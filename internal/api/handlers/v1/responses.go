@@ -1,0 +1,261 @@
+package v1
+
+import (
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/connstate"
+	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
+	"github.com/rickicode/AxonRouter-Go/internal/usage"
+)
+
+// Responses handles POST /v1/responses (OpenAI Responses format)
+func (h *Handler) Responses(c *gin.Context) {
+	start := time.Now()
+
+	body, err := readBody(c)
+	if err != nil {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": gin.H{"message": err.Error(), "type": "invalid_request_error"}})
+		return
+	}
+
+	model := executor.JSONGet(body, "model")
+	if model == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "model is required", "type": "invalid_request_error"}})
+		return
+	}
+
+	// Combo-first routing
+	if comboResult, ok := h.combo.Resolve(model); ok {
+		h.handleComboRequest(c, comboResult, body, model, start)
+		return
+	}
+
+	// Direct routing
+	provider, modelName := executor.SplitModel(model)
+	if provider == "" {
+		// Default to cx (Codex) for responses format
+		provider = "cx"
+		modelName = model
+	}
+
+	exec, providerFormat, err := h.resolveExecutor(provider, modelName)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": err.Error(), "type": "invalid_request_error"}})
+		return
+	}
+
+	body = executor.JSONSet(body, "model", modelName)
+
+	conn, err := h.getConnection(c.Request.Context(), provider, modelName) // Q1: pass modelID
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
+		return
+	}
+
+	// OAuth refresh
+	if !conn.OAuthExpiresAt.IsZero() && time.Now().After(conn.OAuthExpiresAt.Add(-30*time.Second)) {
+		if err := h.refreshOAuthToken(c.Request.Context(), conn, provider); err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": gin.H{"message": "oauth token refresh failed", "type": "auth_error"}})
+			return
+		}
+	}
+
+	// Translate request (OpenAI Responses format → provider format)
+	clientFormat := executor.FormatOpenAIResponses
+	stream := executor.IsStreamRequest(body)
+	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+
+	req := &executor.Request{
+		Model:       modelName,
+		Body:        translatedBody,
+		Stream:      stream,
+		APIKey:      conn.APIKey,
+		AccessToken: conn.AccessToken,
+		BaseURL:     conn.BaseURL,
+		Provider:    provider,
+	}
+
+	// Use OpenAI Responses-specific methods for codex format
+	if providerFormat == executor.FormatOpenAIResponses {
+		h.handleResponsesFormat(c, exec, req, provider, conn, start, translatedBody, body)
+		return
+	}
+
+	var resp *executor.Response
+	var streamResult *executor.StreamResult
+
+	if req.Stream {
+		streamResult, err = exec.ExecuteStream(c.Request.Context(), req)
+	} else {
+		resp, err = exec.Execute(c.Request.Context(), req)
+	}
+
+	latency := time.Since(start).Milliseconds()
+
+	// Parse rate limit headers from response
+	if resp != nil {
+		connstate.ParseRateLimitHeaders(resp.Headers, h.store, conn.ID, modelName)
+	}
+	if streamResult != nil {
+		connstate.ParseRateLimitHeaders(streamResult.Headers, h.store, conn.ID, modelName)
+	}
+
+	if err != nil {
+		det := connstate.DetectError(0, "", err, provider, modelName, nil) // Q5: pass modelID
+		h.store.RecordFailure(conn.ID, det)
+		if det.Status != connstate.StatusReady {
+			h.elig.Update(h.store)
+		}
+		h.combo.RecordFailure(conn.ID, 0, err.Error())
+
+		h.tracker.Log(&usage.LogEntry{
+			ConnectionID:   conn.ID,
+			ProviderTypeID: provider,
+			ModelID:        modelName,
+			Modality:       "chat",
+			LatencyMs:      latency,
+			ErrorMessage:   err.Error(),
+		})
+
+		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
+		return
+	}
+
+	h.store.RecordSuccess(conn.ID)
+	h.elig.Update(h.store) // refresh eligibility after success
+	h.combo.RecordSuccess(conn.ID)
+
+	if req.Stream {
+		h.handleStreamResponse(c, streamResult, conn, provider, modelName, start, translatedBody, body)
+	} else {
+		translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
+
+		h.tracker.Log(&usage.LogEntry{
+			ConnectionID:   conn.ID,
+			ProviderTypeID: provider,
+			ModelID:        modelName,
+			Modality:       "chat",
+			LatencyMs:      latency,
+			StatusCode:     resp.StatusCode,
+		})
+
+		c.Header("Content-Type", "application/json")
+		c.Status(resp.StatusCode)
+		c.Writer.Write(translatedResp)
+	}
+}
+
+// handleResponsesFormat handles OpenAI Responses API format.
+func (h *Handler) handleResponsesFormat(c *gin.Context, exec executor.Executor, req *executor.Request, provider string, conn *Connection, start time.Time, translatedReq, originalReq []byte) {
+	// ponytail: use the OpenAI executor's Responses/ResponsesStream methods
+	openaiExec, ok := exec.(*executor.OpenAIExecutor)
+	if !ok {
+		// Fall back to generic execute
+		if req.Stream {
+			streamResult, err := exec.ExecuteStream(c.Request.Context(), req)
+			if err != nil {
+				c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
+				return
+			}
+			h.handleStreamResponse(c, streamResult, conn, provider, req.Model, start, translatedReq, originalReq)
+		} else {
+			resp, err := exec.Execute(c.Request.Context(), req)
+			if err != nil {
+				c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
+				return
+			}
+			c.Header("Content-Type", "application/json")
+			c.Status(resp.StatusCode)
+			c.Writer.Write(resp.Body)
+		}
+		return
+	}
+
+	if req.Stream {
+		result, err := openaiExec.ResponsesStream(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
+			return
+		}
+
+		flusher, ok := c.Writer.(http.Flusher)
+		if !ok {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"message": "streaming not supported", "type": "server_error"}})
+			return
+		}
+
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Status(http.StatusOK)
+
+		var lastChunk []byte
+		clientFormat := executor.FormatOpenAIResponses
+		_, providerFormat, _ := h.registry.Get(provider)
+
+		for chunk := range result.Chunks {
+			if chunk.Err != nil {
+				c.Writer.Write([]byte("data: {\"error\":{\"message\":\"" + chunk.Err.Error() + "\"}}\n\n"))
+				flusher.Flush()
+				return
+			}
+
+			// Translate chunk
+			translatedChunks := registry.Response(c.Request.Context(), string(providerFormat), string(clientFormat), req.Model, originalReq, translatedReq, chunk.Payload, nil)
+			for _, tc := range translatedChunks {
+				c.Writer.Write(tc)
+				c.Writer.Write([]byte("\n\n"))
+				flusher.Flush()
+			}
+			lastChunk = chunk.Payload
+		}
+
+		c.Writer.Write([]byte("data: [DONE]\n\n"))
+		flusher.Flush()
+
+		// Extract tokens from final chunk
+		latency := time.Since(start).Milliseconds()
+		tokenCounts := ExtractTokensFromFinalChunk(lastChunk)
+
+		h.tracker.Log(&usage.LogEntry{
+			ConnectionID:    conn.ID,
+			ProviderTypeID:  provider,
+			ModelID:         req.Model,
+			Modality:        "chat",
+			InputTokens:     tokenCounts.InputTokens,
+			OutputTokens:    tokenCounts.OutputTokens,
+			ReasoningTokens: tokenCounts.ReasoningTokens,
+			LatencyMs:       latency,
+			StatusCode:      http.StatusOK,
+		})
+	} else {
+		resp, err := openaiExec.Responses(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
+			return
+		}
+
+		// Translate response
+		clientFormat := executor.FormatOpenAIResponses
+		_, providerFormat, _ := h.registry.Get(provider)
+		translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), req.Model, originalReq, translatedReq, resp.Body, nil)
+
+		// Log usage
+		latency := time.Since(start).Milliseconds()
+		h.tracker.Log(&usage.LogEntry{
+			ConnectionID:   conn.ID,
+			ProviderTypeID: provider,
+			ModelID:        req.Model,
+			Modality:       "chat",
+			LatencyMs:      latency,
+			StatusCode:     resp.StatusCode,
+		})
+
+		c.Header("Content-Type", "application/json")
+		c.Status(resp.StatusCode)
+		c.Writer.Write(translatedResp)
+	}
+}

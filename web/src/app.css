@@ -1,0 +1,280 @@
+/* AxonRouter-Go Design System */
+/* Based on DESIGN.md specifications */
+
+/* Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+/* Tailwind Imports */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* CSS Custom Properties for Design Tokens */
+:root {
+  /* Colors */
+  --color-primary: #000000;
+  --color-accent-orange: #fc4c02;
+  --color-accent-magenta: #ef2cc1;
+  --color-accent-periwinkle: #bdbbff;
+  --color-accent-mint: #c8f6f9;
+  
+  --color-canvas: #ffffff;
+  --color-hairline: #ebebeb;
+  --color-canvas-dark: #010120;
+  --color-surface-dark-soft: #26263a;
+  
+  --color-ink: #000000;
+  --color-body: #999999;
+  --color-on-dark: #ffffff;
+  --color-on-primary: #ffffff;
+  
+  /* Typography */
+  --font-display: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Geist Mono', monospace;
+  
+  /* Spacing */
+  --spacing-xxs: 2px;
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 16px;
+  --spacing-xl: 20px;
+  --spacing-2xl: 24px;
+  --spacing-3xl: 32px;
+  --spacing-4xl: 44px;
+  --spacing-5xl: 48px;
+  --spacing-6xl: 55.2px;
+  --spacing-section: 80px;
+  
+  /* Border Radius */
+  --rounded-none: 0px;
+  --rounded-xs: 3.25px;
+  --rounded-sm: 4px;
+  --rounded-md: 8px;
+  --rounded-full: 9999px;
+  
+  /* Box Shadow */
+  --shadow-soft-drop: 0px 4px 10px 0px rgba(1, 1, 32, 0.1);
+}
+
+/* Base Styles */
+@layer base {
+  * {
+    @apply border-hairline;
+  }
+  
+  body {
+    @apply font-display text-body-md text-ink bg-canvas;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display font-medium;
+  }
+  
+  a {
+    @apply transition-colors;
+  }
+}
+
+/* Component Styles */
+@layer components {
+  /* Cards */
+  .card {
+    @apply bg-canvas border border-hairline rounded-sm p-2xl;
+  }
+  
+  .card-dark {
+    @apply bg-canvas-dark border border-surface-dark-soft rounded-sm p-2xl text-on-dark;
+  }
+  
+  .card-tinted {
+    @apply bg-accent-mint rounded-sm p-3xl;
+  }
+  
+  /* Badges */
+  .badge {
+    @apply inline-flex items-center px-sm py-xxs rounded-sm text-body-md;
+  }
+  
+  .badge-neutral {
+    @apply badge bg-hairline text-ink border border-hairline;
+  }
+  
+  .badge-subtle-on-dark {
+    @apply badge bg-surface-dark-soft text-on-dark;
+  }
+  
+  /* Data Tables */
+  .data-table {
+    @apply w-full border-collapse;
+  }
+  
+  .data-table-header {
+    @apply bg-hairline text-body font-mono text-mono-caps-eyebrow uppercase;
+  }
+  
+  .data-table-row {
+    @apply border-b border-hairline;
+  }
+  
+  .data-table-cell {
+    @apply px-lg py-md text-body-md;
+  }
+  
+  /* Inputs */
+  .input {
+    @apply w-full px-lg py-md bg-canvas border border-hairline rounded-sm text-body-md text-ink;
+    @apply focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary;
+    @apply placeholder:text-body;
+  }
+  
+  /* Toggle Pill Group */
+  .toggle-pill-group {
+    @apply inline-flex bg-hairline rounded-sm p-xs;
+  }
+  
+  .toggle-pill {
+    @apply px-lg py-sm rounded-xs text-body-md font-medium;
+    @apply transition-colors;
+  }
+  
+  .toggle-pill-active {
+    @apply toggle-pill bg-primary text-on-primary;
+  }
+  
+  .toggle-pill-inactive {
+    @apply toggle-pill bg-canvas text-ink hover:bg-hairline;
+  }
+}
+
+/* Utility Classes */
+@layer utilities {
+  /* Brand Gradient */
+  .gradient-brand {
+    background: linear-gradient(135deg, var(--color-accent-orange), var(--color-accent-magenta), var(--color-accent-periwinkle));
+  }
+  
+  /* Text Gradient */
+  .text-gradient {
+    background: linear-gradient(135deg, var(--color-accent-orange), var(--color-accent-magenta), var(--color-accent-periwinkle));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  
+  /* Mono Caps */
+  .mono-caps {
+    @apply font-mono text-mono-caps-eyebrow uppercase;
+  }
+  
+  .mono-caps-button {
+    @apply font-mono text-mono-caps-button uppercase;
+  }
+  
+  /* Display Typography */
+  .display-xxl {
+    @apply font-display font-medium text-display-xxl;
+  }
+  
+  .display-xl {
+    @apply font-display font-medium text-display-xl;
+  }
+  
+  .display-lg {
+    @apply font-display font-medium text-display-lg;
+  }
+  
+  .display-md {
+    @apply font-display font-medium text-display-md;
+  }
+  
+  /* Surface Alternating */
+  .surface-light {
+    @apply bg-canvas text-ink;
+  }
+  
+  .surface-dark {
+    @apply bg-canvas-dark text-on-dark;
+  }
+  
+  /* Section Padding */
+  .section-padding {
+    @apply py-section px-3xl;
+  }
+  
+  /* Container */
+  .container-max {
+    @apply max-w-container mx-auto;
+  }
+}
+
+/* Animations */
+@layer utilities {
+  .fade-in {
+    animation: fadeIn 0.3s ease-in-out;
+  }
+  
+  .slide-up {
+    animation: slideUp 0.3s ease-out;
+  }
+  
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  
+  @keyframes slideUp {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+/* Responsive Utilities */
+@layer utilities {
+  .mobile-only {
+    @apply block tablet:hidden;
+  }
+  
+  .tablet-only {
+    @apply hidden tablet:block;
+  }
+  
+  .desktop-only {
+    @apply hidden desktop:block;
+  }
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-canvas;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-hairline rounded-sm;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-body;
+}
+
+/* Selection Styling */
+::selection {
+  @apply bg-primary text-on-primary;
+}

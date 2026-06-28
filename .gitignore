@@ -1,0 +1,48 @@
+# Binaries
+axonrouter
+axonrouter-cli
+build/axonrouter
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go
+*.test
+*.out
+vendor/
+
+# Frontend
+web/node_modules/
+web/.svelte-kit/
+web/build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database
+*.db
+*.db-wal
+*.db-shm
+
+# AI tools
+.rpiv/
+.serena/
+AGENTS.md
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+.env.*.local

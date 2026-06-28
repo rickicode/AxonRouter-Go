@@ -1,0 +1,322 @@
+// Svelte Stores for AxonRouter-Go Dashboard
+
+import { writable, derived } from 'svelte/store';
+import { providersApi, connectionsApi, combosApi, logsApi, dashboardApi } from './api';
+import type { Provider, Connection, Combo, RequestLog } from './api';
+
+// Loading state
+export const isLoading = writable(false);
+export const error = writable<string | null>(null);
+
+// Dashboard stats
+export const dashboardStats = writable<{
+  total_connections: number;
+  active_connections: number;
+  total_requests_today: number;
+  success_rate: number;
+  providers: { id: string; name: string; connection_count: number }[];
+} | null>(null);
+
+// Providers
+export const providers = writable<Provider[]>([]);
+export const selectedProvider = writable<Provider | null>(null);
+
+// Connections
+export const connections = writable<Connection[]>([]);
+export const selectedConnection = writable<Connection | null>(null);
+export const connectionPagination = writable({
+  page: 1,
+  per_page: 50,
+  total: 0,
+  total_pages: 0,
+});
+
+// Combos
+export const combos = writable<Combo[]>([]);
+export const selectedCombo = writable<Combo | null>(null);
+
+// Logs
+export const logs = writable<RequestLog[]>([]);
+export const logPagination = writable({
+  page: 1,
+  per_page: 100,
+  total: 0,
+  total_pages: 0,
+});
+
+// Filters
+export const connectionFilter = writable({
+  status: '',
+  search: '',
+});
+
+export const logFilter = writable({
+  provider_id: '',
+  connection_id: '',
+  model_id: '',
+  status_code: 0,
+  start_date: '',
+  end_date: '',
+});
+
+// Derived stores
+export const activeProviders = derived(providers, ($providers) =>
+  $providers.filter((p) => p.connection_count > 0)
+);
+
+export const providerStatusCounts = derived(providers, ($providers) => {
+  const counts = {
+    ready: 0,
+    rate_limited: 0,
+    quota_exhausted: 0,
+    balance_empty: 0,
+    auth_failed: 0,
+    suspended: 0,
+    disabled: 0,
+  };
+  
+  $providers.forEach((provider) => {
+    if (provider.status_counts) {
+      Object.entries(provider.status_counts).forEach(([status, count]) => {
+        counts[status as keyof typeof counts] += count;
+      });
+    }
+  });
+  
+  return counts;
+});
+
+export const totalConnections = derived(providerStatusCounts, ($counts) =>
+  Object.values($counts).reduce((sum, count) => sum + count, 0)
+);
+
+// Actions
+export async function loadDashboardStats() {
+  isLoading.set(true);
+  error.set(null);
+  
+  try {
+    const stats = await dashboardApi.stats();
+    dashboardStats.set(stats);
+  } catch (err) {
+    error.set(err instanceof Error ? err.message : 'Failed to load dashboard stats');
+  } finally {
+    isLoading.set(false);
+  }
+}
+
+export async function loadProviders() {
+  isLoading.set(true);
+  error.set(null);
+  
+  try {
+    const response = await providersApi.list();
+    providers.set(response.data);
+  } catch (err) {
+    error.set(err instanceof Error ? err.message : 'Failed to load providers');
+  } finally {
+    isLoading.set(false);
+  }
+}
+
+export async function loadProvider(id: string) {
+  isLoading.set(true);
+  error.set(null);
+  
+  try {
+    const provider = await providersApi.get(id);
+    selectedProvider.set(provider);
+    return provider;
+  } catch (err) {
+    error.set(err instanceof Error ? err.message : 'Failed to load provider');
+    return null;
+  } finally {
+    isLoading.set(false);
+  }
+}
+
+export async function loadConnections(
+  providerId: string,
+  page = 1,
+  perPage = 50
+) {
+  isLoading.set(true);
+  error.set(null);
+  
+  try {
+    const filter = { page: 1, per_page: 50, status: '', search: '' };
+    connectionFilter.subscribe((f) => {
+      filter.status = f.status;
+      filter.search = f.search;
+    })();
+    
+    const response = await connectionsApi.list(providerId, {
+      page,
+      per_page: perPage,
+      status: filter.status || undefined,
+      search: filter.search || undefined,
+    });
+    
+    connections.set(response.data);
+    if (response.pagination) {
+      connectionPagination.set(response.pagination);
+    }
+  } catch (err) {
+    error.set(err instanceof Error ? err.message : 'Failed to load connections');
+  } finally {
+    isLoading.set(false);
+  }
+}
+
+export async function loadConnection(id: string) {
+  isLoading.set(true);
+  error.set(null);
+  
+  try {
+    const connection = await connectionsApi.get(id);
+    selectedConnection.set(connection);
+    return connection;
+  } catch (err) {
+    error.set(err instanceof Error ? err.message : 'Failed to load connection');
+    return null;
+  } finally {
+    isLoading.set(false);
+  }
+}
+
+export async function loadCombos() {
+  isLoading.set(true);
+  error.set(null);
+  
+  try {
+    const response = await combosApi.list();
+    combos.set(response.data);
+  } catch (err) {
+    error.set(err instanceof Error ? err.message : 'Failed to load combos');
+  } finally {
+    isLoading.set(false);
+  }
+}
+
+export async function loadCombo(id: string) {
+  isLoading.set(true);
+  error.set(null);
+  
+  try {
+    const combo = await combosApi.get(id);
+    selectedCombo.set(combo);
+    return combo;
+  } catch (err) {
+    error.set(err instanceof Error ? err.message : 'Failed to load combo');
+    return null;
+  } finally {
+    isLoading.set(false);
+  }
+}
+
+export async function loadLogs(page = 1, perPage = 100) {
+  isLoading.set(true);
+  error.set(null);
+  
+  try {
+    const filter = {
+      provider_id: '',
+      connection_id: '',
+      model_id: '',
+      status_code: 0,
+      start_date: '',
+      end_date: '',
+    };
+    
+    logFilter.subscribe((f) => {
+      filter.provider_id = f.provider_id;
+      filter.connection_id = f.connection_id;
+      filter.model_id = f.model_id;
+      filter.status_code = f.status_code;
+      filter.start_date = f.start_date;
+      filter.end_date = f.end_date;
+    })();
+    
+    const response = await logsApi.list({
+      page,
+      per_page: perPage,
+      provider_id: filter.provider_id || undefined,
+      connection_id: filter.connection_id || undefined,
+      model_id: filter.model_id || undefined,
+      status_code: filter.status_code || undefined,
+      start_date: filter.start_date || undefined,
+      end_date: filter.end_date || undefined,
+    });
+    
+    logs.set(response.data);
+    if (response.pagination) {
+      logPagination.set(response.pagination);
+    }
+  } catch (err) {
+    error.set(err instanceof Error ? err.message : 'Failed to load logs');
+  } finally {
+    isLoading.set(false);
+  }
+}
+
+// Helper functions
+export function formatTimestamp(timestamp: number): string {
+  return new Date(timestamp * 1000).toLocaleString();
+}
+
+export function formatLatency(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
+}
+
+export function formatTokens(tokens: number): string {
+  if (tokens < 1000) return tokens.toString();
+  if (tokens < 1000000) return `${(tokens / 1000).toFixed(1)}k`;
+  return `${(tokens / 1000000).toFixed(2)}M`;
+}
+
+export function formatCost(cost: number): string {
+  return `$${cost.toFixed(4)}`;
+}
+
+export function getStatusColor(status: string): string {
+  switch (status) {
+    case 'ready':
+      return 'text-green-600 bg-green-50';
+    case 'rate_limited':
+      return 'text-yellow-600 bg-yellow-50';
+    case 'quota_exhausted':
+      return 'text-orange-600 bg-orange-50';
+    case 'balance_empty':
+      return 'text-red-600 bg-red-50';
+    case 'auth_failed':
+      return 'text-red-600 bg-red-50';
+    case 'suspended':
+      return 'text-gray-600 bg-gray-50';
+    case 'disabled':
+      return 'text-gray-600 bg-gray-50';
+    default:
+      return 'text-gray-600 bg-gray-50';
+  }
+}
+
+export function getStatusLabel(status: string): string {
+  switch (status) {
+    case 'ready':
+      return 'Ready';
+    case 'rate_limited':
+      return 'Rate Limited';
+    case 'quota_exhausted':
+      return 'Quota Exhausted';
+    case 'balance_empty':
+      return 'Balance Empty';
+    case 'auth_failed':
+      return 'Auth Failed';
+    case 'suspended':
+      return 'Suspended';
+    case 'disabled':
+      return 'Disabled';
+    default:
+      return status;
+  }
+}

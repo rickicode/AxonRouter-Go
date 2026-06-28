@@ -1,0 +1,177 @@
+package v1
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"mime"
+	"mime/multipart"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/usage"
+)
+
+// STT handles POST /v1/audio/transcriptions
+func (h *Handler) STT(c *gin.Context) {
+	start := time.Now()
+
+	// STT uses multipart form data
+	contentType := c.GetHeader("Content-Type")
+	if contentType == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "Content-Type required", "type": "invalid_request_error"}})
+		return
+	}
+
+	// Parse multipart form
+	if err := c.Request.ParseMultipartForm(32 << 20); err != nil { // 32MB max
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "failed to parse form: " + err.Error(), "type": "invalid_request_error"}})
+		return
+	}
+
+	model := c.PostForm("model")
+	if model == "" {
+		model = "whisper-1"
+	}
+
+	provider, _ := executor.SplitModel(model)
+	if provider == "" {
+		provider = "openai"
+	}
+
+	// Get the uploaded file
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "file is required", "type": "invalid_request_error"}})
+		return
+	}
+	defer file.Close()
+
+	// Read file data
+	audioData, err := io.ReadAll(file)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "failed to read file", "type": "invalid_request_error"}})
+		return
+	}
+
+	// Build multipart body
+	filename := header.Filename
+	if filename == "" {
+		filename = "audio.wav"
+	}
+
+	language := c.PostForm("language")
+
+	multipartBody, multipartContentType, err := executor.BuildMultipartBody(audioData, filename, model, language)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"message": "failed to build request", "type": "server_error"}})
+		return
+	}
+
+	// Get STT executor
+	sttExec := executor.NewSTTExecutor(executor.NewBaseExecutor())
+
+	conn, err := h.getConnection(c.Request.Context(), provider, model) // Q1: pass modelID
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
+		return
+	}
+
+	// OAuth refresh
+	if !conn.OAuthExpiresAt.IsZero() && time.Now().After(conn.OAuthExpiresAt.Add(-30*time.Second)) {
+		if err := h.refreshOAuthToken(c.Request.Context(), conn, provider); err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": gin.H{"message": "oauth token refresh failed", "type": "auth_error"}})
+			return
+		}
+	}
+
+	req := &executor.Request{
+		Model:       model,
+		Body:        multipartBody,
+		APIKey:      conn.APIKey,
+		AccessToken: conn.AccessToken,
+		BaseURL:     conn.BaseURL,
+		Provider:    provider,
+		Headers: map[string]string{
+			"Content-Type": multipartContentType,
+		},
+	}
+
+	resp, err := sttExec.Execute(c.Request.Context(), req)
+	if err != nil {
+		// Log failure
+		h.tracker.Log(&usage.LogEntry{
+			ConnectionID:   conn.ID,
+			ProviderTypeID: provider,
+			ModelID:        model,
+			Modality:       "audio",
+			LatencyMs:      time.Since(start).Milliseconds(),
+			ErrorMessage:   err.Error(),
+		})
+
+		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
+		return
+	}
+
+	// Log success
+	h.tracker.Log(&usage.LogEntry{
+		ConnectionID:   conn.ID,
+		ProviderTypeID: provider,
+		ModelID:        model,
+		Modality:       "audio",
+		LatencyMs:      time.Since(start).Milliseconds(),
+		StatusCode:     resp.StatusCode,
+	})
+
+	c.Header("Content-Type", "application/json")
+	c.Status(resp.StatusCode)
+	c.Writer.Write(resp.Body)
+}
+
+// parseMultipartBoundary extracts boundary from Content-Type header.
+func parseMultipartBoundary(contentType string) (string, error) {
+	_, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return "", fmt.Errorf("parse media type: %w", err)
+	}
+	boundary := params["boundary"]
+	if boundary == "" {
+		return "", fmt.Errorf("no boundary in content type")
+	}
+	return boundary, nil
+}
+
+// forwardMultipartBody reads the original multipart body and returns it with content type.
+func forwardMultipartBody(c *gin.Context) ([]byte, string, error) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	// Copy form fields
+	for key, values := range c.Request.PostForm {
+		for _, v := range values {
+			writer.WriteField(key, v)
+		}
+	}
+
+	// Copy files
+	for key, files := range c.Request.MultipartForm.File {
+		for _, fh := range files {
+			file, err := fh.Open()
+			if err != nil {
+				continue
+			}
+			part, err := writer.CreateFormFile(key, fh.Filename)
+			if err != nil {
+				file.Close()
+				continue
+			}
+			io.Copy(part, file)
+			file.Close()
+		}
+	}
+
+	writer.Close()
+	return buf.Bytes(), writer.FormDataContentType(), nil
+}

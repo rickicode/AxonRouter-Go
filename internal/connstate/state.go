@@ -1,0 +1,201 @@
+package connstate
+
+import (
+	"sync"
+	"time"
+)
+
+// CircuitState represents the state of a circuit breaker.
+type CircuitState string
+
+const (
+	CBClosed   CircuitState = "closed"
+	CBOpen     CircuitState = "open"
+	CBHalfOpen CircuitState = "half_open"
+)
+
+// Status represents the current status of a provider connection.
+// Aligned to DB vocabulary (migrations.go:30).
+type Status string
+
+const (
+	StatusUnknown        Status = "unknown"
+	StatusReady          Status = "ready"
+	StatusRateLimited    Status = "rate_limited"
+	StatusQuotaExhausted Status = "quota_exhausted"
+	StatusBalanceEmpty   Status = "balance_empty"
+	StatusAuthFailed     Status = "auth_failed"
+	StatusSuspended      Status = "suspended"
+	StatusDisabled       Status = "disabled"
+	StatusDegraded       Status = "degraded"
+	StatusCooldown       Status = "cooldown"
+)
+
+// IsEligible returns true if the status indicates the connection can be used.
+func (s Status) IsEligible() bool {
+	return s == StatusReady || s == StatusDegraded
+}
+
+// ConnectionState holds the live state of a single provider connection.
+type ConnectionState struct {
+	ID            string
+	ProviderID    int64
+	Prefix        string
+	Status        Status
+	LastCheckAt   time.Time
+	LastError     string
+	ResponseTime  time.Duration
+	FailCount     int
+	SuccessCount  int
+	CooldownUntil *time.Time
+	ModelLimits   sync.Map // modelID -> *ModelLimitState
+	mu            sync.RWMutex
+}
+
+// GetStatus returns the current status (thread-safe).
+func (cs *ConnectionState) GetStatus() Status {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return cs.Status
+}
+
+// SetStatus updates the status and timestamps (thread-safe).
+func (cs *ConnectionState) SetStatus(status Status, err string) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.Status = status
+	cs.LastCheckAt = time.Now()
+	cs.LastError = err
+	if status == StatusReady {
+		cs.SuccessCount++
+		cs.FailCount = 0
+	} else if status == StatusAuthFailed || status == StatusSuspended || status == StatusQuotaExhausted || status == StatusBalanceEmpty {
+		cs.FailCount++
+	}
+}
+
+// SetCooldown sets a cooldown timer.
+func (cs *ConnectionState) SetCooldown(until time.Time) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.CooldownUntil = &until
+	cs.Status = StatusCooldown
+}
+
+// IsInCooldown checks if the connection is in cooldown.
+func (cs *ConnectionState) IsInCooldown() bool {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	if cs.CooldownUntil == nil {
+		return false
+	}
+	return time.Now().Before(*cs.CooldownUntil)
+}
+
+// SetResponseTime updates the response time metric (thread-safe).
+func (cs *ConnectionState) SetResponseTime(d time.Duration) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.ResponseTime = d
+}
+
+// Snapshot returns a copy of the connection state for external use.
+func (cs *ConnectionState) Snapshot() ConnectionStateSnapshot {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return ConnectionStateSnapshot{
+		ID:           cs.ID,
+		ProviderID:   cs.ProviderID,
+		Prefix:       cs.Prefix,
+		Status:       cs.Status,
+		LastCheckAt:  cs.LastCheckAt,
+		LastError:    cs.LastError,
+		ResponseTime: cs.ResponseTime,
+		FailCount:    cs.FailCount,
+		SuccessCount: cs.SuccessCount,
+	}
+}
+
+// GetModelLimit returns the model limit state, creating if needed.
+func (cs *ConnectionState) GetModelLimit(modelID string) *ModelLimitState {
+	if v, ok := cs.ModelLimits.Load(modelID); ok {
+		return v.(*ModelLimitState)
+	}
+	mls := &ModelLimitState{ModelID: modelID}
+	actual, _ := cs.ModelLimits.LoadOrStore(modelID, mls)
+	return actual.(*ModelLimitState)
+}
+
+// IsModelInCooldown checks if a specific model is in cooldown.
+func (cs *ConnectionState) IsModelInCooldown(modelID string) bool {
+	mls := cs.GetModelLimit(modelID)
+	return mls.IsInCooldown()
+}
+
+// SetModelCooldown sets a cooldown for a specific model.
+func (cs *ConnectionState) SetModelCooldown(modelID string, until time.Time) {
+	mls := cs.GetModelLimit(modelID)
+	mls.SetCooldown(until)
+}
+
+// ConnectionStateSnapshot is an immutable copy of connection state.
+type ConnectionStateSnapshot struct {
+	ID           string
+	ProviderID   int64
+	Prefix       string
+	Status       Status
+	LastCheckAt  time.Time
+	LastError    string
+	ResponseTime time.Duration
+	FailCount    int
+	SuccessCount int
+}
+
+// ModelLimitState tracks rate limit state for a specific model on a connection.
+type ModelLimitState struct {
+	ModelID       string
+	CooldownUntil *time.Time
+	TPMRemaining  int64
+	TPMLimit      int64
+	RPMRemaining  int64
+	RPMLimit      int64
+	mu            sync.RWMutex
+}
+
+// IsInCooldown checks if the model is in cooldown.
+func (mls *ModelLimitState) IsInCooldown() bool {
+	mls.mu.RLock()
+	defer mls.mu.RUnlock()
+	if mls.CooldownUntil == nil {
+		return false
+	}
+	return time.Now().Before(*mls.CooldownUntil)
+}
+
+// SetCooldown sets a cooldown timer for this model.
+func (mls *ModelLimitState) SetCooldown(until time.Time) {
+	mls.mu.Lock()
+	defer mls.mu.Unlock()
+	mls.CooldownUntil = &until
+}
+
+// ClearCooldown clears the cooldown timer.
+func (mls *ModelLimitState) ClearCooldown() {
+	mls.mu.Lock()
+	defer mls.mu.Unlock()
+	mls.CooldownUntil = nil
+}
+
+// SetTPMRemaining updates the TPM remaining count.
+func (mls *ModelLimitState) SetTPMRemaining(n int64) {
+	mls.mu.Lock()
+	defer mls.mu.Unlock()
+	mls.TPMRemaining = n
+}
+
+// SetRPMRemaining updates the RPM remaining count.
+func (mls *ModelLimitState) SetRPMRemaining(n int64) {
+	mls.mu.Lock()
+	defer mls.mu.Unlock()
+	mls.RPMRemaining = n
+}

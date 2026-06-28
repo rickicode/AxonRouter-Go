@@ -1,0 +1,63 @@
+package v1
+
+import (
+	"io"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/executor"
+)
+
+// Unified handles POST /v1/unified — dispatches to the right endpoint by mode.
+func (h *Handler) Unified(c *gin.Context) {
+	body, err := readBody(c)
+	if err != nil {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": gin.H{"message": err.Error(), "type": "invalid_request_error"}})
+		return
+	}
+
+	mode := executor.JSONGet(body, "mode")
+	if mode == "" {
+		mode = "text"
+	}
+
+	model := executor.JSONGet(body, "model")
+	if model == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "model is required", "type": "invalid_request_error"}})
+		return
+	}
+
+	provider, _ := executor.SplitModel(model)
+	if provider == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "model must include provider prefix", "type": "invalid_request_error"}})
+		return
+	}
+
+	switch mode {
+	case "text":
+		// Dispatch to chat completions
+		c.Request.Body = io.NopCloser(executor.JSONToReader(body))
+		h.ChatCompletions(c)
+
+	case "image":
+		// Dispatch to image generation
+		c.Request.Body = io.NopCloser(executor.JSONToReader(body))
+		h.Images(c)
+
+	case "audio":
+		// Dispatch to TTS
+		c.Request.Body = io.NopCloser(executor.JSONToReader(body))
+		h.TTS(c)
+
+	case "video":
+		// Dispatch to video generation
+		c.Request.Body = io.NopCloser(executor.JSONToReader(body))
+		h.Video(c)
+
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+			"message": "unsupported mode: " + mode + ". Supported: text, image, audio, video",
+			"type":    "invalid_request_error",
+		}})
+	}
+}

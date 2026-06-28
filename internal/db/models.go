@@ -1,0 +1,154 @@
+package db
+
+import (
+	"database/sql"
+	"time"
+)
+
+// ProviderType represents a provider type (e.g., "openai", "claude", "gemini").
+type ProviderType struct {
+	ID            string         `json:"id"`
+	DisplayName   string         `json:"display_name"`
+	Format        string         `json:"format"`
+	BaseURL       string         `json:"base_url"`
+	IsCustom      bool           `json:"is_custom"`
+	CustomHeaders sql.NullString `json:"custom_headers,omitempty"`
+	CreatedAt     int64          `json:"created_at"`
+}
+
+// Connection represents a single API key/token instance for a provider.
+type Connection struct {
+	ID               string         `json:"id"`
+	ProviderTypeID   string         `json:"provider_type_id"`
+	Name             string         `json:"name"`
+	AuthType         string         `json:"auth_type"`
+	APIKey           sql.NullString `json:"-"`
+	OAuthToken       sql.NullString `json:"-"`
+	OAuthRefreshToken sql.NullString `json:"-"`
+	OAuthExpiresAt   sql.NullInt64  `json:"oauth_expires_at,omitempty"`
+	Status           string         `json:"status"`
+	CooldownUntil    sql.NullInt64  `json:"cooldown_until,omitempty"`
+	LastError        sql.NullString `json:"last_error,omitempty"`
+	LastErrorCode    sql.NullInt64  `json:"last_error_code,omitempty"`
+	LastSuccessAt    sql.NullInt64  `json:"last_success_at,omitempty"`
+	LastFailureAt    sql.NullInt64  `json:"last_failure_at,omitempty"`
+	FailureCount     int            `json:"failure_count"`
+	Capabilities     sql.NullString `json:"capabilities,omitempty"`
+	IsActive         bool           `json:"is_active"`
+	CreatedAt        int64          `json:"created_at"`
+	UpdatedAt        int64          `json:"updated_at"`
+}
+
+// ModelRateLimit tracks per-model rate limits on a connection.
+type ModelRateLimit struct {
+	ID            string `json:"id"`
+	ConnectionID  string `json:"connection_id"`
+	ModelID       string `json:"model_id"`
+	TPMRemaining  sql.NullInt64 `json:"tpm_remaining,omitempty"`
+	TPMLimit      sql.NullInt64 `json:"tpm_limit,omitempty"`
+	RPMRemaining  sql.NullInt64 `json:"rpm_remaining,omitempty"`
+	RPMLimit      sql.NullInt64 `json:"rpm_limit,omitempty"`
+	CooldownUntil sql.NullInt64 `json:"cooldown_until,omitempty"`
+	LastUpdatedAt int64         `json:"last_updated_at"`
+}
+
+// APIKey is a client-facing API key for authenticating to the proxy.
+type APIKey struct {
+	ID             string `json:"id"`
+	KeyHash        string `json:"key_hash"`
+	Name           sql.NullString `json:"name,omitempty"`
+	RateLimitPerMin int   `json:"rate_limit_per_min"`
+	IsActive       bool   `json:"is_active"`
+	CreatedAt      int64  `json:"created_at"`
+}
+
+// Combo is a named ordered list of model steps with a routing strategy.
+type Combo struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Strategy   string `json:"strategy"`
+	StickyLimit int   `json:"sticky_limit"`
+	TimeoutMs  int    `json:"timeout_ms"`
+	IsSmart    bool   `json:"is_smart"`
+	SmartGoal  sql.NullString `json:"smart_goal,omitempty"`
+	IsActive   bool   `json:"is_active"`
+	CreatedAt  int64  `json:"created_at"`
+	UpdatedAt  int64  `json:"updated_at"`
+}
+
+// ComboStep is a single step inside a combo.
+type ComboStep struct {
+	ID           string `json:"id"`
+	ComboID      string `json:"combo_id"`
+	ConnectionID string `json:"connection_id"`
+	ModelID      string `json:"model_id"`
+	Priority     int    `json:"priority"`
+	Weight       int    `json:"weight"`
+	CreatedAt    int64  `json:"created_at"`
+}
+
+// RequestLog is a single request log entry.
+type RequestLog struct {
+	ID              string         `json:"id"`
+	Timestamp       int64          `json:"timestamp"`
+	ConnectionID    sql.NullString `json:"connection_id,omitempty"`
+	ProviderTypeID  sql.NullString `json:"provider_type_id,omitempty"`
+	ModelID         sql.NullString `json:"model_id,omitempty"`
+	ComboID         sql.NullString `json:"combo_id,omitempty"`
+	Modality        string         `json:"modality"`
+	InputTokens     int64          `json:"input_tokens"`
+	OutputTokens    int64          `json:"output_tokens"`
+	ReasoningTokens int64          `json:"reasoning_tokens"`
+	LatencyMs       sql.NullInt64  `json:"latency_ms,omitempty"`
+	StatusCode      sql.NullInt64  `json:"status_code,omitempty"`
+	ErrorMessage    sql.NullString `json:"error_message,omitempty"`
+	CostUsd         float64        `json:"cost_usd"`
+	CreatedAt       int64          `json:"created_at"`
+}
+
+// Setting is a key-value configuration pair.
+type Setting struct {
+	Key       string `json:"key"`
+	Value     string `json:"value"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
+// RotationState tracks round-robin rotation counter per combo.
+type RotationState struct {
+	ComboID   string `json:"combo_id"`
+	Counter   int    `json:"counter"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
+// Pagination holds pagination metadata for API responses.
+type Pagination struct {
+	Page       int `json:"page"`
+	PerPage    int `json:"per_page"`
+	Total      int `json:"total"`
+	TotalPages int `json:"total_pages"`
+}
+
+// PaginatedResponse wraps data with pagination metadata.
+type PaginatedResponse struct {
+	Data       interface{} `json:"data"`
+	Pagination Pagination  `json:"pagination"`
+}
+
+// DashboardStats holds aggregated stats for the dashboard.
+type DashboardStats struct {
+	TotalProviders   int            `json:"total_providers"`
+	TotalConnections int            `json:"total_connections"`
+	TotalCombos      int            `json:"total_combos"`
+	StatusCounts     map[string]int `json:"status_counts"`
+	RequestsToday    int64          `json:"requests_today"`
+	TokensToday      int64          `json:"tokens_today"`
+	CostToday        float64        `json:"cost_today"`
+	Uptime           time.Duration  `json:"uptime"`
+}
+
+// ProviderWithCounts is a provider type with its connection count breakdown.
+type ProviderWithCounts struct {
+	ProviderType
+	ConnectionCount int            `json:"connection_count"`
+	StatusCounts    map[string]int `json:"status_counts"`
+}
