@@ -1,10 +1,11 @@
-.PHONY: all build build-frontend build-backend clean run dev
+.PHONY: all build build-frontend build-backend clean run kill-port dev
 
 # Variables
 BINARY_NAME=axonrouter
 BUILD_DIR=./build
 FRONTEND_DIR=./web
 GO_BUILD_FLAGS=-ldflags="-s -w"
+PORT=3777
 
 # Default target
 all: build
@@ -32,9 +33,16 @@ clean:
 	rm -rf $(FRONTEND_DIR)/.svelte-kit
 	@echo "Cleaned!"
 
+# Kill process on port
+kill-port:
+	@echo "Killing process on port $(PORT)..."
+	@lsof -ti :$(PORT) | xargs kill -9 2>/dev/null || true
+	@sleep 0.5
+	@echo "Port $(PORT) cleared."
+
 # Run the server
-run: build
-	@echo "Starting server..."
+run: build kill-port
+	@echo "Starting server on port $(PORT)..."
 	$(BUILD_DIR)/$(BINARY_NAME)
 
 # Development mode (frontend only)
@@ -62,7 +70,8 @@ help:
 	@echo "  build-frontend - Build frontend only"
 	@echo "  build-backend - Build backend only"
 	@echo "  clean         - Clean build artifacts"
-	@echo "  run           - Build and run the server"
+	@echo "  run           - Kill port, build, and run the server"
+	@echo "  kill-port     - Kill process on port $(PORT)"
 	@echo "  dev           - Start frontend development server"
 	@echo "  install       - Install frontend dependencies"
 	@echo "  frontend      - Build frontend only"
