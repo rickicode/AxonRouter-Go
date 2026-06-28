@@ -38,7 +38,7 @@
         <Card variant="default" padding="lg">
           <div class="text-center">
             <p class="text-red-600 mb-lg">{$error}</p>
-            <Button on:click={loadCombos} variant="outline">
+            <Button onclick={loadCombos} variant="outline">
               <span class="mono-caps-button">RETRY</span>
             </Button>
           </div>

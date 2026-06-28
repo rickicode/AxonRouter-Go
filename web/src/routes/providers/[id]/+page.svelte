@@ -7,10 +7,10 @@
   import Badge from '$lib/components/Badge.svelte';
   import DataTable from '$lib/components/DataTable.svelte';
   
-  $: providerId = $page.params.id;
+  let providerId = $derived($page.params.id);
   
-  let currentPage = 1;
-  let perPage = 50;
+  let currentPage = $state(1);
+  let perPage = $state(50);
   
   onMount(() => {
     loadProvider(providerId);
@@ -93,7 +93,7 @@
         <Card variant="default" padding="lg">
           <div class="text-center">
             <p class="text-red-600 mb-lg">{$error}</p>
-            <Button on:click={() => { loadProvider(providerId); loadConnections(providerId, currentPage, perPage); }} variant="outline">
+            <Button onclick={() => { loadProvider(providerId); loadConnections(providerId, currentPage, perPage); }} variant="outline">
               <span class="mono-caps-button">RETRY</span>
             </Button>
           </div>
@@ -152,11 +152,12 @@
           <Card class="mb-3xl">
             <div class="flex flex-wrap gap-lg">
               <div class="flex-1 min-w-[200px]">
-                <label class="mono-caps text-body mb-xs block">STATUS</label>
+                <label for="conn-status" class="mono-caps text-body mb-xs block">STATUS</label>
                 <select
+                  id="conn-status"
                   class="input"
                   bind:value={$connectionFilter.status}
-                  on:change={handleFilterChange}
+                  onchange={handleFilterChange}
                 >
                   <option value="">All Statuses</option>
                   <option value="ready">Ready</option>
@@ -170,13 +171,14 @@
               </div>
               
               <div class="flex-1 min-w-[200px]">
-                <label class="mono-caps text-body mb-xs block">SEARCH</label>
+                <label for="conn-search" class="mono-caps text-body mb-xs block">SEARCH</label>
                 <input
+                  id="conn-search"
                   type="text"
                   class="input"
                   placeholder="Search connections..."
                   bind:value={$connectionFilter.search}
-                  on:input={handleFilterChange}
+                  oninput={handleFilterChange}
                 />
               </div>
             </div>
@@ -189,7 +191,7 @@
             loading={$isLoading}
             emptyMessage="No connections found"
           >
-            <svelte:fragment slot="cell" let:column let:row>
+            {#snippet cell({ column, row })}
               {#if column.key === 'name'}
                 <a href="/providers/{providerId}/{row.id}" class="text-ink hover:text-primary font-medium">
                   {row.name}
@@ -220,7 +222,7 @@
               {:else}
                 {row[column.key] || '-'}
               {/if}
-            </svelte:fragment>
+            {/snippet}
           </DataTable>
           
           <!-- Pagination -->
@@ -235,7 +237,7 @@
                   variant="outline"
                   size="sm"
                   disabled={currentPage === 1}
-                  on:click={() => handlePageChange(currentPage - 1)}
+                  onclick={() => handlePageChange(currentPage - 1)}
                 >
                   <span class="mono-caps-button">PREV</span>
                 </Button>
@@ -245,7 +247,7 @@
                     <Button
                       variant={page === currentPage ? 'primary' : 'outline'}
                       size="sm"
-                      on:click={() => handlePageChange(page)}
+                      onclick={() => handlePageChange(page)}
                     >
                       <span class="mono-caps-button">{page}</span>
                     </Button>
@@ -256,7 +258,7 @@
                   variant="outline"
                   size="sm"
                   disabled={currentPage === $connectionPagination.total_pages}
-                  on:click={() => handlePageChange(currentPage + 1)}
+                  onclick={() => handlePageChange(currentPage + 1)}
                 >
                   <span class="mono-caps-button">NEXT</span>
                 </Button>

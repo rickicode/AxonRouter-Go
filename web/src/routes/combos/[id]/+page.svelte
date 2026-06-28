@@ -6,7 +6,7 @@
   import Button from '$lib/components/Button.svelte';
   import Badge from '$lib/components/Badge.svelte';
   
-  $: comboId = $page.params.id;
+  let comboId = $derived($page.params.id);
   
   onMount(() => {
     loadCombo(comboId);
@@ -55,7 +55,7 @@
         <Card variant="default" padding="lg">
           <div class="text-center">
             <p class="text-red-600 mb-lg">{$error}</p>
-            <Button on:click={() => loadCombo(comboId)} variant="outline">
+            <Button onclick={() => loadCombo(comboId)} variant="outline">
               <span class="mono-caps-button">RETRY</span>
             </Button>
           </div>

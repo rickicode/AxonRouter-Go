@@ -90,7 +90,7 @@
         <Card variant="default" padding="lg">
           <div class="text-center">
             <p class="text-red-600 mb-lg">{error}</p>
-            <Button on:click={loadSettings} variant="outline">
+            <Button onclick={loadSettings} variant="outline">
               <span class="mono-caps-button">RETRY</span>
             </Button>
           </div>
@@ -112,19 +112,19 @@
                       type="text"
                       class="input w-48"
                       bind:value={editingValue}
-                      on:keydown={(e) => e.key === 'Enter' && saveEdit()}
+                      onkeydown={(e) => e.key === 'Enter' && saveEdit()}
                     />
                     <div class="flex gap-xs">
-                      <Button on:click={saveEdit} variant="primary" size="sm">
+                      <Button onclick={saveEdit} variant="primary" size="sm">
                         <span class="mono-caps-button">SAVE</span>
                       </Button>
-                      <Button on:click={cancelEdit} variant="ghost" size="sm">
+                      <Button onclick={cancelEdit} variant="ghost" size="sm">
                         <span class="mono-caps-button">CANCEL</span>
                       </Button>
                     </div>
                   {:else}
                     <span class="text-body-md">{value}</span>
-                    <Button on:click={() => startEdit(key, value)} variant="outline" size="sm">
+                    <Button onclick={() => startEdit(key, value)} variant="outline" size="sm">
                       <span class="mono-caps-button">EDIT</span>
                     </Button>
                   {/if}
@@ -139,7 +139,7 @@
           <Card>
             <h3 class="display-md mb-lg">Actions</h3>
             <div class="flex flex-wrap gap-md">
-              <Button on:click={loadSettings} variant="outline">
+              <Button onclick={loadSettings} variant="outline">
                 <span class="mono-caps-button">RELOAD SETTINGS</span>
               </Button>
               <Button variant="outline">

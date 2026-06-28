@@ -54,7 +54,7 @@
         <Card variant="default" padding="lg">
           <div class="text-center">
             <p class="text-red-600 mb-lg">{$error}</p>
-            <Button on:click={loadProviders} variant="outline">
+            <Button onclick={loadProviders} variant="outline">
               <span class="mono-caps-button">RETRY</span>
             </Button>
           </div>

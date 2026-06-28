@@ -1,8 +1,19 @@
 <script lang="ts">
-  export let columns: { key: string; label: string; class?: string }[];
-  export let data: any[];
-  export let loading = false;
-  export let emptyMessage = 'No data available';
+  import type { Snippet } from 'svelte';
+
+  let {
+    columns,
+    data,
+    loading = false,
+    emptyMessage = 'No data available',
+    cell,
+  }: {
+    columns: { key: string; label: string; class?: string }[];
+    data: any[];
+    loading?: boolean;
+    emptyMessage?: string;
+    cell?: Snippet<[{ column: any; row: any; index: number }]>;
+  } = $props();
 </script>
 
 <div class="overflow-x-auto">
@@ -40,9 +51,7 @@
           <tr class="data-table-row hover:bg-hairline/50 transition-colors">
             {#each columns as column}
               <td class="data-table-cell {column.class || ''}">
-                <slot name="cell" {column} {row} {index}>
-                  {row[column.key] || '-'}
-                </slot>
+                {#if cell}{@render cell({ column, row, index })}{:else}{row[column.key] || '-'}{/if}
               </td>
             {/each}
           </tr>

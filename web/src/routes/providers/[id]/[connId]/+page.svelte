@@ -6,8 +6,8 @@
   import Button from '$lib/components/Button.svelte';
   import Badge from '$lib/components/Badge.svelte';
   
-  $: providerId = $page.params.id;
-  $: connectionId = $page.params.connId;
+  let providerId = $derived($page.params.id);
+  let connectionId = $derived($page.params.connId);
   
   onMount(() => {
     loadConnection(connectionId);
@@ -85,7 +85,7 @@
         <Card variant="default" padding="lg">
           <div class="text-center">
             <p class="text-red-600 mb-lg">{$error}</p>
-            <Button on:click={() => loadConnection(connectionId)} variant="outline">
+            <Button onclick={() => loadConnection(connectionId)} variant="outline">
               <span class="mono-caps-button">RETRY</span>
             </Button>
           </div>

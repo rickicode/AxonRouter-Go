@@ -1,16 +1,19 @@
-<script>
+<script lang="ts">
   import '../app.css';
   import { page } from '$app/stores';
-  
+  import type { Snippet } from 'svelte';
+
+  let { children }: { children: Snippet } = $props();
+
   // Navigation state
-  let isMobileMenuOpen = false;
-  let isScrolled = false;
-  
+  let isMobileMenuOpen = $state(false);
+  let isScrolled = $state(false);
+
   // Check scroll position for nav background
   function handleScroll() {
     isScrolled = window.scrollY > 0;
   }
-  
+
   // Navigation links
   const navLinks = [
     { href: '/', label: 'Dashboard' },
@@ -21,7 +24,7 @@
   ];
 </script>
 
-<svelte:window on:scroll={handleScroll} />
+<svelte:window onscroll={handleScroll} />
 
 <div class="min-h-screen bg-canvas">
   <!-- Navigation -->
@@ -37,7 +40,7 @@
             GO
           </span>
         </a>
-        
+
         <!-- Desktop Navigation -->
         <div class="hidden tablet:flex items-center gap-2xl">
           {#each navLinks as link}
@@ -49,27 +52,21 @@
             </a>
           {/each}
         </div>
-        
+
         <!-- CTA Buttons -->
         <div class="hidden tablet:flex items-center gap-md">
-          <a
-            href="/api/admin"
-            class="button-outline"
-          >
+          <a href="/api/admin" class="button-outline">
             <span class="font-mono text-mono-caps-button uppercase">API</span>
           </a>
-          <a
-            href="/"
-            class="button-primary"
-          >
+          <a href="/" class="button-primary">
             <span class="font-mono text-mono-caps-button uppercase">Dashboard</span>
           </a>
         </div>
-        
+
         <!-- Mobile Menu Button -->
         <button
           class="tablet:hidden p-sm {isScrolled ? 'text-ink' : 'text-on-dark'}"
-          on:click={() => isMobileMenuOpen = !isMobileMenuOpen}
+          onclick={() => isMobileMenuOpen = !isMobileMenuOpen}
           aria-label="Toggle menu"
         >
           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -82,7 +79,7 @@
         </button>
       </div>
     </div>
-    
+
     <!-- Mobile Menu -->
     {#if isMobileMenuOpen}
       <div class="tablet:hidden bg-canvas-dark border-t border-surface-dark-soft">
@@ -91,7 +88,7 @@
             <a
               href={link.href}
               class="block font-body text-body-md text-on-dark hover:text-on-dark/80 {$page.url.pathname === link.href ? 'font-medium' : ''}"
-              on:click={() => isMobileMenuOpen = false}
+              onclick={() => isMobileMenuOpen = false}
             >
               {link.label}
             </a>
@@ -108,12 +105,12 @@
       </div>
     {/if}
   </nav>
-  
+
   <!-- Main Content -->
   <main class="min-h-[calc(100vh-4rem)]">
-    <slot />
+    {@render children()}
   </main>
-  
+
   <!-- Footer -->
   <footer class="bg-canvas border-t border-hairline">
     <div class="max-w-container mx-auto px-3xl py-section">
@@ -121,11 +118,9 @@
         <!-- Brand -->
         <div class="tablet:col-span-1">
           <span class="font-display font-medium text-display-md text-ink">AxonRouter</span>
-          <p class="mt-sm font-body text-body-md text-body">
-            Universal API proxy for coding agents
-          </p>
+          <p class="mt-sm font-body text-body-md text-body">Universal API proxy for coding agents</p>
         </div>
-        
+
         <!-- Links -->
         <div class="tablet:col-span-3 grid grid-cols-2 tablet:grid-cols-4 gap-3xl">
           <div>
@@ -136,41 +131,32 @@
               <li><a href="/logs" class="font-body text-body-md text-ink hover:text-primary">Logs</a></li>
             </ul>
           </div>
-          
           <div>
             <h4 class="font-mono text-mono-caps-eyebrow uppercase text-body mb-lg">API</h4>
             <ul class="space-y-sm">
               <li><a href="/api/admin" class="font-body text-body-md text-ink hover:text-primary">Admin API</a></li>
               <li><a href="/v1/models" class="font-body text-body-md text-ink hover:text-primary">Models</a></li>
-              <li><a href="/v1/chat/completions" class="font-body text-body-md text-ink hover:text-primary">Chat</a></li>
             </ul>
           </div>
-          
           <div>
             <h4 class="font-mono text-mono-caps-eyebrow uppercase text-body mb-lg">Resources</h4>
             <ul class="space-y-sm">
               <li><a href="/docs" class="font-body text-body-md text-ink hover:text-primary">Documentation</a></li>
-              <li><a href="/examples" class="font-body text-body-md text-ink hover:text-primary">Examples</a></li>
-              <li><a href="/changelog" class="font-body text-body-md text-ink hover:text-primary">Changelog</a></li>
             </ul>
           </div>
-          
           <div>
             <h4 class="font-mono text-mono-caps-eyebrow uppercase text-body mb-lg">Legal</h4>
             <ul class="space-y-sm">
               <li><a href="/privacy" class="font-body text-body-md text-ink hover:text-primary">Privacy</a></li>
-              <li><a href="/terms" class="font-body text-body-md text-ink hover:text-primary">Terms</a></li>
             </ul>
           </div>
         </div>
       </div>
-      
+
       <!-- Wordmark Banner -->
       <div class="mt-section pt-section border-t border-hairline">
         <div class="text-center">
-          <span class="font-display font-medium text-display-xxl text-hairline select-none">
-            axonrouter.go
-          </span>
+          <span class="font-display font-medium text-display-xxl text-hairline select-none">axonrouter.go</span>
         </div>
       </div>
     </div>
@@ -178,29 +164,15 @@
 </div>
 
 <style>
-  /* Button Styles from DESIGN.md */
   :global(.button-primary) {
     @apply bg-primary text-on-primary px-2xl py-xs rounded-sm;
     @apply font-mono text-mono-caps-button uppercase;
     @apply hover:bg-primary/90 transition-colors;
   }
-  
   :global(.button-outline) {
     @apply bg-canvas text-ink px-2xl py-xs rounded-xs;
     @apply border border-hairline;
     @apply font-mono text-mono-caps-button uppercase;
     @apply hover:bg-hairline transition-colors;
-  }
-  
-  :global(.button-ghost-on-dark) {
-    @apply bg-surface-dark-soft text-on-dark px-2xl py-xs rounded-sm;
-    @apply font-mono text-mono-caps-button uppercase;
-    @apply hover:bg-surface-dark-soft/80 transition-colors;
-  }
-  
-  :global(.button-secondary-mint) {
-    @apply bg-accent-mint text-ink px-2xl py-xs rounded-sm;
-    @apply font-mono text-mono-caps-button uppercase;
-    @apply hover:bg-accent-mint/90 transition-colors;
   }
 </style>

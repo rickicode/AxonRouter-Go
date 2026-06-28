@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/api/handlers/admin"
@@ -194,16 +195,33 @@ func New(cfg Config) *Router {
 
 	// ---- Static frontend (SPA) ----
 	fsys := web.GetBuildFS()
-	engine.StaticFS("/_app", http.FS(fsys))
+
+	// Serve static files with correct MIME types
+	httpFS := http.FS(fsys)
+	fileServer := http.FileServer(httpFS)
+
 	engine.NoRoute(func(c *gin.Context) {
-		file, err := fsys.Open("index.html")
+		path := c.Request.URL.Path
+
+		// Try to open the file from the embedded FS
+		file, err := fsys.Open(strings.TrimPrefix(path, "/"))
+		if err == nil {
+			file.Close()
+			// File exists — serve it with proper MIME type
+			fileServer.ServeHTTP(c.Writer, c.Request)
+			return
+		}
+
+		// File not found — serve index.html (SPA fallback)
+		indexFile, err := fsys.Open("index.html")
 		if err != nil {
 			c.String(http.StatusNotFound, "Not Found")
 			return
 		}
-		defer file.Close()
-		stat, _ := file.Stat()
-		http.ServeContent(c.Writer, c.Request, stat.Name(), stat.ModTime(), file.(io.ReadSeeker))
+		defer indexFile.Close()
+		stat, _ := indexFile.Stat()
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		http.ServeContent(c.Writer, c.Request, stat.Name(), stat.ModTime(), indexFile.(io.ReadSeeker))
 	})
 
 	return &Router{
