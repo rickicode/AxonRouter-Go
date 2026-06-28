@@ -111,7 +111,7 @@ export async function loadProviders() {
   
   try {
     const response = await providersApi.list();
-    providers.set(response.data);
+    providers.set(response.data || []);
   } catch (err) {
     error.set(err instanceof Error ? err.message : 'Failed to load providers');
   } finally {
@@ -157,7 +157,7 @@ export async function loadConnections(
       search: filter.search || undefined,
     });
     
-    connections.set(response.data);
+    connections.set(response.data || []);
     if (response.pagination) {
       connectionPagination.set(response.pagination);
     }
@@ -190,7 +190,7 @@ export async function loadCombos() {
   
   try {
     const response = await combosApi.list();
-    combos.set(response.data);
+    combos.set(response.data || []);
   } catch (err) {
     error.set(err instanceof Error ? err.message : 'Failed to load combos');
   } finally {
@@ -248,7 +248,7 @@ export async function loadLogs(page = 1, perPage = 100) {
       end_date: filter.end_date || undefined,
     });
     
-    logs.set(response.data);
+    logs.set(response.data || []);
     if (response.pagination) {
       logPagination.set(response.pagination);
     }
