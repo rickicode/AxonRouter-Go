@@ -1,56 +1,23 @@
-// Theme store with localStorage persistence
-
-import { writable } from 'svelte/store';
+// Theme store — dark mode only, no toggle
 import { browser } from '$app/environment';
 
-interface ThemeState {
-  isDark: boolean;
+function applyDarkMode() {
+  if (!browser) return;
+  document.documentElement.classList.add('dark');
+  document.documentElement.style.colorScheme = 'dark';
 }
 
-const STORAGE_KEY = 'axonrouter_theme';
-
-function createThemeStore() {
-  const defaultState: ThemeState = { isDark: true };
-
-  let initialState = defaultState;
-  if (browser) {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        initialState = { isDark: parsed.isDark ?? true };
-      }
-    } catch {
-      // Ignore parse errors, use default
-    }
-  }
-
-  const { subscribe, set, update } = writable<ThemeState>(initialState);
-
-  function applyTheme(isDark: boolean) {
-    if (!browser) return;
-    document.documentElement.classList.toggle('dark', isDark);
-    document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
-  }
-
-  if (browser) {
-    applyTheme(initialState.isDark);
-  }
-
-  return {
-    subscribe,
-
-    toggle() {
-      update((state) => {
-        const newState = { isDark: !state.isDark };
-        if (browser) {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
-          applyTheme(newState.isDark);
-        }
-        return newState;
-      });
-    },
-  };
+if (browser) {
+  applyDarkMode();
 }
 
-export const themeStore = createThemeStore();
+// Export a no-op compatible store API so existing references don't break
+import { readable } from 'svelte/store';
+
+export const themeStore = {
+  subscribe: readable({ isDark: true }).subscribe,
+  toggle: () => {
+    // Dark mode only — toggle disabled
+    applyDarkMode();
+  },
+};

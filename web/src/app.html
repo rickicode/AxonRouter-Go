@@ -1,33 +1,13 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
     <meta charset="utf-8" />
     <link rel="icon" href="%sveltekit.assets%/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- SSR flash prevention: apply theme before first paint -->
+    <!-- Force dark mode always — no light mode support -->
     <script>
-      (function () {
-        const STORAGE_KEY = 'axonrouter_theme';
-        try {
-          const raw = window.localStorage.getItem(STORAGE_KEY);
-          if (!raw) {
-            document.documentElement.classList.add('dark');
-            document.documentElement.style.colorScheme = 'dark';
-            return;
-          }
-          const parsed = JSON.parse(raw);
-          if (parsed.isDark) {
-            document.documentElement.classList.add('dark');
-            document.documentElement.style.colorScheme = 'dark';
-          } else {
-            document.documentElement.classList.remove('dark');
-            document.documentElement.style.colorScheme = 'light';
-          }
-        } catch {
-          document.documentElement.classList.add('dark');
-          document.documentElement.style.colorScheme = 'dark';
-        }
-      })();
+      document.documentElement.classList.add('dark');
+      document.documentElement.style.colorScheme = 'dark';
     </script>
     %sveltekit.head%
   </head>

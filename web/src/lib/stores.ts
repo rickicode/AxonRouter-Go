@@ -1,7 +1,7 @@
 // Svelte Stores for AxonRouter-Go Dashboard
 
 import { writable, derived } from 'svelte/store';
-import { providersApi, connectionsApi, combosApi, logsApi, dashboardApi } from './api';
+import { providersApi, connectionsApi, combosApi, logsApi, dashboardApi, fetchApi } from './api';
 import type { Provider, Connection, Combo, RequestLog } from './api';
 
 // Loading state
@@ -96,8 +96,34 @@ export async function loadDashboardStats() {
   error.set(null);
   
   try {
-    const stats = await dashboardApi.stats();
-    dashboardStats.set(stats);
+    // Call endpoints in parallel
+    const [statsData, providersData, logsData] = await Promise.all([
+      dashboardApi.stats() as any,
+      fetchApi<{ data: any[] }>('/dashboard/providers').catch(() => ({ data: [] })),
+      fetchApi<{ data: any[] }>('/dashboard/recent-logs').catch(() => ({ data: [] }))
+    ]);
+    
+    // Calculate success rate based on recent logs
+    let successRate = 100;
+    if (logsData && logsData.data && logsData.data.length > 0) {
+      const successful = logsData.data.filter((l: any) => l.status_code >= 200 && l.status_code < 300).length;
+      successRate = Math.round((successful / logsData.data.length) * 100);
+    }
+    
+    // Construct the structured dashboardStats object expected by Svelte page
+    const mappedStats = {
+      total_connections: statsData.total_connections || 0,
+      active_connections: statsData.status_counts?.ready || 0,
+      total_requests_today: statsData.requests_today || 0,
+      success_rate: successRate,
+      providers: (providersData.data || []).map((p: any) => ({
+        id: p.id,
+        name: p.display_name || p.id,
+        connection_count: p.total || 0
+      }))
+    };
+    
+    dashboardStats.set(mappedStats);
   } catch (err) {
     error.set(err instanceof Error ? err.message : 'Failed to load dashboard stats');
   } finally {

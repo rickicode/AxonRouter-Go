@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Badge } from '$lib/components/ui/badge';
 
   let isOnline = $state(true);
   let latencyMs = $state(1);
@@ -24,32 +23,41 @@
     return () => clearInterval(interval);
   });
 
-  function getStatusVariant(): 'default' | 'secondary' | 'destructive' {
-    if (!isOnline) return 'destructive';
-    if (latencyMs <= 50) return 'default';
-    if (latencyMs <= 200) return 'secondary';
-    return 'destructive';
+  function getLatencyColor(): string {
+    if (!isOnline) return 'text-red-500';
+    if (latencyMs <= 50) return 'text-emerald-400';
+    if (latencyMs <= 200) return 'text-amber-400';
+    return 'text-red-400';
   }
 </script>
 
-<div class="px-3 py-3">
-  <div class="flex items-center justify-between gap-2 mb-2">
+<div class="px-3 py-3 space-y-2">
+  <!-- Status row -->
+  <div class="flex items-center justify-between gap-2">
     <div class="flex items-center gap-2 min-w-0">
-      <div class="size-2 rounded-full shrink-0 {isOnline ? 'bg-emerald-500' : 'bg-zinc-400'}"></div>
-      <span class="text-sm text-sidebar-foreground truncate group-data-[collapsible=icon]:hidden">
-        {isOnline ? 'Online' : 'Offline'}
+      <span class="relative flex size-2 shrink-0">
+        {#if isOnline}
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-40"></span>
+          <span class="relative inline-flex rounded-full size-2 bg-emerald-500"></span>
+        {:else}
+          <span class="relative inline-flex rounded-full size-2 bg-zinc-600"></span>
+        {/if}
+      </span>
+      <span class="text-xs font-medium text-sidebar-foreground/80 truncate">
+        {isOnline ? 'Connected' : 'Offline'}
       </span>
     </div>
 
     {#if isOnline}
-      <Badge variant={getStatusVariant()} class="text-xs group-data-[collapsible=icon]:hidden">
+      <span class="text-[10px] font-mono {getLatencyColor()} shrink-0">
         {latencyMs}ms
-      </Badge>
+      </span>
     {/if}
   </div>
 
-  <div class="flex items-center justify-between text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
-    <span>AxonRouter</span>
+  <!-- Version row -->
+  <div class="flex items-center justify-between text-[10px] font-mono text-muted-foreground/50">
+    <span>axonrouter</span>
     <span>v{version}</span>
   </div>
 </div>
