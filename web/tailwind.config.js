@@ -3,84 +3,72 @@ export default {
   content: ['./src/**/*.{html,js,svelte,ts}'],
   theme: {
     extend: {
-      // Color System from DESIGN.md
       colors: {
-        // Brand & Accent
-        primary: '#000000',
+        primary: '#ededed',
+        'on-primary': '#000000',
         'accent-orange': '#fc4c02',
         'accent-magenta': '#ef2cc1',
         'accent-periwinkle': '#bdbbff',
         'accent-mint': '#c8f6f9',
-        
-        // Surface
-        canvas: '#ffffff',
-        hairline: '#ebebeb',
-        'canvas-dark': '#010120',
-        'surface-dark-soft': '#26263a',
-        
-        // Text
-        ink: '#000000',
-        body: '#999999',
-        'on-dark': '#ffffff',
-        'on-primary': '#ffffff',
+        canvas: '#0a0a0a',
+        hairline: '#222222',
+        'canvas-dark': '#000000',
+        'surface-dark-soft': '#111111',
+        ink: '#ededed',
+        body: '#888888',
+        'on-dark': '#000000',
       },
-      
-      // Typography from DESIGN.md
       fontFamily: {
         display: ['Inter', 'system-ui', 'sans-serif'],
         mono: ['JetBrains Mono', 'Geist Mono', 'monospace'],
       },
-      
       fontSize: {
-        'display-xxl': ['64px', { lineHeight: '70.4px', letterSpacing: '-1.92px' }],
-        'display-xl': ['40px', { lineHeight: '48px', letterSpacing: '-0.8px' }],
-        'display-lg': ['28px', { lineHeight: '32.2px', letterSpacing: '-0.42px' }],
-        'display-md': ['22px', { lineHeight: '25.3px', letterSpacing: '-0.22px' }],
-        'body-lg': ['18px', { lineHeight: '23.4px', letterSpacing: '-0.18px' }],
-        'body-md': ['16px', { lineHeight: '20.8px', letterSpacing: '-0.16px' }],
-        'caption': ['14px', { lineHeight: '19.6px', letterSpacing: '0' }],
-        'mono-caps-button': ['16px', { lineHeight: '16px', letterSpacing: '0.08px' }],
-        'mono-caps-eyebrow': ['11px', { lineHeight: '11px', letterSpacing: '0.55px' }],
-        'mono-caps-label': ['11px', { lineHeight: '15.4px', letterSpacing: '0.055px' }],
-        'mono-caption': ['10px', { lineHeight: '14px', letterSpacing: '0.05px' }],
+        'display-xxl': ['64px', { lineHeight: '70.4px', fontWeight: '600', letterSpacing: '-1.92px' }],
+        'display-xl': ['48px', { lineHeight: '48px', fontWeight: '600', letterSpacing: '-2.4px' }],
+        'display-lg': ['32px', { lineHeight: '40px', fontWeight: '600', letterSpacing: '-1.28px' }],
+        'display-md': ['24px', { lineHeight: '32px', fontWeight: '600', letterSpacing: '-0.96px' }],
+        'display-sm': ['20px', { lineHeight: '28px', fontWeight: '600', letterSpacing: '-0.6px' }],
+        'body-lg': ['18px', { lineHeight: '28px', letterSpacing: '0px' }],
+        'body-md': ['16px', { lineHeight: '24px', letterSpacing: '0px' }],
+        'body-sm': ['14px', { lineHeight: '20px', letterSpacing: '-0.28px' }],
+        'caption-mono': ['12px', { lineHeight: '16px', letterSpacing: '0px' }],
+        'button-md': ['14px', { lineHeight: '20px', fontWeight: '500' }],
+        'button-lg': ['16px', { lineHeight: '24px', fontWeight: '500' }],
       },
-      
-      // Spacing System (4px base)
       spacing: {
-        'xxs': '2px',
-        'xs': '4px',
-        'sm': '8px',
-        'md': '12px',
-        'lg': '16px',
-        'xl': '20px',
-        '2xl': '24px',
-        '3xl': '32px',
-        '4xl': '44px',
-        '5xl': '48px',
-        '6xl': '55.2px',
-        'section': '80px',
+        'xxs': '4px',
+        'xs': '8px',
+        'sm': '12px',
+        'md': '16px',
+        'lg': '24px',
+        'xl': '32px',
+        '2xl': '40px',
+        '3xl': '48px',
+        '4xl': '64px',
+        '5xl': '96px',
+        '6xl': '128px',
+        'section': '192px',
       },
-      
-      // Border Radius
       borderRadius: {
         'none': '0px',
-        'xs': '3.25px',
-        'sm': '4px',
+        'xs': '4px',
+        'sm': '6px',
         'md': '8px',
+        'lg': '12px',
+        'xl': '16px',
+        'pill-sm': '64px',
+        'pill': '100px',
         'full': '9999px',
       },
-      
-      // Box Shadow
       boxShadow: {
-        'soft-drop': '0px 4px 10px 0px rgba(1, 1, 32, 0.1)',
+        'vercel-1': '0 0 0 1px rgba(255,255,255,0.06) inset',
+        'vercel-2': '0 0 0 1px rgba(255,255,255,0.06) inset, 0 1px 1px rgba(0,0,0,0.4), 0 2px 2px rgba(0,0,0,0.3)',
+        'vercel-3': '0 0 0 1px rgba(255,255,255,0.06) inset, 0 2px 2px rgba(0,0,0,0.4), 0 8px 8px -8px rgba(0,0,0,0.5)',
+        'vercel-4': '0 0 0 1px rgba(255,255,255,0.06) inset, 0 2px 2px rgba(0,0,0,0.5), 0 8px 16px -4px rgba(0,0,0,0.6)',
       },
-      
-      // Max Width
       maxWidth: {
         'container': '1280px',
       },
-      
-      // Breakpoints
       screens: {
         'mobile': '479px',
         'mobile-lg': '767px',
