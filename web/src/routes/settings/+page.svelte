@@ -1,14 +1,18 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { settingsApi } from '$lib/api';
-  import Card from '$lib/components/Card.svelte';
-  import Button from '$lib/components/Button.svelte';
+  import { themeStore } from '$lib/stores/theme';
+  import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '$lib/components/ui/card';
+  import { Button } from '$lib/components/ui/button';
+  import { Input } from '$lib/components/ui/input';
+  import { Label } from '$lib/components/ui/label';
+  import { Switch } from '$lib/components/ui/switch';
   
-  let settings: Record<string, string> = {};
-  let isLoading = true;
-  let error: string | null = null;
-  let editingKey: string | null = null;
-  let editingValue = '';
+  let settings: Record<string, string> = $state({});
+  let isLoading = $state(true);
+  let error: string | null = $state(null);
+  let editingKey: string | null = $state(null);
+  let editingValue = $state('');
   
   onMount(async () => {
     await loadSettings();
@@ -60,123 +64,134 @@
     'api_rate_limit': '600',
     'log_retention_days': '30',
   };
+  
+  function formatSettingKey(key: string) {
+    return key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+  }
 </script>
 
 <svelte:head>
-  <title>Settings - AxonRouter-Go</title>
+  <title>Settings - AxonRouter</title>
 </svelte:head>
 
-<div class="min-h-screen bg-canvas">
-  <!-- Header -->
-  <section class="bg-canvas-dark text-on-dark py-3xl px-3xl">
-    <div class="container-max">
-      <span class="mono-caps text-on-dark/60 mb-lg block">SETTINGS</span>
-      <h1 class="display-xl mb-lg">System Settings</h1>
-      <p class="text-body-lg text-on-dark/80">
-        Configure system behavior and performance settings
-      </p>
-    </div>
-  </section>
+<div class="flex flex-1 flex-col gap-6 p-6">
+  <!-- Page header -->
+  <div class="space-y-1">
+    <h1 class="text-display-lg">Settings.</h1>
+    <p class="text-body-sm text-muted-foreground">
+      Configure system behavior and display preferences.
+    </p>
+  </div>
   
-  <!-- Content -->
-  <section class="section-padding">
-    <div class="container-max">
-      {#if isLoading}
-        <div class="text-center py-3xl">
-          <div class="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-lg"></div>
-          <p class="text-body text-body-md">Loading settings...</p>
+  <!-- Appearance Section -->
+  <Card class="shadow-vercel-2 border">
+    <CardHeader class="pb-3">
+      <CardTitle class="text-body-md font-semibold">Appearance</CardTitle>
+      <CardDescription class="text-body-sm">Customize the look and feel of the dashboard.</CardDescription>
+    </CardHeader>
+    <CardContent>
+      <div class="flex items-center justify-between">
+        <div class="space-y-0.5">
+          <Label class="text-body-sm font-medium">Dark mode</Label>
+          <p class="text-xs text-muted-foreground">Switch between dark and light theme.</p>
         </div>
-      {:else if error}
-        <Card variant="default" padding="lg">
-          <div class="text-center">
-            <p class="text-red-600 mb-lg">{error}</p>
-            <Button onclick={loadSettings} variant="outline">
-              <span class="mono-caps-button">RETRY</span>
-            </Button>
-          </div>
-        </Card>
-      {:else}
-        <!-- Settings List -->
-        <div class="space-y-lg">
-          {#each Object.entries({ ...defaultSettings, ...settings }) as [key, value]}
-            <Card>
-              <div class="flex items-center justify-between">
-                <div class="flex-1">
-                  <h3 class="display-md mb-xs">{key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</h3>
-                  <span class="mono-caps text-body">{key}</span>
-                </div>
-                
-                <div class="flex items-center gap-lg">
-                  {#if editingKey === key}
-                    <input
-                      type="text"
-                      class="input w-48"
-                      bind:value={editingValue}
-                      onkeydown={(e) => e.key === 'Enter' && saveEdit()}
-                    />
-                    <div class="flex gap-xs">
-                      <Button onclick={saveEdit} variant="primary" size="sm">
-                        <span class="mono-caps-button">SAVE</span>
-                      </Button>
-                      <Button onclick={cancelEdit} variant="ghost" size="sm">
-                        <span class="mono-caps-button">CANCEL</span>
-                      </Button>
-                    </div>
-                  {:else}
-                    <span class="text-body-md">{value}</span>
-                    <Button onclick={() => startEdit(key, value)} variant="outline" size="sm">
-                      <span class="mono-caps-button">EDIT</span>
-                    </Button>
-                  {/if}
-                </div>
-              </div>
-            </Card>
+        <Switch
+          checked={$themeStore.isDark}
+          onCheckedChange={() => themeStore.toggle()}
+        />
+      </div>
+    </CardContent>
+  </Card>
+  
+  <!-- System Settings Section -->
+  <Card class="shadow-vercel-2 border">
+    <CardHeader class="pb-3">
+      <CardTitle class="text-body-md font-semibold">System Configuration</CardTitle>
+      <CardDescription class="text-body-sm">Manage system-wide configuration keys stored in SQLite.</CardDescription>
+    </CardHeader>
+    <CardContent>
+      {#if isLoading}
+        <div class="flex flex-col gap-3">
+          {#each Array(5) as _}
+            <div class="h-16 bg-muted animate-pulse rounded-md"></div>
           {/each}
         </div>
-        
-        <!-- Actions -->
-        <div class="mt-section">
-          <Card>
-            <h3 class="display-md mb-lg">Actions</h3>
-            <div class="flex flex-wrap gap-md">
-              <Button onclick={loadSettings} variant="outline">
-                <span class="mono-caps-button">RELOAD SETTINGS</span>
-              </Button>
-              <Button variant="outline">
-                <span class="mono-caps-button">EXPORT SETTINGS</span>
-              </Button>
-              <Button variant="outline">
-                <span class="mono-caps-button">IMPORT SETTINGS</span>
-              </Button>
-            </div>
-          </Card>
+      {:else if error}
+        <div class="flex flex-col items-center justify-center py-8">
+          <p class="text-body-sm text-muted-foreground mb-4">{error}</p>
+          <Button onclick={loadSettings} variant="outline" size="sm">
+            Try again
+          </Button>
         </div>
-        
-        <!-- Info -->
-        <div class="mt-section">
-          <Card variant="dark">
-            <h3 class="display-md mb-lg text-on-dark">About Settings</h3>
-            <div class="space-y-lg text-on-dark/80">
-              <p class="text-body-md">
-                Settings are stored in the SQLite database and can be modified at runtime.
-                Changes take effect immediately for most settings.
-              </p>
-              <p class="text-body-md">
-                <strong>Quota Check Interval:</strong> How often to check provider quotas (default: 30 minutes)
-              </p>
-              <p class="text-body-md">
-                <strong>Usage Flush Interval:</strong> How often to flush usage logs to database (default: 5 seconds)
-              </p>
-              <p class="text-body-md">
-                <strong>Circuit Breaker Cleanup:</strong> How often to clean up stale circuit breaker entries (default: 5 minutes)
-              </p>
-              <p class="text-body-md">
-                <strong>Default Combo Timeout:</strong> Default timeout for combo attempts in milliseconds (default: 30000ms)
-              </p>
+      {:else}
+        <div class="divide-y divide-border border rounded-md overflow-hidden bg-card">
+          {#each Object.entries({ ...defaultSettings, ...settings }) as [key, value]}
+            <div class="flex items-center justify-between gap-4 p-4 hover:bg-accent/10 transition-colors">
+              <div class="min-w-0 flex-1 space-y-0.5">
+                <h3 class="text-body-sm font-medium">{formatSettingKey(key)}</h3>
+                <p class="text-caption-mono text-muted-foreground">{key}</p>
+              </div>
+              
+              <div class="flex items-center gap-2 shrink-0">
+                {#if editingKey === key}
+                  <Input
+                    type="text"
+                    class="w-36 h-8 text-body-sm font-mono"
+                    bind:value={editingValue}
+                    onkeydown={(e) => e.key === 'Enter' && saveEdit()}
+                  />
+                  <Button onclick={saveEdit} size="sm" class="h-8 text-body-sm">
+                    Save
+                  </Button>
+                  <Button onclick={cancelEdit} variant="ghost" size="sm" class="h-8 text-body-sm">
+                    Cancel
+                  </Button>
+                {:else}
+                  <span class="text-body-sm font-mono text-muted-foreground mr-2">{value}</span>
+                  <Button onclick={() => startEdit(key, value)} variant="ghost" size="sm" class="h-8 text-body-sm">
+                    Edit
+                  </Button>
+                {/if}
+              </div>
             </div>
-          </Card>
+          {/each}
         </div>
       {/if}
-    </div>
-  </section>
+    </CardContent>
+  </Card>
+  
+  <!-- Actions -->
+  <Card class="shadow-vercel-2 border">
+    <CardHeader class="pb-3">
+      <CardTitle class="text-body-md font-semibold">Actions</CardTitle>
+      <CardDescription class="text-body-sm">System management actions.</CardDescription>
+    </CardHeader>
+    <CardContent>
+      <div class="flex flex-wrap gap-2">
+        <Button onclick={loadSettings} variant="outline" size="sm" class="text-body-sm">
+          Reload settings
+        </Button>
+        <Button variant="outline" size="sm" class="text-body-sm">
+          Export settings
+        </Button>
+        <Button variant="outline" size="sm" class="text-body-sm">
+          Import settings
+        </Button>
+      </div>
+    </CardContent>
+  </Card>
+  
+  <!-- Info card -->
+  <Card class="shadow-vercel-1 border bg-accent/20">
+    <CardContent class="pt-6">
+      <h3 class="text-body-md font-semibold mb-3">About Settings</h3>
+      <div class="space-y-2 text-body-sm text-muted-foreground">
+        <p>Settings are stored in SQLite and apply immediately at runtime.</p>
+        <p><strong>Quota check interval:</strong> How often to check provider quotas (default: 30 minutes)</p>
+        <p><strong>Usage flush interval:</strong> How often to flush usage logs to database (default: 5 seconds)</p>
+        <p><strong>Default combo timeout:</strong> Timeout for combo attempts in milliseconds (default: 30000ms)</p>
+      </div>
+    </CardContent>
+  </Card>
 </div>
+

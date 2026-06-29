@@ -2,9 +2,9 @@
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { loadConnection, selectedConnection, isLoading, error } from '$lib/stores';
-  import Card from '$lib/components/Card.svelte';
-  import Button from '$lib/components/Button.svelte';
-  import Badge from '$lib/components/Badge.svelte';
+  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
+  import { Button } from '$lib/components/ui/button';
+  import { Badge } from '$lib/components/ui/badge';
   
   let providerId = $derived($page.params.id);
   let connectionId = $derived($page.params.connId);
@@ -13,19 +13,19 @@
     loadConnection(connectionId);
   });
   
-  function getStatusVariant(status: string) {
+  function getStatusVariant(status: string): 'default' | 'secondary' | 'destructive' {
     switch (status) {
       case 'ready':
-        return 'success';
+        return 'default';
       case 'rate_limited':
       case 'quota_exhausted':
-        return 'warning';
+        return 'secondary';
       case 'balance_empty':
       case 'auth_failed':
       case 'suspended':
-        return 'error';
+        return 'destructive';
       default:
-        return 'neutral';
+        return 'secondary';
     }
   }
   
@@ -46,163 +46,134 @@
 </script>
 
 <svelte:head>
-  <title>Connection {$selectedConnection?.name || connectionId} - AxonRouter-Go</title>
+  <title>{$selectedConnection?.name || 'Connection'} - AxonRouter</title>
 </svelte:head>
 
-<div class="min-h-screen bg-canvas">
-  <!-- Header -->
-  <section class="bg-canvas-dark text-on-dark py-3xl px-3xl">
-    <div class="container-max">
-      <div class="flex items-center gap-lg mb-lg">
-        <Button href="/providers/{providerId}" variant="ghost" size="sm">
-          <span class="mono-caps-button">← BACK</span>
-        </Button>
-      </div>
-      
-      {#if $selectedConnection}
-        <span class="mono-caps text-on-dark/60 mb-lg block">CONNECTION</span>
-        <h1 class="display-xl mb-lg">{$selectedConnection.name}</h1>
-        <div class="flex flex-wrap gap-lg">
-          <Badge variant={getStatusVariant($selectedConnection.status)}>
-            {$selectedConnection.status}
-          </Badge>
-          <Badge variant="subtle">{$selectedConnection.auth_type}</Badge>
-          <Badge variant="subtle">{$selectedConnection.id}</Badge>
-        </div>
-      {/if}
-    </div>
-  </section>
+<div class="flex flex-1 flex-col gap-6 p-6">
+  <!-- Back link -->
+  <a href="/providers/{providerId}" class="inline-flex items-center gap-1.5 text-body-sm text-muted-foreground hover:text-foreground transition-colors w-fit">
+    <svg class="size-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+    </svg>
+    Back to provider
+  </a>
   
-  <!-- Content -->
-  <section class="section-padding">
-    <div class="container-max">
-      {#if $isLoading && !$selectedConnection}
-        <div class="text-center py-3xl">
-          <div class="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-lg"></div>
-          <p class="text-body text-body-md">Loading connection...</p>
-        </div>
-      {:else if $error}
-        <Card variant="default" padding="lg">
-          <div class="text-center">
-            <p class="text-red-600 mb-lg">{$error}</p>
-            <Button onclick={() => loadConnection(connectionId)} variant="outline">
-              <span class="mono-caps-button">RETRY</span>
-            </Button>
-          </div>
-        </Card>
-      {:else if $selectedConnection}
-        <div class="grid grid-cols-1 tablet:grid-cols-2 gap-3xl mb-section">
-          <!-- Connection Details -->
-          <Card>
-            <h3 class="display-md mb-lg">Connection Details</h3>
-            <div class="space-y-lg">
-              <div>
-                <span class="mono-caps text-body mb-xs block">ID</span>
-                <span class="text-body-md">{$selectedConnection.id}</span>
-              </div>
-              <div>
-                <span class="mono-caps text-body mb-xs block">Name</span>
-                <span class="text-body-md">{$selectedConnection.name}</span>
-              </div>
-              <div>
-                <span class="mono-caps text-body mb-xs block">Provider</span>
-                <span class="text-body-md">{$selectedConnection.provider_type_id}</span>
-              </div>
-              <div>
-                <span class="mono-caps text-body mb-xs block">Auth Type</span>
-                <span class="text-body-md">{$selectedConnection.auth_type}</span>
-              </div>
-              <div>
-                <span class="mono-caps text-body mb-xs block">Status</span>
-                <Badge variant={getStatusVariant($selectedConnection.status)}>
-                  {$selectedConnection.status}
-                </Badge>
-              </div>
-              <div>
-                <span class="mono-caps text-body mb-xs block">Active</span>
-                <Badge variant={$selectedConnection.is_active ? 'success' : 'error'}>
-                  {$selectedConnection.is_active ? 'Yes' : 'No'}
-                </Badge>
-              </div>
-            </div>
-          </Card>
-          
-          <!-- Status & Timing -->
-          <Card>
-            <h3 class="display-md mb-lg">Status & Timing</h3>
-            <div class="space-y-lg">
-              <div>
-                <span class="mono-caps text-body mb-xs block">Cooldown Until</span>
-                <span class="text-body-md">{$selectedConnection.cooldown_until ? formatCooldown($selectedConnection.cooldown_until) : 'None'}</span>
-              </div>
-              <div>
-                <span class="mono-caps text-body mb-xs block">Last Error</span>
-                <span class="text-body-md text-body">{$selectedConnection.last_error || 'None'}</span>
-              </div>
-              <div>
-                <span class="mono-caps text-body mb-xs block">Last Error Code</span>
-                <span class="text-body-md">{$selectedConnection.last_error_code || '-'}</span>
-              </div>
-              <div>
-                <span class="mono-caps text-body mb-xs block">Failure Count</span>
-                <span class="text-body-md {$selectedConnection.failure_count > 0 ? 'text-red-600' : ''}">
-                  {$selectedConnection.failure_count}
-                </span>
-              </div>
-              <div>
-                <span class="mono-caps text-body mb-xs block">Last Success</span>
-                <span class="text-body-md">{formatTimestamp($selectedConnection.last_success_at)}</span>
-              </div>
-              <div>
-                <span class="mono-caps text-body mb-xs block">Last Failure</span>
-                <span class="text-body-md">{formatTimestamp($selectedConnection.last_failure_at)}</span>
-              </div>
-            </div>
-          </Card>
-        </div>
-        
-        <!-- Capabilities -->
-        <Card class="mb-section">
-          <h3 class="display-md mb-lg">Capabilities</h3>
-          {#if $selectedConnection.capabilities}
-            {@const capabilities = JSON.parse($selectedConnection.capabilities)}
-            <div class="flex flex-wrap gap-sm">
-              {#each capabilities as capability}
-                <Badge variant="neutral">{capability}</Badge>
-              {/each}
-            </div>
-          {:else}
-            <p class="text-body-md text-body">No capabilities specified</p>
-          {/if}
-        </Card>
-        
-        <!-- Actions -->
-        <Card class="mb-section">
-          <h3 class="display-md mb-lg">Actions</h3>
-          <div class="flex flex-wrap gap-md">
-            <Button href="/providers/{providerId}/{connectionId}/test" variant="outline">
-              <span class="mono-caps-button">TEST CONNECTION</span>
-            </Button>
-            <Button href="/providers/{providerId}/{connectionId}/reset" variant="outline">
-              <span class="mono-caps-button">RESET STATUS</span>
-            </Button>
-            <Button href="/providers/{providerId}/{connectionId}/edit" variant="outline">
-              <span class="mono-caps-button">EDIT</span>
-            </Button>
-            <Button variant="danger">
-              <span class="mono-caps-button">DELETE</span>
-            </Button>
-          </div>
-        </Card>
-        
-        <!-- Model Rate Limits -->
-        <Card>
-          <h3 class="display-md mb-lg">Model Rate Limits</h3>
-          <p class="text-body-md text-body">
-            Model-level rate limits will be displayed here when available.
-          </p>
-        </Card>
-      {/if}
+  {#if $isLoading && !$selectedConnection}
+    <div class="flex flex-col gap-6">
+      <div class="h-8 w-64 bg-muted animate-pulse rounded-md"></div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="h-48 bg-muted animate-pulse rounded-md"></div>
+        <div class="h-48 bg-muted animate-pulse rounded-md"></div>
+      </div>
     </div>
-  </section>
+  {:else if $error}
+    <Card class="shadow-vercel-2 border">
+      <CardContent class="flex flex-col items-center justify-center py-12">
+        <p class="text-body-sm text-muted-foreground mb-4">{$error}</p>
+        <Button onclick={() => loadConnection(connectionId)} variant="outline">
+          Try again
+        </Button>
+      </CardContent>
+    </Card>
+  {:else if $selectedConnection}
+    <!-- Page header -->
+    <div class="space-y-1">
+      <div class="flex items-center gap-3">
+        <h1 class="text-display-lg">{$selectedConnection.name}.</h1>
+        <Badge variant={getStatusVariant($selectedConnection.status)} class="text-caption-mono rounded-sm">
+          {$selectedConnection.status}
+        </Badge>
+      </div>
+      <div class="flex items-center gap-2 text-caption-mono text-muted-foreground">
+        <span>Auth: {$selectedConnection.auth_type}</span>
+        <span>·</span>
+        <span>ID: {$selectedConnection.id}</span>
+      </div>
+    </div>
+    
+    <!-- Details Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <!-- Connection Details -->
+      <Card class="shadow-vercel-2 border">
+        <CardHeader class="pb-3">
+          <CardTitle class="text-body-md font-semibold">Details</CardTitle>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <div class="space-y-1">
+            <p class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Provider</p>
+            <p class="text-body-sm font-mono">{$selectedConnection.provider_type_id}</p>
+          </div>
+          <div class="space-y-1">
+            <p class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Active</p>
+            <Badge variant={$selectedConnection.is_active ? 'default' : 'secondary'} class="text-caption-mono rounded-sm">
+              {$selectedConnection.is_active ? 'Active' : 'Disabled'}
+            </Badge>
+          </div>
+        </CardContent>
+      </Card>
+      
+      <!-- Status & Timing -->
+      <Card class="shadow-vercel-2 border">
+        <CardHeader class="pb-3">
+          <CardTitle class="text-body-md font-semibold">Status & Failures</CardTitle>
+        </CardHeader>
+        <CardContent class="grid grid-cols-2 gap-4">
+          <div class="space-y-1">
+            <p class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Cooldown</p>
+            <p class="text-body-sm font-mono">
+              {$selectedConnection.cooldown_until ? formatCooldown($selectedConnection.cooldown_until) : 'None'}
+            </p>
+          </div>
+          <div class="space-y-1">
+            <p class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Failures</p>
+            <p class="text-body-sm font-semibold font-mono {$selectedConnection.failure_count > 0 ? 'text-destructive' : 'text-muted-foreground'}">
+              {$selectedConnection.failure_count}
+            </p>
+          </div>
+          <div class="space-y-1 col-span-2">
+            <p class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Last error</p>
+            <p class="text-body-sm font-mono text-muted-foreground break-all">{$selectedConnection.last_error || 'None'}</p>
+          </div>
+          <div class="space-y-1 col-span-2">
+            <p class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Last success</p>
+            <p class="text-body-sm font-mono text-muted-foreground">{formatTimestamp($selectedConnection.last_success_at)}</p>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+    
+    <!-- Capabilities -->
+    {#if $selectedConnection.capabilities}
+      <Card class="shadow-vercel-2 border">
+        <CardHeader class="pb-3">
+          <CardTitle class="text-body-md font-semibold">Capabilities</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {@const capabilities = JSON.parse($selectedConnection.capabilities)}
+          <div class="flex flex-wrap gap-1.5">
+            {#each capabilities as capability}
+              <Badge variant="secondary" class="text-caption-mono rounded-sm py-0.5">{capability}</Badge>
+            {/each}
+          </div>
+        </CardContent>
+      </Card>
+    {/if}
+    
+    <!-- Actions -->
+    <div class="flex flex-wrap gap-3 pt-2">
+      <Button href="/providers/{providerId}/{connectionId}/test" variant="outline" class="text-body-sm">
+        Test connection
+      </Button>
+      <Button href="/providers/{providerId}/{connectionId}/reset" variant="outline" class="text-body-sm">
+        Reset status
+      </Button>
+      <Button href="/providers/{providerId}/{connectionId}/edit" variant="outline" class="text-body-sm">
+        Edit connection
+      </Button>
+      <Button variant="destructive" class="text-body-sm ml-auto">
+        Delete connection
+      </Button>
+    </div>
+  {/if}
 </div>
+

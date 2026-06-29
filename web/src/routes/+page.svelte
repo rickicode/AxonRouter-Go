@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { loadDashboardStats, dashboardStats, isLoading, error } from '$lib/stores';
-  import Card from '$lib/components/Card.svelte';
-  import Button from '$lib/components/Button.svelte';
-  import Badge from '$lib/components/Badge.svelte';
+  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
+  import { Button } from '$lib/components/ui/button';
+  import { Badge } from '$lib/components/ui/badge';
   
   onMount(() => {
     loadDashboardStats();
@@ -11,159 +11,139 @@
 </script>
 
 <svelte:head>
-  <title>Dashboard - AxonRouter-Go</title>
+  <title>Dashboard - AxonRouter</title>
 </svelte:head>
 
-<div class="min-h-screen bg-canvas">
-  <!-- Hero Section -->
-  <section class="bg-canvas-dark text-on-dark section-padding">
-    <div class="container-max">
-      <div class="max-w-3xl">
-        <span class="mono-caps text-on-dark/60 mb-lg block">DASHBOARD</span>
-        <h1 class="display-xxl mb-lg">
-          AxonRouter-Go
-        </h1>
-        <p class="text-body-lg text-on-dark/80 mb-3xl">
-          Universal API proxy for coding agents. Manage providers, connections, and routing from a single dashboard.
-        </p>
-        <div class="flex gap-md">
-          <Button href="/providers" variant="secondary">
-            <span class="mono-caps-button">VIEW PROVIDERS</span>
-          </Button>
-          <Button href="/logs" variant="ghost">
-            <span class="mono-caps-button">VIEW LOGS</span>
-          </Button>
-        </div>
+<div class="flex flex-1 flex-col gap-6 p-6">
+  {#if $isLoading}
+    <!-- Loading skeleton -->
+    <div class="flex flex-col gap-6">
+      <div class="space-y-2">
+        <div class="h-8 w-48 bg-muted animate-pulse rounded-md"></div>
+        <div class="h-4 w-72 bg-muted/60 animate-pulse rounded-md"></div>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {#each Array(4) as _}
+          <div class="h-24 bg-muted animate-pulse rounded-md"></div>
+        {/each}
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {#each Array(3) as _}
+          <div class="h-40 bg-muted animate-pulse rounded-md"></div>
+        {/each}
       </div>
     </div>
-  </section>
-  
-  <!-- Stats Section -->
-  <section class="section-padding">
-    <div class="container-max">
-      {#if $isLoading}
-        <div class="text-center py-3xl">
-          <div class="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-lg"></div>
-          <p class="text-body text-body-md">Loading dashboard...</p>
+  {:else if $error}
+    <Card class="shadow-vercel-2 border">
+      <CardContent class="flex flex-col items-center justify-center py-12">
+        <p class="text-body-sm text-muted-foreground mb-4">{$error}</p>
+        <Button onclick={loadDashboardStats} variant="outline">
+          Try again
+        </Button>
+      </CardContent>
+    </Card>
+  {:else if $dashboardStats}
+    <!-- Page header -->
+    <div class="space-y-1">
+      <h1 class="text-display-lg">Dashboard.</h1>
+      <p class="text-body-sm text-muted-foreground">
+        Manage providers, connections, and routing system.
+      </p>
+    </div>
+    
+    <!-- Stats Grid -->
+    <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <Card class="shadow-vercel-2 border">
+        <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-1.5">
+          <CardTitle class="text-caption-mono text-muted-foreground uppercase">Total Connections</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div class="text-display-sm font-semibold">{$dashboardStats.total_connections}</div>
+        </CardContent>
+      </Card>
+      
+      <Card class="shadow-vercel-2 border">
+        <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-1.5">
+          <CardTitle class="text-caption-mono text-muted-foreground uppercase">Active</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div class="text-display-sm font-semibold">{$dashboardStats.active_connections}</div>
+        </CardContent>
+      </Card>
+      
+      <Card class="shadow-vercel-2 border">
+        <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-1.5">
+          <CardTitle class="text-caption-mono text-muted-foreground uppercase">Requests Today</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div class="text-display-sm font-semibold">{$dashboardStats.total_requests_today}</div>
+        </CardContent>
+      </Card>
+      
+      <Card class="shadow-vercel-2 border">
+        <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-1.5">
+          <CardTitle class="text-caption-mono text-muted-foreground uppercase">Success Rate</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div class="text-display-sm font-semibold">{$dashboardStats.success_rate}%</div>
+        </CardContent>
+      </Card>
+    </div>
+    
+    <!-- Providers Overview -->
+    <div class="space-y-4">
+      <div class="flex items-center justify-between">
+        <h2 class="text-display-md">Providers.</h2>
+        <Button href="/providers" variant="ghost" size="sm" class="text-body-sm">
+          View all
+        </Button>
+      </div>
+      
+      {#if $dashboardStats.providers.length > 0}
+        <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {#each $dashboardStats.providers as provider}
+            <Card class="shadow-vercel-2 border transition-all hover:bg-accent/30">
+              <CardHeader class="flex flex-row items-start justify-between space-y-0 pb-3">
+                <div class="space-y-0.5">
+                  <CardTitle class="text-body-md font-medium">{provider.name}</CardTitle>
+                  <p class="text-caption-mono text-muted-foreground">{provider.id}</p>
+                </div>
+                <Badge variant="secondary" class="text-caption-mono font-medium rounded-sm">
+                  {provider.connection_count} conns
+                </Badge>
+              </CardHeader>
+              <CardContent>
+                <Button href="/providers/{provider.id}" variant="outline" size="sm" class="text-body-sm w-full">
+                  Manage Provider
+                </Button>
+              </CardContent>
+            </Card>
+          {/each}
         </div>
-      {:else if $error}
-        <Card variant="default" padding="lg">
-          <div class="text-center">
-            <p class="text-red-600 mb-lg">{$error}</p>
-            <Button onclick={loadDashboardStats} variant="outline">
-              <span class="mono-caps-button">RETRY</span>
-            </Button>
-          </div>
+      {:else}
+        <Card class="shadow-vercel-2 border">
+          <CardContent class="py-10 text-center text-muted-foreground text-body-sm">
+            No active providers found. Add a provider to get started.
+          </CardContent>
         </Card>
-      {:else if $dashboardStats}
-        <!-- Stats Grid -->
-        <div class="grid grid-cols-1 tablet:grid-cols-2 desktop:grid-cols-4 gap-3xl mb-section">
-          <Card variant="tinted" padding="lg">
-            <span class="mono-caps text-body mb-sm block">TOTAL CONNECTIONS</span>
-            <span class="display-xl text-ink">{$dashboardStats.total_connections}</span>
-          </Card>
-          
-          <Card variant="tinted" padding="lg">
-            <span class="mono-caps text-body mb-sm block">ACTIVE CONNECTIONS</span>
-            <span class="display-xl text-ink">{$dashboardStats.active_connections}</span>
-          </Card>
-          
-          <Card variant="tinted" padding="lg">
-            <span class="mono-caps text-body mb-sm block">REQUESTS TODAY</span>
-            <span class="display-xl text-ink">{$dashboardStats.total_requests_today}</span>
-          </Card>
-          
-          <Card variant="tinted" padding="lg">
-            <span class="mono-caps text-body mb-sm block">SUCCESS RATE</span>
-            <span class="display-xl text-ink">{$dashboardStats.success_rate}%</span>
-          </Card>
-        </div>
-        
-        <!-- Providers Overview -->
-        <div class="mb-section">
-          <div class="flex items-center justify-between mb-3xl">
-            <h2 class="display-lg">Providers</h2>
-            <Button href="/providers" variant="outline">
-              <span class="mono-caps-button">VIEW ALL</span>
-            </Button>
-          </div>
-          
-          <div class="grid grid-cols-1 tablet:grid-cols-2 desktop:grid-cols-3 gap-3xl">
-            {#each $dashboardStats.providers as provider}
-              <Card hover>
-                <div class="flex items-start justify-between mb-lg">
-                  <div>
-                    <h3 class="display-md mb-xs">{provider.name}</h3>
-                    <span class="mono-caps text-body">{provider.id}</span>
-                  </div>
-                  <Badge variant="success">
-                    {provider.connection_count} connections
-                  </Badge>
-                </div>
-                
-                <div class="flex gap-sm">
-                  <Button href="/providers/{provider.id}" variant="outline" size="sm">
-                    <span class="mono-caps-button">MANAGE</span>
-                  </Button>
-                </div>
-              </Card>
-            {/each}
-          </div>
-        </div>
-        
-        <!-- Quick Actions -->
-        <div>
-          <h2 class="display-lg mb-3xl">Quick Actions</h2>
-          
-          <div class="grid grid-cols-1 tablet:grid-cols-3 gap-3xl">
-            <Card hover>
-              <div class="text-center">
-                <div class="w-12 h-12 bg-accent-mint rounded-sm flex items-center justify-center mx-auto mb-lg">
-                  <svg class="w-6 h-6 text-ink" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                  </svg>
-                </div>
-                <h3 class="display-md mb-xs">Add Provider</h3>
-                <p class="text-body-md text-body mb-lg">Connect a new AI provider to the proxy</p>
-                <Button href="/providers?action=add" variant="primary" size="sm">
-                  <span class="mono-caps-button">ADD PROVIDER</span>
-                </Button>
-              </div>
-            </Card>
-            
-            <Card hover>
-              <div class="text-center">
-                <div class="w-12 h-12 bg-accent-mint rounded-sm flex items-center justify-center mx-auto mb-lg">
-                  <svg class="w-6 h-6 text-ink" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-                  </svg>
-                </div>
-                <h3 class="display-md mb-xs">View Logs</h3>
-                <p class="text-body-md text-body mb-lg">Monitor request logs and performance</p>
-                <Button href="/logs" variant="primary" size="sm">
-                  <span class="mono-caps-button">VIEW LOGS</span>
-                </Button>
-              </div>
-            </Card>
-            
-            <Card hover>
-              <div class="text-center">
-                <div class="w-12 h-12 bg-accent-mint rounded-sm flex items-center justify-center mx-auto mb-lg">
-                  <svg class="w-6 h-6 text-ink" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                </div>
-                <h3 class="display-md mb-xs">Settings</h3>
-                <p class="text-body-md text-body mb-lg">Configure system settings and preferences</p>
-                <Button href="/settings" variant="primary" size="sm">
-                  <span class="mono-caps-button">SETTINGS</span>
-                </Button>
-              </div>
-            </Card>
-          </div>
-        </div>
       {/if}
     </div>
-  </section>
+    
+    <!-- Quick Actions -->
+    <div class="space-y-3">
+      <h2 class="text-display-sm">Quick actions.</h2>
+      <div class="flex flex-wrap gap-3">
+        <Button href="/providers?action=add">
+          Add provider
+        </Button>
+        <Button href="/logs" variant="outline">
+          View logs
+        </Button>
+        <Button href="/settings" variant="ghost">
+          Settings
+        </Button>
+      </div>
+    </div>
+  {/if}
 </div>
+

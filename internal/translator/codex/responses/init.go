@@ -8,13 +8,14 @@ import (
 )
 
 func init() {
+	// codex-responses → openai: response translation only (no request transform needed here)
 	registry.Register(
 		types.FormatCodexResponses,
 		types.FormatOpenAI,
-		nil, // passthrough: Codex uses OpenAI Responses format natively
+		nil, // no request transform: response passthrough path
 		types.ResponseTransform{
-			Stream:    passthroughStream,
-			NonStream: passthroughNonStream,
+			Stream:    convertCodexResponseToOpenAIStream,
+			NonStream: convertCodexResponseToOpenAINonStream,
 		},
 	)
 }

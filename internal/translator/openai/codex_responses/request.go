@@ -3,6 +3,7 @@ package codex_responses
 import (
 	"context"
 
+	"github.com/rickicode/AxonRouter-Go/internal/translator/codex/responses"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/types"
 )
@@ -21,9 +22,8 @@ func init() {
 }
 
 // openaiToCodexRequest converts OpenAI chat format to Codex Responses format.
-// The body is passed through as-is since Codex accepts OpenAI-compatible JSON.
 func openaiToCodexRequest(model string, rawJSON []byte, stream bool) []byte {
-	return rawJSON
+	return responses.ConvertOpenAIRequestToCodex(model, rawJSON, stream)
 }
 
 func passthroughStream(_ context.Context, _ string, _, _, rawChunk []byte, _ *any) [][]byte {

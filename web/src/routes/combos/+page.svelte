@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { loadCombos, combos, isLoading, error } from '$lib/stores';
-  import Card from '$lib/components/Card.svelte';
-  import Button from '$lib/components/Button.svelte';
-  import Badge from '$lib/components/Badge.svelte';
+  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
+  import { Button } from '$lib/components/ui/button';
+  import { Badge } from '$lib/components/ui/badge';
   
   onMount(() => {
     loadCombos();
@@ -11,124 +11,117 @@
 </script>
 
 <svelte:head>
-  <title>Combos - AxonRouter-Go</title>
+  <title>Combos - AxonRouter</title>
 </svelte:head>
 
-<div class="min-h-screen bg-canvas">
-  <!-- Header -->
-  <section class="bg-canvas-dark text-on-dark py-3xl px-3xl">
-    <div class="container-max">
-      <span class="mono-caps text-on-dark/60 mb-lg block">COMBOS</span>
-      <h1 class="display-xl mb-lg">Routing Combos</h1>
-      <p class="text-body-lg text-on-dark/80">
-        Manage routing combos for fallback and load balancing
-      </p>
+<div class="flex flex-1 flex-col gap-6 p-6">
+  {#if $isLoading}
+    <div class="flex flex-col gap-6">
+      <div class="space-y-2">
+        <div class="h-8 w-48 bg-muted animate-pulse rounded-md"></div>
+        <div class="h-4 w-72 bg-muted/60 animate-pulse rounded-md"></div>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {#each Array(3) as _}
+          <div class="h-56 bg-muted animate-pulse rounded-md"></div>
+        {/each}
+      </div>
     </div>
-  </section>
-  
-  <!-- Content -->
-  <section class="section-padding">
-    <div class="container-max">
-      {#if $isLoading}
-        <div class="text-center py-3xl">
-          <div class="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-lg"></div>
-          <p class="text-body text-body-md">Loading combos...</p>
-        </div>
-      {:else if $error}
-        <Card variant="default" padding="lg">
-          <div class="text-center">
-            <p class="text-red-600 mb-lg">{$error}</p>
-            <Button onclick={loadCombos} variant="outline">
-              <span class="mono-caps-button">RETRY</span>
-            </Button>
-          </div>
-        </Card>
-      {:else}
-        <!-- Actions -->
-        <div class="flex items-center justify-between mb-3xl">
-          <div>
-            <h2 class="display-lg">All Combos</h2>
-            <p class="text-body-md text-body">{$combos.length} combos configured</p>
-          </div>
-          <Button href="/combos?action=add" variant="primary">
-            <span class="mono-caps-button">ADD COMBO</span>
-          </Button>
-        </div>
-        
-        <!-- Combos Grid -->
-        <div class="grid grid-cols-1 tablet:grid-cols-2 desktop:grid-cols-3 gap-3xl">
-          {#each $combos as combo}
-            <Card hover>
-              <div class="flex items-start justify-between mb-lg">
-                <div>
-                  <h3 class="display-md mb-xs">{combo.name}</h3>
-                  <span class="mono-caps text-body">{combo.id}</span>
-                </div>
-                <div class="flex gap-xs">
-                  <Badge variant={combo.is_active ? 'success' : 'neutral'}>
-                    {combo.is_active ? 'Active' : 'Inactive'}
-                  </Badge>
-                  {#if combo.is_smart}
-                    <Badge variant="warning">Smart</Badge>
-                  {/if}
-                </div>
+  {:else if $error}
+    <Card class="shadow-vercel-2 border">
+      <CardContent class="flex flex-col items-center justify-center py-12">
+        <p class="text-body-sm text-muted-foreground mb-4">{$error}</p>
+        <Button onclick={loadCombos} variant="outline">
+          Try again
+        </Button>
+      </CardContent>
+    </Card>
+  {:else}
+    <!-- Page header -->
+    <div class="flex items-center justify-between">
+      <div class="space-y-1">
+        <h1 class="text-display-lg">Combos.</h1>
+        <p class="text-body-sm text-muted-foreground">
+          {$combos.length} combos configured in the system.
+        </p>
+      </div>
+      <Button href="/combos?action=add">
+        Add combo
+      </Button>
+    </div>
+    
+    <!-- Combos Grid -->
+    {#if $combos.length > 0}
+      <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        {#each $combos as combo}
+          <Card class="shadow-vercel-2 border transition-all hover:bg-accent/10">
+            <CardHeader class="flex flex-row items-start justify-between space-y-0 pb-3">
+              <div class="space-y-1">
+                <CardTitle class="text-body-md font-medium">{combo.name}</CardTitle>
+                <p class="text-caption-mono text-muted-foreground">{combo.id}</p>
               </div>
-              
-              <div class="space-y-md mb-lg">
+              <div class="flex gap-1">
+                <Badge variant={combo.is_active ? 'default' : 'secondary'} class="text-caption-mono rounded-sm">
+                  {combo.is_active ? 'Active' : 'Inactive'}
+                </Badge>
+                {#if combo.is_smart}
+                  <Badge variant="outline" class="text-caption-mono rounded-sm">Smart</Badge>
+                {/if}
+              </div>
+            </CardHeader>
+            <CardContent class="flex flex-col gap-4">
+              <div class="grid grid-cols-2 gap-3 border-t border-border/60 pt-3">
                 <div>
-                  <span class="mono-caps text-body mb-xs block">STRATEGY</span>
-                  <span class="text-body-md">{combo.strategy}</span>
+                  <p class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Strategy</p>
+                  <p class="text-body-sm mt-0.5">{combo.strategy}</p>
                 </div>
-                
                 <div>
-                  <span class="mono-caps text-body mb-xs block">TIMEOUT</span>
-                  <span class="text-body-md">{combo.timeout_ms}ms</span>
+                  <p class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Timeout</p>
+                  <p class="text-body-sm font-mono mt-0.5">{combo.timeout_ms}ms</p>
                 </div>
-                
                 {#if combo.is_smart && combo.smart_goal}
-                  <div>
-                    <span class="mono-caps text-body mb-xs block">SMART GOAL</span>
-                    <span class="text-body-md">{combo.smart_goal}</span>
+                  <div class="col-span-2">
+                    <p class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Smart goal</p>
+                    <p class="text-body-sm font-mono mt-0.5">{combo.smart_goal}</p>
                   </div>
                 {/if}
-                
-                <div>
-                  <span class="mono-caps text-body mb-xs block">STICKY LIMIT</span>
-                  <span class="text-body-md">{combo.sticky_limit}</span>
+                <div class="col-span-2">
+                  <p class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Sticky limit</p>
+                  <p class="text-body-sm font-mono mt-0.5">{combo.sticky_limit}</p>
                 </div>
               </div>
               
-              <div class="flex gap-sm">
-                <Button href="/combos/{combo.id}" variant="outline" size="sm">
-                  <span class="mono-caps-button">EDIT</span>
+              <div class="flex gap-2 pt-2 border-t border-border mt-auto">
+                <Button href="/combos/{combo.id}" variant="outline" size="sm" class="text-body-sm flex-1">
+                  Edit Combo
                 </Button>
-                <Button href="/combos/{combo.id}/test" variant="ghost" size="sm">
-                  <span class="mono-caps-button">TEST</span>
+                <Button href="/combos/{combo.id}/test" variant="ghost" size="sm" class="text-body-sm">
+                  Test
                 </Button>
               </div>
-            </Card>
-          {/each}
-        </div>
-        
-        {#if $combos.length === 0}
-          <Card variant="default" padding="lg">
-            <div class="text-center">
-              <div class="w-16 h-16 bg-accent-mint rounded-sm flex items-center justify-center mx-auto mb-lg">
-                <svg class="w-8 h-8 text-ink" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-                </svg>
-              </div>
-              <h3 class="display-md mb-xs">No Combos Configured</h3>
-              <p class="text-body-md text-body mb-lg">
-                Create your first routing combo to enable fallback and load balancing
-              </p>
-              <Button href="/combos?action=add" variant="primary">
-                <span class="mono-caps-button">ADD COMBO</span>
-              </Button>
-            </div>
+            </CardContent>
           </Card>
-        {/if}
-      {/if}
-    </div>
-  </section>
+        {/each}
+      </div>
+    {:else}
+      <!-- Empty state -->
+      <Card class="shadow-vercel-2 border">
+        <CardContent class="flex flex-col items-center justify-center py-16">
+          <div class="size-12 bg-muted rounded-md flex items-center justify-center mb-4">
+            <svg class="size-6 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+            </svg>
+          </div>
+          <h3 class="text-body-md font-semibold mb-1">No combos configured</h3>
+          <p class="text-body-sm text-muted-foreground mb-4">
+            Create your first routing combo for fallback and load balancing.
+          </p>
+          <Button href="/combos?action=add">
+            Add combo
+          </Button>
+        </CardContent>
+      </Card>
+    {/if}
+  {/if}
 </div>
+
