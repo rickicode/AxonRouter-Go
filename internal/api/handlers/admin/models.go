@@ -88,8 +88,10 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": staticModels(providerID)})
 }
 
-// TestModel tests a specific model by sending a minimal request.
-// Builds provider-format-aware test bodies (e.g. Codex Responses API needs store:false + input format).
+// TestModel tests a specific model by sending a minimal streaming request.
+// Uses ExecuteStream() for all providers — each executor sets the correct
+// headers, URL, and body format for its provider (Codex needs stream:true,
+// Claude needs anthropic-version, etc.). Reads one SSE chunk to verify connectivity.
 func (h *ModelHandler) TestModel(c *gin.Context) {
 	providerID := c.Param("id")
 
@@ -128,11 +130,12 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 		return
 	}
 
-	// Build provider-format-aware test body
+	// Build minimal test body — just model + short message.
+	// Each executor's ExecuteStream() handles format-specific headers and body transforms.
 	bodyBytes := buildTestBody(provider.Format, req.Model)
 
 	start := time.Now()
-	resp, err := exec.Execute(c.Request.Context(), &executor.Request{
+	streamResult, err := exec.ExecuteStream(c.Request.Context(), &executor.Request{
 		APIKey:      apiKey,
 		AccessToken: accessToken,
 		BaseURL:     provider.BaseURL,
@@ -140,9 +143,8 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 		Provider:    providerID,
 		Model:       req.Model,
 	})
-	latency := time.Since(start).Milliseconds()
-
 	if err != nil {
+		latency := time.Since(start).Milliseconds()
 		c.JSON(http.StatusOK, gin.H{
 			"status":     "error",
 			"error":      err.Error(),
@@ -151,28 +153,44 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 		return
 	}
 
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		c.JSON(http.StatusOK, gin.H{
-			"status":      "ok",
-			"status_code": resp.StatusCode,
-			"latency_ms":  latency,
-		})
-	} else {
-		c.JSON(http.StatusOK, gin.H{
-			"status":      "error",
-			"status_code": resp.StatusCode,
-			"error":       string(resp.Body),
-			"latency_ms":  latency,
-		})
+	// Read first chunk to verify the upstream responds.
+	// Drain remaining chunks to avoid goroutine leak.
+	var firstErr error
+	var gotChunk bool
+	for chunk := range streamResult.Chunks {
+		if chunk.Err != nil {
+			firstErr = chunk.Err
+			break
+		}
+		if !gotChunk && chunk.Payload != nil {
+			gotChunk = true
+		}
+		// Keep draining to close the channel cleanly
 	}
+	latency := time.Since(start).Milliseconds()
+
+	if firstErr != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"status":     "error",
+			"error":      firstErr.Error(),
+			"latency_ms": latency,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":      "ok",
+		"status_code": streamResult.StatusCode,
+		"latency_ms":  latency,
+	})
 }
 
-// buildTestBody constructs a minimal test request body matching the provider's API format.
-// The executor handles stream/store flags internally; this only sets the payload shape.
+// buildTestBody constructs a minimal test request body matching the provider's native API format.
+// Each executor's ExecuteStream() handles stream/store flags; this sets the payload shape.
 func buildTestBody(format, model string) []byte {
 	switch executor.ProviderFormat(format) {
 	case executor.FormatOpenAIResponses:
-		// Codex Responses API: input array format. Executor adds stream:true, store:false.
+		// Codex Responses API: input array format
 		body := map[string]any{
 			"model": model,
 			"input": []map[string]any{
@@ -183,8 +201,27 @@ func buildTestBody(format, model string) []byte {
 		}
 		b, _ := json.Marshal(body)
 		return b
+	case executor.FormatClaude:
+		// Claude Messages API: messages + max_tokens (required)
+		body := map[string]any{
+			"model":      model,
+			"max_tokens": 5,
+			"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
+		}
+		b, _ := json.Marshal(body)
+		return b
+	case executor.FormatGemini, executor.FormatAntigravity:
+		// Gemini generateContent: contents with parts
+		body := map[string]any{
+			"contents": []map[string]any{
+				{"role": "user", "parts": []map[string]string{{"text": "Hi"}}},
+			},
+			"generationConfig": map[string]any{"maxOutputTokens": 5},
+		}
+		b, _ := json.Marshal(body)
+		return b
 	default:
-		// OpenAI-compatible, Claude, Gemini, Antigravity, Kiro — standard chat body
+		// OpenAI-compatible (openai, groq, deepseek, mimo, opencode, openrouter, kiro)
 		body := map[string]any{
 			"model":      model,
 			"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
