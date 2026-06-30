@@ -3,7 +3,7 @@
 import { writable, derived } from 'svelte/store';
 import { providersApi, connectionsApi, combosApi, logsApi, dashboardApi, fetchApi } from './api';
 import type { Provider, Connection, Combo, RequestLog } from './api';
-
+import { toast } from 'svelte-sonner';
 function friendlyError(err: unknown, fallback: string): string {
   const msg = err instanceof Error ? err.message : fallback;
   return msg.includes('aborted') ? 'Backend not reachable. Is the server running?' : msg;
@@ -269,11 +269,18 @@ export async function testProviderModel(providerId: string, model: string) {
   try {
     const result = await providersApi.testModel(providerId, model);
     modelTestResults.update(r => ({ ...r, [model]: result }));
+    if (result.status === 'ok') {
+      toast.success(`${model} OK (${result.latency_ms ?? 0}ms)`);
+    } else {
+      toast.error(`${model} failed: ${result.error ?? 'Unknown'}`);
+    }
   } catch (err) {
+    const errMsg = err instanceof Error ? err.message : 'Unknown error';
     modelTestResults.update(r => ({
       ...r,
-      [model]: { status: 'error', latency_ms: 0, error: err instanceof Error ? err.message : 'Unknown error' }
+      [model]: { status: 'error', latency_ms: 0, error: errMsg }
     }));
+    toast.error(`${model} failed: ${errMsg}`);
   }
 }
 

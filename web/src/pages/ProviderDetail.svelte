@@ -10,6 +10,7 @@
   import * as Select from '$lib/components/ui/select';
   import ProviderIcon from '$lib/components/ProviderIcon.svelte';
   import { getProviderMeta, getStatusDotColor, getStatusVariant, getStatusLabel } from '$lib/provider-catalog';
+  import { toast } from 'svelte-sonner';
 
   let { id = '' }: { id?: string } = $props();
   let providerId = $derived(id);
@@ -59,35 +60,58 @@
   async function handleTestAll() {
     testingAll = true;
     try {
-      await providersApi.test(providerId);
+      const res = await providersApi.test(providerId);
       await loadProvider(providerId);
       await loadConnections(providerId, currentPage, perPage);
-    } catch {}
-    finally { testingAll = false; }
+      const results = res?.results ?? [];
+      const ok = results.filter((r: any) => r.status === 'ok').length;
+      const failed = results.filter((r: any) => r.status === 'failed').length;
+      const skipped = results.filter((r: any) => r.status === 'skipped').length;
+      if (failed > 0) {
+        toast.error(`Test all: ${ok} passed, ${failed} failed${skipped ? `, ${skipped} skipped` : ''}`);
+      } else {
+        toast.success(`Test all: ${ok} passed${skipped ? `, ${skipped} skipped` : ''}`);
+      }
+    } catch (err) {
+      toast.error('Test all failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+    } finally { testingAll = false; }
   }
 
   async function handleTestConnection(connId: string) {
-    try { await connectionsApi.test(connId); await loadConnections(providerId, currentPage, perPage); }
-    catch (err) { alert('Test failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+    try {
+      const res = await connectionsApi.test(connId);
+      if (res?.status === 'ok') {
+        toast.success(`Connection OK (${res.latency_ms ?? 0}ms)`);
+      } else {
+        toast.error(`Test failed: ${res?.error ?? res?.message ?? 'Unknown error'}`);
+      }
+      await loadConnections(providerId, currentPage, perPage);
+    } catch (err) {
+      toast.error('Test failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+    }
   }
 
   async function handleResetConnection(connId: string) {
-    try { await connectionsApi.reset(connId); await loadConnections(providerId, currentPage, perPage); }
-    catch (err) { alert('Reset failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+    try {
+      await connectionsApi.reset(connId);
+      toast.success('Connection reset to ready');
+      await loadConnections(providerId, currentPage, perPage);
+    } catch (err) {
+      toast.error('Reset failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+    }
   }
 
   async function handleDeleteConnection(connId: string, name: string) {
     if (!confirm(`Delete connection "${name}"?`)) return;
-    try { await connectionsApi.delete(connId); await loadConnections(providerId, currentPage, perPage); }
-    catch (err) { alert('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+    try {
+      await connectionsApi.delete(connId);
+      toast.success(`Deleted "${name}"`);
+      await loadConnections(providerId, currentPage, perPage);
+    } catch (err) {
+      toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+    }
   }
 
-  async function handleOAuth(connId: string) {
-    try {
-      const res = await connectionsApi.initiateOAuth(connId);
-      window.open(res.auth_url, '_blank');
-    } catch (err) { alert('OAuth failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
-  }
 </script>
 
 <div class="flex flex-1 flex-col gap-6 p-6">
@@ -95,7 +119,6 @@
     <svg class="size-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg>
     Back to providers
   </a>
-
   {#if $isLoading && !$selectedProvider}
     <div class="flex flex-col gap-6">
       <div class="flex items-center gap-4">
@@ -215,9 +238,6 @@
                       <td class="py-3 px-4">
                         <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                           <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" onclick={() => handleTestConnection(row.id)}>Test</Button>
-                          {#if row.auth_type === 'oauth'}
-                            <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" onclick={() => handleOAuth(row.id)}>OAuth</Button>
-                          {/if}
                           <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" onclick={() => handleResetConnection(row.id)}>Reset</Button>
                           <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm text-destructive hover:text-destructive" onclick={() => handleDeleteConnection(row.id, row.name)}>Del</Button>
                         </div>
