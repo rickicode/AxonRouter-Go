@@ -87,7 +87,7 @@
     <div class="space-y-4">
       <div class="flex items-center justify-between">
         <h2 class="text-display-sm">Providers.</h2>
-        <a href="#/providers" class="text-body-sm text-muted-foreground hover:text-foreground transition-colors">
+        <a href="/providers" class="text-body-sm text-muted-foreground hover:text-foreground transition-colors">
           View all &rarr;
         </a>
       </div>
@@ -95,7 +95,7 @@
       {#if $dashboardStats.providers?.length > 0}
         <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {#each $dashboardStats.providers as provider}
-            <a href="#/providers/{provider.id}" class="group block">
+            <a href="/providers/{provider.id}" class="group block">
               <Card class="shadow-vercel-2 border transition-all hover:bg-accent/10 h-full">
                 <CardHeader class="flex flex-row items-start justify-between space-y-0 pb-3">
                   <div class="space-y-1">
@@ -121,9 +121,9 @@
 
     <!-- Quick Actions -->
     <div class="flex flex-wrap gap-3 pt-4 border-t border-border">
-      <a href="#/providers/add" class="inline-flex items-center justify-center h-9 px-4 text-body-sm bg-foreground text-background rounded-md hover:bg-foreground/90 transition-colors">Add provider</a>
-      <a href="#/logs" class="inline-flex items-center justify-center h-9 px-4 text-body-sm border border-border rounded-md hover:bg-accent/10 transition-colors">View logs</a>
-      <a href="#/settings" class="inline-flex items-center justify-center h-9 px-4 text-body-sm text-muted-foreground hover:text-foreground transition-colors">Settings</a>
+      <a href="/providers/add" class="inline-flex items-center justify-center h-9 px-4 text-body-sm bg-foreground text-background rounded-md hover:bg-foreground/90 transition-colors">Add provider</a>
+      <a href="/logs" class="inline-flex items-center justify-center h-9 px-4 text-body-sm border border-border rounded-md hover:bg-accent/10 transition-colors">View logs</a>
+      <a href="/settings" class="inline-flex items-center justify-center h-9 px-4 text-body-sm text-muted-foreground hover:text-foreground transition-colors">Settings</a>
     </div>
   {/if}
 </div>

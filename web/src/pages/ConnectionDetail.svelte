@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { router } from '$lib/router';
   import { loadConnection, selectedConnection, isLoading, error } from '$lib/stores';
   import { connectionsApi } from '$lib/api';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
@@ -60,7 +61,7 @@
   async function handleDelete() {
     if (!confirm('Delete this connection? This cannot be undone.')) return;
     actionLoading = 'delete';
-    try { await connectionsApi.delete(connectionId); window.location.hash = `#/providers/${providerId}`; }
+    try { await connectionsApi.delete(connectionId); router.navigate(`/providers/${providerId}`); }
     catch (err) { alert('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown')); actionLoading = ''; }
   }
 
@@ -84,9 +85,9 @@
 
 <div class="flex flex-1 flex-col gap-6 p-6">
   <div class="flex items-center gap-2 text-body-sm text-muted-foreground">
-    <a href="#/providers" class="hover:text-foreground transition-colors">Providers</a>
+    <a href="/providers" class="hover:text-foreground transition-colors">Providers</a>
     <span>/</span>
-    <a href="#/providers/{providerId}" class="hover:text-foreground transition-colors">{meta?.displayName ?? providerId}</a>
+    <a href="/providers/{providerId}" class="hover:text-foreground transition-colors">{meta?.displayName ?? providerId}</a>
     <span>/</span>
     <span class="text-foreground">{$selectedConnection?.name ?? 'Connection'}</span>
   </div>

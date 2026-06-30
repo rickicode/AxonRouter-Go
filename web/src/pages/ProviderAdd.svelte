@@ -75,7 +75,7 @@
 
 <div class="flex flex-1 flex-col gap-6 p-6">
   <div class="flex items-center gap-2 text-body-sm text-muted-foreground">
-    <a href="#/providers" class="hover:text-foreground transition-colors">Providers</a>
+    <a href="/providers" class="hover:text-foreground transition-colors">Providers</a>
     <span>/</span>
     <span class="text-foreground">Add provider</span>
   </div>
@@ -231,7 +231,7 @@
           <Button onclick={() => { step = 'select'; selectedProvider = null; resultMsg = ''; }} variant="outline" class="text-body-sm">
             Add another
           </Button>
-          <a href="#/providers/{selectedProvider}" class="inline-flex items-center justify-center h-9 px-4 text-body-sm bg-foreground text-background rounded-md hover:bg-foreground/90 transition-colors">
+          <a href="/providers/{selectedProvider}" class="inline-flex items-center justify-center h-9 px-4 text-body-sm bg-foreground text-background rounded-md hover:bg-foreground/90 transition-colors">
             View provider
           </a>
         </div>

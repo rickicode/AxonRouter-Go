@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { router } from '$lib/router';
   import { loadCombo, selectedCombo, isLoading, error } from '$lib/stores';
   import { combosApi } from '$lib/api';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
@@ -57,7 +58,7 @@
   async function handleDelete() {
     if (!confirm('Delete this combo? This cannot be undone.')) return;
     actionLoading = 'delete';
-    try { await combosApi.delete(comboId); window.location.hash = '#/combos'; }
+    try { await combosApi.delete(comboId); router.navigate('/combos'); }
     catch (err) { alert('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown')); actionLoading = ''; }
   }
 
@@ -72,7 +73,7 @@
 
 <div class="flex flex-1 flex-col gap-6 p-6">
   <div class="flex items-center gap-2 text-body-sm text-muted-foreground">
-    <a href="#/combos" class="hover:text-foreground transition-colors">Combos</a>
+    <a href="/combos" class="hover:text-foreground transition-colors">Combos</a>
     <span>/</span>
     <span class="text-foreground">{$selectedCombo?.name ?? 'Combo'}</span>
   </div>

@@ -135,7 +135,7 @@
 </script>
 
 <div class="flex flex-1 flex-col gap-6 p-6">
-  <a href="#/providers" class="inline-flex items-center gap-1.5 text-body-sm text-muted-foreground hover:text-foreground transition-colors w-fit">
+  <a href="/providers" class="inline-flex items-center gap-1.5 text-body-sm text-muted-foreground hover:text-foreground transition-colors w-fit">
     <svg class="size-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg>
     Back to providers
   </a>
@@ -212,7 +212,7 @@
           <Button onclick={() => showBulkAdd = !showBulkAdd} variant="outline" size="sm" class="text-body-sm">
             Bulk add
           </Button>
-          <a href="#/providers/add" class="inline-flex items-center justify-center h-8 px-3 text-body-sm bg-foreground text-background rounded-md hover:bg-foreground/90 transition-colors">
+          <a href="/providers/add" class="inline-flex items-center justify-center h-8 px-3 text-body-sm bg-foreground text-background rounded-md hover:bg-foreground/90 transition-colors">
             Add connection
           </a>
         </CardContent>
@@ -356,7 +356,7 @@
                   {#each $connections as row}
                     <tr class="transition-colors hover:bg-accent/20 group">
                       <td class="py-3 px-4">
-                        <a href="#/providers/{providerId}/{row.id}" class="font-medium text-body-sm hover:underline flex items-center gap-2">
+                        <a href="/providers/{providerId}/{row.id}" class="font-medium text-body-sm hover:underline flex items-center gap-2">
                           <span class="size-2 rounded-full shrink-0" style="background-color: {getStatusDotColor(row.status)}"></span>
                           {row.name}
                         </a>

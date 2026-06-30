@@ -160,7 +160,7 @@
     {#if $combos.length > 0}
       <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         {#each $combos as combo}
-          <a href="#/combos/{combo.id}" class="group block">
+          <a href="/combos/{combo.id}" class="group block">
             <Card class="shadow-vercel-2 border transition-all hover:bg-accent/10 hover:border-foreground/20 h-full">
               <CardHeader class="flex flex-row items-start justify-between space-y-0 pb-3">
                 <div class="space-y-1">

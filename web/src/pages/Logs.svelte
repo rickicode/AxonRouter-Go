@@ -197,7 +197,7 @@
                 <tr class="transition-colors hover:bg-accent/20">
                   <td class="py-3 px-4 font-mono text-[11px] text-muted-foreground whitespace-nowrap">{formatTimestamp(row.timestamp)}</td>
                   <td class="py-3 px-4 font-semibold text-body-sm">
-                    <a href="#/providers/{row.provider_type_id}" class="hover:underline text-primary">{row.provider_type_id}</a>
+                    <a href="/providers/{row.provider_type_id}" class="hover:underline text-primary">{row.provider_type_id}</a>
                   </td>
                   <td class="py-3 px-4 font-mono text-xs text-foreground">{row.model_id}</td>
                   <td class="py-3 px-4"><Badge variant="secondary" class="text-caption-mono rounded-sm py-0.5">{row.modality}</Badge></td>

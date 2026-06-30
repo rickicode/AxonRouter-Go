@@ -108,7 +108,7 @@
           {$providers.length} providers configured.
         </p>
       </div>
-      <a href="#/providers/add" class="inline-flex items-center justify-center h-9 px-4 text-body-sm bg-foreground text-background rounded-md hover:bg-foreground/90 transition-colors">Add provider</a>
+      <a href="/providers/add" class="inline-flex items-center justify-center h-9 px-4 text-body-sm bg-foreground text-background rounded-md hover:bg-foreground/90 transition-colors">Add provider</a>
     </div>
 
     <!-- Filter bar -->
@@ -171,7 +171,7 @@
                 {@const color = meta?.color ?? '#888888'}
                 {@const result = testResults[provider.id]}
                 <a
-                  href="#/providers/{provider.id}"
+                  href="/providers/{provider.id}"
                   class="group block rounded-lg border border-border bg-card shadow-vercel-2 transition-all hover:border-foreground/20 hover:bg-accent/10"
                 >
                   <div class="flex flex-col gap-3 p-4">

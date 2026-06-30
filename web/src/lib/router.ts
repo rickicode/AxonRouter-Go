@@ -1,4 +1,4 @@
-// Simple hash-based SPA router for Svelte 5
+// Simple path-based SPA router for Svelte 5 (History API)
 import { writable, derived } from 'svelte/store';
 
 export interface RouteParams {
@@ -10,29 +10,27 @@ export interface Route {
   params: RouteParams;
 }
 
-function parseHash(hash: string): Route {
-  const path = hash.replace(/^#\/?/, '/') || '/';
-  const segments = path.split('/').filter(Boolean);
-  return { path, params: {} };
+function getPath(): string {
+  return window.location.pathname || '/';
 }
 
 function createRouter() {
-  const current = writable<Route>(parseHash(window.location.hash));
+  const current = writable<Route>({ path: getPath(), params: {} });
 
-  function navigate(hash: string) {
-    window.location.hash = hash;
+  function navigate(path: string) {
+    if (path === getPath()) return;
+    history.pushState(null, '', path);
+    current.set({ path, params: {} });
   }
 
   function start() {
-    const onHashChange = () => {
-      current.set(parseHash(window.location.hash));
+    const onPopState = () => {
+      current.set({ path: getPath(), params: {} });
     };
-    window.addEventListener('hashchange', onHashChange);
-    // Set initial hash if empty
-    if (!window.location.hash) {
-      window.location.hash = '#/';
-    }
-    return () => window.removeEventListener('hashchange', onHashChange);
+    window.addEventListener('popstate', onPopState);
+    // Set initial state
+    current.set({ path: getPath(), params: {} });
+    return () => window.removeEventListener('popstate', onPopState);
   }
 
   return { current, navigate, start };

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { currentPath } from '$lib/router';
+  import { currentPath, router } from '$lib/router';
   import * as Sidebar from '$lib/components/ui/sidebar';
   import {
     Home,
@@ -12,19 +12,25 @@
   let { onclose }: { onclose?: () => void } = $props();
 
   const platformItems = [
-    { href: '#/', label: 'Dashboard', icon: Home },
-    { href: '#/providers', label: 'Providers', icon: Server },
-    { href: '#/combos', label: 'Combos', icon: Layers },
-    { href: '#/logs', label: 'Logs', icon: Terminal },
+    { href: '/', label: 'Dashboard', icon: Home },
+    { href: '/providers', label: 'Providers', icon: Server },
+    { href: '/combos', label: 'Combos', icon: Layers },
+    { href: '/logs', label: 'Logs', icon: Terminal },
   ];
 
-  const settingsItem = { href: '#/settings', label: 'Settings', icon: Settings };
+  const settingsItem = { href: '/settings', label: 'Settings', icon: Settings };
 
   function isActive(pathname: string, href: string): boolean {
-    const hashPath = href.replace('#', '');
-    if (hashPath === '/') return pathname === '/';
-    return pathname === hashPath || pathname.startsWith(hashPath + '/');
+    if (href === '/') return pathname === '/';
+    return pathname === href || pathname.startsWith(href + '/');
   }
+
+  function handleClick(e: MouseEvent, href: string) {
+    e.preventDefault();
+    router.navigate(href);
+    onclose?.();
+  }
+
 </script>
 
 <div class="flex flex-col gap-1">
@@ -38,7 +44,7 @@
         {@const active = isActive($currentPath, item.href)}
         <a
           href={item.href}
-          onclick={onclose}
+          onclick={(e) => handleClick(e, item.href)}
           class="group relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all duration-150
             {active
               ? 'bg-sidebar-accent text-sidebar-foreground'
@@ -72,7 +78,7 @@
         {@const active = isActive($currentPath, item.href)}
         <a
           href={item.href}
-          onclick={onclose}
+          onclick={(e) => handleClick(e, item.href)}
           class="group relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all duration-150
             {active
               ? 'bg-sidebar-accent text-sidebar-foreground'
