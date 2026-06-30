@@ -4,22 +4,38 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/models"
 )
+
+// v1ProviderCatalog maps provider prefix → models.json keys + owned_by.
+// Providers not listed here (openai, groq, deepseek, mimo, opencode, etc.)
+// have no static catalog — their models are discovered dynamically from upstream.
+var v1ProviderCatalog = map[string]struct {
+	keys    []string
+	ownedBy string
+}{
+	"claude":   {keys: []string{"claude"}, ownedBy: "anthropic"},
+	"gemini":   {keys: []string{"gemini"}, ownedBy: "google"},
+	"cx":       {keys: []string{"codex-free", "codex-team", "codex-plus", "codex-pro"}, ownedBy: "openai"},
+	"ag":       {keys: []string{"antigravity"}, ownedBy: "google"},
+	"kiro":     {keys: []string{"kimi"}, ownedBy: "moonshot"},
+	"aistudio": {keys: []string{"aistudio"}, ownedBy: "google"},
+}
 
 // Models handles GET /v1/models — includes combos and virtual models.
 func (h *Handler) Models(c *gin.Context) {
 	prefixes := h.registry.List()
-	var models []gin.H
+	var allModels []gin.H
 
 	for _, prefix := range prefixes {
 		for _, m := range h.getProviderModels(prefix) {
-			models = append(models, m)
+			allModels = append(allModels, m)
 		}
 	}
 
 	// Add combo names as virtual models
 	for _, combo := range h.combo.ListCombos() {
-		models = append(models, gin.H{
+		allModels = append(allModels, gin.H{
 			"id":       combo.Combo.Name,
 			"object":   "model",
 			"created":  combo.Combo.CreatedAt,
@@ -30,7 +46,7 @@ func (h *Handler) Models(c *gin.Context) {
 	// Add virtual/smart models
 	virtualModels := []string{"auto", "economy", "balanced", "premium"}
 	for _, name := range virtualModels {
-		models = append(models, gin.H{
+		allModels = append(allModels, gin.H{
 			"id":       "smart/" + name,
 			"object":   "model",
 			"created":  1700000000,
@@ -38,167 +54,48 @@ func (h *Handler) Models(c *gin.Context) {
 		})
 	}
 
-	if len(models) == 0 {
-		models = h.defaultModels()
-		models = append(models, mimoModels()...)
-		models = append(models, opencodeModels()...)
+	if len(allModels) == 0 {
+		allModels = h.defaultModels()
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"object": "list",
-		"data":   models,
+		"data":   allModels,
 	})
 }
 
-// getProviderModels returns models for a provider prefix.
+// getProviderModels returns models for a provider prefix from the auto-updating catalog.
+// Returns nil for providers not in models.json (openai, groq, deepseek, etc.) —
+// those are discovered dynamically from upstream and not served as static entries.
 func (h *Handler) getProviderModels(prefix string) []gin.H {
-	// ponytail: hardcoded model lists per provider
-	// Load from DB or config when dynamic models are needed
-	switch prefix {
-	case "openai":
-		return openaiModels()
-	case "claude":
-		return claudeModels()
-	case "gemini":
-		return geminiModels()
-	case "cx":
-		return codexModels()
-	case "ag":
-		return antigravityModels()
-	case "kiro":
-		return kiroModels()
-	case "groq":
-		return groqModels()
-	case "deepseek":
-		return deepseekModels()
-	case "mimo", "mimocode", "mimo-tp":
-		return mimoModels()
-	case "oc", "oc-zen", "oc-go":
-		return opencodeModels()
-	default:
+	cfg, ok := v1ProviderCatalog[prefix]
+	if !ok {
 		return nil
 	}
-}
 
-func openaiModels() []gin.H {
-	return []gin.H{
-		{"id": "openai/gpt-4o", "object": "model", "created": 1700000000, "owned_by": "openai"},
-		{"id": "openai/gpt-4o-mini", "object": "model", "created": 1700000000, "owned_by": "openai"},
-		{"id": "openai/gpt-4-turbo", "object": "model", "created": 1700000000, "owned_by": "openai"},
-		{"id": "openai/o1", "object": "model", "created": 1700000000, "owned_by": "openai"},
-		{"id": "openai/o1-mini", "object": "model", "created": 1700000000, "owned_by": "openai"},
-		{"id": "openai/o1-pro", "object": "model", "created": 1700000000, "owned_by": "openai"},
-		{"id": "openai/o3", "object": "model", "created": 1700000000, "owned_by": "openai"},
-		{"id": "openai/o3-mini", "object": "model", "created": 1700000000, "owned_by": "openai"},
-		{"id": "openai/o4-mini", "object": "model", "created": 1700000000, "owned_by": "openai"},
-		{"id": "openai/gpt-4.1", "object": "model", "created": 1700000000, "owned_by": "openai"},
-		{"id": "openai/gpt-4.1-mini", "object": "model", "created": 1700000000, "owned_by": "openai"},
-		{"id": "openai/gpt-4.1-nano", "object": "model", "created": 1700000000, "owned_by": "openai"},
+	ids := models.GetAllModelIDs(cfg.keys...)
+	if len(ids) == 0 {
+		return nil
 	}
-}
 
-func claudeModels() []gin.H {
-	return []gin.H{
-		{"id": "claude/claude-opus-4-6", "object": "model", "created": 1700000000, "owned_by": "anthropic"},
-		{"id": "claude/claude-sonnet-4-6", "object": "model", "created": 1700000000, "owned_by": "anthropic"},
-		{"id": "claude/claude-opus-4-5-20251101", "object": "model", "created": 1700000000, "owned_by": "anthropic"},
-		{"id": "claude/claude-opus-4-20250514", "object": "model", "created": 1700000000, "owned_by": "anthropic"},
-		{"id": "claude/claude-sonnet-4-20250514", "object": "model", "created": 1700000000, "owned_by": "anthropic"},
-		{"id": "claude/claude-3-7-sonnet-20250219", "object": "model", "created": 1700000000, "owned_by": "anthropic"},
-		{"id": "claude/claude-3-5-haiku-20241022", "object": "model", "created": 1700000000, "owned_by": "anthropic"},
+	entries := make([]gin.H, 0, len(ids))
+	for _, id := range ids {
+		entries = append(entries, gin.H{
+			"id":       prefix + "/" + id,
+			"object":   "model",
+			"created":  1700000000,
+			"owned_by": cfg.ownedBy,
+		})
 	}
+	return entries
 }
 
-
-func geminiModels() []gin.H {
-	return []gin.H{
-		{"id": "gemini/gemini-2.5-pro", "object": "model", "created": 1700000000, "owned_by": "google"},
-		{"id": "gemini/gemini-2.5-flash", "object": "model", "created": 1700000000, "owned_by": "google"},
-		{"id": "gemini/gemini-2.5-flash-lite", "object": "model", "created": 1700000000, "owned_by": "google"},
-		{"id": "gemini/gemini-3-pro-preview", "object": "model", "created": 1700000000, "owned_by": "google"},
-		{"id": "gemini/gemini-3-flash-preview", "object": "model", "created": 1700000000, "owned_by": "google"},
-		{"id": "gemini/gemini-3.5-flash", "object": "model", "created": 1700000000, "owned_by": "google"},
-	}
-}
-
-
-func codexModels() []gin.H {
-	return []gin.H{
-		{"id": "cx/gpt-5.5", "object": "model", "created": 1700000000, "owned_by": "openai"},
-		{"id": "cx/gpt-5.4", "object": "model", "created": 1700000000, "owned_by": "openai"},
-		{"id": "cx/gpt-5.4-mini", "object": "model", "created": 1700000000, "owned_by": "openai"},
-		{"id": "cx/gpt-5.3-codex-spark", "object": "model", "created": 1700000000, "owned_by": "openai"},
-		{"id": "cx/codex-auto-review", "object": "model", "created": 1700000000, "owned_by": "openai"},
-	}
-}
-
-
-func antigravityModels() []gin.H {
-	return []gin.H{
-		{"id": "ag/claude-opus-4-6-thinking", "object": "model", "created": 1700000000, "owned_by": "google"},
-		{"id": "ag/claude-sonnet-4-6", "object": "model", "created": 1700000000, "owned_by": "google"},
-		{"id": "ag/gemini-3-flash", "object": "model", "created": 1700000000, "owned_by": "google"},
-		{"id": "ag/gemini-3-flash-agent", "object": "model", "created": 1700000000, "owned_by": "google"},
-		{"id": "ag/gemini-3.1-pro-low", "object": "model", "created": 1700000000, "owned_by": "google"},
-		{"id": "ag/gemini-3.1-flash-lite", "object": "model", "created": 1700000000, "owned_by": "google"},
-		{"id": "ag/gemini-3.5-flash-low", "object": "model", "created": 1700000000, "owned_by": "google"},
-	}
-}
-
-
-func kiroModels() []gin.H {
-	return []gin.H{
-		{"id": "kiro/kimi-k2", "object": "model", "created": 1700000000, "owned_by": "moonshot"},
-		{"id": "kiro/kimi-k2-thinking", "object": "model", "created": 1700000000, "owned_by": "moonshot"},
-		{"id": "kiro/kimi-k2.5", "object": "model", "created": 1700000000, "owned_by": "moonshot"},
-		{"id": "kiro/kimi-k2.6", "object": "model", "created": 1700000000, "owned_by": "moonshot"},
-		{"id": "kiro/kimi-k2.7-code", "object": "model", "created": 1700000000, "owned_by": "moonshot"},
-		{"id": "kiro/kimi-k2.7-code-highspeed", "object": "model", "created": 1700000000, "owned_by": "moonshot"},
-	}
-}
-
-func groqModels() []gin.H {
-	return []gin.H{
-		{"id": "groq/llama-3.3-70b-versatile", "object": "model", "created": 1700000000, "owned_by": "groq"},
-		{"id": "groq/llama-3.1-8b-instant", "object": "model", "created": 1700000000, "owned_by": "groq"},
-		{"id": "groq/mixtral-8x7b-32768", "object": "model", "created": 1700000000, "owned_by": "groq"},
-	}
-}
-
-func deepseekModels() []gin.H {
-	return []gin.H{
-		{"id": "deepseek/deepseek-chat", "object": "model", "created": 1700000000, "owned_by": "deepseek"},
-		{"id": "deepseek/deepseek-reasoner", "object": "model", "created": 1700000000, "owned_by": "deepseek"},
-	}
-}
-
+// defaultModels returns all catalog-backed models as a fallback
+// when no providers are registered (fresh install, no connections).
 func (h *Handler) defaultModels() []gin.H {
 	var all []gin.H
-	all = append(all, openaiModels()...)
-	all = append(all, claudeModels()...)
-	all = append(all, geminiModels()...)
-	all = append(all, codexModels()...)
-	all = append(all, antigravityModels()...)
-	all = append(all, kiroModels()...)
-	all = append(all, mimoModels()...)
-	all = append(all, opencodeModels()...)
+	for prefix := range v1ProviderCatalog {
+		all = append(all, h.getProviderModels(prefix)...)
+	}
 	return all
-}
-
-func mimoModels() []gin.H {
-	return []gin.H{
-		{"id": "mimo/mimo-v2.5-pro", "object": "model", "created": 1700000000, "owned_by": "xiaomi"},
-		{"id": "mimo/mimo-v2.5", "object": "model", "created": 1700000000, "owned_by": "xiaomi"},
-		{"id": "mimo/mimo-v2-pro", "object": "model", "created": 1700000000, "owned_by": "xiaomi"},
-		{"id": "mimo/mimo-v2-omni", "object": "model", "created": 1700000000, "owned_by": "xiaomi"},
-		{"id": "mimo/mimo-v2-flash", "object": "model", "created": 1700000000, "owned_by": "xiaomi"},
-	}
-}
-
-func opencodeModels() []gin.H {
-	return []gin.H{
-		{"id": "oc/kimi-k2", "object": "model", "created": 1700000000, "owned_by": "opencode"},
-		{"id": "oc/glm-4", "object": "model", "created": 1700000000, "owned_by": "opencode"},
-		{"id": "oc/qwen-2.5-72b", "object": "model", "created": 1700000000, "owned_by": "opencode"},
-	}
 }

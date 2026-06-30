@@ -21,6 +21,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/models"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 	"github.com/rickicode/AxonRouter-Go/web"
 )
@@ -81,10 +82,10 @@ func New(cfg Config) *Router {
 	quotaScheduler := background.NewQuotaSchedulerDB(cfg.DB, store, elig, cfg.QuotaIntervalMin)
 	usageFlush := background.NewUsageFlush(tracker)
 	cleanup := background.NewCleanup(comboHandler, cfg.DB, cfg.LogRetentionDays)
-
 	quotaScheduler.Start(ctx)
 	usageFlush.Start(ctx)
 	cleanup.Start(ctx)
+	models.StartUpdater(ctx)
 
 	// Create admin handlers
 	providerH := admin.NewProviderHandler(cfg.DB, executor.GetRegistry(), store)

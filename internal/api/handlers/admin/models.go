@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/models"
 )
 
 // ModelHandler handles model-related admin endpoints.
@@ -195,41 +196,25 @@ func buildTestBody(format, model string) []byte {
 	}
 }
 
-// staticModels returns a static model list for known provider types.
-// Source of truth: /workspaces/CLIProxyAPI/internal/registry/models/models.json
-// ponytail: hardcoded per provider, update when new models ship.
-// Covers both canonical IDs and DB-stored IDs.
+// providerCatalogKeys maps DB provider IDs to models.json top-level keys.
+// Providers NOT in this map (openai, groq, deepseek, mimo, opencode, openrouter, zai)
+// have no static catalog — their models come from dynamic upstream /models API only.
+var providerCatalogKeys = map[string][]string{
+	"claude":      {"claude"},
+	"gemini":      {"gemini"},
+	"cx":          {"codex-free", "codex-team", "codex-plus", "codex-pro"},
+	"ag":          {"antigravity"},
+	"antigravity": {"antigravity"},
+	"kiro":        {"kimi"},
+	"aistudio":    {"aistudio"},
+}
+
+// staticModels returns model IDs from the auto-updating catalog (models.json + remote refresh).
+// Returns empty for providers not in the catalog — those require dynamic upstream listing.
 func staticModels(providerID string) []string {
-	switch providerID {
-	case "openai":
-		return []string{"gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1", "o1-mini", "o1-pro", "o3", "o3-mini", "o4-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano"}
-	case "claude":
-		return []string{"claude-opus-4-6", "claude-sonnet-4-6", "claude-opus-4-5-20251101", "claude-opus-4-20250514", "claude-sonnet-4-20250514", "claude-3-7-sonnet-20250219", "claude-3-5-haiku-20241022"}
-	case "gemini":
-		return []string{"gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-3.5-flash"}
-	case "cx":
-		return []string{"gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark", "codex-auto-review"}
-	case "ag", "antigravity":
-		return []string{"claude-opus-4-6-thinking", "claude-sonnet-4-6", "gemini-3-flash", "gemini-3-flash-agent", "gemini-3.1-pro-low", "gemini-3.1-flash-lite", "gemini-3.5-flash-low"}
-	case "kiro":
-		return []string{"kimi-k2", "kimi-k2-thinking", "kimi-k2.5", "kimi-k2.6", "kimi-k2.7-code", "kimi-k2.7-code-highspeed"}
-	case "groq":
-		return []string{"llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"}
-	case "deepseek":
-		return []string{"deepseek-chat", "deepseek-reasoner"}
-	case "mimo", "mimocode", "mimo-tp", "mimocode-free", "mimo-token":
-		return []string{"mimo-v2.5-pro", "mimo-v2.5", "mimo-v2-pro", "mimo-v2-omni", "mimo-v2-flash"}
-	case "opencode", "oc", "oc-zen", "oc-go", "opencode-go", "opencode-zen":
-		return []string{"kimi-k2", "glm-4", "qwen-2.5-72b"}
-	case "openrouter":
-		return []string{"openai/gpt-4o", "anthropic/claude-sonnet-4", "google/gemini-2.5-pro", "deepseek/deepseek-chat", "meta-llama/llama-3.3-70b-instruct"}
-	case "zai":
-		return []string{"glm-4-plus", "glm-4-flash", "glm-4-long"}
-	case "elevenlabs":
-		return []string{"eleven_multilingual_v2", "eleven_turbo_v2_5", "eleven_monolingual_v1"}
-	case "deepgram":
-		return []string{"nova-2", "nova-2-medical", "whisper-large"}
-	default:
+	keys, ok := providerCatalogKeys[providerID]
+	if !ok {
 		return []string{}
 	}
+	return models.GetAllModelIDs(keys...)
 }
