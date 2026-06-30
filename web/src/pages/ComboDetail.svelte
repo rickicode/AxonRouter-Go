@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { router } from '$lib/router';
   import { loadCombo, selectedCombo, isLoading, error } from '$lib/stores';
+  import { unwrapInt, unwrapStr } from '$lib/utils';
   import { combosApi } from '$lib/api';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
@@ -20,7 +21,7 @@
   let editIsActive = $state(true);
 
   onMount(() => {
-    document.title = 'Combo - AxonRouter';
+    document.title = 'Combo — AxonRouter';
     loadCombo(comboId);
   });
 
@@ -90,7 +91,7 @@
     <Card class="shadow-vercel-2 border">
       <CardContent class="flex flex-col items-center justify-center py-12">
         <p class="text-body-sm text-muted-foreground mb-4">{$error}</p>
-        <Button onclick={() => loadCombo(comboId)} variant="outline">Try again</Button>
+        <Button onclick={() => loadCombo(comboId)} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
       </CardContent>
     </Card>
   {:else if $selectedCombo}
@@ -103,24 +104,24 @@
         <CardContent class="pt-6 space-y-6">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div class="space-y-2">
-              <Label class="text-body-sm font-medium">Name</Label>
+              <Label class="text-body-sm-strong">Name</Label>
               <Input bind:value={editName} class="h-10 text-body-sm" />
             </div>
             <div class="space-y-2">
-              <Label class="text-body-sm font-medium">Strategy</Label>
+              <Label class="text-body-sm-strong">Strategy</Label>
               <div class="flex gap-2">
                 {#each strategyOptions as opt}
-                  <button class="px-4 py-2 rounded-md text-body-sm border transition-colors {editStrategy === opt ? 'bg-foreground text-background border-foreground' : 'border-border text-muted-foreground hover:text-foreground'}" onclick={() => editStrategy = opt}>{opt}</button>
+                  <button class="px-4 py-2 rounded-sm text-body-sm border transition-colors {editStrategy === opt ? 'bg-foreground text-background border-foreground' : 'border-border text-muted-foreground hover:text-foreground'}" onclick={() => editStrategy = opt}>{opt}</button>
                 {/each}
               </div>
             </div>
             <div class="space-y-2">
-              <Label class="text-body-sm font-medium">Timeout (ms)</Label>
-              <Input type="number" bind:value={editTimeout} class="h-10 text-body-sm font-mono" />
+              <Label class="text-body-sm-strong">Timeout (ms)</Label>
+              <Input type="number" bind:value={editTimeout} class="h-10 text-code font-mono" />
             </div>
             <div class="space-y-2">
-              <Label class="text-body-sm font-medium">Sticky limit</Label>
-              <Input type="number" bind:value={editStickyLimit} class="h-10 text-body-sm font-mono" />
+              <Label class="text-body-sm-strong">Sticky limit</Label>
+              <Input type="number" bind:value={editStickyLimit} class="h-10 text-code font-mono" />
             </div>
           </div>
           <label class="flex items-center gap-2 cursor-pointer">
@@ -130,7 +131,7 @@
         </CardContent>
       </Card>
       <div class="flex gap-3">
-        <Button onclick={handleSave} disabled={!!actionLoading} class="text-body-sm">
+        <Button onclick={handleSave} disabled={!!actionLoading} class="text-button-md rounded-pill px-5">
           {actionLoading === 'save' ? 'Saving...' : 'Save changes'}
         </Button>
         <Button onclick={() => editing = false} variant="ghost" class="text-body-sm">Cancel</Button>
@@ -151,7 +152,7 @@
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card class="shadow-vercel-2 border">
-          <CardHeader class="pb-3"><CardTitle class="text-body-md font-semibold">Configuration</CardTitle></CardHeader>
+          <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Configuration</CardTitle></CardHeader>
           <CardContent class="space-y-4">
             <div class="space-y-1">
               <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Strategy</p>
@@ -159,32 +160,32 @@
             </div>
             <div class="space-y-1">
               <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Timeout</p>
-              <p class="text-body-sm font-mono">{$selectedCombo.timeout_ms}ms</p>
+              <p class="text-code font-mono">{$selectedCombo.timeout_ms}ms</p>
             </div>
             <div class="space-y-1">
               <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Sticky limit</p>
-              <p class="text-body-sm font-mono">{$selectedCombo.sticky_limit}</p>
+              <p class="text-code font-mono">{$selectedCombo.sticky_limit}</p>
             </div>
             <div class="space-y-1">
               <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Created</p>
-              <p class="text-body-sm font-mono text-muted-foreground">{new Date($selectedCombo.created_at * 1000).toLocaleString()}</p>
+              <p class="text-body-sm font-mono text-muted-foreground">{unwrapInt($selectedCombo.created_at) ? new Date(unwrapInt($selectedCombo.created_at)! * 1000).toLocaleString() : '—'}</p>
             </div>
           </CardContent>
         </Card>
 
         <Card class="shadow-vercel-2 border">
-          <CardHeader class="pb-3"><CardTitle class="text-body-md font-semibold">Smart settings</CardTitle></CardHeader>
+          <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Smart settings</CardTitle></CardHeader>
           <CardContent>
-            {#if $selectedCombo.is_smart && $selectedCombo.smart_goal}
+            {#if $selectedCombo.is_smart && unwrapStr($selectedCombo.smart_goal)}
               <div class="space-y-4">
                 <div class="space-y-1">
                   <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Goal</p>
-                  <p class="text-body-sm font-mono">{$selectedCombo.smart_goal}</p>
+                  <p class="text-code font-mono">{unwrapStr($selectedCombo.smart_goal)}</p>
                 </div>
                 <div class="space-y-1">
                   <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Description</p>
                   <p class="text-body-sm text-muted-foreground">
-                    {smartGoalDescriptions[$selectedCombo.smart_goal] ?? 'Custom smart routing goal.'}
+                    {smartGoalDescriptions[unwrapStr($selectedCombo.smart_goal) ?? ''] ?? 'Custom smart routing goal.'}
                   </p>
                 </div>
               </div>
@@ -197,7 +198,7 @@
 
       <Card class="shadow-vercel-2 border">
         <CardHeader class="flex flex-row items-center justify-between pb-3">
-          <CardTitle class="text-body-md font-semibold">Routing steps</CardTitle>
+          <CardTitle class="text-body-md-strong">Routing steps</CardTitle>
         </CardHeader>
         <CardContent>
           <p class="text-body-sm text-muted-foreground">
@@ -210,14 +211,14 @@
       </Card>
 
       <Card class="shadow-vercel-2 border">
-        <CardHeader class="pb-3"><CardTitle class="text-body-md font-semibold">Actions</CardTitle></CardHeader>
+        <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Actions</CardTitle></CardHeader>
         <CardContent>
           <div class="flex flex-wrap gap-2">
-            <Button onclick={startEdit} variant="outline" class="text-body-sm">Edit combo</Button>
-            <Button onclick={handleToggle} disabled={!!actionLoading} variant="outline" class="text-body-sm">
+            <Button onclick={startEdit} variant="outline" class="text-body-sm rounded-sm">Edit combo</Button>
+            <Button onclick={handleToggle} disabled={!!actionLoading} variant="outline" class="text-body-sm rounded-sm">
               {$selectedCombo.is_active ? 'Deactivate' : 'Activate'}
             </Button>
-            <Button onclick={handleDelete} disabled={!!actionLoading} variant="destructive" class="text-body-sm ml-auto">
+            <Button onclick={handleDelete} disabled={!!actionLoading} variant="destructive" class="text-body-sm rounded-sm ml-auto">
               {actionLoading === 'delete' ? 'Deleting...' : 'Delete combo'}
             </Button>
           </div>

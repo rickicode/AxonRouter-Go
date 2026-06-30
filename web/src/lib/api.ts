@@ -61,6 +61,11 @@ export interface Combo {
   updated_at: number;
 }
 
+export interface ComboDetailResponse {
+  combo: Combo;
+  steps: unknown[] | null;
+}
+
 export interface RequestLog {
   id: string;
   timestamp: number;
@@ -233,7 +238,7 @@ export const connectionsApi = {
 export const combosApi = {
   list: () => fetchApi<ApiResponse<Combo[]>>('/combos'),
   
-  get: (id: string) => fetchApi<Combo>(`/combos/${id}`),
+  get: (id: string) => fetchApi<ComboDetailResponse>(`/combos/${id}`),
   
   create: (data: Partial<Combo>) =>
     fetchApi<Combo>('/combos', {

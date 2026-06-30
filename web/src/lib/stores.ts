@@ -244,9 +244,9 @@ export async function loadCombo(id: string) {
   error.set(null);
   
   try {
-    const combo = await combosApi.get(id);
-    selectedCombo.set(combo);
-    return combo;
+    const response = await combosApi.get(id);
+    selectedCombo.set(response.combo);
+    return response.combo;
   } catch (err) {
     error.set(friendlyError(err, 'Failed to load combo'));
     return null;

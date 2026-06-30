@@ -93,11 +93,11 @@
       </p>
     </div>
     <div class="flex items-center gap-2">
-      <Button onclick={handleExport} disabled={$logs.length === 0} variant="outline" size="sm" class="text-body-sm h-9">
+      <Button onclick={handleExport} disabled={$logs.length === 0} variant="outline" size="sm" class="text-body-sm h-9 rounded-sm">
         <Download class="size-3.5 mr-1.5" />
         Export CSV
       </Button>
-      <Button onclick={() => loadLogs(currentPage, perPage)} disabled={$isLoading} variant="outline" size="sm" class="text-body-sm h-9">
+      <Button onclick={() => loadLogs(currentPage, perPage)} disabled={$isLoading} variant="outline" size="sm" class="text-body-sm h-9 rounded-sm">
         <RefreshCw class="size-3.5 mr-1.5 {$isLoading ? 'animate-spin' : ''}" />
         Refresh
       </Button>
@@ -108,13 +108,14 @@
     <CardHeader class="pb-3 border-b border-border/60 flex flex-row items-center justify-between space-y-0">
       <div class="flex items-center gap-2">
         <Filter class="size-4 text-muted-foreground" />
-        <CardTitle class="text-body-md font-semibold">Filters</CardTitle>
+        <CardTitle class="text-body-md-strong">Filters</CardTitle>
         {#if hasActiveFilters}
           <Button onclick={clearFilters} variant="ghost" size="sm" class="text-caption-mono h-6 px-2 text-muted-foreground">
             Clear all
           </Button>
         {/if}
       </div>
+      <!-- DESIGN.md tab-ghost pills for status filters -->
       <div class="flex items-center gap-1.5 overflow-x-auto">
         {#each [
           { code: 0, label: 'All' },
@@ -124,10 +125,10 @@
           { code: 500, label: '5xx Error' },
         ] as pill}
           <button
-            class="px-2.5 py-1 rounded-sm text-caption-mono border transition-colors
+            class="rounded-pill-sm px-3 py-1 text-caption-mono transition-colors
               {$logFilter.status_code === pill.code
-                ? 'bg-foreground text-background border-foreground'
-                : 'border-border text-muted-foreground hover:border-foreground hover:text-foreground'}"
+                ? 'bg-foreground text-background'
+                : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'}"
             onclick={() => setStatusFilter(pill.code)}
           >
             {pill.label}
@@ -168,14 +169,14 @@
     <Card class="shadow-vercel-2 border">
       <CardContent class="flex flex-col items-center justify-center py-16 text-center">
         <p class="text-destructive font-medium text-body-sm mb-4">{$error}</p>
-        <Button onclick={() => loadLogs(currentPage, perPage)} variant="outline" size="sm">Retry</Button>
+        <Button onclick={() => loadLogs(currentPage, perPage)} variant="outline" size="sm" class="text-body-sm">Retry</Button>
       </CardContent>
     </Card>
   {:else if $logs.length === 0}
     <Card class="shadow-vercel-2 border">
       <CardContent class="flex flex-col items-center justify-center py-16 text-center">
         <Terminal class="size-8 text-muted-foreground mb-3" />
-        <p class="text-foreground font-semibold text-body-sm mb-1">No logs found</p>
+        <p class="text-foreground font-semibold text-body-sm mb-1">No logs found.</p>
         <p class="text-muted-foreground text-body-sm">Adjust filters or send requests to the proxy to generate logs.</p>
       </CardContent>
     </Card>
@@ -195,17 +196,17 @@
               {#each $logs as row}
                 {@const statusProps = getStatusBadgeProps(row.status_code)}
                 <tr class="transition-colors hover:bg-accent/20">
-                  <td class="py-3 px-4 font-mono text-[11px] text-muted-foreground whitespace-nowrap">{formatTimestamp(row.timestamp)}</td>
-                  <td class="py-3 px-4 font-semibold text-body-sm">
-                    <a href="/providers/{row.provider_type_id}" class="hover:underline text-primary">{row.provider_type_id}</a>
+                  <td class="py-3 px-4 font-mono text-caption text-muted-foreground whitespace-nowrap">{formatTimestamp(row.timestamp)}</td>
+                  <td class="py-3 px-4 text-body-sm-strong">
+                    <a href="/providers/{row.provider_type_id}" class="hover:underline text-foreground">{row.provider_type_id}</a>
                   </td>
-                  <td class="py-3 px-4 font-mono text-xs text-foreground">{row.model_id}</td>
+                  <td class="py-3 px-4 text-code text-foreground">{row.model_id}</td>
                   <td class="py-3 px-4"><Badge variant="secondary" class="text-caption-mono rounded-sm py-0.5">{row.modality}</Badge></td>
                   <td class="py-3 px-4"><Badge variant={statusProps.variant} class="text-caption-mono rounded-sm py-0.5">{statusProps.label}</Badge></td>
-                  <td class="py-3 px-4 font-mono text-xs text-muted-foreground">{formatLatency(row.latency_ms)}</td>
-                  <td class="py-3 px-4 font-mono text-xs text-muted-foreground">{formatTokens(row.input_tokens)}</td>
-                  <td class="py-3 px-4 font-mono text-xs text-muted-foreground">{formatTokens(row.output_tokens)}</td>
-                  <td class="py-3 px-4 font-mono text-xs font-semibold text-foreground">{formatCost(row.cost_usd)}</td>
+                  <td class="py-3 px-4 text-code text-muted-foreground">{formatLatency(row.latency_ms)}</td>
+                  <td class="py-3 px-4 text-code text-muted-foreground">{formatTokens(row.input_tokens)}</td>
+                  <td class="py-3 px-4 text-code text-muted-foreground">{formatTokens(row.output_tokens)}</td>
+                  <td class="py-3 px-4 text-code text-foreground font-medium">{formatCost(row.cost_usd)}</td>
                 </tr>
               {/each}
             </tbody>
@@ -220,13 +221,13 @@
           Showing <strong class="text-foreground">{((currentPage - 1) * perPage) + 1}–{Math.min(currentPage * perPage, $logPagination.total)}</strong> of <strong class="text-foreground">{$logPagination.total}</strong> logs
         </p>
         <div class="flex items-center gap-1">
-          <Button variant="outline" size="sm" disabled={currentPage === 1} onclick={() => handlePageChange(currentPage - 1)} class="text-body-sm h-8">Prev</Button>
+          <Button variant="outline" size="sm" disabled={currentPage === 1} onclick={() => handlePageChange(currentPage - 1)} class="text-body-sm h-8 rounded-sm">Prev</Button>
           {#each Array.from({ length: Math.min(5, $logPagination.total_pages) }, (_, i) => i + Math.max(1, currentPage - 2)) as page}
             {#if page <= $logPagination.total_pages}
-              <Button variant={page === currentPage ? 'default' : 'outline'} size="sm" onclick={() => handlePageChange(page)} class="text-body-sm h-8 w-8 p-0">{page}</Button>
+              <Button variant={page === currentPage ? 'default' : 'outline'} size="sm" onclick={() => handlePageChange(page)} class="text-body-sm h-8 w-8 p-0 rounded-sm">{page}</Button>
             {/if}
           {/each}
-          <Button variant="outline" size="sm" disabled={currentPage === $logPagination.total_pages} onclick={() => handlePageChange(currentPage + 1)} class="text-body-sm h-8">Next</Button>
+          <Button variant="outline" size="sm" disabled={currentPage === $logPagination.total_pages} onclick={() => handlePageChange(currentPage + 1)} class="text-body-sm h-8 rounded-sm">Next</Button>
         </div>
       </div>
     {/if}

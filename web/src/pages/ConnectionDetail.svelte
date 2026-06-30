@@ -1,12 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { router } from '$lib/router';
   import { loadConnection, selectedConnection, isLoading, error } from '$lib/stores';
+  import { unwrapInt, unwrapStr } from '$lib/utils';
   import { connectionsApi } from '$lib/api';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
+  import { router } from '$lib/router';
   import { getProviderMeta, getStatusDotColor, getStatusVariant, getStatusLabel } from '$lib/provider-catalog';
 
   let { id = '', connId = '' }: { id?: string; connId?: string } = $props();
@@ -17,11 +18,11 @@
   let editName = $state('');
 
   onMount(() => {
-    document.title = 'Connection - AxonRouter';
+    document.title = 'Connection — AxonRouter';
     loadConnection(connectionId);
   });
-
-  function formatCooldown(cooldownUntil: number | null): string {
+  function formatCooldown(raw: unknown): string {
+    const cooldownUntil = unwrapInt(raw);
     if (!cooldownUntil) return 'None';
     const now = Math.floor(Date.now() / 1000);
     if (cooldownUntil <= now) return 'Expired';
@@ -31,7 +32,8 @@
     return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
   }
 
-  function formatTimestamp(timestamp: number | null) {
+  function formatTimestamp(raw: unknown) {
+    const timestamp = unwrapInt(raw);
     if (!timestamp) return 'Never';
     return new Date(timestamp * 1000).toLocaleString();
   }
@@ -76,8 +78,9 @@
   }
 
   let capabilities = $derived.by(() => {
-    if (!$selectedConnection?.capabilities) return [];
-    try { return JSON.parse($selectedConnection.capabilities); } catch { return []; }
+    const raw = unwrapStr($selectedConnection?.capabilities);
+    if (!raw) return [];
+    try { return JSON.parse(raw); } catch { return []; }
   });
 
   let meta = $derived(getProviderMeta(providerId));
@@ -106,7 +109,7 @@
     <Card class="shadow-vercel-2 border">
       <CardContent class="flex flex-col items-center justify-center py-12">
         <p class="text-body-sm text-muted-foreground mb-4">{$error}</p>
-        <Button onclick={() => loadConnection(connectionId)} variant="outline">Try again</Button>
+        <Button onclick={() => loadConnection(connectionId)} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
       </CardContent>
     </Card>
   {:else if $selectedConnection}
@@ -116,7 +119,7 @@
         {#if editingName}
           <div class="flex items-center gap-2">
             <Input bind:value={editName} class="h-9 text-display-lg font-semibold w-64" onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && handleSaveName()} />
-            <Button onclick={handleSaveName} size="sm" class="h-8 text-body-sm">Save</Button>
+            <Button onclick={handleSaveName} size="sm" class="h-8 text-body-sm rounded-sm">Save</Button>
             <Button onclick={() => editingName = false} variant="ghost" size="sm" class="h-8 text-body-sm">Cancel</Button>
           </div>
         {:else}
@@ -142,15 +145,15 @@
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
       <Card class="shadow-vercel-2 border">
-        <CardHeader class="pb-3"><CardTitle class="text-body-md font-semibold">Details</CardTitle></CardHeader>
+        <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Details</CardTitle></CardHeader>
         <CardContent class="space-y-4">
           <div class="space-y-1">
             <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Provider</p>
-            <p class="text-body-sm font-mono">{$selectedConnection.provider_type_id}</p>
+            <p class="text-code font-mono">{$selectedConnection.provider_type_id}</p>
           </div>
           <div class="space-y-1">
             <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Auth Type</p>
-            <p class="text-body-sm font-mono">{$selectedConnection.auth_type}</p>
+            <p class="text-code font-mono">{$selectedConnection.auth_type}</p>
           </div>
           <div class="space-y-1">
             <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Created</p>
@@ -164,7 +167,7 @@
       </Card>
 
       <Card class="shadow-vercel-2 border">
-        <CardHeader class="pb-3"><CardTitle class="text-body-md font-semibold">Status & Failures</CardTitle></CardHeader>
+        <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Status & Failures</CardTitle></CardHeader>
         <CardContent class="grid grid-cols-2 gap-4">
           <div class="space-y-1">
             <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Status</p>
@@ -175,11 +178,11 @@
           </div>
           <div class="space-y-1">
             <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Cooldown</p>
-            <p class="text-body-sm font-mono">{$selectedConnection.cooldown_until ? formatCooldown($selectedConnection.cooldown_until) : 'None'}</p>
+            <p class="text-code font-mono">{$selectedConnection.cooldown_until ? formatCooldown($selectedConnection.cooldown_until) : 'None'}</p>
           </div>
           <div class="space-y-1">
             <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Failures</p>
-            <p class="text-body-sm font-semibold font-mono {$selectedConnection.failure_count > 0 ? 'text-destructive' : 'text-muted-foreground'}">
+            <p class="text-code font-mono {$selectedConnection.failure_count > 0 ? 'text-destructive font-semibold' : 'text-muted-foreground'}">
               {$selectedConnection.failure_count}
             </p>
           </div>
@@ -187,10 +190,10 @@
             <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Last Success</p>
             <p class="text-body-sm font-mono text-muted-foreground">{formatTimestamp($selectedConnection.last_success_at)}</p>
           </div>
-          {#if $selectedConnection.last_error}
+          {#if unwrapStr($selectedConnection.last_error)}
             <div class="col-span-2 space-y-1">
               <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Last Error</p>
-              <p class="text-body-sm font-mono text-destructive break-all bg-destructive/5 p-2 rounded-md">{$selectedConnection.last_error}</p>
+              <p class="text-body-sm font-mono text-destructive break-all bg-destructive/5 p-2 rounded-md">{unwrapStr($selectedConnection.last_error)}</p>
             </div>
           {/if}
         </CardContent>
@@ -199,7 +202,7 @@
 
     {#if capabilities.length > 0}
       <Card class="shadow-vercel-2 border">
-        <CardHeader class="pb-3"><CardTitle class="text-body-md font-semibold">Capabilities</CardTitle></CardHeader>
+        <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Capabilities</CardTitle></CardHeader>
         <CardContent>
           <div class="flex flex-wrap gap-1.5">
             {#each capabilities as capability}
@@ -211,19 +214,19 @@
     {/if}
 
     <Card class="shadow-vercel-2 border">
-      <CardHeader class="pb-3"><CardTitle class="text-body-md font-semibold">Actions</CardTitle></CardHeader>
+      <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Actions</CardTitle></CardHeader>
       <CardContent>
         <div class="flex flex-wrap gap-2">
-          <Button onclick={handleTest} disabled={!!actionLoading} variant="outline" class="text-body-sm">
+          <Button onclick={handleTest} disabled={!!actionLoading} variant="outline" class="text-body-sm rounded-sm">
             {actionLoading === 'test' ? 'Testing...' : 'Test connection'}
           </Button>
-          <Button onclick={handleReset} disabled={!!actionLoading} variant="outline" class="text-body-sm">
+          <Button onclick={handleReset} disabled={!!actionLoading} variant="outline" class="text-body-sm rounded-sm">
             {actionLoading === 'reset' ? 'Resetting...' : 'Reset status'}
           </Button>
-          <Button onclick={handleToggle} disabled={!!actionLoading} variant="outline" class="text-body-sm">
+          <Button onclick={handleToggle} disabled={!!actionLoading} variant="outline" class="text-body-sm rounded-sm">
             {actionLoading === 'toggle' ? 'Updating...' : ($selectedConnection.is_active ? 'Disable' : 'Enable')}
           </Button>
-          <Button onclick={handleDelete} disabled={!!actionLoading} variant="destructive" class="text-body-sm ml-auto">
+          <Button onclick={handleDelete} disabled={!!actionLoading} variant="destructive" class="text-body-sm rounded-sm ml-auto">
             {actionLoading === 'delete' ? 'Deleting...' : 'Delete connection'}
           </Button>
         </div>

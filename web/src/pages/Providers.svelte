@@ -96,7 +96,7 @@
     <Card class="border shadow-vercel-2">
       <CardContent class="flex flex-col items-center justify-center py-12">
         <p class="mb-4 text-body-sm text-muted-foreground">{$error}</p>
-        <Button onclick={loadProviders} variant="outline">Try again</Button>
+        <Button onclick={loadProviders} variant="outline" class="text-body-sm">Try again</Button>
       </CardContent>
     </Card>
   {:else}
@@ -108,10 +108,12 @@
           {$providers.length} providers configured.
         </p>
       </div>
-      <a href="/providers/add" class="inline-flex items-center justify-center h-9 px-4 text-body-sm bg-foreground text-background rounded-md hover:bg-foreground/90 transition-colors">Add provider</a>
+      <a href="/providers/add" class="inline-flex items-center justify-center h-10 px-5 text-button-md bg-primary text-primary-foreground rounded-pill hover:opacity-90 transition-opacity">
+        Add provider
+      </a>
     </div>
 
-    <!-- Filter bar -->
+    <!-- Filter bar — DESIGN.md tab-ghost pills -->
     <div class="flex flex-col gap-3">
       <Input
         type="text"
@@ -121,20 +123,20 @@
       />
       <div class="flex flex-wrap gap-2">
         <button
-          class="rounded-full border px-3 py-1 text-caption-mono transition-colors
+          class="rounded-pill-sm px-4 py-1.5 text-body-sm transition-colors
             {!activeCategory
-              ? 'border-foreground bg-foreground text-background'
-              : 'border-border text-muted-foreground hover:border-foreground hover:text-foreground'}"
+              ? 'bg-foreground text-background'
+              : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'}"
           onclick={() => (activeCategory = '')}
         >
           All
         </button>
         {#each filterCategories as cat}
           <button
-            class="rounded-full border px-3 py-1 text-caption-mono transition-colors
+            class="rounded-pill-sm px-4 py-1.5 text-body-sm transition-colors
               {activeCategory === cat.id
-                ? 'border-foreground bg-foreground text-background'
-                : 'border-border text-muted-foreground hover:border-foreground hover:text-foreground'}"
+                ? 'bg-foreground text-background'
+                : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'}"
             onclick={() => (activeCategory = activeCategory === cat.id ? '' : cat.id)}
           >
             {cat.label}
@@ -152,12 +154,12 @@
             class="flex items-center gap-2 text-left"
             onclick={() => toggleCollapse(cat.id)}
           >
-            <span class="text-body-md font-semibold text-foreground">{cat.label}</span>
+            <span class="text-body-md-strong text-foreground">{cat.label}</span>
             <Badge variant="secondary" class="rounded-full text-caption-mono">
               {groupedProviders[cat.id].length}
             </Badge>
             <span
-              class="ml-1 text-xs text-muted-foreground transition-transform"
+              class="ml-1 text-caption text-muted-foreground transition-transform"
               class:rotate-[-90deg]={isCollapsed}
             >
               ▾
@@ -182,11 +184,11 @@
                       >
                         <ProviderIcon {meta} size={36} />
                       </div>
-                      <span class="truncate text-body-sm font-semibold text-foreground">
+                      <span class="truncate text-body-sm-strong text-foreground">
                         {provider.display_name}
                       </span>
                       <span
-                        class="ml-auto h-2 w-2 shrink-0 rounded-full"
+                        class="ml-auto size-2 shrink-0 rounded-full"
                         style="background: {cat.color};"
                       ></span>
                     </div>
@@ -200,7 +202,7 @@
                               class="gap-1 rounded-full py-0.5 text-caption-mono"
                             >
                               <span
-                                class="inline-block h-1.5 w-1.5 rounded-full"
+                                class="inline-block size-1.5 rounded-full"
                                 style="background: {getStatusDotColor(status)};"
                               ></span>
                               {getStatusLabel(status)}
@@ -226,7 +228,7 @@
 
                     <div class="flex gap-2 border-t border-border pt-3">
                       <span
-                        class="flex-1 inline-flex items-center justify-center h-8 text-body-sm border border-border rounded-md"
+                        class="flex-1 inline-flex items-center justify-center h-8 text-body-sm border border-border rounded-sm"
                       >
                         Manage
                       </span>
@@ -252,7 +254,7 @@
                     {#if result}
                       <p
                         class="text-caption-mono {result.ok
-                          ? 'text-emerald-500'
+                          ? 'text-emerald-600'
                           : 'text-destructive'}"
                       >
                         {result.msg}

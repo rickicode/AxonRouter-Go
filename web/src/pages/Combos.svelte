@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { loadCombos, combos, isLoading, error } from '$lib/stores';
   import { combosApi } from '$lib/api';
+  import { unwrapStr } from '$lib/utils';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
@@ -18,7 +19,7 @@
   let newSmartGoal = $state('balanced');
 
   onMount(() => {
-    document.title = 'Combos - AxonRouter';
+    document.title = 'Combos — AxonRouter';
     loadCombos();
   });
 
@@ -71,7 +72,7 @@
     <Card class="shadow-vercel-2 border">
       <CardContent class="flex flex-col items-center justify-center py-12">
         <p class="text-body-sm text-muted-foreground mb-4">{$error}</p>
-        <Button onclick={loadCombos} variant="outline">Try again</Button>
+        <Button onclick={loadCombos} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
       </CardContent>
     </Card>
   {:else}
@@ -82,7 +83,7 @@
           {$combos.length} routing combos configured.
         </p>
       </div>
-      <Button onclick={() => showCreate = !showCreate}>
+      <Button onclick={() => showCreate = !showCreate} class="text-button-md rounded-pill px-5">
         {showCreate ? 'Cancel' : 'Add combo'}
       </Button>
     </div>
@@ -90,21 +91,21 @@
     {#if showCreate}
       <Card class="shadow-vercel-2 border border-primary/20">
         <CardHeader class="pb-3">
-          <CardTitle class="text-body-md font-semibold">Create new combo</CardTitle>
+          <CardTitle class="text-body-md-strong">Create new combo.</CardTitle>
           <p class="text-body-sm text-muted-foreground">Configure a routing combo with ordered model steps.</p>
         </CardHeader>
         <CardContent class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div class="space-y-2">
-              <Label class="text-body-sm font-medium">Name</Label>
+              <Label class="text-body-sm-strong">Name</Label>
               <Input bind:value={newName} placeholder="e.g. balanced, premium-failover" class="h-10 text-body-sm" />
             </div>
             <div class="space-y-2">
-              <Label class="text-body-sm font-medium">Strategy</Label>
+              <Label class="text-body-sm-strong">Strategy</Label>
               <div class="flex gap-2">
                 {#each strategyOptions as opt}
                   <button
-                    class="px-4 py-2 rounded-md text-body-sm border transition-colors {newStrategy === opt ? 'bg-foreground text-background border-foreground' : 'border-border text-muted-foreground hover:text-foreground'}"
+                    class="px-4 py-2 rounded-sm text-body-sm border transition-colors {newStrategy === opt ? 'bg-foreground text-background border-foreground' : 'border-border text-muted-foreground hover:text-foreground'}"
                     onclick={() => newStrategy = opt}
                   >
                     {opt}
@@ -113,33 +114,33 @@
               </div>
             </div>
             <div class="space-y-2">
-              <Label class="text-body-sm font-medium">Timeout (ms)</Label>
-              <Input type="number" bind:value={newTimeout} class="h-10 text-body-sm font-mono" />
+              <Label class="text-body-sm-strong">Timeout (ms)</Label>
+              <Input type="number" bind:value={newTimeout} class="h-10 text-code font-mono" />
             </div>
             <div class="space-y-2">
-              <Label class="text-body-sm font-medium">Sticky limit</Label>
-              <Input type="number" bind:value={newStickyLimit} class="h-10 text-body-sm font-mono" />
+              <Label class="text-body-sm-strong">Sticky limit</Label>
+              <Input type="number" bind:value={newStickyLimit} class="h-10 text-code font-mono" />
             </div>
           </div>
 
           <div class="flex items-center gap-3 pt-2 border-t border-border">
             <label class="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" bind:checked={newIsSmart} class="rounded" />
-              <span class="text-body-sm font-medium">Smart combo</span>
+              <span class="text-body-sm-strong">Smart combo</span>
             </label>
             <span class="text-body-sm text-muted-foreground">Auto-resolve best combo based on goal</span>
           </div>
 
           {#if newIsSmart}
             <div class="space-y-2">
-              <Label class="text-body-sm font-medium">Smart goal</Label>
+              <Label class="text-body-sm-strong">Smart goal</Label>
               <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
                 {#each smartGoalOptions as opt}
                   <button
                     class="flex flex-col items-start gap-1 p-3 rounded-md border text-left transition-colors {newSmartGoal === opt.value ? 'border-foreground bg-accent' : 'border-border hover:border-foreground/50'}"
                     onclick={() => newSmartGoal = opt.value}
                   >
-                    <span class="text-body-sm font-medium">{opt.label}</span>
+                    <span class="text-body-sm-strong">{opt.label}</span>
                     <span class="text-caption-mono text-muted-foreground">{opt.desc}</span>
                   </button>
                 {/each}
@@ -148,10 +149,10 @@
           {/if}
 
           <div class="flex gap-3 pt-2">
-            <Button onclick={handleCreate} disabled={createLoading || !newName.trim()}>
+            <Button onclick={handleCreate} disabled={createLoading || !newName.trim()} class="text-button-md rounded-pill px-5">
               {createLoading ? 'Creating...' : 'Create combo'}
             </Button>
-            <Button onclick={() => showCreate = false} variant="ghost">Cancel</Button>
+            <Button onclick={() => showCreate = false} variant="ghost" class="text-body-sm">Cancel</Button>
           </div>
         </CardContent>
       </Card>
@@ -164,7 +165,7 @@
             <Card class="shadow-vercel-2 border transition-all hover:bg-accent/10 hover:border-foreground/20 h-full">
               <CardHeader class="flex flex-row items-start justify-between space-y-0 pb-3">
                 <div class="space-y-1">
-                  <CardTitle class="text-body-md font-medium">{combo.name}</CardTitle>
+                  <CardTitle class="text-body-md-strong">{combo.name}</CardTitle>
                   <p class="text-caption-mono text-muted-foreground">{combo.id}</p>
                 </div>
                 <div class="flex gap-1">
@@ -184,12 +185,12 @@
                   </div>
                   <div>
                     <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Timeout</p>
-                    <p class="text-body-sm font-mono mt-0.5">{combo.timeout_ms}ms</p>
+                    <p class="text-code font-mono mt-0.5">{combo.timeout_ms}ms</p>
                   </div>
-                  {#if combo.is_smart && combo.smart_goal}
+                  {#if combo.is_smart && unwrapStr(combo.smart_goal)}
                     <div class="col-span-2">
                       <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Smart goal</p>
-                      <p class="text-body-sm font-mono mt-0.5">{combo.smart_goal}</p>
+                      <p class="text-code font-mono mt-0.5">{unwrapStr(combo.smart_goal)}</p>
                     </div>
                   {/if}
                 </div>
@@ -206,11 +207,11 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
             </svg>
           </div>
-          <h3 class="text-body-md font-semibold mb-1">No combos configured</h3>
+          <h3 class="text-body-md-strong mb-1">No combos configured.</h3>
           <p class="text-body-sm text-muted-foreground mb-4">
             Create your first routing combo for fallback and load balancing.
           </p>
-          <Button onclick={() => showCreate = true}>Add combo</Button>
+          <Button onclick={() => showCreate = true} class="text-button-md rounded-pill px-5">Add combo</Button>
         </CardContent>
       </Card>
     {/if}

@@ -36,7 +36,7 @@
 <div class="flex flex-col gap-1">
   <!-- Platform Section -->
   <div class="mb-1">
-    <p class="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.15em] text-sidebar-foreground/30 font-mono select-none">
+    <p class="px-3 py-1.5 text-caption-mono uppercase tracking-wider text-sidebar-foreground/30 select-none">
       Platform
     </p>
     <nav class="space-y-0.5">
@@ -45,7 +45,7 @@
         <a
           href={item.href}
           onclick={(e) => handleClick(e, item.href)}
-          class="group relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all duration-150
+          class="group relative flex items-center gap-3 rounded-md px-3 py-2 text-body-sm-strong transition-all duration-150
             {active
               ? 'bg-sidebar-accent text-sidebar-foreground'
               : 'text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/60'}"
@@ -70,7 +70,7 @@
 
   <!-- System Section -->
   <div>
-    <p class="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.15em] text-sidebar-foreground/30 font-mono select-none">
+    <p class="px-3 py-1.5 text-caption-mono uppercase tracking-wider text-sidebar-foreground/30 select-none">
       System
     </p>
     <nav class="space-y-0.5">
@@ -79,7 +79,7 @@
         <a
           href={item.href}
           onclick={(e) => handleClick(e, item.href)}
-          class="group relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all duration-150
+          class="group relative flex items-center gap-3 rounded-md px-3 py-2 text-body-sm-strong transition-all duration-150
             {active
               ? 'bg-sidebar-accent text-sidebar-foreground'
               : 'text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/60'}"

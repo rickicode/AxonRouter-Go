@@ -40,17 +40,20 @@ func (h *ProviderHandler) List(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	defer rows.Close()
 
+	// Collect all providers first, then close rows before nested queries
 	var providers []db.ProviderWithCounts
 	for rows.Next() {
 		p := db.ProviderWithCounts{}
 		rows.Scan(&p.ID, &p.DisplayName, &p.Format, &p.BaseURL,
 			&p.IsCustom, &p.CustomHeaders, &p.CreatedAt, &p.ConnectionCount)
-
-		// Get status counts
-		p.StatusCounts = h.getStatusCounts(p.ID)
 		providers = append(providers, p)
+	}
+	rows.Close()
+
+	// Fill status counts after outer rows are closed (avoids SQLite deadlock)
+	for i := range providers {
+		providers[i].StatusCounts = h.getStatusCounts(providers[i].ID)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": providers})

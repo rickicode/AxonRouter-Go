@@ -38,7 +38,7 @@
     return list;
   });
 
-  onMount(() => { document.title = 'Add Provider - AxonRouter'; });
+  onMount(() => { document.title = 'Add Provider — AxonRouter'; });
 
   function selectProvider(id: string) {
     selectedProvider = id;
@@ -83,30 +83,31 @@
   {#if step === 'select'}
     <div class="space-y-1">
       <h1 class="text-display-lg">Add provider.</h1>
-      <p class="text-body-sm text-muted-foreground">
+      <p class="text-body-lg text-muted-foreground">
         Select a provider to add a new connection. Each connection represents a single API key or OAuth credential.
       </p>
     </div>
 
+    <!-- Filter bar — DESIGN.md tab-ghost pills -->
     <div class="flex flex-col gap-3">
       <Input
         type="text"
-        class="h-9 max-w-sm text-body-sm"
+        class="h-10 max-w-sm text-body-sm"
         placeholder="Search providers..."
         bind:value={searchQuery}
       />
       <div class="flex flex-wrap gap-2">
         <button
-          class="rounded-full border px-3 py-1 text-caption-mono transition-colors
-            {!activeCategory ? 'border-foreground bg-foreground text-background' : 'border-border text-muted-foreground hover:border-foreground hover:text-foreground'}"
+          class="rounded-pill-sm px-4 py-1.5 text-body-sm transition-colors
+            {!activeCategory ? 'bg-foreground text-background' : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'}"
           onclick={() => activeCategory = ''}
         >
           All
         </button>
         {#each filterCategories as cat}
           <button
-            class="rounded-full border px-3 py-1 text-caption-mono transition-colors
-              {activeCategory === cat.id ? 'border-foreground bg-foreground text-background' : 'border-border text-muted-foreground hover:border-foreground hover:text-foreground'}"
+            class="rounded-pill-sm px-4 py-1.5 text-body-sm transition-colors
+              {activeCategory === cat.id ? 'bg-foreground text-background' : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'}"
             onclick={() => activeCategory = activeCategory === cat.id ? '' : cat.id}
           >
             {cat.label}
@@ -119,18 +120,18 @@
       <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
         {#each filteredCatalog as provider}
           <button
-            class="group flex items-center gap-3 p-4 rounded-lg border border-border bg-card text-left transition-all hover:border-foreground/20 hover:bg-accent/10 cursor-pointer"
+            class="group flex items-center gap-3 p-4 rounded-lg border border-border bg-card shadow-vercel-2 text-left transition-all hover:border-foreground/20 hover:bg-accent/10 cursor-pointer"
             onclick={() => selectProvider(provider.id)}
           >
             <div
-              class="flex h-10 w-10 shrink-0 items-center justify-center rounded-md overflow-hidden"
+              class="flex size-10 shrink-0 items-center justify-center rounded-md overflow-hidden"
               style="background: {provider.color}15;"
             >
               <ProviderIcon meta={provider} size={40} />
             </div>
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2">
-                <span class="text-body-sm font-semibold text-foreground truncate">{provider.displayName}</span>
+                <span class="text-body-sm-strong text-foreground truncate">{provider.displayName}</span>
                 <span class="size-2 rounded-full shrink-0" style="background: {CATEGORIES.find(c => c.id === provider.category)?.color ?? '#888'}"></span>
               </div>
               <p class="text-caption-mono text-muted-foreground truncate">{provider.description}</p>
@@ -164,7 +165,7 @@
           <svg class="size-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg>
         </button>
         <div
-          class="flex h-10 w-10 shrink-0 items-center justify-center rounded-md overflow-hidden"
+          class="flex size-10 shrink-0 items-center justify-center rounded-md overflow-hidden"
           style="background: {meta.color}15;"
         >
           <ProviderIcon {meta} size={40} />
@@ -179,16 +180,16 @@
     <Card class="shadow-vercel-2 border max-w-xl">
       <CardContent class="pt-6 space-y-4">
         <div class="space-y-2">
-          <Label class="text-body-sm font-medium">Connection name</Label>
+          <Label class="text-body-sm-strong">Connection name</Label>
           <Input bind:value={connectionName} placeholder="{meta.id}-key-001" class="h-10 text-body-sm" />
-          <p class="text-caption-mono text-muted-foreground">A friendly name to identify this connection.</p>
+          <p class="text-caption text-muted-foreground">A friendly name to identify this connection.</p>
         </div>
 
         {#if meta.authType === 'apikey'}
           <div class="space-y-2">
-            <Label class="text-body-sm font-medium">API key</Label>
-            <Input bind:value={apiKey} type="password" placeholder="sk-..." class="h-10 text-body-sm font-mono" />
-            <p class="text-caption-mono text-muted-foreground">Your {meta.displayName} API key. It will be stored encrypted in SQLite.</p>
+            <Label class="text-body-sm-strong">API key</Label>
+            <Input bind:value={apiKey} type="password" placeholder="sk-..." class="h-10 text-code font-mono" />
+            <p class="text-caption text-muted-foreground">Your {meta.displayName} API key. Stored encrypted in SQLite.</p>
           </div>
         {:else if meta.authType === 'oauth'}
           <div class="p-4 rounded-md bg-accent/50 border border-border">
@@ -205,11 +206,11 @@
         {/if}
 
         {#if resultMsg}
-          <p class="text-body-sm {resultOk ? 'text-emerald-500' : 'text-destructive'}">{resultMsg}</p>
+          <p class="text-body-sm {resultOk ? 'text-emerald-600' : 'text-destructive'}">{resultMsg}</p>
         {/if}
 
         <div class="flex gap-3 pt-2">
-          <Button onclick={handleAddConnection} disabled={loading} class="text-body-sm">
+          <Button onclick={handleAddConnection} disabled={loading} class="text-button-md rounded-pill px-5">
             {loading ? 'Adding...' : 'Add connection'}
           </Button>
           <Button onclick={() => step = 'select'} variant="ghost" class="text-body-sm">Back</Button>
@@ -221,17 +222,17 @@
     <Card class="shadow-vercel-2 border max-w-xl">
       <CardContent class="flex flex-col items-center justify-center py-16 text-center">
         <div class="size-12 rounded-full bg-emerald-500/10 flex items-center justify-center mb-4">
-          <svg class="size-6 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="size-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
           </svg>
         </div>
-        <h3 class="text-body-md font-semibold mb-1">Connection added!</h3>
+        <h3 class="text-body-md-strong mb-1">Connection added.</h3>
         <p class="text-body-sm text-muted-foreground mb-6">{resultMsg}</p>
         <div class="flex gap-3">
-          <Button onclick={() => { step = 'select'; selectedProvider = null; resultMsg = ''; }} variant="outline" class="text-body-sm">
+          <Button onclick={() => { step = 'select'; selectedProvider = null; resultMsg = ''; }} variant="outline" class="text-body-sm rounded-pill px-5">
             Add another
           </Button>
-          <a href="/providers/{selectedProvider}" class="inline-flex items-center justify-center h-9 px-4 text-body-sm bg-foreground text-background rounded-md hover:bg-foreground/90 transition-colors">
+          <a href="/providers/{selectedProvider}" class="inline-flex items-center justify-center h-10 px-5 text-button-md bg-primary text-primary-foreground rounded-pill hover:opacity-90 transition-opacity">
             View provider
           </a>
         </div>

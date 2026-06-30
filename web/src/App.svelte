@@ -93,7 +93,7 @@
   <Sidebar.Inset>
     <header class="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background/50 backdrop-blur-md sticky top-0 z-50 px-6">
       <Sidebar.Trigger class="md:hidden text-muted-foreground hover:text-foreground transition-colors cursor-pointer" />
-      <h1 class="text-body-md font-medium text-foreground">{pageLabel}</h1>
+      <h1 class="text-body-md-strong text-foreground">{pageLabel}</h1>
       <div class="ml-auto flex items-center gap-1.5 text-caption-mono text-muted-foreground">
         <span class="size-1.5 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
         <span class="hidden sm:inline">Live</span>
