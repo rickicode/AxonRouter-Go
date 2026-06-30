@@ -95,9 +95,11 @@ func RegisterDefaults() {
 		GetRegistry().Register(p, FormatOpenAI, openaiExec)
 	}
 
-	// Claude
+	// Claude + compatible providers
 	claudeExec := NewClaudeExecutor(base)
-	GetRegistry().Register("claude", FormatClaude, claudeExec)
+	for _, p := range []string{"claude", "zai"} {
+		GetRegistry().Register(p, FormatClaude, claudeExec)
+	}
 
 	// Gemini
 	geminiExec := NewGeminiExecutor(base)
