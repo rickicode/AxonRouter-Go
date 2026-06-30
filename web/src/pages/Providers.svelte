@@ -347,14 +347,13 @@
                   {@const result = testResults[provider.id]}
                   <a
                     href="/providers/{provider.id}"
-                    class="group flex flex-col rounded-lg bg-card transition-all duration-200 hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-card-hover"
-                    style="box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.7), 0 8px 22px rgb(0 0 0 / 0.05), 0 0 0 1px {hexToRgba(color, 0.06)};"
+                    class="group flex flex-col rounded-xl bg-card shadow-card transition-all duration-200 hover:-translate-y-0.5 hover:shadow-card-hover"
                   >
                     <div class="flex flex-col gap-2 p-3">
                       <div class="flex items-start gap-2.5">
                         <div
-                          class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border"
-                          style="background: {hexToRgba(color, 0.10)}; border-color: {hexToRgba(color, 0.18)};"
+                          class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md"
+                          style="background: {hexToRgba(color, 0.10)};"
                         >
                           <ProviderIcon meta={iconMeta} size={22} />
                         </div>
@@ -381,7 +380,7 @@
                           </span>
                         {/if}
                         {#if issueCount(provider) > 0}
-                          <span class="inline-flex items-center gap-0.5 text-amber-600">
+                          <span class="inline-flex items-center gap-0.5 text-amber-400">
                             <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
                             {issueCount(provider)} issues
                           </span>
