@@ -8,6 +8,7 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
+  import { toast } from 'svelte-sonner';
 
   let showCreate = $state(false);
   let createLoading = $state(false);
@@ -40,7 +41,7 @@
       newName = '';
       await loadCombos();
     } catch (err) {
-      alert('Create failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+      toast.error('Create failed: ' + (err instanceof Error ? err.message : 'Unknown'));
     } finally {
       createLoading = false;
     }

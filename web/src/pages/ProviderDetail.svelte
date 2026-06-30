@@ -11,6 +11,9 @@
   import ProviderIcon from '$lib/components/ProviderIcon.svelte';
   import { getProviderMeta, getStatusDotColor, getStatusVariant, getStatusLabel } from '$lib/provider-catalog';
   import { toast } from 'svelte-sonner';
+  import AddConnectionModal from '$lib/components/AddConnectionModal.svelte';
+
+  let showAddModal = $state(false);
 
   let { id = '' }: { id?: string } = $props();
   let providerId = $derived(id);
@@ -172,9 +175,9 @@
           <Button onclick={handleTestAll} disabled={testingAll} variant="outline" size="sm" class="text-body-sm rounded-sm">
             {testingAll ? 'Testing...' : 'Test all'}
           </Button>
-          <a href="/providers/add" class="inline-flex items-center justify-center h-8 px-3 text-body-sm bg-primary text-primary-foreground rounded-sm hover:opacity-90 transition-opacity">
+          <Button onclick={() => showAddModal = true} size="sm" class="text-body-sm rounded-sm">
             Add connection
-          </a>
+          </Button>
         </div>
       </div>
 
@@ -212,7 +215,26 @@
               </thead>
               <tbody class="divide-y divide-border">
                 {#if $connections.length === 0}
-                  <tr><td colspan="7" class="p-8 text-center text-body-sm text-muted-foreground">No connections found.</td></tr>
+                  <tr><td colspan="7" class="p-0">
+                    <div class="flex flex-col items-center justify-center py-12 gap-3">
+                      <div class="size-12 rounded-full bg-muted/50 flex items-center justify-center">
+                        <svg class="size-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          {#if meta?.authType === 'oauth'}
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                          {:else}
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                          {/if}
+                        </svg>
+                      </div>
+                      <div class="text-center">
+                        <p class="text-sm font-medium text-muted-foreground">No connections yet</p>
+                        <p class="text-xs text-muted-foreground/70 mt-0.5">Add your first connection to get started</p>
+                      </div>
+                      <Button onclick={() => showAddModal = true} size="sm" class="text-body-sm rounded-sm mt-1">
+                        Add connection
+                      </Button>
+                    </div>
+                  </td></tr>
                 {:else}
                   {#each $connections as row}
                     <tr class="transition-colors hover:bg-accent/20 group">
@@ -306,3 +328,5 @@
     </div>
   {/if}
 </div>
+
+<AddConnectionModal bind:open={showAddModal} {providerId} {meta} onCreated={() => { loadConnections(providerId, currentPage, perPage); loadProvider(providerId); loadProviderModels(providerId); }} />

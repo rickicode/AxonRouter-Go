@@ -232,6 +232,11 @@ export const connectionsApi = {
       `/connections/${id}/oauth`,
       { method: 'POST' }
     ),
+
+  oauthStatus: (id: string) =>
+    fetchApi<{ connected: boolean }>(
+      `/connections/${id}/oauth/status`
+    ),
 };
 
 // Combo API

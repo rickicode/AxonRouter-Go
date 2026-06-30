@@ -9,6 +9,7 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
+  import { toast } from 'svelte-sonner';
 
   let { id = '' }: { id?: string } = $props();
   let comboId = $derived(id);
@@ -44,7 +45,7 @@
       });
       editing = false;
       await loadCombo(comboId);
-    } catch (err) { alert('Save failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+    } catch (err) { toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
     finally { actionLoading = ''; }
   }
 
@@ -52,15 +53,15 @@
     if (!$selectedCombo) return;
     actionLoading = 'toggle';
     try { await combosApi.update(comboId, { is_active: !$selectedCombo.is_active }); await loadCombo(comboId); }
-    catch (err) { alert('Toggle failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+    catch (err) { toast.error('Toggle failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
     finally { actionLoading = ''; }
   }
 
   async function handleDelete() {
     if (!confirm('Delete this combo? This cannot be undone.')) return;
     actionLoading = 'delete';
-    try { await combosApi.delete(comboId); router.navigate('/combos'); }
-    catch (err) { alert('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown')); actionLoading = ''; }
+    try { await combosApi.delete(comboId); toast.success('Combo deleted'); router.navigate('/combos'); }
+    catch (err) { toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown')); actionLoading = ''; }
   }
 
   const strategyOptions = ['priority', 'round-robin'];

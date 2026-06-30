@@ -5,6 +5,7 @@
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { settingsApi } from '$lib/api';
+  import { toast } from 'svelte-sonner';
 
   let settings: Record<string, string> = $state({});
   let loading = $state(true);
@@ -72,7 +73,7 @@
       editingKey = null;
       editingValue = '';
     } catch (err) {
-      alert('Save failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+      toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown'));
     }
   }
 
@@ -99,7 +100,7 @@
       showImport = false;
       importText = '';
     } catch (err) {
-      alert('Import failed: ' + (err instanceof Error ? err.message : 'Invalid JSON'));
+      toast.error('Import failed: ' + (err instanceof Error ? err.message : 'Invalid JSON'));
     }
   }
 </script>

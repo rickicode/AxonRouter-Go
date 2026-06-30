@@ -66,13 +66,39 @@ func (h *OAuthHandler) InitiateOAuth(c *gin.Context) {
 	go func() {
 		select {
 		case creds := <-resultChan:
-			if creds != nil {
-				log.Printf("OAuth completed for connection %s", connID)
+			if creds == nil {
+				log.Printf("OAuth nil credentials for connection %s", connID)
+				return
+			}
+			now := time.Now().Unix()
+			_, err := h.db.Exec(`
+				UPDATE connections SET
+					oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?,
+					status = 'ready', updated_at = ?
+				WHERE id = ?
+			`, creds.AccessToken, creds.RefreshToken, creds.ExpiresAt.Unix(), now, connID)
+			if err != nil {
+				log.Printf("OAuth save tokens failed for connection %s: %v", connID, err)
+			} else {
+				log.Printf("OAuth tokens saved for connection %s", connID)
 			}
 		case <-time.After(5 * time.Minute):
 			log.Printf("OAuth timeout for connection %s", connID)
 		}
 	}()
+}
+
+// OAuthStatus checks if an OAuth connection has received its tokens.
+func (h *OAuthHandler) OAuthStatus(c *gin.Context) {
+	connID := c.Param("id")
+	var oauthToken sql.NullString
+	err := h.db.QueryRow(`SELECT oauth_token FROM connections WHERE id = ?`, connID).Scan(&oauthToken)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
+		return
+	}
+	connected := oauthToken.Valid && oauthToken.String != ""
+	c.JSON(http.StatusOK, gin.H{"connected": connected})
 }
 
 func generateOAuthState() string {

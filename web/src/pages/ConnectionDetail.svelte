@@ -9,6 +9,7 @@
   import { Input } from '$lib/components/ui/input';
   import { router } from '$lib/router';
   import { getProviderMeta, getStatusDotColor, getStatusVariant, getStatusLabel } from '$lib/provider-catalog';
+  import { toast } from 'svelte-sonner';
 
   let { id = '', connId = '' }: { id?: string; connId?: string } = $props();
   let providerId = $derived(id);
@@ -39,38 +40,37 @@
   }
 
   async function handleTest() {
-    actionLoading = 'test';
-    try { await connectionsApi.test(connectionId); await loadConnection(connectionId); }
-    catch (err) { alert('Test failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+    try { await connectionsApi.test(connectionId); await loadConnection(connectionId); toast.success('Connection test passed'); }
+    catch (err) { toast.error('Test failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
     finally { actionLoading = ''; }
   }
 
   async function handleReset() {
     actionLoading = 'reset';
-    try { await connectionsApi.reset(connectionId); await loadConnection(connectionId); }
-    catch (err) { alert('Reset failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+    try { await connectionsApi.reset(connectionId); await loadConnection(connectionId); toast.success('Connection reset'); }
+    catch (err) { toast.error('Reset failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
     finally { actionLoading = ''; }
   }
 
   async function handleToggle() {
     if (!$selectedConnection) return;
     actionLoading = 'toggle';
-    try { await connectionsApi.update(connectionId, { is_active: !$selectedConnection.is_active }); await loadConnection(connectionId); }
-    catch (err) { alert('Toggle failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+    try { await connectionsApi.update(connectionId, { is_active: !$selectedConnection.is_active }); await loadConnection(connectionId); toast.success($selectedConnection.is_active ? 'Connection enabled' : 'Connection disabled'); }
+    catch (err) { toast.error('Toggle failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
     finally { actionLoading = ''; }
   }
 
   async function handleDelete() {
     if (!confirm('Delete this connection? This cannot be undone.')) return;
     actionLoading = 'delete';
-    try { await connectionsApi.delete(connectionId); router.navigate(`/providers/${providerId}`); }
-    catch (err) { alert('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown')); actionLoading = ''; }
+    try { await connectionsApi.delete(connectionId); toast.success('Connection deleted'); router.navigate(`/providers/${providerId}`); }
+    catch (err) { toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown')); actionLoading = ''; }
   }
 
   async function handleSaveName() {
     if (!$selectedConnection || !editName.trim()) return;
-    try { await connectionsApi.update(connectionId, { name: editName.trim() }); editingName = false; await loadConnection(connectionId); }
-    catch (err) { alert('Rename failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+    try { await connectionsApi.update(connectionId, { name: editName.trim() }); editingName = false; await loadConnection(connectionId); toast.success('Name updated'); }
+    catch (err) { toast.error('Rename failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
   }
 
   function startEditName() {
