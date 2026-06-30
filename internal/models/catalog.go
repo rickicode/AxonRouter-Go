@@ -149,11 +149,14 @@ func tryFetch(ctx context.Context) {
 			continue
 		}
 		mu.Lock()
-		// Merge: remote catalog replaces everything, then provider-specific
-		// endpoints will re-merge their models on next provider sync cycle.
-		current = c
+		// Merge: remote catalog updates existing keys and adds new ones,
+		// but preserves local-only providers (mimocode, opencode, etc.)
+		// that may not exist in the remote catalog yet.
+		for k, v := range c {
+			current[k] = v
+		}
 		mu.Unlock()
-		log.Printf("model catalog updated from %s (%d providers)", url, len(c))
+		log.Printf("model catalog updated from %s (%d providers, %d total)", url, len(c), len(current))
 		return
 	}
 	log.Printf("WARN: all model catalog remote URLs failed, using embedded fallback")
