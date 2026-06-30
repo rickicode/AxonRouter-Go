@@ -1,13 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { page } from '$app/stores';
   import {
     loadProvider, selectedProvider,
     loadConnections, connections, connectionPagination, connectionFilter,
     loadProviderModels, providerModels, testProviderModel, modelTestResults,
     isLoading, error
   } from '$lib/stores';
-  import { connectionsApi } from '$lib/api';
+  import { connectionsApi, providersApi } from '$lib/api';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
@@ -16,7 +15,8 @@
   import { getProviderMeta, getStatusDotColor, getStatusVariant, getStatusLabel } from '$lib/provider-catalog';
   import ProviderIcon from '$lib/components/ProviderIcon.svelte';
 
-  let providerId = $derived($page.params.id);
+  let { id = '' }: { id?: string } = $props();
+  let providerId = $derived(id);
   let currentPage = $state(1);
   let perPage = $state(50);
   let testingAll = $state(false);
@@ -28,6 +28,7 @@
   let meta = $derived(getProviderMeta(providerId));
 
   onMount(() => {
+    document.title = 'Provider - AxonRouter';
     loadProvider(providerId);
     loadConnections(providerId, currentPage, perPage);
     loadProviderModels(providerId);
@@ -105,7 +106,7 @@
     try {
       await providersApi.test(providerId);
       loadConnections(providerId, currentPage, perPage);
-    } catch (err) {
+    } catch {
       // ignore
     } finally {
       testingAll = false;
@@ -121,9 +122,6 @@
     }
   }
 
-  // Pull providersApi from import
-  import { providersApi } from '$lib/api';
-
   const statusOptions = [
     { value: '', label: 'All statuses' },
     { value: 'ready', label: 'Ready' },
@@ -136,13 +134,8 @@
   ];
 </script>
 
-<svelte:head>
-  <title>{$selectedProvider?.display_name || 'Provider'} - AxonRouter</title>
-</svelte:head>
-
 <div class="flex flex-1 flex-col gap-6 p-6">
-  <!-- Back link -->
-  <a href="/providers" class="inline-flex items-center gap-1.5 text-body-sm text-muted-foreground hover:text-foreground transition-colors w-fit">
+  <a href="#/providers" class="inline-flex items-center gap-1.5 text-body-sm text-muted-foreground hover:text-foreground transition-colors w-fit">
     <svg class="size-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg>
     Back to providers
   </a>
@@ -156,10 +149,6 @@
           <div class="h-4 w-48 bg-muted/60 animate-pulse rounded-md"></div>
         </div>
       </div>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div class="h-40 bg-muted animate-pulse rounded-md"></div>
-        <div class="h-40 bg-muted animate-pulse rounded-md"></div>
-      </div>
     </div>
   {:else if $error}
     <Card class="shadow-vercel-2 border">
@@ -169,7 +158,6 @@
       </CardContent>
     </Card>
   {:else if $selectedProvider}
-    <!-- Header with icon -->
     <div class="flex items-start gap-4">
       <div
         class="size-12 rounded-lg flex items-center justify-center shrink-0 overflow-hidden"
@@ -193,9 +181,7 @@
       </div>
     </div>
 
-    <!-- Status Summary + Actions -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <!-- Status Summary -->
       <Card class="shadow-vercel-2 border">
         <CardHeader class="pb-3"><CardTitle class="text-body-md font-semibold">Status Summary</CardTitle></CardHeader>
         <CardContent>
@@ -217,7 +203,6 @@
         </CardContent>
       </Card>
 
-      <!-- Actions -->
       <Card class="shadow-vercel-2 border">
         <CardHeader class="pb-3"><CardTitle class="text-body-md font-semibold">Actions</CardTitle></CardHeader>
         <CardContent class="flex flex-wrap gap-2">
@@ -227,14 +212,13 @@
           <Button onclick={() => showBulkAdd = !showBulkAdd} variant="outline" size="sm" class="text-body-sm">
             Bulk add
           </Button>
-          <Button href="/providers/add" size="sm" class="text-body-sm">
+          <a href="#/providers/add" class="inline-flex items-center justify-center h-8 px-3 text-body-sm bg-foreground text-background rounded-md hover:bg-foreground/90 transition-colors">
             Add connection
-          </Button>
+          </a>
         </CardContent>
       </Card>
     </div>
 
-    <!-- Bulk Add Panel -->
     {#if showBulkAdd}
       <Card class="shadow-vercel-2 border border-primary/20">
         <CardHeader class="pb-3">
@@ -333,11 +317,10 @@
         <span class="text-caption-mono text-muted-foreground">{$connectionPagination.total} total</span>
       </div>
 
-      <!-- Filters -->
       <div class="flex flex-wrap gap-3">
         <Select.Root
           value={$connectionFilter.status}
-          onValueChange={(value) => { $connectionFilter.status = value || ''; currentPage = 1; loadConnections(providerId, currentPage, perPage); }}
+          onValueChange={(value: string) => { $connectionFilter.status = value || ''; currentPage = 1; loadConnections(providerId, currentPage, perPage); }}
         >
           <Select.Trigger class="w-[180px] h-9 text-body-sm">
             {statusOptions.find(o => o.value === $connectionFilter.status)?.label || 'All statuses'}
@@ -351,7 +334,6 @@
         <Input type="text" class="w-64 h-9 text-body-sm" placeholder="Search connections..." bind:value={$connectionFilter.search} oninput={() => { currentPage = 1; loadConnections(providerId, currentPage, perPage); }} />
       </div>
 
-      <!-- Connections Table -->
       <Card class="shadow-vercel-2 border overflow-hidden">
         <CardContent class="p-0">
           <div class="overflow-x-auto">
@@ -374,7 +356,7 @@
                   {#each $connections as row}
                     <tr class="transition-colors hover:bg-accent/20 group">
                       <td class="py-3 px-4">
-                        <a href="/providers/{providerId}/{row.id}" class="font-medium text-body-sm hover:underline flex items-center gap-2">
+                        <a href="#/providers/{providerId}/{row.id}" class="font-medium text-body-sm hover:underline flex items-center gap-2">
                           <span class="size-2 rounded-full shrink-0" style="background-color: {getStatusDotColor(row.status)}"></span>
                           {row.name}
                         </a>
@@ -411,7 +393,6 @@
         </CardContent>
       </Card>
 
-      <!-- Pagination -->
       {#if $connectionPagination.total_pages > 1}
         <div class="flex items-center justify-between">
           <p class="text-body-sm text-muted-foreground">

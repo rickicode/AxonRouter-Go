@@ -7,7 +7,7 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
-  
+
   let showCreate = $state(false);
   let createLoading = $state(false);
   let newName = $state('');
@@ -18,6 +18,7 @@
   let newSmartGoal = $state('balanced');
 
   onMount(() => {
+    document.title = 'Combos - AxonRouter';
     loadCombos();
   });
 
@@ -53,10 +54,6 @@
   ];
 </script>
 
-<svelte:head>
-  <title>Combos - AxonRouter</title>
-</svelte:head>
-
 <div class="flex flex-1 flex-col gap-6 p-6">
   {#if $isLoading}
     <div class="flex flex-col gap-6">
@@ -78,7 +75,6 @@
       </CardContent>
     </Card>
   {:else}
-    <!-- Page header -->
     <div class="flex items-center justify-between">
       <div class="space-y-1">
         <h1 class="text-display-lg">Combos.</h1>
@@ -91,7 +87,6 @@
       </Button>
     </div>
 
-    <!-- Create Combo Panel -->
     {#if showCreate}
       <Card class="shadow-vercel-2 border border-primary/20">
         <CardHeader class="pb-3">
@@ -127,7 +122,6 @@
             </div>
           </div>
 
-          <!-- Smart combo toggle -->
           <div class="flex items-center gap-3 pt-2 border-t border-border">
             <label class="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" bind:checked={newIsSmart} class="rounded" />
@@ -162,12 +156,11 @@
         </CardContent>
       </Card>
     {/if}
-    
-    <!-- Combos Grid -->
+
     {#if $combos.length > 0}
       <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         {#each $combos as combo}
-          <a href="/combos/{combo.id}" class="group block">
+          <a href="#/combos/{combo.id}" class="group block">
             <Card class="shadow-vercel-2 border transition-all hover:bg-accent/10 hover:border-foreground/20 h-full">
               <CardHeader class="flex flex-row items-start justify-between space-y-0 pb-3">
                 <div class="space-y-1">
@@ -206,7 +199,6 @@
         {/each}
       </div>
     {:else}
-      <!-- Empty state -->
       <Card class="shadow-vercel-2 border">
         <CardContent class="flex flex-col items-center justify-center py-16">
           <div class="size-12 bg-muted rounded-md flex items-center justify-center mb-4">

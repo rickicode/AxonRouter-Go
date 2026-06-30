@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { page } from '$app/stores';
   import { loadConnection, selectedConnection, isLoading, error } from '$lib/stores';
   import { connectionsApi } from '$lib/api';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
@@ -8,17 +7,19 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
   import { getProviderMeta, getStatusDotColor, getStatusVariant, getStatusLabel } from '$lib/provider-catalog';
-  
-  let providerId = $derived($page.params.id);
-  let connectionId = $derived($page.params.connId);
+
+  let { id = '', connId = '' }: { id?: string; connId?: string } = $props();
+  let providerId = $derived(id);
+  let connectionId = $derived(connId);
   let actionLoading = $state('');
   let editingName = $state(false);
   let editName = $state('');
-  
+
   onMount(() => {
+    document.title = 'Connection - AxonRouter';
     loadConnection(connectionId);
   });
-  
+
   function formatCooldown(cooldownUntil: number | null): string {
     if (!cooldownUntil) return 'None';
     const now = Math.floor(Date.now() / 1000);
@@ -36,69 +37,41 @@
 
   async function handleTest() {
     actionLoading = 'test';
-    try {
-      await connectionsApi.test(connectionId);
-      await loadConnection(connectionId);
-    } catch (err) {
-      alert('Test failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-    } finally {
-      actionLoading = '';
-    }
+    try { await connectionsApi.test(connectionId); await loadConnection(connectionId); }
+    catch (err) { alert('Test failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+    finally { actionLoading = ''; }
   }
 
   async function handleReset() {
     actionLoading = 'reset';
-    try {
-      await connectionsApi.reset(connectionId);
-      await loadConnection(connectionId);
-    } catch (err) {
-      alert('Reset failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-    } finally {
-      actionLoading = '';
-    }
+    try { await connectionsApi.reset(connectionId); await loadConnection(connectionId); }
+    catch (err) { alert('Reset failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+    finally { actionLoading = ''; }
   }
 
   async function handleToggle() {
     if (!$selectedConnection) return;
     actionLoading = 'toggle';
-    try {
-      await connectionsApi.update(connectionId, { is_active: !$selectedConnection.is_active });
-      await loadConnection(connectionId);
-    } catch (err) {
-      alert('Toggle failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-    } finally {
-      actionLoading = '';
-    }
+    try { await connectionsApi.update(connectionId, { is_active: !$selectedConnection.is_active }); await loadConnection(connectionId); }
+    catch (err) { alert('Toggle failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+    finally { actionLoading = ''; }
   }
 
   async function handleDelete() {
-    if (!confirm(`Delete this connection? This cannot be undone.`)) return;
+    if (!confirm('Delete this connection? This cannot be undone.')) return;
     actionLoading = 'delete';
-    try {
-      await connectionsApi.delete(connectionId);
-      window.location.href = `/providers/${providerId}`;
-    } catch (err) {
-      alert('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-      actionLoading = '';
-    }
+    try { await connectionsApi.delete(connectionId); window.location.hash = `#/providers/${providerId}`; }
+    catch (err) { alert('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown')); actionLoading = ''; }
   }
 
   async function handleSaveName() {
     if (!$selectedConnection || !editName.trim()) return;
-    try {
-      await connectionsApi.update(connectionId, { name: editName.trim() });
-      editingName = false;
-      await loadConnection(connectionId);
-    } catch (err) {
-      alert('Rename failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-    }
+    try { await connectionsApi.update(connectionId, { name: editName.trim() }); editingName = false; await loadConnection(connectionId); }
+    catch (err) { alert('Rename failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
   }
 
   function startEditName() {
-    if ($selectedConnection) {
-      editName = $selectedConnection.name;
-      editingName = true;
-    }
+    if ($selectedConnection) { editName = $selectedConnection.name; editingName = true; }
   }
 
   let capabilities = $derived.by(() => {
@@ -109,20 +82,15 @@
   let meta = $derived(getProviderMeta(providerId));
 </script>
 
-<svelte:head>
-  <title>{$selectedConnection?.name || 'Connection'} - AxonRouter</title>
-</svelte:head>
-
 <div class="flex flex-1 flex-col gap-6 p-6">
-  <!-- Breadcrumb -->
   <div class="flex items-center gap-2 text-body-sm text-muted-foreground">
-    <a href="/providers" class="hover:text-foreground transition-colors">Providers</a>
+    <a href="#/providers" class="hover:text-foreground transition-colors">Providers</a>
     <span>/</span>
-    <a href="/providers/{providerId}" class="hover:text-foreground transition-colors">{meta?.displayName ?? providerId}</a>
+    <a href="#/providers/{providerId}" class="hover:text-foreground transition-colors">{meta?.displayName ?? providerId}</a>
     <span>/</span>
     <span class="text-foreground">{$selectedConnection?.name ?? 'Connection'}</span>
   </div>
-  
+
   {#if $isLoading && !$selectedConnection}
     <div class="flex flex-col gap-6">
       <div class="flex items-center gap-4">
@@ -131,10 +99,6 @@
           <div class="h-8 w-64 bg-muted animate-pulse rounded-md"></div>
           <div class="h-4 w-48 bg-muted/60 animate-pulse rounded-md"></div>
         </div>
-      </div>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div class="h-48 bg-muted animate-pulse rounded-md"></div>
-        <div class="h-48 bg-muted animate-pulse rounded-md"></div>
       </div>
     </div>
   {:else if $error}
@@ -145,13 +109,12 @@
       </CardContent>
     </Card>
   {:else if $selectedConnection}
-    <!-- Page header -->
     <div class="space-y-1">
       <div class="flex items-center gap-3">
         <span class="size-3 rounded-full shrink-0" style="background-color: {getStatusDotColor($selectedConnection.status)}"></span>
         {#if editingName}
           <div class="flex items-center gap-2">
-            <Input bind:value={editName} class="h-9 text-display-lg font-semibold w-64" onkeydown={(e) => e.key === 'Enter' && handleSaveName()} />
+            <Input bind:value={editName} class="h-9 text-display-lg font-semibold w-64" onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && handleSaveName()} />
             <Button onclick={handleSaveName} size="sm" class="h-8 text-body-sm">Save</Button>
             <Button onclick={() => editingName = false} variant="ghost" size="sm" class="h-8 text-body-sm">Cancel</Button>
           </div>
@@ -175,14 +138,10 @@
         <span>ID: {$selectedConnection.id}</span>
       </div>
     </div>
-    
-    <!-- Details Grid -->
+
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <!-- Connection Details -->
       <Card class="shadow-vercel-2 border">
-        <CardHeader class="pb-3">
-          <CardTitle class="text-body-md font-semibold">Details</CardTitle>
-        </CardHeader>
+        <CardHeader class="pb-3"><CardTitle class="text-body-md font-semibold">Details</CardTitle></CardHeader>
         <CardContent class="space-y-4">
           <div class="space-y-1">
             <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Provider</p>
@@ -202,12 +161,9 @@
           </div>
         </CardContent>
       </Card>
-      
-      <!-- Status & Timing -->
+
       <Card class="shadow-vercel-2 border">
-        <CardHeader class="pb-3">
-          <CardTitle class="text-body-md font-semibold">Status & Failures</CardTitle>
-        </CardHeader>
+        <CardHeader class="pb-3"><CardTitle class="text-body-md font-semibold">Status & Failures</CardTitle></CardHeader>
         <CardContent class="grid grid-cols-2 gap-4">
           <div class="space-y-1">
             <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Status</p>
@@ -239,13 +195,10 @@
         </CardContent>
       </Card>
     </div>
-    
-    <!-- Capabilities -->
+
     {#if capabilities.length > 0}
       <Card class="shadow-vercel-2 border">
-        <CardHeader class="pb-3">
-          <CardTitle class="text-body-md font-semibold">Capabilities</CardTitle>
-        </CardHeader>
+        <CardHeader class="pb-3"><CardTitle class="text-body-md font-semibold">Capabilities</CardTitle></CardHeader>
         <CardContent>
           <div class="flex flex-wrap gap-1.5">
             {#each capabilities as capability}
@@ -255,12 +208,9 @@
         </CardContent>
       </Card>
     {/if}
-    
-    <!-- Actions -->
+
     <Card class="shadow-vercel-2 border">
-      <CardHeader class="pb-3">
-        <CardTitle class="text-body-md font-semibold">Actions</CardTitle>
-      </CardHeader>
+      <CardHeader class="pb-3"><CardTitle class="text-body-md font-semibold">Actions</CardTitle></CardHeader>
       <CardContent>
         <div class="flex flex-wrap gap-2">
           <Button onclick={handleTest} disabled={!!actionLoading} variant="outline" class="text-body-sm">

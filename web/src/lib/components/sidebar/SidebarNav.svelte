@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { page } from '$app/stores';
+  import { currentPath } from '$lib/router';
   import * as Sidebar from '$lib/components/ui/sidebar';
   import {
     Home,
@@ -12,17 +12,18 @@
   let { onclose }: { onclose?: () => void } = $props();
 
   const platformItems = [
-    { href: '/', label: 'Dashboard', icon: Home },
-    { href: '/providers', label: 'Providers', icon: Server },
-    { href: '/combos', label: 'Combos', icon: Layers },
-    { href: '/logs', label: 'Logs', icon: Terminal },
+    { href: '#/', label: 'Dashboard', icon: Home },
+    { href: '#/providers', label: 'Providers', icon: Server },
+    { href: '#/combos', label: 'Combos', icon: Layers },
+    { href: '#/logs', label: 'Logs', icon: Terminal },
   ];
 
-  const settingsItem = { href: '/settings', label: 'Settings', icon: Settings };
+  const settingsItem = { href: '#/settings', label: 'Settings', icon: Settings };
 
   function isActive(pathname: string, href: string): boolean {
-    if (href === '/') return pathname === '/';
-    return pathname === href || pathname.startsWith(href + '/');
+    const hashPath = href.replace('#', '');
+    if (hashPath === '/') return pathname === '/';
+    return pathname === hashPath || pathname.startsWith(hashPath + '/');
   }
 </script>
 
@@ -34,7 +35,7 @@
     </p>
     <nav class="space-y-0.5">
       {#each platformItems as item}
-        {@const active = isActive($page.url.pathname, item.href)}
+        {@const active = isActive($currentPath, item.href)}
         <a
           href={item.href}
           onclick={onclose}
@@ -68,7 +69,7 @@
     </p>
     <nav class="space-y-0.5">
       {#each [settingsItem] as item}
-        {@const active = isActive($page.url.pathname, item.href)}
+        {@const active = isActive($currentPath, item.href)}
         <a
           href={item.href}
           onclick={onclose}

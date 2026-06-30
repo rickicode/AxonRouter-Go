@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { page } from '$app/stores';
   import { loadCombo, selectedCombo, isLoading, error } from '$lib/stores';
   import { combosApi } from '$lib/api';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
@@ -8,19 +7,19 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
-  
-  let comboId = $derived($page.params.id);
+
+  let { id = '' }: { id?: string } = $props();
+  let comboId = $derived(id);
   let actionLoading = $state('');
   let editing = $state(false);
-
-  // Edit form state
   let editName = $state('');
   let editStrategy = $state('');
   let editTimeout = $state(0);
   let editStickyLimit = $state(0);
   let editIsActive = $state(true);
-  
+
   onMount(() => {
+    document.title = 'Combo - AxonRouter';
     loadCombo(comboId);
   });
 
@@ -38,44 +37,28 @@
     actionLoading = 'save';
     try {
       await combosApi.update(comboId, {
-        name: editName,
-        strategy: editStrategy,
-        timeout_ms: editTimeout,
-        sticky_limit: editStickyLimit,
-        is_active: editIsActive,
+        name: editName, strategy: editStrategy, timeout_ms: editTimeout,
+        sticky_limit: editStickyLimit, is_active: editIsActive,
       });
       editing = false;
       await loadCombo(comboId);
-    } catch (err) {
-      alert('Save failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-    } finally {
-      actionLoading = '';
-    }
+    } catch (err) { alert('Save failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+    finally { actionLoading = ''; }
   }
 
   async function handleToggle() {
     if (!$selectedCombo) return;
     actionLoading = 'toggle';
-    try {
-      await combosApi.update(comboId, { is_active: !$selectedCombo.is_active });
-      await loadCombo(comboId);
-    } catch (err) {
-      alert('Toggle failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-    } finally {
-      actionLoading = '';
-    }
+    try { await combosApi.update(comboId, { is_active: !$selectedCombo.is_active }); await loadCombo(comboId); }
+    catch (err) { alert('Toggle failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+    finally { actionLoading = ''; }
   }
 
   async function handleDelete() {
     if (!confirm('Delete this combo? This cannot be undone.')) return;
     actionLoading = 'delete';
-    try {
-      await combosApi.delete(comboId);
-      window.location.href = '/combos';
-    } catch (err) {
-      alert('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-      actionLoading = '';
-    }
+    try { await combosApi.delete(comboId); window.location.hash = '#/combos'; }
+    catch (err) { alert('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown')); actionLoading = ''; }
   }
 
   const strategyOptions = ['priority', 'round-robin'];
@@ -87,18 +70,13 @@
   };
 </script>
 
-<svelte:head>
-  <title>{$selectedCombo?.name || 'Combo'} - AxonRouter</title>
-</svelte:head>
-
 <div class="flex flex-1 flex-col gap-6 p-6">
-  <!-- Breadcrumb -->
   <div class="flex items-center gap-2 text-body-sm text-muted-foreground">
-    <a href="/combos" class="hover:text-foreground transition-colors">Combos</a>
+    <a href="#/combos" class="hover:text-foreground transition-colors">Combos</a>
     <span>/</span>
     <span class="text-foreground">{$selectedCombo?.name ?? 'Combo'}</span>
   </div>
-  
+
   {#if $isLoading && !$selectedCombo}
     <div class="flex flex-col gap-6">
       <div class="h-8 w-64 bg-muted animate-pulse rounded-md"></div>
@@ -116,12 +94,10 @@
     </Card>
   {:else if $selectedCombo}
     {#if editing}
-      <!-- Edit Mode -->
       <div class="space-y-1">
         <h1 class="text-display-lg">Edit combo.</h1>
         <p class="text-body-sm text-muted-foreground">Modify combo configuration.</p>
       </div>
-
       <Card class="shadow-vercel-2 border">
         <CardContent class="pt-6 space-y-6">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -133,12 +109,7 @@
               <Label class="text-body-sm font-medium">Strategy</Label>
               <div class="flex gap-2">
                 {#each strategyOptions as opt}
-                  <button
-                    class="px-4 py-2 rounded-md text-body-sm border transition-colors {editStrategy === opt ? 'bg-foreground text-background border-foreground' : 'border-border text-muted-foreground hover:text-foreground'}"
-                    onclick={() => editStrategy = opt}
-                  >
-                    {opt}
-                  </button>
+                  <button class="px-4 py-2 rounded-md text-body-sm border transition-colors {editStrategy === opt ? 'bg-foreground text-background border-foreground' : 'border-border text-muted-foreground hover:text-foreground'}" onclick={() => editStrategy = opt}>{opt}</button>
                 {/each}
               </div>
             </div>
@@ -151,15 +122,12 @@
               <Input type="number" bind:value={editStickyLimit} class="h-10 text-body-sm font-mono" />
             </div>
           </div>
-          <div class="flex items-center gap-3">
-            <label class="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" bind:checked={editIsActive} class="rounded" />
-              <span class="text-body-sm">Active</span>
-            </label>
-          </div>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" bind:checked={editIsActive} class="rounded" />
+            <span class="text-body-sm">Active</span>
+          </label>
         </CardContent>
       </Card>
-
       <div class="flex gap-3">
         <Button onclick={handleSave} disabled={!!actionLoading} class="text-body-sm">
           {actionLoading === 'save' ? 'Saving...' : 'Save changes'}
@@ -167,7 +135,6 @@
         <Button onclick={() => editing = false} variant="ghost" class="text-body-sm">Cancel</Button>
       </div>
     {:else}
-      <!-- View Mode -->
       <div class="space-y-1">
         <div class="flex items-center gap-3">
           <h1 class="text-display-lg">{$selectedCombo.name}.</h1>
@@ -180,8 +147,7 @@
         </div>
         <p class="text-caption-mono text-muted-foreground">ID: {$selectedCombo.id}</p>
       </div>
-      
-      <!-- Details Grid -->
+
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card class="shadow-vercel-2 border">
           <CardHeader class="pb-3"><CardTitle class="text-body-md font-semibold">Configuration</CardTitle></CardHeader>
@@ -204,7 +170,7 @@
             </div>
           </CardContent>
         </Card>
-        
+
         <Card class="shadow-vercel-2 border">
           <CardHeader class="pb-3"><CardTitle class="text-body-md font-semibold">Smart settings</CardTitle></CardHeader>
           <CardContent>
@@ -222,28 +188,26 @@
                 </div>
               </div>
             {:else}
-              <p class="text-body-sm text-muted-foreground">Standard combo with fixed routing steps. Enable smart mode for goal-based resolution.</p>
+              <p class="text-body-sm text-muted-foreground">Standard combo with fixed routing steps.</p>
             {/if}
           </CardContent>
         </Card>
       </div>
-      
-      <!-- Steps -->
+
       <Card class="shadow-vercel-2 border">
         <CardHeader class="flex flex-row items-center justify-between pb-3">
           <CardTitle class="text-body-md font-semibold">Routing steps</CardTitle>
         </CardHeader>
         <CardContent>
           <p class="text-body-sm text-muted-foreground">
-            Define the order in which models are tried. Each step specifies a provider/model combination with the configured strategy.
+            Define the order in which models are tried. Each step specifies a provider/model combination.
           </p>
           <div class="mt-4 p-8 border border-dashed border-border rounded-md text-center text-body-sm text-muted-foreground">
             Steps editor coming soon. Configure via API for now.
           </div>
         </CardContent>
       </Card>
-      
-      <!-- Actions -->
+
       <Card class="shadow-vercel-2 border">
         <CardHeader class="pb-3"><CardTitle class="text-body-md font-semibold">Actions</CardTitle></CardHeader>
         <CardContent>

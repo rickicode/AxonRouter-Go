@@ -4,15 +4,12 @@
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
-  
+
   onMount(() => {
+    document.title = 'Dashboard - AxonRouter';
     loadDashboardStats();
   });
 </script>
-
-<svelte:head>
-  <title>Dashboard - AxonRouter</title>
-</svelte:head>
 
 <div class="flex flex-1 flex-col gap-8 p-6">
   {#if $isLoading}
@@ -90,30 +87,27 @@
     <div class="space-y-4">
       <div class="flex items-center justify-between">
         <h2 class="text-display-sm">Providers.</h2>
-        <Button href="/providers" variant="ghost" size="sm" class="text-body-sm text-muted-foreground hover:text-foreground">
+        <a href="#/providers" class="text-body-sm text-muted-foreground hover:text-foreground transition-colors">
           View all &rarr;
-        </Button>
+        </a>
       </div>
 
       {#if $dashboardStats.providers?.length > 0}
         <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {#each $dashboardStats.providers as provider}
-            <Card class="shadow-vercel-2 border transition-all hover:bg-accent/10">
-              <CardHeader class="flex flex-row items-start justify-between space-y-0 pb-3">
-                <div class="space-y-1">
-                  <CardTitle class="text-body-md font-medium">{provider.name}</CardTitle>
-                  <p class="text-caption-mono text-muted-foreground">{provider.id}</p>
-                </div>
-                <Badge variant="secondary" class="text-caption-mono rounded-sm">
-                  {provider.connection_count} conns
-                </Badge>
-              </CardHeader>
-              <CardContent>
-                <Button href="/providers/{provider.id}" variant="outline" size="sm" class="text-body-sm w-full">
-                  Manage
-                </Button>
-              </CardContent>
-            </Card>
+            <a href="#/providers/{provider.id}" class="group block">
+              <Card class="shadow-vercel-2 border transition-all hover:bg-accent/10 h-full">
+                <CardHeader class="flex flex-row items-start justify-between space-y-0 pb-3">
+                  <div class="space-y-1">
+                    <CardTitle class="text-body-md font-medium">{provider.name}</CardTitle>
+                    <p class="text-caption-mono text-muted-foreground">{provider.id}</p>
+                  </div>
+                  <Badge variant="secondary" class="text-caption-mono rounded-sm">
+                    {provider.connection_count} conns
+                  </Badge>
+                </CardHeader>
+              </Card>
+            </a>
           {/each}
         </div>
       {:else}
@@ -127,9 +121,9 @@
 
     <!-- Quick Actions -->
     <div class="flex flex-wrap gap-3 pt-4 border-t border-border">
-      <Button href="/providers/add" class="h-9 px-4 text-body-sm">Add provider</Button>
-      <Button href="/logs" variant="outline" class="h-9 px-4 text-body-sm">View logs</Button>
-      <Button href="/settings" variant="ghost" class="h-9 px-4 text-body-sm text-muted-foreground">Settings</Button>
+      <a href="#/providers/add" class="inline-flex items-center justify-center h-9 px-4 text-body-sm bg-foreground text-background rounded-md hover:bg-foreground/90 transition-colors">Add provider</a>
+      <a href="#/logs" class="inline-flex items-center justify-center h-9 px-4 text-body-sm border border-border rounded-md hover:bg-accent/10 transition-colors">View logs</a>
+      <a href="#/settings" class="inline-flex items-center justify-center h-9 px-4 text-body-sm text-muted-foreground hover:text-foreground transition-colors">Settings</a>
     </div>
   {/if}
 </div>

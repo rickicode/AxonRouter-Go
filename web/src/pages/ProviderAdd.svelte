@@ -2,24 +2,20 @@
   import { PROVIDER_CATALOG, CATEGORIES, getProviderMeta } from '$lib/provider-catalog';
   import ProviderIcon from '$lib/components/ProviderIcon.svelte';
   import { connectionsApi } from '$lib/api';
-  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
+  import { Card, CardContent } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
+  import { onMount } from 'svelte';
 
   let step = $state<'select' | 'configure' | 'done'>('select');
   let selectedProvider = $state<string | null>(null);
   let searchQuery = $state('');
   let activeCategory = $state('');
 
-  // Connection form state
   let connectionName = $state('');
   let apiKey = $state('');
-  let customName = $state('');
-  let customFormat = $state('openai');
-  let customBaseUrl = $state('');
-  let customApiKey = $state('');
   let loading = $state(false);
   let resultMsg = $state('');
   let resultOk = $state(false);
@@ -42,6 +38,8 @@
     return list;
   });
 
+  onMount(() => { document.title = 'Add Provider - AxonRouter'; });
+
   function selectProvider(id: string) {
     selectedProvider = id;
     connectionName = '';
@@ -56,7 +54,7 @@
     resultMsg = '';
     try {
       const name = connectionName.trim() || `${selectedProvider}-key-001`;
-      const data: Record<string, any> = { name };
+      const data: Record<string, unknown> = { name };
       if (meta?.authType === 'apikey' && apiKey.trim()) {
         data.api_key = apiKey.trim();
       }
@@ -72,43 +70,12 @@
     }
   }
 
-  async function handleAddCustom() {
-    if (!customName.trim() || !customBaseUrl.trim()) return;
-    loading = true;
-    resultMsg = '';
-    try {
-      // Create via providers API first, then add connection
-      const data = {
-        name: customName.trim() || 'custom-provider',
-        api_key: customApiKey.trim(),
-      };
-      // For custom providers, we'd need a different API flow
-      // For now, show a message
-      resultOk = false;
-      resultMsg = 'Custom provider creation not yet implemented via API. Use the provider detail page to add connections.';
-    } catch (err) {
-      resultOk = false;
-      resultMsg = err instanceof Error ? err.message : 'Failed';
-    } finally {
-      loading = false;
-    }
-  }
-
-  function getCategoryProviders(categoryId: string) {
-    return filteredCatalog.filter(p => p.category === categoryId);
-  }
-
   const filterCategories = CATEGORIES.filter(c => ['oauth', 'apikey', 'free', 'free_tier', 'compatible'].includes(c.id));
 </script>
 
-<svelte:head>
-  <title>Add Provider - AxonRouter</title>
-</svelte:head>
-
 <div class="flex flex-1 flex-col gap-6 p-6">
-  <!-- Breadcrumb -->
   <div class="flex items-center gap-2 text-body-sm text-muted-foreground">
-    <a href="/providers" class="hover:text-foreground transition-colors">Providers</a>
+    <a href="#/providers" class="hover:text-foreground transition-colors">Providers</a>
     <span>/</span>
     <span class="text-foreground">Add provider</span>
   </div>
@@ -121,7 +88,6 @@
       </p>
     </div>
 
-    <!-- Search + Filter -->
     <div class="flex flex-col gap-3">
       <Input
         type="text"
@@ -149,7 +115,6 @@
       </div>
     </div>
 
-    <!-- Provider Grid -->
     {#if filteredCatalog.length > 0}
       <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
         {#each filteredCatalog as provider}
@@ -193,7 +158,6 @@
     {/if}
 
   {:else if step === 'configure' && meta}
-    <!-- Configure Connection -->
     <div class="space-y-1">
       <div class="flex items-center gap-3">
         <button class="text-muted-foreground hover:text-foreground transition-colors" onclick={() => step = 'select'} aria-label="Back to provider selection">
@@ -254,7 +218,6 @@
     </Card>
 
   {:else if step === 'done'}
-    <!-- Success -->
     <Card class="shadow-vercel-2 border max-w-xl">
       <CardContent class="flex flex-col items-center justify-center py-16 text-center">
         <div class="size-12 rounded-full bg-emerald-500/10 flex items-center justify-center mb-4">
@@ -268,9 +231,9 @@
           <Button onclick={() => { step = 'select'; selectedProvider = null; resultMsg = ''; }} variant="outline" class="text-body-sm">
             Add another
           </Button>
-          <Button href="/providers/{selectedProvider}" class="text-body-sm">
+          <a href="#/providers/{selectedProvider}" class="inline-flex items-center justify-center h-9 px-4 text-body-sm bg-foreground text-background rounded-md hover:bg-foreground/90 transition-colors">
             View provider
-          </Button>
+          </a>
         </div>
       </CardContent>
     </Card>

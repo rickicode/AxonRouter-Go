@@ -5,7 +5,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
-  
+
   let settings: Record<string, string> = $state({});
   let isLoading = $state(true);
   let error: string | null = $state(null);
@@ -13,11 +13,12 @@
   let editingValue = $state('');
   let importText = $state('');
   let showImport = $state(false);
-  
+
   onMount(async () => {
+    document.title = 'Settings - AxonRouter';
     await loadSettings();
   });
-  
+
   async function loadSettings() {
     isLoading = true;
     error = null;
@@ -29,17 +30,17 @@
       isLoading = false;
     }
   }
-  
+
   function startEdit(key: string, value: string) {
     editingKey = key;
     editingValue = value;
   }
-  
+
   function cancelEdit() {
     editingKey = null;
     editingValue = '';
   }
-  
+
   async function saveEdit() {
     if (!editingKey) return;
     try {
@@ -82,7 +83,7 @@
       alert('Import failed: ' + (err instanceof Error ? err.message : 'Invalid JSON'));
     }
   }
-  
+
   const defaultSettings: Record<string, string> = {
     'quota_check_interval': '30m',
     'usage_flush_interval': '5s',
@@ -92,7 +93,7 @@
     'api_rate_limit': '600',
     'log_retention_days': '30',
   };
-  
+
   function formatSettingKey(key: string) {
     return key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
   }
@@ -108,20 +109,14 @@
   };
 </script>
 
-<svelte:head>
-  <title>Settings - AxonRouter</title>
-</svelte:head>
-
 <div class="flex flex-1 flex-col gap-6 p-6">
-  <!-- Page header -->
   <div class="space-y-1">
     <h1 class="text-display-lg">Settings.</h1>
     <p class="text-body-sm text-muted-foreground">
       Configure system behavior, rate limits, and background task intervals.
     </p>
   </div>
-  
-  <!-- System Settings Section -->
+
   <Card class="shadow-vercel-2 border">
     <CardHeader class="pb-3">
       <div class="flex items-center justify-between">
@@ -157,15 +152,9 @@
                   <p class="text-caption-mono text-muted-foreground/60">{settingDescriptions[key]}</p>
                 {/if}
               </div>
-              
               <div class="flex items-center gap-2 shrink-0">
                 {#if editingKey === key}
-                  <Input
-                    type="text"
-                    class="w-36 h-8 text-body-sm font-mono"
-                    bind:value={editingValue}
-                    onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && saveEdit()}
-                  />
+                  <Input type="text" class="w-36 h-8 text-body-sm font-mono" bind:value={editingValue} onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && saveEdit()} />
                   <Button onclick={saveEdit} size="sm" class="h-8 text-body-sm">Save</Button>
                   <Button onclick={cancelEdit} variant="ghost" size="sm" class="h-8 text-body-sm">Cancel</Button>
                 {:else}
@@ -179,8 +168,7 @@
       {/if}
     </CardContent>
   </Card>
-  
-  <!-- Actions -->
+
   <Card class="shadow-vercel-2 border">
     <CardHeader class="pb-3">
       <CardTitle class="text-body-md font-semibold">Data Management</CardTitle>
@@ -212,8 +200,7 @@
       {/if}
     </CardContent>
   </Card>
-  
-  <!-- Info card -->
+
   <Card class="shadow-vercel-1 border bg-accent/20">
     <CardContent class="pt-6">
       <h3 class="text-body-md font-semibold mb-3">About Settings</h3>
@@ -222,19 +209,19 @@
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
           <div class="space-y-1">
             <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Quota check interval</p>
-            <p>How often the background scheduler checks provider quotas. Providers with proactive quota APIs are polled at this interval.</p>
+            <p>How often the background scheduler checks provider quotas.</p>
           </div>
           <div class="space-y-1">
             <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Usage flush interval</p>
-            <p>Request logs are buffered in memory and flushed to SQLite at this interval for performance.</p>
+            <p>Request logs are buffered in memory and flushed to SQLite at this interval.</p>
           </div>
           <div class="space-y-1">
             <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Circuit breaker cleanup</p>
-            <p>Expired circuit breaker states are cleaned up at this interval to allow retry of failed connections.</p>
+            <p>Expired circuit breaker states are cleaned up at this interval.</p>
           </div>
           <div class="space-y-1">
             <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Default combo timeout</p>
-            <p>Maximum time in milliseconds for a combo routing attempt before falling back to the next step.</p>
+            <p>Maximum time in milliseconds for a combo routing attempt.</p>
           </div>
         </div>
       </div>

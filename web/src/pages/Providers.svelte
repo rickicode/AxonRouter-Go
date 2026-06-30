@@ -14,6 +14,7 @@
   } from '$lib/provider-catalog';
   import ProviderIcon from '$lib/components/ProviderIcon.svelte';
   import { providersApi } from '$lib/api';
+
   let searchQuery = $state('');
   let activeCategory = $state('');
   let testingId = $state<string | null>(null);
@@ -25,6 +26,7 @@
   );
 
   onMount(() => {
+    document.title = 'Providers — AxonRouter';
     loadProviders();
   });
 
@@ -64,8 +66,9 @@
     try {
       const res = await providersApi.test(id);
       testResults[id] = { ok: res.success, msg: res.message ?? (res.success ? 'OK' : 'Failed') };
-    } catch (e: any) {
-      testResults[id] = { ok: false, msg: e?.message ?? 'Error' };
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Error';
+      testResults[id] = { ok: false, msg };
     } finally {
       testingId = null;
     }
@@ -76,13 +79,8 @@
   }
 </script>
 
-<svelte:head>
-  <title>Providers — AxonRouter</title>
-</svelte:head>
-
 <div class="flex flex-1 flex-col gap-6 p-6">
   {#if $isLoading}
-    <!-- Loading skeleton -->
     <div class="flex flex-col gap-6">
       <div class="space-y-2">
         <div class="h-8 w-48 animate-pulse rounded-md bg-muted"></div>
@@ -110,7 +108,7 @@
           {$providers.length} providers configured.
         </p>
       </div>
-      <Button href="/providers/add">Add provider</Button>
+      <a href="#/providers/add" class="inline-flex items-center justify-center h-9 px-4 text-body-sm bg-foreground text-background rounded-md hover:bg-foreground/90 transition-colors">Add provider</a>
     </div>
 
     <!-- Filter bar -->
@@ -150,7 +148,6 @@
       {#each filterCategories as cat}
         {#if groupedProviders[cat.id]?.length}
           {@const isCollapsed = collapsed[cat.id]}
-          <!-- Section header -->
           <button
             class="flex items-center gap-2 text-left"
             onclick={() => toggleCollapse(cat.id)}
@@ -174,11 +171,10 @@
                 {@const color = meta?.color ?? '#888888'}
                 {@const result = testResults[provider.id]}
                 <a
-                  href="/providers/{provider.id}"
+                  href="#/providers/{provider.id}"
                   class="group block rounded-lg border border-border bg-card shadow-vercel-2 transition-all hover:border-foreground/20 hover:bg-accent/10"
                 >
                   <div class="flex flex-col gap-3 p-4">
-                    <!-- Row 1: Icon + Name + category dot -->
                     <div class="flex items-center gap-3">
                       <div
                         class="flex shrink-0 items-center justify-center rounded-md overflow-hidden"
@@ -195,7 +191,6 @@
                       ></span>
                     </div>
 
-                    <!-- Row 2: Status badges -->
                     {#if provider.status_counts}
                       <div class="flex flex-wrap gap-1.5">
                         {#each Object.entries(provider.status_counts) as [status, count]}
@@ -216,7 +211,6 @@
                       </div>
                     {/if}
 
-                    <!-- Row 3: Format + prefix -->
                     <div class="flex flex-wrap gap-1.5">
                       {#if provider.format}
                         <Badge variant="outline" class="rounded-full text-caption-mono">
@@ -230,17 +224,12 @@
                       {/if}
                     </div>
 
-                    <!-- Footer: Manage + Test -->
                     <div class="flex gap-2 border-t border-border pt-3">
-                      <Button
-                        href="/providers/{provider.id}"
-                        variant="outline"
-                        size="sm"
-                        class="flex-1 text-body-sm"
-                        onclick={(e: Event) => e.stopPropagation()}
+                      <span
+                        class="flex-1 inline-flex items-center justify-center h-8 text-body-sm border border-border rounded-md"
                       >
                         Manage
-                      </Button>
+                      </span>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -260,7 +249,6 @@
                       </Button>
                     </div>
 
-                    <!-- Test result flash -->
                     {#if result}
                       <p
                         class="text-caption-mono {result.ok
@@ -278,7 +266,6 @@
         {/if}
       {/each}
     {:else}
-      <!-- Empty state -->
       <Card class="border shadow-vercel-2">
         <CardContent class="flex flex-col items-center justify-center py-16">
           <p class="text-body-sm text-muted-foreground">No providers match your filters.</p>
