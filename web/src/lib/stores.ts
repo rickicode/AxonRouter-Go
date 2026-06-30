@@ -4,6 +4,11 @@ import { writable, derived } from 'svelte/store';
 import { providersApi, connectionsApi, combosApi, logsApi, dashboardApi, fetchApi } from './api';
 import type { Provider, Connection, Combo, RequestLog } from './api';
 
+function friendlyError(err: unknown, fallback: string): string {
+  const msg = err instanceof Error ? err.message : fallback;
+  return msg.includes('aborted') ? 'Backend not reachable. Is the server running?' : msg;
+}
+
 // Loading state
 export const isLoading = writable(false);
 export const error = writable<string | null>(null);
@@ -43,6 +48,10 @@ export const logPagination = writable({
   total: 0,
   total_pages: 0,
 });
+
+// Models per provider
+export const providerModels = writable<string[]>([]);
+export const modelTestResults = writable<Record<string, { status: string; latency_ms: number; error?: string }>>({});
 
 // Filters
 export const connectionFilter = writable({
@@ -96,36 +105,33 @@ export async function loadDashboardStats() {
   error.set(null);
   
   try {
-    // Call endpoints in parallel
     const [statsData, providersData, logsData] = await Promise.all([
-      dashboardApi.stats() as any,
-      fetchApi<{ data: any[] }>('/dashboard/providers').catch(() => ({ data: [] })),
-      fetchApi<{ data: any[] }>('/dashboard/recent-logs').catch(() => ({ data: [] }))
+      dashboardApi.stats() as Promise<{ total_connections: number; status_counts?: { ready: number }; requests_today: number }>,
+      fetchApi<{ data: unknown[] }>('/dashboard/providers').catch(() => ({ data: [] })),
+      fetchApi<{ data: { status_code: number }[] }>('/dashboard/recent-logs').catch(() => ({ data: [] }))
     ]);
     
-    // Calculate success rate based on recent logs
     let successRate = 100;
-    if (logsData && logsData.data && logsData.data.length > 0) {
-      const successful = logsData.data.filter((l: any) => l.status_code >= 200 && l.status_code < 300).length;
+    if (logsData.data.length > 0) {
+      const successful = logsData.data.filter((l) => l.status_code >= 200 && l.status_code < 300).length;
       successRate = Math.round((successful / logsData.data.length) * 100);
     }
     
-    // Construct the structured dashboardStats object expected by Svelte page
-    const mappedStats = {
+    const providers = (providersData.data || []) as { id: string; display_name?: string; total?: number }[];
+    
+    dashboardStats.set({
       total_connections: statsData.total_connections || 0,
       active_connections: statsData.status_counts?.ready || 0,
       total_requests_today: statsData.requests_today || 0,
       success_rate: successRate,
-      providers: (providersData.data || []).map((p: any) => ({
+      providers: providers.map((p) => ({
         id: p.id,
         name: p.display_name || p.id,
         connection_count: p.total || 0
       }))
-    };
-    
-    dashboardStats.set(mappedStats);
+    });
   } catch (err) {
-    error.set(err instanceof Error ? err.message : 'Failed to load dashboard stats');
+    error.set(friendlyError(err, 'Failed to load dashboard stats'));
   } finally {
     isLoading.set(false);
   }
@@ -139,7 +145,7 @@ export async function loadProviders() {
     const response = await providersApi.list();
     providers.set(response.data || []);
   } catch (err) {
-    error.set(err instanceof Error ? err.message : 'Failed to load providers');
+    error.set(friendlyError(err, 'Failed to load providers'));
   } finally {
     isLoading.set(false);
   }
@@ -154,7 +160,7 @@ export async function loadProvider(id: string) {
     selectedProvider.set(provider);
     return provider;
   } catch (err) {
-    error.set(err instanceof Error ? err.message : 'Failed to load provider');
+    error.set(friendlyError(err, 'Failed to load provider'));
     return null;
   } finally {
     isLoading.set(false);
@@ -188,7 +194,7 @@ export async function loadConnections(
       connectionPagination.set(response.pagination);
     }
   } catch (err) {
-    error.set(err instanceof Error ? err.message : 'Failed to load connections');
+    error.set(friendlyError(err, 'Failed to load connections'));
   } finally {
     isLoading.set(false);
   }
@@ -203,7 +209,7 @@ export async function loadConnection(id: string) {
     selectedConnection.set(connection);
     return connection;
   } catch (err) {
-    error.set(err instanceof Error ? err.message : 'Failed to load connection');
+    error.set(friendlyError(err, 'Failed to load connection'));
     return null;
   } finally {
     isLoading.set(false);
@@ -218,7 +224,7 @@ export async function loadCombos() {
     const response = await combosApi.list();
     combos.set(response.data || []);
   } catch (err) {
-    error.set(err instanceof Error ? err.message : 'Failed to load combos');
+    error.set(friendlyError(err, 'Failed to load combos'));
   } finally {
     isLoading.set(false);
   }
@@ -233,10 +239,32 @@ export async function loadCombo(id: string) {
     selectedCombo.set(combo);
     return combo;
   } catch (err) {
-    error.set(err instanceof Error ? err.message : 'Failed to load combo');
+    error.set(friendlyError(err, 'Failed to load combo'));
     return null;
   } finally {
     isLoading.set(false);
+  }
+}
+
+export async function loadProviderModels(providerId: string) {
+  try {
+    const response = await providersApi.models(providerId);
+    providerModels.set(response.data || []);
+  } catch {
+    providerModels.set([]);
+  }
+}
+
+export async function testProviderModel(providerId: string, model: string) {
+  modelTestResults.update(r => ({ ...r, [model]: { status: 'testing', latency_ms: 0 } }));
+  try {
+    const result = await providersApi.testModel(providerId, model);
+    modelTestResults.update(r => ({ ...r, [model]: result }));
+  } catch (err) {
+    modelTestResults.update(r => ({
+      ...r,
+      [model]: { status: 'error', latency_ms: 0, error: err instanceof Error ? err.message : 'Unknown error' }
+    }));
   }
 }
 
@@ -279,7 +307,7 @@ export async function loadLogs(page = 1, perPage = 100) {
       logPagination.set(response.pagination);
     }
   } catch (err) {
-    error.set(err instanceof Error ? err.message : 'Failed to load logs');
+    error.set(friendlyError(err, 'Failed to load logs'));
   } finally {
     isLoading.set(false);
   }
@@ -307,42 +335,26 @@ export function formatCost(cost: number): string {
 
 export function getStatusColor(status: string): string {
   switch (status) {
-    case 'ready':
-      return 'text-green-600 bg-green-50';
-    case 'rate_limited':
-      return 'text-yellow-600 bg-yellow-50';
-    case 'quota_exhausted':
-      return 'text-orange-600 bg-orange-50';
-    case 'balance_empty':
-      return 'text-red-600 bg-red-50';
-    case 'auth_failed':
-      return 'text-red-600 bg-red-50';
-    case 'suspended':
-      return 'text-gray-600 bg-gray-50';
-    case 'disabled':
-      return 'text-gray-600 bg-gray-50';
-    default:
-      return 'text-gray-600 bg-gray-50';
+    case 'ready': return 'text-green-600 bg-green-50';
+    case 'rate_limited': return 'text-yellow-600 bg-yellow-50';
+    case 'quota_exhausted': return 'text-orange-600 bg-orange-50';
+    case 'balance_empty': return 'text-red-600 bg-red-50';
+    case 'auth_failed': return 'text-red-600 bg-red-50';
+    case 'suspended': return 'text-gray-600 bg-gray-50';
+    case 'disabled': return 'text-gray-600 bg-gray-50';
+    default: return 'text-gray-600 bg-gray-50';
   }
 }
 
 export function getStatusLabel(status: string): string {
   switch (status) {
-    case 'ready':
-      return 'Ready';
-    case 'rate_limited':
-      return 'Rate Limited';
-    case 'quota_exhausted':
-      return 'Quota Exhausted';
-    case 'balance_empty':
-      return 'Balance Empty';
-    case 'auth_failed':
-      return 'Auth Failed';
-    case 'suspended':
-      return 'Suspended';
-    case 'disabled':
-      return 'Disabled';
-    default:
-      return status;
+    case 'ready': return 'Ready';
+    case 'rate_limited': return 'Rate Limited';
+    case 'quota_exhausted': return 'Quota Exhausted';
+    case 'balance_empty': return 'Balance Empty';
+    case 'auth_failed': return 'Auth Failed';
+    case 'suspended': return 'Suspended';
+    case 'disabled': return 'Disabled';
+    default: return status;
   }
 }

@@ -83,27 +83,35 @@ interface Settings {
   [key: string]: string;
 }
 
-// Generic fetch wrapper
+// Generic fetch wrapper with timeout
 export async function fetchApi<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
   const url = `${API_BASE}${endpoint}`;
   
-  const response = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-    ...options,
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+      signal: controller.signal,
+      ...options,
+    });
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: response.statusText }));
-    throw new Error(error.message || `HTTP ${response.status}`);
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: response.statusText }));
+      throw new Error(error.message || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return response.json();
 }
 
 // Provider API
@@ -133,6 +141,15 @@ export const providersApi = {
     fetchApi<{ success: boolean; message: string }>(`/providers/${id}/test`, {
       method: 'POST',
     }),
+
+  models: (id: string) =>
+    fetchApi<{ data: string[] }>(`/providers/${id}/models`),
+
+  testModel: (id: string, model: string) =>
+    fetchApi<{ status: string; status_code?: number; latency_ms: number; error?: string }>(
+      `/providers/${id}/models/test`,
+      { method: 'POST', body: JSON.stringify({ model }) }
+    ),
 };
 
 // Connection API
@@ -204,6 +221,12 @@ export const connectionsApi = {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
+
+  initiateOAuth: (id: string) =>
+    fetchApi<{ auth_url: string; callback_port: number }>(
+      `/connections/${id}/oauth`,
+      { method: 'POST' }
+    ),
 };
 
 // Combo API
