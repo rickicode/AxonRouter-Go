@@ -87,6 +87,7 @@ func (h *ProviderHandler) Get(c *gin.Context) {
 func (h *ProviderHandler) Create(c *gin.Context) {
 	var req struct {
 		Name           string            `json:"name" binding:"required"`
+		DisplayName    string            `json:"display_name"`
 		Format         string            `json:"format" binding:"required"`
 		BaseURL        string            `json:"base_url" binding:"required"`
 		CustomHeaders  map[string]string `json:"custom_headers"`
@@ -115,10 +116,14 @@ func (h *ProviderHandler) Create(c *gin.Context) {
 	}
 
 	now := time.Now().Unix()
+	displayName := req.DisplayName
+	if displayName == "" {
+		displayName = req.Name
+	}
 	_, err := h.db.Exec(`
 		INSERT INTO provider_types (id, display_name, format, base_url, is_custom, custom_headers, created_at)
 		VALUES (?, ?, ?, ?, 1, ?, ?)
-	`, req.Name, req.Name, req.Format, req.BaseURL, headersJSON, now)
+	`, req.Name, displayName, req.Format, req.BaseURL, headersJSON, now)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -126,7 +131,7 @@ func (h *ProviderHandler) Create(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, gin.H{
 		"id":           req.Name,
-		"display_name": req.Name,
+		"display_name": displayName,
 		"format":       req.Format,
 		"base_url":     req.BaseURL,
 		"is_custom":    true,

@@ -13,7 +13,6 @@
   import Providers from './pages/Providers.svelte';
   import ProviderDetail from './pages/ProviderDetail.svelte';
   import ConnectionDetail from './pages/ConnectionDetail.svelte';
-  import ProviderAdd from './pages/ProviderAdd.svelte';
   import Combos from './pages/Combos.svelte';
   import ComboDetail from './pages/ComboDetail.svelte';
   import Logs from './pages/Logs.svelte';
@@ -47,8 +46,6 @@
     // /providers → Providers
     if (segments[0] === 'providers' && segments.length === 1) return { component: Providers, params: {} };
 
-    // /providers/add → ProviderAdd
-    if (segments[0] === 'providers' && segments[1] === 'add') return { component: ProviderAdd, params: {} };
 
     // /providers/:id/:connId → ConnectionDetail
     if (segments[0] === 'providers' && segments.length === 3) return { component: ConnectionDetail, params: { id: segments[1], connId: segments[2] } };

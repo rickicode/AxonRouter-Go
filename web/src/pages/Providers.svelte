@@ -15,6 +15,8 @@
   } from '$lib/provider-catalog';
   import ProviderIcon from '$lib/components/ProviderIcon.svelte';
   import type { Provider } from '$lib/api';
+  import AddProviderModal from '$lib/components/AddProviderModal.svelte';
+  let showAddModal = $state(false);
 
   let searchQuery = $state('');
   let activeCategory = $state('');
@@ -221,7 +223,7 @@
               OmniRoute-style provider catalog with AxonRouter connection health, auth labels, prefixes, and model surface details.
             </p>
           </div>
-          <Button href="/providers/add" class="h-10 rounded-sm px-4 text-button-md">
+          <Button onclick={() => showAddModal = true} class="h-10 rounded-sm px-4 text-button-md">
             Add provider
           </Button>
         </div>
@@ -407,4 +409,5 @@
       </section>
     {/if}
   {/if}
+<AddProviderModal bind:open={showAddModal} onCreated={() => loadProviders()} />
 </div>
