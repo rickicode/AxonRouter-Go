@@ -370,7 +370,7 @@
             </div>
 
             {#if !isCollapsed}
-              <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
                 {#each sectionProviders as provider (provider.id)}
                   {@const meta = providerMeta(provider)}
                   {@const iconMeta = providerIconMeta(provider)}
@@ -378,16 +378,16 @@
                   {@const category = getCategoryById(providerCategoryId(provider))}
                   {@const result = testResults[provider.id]}
                   <article
-                    class="group flex min-h-[240px] flex-col rounded-xl border border-border bg-card shadow-vercel-2 transition-all duration-200 hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-vercel-3"
+                    class="group flex min-h-[154px] flex-col rounded-lg border border-border bg-card shadow-vercel-1 transition-all duration-200 hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-vercel-2"
                     style="box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.7), 0 8px 22px rgb(0 0 0 / 0.05), 0 0 0 1px {hexToRgba(color, 0.06)};"
                   >
-                    <div class="flex flex-1 flex-col gap-4 p-4">
+                    <div class="flex flex-1 flex-col gap-2.5 p-3">
                       <div class="flex items-start gap-3">
                         <div
-                          class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border"
+                          class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border"
                           style="background: {hexToRgba(color, 0.10)}; border-color: {hexToRgba(color, 0.18)};"
                         >
-                          <ProviderIcon meta={iconMeta} size={30} />
+                          <ProviderIcon meta={iconMeta} size={24} />
                         </div>
                         <div class="min-w-0 flex-1">
                           <div class="flex min-w-0 items-start justify-between gap-2">
@@ -405,29 +405,29 @@
                         </div>
                       </div>
 
-                      <p class="line-clamp-2 min-h-10 text-body-sm text-muted-foreground">
+                      <p class="line-clamp-1 text-caption text-muted-foreground">
                         {providerDescription(provider)}
                       </p>
 
                       <div class="flex flex-wrap gap-1.5">
                         {#each serviceKinds(provider) as kind}
-                          <span class="rounded-md border border-border bg-background px-2 py-1 text-[10px] font-medium text-muted-foreground">
+                          <span class="rounded-md border border-border bg-background px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
                             {KIND_LABELS[kind] ?? kind}
                           </span>
                         {/each}
                         {#if provider.format}
-                          <span class="rounded-md border border-border bg-background px-2 py-1 text-[10px] font-mono text-muted-foreground">
+                          <span class="rounded-md border border-border bg-background px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">
                             {provider.format}
                           </span>
                         {/if}
                         {#if meta?.hasFree}
-                          <span class="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] font-medium text-emerald-700">
+                          <span class="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
                             Free tier
                           </span>
                         {/if}
                       </div>
 
-                      <div class="mt-auto grid grid-cols-3 gap-2 rounded-lg border border-border bg-background/60 p-2">
+                      <div class="mt-auto grid grid-cols-3 gap-1.5 rounded-md border border-border bg-background/60 p-1.5">
                         <div>
                           <p class="text-[10px] text-muted-foreground">Total</p>
                           <p class="font-mono text-body-sm-strong">{provider.connection_count}</p>
@@ -445,7 +445,7 @@
                       {#if statusEntries(provider).length > 0}
                         <div class="flex flex-wrap gap-1.5">
                           {#each statusEntries(provider).slice(0, 4) as [status, count]}
-                            <Badge variant={getStatusVariant(status)} class="gap-1 rounded-full py-0.5 text-caption-mono">
+                            <Badge variant={getStatusVariant(status)} class="gap-1 rounded-full px-1.5 py-0 text-[10px]">
                               <span class="inline-block size-1.5 rounded-full" style="background: {getStatusDotColor(status)};"></span>
                               {getStatusLabel(status)} {count}
                             </Badge>
@@ -462,14 +462,14 @@
                       {/if}
                     </div>
 
-                    <div class="flex gap-2 border-t border-border p-3">
-                      <Button href="/providers/{provider.id}" variant="outline" size="sm" class="flex-1 rounded-sm text-body-sm">
+                    <div class="flex gap-2 border-t border-border p-2">
+                      <Button href="/providers/{provider.id}" variant="outline" size="xs" class="flex-1 rounded-sm text-caption">
                         Manage
                       </Button>
                       <Button
                         variant="ghost"
-                        size="sm"
-                        class="rounded-sm text-body-sm"
+                        size="xs"
+                        class="rounded-sm text-caption"
                         disabled={testingId === provider.id}
                         onclick={() => handleTest(provider.id)}
                       >

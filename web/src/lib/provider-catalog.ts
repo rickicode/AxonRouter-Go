@@ -97,14 +97,14 @@ export const PROVIDER_CATALOG: ProviderMeta[] = [
   },
   {
     id: 'claude',
-    displayName: 'Claude Code',
+    displayName: 'Anthropic Claude',
     icon: 'smart_toy',
-    textIcon: 'CC',
-    iconFile: '/providers/claude.svg',
-    category: 'oauth',
-    description: 'Anthropic Claude Code account routed through OAuth PKCE.',
-    format: 'claude',
-    authType: 'oauth',
+    textIcon: 'AN',
+    iconFile: '/providers/anthropic-m.png',
+    category: 'apikey',
+    description: 'Anthropic Claude API provider using an API key.',
+    format: 'anthropic',
+    authType: 'apikey',
     prefix: 'claude/',
     isBuiltIn: true,
     website: 'https://anthropic.com',
@@ -182,6 +182,24 @@ export const PROVIDER_CATALOG: ProviderMeta[] = [
     freeNote: 'Groq free tier limits depend on model and account state.',
   },
   {
+    id: 'openrouter',
+    displayName: 'OpenRouter',
+    icon: 'router',
+    textIcon: 'OR',
+    iconFile: '/providers/openrouter.png',
+    category: 'apikey',
+    description: 'OpenRouter multi-model gateway using OpenAI-compatible API keys.',
+    format: 'openai',
+    authType: 'apikey',
+    prefix: 'openrouter/',
+    isBuiltIn: true,
+    website: 'https://openrouter.ai',
+    color: '#f97316',
+    serviceKinds: ['llm'],
+    hasFree: true,
+    freeNote: 'Free models are available upstream with model-specific limits.',
+  },
+  {
     id: 'mimo',
     displayName: 'Xiaomi MiMo PAYG',
     icon: 'devices',
@@ -214,6 +232,22 @@ export const PROVIDER_CATALOG: ProviderMeta[] = [
     serviceKinds: ['llm'],
   },
   {
+    id: 'zai',
+    displayName: 'Z.ai GLM',
+    icon: 'psychology',
+    textIcon: 'ZA',
+    iconFile: '/providers/glm.png',
+    category: 'apikey',
+    description: 'Z.ai GLM endpoint exposed through Claude-compatible messages.',
+    format: 'claude',
+    authType: 'apikey',
+    prefix: 'zai/',
+    isBuiltIn: false,
+    website: 'https://z.ai',
+    color: '#2563eb',
+    serviceKinds: ['llm'],
+  },
+  {
     id: 'oc-zen',
     displayName: 'OpenCode Zen',
     icon: 'opencode',
@@ -235,7 +269,7 @@ export const PROVIDER_CATALOG: ProviderMeta[] = [
     displayName: 'OpenCode Go',
     icon: 'opencode',
     textIcon: 'OG',
-    iconFile: '/providers/opencode.png',
+    iconFile: '/providers/opencode-go.png',
     category: 'apikey',
     description: 'OpenCode Go API-key tier for Qwen-oriented routing.',
     format: 'openai',
@@ -317,12 +351,26 @@ export const PROVIDER_CATALOG: ProviderMeta[] = [
   },
 ];
 
+const PROVIDER_ALIASES: Record<string, string> = {
+  ag: 'antigravity',
+  cx: 'codex',
+  'mimocode-free': 'mimocode',
+  'mimo-token': 'mimo-tp',
+  'opencode-go': 'oc-go',
+  'opencode-zen': 'oc-zen',
+};
+
+export function resolveProviderCatalogId(id: string): string {
+  return PROVIDER_ALIASES[id] ?? id;
+}
+
 export function getCategoryById(id: string): ProviderCategory | undefined {
   return CATEGORIES.find((category) => category.id === id);
 }
 
 export function getProviderMeta(id: string): ProviderMeta | undefined {
-  return PROVIDER_CATALOG.find((provider) => provider.id === id);
+  const catalogId = resolveProviderCatalogId(id);
+  return PROVIDER_CATALOG.find((provider) => provider.id === catalogId);
 }
 
 export function getProviderIconSrc(id: string): string | null {
