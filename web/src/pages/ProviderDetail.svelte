@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { loadProvider, selectedProvider, loadConnections, connections, connectionPagination, connectionFilter, loadProviderModels, providerModels, modelTestResults, testProviderModel, isLoading, error } from '$lib/stores';
   import { unwrapInt } from '$lib/utils';
-  import { connectionsApi } from '$lib/api';
+  import { connectionsApi, providersApi } from '$lib/api';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
@@ -16,10 +16,6 @@
   let meta = $derived(getProviderMeta(providerId));
   let currentPage = $state(1);
   let perPage = $state(50);
-  let showBulkAdd = $state(false);
-  let bulkKeys = $state('');
-  let bulkLoading = $state(false);
-  let bulkResult = $state<{ success: number; failed: number; errors: string[] } | null>(null);
   let testingAll = $state(false);
 
   const statusOptions = [
@@ -92,23 +88,6 @@
       window.open(res.auth_url, '_blank');
     } catch (err) { alert('OAuth failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
   }
-
-  async function handleBulkAdd() {
-    if (!bulkKeys.trim()) return;
-    bulkLoading = true;
-    bulkResult = null;
-    try {
-      const keys = bulkKeys.split('\n').map(k => k.trim()).filter(Boolean);
-      const res = await connectionsApi.bulkCreate(providerId, { api_keys: keys });
-      bulkResult = res;
-      await loadConnections(providerId, currentPage, perPage);
-      await loadProvider(providerId);
-    } catch (err) {
-      bulkResult = { success: 0, failed: 1, errors: [err instanceof Error ? err.message : 'Unknown error'] };
-    } finally { bulkLoading = false; }
-  }
-
-  import { providersApi } from '$lib/api';
 </script>
 
 <div class="flex flex-1 flex-col gap-6 p-6">
@@ -135,6 +114,7 @@
       </CardContent>
     </Card>
   {:else if $selectedProvider}
+    <!-- Provider Header -->
     <div class="flex items-start gap-4">
       <div
         class="size-12 rounded-lg flex items-center justify-center shrink-0 overflow-hidden"
@@ -158,140 +138,21 @@
       </div>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <Card class="shadow-card">
-        <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Status Summary</CardTitle></CardHeader>
-        <CardContent>
-          {#if $selectedProvider.status_counts}
-            <div class="grid grid-cols-2 gap-3">
-              {#each Object.entries($selectedProvider.status_counts) as [status, count]}
-                {#if count > 0 || status === 'ready'}
-                  <div class="flex items-center gap-2">
-                    <span class="size-2 rounded-full shrink-0" style="background-color: {getStatusDotColor(status)}"></span>
-                    <span class="text-body-sm text-muted-foreground">{getStatusLabel(status)}</span>
-                    <span class="text-body-sm-strong font-mono ml-auto">{count}</span>
-                  </div>
-                {/if}
-              {/each}
-            </div>
-          {:else}
-            <p class="text-body-sm text-muted-foreground">No connection data available.</p>
-          {/if}
-        </CardContent>
-      </Card>
-
-      <Card class="shadow-card">
-        <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Actions</CardTitle></CardHeader>
-        <CardContent class="flex flex-wrap gap-2">
+    <!-- Connections Section -->
+    <div class="space-y-4">
+      <div class="flex items-center justify-between gap-3 flex-wrap">
+        <div class="flex items-center gap-3">
+          <h2 class="text-display-sm">Connections.</h2>
+          <span class="text-caption-mono text-muted-foreground">{$connectionPagination.total} total</span>
+        </div>
+        <div class="flex items-center gap-2">
           <Button onclick={handleTestAll} disabled={testingAll} variant="outline" size="sm" class="text-body-sm rounded-sm">
             {testingAll ? 'Testing...' : 'Test all'}
-          </Button>
-          <Button onclick={() => showBulkAdd = !showBulkAdd} variant="outline" size="sm" class="text-body-sm rounded-sm">
-            Bulk add
           </Button>
           <a href="/providers/add" class="inline-flex items-center justify-center h-8 px-3 text-body-sm bg-primary text-primary-foreground rounded-sm hover:opacity-90 transition-opacity">
             Add connection
           </a>
-        </CardContent>
-      </Card>
-    </div>
-
-    {#if showBulkAdd}
-      <Card class="shadow-card border border-primary/20">
-        <CardHeader class="pb-3">
-          <CardTitle class="text-body-md-strong">Bulk Add Connections</CardTitle>
-          <p class="text-body-sm text-muted-foreground">Paste one API key per line. Each key becomes a connection.</p>
-        </CardHeader>
-        <CardContent class="space-y-3">
-          <textarea
-            class="w-full h-32 bg-input rounded-md p-3 text-code font-mono text-foreground placeholder:text-muted-foreground resize-y focus:outline-none focus:ring-1 focus:ring-ring"
-            placeholder="sk-...&#10;sk-...&#10;sk-..."
-            bind:value={bulkKeys}
-          ></textarea>
-          <div class="flex items-center gap-3">
-            <Button onclick={handleBulkAdd} disabled={bulkLoading || !bulkKeys.trim()} size="sm" class="text-body-sm rounded-sm">
-              {bulkLoading ? 'Adding...' : `Add ${bulkKeys.split('\n').filter(k => k.trim()).length} keys`}
-            </Button>
-            <Button onclick={() => { showBulkAdd = false; bulkKeys = ''; bulkResult = null; }} variant="ghost" size="sm" class="text-body-sm">
-              Cancel
-            </Button>
-          </div>
-          {#if bulkResult}
-            <div class="flex gap-4 text-body-sm p-3 rounded-md {bulkResult.failed > 0 ? 'bg-destructive/10 text-destructive' : 'bg-emerald-500/10 text-emerald-400'}">
-              <span>✓ {bulkResult.success} added</span>
-              {#if bulkResult.failed > 0}
-                <span>✗ {bulkResult.failed} failed</span>
-              {/if}
-            </div>
-          {/if}
-        </CardContent>
-      </Card>
-    {/if}
-
-    <!-- Models Section -->
-    <div class="space-y-4">
-      <div class="flex items-center justify-between">
-        <h2 class="text-display-sm">Models.</h2>
-        <span class="text-caption-mono text-muted-foreground">{$providerModels.length} available</span>
-      </div>
-      <Card class="shadow-card overflow-hidden">
-        <CardContent class="p-0">
-          <div class="overflow-x-auto">
-            <table class="w-full text-left border-collapse">
-              <thead>
-                <tr class="border-b border-white/5 bg-muted/30">
-                  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Model</th>
-                  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-32">Status</th>
-                  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-24">Latency</th>
-                  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-24"></th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-border">
-                {#if $providerModels.length === 0}
-                  <tr><td colspan="4" class="p-8 text-center text-body-sm text-muted-foreground">No models discovered yet.</td></tr>
-                {:else}
-                  {#each $providerModels as model}
-                    {@const result = $modelTestResults[model]}
-                    <tr class="transition-colors hover:bg-accent/20">
-                      <td class="py-3 px-4 text-code font-mono">{model}</td>
-                      <td class="py-3 px-4">
-                        {#if result}
-                          <Badge variant={result.status === 'ok' ? 'default' : result.status === 'testing' ? 'secondary' : 'destructive'} class="text-caption-mono rounded-sm">
-                            {result.status}
-                          </Badge>
-                        {:else}
-                          <span class="text-body-sm text-muted-foreground">—</span>
-                        {/if}
-                      </td>
-                      <td class="py-3 px-4 text-code font-mono text-muted-foreground">
-                        {result?.latency_ms ? `${result.latency_ms}ms` : '—'}
-                      </td>
-                      <td class="py-3 px-4">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          class="text-body-sm h-8 px-2.5 rounded-sm"
-                          disabled={result?.status === 'testing'}
-                          onclick={() => testProviderModel(providerId, model)}
-                        >
-                          {result?.status === 'testing' ? 'Testing...' : 'Test'}
-                        </Button>
-                      </td>
-                    </tr>
-                  {/each}
-                {/if}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-
-    <!-- Connections Section -->
-    <div class="space-y-4">
-      <div class="flex items-center justify-between">
-        <h2 class="text-display-sm">Connections.</h2>
-        <span class="text-caption-mono text-muted-foreground">{$connectionPagination.total} total</span>
+        </div>
       </div>
 
       <div class="flex flex-wrap gap-3">
@@ -384,6 +245,56 @@
             {/each}
             <Button variant="outline" size="sm" disabled={currentPage === $connectionPagination.total_pages} onclick={() => handlePageChange(currentPage + 1)} class="text-body-sm h-8 rounded-sm">Next</Button>
           </div>
+        </div>
+      {/if}
+    </div>
+
+    <!-- Models Section (below connections) -->
+    <div class="space-y-4">
+      <div class="flex items-center justify-between">
+        <h2 class="text-display-sm">Models.</h2>
+        <span class="text-caption-mono text-muted-foreground">{$providerModels.length} available</span>
+      </div>
+
+      {#if $providerModels.length === 0}
+        <Card class="shadow-card">
+          <CardContent class="flex flex-col items-center justify-center py-12">
+            <p class="text-body-sm text-muted-foreground">No models discovered yet. Models appear after connecting an account.</p>
+          </CardContent>
+        </Card>
+      {:else}
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {#each $providerModels as model}
+            {@const result = $modelTestResults[model]}
+            <Card class="shadow-card group">
+              <CardContent class="p-4 flex items-center gap-3">
+                <div class="min-w-0 flex-1">
+                  <p class="text-body-sm-strong font-mono truncate" title={model}>{model}</p>
+                  <div class="flex items-center gap-2 mt-1.5">
+                    {#if result}
+                      <Badge variant={result.status === 'ok' ? 'default' : result.status === 'testing' ? 'secondary' : 'destructive'} class="text-[10px] rounded-sm px-1.5 py-0">
+                        {result.status}
+                      </Badge>
+                      {#if result.latency_ms}
+                        <span class="text-[11px] font-mono text-muted-foreground">{result.latency_ms}ms</span>
+                      {/if}
+                    {:else}
+                      <span class="text-[11px] text-muted-foreground">Not tested</span>
+                    {/if}
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  class="text-body-sm h-7 px-2 rounded-sm shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                  disabled={result?.status === 'testing'}
+                  onclick={() => testProviderModel(providerId, model)}
+                >
+                  {result?.status === 'testing' ? '...' : 'Test'}
+                </Button>
+              </CardContent>
+            </Card>
+          {/each}
         </div>
       {/if}
     </div>
