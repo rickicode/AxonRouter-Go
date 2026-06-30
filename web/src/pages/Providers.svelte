@@ -14,26 +14,11 @@
     type ProviderMeta,
   } from '$lib/provider-catalog';
   import ProviderIcon from '$lib/components/ProviderIcon.svelte';
-  import { providersApi, type Provider } from '$lib/api';
+  import type { Provider } from '$lib/api';
 
   let searchQuery = $state('');
   let activeCategory = $state('');
-  let testingId = $state<string | null>(null);
-  let testResults = $state<Record<string, { ok: boolean; msg: string }>>({});
   let collapsed = $state<Record<string, boolean>>({});
-
-  const KIND_LABELS: Record<string, string> = {
-    llm: 'Chat',
-    embedding: 'Embed',
-    image: 'Image',
-    imageToText: 'Vision',
-    tts: 'TTS',
-    stt: 'STT',
-    webSearch: 'Search',
-    webFetch: 'Fetch',
-    video: 'Video',
-    music: 'Music',
-  };
 
   onMount(() => {
     document.title = 'Providers - AxonRouter';
@@ -96,9 +81,6 @@
     return meta?.hasFree === true || meta?.category === 'no-auth';
   }
 
-  function serviceKinds(provider: Provider): string[] {
-    return providerMeta(provider)?.serviceKinds ?? [];
-  }
 
   function hexToRgba(color: string | undefined, alpha: number): string {
     const value = color?.trim();
@@ -109,11 +91,6 @@
     return `rgb(${r} ${g} ${b} / ${alpha})`;
   }
 
-  function statusEntries(provider: Provider) {
-    return Object.entries(provider.status_counts ?? {})
-      .filter(([, count]) => Number(count) > 0)
-      .sort(([a], [b]) => (a === 'ready' ? -1 : b === 'ready' ? 1 : a.localeCompare(b)));
-  }
 
   function issueCount(provider: Provider): number {
     return Object.entries(provider.status_counts ?? {}).reduce((sum, [status, count]) => {
@@ -131,18 +108,6 @@
     return source.filter((provider) => providerCategoryId(provider) === categoryId);
   }
 
-  async function handleTest(id: string) {
-    testingId = id;
-    try {
-      const res = await providersApi.test(id);
-      testResults[id] = { ok: res.success, msg: res.message ?? (res.success ? 'OK' : 'Failed') };
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Error';
-      testResults[id] = { ok: false, msg };
-    } finally {
-      testingId = null;
-    }
-  }
 
   function toggleCollapse(catId: string) {
     collapsed[catId] = !collapsed[catId];
@@ -377,106 +342,56 @@
                   {@const color = providerColor(provider)}
                   {@const category = getCategoryById(providerCategoryId(provider))}
                   {@const result = testResults[provider.id]}
-                  <article
-                    class="group flex min-h-[154px] flex-col rounded-lg border border-border bg-card shadow-vercel-1 transition-all duration-200 hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-vercel-2"
+                  <a
+                    href="/providers/{provider.id}"
+                    class="group flex flex-col rounded-lg border border-border bg-card shadow-vercel-1 transition-all duration-200 hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-vercel-2"
                     style="box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.7), 0 8px 22px rgb(0 0 0 / 0.05), 0 0 0 1px {hexToRgba(color, 0.06)};"
                   >
-                    <div class="flex flex-1 flex-col gap-2.5 p-3">
-                      <div class="flex items-start gap-3">
+                    <div class="flex flex-col gap-2 p-3">
+                      <div class="flex items-start gap-2.5">
                         <div
-                          class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border"
+                          class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border"
                           style="background: {hexToRgba(color, 0.10)}; border-color: {hexToRgba(color, 0.18)};"
                         >
-                          <ProviderIcon meta={iconMeta} size={24} />
+                          <ProviderIcon meta={iconMeta} size={22} />
                         </div>
                         <div class="min-w-0 flex-1">
-                          <div class="flex min-w-0 items-start justify-between gap-2">
-                            <h3 class="min-w-0 text-body-sm-strong text-foreground" title={providerName(provider)}>
-                              <span class="block truncate">{providerName(provider)}</span>
+                          <div class="flex min-w-0 items-center gap-1.5">
+                            <h3 class="min-w-0 flex-1 truncate text-[13px] font-semibold leading-tight text-foreground" title={providerName(provider)}>
+                              {providerName(provider)}
                             </h3>
                             <span
-                              class="shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium leading-4"
-                              style="color: {category?.color ?? color}; border-color: {hexToRgba(category?.color ?? color, 0.24)}; background: {hexToRgba(category?.color ?? color, 0.08)};"
+                              class="inline-flex items-center gap-0.5 shrink-0"
+                              title={category?.label ?? 'Compatible'}
                             >
-                              {category?.label ?? 'Compatible'}
+                              <span class="h-2 w-2 rounded-full shrink-0" style="background: {category?.color ?? color};"></span>
                             </span>
                           </div>
-                          <p class="mt-1 truncate text-caption-mono text-muted-foreground">{providerPrefix(provider)}</p>
+                          <p class="truncate text-[11px] text-muted-foreground">{providerPrefix(provider)}</p>
                         </div>
                       </div>
-
-                      <p class="line-clamp-1 text-caption text-muted-foreground">
-                        {providerDescription(provider)}
-                      </p>
-
-                      <div class="flex flex-wrap gap-1.5">
-                        {#each serviceKinds(provider) as kind}
-                          <span class="rounded-md border border-border bg-background px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                            {KIND_LABELS[kind] ?? kind}
-                          </span>
-                        {/each}
-                        {#if provider.format}
-                          <span class="rounded-md border border-border bg-background px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">
-                            {provider.format}
+                      <div class="flex items-center gap-1.5 text-[11px] text-muted-foreground pt-1.5">
+                        {#if readyCount(provider) > 0}
+                          <span class="inline-flex items-center gap-0.5 text-emerald-600">
+                            <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                            {readyCount(provider)} ready
                           </span>
                         {/if}
-                        {#if meta?.hasFree}
-                          <span class="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
-                            Free tier
+                        {#if issueCount(provider) > 0}
+                          <span class="inline-flex items-center gap-0.5 text-amber-600">
+                            <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+                            {issueCount(provider)} issues
                           </span>
                         {/if}
+                        {#if readyCount(provider) === 0 && issueCount(provider) === 0}
+                          <span class="text-muted-foreground">{provider.connection_count} conn</span>
+                        {/if}
+                        <span class="ml-auto text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                        </span>
                       </div>
-
-                      <div class="mt-auto grid grid-cols-3 gap-1.5 rounded-md border border-border bg-background/60 p-1.5">
-                        <div>
-                          <p class="text-[10px] text-muted-foreground">Total</p>
-                          <p class="font-mono text-body-sm-strong">{provider.connection_count}</p>
-                        </div>
-                        <div>
-                          <p class="text-[10px] text-muted-foreground">Ready</p>
-                          <p class="font-mono text-body-sm-strong text-emerald-600">{readyCount(provider)}</p>
-                        </div>
-                        <div>
-                          <p class="text-[10px] text-muted-foreground">Issues</p>
-                          <p class="font-mono text-body-sm-strong {issueCount(provider) > 0 ? 'text-destructive' : 'text-muted-foreground'}">{issueCount(provider)}</p>
-                        </div>
-                      </div>
-
-                      {#if statusEntries(provider).length > 0}
-                        <div class="flex flex-wrap gap-1.5">
-                          {#each statusEntries(provider).slice(0, 4) as [status, count]}
-                            <Badge variant={getStatusVariant(status)} class="gap-1 rounded-full px-1.5 py-0 text-[10px]">
-                              <span class="inline-block size-1.5 rounded-full" style="background: {getStatusDotColor(status)};"></span>
-                              {getStatusLabel(status)} {count}
-                            </Badge>
-                          {/each}
-                        </div>
-                      {:else}
-                        <p class="text-caption text-muted-foreground">No connections yet.</p>
-                      {/if}
-
-                      {#if result}
-                        <p class="rounded-md border px-2 py-1 text-caption-mono {result.ok ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700' : 'border-destructive/20 bg-destructive/10 text-destructive'}">
-                          {result.msg}
-                        </p>
-                      {/if}
                     </div>
-
-                    <div class="flex gap-2 border-t border-border p-2">
-                      <Button href="/providers/{provider.id}" variant="outline" size="xs" class="flex-1 rounded-sm text-caption">
-                        Manage
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        class="rounded-sm text-caption"
-                        disabled={testingId === provider.id}
-                        onclick={() => handleTest(provider.id)}
-                      >
-                        {testingId === provider.id ? 'Testing...' : 'Test'}
-                      </Button>
-                    </div>
-                  </article>
+                  </a>
                 {/each}
               </div>
             {/if}
