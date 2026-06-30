@@ -192,7 +192,7 @@
 <div class="flex flex-1 flex-col gap-6 p-4 md:p-6">
   {#if $isLoading}
     <div class="flex flex-col gap-6">
-      <div class="rounded-xl border border-border bg-card p-5 shadow-vercel-2">
+      <div class="rounded-xl bg-card p-5 shadow-card">
         <div class="h-8 w-48 animate-pulse rounded-md bg-muted"></div>
         <div class="mt-3 h-4 w-80 max-w-full animate-pulse rounded-md bg-muted/70"></div>
         <div class="mt-5 grid gap-3 md:grid-cols-4">
@@ -203,17 +203,17 @@
       </div>
       <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {#each Array(8) as _}
-          <div class="h-56 animate-pulse rounded-xl border border-border bg-card shadow-vercel-1"></div>
+          <div class="h-56 animate-pulse rounded-xl bg-card shadow-card"></div>
         {/each}
       </div>
     </div>
   {:else if $error}
-    <section class="rounded-xl border border-destructive/20 bg-destructive/5 p-8 text-center shadow-vercel-2">
+    <section class="rounded-xl border border-destructive/20 bg-destructive/5 p-8 text-center shadow-card">
       <p class="mx-auto max-w-xl text-body-sm text-destructive">{$error}</p>
       <Button onclick={loadProviders} variant="outline" class="mt-4 text-body-sm">Try again</Button>
     </section>
   {:else}
-    <section class="overflow-hidden rounded-xl border border-border bg-card shadow-vercel-3">
+    <section class="overflow-hidden rounded-xl bg-card shadow-elevated">
       <div class="relative p-5 md:p-6">
         <div class="pointer-events-none absolute inset-x-0 top-0 h-32 bg-[radial-gradient(circle_at_20%_0%,rgba(0,124,240,0.16),transparent_34%),radial-gradient(circle_at_70%_0%,rgba(255,0,128,0.10),transparent_28%)]"></div>
         <div class="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
@@ -230,22 +230,22 @@
         </div>
 
         <div class="relative mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <div class="rounded-lg border border-border bg-background/80 p-4">
+          <div class="rounded-lg bg-background/80 p-4">
             <p class="text-caption text-muted-foreground">Catalog</p>
             <p class="mt-1 text-display-md">{$providers.length}</p>
             <p class="text-caption-mono text-muted-foreground">{providerTotals.configured} configured</p>
           </div>
-          <div class="rounded-lg border border-border bg-background/80 p-4">
+          <div class="rounded-lg bg-background/80 p-4">
             <p class="text-caption text-muted-foreground">Connections</p>
             <p class="mt-1 text-display-md">{providerTotals.totalConnections}</p>
             <p class="text-caption-mono text-muted-foreground">runtime pool</p>
           </div>
-          <div class="rounded-lg border border-border bg-background/80 p-4">
+          <div class="rounded-lg bg-background/80 p-4">
             <p class="text-caption text-muted-foreground">Ready</p>
             <p class="mt-1 text-display-md text-emerald-400">{providerTotals.ready}</p>
             <p class="text-caption-mono text-muted-foreground">available routes</p>
           </div>
-          <div class="rounded-lg border border-border bg-background/80 p-4">
+          <div class="rounded-lg bg-background/80 p-4">
             <p class="text-caption text-muted-foreground">Needs attention</p>
             <p class="mt-1 text-display-md {providerTotals.issues > 0 ? 'text-destructive' : 'text-muted-foreground'}">{providerTotals.issues}</p>
             <p class="text-caption-mono text-muted-foreground">quota, auth, cooldown</p>
@@ -254,7 +254,7 @@
       </div>
     </section>
 
-    <section class="rounded-xl border border-border bg-card p-4 shadow-vercel-2 md:p-5">
+    <section class="rounded-xl bg-card p-4 shadow-card md:p-5">
       <div class="flex flex-col gap-4">
         <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div class="relative w-full lg:max-w-md">
@@ -282,10 +282,10 @@
           </div>
         </div>
 
-        <div class="flex flex-wrap gap-2 border-t border-border pt-4">
+        <div class="flex flex-wrap gap-2 border-t border-white/5 pt-4">
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-caption font-medium transition-colors {activeCategory === '' ? 'border-foreground bg-foreground text-background' : 'border-border bg-background text-muted-foreground hover:border-foreground/30 hover:text-foreground'}"
+            class="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-caption font-medium transition-colors {activeCategory === '' ? 'border-foreground bg-foreground text-background' : 'border-white/8 bg-background text-muted-foreground hover:border-foreground/30 hover:text-foreground'}"
             aria-pressed={activeCategory === ''}
             onclick={() => (activeCategory = '')}
           >
@@ -297,7 +297,7 @@
             <button
               type="button"
               title={cat.description}
-              class="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-caption font-medium transition-colors {activeCategory === cat.id ? 'border-foreground bg-foreground text-background' : 'border-border bg-background text-muted-foreground hover:border-foreground/30 hover:text-foreground'}"
+              class="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-caption font-medium transition-colors {activeCategory === cat.id ? 'border-foreground bg-foreground text-background' : 'border-white/8 bg-background text-muted-foreground hover:border-foreground/30 hover:text-foreground'}"
               aria-pressed={activeCategory === cat.id}
               onclick={() => (activeCategory = activeCategory === cat.id ? '' : cat.id)}
             >
@@ -347,7 +347,7 @@
                   {@const result = testResults[provider.id]}
                   <a
                     href="/providers/{provider.id}"
-                    class="group flex flex-col rounded-lg border border-border bg-card shadow-vercel-1 transition-all duration-200 hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-vercel-2"
+                    class="group flex flex-col rounded-lg bg-card transition-all duration-200 hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-card-hover"
                     style="box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.7), 0 8px 22px rgb(0 0 0 / 0.05), 0 0 0 1px {hexToRgba(color, 0.06)};"
                   >
                     <div class="flex flex-col gap-2 p-3">
@@ -402,7 +402,7 @@
         {/each}
       </div>
     {:else}
-      <section class="rounded-xl border border-dashed border-border bg-card p-12 text-center shadow-vercel-1">
+      <section class="rounded-xl border border-dashed border-border/30 bg-card p-12 text-center shadow-card">
         <p class="text-body-sm text-muted-foreground">No providers match your filters.</p>
         <Button variant="outline" class="mt-4" onclick={() => { searchQuery = ''; activeCategory = ''; }}>
           Reset filters

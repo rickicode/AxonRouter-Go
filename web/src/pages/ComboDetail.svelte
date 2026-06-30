@@ -88,7 +88,7 @@
       </div>
     </div>
   {:else if $error}
-    <Card class="shadow-vercel-2 border">
+    <Card class="shadow-card">
       <CardContent class="flex flex-col items-center justify-center py-12">
         <p class="text-body-sm text-muted-foreground mb-4">{$error}</p>
         <Button onclick={() => loadCombo(comboId)} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
@@ -100,7 +100,7 @@
         <h1 class="text-display-lg">Edit combo.</h1>
         <p class="text-body-sm text-muted-foreground">Modify combo configuration.</p>
       </div>
-      <Card class="shadow-vercel-2 border">
+      <Card class="shadow-card">
         <CardContent class="pt-6 space-y-6">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div class="space-y-2">
@@ -111,7 +111,7 @@
               <Label class="text-body-sm-strong">Strategy</Label>
               <div class="flex gap-2">
                 {#each strategyOptions as opt}
-                  <button class="px-4 py-2 rounded-sm text-body-sm border transition-colors {editStrategy === opt ? 'bg-foreground text-background border-foreground' : 'border-border text-muted-foreground hover:text-foreground'}" onclick={() => editStrategy = opt}>{opt}</button>
+                  <button class="px-4 py-2 rounded-sm text-body-sm border transition-colors {editStrategy === opt ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}" onclick={() => editStrategy = opt}>{opt}</button>
                 {/each}
               </div>
             </div>
@@ -151,7 +151,7 @@
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Card class="shadow-vercel-2 border">
+        <Card class="shadow-card">
           <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Configuration</CardTitle></CardHeader>
           <CardContent class="space-y-4">
             <div class="space-y-1">
@@ -173,7 +173,7 @@
           </CardContent>
         </Card>
 
-        <Card class="shadow-vercel-2 border">
+        <Card class="shadow-card">
           <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Smart settings</CardTitle></CardHeader>
           <CardContent>
             {#if $selectedCombo.is_smart && unwrapStr($selectedCombo.smart_goal)}
@@ -196,7 +196,7 @@
         </Card>
       </div>
 
-      <Card class="shadow-vercel-2 border">
+      <Card class="shadow-card">
         <CardHeader class="flex flex-row items-center justify-between pb-3">
           <CardTitle class="text-body-md-strong">Routing steps</CardTitle>
         </CardHeader>
@@ -204,13 +204,13 @@
           <p class="text-body-sm text-muted-foreground">
             Define the order in which models are tried. Each step specifies a provider/model combination.
           </p>
-          <div class="mt-4 p-8 border border-dashed border-border rounded-md text-center text-body-sm text-muted-foreground">
+          <div class="mt-4 p-8 border border-dashed border-white/10 rounded-md text-center text-body-sm text-muted-foreground">
             Steps editor coming soon. Configure via API for now.
           </div>
         </CardContent>
       </Card>
 
-      <Card class="shadow-vercel-2 border">
+      <Card class="shadow-card">
         <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Actions</CardTitle></CardHeader>
         <CardContent>
           <div class="flex flex-wrap gap-2">

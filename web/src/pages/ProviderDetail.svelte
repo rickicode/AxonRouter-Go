@@ -128,7 +128,7 @@
       </div>
     </div>
   {:else if $error}
-    <Card class="shadow-vercel-2 border">
+    <Card class="shadow-card">
       <CardContent class="flex flex-col items-center justify-center py-12">
         <p class="text-body-sm text-muted-foreground mb-4">{$error}</p>
         <Button onclick={() => { loadProvider(providerId); loadConnections(providerId, currentPage, perPage); loadProviderModels(providerId); }} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
@@ -159,7 +159,7 @@
     </div>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <Card class="shadow-vercel-2 border">
+      <Card class="shadow-card">
         <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Status Summary</CardTitle></CardHeader>
         <CardContent>
           {#if $selectedProvider.status_counts}
@@ -180,7 +180,7 @@
         </CardContent>
       </Card>
 
-      <Card class="shadow-vercel-2 border">
+      <Card class="shadow-card">
         <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Actions</CardTitle></CardHeader>
         <CardContent class="flex flex-wrap gap-2">
           <Button onclick={handleTestAll} disabled={testingAll} variant="outline" size="sm" class="text-body-sm rounded-sm">
@@ -197,14 +197,14 @@
     </div>
 
     {#if showBulkAdd}
-      <Card class="shadow-vercel-2 border border-primary/20">
+      <Card class="shadow-card border border-primary/20">
         <CardHeader class="pb-3">
           <CardTitle class="text-body-md-strong">Bulk Add Connections</CardTitle>
           <p class="text-body-sm text-muted-foreground">Paste one API key per line. Each key becomes a connection.</p>
         </CardHeader>
         <CardContent class="space-y-3">
           <textarea
-            class="w-full h-32 bg-input border border-border rounded-md p-3 text-code font-mono text-foreground placeholder:text-muted-foreground resize-y focus:outline-none focus:ring-1 focus:ring-ring"
+            class="w-full h-32 bg-input rounded-md p-3 text-code font-mono text-foreground placeholder:text-muted-foreground resize-y focus:outline-none focus:ring-1 focus:ring-ring"
             placeholder="sk-...&#10;sk-...&#10;sk-..."
             bind:value={bulkKeys}
           ></textarea>
@@ -234,12 +234,12 @@
         <h2 class="text-display-sm">Models.</h2>
         <span class="text-caption-mono text-muted-foreground">{$providerModels.length} available</span>
       </div>
-      <Card class="shadow-vercel-2 border overflow-hidden">
+      <Card class="shadow-card overflow-hidden">
         <CardContent class="p-0">
           <div class="overflow-x-auto">
             <table class="w-full text-left border-collapse">
               <thead>
-                <tr class="border-b border-border bg-muted/30">
+                <tr class="border-b border-white/5 bg-muted/30">
                   <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Model</th>
                   <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-32">Status</th>
                   <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-24">Latency</th>
@@ -311,12 +311,12 @@
         <Input type="text" class="w-64 h-9 text-body-sm" placeholder="Search connections..." bind:value={$connectionFilter.search} oninput={() => { currentPage = 1; loadConnections(providerId, currentPage, perPage); }} />
       </div>
 
-      <Card class="shadow-vercel-2 border overflow-hidden">
+      <Card class="shadow-card overflow-hidden">
         <CardContent class="p-0">
           <div class="overflow-x-auto">
             <table class="w-full text-left border-collapse">
               <thead>
-                <tr class="border-b border-border bg-muted/30">
+                <tr class="border-b border-white/5 bg-muted/30">
                   <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Name</th>
                   <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Status</th>
                   <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Auth</th>

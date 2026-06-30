@@ -106,7 +106,7 @@
       </div>
     </div>
   {:else if $error}
-    <Card class="shadow-vercel-2 border">
+    <Card class="shadow-card">
       <CardContent class="flex flex-col items-center justify-center py-12">
         <p class="text-body-sm text-muted-foreground mb-4">{$error}</p>
         <Button onclick={() => loadConnection(connectionId)} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
@@ -144,7 +144,7 @@
     </div>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <Card class="shadow-vercel-2 border">
+      <Card class="shadow-card">
         <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Details</CardTitle></CardHeader>
         <CardContent class="space-y-4">
           <div class="space-y-1">
@@ -166,7 +166,7 @@
         </CardContent>
       </Card>
 
-      <Card class="shadow-vercel-2 border">
+      <Card class="shadow-card">
         <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Status & Failures</CardTitle></CardHeader>
         <CardContent class="grid grid-cols-2 gap-4">
           <div class="space-y-1">
@@ -201,7 +201,7 @@
     </div>
 
     {#if capabilities.length > 0}
-      <Card class="shadow-vercel-2 border">
+      <Card class="shadow-card">
         <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Capabilities</CardTitle></CardHeader>
         <CardContent>
           <div class="flex flex-wrap gap-1.5">
@@ -213,7 +213,7 @@
       </Card>
     {/if}
 
-    <Card class="shadow-vercel-2 border">
+    <Card class="shadow-card">
       <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Actions</CardTitle></CardHeader>
       <CardContent>
         <div class="flex flex-wrap gap-2">

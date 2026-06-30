@@ -104,8 +104,8 @@
     </div>
   </div>
 
-  <Card class="shadow-vercel-2 border">
-    <CardHeader class="pb-3 border-b border-border/60 flex flex-row items-center justify-between space-y-0">
+  <Card class="shadow-card">
+    <CardHeader class="pb-3 border-b border-white/5 flex flex-row items-center justify-between space-y-0">
       <div class="flex items-center gap-2">
         <Filter class="size-4 text-muted-foreground" />
         <CardTitle class="text-body-md-strong">Filters</CardTitle>
@@ -162,18 +162,18 @@
   {#if $isLoading}
     <div class="flex flex-col gap-3">
       {#each Array(8) as _}
-        <div class="h-12 bg-card/60 animate-pulse rounded-md border border-border"></div>
+        <div class="h-12 bg-card/60 animate-pulse rounded-md"></div>
       {/each}
     </div>
   {:else if $error}
-    <Card class="shadow-vercel-2 border">
+    <Card class="shadow-card">
       <CardContent class="flex flex-col items-center justify-center py-16 text-center">
         <p class="text-destructive font-medium text-body-sm mb-4">{$error}</p>
         <Button onclick={() => loadLogs(currentPage, perPage)} variant="outline" size="sm" class="text-body-sm">Retry</Button>
       </CardContent>
     </Card>
   {:else if $logs.length === 0}
-    <Card class="shadow-vercel-2 border">
+    <Card class="shadow-card">
       <CardContent class="flex flex-col items-center justify-center py-16 text-center">
         <Terminal class="size-8 text-muted-foreground mb-3" />
         <p class="text-foreground font-semibold text-body-sm mb-1">No logs found.</p>
@@ -181,12 +181,12 @@
       </CardContent>
     </Card>
   {:else}
-    <Card class="shadow-vercel-2 border overflow-hidden">
+    <Card class="shadow-card overflow-hidden">
       <CardContent class="p-0">
         <div class="overflow-x-auto">
           <table class="w-full text-left border-collapse">
             <thead>
-              <tr class="border-b border-border bg-muted/30">
+              <tr class="border-b border-white/5 bg-muted/30">
                 {#each columns as column}
                   <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">{column.label}</th>
                 {/each}

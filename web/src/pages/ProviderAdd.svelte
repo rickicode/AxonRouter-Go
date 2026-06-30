@@ -120,7 +120,7 @@
       <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
         {#each filteredCatalog as provider}
           <button
-            class="group flex items-center gap-3 p-4 rounded-lg border border-border bg-card shadow-vercel-2 text-left transition-all hover:border-foreground/20 hover:bg-accent/10 cursor-pointer"
+            class="group flex items-center gap-3 p-4 rounded-lg shadow-card bg-card text-left transition-all hover:border-foreground/20 hover:bg-accent/10 cursor-pointer"
             onclick={() => selectProvider(provider.id)}
           >
             <div
@@ -151,7 +151,7 @@
         {/each}
       </div>
     {:else}
-      <Card class="shadow-vercel-2 border">
+      <Card class="shadow-card">
         <CardContent class="flex flex-col items-center justify-center py-16">
           <p class="text-body-sm text-muted-foreground">No providers match your search.</p>
         </CardContent>
@@ -177,7 +177,7 @@
       </div>
     </div>
 
-    <Card class="shadow-vercel-2 border max-w-xl">
+    <Card class="shadow-card max-w-xl">
       <CardContent class="pt-6 space-y-4">
         <div class="space-y-2">
           <Label class="text-body-sm-strong">Connection name</Label>
@@ -192,13 +192,13 @@
             <p class="text-caption text-muted-foreground">Your {meta.displayName} API key. Stored encrypted in SQLite.</p>
           </div>
         {:else if meta.authType === 'oauth'}
-          <div class="p-4 rounded-md bg-accent/50 border border-border">
+          <div class="p-4 rounded-md bg-accent/50">
             <p class="text-body-sm text-muted-foreground">
               This provider uses OAuth authentication. After creating the connection, you'll be redirected to authorize access.
             </p>
           </div>
         {:else if meta.authType === 'none'}
-          <div class="p-4 rounded-md bg-accent/50 border border-border">
+          <div class="p-4 rounded-md bg-accent/50">
             <p class="text-body-sm text-muted-foreground">
               This provider is free and requires no authentication. The connection will be activated automatically.
             </p>
@@ -219,7 +219,7 @@
     </Card>
 
   {:else if step === 'done'}
-    <Card class="shadow-vercel-2 border max-w-xl">
+    <Card class="shadow-card max-w-xl">
       <CardContent class="flex flex-col items-center justify-center py-16 text-center">
         <div class="size-12 rounded-full bg-emerald-500/10 flex items-center justify-center mb-4">
           <svg class="size-6 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">

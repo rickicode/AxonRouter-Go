@@ -15,11 +15,11 @@
     [key: string]: any;
   } = $props();
 
-  const baseClasses = 'rounded-sm border';
+  const baseClasses = 'rounded-lg';
 
-    default: 'bg-card border-border',
-    dark: 'bg-background border-border text-foreground',
-    tinted: 'bg-pink-500/5 border-pink-500/10',
+    default: 'bg-card shadow-card',
+    dark: 'bg-background shadow-card text-foreground',
+    tinted: 'bg-pink-500/5 shadow-card',
 
   const paddingClasses: Record<string, string> = {
     sm: 'p-lg',
@@ -27,7 +27,7 @@
     lg: 'p-3xl',
   };
 
-  const hoverClasses = 'hover:shadow-soft-drop transition-shadow';
+  const hoverClasses = 'hover:shadow-card-hover transition-shadow duration-200';
 
   let classes = $derived(`${baseClasses} ${variantClasses[variant]} ${paddingClasses[padding]} ${hover ? hoverClasses : ''}`);
 </script>

@@ -112,7 +112,7 @@
     </p>
   </div>
 
-  <Card class="shadow-vercel-2 border">
+  <Card class="shadow-card">
     <CardHeader class="pb-3">
       <div class="flex items-center justify-between">
         <div>
@@ -164,7 +164,7 @@
     </CardContent>
   </Card>
 
-  <Card class="shadow-vercel-2 border">
+  <Card class="shadow-card">
     <CardHeader class="pb-3">
       <CardTitle class="text-body-md-strong">Data Management</CardTitle>
       <CardDescription class="text-body-sm">Export, import, and manage settings data.</CardDescription>
@@ -180,10 +180,10 @@
       </div>
 
       {#if showImport}
-        <div class="space-y-3 p-4 border border-border rounded-md bg-card">
+        <div class="space-y-3 p-4 shadow-card rounded-md bg-card">
           <Label class="text-body-sm-strong">Paste settings JSON</Label>
           <textarea
-            class="w-full h-32 bg-input border border-border rounded-md p-3 text-code font-mono text-foreground placeholder:text-muted-foreground resize-y focus:outline-none focus:ring-1 focus:ring-ring"
+            class="w-full h-32 bg-input rounded-md p-3 text-code font-mono text-foreground placeholder:text-muted-foreground resize-y focus:outline-none focus:ring-1 focus:ring-ring"
             placeholder="Paste JSON settings object here..."
             bind:value={importText}
           ></textarea>
@@ -196,7 +196,7 @@
     </CardContent>
   </Card>
 
-  <Card class="shadow-vercel-1 border bg-accent/20">
+  <Card class="shadow-card bg-accent/20">
     <CardContent class="pt-6">
       <h3 class="text-body-md-strong mb-3">About Settings.</h3>
       <div class="space-y-2 text-body-sm text-muted-foreground">

@@ -69,7 +69,7 @@
       </div>
     </div>
   {:else if $error}
-    <Card class="shadow-vercel-2 border">
+    <Card class="shadow-card">
       <CardContent class="flex flex-col items-center justify-center py-12">
         <p class="text-body-sm text-muted-foreground mb-4">{$error}</p>
         <Button onclick={loadCombos} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
@@ -89,7 +89,7 @@
     </div>
 
     {#if showCreate}
-      <Card class="shadow-vercel-2 border border-primary/20">
+      <Card class="shadow-card border border-primary/20">
         <CardHeader class="pb-3">
           <CardTitle class="text-body-md-strong">Create new combo.</CardTitle>
           <p class="text-body-sm text-muted-foreground">Configure a routing combo with ordered model steps.</p>
@@ -105,7 +105,7 @@
               <div class="flex gap-2">
                 {#each strategyOptions as opt}
                   <button
-                    class="px-4 py-2 rounded-sm text-body-sm border transition-colors {newStrategy === opt ? 'bg-foreground text-background border-foreground' : 'border-border text-muted-foreground hover:text-foreground'}"
+                    class="px-4 py-2 rounded-sm text-body-sm border transition-colors {newStrategy === opt ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}"
                     onclick={() => newStrategy = opt}
                   >
                     {opt}
@@ -123,7 +123,7 @@
             </div>
           </div>
 
-          <div class="flex items-center gap-3 pt-2 border-t border-border">
+          <div class="flex items-center gap-3 pt-2 border-t border-white/5">
             <label class="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" bind:checked={newIsSmart} class="rounded" />
               <span class="text-body-sm-strong">Smart combo</span>
@@ -137,7 +137,7 @@
               <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
                 {#each smartGoalOptions as opt}
                   <button
-                    class="flex flex-col items-start gap-1 p-3 rounded-md border text-left transition-colors {newSmartGoal === opt.value ? 'border-foreground bg-accent' : 'border-border hover:border-foreground/50'}"
+                    class="flex flex-col items-start gap-1 p-3 rounded-md border text-left transition-colors {newSmartGoal === opt.value ? 'border-foreground bg-accent' : 'border-white/8 hover:border-foreground/50'}"
                     onclick={() => newSmartGoal = opt.value}
                   >
                     <span class="text-body-sm-strong">{opt.label}</span>
@@ -162,7 +162,7 @@
       <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         {#each $combos as combo}
           <a href="/combos/{combo.id}" class="group block">
-            <Card class="shadow-vercel-2 border transition-all hover:bg-accent/10 hover:border-foreground/20 h-full">
+            <Card class="shadow-card transition-all hover:bg-accent/10 hover:border-foreground/20 h-full">
               <CardHeader class="flex flex-row items-start justify-between space-y-0 pb-3">
                 <div class="space-y-1">
                   <CardTitle class="text-body-md-strong">{combo.name}</CardTitle>
@@ -178,7 +178,7 @@
                 </div>
               </CardHeader>
               <CardContent class="flex flex-col gap-4">
-                <div class="grid grid-cols-2 gap-3 border-t border-border/60 pt-3">
+                <div class="grid grid-cols-2 gap-3 border-t border-white/5 pt-3">
                   <div>
                     <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Strategy</p>
                     <p class="text-body-sm mt-0.5">{combo.strategy}</p>
@@ -200,7 +200,7 @@
         {/each}
       </div>
     {:else}
-      <Card class="shadow-vercel-2 border">
+      <Card class="shadow-card">
         <CardContent class="flex flex-col items-center justify-center py-16">
           <div class="size-12 bg-muted rounded-md flex items-center justify-center mb-4">
             <svg class="size-6 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
