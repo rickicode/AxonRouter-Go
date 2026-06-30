@@ -15,13 +15,11 @@
 
   const baseClasses = 'inline-flex items-center font-mono uppercase';
 
-  const variantClasses: Record<string, string> = {
-    neutral: 'bg-hairline text-ink border border-hairline',
-    subtle: 'bg-surface-dark-soft text-on-dark',
-    success: 'bg-green-50 text-green-700 border border-green-200',
-    warning: 'bg-yellow-50 text-yellow-700 border border-yellow-200',
-    error: 'bg-red-50 text-red-700 border border-red-200',
-  };
+    neutral: 'bg-zinc-800 text-zinc-200 border border-zinc-700',
+    subtle: 'bg-pink-500/10 text-pink-400',
+    success: 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20',
+    warning: 'bg-amber-500/10 text-amber-400 border border-amber-500/20',
+    error: 'bg-red-500/10 text-red-400 border border-red-500/20',
 
   const sizeClasses: Record<string, string> = {
     sm: 'px-sm py-xxs text-mono-caps-eyebrow rounded-sm',

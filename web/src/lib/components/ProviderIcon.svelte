@@ -23,7 +23,7 @@
 
   function hexToRgba(color: string | undefined, alpha: number): string {
     const value = color?.trim();
-    if (!value || !/^#[0-9a-fA-F]{6}$/.test(value)) return `rgb(245 245 245 / ${alpha})`;
+    if (!value || !/^#[0-9a-fA-F]{6}$/.test(value)) return `rgb(39 39 42 / ${alpha})`;
     const r = parseInt(value.slice(1, 3), 16);
     const g = parseInt(value.slice(3, 5), 16);
     const b = parseInt(value.slice(5, 7), 16);
@@ -44,7 +44,7 @@
 {:else}
   <div
     class="flex items-center justify-center rounded-md font-mono font-semibold tracking-[-0.04em] {className}"
-    style="width: {size}px; height: {size}px; font-size: {Math.max(10, Math.round(size * 0.34))}px; color: {meta?.color ?? '#171717'}; background: {hexToRgba(meta?.color, 0.12)};"
+    style="width: {size}px; height: {size}px; font-size: {Math.max(10, Math.round(size * 0.34))}px; color: {meta?.color ?? '#e4e4e7'}; background: {hexToRgba(meta?.color, 0.12)};"
     aria-label={meta?.displayName ?? 'Provider'}
   >
     {meta?.textIcon ?? initials(meta?.displayName)}

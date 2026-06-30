@@ -12,9 +12,9 @@
 
   const statCards = [
     { key: 'total_connections', label: 'Total Connections', format: (v: number) => v.toString() },
-    { key: 'active_connections', label: 'Active Connections', format: (v: number) => v.toString(), color: 'text-emerald-600' },
+    { key: 'active_connections', label: 'Active Connections', format: (v: number) => v.toString(), color: 'text-emerald-400' },
     { key: 'total_requests_today', label: 'Requests Today', format: (v: number) => v.toString() },
-    { key: 'success_rate', label: 'Success Rate', format: (v: number) => `${v}%`, color: 'text-emerald-600' },
+    { key: 'success_rate', label: 'Success Rate', format: (v: number) => `${v}%`, color: 'text-emerald-400' },
   ] as const;
 </script>
 

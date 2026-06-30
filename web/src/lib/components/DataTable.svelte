@@ -19,7 +19,7 @@
 <div class="overflow-x-auto">
   <table class="w-full border-collapse">
     <thead>
-      <tr class="data-table-header">
+      <tr class="bg-muted/50">
         {#each columns as column}
           <th class="px-lg py-md text-left {column.class || ''}">
             {column.label}
@@ -48,7 +48,7 @@
         </tr>
       {:else}
         {#each data as row, index}
-          <tr class="data-table-row hover:bg-hairline/50 transition-colors">
+        <tr class="border-b border-border hover:bg-accent transition-colors">
             {#each columns as column}
               <td class="data-table-cell {column.class || ''}">
                 {#if cell}{@render cell({ column, row, index })}{:else}{row[column.key] || '-'}{/if}

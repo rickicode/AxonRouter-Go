@@ -3,7 +3,7 @@
 
 <a href="/" class="flex items-center gap-3 group px-3 py-1" aria-label="AxonRouter Dashboard">
   <!-- Vercel-style triangle mark -->
-  <svg viewBox="0 0 75 65" class="size-5 fill-current text-foreground shrink-0 transition-transform group-hover:scale-105 duration-200">
+  <svg viewBox="0 0 75 65" class="size-5 fill-current text-primary shrink-0 transition-transform group-hover:scale-105 duration-200">
     <polygon points="37.5,0 75,65 0,65"></polygon>
   </svg>
 

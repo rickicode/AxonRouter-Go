@@ -206,7 +206,7 @@
         {/if}
 
         {#if resultMsg}
-          <p class="text-body-sm {resultOk ? 'text-emerald-600' : 'text-destructive'}">{resultMsg}</p>
+          <p class="text-body-sm {resultOk ? 'text-emerald-400' : 'text-destructive'}">{resultMsg}</p>
         {/if}
 
         <div class="flex gap-3 pt-2">
@@ -222,7 +222,7 @@
     <Card class="shadow-vercel-2 border max-w-xl">
       <CardContent class="flex flex-col items-center justify-center py-16 text-center">
         <div class="size-12 rounded-full bg-emerald-500/10 flex items-center justify-center mb-4">
-          <svg class="size-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="size-6 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
           </svg>
         </div>

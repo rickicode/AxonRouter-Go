@@ -223,9 +223,10 @@
               OmniRoute-style provider catalog with AxonRouter connection health, auth labels, prefixes, and model surface details.
             </p>
           </div>
-          <Button onclick={() => showAddModal = true} class="h-10 rounded-sm px-4 text-button-md">
+          <button onclick={() => showAddModal = true} class="inline-flex items-center gap-2 h-9 rounded-lg bg-foreground px-4 text-sm font-medium text-background transition-all hover:bg-foreground/80 active:scale-[0.98]">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
             Add provider
-          </Button>
+          </button>
         </div>
 
         <div class="relative mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -241,7 +242,7 @@
           </div>
           <div class="rounded-lg border border-border bg-background/80 p-4">
             <p class="text-caption text-muted-foreground">Ready</p>
-            <p class="mt-1 text-display-md text-emerald-600">{providerTotals.ready}</p>
+            <p class="mt-1 text-display-md text-emerald-400">{providerTotals.ready}</p>
             <p class="text-caption-mono text-muted-foreground">available routes</p>
           </div>
           <div class="rounded-lg border border-border bg-background/80 p-4">
@@ -374,7 +375,7 @@
                       </div>
                       <div class="flex items-center gap-1.5 text-[11px] text-muted-foreground pt-1.5">
                         {#if readyCount(provider) > 0}
-                          <span class="inline-flex items-center gap-0.5 text-emerald-600">
+                          <span class="inline-flex items-center gap-0.5 text-emerald-400">
                             <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
                             {readyCount(provider)} ready
                           </span>

@@ -52,14 +52,14 @@
           aria-current={active ? 'page' : undefined}
         >
           <span class="absolute left-0 inset-y-0 w-0.5 rounded-r-full transition-all duration-150
-            {active ? 'bg-sidebar-foreground opacity-100' : 'opacity-0'}"></span>
+            {active ? 'bg-sidebar-primary opacity-100' : 'opacity-0'}"></span>
           <item.icon
             class="size-4 shrink-0 transition-colors duration-150
               {active ? 'text-sidebar-foreground' : 'text-sidebar-foreground/40 group-hover:text-sidebar-foreground/80'}"
           />
           <span class="truncate">{item.label}</span>
           {#if active}
-            <span class="ml-auto size-1.5 rounded-full bg-sidebar-foreground/60 shrink-0"></span>
+            <span class="ml-auto size-1.5 rounded-full bg-sidebar-primary shrink-0"></span>
           {/if}
         </a>
       {/each}
@@ -86,14 +86,14 @@
           aria-current={active ? 'page' : undefined}
         >
           <span class="absolute left-0 inset-y-0 w-0.5 rounded-r-full transition-all duration-150
-            {active ? 'bg-sidebar-foreground opacity-100' : 'opacity-0'}"></span>
+            {active ? 'bg-sidebar-primary opacity-100' : 'opacity-0'}"></span>
           <item.icon
             class="size-4 shrink-0 transition-colors duration-150
               {active ? 'text-sidebar-foreground' : 'text-sidebar-foreground/40 group-hover:text-sidebar-foreground/80'}"
           />
           <span class="truncate">{item.label}</span>
           {#if active}
-            <span class="ml-auto size-1.5 rounded-full bg-sidebar-foreground/60 shrink-0"></span>
+            <span class="ml-auto size-1.5 rounded-full bg-sidebar-primary shrink-0"></span>
           {/if}
         </a>
       {/each}

@@ -17,11 +17,9 @@
 
   const baseClasses = 'rounded-sm border';
 
-  const variantClasses: Record<string, string> = {
-    default: 'bg-canvas border-hairline',
-    dark: 'bg-canvas-dark border-surface-dark-soft text-on-dark',
-    tinted: 'bg-accent-mint border-accent-mint/20',
-  };
+    default: 'bg-card border-border',
+    dark: 'bg-background border-border text-foreground',
+    tinted: 'bg-pink-500/5 border-pink-500/10',
 
   const paddingClasses: Record<string, string> = {
     sm: 'p-lg',

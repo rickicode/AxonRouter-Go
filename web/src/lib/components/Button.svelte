@@ -25,13 +25,11 @@
 
   const baseClasses = 'inline-flex items-center justify-center font-mono uppercase transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-50 disabled:cursor-not-allowed';
 
-  const variantClasses: Record<string, string> = {
-    primary: 'bg-primary text-on-primary hover:bg-primary/90',
-    secondary: 'bg-accent-mint text-ink hover:bg-accent-mint/90',
-    outline: 'bg-canvas text-ink border border-hairline hover:bg-hairline',
-    ghost: 'bg-transparent text-ink hover:bg-hairline',
-    danger: 'bg-red-600 text-white hover:bg-red-700',
-  };
+    primary: 'bg-primary text-primary-foreground hover:bg-primary/90',
+    secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
+    outline: 'bg-transparent text-foreground border border-border hover:bg-accent',
+    ghost: 'bg-transparent text-foreground hover:bg-accent',
+    danger: 'bg-red-500/10 text-red-400 hover:bg-red-500/20',
 
   const sizeClasses: Record<string, string> = {
     sm: 'px-lg py-xs text-mono-caps-eyebrow rounded-xs',

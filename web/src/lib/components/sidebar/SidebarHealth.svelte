@@ -25,8 +25,8 @@
 
   function getLatencyColor(): string {
     if (!isOnline) return 'text-destructive';
-    if (latencyMs <= 50) return 'text-emerald-600';
-    if (latencyMs <= 200) return 'text-amber-600';
+    if (latencyMs <= 50) return 'text-emerald-400';
+    if (latencyMs <= 200) return 'text-amber-400';
     return 'text-red-500';
   }
 </script>

@@ -217,7 +217,7 @@
             </Button>
           </div>
           {#if bulkResult}
-            <div class="flex gap-4 text-body-sm p-3 rounded-md {bulkResult.failed > 0 ? 'bg-destructive/10 text-destructive' : 'bg-emerald-500/10 text-emerald-600'}">
+            <div class="flex gap-4 text-body-sm p-3 rounded-md {bulkResult.failed > 0 ? 'bg-destructive/10 text-destructive' : 'bg-emerald-500/10 text-emerald-400'}">
               <span>✓ {bulkResult.success} added</span>
               {#if bulkResult.failed > 0}
                 <span>✗ {bulkResult.failed} failed</span>
