@@ -12,7 +12,7 @@ interface ApiResponse<T> {
   };
 }
 
-interface Provider {
+export interface Provider {
   id: string;
   display_name: string;
   format: string;
@@ -30,7 +30,7 @@ interface Provider {
   };
 }
 
-interface Connection {
+export interface Connection {
   id: string;
   provider_type_id: string;
   name: string;
@@ -48,7 +48,7 @@ interface Connection {
   updated_at: number;
 }
 
-interface Combo {
+export interface Combo {
   id: string;
   name: string;
   strategy: string;
@@ -61,7 +61,7 @@ interface Combo {
   updated_at: number;
 }
 
-interface RequestLog {
+export interface RequestLog {
   id: string;
   timestamp: number;
   connection_id: string;
@@ -297,10 +297,13 @@ export const settingsApi = {
 export const dashboardApi = {
   stats: () =>
     fetchApi<{
+      total_providers: number;
       total_connections: number;
-      active_connections: number;
-      total_requests_today: number;
-      success_rate: number;
-      providers: { id: string; name: string; connection_count: number }[];
+      total_combos: number;
+      status_counts: Record<string, number>;
+      requests_today: number;
+      tokens_today: number;
+      cost_today: number;
+      uptime_seconds: number;
     }>('/dashboard/stats'),
 };

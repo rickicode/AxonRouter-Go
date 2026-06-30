@@ -27,10 +27,26 @@ function createRouter() {
     const onPopState = () => {
       current.set({ path: getPath(), params: {} });
     };
+
+    // Intercept all internal <a> clicks for SPA navigation
+    const onClick = (e: MouseEvent) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const a = (e.target as HTMLElement).closest('a');
+      if (!a) return;
+      const href = a.getAttribute('href');
+      if (!href || href.startsWith('http') || href.startsWith('//') || href.startsWith('mailto:') || href.startsWith('tel:') || a.target === '_blank') return;
+      e.preventDefault();
+      navigate(href);
+    };
+
     window.addEventListener('popstate', onPopState);
+    document.addEventListener('click', onClick, true);
     // Set initial state
     current.set({ path: getPath(), params: {} });
-    return () => window.removeEventListener('popstate', onPopState);
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      document.removeEventListener('click', onClick, true);
+    };
   }
 
   return { current, navigate, start };

@@ -87,7 +87,7 @@ export const providerStatusCounts = derived(providers, ($providers) => {
   $providers.forEach((provider) => {
     if (provider.status_counts) {
       Object.entries(provider.status_counts).forEach(([status, count]) => {
-        counts[status as keyof typeof counts] += count;
+        counts[status as keyof typeof counts] += count as number;
       });
     }
   });
@@ -112,12 +112,13 @@ export async function loadDashboardStats() {
     ]);
     
     let successRate = 100;
-    if (logsData.data.length > 0) {
-      const successful = logsData.data.filter((l) => l.status_code >= 200 && l.status_code < 300).length;
-      successRate = Math.round((successful / logsData.data.length) * 100);
+    const logEntries = logsData?.data ?? [];
+    if (logEntries.length > 0) {
+      const successful = logEntries.filter((l) => l.status_code >= 200 && l.status_code < 300).length;
+      successRate = Math.round((successful / logEntries.length) * 100);
     }
-    
-    const rawProviders = (providersData.data || []) as { id: string; display_name?: string; total?: number }[];
+
+    const rawProviders = (providersData?.data ?? []) as { id: string; display_name?: string; total?: number }[];
     
     dashboardStats.set({
       total_connections: statsData?.total_connections ?? 0,
