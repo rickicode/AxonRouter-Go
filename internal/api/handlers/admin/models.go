@@ -254,3 +254,30 @@ func staticModels(providerID string) []string {
 	}
 	return models.GetAllModelIDs(keys...)
 }
+
+// defaultTestModel returns the first available model for a provider from the catalog.
+// Used by TestConnection and TestAll when no specific model is provided.
+// Falls back to a hardcoded default for providers without a catalog.
+func defaultTestModel(providerID string) string {
+	// Try catalog first
+	if ids := staticModels(providerID); len(ids) > 0 {
+		return ids[0]
+	}
+	// Fallback for providers not in models.json
+	switch providerID {
+	case "openai":
+		return "gpt-4o"
+	case "groq":
+		return "llama-3.3-70b-versatile"
+	case "deepseek":
+		return "deepseek-chat"
+	case "mimo", "mimocode", "mimo-tp", "mimocode-free", "mimo-token":
+		return "mimo-v2.5-pro"
+	case "opencode", "oc", "oc-zen", "oc-go", "opencode-go", "opencode-zen":
+		return "kimi-k2"
+	case "openrouter":
+		return "openai/gpt-4o"
+	default:
+		return ""
+	}
+}

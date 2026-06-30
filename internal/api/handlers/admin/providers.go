@@ -262,7 +262,7 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 		return
 	}
 
-	bodyBytes := buildTestBody(format, "")
+	bodyBytes := buildTestBody(format, defaultTestModel(providerID))
 	var results []testResult
 	for rows.Next() {
 		var connID, apiKey, accessToken, baseURL string

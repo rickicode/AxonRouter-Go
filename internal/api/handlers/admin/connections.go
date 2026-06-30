@@ -222,7 +222,6 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 		APIKey         string
 		AccessToken    string
 		BaseURL        string
-		ModelHint      string
 	}
 	err := h.db.QueryRow(`
 		SELECT c.id, c.provider_type_id, pt.format, COALESCE(c.api_key,''), COALESCE(c.oauth_token,''),
@@ -246,8 +245,9 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 		return
 	}
 
-	// Build format-specific test body and send via streaming
-	bodyBytes := buildTestBody(conn.Format, conn.ModelHint)
+	// Build format-specific test body with default model for this provider
+	model := defaultTestModel(conn.ProviderTypeID)
+	bodyBytes := buildTestBody(conn.Format, model)
 	start := time.Now()
 	streamResult, err := exec.ExecuteStream(c.Request.Context(), &executor.Request{
 		APIKey:      conn.APIKey,
@@ -255,7 +255,7 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 		BaseURL:     conn.BaseURL,
 		Body:        bodyBytes,
 		Provider:    conn.ProviderTypeID,
-		Model:       conn.ModelHint,
+		Model:       model,
 	})
 	if err != nil {
 		latency := time.Since(start).Milliseconds()
