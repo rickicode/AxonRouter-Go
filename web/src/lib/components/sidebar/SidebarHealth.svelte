@@ -24,10 +24,10 @@
   });
 
   function getLatencyColor(): string {
-    if (!isOnline) return 'text-red-500';
-    if (latencyMs <= 50) return 'text-emerald-400';
-    if (latencyMs <= 200) return 'text-amber-400';
-    return 'text-red-400';
+    if (!isOnline) return 'text-destructive';
+    if (latencyMs <= 50) return 'text-emerald-600';
+    if (latencyMs <= 200) return 'text-amber-600';
+    return 'text-red-500';
   }
 </script>
 
@@ -40,7 +40,7 @@
           <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-40"></span>
           <span class="relative inline-flex rounded-full size-2 bg-emerald-500"></span>
         {:else}
-          <span class="relative inline-flex rounded-full size-2 bg-zinc-600"></span>
+          <span class="relative inline-flex rounded-full size-2 bg-muted-foreground/40"></span>
         {/if}
       </span>
       <span class="text-xs font-medium text-sidebar-foreground/80 truncate">
