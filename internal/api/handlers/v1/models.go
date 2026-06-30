@@ -99,45 +99,61 @@ func openaiModels() []gin.H {
 
 func claudeModels() []gin.H {
 	return []gin.H{
-		{"id": "claude/claude-sonnet-4-20250514", "object": "model", "created": 1700000000, "owned_by": "anthropic"},
+		{"id": "claude/claude-opus-4-6", "object": "model", "created": 1700000000, "owned_by": "anthropic"},
+		{"id": "claude/claude-sonnet-4-6", "object": "model", "created": 1700000000, "owned_by": "anthropic"},
+		{"id": "claude/claude-opus-4-5-20251101", "object": "model", "created": 1700000000, "owned_by": "anthropic"},
 		{"id": "claude/claude-opus-4-20250514", "object": "model", "created": 1700000000, "owned_by": "anthropic"},
-		{"id": "claude/claude-3-5-sonnet-20241022", "object": "model", "created": 1700000000, "owned_by": "anthropic"},
+		{"id": "claude/claude-sonnet-4-20250514", "object": "model", "created": 1700000000, "owned_by": "anthropic"},
+		{"id": "claude/claude-3-7-sonnet-20250219", "object": "model", "created": 1700000000, "owned_by": "anthropic"},
 		{"id": "claude/claude-3-5-haiku-20241022", "object": "model", "created": 1700000000, "owned_by": "anthropic"},
-		{"id": "claude/claude-3-opus-20240229", "object": "model", "created": 1700000000, "owned_by": "anthropic"},
 	}
 }
+
 
 func geminiModels() []gin.H {
 	return []gin.H{
-		{"id": "gemini/gemini-2.5-pro-preview-05-06", "object": "model", "created": 1700000000, "owned_by": "google"},
-		{"id": "gemini/gemini-2.5-flash-preview-05-20", "object": "model", "created": 1700000000, "owned_by": "google"},
-		{"id": "gemini/gemini-2.0-flash", "object": "model", "created": 1700000000, "owned_by": "google"},
-		{"id": "gemini/gemini-1.5-pro", "object": "model", "created": 1700000000, "owned_by": "google"},
-		{"id": "gemini/gemini-1.5-flash", "object": "model", "created": 1700000000, "owned_by": "google"},
+		{"id": "gemini/gemini-2.5-pro", "object": "model", "created": 1700000000, "owned_by": "google"},
+		{"id": "gemini/gemini-2.5-flash", "object": "model", "created": 1700000000, "owned_by": "google"},
+		{"id": "gemini/gemini-2.5-flash-lite", "object": "model", "created": 1700000000, "owned_by": "google"},
+		{"id": "gemini/gemini-3-pro-preview", "object": "model", "created": 1700000000, "owned_by": "google"},
+		{"id": "gemini/gemini-3-flash-preview", "object": "model", "created": 1700000000, "owned_by": "google"},
+		{"id": "gemini/gemini-3.5-flash", "object": "model", "created": 1700000000, "owned_by": "google"},
 	}
 }
+
 
 func codexModels() []gin.H {
 	return []gin.H{
+		{"id": "cx/gpt-5.5", "object": "model", "created": 1700000000, "owned_by": "openai"},
 		{"id": "cx/gpt-5.4", "object": "model", "created": 1700000000, "owned_by": "openai"},
 		{"id": "cx/gpt-5.4-mini", "object": "model", "created": 1700000000, "owned_by": "openai"},
-		{"id": "cx/o3", "object": "model", "created": 1700000000, "owned_by": "openai"},
-		{"id": "cx/o4-mini", "object": "model", "created": 1700000000, "owned_by": "openai"},
-		{"id": "cx/codex-mini", "object": "model", "created": 1700000000, "owned_by": "openai"},
+		{"id": "cx/gpt-5.3-codex-spark", "object": "model", "created": 1700000000, "owned_by": "openai"},
+		{"id": "cx/codex-auto-review", "object": "model", "created": 1700000000, "owned_by": "openai"},
 	}
 }
+
 
 func antigravityModels() []gin.H {
 	return []gin.H{
-		{"id": "ag/gemini-2.5-pro", "object": "model", "created": 1700000000, "owned_by": "google"},
-		{"id": "ag/gemini-2.5-flash", "object": "model", "created": 1700000000, "owned_by": "google"},
+		{"id": "ag/claude-opus-4-6-thinking", "object": "model", "created": 1700000000, "owned_by": "google"},
+		{"id": "ag/claude-sonnet-4-6", "object": "model", "created": 1700000000, "owned_by": "google"},
+		{"id": "ag/gemini-3-flash", "object": "model", "created": 1700000000, "owned_by": "google"},
+		{"id": "ag/gemini-3-flash-agent", "object": "model", "created": 1700000000, "owned_by": "google"},
+		{"id": "ag/gemini-3.1-pro-low", "object": "model", "created": 1700000000, "owned_by": "google"},
+		{"id": "ag/gemini-3.1-flash-lite", "object": "model", "created": 1700000000, "owned_by": "google"},
+		{"id": "ag/gemini-3.5-flash-low", "object": "model", "created": 1700000000, "owned_by": "google"},
 	}
 }
 
+
 func kiroModels() []gin.H {
 	return []gin.H{
-		{"id": "kiro/claude-sonnet-4", "object": "model", "created": 1700000000, "owned_by": "aws"},
-		{"id": "kiro/claude-3-5-sonnet", "object": "model", "created": 1700000000, "owned_by": "aws"},
+		{"id": "kiro/kimi-k2", "object": "model", "created": 1700000000, "owned_by": "moonshot"},
+		{"id": "kiro/kimi-k2-thinking", "object": "model", "created": 1700000000, "owned_by": "moonshot"},
+		{"id": "kiro/kimi-k2.5", "object": "model", "created": 1700000000, "owned_by": "moonshot"},
+		{"id": "kiro/kimi-k2.6", "object": "model", "created": 1700000000, "owned_by": "moonshot"},
+		{"id": "kiro/kimi-k2.7-code", "object": "model", "created": 1700000000, "owned_by": "moonshot"},
+		{"id": "kiro/kimi-k2.7-code-highspeed", "object": "model", "created": 1700000000, "owned_by": "moonshot"},
 	}
 }
 

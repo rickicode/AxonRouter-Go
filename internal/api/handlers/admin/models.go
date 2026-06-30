@@ -88,6 +88,7 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 }
 
 // TestModel tests a specific model by sending a minimal request.
+// Builds provider-format-aware test bodies (e.g. Codex Responses API needs store:false + input format).
 func (h *ModelHandler) TestModel(c *gin.Context) {
 	providerID := c.Param("id")
 
@@ -126,13 +127,8 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 		return
 	}
 
-	// Build minimal test request
-	testBody := map[string]any{
-		"model":      req.Model,
-		"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
-		"max_tokens": 5,
-	}
-	bodyBytes, _ := json.Marshal(testBody)
+	// Build provider-format-aware test body
+	bodyBytes := buildTestBody(provider.Format, req.Model)
 
 	start := time.Now()
 	resp, err := exec.Execute(c.Request.Context(), &executor.Request{
@@ -170,7 +166,37 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 	}
 }
 
+// buildTestBody constructs a minimal test request body matching the provider's API format.
+// ponytail: switch on format string; add new formats as providers land.
+func buildTestBody(format, model string) []byte {
+	switch executor.ProviderFormat(format) {
+	case executor.FormatOpenAIResponses:
+		body := map[string]any{
+			"model":  model,
+			"store":  false,
+			"stream": false,
+			"input": []map[string]any{
+				{"type": "message", "role": "user", "content": []map[string]string{
+					{"type": "input_text", "text": "Hi"},
+				}},
+			},
+		}
+		b, _ := json.Marshal(body)
+		return b
+	default:
+		// OpenAI-compatible, Claude, Gemini, Antigravity, Kiro — standard chat body
+		body := map[string]any{
+			"model":      model,
+			"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
+			"max_tokens": 5,
+		}
+		b, _ := json.Marshal(body)
+		return b
+	}
+}
+
 // staticModels returns a static model list for known provider types.
+// Source of truth: /workspaces/CLIProxyAPI/internal/registry/models/models.json
 // ponytail: hardcoded per provider, update when new models ship.
 // Covers both canonical IDs and DB-stored IDs.
 func staticModels(providerID string) []string {
@@ -178,15 +204,15 @@ func staticModels(providerID string) []string {
 	case "openai":
 		return []string{"gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1", "o1-mini", "o1-pro", "o3", "o3-mini", "o4-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano"}
 	case "claude":
-		return []string{"claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"}
+		return []string{"claude-opus-4-6", "claude-sonnet-4-6", "claude-opus-4-5-20251101", "claude-opus-4-20250514", "claude-sonnet-4-20250514", "claude-3-7-sonnet-20250219", "claude-3-5-haiku-20241022"}
 	case "gemini":
-		return []string{"gemini-2.5-pro-preview-05-06", "gemini-2.5-flash-preview-05-20", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"}
+		return []string{"gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-3.5-flash"}
 	case "cx":
-		return []string{"gpt-5.4", "gpt-5.4-mini", "o3", "o4-mini", "codex-mini"}
+		return []string{"gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark", "codex-auto-review"}
 	case "ag", "antigravity":
-		return []string{"gemini-2.5-pro", "gemini-2.5-flash"}
+		return []string{"claude-opus-4-6-thinking", "claude-sonnet-4-6", "gemini-3-flash", "gemini-3-flash-agent", "gemini-3.1-pro-low", "gemini-3.1-flash-lite", "gemini-3.5-flash-low"}
 	case "kiro":
-		return []string{"claude-sonnet-4", "claude-3-5-sonnet"}
+		return []string{"kimi-k2", "kimi-k2-thinking", "kimi-k2.5", "kimi-k2.6", "kimi-k2.7-code", "kimi-k2.7-code-highspeed"}
 	case "groq":
 		return []string{"llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"}
 	case "deepseek":
