@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -32,8 +33,14 @@ var remoteURLs = []string{
 // For providers requiring API keys, models are discovered dynamically
 // via the ListModels handler when connections exist.
 var providerEndpoints = map[string]string{
+	// opencode free: filter to -free suffix models only
 	"opencode": "https://opencode.ai/zen/v1/models",
-	"oc-go":    "https://opencode.ai/zen/go/v1/models",
+}
+
+// providerFreeOnly filters models to only include those with "-free" suffix.
+// Used for free-tier providers where the upstream returns all models (free + paid).
+var providerFreeOnly = map[string]bool{
+	"opencode": true,
 }
 
 // modelEntry is a single model definition from models.json.
@@ -167,6 +174,10 @@ func tryFetchProviders(ctx context.Context) {
 		}
 		entries := make([]modelEntry, 0, len(models))
 		for _, id := range models {
+			// Filter: free-only providers only keep models with "-free" suffix
+			if providerFreeOnly[catalogKey] && !strings.HasSuffix(id, "-free") {
+				continue
+			}
 			entries = append(entries, modelEntry{ID: id})
 		}
 		mu.Lock()

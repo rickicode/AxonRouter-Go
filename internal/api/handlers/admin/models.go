@@ -246,14 +246,16 @@ var providerCatalogKeys = map[string][]string{
 	"kiro":        {"kimi"},
 	"aistudio":    {"aistudio"},
 	"xai":         {"xai"},
-	"opencode":    {"opencode"},
-	"oc":          {"opencode"},
-	"oc-zen":      {"opencode"},
-	"oc-go":       {"opencode"},
-	"mimocode":    {"mimocode"},
-	"mimo":        {"mimocode"},
-	"mimo-tp":     {"mimocode"},
-	"mimo-token":  {"mimocode"},
+	"opencode":      {"opencode"},
+	"opencode-free": {"opencode"},
+	"oc":            {"opencode"},
+	"oc-zen":        {"opencode"},
+	"oc-go":         {"opencode"},
+	"mimocode":      {"mimocode"},
+	"mimocode-free": {"mimocode"},
+	"mimo":          {"mimocode"},
+	"mimo-tp":       {"mimocode"},
+	"mimo-token":    {"mimocode"},
 	"openai":      {"openai"},
 	"groq":        {"groq"},
 	"deepseek":    {"deepseek"},
@@ -286,8 +288,8 @@ func defaultTestModel(providerID string) string {
 		return "llama-3.3-70b-versatile"
 	case "deepseek":
 		return "deepseek-chat"
-	case "mimo", "mimocode", "mimo-tp", "mimocode-free", "mimo-token":
-		return "mimo-v2.5-pro"
+	case "mimo", "mimocode", "mimocode-free", "mimo-tp", "mimo-token":
+		return "mimo-auto"
 	case "opencode", "oc", "oc-zen", "oc-go", "opencode-go", "opencode-zen":
 		return "kimi-k2"
 	case "openrouter":

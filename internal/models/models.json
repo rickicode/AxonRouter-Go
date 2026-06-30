@@ -2228,133 +2228,10 @@
   ],
   "opencode": [
     {
-      "id": "big-pickle"
-    },
-    {
-      "id": "claude-fable-5"
-    },
-    {
-      "id": "claude-haiku-4-5"
-    },
-    {
-      "id": "claude-opus-4-1"
-    },
-    {
-      "id": "claude-opus-4-5"
-    },
-    {
-      "id": "claude-opus-4-6"
-    },
-    {
-      "id": "claude-opus-4-7"
-    },
-    {
-      "id": "claude-opus-4-8"
-    },
-    {
-      "id": "claude-sonnet-4"
-    },
-    {
-      "id": "claude-sonnet-4-5"
-    },
-    {
-      "id": "claude-sonnet-4-6"
-    },
-    {
-      "id": "deepseek-v4-flash"
-    },
-    {
       "id": "deepseek-v4-flash-free"
     },
     {
-      "id": "deepseek-v4-pro"
-    },
-    {
-      "id": "gemini-3-flash"
-    },
-    {
-      "id": "gemini-3.1-pro"
-    },
-    {
-      "id": "gemini-3.5-flash"
-    },
-    {
-      "id": "glm-5"
-    },
-    {
-      "id": "glm-5.1"
-    },
-    {
-      "id": "glm-5.2"
-    },
-    {
-      "id": "gpt-5"
-    },
-    {
-      "id": "gpt-5-codex"
-    },
-    {
-      "id": "gpt-5-nano"
-    },
-    {
-      "id": "gpt-5.1"
-    },
-    {
-      "id": "gpt-5.1-codex"
-    },
-    {
-      "id": "gpt-5.1-codex-max"
-    },
-    {
-      "id": "gpt-5.1-codex-mini"
-    },
-    {
-      "id": "gpt-5.2"
-    },
-    {
-      "id": "gpt-5.2-codex"
-    },
-    {
-      "id": "gpt-5.3-codex"
-    },
-    {
-      "id": "gpt-5.3-codex-spark"
-    },
-    {
-      "id": "gpt-5.4"
-    },
-    {
-      "id": "gpt-5.4-mini"
-    },
-    {
-      "id": "gpt-5.4-nano"
-    },
-    {
-      "id": "gpt-5.4-pro"
-    },
-    {
-      "id": "gpt-5.5"
-    },
-    {
-      "id": "gpt-5.5-pro"
-    },
-    {
-      "id": "grok-build-0.1"
-    },
-    {
-      "id": "kimi-k2.5"
-    },
-    {
-      "id": "kimi-k2.6"
-    },
-    {
       "id": "mimo-v2.5-free"
-    },
-    {
-      "id": "minimax-m2.5"
-    },
-    {
-      "id": "minimax-m2.7"
     },
     {
       "id": "minimax-m3-free"
@@ -2366,33 +2243,12 @@
       "id": "north-mini-code-free"
     },
     {
-      "id": "qwen3.5-plus"
-    },
-    {
-      "id": "qwen3.6-plus"
-    },
-    {
       "id": "qwen3.6-plus-free"
     }
   ],
   "mimocode": [
     {
-      "id": "mimo-v2-omni"
-    },
-    {
-      "id": "mimo-v2-pro"
-    },
-    {
-      "id": "mimo-v2.5"
-    },
-    {
-      "id": "mimo-v2.5-pro"
-    },
-    {
-      "id": "mimo-v2.5-tts"
-    },
-    {
-      "id": "mimo-v2.5-asr"
+      "id": "mimo-auto"
     }
   ],
   "openai": [
