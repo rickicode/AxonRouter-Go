@@ -106,7 +106,7 @@ export async function loadDashboardStats() {
   
   try {
     const [statsData, providersData, logsData] = await Promise.all([
-      dashboardApi.stats() as Promise<{ total_connections: number; status_counts?: { ready: number }; requests_today: number }>,
+      dashboardApi.stats().catch(() => ({ total_connections: 0, status_counts: { ready: 0 }, requests_today: 0 })),
       fetchApi<{ data: unknown[] }>('/dashboard/providers').catch(() => ({ data: [] })),
       fetchApi<{ data: { status_code: number }[] }>('/dashboard/recent-logs').catch(() => ({ data: [] }))
     ]);
@@ -117,20 +117,28 @@ export async function loadDashboardStats() {
       successRate = Math.round((successful / logsData.data.length) * 100);
     }
     
-    const providers = (providersData.data || []) as { id: string; display_name?: string; total?: number }[];
+    const rawProviders = (providersData.data || []) as { id: string; display_name?: string; total?: number }[];
     
     dashboardStats.set({
-      total_connections: statsData.total_connections || 0,
-      active_connections: statsData.status_counts?.ready || 0,
-      total_requests_today: statsData.requests_today || 0,
+      total_connections: statsData?.total_connections ?? 0,
+      active_connections: statsData?.status_counts?.ready ?? 0,
+      total_requests_today: statsData?.requests_today ?? 0,
       success_rate: successRate,
-      providers: providers.map((p) => ({
+      providers: rawProviders.map((p) => ({
         id: p.id,
         name: p.display_name || p.id,
-        connection_count: p.total || 0
+        connection_count: p.total ?? 0
       }))
     });
   } catch (err) {
+    // Even on total failure, set empty stats so the page renders
+    dashboardStats.set({
+      total_connections: 0,
+      active_connections: 0,
+      total_requests_today: 0,
+      success_rate: 0,
+      providers: []
+    });
     error.set(friendlyError(err, 'Failed to load dashboard stats'));
   } finally {
     isLoading.set(false);

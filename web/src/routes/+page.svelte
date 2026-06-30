@@ -95,7 +95,7 @@
         </Button>
       </div>
 
-      {#if $dashboardStats.providers.length > 0}
+      {#if $dashboardStats.providers?.length > 0}
         <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {#each $dashboardStats.providers as provider}
             <Card class="shadow-vercel-2 border transition-all hover:bg-accent/10">
