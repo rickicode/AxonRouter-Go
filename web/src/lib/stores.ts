@@ -1,8 +1,8 @@
 // Svelte Stores for AxonRouter-Go Dashboard
 
 import { writable, derived } from 'svelte/store';
-import { providersApi, connectionsApi, combosApi, logsApi, dashboardApi, fetchApi } from './api';
-import type { Provider, Connection, Combo, RequestLog } from './api';
+import { providersApi, connectionsApi, combosApi, logsApi, dashboardApi, quotaApi, fetchApi } from './api';
+import type { Provider, Connection, Combo, RequestLog, ProviderQuota, ConnectionQuota } from './api';
 import { toast } from 'svelte-sonner';
 function friendlyError(err: unknown, fallback: string): string {
   const msg = err instanceof Error ? err.message : fallback;
@@ -372,5 +372,43 @@ export function getStatusLabel(status: string): string {
     case 'suspended': return 'Suspended';
     case 'disabled': return 'Disabled';
     default: return status;
+  }
+}
+
+// Quota
+export const quotaData = writable<ProviderQuota[]>([]);
+export const quotaLoading = writable(false);
+export const quotaError = writable<string | null>(null);
+
+export async function loadQuota() {
+  quotaLoading.set(true);
+  quotaError.set(null);
+  try {
+    const data = await quotaApi.list();
+    quotaData.set(data);
+  } catch (err) {
+    quotaError.set(friendlyError(err, 'Failed to load quota'));
+    toast.error('Failed to load quota data');
+  } finally {
+    quotaLoading.set(false);
+  }
+}
+
+export async function refreshConnectionQuota(connId: string): Promise<ConnectionQuota | null> {
+  try {
+    const result = await quotaApi.refresh(connId);
+    quotaData.update(providers =>
+      providers.map(p => ({
+        ...p,
+        connections: p.connections.map(c =>
+          c.connection_id === connId ? result : c
+        ),
+      }))
+    );
+    toast.success('Quota refreshed');
+    return result;
+  } catch (err) {
+    toast.error('Refresh failed: ' + friendlyError(err, 'Unknown error'));
+    return null;
   }
 }

@@ -312,3 +312,42 @@ export const dashboardApi = {
       uptime_seconds: number;
     }>('/dashboard/stats'),
 };
+
+// Quota types
+export interface QuotaItem {
+  name: string;
+  used: number;
+  total: number;
+  remaining_pct: number;
+  reset_at?: string;
+  unlimited: boolean;
+  model_key?: string;
+  family?: string;
+}
+
+export interface ConnectionQuota {
+  connection_id: string;
+  connection_name: string;
+  provider_id: string;
+  provider_name: string;
+  plan?: string;
+  quotas: QuotaItem[];
+  message?: string;
+  error?: string;
+  fetched_at: number;
+}
+
+export interface ProviderQuota {
+  provider_id: string;
+  provider_name: string;
+  display_name: string;
+  color: string;
+  icon_file: string;
+  connections: ConnectionQuota[];
+}
+
+// Quota API
+export const quotaApi = {
+  list: () => fetchApi<ProviderQuota[]>('/quota'),
+  refresh: (connId: string) => fetchApi<ConnectionQuota>(`/quota/${connId}/refresh`, { method: 'POST' }),
+};

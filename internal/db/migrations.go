@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS connections (
     oauth_token TEXT,
     oauth_refresh_token TEXT,
     oauth_expires_at INTEGER,
+    provider_specific_data TEXT,
     status TEXT NOT NULL DEFAULT 'ready',
     cooldown_until INTEGER,
     last_error TEXT,
@@ -119,5 +120,44 @@ CREATE TABLE IF NOT EXISTS rotation_state (
     updated_at INTEGER NOT NULL
 );
 `)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Incremental migrations for columns added after initial schema.
+	// SQLite ALTER TABLE ADD COLUMN is idempotent if column already exists,
+	// but SQLite errors on duplicate — just ignore the "duplicate column" error.
+	for _, stmt := range []string{
+		`ALTER TABLE connections ADD COLUMN provider_specific_data TEXT`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			// Ignore "duplicate column name" errors
+			if !isDuplicateColumnError(err) {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func isDuplicateColumnError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return contains(msg, "duplicate column") || contains(msg, "already exists")
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && searchString(s, substr)
+}
+
+func searchString(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

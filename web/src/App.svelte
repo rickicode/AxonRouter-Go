@@ -17,6 +17,7 @@
   import ComboDetail from './pages/ComboDetail.svelte';
   import Logs from './pages/Logs.svelte';
   import Settings from './pages/Settings.svelte';
+  import Quota from './pages/Quota.svelte';
 
   let cleanup: (() => void) | undefined;
 
@@ -32,6 +33,7 @@
       providers: 'Providers',
       combos: 'Combos',
       logs: 'Logs',
+      quota: 'Quota',
       settings: 'Settings',
     };
     return labels[segment] ?? segment.charAt(0).toUpperCase() + segment.slice(1);
@@ -61,6 +63,9 @@
 
     // /logs → Logs
     if (segments[0] === 'logs') return { component: Logs, params: {} };
+
+    // /quota → Quota
+    if (segments[0] === 'quota' && segments.length === 1) return { component: Quota, params: {} };
 
     // /settings → Settings
     if (segments[0] === 'settings') return { component: Settings, params: {} };

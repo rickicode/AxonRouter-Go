@@ -203,6 +203,11 @@ func New(cfg Config) *Router {
 	adminGroup.GET("/dashboard/providers", dashboardH.ProviderSummary)
 	adminGroup.GET("/dashboard/recent-logs", dashboardH.RecentLogs)
 
+	// Quota
+	quotaH := admin.NewQuotaHandler(cfg.DB)
+	adminGroup.GET("/quota", quotaH.List)
+	adminGroup.POST("/quota/:connId/refresh", quotaH.Refresh)
+
 	// ---- Static frontend (SPA) ----
 	fsys := web.GetBuildFS()
 
