@@ -5,6 +5,7 @@ package translator
 // The import uses _ to trigger init() side effects.
 
 import (
+	// Existing translators
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/antigravity/openai"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/claude/openai"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/codex/responses"
@@ -16,4 +17,13 @@ import (
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai/gemini"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai/kiro"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai/openai"
+
+	// NEW — 7 additional translator pairs
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/antigravity/claude"
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/antigravity/gemini"
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/claude/gemini"
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/codex/claude"
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/codex/gemini"
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/gemini/claude"
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai/openai_responses"
 )

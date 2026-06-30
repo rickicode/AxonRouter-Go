@@ -167,6 +167,15 @@ func New(cfg Config) *Router {
 	adminGroup.POST("/connections/:id/reset", connectionH.ResetStatus)
 	adminGroup.PATCH("/connections/bulk", connectionH.BulkUpdate)
 
+	// Models
+	modelH := admin.NewModelHandler(cfg.DB, executor.GetRegistry(), store)
+	adminGroup.GET("/providers/:id/models", modelH.ListModels)
+	adminGroup.POST("/providers/:id/models/test", modelH.TestModel)
+
+	// OAuth
+	oauthH := admin.NewOAuthHandler(cfg.DB, authManager)
+	adminGroup.POST("/connections/:id/oauth", oauthH.InitiateOAuth)
+
 	// Combos
 	adminGroup.GET("/combos", comboH.List)
 	adminGroup.GET("/combos/:id", comboH.Get)
