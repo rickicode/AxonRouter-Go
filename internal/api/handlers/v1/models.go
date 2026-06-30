@@ -8,8 +8,6 @@ import (
 )
 
 // v1ProviderCatalog maps provider prefix → models.json keys + owned_by.
-// Providers not listed here (openai, groq, deepseek, mimo, opencode, etc.)
-// have no static catalog — their models are discovered dynamically from upstream.
 var v1ProviderCatalog = map[string]struct {
 	keys    []string
 	ownedBy string
@@ -20,6 +18,19 @@ var v1ProviderCatalog = map[string]struct {
 	"ag":       {keys: []string{"antigravity"}, ownedBy: "google"},
 	"kiro":     {keys: []string{"kimi"}, ownedBy: "moonshot"},
 	"aistudio": {keys: []string{"aistudio"}, ownedBy: "google"},
+	"opencode":   {keys: []string{"opencode"}, ownedBy: "opencode"},
+	"oc":         {keys: []string{"opencode"}, ownedBy: "opencode"},
+	"oc-zen":     {keys: []string{"opencode"}, ownedBy: "opencode"},
+	"oc-go":      {keys: []string{"opencode"}, ownedBy: "opencode"},
+	"mimocode":   {keys: []string{"mimocode"}, ownedBy: "xiaomi"},
+	"mimo":       {keys: []string{"mimocode"}, ownedBy: "xiaomi"},
+	"mimo-tp":    {keys: []string{"mimocode"}, ownedBy: "xiaomi"},
+	"mimo-token": {keys: []string{"mimocode"}, ownedBy: "xiaomi"},
+	"openai":     {keys: []string{"openai"}, ownedBy: "openai"},
+	"groq":       {keys: []string{"groq"}, ownedBy: "groq"},
+	"deepseek":   {keys: []string{"deepseek"}, ownedBy: "deepseek"},
+	"openrouter": {keys: []string{"openrouter"}, ownedBy: "openrouter"},
+	"zai":        {keys: []string{"claude"}, ownedBy: "zai"},
 }
 
 // Models handles GET /v1/models — includes combos and virtual models.

@@ -91,7 +91,7 @@ func RegisterDefaults() {
 
 	// OpenAI-compatible providers
 	openaiExec := NewOpenAIExecutor(base)
-	for _, p := range []string{"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimocode", "mimo", "mimo-tp", "elevenlabs", "deepgram"} {
+	for _, p := range []string{"openai", "groq", "deepseek", "opencode", "oc", "oc-zen", "oc-go", "mimocode", "mimo", "mimo-tp", "elevenlabs", "deepgram"} {
 		GetRegistry().Register(p, FormatOpenAI, openaiExec)
 	}
 

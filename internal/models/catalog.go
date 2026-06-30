@@ -16,13 +16,24 @@ import (
 var embeddedModelsJSON []byte
 
 const (
-	refreshInterval = 3 * time.Hour
-	fetchTimeout    = 15 * time.Second
+	refreshInterval    = 3 * time.Hour
+	providerSyncInterval = 15 * time.Minute
+	fetchTimeout       = 15 * time.Second
 )
 
 var remoteURLs = []string{
 	"https://raw.githubusercontent.com/router-for-me/models/refs/heads/main/models.json",
 	"https://models.router-for.me/models.json",
+}
+
+// providerEndpoints maps catalog keys to upstream /v1/models URLs.
+// These are fetched periodically and merged into the in-memory catalog.
+// Only add endpoints that work without authentication (no-auth / public).
+// For providers requiring API keys, models are discovered dynamically
+// via the ListModels handler when connections exist.
+var providerEndpoints = map[string]string{
+	"opencode": "https://opencode.ai/zen/v1/models",
+	"oc-go":    "https://opencode.ai/zen/go/v1/models",
 }
 
 // modelEntry is a single model definition from models.json.
@@ -57,7 +68,7 @@ func loadEmbedded() {
 
 // GetModelIDs returns model IDs (without provider prefix) for a provider key.
 // The key matches models.json top-level keys: "claude", "codex-free", "codex-pro",
-// "gemini", "antigravity", "kimi", "xai", etc.
+// "gemini", "antigravity", "kimi", "xai", "opencode", "mimocode", etc.
 func GetModelIDs(providerKey string) []string {
 	mu.RLock()
 	defer mu.RUnlock()
@@ -90,7 +101,8 @@ func GetAllModelIDs(keys ...string) []string {
 }
 
 // StartUpdater starts a background goroutine that refreshes the model catalog
-// from remote URLs every 3 hours. Safe to call multiple times; only one runs.
+// from remote URLs every 3 hours, and syncs per-provider models every 15 minutes.
+// Safe to call multiple times; only one runs.
 func StartUpdater(ctx context.Context) {
 	once.Do(func() {
 		startTime = time.Now()
@@ -99,17 +111,25 @@ func StartUpdater(ctx context.Context) {
 }
 
 func run(ctx context.Context) {
-	// Fetch immediately on startup
+	// Fetch full catalog immediately on startup
 	tryFetch(ctx)
+	// Also sync per-provider endpoints immediately
+	tryFetchProviders(ctx)
 
-	ticker := time.NewTicker(refreshInterval)
-	defer ticker.Stop()
+	catalogTicker := time.NewTicker(refreshInterval)
+	defer catalogTicker.Stop()
+	providerTicker := time.NewTicker(providerSyncInterval)
+	defer providerTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-catalogTicker.C:
 			tryFetch(ctx)
+			tryFetchProviders(ctx) // re-merge per-provider models after full refresh
+		case <-providerTicker.C:
+			tryFetchProviders(ctx)
 		}
 	}
 }
@@ -122,6 +142,8 @@ func tryFetch(ctx context.Context) {
 			continue
 		}
 		mu.Lock()
+		// Merge: remote catalog replaces everything, then provider-specific
+		// endpoints will re-merge their models on next provider sync cycle.
 		current = c
 		mu.Unlock()
 		log.Printf("model catalog updated from %s (%d providers)", url, len(c))
@@ -130,6 +152,77 @@ func tryFetch(ctx context.Context) {
 	log.Printf("WARN: all model catalog remote URLs failed, using embedded fallback")
 }
 
+// tryFetchProviders fetches models from per-provider upstream endpoints
+// and merges them into the in-memory catalog. This keeps no-auth provider
+// models (like opencode) up-to-date even without stored connections.
+func tryFetchProviders(ctx context.Context) {
+	for catalogKey, endpoint := range providerEndpoints {
+		models, err := fetchProviderModels(ctx, endpoint)
+		if err != nil {
+			log.Printf("WARN: provider model sync failed for %s (%s): %v", catalogKey, endpoint, err)
+			continue
+		}
+		if len(models) == 0 {
+			continue
+		}
+		entries := make([]modelEntry, 0, len(models))
+		for _, id := range models {
+			entries = append(entries, modelEntry{ID: id})
+		}
+		mu.Lock()
+		current[catalogKey] = entries
+		mu.Unlock()
+		log.Printf("provider model sync: %s updated (%d models)", catalogKey, len(entries))
+	}
+}
+
+// fetchProviderModels fetches model IDs from an OpenAI-compatible /v1/models endpoint.
+// Returns model IDs or an error.
+func fetchProviderModels(ctx context.Context, endpoint string) ([]string, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, fetchTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, "GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse OpenAI-format: {"data": [{"id": "model-name"}, ...]}
+	var modelsResp struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &modelsResp); err != nil {
+		return nil, fmt.Errorf("parse error: %w", err)
+	}
+
+	ids := make([]string, 0, len(modelsResp.Data))
+	for _, m := range modelsResp.Data {
+		if m.ID != "" {
+			ids = append(ids, m.ID)
+		}
+	}
+	return ids, nil
+}
+
+// fetchCatalog fetches and parses the full catalog from a remote URL.
 func fetchCatalog(ctx context.Context, url string) (catalog, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
@@ -138,6 +231,7 @@ func fetchCatalog(ctx context.Context, url string) (catalog, error) {
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -157,9 +251,6 @@ func fetchCatalog(ctx context.Context, url string) (catalog, error) {
 	var c catalog
 	if err := json.Unmarshal(data, &c); err != nil {
 		return nil, err
-	}
-	if len(c) == 0 {
-		return nil, fmt.Errorf("empty catalog")
 	}
 	return c, nil
 }

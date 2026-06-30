@@ -2107,7 +2107,7 @@
       "type": "xai",
       "display_name": "Grok Build 0.1",
       "name": "grok-build-0.1",
-      "description": "Grok Build 0.1 is xAI’s fast coding model trained specifically for agentic software engineering workflows.",
+      "description": "Grok Build 0.1 is xAI\u2019s fast coding model trained specifically for agentic software engineering workflows.",
       "context_length": 256000,
       "max_completion_tokens": 256000
     },
@@ -2224,6 +2224,363 @@
       "description": "xAI Composer 2.5 Fast model for the Responses API.",
       "context_length": 200000,
       "max_completion_tokens": 32768
+    }
+  ],
+  "opencode": [
+    {
+      "id": "big-pickle"
+    },
+    {
+      "id": "claude-fable-5"
+    },
+    {
+      "id": "claude-haiku-4-5"
+    },
+    {
+      "id": "claude-opus-4-1"
+    },
+    {
+      "id": "claude-opus-4-5"
+    },
+    {
+      "id": "claude-opus-4-6"
+    },
+    {
+      "id": "claude-opus-4-7"
+    },
+    {
+      "id": "claude-opus-4-8"
+    },
+    {
+      "id": "claude-sonnet-4"
+    },
+    {
+      "id": "claude-sonnet-4-5"
+    },
+    {
+      "id": "claude-sonnet-4-6"
+    },
+    {
+      "id": "deepseek-v4-flash"
+    },
+    {
+      "id": "deepseek-v4-flash-free"
+    },
+    {
+      "id": "deepseek-v4-pro"
+    },
+    {
+      "id": "gemini-3-flash"
+    },
+    {
+      "id": "gemini-3.1-pro"
+    },
+    {
+      "id": "gemini-3.5-flash"
+    },
+    {
+      "id": "glm-5"
+    },
+    {
+      "id": "glm-5.1"
+    },
+    {
+      "id": "glm-5.2"
+    },
+    {
+      "id": "gpt-5"
+    },
+    {
+      "id": "gpt-5-codex"
+    },
+    {
+      "id": "gpt-5-nano"
+    },
+    {
+      "id": "gpt-5.1"
+    },
+    {
+      "id": "gpt-5.1-codex"
+    },
+    {
+      "id": "gpt-5.1-codex-max"
+    },
+    {
+      "id": "gpt-5.1-codex-mini"
+    },
+    {
+      "id": "gpt-5.2"
+    },
+    {
+      "id": "gpt-5.2-codex"
+    },
+    {
+      "id": "gpt-5.3-codex"
+    },
+    {
+      "id": "gpt-5.3-codex-spark"
+    },
+    {
+      "id": "gpt-5.4"
+    },
+    {
+      "id": "gpt-5.4-mini"
+    },
+    {
+      "id": "gpt-5.4-nano"
+    },
+    {
+      "id": "gpt-5.4-pro"
+    },
+    {
+      "id": "gpt-5.5"
+    },
+    {
+      "id": "gpt-5.5-pro"
+    },
+    {
+      "id": "grok-build-0.1"
+    },
+    {
+      "id": "kimi-k2.5"
+    },
+    {
+      "id": "kimi-k2.6"
+    },
+    {
+      "id": "mimo-v2.5-free"
+    },
+    {
+      "id": "minimax-m2.5"
+    },
+    {
+      "id": "minimax-m2.7"
+    },
+    {
+      "id": "minimax-m3-free"
+    },
+    {
+      "id": "nemotron-3-ultra-free"
+    },
+    {
+      "id": "north-mini-code-free"
+    },
+    {
+      "id": "qwen3.5-plus"
+    },
+    {
+      "id": "qwen3.6-plus"
+    },
+    {
+      "id": "qwen3.6-plus-free"
+    }
+  ],
+  "mimocode": [
+    {
+      "id": "mimo-v2-omni"
+    },
+    {
+      "id": "mimo-v2-pro"
+    },
+    {
+      "id": "mimo-v2.5"
+    },
+    {
+      "id": "mimo-v2.5-pro"
+    },
+    {
+      "id": "mimo-v2.5-tts"
+    },
+    {
+      "id": "mimo-v2.5-asr"
+    }
+  ],
+  "openai": [
+    {
+      "id": "gpt-4o"
+    },
+    {
+      "id": "gpt-4o-mini"
+    },
+    {
+      "id": "gpt-4-turbo"
+    },
+    {
+      "id": "gpt-4"
+    },
+    {
+      "id": "gpt-3.5-turbo"
+    },
+    {
+      "id": "o1"
+    },
+    {
+      "id": "o1-mini"
+    },
+    {
+      "id": "o1-pro"
+    },
+    {
+      "id": "o3"
+    },
+    {
+      "id": "o3-mini"
+    },
+    {
+      "id": "o4-mini"
+    },
+    {
+      "id": "gpt-5"
+    },
+    {
+      "id": "gpt-5-mini"
+    },
+    {
+      "id": "gpt-5-nano"
+    },
+    {
+      "id": "gpt-5-pro"
+    },
+    {
+      "id": "gpt-4.1"
+    },
+    {
+      "id": "gpt-4.1-mini"
+    },
+    {
+      "id": "gpt-4.1-nano"
+    },
+    {
+      "id": "dall-e-3"
+    },
+    {
+      "id": "dall-e-2"
+    },
+    {
+      "id": "whisper-1"
+    },
+    {
+      "id": "tts-1"
+    },
+    {
+      "id": "tts-1-hd"
+    },
+    {
+      "id": "text-embedding-3-small"
+    },
+    {
+      "id": "text-embedding-3-large"
+    },
+    {
+      "id": "codex-mini"
+    },
+    {
+      "id": "computer-use-preview"
+    }
+  ],
+  "groq": [
+    {
+      "id": "llama-3.3-70b-versatile"
+    },
+    {
+      "id": "llama-3.1-8b-instant"
+    },
+    {
+      "id": "llama-3.1-70b-versatile"
+    },
+    {
+      "id": "llama-3.1-405b-reasoning"
+    },
+    {
+      "id": "mixtral-8x7b-32768"
+    },
+    {
+      "id": "gemma2-9b-it"
+    },
+    {
+      "id": "deepseek-r1-distill-llama-70b"
+    },
+    {
+      "id": "deepseek-r1-distill-qwen-32b"
+    },
+    {
+      "id": "qwen-qwq-32b"
+    },
+    {
+      "id": "meta-llama/llama-4-scout-17b-16e-instruct"
+    },
+    {
+      "id": "meta-llama/llama-4-maverick-17b-128e-instruct"
+    },
+    {
+      "id": "mistral-saba-24b"
+    },
+    {
+      "id": "qwen-2.5-32b"
+    }
+  ],
+  "deepseek": [
+    {
+      "id": "deepseek-chat"
+    },
+    {
+      "id": "deepseek-reasoner"
+    },
+    {
+      "id": "deepseek-coder"
+    },
+    {
+      "id": "deepseek-v3"
+    },
+    {
+      "id": "deepseek-r1"
+    }
+  ],
+  "openrouter": [
+    {
+      "id": "openai/gpt-4o"
+    },
+    {
+      "id": "openai/gpt-4o-mini"
+    },
+    {
+      "id": "openai/o1-preview"
+    },
+    {
+      "id": "openai/o1-mini"
+    },
+    {
+      "id": "anthropic/claude-3.5-sonnet"
+    },
+    {
+      "id": "anthropic/claude-3.5-haiku"
+    },
+    {
+      "id": "anthropic/claude-3-opus"
+    },
+    {
+      "id": "google/gemini-2.0-flash-exp"
+    },
+    {
+      "id": "google/gemini-pro-1.5"
+    },
+    {
+      "id": "meta-llama/llama-3.1-405b-instruct"
+    },
+    {
+      "id": "meta-llama/llama-3.1-70b-instruct"
+    },
+    {
+      "id": "deepseek/deepseek-chat"
+    },
+    {
+      "id": "deepseek/deepseek-r1"
+    },
+    {
+      "id": "mistralai/mistral-large-latest"
+    },
+    {
+      "id": "qwen/qwen-2.5-72b-instruct"
     }
   ]
 }
