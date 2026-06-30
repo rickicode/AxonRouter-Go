@@ -22,19 +22,8 @@ export default {
         display: ['Inter', 'system-ui', 'sans-serif'],
         mono: ['JetBrains Mono', 'Geist Mono', 'monospace'],
       },
-      fontSize: {
-        'display-xxl': ['64px', { lineHeight: '70.4px', fontWeight: '600', letterSpacing: '-1.92px' }],
-        'display-xl': ['48px', { lineHeight: '48px', fontWeight: '600', letterSpacing: '-2.4px' }],
-        'display-lg': ['32px', { lineHeight: '40px', fontWeight: '600', letterSpacing: '-1.28px' }],
-        'display-md': ['24px', { lineHeight: '32px', fontWeight: '600', letterSpacing: '-0.96px' }],
-        'display-sm': ['20px', { lineHeight: '28px', fontWeight: '600', letterSpacing: '-0.6px' }],
-        'body-lg': ['18px', { lineHeight: '28px', letterSpacing: '0px' }],
-        'body-md': ['16px', { lineHeight: '24px', letterSpacing: '0px' }],
-        'body-sm': ['14px', { lineHeight: '20px', letterSpacing: '-0.28px' }],
-        'caption-mono': ['12px', { lineHeight: '16px', letterSpacing: '0px' }],
-        'button-md': ['14px', { lineHeight: '20px', fontWeight: '500' }],
-        'button-lg': ['16px', { lineHeight: '24px', fontWeight: '500' }],
-      },
+      // ponytail: typography tokens removed — CSS classes in app.css are the source of truth.
+      // All Svelte components use text-display-lg etc. from CSS, not Tailwind utilities.
       spacing: {
         'xxs': '4px',
         'xs': '8px',
