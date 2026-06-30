@@ -1,19 +1,20 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { loadProviders, providers, isLoading, error } from '$lib/stores';
-  import { Card, CardContent } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
   import {
     CATEGORIES,
+    getCategoryById,
     getProviderMeta,
     getStatusDotColor,
     getStatusVariant,
     getStatusLabel,
+    type ProviderMeta,
   } from '$lib/provider-catalog';
   import ProviderIcon from '$lib/components/ProviderIcon.svelte';
-  import { providersApi } from '$lib/api';
+  import { providersApi, type Provider } from '$lib/api';
 
   let searchQuery = $state('');
   let activeCategory = $state('');
@@ -21,45 +22,114 @@
   let testResults = $state<Record<string, { ok: boolean; msg: string }>>({});
   let collapsed = $state<Record<string, boolean>>({});
 
-  const filterCategories = CATEGORIES.filter((c) =>
-    ['oauth', 'apikey', 'free', 'free_tier', 'compatible'].includes(c.id),
-  );
+  const KIND_LABELS: Record<string, string> = {
+    llm: 'Chat',
+    embedding: 'Embed',
+    image: 'Image',
+    imageToText: 'Vision',
+    tts: 'TTS',
+    stt: 'STT',
+    webSearch: 'Search',
+    webFetch: 'Fetch',
+    video: 'Video',
+    music: 'Music',
+  };
 
   onMount(() => {
-    document.title = 'Providers — AxonRouter';
+    document.title = 'Providers - AxonRouter';
     loadProviders();
   });
 
-  let filteredProviders = $derived.by(() => {
-    let list = $providers;
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter(
-        (p) =>
-          p.display_name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q),
-      );
-    }
-    if (activeCategory) {
-      list = list.filter((p) => {
-        const meta = getProviderMeta(p.id);
-        const cat = meta?.category ?? 'compatible';
-        return cat === activeCategory;
-      });
-    }
-    return list;
-  });
+  function providerMeta(provider: Provider) {
+    return getProviderMeta(provider.id);
+  }
 
-  let groupedProviders = $derived.by(() => {
-    const groups: Record<string, typeof filteredProviders> = {};
-    for (const cat of filterCategories) groups[cat.id] = [];
-    for (const p of filteredProviders) {
-      const meta = getProviderMeta(p.id);
-      const cat = meta?.category ?? 'compatible';
-      if (!groups[cat]) groups[cat] = [];
-      groups[cat].push(p);
-    }
-    return groups;
-  });
+  function initials(value: string): string {
+    const words = value.replace(/[^a-zA-Z0-9 ]/g, ' ').trim().split(/\s+/).filter(Boolean);
+    if (words.length === 0) return 'AI';
+    if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+    return `${words[0][0]}${words[1][0]}`.toUpperCase();
+  }
+
+  function providerIconMeta(provider: Provider): ProviderMeta {
+    const meta = providerMeta(provider);
+    if (meta) return meta;
+    const name = providerName(provider);
+    return {
+      id: provider.id,
+      displayName: name,
+      icon: 'api',
+      textIcon: initials(name),
+      category: 'compatible',
+      description: 'Custom compatible provider endpoint.',
+      format: provider.format || 'openai',
+      authType: 'custom',
+      prefix: `${provider.id}/`,
+      isBuiltIn: false,
+      color: '#f97316',
+      serviceKinds: ['llm'],
+    };
+  }
+
+  function providerCategoryId(provider: Provider): string {
+    return providerMeta(provider)?.category ?? 'compatible';
+  }
+
+  function providerColor(provider: Provider): string {
+    return providerMeta(provider)?.color ?? '#f97316';
+  }
+
+  function providerName(provider: Provider): string {
+    return providerMeta(provider)?.displayName ?? provider.display_name ?? provider.id;
+  }
+
+  function providerDescription(provider: Provider): string {
+    return providerMeta(provider)?.description ?? 'Custom compatible provider endpoint.';
+  }
+
+  function providerPrefix(provider: Provider): string {
+    return providerMeta(provider)?.prefix ?? `${provider.id}/`;
+  }
+
+  function providerHasFree(provider: Provider): boolean {
+    const meta = providerMeta(provider);
+    return meta?.hasFree === true || meta?.category === 'no-auth';
+  }
+
+  function serviceKinds(provider: Provider): string[] {
+    return providerMeta(provider)?.serviceKinds ?? [];
+  }
+
+  function hexToRgba(color: string | undefined, alpha: number): string {
+    const value = color?.trim();
+    if (!value || !/^#[0-9a-fA-F]{6}$/.test(value)) return `rgb(23 23 23 / ${alpha})`;
+    const r = parseInt(value.slice(1, 3), 16);
+    const g = parseInt(value.slice(3, 5), 16);
+    const b = parseInt(value.slice(5, 7), 16);
+    return `rgb(${r} ${g} ${b} / ${alpha})`;
+  }
+
+  function statusEntries(provider: Provider) {
+    return Object.entries(provider.status_counts ?? {})
+      .filter(([, count]) => Number(count) > 0)
+      .sort(([a], [b]) => (a === 'ready' ? -1 : b === 'ready' ? 1 : a.localeCompare(b)));
+  }
+
+  function issueCount(provider: Provider): number {
+    return Object.entries(provider.status_counts ?? {}).reduce((sum, [status, count]) => {
+      if (status === 'ready') return sum;
+      return sum + Number(count || 0);
+    }, 0);
+  }
+
+  function readyCount(provider: Provider): number {
+    return Number(provider.status_counts?.ready ?? 0);
+  }
+
+  function categoryProviders(categoryId: string, source: Provider[]): Provider[] {
+    if (categoryId === 'free') return source.filter(providerHasFree);
+    return source.filter((provider) => providerCategoryId(provider) === categoryId);
+  }
 
   async function handleTest(id: string) {
     testingId = id;
@@ -77,202 +147,349 @@
   function toggleCollapse(catId: string) {
     collapsed[catId] = !collapsed[catId];
   }
+
+  let providerTotals = $derived.by(() => {
+    const totalConnections = $providers.reduce((sum, provider) => sum + Number(provider.connection_count || 0), 0);
+    const ready = $providers.reduce((sum, provider) => sum + readyCount(provider), 0);
+    const issues = $providers.reduce((sum, provider) => sum + issueCount(provider), 0);
+    const configured = $providers.filter((provider) => Number(provider.connection_count || 0) > 0).length;
+    return { totalConnections, ready, issues, configured };
+  });
+
+  let categoryStats = $derived.by(() => {
+    const stats: Record<string, { configured: number; total: number }> = {};
+    for (const category of CATEGORIES) stats[category.id] = { configured: 0, total: 0 };
+    for (const provider of $providers) {
+      const categories = [providerCategoryId(provider)];
+      if (providerHasFree(provider)) categories.push('free');
+      for (const category of categories) {
+        if (!stats[category]) stats[category] = { configured: 0, total: 0 };
+        stats[category].total += 1;
+        if (Number(provider.connection_count || 0) > 0) stats[category].configured += 1;
+      }
+    }
+    return stats;
+  });
+
+  let visibleCategoryChips = $derived.by(() =>
+    CATEGORIES.filter((category) => categoryStats[category.id]?.total > 0 || category.id === 'compatible'),
+  );
+
+  let filteredProviders = $derived.by(() => {
+    let list = $providers;
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      list = list.filter((provider) => {
+        const meta = providerMeta(provider);
+        const haystack = [
+          provider.id,
+          provider.display_name,
+          providerName(provider),
+          providerDescription(provider),
+          provider.format,
+          providerPrefix(provider),
+          meta?.category,
+          meta?.website,
+          ...(meta?.serviceKinds ?? []),
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return haystack.includes(q);
+      });
+    }
+    if (activeCategory) list = categoryProviders(activeCategory, list);
+    return list;
+  });
+
+  let groupedProviders = $derived.by(() => {
+    const groups: Record<string, Provider[]> = {};
+    for (const category of CATEGORIES) groups[category.id] = [];
+    for (const provider of filteredProviders) {
+      const categoryId = activeCategory === 'free' ? 'free' : providerCategoryId(provider);
+      if (!groups[categoryId]) groups[categoryId] = [];
+      groups[categoryId].push(provider);
+    }
+    return groups;
+  });
+
+  let visibleSections = $derived.by(() => {
+    if (activeCategory === 'free') {
+      const free = getCategoryById('free');
+      return free && groupedProviders.free?.length ? [free] : [];
+    }
+    return CATEGORIES.filter((category) => category.id !== 'free' && groupedProviders[category.id]?.length);
+  });
 </script>
 
-<div class="flex flex-1 flex-col gap-6 p-6">
+<div class="flex flex-1 flex-col gap-6 p-4 md:p-6">
   {#if $isLoading}
     <div class="flex flex-col gap-6">
-      <div class="space-y-2">
+      <div class="rounded-xl border border-border bg-card p-5 shadow-vercel-2">
         <div class="h-8 w-48 animate-pulse rounded-md bg-muted"></div>
-        <div class="h-4 w-72 animate-pulse rounded-md bg-muted/60"></div>
+        <div class="mt-3 h-4 w-80 max-w-full animate-pulse rounded-md bg-muted/70"></div>
+        <div class="mt-5 grid gap-3 md:grid-cols-4">
+          {#each Array(4) as _}
+            <div class="h-20 animate-pulse rounded-lg bg-muted/80"></div>
+          {/each}
+        </div>
       </div>
-      <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {#each Array(6) as _}
-          <div class="h-48 animate-pulse rounded-md bg-muted"></div>
+      <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {#each Array(8) as _}
+          <div class="h-56 animate-pulse rounded-xl border border-border bg-card shadow-vercel-1"></div>
         {/each}
       </div>
     </div>
   {:else if $error}
-    <Card class="border shadow-vercel-2">
-      <CardContent class="flex flex-col items-center justify-center py-12">
-        <p class="mb-4 text-body-sm text-muted-foreground">{$error}</p>
-        <Button onclick={loadProviders} variant="outline" class="text-body-sm">Try again</Button>
-      </CardContent>
-    </Card>
+    <section class="rounded-xl border border-destructive/20 bg-destructive/5 p-8 text-center shadow-vercel-2">
+      <p class="mx-auto max-w-xl text-body-sm text-destructive">{$error}</p>
+      <Button onclick={loadProviders} variant="outline" class="mt-4 text-body-sm">Try again</Button>
+    </section>
   {:else}
-    <!-- Header -->
-    <div class="flex items-center justify-between">
-      <div class="space-y-1">
-        <h1 class="text-display-lg">Providers.</h1>
-        <p class="text-body-sm text-muted-foreground">
-          {$providers.length} providers configured.
-        </p>
-      </div>
-      <a href="/providers/add" class="inline-flex items-center justify-center h-10 px-5 text-button-md bg-primary text-primary-foreground rounded-pill hover:opacity-90 transition-opacity">
-        Add provider
-      </a>
-    </div>
+    <section class="overflow-hidden rounded-xl border border-border bg-card shadow-vercel-3">
+      <div class="relative p-5 md:p-6">
+        <div class="pointer-events-none absolute inset-x-0 top-0 h-32 bg-[radial-gradient(circle_at_20%_0%,rgba(0,124,240,0.16),transparent_34%),radial-gradient(circle_at_70%_0%,rgba(255,0,128,0.10),transparent_28%)]"></div>
+        <div class="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div class="max-w-3xl space-y-2">
+            <h1 class="text-display-lg text-foreground">Providers</h1>
+            <p class="text-body-sm text-muted-foreground">
+              OmniRoute-style provider catalog with AxonRouter connection health, auth labels, prefixes, and model surface details.
+            </p>
+          </div>
+          <Button href="/providers/add" class="h-10 rounded-sm px-4 text-button-md">
+            Add provider
+          </Button>
+        </div>
 
-    <!-- Filter bar — DESIGN.md tab-ghost pills -->
-    <div class="flex flex-col gap-3">
-      <Input
-        type="text"
-        class="h-9 max-w-sm text-body-sm"
-        placeholder="Search providers..."
-        bind:value={searchQuery}
-      />
-      <div class="flex flex-wrap gap-2">
-        <button
-          class="rounded-pill-sm px-4 py-1.5 text-body-sm transition-colors
-            {!activeCategory
-              ? 'bg-foreground text-background'
-              : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'}"
-          onclick={() => (activeCategory = '')}
-        >
-          All
-        </button>
-        {#each filterCategories as cat}
+        <div class="relative mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div class="rounded-lg border border-border bg-background/80 p-4">
+            <p class="text-caption text-muted-foreground">Catalog</p>
+            <p class="mt-1 text-display-md">{$providers.length}</p>
+            <p class="text-caption-mono text-muted-foreground">{providerTotals.configured} configured</p>
+          </div>
+          <div class="rounded-lg border border-border bg-background/80 p-4">
+            <p class="text-caption text-muted-foreground">Connections</p>
+            <p class="mt-1 text-display-md">{providerTotals.totalConnections}</p>
+            <p class="text-caption-mono text-muted-foreground">runtime pool</p>
+          </div>
+          <div class="rounded-lg border border-border bg-background/80 p-4">
+            <p class="text-caption text-muted-foreground">Ready</p>
+            <p class="mt-1 text-display-md text-emerald-600">{providerTotals.ready}</p>
+            <p class="text-caption-mono text-muted-foreground">available routes</p>
+          </div>
+          <div class="rounded-lg border border-border bg-background/80 p-4">
+            <p class="text-caption text-muted-foreground">Needs attention</p>
+            <p class="mt-1 text-display-md {providerTotals.issues > 0 ? 'text-destructive' : 'text-muted-foreground'}">{providerTotals.issues}</p>
+            <p class="text-caption-mono text-muted-foreground">quota, auth, cooldown</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="rounded-xl border border-border bg-card p-4 shadow-vercel-2 md:p-5">
+      <div class="flex flex-col gap-4">
+        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div class="relative w-full lg:max-w-md">
+            <Input
+              type="text"
+              class="h-10 w-full text-body-sm"
+              placeholder="Search providers..."
+              bind:value={searchQuery}
+            />
+            {#if searchQuery}
+              <button
+                type="button"
+                class="absolute inset-y-0 right-2 text-caption text-muted-foreground hover:text-foreground"
+                aria-label="Clear search"
+                onclick={() => (searchQuery = '')}
+              >
+                Clear
+              </button>
+            {/if}
+          </div>
+          <div class="flex items-center gap-2 text-caption-mono text-muted-foreground">
+            <span>{filteredProviders.length} shown</span>
+            <span class="h-1 w-1 rounded-full bg-border"></span>
+            <span>{visibleSections.length} sections</span>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap gap-2 border-t border-border pt-4">
           <button
-            class="rounded-pill-sm px-4 py-1.5 text-body-sm transition-colors
-              {activeCategory === cat.id
-                ? 'bg-foreground text-background'
-                : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'}"
-            onclick={() => (activeCategory = activeCategory === cat.id ? '' : cat.id)}
+            type="button"
+            class="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-caption font-medium transition-colors {activeCategory === '' ? 'border-foreground bg-foreground text-background' : 'border-border bg-background text-muted-foreground hover:border-foreground/30 hover:text-foreground'}"
+            aria-pressed={activeCategory === ''}
+            onclick={() => (activeCategory = '')}
           >
-            {cat.label}
+            All
+            <span class="font-mono opacity-75">{providerTotals.configured}/{$providers.length}</span>
           </button>
-        {/each}
-      </div>
-    </div>
-
-    <!-- Grouped provider sections -->
-    {#if filteredProviders.length > 0}
-      {#each filterCategories as cat}
-        {#if groupedProviders[cat.id]?.length}
-          {@const isCollapsed = collapsed[cat.id]}
-          <button
-            class="flex items-center gap-2 text-left"
-            onclick={() => toggleCollapse(cat.id)}
-          >
-            <span class="text-body-md-strong text-foreground">{cat.label}</span>
-            <Badge variant="secondary" class="rounded-full text-caption-mono">
-              {groupedProviders[cat.id].length}
-            </Badge>
-            <span
-              class="ml-1 text-caption text-muted-foreground transition-transform"
-              class:rotate-[-90deg]={isCollapsed}
+          {#each visibleCategoryChips as cat (cat.id)}
+            {@const stat = categoryStats[cat.id] ?? { configured: 0, total: 0 }}
+            <button
+              type="button"
+              title={cat.description}
+              class="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-caption font-medium transition-colors {activeCategory === cat.id ? 'border-foreground bg-foreground text-background' : 'border-border bg-background text-muted-foreground hover:border-foreground/30 hover:text-foreground'}"
+              aria-pressed={activeCategory === cat.id}
+              onclick={() => (activeCategory = activeCategory === cat.id ? '' : cat.id)}
             >
-              ▾
-            </span>
-          </button>
+              <span class="h-2 w-2 rounded-full" style="background: {cat.color};"></span>
+              <span>{cat.label}</span>
+              <span class="font-mono opacity-75">{stat.configured}/{stat.total}</span>
+            </button>
+          {/each}
+        </div>
+      </div>
+    </section>
 
-          {#if !isCollapsed}
-            <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {#each groupedProviders[cat.id] as provider (provider.id)}
-                {@const meta = getProviderMeta(provider.id)}
-                {@const color = meta?.color ?? '#888888'}
-                {@const result = testResults[provider.id]}
-                <a
-                  href="/providers/{provider.id}"
-                  class="group block rounded-lg border border-border bg-card shadow-vercel-2 transition-all hover:border-foreground/20 hover:bg-accent/10"
-                >
-                  <div class="flex flex-col gap-3 p-4">
-                    <div class="flex items-center gap-3">
-                      <div
-                        class="flex shrink-0 items-center justify-center rounded-md overflow-hidden"
-                        style="background: {color}15; width: 36px; height: 36px;"
-                      >
-                        <ProviderIcon {meta} size={36} />
-                      </div>
-                      <span class="truncate text-body-sm-strong text-foreground">
-                        {provider.display_name}
-                      </span>
-                      <span
-                        class="ml-auto size-2 shrink-0 rounded-full"
-                        style="background: {cat.color};"
-                      ></span>
-                    </div>
+    {#if filteredProviders.length > 0}
+      <div class="flex flex-col gap-7">
+        {#each visibleSections as cat (cat.id)}
+          {@const sectionProviders = groupedProviders[cat.id] ?? []}
+          {@const isCollapsed = collapsed[cat.id]}
+          {@const stat = categoryStats[cat.id] ?? { configured: 0, total: 0 }}
+          <section class="flex flex-col gap-3">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <button
+                type="button"
+                class="group flex min-w-0 items-start gap-3 text-left"
+                onclick={() => toggleCollapse(cat.id)}
+              >
+                <span class="mt-2 h-2.5 w-2.5 shrink-0 rounded-full" style="background: {cat.color};"></span>
+                <span class="min-w-0">
+                  <span class="flex flex-wrap items-center gap-2">
+                    <span class="text-display-sm text-foreground">{cat.id === 'free' ? 'Free tier providers' : `${cat.label} providers`}</span>
+                    <Badge variant="secondary" class="rounded-full text-caption-mono">
+                      {stat.configured}/{stat.total}
+                    </Badge>
+                  </span>
+                  <span class="mt-1 block max-w-3xl text-body-sm text-muted-foreground">{cat.description}</span>
+                </span>
+                <span class="mt-1 text-body-md text-muted-foreground transition-transform" class:rotate-[-90deg]={isCollapsed}>⌄</span>
+              </button>
+            </div>
 
-                    {#if provider.status_counts}
-                      <div class="flex flex-wrap gap-1.5">
-                        {#each Object.entries(provider.status_counts) as [status, count]}
-                          {#if count > 0}
-                            <Badge
-                              variant={getStatusVariant(status)}
-                              class="gap-1 rounded-full py-0.5 text-caption-mono"
+            {#if !isCollapsed}
+              <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                {#each sectionProviders as provider (provider.id)}
+                  {@const meta = providerMeta(provider)}
+                  {@const iconMeta = providerIconMeta(provider)}
+                  {@const color = providerColor(provider)}
+                  {@const category = getCategoryById(providerCategoryId(provider))}
+                  {@const result = testResults[provider.id]}
+                  <article
+                    class="group flex min-h-[240px] flex-col rounded-xl border border-border bg-card shadow-vercel-2 transition-all duration-200 hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-vercel-3"
+                    style="box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.7), 0 8px 22px rgb(0 0 0 / 0.05), 0 0 0 1px {hexToRgba(color, 0.06)};"
+                  >
+                    <div class="flex flex-1 flex-col gap-4 p-4">
+                      <div class="flex items-start gap-3">
+                        <div
+                          class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border"
+                          style="background: {hexToRgba(color, 0.10)}; border-color: {hexToRgba(color, 0.18)};"
+                        >
+                          <ProviderIcon meta={iconMeta} size={30} />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                          <div class="flex min-w-0 items-start justify-between gap-2">
+                            <h3 class="min-w-0 text-body-sm-strong text-foreground" title={providerName(provider)}>
+                              <span class="block truncate">{providerName(provider)}</span>
+                            </h3>
+                            <span
+                              class="shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium leading-4"
+                              style="color: {category?.color ?? color}; border-color: {hexToRgba(category?.color ?? color, 0.24)}; background: {hexToRgba(category?.color ?? color, 0.08)};"
                             >
-                              <span
-                                class="inline-block size-1.5 rounded-full"
-                                style="background: {getStatusDotColor(status)};"
-                              ></span>
-                              {getStatusLabel(status)}
-                              {count}
-                            </Badge>
-                          {/if}
-                        {/each}
+                              {category?.label ?? 'Compatible'}
+                            </span>
+                          </div>
+                          <p class="mt-1 truncate text-caption-mono text-muted-foreground">{providerPrefix(provider)}</p>
+                        </div>
                       </div>
-                    {/if}
 
-                    <div class="flex flex-wrap gap-1.5">
-                      {#if provider.format}
-                        <Badge variant="outline" class="rounded-full text-caption-mono">
-                          {provider.format}
-                        </Badge>
+                      <p class="line-clamp-2 min-h-10 text-body-sm text-muted-foreground">
+                        {providerDescription(provider)}
+                      </p>
+
+                      <div class="flex flex-wrap gap-1.5">
+                        {#each serviceKinds(provider) as kind}
+                          <span class="rounded-md border border-border bg-background px-2 py-1 text-[10px] font-medium text-muted-foreground">
+                            {KIND_LABELS[kind] ?? kind}
+                          </span>
+                        {/each}
+                        {#if provider.format}
+                          <span class="rounded-md border border-border bg-background px-2 py-1 text-[10px] font-mono text-muted-foreground">
+                            {provider.format}
+                          </span>
+                        {/if}
+                        {#if meta?.hasFree}
+                          <span class="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] font-medium text-emerald-700">
+                            Free tier
+                          </span>
+                        {/if}
+                      </div>
+
+                      <div class="mt-auto grid grid-cols-3 gap-2 rounded-lg border border-border bg-background/60 p-2">
+                        <div>
+                          <p class="text-[10px] text-muted-foreground">Total</p>
+                          <p class="font-mono text-body-sm-strong">{provider.connection_count}</p>
+                        </div>
+                        <div>
+                          <p class="text-[10px] text-muted-foreground">Ready</p>
+                          <p class="font-mono text-body-sm-strong text-emerald-600">{readyCount(provider)}</p>
+                        </div>
+                        <div>
+                          <p class="text-[10px] text-muted-foreground">Issues</p>
+                          <p class="font-mono text-body-sm-strong {issueCount(provider) > 0 ? 'text-destructive' : 'text-muted-foreground'}">{issueCount(provider)}</p>
+                        </div>
+                      </div>
+
+                      {#if statusEntries(provider).length > 0}
+                        <div class="flex flex-wrap gap-1.5">
+                          {#each statusEntries(provider).slice(0, 4) as [status, count]}
+                            <Badge variant={getStatusVariant(status)} class="gap-1 rounded-full py-0.5 text-caption-mono">
+                              <span class="inline-block size-1.5 rounded-full" style="background: {getStatusDotColor(status)};"></span>
+                              {getStatusLabel(status)} {count}
+                            </Badge>
+                          {/each}
+                        </div>
+                      {:else}
+                        <p class="text-caption text-muted-foreground">No connections yet.</p>
                       {/if}
-                      {#if meta?.prefix}
-                        <Badge variant="outline" class="rounded-full text-caption-mono">
-                          {meta.prefix}
-                        </Badge>
+
+                      {#if result}
+                        <p class="rounded-md border px-2 py-1 text-caption-mono {result.ok ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700' : 'border-destructive/20 bg-destructive/10 text-destructive'}">
+                          {result.msg}
+                        </p>
                       {/if}
                     </div>
 
-                    <div class="flex gap-2 border-t border-border pt-3">
-                      <span
-                        class="flex-1 inline-flex items-center justify-center h-8 text-body-sm border border-border rounded-sm"
-                      >
+                    <div class="flex gap-2 border-t border-border p-3">
+                      <Button href="/providers/{provider.id}" variant="outline" size="sm" class="flex-1 rounded-sm text-body-sm">
                         Manage
-                      </span>
+                      </Button>
                       <Button
                         variant="ghost"
                         size="sm"
-                        class="text-body-sm"
+                        class="rounded-sm text-body-sm"
                         disabled={testingId === provider.id}
-                        onclick={(e: Event) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          handleTest(provider.id);
-                        }}
+                        onclick={() => handleTest(provider.id)}
                       >
-                        {#if testingId === provider.id}
-                          Testing…
-                        {:else}
-                          Test
-                        {/if}
+                        {testingId === provider.id ? 'Testing...' : 'Test'}
                       </Button>
                     </div>
-
-                    {#if result}
-                      <p
-                        class="text-caption-mono {result.ok
-                          ? 'text-emerald-600'
-                          : 'text-destructive'}"
-                      >
-                        {result.msg}
-                      </p>
-                    {/if}
-                  </div>
-                </a>
-              {/each}
-            </div>
-          {/if}
-        {/if}
-      {/each}
+                  </article>
+                {/each}
+              </div>
+            {/if}
+          </section>
+        {/each}
+      </div>
     {:else}
-      <Card class="border shadow-vercel-2">
-        <CardContent class="flex flex-col items-center justify-center py-16">
-          <p class="text-body-sm text-muted-foreground">No providers match your filters.</p>
-        </CardContent>
-      </Card>
+      <section class="rounded-xl border border-dashed border-border bg-card p-12 text-center shadow-vercel-1">
+        <p class="text-body-sm text-muted-foreground">No providers match your filters.</p>
+        <Button variant="outline" class="mt-4" onclick={() => { searchQuery = ''; activeCategory = ''; }}>
+          Reset filters
+        </Button>
+      </section>
     {/if}
   {/if}
 </div>
