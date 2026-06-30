@@ -263,37 +263,23 @@
           </CardContent>
         </Card>
       {:else}
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div class="flex flex-wrap gap-2">
           {#each $providerModels as model}
             {@const result = $modelTestResults[model]}
-            <Card class="shadow-card group">
-              <CardContent class="p-4 flex items-center gap-3">
-                <div class="min-w-0 flex-1">
-                  <p class="text-body-sm-strong font-mono truncate" title={model}>{model}</p>
-                  <div class="flex items-center gap-2 mt-1.5">
-                    {#if result}
-                      <Badge variant={result.status === 'ok' ? 'default' : result.status === 'testing' ? 'secondary' : 'destructive'} class="text-[10px] rounded-sm px-1.5 py-0">
-                        {result.status}
-                      </Badge>
-                      {#if result.latency_ms}
-                        <span class="text-[11px] font-mono text-muted-foreground">{result.latency_ms}ms</span>
-                      {/if}
-                    {:else}
-                      <span class="text-[11px] text-muted-foreground">Not tested</span>
-                    {/if}
-                  </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="text-body-sm h-7 px-2 rounded-sm shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                  disabled={result?.status === 'testing'}
-                  onclick={() => testProviderModel(providerId, model)}
-                >
-                  {result?.status === 'testing' ? '...' : 'Test'}
-                </Button>
-              </CardContent>
-            </Card>
+            <button
+              class="group inline-flex items-center gap-2 px-3 py-1.5 bg-card border border-border rounded-md hover:border-primary/40 transition-colors cursor-pointer disabled:opacity-50"
+              disabled={result?.status === 'testing'}
+              onclick={() => testProviderModel(providerId, model)}
+              title={model}
+            >
+              <span class="text-[12px] font-mono truncate max-w-[180px]">{model}</span>
+              {#if result}
+                <span class="size-1.5 rounded-full shrink-0 {result.status === 'ok' ? 'bg-emerald-500' : result.status === 'testing' ? 'bg-yellow-500 animate-pulse' : 'bg-destructive'}"></span>
+                {#if result.latency_ms}
+                  <span class="text-[10px] font-mono text-muted-foreground">{result.latency_ms}ms</span>
+                {/if}
+              {/if}
+            </button>
           {/each}
         </div>
       {/if}
