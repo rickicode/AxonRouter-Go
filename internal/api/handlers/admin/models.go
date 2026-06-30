@@ -168,14 +168,13 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 }
 
 // buildTestBody constructs a minimal test request body matching the provider's API format.
-// ponytail: switch on format string; add new formats as providers land.
+// The executor handles stream/store flags internally; this only sets the payload shape.
 func buildTestBody(format, model string) []byte {
 	switch executor.ProviderFormat(format) {
 	case executor.FormatOpenAIResponses:
+		// Codex Responses API: input array format. Executor adds stream:true, store:false.
 		body := map[string]any{
-			"model":  model,
-			"store":  false,
-			"stream": false,
+			"model": model,
 			"input": []map[string]any{
 				{"type": "message", "role": "user", "content": []map[string]string{
 					{"type": "input_text", "text": "Hi"},
