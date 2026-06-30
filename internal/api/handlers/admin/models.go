@@ -26,6 +26,16 @@ func NewModelHandler(db *sql.DB, registry *executor.Registry, store *connstate.S
 	return &ModelHandler{db: db, registry: registry, store: store}
 }
 
+// noAuthBaseURLs maps no-auth provider IDs to their base URLs.
+// Used for testing and model listing when no DB entry or connection exists.
+var noAuthBaseURLs = map[string]string{
+	"opencode":      "https://opencode.ai/zen/v1",
+	"opencode-free": "https://opencode.ai/zen/v1",
+	"oc":            "https://opencode.ai/zen/v1",
+	"mimocode":      "https://api.xiaomimimo.com/api/free-ai/openai",
+	"mimocode-free": "https://api.xiaomimimo.com/api/free-ai/openai",
+}
+
 // ListModels returns available models for a provider.
 // Priority: (1) dynamic upstream query via executor, (2) static/synced catalog.
 // Works even when the provider has no DB entry (fresh install) — falls back to catalog.
@@ -84,15 +94,11 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 	}
 
 	// Fallback: return static/synced model list from catalog
-	// This works for all providers — even those not in the DB (fresh install)
-	// and no-auth providers whose models are auto-synced from upstream.
 	c.JSON(http.StatusOK, gin.H{"data": staticModels(providerID)})
 }
 
 // TestModel tests a specific model by sending a minimal streaming request.
-// Uses ExecuteStream() for all providers — each executor sets the correct
-// headers, URL, and body format for its provider (Codex needs stream:true,
-// Claude needs anthropic-version, etc.). Reads one SSE chunk to verify connectivity.
+// For no-auth providers (opencode, mimocode), tests without requiring a connection.
 func (h *ModelHandler) TestModel(c *gin.Context) {
 	providerID := c.Param("id")
 
@@ -104,42 +110,60 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 		return
 	}
 
-	// Get provider
+	// Get provider from DB (may not exist for no-auth providers)
 	var provider struct {
 		ID      string
 		Format  string
 		BaseURL string
 	}
-	err := h.db.QueryRow(`SELECT id, format, base_url FROM provider_types WHERE id = ?`, providerID).Scan(&provider.ID, &provider.Format, &provider.BaseURL)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "provider not found"})
-		return
-	}
+	dbErr := h.db.QueryRow(`SELECT id, format, base_url FROM provider_types WHERE id = ?`, providerID).Scan(&provider.ID, &provider.Format, &provider.BaseURL)
 
-	// Get executor
-	exec, _, ok := h.registry.Get(provider.ID)
+	// Resolve executor — try DB provider ID first, then the raw ID
+	executorID := providerID
+	if dbErr == nil {
+		executorID = provider.ID
+	}
+	exec, _, ok := h.registry.Get(executorID)
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no executor for provider"})
 		return
 	}
 
-	// Get a ready connection
+	// Get credentials: try connection first, fall back to no-auth
 	var apiKey, accessToken string
-	err = h.db.QueryRow(`SELECT COALESCE(api_key,''), COALESCE(oauth_token,'') FROM connections WHERE provider_type_id = ? AND status = 'ready' AND is_active = 1 LIMIT 1`, providerID).Scan(&apiKey, &accessToken)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no ready connections"})
-		return
+	baseURL := provider.BaseURL
+	format := provider.Format
+
+	if dbErr == nil {
+		err := h.db.QueryRow(`SELECT COALESCE(api_key,''), COALESCE(oauth_token,'') FROM connections WHERE provider_type_id = ? AND status = 'ready' AND is_active = 1 LIMIT 1`, providerID).Scan(&apiKey, &accessToken)
+		if err != nil {
+			// No connection — check if this is a no-auth provider
+			if noAuthURL, ok := noAuthBaseURLs[providerID]; ok {
+				baseURL = noAuthURL
+				format = "openai"
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "no ready connections"})
+				return
+			}
+		}
+	} else {
+		// Provider not in DB — check if this is a no-auth provider
+		if noAuthURL, ok := noAuthBaseURLs[providerID]; ok {
+			baseURL = noAuthURL
+			format = "openai"
+		} else {
+			c.JSON(http.StatusNotFound, gin.H{"error": "provider not found"})
+			return
+		}
 	}
 
-	// Build minimal test body — just model + short message.
-	// Each executor's ExecuteStream() handles format-specific headers and body transforms.
-	bodyBytes := buildTestBody(provider.Format, req.Model)
+	bodyBytes := buildTestBody(format, req.Model)
 
 	start := time.Now()
 	streamResult, err := exec.ExecuteStream(c.Request.Context(), &executor.Request{
 		APIKey:      apiKey,
 		AccessToken: accessToken,
-		BaseURL:     provider.BaseURL,
+		BaseURL:     baseURL,
 		Body:        bodyBytes,
 		Provider:    providerID,
 		Model:       req.Model,
@@ -154,8 +178,6 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 		return
 	}
 
-	// Read first chunk to verify the upstream responds.
-	// Drain remaining chunks to avoid goroutine leak.
 	var firstErr error
 	var gotChunk bool
 	for chunk := range streamResult.Chunks {
@@ -166,7 +188,6 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 		if !gotChunk && chunk.Payload != nil {
 			gotChunk = true
 		}
-		// Keep draining to close the channel cleanly
 	}
 	latency := time.Since(start).Milliseconds()
 
@@ -187,11 +208,9 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 }
 
 // buildTestBody constructs a minimal test request body matching the provider's native API format.
-// Each executor's ExecuteStream() handles stream/store flags; this sets the payload shape.
 func buildTestBody(format, model string) []byte {
 	switch executor.ProviderFormat(format) {
 	case executor.FormatOpenAIResponses:
-		// Codex Responses API: input array format
 		body := map[string]any{
 			"model": model,
 			"input": []map[string]any{
@@ -203,7 +222,6 @@ func buildTestBody(format, model string) []byte {
 		b, _ := json.Marshal(body)
 		return b
 	case executor.FormatClaude:
-		// Claude Messages API: messages + max_tokens (required)
 		body := map[string]any{
 			"model":      model,
 			"max_tokens": 5,
@@ -212,7 +230,6 @@ func buildTestBody(format, model string) []byte {
 		b, _ := json.Marshal(body)
 		return b
 	case executor.FormatGemini, executor.FormatAntigravity:
-		// Gemini generateContent: contents with parts
 		body := map[string]any{
 			"contents": []map[string]any{
 				{"role": "user", "parts": []map[string]string{{"text": "Hi"}}},
@@ -222,7 +239,6 @@ func buildTestBody(format, model string) []byte {
 		b, _ := json.Marshal(body)
 		return b
 	default:
-		// OpenAI-compatible (openai, groq, deepseek, mimo, opencode, openrouter, kiro)
 		body := map[string]any{
 			"model":      model,
 			"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
@@ -234,18 +250,16 @@ func buildTestBody(format, model string) []byte {
 }
 
 // providerCatalogKeys maps DB provider IDs to models.json top-level keys.
-// Every built-in provider must be listed here so staticModels() returns models
-// even when no connections exist or on a fresh install.
 var providerCatalogKeys = map[string][]string{
-	"claude":      {"claude"},
-	"gemini":      {"gemini"},
-	"vertex":      {"vertex"},
-	"cx":          {"codex-free", "codex-team", "codex-plus", "codex-pro"},
-	"ag":          {"antigravity"},
-	"antigravity": {"antigravity"},
-	"kiro":        {"kimi"},
-	"aistudio":    {"aistudio"},
-	"xai":         {"xai"},
+	"claude":        {"claude"},
+	"gemini":        {"gemini"},
+	"vertex":        {"vertex"},
+	"cx":            {"codex-free", "codex-team", "codex-plus", "codex-pro"},
+	"ag":            {"antigravity"},
+	"antigravity":   {"antigravity"},
+	"kiro":          {"kimi"},
+	"aistudio":      {"aistudio"},
+	"xai":           {"xai"},
 	"opencode":      {"opencode"},
 	"opencode-free": {"opencode"},
 	"oc":            {"opencode"},
@@ -256,14 +270,14 @@ var providerCatalogKeys = map[string][]string{
 	"mimo":          {"mimocode"},
 	"mimo-tp":       {"mimocode"},
 	"mimo-token":    {"mimocode"},
-	"openai":      {"openai"},
-	"groq":        {"groq"},
-	"deepseek":    {"deepseek"},
-	"openrouter":  {"openrouter"},
-	"zai":         {"claude"},
+	"openai":        {"openai"},
+	"groq":          {"groq"},
+	"deepseek":      {"deepseek"},
+	"openrouter":    {"openrouter"},
+	"zai":           {"claude"},
 }
 
-// staticModels returns model IDs from the auto-updating catalog (models.json + remote refresh + per-provider sync).
+// staticModels returns model IDs from the auto-updating catalog.
 func staticModels(providerID string) []string {
 	keys, ok := providerCatalogKeys[providerID]
 	if !ok {
@@ -273,14 +287,10 @@ func staticModels(providerID string) []string {
 }
 
 // defaultTestModel returns the first available model for a provider from the catalog.
-// Used by TestConnection and TestAll when no specific model is provided.
-// Falls back to a hardcoded default for providers without a catalog.
 func defaultTestModel(providerID string) string {
-	// Try catalog first
 	if ids := staticModels(providerID); len(ids) > 0 {
 		return ids[0]
 	}
-	// Fallback for providers not in models.json
 	switch providerID {
 	case "openai":
 		return "gpt-4o"
@@ -290,8 +300,8 @@ func defaultTestModel(providerID string) string {
 		return "deepseek-chat"
 	case "mimo", "mimocode", "mimocode-free", "mimo-tp", "mimo-token":
 		return "mimo-auto"
-	case "opencode", "oc", "oc-zen", "oc-go", "opencode-go", "opencode-zen":
-		return "kimi-k2"
+	case "opencode", "oc", "oc-zen", "oc-go", "opencode-go", "opencode-zen", "opencode-free":
+		return "deepseek-v4-flash-free"
 	case "openrouter":
 		return "openai/gpt-4o"
 	default:
