@@ -14,7 +14,8 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 )
 
-// modelTester is a file-level interface for testing provider connectivity via Models() endpoint.
+// modelTester is an interface for testing provider connectivity via Models() endpoint.
+// Used by ListModels for dynamic model discovery.
 type modelTester interface {
 	Models(ctx context.Context, req *executor.Request) (*executor.Response, error)
 }
@@ -208,24 +209,27 @@ func (h *ConnectionHandler) Delete(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// TestConnection tests a single connection by calling its Models endpoint.
+// TestConnection tests a single connection by sending a minimal streaming request.
+// Uses ExecuteStream() for all providers — each executor sets correct headers/format.
 func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 	id := c.Param("id")
 
-	// Load connection
+	// Load connection + provider format
 	var conn struct {
 		ID             string
 		ProviderTypeID string
+		Format         string
 		APIKey         string
 		AccessToken    string
 		BaseURL        string
+		ModelHint      string
 	}
 	err := h.db.QueryRow(`
-		SELECT c.id, c.provider_type_id, COALESCE(c.api_key,''), COALESCE(c.oauth_token,''),
+		SELECT c.id, c.provider_type_id, pt.format, COALESCE(c.api_key,''), COALESCE(c.oauth_token,''),
 		       COALESCE(pt.base_url,'')
 		FROM connections c JOIN provider_types pt ON c.provider_type_id = pt.id
 		WHERE c.id = ?
-	`, id).Scan(&conn.ID, &conn.ProviderTypeID, &conn.APIKey, &conn.AccessToken, &conn.BaseURL)
+	`, id).Scan(&conn.ID, &conn.ProviderTypeID, &conn.Format, &conn.APIKey, &conn.AccessToken, &conn.BaseURL)
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
 		return
@@ -242,29 +246,19 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 		return
 	}
 
-	// Try Models() endpoint
+	// Build format-specific test body and send via streaming
+	bodyBytes := buildTestBody(conn.Format, conn.ModelHint)
 	start := time.Now()
-	req := &executor.Request{
+	streamResult, err := exec.ExecuteStream(c.Request.Context(), &executor.Request{
 		APIKey:      conn.APIKey,
 		AccessToken: conn.AccessToken,
 		BaseURL:     conn.BaseURL,
+		Body:        bodyBytes,
 		Provider:    conn.ProviderTypeID,
-	}
-
-	tester, ok := exec.(modelTester)
-	if !ok {
-		c.JSON(http.StatusOK, gin.H{
-			"connection_id": id,
-			"status":        "skipped",
-			"message":       "provider does not support model discovery",
-		})
-		return
-	}
-
-	resp, err := tester.Models(c.Request.Context(), req)
-	latency := time.Since(start)
-
+		Model:       conn.ModelHint,
+	})
 	if err != nil {
+		latency := time.Since(start).Milliseconds()
 		det := connstate.DetectError(0, "", err, conn.ProviderTypeID, "", nil)
 		if h.store != nil {
 			h.store.RecordFailure(id, det)
@@ -273,7 +267,31 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 			"connection_id": id,
 			"status":        "failed",
 			"error":         err.Error(),
-			"latency_ms":    latency.Milliseconds(),
+			"latency_ms":    latency,
+		})
+		return
+	}
+
+	// Read first chunk to verify connectivity, drain rest
+	var firstErr error
+	for chunk := range streamResult.Chunks {
+		if chunk.Err != nil {
+			firstErr = chunk.Err
+			break
+		}
+	}
+	latency := time.Since(start).Milliseconds()
+
+	if firstErr != nil {
+		det := connstate.DetectError(0, "", firstErr, conn.ProviderTypeID, "", nil)
+		if h.store != nil {
+			h.store.RecordFailure(id, det)
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"connection_id": id,
+			"status":        "failed",
+			"error":         firstErr.Error(),
+			"latency_ms":    latency,
 		})
 		return
 	}
@@ -285,8 +303,8 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"connection_id": id,
 		"status":        "ok",
-		"status_code":   resp.StatusCode,
-		"latency_ms":    latency.Milliseconds(),
+		"status_code":   streamResult.StatusCode,
+		"latency_ms":    latency,
 	})
 }
 

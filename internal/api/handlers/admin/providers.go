@@ -225,9 +225,17 @@ func (h *ProviderHandler) getStatusCounts(providerID string) map[string]int {
 	return counts
 }
 
-// TestAll tests all connections for a provider.
+// TestAll tests all connections for a provider using streaming.
 func (h *ProviderHandler) TestAll(c *gin.Context) {
 	providerID := c.Param("id")
+
+	// Get provider format
+	var format string
+	err := h.db.QueryRow(`SELECT format FROM provider_types WHERE id = ?`, providerID).Scan(&format)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "provider not found"})
+		return
+	}
 
 	rows, err := h.db.Query(`
 		SELECT c.id, COALESCE(c.api_key,''), COALESCE(c.oauth_token,''),
@@ -248,35 +256,52 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 		LatencyMs    int64  `json:"latency_ms"`
 	}
 
+	exec, _, ok := h.registry.Get(providerID)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no executor for provider: " + providerID})
+		return
+	}
+
+	bodyBytes := buildTestBody(format, "")
 	var results []testResult
 	for rows.Next() {
 		var connID, apiKey, accessToken, baseURL string
 		rows.Scan(&connID, &apiKey, &accessToken, &baseURL)
 
-		exec, _, ok := h.registry.Get(providerID)
-		if !ok {
-			results = append(results, testResult{ConnectionID: connID, Status: "skipped", Error: "no executor"})
-			continue
-		}
-
 		start := time.Now()
-		req := &executor.Request{APIKey: apiKey, AccessToken: accessToken, BaseURL: baseURL, Provider: providerID}
-
-		tester, ok := exec.(modelTester)
-		if !ok {
-			results = append(results, testResult{ConnectionID: connID, Status: "skipped", Error: "no Models() support"})
-			continue
-		}
-
-		_, err := tester.Models(context.Background(), req)
-		latency := time.Since(start).Milliseconds()
-
+		streamResult, err := exec.ExecuteStream(context.Background(), &executor.Request{
+			APIKey:      apiKey,
+			AccessToken: accessToken,
+			BaseURL:     baseURL,
+			Body:        bodyBytes,
+			Provider:    providerID,
+		})
 		if err != nil {
+			latency := time.Since(start).Milliseconds()
 			if h.store != nil {
 				det := connstate.DetectError(0, "", err, providerID, "", nil)
 				h.store.RecordFailure(connID, det)
 			}
 			results = append(results, testResult{ConnectionID: connID, Status: "failed", Error: err.Error(), LatencyMs: latency})
+			continue
+		}
+
+		// Drain stream
+		var firstErr error
+		for chunk := range streamResult.Chunks {
+			if chunk.Err != nil {
+				firstErr = chunk.Err
+				break
+			}
+		}
+		latency := time.Since(start).Milliseconds()
+
+		if firstErr != nil {
+			if h.store != nil {
+				det := connstate.DetectError(0, "", firstErr, providerID, "", nil)
+				h.store.RecordFailure(connID, det)
+			}
+			results = append(results, testResult{ConnectionID: connID, Status: "failed", Error: firstErr.Error(), LatencyMs: latency})
 		} else {
 			if h.store != nil {
 				h.store.RecordSuccess(connID)
