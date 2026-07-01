@@ -6,6 +6,20 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// Claude tool cloaking suffix (matches OmniRoute anti-ban _cc suffix).
+const claudeToolSuffix = "_cc"
+
+func cloakClaudeToolName(name string) string {
+	if name == "" {
+		return name
+	}
+	// Don't cloak if already cloaked
+	if len(name) > 3 && name[len(name)-3:] == claudeToolSuffix {
+		return name
+	}
+	return name + claudeToolSuffix
+}
+
 // convertOpenAIRequestToClaude converts an OpenAI Chat Completions request to Anthropic Messages format.
 func convertOpenAIRequestToClaude(modelName string, body []byte, stream bool) []byte {
 	root := gjson.ParseBytes(body)
@@ -130,7 +144,7 @@ func convertOpenAIRequestToClaude(modelName string, body []byte, stream bool) []
 					contentParts = append(contentParts, map[string]interface{}{
 						"type":  "tool_use",
 						"id":    tc.Get("id").String(),
-						"name":  tc.Get("function.name").String(),
+						"name":  cloakClaudeToolName(tc.Get("function.name").String()),
 						"input": json.RawMessage(tc.Get("function.arguments").String()),
 					})
 					return true
@@ -154,7 +168,7 @@ func convertOpenAIRequestToClaude(modelName string, body []byte, stream bool) []
 		var claudeTools []map[string]interface{}
 		tools.ForEach(func(_, tool gjson.Result) bool {
 			claudeTool := map[string]interface{}{
-				"name": tool.Get("function.name").String(),
+				"name": cloakClaudeToolName(tool.Get("function.name").String()),
 			}
 			if desc := tool.Get("function.description"); desc.Exists() {
 				claudeTool["description"] = desc.String()
