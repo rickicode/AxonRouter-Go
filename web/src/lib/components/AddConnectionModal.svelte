@@ -114,8 +114,32 @@
     errorMsg = '';
     try {
       await oauthApi.submitCallback(callbackUrl.trim());
+      oauthStatusText = 'Callback submitted. Exchanging tokens...';
       toast.success('Callback submitted');
-      oauthStatusText = 'Callback submitted. Finalizing tokens...';
+
+      // Poll immediately after submit (don't wait for background poll)
+      for (let i = 0; i < 15; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        try {
+          const status = await oauthApi.poll(oauthSessionId);
+          if (status.status === 'connected') {
+            oauthPolling = false;
+            const accountName = status.name || (meta?.displayName ?? providerId);
+            oauthStatusText = `Connected as ${accountName}`;
+            toast.success(`OAuth connected: ${accountName}`);
+            step = 'done';
+            onCreated?.();
+            return;
+          }
+          if (status.status === 'failed') {
+            oauthPolling = false;
+            oauthStatusText = status.error || 'OAuth failed.';
+            toast.error(status.error || 'OAuth failed');
+            step = 'error';
+            return;
+          }
+        } catch { /* ignore */ }
+      }
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : 'Callback submit failed';
       toast.error(errorMsg);
@@ -443,49 +467,55 @@
       </Dialog.Footer>
     {:else if step === 'oauth-waiting'}
       <Dialog.Header>
-        <Dialog.Title class="text-lg font-semibold">Waiting for authentication</Dialog.Title>
+        <Dialog.Title class="text-lg font-semibold">Authenticate with {meta?.displayName ?? providerId}</Dialog.Title>
         <Dialog.Description class="text-sm text-muted-foreground">
-          Complete login in the browser window. Keep this modal open.
+          Open the URL below in your browser to sign in.
         </Dialog.Description>
       </Dialog.Header>
 
-      <div class="flex flex-col items-center gap-4 py-6">
-        <div class="relative size-16">
-          <div class="absolute inset-0 rounded-full border-2 border-muted"></div>
-          <div class="absolute inset-0 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
-          <div class="absolute inset-0 flex items-center justify-center">
-            <span class="material-symbols-outlined text-primary">lock_open</span>
+      <div class="flex flex-col gap-4 py-2">
+        <!-- Spinner + status -->
+        <div class="flex items-center gap-3">
+          <div class="relative size-5 shrink-0">
+            <div class="absolute inset-0 rounded-full border-2 border-muted"></div>
+            <div class="absolute inset-0 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
           </div>
+          <p class="text-sm text-muted-foreground">{oauthStatusText}</p>
         </div>
-        <div class="space-y-2 text-center">
-          <p class="text-sm font-medium">{oauthStatusText}</p>
-        </div>
+
         {#if oauthUrl}
-          <div class="w-full space-y-3 rounded-lg border border-border/50 bg-muted/20 p-3">
-            <div>
-              <p class="mb-2 text-xs text-muted-foreground">If the browser did not open, use this URL.</p>
-              <div class="flex gap-2">
-                <Button variant="outline" class="text-sm" onclick={() => window.open(oauthUrl, '_blank')}>Open OAuth URL</Button>
-                <Button variant="outline" class="text-sm" onclick={copyOAuthUrl}>Copy URL</Button>
-              </div>
-            </div>
-            <div class="space-y-1.5 border-t border-border/50 pt-3">
-              <Label class="text-xs text-muted-foreground">Remote/browser fallback callback URL</Label>
-              <div class="flex gap-2">
-                <Input
-                  bind:value={callbackUrl}
-                  class="h-9 min-w-0 flex-1 font-mono text-xs"
-                  placeholder="http://localhost:1455/auth/callback?code=...&state=..."
-                  autocomplete="off"
-                  spellcheck={false}
-                />
-                <Button variant="outline" class="text-sm" disabled={submittingCallback} onclick={submitOAuthCallbackUrl}>
-                  {submittingCallback ? 'Submitting...' : 'Submit'}
-                </Button>
-              </div>
-              <p class="text-[11px] text-muted-foreground">
-                If OAuth lands on a localhost error page, paste that full URL here. AxonRouter will forward it to the backend callback server.
-              </p>
+          <!-- Auth URL display -->
+          <div class="rounded-lg border border-border/50 bg-muted/20 p-3">
+            <p class="mb-2 text-xs font-medium text-muted-foreground">Authorization URL</p>
+            <p class="break-all font-mono text-xs text-foreground/80 select-all">{oauthUrl}</p>
+          </div>
+
+          <!-- Action buttons -->
+          <div class="flex gap-2">
+            <Button class="flex-1 gap-2 text-sm" onclick={() => window.open(oauthUrl, '_blank')}>
+              <svg class="size-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+              Open in browser
+            </Button>
+            <Button variant="outline" class="gap-2 text-sm" onclick={copyOAuthUrl}>
+              <svg class="size-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+              Copy
+            </Button>
+          </div>
+
+          <!-- Callback fallback -->
+          <div class="rounded-lg border border-dashed border-border/50 p-3">
+            <p class="mb-2 text-xs font-medium text-muted-foreground">Remote fallback: paste callback URL</p>
+            <div class="flex gap-2">
+              <Input
+                bind:value={callbackUrl}
+                class="h-8 min-w-0 flex-1 font-mono text-xs"
+                placeholder="http://localhost:1455/auth/callback?code=...&state=..."
+                autocomplete="off"
+                spellcheck={false}
+              />
+              <Button variant="secondary" class="h-8 gap-1.5 text-xs" disabled={submittingCallback} onclick={submitOAuthCallbackUrl}>
+                {submittingCallback ? '...' : 'Submit'}
+              </Button>
             </div>
           </div>
         {/if}

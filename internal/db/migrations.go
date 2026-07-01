@@ -146,8 +146,8 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 	providers := []struct {
 		ID, DisplayName, Format, BaseURL string
 	}{
+		{"ag", "Antigravity", "antigravity", "https://cloudcode-pa.googleapis.com/v1internal:streamProcessMessage"},
 		{"cx", "OpenAI Codex", "openai-responses", "https://chatgpt.com/backend-api/codex/responses"},
-		{"ag", "Antigravity", "antigravity", "https://cloudcode-pa.googleapis.com/v1internal:processMessage"},
 		{"kiro", "Kiro AI", "openai", "https://api.kiro.ai/v1"},
 		{"openai", "OpenAI Platform", "openai", "https://api.openai.com/v1"},
 		{"claude", "Anthropic Claude", "anthropic", "https://api.anthropic.com/v1"},
@@ -158,6 +158,27 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 	for _, p := range providers {
 		db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, is_custom, created_at) VALUES (?, ?, ?, ?, 0, ?)`,
 			p.ID, p.DisplayName, p.Format, p.BaseURL, now)
+	}
+
+	// Quota cache table (stores upstream quota data from background scheduler)
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS quota_cache (
+	id TEXT PRIMARY KEY,
+	connection_id TEXT NOT NULL,
+	provider_type_id TEXT NOT NULL,
+	connection_name TEXT NOT NULL,
+	plan TEXT NOT NULL DEFAULT '',
+	quotas TEXT NOT NULL DEFAULT '[]',
+	status TEXT NOT NULL DEFAULT 'unknown',
+	error TEXT NOT NULL DEFAULT '',
+	fetched_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_quota_cache_provider ON quota_cache(provider_type_id);
+CREATE INDEX IF NOT EXISTS idx_quota_cache_status ON quota_cache(status);
+CREATE INDEX IF NOT EXISTS idx_quota_cache_connection ON quota_cache(connection_id);
+	`); err != nil {
+		return err
 	}
 
 	// Proxy pool tables
