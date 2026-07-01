@@ -2,7 +2,6 @@ package executor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 )
 
@@ -62,19 +61,4 @@ func (e *GeminiExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 	}
 
 	return e.DoStreamRequest(ctx, "POST", url, headers, req.Body)
-}
-
-// parseGeminiUsage extracts token usage from a Gemini response.
-func parseGeminiUsage(body []byte) (inputTokens, outputTokens int64) {
-	var resp struct {
-		UsageMetadata *struct {
-			PromptTokenCount     int64 `json:"promptTokenCount"`
-			CandidatesTokenCount int64 `json:"candidatesTokenCount"`
-			TotalTokenCount      int64 `json:"totalTokenCount"`
-		} `json:"usageMetadata"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil || resp.UsageMetadata == nil {
-		return 0, 0
-	}
-	return resp.UsageMetadata.PromptTokenCount, resp.UsageMetadata.CandidatesTokenCount
 }

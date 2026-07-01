@@ -72,12 +72,12 @@ func (h *ConnectionHandler) List(c *gin.Context) {
 	queryArgs := append(args, perPage, offset)
 	rows, err := h.db.Query(`
 		SELECT id, provider_type_id, name, auth_type, status,
-		       cooldown_until, last_error, last_error_code,
+		       COALESCE(priority, 0), cooldown_until, last_error, last_error_code,
 		       last_success_at, last_failure_at, failure_count,
 		       capabilities, is_active, created_at, updated_at,
 		       COALESCE(oauth_expires_at, 0)
 		FROM connections WHERE `+where+`
-		ORDER BY created_at DESC
+		ORDER BY priority DESC, created_at DESC
 		LIMIT ? OFFSET ?
 	`, queryArgs...)
 	if err != nil {
@@ -90,7 +90,7 @@ func (h *ConnectionHandler) List(c *gin.Context) {
 	for rows.Next() {
 		conn := db.Connection{}
 		rows.Scan(&conn.ID, &conn.ProviderTypeID, &conn.Name, &conn.AuthType,
-			&conn.Status, &conn.CooldownUntil, &conn.LastError, &conn.LastErrorCode,
+			&conn.Status, &conn.Priority, &conn.CooldownUntil, &conn.LastError, &conn.LastErrorCode,
 			&conn.LastSuccessAt, &conn.LastFailureAt, &conn.FailureCount,
 			&conn.Capabilities, &conn.IsActive, &conn.CreatedAt, &conn.UpdatedAt,
 			&conn.OAuthExpiresAt)

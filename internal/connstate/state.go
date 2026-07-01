@@ -41,11 +41,13 @@ type ConnectionState struct {
 	ID            string
 	ProviderID    int64
 	Prefix        string
+	Priority      int // Higher = tried first
 	Status        Status
 	LastCheckAt   time.Time
 	LastError     string
 	ResponseTime  time.Duration
 	FailCount     int
+	BanCount      int // Consecutive ban signals (auth/quota/balance)
 	SuccessCount  int
 	CooldownUntil *time.Time
 	ModelLimits   sync.Map // modelID -> *ModelLimitState
@@ -69,8 +71,10 @@ func (cs *ConnectionState) SetStatus(status Status, err string) {
 	if status == StatusReady {
 		cs.SuccessCount++
 		cs.FailCount = 0
+		cs.BanCount = 0 // reset ban count on success
 	} else if status == StatusAuthFailed || status == StatusSuspended || status == StatusQuotaExhausted || status == StatusBalanceEmpty {
 		cs.FailCount++
+		cs.BanCount++
 	}
 }
 

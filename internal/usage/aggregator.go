@@ -21,6 +21,7 @@ type ProviderUsage struct {
 	Requests       int64   `json:"requests"`
 	InputTokens    int64   `json:"input_tokens"`
 	OutputTokens   int64   `json:"output_tokens"`
+	CachedTokens   int64   `json:"cached_tokens"`
 	TotalTokens    int64   `json:"total_tokens"`
 	CostUsd        float64 `json:"cost_usd"`
 	Errors         int64   `json:"errors"`
@@ -33,6 +34,7 @@ type ModelUsage struct {
 	Requests     int64   `json:"requests"`
 	InputTokens  int64   `json:"input_tokens"`
 	OutputTokens int64   `json:"output_tokens"`
+	CachedTokens int64   `json:"cached_tokens"`
 	CostUsd      float64 `json:"cost_usd"`
 	Errors       int64   `json:"errors"`
 }
@@ -58,6 +60,7 @@ func (a *Aggregator) GetProviderUsage(hours int) ([]ProviderUsage, error) {
 		       COUNT(*),
 		       COALESCE(SUM(input_tokens), 0),
 		       COALESCE(SUM(output_tokens), 0),
+		       COALESCE(SUM(cached_tokens), 0),
 		       COALESCE(SUM(input_tokens + output_tokens), 0),
 		       COALESCE(SUM(cost_usd), 0),
 		       SUM(CASE WHEN error_message IS NOT NULL AND error_message != '' THEN 1 ELSE 0 END),
@@ -75,7 +78,7 @@ func (a *Aggregator) GetProviderUsage(hours int) ([]ProviderUsage, error) {
 	for rows.Next() {
 		var u ProviderUsage
 		rows.Scan(&u.ProviderTypeID, &u.Requests, &u.InputTokens,
-			&u.OutputTokens, &u.TotalTokens, &u.CostUsd,
+			&u.OutputTokens, &u.CachedTokens, &u.TotalTokens, &u.CostUsd,
 			&u.Errors, &u.AvgLatencyMs)
 		result = append(result, u)
 	}
@@ -94,6 +97,7 @@ func (a *Aggregator) GetModelUsage(hours int) ([]ModelUsage, error) {
 		       COUNT(*),
 		       COALESCE(SUM(input_tokens), 0),
 		       COALESCE(SUM(output_tokens), 0),
+		       COALESCE(SUM(cached_tokens), 0),
 		       COALESCE(SUM(cost_usd), 0),
 		       SUM(CASE WHEN error_message IS NOT NULL AND error_message != '' THEN 1 ELSE 0 END)
 		FROM request_logs WHERE timestamp > ?
@@ -110,7 +114,7 @@ func (a *Aggregator) GetModelUsage(hours int) ([]ModelUsage, error) {
 	for rows.Next() {
 		var u ModelUsage
 		rows.Scan(&u.ModelID, &u.Requests, &u.InputTokens,
-			&u.OutputTokens, &u.CostUsd, &u.Errors)
+			&u.OutputTokens, &u.CachedTokens, &u.CostUsd, &u.Errors)
 		result = append(result, u)
 	}
 	return result, nil

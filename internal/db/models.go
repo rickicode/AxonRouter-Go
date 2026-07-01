@@ -27,6 +27,7 @@ type Connection struct {
 	OAuthRefreshToken sql.NullString `json:"-"`
 	OAuthExpiresAt    sql.NullInt64  `json:"oauth_expires_at,omitempty"`
 	ProviderSpecificData sql.NullString `json:"-"`
+	Priority         int            `json:"priority"`
 	Status           string         `json:"status"`
 	CooldownUntil    sql.NullInt64  `json:"cooldown_until,omitempty"`
 	LastError        sql.NullString `json:"last_error,omitempty"`
@@ -100,6 +101,7 @@ type RequestLog struct {
 	InputTokens     int64          `json:"input_tokens"`
 	OutputTokens    int64          `json:"output_tokens"`
 	ReasoningTokens int64          `json:"reasoning_tokens"`
+	CachedTokens    int64          `json:"cached_tokens"`
 	LatencyMs       sql.NullInt64  `json:"latency_ms,omitempty"`
 	StatusCode      sql.NullInt64  `json:"status_code,omitempty"`
 	ErrorMessage    sql.NullString `json:"error_message,omitempty"`

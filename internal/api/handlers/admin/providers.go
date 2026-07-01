@@ -19,11 +19,12 @@ type ProviderHandler struct {
 	db       *sql.DB
 	registry *executor.Registry
 	store    *connstate.Store
+	elig     *connstate.EligibilityManager
 }
 
 // NewProviderHandler creates a new provider handler.
-func NewProviderHandler(database *sql.DB, registry *executor.Registry, store *connstate.Store) *ProviderHandler {
-	return &ProviderHandler{db: database, registry: registry, store: store}
+func NewProviderHandler(database *sql.DB, registry *executor.Registry, store *connstate.Store, elig *connstate.EligibilityManager) *ProviderHandler {
+	return &ProviderHandler{db: database, registry: registry, store: store, elig: elig}
 }
 
 // List returns all providers with connection counts.
@@ -86,11 +87,11 @@ func (h *ProviderHandler) Get(c *gin.Context) {
 // Create adds a custom provider.
 func (h *ProviderHandler) Create(c *gin.Context) {
 	var req struct {
-		Name           string            `json:"name" binding:"required"`
-		DisplayName    string            `json:"display_name"`
-		Format         string            `json:"format" binding:"required"`
-		BaseURL        string            `json:"base_url" binding:"required"`
-		CustomHeaders  map[string]string `json:"custom_headers"`
+		Name          string            `json:"name" binding:"required"`
+		DisplayName   string            `json:"display_name"`
+		Format        string            `json:"format" binding:"required"`
+		BaseURL       string            `json:"base_url" binding:"required"`
+		CustomHeaders map[string]string `json:"custom_headers"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -328,9 +329,10 @@ func joinStrings(ss []string, sep string) string {
 func (h *ProviderHandler) AddConnection(c *gin.Context) {
 	providerID := c.Param("id")
 	var req struct {
-		Name   string `json:"name" binding:"required"`
-		APIKey string `json:"api_key"`
+		Name     string `json:"name" binding:"required"`
+		APIKey   string `json:"api_key"`
 		AuthType string `json:"auth_type"`
+		Priority int    `json:"priority"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -362,12 +364,19 @@ func (h *ProviderHandler) AddConnection(c *gin.Context) {
 	}
 
 	_, err := h.db.Exec(`
-		INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, status, is_active, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
-	`, connID, providerID, req.Name, req.AuthType, apiKey, initialStatus, now, now)
+		INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, priority, status, is_active, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+	`, connID, providerID, req.Name, req.AuthType, apiKey, req.Priority, initialStatus, now, now)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	// Seed in-memory store so eligibility routing picks up the new connection immediately
+	if h.store != nil {
+		h.store.SeedConnection(connID, providerID, initialStatus, req.Priority)
+		if h.elig != nil {
+			h.elig.Update(h.store)
+		}
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"id": connID, "name": req.Name, "status": initialStatus})
@@ -378,8 +387,9 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 	providerID := c.Param("id")
 	var req struct {
 		Connections []struct {
-			Name   string `json:"name"`
-			APIKey string `json:"api_key"`
+			Name     string `json:"name"`
+			APIKey   string `json:"api_key"`
+			Priority int    `json:"priority"`
 		} `json:"connections"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -393,12 +403,20 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 		connID := uuid.New().String()
 		apiKey := sql.NullString{String: conn.APIKey, Valid: conn.APIKey != ""}
 		_, err := h.db.Exec(`
-			INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, status, is_active, created_at, updated_at)
-			VALUES (?, ?, ?, 'api_key', ?, 'ready', 1, ?, ?)
-		`, connID, providerID, conn.Name, apiKey, now, now)
+			INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, priority, status, is_active, created_at, updated_at)
+			VALUES (?, ?, ?, 'api_key', ?, ?, 'ready', 1, ?, ?)
+		`, connID, providerID, conn.Name, apiKey, conn.Priority, now, now)
 		if err == nil {
 			created++
+			if h.store != nil {
+				h.store.SeedConnection(connID, providerID, "ready", conn.Priority)
+			}
 		}
+	}
+
+	// Recompute eligibility once after all seeds
+	if h.store != nil && h.elig != nil {
+		h.elig.Update(h.store)
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"created": created, "total": len(req.Connections)})

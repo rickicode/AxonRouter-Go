@@ -231,6 +231,7 @@ func (h *Handler) handleResponsesFormat(c *gin.Context, exec executor.Executor, 
 			InputTokens:     tokenCounts.InputTokens,
 			OutputTokens:    tokenCounts.OutputTokens,
 			ReasoningTokens: tokenCounts.ReasoningTokens,
+			CachedTokens:    tokenCounts.CachedTokens,
 			LatencyMs:       latency,
 			StatusCode:      http.StatusOK,
 		})
@@ -248,13 +249,18 @@ func (h *Handler) handleResponsesFormat(c *gin.Context, exec executor.Executor, 
 
 		// Log usage
 		latency := time.Since(start).Milliseconds()
+		tokenCounts := ExtractTokensFromBody(translatedResp)
 		h.tracker.Log(&usage.LogEntry{
-			ConnectionID:   conn.ID,
-			ProviderTypeID: provider,
-			ModelID:        req.Model,
-			Modality:       "chat",
-			LatencyMs:      latency,
-			StatusCode:     resp.StatusCode,
+			ConnectionID:    conn.ID,
+			ProviderTypeID:  provider,
+			ModelID:         req.Model,
+			Modality:        "chat",
+			InputTokens:     tokenCounts.InputTokens,
+			OutputTokens:    tokenCounts.OutputTokens,
+			ReasoningTokens: tokenCounts.ReasoningTokens,
+			CachedTokens:    tokenCounts.CachedTokens,
+			LatencyMs:       latency,
+			StatusCode:      resp.StatusCode,
 		})
 
 		c.Header("Content-Type", "application/json")

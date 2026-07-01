@@ -39,7 +39,7 @@ func QueryLogs(database *sql.DB, page, perPage int, filter LogFilter) (*db.Pagin
 	offset := (page - 1) * perPage
 	dataQuery := fmt.Sprintf(`
 		SELECT id, timestamp, connection_id, provider_type_id, model_id, combo_id,
-		       modality, input_tokens, output_tokens, reasoning_tokens,
+		       modality, input_tokens, output_tokens, reasoning_tokens, cached_tokens,
 		       latency_ms, status_code, error_message, cost_usd, created_at
 		FROM request_logs WHERE %s
 		ORDER BY timestamp DESC
@@ -58,7 +58,7 @@ func QueryLogs(database *sql.DB, page, perPage int, filter LogFilter) (*db.Pagin
 		l := db.RequestLog{}
 		rows.Scan(&l.ID, &l.Timestamp, &l.ConnectionID, &l.ProviderTypeID,
 			&l.ModelID, &l.ComboID, &l.Modality,
-			&l.InputTokens, &l.OutputTokens, &l.ReasoningTokens,
+			&l.InputTokens, &l.OutputTokens, &l.ReasoningTokens, &l.CachedTokens,
 			&l.LatencyMs, &l.StatusCode, &l.ErrorMessage,
 			&l.CostUsd, &l.CreatedAt)
 		logs = append(logs, l)

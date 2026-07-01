@@ -20,6 +20,7 @@ type LogEntry struct {
 	InputTokens     int64
 	OutputTokens    int64
 	ReasoningTokens int64
+	CachedTokens    int64
 	LatencyMs       int64
 	StatusCode      int
 	ErrorMessage    string
@@ -126,9 +127,9 @@ func (t *Tracker) flushBatch(batch []*LogEntry) {
 
 	stmt, err := tx.Prepare(`
 		INSERT INTO request_logs (id, timestamp, connection_id, provider_type_id, model_id, combo_id,
-			modality, input_tokens, output_tokens, reasoning_tokens, latency_ms, status_code,
+			modality, input_tokens, output_tokens, reasoning_tokens, cached_tokens, latency_ms, status_code,
 			error_message, cost_usd, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		tx.Rollback()
@@ -148,7 +149,7 @@ func (t *Tracker) flushBatch(batch []*LogEntry) {
 		errMsg := toNullString(e.ErrorMessage)
 
 		stmt.Exec(uuid.New().String(), e.Timestamp, connID, providerID, modelID, comboID,
-			e.Modality, e.InputTokens, e.OutputTokens, e.ReasoningTokens,
+			e.Modality, e.InputTokens, e.OutputTokens, e.ReasoningTokens, e.CachedTokens,
 			latency, statusCode, errMsg, e.CostUsd, now)
 	}
 

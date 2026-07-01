@@ -132,6 +132,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 	// but SQLite errors on duplicate — just ignore the "duplicate column" error.
 	for _, stmt := range []string{
 		`ALTER TABLE connections ADD COLUMN provider_specific_data TEXT`,
+		`ALTER TABLE request_logs ADD COLUMN cached_tokens INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			// Ignore "duplicate column name" errors
@@ -179,6 +180,18 @@ CREATE INDEX IF NOT EXISTS idx_quota_cache_status ON quota_cache(status);
 CREATE INDEX IF NOT EXISTS idx_quota_cache_connection ON quota_cache(connection_id);
 	`); err != nil {
 		return err
+	}
+
+	// Connection priority and auto-disable columns
+	for _, stmt := range []string{
+		`ALTER TABLE connections ADD COLUMN priority INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE connections ADD COLUMN consecutive_ban_count INTEGER NOT NULL DEFAULT 0`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			if !isDuplicateColumnError(err) {
+				return err
+			}
+		}
 	}
 
 	// Proxy pool tables

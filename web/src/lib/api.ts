@@ -45,6 +45,7 @@ export interface Connection {
   capabilities: string;
   provider_specific_data: string | null;
   oauth_expires_at: number | null;
+  priority: number;
   is_active: boolean;
   created_at: number;
   updated_at: number;
@@ -97,7 +98,8 @@ export interface RequestLog {
   modality: string;
   input_tokens: number;
   output_tokens: number;
-  reasoning_tokens: number;
+	reasoning_tokens: number;
+	cached_tokens: number;
   latency_ms: number;
   status_code: number;
   error_message: string;

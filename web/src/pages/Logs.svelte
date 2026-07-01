@@ -36,7 +36,7 @@
   }
 
   function handleExport() {
-    const headers = ['Time', 'Provider', 'Model', 'Modality', 'Status', 'Latency', 'Input', 'Output', 'Reasoning', 'Cost'];
+    const headers = ['Time', 'Provider', 'Model', 'Modality', 'Status', 'Latency', 'Input', 'Output', 'Cached', 'Cost'];
     const rows = $logs.map(row => [
       formatTimestamp(row.timestamp),
       row.provider_type_id,
@@ -46,7 +46,7 @@
       `${row.latency_ms}ms`,
       row.input_tokens.toString(),
       row.output_tokens.toString(),
-      row.reasoning_tokens.toString(),
+      row.cached_tokens.toString(),
       `$${row.cost_usd.toFixed(4)}`,
     ]);
     const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
@@ -80,6 +80,7 @@
     { key: 'latency_ms', label: 'Latency' },
     { key: 'input_tokens', label: 'Input' },
     { key: 'output_tokens', label: 'Output' },
+    { key: 'cached_tokens', label: 'Cached' },
     { key: 'cost_usd', label: 'Cost' },
   ];
 </script>
@@ -206,6 +207,7 @@
                   <td class="py-3 px-4 text-code text-muted-foreground">{formatLatency(row.latency_ms)}</td>
                   <td class="py-3 px-4 text-code text-muted-foreground">{formatTokens(row.input_tokens)}</td>
                   <td class="py-3 px-4 text-code text-muted-foreground">{formatTokens(row.output_tokens)}</td>
+                  <td class="py-3 px-4 text-code text-muted-foreground">{formatTokens(row.cached_tokens)}</td>
                   <td class="py-3 px-4 text-code text-foreground font-medium">{formatCost(row.cost_usd)}</td>
                 </tr>
               {/each}

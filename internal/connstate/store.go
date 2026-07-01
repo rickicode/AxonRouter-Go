@@ -69,7 +69,7 @@ func (s *Store) RecordSuccess(connID string) {
 // RecordFailure records a failed request with error detection.
 func (s *Store) RecordFailure(connID string, det ErrorDetection) {
 	cs := s.GetOrCreate(connID)
-	
+
 	if det.Scope == "model" {
 		if det.ModelID != "" {
 			// Model-level cooldown
@@ -141,6 +141,36 @@ func (s *Store) HealthyCount() int {
 		return true
 	})
 	return count
+}
+
+// SeedConnection creates or updates a connection state entry from DB data.
+// Used to keep the in-memory store in sync with the database.
+func (s *Store) SeedConnection(connID, prefix, status string, priority int) {
+	cs := s.GetOrCreate(connID)
+	cs.mu.Lock()
+	cs.Prefix = prefix
+	cs.Priority = priority
+	switch status {
+	case "ready":
+		cs.Status = StatusReady
+	case "rate_limited":
+		cs.Status = StatusRateLimited
+	case "quota_exhausted":
+		cs.Status = StatusQuotaExhausted
+	case "balance_empty":
+		cs.Status = StatusBalanceEmpty
+	case "auth_failed":
+		cs.Status = StatusAuthFailed
+	case "suspended":
+		cs.Status = StatusSuspended
+	case "disabled":
+		cs.Status = StatusDisabled
+	case "degraded":
+		cs.Status = StatusDegraded
+	default:
+		cs.Status = StatusUnknown
+	}
+	cs.mu.Unlock()
 }
 
 // All returns all connection states as a slice.

@@ -38,6 +38,7 @@ func readBody(c *gin.Context) ([]byte, error) {
 type Connection struct {
 	ID                   string
 	Provider             string
+	Priority             int
 	APIKey               string
 	AccessToken          string
 	RefreshToken         string
@@ -130,7 +131,8 @@ func (h *Handler) invalidateCache(provider string) {
 // loadConnections loads connections from the database.
 func (h *Handler) loadConnections(ctx context.Context, provider string) ([]*Connection, error) {
 	rows, err := h.db.QueryContext(ctx, `
-		SELECT c.id, pt.id as provider_prefix, 
+		SELECT c.id, pt.id as provider_prefix,
+			COALESCE(c.priority, 0) as priority,
 			COALESCE(c.api_key, '') as api_key,
 			COALESCE(c.oauth_token, '') as oauth_token,
 			COALESCE(c.oauth_refresh_token, '') as oauth_refresh_token,
@@ -140,7 +142,7 @@ func (h *Handler) loadConnections(ctx context.Context, provider string) ([]*Conn
 		FROM connections c
 		JOIN provider_types pt ON c.provider_type_id = pt.id
 		WHERE pt.id = ? AND c.is_active = 1
-		ORDER BY c.id
+		ORDER BY c.priority DESC, c.id
 	`, provider)
 	if err != nil {
 		return nil, err
@@ -151,7 +153,7 @@ func (h *Handler) loadConnections(ctx context.Context, provider string) ([]*Conn
 	for rows.Next() {
 		var conn Connection
 		var expiresAt int64
-		if err := rows.Scan(&conn.ID, &conn.Provider, &conn.APIKey, &conn.AccessToken,
+		if err := rows.Scan(&conn.ID, &conn.Provider, &conn.Priority, &conn.APIKey, &conn.AccessToken,
 			&conn.RefreshToken, &expiresAt, &conn.BaseURL, &conn.Status); err != nil {
 			continue
 		}
@@ -251,4 +253,24 @@ func (h *Handler) proxyContext(ctx context.Context, conn *Connection) context.Co
 		RelayType:   cfg.RelayType,
 		StrictProxy: cfg.StrictProxy,
 	})
+}
+
+// checkAutoDisable checks if a connection should be auto-disabled due to repeated ban signals.
+// Matches OmniRoute autoDisableBannedAccounts: permanently disable after threshold consecutive bans.
+func (h *Handler) checkAutoDisable(connID, provider string) {
+	cs := h.store.Get(connID)
+	if cs == nil {
+		return
+	}
+	// Default threshold: 3 consecutive ban signals
+	threshold := 3
+	banCount := cs.BanCount
+
+	if banCount >= threshold {
+		log.Printf("Auto-disabling connection %s after %d consecutive ban signals", connID, banCount)
+		h.db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', updated_at = ? WHERE id = ?`,
+			time.Now().Unix(), connID)
+		h.store.UpdateStatus(connID, connstate.StatusDisabled)
+		h.elig.Update(h.store)
+	}
 }

@@ -119,6 +119,9 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		}
 		h.combo.RecordFailure(conn.ID, 0, err.Error())
 
+		// Auto-disable banned accounts (auth/quota/balance failures)
+		h.checkAutoDisable(conn.ID, provider)
+
 		h.tracker.Log(&usage.LogEntry{
 			ConnectionID:   conn.ID,
 			ProviderTypeID: provider,
@@ -143,14 +146,19 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		// Translate response (provider format → client format)
 		translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
 
-		// Log usage
+		// Extract token counts from translated response (OpenAI format)
+		tokenCounts := ExtractTokensFromBody(translatedResp)
 		h.tracker.Log(&usage.LogEntry{
-			ConnectionID:   conn.ID,
-			ProviderTypeID: provider,
-			ModelID:        modelName,
-			Modality:       "chat",
-			LatencyMs:      latency,
-			StatusCode:     resp.StatusCode,
+			ConnectionID:    conn.ID,
+			ProviderTypeID:  provider,
+			ModelID:         modelName,
+			Modality:        "chat",
+			InputTokens:     tokenCounts.InputTokens,
+			OutputTokens:    tokenCounts.OutputTokens,
+			ReasoningTokens: tokenCounts.ReasoningTokens,
+			CachedTokens:    tokenCounts.CachedTokens,
+			LatencyMs:       latency,
+			StatusCode:      resp.StatusCode,
 		})
 
 		c.Header("Content-Type", "application/json")
@@ -236,13 +244,18 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 		} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
 
+			tokenCounts := ExtractTokensFromBody(translatedResp)
 			h.tracker.Log(&usage.LogEntry{
-				ConnectionID:   connID,
-				ProviderTypeID: provider,
-				ModelID:        modelName,
-				Modality:       "chat",
-				LatencyMs:      latency,
-				StatusCode:     resp.StatusCode,
+				ConnectionID:    connID,
+				ProviderTypeID:  provider,
+				ModelID:         modelName,
+				Modality:        "chat",
+				InputTokens:     tokenCounts.InputTokens,
+				OutputTokens:    tokenCounts.OutputTokens,
+				ReasoningTokens: tokenCounts.ReasoningTokens,
+				CachedTokens:    tokenCounts.CachedTokens,
+				LatencyMs:       latency,
+				StatusCode:      resp.StatusCode,
 			})
 
 			c.Header("Content-Type", "application/json")
@@ -321,6 +334,7 @@ func (h *Handler) handleStreamResponse(c *gin.Context, result *executor.StreamRe
 		InputTokens:     tokenCounts.InputTokens,
 		OutputTokens:    tokenCounts.OutputTokens,
 		ReasoningTokens: tokenCounts.ReasoningTokens,
+		CachedTokens:    tokenCounts.CachedTokens,
 		LatencyMs:       latency,
 		StatusCode:      http.StatusOK,
 	})

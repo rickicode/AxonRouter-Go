@@ -2,7 +2,6 @@ package executor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -154,30 +153,4 @@ func (e *OpenAIExecutor) ResponsesStream(ctx context.Context, req *Request) (*St
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
 
 	return e.DoStreamRequest(ctx, "POST", url, headers, body)
-}
-
-// parseOpenAIUsage extracts token usage from an OpenAI response.
-func parseOpenAIUsage(body []byte) (inputTokens, outputTokens, reasoningTokens int64) {
-	var resp struct {
-		Usage *struct {
-			PromptTokens        int64 `json:"prompt_tokens"`
-			CompletionTokens    int64 `json:"completion_tokens"`
-			TotalTokens         int64 `json:"total_tokens"`
-			PromptTokensDetails *struct {
-				CachedTokens int64 `json:"cached_tokens"`
-			} `json:"prompt_tokens_details"`
-			CompletionTokensDetails *struct {
-				ReasoningTokens int64 `json:"reasoning_tokens"`
-			} `json:"completion_tokens_details"`
-		} `json:"usage"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil || resp.Usage == nil {
-		return 0, 0, 0
-	}
-	inputTokens = resp.Usage.PromptTokens
-	outputTokens = resp.Usage.CompletionTokens
-	if resp.Usage.CompletionTokensDetails != nil {
-		reasoningTokens = resp.Usage.CompletionTokensDetails.ReasoningTokens
-	}
-	return
 }

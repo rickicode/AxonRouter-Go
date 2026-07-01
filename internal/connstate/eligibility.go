@@ -1,6 +1,7 @@
 package connstate
 
 import (
+	"sort"
 	"sync/atomic"
 )
 
@@ -29,6 +30,7 @@ func NewEligibilityManager(store *Store) *EligibilityManager {
 }
 
 // Update recomputes the eligibility snapshot from the current store state.
+// Connections are sorted by priority (higher first) within each prefix.
 func (e *EligibilityManager) Update(store *Store) {
 	eligible := make(map[string][]string)
 	var all []string
@@ -42,6 +44,18 @@ func (e *EligibilityManager) Update(store *Store) {
 		}
 		return true
 	})
+
+	// Sort each prefix's connections by priority (higher first)
+	for _, ids := range eligible {
+		sort.SliceStable(ids, func(i, j int) bool {
+			ci := store.Get(ids[i])
+			cj := store.Get(ids[j])
+			if ci == nil || cj == nil {
+				return false
+			}
+			return ci.Priority > cj.Priority
+		})
+	}
 
 	e.snapshot.Store(&EligibilitySnapshot{
 		Providers: all,

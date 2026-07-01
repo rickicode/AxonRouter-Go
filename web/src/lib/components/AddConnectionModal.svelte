@@ -31,6 +31,7 @@
   let apiKey = $state('');
   let showKey = $state(false);
   let bulkText = $state('');
+  let connectionPriority = $state('1');
   let submitting = $state(false);
   let errorMsg = $state('');
   let oauthPolling = $state(false);
@@ -53,8 +54,8 @@
     mode = 'single';
     connectionName = '';
     apiKey = '';
-    showKey = false;
     bulkText = '';
+    connectionPriority = '1';
     errorMsg = '';
     validating = false;
     validationResult = null;
@@ -194,6 +195,7 @@
       const data = {
         name,
         auth_type: 'api_key' as const,
+        priority: parseInt(connectionPriority) || 1,
         ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
       };
       await connectionsApi.create(providerId, data);

@@ -2,7 +2,6 @@ package executor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 )
 
@@ -98,18 +97,4 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, req *Request) (*Respon
 	}
 
 	return resp, nil
-}
-
-// parseClaudeUsage extracts token usage from a Claude response.
-func parseClaudeUsage(body []byte) (inputTokens, outputTokens int64) {
-	var resp struct {
-		Usage *struct {
-			InputTokens  int64 `json:"input_tokens"`
-			OutputTokens int64 `json:"output_tokens"`
-		} `json:"usage"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil || resp.Usage == nil {
-		return 0, 0
-	}
-	return resp.Usage.InputTokens, resp.Usage.OutputTokens
 }
