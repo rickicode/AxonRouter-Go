@@ -1,31 +1,51 @@
 # AGENTS.md — AxonRouter-Go Project Rules
+## Anti-Hallucination Rule — DATA FIRST (CRITICAL)
 
-## Anti-Hallucination Rule (CRITICAL)
+**DILARANG NGARANG. SEMUA HARUS BY DATA.**
 
-**DILARANG NGARANG.** Setiap claim tentang provider capabilities, API endpoints, fitur, atau behavior HARUS diverifikasi dari codebase reference:
+### Prinsip Utama
+1. **DATA = bukti nyata** — API response, code, log, screenshot, terminal output
+2. **ASSUME = ngarang** — kalau tidak ada data, jangan pernah assume
+3. **VERIFY dulu, baru bicara** — jangan claim sebelum cek
+4. **Model names, URLs, endpoints, behavior** — SEMUA harus diverifikasi dari codebase atau live API
 
-1. **SELALU cek codebase** — `/workspaces/AxonRouter`, `/workspaces/CLIProxyAPI`, `/workspaces/OmniRoute`
-2. **SELALU cek internet** — kalau informasi tidak ada di codebase, search web
-3. **JANGAN pernah assume** — kalau tidak tau, bilang tidak tau, jangan ngarang
-4. **JANGAN halusinasi** — kalau tidak ada bukti di code, jangan claim itu ada
-5. **Quote source** — setiap claim harus ada file reference atau URL
-
-### Contoh Salah:
+### Cara Kerja (WAJIB ikuti)
 ```
-❌ "Mimo punya balance tracking" (ngarang, tidak ada di codebase)
-❌ "Codex quota reset setiap minggu" (belum verify dari code)
-```
-
-### Contoh Benar:
-```
-✅ "OmniRoute quotaCache.ts line 15: background refresh setiap 1 menit" (ada di code)
-✅ "CLIProxyAPI codex/openai_auth.go: AuthURL = 'https://auth.openai.com/oauth/authorize'" (ada di code)
+1. Cek codebase dulu (grep, read, lsp)
+2. Kalau tidak ada → cek reference codebases (OmniRoute, CLIProxyAPI, AxonRouter)
+3. Kalau tidak ada → cek internet (web search)
+4. Kalau tidak ada → bilang "tidak tau, tidak ada data"
 ```
 
-### Saat tidak tau:
+### Contoh Salah (NGARANG):
 ```
-✅ "Saya tidak tau apakah Mimo punya quota endpoint. Tidak ada referensi di codebase yang tersedia."
+❌ "Mimo punya balance tracking" — belum cek codebase
+❌ "Codex quota reset setiap minggu" — belum verify dari code
+❌ "Model name gemini-3.5-flash" — belum cek API response actual
+❌ "Endpoint /api/foo/bar" — belum verify di router.go
+❌ "Quota 100% berarti unlimited" — belum cek response format
 ```
+
+### Contoh Benar (BY DATA):
+```
+✅ "OmniRoute quotaCache.ts line 15: background refresh setiap 1 menit" — ada di code
+✅ "API return gemini-2.5-pro bukan gemini-3.1-pro" — verified dari curl response
+✅ "claude-sonnet-4-6 (bukan 4.6)" — verified dari actual API model key
+✅ "Endpoint ada di router.go line 219" — verified dari code
+```
+
+### Saat Tidak Tau:
+```
+✅ "Saya tidak tau. Tidak ada data di codebase yang tersedia."
+✅ "Perlu verify dulu — mau saya cek API response?"
+```
+
+### Untuk Model Names & Provider Data:
+- **WAJIB smoke test** dulu sebelum set model name/filter
+- **WAJIB cek actual API response** — jangan pernah tebak nama model
+- **WAJIB verify endpoint** dari router.go, jangan assume path
+- Kalau user bilang "gemini 3.5" tapi API return "gemini-2.5" → bilang datanya beda, jangan ngarang
+
 
 ## Multi-Codebase Comparison Rule (CRITICAL)
 
