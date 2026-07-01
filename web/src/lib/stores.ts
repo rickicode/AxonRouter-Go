@@ -18,9 +18,17 @@ export const dashboardStats = writable<{
   total_connections: number;
   active_connections: number;
   total_requests_today: number;
+  tokens_today: number;
+  cost_today: number;
   success_rate: number;
   providers: { id: string; name: string; connection_count: number }[];
 } | null>(null);
+
+// Usage stats for charts
+export const usageStats = writable<{
+  daily: { date: string; requests: number; tokens: number; cost_usd: number; errors: number }[];
+  providers: { provider_type_id: string; requests: number; total_tokens: number; cost_usd: number; errors: number }[];
+}>({ daily: [], providers: [] });
 
 // Providers
 export const providers = writable<Provider[]>([]);
@@ -105,40 +113,43 @@ export async function loadDashboardStats() {
   error.set(null);
   
   try {
-    const [statsData, providersData, logsData] = await Promise.all([
-      dashboardApi.stats().catch(() => ({ total_connections: 0, status_counts: { ready: 0 }, requests_today: 0 })),
-      fetchApi<{ data: unknown[] }>('/dashboard/providers').catch(() => ({ data: [] })),
-      fetchApi<{ data: { status_code: number }[] }>('/dashboard/recent-logs').catch(() => ({ data: [] }))
+    const [statsData, usageData] = await Promise.all([
+      dashboardApi.stats().catch(() => ({
+        total_connections: 0,
+        status_counts: { ready: 0 } as Record<string, number>,
+        requests_today: 0,
+        tokens_today: 0,
+        cost_today: 0,
+      })),
+      dashboardApi.usageStats(24).catch(() => ({
+        provider_usage: [] as { provider_type_id: string; requests: number; total_tokens: number; cost_usd: number; errors: number }[],
+        daily_usage: [] as { date: string; requests: number; tokens: number; cost_usd: number; errors: number }[],
+      })),
     ]);
-    
-    let successRate = 100;
-    const logEntries = logsData?.data ?? [];
-    if (logEntries.length > 0) {
-      const successful = logEntries.filter((l) => l.status_code >= 200 && l.status_code < 300).length;
-      successRate = Math.round((successful / logEntries.length) * 100);
-    }
 
-    const rawProviders = (providersData?.data ?? []) as { id: string; display_name?: string; total?: number }[];
-    
     dashboardStats.set({
       total_connections: statsData?.total_connections ?? 0,
       active_connections: statsData?.status_counts?.ready ?? 0,
       total_requests_today: statsData?.requests_today ?? 0,
-      success_rate: successRate,
-      providers: rawProviders.map((p) => ({
-        id: p.id,
-        name: p.display_name || p.id,
-        connection_count: p.total ?? 0
-      }))
+      tokens_today: statsData?.tokens_today ?? 0,
+      cost_today: statsData?.cost_today ?? 0,
+      success_rate: 100,
+      providers: [],
+    });
+
+    usageStats.set({
+      daily: (usageData?.daily_usage ?? []).reverse(),
+      providers: usageData?.provider_usage ?? [],
     });
   } catch (err) {
-    // Even on total failure, set empty stats so the page renders
     dashboardStats.set({
       total_connections: 0,
       active_connections: 0,
       total_requests_today: 0,
+      tokens_today: 0,
+      cost_today: 0,
       success_rate: 0,
-      providers: []
+      providers: [],
     });
     error.set(friendlyError(err, 'Failed to load dashboard stats'));
   } finally {

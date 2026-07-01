@@ -394,6 +394,30 @@ export const dashboardApi = {
       cost_today: number;
       uptime_seconds: number;
     }>('/dashboard/stats'),
+  usageStats: (hours = 24) =>
+    fetchApi<{
+      provider_usage: {
+        provider_type_id: string;
+        requests: number;
+        total_tokens: number;
+        cost_usd: number;
+        errors: number;
+        avg_latency_ms: number;
+      }[];
+      model_usage: {
+        model_id: string;
+        requests: number;
+        cost_usd: number;
+        errors: number;
+      }[];
+      daily_usage: {
+        date: string;
+        requests: number;
+        tokens: number;
+        cost_usd: number;
+        errors: number;
+      }[];
+    }>(`/logs/stats?hours=${hours}`),
 };
 
 // Quota types
