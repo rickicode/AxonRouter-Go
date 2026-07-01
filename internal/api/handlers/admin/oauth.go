@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -11,17 +12,18 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
+	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 )
 
-// OAuthHandler handles OAuth flow initiation.
 type OAuthHandler struct {
 	db      *sql.DB
 	authMgr *auth.Manager
+	store   *connstate.Store
+	elig    *connstate.EligibilityManager
 }
 
-// NewOAuthHandler creates a new OAuth handler.
-func NewOAuthHandler(db *sql.DB, authMgr *auth.Manager) *OAuthHandler {
-	return &OAuthHandler{db: db, authMgr: authMgr}
+func NewOAuthHandler(db *sql.DB, authMgr *auth.Manager, store *connstate.Store, elig *connstate.EligibilityManager) *OAuthHandler {
+	return &OAuthHandler{db: db, authMgr: authMgr, store: store, elig: elig}
 }
 
 // InitiateOAuth starts an OAuth flow for a connection's provider.
@@ -43,10 +45,11 @@ func (h *OAuthHandler) InitiateOAuth(c *gin.Context) {
 		return
 	}
 
-	ctx := c.Request.Context()
+	ctx, cancel := context.WithCancel(context.Background())
 	state := generateOAuthState()
 	port, resultChan, err := svc.StartLocalServer(ctx, state)
 	if err != nil {
+		cancel()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start callback server"})
 		return
 	}
@@ -54,6 +57,7 @@ func (h *OAuthHandler) InitiateOAuth(c *gin.Context) {
 	stateWithPort := fmt.Sprintf("%s:%d", state, port)
 	authURL, err := svc.GenerateAuthURL(ctx, stateWithPort)
 	if err != nil {
+		cancel()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate auth URL"})
 		return
 	}
@@ -64,6 +68,7 @@ func (h *OAuthHandler) InitiateOAuth(c *gin.Context) {
 	})
 
 	go func() {
+		defer cancel() // shuts down the local callback server
 		select {
 		case creds := <-resultChan:
 			if creds == nil {
@@ -81,6 +86,13 @@ func (h *OAuthHandler) InitiateOAuth(c *gin.Context) {
 				log.Printf("OAuth save tokens failed for connection %s: %v", connID, err)
 			} else {
 				log.Printf("OAuth tokens saved for connection %s", connID)
+				// Sync in-memory state so routing picks up the new connection
+				if h.store != nil {
+					h.store.UpdateStatus(connID, connstate.StatusReady)
+					if h.elig != nil {
+						h.elig.Update(h.store)
+					}
+				}
 			}
 		case <-time.After(5 * time.Minute):
 			log.Printf("OAuth timeout for connection %s", connID)

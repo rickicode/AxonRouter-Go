@@ -356,16 +356,21 @@ func (h *ProviderHandler) AddConnection(c *gin.Context) {
 		apiKey = sql.NullString{String: req.APIKey, Valid: true}
 	}
 
+	initialStatus := "ready"
+	if req.AuthType == "oauth" {
+		initialStatus = "auth_failed" // not eligible until OAuth completes
+	}
+
 	_, err := h.db.Exec(`
 		INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, status, is_active, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, 'ready', 1, ?, ?)
-	`, connID, providerID, req.Name, req.AuthType, apiKey, now, now)
+		VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+	`, connID, providerID, req.Name, req.AuthType, apiKey, initialStatus, now, now)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"id": connID, "name": req.Name, "status": "ready"})
+	c.JSON(http.StatusCreated, gin.H{"id": connID, "name": req.Name, "status": initialStatus})
 }
 
 // BulkAddConnections adds multiple connections at once.

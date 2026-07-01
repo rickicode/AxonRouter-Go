@@ -174,7 +174,7 @@ func New(cfg Config) *Router {
 	adminGroup.POST("/providers/:id/models/test", modelH.TestModel)
 
 	// OAuth
-	oauthH := admin.NewOAuthHandler(cfg.DB, authManager)
+	oauthH := admin.NewOAuthHandler(cfg.DB, authManager, store, elig)
 	adminGroup.POST("/connections/:id/oauth", oauthH.InitiateOAuth)
 	adminGroup.GET("/connections/:id/oauth/status", oauthH.OAuthStatus)
 

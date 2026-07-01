@@ -112,8 +112,8 @@
       // Step 2: Initiate OAuth flow
       const oauthRes = await connectionsApi.initiateOAuth(conn.id);
 
-      // Step 3: Open auth URL in new window
-      window.open(oauthRes.auth_url, '_blank', 'width=600,height=700');
+      // Step 3: Open auth URL (same window to avoid popup blocker)
+      window.location.href = oauthRes.auth_url;
 
       step = 'oauth-waiting';
       oauthPolling = true;
