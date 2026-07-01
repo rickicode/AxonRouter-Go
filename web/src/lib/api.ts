@@ -435,6 +435,8 @@ export interface QuotaCacheEntry {
   status: string; // ok, exhausted, unlimited, error, no_data
   error?: string;
   fetched_at: number;
+  auth_type: string;
+  oauth_expires_at?: number;
 }
 
 export interface QuotaCacheResponse {

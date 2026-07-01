@@ -42,8 +42,6 @@ func SaveQuotaCache(db *sql.DB, results []ProviderQuota) {
 	}
 }
 
-
-
 // evaluateCacheStatus determines the display status for the cache entry.
 func evaluateCacheStatus(quotas []QuotaItem, connError string) string {
 	if connError != "" {
@@ -86,6 +84,8 @@ type QuotaCacheEntry struct {
 	Status         string      `json:"status"`
 	Error          string      `json:"error,omitempty"`
 	FetchedAt      int64       `json:"fetched_at"`
+	AuthType       string      `json:"auth_type"`
+	OAuthExpiresAt int64       `json:"oauth_expires_at,omitempty"`
 }
 
 // QuotaCacheResponse is the paginated API response.
@@ -122,14 +122,16 @@ func LoadQuotaCache(db *sql.DB, providerID, search, status string, page, perPage
 		totalPages++
 	}
 
-	// Fetch page
-	offset := (page - 1) * perPage
 	selectQuery := fmt.Sprintf(`
-		SELECT id, connection_id, provider_type_id, connection_name, plan, quotas, status, error, fetched_at
-		FROM quota_cache %s
-		ORDER BY provider_type_id, connection_name
+		SELECT q.id, q.connection_id, q.provider_type_id, q.connection_name, q.plan, q.quotas, q.status, q.error, q.fetched_at,
+		       COALESCE(c.auth_type, ''), COALESCE(c.oauth_expires_at, 0)
+		FROM quota_cache q
+		LEFT JOIN connections c ON q.connection_id = c.id
+		%s
+		ORDER BY q.provider_type_id, q.connection_name
 		LIMIT ? OFFSET ?
 	`, where)
+	offset := (page - 1) * perPage
 	args = append(args, perPage, offset)
 
 	rows, err := db.Query(selectQuery, args...)
@@ -143,7 +145,8 @@ func LoadQuotaCache(db *sql.DB, providerID, search, status string, page, perPage
 		var e QuotaCacheEntry
 		var quotasJSON string
 		if err := rows.Scan(&e.ID, &e.ConnectionID, &e.ProviderID, &e.ConnectionName,
-			&e.Plan, &quotasJSON, &e.Status, &e.Error, &e.FetchedAt); err != nil {
+			&e.Plan, &quotasJSON, &e.Status, &e.Error, &e.FetchedAt,
+			&e.AuthType, &e.OAuthExpiresAt); err != nil {
 			log.Printf("quota cache: scan error: %v", err)
 			continue
 		}
