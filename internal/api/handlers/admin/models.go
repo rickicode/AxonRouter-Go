@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/models"
@@ -19,11 +20,12 @@ type ModelHandler struct {
 	db       *sql.DB
 	registry *executor.Registry
 	store    *connstate.Store
+	authMgr  *auth.Manager
 }
 
 // NewModelHandler creates a new model handler.
-func NewModelHandler(db *sql.DB, registry *executor.Registry, store *connstate.Store) *ModelHandler {
-	return &ModelHandler{db: db, registry: registry, store: store}
+func NewModelHandler(db *sql.DB, registry *executor.Registry, store *connstate.Store, authMgr *auth.Manager) *ModelHandler {
+	return &ModelHandler{db: db, registry: registry, store: store, authMgr: authMgr}
 }
 
 // noAuthBaseURLs maps no-auth provider IDs to their base URLs.
@@ -144,7 +146,10 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 
 	if dbErr == nil {
 		var psdJSON sql.NullString
-		err := h.db.QueryRow(`SELECT COALESCE(api_key,''), COALESCE(oauth_token,''), provider_specific_data FROM connections WHERE provider_type_id = ? AND status = 'ready' AND is_active = 1 LIMIT 1`, providerID).Scan(&apiKey, &accessToken, &psdJSON)
+		var refreshToken sql.NullString
+		var expiresAt int64
+		var connID string
+		err := h.db.QueryRow(`SELECT id, COALESCE(api_key,''), COALESCE(oauth_token,''), COALESCE(oauth_refresh_token,''), COALESCE(oauth_expires_at,0), COALESCE(provider_specific_data,'') FROM connections WHERE provider_type_id = ? AND status = 'ready' AND is_active = 1 LIMIT 1`, providerID).Scan(&connID, &apiKey, &accessToken, &refreshToken, &expiresAt, &psdJSON)
 		if err != nil {
 			// No connection — check if this is a no-auth provider
 			if noAuthURL, ok := noAuthBaseURLs[providerID]; ok {
@@ -154,9 +159,23 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "no ready connections"})
 				return
 			}
-		} else if psdJSON.Valid && psdJSON.String != "" {
-			providerSpecificData = make(map[string]string)
-			json.Unmarshal([]byte(psdJSON.String), &providerSpecificData)
+		} else {
+			if psdJSON.Valid && psdJSON.String != "" {
+				providerSpecificData = make(map[string]string)
+				json.Unmarshal([]byte(psdJSON.String), &providerSpecificData)
+			}
+			// Refresh OAuth token if expired
+			if accessToken != "" && expiresAt > 0 && time.Now().Unix() > expiresAt-30 && refreshToken.Valid && refreshToken.String != "" && h.authMgr != nil {
+				creds := &auth.Credentials{AccessToken: accessToken, RefreshToken: refreshToken.String, ExpiresAt: time.Unix(expiresAt, 0)}
+				newCreds, err := h.authMgr.RefreshToken(c.Request.Context(), auth.ProviderType(providerID), creds)
+				if err != nil {
+					log.Printf("TestModel: OAuth refresh failed for %s: %v", connID, err)
+				} else {
+					accessToken = newCreds.AccessToken
+					h.db.Exec(`UPDATE connections SET oauth_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
+						newCreds.AccessToken, newCreds.ExpiresAt.Unix(), time.Now().Unix(), connID)
+				}
+			}
 		}
 	} else {
 		// Provider not in DB — check if this is a no-auth provider

@@ -178,7 +178,7 @@ func New(cfg Config) *Router {
 	adminGroup.PATCH("/connections/bulk", connectionH.BulkUpdate)
 
 	// Models
-	modelH := admin.NewModelHandler(cfg.DB, executor.GetRegistry(), store)
+	modelH := admin.NewModelHandler(cfg.DB, executor.GetRegistry(), store, authManager)
 	adminGroup.GET("/providers/:id/models", modelH.ListModels)
 	adminGroup.POST("/providers/:id/models/test", modelH.TestModel)
 
