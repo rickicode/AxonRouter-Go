@@ -1,40 +1,28 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
   <defs>
-    <linearGradient id="pink" x1="20" y1="10" x2="44" y2="54" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#f472b6"/>
+    <linearGradient id="g1" x1="16" y1="16" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#f9a8d4"/>
       <stop offset="100%" stop-color="#ec4899"/>
     </linearGradient>
-    <linearGradient id="pinkBright" x1="28" y1="8" x2="36" y2="50" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#f9a8d4"/>
-      <stop offset="100%" stop-color="#f472b6"/>
-    </linearGradient>
   </defs>
-  <!-- Background rounded hexagon -->
+  <!-- Dark background hex -->
   <path d="M32 3L57 17.5V46.5L32 61L7 46.5V17.5L32 3Z" fill="#18181b" stroke="#27272a" stroke-width="0.8"/>
-  <!-- Left leg of A — thick bold stroke -->
-  <path d="M19 49L32 11" stroke="url(#pink)" stroke-width="3.2" stroke-linecap="round"/>
-  <!-- Right leg of A -->
-  <path d="M32 11L45 49" stroke="url(#pink)" stroke-width="3.2" stroke-linecap="round"/>
-  <!-- Crossbar -->
-  <line x1="23" y1="35" x2="41" y2="35" stroke="url(#pink)" stroke-width="2.6" stroke-linecap="round"/>
-  <!-- Apex node — bright pink glow -->
-  <circle cx="32" cy="11" r="3.5" fill="#ec4899"/>
-  <circle cx="32" cy="11" r="1.5" fill="#fce7f3"/>
-  <!-- Bottom left node -->
-  <circle cx="19" cy="49" r="2.5" fill="#ec4899"/>
-  <circle cx="19" cy="49" r="1" fill="#fce7f3"/>
-  <!-- Bottom right node -->
-  <circle cx="45" cy="49" r="2.5" fill="#ec4899"/>
-  <circle cx="45" cy="49" r="1" fill="#fce7f3"/>
-  <!-- Crossbar intersections -->
-  <circle cx="23" cy="35" r="2" fill="#f472b6"/>
-  <circle cx="41" cy="35" r="2" fill="#f472b6"/>
-  <!-- Signal branches from apex -->
-  <line x1="32" y1="7.5" x2="32" y2="3.5" stroke="#f9a8d4" stroke-width="1.5" stroke-linecap="round" opacity="0.8"/>
-  <line x1="29.5" y1="8.5" x2="26" y2="5" stroke="#f9a8d4" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
-  <line x1="34.5" y1="8.5" x2="38" y2="5" stroke="#f9a8d4" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
-  <!-- Synaptic tips -->
-  <circle cx="32" cy="3.5" r="1.2" fill="#f9a8d4" opacity="0.8"/>
-  <circle cx="26" cy="5" r="0.8" fill="#f9a8d4" opacity="0.5"/>
-  <circle cx="38" cy="5" r="0.8" fill="#f9a8d4" opacity="0.5"/>
+  <!-- Central hub — bold hexagon -->
+  <path d="M32 22L40 26.5V35.5L32 40L24 35.5V26.5L32 22Z" fill="#ec4899"/>
+  <path d="M32 25L37 28V34L32 37L27 34V28L32 25Z" fill="#18181b"/>
+  <!-- Top path — incoming -->
+  <line x1="32" y1="19" x2="32" y2="8" stroke="#f472b6" stroke-width="2.2" stroke-linecap="round"/>
+  <circle cx="32" cy="8" r="2" fill="#f9a8d4"/>
+  <!-- Bottom-left path — outgoing -->
+  <line x1="28" y1="37" x2="16" y2="50" stroke="#f472b6" stroke-width="2.2" stroke-linecap="round"/>
+  <circle cx="16" cy="50" r="2" fill="#f9a8d4"/>
+  <!-- Bottom-right path — outgoing -->
+  <line x1="36" y1="37" x2="48" y2="50" stroke="#f472b6" stroke-width="2.2" stroke-linecap="round"/>
+  <circle cx="48" cy="50" r="2" fill="#f9a8d4"/>
+  <!-- Cross-link between bottom nodes -->
+  <line x1="18" y1="49" x2="46" y2="49" stroke="#f472b6" stroke-width="1" stroke-linecap="round" opacity="0.35" stroke-dasharray="3 2"/>
+  <!-- Tiny signal dots on paths -->
+  <circle cx="32" cy="13" r="1" fill="#fce7f3" opacity="0.7"/>
+  <circle cx="22" cy="44" r="1" fill="#fce7f3" opacity="0.7"/>
+  <circle cx="42" cy="44" r="1" fill="#fce7f3" opacity="0.7"/>
 </svg>
