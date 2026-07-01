@@ -135,7 +135,8 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	// Record success
+	// Record success (reset ban count BEFORE RecordSuccess which zeros in-memory BanCount)
+	h.resetBanCount(conn.ID)
 	h.store.RecordSuccess(conn.ID)
 	h.elig.Update(h.store) // refresh eligibility after success
 	h.combo.RecordSuccess(conn.ID)
@@ -235,6 +236,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 		}
 
 		// Success
+		h.resetBanCount(connID)
 		h.combo.RecordSuccess(connID)
 		h.store.RecordSuccess(connID)
 		h.elig.Update(h.store) // refresh eligibility after success

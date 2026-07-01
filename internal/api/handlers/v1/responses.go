@@ -126,6 +126,7 @@ func (h *Handler) Responses(c *gin.Context) {
 		return
 	}
 
+	h.resetBanCount(conn.ID)
 	h.store.RecordSuccess(conn.ID)
 	h.elig.Update(h.store) // refresh eligibility after success
 	h.combo.RecordSuccess(conn.ID)

@@ -257,14 +257,18 @@ func (h *Handler) proxyContext(ctx context.Context, conn *Connection) context.Co
 
 // checkAutoDisable checks if a connection should be auto-disabled due to repeated ban signals.
 // Matches OmniRoute autoDisableBannedAccounts: permanently disable after threshold consecutive bans.
+// Persists ban count to DB so it survives restarts.
 func (h *Handler) checkAutoDisable(connID, provider string) {
 	cs := h.store.Get(connID)
 	if cs == nil {
 		return
 	}
-	// Default threshold: 3 consecutive ban signals
 	threshold := 3
 	banCount := cs.BanCount
+
+	// Persist ban count to DB
+	h.db.Exec(`UPDATE connections SET consecutive_ban_count = ?, updated_at = ? WHERE id = ?`,
+		banCount, time.Now().Unix(), connID)
 
 	if banCount >= threshold {
 		log.Printf("Auto-disabling connection %s after %d consecutive ban signals", connID, banCount)
@@ -272,5 +276,15 @@ func (h *Handler) checkAutoDisable(connID, provider string) {
 			time.Now().Unix(), connID)
 		h.store.UpdateStatus(connID, connstate.StatusDisabled)
 		h.elig.Update(h.store)
+	}
+}
+
+// resetBanCount resets the consecutive ban count on success (persists to DB).
+func (h *Handler) resetBanCount(connID string) {
+	cs := h.store.Get(connID)
+	if cs != nil && cs.BanCount > 0 {
+		cs.BanCount = 0
+		h.db.Exec(`UPDATE connections SET consecutive_ban_count = 0, updated_at = ? WHERE id = ?`,
+			time.Now().Unix(), connID)
 	}
 }

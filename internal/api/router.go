@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"io"
 	"io/fs"
+	"log"
 	"net/http"
 	"strings"
 
@@ -60,6 +61,9 @@ func New(cfg Config) *Router {
 
 	// Initialize core packages
 	store := connstate.NewStore()
+
+	// Seed in-memory store from DB on startup so existing connections enter eligibility
+	seedConnectionsFromDB(cfg.DB, store)
 
 	elig := connstate.NewEligibilityManager(store)
 	elig.RecomputeAll()
@@ -330,4 +334,38 @@ func (r *Router) Eligibility() *connstate.EligibilityManager {
 // ComboHandler returns the combo handler.
 func (r *Router) ComboHandler() *combo.Handler {
 	return r.combo
+}
+
+// seedConnectionsFromDB loads all active connections from the database into the in-memory store.
+// Called once on startup so existing connections enter eligibility routing immediately.
+func seedConnectionsFromDB(db *sql.DB, store *connstate.Store) {
+	rows, err := db.Query(`
+		SELECT c.id, c.provider_type_id, COALESCE(c.status, 'ready'),
+		       COALESCE(c.priority, 0), COALESCE(c.consecutive_ban_count, 0)
+		FROM connections c
+		WHERE c.is_active = 1
+	`)
+	if err != nil {
+		log.Printf("WARN: seed connections failed: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		var connID, providerID, status string
+		var priority, banCount int
+		if err := rows.Scan(&connID, &providerID, &status, &priority, &banCount); err != nil {
+			continue
+		}
+		store.SeedConnection(connID, providerID, status, priority)
+		// Restore persisted ban count
+		if cs := store.Get(connID); cs != nil {
+			cs.BanCount = banCount
+		}
+		count++
+	}
+	if count > 0 {
+		log.Printf("Seeded %d connections into eligibility store", count)
+	}
 }
