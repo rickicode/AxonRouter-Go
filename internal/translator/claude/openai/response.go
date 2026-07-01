@@ -6,28 +6,29 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/rickicode/AxonRouter-Go/internal/translator/openai/claude"
 	"github.com/tidwall/gjson"
 )
 
 // claudeStreamState holds accumulated state for OpenAI→Claude streaming.
 type claudeStreamState struct {
-	MessageID               string
-	Model                   string
-	CreatedAt               int64
-	ToolNameMap             map[string]string
-	ContentBlockStarted     bool
-	ContentBlockIndex       int
-	ThinkingBlockStarted    bool
-	ThinkingBlockIndex      int
-	ToolBlocks              map[int]int
-	ToolStartEmitted        map[int]bool
-	ToolArgsAccum           map[int]*strings.Builder
-	TextAccum               strings.Builder
-	FinishReason            string
-	MessageStartSent        bool
-	MessageStopSent         bool
-	SawToolCall             bool
-	NextContentBlockIndex   int
+	MessageID             string
+	Model                 string
+	CreatedAt             int64
+	ToolNameMap           map[string]string
+	ContentBlockStarted   bool
+	ContentBlockIndex     int
+	ThinkingBlockStarted  bool
+	ThinkingBlockIndex    int
+	ToolBlocks            map[int]int
+	ToolStartEmitted      map[int]bool
+	ToolArgsAccum         map[int]*strings.Builder
+	TextAccum             strings.Builder
+	FinishReason          string
+	MessageStartSent      bool
+	MessageStopSent       bool
+	SawToolCall           bool
+	NextContentBlockIndex int
 }
 
 var dataTag = []byte("data:")
@@ -35,9 +36,9 @@ var dataTag = []byte("data:")
 func getState(param *any) *claudeStreamState {
 	if *param == nil {
 		*param = &claudeStreamState{
-			ToolBlocks:       make(map[int]int),
-			ToolStartEmitted: make(map[int]bool),
-			ToolArgsAccum:    make(map[int]*strings.Builder),
+			ToolBlocks:            make(map[int]int),
+			ToolStartEmitted:      make(map[int]bool),
+			ToolArgsAccum:         make(map[int]*strings.Builder),
 			NextContentBlockIndex: 0,
 		}
 	}
@@ -94,7 +95,7 @@ func convertOpenAIResponseToClaudeStream(_ context.Context, _ string, _, _ []byt
 					idx := int(tc.Get("index").Int())
 					if !state.ToolStartEmitted[idx] {
 						toolID := tc.Get("id").String()
-						toolName := tc.Get("function.name").String()
+						toolName := claude.UncloakClaudeToolName(tc.Get("function.name").String())
 						if toolID == "" {
 							toolID = "call_" + state.MessageID
 						}

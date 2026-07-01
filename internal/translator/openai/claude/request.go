@@ -13,11 +13,18 @@ func cloakClaudeToolName(name string) string {
 	if name == "" {
 		return name
 	}
-	// Don't cloak if already cloaked
 	if len(name) > 3 && name[len(name)-3:] == claudeToolSuffix {
 		return name
 	}
 	return name + claudeToolSuffix
+}
+
+// UncloakClaudeToolName removes the _cc suffix from a tool name.
+func UncloakClaudeToolName(name string) string {
+	if len(name) > 3 && name[len(name)-3:] == claudeToolSuffix {
+		return name[:len(name)-3]
+	}
+	return name
 }
 
 // convertOpenAIRequestToClaude converts an OpenAI Chat Completions request to Anthropic Messages format.
