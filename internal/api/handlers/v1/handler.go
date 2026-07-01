@@ -303,6 +303,18 @@ func isUnrecoverableRefreshError(err error) bool {
 	return false
 }
 
+// isAuthError checks if an error indicates an authentication failure (401/403).
+// Used for reactive retry: refresh token and retry once on auth errors.
+func isAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "401") || strings.Contains(msg, "403") ||
+		strings.Contains(msg, "unauthorized") || strings.Contains(msg, "forbidden") ||
+		strings.Contains(msg, "authentication") || strings.Contains(msg, "access denied")
+}
+
 // proxyContext resolves proxy config for a connection and returns a context with it attached.
 func (h *Handler) proxyContext(ctx context.Context, conn *Connection) context.Context {
 	if h.resolver == nil {

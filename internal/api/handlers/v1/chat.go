@@ -85,14 +85,30 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 
 	proxyCtx := h.proxyContext(c.Request.Context(), conn)
 
+	// Execute with reactive 401/403 retry (matches OmniRoute chatCore.ts)
 	var resp *executor.Response
 	var streamResult *executor.StreamResult
+	var execErr error
 
-	if req.Stream {
-		streamResult, err = exec.ExecuteStream(proxyCtx, req)
-	} else {
-		resp, err = exec.Execute(proxyCtx, req)
+	for attempt := 0; attempt < 2; attempt++ {
+		if req.Stream {
+			streamResult, err = exec.ExecuteStream(proxyCtx, req)
+		} else {
+			resp, err = exec.Execute(proxyCtx, req)
+		}
+		execErr = err
+
+		// Check for auth error (401/403) on first attempt
+		if attempt == 0 && err != nil && isAuthError(err) {
+			if h.proactiveRefreshToken(c.Request.Context(), conn, provider) {
+				// Update request credentials with refreshed token
+				req.AccessToken = conn.AccessToken
+				continue // Retry with refreshed token
+			}
+		}
+		break
 	}
+	err = execErr
 
 	latency := time.Since(start).Milliseconds()
 
