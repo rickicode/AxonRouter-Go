@@ -4,7 +4,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
@@ -50,6 +54,8 @@ type connRow struct {
 	ProviderTypeID       string
 	Name                 string
 	OAuthToken           sql.NullString
+	OAuthRefreshToken    sql.NullString
+	OAuthExpiresAt       int64
 	ProviderSpecificData sql.NullString
 }
 
@@ -63,8 +69,8 @@ type providerMeta struct {
 // knownProviders maps provider_type_id to display metadata (colors, icons).
 // Display names are loaded from the DB provider_types table at runtime.
 var knownProviders = map[string]providerMeta{
-	"cx":  {DisplayName: "Codex", Color: "#10a37f", IconFile: "codex.svg"},
-	"ag":  {DisplayName: "Antigravity", Color: "#4285f4", IconFile: "antigravity.svg"},
+	"cx":   {DisplayName: "Codex", Color: "#10a37f", IconFile: "codex.svg"},
+	"ag":   {DisplayName: "Antigravity", Color: "#4285f4", IconFile: "antigravity.svg"},
 	"kiro": {DisplayName: "Kiro", Color: "#ff9900", IconFile: "kiro.svg"},
 }
 
@@ -73,13 +79,15 @@ func ProviderMeta(providerID string) (providerMeta, bool) {
 	m, ok := knownProviders[providerID]
 	return m, ok
 }
+
 // FetchAllQuota fetches quota for all OAuth connections across all providers.
 func FetchAllQuota(db *sql.DB) ([]ProviderQuota, error) {
 	// Load provider display names from DB
 	providerNames := loadProviderNames(db)
 
 	rows, err := db.Query(`
-		SELECT id, provider_type_id, name, oauth_token, provider_specific_data
+		SELECT id, provider_type_id, name, oauth_token,
+		       oauth_refresh_token, COALESCE(oauth_expires_at, 0), provider_specific_data
 		FROM connections
 		WHERE auth_type = 'oauth' AND is_active = 1
 		ORDER BY provider_type_id, name
@@ -92,7 +100,7 @@ func FetchAllQuota(db *sql.DB) ([]ProviderQuota, error) {
 	var conns []connRow
 	for rows.Next() {
 		var c connRow
-		if err := rows.Scan(&c.ID, &c.ProviderTypeID, &c.Name, &c.OAuthToken, &c.ProviderSpecificData); err != nil {
+		if err := rows.Scan(&c.ID, &c.ProviderTypeID, &c.Name, &c.OAuthToken, &c.OAuthRefreshToken, &c.OAuthExpiresAt, &c.ProviderSpecificData); err != nil {
 			log.Printf("quota: scan connection: %v", err)
 			continue
 		}
@@ -140,7 +148,7 @@ func FetchAllQuota(db *sql.DB) ([]ProviderQuota, error) {
 				defer wg.Done()
 				defer func() { <-sem }()
 
-				cq := fetchConnectionQuota(c, providerID)
+				cq := fetchConnectionQuota(c, providerID, db)
 
 				mu.Lock()
 				pq.Connections = append(pq.Connections, cq)
@@ -178,15 +186,16 @@ func loadProviderNames(db *sql.DB) map[string]string {
 func FetchConnectionQuota(db *sql.DB, connectionID string) (*ConnectionQuota, error) {
 	var c connRow
 	err := db.QueryRow(`
-		SELECT id, provider_type_id, name, oauth_token, provider_specific_data
+		SELECT id, provider_type_id, name, oauth_token,
+		       oauth_refresh_token, COALESCE(oauth_expires_at, 0), provider_specific_data
 		FROM connections
 		WHERE id = ? AND auth_type = 'oauth' AND is_active = 1
-	`, connectionID).Scan(&c.ID, &c.ProviderTypeID, &c.Name, &c.OAuthToken, &c.ProviderSpecificData)
+	`, connectionID).Scan(&c.ID, &c.ProviderTypeID, &c.Name, &c.OAuthToken, &c.OAuthRefreshToken, &c.OAuthExpiresAt, &c.ProviderSpecificData)
 	if err != nil {
 		return nil, fmt.Errorf("connection not found: %w", err)
 	}
 
-	cq := fetchConnectionQuota(c, c.ProviderTypeID)
+	cq := fetchConnectionQuota(c, c.ProviderTypeID, db)
 	return &cq, nil
 }
 
@@ -202,8 +211,69 @@ func parseProviderSpecificData(raw sql.NullString) map[string]any {
 	return m
 }
 
+// refreshOAuthToken refreshes an expired OAuth token using the provider's refresh token.
+// Returns new access token and expiry unix timestamp.
+func refreshOAuthToken(providerID, refreshToken string) (string, int64, error) {
+	// Use provider-specific client credentials (same as auth package)
+	var clientID, clientSecret, tokenURL string
+	switch providerID {
+	case "cx":
+		clientID = "app_EMoamEEZ73f0CkXaXp7hrann"
+		tokenURL = "https://auth.openai.com/oauth/token"
+	case "ag":
+		clientID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
+		clientSecret = "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"
+		tokenURL = "https://oauth2.googleapis.com/token"
+	default:
+		return "", 0, fmt.Errorf("token refresh not supported for provider: %s", providerID)
+	}
+
+	form := url.Values{}
+	form.Set("grant_type", "refresh_token")
+	form.Set("client_id", clientID)
+	if clientSecret != "" {
+		form.Set("client_secret", clientSecret)
+	}
+	form.Set("refresh_token", refreshToken)
+
+	req, err := http.NewRequest("POST", tokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", 0, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", 0, fmt.Errorf("refresh request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", 0, fmt.Errorf("read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", 0, fmt.Errorf("refresh failed %d: %s", resp.StatusCode, string(body))
+	}
+
+	var tokenResp struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int64  `json:"expires_in"`
+	}
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return "", 0, fmt.Errorf("parse response: %w", err)
+	}
+	if tokenResp.AccessToken == "" {
+		return "", 0, fmt.Errorf("empty access_token in refresh response")
+	}
+
+	return tokenResp.AccessToken, time.Now().Unix() + tokenResp.ExpiresIn, nil
+}
+
 // fetchConnectionQuota dispatches to the right provider fetcher.
-func fetchConnectionQuota(c connRow, providerID string) ConnectionQuota {
+// Refreshes expired OAuth tokens before fetching quota.
+func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQuota {
 	cq := ConnectionQuota{
 		ConnectionID:   c.ID,
 		ConnectionName: c.Name,
@@ -218,6 +288,25 @@ func fetchConnectionQuota(c connRow, providerID string) ConnectionQuota {
 	}
 
 	token := c.OAuthToken.String
+
+	// Refresh token if expired (with 30s skew)
+	if c.OAuthExpiresAt > 0 && time.Now().Unix() > c.OAuthExpiresAt-30 {
+		if c.OAuthRefreshToken.Valid && c.OAuthRefreshToken.String != "" {
+			newToken, newExpiry, err := refreshOAuthToken(providerID, c.OAuthRefreshToken.String)
+			if err != nil {
+				log.Printf("quota: token refresh failed for %s (%s): %v", c.ID, c.Name, err)
+				cq.Error = fmt.Sprintf("token refresh failed: %v", err)
+				return cq
+			}
+			token = newToken
+			// Persist refreshed token to DB
+			if db != nil {
+				db.Exec(`UPDATE connections SET oauth_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
+					newToken, newExpiry, time.Now().Unix(), c.ID)
+			}
+		}
+	}
+
 	psd := parseProviderSpecificData(c.ProviderSpecificData)
 
 	type fetchResult struct {
