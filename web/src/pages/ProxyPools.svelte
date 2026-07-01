@@ -371,7 +371,7 @@
                 {/if}
                 <div class="flex gap-2 pt-1">
                   <Button onclick={() => testPool(pool.id)} variant="outline" size="sm" class="text-caption-mono rounded-sm flex-1">Test</Button>
-                  <Button onclick={() => togglePoolActive(pool.id)} variant="outline" size="sm" class="text-caption-mono rounded-sm">
+                  <Button onclick={() => togglePoolActive(pool)} variant="outline" size="sm" class="text-caption-mono rounded-sm">
                     {pool.isActive ? 'Disable' : 'Enable'}
                   </Button>
                   <Button onclick={() => deletePool(pool.id)} variant="ghost" size="sm" class="text-caption-mono text-destructive rounded-sm">Delete</Button>
@@ -433,7 +433,7 @@
                   <Button onclick={() => toggleGroupActive(group)} variant="outline" size="sm" class="text-caption-mono rounded-sm flex-1">
                     {group.isActive ? 'Disable' : 'Enable'}
                   </Button>
-                  <Button onclick={() => deleteGroup(group)} variant="ghost" size="sm" class="text-caption-mono text-destructive rounded-sm">Delete</Button>
+                  <Button onclick={() => deleteGroup(group.id)} variant="ghost" size="sm" class="text-caption-mono text-destructive rounded-sm">Delete</Button>
                 </div>
               </CardContent>
             </Card>
