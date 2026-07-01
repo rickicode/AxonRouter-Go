@@ -29,13 +29,13 @@ import (
 
 // Router holds all dependencies and mounts all routes.
 type Router struct {
-	engine   *gin.Engine
-	db       *sql.DB
-	store    *connstate.Store
-	elig     *connstate.EligibilityManager
-	combo    *combo.Handler
-	tracker  *usage.Tracker
-	authMgr  *auth.Manager
+	engine  *gin.Engine
+	db      *sql.DB
+	store   *connstate.Store
+	elig    *connstate.EligibilityManager
+	combo   *combo.Handler
+	tracker *usage.Tracker
+	authMgr *auth.Manager
 
 	// Background goroutines
 	quotaScheduler *background.QuotaSchedulerDB

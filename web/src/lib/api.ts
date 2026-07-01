@@ -43,6 +43,7 @@ export interface Connection {
   last_failure_at: number | null;
   failure_count: number;
   capabilities: string;
+  provider_specific_data: string | null;
   is_active: boolean;
   created_at: number;
   updated_at: number;

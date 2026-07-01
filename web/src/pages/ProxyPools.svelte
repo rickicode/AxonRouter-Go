@@ -252,7 +252,7 @@
             <Card class="shadow-card transition-all hover:bg-accent/10 hover:border-foreground/20 h-full">
               <CardHeader class="flex flex-row items-start justify-between space-y-0 pb-2">
                 <div class="space-y-1 min-w-0">
-                  <CardTitle class="text-body-md-strong truncate">{pool.name}</CardTitle>
+                  <a href="/proxy-pools/{pool.id}" class="text-body-md-strong truncate hover:underline block">{pool.name}</a>
                   <p class="text-caption-mono text-muted-foreground truncate">{pool.proxyUrl}</p>
                 </div>
                 <div class="flex gap-1 flex-shrink-0">

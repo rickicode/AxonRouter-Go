@@ -112,16 +112,19 @@ func (h *ConnectionHandler) List(c *gin.Context) {
 func (h *ConnectionHandler) Get(c *gin.Context) {
 	id := c.Param("id")
 	conn := db.Connection{}
+	var psd sql.NullString
 	err := h.db.QueryRow(`
 		SELECT id, provider_type_id, name, auth_type, status,
 		       cooldown_until, last_error, last_error_code,
 		       last_success_at, last_failure_at, failure_count,
-		       capabilities, is_active, created_at, updated_at
+		       capabilities, is_active, created_at, updated_at,
+		       COALESCE(provider_specific_data, '')
 		FROM connections WHERE id = ?
 	`, id).Scan(&conn.ID, &conn.ProviderTypeID, &conn.Name, &conn.AuthType,
 		&conn.Status, &conn.CooldownUntil, &conn.LastError, &conn.LastErrorCode,
 		&conn.LastSuccessAt, &conn.LastFailureAt, &conn.FailureCount,
-		&conn.Capabilities, &conn.IsActive, &conn.CreatedAt, &conn.UpdatedAt)
+		&conn.Capabilities, &conn.IsActive, &conn.CreatedAt, &conn.UpdatedAt,
+		&psd)
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
 		return
@@ -130,18 +133,37 @@ func (h *ConnectionHandler) Get(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, conn)
+	// Build response with provider_specific_data as plain string (not sql.NullString)
+	c.JSON(http.StatusOK, gin.H{
+		"id":                     conn.ID,
+		"provider_type_id":       conn.ProviderTypeID,
+		"name":                   conn.Name,
+		"auth_type":              conn.AuthType,
+		"status":                 conn.Status,
+		"cooldown_until":         conn.CooldownUntil,
+		"last_error":             conn.LastError,
+		"last_error_code":        conn.LastErrorCode,
+		"last_success_at":        conn.LastSuccessAt,
+		"last_failure_at":        conn.LastFailureAt,
+		"failure_count":          conn.FailureCount,
+		"capabilities":           conn.Capabilities,
+		"is_active":              conn.IsActive,
+		"created_at":             conn.CreatedAt,
+		"updated_at":             conn.UpdatedAt,
+		"provider_specific_data": nullStr(psd),
+	})
 }
 
 // Update modifies a connection.
 func (h *ConnectionHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		Name         string `json:"name"`
-		APIKey       string `json:"api_key"`
-		Status       string `json:"status"`
-		IsActive     *bool  `json:"is_active"`
-		Capabilities string `json:"capabilities"`
+		Name                 string `json:"name"`
+		APIKey               string `json:"api_key"`
+		Status               string `json:"status"`
+		IsActive             *bool  `json:"is_active"`
+		Capabilities         string `json:"capabilities"`
+		ProviderSpecificData string `json:"provider_specific_data"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -169,6 +191,10 @@ func (h *ConnectionHandler) Update(c *gin.Context) {
 	if req.Capabilities != "" {
 		sets = append(sets, "capabilities = ?")
 		args = append(args, req.Capabilities)
+	}
+	if req.ProviderSpecificData != "" {
+		sets = append(sets, "provider_specific_data = ?")
+		args = append(args, req.ProviderSpecificData)
 	}
 	if len(sets) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "nothing to update"})
@@ -382,4 +408,11 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+func nullStr(v sql.NullString) interface{} {
+	if v.Valid {
+		return v.String
+	}
+	return nil
 }

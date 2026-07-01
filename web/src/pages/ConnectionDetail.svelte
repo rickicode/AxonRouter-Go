@@ -2,7 +2,8 @@
   import { onMount } from 'svelte';
   import { loadConnection, selectedConnection, isLoading, error } from '$lib/stores';
   import { unwrapInt, unwrapStr } from '$lib/utils';
-  import { connectionsApi } from '$lib/api';
+  import { connectionsApi, proxyPoolsApi, proxyGroupsApi } from '$lib/api';
+  import type { ProxyPool, ProxyGroup } from '$lib/api';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
@@ -16,12 +17,51 @@
   let connectionId = $derived(connId);
   let actionLoading = $state('');
   let editingName = $state(false);
+  let pools = $state<ProxyPool[]>([]);
+  let groups = $state<ProxyGroup[]>([]);
+  let selectedPoolId = $state('');
+  let selectedGroupId = $state('');
+  let proxySaving = $state(false);
   let editName = $state('');
 
-  onMount(() => {
+  onMount(async () => {
     document.title = 'Connection — AxonRouter';
-    loadConnection(connectionId);
+    await loadConnection(connectionId);
+    loadProxyData();
   });
+
+  async function loadProxyData() {
+    try {
+      const [poolsRes, groupsRes] = await Promise.all([proxyPoolsApi.list(), proxyGroupsApi.list()]);
+      pools = poolsRes.data ?? [];
+      groups = groupsRes.data ?? [];
+      // Read current assignments from provider_specific_data
+      if ($selectedConnection?.provider_specific_data) {
+        try {
+          const psd = JSON.parse($selectedConnection.provider_specific_data);
+          selectedPoolId = psd.proxyPoolId ?? '';
+          selectedGroupId = psd.proxyGroupId ?? '';
+        } catch { /* ignore */ }
+      }
+    } catch { /* ignore */ }
+  }
+
+  async function saveProxyAssignment() {
+    if (!$selectedConnection) return;
+    proxySaving = true;
+    try {
+      const psd: Record<string, string> = {};
+      if (selectedGroupId) psd.proxyGroupId = selectedGroupId;
+      if (selectedPoolId) psd.proxyPoolId = selectedPoolId;
+      await connectionsApi.update(connectionId, { provider_specific_data: JSON.stringify(psd) });
+      await loadConnection(connectionId);
+      toast.success('Proxy assignment saved');
+    } catch (err) {
+      toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+    } finally {
+      proxySaving = false;
+    }
+  }
   function formatCooldown(raw: unknown): string {
     const cooldownUntil = unwrapInt(raw);
     if (!cooldownUntil) return 'None';
@@ -213,6 +253,44 @@
         </CardContent>
       </Card>
     {/if}
+
+    <Card class="shadow-card">
+      <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Proxy Routing</CardTitle></CardHeader>
+      <CardContent class="space-y-4">
+        <p class="text-body-sm text-muted-foreground">Assign a proxy pool or group to route traffic for this connection.</p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="space-y-2">
+            <label for="proxy-group-select" class="text-body-sm-strong">Proxy Group</label>
+            <select
+              id="proxy-group-select"
+              class="w-full h-9 rounded-md border border-input bg-background px-3 text-body-sm cursor-pointer"
+              bind:value={selectedGroupId}
+            >
+              <option value="">None</option>
+              {#each groups as group}
+                <option value={group.id}>{group.name} ({group.mode})</option>
+              {/each}
+            </select>
+          </div>
+          <div class="space-y-2">
+            <label for="proxy-pool-select" class="text-body-sm-strong">Proxy Pool</label>
+            <select
+              id="proxy-pool-select"
+              class="w-full h-9 rounded-md border border-input bg-background px-3 text-body-sm cursor-pointer"
+              bind:value={selectedPoolId}
+            >
+              <option value="">None</option>
+              {#each pools as pool}
+                <option value={pool.id}>{pool.name} ({pool.type})</option>
+              {/each}
+            </select>
+          </div>
+        </div>
+        <Button onclick={saveProxyAssignment} disabled={proxySaving} class="text-body-sm rounded-sm">
+          {proxySaving ? 'Saving...' : 'Save proxy assignment'}
+        </Button>
+      </CardContent>
+    </Card>
 
     <Card class="shadow-card">
       <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Actions</CardTitle></CardHeader>

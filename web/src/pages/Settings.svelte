@@ -4,7 +4,8 @@
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
-  import { settingsApi } from '$lib/api';
+  import { settingsApi, proxyPoolsApi, proxyGroupsApi, providersApi } from '$lib/api';
+  import type { ProxyPool, ProxyGroup, Provider } from '$lib/api';
   import { toast } from 'svelte-sonner';
 
   let settings: Record<string, string> = $state({});
@@ -13,6 +14,12 @@
   let editingKey = $state<string | null>(null);
   let editingValue = $state('');
   let showImport = $state(false);
+  // Provider proxy defaults
+  let pools = $state<ProxyPool[]>([]);
+  let groups = $state<ProxyGroup[]>([]);
+  let providers = $state<Provider[]>([]);
+  let proxyDefaults = $state<Record<string, Record<string, string>>>({});
+  let proxySaving = $state(false);
   let importText = $state('');
 
   const defaultSettings: Record<string, string> = {
@@ -33,10 +40,56 @@
     'log_retention_days': 'Days to keep request logs',
   };
 
-  onMount(() => {
+  onMount(async () => {
     document.title = 'Settings — AxonRouter';
-    loadSettings();
+    await loadSettings();
+    loadProxyData();
   });
+
+  async function loadProxyData() {
+    try {
+      const [poolsRes, groupsRes, provRes] = await Promise.all([
+        proxyPoolsApi.list(),
+        proxyGroupsApi.list(),
+        providersApi.list(),
+      ]);
+      pools = poolsRes.data ?? [];
+      groups = groupsRes.data ?? [];
+      providers = provRes.data ?? [];
+      // Load existing proxy defaults from settings
+      const raw = settings['provider_proxy_defaults'];
+      if (raw) {
+        try { proxyDefaults = JSON.parse(raw); } catch { proxyDefaults = {}; }
+      }
+    } catch { /* ignore */ }
+  }
+
+  async function saveProxyDefaults() {
+    proxySaving = true;
+    try {
+      await settingsApi.update('provider_proxy_defaults', JSON.stringify(proxyDefaults));
+      settings['provider_proxy_defaults'] = JSON.stringify(proxyDefaults);
+      toast.success('Provider proxy defaults saved');
+    } catch (err) {
+      toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+    } finally {
+      proxySaving = false;
+    }
+  }
+
+  function setProxyDefault(providerId: string, field: 'proxyPoolId' | 'proxyGroupId', value: string) {
+    if (!proxyDefaults[providerId]) proxyDefaults[providerId] = {};
+    if (value) {
+      proxyDefaults[providerId][field] = value;
+    } else {
+      delete proxyDefaults[providerId][field];
+    }
+    // Clean up empty entries
+    if (Object.keys(proxyDefaults[providerId]).length === 0) {
+      delete proxyDefaults[providerId];
+    }
+    proxyDefaults = { ...proxyDefaults }; // trigger reactivity
+  }
 
   async function loadSettings() {
     loading = true;
@@ -196,6 +249,56 @@
       {/if}
     </CardContent>
   </Card>
+
+  {#if providers.length > 0}
+    <Card class="shadow-card">
+      <CardHeader class="pb-3">
+        <div class="flex items-center justify-between">
+          <div>
+            <CardTitle class="text-body-md-strong">Provider Proxy Defaults</CardTitle>
+            <CardDescription class="text-body-sm">Set default proxy pool or group for each provider.</CardDescription>
+          </div>
+          <Button onclick={saveProxyDefaults} disabled={proxySaving} size="sm" class="text-body-sm rounded-sm">
+            {proxySaving ? 'Saving...' : 'Save'}
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div class="divide-y divide-border border rounded-md overflow-hidden bg-card">
+          {#each providers as prov}
+            <div class="flex items-center gap-4 p-4 hover:bg-accent/10 transition-colors">
+              <div class="min-w-0 flex-1">
+                <h3 class="text-body-sm-strong">{prov.display_name ?? prov.id}</h3>
+                <p class="text-caption-mono text-muted-foreground">{prov.id}</p>
+              </div>
+              <div class="flex items-center gap-3 shrink-0">
+                <select
+                  class="h-8 rounded-md border border-input bg-background px-2 text-body-sm cursor-pointer"
+                  value={proxyDefaults[prov.id]?.proxyGroupId ?? ''}
+                  onchange={(e) => setProxyDefault(prov.id, 'proxyGroupId', (e.target as HTMLSelectElement).value)}
+                >
+                  <option value="">No group</option>
+                  {#each groups as group}
+                    <option value={group.id}>{group.name}</option>
+                  {/each}
+                </select>
+                <select
+                  class="h-8 rounded-md border border-input bg-background px-2 text-body-sm cursor-pointer"
+                  value={proxyDefaults[prov.id]?.proxyPoolId ?? ''}
+                  onchange={(e) => setProxyDefault(prov.id, 'proxyPoolId', (e.target as HTMLSelectElement).value)}
+                >
+                  <option value="">No pool</option>
+                  {#each pools as pool}
+                    <option value={pool.id}>{pool.name}</option>
+                  {/each}
+                </select>
+              </div>
+            </div>
+          {/each}
+        </div>
+      </CardContent>
+    </Card>
+  {/if}
 
   <Card class="shadow-card bg-accent/20">
     <CardContent class="pt-6">
