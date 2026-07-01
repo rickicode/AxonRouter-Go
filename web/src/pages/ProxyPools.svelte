@@ -7,7 +7,9 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
+  import * as Dialog from '$lib/components/ui/dialog';
   import { toast } from 'svelte-sonner';
+  import { router } from '$lib/router';
 
   let tab = $state<'pools' | 'groups'>('pools');
   let pools = $state<ProxyPool[]>([]);
@@ -15,8 +17,11 @@
   let loading = $state(true);
   let error = $state('');
 
-  // Create pool form
+  // Modal state
   let showCreatePool = $state(false);
+  let showCreateGroup = $state(false);
+
+  // Create pool form
   let poolName = $state('');
   let poolUrl = $state('');
   let poolType = $state('http');
@@ -24,7 +29,6 @@
   let createPoolLoading = $state(false);
 
   // Create group form
-  let showCreateGroup = $state(false);
   let groupName = $state('');
   let groupMode = $state('roundrobin');
   let groupStickyLimit = $state(1);
@@ -214,170 +218,72 @@
         <Button onclick={runHealthCheck} variant="outline" class="text-body-sm rounded-pill px-4">
           Health check
         </Button>
-        <Button onclick={() => tab === 'pools' ? (showCreatePool = !showCreatePool) : (showCreateGroup = !showCreateGroup)} class="text-button-md rounded-pill px-5">
-          {tab === 'pools' ? (showCreatePool ? 'Cancel' : 'Add pool') : (showCreateGroup ? 'Cancel' : 'Add group')}
-        </Button>
+        {#if tab === 'pools'}
+          <Button onclick={() => (showCreatePool = true)} class="text-button-md rounded-pill px-5">
+            Add pool
+          </Button>
+        {:else}
+          <Button onclick={() => (showCreateGroup = true)} class="text-button-md rounded-pill px-5">
+            Add group
+          </Button>
+        {/if}
       </div>
     </div>
 
     <!-- Tabs -->
     <div class="flex gap-1 border-b border-white/10">
       <button
-        class="px-4 py-2 text-body-sm transition-colors {tab === 'pools' ? 'border-b-2 border-foreground text-foreground' : 'text-muted-foreground hover:text-foreground'}"
-        onclick={() => { tab = 'pools'; showCreateGroup = false; }}
+        class="cursor-pointer px-4 py-2 text-body-sm transition-colors {tab === 'pools' ? 'border-b-2 border-foreground text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+        onclick={() => (tab = 'pools')}
       >
         Pools ({pools.length})
       </button>
       <button
-        class="px-4 py-2 text-body-sm transition-colors {tab === 'groups' ? 'border-b-2 border-foreground text-foreground' : 'text-muted-foreground hover:text-foreground'}"
-        onclick={() => { tab = 'groups'; showCreatePool = false; }}
+        class="cursor-pointer px-4 py-2 text-body-sm transition-colors {tab === 'groups' ? 'border-b-2 border-foreground text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+        onclick={() => (tab = 'groups')}
       >
         Groups ({groups.length})
       </button>
     </div>
-
-    <!-- Create Pool Form -->
-    {#if tab === 'pools' && showCreatePool}
-      <Card class="shadow-card border border-primary/20">
-        <CardHeader class="pb-3">
-          <CardTitle class="text-body-md-strong">Create proxy pool.</CardTitle>
-          <p class="text-body-sm text-muted-foreground">Add an HTTP proxy or relay endpoint.</p>
-        </CardHeader>
-        <CardContent class="space-y-4">
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="space-y-2">
-              <Label class="text-body-sm-strong">Name</Label>
-              <Input bind:value={poolName} placeholder="e.g. us-east-proxy, vercel-relay" class="h-10 text-body-sm" />
-            </div>
-            <div class="space-y-2">
-              <Label class="text-body-sm-strong">Proxy URL</Label>
-              <Input bind:value={poolUrl} placeholder="http://proxy:8080 or https://relay.vercel.app" class="h-10 text-body-sm font-mono" />
-            </div>
-            <div class="space-y-2">
-              <Label class="text-body-sm-strong">Type</Label>
-              <div class="flex gap-2">
-                {#each typeOptions as opt}
-                  <button
-                    class="px-3 py-1.5 rounded-sm text-body-sm border transition-colors {poolType === opt ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}"
-                    onclick={() => poolType = opt}
-                  >
-                    {typeLabel(opt)}
-                  </button>
-                {/each}
-              </div>
-            </div>
-            <div class="space-y-2">
-              <Label class="text-body-sm-strong">No Proxy (optional)</Label>
-              <Input bind:value={poolNoProxy} placeholder="localhost,127.0.0.1" class="h-10 text-body-sm font-mono" />
-            </div>
-          </div>
-          <div class="flex gap-3 pt-2">
-            <Button onclick={handleCreatePool} disabled={createPoolLoading || !poolName.trim() || !poolUrl.trim()} class="text-button-md rounded-pill px-5">
-              {createPoolLoading ? 'Creating...' : 'Create pool'}
-            </Button>
-            <Button onclick={() => showCreatePool = false} variant="ghost" class="text-body-sm">Cancel</Button>
-          </div>
-        </CardContent>
-      </Card>
-    {/if}
-
-    <!-- Create Group Form -->
-    {#if tab === 'groups' && showCreateGroup}
-      <Card class="shadow-card border border-primary/20">
-        <CardHeader class="pb-3">
-          <CardTitle class="text-body-md-strong">Create proxy group.</CardTitle>
-          <p class="text-body-sm text-muted-foreground">Group multiple pools with round-robin or sticky selection.</p>
-        </CardHeader>
-        <CardContent class="space-y-4">
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="space-y-2">
-              <Label class="text-body-sm-strong">Name</Label>
-              <Input bind:value={groupName} placeholder="e.g. us-proxies, failover-group" class="h-10 text-body-sm" />
-            </div>
-            <div class="space-y-2">
-              <Label class="text-body-sm-strong">Mode</Label>
-              <div class="flex gap-2">
-                <button
-                  class="px-4 py-2 rounded-sm text-body-sm border transition-colors {groupMode === 'roundrobin' ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}"
-                  onclick={() => groupMode = 'roundrobin'}
-                >
-                  Round Robin
-                </button>
-                <button
-                  class="px-4 py-2 rounded-sm text-body-sm border transition-colors {groupMode === 'sticky' ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}"
-                  onclick={() => groupMode = 'sticky'}
-                >
-                  Sticky
-                </button>
-              </div>
-            </div>
-            {#if groupMode === 'sticky'}
-              <div class="space-y-2">
-                <Label class="text-body-sm-strong">Sticky Limit</Label>
-                <Input type="number" bind:value={groupStickyLimit} min={1} class="h-10 text-code font-mono" />
-              </div>
-            {/if}
-            <div class="space-y-2 flex items-end">
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" bind:checked={groupStrict} class="rounded" />
-                <span class="text-body-sm-strong">Strict proxy</span>
-              </label>
-            </div>
-          </div>
-          <p class="text-caption-mono text-muted-foreground">Add pools to this group after creation.</p>
-          <div class="flex gap-3 pt-2">
-            <Button onclick={handleCreateGroup} disabled={createGroupLoading || !groupName.trim()} class="text-button-md rounded-pill px-5">
-              {createGroupLoading ? 'Creating...' : 'Create group'}
-            </Button>
-            <Button onclick={() => showCreateGroup = false} variant="ghost" class="text-body-sm">Cancel</Button>
-          </div>
-        </CardContent>
-      </Card>
-    {/if}
 
     <!-- Pool List -->
     {#if tab === 'pools'}
       {#if pools.length > 0}
         <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {#each pools as pool}
-            <Card class="shadow-card transition-all hover:bg-accent/10 hover:border-foreground/20">
-              <CardHeader class="flex flex-row items-start justify-between space-y-0 pb-2">
-                <div class="space-y-1 min-w-0">
-                  <CardTitle class="text-body-md-strong truncate">{pool.name}</CardTitle>
-                  <p class="text-caption-mono text-muted-foreground truncate">{pool.proxyUrl}</p>
-                </div>
-                <div class="flex gap-1 flex-shrink-0">
-                  <Badge variant={pool.isActive ? 'default' : 'secondary'} class="text-caption-mono rounded-sm">
-                    {pool.isActive ? 'Active' : 'Off'}
-                  </Badge>
-                  <Badge variant={statusColor(pool.testStatus)} class="text-caption-mono rounded-sm">
-                    {pool.testStatus}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent class="flex flex-col gap-3">
-                <div class="grid grid-cols-2 gap-2 border-t border-white/5 pt-3">
-                  <div>
-                    <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Type</p>
-                    <p class="text-body-sm mt-0.5">{typeLabel(pool.type)}</p>
+            <a href="/proxy-pools/{pool.id}" class="group block">
+              <Card class="shadow-card transition-all hover:bg-accent/10 hover:border-foreground/20 h-full">
+                <CardHeader class="flex flex-row items-start justify-between space-y-0 pb-2">
+                  <div class="space-y-1 min-w-0">
+                    <CardTitle class="text-body-md-strong truncate">{pool.name}</CardTitle>
+                    <p class="text-caption-mono text-muted-foreground truncate">{pool.proxyUrl}</p>
                   </div>
-                  <div>
-                    <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Latency</p>
-                    <p class="text-code font-mono mt-0.5">{pool.responseTimeMs != null ? pool.responseTimeMs + 'ms' : '—'}</p>
+                  <div class="flex gap-1 flex-shrink-0">
+                    <Badge variant={pool.isActive ? 'default' : 'secondary'} class="text-caption-mono rounded-sm">
+                      {pool.isActive ? 'Active' : 'Off'}
+                    </Badge>
+                    <Badge variant={statusColor(pool.testStatus)} class="text-caption-mono rounded-sm">
+                      {pool.testStatus}
+                    </Badge>
                   </div>
-                </div>
-                {#if pool.lastError}
-                  <p class="text-caption-mono text-destructive truncate" title={pool.lastError}>{pool.lastError}</p>
-                {/if}
-                <div class="flex gap-2 pt-1">
-                  <Button onclick={() => testPool(pool.id)} variant="outline" size="sm" class="text-caption-mono rounded-sm flex-1">Test</Button>
-                  <Button onclick={() => togglePoolActive(pool)} variant="outline" size="sm" class="text-caption-mono rounded-sm">
-                    {pool.isActive ? 'Disable' : 'Enable'}
-                  </Button>
-                  <Button onclick={() => deletePool(pool.id)} variant="ghost" size="sm" class="text-caption-mono text-destructive rounded-sm">Delete</Button>
-                </div>
-              </CardContent>
-            </Card>
+                </CardHeader>
+                <CardContent class="flex flex-col gap-3">
+                  <div class="grid grid-cols-2 gap-2 border-t border-white/5 pt-3">
+                    <div>
+                      <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Type</p>
+                      <p class="text-body-sm mt-0.5">{typeLabel(pool.type)}</p>
+                    </div>
+                    <div>
+                      <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Latency</p>
+                      <p class="text-code font-mono mt-0.5">{pool.responseTimeMs != null ? pool.responseTimeMs + 'ms' : '—'}</p>
+                    </div>
+                  </div>
+                  {#if pool.lastError}
+                    <p class="text-caption-mono text-destructive truncate" title={pool.lastError}>{pool.lastError}</p>
+                  {/if}
+                </CardContent>
+              </Card>
+            </a>
           {/each}
         </div>
       {:else}
@@ -392,7 +298,7 @@
             <p class="text-body-sm text-muted-foreground mb-4">
               Add an HTTP proxy or relay to route traffic through external endpoints.
             </p>
-            <Button onclick={() => showCreatePool = true} class="text-button-md rounded-pill px-5">Add pool</Button>
+            <Button onclick={() => (showCreatePool = true)} class="text-button-md rounded-pill px-5">Add pool</Button>
           </CardContent>
         </Card>
       {/if}
@@ -403,40 +309,36 @@
       {#if groups.length > 0}
         <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {#each groups as group}
-            <Card class="shadow-card transition-all hover:bg-accent/10 hover:border-foreground/20">
-              <CardHeader class="flex flex-row items-start justify-between space-y-0 pb-2">
-                <div class="space-y-1 min-w-0">
-                  <CardTitle class="text-body-md-strong truncate">{group.name}</CardTitle>
-                  <p class="text-caption-mono text-muted-foreground">{group.proxyPoolIds?.length ?? 0} pools</p>
-                </div>
-                <Badge variant={group.isActive ? 'default' : 'secondary'} class="text-caption-mono rounded-sm flex-shrink-0">
-                  {group.isActive ? 'Active' : 'Off'}
-                </Badge>
-              </CardHeader>
-              <CardContent class="flex flex-col gap-3">
-                <div class="grid grid-cols-2 gap-2 border-t border-white/5 pt-3">
-                  <div>
-                    <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Mode</p>
-                    <p class="text-body-sm mt-0.5">{group.mode}</p>
+            <a href="/proxy-groups/{group.id}" class="group block">
+              <Card class="shadow-card transition-all hover:bg-accent/10 hover:border-foreground/20 h-full">
+                <CardHeader class="flex flex-row items-start justify-between space-y-0 pb-2">
+                  <div class="space-y-1 min-w-0">
+                    <CardTitle class="text-body-md-strong truncate">{group.name}</CardTitle>
+                    <p class="text-caption-mono text-muted-foreground">{group.proxyPoolIds?.length ?? 0} pools</p>
                   </div>
-                  <div>
-                    <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Sticky</p>
-                    <p class="text-code font-mono mt-0.5">{group.mode === 'sticky' ? group.stickyLimit : '—'}</p>
-                  </div>
-                  {#if group.strictProxy}
-                    <div class="col-span-2">
-                      <Badge variant="outline" class="text-caption-mono rounded-sm">Strict proxy</Badge>
+                  <Badge variant={group.isActive ? 'default' : 'secondary'} class="text-caption-mono rounded-sm flex-shrink-0">
+                    {group.isActive ? 'Active' : 'Off'}
+                  </Badge>
+                </CardHeader>
+                <CardContent class="flex flex-col gap-3">
+                  <div class="grid grid-cols-2 gap-2 border-t border-white/5 pt-3">
+                    <div>
+                      <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Mode</p>
+                      <p class="text-body-sm mt-0.5">{group.mode}</p>
                     </div>
-                  {/if}
-                </div>
-                <div class="flex gap-2 pt-1">
-                  <Button onclick={() => toggleGroupActive(group)} variant="outline" size="sm" class="text-caption-mono rounded-sm flex-1">
-                    {group.isActive ? 'Disable' : 'Enable'}
-                  </Button>
-                  <Button onclick={() => deleteGroup(group.id)} variant="ghost" size="sm" class="text-caption-mono text-destructive rounded-sm">Delete</Button>
-                </div>
-              </CardContent>
-            </Card>
+                    <div>
+                      <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Sticky</p>
+                      <p class="text-code font-mono mt-0.5">{group.mode === 'sticky' ? group.stickyLimit : '—'}</p>
+                    </div>
+                    {#if group.strictProxy}
+                      <div class="col-span-2">
+                        <Badge variant="outline" class="text-caption-mono rounded-sm">Strict proxy</Badge>
+                      </div>
+                    {/if}
+                  </div>
+                </CardContent>
+              </Card>
+            </a>
           {/each}
         </div>
       {:else}
@@ -451,10 +353,101 @@
             <p class="text-body-sm text-muted-foreground mb-4">
               Group multiple pools with round-robin or sticky selection.
             </p>
-            <Button onclick={() => showCreateGroup = true} class="text-button-md rounded-pill px-5">Add group</Button>
+            <Button onclick={() => (showCreateGroup = true)} class="text-button-md rounded-pill px-5">Add group</Button>
           </CardContent>
         </Card>
       {/if}
     {/if}
   {/if}
 </div>
+
+<!-- Create Pool Dialog -->
+<Dialog.Root bind:open={showCreatePool}>
+  <Dialog.Content class="sm:max-w-lg">
+    <Dialog.Header>
+      <Dialog.Title class="text-body-md-strong">Create proxy pool</Dialog.Title>
+    </Dialog.Header>
+    <div class="space-y-4">
+      <div class="space-y-2">
+        <Label class="text-body-sm-strong">Name</Label>
+        <Input bind:value={poolName} placeholder="e.g. us-east-proxy, vercel-relay" class="h-10 text-body-sm" />
+      </div>
+      <div class="space-y-2">
+        <Label class="text-body-sm-strong">Proxy URL</Label>
+        <Input bind:value={poolUrl} placeholder="http://proxy:8080 or https://relay.vercel.app" class="h-10 text-body-sm font-mono" />
+      </div>
+      <div class="space-y-2">
+        <Label class="text-body-sm-strong">Type</Label>
+        <div class="flex gap-2">
+          {#each typeOptions as opt}
+            <button
+              class="cursor-pointer px-3 py-1.5 rounded-sm text-body-sm border transition-colors {poolType === opt ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}"
+              onclick={() => (poolType = opt)}
+            >
+              {typeLabel(opt)}
+            </button>
+          {/each}
+        </div>
+      </div>
+      <div class="space-y-2">
+        <Label class="text-body-sm-strong">No Proxy (optional)</Label>
+        <Input bind:value={poolNoProxy} placeholder="localhost,127.0.0.1" class="h-10 text-body-sm font-mono" />
+      </div>
+    </div>
+    <Dialog.Footer>
+      <Button variant="ghost" onclick={() => (showCreatePool = false)}>Cancel</Button>
+      <Button onclick={handleCreatePool} disabled={createPoolLoading || !poolName.trim() || !poolUrl.trim()}>
+        {createPoolLoading ? 'Creating...' : 'Create pool'}
+      </Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
+
+<!-- Create Group Dialog -->
+<Dialog.Root bind:open={showCreateGroup}>
+  <Dialog.Content class="sm:max-w-lg">
+    <Dialog.Header>
+      <Dialog.Title class="text-body-md-strong">Create proxy group</Dialog.Title>
+    </Dialog.Header>
+    <div class="space-y-4">
+      <div class="space-y-2">
+        <Label class="text-body-sm-strong">Name</Label>
+        <Input bind:value={groupName} placeholder="e.g. us-proxies, failover-group" class="h-10 text-body-sm" />
+      </div>
+      <div class="space-y-2">
+        <Label class="text-body-sm-strong">Mode</Label>
+        <div class="flex gap-2">
+          <button
+            class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {groupMode === 'roundrobin' ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}"
+            onclick={() => (groupMode = 'roundrobin')}
+          >
+            Round Robin
+          </button>
+          <button
+            class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {groupMode === 'sticky' ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}"
+            onclick={() => (groupMode = 'sticky')}
+          >
+            Sticky
+          </button>
+        </div>
+      </div>
+      {#if groupMode === 'sticky'}
+        <div class="space-y-2">
+          <Label class="text-body-sm-strong">Sticky Limit</Label>
+          <Input type="number" bind:value={groupStickyLimit} min={1} class="h-10 text-code font-mono" />
+        </div>
+      {/if}
+      <div class="flex items-center gap-2">
+        <input type="checkbox" bind:checked={groupStrict} class="rounded cursor-pointer" />
+        <Label class="text-body-sm-strong cursor-pointer">Strict proxy</Label>
+      </div>
+      <p class="text-caption-mono text-muted-foreground">Add pools to this group after creation.</p>
+    </div>
+    <Dialog.Footer>
+      <Button variant="ghost" onclick={() => (showCreateGroup = false)}>Cancel</Button>
+      <Button onclick={handleCreateGroup} disabled={createGroupLoading || !groupName.trim()}>
+        {createGroupLoading ? 'Creating...' : 'Create group'}
+      </Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>

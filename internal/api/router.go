@@ -184,6 +184,7 @@ func New(cfg Config) *Router {
 	oauthH := admin.NewOAuthHandler(cfg.DB, authManager, store, elig)
 	adminGroup.POST("/connections/:id/oauth", oauthH.InitiateOAuth)
 	adminGroup.GET("/connections/:id/oauth/status", oauthH.OAuthStatus)
+	adminGroup.POST("/connections/:id/oauth/callback", oauthH.SubmitOAuthCallback)
 
 	// Combos
 	adminGroup.GET("/combos", comboH.List)

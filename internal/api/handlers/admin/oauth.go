@@ -7,8 +7,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -118,6 +121,46 @@ func (h *OAuthHandler) OAuthStatus(c *gin.Context) {
 	}
 	connected := oauthToken.Valid && oauthToken.String != ""
 	c.JSON(http.StatusOK, gin.H{"connected": connected})
+}
+
+// SubmitOAuthCallback lets remote dashboard users paste the localhost callback URL.
+// The backend forwards it to the local callback server started by InitiateOAuth,
+// preserving provider-specific PKCE verifier and redirect_uri handling.
+func (h *OAuthHandler) SubmitOAuthCallback(c *gin.Context) {
+	var req struct {
+		RedirectURL string `json:"redirect_url" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	u, err := url.Parse(req.RedirectURL)
+	if err != nil || u.Scheme != "http" || u.Path != "/auth/callback" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid callback URL"})
+		return
+	}
+	host := u.Hostname()
+	ip := net.ParseIP(host)
+	if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "callback URL must point to localhost"})
+		return
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(req.RedirectURL)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "callback submit failed: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode >= 400 {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("callback rejected %d: %s", resp.StatusCode, string(body))})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func generateOAuthState() string {

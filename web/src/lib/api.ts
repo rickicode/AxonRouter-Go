@@ -48,6 +48,25 @@ export interface Connection {
   updated_at: number;
 }
 
+export interface CreateConnectionPayload {
+  name: string;
+  auth_type?: 'api_key' | 'oauth' | 'none' | 'custom';
+  api_key?: string;
+}
+
+export interface CreateConnectionResponse {
+  id: string;
+  name: string;
+  status: string;
+}
+
+export interface BulkCreateConnectionResponse {
+  created: number;
+  total: number;
+  failed?: number;
+  errors?: string[];
+}
+
 export interface Combo {
   id: string;
   name: string;
@@ -182,14 +201,14 @@ export const connectionsApi = {
   
   get: (id: string) => fetchApi<Connection>(`/connections/${id}`),
   
-  create: (providerId: string, data: Partial<Connection>) =>
-    fetchApi<{ id: string; name: string; status: string }>(`/providers/${providerId}/connections`, {
+  create: (providerId: string, data: CreateConnectionPayload) =>
+    fetchApi<CreateConnectionResponse>(`/providers/${providerId}/connections`, {
       method: 'POST',
       body: JSON.stringify(data),
     }),
-  
+
   bulkCreate: (providerId: string, data: { connections: { name: string; api_key: string }[] }) =>
-    fetchApi<{ created: number; total: number }>(
+    fetchApi<BulkCreateConnectionResponse>(
       `/providers/${providerId}/connections/bulk`,
       {
         method: 'POST',

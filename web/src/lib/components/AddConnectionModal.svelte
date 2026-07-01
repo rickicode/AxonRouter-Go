@@ -3,6 +3,8 @@
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
+  import { Textarea } from '$lib/components/ui/textarea';
+  import { Badge } from '$lib/components/ui/badge';
   import { connectionsApi } from '$lib/api';
   import { toast } from 'svelte-sonner';
   import ProviderIcon from '$lib/components/ProviderIcon.svelte';
@@ -20,27 +22,42 @@
     onCreated?: () => void;
   } = $props();
 
-  let step = $state<'form' | 'oauth-waiting' | 'done'>('form');
+  type Step = 'form' | 'oauth-waiting' | 'done' | 'error';
+  type Mode = 'single' | 'bulk';
+
+  let step = $state<Step>('form');
+  let mode = $state<Mode>('single');
   let connectionName = $state('');
   let apiKey = $state('');
+  let bulkText = $state('');
   let submitting = $state(false);
   let errorMsg = $state('');
   let oauthPolling = $state(false);
   let createdConnId = $state('');
+  let oauthUrl = $state('');
+  let oauthStatusText = $state('Waiting for browser authorization...');
+  let oauthPopup: Window | null = null;
 
   const authType = $derived(meta?.authType ?? 'apikey');
   const isOAuth = $derived(authType === 'oauth');
   const isNoAuth = $derived(authType === 'none');
   const isApiKey = $derived(authType === 'apikey' || authType === 'custom');
+  const supportsBulk = $derived(isApiKey);
 
   function reset() {
     step = 'form';
+    mode = 'single';
     connectionName = '';
     apiKey = '';
+    bulkText = '';
     errorMsg = '';
     submitting = false;
     oauthPolling = false;
     createdConnId = '';
+    oauthUrl = '';
+    oauthStatusText = 'Waiting for browser authorization...';
+    oauthPopup?.close();
+    oauthPopup = null;
   }
 
   function handleOpenChange(isOpen: boolean) {
@@ -48,30 +65,64 @@
     open = isOpen;
   }
 
-  function defaultName(): string {
+  function defaultName(index?: number): string {
     const base = meta?.displayName ?? providerId;
-    return `${base} connection`;
+    return typeof index === 'number' ? `${base} ${index}` : `${base} connection`;
+  }
+
+  function parseBulkConnections() {
+    return bulkText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line, index) => {
+        const match = line.match(/^([^,:\t]+)[,:\t](.+)$/);
+        if (!match) return { name: defaultName(index + 1), api_key: line };
+        const name = match[1].trim() || defaultName(index + 1);
+        const key = match[2].trim();
+        return { name, api_key: key };
+      })
+      .filter((conn) => conn.api_key.length > 0);
+  }
+
+  async function copyOAuthUrl() {
+    if (!oauthUrl) return;
+    try {
+      await navigator.clipboard.writeText(oauthUrl);
+      toast.success('OAuth URL copied');
+    } catch {
+      toast.error('Copy failed — select the URL manually');
+    }
   }
 
   async function handleApiKeySubmit() {
     errorMsg = '';
     submitting = true;
     try {
-      const name = connectionName.trim() || defaultName();
-      const data: Record<string, unknown> = {
-        name,
-        auth_type: 'api_key',
-      };
-      if (apiKey.trim()) {
-        data.api_key = apiKey.trim();
+      if (mode === 'bulk') {
+        const connections = parseBulkConnections();
+        if (connections.length === 0) throw new Error('Paste at least one API key');
+        const result = await connectionsApi.bulkCreate(providerId, { connections });
+        toast.success(`Added ${result.created}/${result.total} connections`);
+        step = 'done';
+        onCreated?.();
+        return;
       }
+
+      const name = connectionName.trim() || defaultName();
+      const data = {
+        name,
+        auth_type: 'api_key' as const,
+        ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
+      };
       await connectionsApi.create(providerId, data);
-      toast.success(`Connection "${name}" added`);
+      toast.success(`Connection added: ${name}`);
       step = 'done';
       onCreated?.();
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : 'Failed to add connection';
       toast.error(errorMsg);
+      step = 'error';
     } finally {
       submitting = false;
     }
@@ -86,12 +137,13 @@
         name,
         auth_type: 'none',
       });
-      toast.success(`Connection "${name}" added`);
+      toast.success(`Connection added: ${name}`);
       step = 'done';
       onCreated?.();
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : 'Failed to add connection';
       toast.error(errorMsg);
+      step = 'error';
     } finally {
       submitting = false;
     }
@@ -100,8 +152,17 @@
   async function handleOAuthSubmit() {
     errorMsg = '';
     submitting = true;
+    oauthUrl = '';
+    oauthStatusText = 'Starting OAuth login...';
+
+    // Open synchronously from the click handler so browsers do not classify it as a blocked async popup.
+    oauthPopup = window.open('about:blank', '_blank');
+    if (oauthPopup) {
+      oauthPopup.document.title = 'AxonRouter OAuth';
+      oauthPopup.document.body.innerHTML = '<p style="font-family:system-ui;padding:24px">Preparing OAuth login...</p>';
+    }
+
     try {
-      // Step 1: Create connection with oauth auth type
       const name = connectionName.trim() || defaultName();
       const conn = await connectionsApi.create(providerId, {
         name,
@@ -109,47 +170,66 @@
       });
       createdConnId = conn.id;
 
-      // Step 2: Initiate OAuth flow
       const oauthRes = await connectionsApi.initiateOAuth(conn.id);
-
-      // Step 3: Open auth URL (same window to avoid popup blocker)
-      window.location.href = oauthRes.auth_url;
-
+      oauthUrl = oauthRes.auth_url;
       step = 'oauth-waiting';
       oauthPolling = true;
+      oauthStatusText = 'Browser opened. Complete authorization there.';
 
-      // Step 4: Poll for OAuth completion
+      if (oauthPopup) {
+        oauthPopup.location.href = oauthRes.auth_url;
+      } else {
+        toast.error('Popup blocked — use the Open OAuth URL button');
+      }
+
+      toast.info(`OAuth started for ${meta?.displayName ?? providerId}`);
       pollOAuthStatus(conn.id);
     } catch (err) {
+      oauthPopup?.close();
+      oauthPopup = null;
       errorMsg = err instanceof Error ? err.message : 'Failed to start OAuth';
       toast.error(errorMsg);
+      step = 'error';
     } finally {
       submitting = false;
     }
   }
 
   async function pollOAuthStatus(connId: string) {
-    const maxAttempts = 60; // 5 minutes at 5s intervals
-    for (let i = 0; i < maxAttempts; i++) {
-      await new Promise(r => setTimeout(r, 5000));
-      if (!oauthPolling) break;
+    const maxAttempts = 150; // 5 minutes at 2s intervals, same timeout window as CLIProxyAPI.
+    for (let i = 0; i < maxAttempts; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      if (!oauthPolling) return;
       try {
         const status = await connectionsApi.oauthStatus(connId);
         if (status.connected) {
           oauthPolling = false;
+          oauthPopup?.close();
+          oauthPopup = null;
+          oauthStatusText = 'OAuth connected.';
           toast.success('OAuth connected successfully');
           step = 'done';
           onCreated?.();
           return;
         }
       } catch {
-        // ignore poll errors
+        // Ignore transient status errors while the local callback server is waiting.
       }
     }
+
     oauthPolling = false;
-    toast.error('OAuth timed out. The connection was created — re-authenticate from the connection page.');
-    step = 'done';
+    oauthStatusText = 'OAuth timed out. The connection is not eligible until authentication succeeds.';
+    toast.error('OAuth timed out after 5 minutes');
+    step = 'error';
     onCreated?.();
+  }
+
+  function cancelOAuth() {
+    oauthPolling = false;
+    oauthPopup?.close();
+    oauthPopup = null;
+    toast.info('OAuth flow cancelled');
+    handleOpenChange(false);
   }
 
   function handleSubmit() {
@@ -160,82 +240,108 @@
 </script>
 
 <Dialog.Root {open} onOpenChange={handleOpenChange}>
-  <Dialog.Content class="sm:max-w-[480px]">
+  <Dialog.Content class="sm:max-w-[560px]">
     {#if step === 'form'}
       <Dialog.Header>
-        <div class="flex items-center gap-3">
+        <div class="flex items-start gap-3">
           {#if meta}
             <div
-              class="size-10 rounded-lg flex items-center justify-center shrink-0 overflow-hidden"
+              class="size-11 shrink-0 overflow-hidden rounded-lg border border-border/50 flex items-center justify-center"
               style="background-color: {(meta.color ?? '#888')}15"
             >
-              <ProviderIcon {meta} size={40} />
+              <ProviderIcon {meta} size={44} />
             </div>
           {/if}
-          <div>
+          <div class="min-w-0 space-y-1">
             <Dialog.Title class="text-lg font-semibold">
-              Add connection
+              {isOAuth ? 'Connect OAuth account' : isNoAuth ? 'Add no-auth connection' : 'Add API key'}
             </Dialog.Title>
             <Dialog.Description class="text-sm text-muted-foreground">
-              {meta?.displayName ?? providerId}
-              {#if isOAuth}
-                · OAuth authentication
-              {:else if isNoAuth}
-                · No authentication required
-              {:else}
-                · API key authentication
-              {/if}
+              {meta?.displayName ?? providerId} · {isOAuth ? 'browser login' : isNoAuth ? 'no credential required' : 'single or bulk credential'}
             </Dialog.Description>
+            <div class="flex flex-wrap gap-1.5 pt-1">
+              <Badge variant="outline" class="rounded-full text-caption-mono">{meta?.prefix ?? `${providerId}/`}</Badge>
+              <Badge variant="outline" class="rounded-full text-caption-mono">{meta?.format ?? 'openai'}</Badge>
+              <Badge variant="secondary" class="rounded-full text-caption-mono">
+                {isOAuth ? 'OAuth' : isNoAuth ? 'No auth' : 'API key'}
+              </Badge>
+            </div>
           </div>
         </div>
       </Dialog.Header>
 
       <div class="flex flex-col gap-4 py-2">
-        <!-- Connection name -->
-        <div class="flex flex-col gap-1.5">
-          <Label class="text-sm font-medium">Connection name</Label>
-          <Input
-            bind:value={connectionName}
-            placeholder={defaultName()}
-            class="h-9 text-sm"
-          />
-        </div>
+        {#if supportsBulk}
+          <div class="grid grid-cols-2 gap-2 rounded-lg border border-border/50 bg-muted/20 p-1">
+            <button
+              type="button"
+              class="rounded-md px-3 py-2 text-sm transition-colors {mode === 'single' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}"
+              onclick={() => mode = 'single'}
+            >
+              Single key
+            </button>
+            <button
+              type="button"
+              class="rounded-md px-3 py-2 text-sm transition-colors {mode === 'bulk' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}"
+              onclick={() => mode = 'bulk'}
+            >
+              Bulk import
+            </button>
+          </div>
+        {/if}
 
-        {#if isApiKey}
-          <!-- API Key input -->
+        {#if mode === 'single'}
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-sm font-medium">Connection name</Label>
+            <Input bind:value={connectionName} placeholder={defaultName()} class="h-9 text-sm" />
+          </div>
+        {/if}
+
+        {#if isApiKey && mode === 'single'}
           <div class="flex flex-col gap-1.5">
             <Label class="text-sm font-medium">
               API key
               {#if meta?.authHint}
-                <span class="text-muted-foreground font-normal">({meta.authHint})</span>
+                <span class="font-normal text-muted-foreground">({meta.authHint})</span>
               {/if}
             </Label>
             <Input
               bind:value={apiKey}
               type="password"
-              placeholder="sk-..."
-              class="h-9 text-sm font-mono"
+              placeholder={meta?.apiHint ?? 'sk-...'}
+              class="h-9 font-mono text-sm"
+              autocomplete="off"
+              spellcheck={false}
             />
-            {#if meta?.apiHint}
-              <p class="text-[11px] text-muted-foreground">{meta.apiHint}</p>
-            {/if}
+            <p class="text-[11px] text-muted-foreground">
+              {meta?.apiHint ?? 'Stored as one AxonRouter connection and used for routing.'}
+            </p>
+          </div>
+        {:else if isApiKey && mode === 'bulk'}
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-sm font-medium">API keys</Label>
+            <Textarea
+              bind:value={bulkText}
+              class="min-h-36 font-mono text-xs"
+              placeholder={`sk-...\nmain: sk-...\nbackup, sk-...`}
+              spellcheck={false}
+            />
+            <p class="text-[11px] text-muted-foreground">
+              One key per line. Optional format: <span class="font-mono">name: key</span> or <span class="font-mono">name, key</span>.
+            </p>
           </div>
         {/if}
 
         {#if isOAuth}
-          <div class="rounded-lg border border-border/50 bg-muted/30 p-3">
-            <p class="text-sm text-muted-foreground">
-              A browser window will open for authentication. After authorizing,
-              the connection will be configured automatically.
-            </p>
+          <div class="rounded-lg border border-border/50 bg-muted/30 p-3 text-sm text-muted-foreground">
+            <p class="font-medium text-foreground">Browser OAuth flow.</p>
+            <p class="mt-1">A browser tab opens immediately, then this modal waits up to 5 minutes for the callback, matching CLIProxyAPI's status polling pattern.</p>
           </div>
         {/if}
 
         {#if isNoAuth}
-          <div class="rounded-lg border border-border/50 bg-muted/30 p-3">
-            <p class="text-sm text-muted-foreground">
-              This provider doesn't require authentication. Just give your connection a name.
-            </p>
+          <div class="rounded-lg border border-border/50 bg-muted/30 p-3 text-sm text-muted-foreground">
+            This provider does not require a credential. Add a named ready connection for routing.
           </div>
         {/if}
 
@@ -254,49 +360,62 @@
         <Button variant="outline" onclick={() => handleOpenChange(false)} class="text-sm">Cancel</Button>
         <Button onclick={handleSubmit} disabled={submitting} class="text-sm">
           {#if submitting}
-            {isOAuth ? 'Starting OAuth...' : 'Adding...'}
+            {isOAuth ? 'Starting OAuth...' : mode === 'bulk' ? 'Importing...' : 'Adding...'}
           {:else if isOAuth}
-            Connect with OAuth
-          {:else if isNoAuth}
-            Add connection
+            Connect
+          {:else if mode === 'bulk'}
+            Import keys
           {:else}
             Add connection
           {/if}
         </Button>
       </Dialog.Footer>
-
     {:else if step === 'oauth-waiting'}
       <Dialog.Header>
-        <Dialog.Title class="text-lg font-semibold">Waiting for authorization</Dialog.Title>
+        <Dialog.Title class="text-lg font-semibold">Waiting for authentication</Dialog.Title>
         <Dialog.Description class="text-sm text-muted-foreground">
-          Complete the authentication in the browser window that opened.
+          Complete login in the browser window. Keep this modal open.
         </Dialog.Description>
       </Dialog.Header>
 
       <div class="flex flex-col items-center gap-4 py-6">
         <div class="relative size-16">
           <div class="absolute inset-0 rounded-full border-2 border-muted"></div>
-          <div class="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin"></div>
+          <div class="absolute inset-0 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
           <div class="absolute inset-0 flex items-center justify-center">
-            <svg class="size-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
+            <span class="material-symbols-outlined text-primary">lock_open</span>
           </div>
         </div>
-        <div class="text-center">
-          <p class="text-sm font-medium">Waiting for OAuth callback...</p>
-          <p class="text-xs text-muted-foreground mt-1">This will auto-complete once you authorize in the browser.</p>
+        <div class="space-y-2 text-center">
+          <p class="text-sm font-medium">{oauthStatusText}</p>
+          <p class="text-xs text-muted-foreground">Connection ID: {createdConnId}</p>
         </div>
+        {#if oauthUrl}
+          <div class="w-full rounded-lg border border-border/50 bg-muted/20 p-3">
+            <p class="mb-2 text-xs text-muted-foreground">If the browser did not open, use this URL.</p>
+            <div class="flex gap-2">
+              <Button variant="outline" class="text-sm" onclick={() => window.open(oauthUrl, '_blank')}>Open OAuth URL</Button>
+              <Button variant="outline" class="text-sm" onclick={copyOAuthUrl}>Copy URL</Button>
+            </div>
+          </div>
+        {/if}
       </div>
 
       <Dialog.Footer>
-        <Button variant="outline" onclick={() => { oauthPolling = false; handleOpenChange(false); }} class="text-sm">
-          Cancel
-        </Button>
+        <Button variant="outline" onclick={cancelOAuth} class="text-sm">Cancel</Button>
       </Dialog.Footer>
-
+    {:else if step === 'error'}
+      <Dialog.Header>
+        <Dialog.Title class="text-lg font-semibold">Connection not ready</Dialog.Title>
+        <Dialog.Description class="text-sm text-muted-foreground">
+          {errorMsg || oauthStatusText}
+        </Dialog.Description>
+      </Dialog.Header>
+      <Dialog.Footer>
+        <Button variant="outline" onclick={() => { step = 'form'; errorMsg = ''; }} class="text-sm">Back</Button>
+        <Button onclick={() => handleOpenChange(false)} class="text-sm">Close</Button>
+      </Dialog.Footer>
     {:else}
-      <!-- Success -->
       <Dialog.Header>
         <Dialog.Title class="text-lg font-semibold">Connection added</Dialog.Title>
       </Dialog.Header>
