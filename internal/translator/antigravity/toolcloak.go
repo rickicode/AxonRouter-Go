@@ -87,3 +87,34 @@ func (t *ToolNameMap) Original(cloaked string) string {
 func (t *ToolNameMap) Len() int {
 	return len(t.m)
 }
+
+// StripEnumDescriptions recursively removes enumDescriptions from a JSON schema.
+// Antigravity API rejects requests carrying that field with HTTP 400.
+// Matches OmniRoute open-sse/config/toolCloaking.ts:63-87.
+func StripEnumDescriptions(schema map[string]any) map[string]any {
+	if schema == nil {
+		return nil
+	}
+	result := make(map[string]any, len(schema))
+	for k, v := range schema {
+		if k == "enumDescriptions" {
+			continue
+		}
+		if sub, ok := v.(map[string]any); ok {
+			result[k] = StripEnumDescriptions(sub)
+		} else if arr, ok := v.([]any); ok {
+			newArr := make([]any, len(arr))
+			for i, item := range arr {
+				if sub, ok := item.(map[string]any); ok {
+					newArr[i] = StripEnumDescriptions(sub)
+				} else {
+					newArr[i] = item
+				}
+			}
+			result[k] = newArr
+		} else {
+			result[k] = v
+		}
+	}
+	return result
+}

@@ -58,22 +58,21 @@ func (h *Handler) Embeddings(c *gin.Context) {
 
 	proxyCtx := h.proxyContext(c.Request.Context(), conn)
 
-	// Use OpenAI executor's Embeddings method
+	// Use OpenAI executor's Embeddings method with reactive 401/403 retry
 	if openaiExec, ok := exec.(*executor.OpenAIExecutor); ok {
-		resp, err := openaiExec.Embeddings(proxyCtx, req)
+		var resp *executor.Response
+		for attempt := 0; attempt < 2; attempt++ {
+			resp, err = openaiExec.Embeddings(proxyCtx, req)
+			if attempt == 0 && err != nil && isAuthError(err) {
+				if h.proactiveRefreshToken(c.Request.Context(), conn, provider) {
+					req.AccessToken = conn.AccessToken
+					continue
+				}
+			}
+			break
+		}
 		if err != nil {
 			// Log failure
-			h.tracker.Log(&usage.LogEntry{
-				ConnectionID:   conn.ID,
-				ProviderTypeID: provider,
-				ModelID:        modelName,
-				Modality:       "embedding",
-				LatencyMs:      time.Since(start).Milliseconds(),
-				ErrorMessage:   err.Error(),
-			})
-
-			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
-			return
 		}
 
 		// Log success

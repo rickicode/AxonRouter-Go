@@ -12,12 +12,12 @@ var v1ProviderCatalog = map[string]struct {
 	keys    []string
 	ownedBy string
 }{
-	"claude":   {keys: []string{"claude"}, ownedBy: "anthropic"},
-	"gemini":   {keys: []string{"gemini"}, ownedBy: "google"},
-	"cx":       {keys: []string{"codex-free", "codex-team", "codex-plus", "codex-pro"}, ownedBy: "openai"},
-	"ag":       {keys: []string{"antigravity"}, ownedBy: "google"},
-	"kiro":     {keys: []string{"kimi"}, ownedBy: "moonshot"},
-	"aistudio": {keys: []string{"aistudio"}, ownedBy: "google"},
+	"claude":        {keys: []string{"claude"}, ownedBy: "anthropic"},
+	"gemini":        {keys: []string{"gemini"}, ownedBy: "google"},
+	"cx":            {keys: []string{"codex-free", "codex-team", "codex-plus", "codex-pro"}, ownedBy: "openai"},
+	"ag":            {keys: []string{"antigravity"}, ownedBy: "google"},
+	"kiro":          {keys: []string{"kimi"}, ownedBy: "moonshot"},
+	"aistudio":      {keys: []string{"aistudio"}, ownedBy: "google"},
 	"opencode":      {keys: []string{"opencode"}, ownedBy: "opencode"},
 	"opencode-free": {keys: []string{"opencode"}, ownedBy: "opencode"},
 	"oc":            {keys: []string{"opencode"}, ownedBy: "opencode"},
@@ -28,11 +28,11 @@ var v1ProviderCatalog = map[string]struct {
 	"mimo":          {keys: []string{"mimocode"}, ownedBy: "xiaomi"},
 	"mimo-tp":       {keys: []string{"mimocode"}, ownedBy: "xiaomi"},
 	"mimo-token":    {keys: []string{"mimocode"}, ownedBy: "xiaomi"},
-	"openai":     {keys: []string{"openai"}, ownedBy: "openai"},
-	"groq":       {keys: []string{"groq"}, ownedBy: "groq"},
-	"deepseek":   {keys: []string{"deepseek"}, ownedBy: "deepseek"},
-	"openrouter": {keys: []string{"openrouter"}, ownedBy: "openrouter"},
-	"zai":        {keys: []string{"claude"}, ownedBy: "zai"},
+	"openai":        {keys: []string{"openai"}, ownedBy: "openai"},
+	"groq":          {keys: []string{"groq"}, ownedBy: "groq"},
+	"deepseek":      {keys: []string{"deepseek"}, ownedBy: "deepseek"},
+	"openrouter":    {keys: []string{"openrouter"}, ownedBy: "openrouter"},
+	"zai":           {keys: []string{"claude"}, ownedBy: "zai"},
 }
 
 // Models handles GET /v1/models — includes combos and virtual models.

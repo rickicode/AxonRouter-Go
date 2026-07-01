@@ -401,6 +401,17 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 				fn := t.Get("function")
 				if fn.Exists() && fn.IsObject() {
 					fnRaw := fn.Raw
+					// Strip enumDescriptions (Antigravity rejects with HTTP 400)
+					if params := fn.Get("parameters"); params.Exists() {
+						var parsed map[string]any
+						if json.Unmarshal([]byte(params.Raw), &parsed) == nil {
+							cleaned := antigravity.StripEnumDescriptions(parsed)
+							if b, err := json.Marshal(cleaned); err == nil {
+								fnRawBytes, _ := sjson.SetRawBytes([]byte(fnRaw), "parameters", b)
+								fnRaw = string(fnRawBytes)
+							}
+						}
+					}
 					if fn.Get("parameters").Exists() {
 						renamed, errRename := RenameKey(fnRaw, "parameters", "parametersJsonSchema")
 						if errRename != nil {
@@ -486,6 +497,12 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 			}
 			for _, urlNode := range urlContextNodes {
 				toolsNode, _ = sjson.SetRawBytes(toolsNode, "-1", urlNode)
+			}
+			// Inject decoy tools to match native Antigravity IDE fingerprint.
+			// Decoys are native tool names that appear as "unavailable" — they are NOT cloaked.
+			for _, decoyName := range antigravity.AGDecoyToolNames {
+				decoyDecl := fmt.Sprintf(`{"name":%q,"description":"This tool is currently unavailable.","parametersJsonSchema":{"type":"object","properties":{}}}`, decoyName)
+				toolsNode, _ = sjson.SetRawBytes(toolsNode, "-1", []byte(decoyDecl))
 			}
 			out, _ = sjson.SetRawBytes(out, "request.tools", toolsNode)
 		}

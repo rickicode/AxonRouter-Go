@@ -77,14 +77,28 @@ func (h *Handler) Messages(c *gin.Context) {
 
 	proxyCtx := h.proxyContext(c.Request.Context(), conn)
 
+	// Execute with reactive 401/403 retry
 	var resp *executor.Response
 	var streamResult *executor.StreamResult
+	var execErr error
 
-	if req.Stream {
-		streamResult, err = exec.ExecuteStream(proxyCtx, req)
-	} else {
-		resp, err = exec.Execute(proxyCtx, req)
+	for attempt := 0; attempt < 2; attempt++ {
+		if req.Stream {
+			streamResult, err = exec.ExecuteStream(proxyCtx, req)
+		} else {
+			resp, err = exec.Execute(proxyCtx, req)
+		}
+		execErr = err
+
+		if attempt == 0 && err != nil && isAuthError(err) {
+			if h.proactiveRefreshToken(c.Request.Context(), conn, provider) {
+				req.AccessToken = conn.AccessToken
+				continue
+			}
+		}
+		break
 	}
+	err = execErr
 
 	latency := time.Since(start).Milliseconds()
 
