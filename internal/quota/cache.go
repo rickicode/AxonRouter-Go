@@ -13,10 +13,22 @@ import (
 
 // SaveQuotaCache persists fetched quota data to the quota_cache table.
 // Called by the background scheduler after each fetch cycle.
+// Skips saving failed fetches if there's already valid cached data (preserves last good state).
 func SaveQuotaCache(db *sql.DB, results []ProviderQuota) {
 	now := time.Now().Unix()
 	for _, provider := range results {
 		for _, conn := range provider.Connections {
+			// If fetch failed, check if there's existing good data — don't overwrite it
+			if conn.Error != "" {
+				var existingStatus string
+				err := db.QueryRow(`SELECT status FROM quota_cache WHERE id = ?`, conn.ConnectionID).Scan(&existingStatus)
+				if err == nil && existingStatus != "error" && existingStatus != "no_data" {
+					// Existing data is good — skip overwrite, just update timestamp
+					db.Exec(`UPDATE quota_cache SET updated_at = ? WHERE id = ?`, now, conn.ConnectionID)
+					continue
+				}
+			}
+
 			status := evaluateCacheStatus(conn.Quotas, conn.Error)
 			quotasJSON, err := json.Marshal(conn.Quotas)
 			if err != nil {
