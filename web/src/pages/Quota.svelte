@@ -119,11 +119,11 @@
 
   function statusInfo(status: string) {
     switch (status) {
-      case 'ok': return { label: 'OK', cls: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400', icon: CheckCircle2 };
-      case 'exhausted': return { label: 'Exhausted', cls: 'border-rose-500/30 bg-rose-500/10 text-rose-400', icon: AlertTriangle };
-      case 'unlimited': return { label: 'Unlimited', cls: 'border-violet-500/30 bg-violet-500/10 text-violet-400', icon: Infinity };
-      case 'error': return { label: 'Error', cls: 'border-rose-500/30 bg-rose-500/10 text-rose-400', icon: AlertCircle };
-      default: return { label: 'No Data', cls: 'border-muted bg-muted/10 text-muted-foreground', icon: HelpCircle };
+      case 'ok': return { label: 'Ready', cls: 'text-emerald-400', dot: 'bg-emerald-400' };
+      case 'exhausted': return { label: 'Exhausted', cls: 'text-rose-400', dot: 'bg-rose-400' };
+      case 'unlimited': return { label: 'Unlimited', cls: 'text-violet-400', dot: 'bg-violet-400' };
+      case 'error': return { label: 'Error', cls: 'text-rose-400', dot: 'bg-rose-400' };
+      default: return { label: 'No Data', cls: 'text-muted-foreground', dot: 'bg-muted-foreground' };
     }
   }
 
@@ -201,63 +201,76 @@
     </div>
   </div>
 
-  <!-- Provider summary cards -->
-  {#if $quotaSummary.length > 0}
-    <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      {#each $quotaSummary as ps}
-        {@const exhausted = ps.statuses['exhausted'] || 0}
-        {@const errors = ps.statuses['error'] || 0}
-        {@const ok = (ps.statuses['ok'] || 0) + (ps.statuses['unlimited'] || 0)}
-        <button
-          onclick={() => onProviderChange(filterProvider === ps.provider_id ? '' : ps.provider_id)}
-          class="rounded-lg bg-card p-4 text-left transition-all cursor-pointer shadow-card hover:shadow-elevated
-            {filterProvider === ps.provider_id ? 'ring-1 ring-primary/40' : ''}"
-        >
-          <p class="text-caption text-muted-foreground">{ps.display_name}</p>
-          <p class="mt-1 text-display-md">{ps.total}</p>
-          <div class="mt-1 flex items-center gap-2 text-caption-mono">
-            <span class="text-emerald-400">{ok} ready</span>
-            {#if exhausted > 0}<span class="text-rose-400">{exhausted} exhausted</span>{/if}
-            {#if errors > 0}<span class="text-amber-400">{errors} error</span>{/if}
-          </div>
-        </button>
-      {/each}
-    </div>
-  {/if}
 
   <!-- Filters -->
   <section class="rounded-xl bg-card p-4 shadow-card md:p-5">
-    <div class="flex flex-col gap-3 lg:flex-row lg:items-center">
-      <div class="relative flex-1 lg:max-w-md">
-        <Search class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-        <Input
-          type="text"
-          bind:value={searchQuery}
-          oninput={onSearchInput}
-          placeholder="Search connections…"
-          class="h-10 pl-9 text-body-sm"
-        />
+    <div class="flex flex-col gap-4">
+      <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div class="relative w-full lg:max-w-md">
+          <Search class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+          <Input
+            type="text"
+            bind:value={searchQuery}
+            oninput={onSearchInput}
+            placeholder="Search connections…"
+            class="h-10 pl-9 text-body-sm"
+          />
+          {#if searchQuery}
+            <button
+              type="button"
+              class="absolute inset-y-0 right-2 text-caption text-muted-foreground hover:text-foreground cursor-pointer"
+              onclick={() => { searchQuery = ''; applyFilters(); }}
+            >Clear</button>
+          {/if}
+        </div>
+        <div class="flex items-center gap-2 text-caption-mono text-muted-foreground">
+          <span>{$quotaTotal} connections</span>
+        </div>
       </div>
-      <div class="flex items-center gap-2">
-        <select
-          class="h-10 rounded-md border border-input bg-background px-3 text-body-sm text-foreground cursor-pointer shrink-0"
-          value={filterProvider}
-          onchange={(e) => onProviderChange((e.target as HTMLSelectElement).value)}
-        >
-          {#each providerOptions() as opt}
-            <option value={opt.value}>{opt.label}</option>
-          {/each}
-        </select>
-        <select
-          class="h-10 rounded-md border border-input bg-background px-3 text-body-sm text-foreground cursor-pointer shrink-0"
-          value={filterStatus}
-          onchange={(e) => onStatusChange((e.target as HTMLSelectElement).value)}
-        >
-          {#each statusOptions as opt}
-            <option value={opt.value}>{opt.label}</option>
-          {/each}
-        </select>
+
+      <!-- Status pills -->
+      <div class="flex flex-wrap gap-1.5 border-t border-white/5 pt-3">
+        {#each statusOptions as opt}
+          <button
+            class="inline-flex items-center rounded-full px-3 py-1 text-caption font-medium transition-colors cursor-pointer
+              {filterStatus === opt.value
+                ? 'bg-foreground text-background'
+                : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'}"
+            onclick={() => onStatusChange(opt.value)}
+          >
+            {opt.label}
+          </button>
+        {/each}
       </div>
+
+      <!-- Provider pills -->
+      {#if $quotaSummary.length > 0}
+        <div class="flex flex-wrap gap-1.5">
+          <button
+            class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-caption font-medium transition-colors cursor-pointer
+              {filterProvider === ''
+                ? 'bg-foreground text-background'
+                : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'}"
+            onclick={() => onProviderChange('')}
+          >
+            All
+            <span class="font-mono opacity-75">{$quotaTotal}</span>
+          </button>
+          {#each $quotaSummary as ps}
+            <button
+              class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-caption font-medium transition-colors cursor-pointer
+                {filterProvider === ps.provider_id
+                  ? 'bg-foreground text-background'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'}"
+              onclick={() => onProviderChange(filterProvider === ps.provider_id ? '' : ps.provider_id)}
+            >
+              <span class="size-2 rounded-full shrink-0" style="background-color: {ps.provider_id === 'ag' ? '#4285f4' : ps.provider_id === 'cx' ? '#10a37f' : '#888'}"></span>
+              {ps.display_name}
+              <span class="font-mono opacity-75">{ps.total}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
     </div>
   </section>
 
@@ -293,7 +306,6 @@
     <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {#each $quotaItems as item (item.id)}
         {@const st = statusInfo(item.status)}
-        {@const stIcon = st.icon}
         {@const refreshing = isRefreshing(item.connection_id)}
         {@const planBadge = item.plan ? getPlanBadge(item.plan) : null}
         <div class="rounded-xl bg-card shadow-card transition-all hover:shadow-elevated {refreshing ? 'ring-1 ring-primary/30' : ''}">
@@ -315,19 +327,18 @@
 
           <!-- Meta row -->
           <div class="flex items-center gap-2 px-4 pb-3">
-            <span class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-caption {st.cls}">
-              <stIcon class="size-3"></stIcon>
+            <span class="inline-flex items-center gap-1.5 text-caption font-medium {st.cls}">
+              <span class="size-1.5 rounded-full {st.dot}"></span>
               {st.label}
             </span>
             {#if planBadge}
-              <span class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-caption {planBadge.cls}">
+              <span class="inline-flex items-center gap-1 text-caption {planBadge.cls}">
                 <planBadge.icon class="size-3"></planBadge.icon>
                 {item.plan}
               </span>
             {/if}
             <span class="text-caption text-muted-foreground">{item.display_name}</span>
           </div>
-
           <!-- Quota bars -->
           <div class="px-4 pb-3 space-y-2.5">
             {#if item.error}
