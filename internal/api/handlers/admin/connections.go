@@ -3,12 +3,14 @@ package admin
 import (
 	"context"
 	"database/sql"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
@@ -26,11 +28,12 @@ type ConnectionHandler struct {
 	registry *executor.Registry
 	store    *connstate.Store
 	elig     *connstate.EligibilityManager
+	authMgr  *auth.Manager
 }
 
 // NewConnectionHandler creates a new connection handler.
-func NewConnectionHandler(database *sql.DB, registry *executor.Registry, store *connstate.Store, elig *connstate.EligibilityManager) *ConnectionHandler {
-	return &ConnectionHandler{db: database, registry: registry, store: store, elig: elig}
+func NewConnectionHandler(database *sql.DB, registry *executor.Registry, store *connstate.Store, elig *connstate.EligibilityManager, authMgr *auth.Manager) *ConnectionHandler {
+	return &ConnectionHandler{db: database, registry: registry, store: store, elig: elig, authMgr: authMgr}
 }
 
 // List returns paginated connections for a provider.
@@ -71,7 +74,8 @@ func (h *ConnectionHandler) List(c *gin.Context) {
 		SELECT id, provider_type_id, name, auth_type, status,
 		       cooldown_until, last_error, last_error_code,
 		       last_success_at, last_failure_at, failure_count,
-		       capabilities, is_active, created_at, updated_at
+		       capabilities, is_active, created_at, updated_at,
+		       COALESCE(oauth_expires_at, 0)
 		FROM connections WHERE `+where+`
 		ORDER BY created_at DESC
 		LIMIT ? OFFSET ?
@@ -88,7 +92,8 @@ func (h *ConnectionHandler) List(c *gin.Context) {
 		rows.Scan(&conn.ID, &conn.ProviderTypeID, &conn.Name, &conn.AuthType,
 			&conn.Status, &conn.CooldownUntil, &conn.LastError, &conn.LastErrorCode,
 			&conn.LastSuccessAt, &conn.LastFailureAt, &conn.FailureCount,
-			&conn.Capabilities, &conn.IsActive, &conn.CreatedAt, &conn.UpdatedAt)
+			&conn.Capabilities, &conn.IsActive, &conn.CreatedAt, &conn.UpdatedAt,
+			&conn.OAuthExpiresAt)
 		conns = append(conns, conn)
 	}
 
@@ -415,4 +420,67 @@ func nullStr(v sql.NullString) interface{} {
 		return v.String
 	}
 	return nil
+}
+
+// RefreshToken manually refreshes an OAuth token for a connection.
+func (h *ConnectionHandler) RefreshToken(c *gin.Context) {
+	connID := c.Param("id")
+
+	var providerTypeID, refreshToken string
+	var expiresAt int64
+	var accessToken string
+	err := h.db.QueryRow(`
+		SELECT provider_type_id, COALESCE(oauth_token,''), COALESCE(oauth_refresh_token,''), COALESCE(oauth_expires_at,0)
+		FROM connections WHERE id = ?
+	`, connID).Scan(&providerTypeID, &accessToken, &refreshToken, &expiresAt)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
+		return
+	}
+
+	if refreshToken == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no refresh token available"})
+		return
+	}
+
+	if h.authMgr == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "auth manager not configured"})
+		return
+	}
+
+	creds := &auth.Credentials{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ExpiresAt:    time.Unix(expiresAt, 0),
+	}
+
+	newCreds, err := h.authMgr.RefreshToken(c.Request.Context(), auth.ProviderType(providerTypeID), creds)
+	if err != nil {
+		log.Printf("Manual token refresh failed for %s: %v", connID, err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+
+	now := time.Now().Unix()
+	_, err = h.db.Exec(`
+		UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?
+	`, newCreds.AccessToken, newCreds.RefreshToken, newCreds.ExpiresAt.Unix(), now, connID)
+	if err != nil {
+		log.Printf("Failed to persist refreshed token for %s: %v", connID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to persist token"})
+		return
+	}
+
+	if h.store != nil {
+		h.store.UpdateStatus(connID, connstate.StatusReady)
+		if h.elig != nil {
+			h.elig.Update(h.store)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":    true,
+		"expires_at": newCreds.ExpiresAt.Unix(),
+		"message":    "Token refreshed successfully",
+	})
 }

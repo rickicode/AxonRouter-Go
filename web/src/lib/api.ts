@@ -44,6 +44,7 @@ export interface Connection {
   failure_count: number;
   capabilities: string;
   provider_specific_data: string | null;
+  oauth_expires_at: number | null;
   is_active: boolean;
   created_at: number;
   updated_at: number;
@@ -241,6 +242,11 @@ export const connectionsApi = {
   
   reset: (id: string) =>
     fetchApi<Connection>(`/connections/${id}/reset`, {
+      method: 'POST',
+    }),
+
+  refreshToken: (id: string) =>
+    fetchApi<{ success: boolean; expires_at: number; message: string }>(`/connections/${id}/refresh`, {
       method: 'POST',
     }),
   

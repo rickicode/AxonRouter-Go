@@ -109,6 +109,16 @@
       toast.error('Reset failed: ' + (err instanceof Error ? err.message : 'Unknown'));
     } finally { actionLoading = ''; }
   }
+  async function handleRefreshToken(connId: string) {
+    actionLoading = connId;
+    try {
+      const res = await connectionsApi.refreshToken(connId);
+      toast.success(`Token refreshed, expires ${new Date(res.expires_at * 1000).toLocaleTimeString()}`);
+      await loadConnections(providerId, currentPage, perPage);
+    } catch (err) {
+      toast.error('Refresh failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+    } finally { actionLoading = ''; }
+  }
   function confirmDeleteConnection(connId: string, name: string) {
     deleteTarget = { id: connId, name };
     deleteDialogOpen = true;
@@ -250,12 +260,24 @@
                   </td></tr>
                 {:else}
                   {#each $connections as row}
+                    {@const isOAuth = row.auth_type === 'oauth'}
+                    {@const tokenExpiry = row.oauth_expires_at}
+                    {@const minsLeft = isOAuth && tokenExpiry ? Math.floor((tokenExpiry * 1000 - Date.now()) / 60000) : null}
                     <tr class="transition-colors hover:bg-accent/20 group">
                       <td class="py-3 px-4">
                         <a href="/providers/{providerId}/{row.id}" class="text-body-sm-strong hover:underline flex items-center gap-2">
                           <span class="size-2 rounded-full shrink-0" style="background-color: {getStatusDotColor(row.status)}"></span>
                           {row.name}
                         </a>
+                        {#if minsLeft !== null}
+                          {#if minsLeft < 0}
+                            <span class="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-500/15 text-red-400">Expired</span>
+                          {:else if minsLeft < 30}
+                            <span class="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-400">~{minsLeft}m</span>
+                          {:else}
+                            <span class="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/15 text-emerald-400">{Math.floor(minsLeft/60)}h {minsLeft%60}m</span>
+                          {/if}
+                        {/if}
                       </td>
                       <td class="py-3 px-4">
                         <Badge variant={getStatusVariant(row.status)} class="text-caption-mono rounded-sm py-0.5">
@@ -275,6 +297,11 @@
                           <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" disabled={actionLoading === row.id} onclick={() => handleTestConnection(row.id)}>
                             {actionLoading === row.id ? '...' : 'Test'}
                           </Button>
+                          {#if isOAuth}
+                            <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm text-amber-400 hover:text-amber-300" disabled={actionLoading === row.id} onclick={() => handleRefreshToken(row.id)}>
+                              Refresh
+                            </Button>
+                          {/if}
                           <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" disabled={actionLoading === row.id} onclick={() => handleResetConnection(row.id)}>
                             Reset
                           </Button>
