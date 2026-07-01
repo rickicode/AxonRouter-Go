@@ -93,8 +93,8 @@ func New(cfg Config) *Router {
 	proxyHealth.Start(ctx)
 
 	// Create admin handlers
+	connectionH := admin.NewConnectionHandler(cfg.DB, executor.GetRegistry(), store, elig, authManager)
 	providerH := admin.NewProviderHandler(cfg.DB, executor.GetRegistry(), store)
-	connectionH := admin.NewConnectionHandler(cfg.DB, executor.GetRegistry(), store, elig)
 
 	// Auto-migrate raw API keys to bcrypt
 	db.MigrateRawKeysToBcrypt(cfg.DB)
@@ -174,6 +174,7 @@ func New(cfg Config) *Router {
 	adminGroup.PATCH("/connections/:id", connectionH.Update)
 	adminGroup.DELETE("/connections/:id", connectionH.Delete)
 	adminGroup.POST("/connections/:id/test", connectionH.TestConnection)
+	adminGroup.POST("/connections/:id/refresh", connectionH.RefreshToken)
 	adminGroup.POST("/connections/:id/reset", connectionH.ResetStatus)
 	adminGroup.PATCH("/connections/bulk", connectionH.BulkUpdate)
 
