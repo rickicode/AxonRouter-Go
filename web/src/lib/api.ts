@@ -109,8 +109,8 @@ export async function fetchApi<T>(
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ message: response.statusText }));
-      throw new Error(error.message || `HTTP ${response.status}`);
+      const err = await response.json().catch(() => ({ message: response.statusText }));
+      throw new Error(err.error || err.message || `HTTP ${response.status}`);
     }
 
     return response.json();
@@ -355,4 +355,65 @@ export interface ProviderQuota {
 export const quotaApi = {
   list: () => fetchApi<ProviderQuota[]>('/quota'),
   refresh: (connId: string) => fetchApi<ConnectionQuota>(`/quota/${connId}/refresh`, { method: 'POST' }),
+};
+
+// Proxy Pool types
+export interface ProxyPool {
+  id: string;
+  name: string;
+  type: string; // http, vercel, deno, cloudflare
+  proxyUrl: string;
+  noProxy: string;
+  relayAuth: string;
+  isActive: boolean;
+  testStatus: string; // untested, active, error
+  lastTestedAt: string | null;
+  lastError: string | null;
+  responseTimeMs: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ProxyGroup {
+  id: string;
+  name: string;
+  mode: string; // roundrobin, sticky
+  stickyLimit: number;
+  strictProxy: boolean;
+  proxyPoolIds: string[];
+  isActive: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface HealthCheckResult {
+  ok: boolean;
+  lastHealthCheckAt: string | null;
+}
+
+// Proxy Pool API
+export const proxyPoolsApi = {
+  list: (params?: Record<string, string>) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return fetchApi<{ data: ProxyPool[]; pagination: { page: number; per_page: number; total: number; total_pages: number } }>(`/proxy-pools${qs}`);
+  },
+  get: (id: string) => fetchApi<{ data: ProxyPool }>(`/proxy-pools/${id}`),
+  create: (data: Record<string, unknown>) => fetchApi<{ data: ProxyPool }>(`/proxy-pools`, { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: Record<string, unknown>) => fetchApi<{ data: ProxyPool }>(`/proxy-pools/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  delete: (id: string) => fetchApi<{ ok: boolean }>(`/proxy-pools/${id}`, { method: 'DELETE' }),
+  test: (id: string) => fetchApi<{ ok: boolean; status: number; error: string; elapsedMs: number; testedAt: string }>(`/proxy-pools/${id}/test`, { method: 'POST' }),
+  healthGet: () => fetchApi<HealthCheckResult>('/proxy-pools/health-check'),
+  healthRun: () => fetchApi<{ ok: boolean; checkedAt: string; results: unknown[]; skipped: boolean }>('/proxy-pools/health-check', { method: 'POST' }),
+};
+
+// Proxy Group API
+export const proxyGroupsApi = {
+  list: (params?: Record<string, string>) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return fetchApi<{ data: ProxyGroup[]; pagination: { page: number; per_page: number; total: number; total_pages: number } }>(`/proxy-groups${qs}`);
+  },
+  get: (id: string) => fetchApi<{ data: ProxyGroup }>(`/proxy-groups/${id}`),
+  create: (data: Record<string, unknown>) => fetchApi<{ data: ProxyGroup }>(`/proxy-groups`, { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: Record<string, unknown>) => fetchApi<{ data: ProxyGroup }>(`/proxy-groups/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  delete: (id: string) => fetchApi<{ ok: boolean }>(`/proxy-groups/${id}`, { method: 'DELETE' }),
 };

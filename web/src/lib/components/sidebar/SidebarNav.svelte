@@ -8,6 +8,7 @@
     Terminal,
     Settings,
     Gauge,
+    Globe,
   } from '@lucide/svelte';
 
   let { onclose }: { onclose?: () => void } = $props();
@@ -15,6 +16,7 @@
   const platformItems = [
     { href: '/', label: 'Dashboard', icon: Home },
     { href: '/providers', label: 'Providers', icon: Server },
+    { href: '/proxy-pools', label: 'Proxy Pools', icon: Globe },
     { href: '/combos', label: 'Combos', icon: Layers },
     { href: '/quota', label: 'Quota', icon: Gauge },
     { href: '/logs', label: 'Logs', icon: Terminal },

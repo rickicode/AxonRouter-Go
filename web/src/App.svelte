@@ -18,7 +18,7 @@
   import Logs from './pages/Logs.svelte';
   import Settings from './pages/Settings.svelte';
   import Quota from './pages/Quota.svelte';
-
+  import ProxyPools from './pages/ProxyPools.svelte';
   let cleanup: (() => void) | undefined;
 
   onMount(() => {
@@ -35,6 +35,7 @@
       logs: 'Logs',
       quota: 'Quota',
       settings: 'Settings',
+      'proxy-pools': 'Proxy Pools',
     };
     return labels[segment] ?? segment.charAt(0).toUpperCase() + segment.slice(1);
   }
@@ -69,6 +70,9 @@
 
     // /settings → Settings
     if (segments[0] === 'settings') return { component: Settings, params: {} };
+
+    // /proxy-pools → ProxyPools
+    if (segments[0] === 'proxy-pools' && segments.length === 1) return { component: ProxyPools, params: {} };
 
     // Fallback
     return { component: Dashboard, params: {} };
