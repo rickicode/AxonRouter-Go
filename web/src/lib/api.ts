@@ -254,7 +254,7 @@ export const connectionsApi = {
     ),
 
   oauthStatus: (id: string) =>
-    fetchApi<{ connected: boolean }>(
+    fetchApi<{ connected: boolean; name?: string }>(
       `/connections/${id}/oauth/status`
     ),
 

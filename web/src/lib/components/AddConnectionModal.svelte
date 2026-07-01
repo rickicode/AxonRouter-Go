@@ -188,7 +188,8 @@
     }
 
     try {
-      const name = connectionName.trim() || defaultName();
+      // Auto-generate name like OmniRoute — backend will update with email after OAuth completes
+      const name = `OAuth ${meta?.displayName ?? providerId}`;
       const conn = await connectionsApi.create(providerId, {
         name,
         auth_type: 'oauth',
@@ -231,8 +232,9 @@
           oauthPolling = false;
           oauthPopup?.close();
           oauthPopup = null;
-          oauthStatusText = 'OAuth connected.';
-          toast.success('OAuth connected successfully');
+          const accountName = status.name || (meta?.displayName ?? providerId);
+          oauthStatusText = `Connected as ${accountName}`;
+          toast.success(`OAuth connected: ${accountName}`);
           step = 'done';
           onCreated?.();
           return;
@@ -315,7 +317,7 @@
           </div>
         {/if}
 
-        {#if mode === 'single'}
+        {#if !isOAuth && mode === 'single'}
           <div class="flex flex-col gap-1.5">
             <Label class="text-sm font-medium">Connection name</Label>
             <Input bind:value={connectionName} placeholder={defaultName()} class="h-9 text-sm" />
@@ -475,7 +477,9 @@
       </Dialog.Footer>
     {:else}
       <Dialog.Header>
-        <Dialog.Title class="text-lg font-semibold">Connection added</Dialog.Title>
+        <Dialog.Title class="text-lg font-semibold">
+          {isOAuth ? 'Connected' : 'Connection added'}
+        </Dialog.Title>
       </Dialog.Header>
 
       <div class="flex flex-col items-center gap-3 py-4">
@@ -484,7 +488,7 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
           </svg>
         </div>
-        <p class="text-sm text-muted-foreground">Connection is ready to use.</p>
+        <p class="text-sm text-muted-foreground">{oauthStatusText || 'Connection is ready to use.'}</p>
       </div>
 
       <Dialog.Footer>

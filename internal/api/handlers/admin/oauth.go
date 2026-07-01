@@ -86,6 +86,10 @@ func (h *OAuthHandler) InitiateOAuth(c *gin.Context) {
 					providerSpecific = sql.NullString{String: string(b), Valid: true}
 				}
 			}
+			// Update name with email if available (like OmniRoute auto-naming)
+			if creds.Email != "" {
+				h.db.Exec(`UPDATE connections SET name = ? WHERE id = ? AND name LIKE 'OAuth %'`, creds.Email, connID)
+			}
 			_, err := h.db.Exec(`
 				UPDATE connections SET
 					oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?,
@@ -114,13 +118,14 @@ func (h *OAuthHandler) InitiateOAuth(c *gin.Context) {
 func (h *OAuthHandler) OAuthStatus(c *gin.Context) {
 	connID := c.Param("id")
 	var oauthToken sql.NullString
-	err := h.db.QueryRow(`SELECT oauth_token FROM connections WHERE id = ?`, connID).Scan(&oauthToken)
+	var name string
+	err := h.db.QueryRow(`SELECT COALESCE(oauth_token, ''), name FROM connections WHERE id = ?`, connID).Scan(&oauthToken, &name)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
 		return
 	}
 	connected := oauthToken.Valid && oauthToken.String != ""
-	c.JSON(http.StatusOK, gin.H{"connected": connected})
+	c.JSON(http.StatusOK, gin.H{"connected": connected, "name": name})
 }
 
 // SubmitOAuthCallback lets remote dashboard users paste the localhost callback URL.

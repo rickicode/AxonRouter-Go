@@ -204,16 +204,9 @@ func (h *Handler) refreshOAuthToken(ctx context.Context, conn *Connection, provi
 		return fmt.Errorf("auth manager not configured")
 	}
 
-	// Map provider prefix to auth ProviderType
-	var providerType auth.ProviderType
-	switch provider {
-	case "cx":
-		providerType = auth.ProviderCodex
-	case "ag":
-		providerType = auth.ProviderAntigravity
-	case "kiro":
-		providerType = auth.ProviderKiro
-	default:
+	// Map provider prefix to auth ProviderType (constants match DB IDs)
+	providerType := auth.ProviderType(provider)
+	if _, ok := h.authMgr.GetService(providerType); !ok {
 		return fmt.Errorf("oauth not supported for provider: %s", provider)
 	}
 

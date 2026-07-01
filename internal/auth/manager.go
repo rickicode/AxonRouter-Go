@@ -16,8 +16,8 @@ import (
 type ProviderType string
 
 const (
-	ProviderCodex       ProviderType = "codex"
-	ProviderAntigravity ProviderType = "antigravity"
+	ProviderCodex       ProviderType = "cx"
+	ProviderAntigravity ProviderType = "ag"
 	ProviderKiro        ProviderType = "kiro"
 )
 
@@ -60,8 +60,8 @@ type OAuthService interface {
 
 // Manager coordinates authentication across providers.
 type Manager struct {
-	mu          sync.RWMutex
-	services    map[ProviderType]OAuthService
+	mu           sync.RWMutex
+	services     map[ProviderType]OAuthService
 	refreshGroup singleflight.Group
 }
 
