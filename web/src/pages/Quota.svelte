@@ -1,31 +1,91 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import {
-    quotaData,
+    quotaItems,
+    quotaTotal,
+    quotaPage,
+    quotaTotalPages,
     quotaLoading,
     quotaError,
+    quotaSummary,
     loadQuota,
+    loadQuotaSummary,
     refreshConnectionQuota,
   } from '$lib/stores';
-  import type { QuotaItem, ConnectionQuota, ProviderQuota } from '$lib/api';
-  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
+  import type { QuotaCacheEntry, QuotaProviderSummary } from '$lib/api';
+  import { quotaApi } from '$lib/api';
+  import { Card, CardContent } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
-  import { RefreshCw, Gauge, AlertCircle, Clock, User, Building2, Zap } from '@lucide/svelte';
+  import { Input } from '$lib/components/ui/input';
+  import {
+    RefreshCw, Gauge, AlertCircle, Clock, Search, ChevronLeft, ChevronRight,
+    Filter, X, Zap, Infinity, AlertTriangle, CheckCircle2, HelpCircle
+  } from '@lucide/svelte';
 
-  let refreshAllLoading = $state(false);
-  let intervalId: ReturnType<typeof setInterval> | undefined;
+  // Filter state
+  let searchQuery = $state('');
+  let filterProvider = $state('');
+  let filterStatus = $state('');
+  let searchTimeout: ReturnType<typeof setTimeout> | undefined;
+
+  // Per-row refresh state
   let refreshingIds = $state<Set<string>>(new Set());
+
+  const perPage = 50;
+
+  const statusOptions = [
+    { value: '', label: 'All Status' },
+    { value: 'ok', label: 'OK' },
+    { value: 'exhausted', label: 'Exhausted' },
+    { value: 'unlimited', label: 'Unlimited' },
+    { value: 'error', label: 'Error' },
+    { value: 'no_data', label: 'No Data' },
+  ];
 
   onMount(() => {
     document.title = 'Quota — AxonRouter';
-    loadQuota();
-    intervalId = setInterval(loadQuota, 300_000);
+    loadQuota({ page: 1, per_page: perPage });
+    loadQuotaSummary();
   });
 
-  onDestroy(() => {
-    if (intervalId) clearInterval(intervalId);
-  });
+  function applyFilters(page = 1) {
+    loadQuota({
+      provider: filterProvider || undefined,
+      search: searchQuery || undefined,
+      status: filterStatus || undefined,
+      page,
+      per_page: perPage,
+    });
+  }
+
+  function onSearchInput() {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => applyFilters(), 300);
+  }
+
+  function onProviderChange(val: string) {
+    filterProvider = val;
+    applyFilters();
+  }
+
+  function onStatusChange(val: string) {
+    filterStatus = val;
+    applyFilters();
+  }
+
+  function clearFilters() {
+    searchQuery = '';
+    filterProvider = '';
+    filterStatus = '';
+    applyFilters();
+  }
+
+  function goToPage(page: number) {
+    if (page >= 1 && page <= $quotaTotalPages) {
+      applyFilters(page);
+    }
+  }
 
   function isRefreshing(connId: string): boolean {
     return refreshingIds.has(connId);
@@ -35,6 +95,29 @@
     refreshingIds = new Set(refreshingIds);
     if (val) refreshingIds.add(connId);
     else refreshingIds.delete(connId);
+  }
+
+  async function handleRefreshOne(connId: string) {
+    setRefreshing(connId, true);
+    await refreshConnectionQuota(connId);
+    setRefreshing(connId, false);
+    loadQuotaSummary();
+  }
+
+  async function handleRefreshAll() {
+    const items = $quotaItems;
+    for (let i = 0; i < items.length; i += 3) {
+      const batch = items.slice(i, i + 3);
+      await Promise.allSettled(
+        batch.map(c => {
+          setRefreshing(c.connection_id, true);
+          return refreshConnectionQuota(c.connection_id).finally(() =>
+            setRefreshing(c.connection_id, false)
+          );
+        })
+      );
+    }
+    loadQuotaSummary();
   }
 
   function quotaTextColor(pct: number): string {
@@ -49,24 +132,26 @@
     return 'bg-rose-500';
   }
 
-  function getPlanBadgeClass(plan: string): string {
-    const p = plan.toLowerCase();
-    if (p.includes('free') || p.includes('starter'))
-      return 'border-zinc-500/40 bg-zinc-500/10 text-zinc-300';
-    if (p.includes('plus') || p.includes('pro'))
-      return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300';
-    if (p.includes('ultra') || p.includes('premium') || p.includes('max'))
-      return 'border-violet-500/40 bg-violet-500/10 text-violet-300';
-    if (p.includes('enterprise') || p.includes('business') || p.includes('team'))
-      return 'border-amber-500/40 bg-amber-500/10 text-amber-300';
-    return 'border-zinc-500/35 bg-zinc-500/10 text-zinc-300';
+  function statusBadge(status: string) {
+    switch (status) {
+      case 'ok': return { label: 'OK', cls: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300', icon: CheckCircle2 };
+      case 'exhausted': return { label: 'Exhausted', cls: 'border-rose-500/40 bg-rose-500/10 text-rose-300', icon: AlertTriangle };
+      case 'unlimited': return { label: 'Unlimited', cls: 'border-violet-500/40 bg-violet-500/10 text-violet-300', icon: Infinity };
+      case 'error': return { label: 'Error', cls: 'border-rose-500/40 bg-rose-500/10 text-rose-300', icon: AlertCircle };
+      case 'no_data': return { label: 'No Data', cls: 'border-zinc-500/40 bg-zinc-500/10 text-zinc-400', icon: HelpCircle };
+      default: return { label: status, cls: 'border-zinc-500/40 bg-zinc-500/10 text-zinc-400', icon: HelpCircle };
+    }
   }
 
-  function getPlanIcon(plan: string) {
-    const p = plan.toLowerCase();
-    if (p.includes('free') || p.includes('starter')) return User;
-    if (p.includes('enterprise') || p.includes('business') || p.includes('team')) return Building2;
-    return Zap;
+  function formatTimestamp(ms: number): string {
+    if (!ms) return '';
+    const d = new Date(ms);
+    const now = new Date();
+    const diffMs = now.getTime() - d.getTime();
+    if (diffMs < 60_000) return 'just now';
+    if (diffMs < 3_600_000) return `${Math.floor(diffMs / 60_000)}m ago`;
+    if (diffMs < 86_400_000) return `${Math.floor(diffMs / 3_600_000)}h ago`;
+    return d.toLocaleDateString();
   }
 
   function formatResetTime(iso?: string): string {
@@ -75,13 +160,10 @@
       const date = new Date(iso);
       const now = new Date();
       const diffMs = date.getTime() - now.getTime();
-      if (diffMs <= 0) return 'resetting soon';
+      if (diffMs <= 0) return 'soon';
       const hours = Math.floor(diffMs / 3_600_000);
       const mins = Math.floor((diffMs % 3_600_000) / 60_000);
-      if (hours > 24) {
-        const days = Math.floor(hours / 24);
-        return `${days}d ${hours % 24}h`;
-      }
+      if (hours > 24) return `${Math.floor(hours / 24)}d`;
       if (hours > 0) return `${hours}h ${mins}m`;
       return `${mins}m`;
     } catch {
@@ -89,291 +171,280 @@
     }
   }
 
-  function formatTimestamp(ms: number): string {
-    if (!ms) return '';
-    return new Date(ms).toLocaleTimeString();
+  // Build a compact quota summary string per connection
+  function quotaSummaryText(item: QuotaCacheEntry): string {
+    if (item.error) return item.error;
+    if (!item.quotas.length) return 'No data';
+    const nonUnlimited = item.quotas.filter(q => !q.unlimited);
+    if (nonUnlimited.length === 0) return 'All unlimited';
+    const min = Math.min(...nonUnlimited.map(q => q.remaining_pct));
+    return `${min.toFixed(0)}% min remaining`;
   }
 
-  async function handleRefreshAll() {
-    refreshAllLoading = true;
-    const allConns = $quotaData.flatMap(p => p.connections);
-    for (let i = 0; i < allConns.length; i += 3) {
-      const batch = allConns.slice(i, i + 3);
-      await Promise.allSettled(
-        batch.map(c => {
-          setRefreshing(c.connection_id, true);
-          return refreshConnectionQuota(c.connection_id).finally(() =>
-            setRefreshing(c.connection_id, false)
-          );
-        })
-      );
+  // Unique providers from summary
+  let providerOptions = $derived(() => {
+    const opts = [{ value: '', label: 'All Providers' }];
+    for (const p of $quotaSummary) {
+      opts.push({ value: p.provider_id, label: p.display_name });
     }
-    refreshAllLoading = false;
-  }
+    return opts;
+  });
 
-  async function handleRefreshOne(connId: string) {
-    setRefreshing(connId, true);
-    await refreshConnectionQuota(connId);
-    setRefreshing(connId, false);
-  }
-
-  function groupByFamily(quotas: QuotaItem[]): Map<string, QuotaItem[]> {
-    const groups = new Map<string, QuotaItem[]>();
-    for (const q of quotas) {
-      const family = q.family || 'other';
-      if (!groups.has(family)) groups.set(family, []);
-      groups.get(family)!.push(q);
-    }
-    return groups;
-  }
-
-  function familyLabel(family: string): string {
-    switch (family) {
-      case 'gemini': return 'Gemini';
-      case 'claude': return 'Claude';
-      default: return 'Other';
-    }
-  }
+  const hasActiveFilters = $derived(filterProvider || filterStatus || searchQuery);
 </script>
 
-<div class="flex flex-1 flex-col gap-5 p-4">
+<div class="flex flex-1 flex-col gap-4 p-4 max-w-[1400px]">
   <!-- Header -->
   <div class="flex items-center justify-between">
     <div>
       <h1 class="text-lg font-semibold">Quota Tracker</h1>
-      <p class="text-xs text-muted-foreground">Live upstream quota for OAuth connections</p>
+      <p class="text-xs text-muted-foreground">Cached upstream quota data · updated by background scheduler</p>
     </div>
-    <Button
-      variant="outline"
-      size="sm"
-      onclick={handleRefreshAll}
-      disabled={refreshAllLoading || $quotaLoading}
-      class="h-7 gap-1.5 text-xs cursor-pointer"
-    >
-      <RefreshCw class="size-3 {refreshAllLoading ? 'animate-spin' : ''}" />
-      {refreshAllLoading ? 'Refreshing…' : 'Refresh All'}
-    </Button>
+    <div class="flex items-center gap-2">
+      {#if hasActiveFilters}
+        <Button variant="ghost" size="sm" onclick={clearFilters} class="h-7 gap-1 text-xs cursor-pointer">
+          <X class="size-3" /> Clear
+        </Button>
+      {/if}
+      <Button
+        variant="outline"
+        size="sm"
+        onclick={handleRefreshAll}
+        disabled={$quotaLoading || $quotaItems.length === 0}
+        class="h-7 gap-1.5 text-xs cursor-pointer"
+      >
+        <RefreshCw class="size-3" />
+        Refresh Page
+      </Button>
+    </div>
   </div>
 
-  {#if $quotaLoading && $quotaData.length === 0}
-    <div class="flex flex-col gap-4">
-      {#each [1, 2] as _}
-        <Card class="shadow-card">
-          <CardHeader class="pb-2 pt-3 px-4">
-            <div class="h-4 w-28 bg-muted animate-pulse rounded"></div>
-          </CardHeader>
-          <CardContent class="px-4 pb-3 space-y-2">
-            <div class="h-12 bg-muted animate-pulse rounded"></div>
-          </CardContent>
-        </Card>
+  <!-- Summary cards -->
+  {#if $quotaSummary.length > 0}
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2">
+      {#each $quotaSummary as ps}
+        {@const exhausted = ps.statuses['exhausted'] || 0}
+        {@const errors = ps.statuses['error'] || 0}
+        {@const ok = (ps.statuses['ok'] || 0) + (ps.statuses['unlimited'] || 0)}
+        <button
+          class="flex flex-col gap-1 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-left transition-colors hover:bg-zinc-800/50 cursor-pointer {filterProvider === ps.provider_id ? 'ring-1 ring-primary/50 border-primary/30' : ''}"
+          onclick={() => onProviderChange(filterProvider === ps.provider_id ? '' : ps.provider_id)}
+        >
+          <span class="text-[11px] font-medium text-zinc-300 truncate">{ps.display_name}</span>
+          <div class="flex items-center gap-2 text-[10px]">
+            <span class="text-emerald-400">{ok}</span>
+            {#if exhausted > 0}
+              <span class="text-rose-400">{exhausted}</span>
+            {/if}
+            {#if errors > 0}
+              <span class="text-amber-400">{errors}</span>
+            {/if}
+            <span class="text-zinc-500">/ {ps.total}</span>
+          </div>
+        </button>
       {/each}
     </div>
-  {:else if $quotaError && $quotaData.length === 0}
+  {/if}
+
+  <!-- Filters -->
+  <div class="flex flex-wrap items-center gap-2">
+    <div class="relative flex-1 min-w-[200px] max-w-sm">
+      <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+      <Input
+        bind:value={searchQuery}
+        oninput={onSearchInput}
+        placeholder="Search connections…"
+        class="h-8 pl-8 text-xs"
+      />
+    </div>
+    <select
+      class="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground cursor-pointer"
+      value={filterProvider}
+      onchange={(e) => onProviderChange((e.target as HTMLSelectElement).value)}
+    >
+      {#each providerOptions() as opt}
+        <option value={opt.value}>{opt.label}</option>
+      {/each}
+    </select>
+    <select
+      class="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground cursor-pointer"
+      value={filterStatus}
+      onchange={(e) => onStatusChange((e.target as HTMLSelectElement).value)}
+    >
+      {#each statusOptions as opt}
+        <option value={opt.value}>{opt.label}</option>
+      {/each}
+    </select>
+  </div>
+
+  <!-- Content -->
+  {#if $quotaLoading && $quotaItems.length === 0}
+    <div class="flex flex-col gap-2">
+      {#each [1, 2, 3, 4, 5] as _}
+        <div class="h-12 rounded-lg bg-zinc-900 animate-pulse"></div>
+      {/each}
+    </div>
+  {:else if $quotaError && $quotaItems.length === 0}
     <Card class="shadow-card">
       <CardContent class="flex flex-col items-center justify-center py-10 gap-2">
         <AlertCircle class="size-6 text-rose-400" />
         <p class="text-xs text-muted-foreground">{$quotaError}</p>
-        <Button variant="outline" size="sm" onclick={() => loadQuota()} class="h-7 text-xs cursor-pointer">Retry</Button>
+        <Button variant="outline" size="sm" onclick={() => applyFilters()} class="h-7 text-xs cursor-pointer">Retry</Button>
       </CardContent>
     </Card>
-  {:else if $quotaData.length === 0}
+  {:else if $quotaItems.length === 0}
     <Card class="shadow-card">
       <CardContent class="flex flex-col items-center justify-center py-10 gap-2">
         <Gauge class="size-6 text-muted-foreground" />
-        <p class="text-xs text-muted-foreground">No OAuth connections found.</p>
+        <p class="text-xs text-muted-foreground">
+          {hasActiveFilters ? 'No connections match your filters.' : 'No quota data yet. The scheduler will populate this on its next run.'}
+        </p>
+        {#if hasActiveFilters}
+          <Button variant="outline" size="sm" onclick={clearFilters} class="h-7 text-xs cursor-pointer">Clear Filters</Button>
+        {/if}
       </CardContent>
     </Card>
   {:else}
-    {#each $quotaData as provider (provider.provider_id)}
-      <div class="space-y-2.5">
-        <!-- Provider header -->
-        <div class="flex items-center gap-2">
-          <span class="size-2.5 rounded-full" style="background-color: {provider.color}"></span>
-          <h2 class="text-sm font-semibold">{provider.display_name}</h2>
-          <Badge variant="secondary" class="h-4 text-[10px] font-mono rounded-sm px-1.5">
-            {provider.connections.length}
-          </Badge>
-        </div>
-
-        <!-- Connection cards -->
-        <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-          {#each provider.connections as conn (conn.connection_id)}
-            {@const refreshing = isRefreshing(conn.connection_id)}
-            <Card class="shadow-card transition-all hover:bg-accent/5 {refreshing ? 'ring-1 ring-primary/30' : ''}">
-              <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-1 pt-3 px-3">
-                <div class="min-w-0 flex items-center gap-2">
-                  <CardTitle class="text-xs font-medium truncate">{conn.connection_name}</CardTitle>
-                  {#if conn.plan}
-                    {@const PlanIcon = getPlanIcon(conn.plan)}
-                    <span class="inline-flex items-center gap-1 rounded border px-1.5 py-px {getPlanBadgeClass(conn.plan)}">
-                      <PlanIcon class="size-2.5" />
-                      <span class="text-[9px] font-bold uppercase tracking-wider">{conn.plan}</span>
-                    </span>
-                  {/if}
+    <!-- Table -->
+    <div class="rounded-lg border border-zinc-800 overflow-hidden">
+      <table class="w-full text-xs">
+        <thead>
+          <tr class="border-b border-zinc-800 bg-zinc-900/80">
+            <th class="text-left px-3 py-2 font-medium text-zinc-400">Connection</th>
+            <th class="text-left px-3 py-2 font-medium text-zinc-400">Provider</th>
+            <th class="text-left px-3 py-2 font-medium text-zinc-400">Plan</th>
+            <th class="text-left px-3 py-2 font-medium text-zinc-400">Status</th>
+            <th class="text-left px-3 py-2 font-medium text-zinc-400">Quota</th>
+            <th class="text-left px-3 py-2 font-medium text-zinc-400">Updated</th>
+            <th class="text-right px-3 py-2 font-medium text-zinc-400 w-10"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each $quotaItems as item (item.id)}
+            {@const st = statusBadge(item.status)}
+            {@const stIcon = st.icon}
+            {@const refreshing = isRefreshing(item.connection_id)}
+            <tr class="border-b border-zinc-800/50 hover:bg-zinc-900/50 transition-colors {refreshing ? 'bg-primary/5' : ''}">
+              <!-- Connection name -->
+              <td class="px-3 py-2">
+                <span class="font-medium text-zinc-200 truncate max-w-[200px] block" title={item.connection_name}>
+                  {item.connection_name}
+                </span>
+              </td>
+              <!-- Provider -->
+              <td class="px-3 py-2">
+                <div class="flex items-center gap-1.5">
+                  <span class="size-2 rounded-full shrink-0" style="background-color: {item.color}"></span>
+                  <span class="text-zinc-300">{item.display_name}</span>
                 </div>
+              </td>
+              <!-- Plan -->
+              <td class="px-3 py-2">
+                {#if item.plan}
+                  <span class="text-zinc-400">{item.plan}</span>
+                {:else}
+                  <span class="text-zinc-600">—</span>
+                {/if}
+              </td>
+              <!-- Status -->
+              <td class="px-3 py-2">
+                <span class="inline-flex items-center gap-1 rounded border px-1.5 py-px {st.cls}">
+                  <stIcon class="size-2.5"></stIcon>
+                  <span class="font-semibold">{st.label}</span>
+                </span>
+              </td>
+              <!-- Quota summary -->
+              <td class="px-3 py-2">
+                {#if item.error}
+                  <span class="text-rose-400 truncate max-w-[250px] block" title={item.error}>{item.error}</span>
+                {:else if item.quotas.length === 0}
+                  <span class="text-zinc-600">No data</span>
+                {:else}
+                  <div class="flex flex-col gap-0.5">
+                    {#each item.quotas.slice(0, 3) as qi}
+                      <div class="flex items-center gap-2">
+                        <span class="text-zinc-500 w-16 truncate" title={qi.name}>{qi.name}</span>
+                        {#if qi.unlimited}
+                          <span class="text-emerald-400 text-[10px]">∞</span>
+                        {:else}
+                          <div class="flex-1 max-w-[80px]">
+                            <div class="h-1 rounded-full bg-zinc-800 overflow-hidden">
+                              <div
+                                class="h-full rounded-full transition-all duration-300 {quotaBarColor(qi.remaining_pct)}"
+                                style="width: {qi.remaining_pct}%"
+                              ></div>
+                            </div>
+                          </div>
+                          <span class="font-mono font-bold tabular-nums w-10 text-right {quotaTextColor(qi.remaining_pct)}">
+                            {qi.remaining_pct.toFixed(0)}%
+                          </span>
+                        {/if}
+                        {#if qi.reset_at}
+                          <span class="text-zinc-600 text-[9px]">
+                            <Clock class="size-2 inline" /> {formatResetTime(qi.reset_at)}
+                          </span>
+                        {/if}
+                      </div>
+                    {/each}
+                    {#if item.quotas.length > 3}
+                      <span class="text-zinc-600 text-[10px]">+{item.quotas.length - 3} more</span>
+                    {/if}
+                  </div>
+                {/if}
+              </td>
+              <!-- Updated -->
+              <td class="px-3 py-2 text-zinc-500">
+                {formatTimestamp(item.fetched_at)}
+              </td>
+              <!-- Actions -->
+              <td class="px-3 py-2 text-right">
                 <Button
                   variant="ghost"
                   size="icon"
-                  class="size-6 shrink-0 cursor-pointer text-muted-foreground hover:text-foreground"
-                  onclick={() => handleRefreshOne(conn.connection_id)}
+                  class="size-6 cursor-pointer text-muted-foreground hover:text-foreground"
+                  onclick={() => handleRefreshOne(item.connection_id)}
                   disabled={refreshing}
-                  title="Refresh"
+                  title="Refresh this connection"
                 >
                   <RefreshCw class="size-3 {refreshing ? 'animate-spin' : ''}" />
                 </Button>
-              </CardHeader>
-              <CardContent class="px-3 pb-3 space-y-1.5">
-                {#if conn.error}
-                  <div class="flex items-start gap-1.5 rounded bg-rose-500/10 border border-rose-500/20 px-2 py-1.5">
-                    <AlertCircle class="size-3 text-rose-400 shrink-0 mt-0.5" />
-                    <p class="text-[10px] text-rose-300 leading-tight">{conn.error}</p>
-                  </div>
-                {:else if conn.message}
-                  <p class="text-[10px] text-muted-foreground">{conn.message}</p>
-                {:else if conn.quotas.length === 0}
-                  <p class="text-[10px] text-muted-foreground">No quota data.</p>
-                {:else}
-                  {#if provider.provider_id === 'cx'}
-                    <!-- Codex: percentage bars -->
-                    <div class="space-y-1.5">
-                      {#each conn.quotas as qi}
-                        <div class="space-y-0.5">
-                          <div class="flex items-center justify-between">
-                            <span class="text-[10px] text-zinc-400">{qi.name}</span>
-                            <span class="text-[11px] font-bold tabular-nums {quotaTextColor(qi.remaining_pct)}">
-                              {qi.remaining_pct.toFixed(1)}%
-                            </span>
-                          </div>
-                          <div class="h-1.5 rounded-full overflow-hidden bg-zinc-800">
-                            <div
-                              class="h-full rounded-full transition-all duration-500 {quotaBarColor(qi.remaining_pct)}"
-                              style="width: {qi.remaining_pct}%"
-                            ></div>
-                          </div>
-                          {#if qi.reset_at}
-                            <div class="flex items-center gap-1 text-[9px] text-zinc-600">
-                              <Clock class="size-2.5" />
-                              <span>{formatResetTime(qi.reset_at)}</span>
-                            </div>
-                          {/if}
-                        </div>
-                      {/each}
-                    </div>
-
-                  {:else if provider.provider_id === 'ag'}
-                    <!-- Antigravity: per-model grid grouped by family -->
-                    {@const families = groupByFamily(conn.quotas)}
-                    <div class="space-y-2">
-                      {#each [...families.entries()] as [family, items]}
-                        {@const familyRemaining = Math.max(...items.map(q => q.remaining_pct))}
-                        <div>
-                          <div class="flex items-center justify-between mb-1 px-0.5">
-                            <span class="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
-                              {familyLabel(family)}
-                            </span>
-                            <span class="text-[9px] font-bold tabular-nums {quotaTextColor(familyRemaining)}">
-                              {familyRemaining.toFixed(0)}%
-                            </span>
-                          </div>
-                          <div class="grid grid-cols-2 gap-x-2.5 gap-y-1">
-                            {#each items as qi}
-                              <div class="min-w-0">
-                                <div class="flex items-center justify-between gap-1 mb-px">
-                                  <span class="text-[9px] text-zinc-500 truncate" title={qi.model_key || qi.name}>
-                                    {qi.model_key || qi.name}
-                                  </span>
-                                  {#if qi.unlimited}
-                                    <span class="text-[9px] text-emerald-400 shrink-0">∞</span>
-                                  {:else}
-                                    <span class="text-[9px] font-bold tabular-nums shrink-0 {quotaTextColor(qi.remaining_pct)}">
-                                      {qi.remaining_pct.toFixed(0)}%
-                                    </span>
-                                  {/if}
-                                </div>
-                                {#if !qi.unlimited}
-                                  <div class="h-1 rounded-full bg-zinc-800 overflow-hidden">
-                                    <div
-                                      class="h-full rounded-full transition-all duration-500 {quotaBarColor(qi.remaining_pct)}"
-                                      style="width: {qi.remaining_pct}%"
-                                    ></div>
-                                  </div>
-                                {/if}
-                              </div>
-                            {/each}
-                          </div>
-                        </div>
-                      {/each}
-                    </div>
-
-                  {:else if provider.provider_id === 'kiro'}
-                    <!-- Kiro: credit-based -->
-                    <div class="space-y-1.5">
-                      {#each conn.quotas as qi}
-                        {@const usedPct = qi.total > 0 ? (qi.used / qi.total) * 100 : 0}
-                        {@const remainingPct = 100 - usedPct}
-                        <div class="space-y-0.5">
-                          <div class="flex items-center justify-between">
-                            <span class="text-[10px] text-zinc-400 capitalize">{qi.name}</span>
-                            <div class="flex items-center gap-1.5">
-                              {#if qi.unlimited}
-                                <span class="text-[10px] text-emerald-400">unlimited</span>
-                              {:else}
-                                <span class="text-[10px] font-bold tabular-nums {quotaTextColor(remainingPct)}">
-                                  {(qi.total - qi.used).toFixed(0)}
-                                </span>
-                                <span class="text-[9px] text-zinc-600">/ {qi.total.toFixed(0)}</span>
-                              {/if}
-                            </div>
-                          </div>
-                          {#if !qi.unlimited}
-                            <div class="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
-                              <div
-                                class="h-full rounded-full transition-all duration-500 {quotaBarColor(remainingPct)}"
-                                style="width: {usedPct}%"
-                              ></div>
-                            </div>
-                          {/if}
-                          {#if qi.reset_at}
-                            <span class="text-[9px] text-zinc-600">resets {formatResetTime(qi.reset_at)}</span>
-                          {/if}
-                        </div>
-                      {/each}
-                    </div>
-
-                  {:else}
-                    <!-- Generic fallback -->
-                    <div class="space-y-1.5">
-                      {#each conn.quotas as qi}
-                        {@const usedPct = qi.total > 0 ? (qi.used / qi.total) * 100 : 0}
-                        <div class="space-y-0.5">
-                          <div class="flex items-center justify-between">
-                            <span class="text-[10px] text-zinc-400 truncate">{qi.name}</span>
-                            <span class="text-[10px] font-bold tabular-nums {quotaTextColor(qi.remaining_pct)}">
-                              {qi.remaining_pct.toFixed(1)}%
-                            </span>
-                          </div>
-                          <div class="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
-                            <div
-                              class="h-full rounded-full transition-all duration-500 {quotaBarColor(qi.remaining_pct)}"
-                              style="width: {usedPct}%"
-                            ></div>
-                          </div>
-                        </div>
-                      {/each}
-                    </div>
-                  {/if}
-                {/if}
-
-                {#if conn.fetched_at}
-                  <p class="text-[9px] text-zinc-600 pt-0.5">
-                    fetched {formatTimestamp(conn.fetched_at)}
-                  </p>
-                {/if}
-              </CardContent>
-            </Card>
+              </td>
+            </tr>
           {/each}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Pagination -->
+    {#if $quotaTotalPages > 1}
+      <div class="flex items-center justify-between">
+        <p class="text-xs text-muted-foreground">
+          Showing {($quotaPage - 1) * perPage + 1}–{Math.min($quotaPage * perPage, $quotaTotal)} of {$quotaTotal}
+        </p>
+        <div class="flex items-center gap-1">
+          <Button
+            variant="outline"
+            size="icon"
+            class="size-7 cursor-pointer"
+            disabled={$quotaPage <= 1}
+            onclick={() => goToPage($quotaPage - 1)}
+          >
+            <ChevronLeft class="size-3.5" />
+          </Button>
+          <span class="text-xs text-zinc-400 px-2">
+            {$quotaPage} / {$quotaTotalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="icon"
+            class="size-7 cursor-pointer"
+            disabled={$quotaPage >= $quotaTotalPages}
+            onclick={() => goToPage($quotaPage + 1)}
+          >
+            <ChevronRight class="size-3.5" />
+          </Button>
         </div>
       </div>
-    {/each}
+    {/if}
   {/if}
 </div>

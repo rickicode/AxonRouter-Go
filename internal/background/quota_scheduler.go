@@ -186,7 +186,7 @@ func (qs *QuotaSchedulerDB) check() {
 	}
 }
 
-// checkQuotas fetches quota from upstream provider APIs and updates connection status.
+// checkQuotas fetches quota from upstream provider APIs, saves to DB cache, and updates connection status.
 func (qs *QuotaSchedulerDB) checkQuotas() {
 	results, err := quota.FetchAllQuota(qs.db)
 	if err != nil {
@@ -194,77 +194,20 @@ func (qs *QuotaSchedulerDB) checkQuotas() {
 		return
 	}
 
+	// Save to quota_cache table for the UI
+	quota.SaveQuotaCache(qs.db, results)
+
+	// Update connection statuses based on quota data
 	statusChanged := false
 	for _, provider := range results {
 		for _, conn := range provider.Connections {
-			if conn.Error != "" {
-				continue
-			}
-			newStatus := evaluateQuotaStatus(conn.Quotas)
-			qs.applyQuotaStatus(conn.ConnectionID, newStatus, &statusChanged)
+			quota.UpdateConnectionQuotaStatus(qs.db, qs.store, conn.ConnectionID, conn.Quotas, conn.Error, &statusChanged)
 		}
 	}
 
 	if statusChanged {
 		qs.elig.Update(qs.store)
 	}
-}
-
-// evaluateQuotaStatus determines the connection status from quota items.
-// Returns "ready" if all non-unlimited quotas have remaining > 0,
-// "quota_exhausted" if any non-unlimited quota is at 0%.
-func evaluateQuotaStatus(quotas []quota.QuotaItem) string {
-	if len(quotas) == 0 {
-		return "ready"
-	}
-	hasExhausted := false
-	for _, q := range quotas {
-		if q.Unlimited {
-			continue
-		}
-		if q.RemainingPct <= 0 {
-			hasExhausted = true
-		}
-	}
-	if hasExhausted {
-		return "quota_exhausted"
-	}
-	return "ready"
-}
-
-// applyQuotaStatus updates DB and connstate if status changed.
-func (qs *QuotaSchedulerDB) applyQuotaStatus(connID, newStatus string, changed *bool) {
-	// Get current DB status
-	var currentStatus string
-	err := qs.db.QueryRow(`SELECT status FROM connections WHERE id = ?`, connID).Scan(&currentStatus)
-	if err != nil {
-		return
-	}
-
-	// Only update if status actually changed
-	if currentStatus == newStatus {
-		return
-	}
-
-	// Skip if connection is in a manual-only state (don't override user actions)
-	switch currentStatus {
-	case "disabled", "auth_failed", "suspended", "balance_empty":
-		return
-	}
-
-	_, err = qs.db.Exec(`UPDATE connections SET status = ?, updated_at = ? WHERE id = ?`,
-		newStatus, time.Now().Unix(), connID)
-	if err != nil {
-		log.Printf("background: failed to update connection %s status: %v", connID, err)
-		return
-	}
-
-	// Sync connstate
-	if cs := qs.store.Get(connID); cs != nil {
-		cs.SetStatus(connstate.Status(newStatus), "")
-	}
-	*changed = true
-	log.Printf("background: connection %s status: %s → %s", connID, currentStatus, newStatus)
 }
 
 // Stop signals the scheduler to stop.

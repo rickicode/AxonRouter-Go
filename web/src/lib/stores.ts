@@ -2,7 +2,7 @@
 
 import { writable, derived } from 'svelte/store';
 import { providersApi, connectionsApi, combosApi, logsApi, dashboardApi, quotaApi, fetchApi } from './api';
-import type { Provider, Connection, Combo, RequestLog, ProviderQuota, ConnectionQuota } from './api';
+import type { Provider, Connection, Combo, RequestLog, QuotaCacheEntry, QuotaCacheResponse, QuotaProviderSummary, ConnectionQuota } from './api';
 import { toast } from 'svelte-sonner';
 function friendlyError(err: unknown, fallback: string): string {
   const msg = err instanceof Error ? err.message : fallback;
@@ -375,17 +375,24 @@ export function getStatusLabel(status: string): string {
   }
 }
 
-// Quota
-export const quotaData = writable<ProviderQuota[]>([]);
+// Quota (cached from DB)
+export const quotaItems = writable<QuotaCacheEntry[]>([]);
+export const quotaTotal = writable(0);
+export const quotaPage = writable(1);
+export const quotaTotalPages = writable(1);
 export const quotaLoading = writable(false);
 export const quotaError = writable<string | null>(null);
+export const quotaSummary = writable<QuotaProviderSummary[]>([]);
 
-export async function loadQuota() {
+export async function loadQuota(params?: { provider?: string; search?: string; status?: string; page?: number; per_page?: number }) {
   quotaLoading.set(true);
   quotaError.set(null);
   try {
-    const data = await quotaApi.list();
-    quotaData.set(data);
+    const data = await quotaApi.list(params);
+    quotaItems.set(data.items || []);
+    quotaTotal.set(data.total);
+    quotaPage.set(data.page);
+    quotaTotalPages.set(data.total_pages);
   } catch (err) {
     quotaError.set(friendlyError(err, 'Failed to load quota'));
     toast.error('Failed to load quota data');
@@ -394,16 +401,25 @@ export async function loadQuota() {
   }
 }
 
+export async function loadQuotaSummary() {
+  try {
+    const data = await quotaApi.summary();
+    quotaSummary.set(data.providers || []);
+  } catch {
+    // silent — summary is optional enhancement
+  }
+}
+
 export async function refreshConnectionQuota(connId: string): Promise<ConnectionQuota | null> {
   try {
     const result = await quotaApi.refresh(connId);
-    quotaData.update(providers =>
-      providers.map(p => ({
-        ...p,
-        connections: p.connections.map(c =>
-          c.connection_id === connId ? result : c
-        ),
-      }))
+    // Update the item in the cache list
+    quotaItems.update(items =>
+      items.map(item =>
+        item.connection_id === connId
+          ? { ...item, quotas: result.quotas, plan: result.plan || '', error: result.error || '', fetched_at: result.fetched_at, status: result.error ? 'error' : (result.quotas.length ? 'ok' : 'no_data') }
+          : item
+      )
     );
     toast.success('Quota refreshed');
     return result;

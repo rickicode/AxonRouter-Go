@@ -137,6 +137,16 @@ func parseAntigravityQuotas(data map[string]any) []QuotaItem {
 		return nil
 	}
 
+	// Only track quota for models that matter for usage differentiation.
+	// Skip noise models like tab_flash_lite_preview, gpt-oss, etc.
+	keepModels := map[string]bool{
+		"gemini-3.1-flash":  true,
+		"gemini-3.5-flash":  true,
+		"gemini-2.5-pro":    true,
+		"gemini-2.5-flash":  true,
+		"gemini-2.0-flash":  true,
+	}
+
 	var quotas []QuotaItem
 	for rawModelKey, infoVal := range models {
 		info, ok := infoVal.(map[string]any)
@@ -159,6 +169,14 @@ func parseAntigravityQuotas(data map[string]any) []QuotaItem {
 			continue
 		}
 
+		// Filter: skip models not in the keep list, and skip known noise models
+		lower := strings.ToLower(modelKey)
+		if strings.Contains(lower, "tab_flash_lite") || strings.Contains(lower, "gpt-oss") {
+			continue
+		}
+		if !keepModels[modelKey] && !strings.Contains(lower, "claude") {
+			continue
+		}
 		remainingFraction := getNumberField(quotaInfo, "remainingFraction", "remaining_fraction")
 		resetAt := parseResetTimeString(quotaInfo)
 

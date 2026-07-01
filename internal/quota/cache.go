@@ -1,0 +1,250 @@
+package quota
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"log"
+	"strings"
+	"time"
+
+	"github.com/rickicode/AxonRouter-Go/internal/connstate"
+)
+
+// SaveQuotaCache persists fetched quota data to the quota_cache table.
+// Called by the background scheduler after each fetch cycle.
+func SaveQuotaCache(db *sql.DB, results []ProviderQuota) {
+	now := time.Now().Unix()
+	for _, provider := range results {
+		for _, conn := range provider.Connections {
+			status := evaluateCacheStatus(conn.Quotas, conn.Error)
+			quotasJSON, err := json.Marshal(conn.Quotas)
+			if err != nil {
+				quotasJSON = []byte("[]")
+			}
+
+			_, err = db.Exec(`
+				INSERT INTO quota_cache (id, connection_id, provider_type_id, connection_name, plan, quotas, status, error, fetched_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT(id) DO UPDATE SET
+					plan = excluded.plan,
+					quotas = excluded.quotas,
+					status = excluded.status,
+					error = excluded.error,
+					fetched_at = excluded.fetched_at,
+					updated_at = excluded.updated_at
+			`, conn.ConnectionID, conn.ConnectionID, provider.ProviderID, conn.ConnectionName,
+				conn.Plan, string(quotasJSON), status, conn.Error, conn.FetchedAt, now)
+			if err != nil {
+				log.Printf("quota cache: save error for %s: %v", conn.ConnectionID, err)
+			}
+		}
+	}
+}
+
+// evaluateCacheStatus determines the display status for the cache entry.
+func evaluateCacheStatus(quotas []QuotaItem, connError string) string {
+	if connError != "" {
+		return "error"
+	}
+	if len(quotas) == 0 {
+		return "no_data"
+	}
+	hasExhausted := false
+	allUnlimited := true
+	for _, q := range quotas {
+		if !q.Unlimited {
+			allUnlimited = false
+			if q.RemainingPct <= 0 {
+				hasExhausted = true
+			}
+		}
+	}
+	if allUnlimited {
+		return "unlimited"
+	}
+	if hasExhausted {
+		return "exhausted"
+	}
+	return "ok"
+}
+
+// QuotaCacheEntry is a single row from quota_cache for the API response.
+type QuotaCacheEntry struct {
+	ID             string      `json:"id"`
+	ConnectionID   string      `json:"connection_id"`
+	ConnectionName string      `json:"connection_name"`
+	ProviderID     string      `json:"provider_id"`
+	ProviderName   string      `json:"provider_name"`
+	DisplayName    string      `json:"display_name"`
+	Color          string      `json:"color"`
+	IconFile       string      `json:"icon_file"`
+	Plan           string      `json:"plan,omitempty"`
+	Quotas         []QuotaItem `json:"quotas"`
+	Status         string      `json:"status"`
+	Error          string      `json:"error,omitempty"`
+	FetchedAt      int64       `json:"fetched_at"`
+}
+
+// QuotaCacheResponse is the paginated API response.
+type QuotaCacheResponse struct {
+	Items      []QuotaCacheEntry `json:"items"`
+	Total      int               `json:"total"`
+	Page       int               `json:"page"`
+	PerPage    int               `json:"per_page"`
+	TotalPages int               `json:"total_pages"`
+}
+
+// LoadQuotaCache reads cached quota data from DB with filters and pagination.
+func LoadQuotaCache(db *sql.DB, providerID, search, status string, page, perPage int) (*QuotaCacheResponse, error) {
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 {
+		perPage = 50
+	}
+
+	providerNames := loadProviderNames(db)
+
+	where, args := buildCacheWhere(providerID, search, status)
+
+	// Count total
+	var total int
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM quota_cache %s", where)
+	if err := db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, fmt.Errorf("count quota_cache: %w", err)
+	}
+
+	totalPages := total / perPage
+	if total%perPage > 0 {
+		totalPages++
+	}
+
+	// Fetch page
+	offset := (page - 1) * perPage
+	selectQuery := fmt.Sprintf(`
+		SELECT id, connection_id, provider_type_id, connection_name, plan, quotas, status, error, fetched_at
+		FROM quota_cache %s
+		ORDER BY provider_type_id, connection_name
+		LIMIT ? OFFSET ?
+	`, where)
+	args = append(args, perPage, offset)
+
+	rows, err := db.Query(selectQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query quota_cache: %w", err)
+	}
+	defer rows.Close()
+
+	var items []QuotaCacheEntry
+	for rows.Next() {
+		var e QuotaCacheEntry
+		var quotasJSON string
+		if err := rows.Scan(&e.ID, &e.ConnectionID, &e.ProviderID, &e.ConnectionName,
+			&e.Plan, &quotasJSON, &e.Status, &e.Error, &e.FetchedAt); err != nil {
+			log.Printf("quota cache: scan error: %v", err)
+			continue
+		}
+		json.Unmarshal([]byte(quotasJSON), &e.Quotas)
+
+		// Enrich with provider metadata
+		if meta, ok := knownProviders[e.ProviderID]; ok {
+			e.Color = meta.Color
+			e.IconFile = meta.IconFile
+		}
+		e.ProviderName = e.ProviderID
+		if dbName, ok := providerNames[e.ProviderID]; ok && dbName != "" {
+			e.DisplayName = dbName
+		} else if meta, ok := knownProviders[e.ProviderID]; ok {
+			e.DisplayName = meta.DisplayName
+		} else {
+			e.DisplayName = e.ProviderID
+		}
+
+		items = append(items, e)
+	}
+
+	return &QuotaCacheResponse{
+		Items:      items,
+		Total:      total,
+		Page:       page,
+		PerPage:    perPage,
+		TotalPages: totalPages,
+	}, nil
+}
+
+func buildCacheWhere(providerID, search, status string) (string, []any) {
+	var conditions []string
+	var args []any
+
+	if providerID != "" {
+		conditions = append(conditions, "provider_type_id = ?")
+		args = append(args, providerID)
+	}
+	if search != "" {
+		conditions = append(conditions, "connection_name LIKE ?")
+		args = append(args, "%"+search+"%")
+	}
+	if status != "" {
+		conditions = append(conditions, "status = ?")
+		args = append(args, status)
+	}
+
+	if len(conditions) == 0 {
+		return "", args
+	}
+	return "WHERE " + strings.Join(conditions, " AND "), args
+}
+
+// UpdateConnectionQuotaStatus updates connection status in DB + connstate
+// based on quota data. Called by the background scheduler.
+func UpdateConnectionQuotaStatus(db *sql.DB, store *connstate.Store, connID string, quotas []QuotaItem, connError string, changed *bool) {
+	newStatus := "ready"
+	if connError != "" {
+		return // don't change status on fetch errors
+	}
+	if len(quotas) > 0 {
+		hasExhausted := false
+		for _, q := range quotas {
+			if !q.Unlimited && q.RemainingPct <= 0 {
+				hasExhausted = true
+				break
+			}
+		}
+		if hasExhausted {
+			newStatus = "quota_exhausted"
+		}
+	}
+
+	// Get current DB status
+	var currentStatus string
+	err := db.QueryRow(`SELECT status FROM connections WHERE id = ?`, connID).Scan(&currentStatus)
+	if err != nil {
+		return
+	}
+
+	// Only update if status actually changed
+	if currentStatus == newStatus {
+		return
+	}
+
+	// Skip if connection is in a manual-only state
+	switch currentStatus {
+	case "disabled", "auth_failed", "suspended", "balance_empty":
+		return
+	}
+
+	_, err = db.Exec(`UPDATE connections SET status = ?, updated_at = ? WHERE id = ?`,
+		newStatus, time.Now().Unix(), connID)
+	if err != nil {
+		log.Printf("quota: failed to update connection %s status: %v", connID, err)
+		return
+	}
+
+	// Sync connstate
+	if cs := store.Get(connID); cs != nil {
+		cs.SetStatus(connstate.Status(newStatus), "")
+	}
+	*changed = true
+	log.Printf("quota: connection %s status: %s → %s", connID, currentStatus, newStatus)
+}

@@ -377,6 +377,39 @@ export interface ConnectionQuota {
   fetched_at: number;
 }
 
+// Cached quota entry (from DB, flat structure)
+export interface QuotaCacheEntry {
+  id: string;
+  connection_id: string;
+  connection_name: string;
+  provider_id: string;
+  provider_name: string;
+  display_name: string;
+  color: string;
+  icon_file: string;
+  plan?: string;
+  quotas: QuotaItem[];
+  status: string; // ok, exhausted, unlimited, error, no_data
+  error?: string;
+  fetched_at: number;
+}
+
+export interface QuotaCacheResponse {
+  items: QuotaCacheEntry[];
+  total: number;
+  page: number;
+  per_page: number;
+  total_pages: number;
+}
+
+export interface QuotaProviderSummary {
+  provider_id: string;
+  display_name: string;
+  total: number;
+  statuses: Record<string, number>;
+}
+
+// Legacy type for backward compat
 export interface ProviderQuota {
   provider_id: string;
   provider_name: string;
@@ -388,7 +421,17 @@ export interface ProviderQuota {
 
 // Quota API
 export const quotaApi = {
-  list: () => fetchApi<ProviderQuota[]>('/quota'),
+  list: (params?: { provider?: string; search?: string; status?: string; page?: number; per_page?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.provider) qs.set('provider', params.provider);
+    if (params?.search) qs.set('search', params.search);
+    if (params?.status) qs.set('status', params.status);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.per_page) qs.set('per_page', String(params.per_page));
+    const q = qs.toString();
+    return fetchApi<QuotaCacheResponse>(`/quota${q ? '?' + q : ''}`);
+  },
+  summary: () => fetchApi<{ providers: QuotaProviderSummary[] }>('/quota/summary'),
   refresh: (connId: string) => fetchApi<ConnectionQuota>(`/quota/${connId}/refresh`, { method: 'POST' }),
 };
 

@@ -217,6 +217,7 @@ func New(cfg Config) *Router {
 	// Quota
 	quotaH := admin.NewQuotaHandler(cfg.DB)
 	adminGroup.GET("/quota", quotaH.List)
+	adminGroup.GET("/quota/summary", quotaH.Summary)
 	adminGroup.POST("/quota/:connId/refresh", quotaH.Refresh)
 
 	// Proxy Pools (static routes before :id to avoid wildcard capture)

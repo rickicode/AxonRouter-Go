@@ -67,6 +67,12 @@ var knownProviders = map[string]providerMeta{
 	"ag":  {DisplayName: "Antigravity", Color: "#4285f4", IconFile: "antigravity.svg"},
 	"kiro": {DisplayName: "Kiro", Color: "#ff9900", IconFile: "kiro.svg"},
 }
+
+// ProviderMeta returns display metadata for a provider type, if known.
+func ProviderMeta(providerID string) (providerMeta, bool) {
+	m, ok := knownProviders[providerID]
+	return m, ok
+}
 // FetchAllQuota fetches quota for all OAuth connections across all providers.
 func FetchAllQuota(db *sql.DB) ([]ProviderQuota, error) {
 	// Load provider display names from DB
