@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/antigravity"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -336,7 +337,7 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 							continue
 						}
 						fid := tc.Get("id").String()
-						fname := SanitizeFunctionName(tc.Get("function.name").String())
+						fname := antigravity.CloakName(SanitizeFunctionName(tc.Get("function.name").String()))
 						fargs := tc.Get("function.arguments").String()
 						node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".functionCall.id", fid)
 						node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".functionCall.name", fname)
@@ -362,7 +363,7 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 					for _, fid := range fIDs {
 						if name, ok := tcID2Name[fid]; ok {
 							toolNode, _ = sjson.SetBytes(toolNode, "parts."+itoa(pp)+".functionResponse.id", fid)
-							toolNode, _ = sjson.SetBytes(toolNode, "parts."+itoa(pp)+".functionResponse.name", SanitizeFunctionName(name))
+							toolNode, _ = sjson.SetBytes(toolNode, "parts."+itoa(pp)+".functionResponse.name", antigravity.CloakName(SanitizeFunctionName(name)))
 							resp := toolResponses[fid]
 							if resp == "" {
 								resp = "{}"
@@ -431,7 +432,7 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 						fnRaw = string(fnRawBytes)
 					}
 					fnRawBytes := []byte(fnRaw)
-					fnRawBytes, _ = sjson.SetBytes(fnRawBytes, "name", SanitizeFunctionName(fn.Get("name").String()))
+					fnRawBytes, _ = sjson.SetBytes(fnRawBytes, "name", antigravity.CloakName(SanitizeFunctionName(fn.Get("name").String())))
 					fnRaw, _ = sjson.Delete(string(fnRawBytes), "strict")
 					if !hasFunction {
 						functionToolNode, _ = sjson.SetRawBytes(functionToolNode, "functionDeclarations", []byte("[]"))

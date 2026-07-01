@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/antigravity"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -174,8 +175,8 @@ func convertAntigravityResponseToOpenAIStream(_ context.Context, _ string, origi
 					template, _ = sjson.SetRawBytes(template, "choices.0.delta.tool_calls", []byte(`[]`))
 				}
 
+				fcName := antigravity.UncloakName(RestoreSanitizedToolName(p.SanitizedNameMap, functionCallResult.Get("name").String()))
 				functionCallTemplate := []byte(`{"id": "","index": 0,"type": "function","function": {"name": "","arguments": ""}}`)
-				fcName := RestoreSanitizedToolName(p.SanitizedNameMap, functionCallResult.Get("name").String())
 				functionCallTemplate, _ = sjson.SetBytes(functionCallTemplate, "id", fmt.Sprintf("%s-%d-%d", fcName, time.Now().UnixNano(), atomic.AddUint64(&functionCallIDCounter, 1)))
 				functionCallTemplate, _ = sjson.SetBytes(functionCallTemplate, "index", functionCallIndex)
 				functionCallTemplate, _ = sjson.SetBytes(functionCallTemplate, "function.name", fcName)
