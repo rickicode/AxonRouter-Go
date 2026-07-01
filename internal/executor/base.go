@@ -156,19 +156,64 @@ func (b *BaseExecutor) proxyClient(proxyURL string) (*http.Client, error) {
 	return c, nil
 }
 
+// noProxyMatch checks if a hostname matches any entry in a comma-separated no_proxy list.
+// Matches exact host or suffix (e.g. "example.com" matches ".example.com").
+func noProxyMatch(host, noProxy string) bool {
+	if noProxy == "" {
+		return false
+	}
+	host = strings.ToLower(host)
+	for _, entry := range strings.Split(noProxy, ",") {
+		entry = strings.TrimSpace(strings.ToLower(entry))
+		if entry == "" {
+			continue
+		}
+		if host == entry {
+			return true
+		}
+		if strings.HasPrefix(entry, ".") && (strings.HasSuffix(host, entry) || host == entry[1:]) {
+			return true
+		}
+	}
+	return false
+}
 // clientForContext picks the right http.Client and target URL for a request.
-func (b *BaseExecutor) clientForContext(ctx context.Context, rawURL string, headers map[string]string) (*http.Client, string) {
+// Returns error only when StrictProxy is true and proxy is unavailable.
+func (b *BaseExecutor) clientForContext(ctx context.Context, rawURL string, headers map[string]string) (*http.Client, string, error) {
 	cfg, _ := ctx.Value(proxyContextKey{}).(ProxyConfig)
 	targetURL, extra := resolveTargetURL(rawURL, cfg)
 	for k, v := range extra {
 		headers[k] = v
 	}
-	if cfg.ProxyURL != "" && cfg.RelayURL == "" {
-		if c, err := b.proxyClient(cfg.ProxyURL); err == nil {
-			return c, targetURL
+
+	// Relay: always use default client (URL already rewritten)
+	if cfg.RelayURL != "" {
+		return b.Client, targetURL, nil
+	}
+
+	// No proxy configured
+	if cfg.ProxyURL == "" {
+		return b.Client, targetURL, nil
+	}
+
+	// Check noProxy: skip proxy for matching hosts
+	if cfg.NoProxy != "" {
+		u, err := url.Parse(targetURL)
+		if err == nil && noProxyMatch(u.Hostname(), cfg.NoProxy) {
+			return b.Client, targetURL, nil
 		}
 	}
-	return b.Client, targetURL
+
+	// Get proxy client
+	c, err := b.proxyClient(cfg.ProxyURL)
+	if err != nil {
+		if cfg.StrictProxy {
+			return nil, targetURL, fmt.Errorf("strict proxy unavailable: %w", err)
+		}
+		// Non-strict: fall back to direct
+		return b.Client, targetURL, nil
+	}
+	return c, targetURL, nil
 }
 
 // DoRequest performs a non-streaming HTTP request.
@@ -177,7 +222,10 @@ func (b *BaseExecutor) DoRequest(ctx context.Context, method, rawURL string, hea
 		return nil, fmt.Errorf("blocked URL: %w", err)
 	}
 
-	client, targetURL := b.clientForContext(ctx, rawURL, headers)
+	client, targetURL, err := b.clientForContext(ctx, rawURL, headers)
+	if err != nil {
+		return nil, err
+	}
 
 	var bodyReader io.Reader
 	if body != nil {
@@ -220,7 +268,10 @@ func (b *BaseExecutor) DoStreamRequest(ctx context.Context, method, rawURL strin
 		return nil, fmt.Errorf("blocked URL: %w", err)
 	}
 
-	client, targetURL := b.clientForContext(ctx, rawURL, headers)
+	client, targetURL, err := b.clientForContext(ctx, rawURL, headers)
+	if err != nil {
+		return nil, err
+	}
 
 	var bodyReader io.Reader
 	if body != nil {
