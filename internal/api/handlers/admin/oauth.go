@@ -12,40 +12,57 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 )
 
-type OAuthHandler struct {
-	db      *sql.DB
-	authMgr *auth.Manager
-	store   *connstate.Store
-	elig    *connstate.EligibilityManager
+// oauthSession tracks an in-flight OAuth attempt before any connection exists in the DB.
+type oauthSession struct {
+	provider     string
+	providerName string
+	status       string // "pending", "connected", "failed"
+	name         string // email from OAuth
+	connID       string // created connection ID (only after success)
+	err          string
 }
 
+// OAuthHandler manages OAuth flows for providers.
+type OAuthHandler struct {
+	db       *sql.DB
+	authMgr  *auth.Manager
+	store    *connstate.Store
+	elig     *connstate.EligibilityManager
+	sessions sync.Map // sessionID -> *oauthSession
+}
+
+// NewOAuthHandler creates a new OAuth handler.
 func NewOAuthHandler(db *sql.DB, authMgr *auth.Manager, store *connstate.Store, elig *connstate.EligibilityManager) *OAuthHandler {
 	return &OAuthHandler{db: db, authMgr: authMgr, store: store, elig: elig}
 }
 
-// InitiateOAuth starts an OAuth flow for a connection's provider.
-func (h *OAuthHandler) InitiateOAuth(c *gin.Context) {
-	connID := c.Param("id")
-
-	// Get connection to find provider type
-	var providerTypeID string
-	err := h.db.QueryRow(`SELECT provider_type_id FROM connections WHERE id = ?`, connID).Scan(&providerTypeID)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
+// StartOAuth begins an OAuth flow WITHOUT creating a connection.
+// Returns auth_url + session_id. Connection is only created when OAuth succeeds.
+// This matches OmniRoute behavior: no orphaned connections on failed OAuth.
+func (h *OAuthHandler) StartOAuth(c *gin.Context) {
+	var req struct {
+		Provider     string `json:"provider" binding:"required"`
+		ProviderName string `json:"provider_name"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	providerType := auth.ProviderType(providerTypeID)
+	providerType := auth.ProviderType(req.Provider)
 	svc, ok := h.authMgr.GetService(providerType)
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "OAuth not supported for provider: " + providerTypeID})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "OAuth not supported for provider: " + req.Provider})
 		return
 	}
 
@@ -58,7 +75,7 @@ func (h *OAuthHandler) InitiateOAuth(c *gin.Context) {
 		return
 	}
 
-	stateWithPort := fmt.Sprintf("%s:%d", state, port)
+	stateWithPort := state + ":" + strconv.Itoa(port)
 	authURL, err := svc.GenerateAuthURL(ctx, stateWithPort)
 	if err != nil {
 		cancel()
@@ -66,19 +83,42 @@ func (h *OAuthHandler) InitiateOAuth(c *gin.Context) {
 		return
 	}
 
+	sessionID := generateOAuthState() // reuse random hex generator
+	session := &oauthSession{
+		provider:     req.Provider,
+		providerName: req.ProviderName,
+		status:       "pending",
+	}
+	h.sessions.Store(sessionID, session)
+
 	c.JSON(http.StatusOK, gin.H{
-		"auth_url":      authURL,
-		"callback_port": port,
+		"auth_url":   authURL,
+		"session_id": sessionID,
+		"port":       port,
 	})
 
 	go func() {
-		defer cancel() // shuts down the local callback server
+		defer cancel()
+		defer h.sessions.Delete(sessionID)
 		select {
 		case creds := <-resultChan:
 			if creds == nil {
-				log.Printf("OAuth nil credentials for connection %s", connID)
+				session.status = "failed"
+				session.err = "nil credentials"
+				log.Printf("OAuth nil credentials for session %s", sessionID)
 				return
 			}
+
+			// Build connection name from email or provider name
+			connName := "OAuth " + req.Provider
+			if creds.Email != "" {
+				connName = creds.Email
+			} else if req.ProviderName != "" {
+				connName = "OAuth " + req.ProviderName
+			}
+
+			// Create connection ONLY on success
+			connID := uuid.New().String()
 			now := time.Now().Unix()
 			providerSpecific := sql.NullString{}
 			if len(creds.ProviderSpecific) > 0 {
@@ -86,52 +126,57 @@ func (h *OAuthHandler) InitiateOAuth(c *gin.Context) {
 					providerSpecific = sql.NullString{String: string(b), Valid: true}
 				}
 			}
-			// Update name with email if available (like OmniRoute auto-naming)
-			if creds.Email != "" {
-				h.db.Exec(`UPDATE connections SET name = ? WHERE id = ? AND name LIKE 'OAuth %'`, creds.Email, connID)
-			}
+
 			_, err := h.db.Exec(`
-				UPDATE connections SET
-					oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?,
-					provider_specific_data = ?, status = 'ready', updated_at = ?
-				WHERE id = ?
-			`, creds.AccessToken, creds.RefreshToken, creds.ExpiresAt.Unix(), providerSpecific, now, connID)
+				INSERT INTO connections (id, provider_type_id, name, auth_type, oauth_token, oauth_refresh_token, oauth_expires_at, provider_specific_data, status, is_active, created_at, updated_at)
+				VALUES (?, ?, ?, 'oauth', ?, ?, ?, ?, 'ready', 1, ?, ?)
+			`, connID, req.Provider, connName, creds.AccessToken, creds.RefreshToken, creds.ExpiresAt.Unix(), providerSpecific, now, now)
 			if err != nil {
-				log.Printf("OAuth save tokens failed for connection %s: %v", connID, err)
-			} else {
-				log.Printf("OAuth tokens saved for connection %s", connID)
-				// Sync in-memory state so routing picks up the new connection
-				if h.store != nil {
-					h.store.UpdateStatus(connID, connstate.StatusReady)
-					if h.elig != nil {
-						h.elig.Update(h.store)
-					}
+				session.status = "failed"
+				session.err = "failed to create connection: " + err.Error()
+				log.Printf("OAuth create connection failed for session %s: %v", sessionID, err)
+				return
+			}
+
+			session.status = "connected"
+			session.name = connName
+			session.connID = connID
+			log.Printf("OAuth connection created: %s (%s) for session %s", connID, connName, sessionID)
+
+			// Sync in-memory state
+			if h.store != nil {
+				h.store.UpdateStatus(connID, connstate.StatusReady)
+				if h.elig != nil {
+					h.elig.Update(h.store)
 				}
 			}
+
 		case <-time.After(5 * time.Minute):
-			log.Printf("OAuth timeout for connection %s, removing connection", connID)
-			h.db.Exec(`DELETE FROM connections WHERE id = ? AND status = 'auth_failed'`, connID)
+			session.status = "failed"
+			session.err = "OAuth timeout after 5 minutes"
+			log.Printf("OAuth timeout for session %s", sessionID)
 		}
 	}()
 }
 
-// OAuthStatus checks if an OAuth connection has received its tokens.
-func (h *OAuthHandler) OAuthStatus(c *gin.Context) {
-	connID := c.Param("id")
-	var oauthToken sql.NullString
-	var name string
-	err := h.db.QueryRow(`SELECT COALESCE(oauth_token, ''), name FROM connections WHERE id = ?`, connID).Scan(&oauthToken, &name)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
+// PollOAuth checks the status of an OAuth session.
+func (h *OAuthHandler) PollOAuth(c *gin.Context) {
+	sessionID := c.Param("sessionId")
+	val, ok := h.sessions.Load(sessionID)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "session not found or expired"})
 		return
 	}
-	connected := oauthToken.Valid && oauthToken.String != ""
-	c.JSON(http.StatusOK, gin.H{"connected": connected, "name": name})
+	session := val.(*oauthSession)
+	c.JSON(http.StatusOK, gin.H{
+		"status":        session.status,
+		"name":          session.name,
+		"connection_id": session.connID,
+		"error":         session.err,
+	})
 }
 
 // SubmitOAuthCallback lets remote dashboard users paste the localhost callback URL.
-// The backend forwards it to the local callback server started by InitiateOAuth,
-// preserving provider-specific PKCE verifier and redirect_uri handling.
 func (h *OAuthHandler) SubmitOAuthCallback(c *gin.Context) {
 	var req struct {
 		RedirectURL string `json:"redirect_url" binding:"required"`
@@ -142,7 +187,7 @@ func (h *OAuthHandler) SubmitOAuthCallback(c *gin.Context) {
 	}
 
 	u, err := url.Parse(req.RedirectURL)
-	if err != nil || u.Scheme != "http" || u.Path != "/auth/callback" {
+	if err != nil || u.Scheme != "http" || (u.Path != "/auth/callback" && u.Path != "/callback") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid callback URL"})
 		return
 	}

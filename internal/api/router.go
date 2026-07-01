@@ -182,11 +182,11 @@ func New(cfg Config) *Router {
 	adminGroup.GET("/providers/:id/models", modelH.ListModels)
 	adminGroup.POST("/providers/:id/models/test", modelH.TestModel)
 
-	// OAuth
+	// OAuth — connection created only on success (no orphaned connections)
 	oauthH := admin.NewOAuthHandler(cfg.DB, authManager, store, elig)
-	adminGroup.POST("/connections/:id/oauth", oauthH.InitiateOAuth)
-	adminGroup.GET("/connections/:id/oauth/status", oauthH.OAuthStatus)
-	adminGroup.POST("/connections/:id/oauth/callback", oauthH.SubmitOAuthCallback)
+	adminGroup.POST("/oauth/start", oauthH.StartOAuth)
+	adminGroup.GET("/oauth/:sessionId/poll", oauthH.PollOAuth)
+	adminGroup.POST("/oauth/callback", oauthH.SubmitOAuthCallback)
 
 	// Combos
 	adminGroup.GET("/combos", comboH.List)

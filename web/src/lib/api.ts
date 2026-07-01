@@ -252,20 +252,23 @@ export const connectionsApi = {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
+};
 
-  initiateOAuth: (id: string) =>
-    fetchApi<{ auth_url: string; callback_port: number }>(
-      `/connections/${id}/oauth`,
-      { method: 'POST' }
+
+export const oauthApi = {
+  start: (provider: string, providerName?: string) =>
+    fetchApi<{ auth_url: string; session_id: string; port: number }>('/oauth/start', {
+      method: 'POST',
+      body: JSON.stringify({ provider, provider_name: providerName }),
+    }),
+
+  poll: (sessionId: string) =>
+    fetchApi<{ status: string; name?: string; connection_id?: string; error?: string }>(
+      `/oauth/${sessionId}/poll`
     ),
 
-  oauthStatus: (id: string) =>
-    fetchApi<{ connected: boolean; name?: string }>(
-      `/connections/${id}/oauth/status`
-    ),
-
-  submitOAuthCallback: (id: string, redirectUrl: string) =>
-    fetchApi<{ ok: boolean }>(`/connections/${id}/oauth/callback`, {
+  submitCallback: (redirectUrl: string) =>
+    fetchApi<{ ok: boolean }>('/oauth/callback', {
       method: 'POST',
       body: JSON.stringify({ redirect_url: redirectUrl }),
     }),

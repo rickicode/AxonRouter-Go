@@ -5,7 +5,7 @@
   import { Label } from '$lib/components/ui/label';
   import { Textarea } from '$lib/components/ui/textarea';
   import { Badge } from '$lib/components/ui/badge';
-  import { connectionsApi, providersApi } from '$lib/api';
+  import { connectionsApi, providersApi, oauthApi } from '$lib/api';
   import { toast } from 'svelte-sonner';
   import ProviderIcon from '$lib/components/ProviderIcon.svelte';
   import type { ProviderMeta } from '$lib/provider-catalog';
@@ -34,14 +34,13 @@
   let submitting = $state(false);
   let errorMsg = $state('');
   let oauthPolling = $state(false);
-  let createdConnId = $state('');
+  let oauthSessionId = $state('');
   let oauthUrl = $state('');
   let oauthStatusText = $state('Waiting for browser authorization...');
   let callbackUrl = $state('');
   let submittingCallback = $state(false);
   let validating = $state(false);
   let validationResult = $state<'success' | 'failed' | null>(null);
-  let oauthPopup: Window | null = null;
 
   const authType = $derived(meta?.authType ?? 'apikey');
   const isOAuth = $derived(authType === 'oauth');
@@ -61,17 +60,18 @@
     validationResult = null;
     submitting = false;
     oauthPolling = false;
-    createdConnId = '';
+    oauthSessionId = '';
     oauthUrl = '';
     oauthStatusText = 'Waiting for browser authorization...';
     callbackUrl = '';
     submittingCallback = false;
-    oauthPopup?.close();
-    oauthPopup = null;
   }
 
   function handleOpenChange(isOpen: boolean) {
-    if (!isOpen) reset();
+    if (!isOpen) {
+      oauthPolling = false;
+      reset();
+    }
     open = isOpen;
   }
 
@@ -106,14 +106,14 @@
   }
 
   async function submitOAuthCallbackUrl() {
-    if (!createdConnId || !callbackUrl.trim()) {
+    if (!callbackUrl.trim()) {
       toast.error('Paste the callback URL first');
       return;
     }
     submittingCallback = true;
     errorMsg = '';
     try {
-      await connectionsApi.submitOAuthCallback(createdConnId, callbackUrl.trim());
+      await oauthApi.submitCallback(callbackUrl.trim());
       toast.success('Callback submitted');
       oauthStatusText = 'Callback submitted. Finalizing tokens...';
     } catch (err) {
@@ -212,39 +212,17 @@
     oauthUrl = '';
     oauthStatusText = 'Starting OAuth login...';
 
-    // Open synchronously from the click handler so browsers do not classify it as a blocked async popup.
-    oauthPopup = window.open('about:blank', '_blank');
-    if (oauthPopup) {
-      oauthPopup.document.title = 'AxonRouter OAuth';
-      oauthPopup.document.body.innerHTML = '<p style="font-family:system-ui;padding:24px">Preparing OAuth login...</p>';
-    }
-
     try {
-      // Auto-generate name like OmniRoute — backend will update with email after OAuth completes
-      const name = `OAuth ${meta?.displayName ?? providerId}`;
-      const conn = await connectionsApi.create(providerId, {
-        name,
-        auth_type: 'oauth',
-      });
-      createdConnId = conn.id;
-
-      const oauthRes = await connectionsApi.initiateOAuth(conn.id);
-      oauthUrl = oauthRes.auth_url;
+      const res = await oauthApi.start(providerId, meta?.displayName ?? providerId);
+      oauthUrl = res.auth_url;
+      oauthSessionId = res.session_id;
       step = 'oauth-waiting';
       oauthPolling = true;
-      oauthStatusText = 'Browser opened. Complete authorization there.';
-
-      if (oauthPopup) {
-        oauthPopup.location.href = oauthRes.auth_url;
-      } else {
-        toast.error('Popup blocked — use the Open OAuth URL button');
-      }
+      oauthStatusText = 'Open the URL below in your browser to authenticate.';
 
       toast.info(`OAuth started for ${meta?.displayName ?? providerId}`);
-      pollOAuthStatus(conn.id);
+      pollOAuthStatus(res.session_id);
     } catch (err) {
-      oauthPopup?.close();
-      oauthPopup = null;
       errorMsg = err instanceof Error ? err.message : 'Failed to start OAuth';
       toast.error(errorMsg);
       step = 'error';
@@ -253,17 +231,15 @@
     }
   }
 
-  async function pollOAuthStatus(connId: string) {
-    const maxAttempts = 150; // 5 minutes at 2s intervals, same timeout window as CLIProxyAPI.
+  async function pollOAuthStatus(sessionId: string) {
+    const maxAttempts = 150;
     for (let i = 0; i < maxAttempts; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 2000));
       if (!oauthPolling) return;
       try {
-        const status = await connectionsApi.oauthStatus(connId);
-        if (status.connected) {
+        const status = await oauthApi.poll(sessionId);
+        if (status.status === 'connected') {
           oauthPolling = false;
-          oauthPopup?.close();
-          oauthPopup = null;
           const accountName = status.name || (meta?.displayName ?? providerId);
           oauthStatusText = `Connected as ${accountName}`;
           toast.success(`OAuth connected: ${accountName}`);
@@ -271,31 +247,26 @@
           onCreated?.();
           return;
         }
+        if (status.status === 'failed') {
+          oauthPolling = false;
+          oauthStatusText = status.error || 'OAuth failed.';
+          toast.error(status.error || 'OAuth failed');
+          step = 'error';
+          return;
+        }
       } catch {
-        // Ignore transient status errors while the local callback server is waiting.
+        // Ignore transient status errors
       }
     }
 
     oauthPolling = false;
-    // Delete the connection on timeout (OmniRoute doesn't create connections until OAuth succeeds)
-    if (createdConnId) {
-      try { await connectionsApi.delete(createdConnId); } catch { /* ignore cleanup errors */ }
-    }
-    oauthPopup?.close();
-    oauthPopup = null;
-    oauthStatusText = 'OAuth timed out. Connection removed.';
+    oauthStatusText = 'OAuth timed out.';
     toast.error('OAuth timed out after 5 minutes');
     step = 'error';
   }
 
-  async function cancelOAuth() {
+  function cancelOAuth() {
     oauthPolling = false;
-    oauthPopup?.close();
-    oauthPopup = null;
-    // Delete the connection on cancel (OmniRoute doesn't create connections until OAuth succeeds)
-    if (createdConnId) {
-      try { await connectionsApi.delete(createdConnId); } catch { /* ignore cleanup errors */ }
-    }
     toast.info('OAuth cancelled');
     handleOpenChange(false);
   }
