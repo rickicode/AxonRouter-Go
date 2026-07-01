@@ -183,13 +183,13 @@ export const connectionsApi = {
   get: (id: string) => fetchApi<Connection>(`/connections/${id}`),
   
   create: (providerId: string, data: Partial<Connection>) =>
-    fetchApi<Connection>(`/providers/${providerId}/connections`, {
+    fetchApi<{ id: string; name: string; status: string }>(`/providers/${providerId}/connections`, {
       method: 'POST',
       body: JSON.stringify(data),
     }),
   
-  bulkCreate: (providerId: string, data: { api_keys: string[] }) =>
-    fetchApi<{ success: number; failed: number; errors: string[] }>(
+  bulkCreate: (providerId: string, data: { connections: { name: string; api_key: string }[] }) =>
+    fetchApi<{ created: number; total: number }>(
       `/providers/${providerId}/connections/bulk`,
       {
         method: 'POST',

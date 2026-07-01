@@ -54,8 +54,9 @@
 
   async function handleToggle() {
     if (!$selectedConnection) return;
+    const willBeActive = !$selectedConnection.is_active;
     actionLoading = 'toggle';
-    try { await connectionsApi.update(connectionId, { is_active: !$selectedConnection.is_active }); await loadConnection(connectionId); toast.success($selectedConnection.is_active ? 'Connection enabled' : 'Connection disabled'); }
+    try { await connectionsApi.update(connectionId, { is_active: willBeActive }); await loadConnection(connectionId); toast.success(willBeActive ? 'Connection enabled' : 'Connection disabled'); }
     catch (err) { toast.error('Toggle failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
     finally { actionLoading = ''; }
   }

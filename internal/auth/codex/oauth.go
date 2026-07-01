@@ -191,10 +191,6 @@ func (s *OAuthService) RefreshToken(ctx context.Context, creds *auth.Credentials
 func (s *OAuthService) StartLocalServer(ctx context.Context, state string) (int, chan *auth.Credentials, error) {
 	parts := strings.SplitN(state, ":", 2)
 	stateParam := parts[0]
-	port := 1455
-	if len(parts) > 1 {
-		fmt.Sscanf(parts[1], "%d", &port)
-	}
 
 	resultChan := make(chan *auth.Credentials, 1)
 
@@ -227,8 +223,14 @@ func (s *OAuthService) StartLocalServer(ctx context.Context, state string) (int,
 			<body><h1>Authentication successful!</h1><p>You can close this window.</p></body></html>`)
 	})
 
+	// Use :0 to let OS pick a free port — avoids collision on repeated OAuth attempts
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, nil, fmt.Errorf("listen: %w", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+
 	server := &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
 		Handler: mux,
 		BaseContext: func(l net.Listener) context.Context {
 			return ctx
@@ -241,7 +243,7 @@ func (s *OAuthService) StartLocalServer(ctx context.Context, state string) (int,
 	}()
 
 	go func() {
-		if err := server.ListenAndServe(); err != http.ErrServerClosed {
+		if err := server.Serve(listener); err != http.ErrServerClosed {
 			close(resultChan)
 		}
 	}()
