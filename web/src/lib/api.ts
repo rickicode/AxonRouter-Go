@@ -256,6 +256,12 @@ export const connectionsApi = {
     fetchApi<{ connected: boolean }>(
       `/connections/${id}/oauth/status`
     ),
+
+  submitOAuthCallback: (id: string, redirectUrl: string) =>
+    fetchApi<{ ok: boolean }>(`/connections/${id}/oauth/callback`, {
+      method: 'POST',
+      body: JSON.stringify({ redirect_url: redirectUrl }),
+    }),
 };
 
 // Combo API

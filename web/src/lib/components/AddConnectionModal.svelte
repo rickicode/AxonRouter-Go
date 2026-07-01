@@ -36,6 +36,8 @@
   let createdConnId = $state('');
   let oauthUrl = $state('');
   let oauthStatusText = $state('Waiting for browser authorization...');
+  let callbackUrl = $state('');
+  let submittingCallback = $state(false);
   let oauthPopup: Window | null = null;
 
   const authType = $derived(meta?.authType ?? 'apikey');
@@ -56,6 +58,8 @@
     createdConnId = '';
     oauthUrl = '';
     oauthStatusText = 'Waiting for browser authorization...';
+    callbackUrl = '';
+    submittingCallback = false;
     oauthPopup?.close();
     oauthPopup = null;
   }
@@ -92,6 +96,25 @@
       toast.success('OAuth URL copied');
     } catch {
       toast.error('Copy failed — select the URL manually');
+    }
+  }
+
+  async function submitOAuthCallbackUrl() {
+    if (!createdConnId || !callbackUrl.trim()) {
+      toast.error('Paste the callback URL first');
+      return;
+    }
+    submittingCallback = true;
+    errorMsg = '';
+    try {
+      await connectionsApi.submitOAuthCallback(createdConnId, callbackUrl.trim());
+      toast.success('Callback submitted');
+      oauthStatusText = 'Callback submitted. Finalizing tokens...';
+    } catch (err) {
+      errorMsg = err instanceof Error ? err.message : 'Callback submit failed';
+      toast.error(errorMsg);
+    } finally {
+      submittingCallback = false;
     }
   }
 
@@ -391,11 +414,31 @@
           <p class="text-xs text-muted-foreground">Connection ID: {createdConnId}</p>
         </div>
         {#if oauthUrl}
-          <div class="w-full rounded-lg border border-border/50 bg-muted/20 p-3">
-            <p class="mb-2 text-xs text-muted-foreground">If the browser did not open, use this URL.</p>
-            <div class="flex gap-2">
-              <Button variant="outline" class="text-sm" onclick={() => window.open(oauthUrl, '_blank')}>Open OAuth URL</Button>
-              <Button variant="outline" class="text-sm" onclick={copyOAuthUrl}>Copy URL</Button>
+          <div class="w-full space-y-3 rounded-lg border border-border/50 bg-muted/20 p-3">
+            <div>
+              <p class="mb-2 text-xs text-muted-foreground">If the browser did not open, use this URL.</p>
+              <div class="flex gap-2">
+                <Button variant="outline" class="text-sm" onclick={() => window.open(oauthUrl, '_blank')}>Open OAuth URL</Button>
+                <Button variant="outline" class="text-sm" onclick={copyOAuthUrl}>Copy URL</Button>
+              </div>
+            </div>
+            <div class="space-y-1.5 border-t border-border/50 pt-3">
+              <Label class="text-xs text-muted-foreground">Remote/browser fallback callback URL</Label>
+              <div class="flex gap-2">
+                <Input
+                  bind:value={callbackUrl}
+                  class="h-9 min-w-0 flex-1 font-mono text-xs"
+                  placeholder="http://localhost:1455/auth/callback?code=...&state=..."
+                  autocomplete="off"
+                  spellcheck={false}
+                />
+                <Button variant="outline" class="text-sm" disabled={submittingCallback} onclick={submitOAuthCallbackUrl}>
+                  {submittingCallback ? 'Submitting...' : 'Submit'}
+                </Button>
+              </div>
+              <p class="text-[11px] text-muted-foreground">
+                If OAuth lands on a localhost error page, paste that full URL here. AxonRouter will forward it to the backend callback server.
+              </p>
             </div>
           </div>
         {/if}

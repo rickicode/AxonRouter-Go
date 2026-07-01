@@ -9,8 +9,6 @@
   import { Label } from '$lib/components/ui/label';
   import * as Dialog from '$lib/components/ui/dialog';
   import { toast } from 'svelte-sonner';
-  import { router } from '$lib/router';
-
   let tab = $state<'pools' | 'groups'>('pools');
   let pools = $state<ProxyPool[]>([]);
   let groups = $state<ProxyGroup[]>([]);
@@ -251,39 +249,44 @@
       {#if pools.length > 0}
         <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {#each pools as pool}
-            <a href="/proxy-pools/{pool.id}" class="group block">
-              <Card class="shadow-card transition-all hover:bg-accent/10 hover:border-foreground/20 h-full">
-                <CardHeader class="flex flex-row items-start justify-between space-y-0 pb-2">
-                  <div class="space-y-1 min-w-0">
-                    <CardTitle class="text-body-md-strong truncate">{pool.name}</CardTitle>
-                    <p class="text-caption-mono text-muted-foreground truncate">{pool.proxyUrl}</p>
+            <Card class="shadow-card transition-all hover:bg-accent/10 hover:border-foreground/20 h-full">
+              <CardHeader class="flex flex-row items-start justify-between space-y-0 pb-2">
+                <div class="space-y-1 min-w-0">
+                  <CardTitle class="text-body-md-strong truncate">{pool.name}</CardTitle>
+                  <p class="text-caption-mono text-muted-foreground truncate">{pool.proxyUrl}</p>
+                </div>
+                <div class="flex gap-1 flex-shrink-0">
+                  <Badge variant={pool.isActive ? 'default' : 'secondary'} class="text-caption-mono rounded-sm">
+                    {pool.isActive ? 'Active' : 'Off'}
+                  </Badge>
+                  <Badge variant={statusColor(pool.testStatus)} class="text-caption-mono rounded-sm">
+                    {pool.testStatus}
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent class="flex flex-col gap-3">
+                <div class="grid grid-cols-2 gap-2 border-t border-white/5 pt-3">
+                  <div>
+                    <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Type</p>
+                    <p class="text-body-sm mt-0.5">{typeLabel(pool.type)}</p>
                   </div>
-                  <div class="flex gap-1 flex-shrink-0">
-                    <Badge variant={pool.isActive ? 'default' : 'secondary'} class="text-caption-mono rounded-sm">
-                      {pool.isActive ? 'Active' : 'Off'}
-                    </Badge>
-                    <Badge variant={statusColor(pool.testStatus)} class="text-caption-mono rounded-sm">
-                      {pool.testStatus}
-                    </Badge>
+                  <div>
+                    <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Latency</p>
+                    <p class="text-code font-mono mt-0.5">{pool.responseTimeMs != null ? pool.responseTimeMs + 'ms' : '—'}</p>
                   </div>
-                </CardHeader>
-                <CardContent class="flex flex-col gap-3">
-                  <div class="grid grid-cols-2 gap-2 border-t border-white/5 pt-3">
-                    <div>
-                      <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Type</p>
-                      <p class="text-body-sm mt-0.5">{typeLabel(pool.type)}</p>
-                    </div>
-                    <div>
-                      <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Latency</p>
-                      <p class="text-code font-mono mt-0.5">{pool.responseTimeMs != null ? pool.responseTimeMs + 'ms' : '—'}</p>
-                    </div>
-                  </div>
-                  {#if pool.lastError}
-                    <p class="text-caption-mono text-destructive truncate" title={pool.lastError}>{pool.lastError}</p>
-                  {/if}
-                </CardContent>
-              </Card>
-            </a>
+                </div>
+                {#if pool.lastError}
+                  <p class="text-caption-mono text-destructive truncate" title={pool.lastError}>{pool.lastError}</p>
+                {/if}
+                <div class="flex gap-2 pt-1">
+                  <Button onclick={() => testPool(pool.id)} variant="outline" size="sm" class="text-caption-mono rounded-sm flex-1">Test</Button>
+                  <Button onclick={() => togglePoolActive(pool)} variant="outline" size="sm" class="text-caption-mono rounded-sm">
+                    {pool.isActive ? 'Disable' : 'Enable'}
+                  </Button>
+                  <Button onclick={() => deletePool(pool.id)} variant="ghost" size="sm" class="text-caption-mono text-destructive rounded-sm">Delete</Button>
+                </div>
+              </CardContent>
+            </Card>
           {/each}
         </div>
       {:else}
@@ -309,36 +312,40 @@
       {#if groups.length > 0}
         <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {#each groups as group}
-            <a href="/proxy-groups/{group.id}" class="group block">
-              <Card class="shadow-card transition-all hover:bg-accent/10 hover:border-foreground/20 h-full">
-                <CardHeader class="flex flex-row items-start justify-between space-y-0 pb-2">
-                  <div class="space-y-1 min-w-0">
-                    <CardTitle class="text-body-md-strong truncate">{group.name}</CardTitle>
-                    <p class="text-caption-mono text-muted-foreground">{group.proxyPoolIds?.length ?? 0} pools</p>
+            <Card class="shadow-card transition-all hover:bg-accent/10 hover:border-foreground/20 h-full">
+              <CardHeader class="flex flex-row items-start justify-between space-y-0 pb-2">
+                <div class="space-y-1 min-w-0">
+                  <CardTitle class="text-body-md-strong truncate">{group.name}</CardTitle>
+                  <p class="text-caption-mono text-muted-foreground">{group.proxyPoolIds?.length ?? 0} pools</p>
+                </div>
+                <Badge variant={group.isActive ? 'default' : 'secondary'} class="text-caption-mono rounded-sm flex-shrink-0">
+                  {group.isActive ? 'Active' : 'Off'}
+                </Badge>
+              </CardHeader>
+              <CardContent class="flex flex-col gap-3">
+                <div class="grid grid-cols-2 gap-2 border-t border-white/5 pt-3">
+                  <div>
+                    <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Mode</p>
+                    <p class="text-body-sm mt-0.5">{group.mode}</p>
                   </div>
-                  <Badge variant={group.isActive ? 'default' : 'secondary'} class="text-caption-mono rounded-sm flex-shrink-0">
-                    {group.isActive ? 'Active' : 'Off'}
-                  </Badge>
-                </CardHeader>
-                <CardContent class="flex flex-col gap-3">
-                  <div class="grid grid-cols-2 gap-2 border-t border-white/5 pt-3">
-                    <div>
-                      <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Mode</p>
-                      <p class="text-body-sm mt-0.5">{group.mode}</p>
-                    </div>
-                    <div>
-                      <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Sticky</p>
-                      <p class="text-code font-mono mt-0.5">{group.mode === 'sticky' ? group.stickyLimit : '—'}</p>
-                    </div>
-                    {#if group.strictProxy}
-                      <div class="col-span-2">
-                        <Badge variant="outline" class="text-caption-mono rounded-sm">Strict proxy</Badge>
-                      </div>
-                    {/if}
+                  <div>
+                    <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Sticky</p>
+                    <p class="text-code font-mono mt-0.5">{group.mode === 'sticky' ? group.stickyLimit : '—'}</p>
                   </div>
-                </CardContent>
-              </Card>
-            </a>
+                  {#if group.strictProxy}
+                    <div class="col-span-2">
+                      <Badge variant="outline" class="text-caption-mono rounded-sm">Strict proxy</Badge>
+                    </div>
+                  {/if}
+                </div>
+                <div class="flex gap-2 pt-1">
+                  <Button onclick={() => toggleGroupActive(group)} variant="outline" size="sm" class="text-caption-mono rounded-sm flex-1">
+                    {group.isActive ? 'Disable' : 'Enable'}
+                  </Button>
+                  <Button onclick={() => deleteGroup(group.id)} variant="ghost" size="sm" class="text-caption-mono text-destructive rounded-sm">Delete</Button>
+                </div>
+              </CardContent>
+            </Card>
           {/each}
         </div>
       {:else}
