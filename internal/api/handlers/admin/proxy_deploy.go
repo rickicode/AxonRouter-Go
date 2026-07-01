@@ -185,12 +185,24 @@ func (h *ProxyDeployHandler) DeployDeno(c *gin.Context) {
 		return
 	}
 	var dResult struct {
-		ID string `json:"id"`
+		ID           string `json:"id"`
+		DeploymentID string `json:"deploymentId"`
 	}
 	json.Unmarshal(deployRespBody, &dResult)
+	revisionID := dResult.ID
+	if revisionID == "" {
+		revisionID = dResult.DeploymentID
+	}
+	if revisionID == "" {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Deno deploy returned no deployment ID"})
+		return
+	}
 
 	// Poll revision (TS: GET /v2/revisions/{id})
-	pollDenoRevision(dResult.ID, req.DenoToken, 60*time.Second)
+	if err := pollDenoRevision(revisionID, req.DenoToken, 60*time.Second); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Deno deployment failed: " + err.Error()})
+		return
+	}
 
 	deployURL := fmt.Sprintf("https://%s.%s.deno.net", projectName, req.OrgDomain)
 	testRes := testRelayURL(deployURL, relayAuth)
@@ -400,14 +412,14 @@ func pollVercelDeployment(deploymentID, token string, timeout time.Duration) (st
 	return "", fmt.Errorf("deployment timed out")
 }
 
-func pollDenoRevision(revisionID, token string, timeout time.Duration) {
+func pollDenoRevision(revisionID, token string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		req, _ := http.NewRequest("GET", fmt.Sprintf("https://api.deno.com/v2/revisions/%s", revisionID), nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			return
+			return fmt.Errorf("poll request failed: %w", err)
 		}
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -415,11 +427,15 @@ func pollDenoRevision(revisionID, token string, timeout time.Duration) {
 			Status string `json:"status"`
 		}
 		json.Unmarshal(body, &result)
-		if result.Status == "deployed" || result.Status == "failed" {
-			return
+		if result.Status == "deployed" {
+			return nil
+		}
+		if result.Status == "failed" {
+			return fmt.Errorf("deployment failed")
 		}
 		time.Sleep(2 * time.Second)
 	}
+	return fmt.Errorf("deployment timed out after %s", timeout)
 }
 
 type deployTestResult struct {
