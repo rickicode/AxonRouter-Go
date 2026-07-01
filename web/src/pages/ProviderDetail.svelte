@@ -12,6 +12,7 @@
   import { getProviderMeta, getStatusDotColor, getStatusVariant, getStatusLabel } from '$lib/provider-catalog';
   import { toast } from 'svelte-sonner';
   import AddConnectionModal from '$lib/components/AddConnectionModal.svelte';
+  import * as AlertDialog from '$lib/components/ui/alert-dialog';
 
   let showAddModal = $state(false);
 
@@ -21,6 +22,9 @@
   let currentPage = $state(1);
   let perPage = $state(50);
   let testingAll = $state(false);
+  let actionLoading = $state('');
+  let deleteTarget = $state<{ id: string; name: string } | null>(null);
+  let deleteDialogOpen = $state(false);
 
   const statusOptions = [
     { value: '', label: 'All statuses' },
@@ -81,6 +85,7 @@
   }
 
   async function handleTestConnection(connId: string) {
+    actionLoading = connId;
     try {
       const res = await connectionsApi.test(connId);
       if (res?.status === 'ok') {
@@ -91,28 +96,36 @@
       await loadConnections(providerId, currentPage, perPage);
     } catch (err) {
       toast.error('Test failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-    }
+    } finally { actionLoading = ''; }
   }
 
   async function handleResetConnection(connId: string) {
+    actionLoading = connId;
     try {
       await connectionsApi.reset(connId);
       toast.success('Connection reset to ready');
       await loadConnections(providerId, currentPage, perPage);
     } catch (err) {
       toast.error('Reset failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-    }
+    } finally { actionLoading = ''; }
+  }
+  function confirmDeleteConnection(connId: string, name: string) {
+    deleteTarget = { id: connId, name };
+    deleteDialogOpen = true;
   }
 
-  async function handleDeleteConnection(connId: string, name: string) {
-    if (!confirm(`Delete connection "${name}"?`)) return;
+  async function executeDeleteConnection() {
+    const { id: connId, name } = deleteTarget;
+    deleteTarget = null;
+    deleteDialogOpen = false;
+    actionLoading = connId;
     try {
       await connectionsApi.delete(connId);
       toast.success(`Deleted "${name}"`);
       await loadConnections(providerId, currentPage, perPage);
     } catch (err) {
       toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-    }
+    } finally { actionLoading = ''; }
   }
 
 </script>
@@ -258,10 +271,16 @@
                       </td>
                       <td class="py-3 px-4 text-body-sm text-muted-foreground">{formatTimestamp(row.last_success_at)}</td>
                       <td class="py-3 px-4">
-                        <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" onclick={() => handleTestConnection(row.id)}>Test</Button>
-                          <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" onclick={() => handleResetConnection(row.id)}>Reset</Button>
-                          <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm text-destructive hover:text-destructive" onclick={() => handleDeleteConnection(row.id, row.name)}>Del</Button>
+                        <div class="flex gap-1">
+                          <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" disabled={actionLoading === row.id} onclick={() => handleTestConnection(row.id)}>
+                            {actionLoading === row.id ? '...' : 'Test'}
+                          </Button>
+                          <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" disabled={actionLoading === row.id} onclick={() => handleResetConnection(row.id)}>
+                            Reset
+                          </Button>
+                          <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm text-destructive hover:text-destructive" disabled={actionLoading === row.id} onclick={() => confirmDeleteConnection(row.id, row.name)}>
+                            Del
+                          </Button>
                         </div>
                       </td>
                     </tr>
@@ -330,3 +349,17 @@
 </div>
 
 <AddConnectionModal bind:open={showAddModal} {providerId} {meta} onCreated={() => { loadConnections(providerId, currentPage, perPage); loadProvider(providerId); loadProviderModels(providerId); }} />
+<AlertDialog.Root bind:open={deleteDialogOpen}>
+  <AlertDialog.Content>
+    <AlertDialog.Header>
+      <AlertDialog.Title>Delete connection</AlertDialog.Title>
+      <AlertDialog.Description>
+        Delete "{deleteTarget?.name ?? ''}"? This cannot be undone.
+      </AlertDialog.Description>
+    </AlertDialog.Header>
+    <AlertDialog.Footer>
+      <AlertDialog.Action onclick={executeDeleteConnection}>Delete</AlertDialog.Action>
+      <AlertDialog.Cancel onclick={() => { deleteTarget = null; deleteDialogOpen = false; }}>Cancel</AlertDialog.Cancel>
+    </AlertDialog.Footer>
+  </AlertDialog.Content>
+</AlertDialog.Root>

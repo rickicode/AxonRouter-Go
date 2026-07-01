@@ -29,6 +29,7 @@
   let mode = $state<Mode>('single');
   let connectionName = $state('');
   let apiKey = $state('');
+  let showKey = $state(false);
   let bulkText = $state('');
   let submitting = $state(false);
   let errorMsg = $state('');
@@ -51,6 +52,7 @@
     mode = 'single';
     connectionName = '';
     apiKey = '';
+    showKey = false;
     bulkText = '';
     errorMsg = '';
     submitting = false;
@@ -328,14 +330,24 @@
                 <span class="font-normal text-muted-foreground">({meta.authHint})</span>
               {/if}
             </Label>
-            <Input
-              bind:value={apiKey}
-              type="password"
-              placeholder={meta?.apiHint ?? 'sk-...'}
-              class="h-9 font-mono text-sm"
-              autocomplete="off"
-              spellcheck={false}
-            />
+            <div class="relative">
+              <Input
+                bind:value={apiKey}
+                type={showKey ? 'text' : 'password'}
+                placeholder={meta?.apiHint ?? 'sk-...'}
+                class="h-9 pr-10 font-mono text-sm"
+                autocomplete="off"
+                spellcheck={false}
+              />
+              <button
+                type="button"
+                class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                onclick={() => showKey = !showKey}
+                tabindex={-1}
+              >
+                <span class="material-symbols-outlined text-base">{showKey ? 'visibility_off' : 'visibility'}</span>
+              </button>
+            </div>
             <p class="text-[11px] text-muted-foreground">
               {meta?.apiHint ?? 'Stored as one AxonRouter connection and used for routing.'}
             </p>
@@ -349,6 +361,11 @@
               placeholder={`sk-...\nmain: sk-...\nbackup, sk-...`}
               spellcheck={false}
             />
+            {#if bulkText.trim()}
+              <p class="text-[11px] text-emerald-400">
+                {parseBulkConnections().length} key{parseBulkConnections().length !== 1 ? 's' : ''} detected
+              </p>
+            {/if}
             <p class="text-[11px] text-muted-foreground">
               One key per line. Optional format: <span class="font-mono">name: key</span> or <span class="font-mono">name, key</span>.
             </p>
@@ -357,8 +374,7 @@
 
         {#if isOAuth}
           <div class="rounded-lg border border-border/50 bg-muted/30 p-3 text-sm text-muted-foreground">
-            <p class="font-medium text-foreground">Browser OAuth flow.</p>
-            <p class="mt-1">A browser tab opens immediately, then this modal waits up to 5 minutes for the callback, matching CLIProxyAPI's status polling pattern.</p>
+            <p>A browser tab opens automatically. Complete login there — this modal waits up to 5 minutes for the callback.</p>
           </div>
         {/if}
 
@@ -411,7 +427,6 @@
         </div>
         <div class="space-y-2 text-center">
           <p class="text-sm font-medium">{oauthStatusText}</p>
-          <p class="text-xs text-muted-foreground">Connection ID: {createdConnId}</p>
         </div>
         {#if oauthUrl}
           <div class="w-full space-y-3 rounded-lg border border-border/50 bg-muted/20 p-3">
