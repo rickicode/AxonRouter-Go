@@ -89,9 +89,8 @@ func (qs *QuotaScheduler) Stop() {
 }
 
 // QuotaSchedulerDB is a version that also queries DB for proactive quota checks.
-// ponytail: simple version that just does cooldown recovery.
-// Real proactive quota checking (per-provider API calls) should be added when
-// providers with quota APIs are integrated.
+// Runs cooldown recovery + proactive quota fetching from provider APIs (Codex, Antigravity, Kiro).
+// Interval is configurable via quota_check_interval_min setting (default 30 min).
 type QuotaSchedulerDB struct {
 	once     sync.Once
 	db       *sql.DB
