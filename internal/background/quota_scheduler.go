@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
+	"github.com/rickicode/AxonRouter-Go/internal/quota"
 )
 
 // QuotaScheduler periodically checks provider quotas and updates connection states.
@@ -144,7 +145,7 @@ func (qs *QuotaSchedulerDB) run(ctx context.Context) {
 }
 
 func (qs *QuotaSchedulerDB) check() {
-	// 1. Recover cooldown-expired connections
+	// 1. Recover cooldown-expired connections (in-memory)
 	now := time.Now()
 	recovered := 0
 	qs.store.RangeByConnID(func(connID string, cs *connstate.ConnectionState) bool {
@@ -157,33 +158,114 @@ func (qs *QuotaSchedulerDB) check() {
 
 	// 2. Query DB for connections with cooldown_until in the past
 	rows, err := qs.db.Query(`
-		SELECT id FROM connections 
-		WHERE status IN ('rate_limited', 'quota_exhausted') 
-		  AND cooldown_until IS NOT NULL 
+		SELECT id FROM connections
+		WHERE status IN ('rate_limited', 'quota_exhausted')
+		  AND cooldown_until IS NOT NULL
 		  AND cooldown_until <= ?
-	`, time.Now().Unix())
+	`, now.Unix())
+	if err == nil {
+		defer rows.Close()
+		var toRecover []string
+		for rows.Next() {
+			var id string
+			rows.Scan(&id)
+			toRecover = append(toRecover, id)
+		}
+		for _, id := range toRecover {
+			qs.db.Exec(`UPDATE connections SET status = 'ready', cooldown_until = NULL, updated_at = ? WHERE id = ?`,
+				now.Unix(), id)
+		}
+		recovered += len(toRecover)
+	}
+
+	// 3. Proactive quota fetch for OAuth connections
+	qs.checkQuotas()
+
+	if recovered > 0 {
+		log.Printf("background: recovered %d connections", recovered)
+		qs.elig.Update(qs.store)
+	}
+}
+
+// checkQuotas fetches quota from upstream provider APIs and updates connection status.
+func (qs *QuotaSchedulerDB) checkQuotas() {
+	results, err := quota.FetchAllQuota(qs.db)
+	if err != nil {
+		log.Printf("background: quota fetch error: %v", err)
+		return
+	}
+
+	statusChanged := false
+	for _, provider := range results {
+		for _, conn := range provider.Connections {
+			if conn.Error != "" {
+				continue
+			}
+			newStatus := evaluateQuotaStatus(conn.Quotas)
+			qs.applyQuotaStatus(conn.ConnectionID, newStatus, &statusChanged)
+		}
+	}
+
+	if statusChanged {
+		qs.elig.Update(qs.store)
+	}
+}
+
+// evaluateQuotaStatus determines the connection status from quota items.
+// Returns "ready" if all non-unlimited quotas have remaining > 0,
+// "quota_exhausted" if any non-unlimited quota is at 0%.
+func evaluateQuotaStatus(quotas []quota.QuotaItem) string {
+	if len(quotas) == 0 {
+		return "ready"
+	}
+	hasExhausted := false
+	for _, q := range quotas {
+		if q.Unlimited {
+			continue
+		}
+		if q.RemainingPct <= 0 {
+			hasExhausted = true
+		}
+	}
+	if hasExhausted {
+		return "quota_exhausted"
+	}
+	return "ready"
+}
+
+// applyQuotaStatus updates DB and connstate if status changed.
+func (qs *QuotaSchedulerDB) applyQuotaStatus(connID, newStatus string, changed *bool) {
+	// Get current DB status
+	var currentStatus string
+	err := qs.db.QueryRow(`SELECT status FROM connections WHERE id = ?`, connID).Scan(&currentStatus)
 	if err != nil {
 		return
 	}
-	defer rows.Close()
 
-	var toRecover []string
-	for rows.Next() {
-		var id string
-		rows.Scan(&id)
-		toRecover = append(toRecover, id)
+	// Only update if status actually changed
+	if currentStatus == newStatus {
+		return
 	}
 
-	for _, id := range toRecover {
-		qs.db.Exec(`UPDATE connections SET status = 'ready', cooldown_until = NULL, updated_at = ? WHERE id = ?`,
-			time.Now().Unix(), id)
+	// Skip if connection is in a manual-only state (don't override user actions)
+	switch currentStatus {
+	case "disabled", "auth_failed", "suspended", "balance_empty":
+		return
 	}
 
-	totalRecovered := recovered + len(toRecover)
-	if totalRecovered > 0 {
-		log.Printf("background: recovered %d connections", totalRecovered)
-		qs.elig.Update(qs.store)
+	_, err = qs.db.Exec(`UPDATE connections SET status = ?, updated_at = ? WHERE id = ?`,
+		newStatus, time.Now().Unix(), connID)
+	if err != nil {
+		log.Printf("background: failed to update connection %s status: %v", connID, err)
+		return
 	}
+
+	// Sync connstate
+	if cs := qs.store.Get(connID); cs != nil {
+		cs.SetStatus(connstate.Status(newStatus), "")
+	}
+	*changed = true
+	log.Printf("background: connection %s status: %s → %s", connID, currentStatus, newStatus)
 }
 
 // Stop signals the scheduler to stop.
