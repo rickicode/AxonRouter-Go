@@ -166,6 +166,7 @@ func New(cfg Config) *Router {
 	adminGroup.POST("/providers/:id/test", providerH.TestAll)
 	adminGroup.POST("/providers/:id/connections", providerH.AddConnection)
 	adminGroup.POST("/providers/:id/connections/bulk", providerH.BulkAddConnections)
+	adminGroup.POST("/providers/validate", providerH.ValidateKey)
 
 	// Connections
 	adminGroup.GET("/providers/:id/connections", connectionH.List)

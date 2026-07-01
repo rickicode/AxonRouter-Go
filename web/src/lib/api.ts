@@ -175,6 +175,12 @@ export const providersApi = {
       `/providers/${id}/models/test`,
       { method: 'POST', body: JSON.stringify({ model }) }
     ),
+
+  validateKey: (provider: string, apiKey: string) =>
+    fetchApi<{ valid: boolean }>('/providers/validate', {
+      method: 'POST',
+      body: JSON.stringify({ provider, api_key: apiKey }),
+    }),
 };
 
 // Connection API

@@ -27,10 +27,10 @@ func NewProxyDeployHandler(db *sql.DB, health *proxypool.HealthChecker) *ProxyDe
 // Reference: /workspaces/AxonRouter/src/app/api/proxy-pools/vercel-deploy/route.ts
 func (h *ProxyDeployHandler) DeployVercel(c *gin.Context) {
 	var req struct {
-		VercekToken string `json:"vercelToken"`
+		VercelToken string `json:"vercelToken"`
 		ProjectName string `json:"projectName"`
 	}
-	if c.ShouldBindJSON(&req) != nil || req.VercekToken == "" {
+	if c.ShouldBindJSON(&req) != nil || req.VercelToken == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Vercel API token is required"})
 		return
 	}
@@ -55,7 +55,7 @@ func (h *ProxyDeployHandler) DeployVercel(c *gin.Context) {
 	}
 	body, _ := json.Marshal(deployBody)
 	deployReq, _ := http.NewRequest("POST", "https://api.vercel.com/v13/deployments", bytes.NewReader(body))
-	deployReq.Header.Set("Authorization", "Bearer "+req.VercekToken)
+	deployReq.Header.Set("Authorization", "Bearer "+req.VercelToken)
 	deployReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(deployReq)
@@ -90,12 +90,12 @@ func (h *ProxyDeployHandler) DeployVercel(c *gin.Context) {
 	}
 	protBody, _ := json.Marshal(map[string]any{"ssoProtection": nil})
 	protReq, _ := http.NewRequest("PATCH", fmt.Sprintf("https://api.vercel.com/v9/projects/%s", projectID), bytes.NewReader(protBody))
-	protReq.Header.Set("Authorization", "Bearer "+req.VercekToken)
+	protReq.Header.Set("Authorization", "Bearer "+req.VercelToken)
 	protReq.Header.Set("Content-Type", "application/json")
 	http.DefaultClient.Do(protReq) // best-effort
 
 	// Poll until ready (TS: GET /v13/deployments/{id}, check readyState)
-	readyURL, err := pollVercelDeployment(deploymentID, req.VercekToken, 120*time.Second)
+	readyURL, err := pollVercelDeployment(deploymentID, req.VercelToken, 120*time.Second)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Deployment poll failed: " + err.Error()})
 		return

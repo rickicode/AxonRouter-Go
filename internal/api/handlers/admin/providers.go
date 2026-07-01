@@ -403,3 +403,73 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, gin.H{"created": created, "total": len(req.Connections)})
 }
+
+// ValidateKey checks if an API key is valid for a provider by attempting a lightweight model list request.
+func (h *ProviderHandler) ValidateKey(c *gin.Context) {
+	var req struct {
+		Provider string `json:"provider" binding:"required"`
+		APIKey   string `json:"api_key" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Get provider base URL and format
+	var provider struct {
+		ID      string
+		Format  string
+		BaseURL string
+	}
+	dbErr := h.db.QueryRow(`SELECT id, format, base_url FROM provider_types WHERE id = ?`, req.Provider).Scan(&provider.ID, &provider.Format, &provider.BaseURL)
+	if dbErr != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "provider not found"})
+		return
+	}
+
+	// Resolve executor
+	executorID := req.Provider
+	if dbErr == nil {
+		executorID = provider.ID
+	}
+	exec, _, ok := h.registry.Get(executorID)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no executor for provider"})
+		return
+	}
+
+	// Try a lightweight request to validate the key
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+
+	testModel := defaultTestModel(req.Provider)
+	if testModel == "" {
+		// No known model — just check if the key can list models
+		testModel = "gpt-4o-mini"
+	}
+
+	resp, err := exec.ExecuteStream(ctx, &executor.Request{
+		APIKey:   req.APIKey,
+		BaseURL:  provider.BaseURL,
+		Body:     buildTestBody(provider.Format, testModel),
+		Provider: req.Provider,
+		Model:    testModel,
+	})
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"valid": false})
+		return
+	}
+
+	var valid bool
+	for chunk := range resp.Chunks {
+		if chunk.Err != nil {
+			break
+		}
+		if chunk.Payload != nil {
+			valid = true
+			break
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"valid": valid})
+}

@@ -5,7 +5,7 @@
   import { Label } from '$lib/components/ui/label';
   import { Textarea } from '$lib/components/ui/textarea';
   import { Badge } from '$lib/components/ui/badge';
-  import { connectionsApi } from '$lib/api';
+  import { connectionsApi, providersApi } from '$lib/api';
   import { toast } from 'svelte-sonner';
   import ProviderIcon from '$lib/components/ProviderIcon.svelte';
   import type { ProviderMeta } from '$lib/provider-catalog';
@@ -39,6 +39,8 @@
   let oauthStatusText = $state('Waiting for browser authorization...');
   let callbackUrl = $state('');
   let submittingCallback = $state(false);
+  let validating = $state(false);
+  let validationResult = $state<'success' | 'failed' | null>(null);
   let oauthPopup: Window | null = null;
 
   const authType = $derived(meta?.authType ?? 'apikey');
@@ -55,6 +57,8 @@
     showKey = false;
     bulkText = '';
     errorMsg = '';
+    validating = false;
+    validationResult = null;
     submitting = false;
     oauthPolling = false;
     createdConnId = '';
@@ -120,6 +124,20 @@
     }
   }
 
+  async function handleValidate() {
+    if (!apiKey.trim()) return;
+    validating = true;
+    validationResult = null;
+    try {
+      const res = await providersApi.validateKey(providerId, apiKey.trim());
+      validationResult = res.valid ? 'success' : 'failed';
+    } catch {
+      validationResult = 'failed';
+    } finally {
+      validating = false;
+    }
+  }
+
   async function handleApiKeySubmit() {
     errorMsg = '';
     submitting = true;
@@ -132,6 +150,20 @@
         step = 'done';
         onCreated?.();
         return;
+      }
+
+      // Auto-validate before saving (like AxonRouter TS)
+      if (apiKey.trim()) {
+        try {
+          validating = true;
+          validationResult = null;
+          const res = await providersApi.validateKey(providerId, apiKey.trim());
+          validationResult = res.valid ? 'success' : 'failed';
+        } catch {
+          validationResult = 'failed';
+        } finally {
+          validating = false;
+        }
       }
 
       const name = connectionName.trim() || defaultName();
@@ -264,6 +296,14 @@
     if (isNoAuth) return handleNoAuthSubmit();
     return handleApiKeySubmit();
   }
+  // Auto-start OAuth when modal opens for OAuth providers (matches AxonRouter TS behavior)
+  $effect(() => {
+    if (open && isOAuth && step === 'form' && !submitting && !oauthPolling) {
+      // Use setTimeout to avoid calling during render
+      setTimeout(() => handleOAuthSubmit(), 50);
+    }
+  });
+
 </script>
 
 <Dialog.Root {open} onOpenChange={handleOpenChange}>
@@ -332,24 +372,34 @@
                 <span class="font-normal text-muted-foreground">({meta.authHint})</span>
               {/if}
             </Label>
-            <div class="relative">
-              <Input
-                bind:value={apiKey}
-                type={showKey ? 'text' : 'password'}
-                placeholder={meta?.apiHint ?? 'sk-...'}
-                class="h-9 pr-10 font-mono text-sm"
-                autocomplete="off"
-                spellcheck={false}
-              />
-              <button
-                type="button"
-                class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                onclick={() => showKey = !showKey}
-                tabindex={-1}
-              >
-                <span class="material-symbols-outlined text-base">{showKey ? 'visibility_off' : 'visibility'}</span>
-              </button>
+            <div class="flex gap-2">
+              <div class="relative flex-1">
+                <Input
+                  bind:value={apiKey}
+                  type={showKey ? 'text' : 'password'}
+                  placeholder={meta?.apiHint ?? 'sk-...'}
+                  class="h-9 pr-10 font-mono text-sm"
+                  autocomplete="off"
+                  spellcheck={false}
+                />
+                <button
+                  type="button"
+                  class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  onclick={() => showKey = !showKey}
+                  tabindex={-1}
+                >
+                  <span class="material-symbols-outlined text-base">{showKey ? 'visibility_off' : 'visibility'}</span>
+                </button>
+              </div>
+              <Button variant="secondary" class="h-9 text-sm" disabled={!apiKey.trim() || validating || submitting} onclick={handleValidate}>
+                {validating ? 'Checking...' : 'Check'}
+              </Button>
             </div>
+            {#if validationResult}
+              <Badge variant={validationResult === 'success' ? 'default' : 'destructive'} class="w-fit text-caption-mono">
+                {validationResult === 'success' ? 'Valid' : 'Invalid'}
+              </Badge>
+            {/if}
             <p class="text-[11px] text-muted-foreground">
               {meta?.apiHint ?? 'Stored as one AxonRouter connection and used for routing.'}
             </p>

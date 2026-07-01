@@ -8,6 +8,7 @@ import (
 )
 
 const HealthInterval = 30 * time.Minute
+const healthConcurrency = 4
 
 type HealthChecker struct {
 	db     *sql.DB
@@ -49,6 +50,7 @@ func (h *HealthChecker) Last() string {
 	return h.last
 }
 
+// RunNow tests all active pools concurrently (bounded by healthConcurrency).
 func (h *HealthChecker) RunNow() ([]TestResult, bool) {
 	h.mu.Lock()
 	if h.run {
@@ -69,14 +71,38 @@ func (h *HealthChecker) RunNow() ([]TestResult, bool) {
 		return nil, false
 	}
 	defer rows.Close()
-	var out []TestResult
+
+	var ids []string
 	for rows.Next() {
 		var id string
 		if rows.Scan(&id) == nil {
-			if res, err := TestPool(h.db, id); err == nil {
-				out = append(out, res)
-			}
+			ids = append(ids, id)
 		}
 	}
+	if len(ids) == 0 {
+		return []TestResult{}, false
+	}
+
+	// Parallel test with bounded concurrency
+	sem := make(chan struct{}, healthConcurrency)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	out := make([]TestResult, 0, len(ids))
+
+	for _, id := range ids {
+		id := id
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if res, err := TestPool(h.db, id); err == nil {
+				mu.Lock()
+				out = append(out, res)
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
 	return out, false
 }
