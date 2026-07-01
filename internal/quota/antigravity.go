@@ -140,11 +140,12 @@ func parseAntigravityQuotas(data map[string]any) []QuotaItem {
 	// Only track quota for models that matter for usage differentiation.
 	// Skip noise models like tab_flash_lite_preview, gpt-oss, etc.
 	keepModels := map[string]bool{
-		"gemini-3.1-flash":  true,
-		"gemini-3.5-flash":  true,
-		"gemini-2.5-pro":    true,
-		"gemini-2.5-flash":  true,
-		"gemini-2.0-flash":  true,
+		"gemini-3.1-pro":      true,
+		"gemini-3.5-flash":    true,
+		"claude-sonnet-4.6":   true,
+		"gemini-2.5-pro":      true,
+		"gemini-2.5-flash":    true,
+		"gemini-2.0-flash":    true,
 	}
 
 	var quotas []QuotaItem
