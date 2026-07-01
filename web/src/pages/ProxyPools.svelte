@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { proxyPoolsApi, proxyGroupsApi } from '$lib/api';
-  import type { ProxyPool, ProxyGroup } from '$lib/api';
+  import { proxyPoolsApi, proxyGroupsApi, proxyDeployApi } from '$lib/api';
+  import type { ProxyPool, ProxyGroup, DeployResult } from '$lib/api';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
@@ -9,7 +9,7 @@
   import { Label } from '$lib/components/ui/label';
   import * as Dialog from '$lib/components/ui/dialog';
   import { toast } from 'svelte-sonner';
-  let tab = $state<'pools' | 'groups'>('pools');
+  let tab = $state<'pools' | 'groups' | 'deploy'>('pools');
   let pools = $state<ProxyPool[]>([]);
   let groups = $state<ProxyGroup[]>([]);
   let loading = $state(true);
@@ -33,6 +33,15 @@
   let groupStrict = $state(false);
   let createGroupLoading = $state(false);
 
+
+  // Deploy state
+  let deployPlatform = $state<'vercel' | 'deno' | 'cloudflare'>('vercel');
+  let deployToken = $state('');
+  let deployProjectName = $state('');
+  let deployOrgDomain = $state('');
+  let deployAccountId = $state('');
+  let deployLoading = $state(false);
+  let deployResult = $state<DeployResult | null>(null);
   const typeOptions = ['http', 'vercel', 'deno', 'cloudflare'];
 
   onMount(() => {
@@ -181,6 +190,35 @@
     if (type === 'cloudflare') return 'CF';
     return type;
   }
+
+  async function handleDeploy() {
+    if (!deployToken.trim()) return;
+    deployLoading = true;
+    deployResult = null;
+    try {
+      let res: DeployResult;
+      if (deployPlatform === 'vercel') {
+        res = await proxyDeployApi.vercel({ vercelToken: deployToken.trim(), projectName: deployProjectName.trim() || undefined });
+      } else if (deployPlatform === 'deno') {
+        if (!deployOrgDomain.trim()) { toast.error('Organization domain is required'); deployLoading = false; return; }
+        res = await proxyDeployApi.deno({ denoToken: deployToken.trim(), orgDomain: deployOrgDomain.trim(), projectName: deployProjectName.trim() || undefined });
+      } else {
+        if (!deployAccountId.trim()) { toast.error('Account ID is required'); deployLoading = false; return; }
+        res = await proxyDeployApi.cloudflare({ cfToken: deployToken.trim(), accountId: deployAccountId.trim(), projectName: deployProjectName.trim() || undefined });
+      }
+      deployResult = res;
+      if (res.relayTest.ok) {
+        toast.success(`Deployed to ${deployPlatform}! ${res.deployUrl}`);
+      } else {
+        toast.error(`Deployed but test failed: ${res.relayTest.error}`);
+      }
+      await loadAll();
+    } catch (err) {
+      toast.error('Deploy failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+    } finally {
+      deployLoading = false;
+    }
+  }
 </script>
 
 <div class="flex flex-1 flex-col gap-6 p-6">
@@ -220,7 +258,7 @@
           <Button onclick={() => (showCreatePool = true)} class="text-button-md rounded-pill px-5">
             Add pool
           </Button>
-        {:else}
+        {:else if tab === 'groups'}
           <Button onclick={() => (showCreateGroup = true)} class="text-button-md rounded-pill px-5">
             Add group
           </Button>
@@ -241,6 +279,12 @@
         onclick={() => (tab = 'groups')}
       >
         Groups ({groups.length})
+      </button>
+      <button
+        class="cursor-pointer px-4 py-2 text-body-sm transition-colors {tab === 'deploy' ? 'border-b-2 border-foreground text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+        onclick={() => (tab = 'deploy')}
+      >
+        Deploy
       </button>
     </div>
 
@@ -364,6 +408,81 @@
           </CardContent>
         </Card>
       {/if}
+    {/if}
+
+    <!-- Deploy Tab -->
+    {#if tab === 'deploy'}
+      <Card class="shadow-card">
+        <CardHeader class="pb-3">
+          <CardTitle class="text-body-md-strong">Deploy Relay Edge Function</CardTitle>
+          <p class="text-body-sm text-muted-foreground">Auto-deploy a relay proxy to Vercel, Deno Deploy, or Cloudflare Workers.</p>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <div class="space-y-2">
+            <Label class="text-body-sm-strong">Platform</Label>
+            <div class="flex gap-2">
+              {#each (['vercel', 'deno', 'cloudflare'] as const) as p}
+                <button
+                  class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {deployPlatform === p ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}"
+                  onclick={() => (deployPlatform = p)}
+                >
+                  {p === 'vercel' ? 'Vercel' : p === 'deno' ? 'Deno Deploy' : 'Cloudflare'}
+                </button>
+              {/each}
+            </div>
+          </div>
+          <div class="space-y-2">
+            <Label class="text-body-sm-strong">
+              {deployPlatform === 'vercel' ? 'Vercel Token' : deployPlatform === 'deno' ? 'Deno Token' : 'Cloudflare API Token'}
+            </Label>
+            <Input bind:value={deployToken} type="password" placeholder="pat_xxx or API token" class="h-10 text-body-sm font-mono" />
+          </div>
+          {#if deployPlatform === 'deno'}
+            <div class="space-y-2">
+              <Label class="text-body-sm-strong">Organization Domain</Label>
+              <Input bind:value={deployOrgDomain} placeholder="your-org" class="h-10 text-body-sm font-mono" />
+            </div>
+          {/if}
+          {#if deployPlatform === 'cloudflare'}
+            <div class="space-y-2">
+              <Label class="text-body-sm-strong">Account ID</Label>
+              <Input bind:value={deployAccountId} placeholder="abcdef1234567890" class="h-10 text-body-sm font-mono" />
+            </div>
+          {/if}
+          <div class="space-y-2">
+            <Label class="text-body-sm-strong">Project Name (optional)</Label>
+            <Input bind:value={deployProjectName} placeholder="auto-generated if empty" class="h-10 text-body-sm" />
+          </div>
+          <Button onclick={handleDeploy} disabled={deployLoading || !deployToken.trim()} class="text-button-md rounded-pill px-5">
+            {deployLoading ? 'Deploying...' : `Deploy to ${deployPlatform === 'vercel' ? 'Vercel' : deployPlatform === 'deno' ? 'Deno' : 'Cloudflare'}`}
+          </Button>
+          {#if deployResult}
+            <Card class="shadow-card border {deployResult.relayTest.ok ? 'border-green-500/30' : 'border-destructive/30'}">
+              <CardContent class="pt-4 space-y-2">
+                <div class="flex items-center gap-2">
+                  <Badge variant={deployResult.relayTest.ok ? 'default' : 'destructive'} class="text-caption-mono rounded-sm">
+                    {deployResult.relayTest.ok ? 'Deployed' : 'Test Failed'}
+                  </Badge>
+                </div>
+                <div class="space-y-1">
+                  <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Deploy URL</p>
+                  <p class="text-code font-mono break-all">{deployResult.deployUrl}</p>
+                </div>
+                <div class="space-y-1">
+                  <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Relay Auth</p>
+                  <p class="text-code font-mono break-all">{deployResult.relayAuth}</p>
+                </div>
+                {#if !deployResult.relayTest.ok}
+                  <div class="space-y-1">
+                    <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Test Error</p>
+                    <p class="text-body-sm font-mono text-destructive">{deployResult.relayTest.error}</p>
+                  </div>
+                {/if}
+              </CardContent>
+            </Card>
+          {/if}
+        </CardContent>
+      </Card>
     {/if}
   {/if}
 </div>

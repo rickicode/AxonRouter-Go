@@ -105,6 +105,7 @@ func New(cfg Config) *Router {
 	dashboardH := admin.NewDashboardHandler(cfg.DB)
 	proxyPoolH := admin.NewProxyPoolHandler(cfg.DB, proxyHealth)
 	proxyGroupH := admin.NewProxyGroupHandler(cfg.DB)
+	proxyDeployH := admin.NewProxyDeployHandler(cfg.DB, proxyHealth)
 
 	// Create v1 handler with all dependencies
 	v1H := v1.NewHandler(cfg.DB, store, elig, comboHandler, tracker, authManager, proxyResolver)
@@ -217,12 +218,16 @@ func New(cfg Config) *Router {
 	adminGroup.GET("/quota", quotaH.List)
 	adminGroup.POST("/quota/:connId/refresh", quotaH.Refresh)
 
-	// Proxy Pools (health-check before :id to avoid wildcard capture)
+	// Proxy Pools (static routes before :id to avoid wildcard capture)
 	adminGroup.GET("/proxy-pools", proxyPoolH.List)
 	adminGroup.GET("/proxy-pools/health-check", proxyPoolH.HealthGet)
 	adminGroup.POST("/proxy-pools/health-check", proxyPoolH.HealthRun)
-	adminGroup.GET("/proxy-pools/:id", proxyPoolH.Get)
+	adminGroup.GET("/proxy-pools/generate-source", proxyDeployH.GenerateSource)
+	adminGroup.POST("/proxy-pools/vercel-deploy", proxyDeployH.DeployVercel)
+	adminGroup.POST("/proxy-pools/deno-deploy", proxyDeployH.DeployDeno)
+	adminGroup.POST("/proxy-pools/cloudflare-deploy", proxyDeployH.DeployCloudflare)
 	adminGroup.POST("/proxy-pools", proxyPoolH.Create)
+	adminGroup.GET("/proxy-pools/:id", proxyPoolH.Get)
 	adminGroup.PATCH("/proxy-pools/:id", proxyPoolH.Update)
 	adminGroup.DELETE("/proxy-pools/:id", proxyPoolH.Delete)
 	adminGroup.POST("/proxy-pools/:id/test", proxyPoolH.Test)

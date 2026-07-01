@@ -443,3 +443,22 @@ export const proxyGroupsApi = {
   update: (id: string, data: Record<string, unknown>) => fetchApi<{ data: ProxyGroup }>(`/proxy-groups/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   delete: (id: string) => fetchApi<{ ok: boolean }>(`/proxy-groups/${id}`, { method: 'DELETE' }),
 };
+
+export interface DeployResult {
+  proxyPoolId: string;
+  deployUrl: string;
+  relayAuth: string;
+  relayTest: { ok: boolean; status: number; error: string; elapsedMs: number };
+}
+
+// Proxy Deploy API
+export const proxyDeployApi = {
+  vercel: (data: { vercelToken: string; projectName?: string }) =>
+    fetchApi<DeployResult>('/proxy-pools/vercel-deploy', { method: 'POST', body: JSON.stringify(data) }),
+  deno: (data: { denoToken: string; orgDomain: string; projectName?: string }) =>
+    fetchApi<DeployResult>('/proxy-pools/deno-deploy', { method: 'POST', body: JSON.stringify(data) }),
+  cloudflare: (data: { cfToken: string; accountId: string; projectName?: string }) =>
+    fetchApi<DeployResult>('/proxy-pools/cloudflare-deploy', { method: 'POST', body: JSON.stringify(data) }),
+  generateSource: (type: string) =>
+    fetchApi<{ type: string; source: string }>(`/proxy-pools/generate-source?type=${type}`),
+};
