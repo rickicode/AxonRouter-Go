@@ -216,15 +216,15 @@ func New(cfg Config) *Router {
 	adminGroup.GET("/quota", quotaH.List)
 	adminGroup.POST("/quota/:connId/refresh", quotaH.Refresh)
 
-	// Proxy Pools
+	// Proxy Pools (health-check before :id to avoid wildcard capture)
 	adminGroup.GET("/proxy-pools", proxyPoolH.List)
+	adminGroup.GET("/proxy-pools/health-check", proxyPoolH.HealthGet)
+	adminGroup.POST("/proxy-pools/health-check", proxyPoolH.HealthRun)
 	adminGroup.GET("/proxy-pools/:id", proxyPoolH.Get)
 	adminGroup.POST("/proxy-pools", proxyPoolH.Create)
 	adminGroup.PATCH("/proxy-pools/:id", proxyPoolH.Update)
 	adminGroup.DELETE("/proxy-pools/:id", proxyPoolH.Delete)
 	adminGroup.POST("/proxy-pools/:id/test", proxyPoolH.Test)
-	adminGroup.GET("/proxy-pools/health-check", proxyPoolH.HealthGet)
-	adminGroup.POST("/proxy-pools/health-check", proxyPoolH.HealthRun)
 
 	// Proxy Groups
 	adminGroup.GET("/proxy-groups", proxyGroupH.List)
