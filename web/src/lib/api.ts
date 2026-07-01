@@ -274,6 +274,43 @@ export const oauthApi = {
     }),
 };
 
+export interface APIKeyItem {
+  id: string;
+  name: string;
+  key_preview: string;
+  rate_limit_per_min: number;
+  is_active: boolean;
+  created_at: number;
+}
+
+export interface APIKeyCreateResponse {
+  id: string;
+  key: string;
+  name: string;
+  message: string;
+}
+
+export const apiKeysApi = {
+  list: () => fetchApi<{ data: APIKeyItem[] }>('/api-keys'),
+
+  create: (name?: string, rateLimit?: number) =>
+    fetchApi<APIKeyCreateResponse>('/api-keys', {
+      method: 'POST',
+      body: JSON.stringify({ name, rate_limit_per_min: rateLimit }),
+    }),
+
+  delete: (id: string) =>
+    fetchApi<{ ok: boolean }>(`/api-keys/${id}`, {
+      method: 'DELETE',
+    }),
+
+  toggle: (id: string, isActive: boolean) =>
+    fetchApi<{ ok: boolean }>(`/api-keys/${id}/toggle`, {
+      method: 'PATCH',
+      body: JSON.stringify({ is_active: isActive }),
+    }),
+};
+
 // Combo API
 export const combosApi = {
   list: () => fetchApi<ApiResponse<Combo[]>>('/combos'),

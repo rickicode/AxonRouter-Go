@@ -9,6 +9,7 @@
     Settings,
     Gauge,
     Globe,
+    Key,
   } from '@lucide/svelte';
 
   let { onclose }: { onclose?: () => void } = $props();
@@ -23,6 +24,7 @@
   ];
 
   const settingsItem = { href: '/settings', label: 'Settings', icon: Settings };
+  const apiKeysItem = { href: '/api-keys', label: 'API Keys', icon: Key };
 
   function isActive(pathname: string, href: string): boolean {
     if (href === '/') return pathname === '/';
@@ -78,7 +80,7 @@
       System
     </p>
     <nav class="space-y-0.5">
-      {#each [settingsItem] as item}
+      {#each [apiKeysItem, settingsItem] as item}
         {@const active = isActive($currentPath, item.href)}
         <a
           href={item.href}

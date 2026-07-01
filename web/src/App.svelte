@@ -20,6 +20,7 @@
   import Quota from './pages/Quota.svelte';
   import ProxyPools from './pages/ProxyPools.svelte';
   import ProxyPoolDetail from './pages/ProxyPoolDetail.svelte';
+  import APIKeys from './pages/APIKeys.svelte';
 
   let cleanup: (() => void) | undefined;
 
@@ -78,6 +79,9 @@
 
     // /proxy-pools → ProxyPools
     if (segments[0] === 'proxy-pools' && segments.length === 1) return { component: ProxyPools, params: {} };
+
+    // /api-keys → APIKeys
+    if (segments[0] === 'api-keys') return { component: APIKeys, params: {} };
 
     // Fallback
     return { component: Dashboard, params: {} };

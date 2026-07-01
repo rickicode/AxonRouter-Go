@@ -241,6 +241,13 @@ func New(cfg Config) *Router {
 	adminGroup.PATCH("/proxy-groups/:id", proxyGroupH.Update)
 	adminGroup.DELETE("/proxy-groups/:id", proxyGroupH.Delete)
 
+	// API Keys
+	apiKeyH := admin.NewAPIKeyHandler(cfg.DB)
+	adminGroup.GET("/api-keys", apiKeyH.List)
+	adminGroup.POST("/api-keys", apiKeyH.Create)
+	adminGroup.DELETE("/api-keys/:id", apiKeyH.Delete)
+	adminGroup.PATCH("/api-keys/:id/toggle", apiKeyH.ToggleActive)
+
 	// ---- Static frontend (SPA) ----
 	fsys := web.GetBuildFS()
 

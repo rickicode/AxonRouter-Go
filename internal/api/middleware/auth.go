@@ -24,10 +24,8 @@ func Auth(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 		if count == 0 {
-			// No keys configured — fail closed
-			log.Printf("WARN: no active API keys configured — denying request (fail-closed)")
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "no API keys configured"})
-			c.Abort()
+			// No keys configured — open access (user hasn't set up auth yet)
+			c.Next()
 			return
 		}
 
