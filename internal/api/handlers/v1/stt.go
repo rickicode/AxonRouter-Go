@@ -99,7 +99,9 @@ func (h *Handler) STT(c *gin.Context) {
 		},
 	}
 
-	resp, err := sttExec.Execute(c.Request.Context(), req)
+	proxyCtx := h.proxyContext(c.Request.Context(), conn)
+
+	resp, err := sttExec.Execute(proxyCtx, req)
 	if err != nil {
 		// Log failure
 		h.tracker.Log(&usage.LogEntry{

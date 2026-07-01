@@ -56,7 +56,9 @@ func (h *Handler) Video(c *gin.Context) {
 		Provider:    provider,
 	}
 
-	resp, err := videoExec.Execute(c.Request.Context(), req)
+	proxyCtx := h.proxyContext(c.Request.Context(), conn)
+
+	resp, err := videoExec.Execute(proxyCtx, req)
 	if err != nil {
 		// Log failure
 		h.tracker.Log(&usage.LogEntry{

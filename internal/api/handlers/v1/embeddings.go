@@ -62,9 +62,11 @@ func (h *Handler) Embeddings(c *gin.Context) {
 		Provider:    provider,
 	}
 
+	proxyCtx := h.proxyContext(c.Request.Context(), conn)
+
 	// Use OpenAI executor's Embeddings method
 	if openaiExec, ok := exec.(*executor.OpenAIExecutor); ok {
-		resp, err := openaiExec.Embeddings(c.Request.Context(), req)
+		resp, err := openaiExec.Embeddings(proxyCtx, req)
 		if err != nil {
 			// Log failure
 			h.tracker.Log(&usage.LogEntry{

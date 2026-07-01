@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -56,8 +57,9 @@ type Executor interface {
 
 // BaseExecutor provides shared HTTP logic for all executors.
 type BaseExecutor struct {
-	Client  *http.Client
-	Timeout time.Duration
+	Client       *http.Client
+	Timeout      time.Duration
+	proxyClients sync.Map // proxyURL -> *http.Client
 }
 
 // NewBaseExecutor creates a base executor with default settings.
@@ -66,6 +68,26 @@ func NewBaseExecutor() *BaseExecutor {
 		Client:  &http.Client{Timeout: 5 * time.Minute},
 		Timeout: 5 * time.Minute,
 	}
+}
+
+type proxyContextKey struct{}
+
+// ProxyConfig is attached to request contexts by v1 handlers.
+type ProxyConfig struct {
+	Enabled     bool
+	ProxyURL    string
+	NoProxy     string
+	RelayURL    string
+	RelayAuth   string
+	RelayType   string
+	StrictProxy bool
+}
+
+func ContextWithProxy(ctx context.Context, cfg ProxyConfig) context.Context {
+	if !cfg.Enabled && cfg.RelayURL == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, proxyContextKey{}, cfg)
 }
 
 // validateURL checks for SSRF-safe URLs. Blocks private IPs and localhost.
@@ -80,8 +102,11 @@ func validateURL(rawURL string) error {
 	}
 
 	host := u.Hostname()
-	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "0.0.0.0" {
 		return fmt.Errorf("localhost not allowed")
+	}
+	if strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal") {
+		return fmt.Errorf("local/internal hostname not allowed")
 	}
 
 	ip := net.ParseIP(host)
@@ -98,18 +123,68 @@ func validateURL(rawURL string) error {
 	return nil
 }
 
+// resolveTargetURL applies relay rewriting if proxy config has a relay URL.
+func resolveTargetURL(rawURL string, cfg ProxyConfig) (string, map[string]string) {
+	extra := map[string]string{}
+	if cfg.RelayURL == "" {
+		return rawURL, extra
+	}
+	target, _ := url.Parse(rawURL)
+	extra["x-relay-target"] = target.Scheme + "://" + target.Host
+	extra["x-relay-path"] = target.Path
+	if target.RawQuery != "" {
+		extra["x-relay-path"] = target.Path + "?" + target.RawQuery
+	}
+	if cfg.RelayAuth != "" {
+		extra["x-relay-auth"] = cfg.RelayAuth
+	}
+	return cfg.RelayURL, extra
+}
+
+// proxyClient returns an http.Client that routes through the given proxy URL.
+// ponytail: cached per proxy URL, avoids creating a new transport per request.
+func (b *BaseExecutor) proxyClient(proxyURL string) (*http.Client, error) {
+	if v, ok := b.proxyClients.Load(proxyURL); ok {
+		return v.(*http.Client), nil
+	}
+	u, err := url.Parse(proxyURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid proxy URL: %w", err)
+	}
+	c := &http.Client{Timeout: b.Timeout, Transport: &http.Transport{Proxy: http.ProxyURL(u)}}
+	b.proxyClients.Store(proxyURL, c)
+	return c, nil
+}
+
+// clientForContext picks the right http.Client and target URL for a request.
+func (b *BaseExecutor) clientForContext(ctx context.Context, rawURL string, headers map[string]string) (*http.Client, string) {
+	cfg, _ := ctx.Value(proxyContextKey{}).(ProxyConfig)
+	targetURL, extra := resolveTargetURL(rawURL, cfg)
+	for k, v := range extra {
+		headers[k] = v
+	}
+	if cfg.ProxyURL != "" && cfg.RelayURL == "" {
+		if c, err := b.proxyClient(cfg.ProxyURL); err == nil {
+			return c, targetURL
+		}
+	}
+	return b.Client, targetURL
+}
+
 // DoRequest performs a non-streaming HTTP request.
-func (b *BaseExecutor) DoRequest(ctx context.Context, method, url string, headers map[string]string, body []byte) (*Response, error) {
-	if err := validateURL(url); err != nil {
+func (b *BaseExecutor) DoRequest(ctx context.Context, method, rawURL string, headers map[string]string, body []byte) (*Response, error) {
+	if err := validateURL(rawURL); err != nil {
 		return nil, fmt.Errorf("blocked URL: %w", err)
 	}
+
+	client, targetURL := b.clientForContext(ctx, rawURL, headers)
 
 	var bodyReader io.Reader
 	if body != nil {
 		bodyReader = bytes.NewReader(body)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, targetURL, bodyReader)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -121,7 +196,7 @@ func (b *BaseExecutor) DoRequest(ctx context.Context, method, url string, header
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := b.Client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("do request: %w", err)
 	}
@@ -140,17 +215,19 @@ func (b *BaseExecutor) DoRequest(ctx context.Context, method, url string, header
 }
 
 // DoStreamRequest performs a streaming HTTP request and returns chunks via channel.
-func (b *BaseExecutor) DoStreamRequest(ctx context.Context, method, url string, headers map[string]string, body []byte) (*StreamResult, error) {
-	if err := validateURL(url); err != nil {
+func (b *BaseExecutor) DoStreamRequest(ctx context.Context, method, rawURL string, headers map[string]string, body []byte) (*StreamResult, error) {
+	if err := validateURL(rawURL); err != nil {
 		return nil, fmt.Errorf("blocked URL: %w", err)
 	}
+
+	client, targetURL := b.clientForContext(ctx, rawURL, headers)
 
 	var bodyReader io.Reader
 	if body != nil {
 		bodyReader = bytes.NewReader(body)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, targetURL, bodyReader)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -162,7 +239,7 @@ func (b *BaseExecutor) DoStreamRequest(ctx context.Context, method, url string, 
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := b.Client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("do request: %w", err)
 	}

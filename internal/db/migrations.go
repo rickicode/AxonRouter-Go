@@ -138,6 +138,39 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		}
 	}
 
+	// Proxy pool tables
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS proxy_pools (
+	id TEXT PRIMARY KEY,
+	name TEXT NOT NULL,
+	type TEXT NOT NULL DEFAULT 'http',
+	proxy_url TEXT NOT NULL DEFAULT '',
+	no_proxy TEXT NOT NULL DEFAULT '',
+	relay_auth TEXT NOT NULL DEFAULT '',
+	is_active INTEGER DEFAULT 1,
+	test_status TEXT NOT NULL DEFAULT 'untested',
+	last_tested_at TEXT,
+	last_error TEXT,
+	response_time_ms INTEGER,
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS proxy_groups (
+	id TEXT PRIMARY KEY,
+	name TEXT NOT NULL,
+	mode TEXT NOT NULL DEFAULT 'roundrobin',
+	sticky_limit INTEGER DEFAULT 1,
+	strict_proxy INTEGER DEFAULT 0,
+	proxy_pool_ids TEXT NOT NULL DEFAULT '[]',
+	is_active INTEGER DEFAULT 1,
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL
+);
+	`); err != nil {
+		return err
+	}
+
 	return nil
 }
 

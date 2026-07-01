@@ -15,6 +15,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
 
@@ -35,15 +36,16 @@ func readBody(c *gin.Context) ([]byte, error) {
 
 // Connection holds runtime connection data for a provider.
 type Connection struct {
-	ID             string
-	Provider       string
-	APIKey         string
-	AccessToken    string
-	RefreshToken   string
-	OAuthExpiresAt time.Time
-	BaseURL        string
-	Status         string
-	LastUsed       time.Time
+	ID                   string
+	Provider             string
+	APIKey               string
+	AccessToken          string
+	RefreshToken         string
+	OAuthExpiresAt       time.Time
+	BaseURL              string
+	Status               string
+	ProviderSpecificData string
+	LastUsed             time.Time
 }
 
 // Handler is the base handler for all /v1/* endpoints.
@@ -55,6 +57,7 @@ type Handler struct {
 	combo    *combo.Handler
 	tracker  *usage.Tracker
 	authMgr  *auth.Manager
+	resolver *proxypool.Resolver
 	conns    sync.Map // provider -> cachedConns
 }
 
@@ -72,6 +75,7 @@ func NewHandler(
 	comboHandler *combo.Handler,
 	tracker *usage.Tracker,
 	authManager *auth.Manager,
+	resolver *proxypool.Resolver,
 ) *Handler {
 	return &Handler{
 		db:       db,
@@ -81,6 +85,7 @@ func NewHandler(
 		combo:    comboHandler,
 		tracker:  tracker,
 		authMgr:  authManager,
+		resolver: resolver,
 	}
 }
 
@@ -166,24 +171,29 @@ func (h *Handler) loadConnections(ctx context.Context, provider string) ([]*Conn
 func (h *Handler) loadConnectionByID(ctx context.Context, connID string) (*Connection, error) {
 	var conn Connection
 	var expiresAt int64
+	var psd sql.NullString
 	err := h.db.QueryRowContext(ctx, `
-		SELECT c.id, pt.id as provider_prefix, 
+		SELECT c.id, c.provider_type_id as provider_prefix,
 			COALESCE(c.api_key, '') as api_key,
 			COALESCE(c.oauth_token, '') as oauth_token,
 			COALESCE(c.oauth_refresh_token, '') as oauth_refresh_token,
 			COALESCE(c.oauth_expires_at, 0) as oauth_expires_at,
 			COALESCE(pt.base_url, '') as base_url,
-			COALESCE(c.status, 'ready') as status
+			COALESCE(c.status, 'ready') as status,
+			c.provider_specific_data
 		FROM connections c
 		JOIN provider_types pt ON c.provider_type_id = pt.id
 		WHERE c.id = ?
 	`, connID).Scan(&conn.ID, &conn.Provider, &conn.APIKey, &conn.AccessToken,
-		&conn.RefreshToken, &expiresAt, &conn.BaseURL, &conn.Status)
+		&conn.RefreshToken, &expiresAt, &conn.BaseURL, &conn.Status, &psd)
 	if err != nil {
 		return nil, err
 	}
 	if expiresAt > 0 {
 		conn.OAuthExpiresAt = time.Unix(expiresAt, 0)
+	}
+	if psd.Valid {
+		conn.ProviderSpecificData = psd.String
 	}
 	return &conn, nil
 }
@@ -231,4 +241,21 @@ func (h *Handler) refreshOAuthToken(ctx context.Context, conn *Connection, provi
 	}
 
 	return nil
+}
+
+// proxyContext resolves proxy config for a connection and returns a context with it attached.
+func (h *Handler) proxyContext(ctx context.Context, conn *Connection) context.Context {
+	if h.resolver == nil {
+		return ctx
+	}
+	cfg := h.resolver.Resolve(conn.ProviderSpecificData, conn.Provider)
+	return executor.ContextWithProxy(ctx, executor.ProxyConfig{
+		Enabled:     cfg.Enabled,
+		ProxyURL:    cfg.ProxyURL,
+		NoProxy:     cfg.NoProxy,
+		RelayURL:    cfg.RelayURL,
+		RelayAuth:   cfg.RelayAuth,
+		RelayType:   cfg.RelayType,
+		StrictProxy: cfg.StrictProxy,
+	})
 }

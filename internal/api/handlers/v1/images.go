@@ -55,7 +55,9 @@ func (h *Handler) Images(c *gin.Context) {
 		Provider:    provider,
 	}
 
-	resp, err := imagesExec.Execute(c.Request.Context(), req)
+	proxyCtx := h.proxyContext(c.Request.Context(), conn)
+
+	resp, err := imagesExec.Execute(proxyCtx, req)
 	if err != nil {
 		// Log failure
 		h.tracker.Log(&usage.LogEntry{

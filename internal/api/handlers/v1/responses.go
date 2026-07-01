@@ -78,6 +78,8 @@ func (h *Handler) Responses(c *gin.Context) {
 		Provider:    provider,
 	}
 
+	proxyCtx := h.proxyContext(c.Request.Context(), conn)
+
 	// Use OpenAI Responses-specific methods for codex format
 	if providerFormat == executor.FormatOpenAIResponses {
 		h.handleResponsesFormat(c, exec, req, provider, conn, start, translatedBody, body)
@@ -88,9 +90,9 @@ func (h *Handler) Responses(c *gin.Context) {
 	var streamResult *executor.StreamResult
 
 	if req.Stream {
-		streamResult, err = exec.ExecuteStream(c.Request.Context(), req)
+		streamResult, err = exec.ExecuteStream(proxyCtx, req)
 	} else {
-		resp, err = exec.Execute(c.Request.Context(), req)
+		resp, err = exec.Execute(proxyCtx, req)
 	}
 
 	latency := time.Since(start).Milliseconds()
@@ -150,19 +152,20 @@ func (h *Handler) Responses(c *gin.Context) {
 
 // handleResponsesFormat handles OpenAI Responses API format.
 func (h *Handler) handleResponsesFormat(c *gin.Context, exec executor.Executor, req *executor.Request, provider string, conn *Connection, start time.Time, translatedReq, originalReq []byte) {
+	proxyCtx := h.proxyContext(c.Request.Context(), conn)
 	// ponytail: use the OpenAI executor's Responses/ResponsesStream methods
 	openaiExec, ok := exec.(*executor.OpenAIExecutor)
 	if !ok {
 		// Fall back to generic execute
 		if req.Stream {
-			streamResult, err := exec.ExecuteStream(c.Request.Context(), req)
+			streamResult, err := exec.ExecuteStream(proxyCtx, req)
 			if err != nil {
 				c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
 				return
 			}
 			h.handleStreamResponse(c, streamResult, conn, provider, req.Model, start, translatedReq, originalReq)
 		} else {
-			resp, err := exec.Execute(c.Request.Context(), req)
+			resp, err := exec.Execute(proxyCtx, req)
 			if err != nil {
 				c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
 				return
@@ -175,7 +178,7 @@ func (h *Handler) handleResponsesFormat(c *gin.Context, exec executor.Executor, 
 	}
 
 	if req.Stream {
-		result, err := openaiExec.ResponsesStream(c.Request.Context(), req)
+		result, err := openaiExec.ResponsesStream(proxyCtx, req)
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
 			return
@@ -232,7 +235,7 @@ func (h *Handler) handleResponsesFormat(c *gin.Context, exec executor.Executor, 
 			StatusCode:      http.StatusOK,
 		})
 	} else {
-		resp, err := openaiExec.Responses(c.Request.Context(), req)
+		resp, err := openaiExec.Responses(proxyCtx, req)
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
 			return

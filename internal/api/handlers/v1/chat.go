@@ -81,13 +81,15 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		Provider:    provider,
 	}
 
+	proxyCtx := h.proxyContext(c.Request.Context(), conn)
+
 	var resp *executor.Response
 	var streamResult *executor.StreamResult
 
 	if req.Stream {
-		streamResult, err = exec.ExecuteStream(c.Request.Context(), req)
+		streamResult, err = exec.ExecuteStream(proxyCtx, req)
 	} else {
-		resp, err = exec.Execute(c.Request.Context(), req)
+		resp, err = exec.Execute(proxyCtx, req)
 	}
 
 	latency := time.Since(start).Milliseconds()
@@ -173,6 +175,8 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 			continue
 		}
 
+		proxyCtx := h.proxyContext(comboCtx, conn)
+
 		provider, modelName := executor.SplitModel(step.ModelID)
 		exec, providerFormat, err := h.resolveExecutor(provider, modelName)
 		if err != nil {
@@ -198,9 +202,9 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 		var streamResult *executor.StreamResult
 
 		if req.Stream {
-			streamResult, err = exec.ExecuteStream(comboCtx, req)
+			streamResult, err = exec.ExecuteStream(proxyCtx, req)
 		} else {
-			resp, err = exec.Execute(comboCtx, req)
+			resp, err = exec.Execute(proxyCtx, req)
 		}
 
 		latency := time.Since(start).Milliseconds()

@@ -22,6 +22,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/models"
+	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 	"github.com/rickicode/AxonRouter-Go/web"
 )
@@ -84,8 +85,12 @@ func New(cfg Config) *Router {
 	cleanup := background.NewCleanup(comboHandler, cfg.DB, cfg.LogRetentionDays)
 	quotaScheduler.Start(ctx)
 	usageFlush.Start(ctx)
-	cleanup.Start(ctx)
 	models.StartUpdater(ctx)
+
+	// Proxy pool system
+	proxyResolver := proxypool.NewResolver(cfg.DB)
+	proxyHealth := proxypool.NewHealthChecker(cfg.DB)
+	proxyHealth.Start(ctx)
 
 	// Create admin handlers
 	providerH := admin.NewProviderHandler(cfg.DB, executor.GetRegistry(), store)
@@ -98,9 +103,11 @@ func New(cfg Config) *Router {
 	logH := admin.NewLogHandler(cfg.DB)
 	settingH := settingHandler
 	dashboardH := admin.NewDashboardHandler(cfg.DB)
+	proxyPoolH := admin.NewProxyPoolHandler(cfg.DB, proxyHealth)
+	proxyGroupH := admin.NewProxyGroupHandler(cfg.DB)
 
 	// Create v1 handler with all dependencies
-	v1H := v1.NewHandler(cfg.DB, store, elig, comboHandler, tracker, authManager)
+	v1H := v1.NewHandler(cfg.DB, store, elig, comboHandler, tracker, authManager, proxyResolver)
 
 	// Create Gin engine
 	engine := gin.New()
@@ -208,6 +215,23 @@ func New(cfg Config) *Router {
 	quotaH := admin.NewQuotaHandler(cfg.DB)
 	adminGroup.GET("/quota", quotaH.List)
 	adminGroup.POST("/quota/:connId/refresh", quotaH.Refresh)
+
+	// Proxy Pools
+	adminGroup.GET("/proxy-pools", proxyPoolH.List)
+	adminGroup.GET("/proxy-pools/:id", proxyPoolH.Get)
+	adminGroup.POST("/proxy-pools", proxyPoolH.Create)
+	adminGroup.PATCH("/proxy-pools/:id", proxyPoolH.Update)
+	adminGroup.DELETE("/proxy-pools/:id", proxyPoolH.Delete)
+	adminGroup.POST("/proxy-pools/:id/test", proxyPoolH.Test)
+	adminGroup.GET("/proxy-pools/health-check", proxyPoolH.HealthGet)
+	adminGroup.POST("/proxy-pools/health-check", proxyPoolH.HealthRun)
+
+	// Proxy Groups
+	adminGroup.GET("/proxy-groups", proxyGroupH.List)
+	adminGroup.GET("/proxy-groups/:id", proxyGroupH.Get)
+	adminGroup.POST("/proxy-groups", proxyGroupH.Create)
+	adminGroup.PATCH("/proxy-groups/:id", proxyGroupH.Update)
+	adminGroup.DELETE("/proxy-groups/:id", proxyGroupH.Delete)
 
 	// ---- Static frontend (SPA) ----
 	fsys := web.GetBuildFS()

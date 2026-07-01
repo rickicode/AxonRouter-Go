@@ -80,13 +80,15 @@ func (h *Handler) Messages(c *gin.Context) {
 		Provider:    provider,
 	}
 
+	proxyCtx := h.proxyContext(c.Request.Context(), conn)
+
 	var resp *executor.Response
 	var streamResult *executor.StreamResult
 
 	if req.Stream {
-		streamResult, err = exec.ExecuteStream(c.Request.Context(), req)
+		streamResult, err = exec.ExecuteStream(proxyCtx, req)
 	} else {
-		resp, err = exec.Execute(c.Request.Context(), req)
+		resp, err = exec.Execute(proxyCtx, req)
 	}
 
 	latency := time.Since(start).Milliseconds()
@@ -256,7 +258,8 @@ func (h *Handler) CountTokens(c *gin.Context) {
 
 	// Use Claude executor's CountTokens method
 	if claudeExec, ok := exec.(*executor.ClaudeExecutor); ok {
-		resp, err := claudeExec.CountTokens(c.Request.Context(), req)
+		proxyCtx := h.proxyContext(c.Request.Context(), conn)
+		resp, err := claudeExec.CountTokens(proxyCtx, req)
 		if err != nil {
 			c.JSON(http.StatusBadGateway, claudeError("server_error", err.Error()))
 			return

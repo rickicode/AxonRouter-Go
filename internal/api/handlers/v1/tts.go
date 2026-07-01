@@ -56,7 +56,9 @@ func (h *Handler) TTS(c *gin.Context) {
 		Provider:    provider,
 	}
 
-	resp, err := ttsExec.Execute(c.Request.Context(), req)
+	proxyCtx := h.proxyContext(c.Request.Context(), conn)
+
+	resp, err := ttsExec.Execute(proxyCtx, req)
 	if err != nil {
 		// Log failure
 		h.tracker.Log(&usage.LogEntry{

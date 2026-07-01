@@ -153,3 +153,33 @@ type ProviderWithCounts struct {
 	ConnectionCount int            `json:"connection_count"`
 	StatusCounts    map[string]int `json:"status_counts"`
 }
+
+// ProxyPool represents a proxy endpoint (HTTP proxy or relay).
+type ProxyPool struct {
+	ID             string         `json:"id"`
+	Name           string         `json:"name"`
+	Type           string         `json:"type"`            // http, vercel, deno, cloudflare
+	ProxyURL       string         `json:"proxyUrl"`
+	NoProxy        string         `json:"noProxy"`
+	RelayAuth      string         `json:"relayAuth"`       // auth token for relay types
+	IsActive       bool           `json:"isActive"`
+	TestStatus     string         `json:"testStatus"`      // untested, active, error
+	LastTestedAt   sql.NullString `json:"lastTestedAt"`
+	LastError      sql.NullString `json:"lastError"`
+	ResponseTimeMs sql.NullInt64  `json:"responseTimeMs"`
+	CreatedAt      int64          `json:"createdAt"`
+	UpdatedAt      int64          `json:"updatedAt"`
+}
+
+// ProxyGroup represents a named group of proxy pools with a selection strategy.
+type ProxyGroup struct {
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Mode         string   `json:"mode"`         // roundrobin, sticky
+	StickyLimit  int      `json:"stickyLimit"`
+	StrictProxy  bool     `json:"strictProxy"`
+	ProxyPoolIDs []string `json:"proxyPoolIds"`  // ordered list of pool IDs
+	IsActive     bool     `json:"isActive"`
+	CreatedAt    int64    `json:"createdAt"`
+	UpdatedAt    int64    `json:"updatedAt"`
+}
