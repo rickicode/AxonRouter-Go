@@ -131,21 +131,26 @@ func fetchAntigravityModels(accessToken string, psd map[string]any) ([]QuotaItem
 	return nil, fmt.Errorf("antigravity api unavailable")
 }
 
+// isNoiseModelSuffix returns true for model variants that are just resource tiers,
+// not separate models worth tracking individually.
+func isNoiseModelSuffix(modelKey string) bool {
+	lower := strings.ToLower(modelKey)
+	if strings.Contains(lower, "gpt-oss") {
+		return true
+	}
+	suffixes := []string{"-low", "-high", "-agent", "-extra-low", "-lite", "-thinking", "-image"}
+	for _, s := range suffixes {
+		if strings.HasSuffix(lower, s) {
+			return true
+		}
+	}
+	return false
+}
+
 func parseAntigravityQuotas(data map[string]any) []QuotaItem {
 	models, ok := data["models"].(map[string]any)
 	if !ok {
 		return nil
-	}
-
-	// Only track quota for models that matter for usage differentiation.
-	// Skip noise models like tab_flash_lite_preview, gpt-oss, etc.
-	keepModels := map[string]bool{
-		"gemini-3.1-pro":      true,
-		"gemini-3.5-flash":    true,
-		"claude-sonnet-4.6":   true,
-		"gemini-2.5-pro":      true,
-		"gemini-2.5-flash":    true,
-		"gemini-2.0-flash":    true,
 	}
 
 	var quotas []QuotaItem
@@ -155,7 +160,6 @@ func parseAntigravityQuotas(data map[string]any) []QuotaItem {
 			continue
 		}
 
-		// Skip internal models
 		if isInternal, ok := info["isInternal"].(bool); ok && isInternal {
 			continue
 		}
@@ -170,14 +174,11 @@ func parseAntigravityQuotas(data map[string]any) []QuotaItem {
 			continue
 		}
 
-		// Filter: skip models not in the keep list, and skip known noise models
-		lower := strings.ToLower(modelKey)
-		if strings.Contains(lower, "tab_flash_lite") || strings.Contains(lower, "gpt-oss") {
+		// Skip noise variants (resource tiers, not real models)
+		if isNoiseModelSuffix(modelKey) {
 			continue
 		}
-		if !keepModels[modelKey] && !strings.Contains(lower, "claude") {
-			continue
-		}
+
 		remainingFraction := getNumberField(quotaInfo, "remainingFraction", "remaining_fraction")
 		resetAt := parseResetTimeString(quotaInfo)
 

@@ -146,7 +146,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 	providers := []struct {
 		ID, DisplayName, Format, BaseURL string
 	}{
-		{"ag", "Antigravity", "antigravity", "https://cloudcode-pa.googleapis.com/v1internal:streamProcessMessage"},
+		{"ag", "Antigravity", "antigravity", "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"},
 		{"cx", "OpenAI Codex", "openai-responses", "https://chatgpt.com/backend-api/codex/responses"},
 		{"kiro", "Kiro AI", "openai", "https://api.kiro.ai/v1"},
 		{"openai", "OpenAI Platform", "openai", "https://api.openai.com/v1"},

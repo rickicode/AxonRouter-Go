@@ -49,7 +49,6 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 		return
 	}
 
-
 	// Try to get provider from DB (may not exist on fresh install)
 	var provider struct {
 		ID      string
@@ -139,11 +138,13 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 
 	// Get credentials: try connection first, fall back to no-auth
 	var apiKey, accessToken string
+	var providerSpecificData map[string]string
 	baseURL := provider.BaseURL
 	format := provider.Format
 
 	if dbErr == nil {
-		err := h.db.QueryRow(`SELECT COALESCE(api_key,''), COALESCE(oauth_token,'') FROM connections WHERE provider_type_id = ? AND status = 'ready' AND is_active = 1 LIMIT 1`, providerID).Scan(&apiKey, &accessToken)
+		var psdJSON sql.NullString
+		err := h.db.QueryRow(`SELECT COALESCE(api_key,''), COALESCE(oauth_token,''), provider_specific_data FROM connections WHERE provider_type_id = ? AND status = 'ready' AND is_active = 1 LIMIT 1`, providerID).Scan(&apiKey, &accessToken, &psdJSON)
 		if err != nil {
 			// No connection — check if this is a no-auth provider
 			if noAuthURL, ok := noAuthBaseURLs[providerID]; ok {
@@ -153,6 +154,9 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "no ready connections"})
 				return
 			}
+		} else if psdJSON.Valid && psdJSON.String != "" {
+			providerSpecificData = make(map[string]string)
+			json.Unmarshal([]byte(psdJSON.String), &providerSpecificData)
 		}
 	} else {
 		// Provider not in DB — check if this is a no-auth provider
@@ -169,12 +173,13 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 
 	start := time.Now()
 	streamResult, err := exec.ExecuteStream(c.Request.Context(), &executor.Request{
-		APIKey:      apiKey,
-		AccessToken: accessToken,
-		BaseURL:     baseURL,
-		Body:        bodyBytes,
-		Provider:    providerID,
-		Model:       req.Model,
+		APIKey:               apiKey,
+		AccessToken:          accessToken,
+		BaseURL:              baseURL,
+		Body:                 bodyBytes,
+		Provider:             providerID,
+		Model:                req.Model,
+		ProviderSpecificData: providerSpecificData,
 	})
 	if err != nil {
 		latency := time.Since(start).Milliseconds()

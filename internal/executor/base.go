@@ -45,6 +45,8 @@ type Request struct {
 	AccessToken string
 	BaseURL     string
 	Provider    string
+	// Provider-specific data (e.g., projectId for Antigravity)
+	ProviderSpecificData map[string]string
 	// Extra headers
 	Headers map[string]string
 }

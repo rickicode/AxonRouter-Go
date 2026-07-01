@@ -16,6 +16,9 @@ import (
 func SaveQuotaCache(db *sql.DB, results []ProviderQuota) {
 	now := time.Now().Unix()
 	for _, provider := range results {
+		// Filter: only keep models with different % across connections
+		provider.Connections = filterDistinctModels(provider.Connections)
+
 		for _, conn := range provider.Connections {
 			status := evaluateCacheStatus(conn.Quotas, conn.Error)
 			quotasJSON, err := json.Marshal(conn.Quotas)
@@ -41,6 +44,68 @@ func SaveQuotaCache(db *sql.DB, results []ProviderQuota) {
 		}
 	}
 }
+
+// filterDistinctModels keeps only models where quota % differs across connections.
+// Models where all connections show the same % are noise (all free or all exhausted).
+func filterDistinctModels(connections []ConnectionQuota) []ConnectionQuota {
+	if len(connections) <= 1 {
+		return connections
+	}
+
+	type rangeInfo struct{ min, max float64 }
+	modelRanges := make(map[string]*rangeInfo)
+
+	for _, conn := range connections {
+		if conn.Error != "" {
+			continue
+		}
+		for _, q := range conn.Quotas {
+			key := q.ModelKey
+			if key == "" {
+				key = q.Name
+			}
+			r, ok := modelRanges[key]
+			if !ok {
+				modelRanges[key] = &rangeInfo{min: q.RemainingPct, max: q.RemainingPct}
+			} else {
+				if q.RemainingPct < r.min {
+					r.min = q.RemainingPct
+				}
+				if q.RemainingPct > r.max {
+					r.max = q.RemainingPct
+				}
+			}
+		}
+	}
+
+	distinct := make(map[string]bool)
+	for key, r := range modelRanges {
+		if r.min != r.max {
+			distinct[key] = true
+		}
+	}
+
+	if len(distinct) == 0 {
+		return connections
+	}
+
+	for i := range connections {
+		var filtered []QuotaItem
+		for _, q := range connections[i].Quotas {
+			key := q.ModelKey
+			if key == "" {
+				key = q.Name
+			}
+			if distinct[key] {
+				filtered = append(filtered, q)
+			}
+		}
+		connections[i].Quotas = filtered
+	}
+
+	return connections
+}
+
 
 // evaluateCacheStatus determines the display status for the cache entry.
 func evaluateCacheStatus(quotas []QuotaItem, connError string) string {

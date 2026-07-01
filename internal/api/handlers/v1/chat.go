@@ -71,14 +71,21 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	stream := executor.IsStreamRequest(body)
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
 
+	// Parse provider-specific data for executor (e.g., Antigravity projectId)
+	var psdMap map[string]string
+	if conn.ProviderSpecificData != "" {
+		json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap)
+	}
+
 	req := &executor.Request{
-		Model:       modelName,
-		Body:        translatedBody,
-		Stream:      stream,
-		APIKey:      conn.APIKey,
-		AccessToken: conn.AccessToken,
-		BaseURL:     conn.BaseURL,
-		Provider:    provider,
+		Model:                modelName,
+		Body:                 translatedBody,
+		Stream:               stream,
+		APIKey:               conn.APIKey,
+		AccessToken:          conn.AccessToken,
+		BaseURL:              conn.BaseURL,
+		Provider:             provider,
+		ProviderSpecificData: psdMap,
 	}
 
 	proxyCtx := h.proxyContext(c.Request.Context(), conn)
@@ -211,7 +218,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 
 		if err != nil {
 			det := connstate.DetectError(0, "", err, provider, modelName, nil) // Q5: pass modelID
-			h.store.RecordFailure(connID, det) // Q7: update circuit breaker
+			h.store.RecordFailure(connID, det)                                 // Q7: update circuit breaker
 			if det.Status != connstate.StatusReady {
 				h.elig.Update(h.store)
 			}

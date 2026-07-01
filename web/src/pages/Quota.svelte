@@ -13,11 +13,12 @@
     refreshConnectionQuota,
   } from '$lib/stores';
   import type { QuotaCacheEntry } from '$lib/api';
+  import { Card, CardContent } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import {
     RefreshCw, Gauge, AlertCircle, Clock, Search, ChevronLeft, ChevronRight,
-    X, Infinity, AlertTriangle, CheckCircle2, HelpCircle, Zap, User, Building2
+    X, Infinity, AlertTriangle, CheckCircle2, HelpCircle, Zap, User
   } from '@lucide/svelte';
 
   let searchQuery = $state('');
@@ -105,24 +106,24 @@
   }
 
   function quotaBarColor(pct: number): string {
-    if (pct > 50) return 'bg-[#4ade80]';
-    if (pct > 20) return 'bg-[#fbbf24]';
-    return 'bg-[#f87171]';
+    if (pct > 50) return 'bg-emerald-500';
+    if (pct > 20) return 'bg-amber-500';
+    return 'bg-rose-500';
   }
 
   function quotaTextClr(pct: number): string {
-    if (pct > 50) return 'text-[#4ade80]';
-    if (pct > 20) return 'text-[#fbbf24]';
-    return 'text-[#f87171]';
+    if (pct > 50) return 'text-emerald-400';
+    if (pct > 20) return 'text-amber-400';
+    return 'text-rose-400';
   }
 
   function statusInfo(status: string) {
     switch (status) {
-      case 'ok': return { label: 'OK', bg: 'bg-[#4ade80]/10', border: 'border-[#4ade80]/20', text: 'text-[#4ade80]', icon: CheckCircle2 };
-      case 'exhausted': return { label: 'Exhausted', bg: 'bg-[#f87171]/10', border: 'border-[#f87171]/20', text: 'text-[#f87171]', icon: AlertTriangle };
-      case 'unlimited': return { label: 'Unlimited', bg: 'bg-[#a78bfa]/10', border: 'border-[#a78bfa]/20', text: 'text-[#a78bfa]', icon: Infinity };
-      case 'error': return { label: 'Error', bg: 'bg-[#f87171]/10', border: 'border-[#f87171]/20', text: 'text-[#f87171]', icon: AlertCircle };
-      default: return { label: 'No Data', bg: 'bg-[#71717a]/10', border: 'border-[#71717a]/20', text: 'text-[#71717a]', icon: HelpCircle };
+      case 'ok': return { label: 'OK', cls: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400', icon: CheckCircle2 };
+      case 'exhausted': return { label: 'Exhausted', cls: 'border-rose-500/30 bg-rose-500/10 text-rose-400', icon: AlertTriangle };
+      case 'unlimited': return { label: 'Unlimited', cls: 'border-violet-500/30 bg-violet-500/10 text-violet-400', icon: Infinity };
+      case 'error': return { label: 'Error', cls: 'border-rose-500/30 bg-rose-500/10 text-rose-400', icon: AlertCircle };
+      default: return { label: 'No Data', cls: 'border-muted bg-muted/10 text-muted-foreground', icon: HelpCircle };
     }
   }
 
@@ -150,10 +151,10 @@
 
   function getPlanBadge(plan: string) {
     const p = plan.toLowerCase();
-    if (p.includes('free')) return { cls: 'border-[#71717a]/30 text-[#71717a]', icon: User };
-    if (p.includes('plus') || p.includes('pro')) return { cls: 'border-[#4ade80]/30 text-[#4ade80]', icon: Zap };
-    if (p.includes('ultra') || p.includes('premium')) return { cls: 'border-[#a78bfa]/30 text-[#a78bfa]', icon: Zap };
-    return { cls: 'border-[#71717a]/30 text-[#71717a]', icon: Zap };
+    if (p.includes('free')) return { cls: 'border-muted text-muted-foreground', icon: User };
+    if (p.includes('plus') || p.includes('pro')) return { cls: 'border-emerald-500/30 text-emerald-400', icon: Zap };
+    if (p.includes('ultra') || p.includes('premium')) return { cls: 'border-violet-500/30 text-violet-400', icon: Zap };
+    return { cls: 'border-muted text-muted-foreground', icon: Zap };
   }
 
   let providerOptions = $derived(() => {
@@ -165,184 +166,189 @@
   const hasActiveFilters = $derived(filterProvider || filterStatus || searchQuery);
 </script>
 
-<div class="flex flex-1 flex-col gap-6 p-6 max-w-[1400px]">
+<div class="flex flex-1 flex-col gap-6 p-6">
   <!-- Header -->
   <div class="flex items-center justify-between">
-    <div>
-      <h1 class="text-[24px] font-semibold tracking-[-0.96px] text-[#e4e4e7] leading-[32px]">Quota Tracker</h1>
-      <p class="text-[13px] text-[#71717a] mt-0.5">Cached upstream quota · updated by background scheduler every 30 min</p>
+    <div class="space-y-1">
+      <h1 class="text-display-lg">Quota Tracker</h1>
+      <p class="text-body-sm text-muted-foreground">Cached upstream quota · updated by background scheduler every 30 min</p>
     </div>
     <div class="flex items-center gap-2">
       {#if hasActiveFilters}
-        <button
-          onclick={clearFilters}
-          class="inline-flex items-center gap-1.5 h-[32px] px-3 rounded-[6px] text-[13px] font-medium text-[#a1a1aa] bg-[#18181b] border border-[#27272a] hover:text-[#e4e4e7] hover:border-[#3f3f46] transition-colors cursor-pointer"
-        >
+        <Button variant="outline" size="sm" onclick={clearFilters} class="gap-1.5 text-body-sm rounded-sm cursor-pointer">
           <X class="size-3.5" /> Clear
-        </button>
+        </Button>
       {/if}
-      <button
+      <Button
+        variant="outline"
+        size="sm"
         onclick={handleRefreshAll}
         disabled={$quotaLoading || $quotaItems.length === 0}
-        class="inline-flex items-center gap-1.5 h-[32px] px-3 rounded-[6px] text-[13px] font-medium text-[#e4e4e7] bg-[#18181b] border border-[#27272a] hover:border-[#3f3f46] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+        class="gap-1.5 text-body-sm rounded-sm cursor-pointer"
       >
         <RefreshCw class="size-3.5" /> Refresh Page
-      </button>
+      </Button>
     </div>
   </div>
 
-  <!-- Provider summary pills -->
+  <!-- Provider summary cards -->
   {#if $quotaSummary.length > 0}
-    <div class="flex flex-wrap gap-2">
+    <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       {#each $quotaSummary as ps}
         {@const exhausted = ps.statuses['exhausted'] || 0}
         {@const errors = ps.statuses['error'] || 0}
         {@const ok = (ps.statuses['ok'] || 0) + (ps.statuses['unlimited'] || 0)}
         <button
           onclick={() => onProviderChange(filterProvider === ps.provider_id ? '' : ps.provider_id)}
-          class="inline-flex items-center gap-2.5 h-[36px] px-3.5 rounded-[6px] text-[13px] transition-all cursor-pointer
-            {filterProvider === ps.provider_id
-              ? 'bg-[#ec4899]/10 border border-[#ec4899]/30 text-[#ec4899]'
-              : 'bg-[#18181b] border border-[#27272a] text-[#a1a1aa] hover:border-[#3f3f46] hover:text-[#e4e4e7]'}"
+          class="rounded-lg bg-card p-4 text-left transition-all cursor-pointer shadow-card hover:shadow-elevated
+            {filterProvider === ps.provider_id ? 'ring-1 ring-primary/40' : ''}"
         >
-          <span class="font-medium">{ps.display_name}</span>
-          <span class="inline-flex items-center gap-1.5 text-[12px] font-mono">
-            <span class="text-[#4ade80]">{ok}</span>
-            {#if exhausted > 0}<span class="text-[#f87171]">{exhausted}</span>{/if}
-            {#if errors > 0}<span class="text-[#fbbf24]">{errors}</span>{/if}
-            <span class="text-[#71717a]">/{ps.total}</span>
-          </span>
+          <p class="text-caption text-muted-foreground">{ps.display_name}</p>
+          <p class="mt-1 text-display-md">{ps.total}</p>
+          <div class="mt-1 flex items-center gap-2 text-caption-mono">
+            <span class="text-emerald-400">{ok} ready</span>
+            {#if exhausted > 0}<span class="text-rose-400">{exhausted} exhausted</span>{/if}
+            {#if errors > 0}<span class="text-amber-400">{errors} error</span>{/if}
+          </div>
         </button>
       {/each}
     </div>
   {/if}
 
   <!-- Filters -->
-  <div class="flex flex-wrap items-center gap-2">
-    <div class="relative flex-1 min-w-[200px] max-w-sm">
-      <Search class="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[#71717a]" />
-      <input
-        type="text"
-        bind:value={searchQuery}
-        oninput={onSearchInput}
-        placeholder="Search connections…"
-        class="w-full h-[36px] pl-9 pr-3 rounded-[6px] bg-[#18181b] border border-[#27272a] text-[13px] text-[#e4e4e7] placeholder:text-[#71717a] focus:outline-none focus:border-[#ec4899]/50 transition-colors"
-      />
+  <section class="rounded-xl bg-card p-4 shadow-card md:p-5">
+    <div class="flex flex-col gap-3 lg:flex-row lg:items-center">
+      <div class="relative flex-1 lg:max-w-md">
+        <Search class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+        <Input
+          type="text"
+          bind:value={searchQuery}
+          oninput={onSearchInput}
+          placeholder="Search connections…"
+          class="h-10 pl-9 text-body-sm"
+        />
+      </div>
+      <div class="flex items-center gap-2">
+        <select
+          class="h-10 rounded-md border border-input bg-background px-3 text-body-sm text-foreground cursor-pointer"
+          value={filterProvider}
+          onchange={(e) => onProviderChange((e.target as HTMLSelectElement).value)}
+        >
+          {#each providerOptions() as opt}
+            <option value={opt.value}>{opt.label}</option>
+          {/each}
+        </select>
+        <select
+          class="h-10 rounded-md border border-input bg-background px-3 text-body-sm text-foreground cursor-pointer"
+          value={filterStatus}
+          onchange={(e) => onStatusChange((e.target as HTMLSelectElement).value)}
+        >
+          {#each statusOptions as opt}
+            <option value={opt.value}>{opt.label}</option>
+          {/each}
+        </select>
+      </div>
     </div>
-    <select
-      class="h-[36px] px-3 rounded-[6px] bg-[#18181b] border border-[#27272a] text-[13px] text-[#e4e4e7] cursor-pointer focus:outline-none focus:border-[#ec4899]/50 transition-colors"
-      value={filterProvider}
-      onchange={(e) => onProviderChange((e.target as HTMLSelectElement).value)}
-    >
-      {#each providerOptions() as opt}
-        <option value={opt.value}>{opt.label}</option>
-      {/each}
-    </select>
-    <select
-      class="h-[36px] px-3 rounded-[6px] bg-[#18181b] border border-[#27272a] text-[13px] text-[#e4e4e7] cursor-pointer focus:outline-none focus:border-[#ec4899]/50 transition-colors"
-      value={filterStatus}
-      onchange={(e) => onStatusChange((e.target as HTMLSelectElement).value)}
-    >
-      {#each statusOptions as opt}
-        <option value={opt.value}>{opt.label}</option>
-      {/each}
-    </select>
-  </div>
+  </section>
 
   <!-- Content -->
   {#if $quotaLoading && $quotaItems.length === 0}
-    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {#each [1, 2, 3, 4, 5, 6] as _}
-        <div class="h-[180px] rounded-[8px] bg-[#18181b] border border-[#27272a] animate-pulse"></div>
+        <div class="h-[200px] rounded-xl bg-card shadow-card animate-pulse"></div>
       {/each}
     </div>
   {:else if $quotaError && $quotaItems.length === 0}
-    <div class="flex flex-col items-center justify-center py-16 gap-3 rounded-[8px] bg-[#18181b] border border-[#27272a]">
-      <AlertCircle class="size-6 text-[#f87171]" />
-      <p class="text-[13px] text-[#a1a1aa]">{$quotaError}</p>
-      <button onclick={() => applyFilters()} class="h-[32px] px-3 rounded-[6px] text-[13px] font-medium text-[#e4e4e7] bg-[#18181b] border border-[#27272a] hover:border-[#3f3f46] cursor-pointer">Retry</button>
-    </div>
+    <Card class="shadow-card">
+      <CardContent class="flex flex-col items-center justify-center py-12 gap-3">
+        <AlertCircle class="size-6 text-rose-400" />
+        <p class="text-body-sm text-muted-foreground">{$quotaError}</p>
+        <Button variant="outline" onclick={() => applyFilters()} class="text-body-sm rounded-sm cursor-pointer">Retry</Button>
+      </CardContent>
+    </Card>
   {:else if $quotaItems.length === 0}
-    <div class="flex flex-col items-center justify-center py-16 gap-3 rounded-[8px] bg-[#18181b] border border-[#27272a]">
-      <Gauge class="size-6 text-[#71717a]" />
-      <p class="text-[13px] text-[#a1a1aa]">
-        {hasActiveFilters ? 'No connections match your filters.' : 'No quota data yet. The scheduler will populate this on its next run.'}
-      </p>
-      {#if hasActiveFilters}
-        <button onclick={clearFilters} class="h-[32px] px-3 rounded-[6px] text-[13px] font-medium text-[#e4e4e7] bg-[#18181b] border border-[#27272a] hover:border-[#3f3f46] cursor-pointer">Clear Filters</button>
-      {/if}
-    </div>
+    <Card class="shadow-card">
+      <CardContent class="flex flex-col items-center justify-center py-12 gap-3">
+        <Gauge class="size-6 text-muted-foreground" />
+        <p class="text-body-sm text-muted-foreground">
+          {hasActiveFilters ? 'No connections match your filters.' : 'No quota data yet. The scheduler will populate this on its next run.'}
+        </p>
+        {#if hasActiveFilters}
+          <Button variant="outline" onclick={clearFilters} class="text-body-sm rounded-sm cursor-pointer">Clear Filters</Button>
+        {/if}
+      </CardContent>
+    </Card>
   {:else}
     <!-- Card grid -->
-    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {#each $quotaItems as item (item.id)}
         {@const st = statusInfo(item.status)}
         {@const stIcon = st.icon}
         {@const refreshing = isRefreshing(item.connection_id)}
         {@const planBadge = item.plan ? getPlanBadge(item.plan) : null}
-        <div class="group relative flex flex-col rounded-[8px] bg-[#18181b] border border-[#27272a] hover:border-[#3f3f46] transition-colors {refreshing ? 'border-[#ec4899]/30' : ''}" style="box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03);">
+        <div class="rounded-xl bg-card shadow-card transition-all hover:shadow-elevated {refreshing ? 'ring-1 ring-primary/30' : ''}">
           <!-- Card header -->
-          <div class="flex items-center justify-between px-4 pt-3.5 pb-2">
+          <div class="flex items-center justify-between px-4 pt-4 pb-2">
             <div class="min-w-0 flex items-center gap-2">
-              <span class="size-2 rounded-full shrink-0" style="background-color: {item.color}"></span>
-              <span class="text-[14px] font-medium text-[#e4e4e7] truncate tracking-[-0.28px]">{item.connection_name}</span>
+              <span class="size-2.5 rounded-full shrink-0" style="background-color: {item.color}"></span>
+              <span class="text-body-sm-strong truncate">{item.connection_name}</span>
             </div>
             <button
               onclick={() => handleRefreshOne(item.connection_id)}
               disabled={refreshing}
-              class="size-6 flex items-center justify-center rounded-[4px] text-[#71717a] hover:text-[#e4e4e7] hover:bg-[#27272a] transition-colors cursor-pointer disabled:opacity-40"
+              class="size-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer disabled:opacity-40"
               title="Refresh"
             >
-              <RefreshCw class="size-3 {refreshing ? 'animate-spin' : ''}" />
+              <RefreshCw class="size-3.5 {refreshing ? 'animate-spin' : ''}" />
             </button>
           </div>
 
           <!-- Meta row -->
-          <div class="flex items-center gap-2 px-4 pb-2">
-            <span class="inline-flex items-center gap-1 h-[20px] px-1.5 rounded-full border {st.bg} {st.border} {st.text} text-[11px] font-medium">
-              <stIcon class="size-2.5"></stIcon>
+          <div class="flex items-center gap-2 px-4 pb-3">
+            <span class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-caption {st.cls}">
+              <stIcon class="size-3"></stIcon>
               {st.label}
             </span>
             {#if planBadge}
-              <span class="inline-flex items-center gap-1 h-[20px] px-1.5 rounded-full border {planBadge.cls} text-[11px] font-medium border-current/20">
-                <planBadge.icon class="size-2.5"></planBadge.icon>
+              <span class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-caption {planBadge.cls}">
+                <planBadge.icon class="size-3"></planBadge.icon>
                 {item.plan}
               </span>
             {/if}
-            <span class="text-[11px] text-[#71717a] font-mono">{item.display_name}</span>
+            <span class="text-caption text-muted-foreground">{item.display_name}</span>
           </div>
 
           <!-- Quota bars -->
-          <div class="flex-1 px-4 pb-2 space-y-2">
+          <div class="px-4 pb-3 space-y-2.5">
             {#if item.error}
-              <div class="flex items-start gap-2 rounded-[4px] bg-[#f87171]/5 border border-[#f87171]/10 px-2.5 py-2">
-                <AlertCircle class="size-3 text-[#f87171] shrink-0 mt-0.5" />
-                <p class="text-[12px] text-[#f87171]/80 leading-snug">{item.error}</p>
+              <div class="flex items-start gap-2 rounded-md bg-rose-500/5 border border-rose-500/10 px-3 py-2">
+                <AlertCircle class="size-3.5 text-rose-400 shrink-0 mt-0.5" />
+                <p class="text-caption text-rose-400/80 leading-snug">{item.error}</p>
               </div>
             {:else if item.quotas.length === 0}
-              <p class="text-[12px] text-[#71717a]">No quota data.</p>
+              <p class="text-caption text-muted-foreground">No quota data.</p>
             {:else}
               {#each item.quotas as qi}
                 <div class="space-y-1">
                   <div class="flex items-center justify-between">
-                    <span class="text-[12px] text-[#a1a1aa] truncate max-w-[60%]">{qi.name}</span>
+                    <span class="text-caption text-muted-foreground truncate max-w-[60%]">{qi.name}</span>
                     <div class="flex items-center gap-2">
                       {#if qi.unlimited}
-                        <span class="text-[12px] text-[#a78bfa] font-medium">∞ unlimited</span>
+                        <span class="text-caption text-violet-400 font-medium">∞ unlimited</span>
                       {:else}
-                        <span class="text-[12px] font-semibold font-mono tabular-nums {quotaTextClr(qi.remaining_pct)}">
+                        <span class="text-caption-mono font-semibold tabular-nums {quotaTextClr(qi.remaining_pct)}">
                           {qi.remaining_pct.toFixed(0)}%
                         </span>
                       {/if}
                       {#if qi.reset_at}
-                        <span class="inline-flex items-center gap-0.5 text-[10px] text-[#71717a]">
+                        <span class="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
                           <Clock class="size-2.5" />{formatResetTime(qi.reset_at)}
                         </span>
                       {/if}
                     </div>
                   </div>
                   {#if !qi.unlimited}
-                    <div class="h-[3px] rounded-full bg-[#27272a] overflow-hidden">
+                    <div class="h-1.5 rounded-full bg-muted overflow-hidden">
                       <div
                         class="h-full rounded-full transition-all duration-500 {quotaBarColor(qi.remaining_pct)}"
                         style="width: {qi.remaining_pct}%"
@@ -355,8 +361,8 @@
           </div>
 
           <!-- Footer -->
-          <div class="px-4 py-2.5 border-t border-[#27272a] flex items-center justify-between">
-            <span class="text-[11px] text-[#71717a]">Updated {formatFetched(item.fetched_at)}</span>
+          <div class="px-4 py-2.5 border-t border-border">
+            <span class="text-caption text-muted-foreground">Updated {formatFetched(item.fetched_at)}</span>
           </div>
         </div>
       {/each}
@@ -364,26 +370,18 @@
 
     <!-- Pagination -->
     {#if $quotaTotalPages > 1}
-      <div class="flex items-center justify-between pt-1">
-        <p class="text-[12px] text-[#71717a]">
+      <div class="flex items-center justify-between">
+        <p class="text-caption text-muted-foreground">
           Showing {($quotaPage - 1) * perPage + 1}–{Math.min($quotaPage * perPage, $quotaTotal)} of {$quotaTotal}
         </p>
         <div class="flex items-center gap-1.5">
-          <button
-            disabled={$quotaPage <= 1}
-            onclick={() => goToPage($quotaPage - 1)}
-            class="size-7 flex items-center justify-center rounded-[4px] border border-[#27272a] text-[#a1a1aa] hover:text-[#e4e4e7] hover:border-[#3f3f46] transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            <ChevronLeft class="size-3.5" />
-          </button>
-          <span class="text-[12px] text-[#71717a] font-mono px-2">{$quotaPage} / {$quotaTotalPages}</span>
-          <button
-            disabled={$quotaPage >= $quotaTotalPages}
-            onclick={() => goToPage($quotaPage + 1)}
-            class="size-7 flex items-center justify-center rounded-[4px] border border-[#27272a] text-[#a1a1aa] hover:text-[#e4e4e7] hover:border-[#3f3f46] transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            <ChevronRight class="size-3.5" />
-          </button>
+          <Button variant="outline" size="icon" class="size-8 rounded-sm cursor-pointer" disabled={$quotaPage <= 1} onclick={() => goToPage($quotaPage - 1)}>
+            <ChevronLeft class="size-4" />
+          </Button>
+          <span class="text-caption-mono px-2">{$quotaPage} / {$quotaTotalPages}</span>
+          <Button variant="outline" size="icon" class="size-8 rounded-sm cursor-pointer" disabled={$quotaPage >= $quotaTotalPages} onclick={() => goToPage($quotaPage + 1)}>
+            <ChevronRight class="size-4" />
+          </Button>
         </div>
       </div>
     {/if}

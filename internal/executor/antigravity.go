@@ -2,6 +2,9 @@ package executor
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 )
 
@@ -15,19 +18,59 @@ func NewAntigravityExecutor(base *BaseExecutor) *AntigravityExecutor {
 	return &AntigravityExecutor{BaseExecutor: base}
 }
 
+// wrapEnvelope wraps the request body in the Antigravity envelope format.
+// OmniRoute reference: open-sse/executors/antigravity.ts lines 844-858.
+func (e *AntigravityExecutor) wrapEnvelope(req *Request) []byte {
+	// Parse the inner request body
+	var inner map[string]any
+	if err := json.Unmarshal(req.Body, &inner); err != nil {
+		inner = map[string]any{
+			"contents": []map[string]any{
+				{"role": "user", "parts": []map[string]string{{"text": "Hi"}}},
+			},
+		}
+	}
+
+	// Get projectId from provider-specific data
+	projectId := ""
+	if req.ProviderSpecificData != nil {
+		projectId = req.ProviderSpecificData["projectId"]
+	}
+
+	// Build envelope (matches OmniRoute AntigravityRequestEnvelope)
+	envelope := map[string]any{
+		"project":            projectId,
+		"requestId":          generateAntigravityRequestId(),
+		"request":            inner,
+		"model":              req.Model,
+		"userAgent":          "google-assist-cli/1.0",
+		"requestType":        "agent",
+		"enabledCreditTypes": []string{"GOOGLE_ONE_AI"},
+	}
+
+	b, _ := json.Marshal(envelope)
+	return b
+}
+
+func generateAntigravityRequestId() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
 // Execute performs a non-streaming Antigravity request.
 func (e *AntigravityExecutor) Execute(ctx context.Context, req *Request) (*Response, error) {
 	url := req.BaseURL
 	if url == "" {
-		url = "https://cloudcode-pa.googleapis.com/v1internal:processMessage"
+		url = "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
 	}
 
-	body := req.Body
+	body := e.wrapEnvelope(req)
 
 	headers := map[string]string{
-		"Content-Type":  "application/json",
-		"Authorization": "Bearer " + req.AccessToken,
-		"User-Agent":    "google-assist-cli/1.0",
+		"Content-Type":   "application/json",
+		"Authorization":  "Bearer " + req.AccessToken,
+		"User-Agent":     "google-assist-cli/1.0",
 		"X-Goog-Api-Key": req.APIKey,
 	}
 
@@ -47,17 +90,17 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, req *Request) (*Respo
 func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
 	url := req.BaseURL
 	if url == "" {
-		url = "https://cloudcode-pa.googleapis.com/v1internal:streamProcessMessage"
+		url = "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
 	}
 
-	body := req.Body
+	body := e.wrapEnvelope(req)
 
 	headers := map[string]string{
-		"Content-Type":  "application/json",
-		"Accept":        "text/event-stream",
-		"Cache-Control": "no-cache",
-		"Authorization": "Bearer " + req.AccessToken,
-		"User-Agent":    "google-assist-cli/1.0",
+		"Content-Type":   "application/json",
+		"Accept":         "text/event-stream",
+		"Cache-Control":  "no-cache",
+		"Authorization":  "Bearer " + req.AccessToken,
+		"User-Agent":     "google-assist-cli/1.0",
 		"X-Goog-Api-Key": req.APIKey,
 	}
 
