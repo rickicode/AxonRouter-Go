@@ -122,3 +122,44 @@ toast.error(`Test all: ${ok} passed, ${failed} failed`);
 6. **Model test**: toast per model show `modelName OK (Xms)` atau `modelName failed: reason`
 7. **Delete/Reset**: toast konfirmasi aksi berhasil
 8. **Bulk operations**: satu toast summary, bukan satu toast per item
+
+## Page Layout Convention (Wajib Konsisten)
+
+Semua dashboard pages HARUS menggunakan layout pattern yang sama. JANGAN buat `max-w-[Npx]` atau `w-full` di outer wrapper — biarkan flex-1 fill parent.
+
+### Outer wrapper (wajib):
+```svelte
+<div class="flex flex-1 flex-col gap-6 p-6">
+```
+
+### Heading pattern:
+```svelte
+<div class="space-y-1">
+  <h1 class="text-display-lg">Page Title.</h1>
+  <p class="text-body-sm text-muted-foreground">Description text</p>
+</div>
+```
+
+### Card surfaces:
+- `bg-card` (`#18181b`) untuk card backgrounds
+- `shadow-card` / `shadow-elevated` untuk elevation
+- `rounded-xl` (12px) untuk card radius
+- `border-border` untuk card borders
+- JANGAN pakai raw hex colors (`bg-[#18181b]`) — gunakan Tailwind tokens
+
+### Typography tokens (dari DESIGN.md):
+- `text-display-lg` — page headings (32px, 600, -1.28px tracking)
+- `text-display-md` — section headings (24px, 600)
+- `text-body-sm` — body text (14px, 400)
+- `text-body-sm-strong` — bold body (14px, 500)
+- `text-caption` — small labels (12px, 400)
+- `text-caption-mono` — mono labels (12px, mono)
+
+### Buttons:
+- `<Button variant="outline" size="sm" class="text-body-sm rounded-sm cursor-pointer">`
+- JANGAN bikin custom button styling — pakai Button component
+
+### Reference pages:
+- `Providers.svelte` — gold standard layout
+- `Combos.svelte` — card grid pattern
+- `Logs.svelte` — table + filters pattern

@@ -127,6 +127,16 @@
     }
   }
 
+  function modelDisplayName(name: string): string {
+    const map: Record<string, string> = {
+      'gemini-2.5-pro': 'Gemini 3.1 Pro',
+      'gemini-2.5-flash': 'Gemini 3.5 Flash',
+      'gemini-3-flash': 'Gemini 3.5 Flash',
+      'claude-sonnet-4-6': 'Claude Sonnet',
+    };
+    return map[name] || name;
+  }
+
   function formatResetTime(iso?: string): string {
     if (!iso) return '';
     try {
@@ -230,7 +240,7 @@
       </div>
       <div class="flex items-center gap-2">
         <select
-          class="h-10 rounded-md border border-input bg-background px-3 text-body-sm text-foreground cursor-pointer"
+          class="h-10 rounded-md border border-input bg-background px-3 text-body-sm text-foreground cursor-pointer shrink-0"
           value={filterProvider}
           onchange={(e) => onProviderChange((e.target as HTMLSelectElement).value)}
         >
@@ -239,7 +249,7 @@
           {/each}
         </select>
         <select
-          class="h-10 rounded-md border border-input bg-background px-3 text-body-sm text-foreground cursor-pointer"
+          class="h-10 rounded-md border border-input bg-background px-3 text-body-sm text-foreground cursor-pointer shrink-0"
           value={filterStatus}
           onchange={(e) => onStatusChange((e.target as HTMLSelectElement).value)}
         >
@@ -331,7 +341,7 @@
               {#each item.quotas as qi}
                 <div class="space-y-1">
                   <div class="flex items-center justify-between">
-                    <span class="text-caption text-muted-foreground truncate max-w-[60%]">{qi.name}</span>
+                    <span class="text-caption text-muted-foreground truncate max-w-[60%]">{modelDisplayName(qi.name)}</span>
                     <div class="flex items-center gap-2">
                       {#if qi.unlimited}
                         <span class="text-caption text-violet-400 font-medium">∞ unlimited</span>

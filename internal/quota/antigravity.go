@@ -131,11 +131,17 @@ func fetchAntigravityModels(accessToken string, psd map[string]any) ([]QuotaItem
 	return nil, fmt.Errorf("antigravity api unavailable")
 }
 
-// isNoiseModelSuffix returns true for model variants that are just resource tiers,
-// not separate models worth tracking individually.
+// antigravityAllowedModels is the whitelist of models to track.
+// Only these 3 show in the quota page.
+var antigravityAllowedModels = map[string]string{
+	"gemini-2.5-pro":   "Gemini 3.1 Pro",
+	"gemini-3-flash":   "Gemini 3.5 Flash",
+	"claude-sonnet-4-6": "Claude Sonnet",
+}
+
 func isNoiseModelSuffix(modelKey string) bool {
 	lower := strings.ToLower(modelKey)
-	if strings.Contains(lower, "gpt-oss") {
+	if strings.Contains(lower, "gpt-oss") || strings.Contains(lower, "tab_flash") || strings.Contains(lower, "tab_jump") {
 		return true
 	}
 	suffixes := []string{"-low", "-high", "-agent", "-extra-low", "-lite", "-thinking", "-image"}
@@ -174,36 +180,35 @@ func parseAntigravityQuotas(data map[string]any) []QuotaItem {
 			continue
 		}
 
-		// Skip noise variants (resource tiers, not real models)
-		if isNoiseModelSuffix(modelKey) {
+		// Only keep whitelisted models
+		displayName, allowed := antigravityAllowedModels[modelKey]
+		if !allowed {
 			continue
 		}
 
-		remainingFraction := getNumberField(quotaInfo, "remainingFraction", "remaining_fraction")
-		resetAt := parseResetTimeString(quotaInfo)
-
-		isUnlimited := remainingFraction >= 1.0 && resetAt == ""
-
-		total := 1000.0
-		remaining := total * remainingFraction
-		used := total - remaining
-		if isUnlimited {
-			used = 0
-			total = 0
-		}
-
-		family := classifyModelFamily(modelKey)
-
-		quotas = append(quotas, QuotaItem{
-			Name:         modelKey,
-			Used:         used,
-			Total:        total,
-			RemainingPct: remainingFraction * 100,
-			ResetAt:      resetAt,
-			Unlimited:    isUnlimited,
-			ModelKey:     modelKey,
-			Family:       family,
-		})
+ 		remainingFraction := getNumberField(quotaInfo, "remainingFraction", "remaining_fraction")
+ 		resetAt := parseResetTimeString(quotaInfo)
+ 
+ 		isUnlimited := remainingFraction >= 1.0 && resetAt == ""
+ 
+ 		total := 1000.0
+ 		remaining := total * remainingFraction
+ 		used := total - remaining
+ 		if isUnlimited {
+ 			used = 0
+ 			total = 0
+ 		}
+ 
+ 		quotas = append(quotas, QuotaItem{
+ 			Name:         displayName,
+ 			Used:         used,
+ 			Total:        total,
+ 			RemainingPct: remainingFraction * 100,
+ 			ResetAt:      resetAt,
+ 			Unlimited:    isUnlimited,
+ 			ModelKey:     modelKey,
+ 			Family:       "antigravity",
+ 		})
 	}
 
 	return quotas
