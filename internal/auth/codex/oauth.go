@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
@@ -28,6 +29,8 @@ const (
 // OAuthService handles Codex OAuth2 PKCE flow.
 type OAuthService struct {
 	httpClient *http.Client
+	mu         sync.Mutex
+	pkce       map[string]string
 }
 
 // NewOAuthService creates a new Codex OAuth service.
@@ -35,7 +38,7 @@ func NewOAuthService(httpClient *http.Client) *OAuthService {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
-	return &OAuthService{httpClient: httpClient}
+	return &OAuthService{httpClient: httpClient, pkce: make(map[string]string)}
 }
 
 // GenerateAuthURL creates the OAuth authorization URL with PKCE.
@@ -54,8 +57,9 @@ func (s *OAuthService) GenerateAuthURL(ctx context.Context, state string) (strin
 		return "", fmt.Errorf("generate PKCE: %w", err)
 	}
 
-	// Store PKCE verifier in state for later use
-	// In production, store in a map keyed by stateParam
+	s.mu.Lock()
+	s.pkce[stateParam] = pkce.CodeVerifier
+	s.mu.Unlock()
 	redirectURI := fmt.Sprintf(RedirectURI, port)
 
 	params := url.Values{
@@ -76,13 +80,19 @@ func (s *OAuthService) GenerateAuthURL(ctx context.Context, state string) (strin
 
 // ExchangeCode exchanges an authorization code for tokens.
 func (s *OAuthService) ExchangeCode(ctx context.Context, code string) (*auth.Credentials, error) {
-	data := url.Values{
-		"grant_type":    {"authorization_code"},
-		"client_id":     {ClientID},
-		"code":          {code},
-		"redirect_uri":  {fmt.Sprintf(RedirectURI, 1455)},
-	}
+	return s.exchangeCode(ctx, code, fmt.Sprintf(RedirectURI, 1455), "")
+}
 
+func (s *OAuthService) exchangeCode(ctx context.Context, code, redirectURI, codeVerifier string) (*auth.Credentials, error) {
+	data := url.Values{
+		"grant_type":   {"authorization_code"},
+		"client_id":    {ClientID},
+		"code":         {code},
+		"redirect_uri": {redirectURI},
+	}
+	if codeVerifier != "" {
+		data.Set("code_verifier", codeVerifier)
+	}
 	req, err := http.NewRequestWithContext(ctx, "POST", TokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -193,6 +203,7 @@ func (s *OAuthService) StartLocalServer(ctx context.Context, state string) (int,
 	stateParam := parts[0]
 
 	resultChan := make(chan *auth.Credentials, 1)
+	var port int
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/auth/callback", func(w http.ResponseWriter, r *http.Request) {
@@ -209,7 +220,16 @@ func (s *OAuthService) StartLocalServer(ctx context.Context, state string) (int,
 			return
 		}
 
-		creds, err := s.ExchangeCode(r.Context(), code)
+		s.mu.Lock()
+		codeVerifier := s.pkce[stateParam]
+		delete(s.pkce, stateParam)
+		s.mu.Unlock()
+		if codeVerifier == "" {
+			http.Error(w, "PKCE verifier missing", http.StatusBadRequest)
+			return
+		}
+
+		creds, err := s.exchangeCode(r.Context(), code, fmt.Sprintf(RedirectURI, port), codeVerifier)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Token exchange failed: %v", err), http.StatusInternalServerError)
 			return
@@ -228,7 +248,7 @@ func (s *OAuthService) StartLocalServer(ctx context.Context, state string) (int,
 	if err != nil {
 		return 0, nil, fmt.Errorf("listen: %w", err)
 	}
-	port := listener.Addr().(*net.TCPAddr).Port
+	port = listener.Addr().(*net.TCPAddr).Port
 
 	server := &http.Server{
 		Handler: mux,

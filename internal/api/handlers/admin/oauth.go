@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -76,12 +77,18 @@ func (h *OAuthHandler) InitiateOAuth(c *gin.Context) {
 				return
 			}
 			now := time.Now().Unix()
+			providerSpecific := sql.NullString{}
+			if len(creds.ProviderSpecific) > 0 {
+				if b, err := json.Marshal(creds.ProviderSpecific); err == nil {
+					providerSpecific = sql.NullString{String: string(b), Valid: true}
+				}
+			}
 			_, err := h.db.Exec(`
 				UPDATE connections SET
 					oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?,
-					status = 'ready', updated_at = ?
+					provider_specific_data = ?, status = 'ready', updated_at = ?
 				WHERE id = ?
-			`, creds.AccessToken, creds.RefreshToken, creds.ExpiresAt.Unix(), now, connID)
+			`, creds.AccessToken, creds.RefreshToken, creds.ExpiresAt.Unix(), providerSpecific, now, connID)
 			if err != nil {
 				log.Printf("OAuth save tokens failed for connection %s: %v", connID, err)
 			} else {

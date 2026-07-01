@@ -41,6 +41,14 @@ var noAuthBaseURLs = map[string]string{
 // Works even when the provider has no DB entry (fresh install) — falls back to catalog.
 func (h *ModelHandler) ListModels(c *gin.Context) {
 	providerID := c.Param("id")
+	if _, ok := noAuthBaseURLs[providerID]; ok {
+		// No-auth providers use the static/synced catalog. Their chat base URL
+		// is not necessarily the /models URL, so dynamic executor probing can
+		// hit HTML/404 pages (opencode.ai/zen/v1) and spam warnings.
+		c.JSON(http.StatusOK, gin.H{"data": staticModels(providerID)})
+		return
+	}
+
 
 	// Try to get provider from DB (may not exist on fresh install)
 	var provider struct {

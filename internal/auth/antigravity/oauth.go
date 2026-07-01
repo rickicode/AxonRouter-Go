@@ -1,7 +1,11 @@
 package antigravity
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,25 +13,35 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 )
 
-// OAuth configuration for Antigravity (Google Cloud Code Assist)
+// OAuth configuration for Antigravity (Google Cloud Code Assist).
+// Values match OmniRoute's resolvePublicCred("antigravity_*") defaults.
 const (
-	AuthURL    = "https://accounts.google.com/o/oauth2/v2/auth"
-	TokenURL   = "https://oauth2.googleapis.com/token"
-	// ponytail: use a well-known public client ID for CLI tools
-	ClientID     = "710733562955-6g5m1v5mjq5kqt3mfrq9ipj0mm8nkls.apps.googleusercontent.com"
-	ClientSecret = "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"
+	AuthURL      = "https://accounts.google.com/o/oauth2/v2/auth"
+	TokenURL     = "https://oauth2.googleapis.com/token"
+	UserInfoURL  = "https://www.googleapis.com/oauth2/v1/userinfo"
+	ClientID     = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
+	ClientSecret = "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"
 	RedirectURI  = "http://localhost:%d/auth/callback"
-	Scopes       = "openid email profile https://www.googleapis.com/auth/cloud-platform"
+	Scopes       = "openid https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/cclog https://www.googleapis.com/auth/experimentsandconfigs"
 )
+
+var antigravityBaseURLs = []string{
+	"https://daily-cloudcode-pa.googleapis.com",
+	"https://cloudcode-pa.googleapis.com",
+	"https://daily-cloudcode-pa.sandbox.googleapis.com",
+}
 
 // OAuthService handles Google OAuth flow for Antigravity.
 type OAuthService struct {
 	httpClient *http.Client
+	mu         sync.Mutex
+	pkce       map[string]string
 }
 
 // NewOAuthService creates a new Antigravity OAuth service.
@@ -35,7 +49,7 @@ func NewOAuthService(httpClient *http.Client) *OAuthService {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
-	return &OAuthService{httpClient: httpClient}
+	return &OAuthService{httpClient: httpClient, pkce: make(map[string]string)}
 }
 
 // GenerateAuthURL creates the Google OAuth authorization URL.
@@ -48,15 +62,24 @@ func (s *OAuthService) GenerateAuthURL(ctx context.Context, state string) (strin
 	}
 
 	redirectURI := fmt.Sprintf(RedirectURI, port)
+	pkce, err := GeneratePKCECodes()
+	if err != nil {
+		return "", fmt.Errorf("generate PKCE: %w", err)
+	}
+	s.mu.Lock()
+	s.pkce[stateParam] = pkce.CodeVerifier
+	s.mu.Unlock()
 
 	params := url.Values{
-		"client_id":     {ClientID},
-		"redirect_uri":  {redirectURI},
-		"response_type": {"code"},
-		"scope":         {Scopes},
-		"state":         {stateParam},
-		"access_type":   {"offline"},
-		"prompt":        {"consent"},
+		"client_id":             {ClientID},
+		"redirect_uri":          {redirectURI},
+		"response_type":         {"code"},
+		"scope":                 {Scopes},
+		"state":                 {stateParam},
+		"access_type":           {"offline"},
+		"prompt":                {"consent"},
+		"code_challenge":        {pkce.CodeChallenge},
+		"code_challenge_method": {"S256"},
 	}
 
 	return fmt.Sprintf("%s?%s", AuthURL, params.Encode()), nil
@@ -64,12 +87,19 @@ func (s *OAuthService) GenerateAuthURL(ctx context.Context, state string) (strin
 
 // ExchangeCode exchanges an authorization code for tokens.
 func (s *OAuthService) ExchangeCode(ctx context.Context, code string) (*auth.Credentials, error) {
+	return s.exchangeCode(ctx, code, fmt.Sprintf(RedirectURI, 1456), "")
+}
+
+func (s *OAuthService) exchangeCode(ctx context.Context, code, redirectURI, codeVerifier string) (*auth.Credentials, error) {
 	data := url.Values{
 		"grant_type":    {"authorization_code"},
 		"client_id":     {ClientID},
 		"client_secret": {ClientSecret},
 		"code":          {code},
-		"redirect_uri":  {fmt.Sprintf(RedirectURI, 1456)},
+		"redirect_uri":  {redirectURI},
+	}
+	if codeVerifier != "" {
+		data.Set("code_verifier", codeVerifier)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", TokenURL, strings.NewReader(data.Encode()))
@@ -106,18 +136,22 @@ func (s *OAuthService) ExchangeCode(ctx context.Context, code string) (*auth.Cre
 		return nil, fmt.Errorf("parse token response: %w", err)
 	}
 
-	// Get user info
 	email := ""
 	if tokenResp.IDToken != "" {
 		email = extractGoogleEmail(tokenResp.IDToken)
 	}
+	providerSpecific, _ := s.postExchange(ctx, tokenResp.AccessToken)
+	if email == "" && providerSpecific["email"] != "" {
+		email = providerSpecific["email"]
+	}
 
 	return &auth.Credentials{
-		AccessToken:  tokenResp.AccessToken,
-		RefreshToken: tokenResp.RefreshToken,
-		IDToken:      tokenResp.IDToken,
-		Email:        email,
-		ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second),
+		AccessToken:      tokenResp.AccessToken,
+		RefreshToken:     tokenResp.RefreshToken,
+		IDToken:          tokenResp.IDToken,
+		Email:            email,
+		ExpiresAt:        time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second),
+		ProviderSpecific: providerSpecific,
 	}, nil
 }
 
@@ -185,6 +219,7 @@ func (s *OAuthService) StartLocalServer(ctx context.Context, state string) (int,
 	stateParam := parts[0]
 
 	resultChan := make(chan *auth.Credentials, 1)
+	var port int
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/auth/callback", func(w http.ResponseWriter, r *http.Request) {
@@ -201,7 +236,16 @@ func (s *OAuthService) StartLocalServer(ctx context.Context, state string) (int,
 			return
 		}
 
-		creds, err := s.ExchangeCode(r.Context(), code)
+		s.mu.Lock()
+		codeVerifier := s.pkce[stateParam]
+		delete(s.pkce, stateParam)
+		s.mu.Unlock()
+		if codeVerifier == "" {
+			http.Error(w, "PKCE verifier missing", http.StatusBadRequest)
+			return
+		}
+
+		creds, err := s.exchangeCode(r.Context(), code, fmt.Sprintf(RedirectURI, port), codeVerifier)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Token exchange failed: %v", err), http.StatusInternalServerError)
 			return
@@ -219,7 +263,7 @@ func (s *OAuthService) StartLocalServer(ctx context.Context, state string) (int,
 	if err != nil {
 		return 0, nil, fmt.Errorf("listen: %w", err)
 	}
-	port := listener.Addr().(*net.TCPAddr).Port
+	port = listener.Addr().(*net.TCPAddr).Port
 
 	server := &http.Server{
 		Handler: mux,
@@ -240,6 +284,121 @@ func (s *OAuthService) StartLocalServer(ctx context.Context, state string) (int,
 	}()
 
 	return port, resultChan, nil
+}
+
+func (s *OAuthService) postExchange(ctx context.Context, accessToken string) (map[string]string, error) {
+	out := map[string]string{}
+	userInfoReq, _ := http.NewRequestWithContext(ctx, "GET", UserInfoURL+"?alt=json", nil)
+	userInfoReq.Header.Set("Authorization", "Bearer "+accessToken)
+	if resp, err := s.httpClient.Do(userInfoReq); err == nil {
+		func() {
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				var userInfo struct {
+					Email string `json:"email"`
+				}
+				if body, err := io.ReadAll(resp.Body); err == nil && json.Unmarshal(body, &userInfo) == nil && userInfo.Email != "" {
+					out["email"] = userInfo.Email
+				}
+			}
+		}()
+	}
+
+	headers := map[string]string{
+		"Content-Type":  "application/json",
+		"User-Agent":    "vscode/1.X.X (Antigravity/4.2.0)",
+		"Authorization": "Bearer " + accessToken,
+	}
+	body := []byte(`{"metadata":{"ideType":"ANTIGRAVITY"}}`)
+
+	projectID := ""
+	tierID := "legacy-tier"
+	for _, baseURL := range antigravityBaseURLs {
+		req, _ := http.NewRequestWithContext(ctx, "POST", baseURL+"/v1internal:loadCodeAssist", bytes.NewReader(body))
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		resp, err := s.httpClient.Do(req)
+		if err != nil {
+			continue
+		}
+		func() {
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				return
+			}
+			var data map[string]any
+			if b, err := io.ReadAll(resp.Body); err == nil && json.Unmarshal(b, &data) == nil {
+				projectID = pickProjectID(data)
+				tierID = pickTierID(data)
+			}
+		}()
+		if projectID != "" {
+			break
+		}
+	}
+
+	if projectID != "" {
+		for _, baseURL := range antigravityBaseURLs {
+			reqBody := []byte(fmt.Sprintf(`{"tier_id":%q,"metadata":{"ideType":"ANTIGRAVITY"}}`, tierID))
+			req, _ := http.NewRequestWithContext(ctx, "POST", baseURL+"/v1internal:onboardUser", bytes.NewReader(reqBody))
+			for k, v := range headers {
+				req.Header.Set(k, v)
+			}
+			resp, err := s.httpClient.Do(req)
+			if err != nil {
+				continue
+			}
+			resp.Body.Close()
+			if resp.StatusCode < 500 {
+				break
+			}
+		}
+		out["projectId"] = projectID
+		out["tier"] = tierID
+	}
+
+	return out, nil
+}
+
+func pickProjectID(data map[string]any) string {
+	if v, ok := data["cloudaicompanionProject"].(string); ok {
+		return strings.TrimSpace(v)
+	}
+	if obj, ok := data["cloudaicompanionProject"].(map[string]any); ok {
+		if id, ok := obj["id"].(string); ok {
+			return strings.TrimSpace(id)
+		}
+	}
+	return ""
+}
+
+func pickTierID(data map[string]any) string {
+	sub, _ := data["subscriptionInfo"].(map[string]any)
+	for _, key := range []string{"paidTier", "currentTier"} {
+		if tier, ok := sub[key].(map[string]any); ok {
+			if id, ok := tier["id"].(string); ok && strings.TrimSpace(id) != "" {
+				return strings.TrimSpace(id)
+			}
+		}
+	}
+	return "legacy-tier"
+}
+
+func GeneratePKCECodes() (*PKCECodes, error) {
+	bytes := make([]byte, 96)
+	if _, err := rand.Read(bytes); err != nil {
+		return nil, fmt.Errorf("generate random: %w", err)
+	}
+	verifier := base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(bytes)
+	hash := sha256.Sum256([]byte(verifier))
+	challenge := base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(hash[:])
+	return &PKCECodes{CodeVerifier: verifier, CodeChallenge: challenge}, nil
+}
+
+type PKCECodes struct {
+	CodeVerifier  string
+	CodeChallenge string
 }
 
 // extractGoogleEmail extracts email from a Google ID token.
