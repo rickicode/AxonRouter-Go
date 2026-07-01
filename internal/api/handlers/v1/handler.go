@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -200,13 +201,42 @@ func (h *Handler) loadConnectionByID(ctx context.Context, connID string) (*Conne
 	return &conn, nil
 }
 
+// refreshLeadMs defines per-provider proactive refresh lead times (ms).
+// Matches OmniRoute REFRESH_LEAD_MS at open-sse/services/tokenRefresh.ts:32-49.
+var refreshLeadMs = map[string]time.Duration{
+	"cx":   5 * time.Minute,  // Codex: Auth0 rotating refresh tokens
+	"ag":   15 * time.Minute, // Antigravity: Google non-rotating refresh tokens
+	"kiro": 5 * time.Minute,  // Kiro: AWS SSO OIDC one-time-use refresh tokens
+}
+
+const defaultRefreshLeadMs = 5 * time.Minute
+
+// proactiveRefreshToken checks if a token should be refreshed proactively
+// based on per-provider lead times. Matches OmniRoute checkAndRefreshToken.
+func (h *Handler) proactiveRefreshToken(ctx context.Context, conn *Connection, provider string) bool {
+	if h.authMgr == nil || conn.RefreshToken == "" || conn.OAuthExpiresAt.IsZero() {
+		return false
+	}
+	lead := defaultRefreshLeadMs
+	if v, ok := refreshLeadMs[provider]; ok {
+		lead = v
+	}
+	if time.Until(conn.OAuthExpiresAt) > lead {
+		return false
+	}
+	if err := h.refreshOAuthToken(ctx, conn, provider); err != nil {
+		log.Printf("Proactive refresh failed for %s/%s: %v", provider, conn.ID, err)
+		return false
+	}
+	return true
+}
+
 // refreshOAuthToken refreshes an expired OAuth token.
 func (h *Handler) refreshOAuthToken(ctx context.Context, conn *Connection, provider string) error {
 	if h.authMgr == nil {
 		return fmt.Errorf("auth manager not configured")
 	}
 
-	// Map provider prefix to auth ProviderType (constants match DB IDs)
 	providerType := auth.ProviderType(provider)
 	if _, ok := h.authMgr.GetService(providerType); !ok {
 		return fmt.Errorf("oauth not supported for provider: %s", provider)
@@ -220,22 +250,57 @@ func (h *Handler) refreshOAuthToken(ctx context.Context, conn *Connection, provi
 
 	newCreds, err := h.authMgr.RefreshToken(ctx, providerType, creds)
 	if err != nil {
+		// Check for unrecoverable errors (matches OmniRoute isUnrecoverableRefreshError)
+		if isUnrecoverableRefreshError(err) {
+			log.Printf("Unrecoverable refresh error for %s/%s: %v — blocking connection", provider, conn.ID, err)
+			h.db.ExecContext(ctx, `UPDATE connections SET is_active = 0, status = 'auth_failed', updated_at = ? WHERE id = ?`,
+				time.Now().Unix(), conn.ID)
+			h.store.UpdateStatus(conn.ID, connstate.StatusAuthFailed)
+			h.elig.Update(h.store)
+		}
 		return fmt.Errorf("refresh token: %w", err)
 	}
 
 	// Update connection in memory
 	conn.AccessToken = newCreds.AccessToken
 	conn.OAuthExpiresAt = newCreds.ExpiresAt
+	if newCreds.RefreshToken != "" {
+		conn.RefreshToken = newCreds.RefreshToken
+	}
 
-	// Update DB synchronously with error logging (Q2 fix)
-	_, err = h.db.ExecContext(ctx, `UPDATE connections SET oauth_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
-		newCreds.AccessToken, newCreds.ExpiresAt.Unix(), time.Now().Unix(), conn.ID)
+	// Persist to DB (use conn.RefreshToken which preserves existing token when newCreds omits it)
+	_, err = h.db.ExecContext(ctx, `UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
+		conn.AccessToken, conn.RefreshToken, conn.OAuthExpiresAt.Unix(), time.Now().Unix(), conn.ID)
 	if err != nil {
-		// Log but don't fail — in-memory token is valid for this request
 		log.Printf("WARN: failed to persist OAuth token for connection %s: %v", conn.ID, err)
 	}
 
 	return nil
+}
+
+// isUnrecoverableRefreshError checks if a refresh error indicates the token is
+// permanently invalid and should not be retried. Matches OmniRoute isUnrecoverableRefreshError
+// at open-sse/services/tokenRefresh.ts:9-19.
+func isUnrecoverableRefreshError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	unrecoverable := []string{
+		"invalid_grant",
+		"invalid_request",
+		"invalid_token",
+		"token_expired",
+		"refresh_token_reused",
+		"refresh_token_invalidated",
+		"unrecoverable_refresh_error",
+	}
+	for _, kw := range unrecoverable {
+		if strings.Contains(msg, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 // proxyContext resolves proxy config for a connection and returns a context with it attached.

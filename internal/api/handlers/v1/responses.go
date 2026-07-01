@@ -55,13 +55,8 @@ func (h *Handler) Responses(c *gin.Context) {
 		return
 	}
 
-	// OAuth refresh
-	if !conn.OAuthExpiresAt.IsZero() && time.Now().After(conn.OAuthExpiresAt.Add(-30*time.Second)) {
-		if err := h.refreshOAuthToken(c.Request.Context(), conn, provider); err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": gin.H{"message": "oauth token refresh failed", "type": "auth_error"}})
-			return
-		}
-	}
+	// Proactive token refresh
+	h.proactiveRefreshToken(c.Request.Context(), conn, provider)
 
 	// Translate request (OpenAI Responses format → provider format)
 	clientFormat := executor.FormatOpenAIResponses

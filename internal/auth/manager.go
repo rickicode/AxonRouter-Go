@@ -63,12 +63,30 @@ type Manager struct {
 	mu           sync.RWMutex
 	services     map[ProviderType]OAuthService
 	refreshGroup singleflight.Group
+
+	// Rotation-group serializer: prevents concurrent refreshes for providers
+	// sharing the same Auth0 client_id from invalidating each other's tokens.
+	// Matches OmniRoute refreshSerializer.ts rotation groups.
+	groupMu   sync.Mutex
+	groupTail map[string]chan struct{} // groupKey → channel used as serialization gate
 }
+
+// rotationGroup maps providers to their Auth0/OIDC rotation group.
+// Providers sharing a group MUST NOT refresh concurrently.
+var rotationGroup = map[ProviderType]string{
+	ProviderCodex: "openai-auth0", // Codex/Auth0: rotating refresh tokens
+	ProviderKiro:  "kiro",         // Kiro: AWS SSO OIDC one-time-use refresh tokens
+}
+
+// ProviderAntigravity (Google) is NOT in rotation groups — Google refresh tokens are permanent/non-rotating.
+
+const refreshSpacingMs = 2000 // 2s settle gap between sibling refreshes
 
 // NewManager creates a new auth manager.
 func NewManager() *Manager {
 	return &Manager{
-		services: make(map[ProviderType]OAuthService),
+		services:  make(map[ProviderType]OAuthService),
+		groupTail: make(map[string]chan struct{}),
 	}
 }
 
@@ -87,14 +105,45 @@ func (m *Manager) GetService(provider ProviderType) (OAuthService, bool) {
 	return svc, ok
 }
 
-// RefreshToken refreshes tokens with singleflight deduplication.
+// RefreshToken refreshes tokens with singleflight deduplication AND rotation-group serialization.
+// Providers in the same rotation group (e.g. codex+openai → openai-auth0) are serialized
+// to prevent Auth0 family revocation. Matches OmniRoute refreshSerializer.ts.
 func (m *Manager) RefreshToken(ctx context.Context, provider ProviderType, creds *Credentials) (*Credentials, error) {
 	svc, ok := m.GetService(provider)
 	if !ok {
 		return nil, fmt.Errorf("no auth service for provider: %s", provider)
 	}
 
-	// Use singleflight to deduplicate concurrent refresh requests
+	// Rotation-group serialization: if this provider is in a rotation group,
+	// wait for any sibling refresh to complete + settle gap before proceeding.
+	if group, ok := rotationGroup[provider]; ok {
+		m.groupMu.Lock()
+		tail, exists := m.groupTail[group]
+		if !exists {
+			tail = make(chan struct{}, 1)
+			tail <- struct{}{} // initial unlock
+			m.groupTail[group] = tail
+		}
+		m.groupMu.Unlock()
+
+		// Wait for our turn in the group
+		select {
+		case <-tail:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+
+		// Release the gate after this refresh completes + settle gap
+		defer func() {
+			go func() {
+				time.Sleep(time.Duration(refreshSpacingMs) * time.Millisecond)
+				tail <- struct{}{}
+			}()
+		}()
+	}
+
+	// Singleflight dedup: if the same refresh_token is already being refreshed,
+	// wait for that result instead of starting a new request.
 	key := fmt.Sprintf("%s:%s", provider, creds.RefreshToken)
 	result, err, _ := m.refreshGroup.Do(key, func() (any, error) {
 		return svc.RefreshToken(ctx, creds)

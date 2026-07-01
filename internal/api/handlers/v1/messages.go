@@ -57,13 +57,8 @@ func (h *Handler) Messages(c *gin.Context) {
 		return
 	}
 
-	// OAuth refresh
-	if !conn.OAuthExpiresAt.IsZero() && time.Now().After(conn.OAuthExpiresAt.Add(-30*time.Second)) {
-		if err := h.refreshOAuthToken(c.Request.Context(), conn, provider); err != nil {
-			c.JSON(http.StatusUnauthorized, claudeError("auth_error", "oauth token refresh failed"))
-			return
-		}
-	}
+	// Proactive token refresh
+	h.proactiveRefreshToken(c.Request.Context(), conn, provider)
 
 	// Translate request (Claude format → provider format)
 	clientFormat := executor.FormatClaude // /v1/messages is Claude format

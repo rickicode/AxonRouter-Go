@@ -58,13 +58,8 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	// Check OAuth expiry and refresh if needed
-	if !conn.OAuthExpiresAt.IsZero() && time.Now().After(conn.OAuthExpiresAt.Add(-30*time.Second)) {
-		if err := h.refreshOAuthToken(c.Request.Context(), conn, provider); err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": gin.H{"message": "oauth token refresh failed", "type": "auth_error"}})
-			return
-		}
-	}
+	// Proactive token refresh (matches OmniRoute checkAndRefreshToken)
+	h.proactiveRefreshToken(c.Request.Context(), conn, provider)
 
 	// Translate request (client format → provider format)
 	clientFormat := executor.FormatOpenAI // /v1/chat/completions is OpenAI format
