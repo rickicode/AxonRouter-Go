@@ -27,7 +27,7 @@ const (
 	UserInfoURL  = "https://www.googleapis.com/oauth2/v1/userinfo"
 	ClientID     = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
 	ClientSecret = "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"
-	RedirectURI  = "http://localhost:%d/auth/callback"
+	RedirectURI  = "http://localhost:%d/callback"
 	Scopes       = "openid https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/cclog https://www.googleapis.com/auth/experimentsandconfigs"
 )
 
@@ -222,7 +222,7 @@ func (s *OAuthService) StartLocalServer(ctx context.Context, state string) (int,
 	var port int
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/auth/callback", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
 		returnedState := r.URL.Query().Get("state")
 

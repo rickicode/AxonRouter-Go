@@ -277,17 +277,26 @@
     }
 
     oauthPolling = false;
-    oauthStatusText = 'OAuth timed out. The connection is not eligible until authentication succeeds.';
+    // Delete the connection on timeout (OmniRoute doesn't create connections until OAuth succeeds)
+    if (createdConnId) {
+      try { await connectionsApi.delete(createdConnId); } catch { /* ignore cleanup errors */ }
+    }
+    oauthPopup?.close();
+    oauthPopup = null;
+    oauthStatusText = 'OAuth timed out. Connection removed.';
     toast.error('OAuth timed out after 5 minutes');
     step = 'error';
-    onCreated?.();
   }
 
-  function cancelOAuth() {
+  async function cancelOAuth() {
     oauthPolling = false;
     oauthPopup?.close();
     oauthPopup = null;
-    toast.info('OAuth flow cancelled');
+    // Delete the connection on cancel (OmniRoute doesn't create connections until OAuth succeeds)
+    if (createdConnId) {
+      try { await connectionsApi.delete(createdConnId); } catch { /* ignore cleanup errors */ }
+    }
+    toast.info('OAuth cancelled');
     handleOpenChange(false);
   }
 

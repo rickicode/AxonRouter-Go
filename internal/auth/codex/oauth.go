@@ -66,13 +66,14 @@ func (s *OAuthService) GenerateAuthURL(ctx context.Context, state string) (strin
 		"client_id":                  {ClientID},
 		"response_type":              {"code"},
 		"redirect_uri":               {redirectURI},
-		"scope":                      {"openid email profile offline_access"},
+		"scope":                      {"openid profile email offline_access"},
 		"state":                      {stateParam},
 		"code_challenge":             {pkce.CodeChallenge},
 		"code_challenge_method":      {"S256"},
 		"prompt":                     {"login"},
 		"id_token_add_organizations": {"true"},
 		"codex_cli_simplified_flow":  {"true"},
+		"originator":                 {"codex_cli_rs"},
 	}
 
 	return fmt.Sprintf("%s?%s", AuthURL, params.Encode()), nil
@@ -243,12 +244,13 @@ func (s *OAuthService) StartLocalServer(ctx context.Context, state string) (int,
 			<body><h1>Authentication successful!</h1><p>You can close this window.</p></body></html>`)
 	})
 
-	// Use :0 to let OS pick a free port — avoids collision on repeated OAuth attempts
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	// Codex OAuth app is registered with http://localhost:1455/auth/callback.
+	// Must listen on the fixed port so the redirect_uri matches.
+	listener, err := net.Listen("tcp", "127.0.0.1:1455")
 	if err != nil {
-		return 0, nil, fmt.Errorf("listen: %w", err)
+		return 0, nil, fmt.Errorf("listen on port 1455: %w (is another OAuth flow already running?)", err)
 	}
-	port = listener.Addr().(*net.TCPAddr).Port
+	port = 1455
 
 	server := &http.Server{
 		Handler: mux,

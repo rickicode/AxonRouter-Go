@@ -109,7 +109,8 @@ func (h *OAuthHandler) InitiateOAuth(c *gin.Context) {
 				}
 			}
 		case <-time.After(5 * time.Minute):
-			log.Printf("OAuth timeout for connection %s", connID)
+			log.Printf("OAuth timeout for connection %s, removing connection", connID)
+			h.db.Exec(`DELETE FROM connections WHERE id = ? AND status = 'auth_failed'`, connID)
 		}
 	}()
 }
