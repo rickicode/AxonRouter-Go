@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -142,12 +143,16 @@ func convertAntigravityResponseToOpenAIStream(_ context.Context, _ string, origi
 			if !thoughtSignatureResult.Exists() {
 				thoughtSignatureResult = partResult.Get("thought_signature")
 			}
-
 			hasThoughtSignature := thoughtSignatureResult.Exists() && thoughtSignatureResult.String() != ""
 			hasContentPayload := partTextResult.Exists() || functionCallResult.Exists() || inlineDataResult.Exists()
 
+			// Cache signature for future request replay
+			if hasThoughtSignature && partTextResult.Exists() {
+				respModel := gjson.GetBytes(rawJSON, "response.model").String()
+				cache.CacheSignature(respModel, partTextResult.String(), thoughtSignatureResult.String())
+			}
+
 			if hasThoughtSignature && !hasContentPayload {
-				continue
 			}
 
 			if partTextResult.Exists() {

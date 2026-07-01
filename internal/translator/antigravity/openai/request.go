@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -344,7 +345,11 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 						} else {
 							node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".functionCall.args.params", []byte(fargs))
 						}
-						node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".thoughtSignature", antigravityFunctionThoughtSignature)
+						sig := cache.GetCachedSignature("", fargs)
+						if sig == "" {
+							sig = antigravityFunctionThoughtSignature
+						}
+						node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".thoughtSignature", sig)
 						p++
 						if fid != "" {
 							fIDs = append(fIDs, fid)
@@ -496,4 +501,3 @@ func mustMarshal(v interface{}) []byte {
 func itoa(i int) string {
 	return fmt.Sprintf("%d", i)
 }
-
