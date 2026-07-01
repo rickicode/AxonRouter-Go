@@ -1,6 +1,9 @@
 package db
 
-import "database/sql"
+import (
+	"database/sql"
+	"time"
+)
 
 // RunMigrations creates all tables if they don't exist.
 func RunMigrations(db *sql.DB) error {
@@ -136,6 +139,25 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 				return err
 			}
 		}
+	}
+
+	// Fix provider_types defaults (idempotent upserts)
+	now := time.Now().Unix()
+	providers := []struct {
+		ID, DisplayName, Format, BaseURL string
+	}{
+		{"cx", "OpenAI Codex", "openai-responses", "https://chatgpt.com/backend-api/codex/responses"},
+		{"ag", "Antigravity", "antigravity", "https://cloudcode-pa.googleapis.com/v1internal:processMessage"},
+		{"kiro", "Kiro AI", "openai", "https://api.kiro.ai/v1"},
+		{"openai", "OpenAI Platform", "openai", "https://api.openai.com/v1"},
+		{"claude", "Anthropic Claude", "anthropic", "https://api.anthropic.com/v1"},
+		{"groq", "Groq Cloud", "openai", "https://api.groq.com/openai/v1"},
+		{"opencode", "OpenCode Free", "openai", "https://opencode.ai/zen/v1"},
+		{"mimocode-free", "MiMoCode Free Tier", "openai", "https://api.xiaomimimo.com/api/free-ai"},
+	}
+	for _, p := range providers {
+		db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, is_custom, created_at) VALUES (?, ?, ?, ?, 0, ?)`,
+			p.ID, p.DisplayName, p.Format, p.BaseURL, now)
 	}
 
 	// Proxy pool tables
