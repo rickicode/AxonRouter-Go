@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // OpenAIExecutor handles OpenAI-compatible providers.
@@ -16,12 +17,22 @@ func NewOpenAIExecutor(base *BaseExecutor) *OpenAIExecutor {
 	return &OpenAIExecutor{BaseExecutor: base}
 }
 
+func openAIEndpoint(baseURL, endpoint string) string {
+	if baseURL == "" {
+		return "https://api.openai.com/v1/" + endpoint
+	}
+	url := strings.TrimRight(baseURL, "/")
+	for _, suffix := range []string{"/chat/completions", "/responses", "/embeddings", "/models"} {
+		if strings.HasSuffix(url, suffix) {
+			return url
+		}
+	}
+	return url + "/" + endpoint
+}
+
 // Execute performs a non-streaming chat completion.
 func (e *OpenAIExecutor) Execute(ctx context.Context, req *Request) (*Response, error) {
-	url := req.BaseURL
-	if url == "" {
-		url = "https://api.openai.com/v1/chat/completions"
-	}
+	url := openAIEndpoint(req.BaseURL, "chat/completions")
 
 	body := req.Body
 	// Ensure stream is false
@@ -46,10 +57,7 @@ func (e *OpenAIExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 
 // ExecuteStream performs a streaming chat completion.
 func (e *OpenAIExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
-	url := req.BaseURL
-	if url == "" {
-		url = "https://api.openai.com/v1/chat/completions"
-	}
+	url := openAIEndpoint(req.BaseURL, "chat/completions")
 
 	body := req.Body
 	// Ensure stream is true
@@ -67,10 +75,7 @@ func (e *OpenAIExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 
 // Embeddings performs an embedding request.
 func (e *OpenAIExecutor) Embeddings(ctx context.Context, req *Request) (*Response, error) {
-	url := req.BaseURL
-	if url == "" {
-		url = "https://api.openai.com/v1/embeddings"
-	}
+	url := openAIEndpoint(req.BaseURL, "embeddings")
 
 	headers := map[string]string{
 		"Content-Type": "application/json",
@@ -91,10 +96,7 @@ func (e *OpenAIExecutor) Embeddings(ctx context.Context, req *Request) (*Respons
 
 // Models returns available models for OpenAI.
 func (e *OpenAIExecutor) Models(ctx context.Context, req *Request) (*Response, error) {
-	url := req.BaseURL
-	if url == "" {
-		url = "https://api.openai.com/v1/models"
-	}
+	url := openAIEndpoint(req.BaseURL, "models")
 
 	headers := map[string]string{
 		"Content-Type": "application/json",
@@ -115,10 +117,7 @@ func (e *OpenAIExecutor) Models(ctx context.Context, req *Request) (*Response, e
 
 // Responses performs an OpenAI Responses API call (for Codex-style).
 func (e *OpenAIExecutor) Responses(ctx context.Context, req *Request) (*Response, error) {
-	url := req.BaseURL
-	if url == "" {
-		url = "https://api.openai.com/v1/responses"
-	}
+	url := openAIEndpoint(req.BaseURL, "responses")
 
 	body := req.Body
 	body = JSONSet(body, "stream", false)
@@ -142,10 +141,7 @@ func (e *OpenAIExecutor) Responses(ctx context.Context, req *Request) (*Response
 
 // ResponsesStream performs a streaming Responses API call.
 func (e *OpenAIExecutor) ResponsesStream(ctx context.Context, req *Request) (*StreamResult, error) {
-	url := req.BaseURL
-	if url == "" {
-		url = "https://api.openai.com/v1/responses"
-	}
+	url := openAIEndpoint(req.BaseURL, "responses")
 
 	body := req.Body
 	body = JSONSet(body, "stream", true)
@@ -164,10 +160,10 @@ func (e *OpenAIExecutor) ResponsesStream(ctx context.Context, req *Request) (*St
 func parseOpenAIUsage(body []byte) (inputTokens, outputTokens, reasoningTokens int64) {
 	var resp struct {
 		Usage *struct {
-			PromptTokens            int64 `json:"prompt_tokens"`
-			CompletionTokens        int64 `json:"completion_tokens"`
-			TotalTokens             int64 `json:"total_tokens"`
-			PromptTokensDetails     *struct {
+			PromptTokens        int64 `json:"prompt_tokens"`
+			CompletionTokens    int64 `json:"completion_tokens"`
+			TotalTokens         int64 `json:"total_tokens"`
+			PromptTokensDetails *struct {
 				CachedTokens int64 `json:"cached_tokens"`
 			} `json:"prompt_tokens_details"`
 			CompletionTokensDetails *struct {
