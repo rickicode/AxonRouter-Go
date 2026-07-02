@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { proxyPoolsApi, proxyGroupsApi, proxyDeployApi } from '$lib/api';
-  import type { ProxyPool, ProxyGroup, DeployResult } from '$lib/api';
+  import { proxyPoolsApi, proxyGroupsApi, proxyDeployApi, providersApi, settingsApi } from '$lib/api';
+  import type { ProxyPool, ProxyGroup, DeployResult, Provider } from '$lib/api';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
@@ -10,15 +10,17 @@
   import * as Dialog from '$lib/components/ui/dialog';
   import { toast } from 'svelte-sonner';
 
-  let tab = $state<'pools' | 'groups' | 'deploy'>('pools');
+  let tab = $state<'pools' | 'groups' | 'assignments' | 'deploy'>('pools');
   let pools = $state<ProxyPool[]>([]);
   let groups = $state<ProxyGroup[]>([]);
+  let providers = $state<Provider[]>([]);
   let loading = $state(true);
   let error = $state('');
 
   // Modal state
   let showCreatePool = $state(false);
   let showCreateGroup = $state(false);
+  let showEditGroup = $state(false);
 
   // Create pool form
   let poolName = $state('');
@@ -27,12 +29,19 @@
   let poolNoProxy = $state('');
   let createPoolLoading = $state(false);
 
-  // Create group form
+  // Create/Edit group form
   let groupName = $state('');
   let groupMode = $state('roundrobin');
   let groupStickyLimit = $state(1);
   let groupStrict = $state(false);
+  let groupPoolIds = $state<string[]>([]);
   let createGroupLoading = $state(false);
+  let editGroupId = $state('');
+  let editGroupLoading = $state(false);
+
+  // Assignments state
+  let proxyDefaults = $state<Record<string, Record<string, string>>>({});
+  let proxySaving = $state(false);
 
   // Deploy state
   let deployPlatform = $state<'vercel' | 'deno' | 'cloudflare'>('vercel');
@@ -58,12 +67,19 @@
     loading = true;
     error = '';
     try {
-      const [poolsRes, groupsRes] = await Promise.all([
+      const [poolsRes, groupsRes, provRes, settingsRes] = await Promise.all([
         proxyPoolsApi.list(),
         proxyGroupsApi.list(),
+        providersApi.list(),
+        settingsApi.list().catch(() => ({})),
       ]);
       pools = poolsRes.data ?? [];
       groups = groupsRes.data ?? [];
+      providers = provRes.data ?? [];
+      // Load proxy defaults
+      const settings = ('data' in settingsRes ? (settingsRes as any).data : settingsRes) as Record<string, string>;
+      const raw = settings?.['provider_proxy_defaults'];
+      if (raw) { try { proxyDefaults = JSON.parse(raw); } catch { proxyDefaults = {}; } }
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to load';
     } finally {
@@ -71,115 +87,124 @@
     }
   }
 
+  // --- Pool CRUD ---
   async function handleCreatePool() {
     if (!poolName.trim() || !poolUrl.trim()) return;
     createPoolLoading = true;
     try {
-      await proxyPoolsApi.create({
-        name: poolName.trim(),
-        proxyUrl: poolUrl.trim(),
-        type: poolType,
-        noProxy: poolNoProxy.trim() || undefined,
-        isActive: true,
-      });
+      await proxyPoolsApi.create({ name: poolName.trim(), proxyUrl: poolUrl.trim(), type: poolType, noProxy: poolNoProxy.trim() || undefined, isActive: true });
       toast.success('Proxy pool created');
       showCreatePool = false;
-      poolName = '';
-      poolUrl = '';
-      poolNoProxy = '';
+      poolName = ''; poolUrl = ''; poolNoProxy = '';
       await loadAll();
-    } catch (err) {
-      toast.error('Create failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-    } finally {
-      createPoolLoading = false;
-    }
-  }
-
-  async function handleCreateGroup() {
-    if (!groupName.trim()) return;
-    createGroupLoading = true;
-    try {
-      await proxyGroupsApi.create({
-        name: groupName.trim(),
-        mode: groupMode,
-        stickyLimit: groupStickyLimit,
-        strictProxy: groupStrict,
-        proxyPoolIds: [],
-        isActive: true,
-      });
-      toast.success('Proxy group created');
-      showCreateGroup = false;
-      groupName = '';
-      await loadAll();
-    } catch (err) {
-      toast.error('Create failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-    } finally {
-      createGroupLoading = false;
-    }
+    } catch (err) { toast.error('Create failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+    finally { createPoolLoading = false; }
   }
 
   async function testPool(id: string) {
     try {
       const res = await proxyPoolsApi.test(id);
-      if (res.ok) {
-        toast.success(`Proxy OK (${res.elapsedMs}ms)`);
-      } else {
-        toast.error(`Proxy failed: ${res.error || 'unknown'}`);
-      }
+      if (res.ok) toast.success(`Proxy OK (${res.elapsedMs}ms)`);
+      else toast.error(`Proxy failed: ${res.error || 'unknown'}`);
       await loadAll();
-    } catch (err) {
-      toast.error('Test failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-    }
+    } catch (err) { toast.error('Test failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
   }
 
   async function deletePool(id: string) {
+    try { await proxyPoolsApi.delete(id); toast.success('Proxy pool deleted'); await loadAll(); }
+    catch (err) { toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+  }
+
+  async function togglePoolActive(pool: ProxyPool) {
+    try { await proxyPoolsApi.update(pool.id, { isActive: !pool.isActive }); toast.success(pool.isActive ? 'Pool disabled' : 'Pool enabled'); await loadAll(); }
+    catch (err) { toast.error('Update failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+  }
+
+  // --- Group CRUD ---
+  async function handleCreateGroup() {
+    if (!groupName.trim()) return;
+    createGroupLoading = true;
     try {
-      await proxyPoolsApi.delete(id);
-      toast.success('Proxy pool deleted');
+      await proxyGroupsApi.create({ name: groupName.trim(), mode: groupMode, stickyLimit: groupStickyLimit, strictProxy: groupStrict, proxyPoolIds: groupPoolIds, isActive: true });
+      toast.success('Proxy group created');
+      showCreateGroup = false;
+      groupName = ''; groupPoolIds = [];
       await loadAll();
-    } catch (err) {
-      toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+    } catch (err) { toast.error('Create failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+    finally { createGroupLoading = false; }
+  }
+
+  function openEditGroup(group: ProxyGroup) {
+    editGroupId = group.id;
+    groupName = group.name;
+    groupMode = group.mode;
+    groupStickyLimit = group.stickyLimit ?? 1;
+    groupStrict = group.strictProxy ?? false;
+    groupPoolIds = group.proxyPoolIds ? [...group.proxyPoolIds] : [];
+    showEditGroup = true;
+  }
+
+  async function handleEditGroup() {
+    if (!editGroupId || !groupName.trim()) return;
+    editGroupLoading = true;
+    try {
+      await proxyGroupsApi.update(editGroupId, {
+        name: groupName.trim(),
+        mode: groupMode,
+        stickyLimit: groupStickyLimit,
+        strictProxy: groupStrict,
+        proxyPoolIds: groupPoolIds,
+      });
+      toast.success('Group updated');
+      showEditGroup = false;
+      await loadAll();
+    } catch (err) { toast.error('Update failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+    finally { editGroupLoading = false; }
+  }
+
+  function toggleGroupPool(poolId: string) {
+    if (groupPoolIds.includes(poolId)) {
+      groupPoolIds = groupPoolIds.filter(id => id !== poolId);
+    } else {
+      groupPoolIds = [...groupPoolIds, poolId];
     }
   }
 
   async function deleteGroup(id: string) {
-    try {
-      await proxyGroupsApi.delete(id);
-      toast.success('Proxy group deleted');
-      await loadAll();
-    } catch (err) {
-      toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-    }
-  }
-
-  async function togglePoolActive(pool: ProxyPool) {
-    try {
-      await proxyPoolsApi.update(pool.id, { isActive: !pool.isActive });
-      toast.success(pool.isActive ? 'Pool disabled' : 'Pool enabled');
-      await loadAll();
-    } catch (err) {
-      toast.error('Update failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-    }
+    try { await proxyGroupsApi.delete(id); toast.success('Proxy group deleted'); await loadAll(); }
+    catch (err) { toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
   }
 
   async function toggleGroupActive(group: ProxyGroup) {
-    try {
-      await proxyGroupsApi.update(group.id, { isActive: !group.isActive });
-      toast.success(group.isActive ? 'Group disabled' : 'Group enabled');
-      await loadAll();
-    } catch (err) {
-      toast.error('Update failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-    }
+    try { await proxyGroupsApi.update(group.id, { isActive: !group.isActive }); toast.success(group.isActive ? 'Group disabled' : 'Group enabled'); await loadAll(); }
+    catch (err) { toast.error('Update failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
   }
 
+  // --- Assignments ---
+  function setProxyDefault(providerId: string, field: 'proxyPoolId' | 'proxyGroupId', value: string) {
+    if (!proxyDefaults[providerId]) proxyDefaults[providerId] = {};
+    if (value) proxyDefaults[providerId][field] = value;
+    else delete proxyDefaults[providerId][field];
+    if (Object.keys(proxyDefaults[providerId]).length === 0) delete proxyDefaults[providerId];
+    proxyDefaults = { ...proxyDefaults };
+  }
+
+  async function saveProxyDefaults() {
+    proxySaving = true;
+    try {
+      await settingsApi.update('provider_proxy_defaults', JSON.stringify(proxyDefaults));
+      toast.success('Proxy assignments saved');
+    } catch (err) { toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+    finally { proxySaving = false; }
+  }
+
+  // --- Health & Deploy ---
   async function runHealthCheck() {
     try {
       const res = await proxyPoolsApi.healthRun();
       toast.success(`Health check done (${res.results?.length ?? 0} pools)`);
       await loadAll();
-    } catch (err) {
-      toast.error('Health check failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-    }
+    } catch (err) { toast.error('Health check failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
   }
 
   function typeLabel(type: string): string {
@@ -192,13 +217,11 @@
 
   async function handleDeploy() {
     if (!deployToken.trim()) return;
-    deployLoading = true;
-    deployResult = null;
+    deployLoading = true; deployResult = null;
     try {
       let res: DeployResult;
-      if (deployPlatform === 'vercel') {
-        res = await proxyDeployApi.vercel({ vercelToken: deployToken.trim(), projectName: deployProjectName.trim() || undefined });
-      } else if (deployPlatform === 'deno') {
+      if (deployPlatform === 'vercel') res = await proxyDeployApi.vercel({ vercelToken: deployToken.trim(), projectName: deployProjectName.trim() || undefined });
+      else if (deployPlatform === 'deno') {
         if (!deployOrgDomain.trim()) { toast.error('Organization domain is required'); deployLoading = false; return; }
         res = await proxyDeployApi.deno({ denoToken: deployToken.trim(), orgDomain: deployOrgDomain.trim(), projectName: deployProjectName.trim() || undefined });
       } else {
@@ -206,17 +229,11 @@
         res = await proxyDeployApi.cloudflare({ cfToken: deployToken.trim(), accountId: deployAccountId.trim(), projectName: deployProjectName.trim() || undefined });
       }
       deployResult = res;
-      if (res.relayTest.ok) {
-        toast.success(`Deployed to ${deployPlatform}! ${res.deployUrl}`);
-      } else {
-        toast.error(`Deployed but test failed: ${res.relayTest.error}`);
-      }
+      if (res.relayTest.ok) toast.success(`Deployed to ${deployPlatform}! ${res.deployUrl}`);
+      else toast.error(`Deployed but test failed: ${res.relayTest.error}`);
       await loadAll();
-    } catch (err) {
-      toast.error('Deploy failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-    } finally {
-      deployLoading = false;
-    }
+    } catch (err) { toast.error('Deploy failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+    finally { deployLoading = false; }
   }
 </script>
 
@@ -267,37 +284,21 @@
           Health check
         </Button>
         {#if tab === 'pools'}
-          <Button onclick={() => (showCreatePool = true)} class="text-button-md rounded-pill px-5">
-            Add pool
-          </Button>
+          <Button onclick={() => (showCreatePool = true)} class="text-button-md rounded-pill px-5">Add pool</Button>
         {:else if tab === 'groups'}
-          <Button onclick={() => (showCreateGroup = true)} class="text-button-md rounded-pill px-5">
-            Add group
-          </Button>
+          <Button onclick={() => { groupName = ''; groupMode = 'roundrobin'; groupStickyLimit = 1; groupStrict = false; groupPoolIds = []; showCreateGroup = true; }} class="text-button-md rounded-pill px-5">Add group</Button>
         {/if}
       </div>
     </div>
 
     <!-- Tabs -->
     <div class="flex gap-1 border-b border-white/10">
-      <button
-        class="cursor-pointer px-4 py-2 text-body-sm transition-colors {tab === 'pools' ? 'border-b-2 border-foreground text-foreground' : 'text-muted-foreground hover:text-foreground'}"
-        onclick={() => (tab = 'pools')}
-      >
-        Pools ({pools.length})
-      </button>
-      <button
-        class="cursor-pointer px-4 py-2 text-body-sm transition-colors {tab === 'groups' ? 'border-b-2 border-foreground text-foreground' : 'text-muted-foreground hover:text-foreground'}"
-        onclick={() => (tab = 'groups')}
-      >
-        Groups ({groups.length})
-      </button>
-      <button
-        class="cursor-pointer px-4 py-2 text-body-sm transition-colors {tab === 'deploy' ? 'border-b-2 border-foreground text-foreground' : 'text-muted-foreground hover:text-foreground'}"
-        onclick={() => (tab = 'deploy')}
-      >
-        Deploy
-      </button>
+      {#each ([['pools', `Pools (${pools.length})`], ['groups', `Groups (${groups.length})`], ['assignments', 'Assignments'], ['deploy', 'Deploy']] as const) as [key, label]}
+        <button
+          class="cursor-pointer px-4 py-2 text-body-sm transition-colors {tab === key ? 'border-b-2 border-foreground text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+          onclick={() => (tab = key)}
+        >{label}</button>
+      {/each}
     </div>
 
     <!-- Pool Table -->
@@ -329,20 +330,14 @@
                     <span class="text-caption-mono text-muted-foreground">{typeLabel(pool.type)}</span>
                   </td>
                   <td class="px-4 py-2.5 text-center">
-                    <!-- State: user-controlled enabled/disabled -->
-                    <button
-                      onclick={() => togglePoolActive(pool)}
+                    <button onclick={() => togglePoolActive(pool)}
                       class="cursor-pointer inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase transition-colors
-                        {pool.isActive
-                          ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25'
-                          : 'bg-zinc-500/15 text-zinc-500 border border-zinc-500/20 hover:bg-zinc-500/25'}"
-                    >
+                        {pool.isActive ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25' : 'bg-zinc-500/15 text-zinc-500 border border-zinc-500/20 hover:bg-zinc-500/25'}">
                       <span class="size-1.5 rounded-full {pool.isActive ? 'bg-emerald-400' : 'bg-zinc-600'}"></span>
                       {pool.isActive ? 'On' : 'Off'}
                     </button>
                   </td>
                   <td class="px-4 py-2.5 text-center">
-                    <!-- Health: last test result -->
                     {#if pool.testStatus === 'active'}
                       <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase bg-sky-500/15 text-sky-400 border border-sky-500/30">
                         <span class="size-1.5 rounded-full bg-sky-400 animate-pulse"></span>
@@ -379,15 +374,8 @@
       {:else}
         <Card class="shadow-card">
           <CardContent class="flex flex-col items-center justify-center py-16">
-            <div class="size-12 bg-muted rounded-md flex items-center justify-center mb-4">
-              <svg class="size-6 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9" />
-              </svg>
-            </div>
             <h3 class="text-body-md-strong mb-1">No proxy pools configured.</h3>
-            <p class="text-body-sm text-muted-foreground mb-4">
-              Add an HTTP proxy or relay to route traffic through external endpoints.
-            </p>
+            <p class="text-body-sm text-muted-foreground mb-4">Add an HTTP proxy or relay to route traffic through external endpoints.</p>
             <Button onclick={() => (showCreatePool = true)} class="text-button-md rounded-pill px-5">Add pool</Button>
           </CardContent>
         </Card>
@@ -413,7 +401,7 @@
               {#each groups as group}
                 <tr class="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
                   <td class="px-4 py-2.5">
-                    <a href="/proxy-pools/{group.id}" class="text-body-sm-strong hover:underline truncate block max-w-[160px]">{group.name}</a>
+                    <span class="text-body-sm-strong truncate block max-w-[160px]">{group.name}</span>
                   </td>
                   <td class="px-4 py-2.5">
                     <span class="text-caption-mono text-muted-foreground capitalize">{group.mode}</span>
@@ -425,13 +413,9 @@
                     <span class="text-caption-mono">{group.proxyPoolIds?.length ?? 0}</span>
                   </td>
                   <td class="px-4 py-2.5 text-center">
-                    <button
-                      onclick={() => toggleGroupActive(group)}
+                    <button onclick={() => toggleGroupActive(group)}
                       class="cursor-pointer inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase transition-colors
-                        {group.isActive
-                          ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25'
-                          : 'bg-zinc-500/15 text-zinc-500 border border-zinc-500/20 hover:bg-zinc-500/25'}"
-                    >
+                        {group.isActive ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25' : 'bg-zinc-500/15 text-zinc-500 border border-zinc-500/20 hover:bg-zinc-500/25'}">
                       <span class="size-1.5 rounded-full {group.isActive ? 'bg-emerald-400' : 'bg-zinc-600'}"></span>
                       {group.isActive ? 'On' : 'Off'}
                     </button>
@@ -444,7 +428,10 @@
                     {/if}
                   </td>
                   <td class="px-4 py-2.5 text-right">
-                    <Button onclick={() => deleteGroup(group.id)} variant="ghost" size="sm" class="text-caption-mono text-destructive h-6 px-2 rounded-sm">Del</Button>
+                    <div class="flex gap-1 justify-end">
+                      <Button onclick={() => openEditGroup(group)} variant="ghost" size="sm" class="text-caption-mono h-6 px-2 rounded-sm">Edit</Button>
+                      <Button onclick={() => deleteGroup(group.id)} variant="ghost" size="sm" class="text-caption-mono text-destructive h-6 px-2 rounded-sm">Del</Button>
+                    </div>
                   </td>
                 </tr>
               {/each}
@@ -454,16 +441,76 @@
       {:else}
         <Card class="shadow-card">
           <CardContent class="flex flex-col items-center justify-center py-16">
-            <div class="size-12 bg-muted rounded-md flex items-center justify-center mb-4">
-              <svg class="size-6 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-              </svg>
-            </div>
             <h3 class="text-body-md-strong mb-1">No proxy groups configured.</h3>
-            <p class="text-body-sm text-muted-foreground mb-4">
-              Group pools together with round-robin or sticky routing.
-            </p>
-            <Button onclick={() => (showCreateGroup = true)} class="text-button-md rounded-pill px-5">Add group</Button>
+            <p class="text-body-sm text-muted-foreground mb-4">Group pools together with round-robin or sticky routing.</p>
+            <Button onclick={() => { groupName = ''; groupMode = 'roundrobin'; groupStickyLimit = 1; groupStrict = false; groupPoolIds = []; showCreateGroup = true; }} class="text-button-md rounded-pill px-5">Add group</Button>
+          </CardContent>
+        </Card>
+      {/if}
+    {/if}
+
+    <!-- Assignments Tab -->
+    {#if tab === 'assignments'}
+      {#if providers.length > 0 && pools.length > 0}
+        <Card class="shadow-card overflow-hidden p-0">
+          <div class="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-white/[0.02]">
+            <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Provider → Proxy Assignment</p>
+            <Button onclick={saveProxyDefaults} disabled={proxySaving} size="sm" class="text-body-sm rounded-sm">
+              {proxySaving ? 'Saving...' : 'Save'}
+            </Button>
+          </div>
+          <table class="w-full text-body-sm">
+            <thead>
+              <tr class="border-b border-white/5">
+                <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Provider</th>
+                <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Proxy Group</th>
+                <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Proxy Pool</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each providers as prov}
+                <tr class="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
+                  <td class="px-4 py-2.5">
+                    <span class="text-body-sm-strong">{prov.display_name ?? prov.id}</span>
+                    <span class="text-caption-mono text-muted-foreground ml-1">({prov.id})</span>
+                  </td>
+                  <td class="px-4 py-2.5">
+                    <select class="h-8 rounded-md border border-input bg-background px-2 text-body-sm cursor-pointer w-full max-w-[200px]"
+                      value={proxyDefaults[prov.id]?.proxyGroupId ?? ''}
+                      onchange={(e) => setProxyDefault(prov.id, 'proxyGroupId', (e.target as HTMLSelectElement).value)}>
+                      <option value="">None</option>
+                      {#each groups as group}
+                        <option value={group.id}>{group.name}</option>
+                      {/each}
+                    </select>
+                  </td>
+                  <td class="px-4 py-2.5">
+                    <select class="h-8 rounded-md border border-input bg-background px-2 text-body-sm cursor-pointer w-full max-w-[200px]"
+                      value={proxyDefaults[prov.id]?.proxyPoolId ?? ''}
+                      onchange={(e) => setProxyDefault(prov.id, 'proxyPoolId', (e.target as HTMLSelectElement).value)}>
+                      <option value="">None</option>
+                      {#each pools as pool}
+                        <option value={pool.id}>{pool.name}</option>
+                      {/each}
+                    </select>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </Card>
+      {:else if providers.length === 0}
+        <Card class="shadow-card">
+          <CardContent class="flex flex-col items-center justify-center py-16">
+            <h3 class="text-body-md-strong mb-1">No providers found.</h3>
+            <p class="text-body-sm text-muted-foreground">Add connections first to assign proxy pools.</p>
+          </CardContent>
+        </Card>
+      {:else}
+        <Card class="shadow-card">
+          <CardContent class="flex flex-col items-center justify-center py-16">
+            <h3 class="text-body-md-strong mb-1">No proxy pools configured.</h3>
+            <p class="text-body-sm text-muted-foreground">Create proxy pools first before assigning them to providers.</p>
           </CardContent>
         </Card>
       {/if}
@@ -481,19 +528,14 @@
             <Label class="text-body-sm-strong">Platform</Label>
             <div class="flex gap-2">
               {#each (['vercel', 'deno', 'cloudflare'] as const) as p}
-                <button
-                  class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {deployPlatform === p ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}"
-                  onclick={() => (deployPlatform = p)}
-                >
+                <button class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {deployPlatform === p ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}" onclick={() => (deployPlatform = p)}>
                   {p === 'vercel' ? 'Vercel' : p === 'deno' ? 'Deno Deploy' : 'Cloudflare'}
                 </button>
               {/each}
             </div>
           </div>
           <div class="space-y-2">
-            <Label class="text-body-sm-strong">
-              {deployPlatform === 'vercel' ? 'Vercel Token' : deployPlatform === 'deno' ? 'Deno Token' : 'Cloudflare API Token'}
-            </Label>
+            <Label class="text-body-sm-strong">{deployPlatform === 'vercel' ? 'Vercel Token' : deployPlatform === 'deno' ? 'Deno Token' : 'Cloudflare API Token'}</Label>
             <Input bind:value={deployToken} type="password" placeholder="pat_xxx or API token" class="h-10 text-body-sm font-mono" />
           </div>
           {#if deployPlatform === 'deno'}
@@ -518,11 +560,9 @@
           {#if deployResult}
             <Card class="shadow-card border {deployResult.relayTest.ok ? 'border-green-500/30' : 'border-destructive/30'}">
               <CardContent class="pt-4 space-y-2">
-                <div class="flex items-center gap-2">
-                  <Badge variant={deployResult.relayTest.ok ? 'default' : 'destructive'} class="text-caption-mono rounded-sm">
-                    {deployResult.relayTest.ok ? 'Deployed' : 'Test Failed'}
-                  </Badge>
-                </div>
+                <Badge variant={deployResult.relayTest.ok ? 'default' : 'destructive'} class="text-caption-mono rounded-sm">
+                  {deployResult.relayTest.ok ? 'Deployed' : 'Test Failed'}
+                </Badge>
                 <div class="space-y-1">
                   <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Deploy URL</p>
                   <p class="text-code font-mono break-all">{deployResult.deployUrl}</p>
@@ -555,20 +595,17 @@
     <div class="space-y-4">
       <div class="space-y-2">
         <Label class="text-body-sm-strong">Name</Label>
-        <Input bind:value={poolName} placeholder="e.g. us-east-proxy, vercel-relay" class="h-10 text-body-sm" />
+        <Input bind:value={poolName} placeholder="e.g. us-east-proxy" class="h-10 text-body-sm" />
       </div>
       <div class="space-y-2">
         <Label class="text-body-sm-strong">Proxy URL</Label>
-        <Input bind:value={poolUrl} placeholder="http://proxy:8080 or https://relay.vercel.app" class="h-10 text-body-sm font-mono" />
+        <Input bind:value={poolUrl} placeholder="http://proxy:8080" class="h-10 text-body-sm font-mono" />
       </div>
       <div class="space-y-2">
         <Label class="text-body-sm-strong">Type</Label>
         <div class="flex gap-2">
           {#each typeOptions as opt}
-            <button
-              class="cursor-pointer px-3 py-1.5 rounded-sm text-body-sm border transition-colors {poolType === opt ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}"
-              onclick={() => (poolType = opt)}
-            >
+            <button class="cursor-pointer px-3 py-1.5 rounded-sm text-body-sm border transition-colors {poolType === opt ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}" onclick={() => (poolType = opt)}>
               {typeLabel(opt)}
             </button>
           {/each}
@@ -597,23 +634,13 @@
     <div class="space-y-4">
       <div class="space-y-2">
         <Label class="text-body-sm-strong">Name</Label>
-        <Input bind:value={groupName} placeholder="e.g. us-proxies, failover-group" class="h-10 text-body-sm" />
+        <Input bind:value={groupName} placeholder="e.g. us-proxies" class="h-10 text-body-sm" />
       </div>
       <div class="space-y-2">
         <Label class="text-body-sm-strong">Mode</Label>
         <div class="flex gap-2">
-          <button
-            class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {groupMode === 'roundrobin' ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}"
-            onclick={() => (groupMode = 'roundrobin')}
-          >
-            Round Robin
-          </button>
-          <button
-            class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {groupMode === 'sticky' ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}"
-            onclick={() => (groupMode = 'sticky')}
-          >
-            Sticky
-          </button>
+          <button class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {groupMode === 'roundrobin' ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'roundrobin')}>Round Robin</button>
+          <button class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {groupMode === 'sticky' ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'sticky')}>Sticky</button>
         </div>
       </div>
       {#if groupMode === 'sticky'}
@@ -626,12 +653,73 @@
         <input type="checkbox" bind:checked={groupStrict} class="rounded cursor-pointer" />
         <Label class="text-body-sm-strong cursor-pointer">Strict proxy</Label>
       </div>
-      <p class="text-caption-mono text-muted-foreground">Add pools to this group after creation.</p>
+      {#if pools.length > 0}
+        <div class="space-y-2">
+          <Label class="text-body-sm-strong">Pools</Label>
+          <div class="flex flex-wrap gap-1.5">
+            {#each pools as pool}
+              <button class="cursor-pointer px-2.5 py-1 rounded-md text-caption-mono border transition-colors {groupPoolIds.includes(pool.id) ? 'bg-foreground text-background border-foreground' : 'border-white/10 text-muted-foreground hover:text-foreground'}" onclick={() => toggleGroupPool(pool.id)}>
+                {pool.name}
+              </button>
+            {/each}
+          </div>
+        </div>
+      {/if}
     </div>
     <Dialog.Footer>
       <Button variant="ghost" onclick={() => (showCreateGroup = false)}>Cancel</Button>
       <Button onclick={handleCreateGroup} disabled={createGroupLoading || !groupName.trim()}>
-        {createGroupLoading ? 'Creating...' : 'Create group'}
+        {createGroupLoading ? 'Creating...' : 'Create'}
+      </Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
+
+<!-- Edit Group Dialog -->
+<Dialog.Root bind:open={showEditGroup}>
+  <Dialog.Content class="sm:max-w-lg">
+    <Dialog.Header>
+      <Dialog.Title class="text-body-md-strong">Edit proxy group</Dialog.Title>
+    </Dialog.Header>
+    <div class="space-y-4">
+      <div class="space-y-2">
+        <Label class="text-body-sm-strong">Name</Label>
+        <Input bind:value={groupName} class="h-10 text-body-sm" />
+      </div>
+      <div class="space-y-2">
+        <Label class="text-body-sm-strong">Mode</Label>
+        <div class="flex gap-2">
+          <button class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {groupMode === 'roundrobin' ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'roundrobin')}>Round Robin</button>
+          <button class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {groupMode === 'sticky' ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'sticky')}>Sticky</button>
+        </div>
+      </div>
+      {#if groupMode === 'sticky'}
+        <div class="space-y-2">
+          <Label class="text-body-sm-strong">Sticky Limit</Label>
+          <Input type="number" bind:value={groupStickyLimit} min={1} class="h-10 text-code font-mono" />
+        </div>
+      {/if}
+      <div class="flex items-center gap-2">
+        <input type="checkbox" bind:checked={groupStrict} class="rounded cursor-pointer" />
+        <Label class="text-body-sm-strong cursor-pointer">Strict proxy</Label>
+      </div>
+      {#if pools.length > 0}
+        <div class="space-y-2">
+          <Label class="text-body-sm-strong">Pools</Label>
+          <div class="flex flex-wrap gap-1.5">
+            {#each pools as pool}
+              <button class="cursor-pointer px-2.5 py-1 rounded-md text-caption-mono border transition-colors {groupPoolIds.includes(pool.id) ? 'bg-foreground text-background border-foreground' : 'border-white/10 text-muted-foreground hover:text-foreground'}" onclick={() => toggleGroupPool(pool.id)}>
+                {pool.name}
+              </button>
+            {/each}
+          </div>
+        </div>
+      {/if}
+    </div>
+    <Dialog.Footer>
+      <Button variant="ghost" onclick={() => (showEditGroup = false)}>Cancel</Button>
+      <Button onclick={handleEditGroup} disabled={editGroupLoading || !groupName.trim()}>
+        {editGroupLoading ? 'Saving...' : 'Save'}
       </Button>
     </Dialog.Footer>
   </Dialog.Content>
