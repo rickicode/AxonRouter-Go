@@ -309,6 +309,7 @@
         {@const st = statusInfo(item.status)}
         {@const refreshing = isRefreshing(item.connection_id)}
         {@const planBadge = item.plan ? getPlanBadge(item.plan) : null}
+        {@const expiry = item.auth_type === 'oauth' ? getTokenExpiry(item.oauth_expires_at) : null}
         <div class="rounded-xl bg-card shadow-card transition-all hover:shadow-elevated {refreshing ? 'ring-1 ring-primary/30' : ''}">
           <!-- Card header -->
           <div class="flex items-center justify-between px-4 pt-4 pb-2">
@@ -384,7 +385,7 @@
 
           <!-- Footer -->
           <div class="px-4 py-2.5 border-t border-border">
-            {#if item.auth_type === 'oauth' && getTokenExpiry(item.oauth_expires_at) as expiry}
+            {#if expiry}
               {#if expiry.status === 'expired'}
                 <span class="text-caption text-red-400 flex items-center gap-1"><AlertCircle class="size-3" /> Token expired</span>
               {:else if expiry.status === 'expiring'}
