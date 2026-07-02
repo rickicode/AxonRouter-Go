@@ -261,8 +261,8 @@
                 {:else}
                   {#each $connections as row}
                     {@const isOAuth = row.auth_type === 'oauth'}
-                    {@const tokenExpiry = row.oauth_expires_at}
-                    {@const minsLeft = isOAuth && tokenExpiry ? Math.floor((tokenExpiry * 1000 - Date.now()) / 60000) : null}
+                    {@const expiresAt = Number(row.oauth_expires_at)}
+                    {@const minsLeft = isOAuth && Number.isFinite(expiresAt) && expiresAt > 0 ? Math.floor((expiresAt * 1000 - Date.now()) / 60000) : null}
                     <tr class="transition-colors hover:bg-accent/20 group">
                       <td class="py-3 px-4">
                         <a href="/providers/{providerId}/{row.id}" class="text-body-sm-strong hover:underline flex items-center gap-2">

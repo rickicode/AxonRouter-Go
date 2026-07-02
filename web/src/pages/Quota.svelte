@@ -383,8 +383,8 @@
 
           <!-- Footer -->
           <div class="px-4 py-2.5 border-t border-border">
-            {#if item.auth_type === 'oauth' && item.oauth_expires_at}
-              {@const minsLeft = Math.floor((item.oauth_expires_at * 1000 - Date.now()) / 60000)}
+            {#if item.auth_type === 'oauth' && Number.isFinite(Number(item.oauth_expires_at)) && Number(item.oauth_expires_at) > 0}
+              {@const minsLeft = Math.floor((Number(item.oauth_expires_at) * 1000 - Date.now()) / 60000)}
               {#if minsLeft < 0}
                 <span class="text-caption text-red-400 flex items-center gap-1"><AlertCircle class="size-3" /> Token expired</span>
               {:else if minsLeft < 30}
