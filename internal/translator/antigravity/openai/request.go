@@ -487,6 +487,23 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 		if hasFunction || len(googleSearchNodes) > 0 || len(codeExecutionNodes) > 0 || len(urlContextNodes) > 0 {
 			toolsNode := []byte("[]")
 			if hasFunction {
+				// Track declared tool names to avoid duplicates
+				declaredNames := make(map[string]bool)
+				if decls := gjson.GetBytes(functionToolNode, "functionDeclarations"); decls.Exists() {
+					for _, d := range decls.Array() {
+						if n := d.Get("name").String(); n != "" {
+							declaredNames[n] = true
+						}
+					}
+				}
+				// Inject decoy tools into functionDeclarations (skip if already declared)
+				for _, decoyName := range antigravity.AGDecoyToolNames {
+					if declaredNames[decoyName] {
+						continue
+					}
+					decoyDecl := fmt.Sprintf(`{"name":%q,"description":"This tool is currently unavailable.","parametersJsonSchema":{"type":"object","properties":{}}}`, decoyName)
+					functionToolNode, _ = sjson.SetRawBytes(functionToolNode, "functionDeclarations.-1", []byte(decoyDecl))
+				}
 				toolsNode, _ = sjson.SetRawBytes(toolsNode, "-1", functionToolNode)
 			}
 			for _, googleNode := range googleSearchNodes {
@@ -497,12 +514,6 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 			}
 			for _, urlNode := range urlContextNodes {
 				toolsNode, _ = sjson.SetRawBytes(toolsNode, "-1", urlNode)
-			}
-			// Inject decoy tools to match native Antigravity IDE fingerprint.
-			// Decoys are native tool names that appear as "unavailable" — they are NOT cloaked.
-			for _, decoyName := range antigravity.AGDecoyToolNames {
-				decoyDecl := fmt.Sprintf(`{"name":%q,"description":"This tool is currently unavailable.","parametersJsonSchema":{"type":"object","properties":{}}}`, decoyName)
-				toolsNode, _ = sjson.SetRawBytes(toolsNode, "-1", []byte(decoyDecl))
 			}
 			out, _ = sjson.SetRawBytes(out, "request.tools", toolsNode)
 		}
