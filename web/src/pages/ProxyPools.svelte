@@ -9,6 +9,7 @@
   import { Label } from '$lib/components/ui/label';
   import * as Dialog from '$lib/components/ui/dialog';
   import { toast } from 'svelte-sonner';
+
   let tab = $state<'pools' | 'groups' | 'deploy'>('pools');
   let pools = $state<ProxyPool[]>([]);
   let groups = $state<ProxyGroup[]>([]);
@@ -33,7 +34,6 @@
   let groupStrict = $state(false);
   let createGroupLoading = $state(false);
 
-
   // Deploy state
   let deployPlatform = $state<'vercel' | 'deno' | 'cloudflare'>('vercel');
   let deployToken = $state('');
@@ -43,6 +43,11 @@
   let deployLoading = $state(false);
   let deployResult = $state<DeployResult | null>(null);
   const typeOptions = ['http', 'vercel', 'deno', 'cloudflare'];
+
+  // Derived stats
+  const enabledCount = $derived(pools.filter(p => p.isActive).length);
+  const onlineCount = $derived(pools.filter(p => p.testStatus === 'active').length);
+  const errorCount = $derived(pools.filter(p => p.testStatus === 'error').length);
 
   onMount(() => {
     document.title = 'Proxy Pools — AxonRouter';
@@ -150,7 +155,7 @@
   async function togglePoolActive(pool: ProxyPool) {
     try {
       await proxyPoolsApi.update(pool.id, { isActive: !pool.isActive });
-      toast.success(pool.isActive ? 'Pool deactivated' : 'Pool activated');
+      toast.success(pool.isActive ? 'Pool disabled' : 'Pool enabled');
       await loadAll();
     } catch (err) {
       toast.error('Update failed: ' + (err instanceof Error ? err.message : 'Unknown'));
@@ -160,7 +165,7 @@
   async function toggleGroupActive(group: ProxyGroup) {
     try {
       await proxyGroupsApi.update(group.id, { isActive: !group.isActive });
-      toast.success(group.isActive ? 'Group deactivated' : 'Group activated');
+      toast.success(group.isActive ? 'Group disabled' : 'Group enabled');
       await loadAll();
     } catch (err) {
       toast.error('Update failed: ' + (err instanceof Error ? err.message : 'Unknown'));
@@ -175,12 +180,6 @@
     } catch (err) {
       toast.error('Health check failed: ' + (err instanceof Error ? err.message : 'Unknown'));
     }
-  }
-
-  function statusColor(status: string): string {
-    if (status === 'active') return 'default';
-    if (status === 'error') return 'destructive';
-    return 'secondary';
   }
 
   function typeLabel(type: string): string {
@@ -228,11 +227,7 @@
         <div class="h-8 w-48 bg-muted animate-pulse rounded-md"></div>
         <div class="h-4 w-72 bg-muted/60 animate-pulse rounded-md"></div>
       </div>
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {#each Array(3) as _}
-          <div class="h-40 bg-muted animate-pulse rounded-md"></div>
-        {/each}
-      </div>
+      <div class="h-48 bg-muted animate-pulse rounded-md"></div>
     </div>
   {:else if error}
     <Card class="shadow-card">
@@ -246,9 +241,26 @@
     <div class="flex items-center justify-between">
       <div class="space-y-1">
         <h1 class="text-display-lg">Proxy Pools.</h1>
-        <p class="text-body-sm text-muted-foreground">
-          {pools.length} pools, {groups.length} groups configured.
-        </p>
+        <div class="flex items-center gap-3 text-body-sm text-muted-foreground">
+          <span>{pools.length} pools</span>
+          <span class="text-border">·</span>
+          <span class="inline-flex items-center gap-1">
+            <span class="size-1.5 rounded-full bg-emerald-400"></span>
+            {enabledCount} enabled
+          </span>
+          <span class="text-border">·</span>
+          <span class="inline-flex items-center gap-1">
+            <span class="size-1.5 rounded-full bg-sky-400"></span>
+            {onlineCount} online
+          </span>
+          {#if errorCount > 0}
+            <span class="text-border">·</span>
+            <span class="inline-flex items-center gap-1 text-red-400">
+              <span class="size-1.5 rounded-full bg-red-400"></span>
+              {errorCount} error
+            </span>
+          {/if}
+        </div>
       </div>
       <div class="flex gap-2">
         <Button onclick={runHealthCheck} variant="outline" class="text-body-sm rounded-pill px-4">
@@ -288,51 +300,82 @@
       </button>
     </div>
 
-    <!-- Pool List -->
+    <!-- Pool Table -->
     {#if tab === 'pools'}
       {#if pools.length > 0}
-        <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {#each pools as pool}
-            <Card class="shadow-card transition-all hover:bg-accent/10 hover:border-foreground/20 h-full">
-              <CardHeader class="flex flex-row items-start justify-between space-y-0 pb-2">
-                <div class="space-y-1 min-w-0">
-                  <a href="/proxy-pools/{pool.id}" class="text-body-md-strong truncate hover:underline block">{pool.name}</a>
-                  <p class="text-caption-mono text-muted-foreground truncate">{pool.proxyUrl}</p>
-                </div>
-                <div class="flex gap-1 flex-shrink-0">
-                  <Badge variant={pool.isActive ? 'default' : 'secondary'} class="text-caption-mono rounded-sm">
-                    {pool.isActive ? 'Active' : 'Off'}
-                  </Badge>
-                  <Badge variant={statusColor(pool.testStatus)} class="text-caption-mono rounded-sm">
-                    {pool.testStatus}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent class="flex flex-col gap-3">
-                <div class="grid grid-cols-2 gap-2 border-t border-white/5 pt-3">
-                  <div>
-                    <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Type</p>
-                    <p class="text-body-sm mt-0.5">{typeLabel(pool.type)}</p>
-                  </div>
-                  <div>
-                    <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Latency</p>
-                    <p class="text-code font-mono mt-0.5">{pool.responseTimeMs != null ? pool.responseTimeMs + 'ms' : '—'}</p>
-                  </div>
-                </div>
-                {#if pool.lastError}
-                  <p class="text-caption-mono text-destructive truncate" title={pool.lastError}>{pool.lastError}</p>
-                {/if}
-                <div class="flex gap-2 pt-1">
-                  <Button onclick={() => testPool(pool.id)} variant="outline" size="sm" class="text-caption-mono rounded-sm flex-1">Test</Button>
-                  <Button onclick={() => togglePoolActive(pool)} variant="outline" size="sm" class="text-caption-mono rounded-sm">
-                    {pool.isActive ? 'Disable' : 'Enable'}
-                  </Button>
-                  <Button onclick={() => deletePool(pool.id)} variant="ghost" size="sm" class="text-caption-mono text-destructive rounded-sm">Delete</Button>
-                </div>
-              </CardContent>
-            </Card>
-          {/each}
-        </div>
+        <Card class="shadow-card overflow-hidden p-0">
+          <table class="w-full text-body-sm">
+            <thead>
+              <tr class="border-b border-white/5 bg-white/[0.02]">
+                <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Name</th>
+                <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Proxy URL</th>
+                <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Type</th>
+                <th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">State</th>
+                <th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Health</th>
+                <th class="text-right text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Latency</th>
+                <th class="text-right text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each pools as pool}
+                <tr class="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
+                  <td class="px-4 py-2.5">
+                    <a href="/proxy-pools/{pool.id}" class="text-body-sm-strong hover:underline truncate block max-w-[160px]">{pool.name}</a>
+                  </td>
+                  <td class="px-4 py-2.5">
+                    <span class="text-caption-mono text-muted-foreground truncate block max-w-[220px]">{pool.proxyUrl}</span>
+                  </td>
+                  <td class="px-4 py-2.5">
+                    <span class="text-caption-mono text-muted-foreground">{typeLabel(pool.type)}</span>
+                  </td>
+                  <td class="px-4 py-2.5 text-center">
+                    <!-- State: user-controlled enabled/disabled -->
+                    <button
+                      onclick={() => togglePoolActive(pool)}
+                      class="cursor-pointer inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase transition-colors
+                        {pool.isActive
+                          ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25'
+                          : 'bg-zinc-500/15 text-zinc-500 border border-zinc-500/20 hover:bg-zinc-500/25'}"
+                    >
+                      <span class="size-1.5 rounded-full {pool.isActive ? 'bg-emerald-400' : 'bg-zinc-600'}"></span>
+                      {pool.isActive ? 'On' : 'Off'}
+                    </button>
+                  </td>
+                  <td class="px-4 py-2.5 text-center">
+                    <!-- Health: last test result -->
+                    {#if pool.testStatus === 'active'}
+                      <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase bg-sky-500/15 text-sky-400 border border-sky-500/30">
+                        <span class="size-1.5 rounded-full bg-sky-400 animate-pulse"></span>
+                        Online
+                      </span>
+                    {:else if pool.testStatus === 'error'}
+                      <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase bg-red-500/15 text-red-400 border border-red-500/30" title={pool.lastError || ''}>
+                        <span class="size-1.5 rounded-full bg-red-400"></span>
+                        Error
+                      </span>
+                    {:else}
+                      <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase bg-zinc-500/10 text-zinc-500 border border-zinc-500/20">
+                        <span class="size-1.5 rounded-full bg-zinc-600"></span>
+                        —
+                      </span>
+                    {/if}
+                  </td>
+                  <td class="px-4 py-2.5 text-right">
+                    <span class="text-caption-mono {pool.responseTimeMs != null && pool.responseTimeMs < 500 ? 'text-emerald-400' : pool.responseTimeMs != null && pool.responseTimeMs < 2000 ? 'text-yellow-400' : 'text-muted-foreground'}">
+                      {pool.responseTimeMs != null ? pool.responseTimeMs + 'ms' : '—'}
+                    </span>
+                  </td>
+                  <td class="px-4 py-2.5 text-right">
+                    <div class="flex gap-1 justify-end">
+                      <Button onclick={() => testPool(pool.id)} variant="ghost" size="sm" class="text-caption-mono h-6 px-2 rounded-sm">Test</Button>
+                      <Button onclick={() => deletePool(pool.id)} variant="ghost" size="sm" class="text-caption-mono text-destructive h-6 px-2 rounded-sm">Del</Button>
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </Card>
       {:else}
         <Card class="shadow-card">
           <CardContent class="flex flex-col items-center justify-center py-16">
@@ -351,47 +394,63 @@
       {/if}
     {/if}
 
-    <!-- Group List -->
+    <!-- Group Table -->
     {#if tab === 'groups'}
       {#if groups.length > 0}
-        <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {#each groups as group}
-            <Card class="shadow-card transition-all hover:bg-accent/10 hover:border-foreground/20 h-full">
-              <CardHeader class="flex flex-row items-start justify-between space-y-0 pb-2">
-                <div class="space-y-1 min-w-0">
-                  <CardTitle class="text-body-md-strong truncate">{group.name}</CardTitle>
-                  <p class="text-caption-mono text-muted-foreground">{group.proxyPoolIds?.length ?? 0} pools</p>
-                </div>
-                <Badge variant={group.isActive ? 'default' : 'secondary'} class="text-caption-mono rounded-sm flex-shrink-0">
-                  {group.isActive ? 'Active' : 'Off'}
-                </Badge>
-              </CardHeader>
-              <CardContent class="flex flex-col gap-3">
-                <div class="grid grid-cols-2 gap-2 border-t border-white/5 pt-3">
-                  <div>
-                    <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Mode</p>
-                    <p class="text-body-sm mt-0.5">{group.mode}</p>
-                  </div>
-                  <div>
-                    <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Sticky</p>
-                    <p class="text-code font-mono mt-0.5">{group.mode === 'sticky' ? group.stickyLimit : '—'}</p>
-                  </div>
-                  {#if group.strictProxy}
-                    <div class="col-span-2">
-                      <Badge variant="outline" class="text-caption-mono rounded-sm">Strict proxy</Badge>
-                    </div>
-                  {/if}
-                </div>
-                <div class="flex gap-2 pt-1">
-                  <Button onclick={() => toggleGroupActive(group)} variant="outline" size="sm" class="text-caption-mono rounded-sm flex-1">
-                    {group.isActive ? 'Disable' : 'Enable'}
-                  </Button>
-                  <Button onclick={() => deleteGroup(group.id)} variant="ghost" size="sm" class="text-caption-mono text-destructive rounded-sm">Delete</Button>
-                </div>
-              </CardContent>
-            </Card>
-          {/each}
-        </div>
+        <Card class="shadow-card overflow-hidden p-0">
+          <table class="w-full text-body-sm">
+            <thead>
+              <tr class="border-b border-white/5 bg-white/[0.02]">
+                <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Name</th>
+                <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Mode</th>
+                <th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Pools</th>
+                <th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">State</th>
+                <th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Options</th>
+                <th class="text-right text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each groups as group}
+                <tr class="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
+                  <td class="px-4 py-2.5">
+                    <a href="/proxy-pools/{group.id}" class="text-body-sm-strong hover:underline truncate block max-w-[160px]">{group.name}</a>
+                  </td>
+                  <td class="px-4 py-2.5">
+                    <span class="text-caption-mono text-muted-foreground capitalize">{group.mode}</span>
+                    {#if group.mode === 'sticky'}
+                      <span class="text-caption text-muted-foreground ml-1">({group.stickyLimit})</span>
+                    {/if}
+                  </td>
+                  <td class="px-4 py-2.5 text-center">
+                    <span class="text-caption-mono">{group.proxyPoolIds?.length ?? 0}</span>
+                  </td>
+                  <td class="px-4 py-2.5 text-center">
+                    <button
+                      onclick={() => toggleGroupActive(group)}
+                      class="cursor-pointer inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase transition-colors
+                        {group.isActive
+                          ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25'
+                          : 'bg-zinc-500/15 text-zinc-500 border border-zinc-500/20 hover:bg-zinc-500/25'}"
+                    >
+                      <span class="size-1.5 rounded-full {group.isActive ? 'bg-emerald-400' : 'bg-zinc-600'}"></span>
+                      {group.isActive ? 'On' : 'Off'}
+                    </button>
+                  </td>
+                  <td class="px-4 py-2.5 text-center">
+                    {#if group.strictProxy}
+                      <span class="text-[10px] uppercase tracking-wide text-yellow-400/80">Strict</span>
+                    {:else}
+                      <span class="text-muted-foreground">—</span>
+                    {/if}
+                  </td>
+                  <td class="px-4 py-2.5 text-right">
+                    <Button onclick={() => deleteGroup(group.id)} variant="ghost" size="sm" class="text-caption-mono text-destructive h-6 px-2 rounded-sm">Del</Button>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </Card>
       {:else}
         <Card class="shadow-card">
           <CardContent class="flex flex-col items-center justify-center py-16">
@@ -402,7 +461,7 @@
             </div>
             <h3 class="text-body-md-strong mb-1">No proxy groups configured.</h3>
             <p class="text-body-sm text-muted-foreground mb-4">
-              Group multiple pools with round-robin or sticky selection.
+              Group pools together with round-robin or sticky routing.
             </p>
             <Button onclick={() => (showCreateGroup = true)} class="text-button-md rounded-pill px-5">Add group</Button>
           </CardContent>
