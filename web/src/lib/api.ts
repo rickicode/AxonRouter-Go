@@ -265,7 +265,7 @@ export const connectionsApi = {
 
 export const oauthApi = {
   start: (provider: string, providerName?: string) =>
-    fetchApi<{ auth_url: string; session_id: string; port: number }>('/oauth/start', {
+    fetchApi<{ auth_url: string; session_id: string; port: number; user_code?: string }>('/oauth/start', {
       method: 'POST',
       body: JSON.stringify({ provider, provider_name: providerName }),
     }),

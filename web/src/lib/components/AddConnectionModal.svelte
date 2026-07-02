@@ -37,6 +37,7 @@
   let oauthPolling = $state(false);
   let oauthSessionId = $state('');
   let oauthUrl = $state('');
+  let oauthUserCode = $state('');
   let oauthStatusText = $state('Waiting for browser authorization...');
   let callbackUrl = $state('');
   let submittingCallback = $state(false);
@@ -63,6 +64,7 @@
     oauthPolling = false;
     oauthSessionId = '';
     oauthUrl = '';
+    oauthUserCode = '';
     oauthStatusText = 'Waiting for browser authorization...';
     callbackUrl = '';
     submittingCallback = false;
@@ -241,10 +243,13 @@
     try {
       const res = await oauthApi.start(providerId, meta?.displayName ?? providerId);
       oauthUrl = res.auth_url;
+      oauthUserCode = res.user_code || '';
       oauthSessionId = res.session_id;
       step = 'oauth-waiting';
       oauthPolling = true;
-      oauthStatusText = 'Open the URL below in your browser to authenticate.';
+      oauthStatusText = oauthUserCode
+        ? 'Enter the code below in your browser, then authorize.'
+        : 'Open the URL below in your browser to authenticate.';
 
       toast.info(`OAuth started for ${meta?.displayName ?? providerId}`);
       pollOAuthStatus(res.session_id);
@@ -491,6 +496,20 @@
             <p class="mb-2 text-xs font-medium text-muted-foreground">Authorization URL</p>
             <p class="break-all font-mono text-xs text-foreground/80 select-all">{oauthUrl}</p>
           </div>
+
+          {#if oauthUserCode}
+            <!-- Device code display -->
+            <div class="rounded-lg border border-primary/30 bg-primary/5 p-4 text-center">
+              <p class="mb-1 text-xs font-medium text-muted-foreground">Your device code</p>
+              <p class="text-2xl font-bold tracking-widest text-foreground select-all">{oauthUserCode}</p>
+              <Button variant="outline" size="sm" class="mt-2 gap-1.5 text-xs" onclick={async () => {
+                try { await navigator.clipboard.writeText(oauthUserCode); toast.success('Code copied'); } catch { toast.error('Copy failed'); }
+              }}>
+                <svg class="size-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                Copy code
+              </Button>
+            </div>
+          {/if}
 
           <!-- Action buttons -->
           <div class="flex gap-2">

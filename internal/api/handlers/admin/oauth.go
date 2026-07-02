@@ -91,11 +91,19 @@ func (h *OAuthHandler) StartOAuth(c *gin.Context) {
 	}
 	h.sessions.Store(sessionID, session)
 
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"auth_url":   authURL,
 		"session_id": sessionID,
 		"port":       port,
-	})
+	}
+	// Device code flow: include user_code so frontend can display it
+	type userCoder interface{ GetUserCode(string) string }
+	if uc, ok := svc.(userCoder); ok {
+		if code := uc.GetUserCode(state); code != "" {
+			resp["user_code"] = code
+		}
+	}
+	c.JSON(http.StatusOK, resp)
 
 	go func() {
 		defer cancel()
