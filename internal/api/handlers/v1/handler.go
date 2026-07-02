@@ -139,17 +139,8 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 		}
 		return conn, nil
 	}
-
-	// Fallback: use PickConnection (returns first eligible even if exhausted)
-	cs := h.elig.PickConnection(provider, modelID)
-	if cs == nil {
-		return nil, fmt.Errorf("no eligible connection for provider: %s", provider)
-	}
-	conn, err := h.loadConnectionByID(ctx, cs.ID)
-	if err != nil {
-		return nil, fmt.Errorf("load connection %s: %w", cs.ID, err)
-	}
-	return conn, nil
+	// All eligible connections exhausted or failed to load
+	return nil, fmt.Errorf("no available connection for provider: %s (all exhausted or failing)", provider)
 }
 
 // RefreshConnections clears the connection cache for a provider.
