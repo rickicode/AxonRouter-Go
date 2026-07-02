@@ -92,6 +92,7 @@ func convertClaudeResponseToOpenAINonStream(_ context.Context, _ string, _, _ []
 	}
 
 	var textParts []string
+	var reasoningParts []string
 	var toolCalls []map[string]interface{}
 
 	if content := root.Get("content"); content.Exists() && content.IsArray() {
@@ -101,13 +102,13 @@ func convertClaudeResponseToOpenAINonStream(_ context.Context, _ string, _, _ []
 			case "text":
 				textParts = append(textParts, block.Get("text").String())
 			case "thinking":
-				// skip thinking in non-stream
+				reasoningParts = append(reasoningParts, block.Get("thinking").String())
 			case "tool_use":
 				tc := map[string]interface{}{
 					"id":   block.Get("id").String(),
 					"type": "function",
 					"function": map[string]interface{}{
-						"name":      block.Get("name").String(),
+						"name":      UncloakClaudeToolName(block.Get("name").String()),
 						"arguments": block.Get("input").Raw,
 					},
 				}
@@ -119,6 +120,9 @@ func convertClaudeResponseToOpenAINonStream(_ context.Context, _ string, _, _ []
 
 	if len(textParts) > 0 {
 		msg["content"] = strings.Join(textParts, "")
+	}
+	if len(reasoningParts) > 0 {
+		msg["reasoning_content"] = strings.Join(reasoningParts, "")
 	}
 	if len(toolCalls) > 0 {
 		msg["tool_calls"] = toolCalls
@@ -156,7 +160,7 @@ func handleMessageStart(root gjson.Result, state *claudeStreamState) [][]byte {
 	state.Model = msg.Get("model").String()
 	state.MessageStartSent = true
 
-	chunk := buildOpenAIChunk(state.MessageID, state.Model, nil, nil)
+	chunk := buildOpenAIChunk(state.MessageID, state.Model, nil, nil, nil)
 	return [][]byte{chunk}
 }
 
@@ -196,14 +200,15 @@ func handleContentBlockDelta(root gjson.Result, state *claudeStreamState) [][]by
 	if deltaType == "thinking_delta" {
 		text := root.Get("delta.thinking").String()
 		state.ThinkingAccum.WriteString(text)
-		return nil
+		chunk := buildOpenAIChunk(state.MessageID, state.Model, nil, nil, &text)
+		return [][]byte{chunk}
 	}
 
 	if deltaType == "text_delta" {
 		text := root.Get("delta.text").String()
 		state.TextAccum.WriteString(text)
 
-		chunk := buildOpenAIChunk(state.MessageID, state.Model, &text, nil)
+		chunk := buildOpenAIChunk(state.MessageID, state.Model, &text, nil, nil)
 		return [][]byte{chunk}
 	}
 
@@ -222,7 +227,7 @@ func handleContentBlockStop(root gjson.Result, state *claudeStreamState) [][]byt
 
 	// If a tool block just completed, emit the tool_call delta
 	if args, ok := state.ToolArgsAccum[index]; ok {
-		name := state.ToolNames[index]
+		name := UncloakClaudeToolName(state.ToolNames[index])
 		argsStr := args.String()
 		if argsStr == "" {
 			argsStr = "{}"
@@ -237,7 +242,7 @@ func handleContentBlockStop(root gjson.Result, state *claudeStreamState) [][]byt
 				"arguments": argsStr,
 			},
 		}
-		chunk := buildOpenAIChunk(state.MessageID, state.Model, nil, []map[string]interface{}{tc})
+		chunk := buildOpenAIChunk(state.MessageID, state.Model, nil, []map[string]interface{}{tc}, nil)
 		state.SawToolCall = true
 		delete(state.ToolArgsAccum, index)
 		delete(state.ToolNames, index)
@@ -264,7 +269,7 @@ func handleMessageDelta(root gjson.Result, state *claudeStreamState) [][]byte {
 		finishReason = &s
 	}
 
-	chunk := buildOpenAIChunk(state.MessageID, state.Model, nil, nil)
+	chunk := buildOpenAIChunk(state.MessageID, state.Model, nil, nil, nil)
 	if finishReason != nil {
 		chunk, _ = sjson.SetBytes(chunk, "choices.0.finish_reason", *finishReason)
 	}
@@ -278,7 +283,7 @@ func handleMessageStop(state *claudeStreamState) [][]byte {
 	return [][]byte{done}
 }
 
-func buildOpenAIChunk(id, model string, content *string, toolCalls []map[string]interface{}) []byte {
+func buildOpenAIChunk(id, model string, content *string, toolCalls []map[string]interface{}, reasoningContent *string) []byte {
 	chunk := []byte(`{"object":"chat.completion.chunk","choices":[{"index":0,"delta":{}}]}`)
 	chunk, _ = sjson.SetBytes(chunk, "id", "chatcmpl-"+id)
 	chunk, _ = sjson.SetBytes(chunk, "model", model)
@@ -287,6 +292,9 @@ func buildOpenAIChunk(id, model string, content *string, toolCalls []map[string]
 	}
 	if toolCalls != nil {
 		chunk, _ = sjson.SetRawBytes(chunk, "choices.0.delta.tool_calls", mustMarshal(toolCalls))
+	}
+	if reasoningContent != nil {
+		chunk, _ = sjson.SetBytes(chunk, "choices.0.delta.reasoning_content", *reasoningContent)
 	}
 	return []byte("data: " + string(chunk) + "\n\n")
 }

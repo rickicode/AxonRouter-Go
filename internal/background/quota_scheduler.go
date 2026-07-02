@@ -21,10 +21,10 @@ type QuotaScheduler struct {
 }
 
 // NewQuotaScheduler creates a new quota scheduler.
-// Default interval: 30 minutes.
+// Default interval: 1 minute (matches OmniRoute REFRESH_INTERVAL_MS).
 func NewQuotaScheduler(store *connstate.Store, elig *connstate.EligibilityManager, intervalMin int) *QuotaScheduler {
 	if intervalMin <= 0 {
-		intervalMin = 30
+		intervalMin = 1
 	}
 	return &QuotaScheduler{
 		store:    store,
@@ -90,27 +90,30 @@ func (qs *QuotaScheduler) Stop() {
 
 // QuotaSchedulerDB is a version that also queries DB for proactive quota checks.
 // Runs cooldown recovery + proactive quota fetching from provider APIs (Codex, Antigravity, Kiro).
-// Interval is configurable via quota_check_interval_min setting (default 30 min).
+// Default interval: 1 minute (matches OmniRoute REFRESH_INTERVAL_MS).
 type QuotaSchedulerDB struct {
-	once     sync.Once
-	db       *sql.DB
-	store    *connstate.Store
-	elig     *connstate.EligibilityManager
-	interval time.Duration
-	stopCh   chan struct{}
+	once       sync.Once
+	db         *sql.DB
+	store      *connstate.Store
+	elig       *connstate.EligibilityManager
+	exhaustion *quota.ExhaustionCache
+	interval   time.Duration
+	stopCh     chan struct{}
 }
 
 // NewQuotaSchedulerDB creates a DB-aware quota scheduler.
-func NewQuotaSchedulerDB(database *sql.DB, store *connstate.Store, elig *connstate.EligibilityManager, intervalMin int) *QuotaSchedulerDB {
+// Default interval: 1 minute (matches OmniRoute REFRESH_INTERVAL_MS).
+func NewQuotaSchedulerDB(database *sql.DB, store *connstate.Store, elig *connstate.EligibilityManager, intervalMin int, exhaustionCache *quota.ExhaustionCache) *QuotaSchedulerDB {
 	if intervalMin <= 0 {
-		intervalMin = 30
+		intervalMin = 1
 	}
 	return &QuotaSchedulerDB{
-		db:       database,
-		store:    store,
-		elig:     elig,
-		interval: time.Duration(intervalMin) * time.Minute,
-		stopCh:   make(chan struct{}),
+		db:         database,
+		store:      store,
+		elig:       elig,
+		exhaustion: exhaustionCache,
+		interval:   time.Duration(intervalMin) * time.Minute,
+		stopCh:     make(chan struct{}),
 	}
 }
 
@@ -179,6 +182,11 @@ func (qs *QuotaSchedulerDB) check() {
 
 	// 3. Proactive quota fetch for OAuth connections
 	qs.checkQuotas()
+
+	// 4. Cleanup expired exhaustion marks
+	if qs.exhaustion != nil {
+		qs.exhaustion.Cleanup()
+	}
 
 	if recovered > 0 {
 		log.Printf("background: recovered %d connections", recovered)

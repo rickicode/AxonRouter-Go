@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -62,18 +63,19 @@ func fetchCodexQuota(accessToken string, psd map[string]any) ([]QuotaItem, strin
 }
 
 // parseCodexQuotas builds QuotaItems from the rate_limit block.
+// Also detects Spark quotas from additional_rate_limits and tags them with Scope: "spark".
 func parseCodexQuotas(rateLimit map[string]any, data map[string]any) []QuotaItem {
 	var quotas []QuotaItem
 
 	// Primary window (session)
 	if pw := getMapField(rateLimit, "primary_window", "primaryWindow"); len(pw) > 0 {
-		qi := buildPercentageQuota(pw, "Session")
+		qi := buildPercentageQuota(pw, "Session", "codex")
 		quotas = append(quotas, qi)
 	}
 
 	// Secondary window (weekly)
 	if sw := getMapField(rateLimit, "secondary_window", "secondaryWindow"); len(sw) > 0 {
-		qi := buildPercentageQuota(sw, "Weekly")
+		qi := buildPercentageQuota(sw, "Weekly", "codex")
 		quotas = append(quotas, qi)
 	}
 
@@ -84,17 +86,28 @@ func parseCodexQuotas(rateLimit map[string]any, data map[string]any) []QuotaItem
 	}
 	if len(reviewRL) > 0 {
 		if pw := getMapField(reviewRL, "primary_window", "primaryWindow"); len(pw) > 0 {
-			quotas = append(quotas, buildPercentageQuota(pw, "Code Review"))
+			quotas = append(quotas, buildPercentageQuota(pw, "Code Review", "codex"))
 		}
 		if sw := getMapField(reviewRL, "secondary_window", "secondaryWindow"); len(sw) > 0 {
-			quotas = append(quotas, buildPercentageQuota(sw, "Code Review Weekly"))
+			quotas = append(quotas, buildPercentageQuota(sw, "Code Review Weekly", "codex"))
+		}
+	}
+
+	// Spark quota from additional_rate_limits (OmniRoute codexQuotaScopes pattern)
+	sparkRL := findSparkRateLimit(data)
+	if sparkRL != nil {
+		if pw := getMapField(sparkRL, "primary_window", "primaryWindow"); len(pw) > 0 {
+			quotas = append(quotas, buildPercentageQuota(pw, "Spark Session", "spark"))
+		}
+		if sw := getMapField(sparkRL, "secondary_window", "secondaryWindow"); len(sw) > 0 {
+			quotas = append(quotas, buildPercentageQuota(sw, "Spark Weekly", "spark"))
 		}
 	}
 
 	return quotas
 }
 
-func buildPercentageQuota(window map[string]any, name string) QuotaItem {
+func buildPercentageQuota(window map[string]any, name string, scope string) QuotaItem {
 	usedPct := getNumberField(window, "used_percent", "usedPercent")
 	resetAt := parseWindowReset(window)
 	return QuotaItem{
@@ -104,6 +117,7 @@ func buildPercentageQuota(window map[string]any, name string) QuotaItem {
 		RemainingPct: 100 - usedPct,
 		ResetAt:      resetAt,
 		Unlimited:    false,
+		Scope:        scope,
 	}
 }
 
@@ -149,6 +163,58 @@ func findAdditionalRateLimit(data map[string]any, names ...string) map[string]an
 		}
 	}
 	return nil
+}
+
+// findSparkRateLimit scans additional_rate_limits for Spark descriptors.
+// Matches OmniRoute codexQuotaScopes.ts isCodexSparkLimitDescriptor + findSparkRateLimit.
+func findSparkRateLimit(data map[string]any) map[string]any {
+	arl, ok := data["additional_rate_limits"]
+	if !ok {
+		arl, ok = data["additionalRateLimits"]
+	}
+	if !ok {
+		return nil
+	}
+
+	list, ok := arl.([]any)
+	if !ok {
+		return nil
+	}
+
+	for _, entry := range list {
+		m, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if isSparkDescriptor(m) {
+			rl := getMapField(m, "rate_limit", "rateLimit")
+			if len(rl) > 0 {
+				return rl
+			}
+		}
+	}
+	return nil
+}
+
+// isSparkDescriptor checks if an additional_rate_limits entry is a Spark descriptor.
+// Matches OmniRoute isCodexSparkLimitDescriptor: checks limit_name, metered_feature, etc.
+// for "spark", "bengalfox", or "gpt_5_3_codex_spark".
+func isSparkDescriptor(m map[string]any) bool {
+	descriptorKeys := []string{"limit_name", "limitName", "metered_feature", "meteredFeature",
+		"limit_id", "limitId", "id", "name", "title", "model", "model_id", "modelId"}
+	for _, k := range descriptorKeys {
+		if v, ok := m[k]; ok {
+			if s, ok := v.(string); ok {
+				lower := strings.ToLower(s)
+				if strings.Contains(lower, "spark") ||
+					strings.Contains(lower, "bengalfox") ||
+					strings.Contains(lower, "gpt_5_3_codex_spark") {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func matchesFieldName(m map[string]any, target string) bool {

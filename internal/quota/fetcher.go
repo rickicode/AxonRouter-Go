@@ -23,6 +23,7 @@ type QuotaItem struct {
 	Unlimited    bool    `json:"unlimited"`
 	ModelKey     string  `json:"model_key,omitempty"`
 	Family       string  `json:"family,omitempty"`
+	Scope        string  `json:"scope,omitempty"` // "codex", "spark", or "" (default/unknown)
 }
 
 // ConnectionQuota holds quota data for a single connection.
@@ -212,8 +213,8 @@ func parseProviderSpecificData(raw sql.NullString) map[string]any {
 }
 
 // refreshOAuthToken refreshes an expired OAuth token using the provider's refresh token.
-// Returns new access token and expiry unix timestamp.
-func refreshOAuthToken(providerID, refreshToken string) (string, int64, error) {
+// Returns new access token, new refresh token (may be same as input if not rotated), and expiry unix timestamp.
+func refreshOAuthToken(providerID, refreshToken string) (string, string, int64, error) {
 	// Use provider-specific client credentials (same as auth package)
 	var clientID, clientSecret, tokenURL string
 	switch providerID {
@@ -225,7 +226,7 @@ func refreshOAuthToken(providerID, refreshToken string) (string, int64, error) {
 		clientSecret = "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"
 		tokenURL = "https://oauth2.googleapis.com/token"
 	default:
-		return "", 0, fmt.Errorf("token refresh not supported for provider: %s", providerID)
+		return "", "", 0, fmt.Errorf("token refresh not supported for provider: %s", providerID)
 	}
 
 	form := url.Values{}
@@ -238,37 +239,44 @@ func refreshOAuthToken(providerID, refreshToken string) (string, int64, error) {
 
 	req, err := http.NewRequest("POST", tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", 0, fmt.Errorf("create request: %w", err)
+		return "", "", 0, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", 0, fmt.Errorf("refresh request: %w", err)
+		return "", "", 0, fmt.Errorf("refresh request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", 0, fmt.Errorf("read response: %w", err)
+		return "", "", 0, fmt.Errorf("read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", 0, fmt.Errorf("refresh failed %d: %s", resp.StatusCode, string(body))
+		return "", "", 0, fmt.Errorf("refresh failed %d: %s", resp.StatusCode, string(body))
 	}
 
 	var tokenResp struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int64  `json:"expires_in"`
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int64  `json:"expires_in"`
 	}
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return "", 0, fmt.Errorf("parse response: %w", err)
+		return "", "", 0, fmt.Errorf("parse response: %w", err)
 	}
 	if tokenResp.AccessToken == "" {
-		return "", 0, fmt.Errorf("empty access_token in refresh response")
+		return "", "", 0, fmt.Errorf("empty access_token in refresh response")
 	}
 
-	return tokenResp.AccessToken, time.Now().Unix() + tokenResp.ExpiresIn, nil
+	// Preserve old refresh_token when provider omits it (Auth0 rotation gives a new one; Google often omits it)
+	newRefreshToken := tokenResp.RefreshToken
+	if newRefreshToken == "" {
+		newRefreshToken = refreshToken
+	}
+
+	return tokenResp.AccessToken, newRefreshToken, time.Now().Unix() + tokenResp.ExpiresIn, nil
 }
 
 // fetchConnectionQuota dispatches to the right provider fetcher.
@@ -289,20 +297,21 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 
 	token := c.OAuthToken.String
 
-	// Refresh token if expired (with 30s skew)
-	if c.OAuthExpiresAt > 0 && time.Now().Unix() > c.OAuthExpiresAt-30 {
+	// Refresh token if expired (with 30s skew).
+	// Skip proactive refresh for Codex (cx) — Auth0 rotating tokens cause family revocation.
+	if providerID != "cx" && c.OAuthExpiresAt > 0 && time.Now().Unix() > c.OAuthExpiresAt-30 {
 		if c.OAuthRefreshToken.Valid && c.OAuthRefreshToken.String != "" {
-			newToken, newExpiry, err := refreshOAuthToken(providerID, c.OAuthRefreshToken.String)
+			newToken, newRefreshToken, newExpiry, err := refreshOAuthToken(providerID, c.OAuthRefreshToken.String)
 			if err != nil {
 				log.Printf("quota: token refresh failed for %s (%s): %v", c.ID, c.Name, err)
 				cq.Error = fmt.Sprintf("token refresh failed: %v", err)
 				return cq
 			}
 			token = newToken
-			// Persist refreshed token to DB
+			// Persist refreshed token (and rotated refresh_token) to DB
 			if db != nil {
-				db.Exec(`UPDATE connections SET oauth_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
-					newToken, newExpiry, time.Now().Unix(), c.ID)
+				db.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
+					newToken, newRefreshToken, newExpiry, time.Now().Unix(), c.ID)
 			}
 		}
 	}

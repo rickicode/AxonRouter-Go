@@ -23,34 +23,59 @@ func SaveQuotaCache(db *sql.DB, results []ProviderQuota) {
 				var existingStatus string
 				err := db.QueryRow(`SELECT status FROM quota_cache WHERE id = ?`, conn.ConnectionID).Scan(&existingStatus)
 				if err == nil && existingStatus != "error" && existingStatus != "no_data" {
-					// Existing data is good — skip overwrite, just update timestamp
 					db.Exec(`UPDATE quota_cache SET updated_at = ? WHERE id = ?`, now, conn.ConnectionID)
 					continue
 				}
 			}
 
-			status := evaluateCacheStatus(conn.Quotas, conn.Error)
-			quotasJSON, err := json.Marshal(conn.Quotas)
-			if err != nil {
-				quotasJSON = []byte("[]")
+			// Split quotas by scope: codex (default) vs spark
+			var codexQuotas, sparkQuotas []QuotaItem
+			for _, q := range conn.Quotas {
+				if q.Scope == "spark" {
+					sparkQuotas = append(sparkQuotas, q)
+				} else {
+					codexQuotas = append(codexQuotas, q)
+				}
 			}
 
-			_, err = db.Exec(`
-				INSERT INTO quota_cache (id, connection_id, provider_type_id, connection_name, plan, quotas, status, error, fetched_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-				ON CONFLICT(id) DO UPDATE SET
-					plan = excluded.plan,
-					quotas = excluded.quotas,
-					status = excluded.status,
-					error = excluded.error,
-					fetched_at = excluded.fetched_at,
-					updated_at = excluded.updated_at
-			`, conn.ConnectionID, conn.ConnectionID, provider.ProviderID, conn.ConnectionName,
-				conn.Plan, string(quotasJSON), status, conn.Error, conn.FetchedAt, now)
-			if err != nil {
-				log.Printf("quota cache: save error for %s: %v", conn.ConnectionID, err)
+			// Save codex/default quotas under connID
+			saveQuotaCacheEntry(db, conn.ConnectionID, conn.ConnectionID, provider.ProviderID,
+				conn.ConnectionName, conn.Plan, codexQuotas, conn.Error, conn.FetchedAt, now)
+
+			// Save spark quotas under connID:spark if any exist
+			if len(sparkQuotas) > 0 {
+				sparkKey := conn.ConnectionID + ":spark"
+				saveQuotaCacheEntry(db, sparkKey, conn.ConnectionID, provider.ProviderID,
+					conn.ConnectionName+" (Spark)", conn.Plan, sparkQuotas, conn.Error, conn.FetchedAt, now)
 			}
 		}
+	}
+}
+
+// saveQuotaCacheEntry persists a single quota cache entry to the DB.
+func saveQuotaCacheEntry(db *sql.DB, cacheID, connID, providerID, connName, plan string,
+	quotas []QuotaItem, connError string, fetchedAt, now int64) {
+
+	status := evaluateCacheStatus(quotas, connError)
+	quotasJSON, err := json.Marshal(quotas)
+	if err != nil {
+		quotasJSON = []byte("[]")
+	}
+
+	_, err = db.Exec(`
+		INSERT INTO quota_cache (id, connection_id, provider_type_id, connection_name, plan, quotas, status, error, fetched_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			plan = excluded.plan,
+			quotas = excluded.quotas,
+			status = excluded.status,
+			error = excluded.error,
+			fetched_at = excluded.fetched_at,
+			updated_at = excluded.updated_at
+	`, cacheID, connID, providerID, connName,
+		plan, string(quotasJSON), status, connError, fetchedAt, now)
+	if err != nil {
+		log.Printf("quota cache: save error for %s: %v", cacheID, err)
 	}
 }
 

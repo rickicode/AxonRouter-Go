@@ -16,6 +16,16 @@ func NewOpenAIExecutor(base *BaseExecutor) *OpenAIExecutor {
 	return &OpenAIExecutor{BaseExecutor: base}
 }
 
+// openRouterHeaders adds OpenRouter attribution headers to the headers map
+// if the provider is "openrouter". OpenRouter uses HTTP-Referer and X-Title
+// for app attribution and rate-limit tracking.
+func openRouterHeaders(headers map[string]string, provider string) {
+	if provider == "openrouter" {
+		headers["HTTP-Referer"] = "https://endpoint-proxy.local"
+		headers["X-Title"] = "Endpoint Proxy"
+	}
+}
+
 func openAIEndpoint(baseURL, endpoint string) string {
 	if baseURL == "" {
 		return "https://api.openai.com/v1/" + endpoint
@@ -41,6 +51,7 @@ func (e *OpenAIExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 		"Content-Type": "application/json",
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
+	openRouterHeaders(headers, req.Provider)
 
 	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
 	if err != nil {
@@ -68,6 +79,7 @@ func (e *OpenAIExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 		"Cache-Control": "no-cache",
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
+	openRouterHeaders(headers, req.Provider)
 
 	return e.DoStreamRequest(ctx, "POST", url, headers, body)
 }
@@ -80,6 +92,7 @@ func (e *OpenAIExecutor) Embeddings(ctx context.Context, req *Request) (*Respons
 		"Content-Type": "application/json",
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
+	openRouterHeaders(headers, req.Provider)
 
 	resp, err := e.DoRequest(ctx, "POST", url, headers, req.Body)
 	if err != nil {
@@ -101,6 +114,7 @@ func (e *OpenAIExecutor) Models(ctx context.Context, req *Request) (*Response, e
 		"Content-Type": "application/json",
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
+	openRouterHeaders(headers, req.Provider)
 
 	resp, err := e.DoRequest(ctx, "GET", url, headers, nil)
 	if err != nil {
@@ -125,6 +139,7 @@ func (e *OpenAIExecutor) Responses(ctx context.Context, req *Request) (*Response
 		"Content-Type": "application/json",
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
+	openRouterHeaders(headers, req.Provider)
 
 	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
 	if err != nil {
@@ -151,6 +166,7 @@ func (e *OpenAIExecutor) ResponsesStream(ctx context.Context, req *Request) (*St
 		"Cache-Control": "no-cache",
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
+	openRouterHeaders(headers, req.Provider)
 
 	return e.DoStreamRequest(ctx, "POST", url, headers, body)
 }

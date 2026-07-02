@@ -24,6 +24,7 @@ type claudeStreamState struct {
 	ToolStartEmitted      map[int]bool
 	ToolArgsAccum         map[int]*strings.Builder
 	TextAccum             strings.Builder
+	ThinkingAccum         strings.Builder
 	FinishReason          string
 	MessageStartSent      bool
 	MessageStopSent       bool
@@ -80,7 +81,24 @@ func convertOpenAIResponseToClaudeStream(_ context.Context, _ string, _, _ []byt
 			delta := choice.Get("delta")
 			finish := choice.Get("finish_reason").String()
 
+			// Handle reasoning_content → thinking block
+			if reasoningContent := delta.Get("reasoning_content"); reasoningContent.Exists() && reasoningContent.String() != "" {
+				if !state.ThinkingBlockStarted {
+					results = append(results, buildClaudeContentBlockStart(state, "thinking"))
+					state.ThinkingBlockStarted = true
+					state.ThinkingBlockIndex = state.NextContentBlockIndex
+					state.NextContentBlockIndex++
+				}
+				state.ThinkingAccum.WriteString(reasoningContent.String())
+				results = append(results, buildClaudeThinkingDelta(state.ThinkingBlockIndex, reasoningContent.String()))
+			}
+
 			if content := delta.Get("content"); content.Exists() {
+				// Close any open thinking block before starting text
+				if state.ThinkingBlockStarted {
+					results = append(results, buildClaudeContentBlockStop(state.ThinkingBlockIndex))
+					state.ThinkingBlockStarted = false
+				}
 				if !state.ContentBlockStarted {
 					results = append(results, buildClaudeContentBlockStart(state, "text"))
 					state.ContentBlockStarted = true
@@ -91,6 +109,11 @@ func convertOpenAIResponseToClaudeStream(_ context.Context, _ string, _, _ []byt
 			}
 
 			if toolCalls := delta.Get("tool_calls"); toolCalls.Exists() && toolCalls.IsArray() {
+				// Close any open thinking block before starting tool
+				if state.ThinkingBlockStarted {
+					results = append(results, buildClaudeContentBlockStop(state.ThinkingBlockIndex))
+					state.ThinkingBlockStarted = false
+				}
 				toolCalls.ForEach(func(_, tc gjson.Result) bool {
 					idx := int(tc.Get("index").Int())
 					if !state.ToolStartEmitted[idx] {
@@ -139,6 +162,15 @@ func convertOpenAIResponseToClaudeNonStream(_ context.Context, _ string, _, _ []
 	if choices := root.Get("choices"); choices.Exists() && choices.IsArray() {
 		choices.ForEach(func(_, choice gjson.Result) bool {
 			msg := choice.Get("message")
+
+			// Handle reasoning_content → thinking block
+			if reasoningContent := msg.Get("reasoning_content"); reasoningContent.Exists() && reasoningContent.String() != "" {
+				content = append(content, map[string]interface{}{
+					"type":     "thinking",
+					"thinking": reasoningContent.String(),
+				})
+			}
+
 			if text := msg.Get("content"); text.Exists() && text.String() != "" {
 				content = append(content, map[string]interface{}{
 					"type": "text",
@@ -210,6 +242,8 @@ func buildClaudeContentBlockStart(state *claudeStreamState, blockType string) []
 	}
 	if blockType == "text" {
 		block["text"] = ""
+	} else if blockType == "thinking" {
+		block["thinking"] = ""
 	}
 	event := map[string]interface{}{
 		"type":          "content_block_start",
@@ -228,6 +262,28 @@ func buildClaudeTextDelta(index int, text string) []byte {
 			"type": "text_delta",
 			"text": text,
 		},
+	}
+	b, _ := json.Marshal(event)
+	return []byte("data: " + string(b) + "\n\n")
+}
+
+func buildClaudeThinkingDelta(index int, thinking string) []byte {
+	event := map[string]interface{}{
+		"type":  "content_block_delta",
+		"index": index,
+		"delta": map[string]interface{}{
+			"type":     "thinking_delta",
+			"thinking": thinking,
+		},
+	}
+	b, _ := json.Marshal(event)
+	return []byte("data: " + string(b) + "\n\n")
+}
+
+func buildClaudeContentBlockStop(index int) []byte {
+	event := map[string]interface{}{
+		"type":  "content_block_stop",
+		"index": index,
 	}
 	b, _ := json.Marshal(event)
 	return []byte("data: " + string(b) + "\n\n")
@@ -255,14 +311,14 @@ func buildClaudeToolUseStart(state *claudeStreamState, idx int, id, name string)
 func handleClaudeDone(state *claudeStreamState) [][]byte {
 	var results [][]byte
 
+	// Stop any open thinking block first
+	if state.ThinkingBlockStarted {
+		results = append(results, buildClaudeContentBlockStop(state.ThinkingBlockIndex))
+	}
+
 	// Stop any open content blocks
 	if state.ContentBlockStarted {
-		event := map[string]interface{}{
-			"type":  "content_block_stop",
-			"index": state.ContentBlockIndex,
-		}
-		b, _ := json.Marshal(event)
-		results = append(results, []byte("data: "+string(b)+"\n\n"))
+		results = append(results, buildClaudeContentBlockStop(state.ContentBlockIndex))
 	}
 
 	// Stop any open tool blocks
@@ -280,12 +336,7 @@ func handleClaudeDone(state *claudeStreamState) [][]byte {
 			d, _ := json.Marshal(delta)
 			results = append(results, []byte("data: "+string(d)+"\n\n"))
 		}
-		stop := map[string]interface{}{
-			"type":  "content_block_stop",
-			"index": blockIndex,
-		}
-		s, _ := json.Marshal(stop)
-		results = append(results, []byte("data: "+string(s)+"\n\n"))
+		results = append(results, buildClaudeContentBlockStop(blockIndex))
 	}
 
 	// message_delta with stop_reason

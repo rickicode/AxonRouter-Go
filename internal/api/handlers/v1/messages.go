@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
@@ -117,6 +118,9 @@ func (h *Handler) Messages(c *gin.Context) {
 
 	if err != nil {
 		det := connstate.DetectError(0, "", err, provider, modelName, nil) // Q5: pass modelID
+		if det.Category == connstate.ErrorRateLimit {
+			h.exhaustion.MarkExhausted(conn.ID, quota.DefaultExhaustionTTL)
+		}
 		h.store.RecordFailure(conn.ID, det)
 		if det.Status != connstate.StatusReady {
 			h.elig.Update(h.store)

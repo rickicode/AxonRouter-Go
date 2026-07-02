@@ -32,12 +32,14 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 	body = JSONSet(body, "store", false)
 
 	headers := map[string]string{
-		"Content-Type":  "application/json",
-		"Accept":        "text/event-stream",
-		"Cache-Control": "no-cache",
-		"Authorization": "Bearer " + req.AccessToken,
-		"User-Agent":    "codex_cli_rs/0.42.0 (Debian 12.9; x86_64)",
-		"Openai-Beta":   "responses=experimental",
+		"Content-Type":               "application/json",
+		"Accept":                     "text/event-stream",
+		"Cache-Control":              "no-cache",
+		"Authorization":              "Bearer " + req.AccessToken,
+		"User-Agent":                 "codex_cli_rs/0.42.0 (Debian 12.9; x86_64)",
+		"Openai-Beta":                "responses=experimental",
+		"Originator":                 "codex_cli_rs",
+		"Codex-Cli-Simplified-Flow":  "true",
 	}
 	if req.APIKey != "" && req.AccessToken == "" {
 		headers["Authorization"] = "Bearer " + req.APIKey
@@ -84,12 +86,14 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, req *Request) (*Strea
 	body = JSONSet(body, "store", false)
 
 	headers := map[string]string{
-		"Content-Type":  "application/json",
-		"Accept":        "text/event-stream",
-		"Cache-Control": "no-cache",
-		"Authorization": "Bearer " + req.AccessToken,
-		"User-Agent":    "codex_cli_rs/0.42.0 (Debian 12.9; x86_64)",
-		"Openai-Beta":   "responses=experimental",
+		"Content-Type":               "application/json",
+		"Accept":                     "text/event-stream",
+		"Cache-Control":              "no-cache",
+		"Authorization":              "Bearer " + req.AccessToken,
+		"User-Agent":                 "codex_cli_rs/0.42.0 (Debian 12.9; x86_64)",
+		"Openai-Beta":                "responses=experimental",
+		"Originator":                 "codex_cli_rs",
+		"Codex-Cli-Simplified-Flow":  "true",
 	}
 	if req.APIKey != "" && req.AccessToken == "" {
 		headers["Authorization"] = "Bearer " + req.APIKey

@@ -18,6 +18,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
+	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
 
@@ -53,15 +54,16 @@ type Connection struct {
 
 // Handler is the base handler for all /v1/* endpoints.
 type Handler struct {
-	db       *sql.DB
-	registry *executor.Registry
-	store    *connstate.Store
-	elig     *connstate.EligibilityManager
-	combo    *combo.Handler
-	tracker  *usage.Tracker
-	authMgr  *auth.Manager
-	resolver *proxypool.Resolver
-	conns    sync.Map // provider -> cachedConns
+	db         *sql.DB
+	registry   *executor.Registry
+	store      *connstate.Store
+	elig       *connstate.EligibilityManager
+	combo      *combo.Handler
+	tracker    *usage.Tracker
+	authMgr    *auth.Manager
+	resolver   *proxypool.Resolver
+	exhaustion *quota.ExhaustionCache
+	conns      sync.Map // provider -> cachedConns
 }
 
 // cachedConns holds cached connections with expiry.
@@ -79,16 +81,18 @@ func NewHandler(
 	tracker *usage.Tracker,
 	authManager *auth.Manager,
 	resolver *proxypool.Resolver,
+	exhaustionCache *quota.ExhaustionCache,
 ) *Handler {
 	return &Handler{
-		db:       db,
-		registry: executor.GetRegistry(),
-		store:    store,
-		elig:     elig,
-		combo:    comboHandler,
-		tracker:  tracker,
-		authMgr:  authManager,
-		resolver: resolver,
+		db:         db,
+		registry:   executor.GetRegistry(),
+		store:      store,
+		elig:       elig,
+		combo:      comboHandler,
+		tracker:    tracker,
+		authMgr:    authManager,
+		resolver:   resolver,
+		exhaustion: exhaustionCache,
 	}
 }
 
@@ -102,15 +106,45 @@ func (h *Handler) resolveExecutor(provider, model string) (executor.Executor, ex
 }
 
 // getConnection returns an active connection for a provider using O(1) eligibility snapshot.
-// Replaces the old O(n) linear scan with TTL cache.
+// Preflight: skips connections marked as exhausted in the quota exhaustion cache.
 func (h *Handler) getConnection(ctx context.Context, provider string, modelID string) (*Connection, error) {
-	// O(1) eligibility pick
+	// Get all eligible connections for this provider (sorted by priority)
+	connIDs := h.elig.GetByPrefix(provider)
+	if len(connIDs) == 0 {
+		return nil, fmt.Errorf("no eligible connection for provider: %s", provider)
+	}
+
+	// Preflight: find first connection not marked exhausted
+	for _, connID := range connIDs {
+		cs := h.store.Get(connID)
+		if cs == nil {
+			continue
+		}
+		// Check connection-level cooldown
+		if cs.IsInCooldown() {
+			continue
+		}
+		// Check model-level cooldown
+		if modelID != "" && cs.IsModelInCooldown(modelID) {
+			continue
+		}
+		// Preflight quota exhaustion check (OmniRoute isAccountQuotaExhausted)
+		if h.exhaustion.IsExhausted(connID) {
+			continue
+		}
+		// Load credentials by ID
+		conn, err := h.loadConnectionByID(ctx, connID)
+		if err != nil {
+			continue
+		}
+		return conn, nil
+	}
+
+	// Fallback: use PickConnection (returns first eligible even if exhausted)
 	cs := h.elig.PickConnection(provider, modelID)
 	if cs == nil {
 		return nil, fmt.Errorf("no eligible connection for provider: %s", provider)
 	}
-
-	// Load credentials by ID (single row query, not full scan)
 	conn, err := h.loadConnectionByID(ctx, cs.ID)
 	if err != nil {
 		return nil, fmt.Errorf("load connection %s: %w", cs.ID, err)

@@ -57,9 +57,15 @@ func convertGeminiResponseToOpenAIStream(_ context.Context, _ string, _, _ []byt
 			if parts := candidate.Get("content.parts"); parts.Exists() && parts.IsArray() {
 				parts.ForEach(func(_, part gjson.Result) bool {
 					if text := part.Get("text"); text.Exists() {
-						chunk := buildOpenAIFromGemini(state.MessageID, state.Model, text.String(), nil)
-						results = append(results, chunk)
-						state.ContentAcc.WriteString(text.String())
+						if part.Get("thought").Bool() {
+							reasoningText := text.String()
+							chunk := buildOpenAIFromGemini(state.MessageID, state.Model, nil, nil, &reasoningText)
+							results = append(results, chunk)
+						} else {
+							chunk := buildOpenAIFromGemini(state.MessageID, state.Model, nil, &text, nil)
+							results = append(results, chunk)
+							state.ContentAcc.WriteString(text.String())
+						}
 					}
 
 					if fc := part.Get("functionCall"); fc.Exists() {
@@ -70,7 +76,7 @@ func convertGeminiResponseToOpenAIStream(_ context.Context, _ string, _, _ []byt
 						if argsStr == "" {
 							argsStr = "{}"
 						}
-						chunk := buildOpenAIFromGemini(state.MessageID, state.Model, "", []map[string]interface{}{{
+						chunk := buildOpenAIFromGemini(state.MessageID, state.Model, []map[string]interface{}{{
 							"index": idx,
 							"id":    fmt.Sprintf("call_%s_%d", state.MessageID, idx),
 							"type":  "function",
@@ -78,11 +84,32 @@ func convertGeminiResponseToOpenAIStream(_ context.Context, _ string, _, _ []byt
 								"name":      fc.Get("name").String(),
 								"arguments": argsStr,
 							},
-						}})
+						}}, nil, nil)
 						results = append(results, chunk)
 					}
 					return true
 				})
+			}
+
+			// Usage metadata
+			if usage := root.Get("usageMetadata"); usage.Exists() {
+				chunk := buildOpenAIFromGemini(state.MessageID, state.Model, nil, nil, nil)
+				if promptTokens := usage.Get("promptTokenCount"); promptTokens.Exists() {
+					chunk, _ = sjson.SetBytes(chunk, "usage.prompt_tokens", promptTokens.Int())
+				}
+				if completionTokens := usage.Get("candidatesTokenCount"); completionTokens.Exists() {
+					chunk, _ = sjson.SetBytes(chunk, "usage.completion_tokens", completionTokens.Int())
+				}
+				if totalTokens := usage.Get("totalTokenCount"); totalTokens.Exists() {
+					chunk, _ = sjson.SetBytes(chunk, "usage.total_tokens", totalTokens.Int())
+				}
+				if thoughtsTokens := usage.Get("thoughtsTokenCount"); thoughtsTokens.Exists() && thoughtsTokens.Int() > 0 {
+					chunk, _ = sjson.SetBytes(chunk, "usage.completion_tokens_details.reasoning_tokens", thoughtsTokens.Int())
+				}
+				if cachedTokens := usage.Get("cachedContentTokenCount"); cachedTokens.Exists() && cachedTokens.Int() > 0 {
+					chunk, _ = sjson.SetBytes(chunk, "usage.prompt_tokens_details.cached_tokens", cachedTokens.Int())
+				}
+				results = append(results, chunk)
 			}
 
 			// Finish reason
@@ -96,7 +123,7 @@ func convertGeminiResponseToOpenAIStream(_ context.Context, _ string, _, _ []byt
 				case "SAFETY":
 					finishReason = "content_filter"
 				}
-				chunk := buildOpenAIFromGemini(state.MessageID, state.Model, "", nil)
+				chunk := buildOpenAIFromGemini(state.MessageID, state.Model, nil, nil, nil)
 				chunk, _ = sjson.SetBytes(chunk, "choices.0.finish_reason", finishReason)
 				results = append(results, chunk)
 			}
@@ -118,6 +145,7 @@ func convertGeminiResponseToOpenAINonStream(_ context.Context, _ string, _, _ []
 	out["created"] = root.Get("createTimeMillis").Int() / 1000
 
 	var textParts []string
+	var reasoningParts []string
 	var toolCalls []map[string]interface{}
 	toolIdx := 0
 
@@ -126,7 +154,11 @@ func convertGeminiResponseToOpenAINonStream(_ context.Context, _ string, _, _ []
 			if parts := candidate.Get("content.parts"); parts.Exists() && parts.IsArray() {
 				parts.ForEach(func(_, part gjson.Result) bool {
 					if text := part.Get("text"); text.Exists() {
-						textParts = append(textParts, text.String())
+						if part.Get("thought").Bool() {
+							reasoningParts = append(reasoningParts, text.String())
+						} else {
+							textParts = append(textParts, text.String())
+						}
 					}
 					if fc := part.Get("functionCall"); fc.Exists() {
 						toolIdx++
@@ -152,6 +184,9 @@ func convertGeminiResponseToOpenAINonStream(_ context.Context, _ string, _, _ []
 	if len(textParts) > 0 {
 		msg["content"] = strings.Join(textParts, "")
 	}
+	if len(reasoningParts) > 0 {
+		msg["reasoning_content"] = strings.Join(reasoningParts, "")
+	}
 	if len(toolCalls) > 0 {
 		msg["tool_calls"] = toolCalls
 		msg["finish_reason"] = "tool_calls"
@@ -161,23 +196,37 @@ func convertGeminiResponseToOpenAINonStream(_ context.Context, _ string, _, _ []
 	out["choices"] = []map[string]interface{}{{"index": 0, "message": msg}}
 
 	if usage := root.Get("usageMetadata"); usage.Exists() {
-		out["usage"] = map[string]interface{}{
+		usageMap := map[string]interface{}{
 			"prompt_tokens":     usage.Get("promptTokenCount").Int(),
 			"completion_tokens": usage.Get("candidatesTokenCount").Int(),
 			"total_tokens":      usage.Get("totalTokenCount").Int(),
 		}
+		if thoughtsTokens := usage.Get("thoughtsTokenCount"); thoughtsTokens.Exists() && thoughtsTokens.Int() > 0 {
+			usageMap["completion_tokens_details"] = map[string]interface{}{
+				"reasoning_tokens": thoughtsTokens.Int(),
+			}
+		}
+		if cachedTokens := usage.Get("cachedContentTokenCount"); cachedTokens.Exists() && cachedTokens.Int() > 0 {
+			usageMap["prompt_tokens_details"] = map[string]interface{}{
+				"cached_tokens": cachedTokens.Int(),
+			}
+		}
+		out["usage"] = usageMap
 	}
 
 	result, _ := json.Marshal(out)
 	return result
 }
 
-func buildOpenAIFromGemini(id, model string, content string, toolCalls []map[string]interface{}) []byte {
+func buildOpenAIFromGemini(id, model string, toolCalls []map[string]interface{}, content *gjson.Result, reasoningContent *string) []byte {
 	chunk := []byte(`{"object":"chat.completion.chunk","choices":[{"index":0,"delta":{}}]}`)
 	chunk, _ = sjson.SetBytes(chunk, "id", "chatcmpl-"+id)
 	chunk, _ = sjson.SetBytes(chunk, "model", model)
-	if content != "" {
-		chunk, _ = sjson.SetBytes(chunk, "choices.0.delta.content", content)
+	if content != nil && content.Exists() {
+		chunk, _ = sjson.SetBytes(chunk, "choices.0.delta.content", content.String())
+	}
+	if reasoningContent != nil {
+		chunk, _ = sjson.SetBytes(chunk, "choices.0.delta.reasoning_content", *reasoningContent)
 	}
 	if toolCalls != nil {
 		b, _ := json.Marshal(toolCalls)

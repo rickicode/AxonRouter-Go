@@ -14,10 +14,13 @@ type claudeStreamState struct {
 	MessageID        string
 	Model            string
 	ContentBlockIdx  int
+	ThinkingBlockIdx int
+	ThinkingBlockOpen bool
 	ToolBlocks       map[int]int
 	ToolNames        map[int]string
 	ToolArgsAccum    map[int]*strings.Builder
 	TextAccum        strings.Builder
+	ThinkingAccum    strings.Builder
 	MessageStartSent bool
 }
 
@@ -30,6 +33,11 @@ func getStreamState(param *any) *claudeStreamState {
 		}
 	}
 	return (*param).(*claudeStreamState)
+}
+
+func claudeSSE(event map[string]interface{}) []byte {
+	b, _ := json.Marshal(event)
+	return []byte("data: " + string(b) + "\n\n")
 }
 
 // convertGeminiResponseToClaudeStream converts Gemini streaming to Claude Messages format.
@@ -54,7 +62,7 @@ func convertGeminiResponseToClaudeStream(_ context.Context, _ string, _, _ []byt
 
 	// Emit message_start on first chunk
 	if !state.MessageStartSent {
-		msgStart := map[string]interface{}{
+		results = append(results, claudeSSE(map[string]interface{}{
 			"type": "message_start",
 			"message": map[string]interface{}{
 				"id":            state.MessageID,
@@ -67,9 +75,7 @@ func convertGeminiResponseToClaudeStream(_ context.Context, _ string, _, _ []byt
 					"output_tokens": 0,
 				},
 			},
-		}
-		b, _ := json.Marshal(msgStart)
-		results = append(results, b)
+		}))
 		state.MessageStartSent = true
 	}
 
@@ -78,29 +84,75 @@ func convertGeminiResponseToClaudeStream(_ context.Context, _ string, _, _ []byt
 			if parts := candidate.Get("content.parts"); parts.Exists() && parts.IsArray() {
 				parts.ForEach(func(_, part gjson.Result) bool {
 					if text := part.Get("text"); text.Exists() {
-						state.TextAccum.WriteString(text.String())
-						state.ContentBlockIdx++
-						delta := map[string]interface{}{
-							"type":  "content_block_delta",
-							"index": state.ContentBlockIdx - 1,
-							"delta": map[string]interface{}{
-								"type": "text_delta",
-								"text": text.String(),
-							},
+						if part.Get("thought").Bool() {
+							thinkingText := text.String()
+							state.ThinkingAccum.WriteString(thinkingText)
+
+							if !state.ThinkingBlockOpen {
+								state.ThinkingBlockIdx = state.ContentBlockIdx
+								state.ContentBlockIdx++
+								state.ThinkingBlockOpen = true
+								results = append(results, claudeSSE(map[string]interface{}{
+									"type":          "content_block_start",
+									"index":         state.ThinkingBlockIdx,
+									"content_block": map[string]interface{}{"type": "thinking", "thinking": ""},
+								}))
+							}
+
+							results = append(results, claudeSSE(map[string]interface{}{
+								"type":  "content_block_delta",
+								"index": state.ThinkingBlockIdx,
+								"delta": map[string]interface{}{
+									"type":     "thinking_delta",
+									"thinking": thinkingText,
+								},
+							}))
+						} else {
+							if state.ThinkingBlockOpen {
+								results = append(results, claudeSSE(map[string]interface{}{
+									"type":  "content_block_stop",
+									"index": state.ThinkingBlockIdx,
+								}))
+								state.ThinkingBlockOpen = false
+							}
+
+							state.TextAccum.WriteString(text.String())
+							idx := state.ContentBlockIdx
+							state.ContentBlockIdx++
+
+							results = append(results, claudeSSE(map[string]interface{}{
+								"type":          "content_block_start",
+								"index":         idx,
+								"content_block": map[string]interface{}{"type": "text", "text": ""},
+							}))
+							results = append(results, claudeSSE(map[string]interface{}{
+								"type":  "content_block_delta",
+								"index": idx,
+								"delta": map[string]interface{}{"type": "text_delta", "text": text.String()},
+							}))
+							results = append(results, claudeSSE(map[string]interface{}{
+								"type":  "content_block_stop",
+								"index": idx,
+							}))
 						}
-						b, _ := json.Marshal(delta)
-						results = append(results, b)
 					}
 
 					if fc := part.Get("functionCall"); fc.Exists() {
+						if state.ThinkingBlockOpen {
+							results = append(results, claudeSSE(map[string]interface{}{
+								"type":  "content_block_stop",
+								"index": state.ThinkingBlockIdx,
+							}))
+							state.ThinkingBlockOpen = false
+						}
+
 						name := fc.Get("name").String()
-						state.ToolNames[state.ContentBlockIdx] = name
-						state.ToolArgsAccum[state.ContentBlockIdx] = &strings.Builder{}
 						toolIdx := state.ContentBlockIdx
+						state.ToolNames[toolIdx] = name
+						state.ToolArgsAccum[toolIdx] = &strings.Builder{}
 						state.ContentBlockIdx++
 
-						// tool_use start
-						start := map[string]interface{}{
+						results = append(results, claudeSSE(map[string]interface{}{
 							"type":  "content_block_start",
 							"index": toolIdx,
 							"content_block": map[string]interface{}{
@@ -109,24 +161,19 @@ func convertGeminiResponseToClaudeStream(_ context.Context, _ string, _, _ []byt
 								"name":  name,
 								"input": map[string]interface{}{},
 							},
-						}
-						b, _ := json.Marshal(start)
-						results = append(results, b)
+						}))
 
-						// arguments
 						args := fc.Get("args").Raw
 						if args != "" {
 							state.ToolArgsAccum[toolIdx].WriteString(args)
-							delta := map[string]interface{}{
+							results = append(results, claudeSSE(map[string]interface{}{
 								"type":  "content_block_delta",
 								"index": toolIdx,
 								"delta": map[string]interface{}{
-									"type":        "input_json_delta",
+									"type":         "input_json_delta",
 									"partial_json": args,
 								},
-							}
-							b, _ := json.Marshal(delta)
-							results = append(results, b)
+							}))
 						}
 					}
 					return true
@@ -157,10 +204,25 @@ func convertGeminiResponseToClaudeNonStream(_ context.Context, _ string, _, _ []
 			if parts := candidate.Get("content.parts"); parts.Exists() && parts.IsArray() {
 				parts.ForEach(func(_, part gjson.Result) bool {
 					if text := part.Get("text"); text.Exists() {
-						contentBlocks = append(contentBlocks, map[string]interface{}{
-							"type": "text",
-							"text": text.String(),
-						})
+						if part.Get("thought").Bool() {
+							thinkingBlock := map[string]interface{}{
+								"type":     "thinking",
+								"thinking": text.String(),
+							}
+							sig := part.Get("thoughtSignature")
+							if !sig.Exists() {
+								sig = part.Get("thought_signature")
+							}
+							if sig.Exists() && sig.String() != "" {
+								thinkingBlock["signature"] = sig.String()
+							}
+							contentBlocks = append(contentBlocks, thinkingBlock)
+						} else {
+							contentBlocks = append(contentBlocks, map[string]interface{}{
+								"type": "text",
+								"text": text.String(),
+							})
+						}
 					}
 					if fc := part.Get("functionCall"); fc.Exists() {
 						name := fc.Get("name").String()
@@ -188,7 +250,6 @@ func convertGeminiResponseToClaudeNonStream(_ context.Context, _ string, _, _ []
 
 	out["content"] = contentBlocks
 
-	// Determine stop reason
 	stopReason := "end_turn"
 	if root.Get("candidates.0.finishReason").String() == "STOP" {
 		stopReason = "end_turn"
@@ -197,7 +258,6 @@ func convertGeminiResponseToClaudeNonStream(_ context.Context, _ string, _, _ []
 	}
 	out["stop_reason"] = stopReason
 
-	// Usage
 	usage := map[string]interface{}{
 		"input_tokens":  root.Get("usageMetadata.promptTokenCount").Int(),
 		"output_tokens": root.Get("usageMetadata.candidatesTokenCount").Int(),

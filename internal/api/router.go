@@ -24,6 +24,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/models"
 	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
+	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 	"github.com/rickicode/AxonRouter-Go/web"
 )
@@ -84,7 +85,8 @@ func New(cfg Config) *Router {
 
 	// Background goroutines
 	ctx := context.Background()
-	quotaScheduler := background.NewQuotaSchedulerDB(cfg.DB, store, elig, cfg.QuotaIntervalMin)
+	exhaustionCache := quota.NewExhaustionCache()
+	quotaScheduler := background.NewQuotaSchedulerDB(cfg.DB, store, elig, cfg.QuotaIntervalMin, exhaustionCache)
 	usageFlush := background.NewUsageFlush(tracker)
 	cleanup := background.NewCleanup(comboHandler, cfg.DB, cfg.LogRetentionDays)
 	quotaScheduler.Start(ctx)
@@ -112,7 +114,7 @@ func New(cfg Config) *Router {
 	proxyDeployH := admin.NewProxyDeployHandler(cfg.DB, proxyHealth)
 
 	// Create v1 handler with all dependencies
-	v1H := v1.NewHandler(cfg.DB, store, elig, comboHandler, tracker, authManager, proxyResolver)
+	v1H := v1.NewHandler(cfg.DB, store, elig, comboHandler, tracker, authManager, proxyResolver, exhaustionCache)
 
 	// Create Gin engine
 	engine := gin.New()

@@ -10,6 +10,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
@@ -126,6 +127,10 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	// Handle errors
 	if err != nil {
 		det := connstate.DetectError(0, "", err, provider, modelName, nil) // Q5: pass modelID
+		// Mark connection exhausted on 429 rate limit (OmniRoute markAccountExhaustedFrom429)
+		if det.Category == connstate.ErrorRateLimit {
+			h.exhaustion.MarkExhausted(conn.ID, quota.DefaultExhaustionTTL)
+		}
 		h.store.RecordFailure(conn.ID, det)
 		// Refresh eligibility only when connection becomes non-eligible
 		if det.Status != connstate.StatusReady {
@@ -241,7 +246,10 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 
 		if err != nil {
 			det := connstate.DetectError(0, "", err, provider, modelName, nil) // Q5: pass modelID
-			h.store.RecordFailure(connID, det)                                 // Q7: update circuit breaker
+			if det.Category == connstate.ErrorRateLimit {
+				h.exhaustion.MarkExhausted(connID, quota.DefaultExhaustionTTL)
+			}
+			h.store.RecordFailure(connID, det) // Q7: update circuit breaker
 			if det.Status != connstate.StatusReady {
 				h.elig.Update(h.store)
 			}

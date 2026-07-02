@@ -157,7 +157,8 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		{"groq", "Groq Cloud", "openai", "https://api.groq.com/openai/v1"},
 		{"openrouter", "OpenRouter", "openai", "https://openrouter.ai/api/v1"},
 		{"opencode", "OpenCode Free", "openai", "https://opencode.ai/zen/v1"},
-		{"mimocode-free", "MiMoCode Free Tier", "openai", "https://api.xiaomimimo.com/api/free-ai"},
+		{"mimocode", "MiMoCode", "openai", "https://api.xiaomimimo.com/api/free-ai/openai"},
+		{"mimocode-free", "MiMoCode Free Tier", "openai", "https://api.xiaomimimo.com/api/free-ai/openai"},
 	}
 	for _, p := range providers {
 		db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, is_custom, created_at) VALUES (?, ?, ?, ?, 0, ?)`,

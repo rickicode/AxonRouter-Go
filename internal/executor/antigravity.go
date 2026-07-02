@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // AntigravityExecutor handles Google Antigravity (Gemini Code Assist) API.
@@ -43,7 +44,7 @@ func (e *AntigravityExecutor) wrapEnvelope(req *Request) []byte {
 		"requestId":          generateAntigravityRequestId(),
 		"request":            inner,
 		"model":              req.Model,
-		"userAgent":          "google-assist-cli/1.0",
+		"userAgent":          "antigravity",
 		"requestType":        "agent",
 		"enabledCreditTypes": []string{"GOOGLE_ONE_AI"},
 	}
@@ -53,9 +54,9 @@ func (e *AntigravityExecutor) wrapEnvelope(req *Request) []byte {
 }
 
 func generateAntigravityRequestId() string {
-	b := make([]byte, 16)
+	b := make([]byte, 4)
 	rand.Read(b)
-	return hex.EncodeToString(b)
+	return fmt.Sprintf("agent/%d/%s", time.Now().UnixMilli(), hex.EncodeToString(b))
 }
 
 // Execute performs a non-streaming Antigravity request.
