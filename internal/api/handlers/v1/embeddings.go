@@ -61,15 +61,24 @@ func (h *Handler) Embeddings(c *gin.Context) {
 	// Use OpenAI executor's Embeddings method with reactive 401/403 retry
 	if openaiExec, ok := exec.(*executor.OpenAIExecutor); ok {
 		var resp *executor.Response
-		for attempt := 0; attempt < 2; attempt++ {
-			resp, err = openaiExec.Embeddings(proxyCtx, req)
-			if attempt == 0 && err != nil && isAuthError(err) {
-				if h.proactiveRefreshToken(c.Request.Context(), conn, provider) {
-					req.AccessToken = conn.AccessToken
-					continue
-				}
+		for attempt := 0; attempt < 3; attempt++ {
+			if attempt > 0 {
+				time.Sleep(time.Duration(attempt) * time.Second)
 			}
-			break
+			resp, err = openaiExec.Embeddings(proxyCtx, req)
+			if err == nil {
+				break
+			}
+			if isUnrecoverableRefreshError(err) {
+				break
+			}
+			if attempt < 2 && isAuthError(err) && h.proactiveRefreshToken(c.Request.Context(), conn, provider) {
+				req.AccessToken = conn.AccessToken
+				continue
+			}
+			if !isAuthError(err) {
+				break
+			}
 		}
 		if err != nil {
 			// Log failure

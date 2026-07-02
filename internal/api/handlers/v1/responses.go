@@ -81,28 +81,33 @@ func (h *Handler) Responses(c *gin.Context) {
 		return
 	}
 
-	// Execute with reactive 401/403 retry
+	// Execute with reactive 401/403 retry (3 attempts, linear backoff)
 	var resp *executor.Response
 	var streamResult *executor.StreamResult
-	var execErr error
 
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * time.Second)
+		}
 		if req.Stream {
 			streamResult, err = exec.ExecuteStream(proxyCtx, req)
 		} else {
 			resp, err = exec.Execute(proxyCtx, req)
 		}
-		execErr = err
-
-		if attempt == 0 && err != nil && isAuthError(err) {
-			if h.proactiveRefreshToken(c.Request.Context(), conn, provider) {
-				req.AccessToken = conn.AccessToken
-				continue
-			}
+		if err == nil {
+			break
 		}
-		break
+		if isUnrecoverableRefreshError(err) {
+			break
+		}
+		if attempt < 2 && isAuthError(err) && h.proactiveRefreshToken(c.Request.Context(), conn, provider) {
+			req.AccessToken = conn.AccessToken
+			continue
+		}
+		if !isAuthError(err) {
+			break
+		}
 	}
-	err = execErr
 
 	latency := time.Since(start).Milliseconds()
 

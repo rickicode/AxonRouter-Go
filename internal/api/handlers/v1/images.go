@@ -52,17 +52,26 @@ func (h *Handler) Images(c *gin.Context) {
 
 	proxyCtx := h.proxyContext(c.Request.Context(), conn)
 
-	// Execute with reactive 401/403 retry
+	// Execute with reactive 401/403 retry (3 attempts, linear backoff)
 	var resp *executor.Response
-	for attempt := 0; attempt < 2; attempt++ {
-		resp, err = imagesExec.Execute(proxyCtx, req)
-		if attempt == 0 && err != nil && isAuthError(err) {
-			if h.proactiveRefreshToken(c.Request.Context(), conn, provider) {
-				req.AccessToken = conn.AccessToken
-				continue
-			}
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * time.Second)
 		}
-		break
+		resp, err = imagesExec.Execute(proxyCtx, req)
+		if err == nil {
+			break
+		}
+		if isUnrecoverableRefreshError(err) {
+			break
+		}
+		if attempt < 2 && isAuthError(err) && h.proactiveRefreshToken(c.Request.Context(), conn, provider) {
+			req.AccessToken = conn.AccessToken
+			continue
+		}
+		if !isAuthError(err) {
+			break
+		}
 	}
 	if err != nil {
 		// Log failure
