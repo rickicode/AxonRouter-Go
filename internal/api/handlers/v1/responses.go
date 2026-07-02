@@ -150,13 +150,18 @@ func (h *Handler) Responses(c *gin.Context) {
 	} else {
 		translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
 
+		tokenCounts := ExtractTokensFromBody(translatedResp)
 		h.tracker.Log(&usage.LogEntry{
-			ConnectionID:   conn.ID,
-			ProviderTypeID: provider,
-			ModelID:        modelName,
-			Modality:       "chat",
-			LatencyMs:      latency,
-			StatusCode:     resp.StatusCode,
+			ConnectionID:    conn.ID,
+			ProviderTypeID:  provider,
+			ModelID:         modelName,
+			Modality:        "chat",
+			InputTokens:     tokenCounts.InputTokens,
+			OutputTokens:    tokenCounts.OutputTokens,
+			ReasoningTokens: tokenCounts.ReasoningTokens,
+			CachedTokens:    tokenCounts.CachedTokens,
+			LatencyMs:       latency,
+			StatusCode:      resp.StatusCode,
 		})
 
 		c.Header("Content-Type", "application/json")
