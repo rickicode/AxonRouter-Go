@@ -16,6 +16,7 @@ type antigravityStreamState struct {
 	CurrentText strings.Builder
 	ToolCalls   []map[string]interface{}
 	ToolIndex   int
+	Thinking    bool
 }
 
 func getStreamState(param *any) *antigravityStreamState {
@@ -46,12 +47,32 @@ func convertClaudeResponseToAntigravityStream(_ context.Context, _ string, _, _ 
 		state.Model = root.Get("message.model").String()
 		return nil
 
+	case "content_block_start":
+		blockType := root.Get("content_block.type").String()
+		if blockType == "thinking" {
+			state.Thinking = true
+		} else if blockType == "tool_use" {
+			state.Thinking = false
+			name := root.Get("content_block.name").String()
+			state.ToolCalls = append(state.ToolCalls, map[string]interface{}{
+				"name": name,
+				"args": "",
+			})
+			state.ToolIndex = len(state.ToolCalls)
+		}
+
 	case "content_block_delta":
 		deltaType := root.Get("delta.type").String()
+		if deltaType == "thinking_delta" {
+			text := root.Get("delta.thinking").String()
+			chunk := buildAntigravityChunk(state, text, nil, true)
+			return [][]byte{chunk}
+		}
 		if deltaType == "text_delta" {
 			text := root.Get("delta.text").String()
+			state.Thinking = false
 			state.CurrentText.WriteString(text)
-			chunk := buildAntigravityChunk(state, text, nil)
+			chunk := buildAntigravityChunk(state, text, nil, false)
 			return [][]byte{chunk}
 		}
 		if deltaType == "input_json_delta" {
@@ -64,19 +85,8 @@ func convertClaudeResponseToAntigravityStream(_ context.Context, _ string, _, _ 
 			}
 		}
 
-	case "content_block_start":
-		blockType := root.Get("content_block.type").String()
-		if blockType == "tool_use" {
-			name := root.Get("content_block.name").String()
-			state.ToolCalls = append(state.ToolCalls, map[string]interface{}{
-				"name": name,
-				"args": "",
-			})
-			state.ToolIndex = len(state.ToolCalls)
-		}
-
 	case "message_stop":
-		chunk := buildAntigravityChunk(state, "", nil)
+		chunk := buildAntigravityChunk(state, "", nil, false)
 		return [][]byte{chunk}
 	}
 
@@ -96,6 +106,11 @@ func convertClaudeResponseToAntigravityNonStream(_ context.Context, _ string, _,
 		content.ForEach(func(_, block gjson.Result) bool {
 			bType := block.Get("type").String()
 			switch bType {
+			case "thinking":
+				parts = append(parts, map[string]interface{}{
+					"text":    block.Get("thinking").String(),
+					"thought": true,
+				})
 			case "text":
 				parts = append(parts, map[string]interface{}{
 					"text": block.Get("text").String(),
@@ -141,13 +156,17 @@ func convertClaudeResponseToAntigravityNonStream(_ context.Context, _ string, _,
 	return out
 }
 
-func buildAntigravityChunk(state *antigravityStreamState, text string, toolCalls []map[string]interface{}) []byte {
+func buildAntigravityChunk(state *antigravityStreamState, text string, toolCalls []map[string]interface{}, thought bool) []byte {
 	chunk := []byte(`{"response":{}}`)
 	chunk, _ = sjson.SetBytes(chunk, "response.modelVersion", state.Model)
 
 	var parts []map[string]interface{}
 	if text != "" {
-		parts = append(parts, map[string]interface{}{"text": text})
+		part := map[string]interface{}{"text": text}
+		if thought {
+			part["thought"] = true
+		}
+		parts = append(parts, part)
 	}
 	if toolCalls != nil {
 		for _, tc := range toolCalls {
@@ -168,5 +187,3 @@ func buildAntigravityChunk(state *antigravityStreamState, text string, toolCalls
 	b, _ := json.Marshal(chunk)
 	return b
 }
-
-
