@@ -17,7 +17,6 @@
   const platformItems = [
     { href: '/', label: 'Dashboard', icon: Home },
     { href: '/providers', label: 'Providers', icon: Server },
-    { href: '/proxy-pools', label: 'Proxy Pools', icon: Globe },
     { href: '/combos', label: 'Combos', icon: Layers },
     { href: '/quota', label: 'Quota', icon: Gauge },
     { href: '/logs', label: 'Logs', icon: Terminal },
@@ -25,6 +24,12 @@
 
   const settingsItem = { href: '/settings', label: 'Settings', icon: Settings };
   const apiKeysItem = { href: '/api-keys', label: 'API Keys', icon: Key };
+
+  const systemItems = [
+    { href: '/proxy-pools', label: 'Proxy Pools', icon: Globe },
+    apiKeysItem,
+    settingsItem,
+  ];
 
   function isActive(pathname: string, href: string): boolean {
     if (href === '/') return pathname === '/';
@@ -80,7 +85,7 @@
       System
     </p>
     <nav class="space-y-0.5">
-      {#each [apiKeysItem, settingsItem] as item}
+      {#each systemItems as item}
         {@const active = isActive($currentPath, item.href)}
         <a
           href={item.href}

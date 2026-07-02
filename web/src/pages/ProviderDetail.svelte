@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { loadProvider, selectedProvider, loadConnections, connections, connectionPagination, connectionFilter, loadProviderModels, providerModels, modelTestResults, testProviderModel, isLoading, error } from '$lib/stores';
-  import { unwrapInt } from '$lib/utils';
+  import { unwrapInt, getTokenExpiry } from '$lib/utils';
   import { connectionsApi, providersApi } from '$lib/api';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
@@ -261,23 +261,23 @@
                 {:else}
                   {#each $connections as row}
                     {@const isOAuth = row.auth_type === 'oauth'}
-                    {@const expiresAt = Number(row.oauth_expires_at)}
-                    {@const minsLeft = isOAuth && Number.isFinite(expiresAt) && expiresAt > 0 ? Math.floor((expiresAt * 1000 - Date.now()) / 60000) : null}
+                    {@const expiry = isOAuth ? getTokenExpiry(row.oauth_expires_at) : null}
                     <tr class="transition-colors hover:bg-accent/20 group">
                       <td class="py-3 px-4">
                         <a href="/providers/{providerId}/{row.id}" class="text-body-sm-strong hover:underline flex items-center gap-2">
                           <span class="size-2 rounded-full shrink-0" style="background-color: {getStatusDotColor(row.status)}"></span>
                           {row.name}
                         </a>
-                        {#if minsLeft !== null}
-                          {#if minsLeft < 0}
-                            <span class="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-500/15 text-red-400">Expired</span>
-                          {:else if minsLeft < 30}
-                            <span class="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-400">~{minsLeft}m</span>
+                        {#if expiry}
+                          {#if expiry.status === 'expired'}
+                            <span class="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-500/15 text-red-400">{expiry.text}</span>
+                          {:else if expiry.status === 'expiring'}
+                            <span class="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-400">{expiry.text}</span>
                           {:else}
-                            <span class="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/15 text-emerald-400">{Math.floor(minsLeft/60)}h {minsLeft%60}m</span>
+                            <span class="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/15 text-emerald-400">{expiry.text}</span>
                           {/if}
                         {/if}
+
                       </td>
                       <td class="py-3 px-4">
                         <Badge variant={getStatusVariant(row.status)} class="text-caption-mono rounded-sm py-0.5">

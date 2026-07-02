@@ -13,6 +13,7 @@
     refreshConnectionQuota,
   } from '$lib/stores';
   import type { QuotaCacheEntry } from '$lib/api';
+  import { getTokenExpiry } from '$lib/utils';
   import { Card, CardContent } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
@@ -383,14 +384,13 @@
 
           <!-- Footer -->
           <div class="px-4 py-2.5 border-t border-border">
-            {#if item.auth_type === 'oauth' && Number.isFinite(Number(item.oauth_expires_at)) && Number(item.oauth_expires_at) > 0}
-              {@const minsLeft = Math.floor((Number(item.oauth_expires_at) * 1000 - Date.now()) / 60000)}
-              {#if minsLeft < 0}
+            {#if item.auth_type === 'oauth' && getTokenExpiry(item.oauth_expires_at) as expiry}
+              {#if expiry.status === 'expired'}
                 <span class="text-caption text-red-400 flex items-center gap-1"><AlertCircle class="size-3" /> Token expired</span>
-              {:else if minsLeft < 30}
-                <span class="text-caption text-amber-400 flex items-center gap-1"><AlertTriangle class="size-3" /> Token expires in ~{minsLeft}m</span>
+              {:else if expiry.status === 'expiring'}
+                <span class="text-caption text-amber-400 flex items-center gap-1"><AlertTriangle class="size-3" /> Token expires in {expiry.text}</span>
               {:else}
-                <span class="text-caption text-emerald-400 flex items-center gap-1"><CheckCircle2 class="size-3" /> Token expires in {Math.floor(minsLeft/60)}h {minsLeft%60}m</span>
+                <span class="text-caption text-emerald-400 flex items-center gap-1"><CheckCircle2 class="size-3" /> Token expires in {expiry.text}</span>
               {/if}
             {:else}
               <span class="text-caption text-muted-foreground">Updated {formatFetched(item.fetched_at)}</span>
