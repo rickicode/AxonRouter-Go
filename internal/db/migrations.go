@@ -152,7 +152,10 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		{"kiro", "Kiro AI", "openai", "https://api.kiro.ai/v1"},
 		{"openai", "OpenAI Platform", "openai", "https://api.openai.com/v1"},
 		{"claude", "Anthropic Claude", "anthropic", "https://api.anthropic.com/v1"},
+		{"gemini", "Gemini", "gemini", "https://generativelanguage.googleapis.com/v1beta"},
+		{"deepseek", "DeepSeek", "openai", "https://api.deepseek.com/v1"},
 		{"groq", "Groq Cloud", "openai", "https://api.groq.com/openai/v1"},
+		{"openrouter", "OpenRouter", "openai", "https://openrouter.ai/api/v1"},
 		{"opencode", "OpenCode Free", "openai", "https://opencode.ai/zen/v1"},
 		{"mimocode-free", "MiMoCode Free Tier", "openai", "https://api.xiaomimimo.com/api/free-ai"},
 	}
