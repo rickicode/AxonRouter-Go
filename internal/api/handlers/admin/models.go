@@ -340,3 +340,9 @@ func defaultTestModel(providerID string) string {
 		return ""
 	}
 }
+
+// SyncModels triggers an immediate sync of per-provider models from upstream endpoints.
+func (h *ModelHandler) SyncModels(c *gin.Context) {
+	models.SyncNow(c.Request.Context())
+	c.JSON(http.StatusOK, gin.H{"message": "models synced successfully"})
+}

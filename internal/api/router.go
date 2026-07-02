@@ -186,6 +186,7 @@ func New(cfg Config) *Router {
 	modelH := admin.NewModelHandler(cfg.DB, executor.GetRegistry(), store, authManager)
 	adminGroup.GET("/providers/:id/models", modelH.ListModels)
 	adminGroup.POST("/providers/:id/models/test", modelH.TestModel)
+	adminGroup.POST("/models/sync", modelH.SyncModels)
 
 	// OAuth — connection created only on success (no orphaned connections)
 	oauthH := admin.NewOAuthHandler(cfg.DB, authManager, store, elig)

@@ -17,9 +17,9 @@ import (
 var embeddedModelsJSON []byte
 
 const (
-	refreshInterval    = 3 * time.Hour
-	providerSyncInterval = 15 * time.Minute
-	fetchTimeout       = 15 * time.Second
+	refreshInterval      = 3 * time.Hour
+	providerSyncInterval = 24 * time.Hour
+	fetchTimeout         = 15 * time.Second
 )
 
 var remoteURLs = []string{
@@ -108,13 +108,19 @@ func GetAllModelIDs(keys ...string) []string {
 }
 
 // StartUpdater starts a background goroutine that refreshes the model catalog
-// from remote URLs every 3 hours, and syncs per-provider models every 15 minutes.
+// from remote URLs every 3 hours, and syncs per-provider models every 24 hours.
 // Safe to call multiple times; only one runs.
 func StartUpdater(ctx context.Context) {
 	once.Do(func() {
 		startTime = time.Now()
 		go run(ctx)
 	})
+}
+
+// SyncNow triggers an immediate sync of per-provider models from upstream endpoints.
+// Safe to call from API handlers — runs synchronously.
+func SyncNow(ctx context.Context) {
+	tryFetchProviders(ctx)
 }
 
 func run(ctx context.Context) {
