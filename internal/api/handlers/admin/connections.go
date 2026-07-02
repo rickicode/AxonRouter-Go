@@ -86,7 +86,7 @@ func (h *ConnectionHandler) List(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	var conns []db.Connection
+	var conns []gin.H
 	for rows.Next() {
 		conn := db.Connection{}
 		rows.Scan(&conn.ID, &conn.ProviderTypeID, &conn.Name, &conn.AuthType,
@@ -94,7 +94,7 @@ func (h *ConnectionHandler) List(c *gin.Context) {
 			&conn.LastSuccessAt, &conn.LastFailureAt, &conn.FailureCount,
 			&conn.Capabilities, &conn.IsActive, &conn.CreatedAt, &conn.UpdatedAt,
 			&conn.OAuthExpiresAt)
-		conns = append(conns, conn)
+		conns = append(conns, connToJSON(conn))
 	}
 
 	totalPages := total / perPage
@@ -123,13 +123,14 @@ func (h *ConnectionHandler) Get(c *gin.Context) {
 		       cooldown_until, last_error, last_error_code,
 		       last_success_at, last_failure_at, failure_count,
 		       capabilities, is_active, created_at, updated_at,
-		       COALESCE(provider_specific_data, '')
+		       COALESCE(provider_specific_data, ''),
+		       COALESCE(oauth_expires_at, 0)
 		FROM connections WHERE id = ?
 	`, id).Scan(&conn.ID, &conn.ProviderTypeID, &conn.Name, &conn.AuthType,
 		&conn.Status, &conn.CooldownUntil, &conn.LastError, &conn.LastErrorCode,
 		&conn.LastSuccessAt, &conn.LastFailureAt, &conn.FailureCount,
 		&conn.Capabilities, &conn.IsActive, &conn.CreatedAt, &conn.UpdatedAt,
-		&psd)
+		&psd, &conn.OAuthExpiresAt)
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
 		return
@@ -138,25 +139,9 @@ func (h *ConnectionHandler) Get(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	// Build response with provider_specific_data as plain string (not sql.NullString)
-	c.JSON(http.StatusOK, gin.H{
-		"id":                     conn.ID,
-		"provider_type_id":       conn.ProviderTypeID,
-		"name":                   conn.Name,
-		"auth_type":              conn.AuthType,
-		"status":                 conn.Status,
-		"cooldown_until":         conn.CooldownUntil,
-		"last_error":             conn.LastError,
-		"last_error_code":        conn.LastErrorCode,
-		"last_success_at":        conn.LastSuccessAt,
-		"last_failure_at":        conn.LastFailureAt,
-		"failure_count":          conn.FailureCount,
-		"capabilities":           conn.Capabilities,
-		"is_active":              conn.IsActive,
-		"created_at":             conn.CreatedAt,
-		"updated_at":             conn.UpdatedAt,
-		"provider_specific_data": nullStr(psd),
-	})
+	resp := connToJSON(conn)
+	resp["provider_specific_data"] = nullStr(psd)
+	c.JSON(http.StatusOK, resp)
 }
 
 // Update modifies a connection.
@@ -420,6 +405,39 @@ func nullStr(v sql.NullString) interface{} {
 		return v.String
 	}
 	return nil
+}
+
+func nullInt64(v sql.NullInt64) interface{} {
+	if v.Valid {
+		return v.Int64
+	}
+	return nil
+}
+
+func connToJSON(conn db.Connection) gin.H {
+	var expAt int64
+	if conn.OAuthExpiresAt.Valid {
+		expAt = conn.OAuthExpiresAt.Int64
+	}
+	return gin.H{
+		"id":               conn.ID,
+		"provider_type_id": conn.ProviderTypeID,
+		"name":             conn.Name,
+		"auth_type":        conn.AuthType,
+		"status":           conn.Status,
+		"priority":         conn.Priority,
+		"cooldown_until":   nullInt64(conn.CooldownUntil),
+		"last_error":       nullStr(conn.LastError),
+		"last_error_code":  nullInt64(conn.LastErrorCode),
+		"last_success_at":  nullInt64(conn.LastSuccessAt),
+		"last_failure_at":  nullInt64(conn.LastFailureAt),
+		"failure_count":    conn.FailureCount,
+		"capabilities":     nullStr(conn.Capabilities),
+		"is_active":        conn.IsActive,
+		"created_at":       conn.CreatedAt,
+		"updated_at":       conn.UpdatedAt,
+		"oauth_expires_at": expAt,
+	}
 }
 
 // RefreshToken manually refreshes an OAuth token for a connection.

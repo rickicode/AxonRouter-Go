@@ -25,7 +25,7 @@ type Connection struct {
 	APIKey           sql.NullString `json:"-"`
 	OAuthToken       sql.NullString `json:"-"`
 	OAuthRefreshToken sql.NullString `json:"-"`
-	OAuthExpiresAt    sql.NullInt64  `json:"oauth_expires_at,omitempty"`
+	OAuthExpiresAt    sql.NullInt64  `json:"-"`
 	ProviderSpecificData sql.NullString `json:"-"`
 	Priority         int            `json:"priority"`
 	Status           string         `json:"status"`
