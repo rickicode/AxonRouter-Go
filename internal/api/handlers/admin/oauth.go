@@ -26,10 +26,11 @@ import (
 type oauthSession struct {
 	provider     string
 	providerName string
-	status       string // "pending", "connected", "failed"
-	name         string // email from OAuth
-	connID       string // created connection ID (only after success)
+	status       string    // "pending", "connected", "failed"
+	name         string    // email from OAuth
+	connID       string    // created connection ID (only after success)
 	err          string
+	doneAt       time.Time // when terminal state was set; zero while pending
 }
 
 // OAuthHandler manages OAuth flows for providers.
@@ -58,6 +59,15 @@ func (h *OAuthHandler) StartOAuth(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Sweep expired terminal sessions (>30s in connected/failed state)
+	h.sessions.Range(func(key, value any) bool {
+		s := value.(*oauthSession)
+		if !s.doneAt.IsZero() && time.Since(s.doneAt) > 30*time.Second {
+			h.sessions.Delete(key)
+		}
+		return true
+	})
 
 	providerType := auth.ProviderType(req.Provider)
 	svc, ok := h.authMgr.GetService(providerType)
@@ -107,12 +117,12 @@ func (h *OAuthHandler) StartOAuth(c *gin.Context) {
 
 	go func() {
 		defer cancel()
-		defer h.sessions.Delete(sessionID)
 		select {
 		case creds := <-resultChan:
 			if creds == nil {
 				session.status = "failed"
 				session.err = "nil credentials"
+				session.doneAt = time.Now()
 				log.Printf("OAuth nil credentials for session %s", sessionID)
 				return
 			}
@@ -142,6 +152,7 @@ func (h *OAuthHandler) StartOAuth(c *gin.Context) {
 			if err != nil {
 				session.status = "failed"
 				session.err = "failed to create connection: " + err.Error()
+				session.doneAt = time.Now()
 				log.Printf("OAuth create connection failed for session %s: %v", sessionID, err)
 				return
 			}
@@ -149,6 +160,7 @@ func (h *OAuthHandler) StartOAuth(c *gin.Context) {
 			session.status = "connected"
 			session.name = connName
 			session.connID = connID
+			session.doneAt = time.Now()
 			log.Printf("OAuth connection created: %s (%s) for session %s", connID, connName, sessionID)
 
 			// Sync in-memory state
@@ -162,6 +174,7 @@ func (h *OAuthHandler) StartOAuth(c *gin.Context) {
 		case <-time.After(5 * time.Minute):
 			session.status = "failed"
 			session.err = "OAuth timeout after 5 minutes"
+			session.doneAt = time.Now()
 			log.Printf("OAuth timeout for session %s", sessionID)
 		}
 	}()
