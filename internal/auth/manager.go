@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -69,24 +70,80 @@ type Manager struct {
 	// Matches OmniRoute refreshSerializer.ts rotation groups.
 	groupMu   sync.Mutex
 	groupTail map[string]chan struct{} // groupKey → channel used as serialization gate
+
+	// Token rotation map: caches recent rotations so stale callers can be
+	// redirected to new tokens without hitting upstream.
+	// Matches OmniRoute tokenRefresh.ts:83-141 tokenRotationMap.
+	rotationMu  sync.Mutex
+	rotationMap map[string]rotationEntry // key → {result, expiresAt}
 }
+
+// rotationEntry caches a recent token rotation.
+type rotationEntry struct {
+	AccessToken  string
+	RefreshToken string
+	ExpiresAt    time.Time
+	expiresAt    time.Time // entry expiry (60s TTL)
+}
+
+const rotationMapTTL = 60 * time.Second
 
 // rotationGroup maps providers to their Auth0/OIDC rotation group.
-// Providers sharing a group MUST NOT refresh concurrently.
 var rotationGroup = map[ProviderType]string{
-	ProviderCodex: "openai-auth0", // Codex/Auth0: rotating refresh tokens
-	ProviderKiro:  "kiro",         // Kiro: AWS SSO OIDC one-time-use refresh tokens
+	ProviderCodex: "openai-auth0",
+	ProviderKiro:  "kiro",
 }
 
-// ProviderAntigravity (Google) is NOT in rotation groups — Google refresh tokens are permanent/non-rotating.
-
-const refreshSpacingMs = 2000 // 2s settle gap between sibling refreshes
+const refreshSpacingMs = 2000
 
 // NewManager creates a new auth manager.
 func NewManager() *Manager {
 	return &Manager{
-		services:  make(map[ProviderType]OAuthService),
-		groupTail: make(map[string]chan struct{}),
+		services:    make(map[ProviderType]OAuthService),
+		groupTail:   make(map[string]chan struct{}),
+		rotationMap: make(map[string]rotationEntry),
+	}
+}
+
+// rotationCacheKey creates a cache key for the rotation map.
+// Matches OmniRoute: provider:sha256(oldRefreshToken)
+func rotationCacheKey(provider ProviderType, refreshToken string) string {
+	h := sha256.Sum256([]byte(refreshToken))
+	return string(provider) + ":" + hex.EncodeToString(h[:])
+}
+
+// lookupRotation checks if a stale refresh token was recently rotated.
+func (m *Manager) lookupRotation(provider ProviderType, refreshToken string) *rotationEntry {
+	if refreshToken == "" {
+		return nil
+	}
+	m.rotationMu.Lock()
+	defer m.rotationMu.Unlock()
+	key := rotationCacheKey(provider, refreshToken)
+	entry, ok := m.rotationMap[key]
+	if !ok {
+		return nil
+	}
+	if time.Now().After(entry.expiresAt) {
+		delete(m.rotationMap, key)
+		return nil
+	}
+	return &entry
+}
+
+// recordRotation caches a token rotation for stale caller redirect.
+func (m *Manager) recordRotation(provider ProviderType, oldRefreshToken string, newCreds *Credentials) {
+	if oldRefreshToken == "" || newCreds.RefreshToken == "" || oldRefreshToken == newCreds.RefreshToken {
+		return
+	}
+	m.rotationMu.Lock()
+	defer m.rotationMu.Unlock()
+	key := rotationCacheKey(provider, oldRefreshToken)
+	m.rotationMap[key] = rotationEntry{
+		AccessToken:  newCreds.AccessToken,
+		RefreshToken: newCreds.RefreshToken,
+		ExpiresAt:    newCreds.ExpiresAt,
+		expiresAt:    time.Now().Add(rotationMapTTL),
 	}
 }
 
@@ -114,26 +171,32 @@ func (m *Manager) RefreshToken(ctx context.Context, provider ProviderType, creds
 		return nil, fmt.Errorf("no auth service for provider: %s", provider)
 	}
 
-	// Rotation-group serialization: if this provider is in a rotation group,
-	// wait for any sibling refresh to complete + settle gap before proceeding.
+	// Check rotation map: if this refresh_token was recently rotated, return cached result
+	if entry := m.lookupRotation(provider, creds.RefreshToken); entry != nil {
+		return &Credentials{
+			AccessToken:  entry.AccessToken,
+			RefreshToken: entry.RefreshToken,
+			ExpiresAt:    entry.ExpiresAt,
+		}, nil
+	}
+
+	// Rotation-group serialization
 	if group, ok := rotationGroup[provider]; ok {
 		m.groupMu.Lock()
 		tail, exists := m.groupTail[group]
 		if !exists {
 			tail = make(chan struct{}, 1)
-			tail <- struct{}{} // initial unlock
+			tail <- struct{}{}
 			m.groupTail[group] = tail
 		}
 		m.groupMu.Unlock()
 
-		// Wait for our turn in the group
 		select {
 		case <-tail:
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
 
-		// Release the gate after this refresh completes + settle gap
 		defer func() {
 			go func() {
 				time.Sleep(time.Duration(refreshSpacingMs) * time.Millisecond)
@@ -142,9 +205,9 @@ func (m *Manager) RefreshToken(ctx context.Context, provider ProviderType, creds
 		}()
 	}
 
-	// Singleflight dedup: if the same refresh_token is already being refreshed,
-	// wait for that result instead of starting a new request.
-	key := fmt.Sprintf("%s:%s", provider, creds.RefreshToken)
+	// Singleflight dedup
+	oldRefreshToken := creds.RefreshToken
+	key := fmt.Sprintf("%s:%s", provider, oldRefreshToken)
 	result, err, _ := m.refreshGroup.Do(key, func() (any, error) {
 		return svc.RefreshToken(ctx, creds)
 	})
@@ -156,6 +219,14 @@ func (m *Manager) RefreshToken(ctx context.Context, provider ProviderType, creds
 	if !ok {
 		return nil, fmt.Errorf("unexpected refresh result type")
 	}
+
+	// Preserve old refresh token when provider omits it (Google/Antigravity often omit)
+	if newCreds.RefreshToken == "" {
+		newCreds.RefreshToken = oldRefreshToken
+	}
+
+	// Record rotation for stale caller redirect
+	m.recordRotation(provider, oldRefreshToken, newCreds)
 
 	return newCreds, nil
 }

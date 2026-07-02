@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -285,22 +286,81 @@ func isUnrecoverableRefreshError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := strings.ToLower(err.Error())
-	unrecoverable := []string{
-		"invalid_grant",
-		"invalid_request",
-		"invalid_token",
-		"token_expired",
-		"refresh_token_reused",
-		"refresh_token_invalidated",
-		"unrecoverable_refresh_error",
+	code := extractOAuthErrorCode(err.Error(), 0)
+	return code != ""
+}
+
+// unrecoverableCodes are OAuth error codes that mean the refresh token is permanently dead.
+// Matches OmniRoute UNRECOVERABLE_OAUTH_ERROR_CODES at tokenRefresh.ts:204-212.
+var unrecoverableCodes = map[string]bool{
+	"invalid_grant":               true,
+	"invalid_request":             true,
+	"refresh_token_reused":        true,
+	"refresh_token_invalidated":   true,
+	"invalid_token":               true,
+	"token_expired":               true,
+	"expired_token":               true,
+	"unauthorized_client":         true,
+	"access_denied":               true,
+	"unrecoverable_refresh_error": true,
+}
+
+// extractOAuthErrorCode extracts a canonical OAuth error code from an error body
+// of ANY shape. Handles JSON objects, double-encoded JSON strings, and regex fallback.
+// Matches OmniRoute extractOAuthErrorCode at tokenRefresh.ts:229-262.
+func extractOAuthErrorCode(raw string, depth int) string {
+	if raw == "" || depth > 6 {
+		return ""
 	}
-	for _, kw := range unrecoverable {
-		if strings.Contains(msg, kw) {
-			return true
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+
+	// Direct match
+	if unrecoverableCodes[s] {
+		return s
+	}
+
+	// Try parsing as JSON
+	if s[0] == '{' || s[0] == '[' || s[0] == '"' {
+		var parsed any
+		if json.Unmarshal([]byte(s), &parsed) == nil {
+			if code := extractOAuthErrorCodeFromParsed(parsed, depth+1); code != "" {
+				return code
+			}
 		}
 	}
-	return false
+
+	// Regex fallback: known code as value of "error" or "error_code" field
+	lower := strings.ToLower(s)
+	for _, code := range []string{"invalid_grant", "invalid_request", "refresh_token_reused", "refresh_token_invalidated", "invalid_token", "expired_token", "token_expired", "unauthorized_client", "access_denied", "unrecoverable_refresh_error"} {
+		if strings.Contains(lower, code) {
+			return code
+		}
+	}
+
+	return ""
+}
+
+// extractOAuthErrorCodeFromParsed extracts error code from parsed JSON (object or string).
+func extractOAuthErrorCodeFromParsed(raw any, depth int) string {
+	if raw == nil || depth > 6 {
+		return ""
+	}
+	switch v := raw.(type) {
+	case string:
+		return extractOAuthErrorCode(v, depth+1)
+	case map[string]any:
+		for _, key := range []string{"error", "code", "error_code", "error_description", "message", "body", "details"} {
+			if val, ok := v[key]; ok {
+				if code := extractOAuthErrorCodeFromParsed(val, depth+1); code != "" {
+					return code
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // isAuthError checks if an error indicates an authentication failure (401/403).
