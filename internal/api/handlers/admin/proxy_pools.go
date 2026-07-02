@@ -75,6 +75,12 @@ func (h *ProxyPoolHandler) Create(c *gin.Context) {
 	noProxy := asString(req["noProxy"])
 	relayAuth := asString(req["relayAuth"])
 	if proxypool.IsRelayType(typ) && relayAuth == "" { relayAuth = proxypool.GenerateRelayAuth() }
+	// Check for duplicate proxy URL
+	var existingCount int
+	if err := h.db.QueryRow(`SELECT COUNT(*) FROM proxy_pools WHERE proxy_url = ?`, proxyURL).Scan(&existingCount); err == nil && existingCount > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "proxy URL already exists", "existing_count": existingCount})
+		return
+	}
 	active := true
 	if v, ok := req["isActive"]; ok { active = asBool(v) }
 	now := time.Now().Unix()
