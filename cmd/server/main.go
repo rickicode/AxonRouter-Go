@@ -29,7 +29,7 @@ func main() {
 		DB:               database,
 		Port:             cfg.Port,
 		AdminKey:         cfg.AdminAPIKey,
-		QuotaIntervalMin: 30,
+		QuotaIntervalMin: 1,
 		LogRetentionDays: 30,
 	})
 

@@ -297,9 +297,16 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 
 	token := c.OAuthToken.String
 
-	// Refresh token if expired (with 30s skew).
-	// Skip proactive refresh for Codex (cx) — Auth0 rotating tokens cause family revocation.
-	if providerID != "cx" && c.OAuthExpiresAt > 0 && time.Now().Unix() > c.OAuthExpiresAt-30 {
+	// Proactive refresh with per-provider lead times (matches handler.go refreshLeadMs).
+	// Skip proactive refresh for Codex (cx) — Auth0 rotating tokens, handler uses singleflight+rotation-group.
+	refreshLead := int64(300) // default 5 minutes
+	switch providerID {
+	case "ag":
+		refreshLead = 900 // 15 minutes for Antigravity (Google non-rotating)
+	case "kiro":
+		refreshLead = 300 // 5 minutes for Kiro
+	}
+	if providerID != "cx" && c.OAuthExpiresAt > 0 && time.Now().Unix() > c.OAuthExpiresAt-refreshLead {
 		if c.OAuthRefreshToken.Valid && c.OAuthRefreshToken.String != "" {
 			newToken, newRefreshToken, newExpiry, err := refreshOAuthToken(providerID, c.OAuthRefreshToken.String)
 			if err != nil {
