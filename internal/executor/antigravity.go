@@ -9,6 +9,30 @@ import (
 	"time"
 )
 
+// Fields that must not reach the Google Antigravity API.
+// OmniRoute strips these via destructuring (antigravity.ts:832-844).
+// Google rejects them with 400 "oneOf at / not met" or "Unknown name".
+var antigravityStripFields = []string{
+	"thinking", "reasoning_effort", "reasoning",
+	"enable_thinking", "thinking_budget",
+	"output_config", "output_format",
+}
+
+// maxAntigravityOutputTokens is the hard ceiling on generationConfig.maxOutputTokens.
+// OmniRoute MAX_ANTIGRAVITY_OUTPUT_TOKENS (antigravity.ts:527).
+const maxAntigravityOutputTokens = 16384
+
+// defaultSafetySettings turns off all Google content safety filters to prevent
+// false-positive blocks on benign technical prompts.
+// OmniRoute DEFAULT_SAFETY_SETTINGS (geminiHelper.ts:90).
+var defaultSafetySettings = []map[string]string{
+	{"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF"},
+	{"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF"},
+	{"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF"},
+	{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF"},
+	{"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "OFF"},
+}
+
 // AntigravityExecutor handles Google Antigravity (Gemini Code Assist) API.
 type AntigravityExecutor struct {
 	*BaseExecutor
@@ -17,6 +41,26 @@ type AntigravityExecutor struct {
 // NewAntigravityExecutor creates a new Antigravity executor.
 func NewAntigravityExecutor(base *BaseExecutor) *AntigravityExecutor {
 	return &AntigravityExecutor{BaseExecutor: base}
+}
+
+// sanitizeRequest strips fields Google rejects and applies generation defaults.
+func sanitizeRequest(inner map[string]any) {
+	// Strip thinking/reasoning and Anthropic-only fields (OmniRoute destructuring)
+	for _, f := range antigravityStripFields {
+		delete(inner, f)
+	}
+
+	// Cap maxOutputTokens (OmniRoute applyAntigravityGenerationDefaults)
+	if gc, ok := inner["generationConfig"].(map[string]any); ok {
+		if v, ok := gc["maxOutputTokens"].(float64); ok && v > maxAntigravityOutputTokens {
+			gc["maxOutputTokens"] = maxAntigravityOutputTokens
+		}
+	}
+
+	// Default safety settings if caller didn't provide them
+	if _, ok := inner["safetySettings"]; !ok {
+		inner["safetySettings"] = defaultSafetySettings
+	}
 }
 
 // wrapEnvelope wraps the request body in the Antigravity envelope format.
@@ -31,6 +75,8 @@ func (e *AntigravityExecutor) wrapEnvelope(req *Request) []byte {
 			},
 		}
 	}
+
+	sanitizeRequest(inner)
 
 	// Get projectId from provider-specific data
 	projectId := ""
@@ -71,7 +117,7 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, req *Request) (*Respo
 	headers := map[string]string{
 		"Content-Type":   "application/json",
 		"Authorization":  "Bearer " + req.AccessToken,
-		"User-Agent":     "google-assist-cli/1.0",
+		"User-Agent":     "antigravity",
 		"X-Goog-Api-Key": req.APIKey,
 	}
 
@@ -101,7 +147,7 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, req *Request) (
 		"Accept":         "text/event-stream",
 		"Cache-Control":  "no-cache",
 		"Authorization":  "Bearer " + req.AccessToken,
-		"User-Agent":     "google-assist-cli/1.0",
+		"User-Agent":     "antigravity",
 		"X-Goog-Api-Key": req.APIKey,
 	}
 

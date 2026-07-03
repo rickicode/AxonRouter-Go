@@ -45,7 +45,8 @@ var providerFreeOnly = map[string]bool{
 
 // modelEntry is a single model definition from models.json.
 type modelEntry struct {
-	ID string `json:"id"`
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
 }
 
 // catalog is the full models.json structure: provider → []modelEntry.
@@ -105,6 +106,24 @@ func GetAllModelIDs(keys ...string) []string {
 		}
 	}
 	return ids
+}
+
+// GetModelDisplayNames returns a map of model ID → display_name for a provider key.
+// Used by quota fetchers to map upstream model IDs to human-readable names.
+func GetModelDisplayNames(providerKey string) map[string]string {
+	mu.RLock()
+	defer mu.RUnlock()
+	entries, ok := current[providerKey]
+	if !ok {
+		return nil
+	}
+	names := make(map[string]string, len(entries))
+	for _, e := range entries {
+		if e.ID != "" {
+			names[e.ID] = e.DisplayName
+		}
+	}
+	return names
 }
 
 // StartUpdater starts a background goroutine that refreshes the model catalog
