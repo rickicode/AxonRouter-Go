@@ -42,7 +42,7 @@ func TestOpenAIEndpointNormalizesBaseURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := openAIEndpoint(tt.baseURL, tt.endpoint); got != tt.want {
+			if got := openAIEndpoint(tt.baseURL, tt.endpoint, nil); got != tt.want {
 				t.Fatalf("openAIEndpoint(%q, %q) = %q, want %q", tt.baseURL, tt.endpoint, got, tt.want)
 			}
 		})
