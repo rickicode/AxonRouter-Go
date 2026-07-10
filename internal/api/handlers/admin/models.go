@@ -307,6 +307,7 @@ var providerCatalogKeys = map[string][]string{
 	"deepseek":      {"deepseek"},
 	"openrouter":    {"openrouter"},
 	"zai":           {"claude"},
+	"cf":            {"cf"},
 }
 
 // staticModels returns model IDs from the auto-updating catalog.

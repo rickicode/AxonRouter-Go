@@ -33,6 +33,7 @@ var v1ProviderCatalog = map[string]struct {
 	"deepseek":      {keys: []string{"deepseek"}, ownedBy: "deepseek"},
 	"openrouter":    {keys: []string{"openrouter"}, ownedBy: "openrouter"},
 	"zai":           {keys: []string{"claude"}, ownedBy: "zai"},
+	"cf":            {keys: []string{"cf"}, ownedBy: "cloudflare"},
 }
 
 // Models handles GET /v1/models — includes combos and virtual models.

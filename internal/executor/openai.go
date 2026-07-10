@@ -27,23 +27,159 @@ func openRouterHeaders(headers map[string]string, provider string) {
 	}
 }
 
-// sanitizeCFRequest caps max_tokens for Cloudflare Workers AI.
-// Reasoning models (r1, qwq) capped at 4096, others at 8192.
+// isCFReasoningModel mirrors AMRouter reasoning-model detection for
+// Cloudflare Workers AI strip flags (thinking).
+func isCFReasoningModel(model string) bool {
+	lower := strings.ToLower(model)
+	switch {
+	case strings.Contains(lower, "r1"):
+		return true
+	case strings.Contains(lower, "qwq"):
+		return true
+	case strings.Contains(lower, "kimi-k2.5"), strings.Contains(lower, "kimi-k2.6"):
+		return true
+	case strings.Contains(lower, "glm-5."):
+		return true
+	case strings.Contains(lower, "glm-4.7"):
+		return true
+	}
+	return false
+}
+
+// sanitizeCFRequest enforces Cloudflare Workers AI constraints:
+//   - max_tokens cap: 4096 for reasoning models, 8192 otherwise.
+//   - message content arrays may only contain {type:"text"} or {type:"image_url"}.
+//   - tool_result blocks are converted into role:tool messages.
+//   - A single remaining text block is collapsed to a plain string.
+//
+// This matches AMRouter chatCore.js san behaviour for the cloudflare-ai provider.
 func sanitizeCFRequest(body []byte) []byte {
+	var req map[string]any
+	if err := json.Unmarshal(body, &req); err != nil {
+		return body
+	}
+
+	model, _ := req["model"].(string)
 	maxCap := 8192
-	model := JSONGet(body, "model")
-	if strings.Contains(model, "r1") || strings.Contains(model, "qwq") {
+	if isCFReasoningModel(model) {
 		maxCap = 4096
 	}
-	// Check current max_tokens via raw JSON parse
-	var m map[string]any
-	if err := json.Unmarshal(body, &m); err == nil {
-		current, _ := m["max_tokens"].(float64)
-		if current == 0 || current > float64(maxCap) {
-			body = JSONSet(body, "max_tokens", maxCap)
-		}
+	if current, ok := req["max_tokens"].(float64); !ok || current == 0 || current > float64(maxCap) {
+		req["max_tokens"] = maxCap
 	}
-	return body
+
+	if messages, ok := req["messages"].([]any); ok {
+		req["messages"] = sanitizeCFMessages(messages)
+	}
+
+	out, err := json.Marshal(req)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+func sanitizeCFMessages(messages []any) []any {
+	var sanitized []any
+	for _, raw := range messages {
+		msg, ok := raw.(map[string]any)
+		if !ok {
+			sanitized = append(sanitized, raw)
+			continue
+		}
+		content, ok := msg["content"].([]any)
+		if !ok {
+			sanitized = append(sanitized, msg)
+			continue
+		}
+
+		var toolResults []map[string]any
+		var otherBlocks []map[string]any
+		for _, b := range content {
+			block, ok := b.(map[string]any)
+			if !ok {
+				continue
+			}
+			typ, _ := block["type"].(string)
+			if typ == "tool_result" {
+				toolResults = append(toolResults, block)
+			} else {
+				otherBlocks = append(otherBlocks, block)
+			}
+		}
+
+		for _, tr := range toolResults {
+			var text string
+			switch v := tr["content"].(type) {
+			case string:
+				text = v
+			case []any:
+				parts := make([]string, 0, len(v))
+				for _, c := range v {
+					if cm, ok := c.(map[string]any); ok {
+						if t, ok := cm["type"].(string); ok && t == "text" {
+							if s, ok := cm["text"].(string); ok {
+								parts = append(parts, s)
+							}
+						}
+					}
+				}
+				text = strings.Join(parts, "\n")
+			default:
+				if v != nil {
+					b, _ := json.Marshal(v)
+					text = string(b)
+				}
+			}
+			toolCallID, _ := tr["tool_use_id"].(string)
+			if toolCallID == "" {
+				toolCallID, _ = tr["tool_call_id"].(string)
+			}
+			sanitized = append(sanitized, map[string]any{
+				"role":        "tool",
+				"tool_call_id": toolCallID,
+				"content":     text,
+			})
+		}
+
+		var cfSafe []map[string]any
+		for _, b := range otherBlocks {
+			typ, _ := b["type"].(string)
+			if typ == "text" || typ == "image_url" {
+				if typ == "text" {
+					text, _ := b["text"].(string)
+					cfSafe = append(cfSafe, map[string]any{"type": "text", "text": text})
+				} else {
+					cfSafe = append(cfSafe, b)
+				}
+			}
+		}
+
+		// If this message only contained tool_result blocks, drop the original
+		// message and keep only the converted role:tool messages.
+		if len(otherBlocks) == 0 {
+			continue
+		}
+
+		newMsg := make(map[string]any, len(msg))
+		for k, v := range msg {
+			newMsg[k] = v
+		}
+		switch len(cfSafe) {
+		case 0:
+			newMsg["content"] = ""
+		case 1:
+			if cfSafe[0]["type"] == "text" {
+				newMsg["content"] = cfSafe[0]["text"]
+			} else {
+				newMsg["content"] = cfSafe
+			}
+		default:
+			newMsg["content"] = cfSafe
+		}
+		sanitized = append(sanitized, newMsg)
+	}
+	return sanitized
 }
 
 
