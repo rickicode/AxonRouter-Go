@@ -117,3 +117,17 @@ func (s *Store) DB() *sql.DB {
 func (s *Store) Close() error {
 	return s.db.Close()
 }
+
+// GetSetting returns a setting value from the database, falling back to default
+// if the row does not exist or an error occurs.
+func GetSetting(key, defaultValue string) string {
+	if globalDB == nil {
+		return defaultValue
+	}
+	var value string
+	err := globalDB.QueryRow(`SELECT value FROM settings WHERE key = ?`, key).Scan(&value)
+	if err != nil || value == "" {
+		return defaultValue
+	}
+	return value
+}

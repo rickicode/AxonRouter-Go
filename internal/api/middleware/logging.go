@@ -1,10 +1,10 @@
 package middleware
 
 import (
-	"log"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/logging"
 )
 
 // Logging logs HTTP requests in a compact format.
@@ -25,14 +25,13 @@ func Logging() gin.HandlerFunc {
 			path = path + "?" + query
 		}
 
-		// ponytail: standard log format — upgrade to structured logging later
-		log.Printf("[%s] %3d | %13v | %15s | %s %s",
-			time.Now().Format("15:04:05"),
-			status,
-			latency,
-			clientIP,
-			method,
-			path,
+		logging.Logger.Info("http request",
+			"request_id", c.GetString("request_id"),
+			"method", method,
+			"path", path,
+			"status", status,
+			"latency", latency,
+			"client_ip", clientIP,
 		)
 	}
 }

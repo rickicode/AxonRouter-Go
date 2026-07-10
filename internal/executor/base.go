@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/rickicode/AxonRouter-Go/internal/logging"
 )
 
 // StreamChunk is a single SSE chunk from a streaming response.
@@ -73,6 +75,19 @@ func NewBaseExecutor() *BaseExecutor {
 }
 
 type proxyContextKey struct{}
+type requestIDKey struct{}
+
+// ContextWithRequestID attaches a request ID to a context for propagation
+// to upstream providers.
+func ContextWithRequestID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, requestIDKey{}, id)
+}
+
+// RequestIDFromContext extracts the request ID from a context.
+func RequestIDFromContext(ctx context.Context) string {
+	id, _ := ctx.Value(requestIDKey{}).(string)
+	return id
+}
 
 // ProxyConfig is attached to request contexts by v1 handlers.
 type ProxyConfig struct {
@@ -246,8 +261,24 @@ func (b *BaseExecutor) DoRequest(ctx context.Context, method, rawURL string, hea
 		req.Header.Set("Content-Type", "application/json")
 	}
 
+	if id := RequestIDFromContext(ctx); id != "" {
+		req.Header.Set("X-Request-ID", id)
+	}
+
+	logging.Logger.Info("upstream request start",
+		"request_id", RequestIDFromContext(ctx),
+		"method", method,
+		"url", targetURL,
+	)
+
 	resp, err := client.Do(req)
 	if err != nil {
+		logging.Logger.Warn("upstream request failed",
+			"request_id", RequestIDFromContext(ctx),
+			"method", method,
+			"url", targetURL,
+			"error", err,
+		)
 		return nil, fmt.Errorf("do request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -292,8 +323,24 @@ func (b *BaseExecutor) DoStreamRequest(ctx context.Context, method, rawURL strin
 		req.Header.Set("Content-Type", "application/json")
 	}
 
+	if id := RequestIDFromContext(ctx); id != "" {
+		req.Header.Set("X-Request-ID", id)
+	}
+
+	logging.Logger.Info("upstream stream request start",
+		"request_id", RequestIDFromContext(ctx),
+		"method", method,
+		"url", targetURL,
+	)
+
 	resp, err := client.Do(req)
 	if err != nil {
+		logging.Logger.Warn("upstream stream request failed",
+			"request_id", RequestIDFromContext(ctx),
+			"method", method,
+			"url", targetURL,
+			"error", err,
+		)
 		return nil, fmt.Errorf("do request: %w", err)
 	}
 

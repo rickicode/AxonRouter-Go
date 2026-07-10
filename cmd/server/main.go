@@ -11,6 +11,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/api"
 	"github.com/rickicode/AxonRouter-Go/internal/config"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
+	"github.com/rickicode/AxonRouter-Go/internal/logging"
 )
 
 func main() {
@@ -23,6 +24,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to open database: %v", err)
 	}
+
+	// Initialise structured logger (default text; switch to json via setting)
+	logging.Init(db.GetSetting("log_format", "text"))
 
 	// Create router with all routes and background goroutines
 	router := api.New(api.Config{

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -398,6 +399,55 @@ func isAuthError(err error) bool {
 	return strings.Contains(msg, "401") || strings.Contains(msg, "403") ||
 		strings.Contains(msg, "unauthorized") || strings.Contains(msg, "forbidden") ||
 		strings.Contains(msg, "authentication") || strings.Contains(msg, "access denied")
+}
+
+// executeWithRetry runs the executor up to 3 times with linear backoff. On an
+// auth error it refreshes the OAuth token (if configured) and retries once.
+func (h *Handler) executeWithRetry(
+	ctx context.Context,
+	exec executor.Executor,
+	req *executor.Request,
+	conn *Connection,
+	provider string,
+	modelID string,
+) (*executor.Response, *executor.StreamResult, error) {
+	var resp *executor.Response
+	var streamResult *executor.StreamResult
+	var err error
+
+	for attempt := range 3 {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * time.Second)
+		}
+
+		if req.Stream {
+			streamer, ok := exec.(interface {
+				ExecuteStream(context.Context, *executor.Request) (*executor.StreamResult, error)
+			})
+			if !ok {
+				return nil, nil, errors.New("executor does not support streaming")
+			}
+			streamResult, err = streamer.ExecuteStream(ctx, req)
+		} else {
+			resp, err = exec.Execute(ctx, req)
+		}
+
+		if err == nil {
+			return resp, streamResult, nil
+		}
+		if isUnrecoverableRefreshError(err) {
+			break
+		}
+		if attempt < 2 && isAuthError(err) && h.proactiveRefreshToken(ctx, conn, provider) {
+			req.AccessToken = conn.AccessToken
+			continue
+		}
+		if !isAuthError(err) {
+			break
+		}
+	}
+
+	return resp, streamResult, err
 }
 
 // proxyContext resolves proxy config for a connection and returns a context with it attached.

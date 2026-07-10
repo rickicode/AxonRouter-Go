@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"sync"
 	"time"
@@ -47,9 +49,14 @@ func RateLimit(limiter *RateLimiter) gin.HandlerFunc {
 		if v, exists := c.Get("rate_limit"); exists {
 			if l, ok := v.(int); ok && l > 0 {
 				limit = l
-				// Use API key as bucket key for per-key limiting
-				if authKey := c.GetHeader("Authorization"); authKey != "" {
-					key = authKey // ponytail: use raw header as key; hash if privacy matters
+				// Use stable API key ID as bucket key; hash the header if no ID is set
+				if id, exists := c.Get("api_key_id"); exists && id != "" {
+					if s, ok := id.(string); ok {
+						key = s
+					}
+				} else if authKey := c.GetHeader("Authorization"); authKey != "" {
+					sum := sha256.Sum256([]byte(authKey))
+					key = hex.EncodeToString(sum[:])
 				}
 			}
 		}

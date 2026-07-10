@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
@@ -13,13 +14,17 @@ import (
 // DashboardHandler handles dashboard statistics.
 type DashboardHandler struct {
 	db      *sql.DB
+	store   *connstate.Store
+	tracker *usage.Tracker
 	startAt time.Time
 }
 
 // NewDashboardHandler creates a new dashboard handler.
-func NewDashboardHandler(database *sql.DB) *DashboardHandler {
+func NewDashboardHandler(database *sql.DB, store *connstate.Store, tracker *usage.Tracker) *DashboardHandler {
 	return &DashboardHandler{
 		db:      database,
+		store:   store,
+		tracker: tracker,
 		startAt: time.Now(),
 	}
 }
@@ -50,19 +55,20 @@ func (h *DashboardHandler) Stats(c *gin.Context) {
 	agg := usage.NewAggregator(h.db)
 	requestsToday, tokensToday, costToday, _ := agg.GetTodayStats()
 
-	// Buffer stats (ponytail: stub, real tracker ref needed)
-	bufferLen := 0
+	bufferLen := h.tracker.Buffered()
 
 	c.JSON(http.StatusOK, gin.H{
-		"total_providers":   totalProviders,
-		"total_connections": totalConns,
-		"total_combos":      totalCombos,
-		"status_counts":     statusCounts,
-		"requests_today":    requestsToday,
-		"tokens_today":      tokensToday,
-		"cost_today":        costToday,
-		"uptime_seconds":    int(time.Since(h.startAt).Seconds()),
-		"buffer_length":     bufferLen,
+		"total_providers":      totalProviders,
+		"total_connections":    totalConns,
+		"total_combos":         totalCombos,
+		"status_counts":        statusCounts,
+		"requests_today":       requestsToday,
+		"tokens_today":         tokensToday,
+		"cost_today":           costToday,
+		"uptime_seconds":       int(time.Since(h.startAt).Seconds()),
+		"buffer_length":        bufferLen,
+		"healthy_connections":  h.store.HealthyCount(),
+		"dropped_usage_events": h.tracker.Dropped(),
 	})
 }
 

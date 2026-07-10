@@ -53,7 +53,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	conn, err := h.getConnection(c.Request.Context(), provider, modelName) // Q1: pass modelID
+	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
 		return
@@ -90,29 +90,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	var resp *executor.Response
 	var streamResult *executor.StreamResult
 
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * time.Second)
-		}
-		if req.Stream {
-			streamResult, err = exec.ExecuteStream(proxyCtx, req)
-		} else {
-			resp, err = exec.Execute(proxyCtx, req)
-		}
-		if err == nil {
-			break
-		}
-		if isUnrecoverableRefreshError(err) {
-			break
-		}
-		if attempt < 2 && isAuthError(err) && h.proactiveRefreshToken(c.Request.Context(), conn, provider) {
-			req.AccessToken = conn.AccessToken
-			continue
-		}
-		if !isAuthError(err) {
-			break
-		}
-	}
+	resp, streamResult, err = h.executeWithRetry(proxyCtx, exec, req, conn, provider, modelName)
 
 	latency := time.Since(start).Milliseconds()
 
@@ -126,7 +104,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 
 	// Handle errors
 	if err != nil {
-		det := connstate.DetectError(0, "", err, provider, modelName, nil) // Q5: pass modelID
+		det := connstate.DetectError(0, "", err, provider, modelName, nil)
 		// Mark connection exhausted on 429 rate limit (OmniRoute markAccountExhaustedFrom429)
 		if det.Category == connstate.ErrorRateLimit {
 			h.exhaustion.MarkExhausted(conn.ID, quota.DefaultExhaustionTTL)
@@ -245,11 +223,11 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 		latency := time.Since(start).Milliseconds()
 
 		if err != nil {
-			det := connstate.DetectError(0, "", err, provider, modelName, nil) // Q5: pass modelID
+			det := connstate.DetectError(0, "", err, provider, modelName, nil)
 			if det.Category == connstate.ErrorRateLimit {
 				h.exhaustion.MarkExhausted(connID, quota.DefaultExhaustionTTL)
 			}
-			h.store.RecordFailure(connID, det) // Q7: update circuit breaker
+			h.store.RecordFailure(connID, det)
 			if det.Status != connstate.StatusReady {
 				h.elig.Update(h.store)
 			}

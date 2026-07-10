@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -39,7 +40,7 @@ func (h *Handler) Embeddings(c *gin.Context) {
 
 	body = executor.JSONSet(body, "model", modelName)
 
-	conn, err := h.getConnection(c.Request.Context(), provider, modelName) // Q1: pass modelID
+	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
 		return
@@ -60,31 +61,21 @@ func (h *Handler) Embeddings(c *gin.Context) {
 
 	// Use OpenAI executor's Embeddings method with reactive 401/403 retry
 	if openaiExec, ok := exec.(*executor.OpenAIExecutor); ok {
-		var resp *executor.Response
-		for attempt := 0; attempt < 3; attempt++ {
-			if attempt > 0 {
-				time.Sleep(time.Duration(attempt) * time.Second)
-			}
-			resp, err = openaiExec.Embeddings(proxyCtx, req)
-			if err == nil {
-				break
-			}
-			if isUnrecoverableRefreshError(err) {
-				break
-			}
-			if attempt < 2 && isAuthError(err) && h.proactiveRefreshToken(c.Request.Context(), conn, provider) {
-				req.AccessToken = conn.AccessToken
-				continue
-			}
-			if !isAuthError(err) {
-				break
-			}
-		}
+		embedExec := &embeddingsAdapter{OpenAIExecutor: openaiExec}
+		resp, _, err := h.executeWithRetry(proxyCtx, embedExec, req, conn, provider, modelName)
 		if err != nil {
-			// Log failure
+			h.tracker.Log(&usage.LogEntry{
+				ConnectionID:   conn.ID,
+				ProviderTypeID: provider,
+				ModelID:        modelName,
+				Modality:       "embedding",
+				LatencyMs:      time.Since(start).Milliseconds(),
+				ErrorMessage:   err.Error(),
+			})
+			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
+			return
 		}
 
-		// Log success
 		h.tracker.Log(&usage.LogEntry{
 			ConnectionID:   conn.ID,
 			ProviderTypeID: provider,
@@ -101,4 +92,12 @@ func (h *Handler) Embeddings(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "embeddings only supported for OpenAI-compatible providers", "type": "invalid_request_error"}})
+}
+
+// embeddingsAdapter exposes OpenAIExecutor.Embeddings through the standard
+// executor.Executor interface so executeWithRetry can drive it.
+type embeddingsAdapter struct{ *executor.OpenAIExecutor }
+
+func (a *embeddingsAdapter) Execute(ctx context.Context, req *executor.Request) (*executor.Response, error) {
+	return a.OpenAIExecutor.Embeddings(ctx, req)
 }

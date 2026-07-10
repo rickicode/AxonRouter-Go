@@ -52,7 +52,7 @@ func (h *Handler) Messages(c *gin.Context) {
 	// Replace model with unprefixed name
 	body = executor.JSONSet(body, "model", modelName)
 
-	conn, err := h.getConnection(c.Request.Context(), provider, modelName) // Q1: pass modelID
+	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, claudeError("server_error", "no available connection"))
 		return
@@ -82,29 +82,7 @@ func (h *Handler) Messages(c *gin.Context) {
 	var resp *executor.Response
 	var streamResult *executor.StreamResult
 
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * time.Second)
-		}
-		if req.Stream {
-			streamResult, err = exec.ExecuteStream(proxyCtx, req)
-		} else {
-			resp, err = exec.Execute(proxyCtx, req)
-		}
-		if err == nil {
-			break
-		}
-		if isUnrecoverableRefreshError(err) {
-			break
-		}
-		if attempt < 2 && isAuthError(err) && h.proactiveRefreshToken(c.Request.Context(), conn, provider) {
-			req.AccessToken = conn.AccessToken
-			continue
-		}
-		if !isAuthError(err) {
-			break
-		}
-	}
+	resp, streamResult, err = h.executeWithRetry(proxyCtx, exec, req, conn, provider, modelName)
 
 	latency := time.Since(start).Milliseconds()
 
@@ -117,7 +95,7 @@ func (h *Handler) Messages(c *gin.Context) {
 	}
 
 	if err != nil {
-		det := connstate.DetectError(0, "", err, provider, modelName, nil) // Q5: pass modelID
+		det := connstate.DetectError(0, "", err, provider, modelName, nil)
 		if det.Category == connstate.ErrorRateLimit {
 			h.exhaustion.MarkExhausted(conn.ID, quota.DefaultExhaustionTTL)
 		}
@@ -266,7 +244,7 @@ func (h *Handler) CountTokens(c *gin.Context) {
 
 	body = executor.JSONSet(body, "model", modelName)
 
-	conn, err := h.getConnection(c.Request.Context(), provider, modelName) // Q1: pass modelID
+	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, claudeError("server_error", "no available connection"))
 		return

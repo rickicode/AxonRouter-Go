@@ -108,7 +108,8 @@ func New(cfg Config) *Router {
 	comboH := admin.NewComboHandler(cfg.DB, comboHandler)
 	logH := admin.NewLogHandler(cfg.DB)
 	settingH := settingHandler
-	dashboardH := admin.NewDashboardHandler(cfg.DB)
+	dashboardH := admin.NewDashboardHandler(cfg.DB, store, tracker)
+	healthH := admin.NewHealthHandler(cfg.DB, store, tracker)
 	proxyPoolH := admin.NewProxyPoolHandler(cfg.DB, proxyHealth)
 	proxyGroupH := admin.NewProxyGroupHandler(cfg.DB)
 	proxyDeployH := admin.NewProxyDeployHandler(cfg.DB, proxyHealth)
@@ -120,6 +121,7 @@ func New(cfg Config) *Router {
 	engine := gin.New()
 	engine.Use(gin.Recovery())
 	engine.Use(middleware.CORS())
+	engine.Use(middleware.RequestID())
 	engine.Use(middleware.Logging())
 
 	// Rate limiter
@@ -141,6 +143,10 @@ func New(cfg Config) *Router {
 	v1Group.POST("/video/generations", v1H.Video)
 	v1Group.POST("/unified", v1H.Unified)
 	v1Group.POST("/messages/count_tokens", v1H.CountTokens)
+
+	// Health check is reachable without admin auth for sidebar/lb probes.
+	engine.HEAD("/api/admin/health", healthH.Health)
+	engine.GET("/api/admin/health", healthH.Health)
 
 	// ---- /api/admin routes ----
 	adminGroup := engine.Group("/api/admin")
@@ -221,6 +227,9 @@ func New(cfg Config) *Router {
 	adminGroup.GET("/dashboard/stats", dashboardH.Stats)
 	adminGroup.GET("/dashboard/providers", dashboardH.ProviderSummary)
 	adminGroup.GET("/dashboard/recent-logs", dashboardH.RecentLogs)
+
+	// Metrics
+	adminGroup.GET("/metrics", healthH.Metrics)
 
 	// Quota
 	quotaH := admin.NewQuotaHandler(cfg.DB)

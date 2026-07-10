@@ -3,6 +3,7 @@ package usage
 import (
 	"database/sql"
 	"log"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,11 +30,12 @@ type LogEntry struct {
 
 // Tracker is an async usage logger with channel-based buffering.
 type Tracker struct {
-	buffer       chan *LogEntry
-	db           *sql.DB
-	flushTicker  *time.Ticker
-	batchSize    int
-	stopCh       chan struct{}
+	buffer      chan *LogEntry
+	db          *sql.DB
+	flushTicker *time.Ticker
+	batchSize   int
+	stopCh      chan struct{}
+	dropped     atomic.Int64
 }
 
 // NewTracker creates a new async usage tracker.
@@ -63,6 +65,7 @@ func (t *Tracker) Log(entry *LogEntry) {
 	case t.buffer <- entry:
 	default:
 		// Buffer full, drop
+		t.dropped.Add(1)
 	}
 }
 
@@ -167,6 +170,17 @@ func (t *Tracker) Stop() {
 // BufferLen returns the current buffer length (for monitoring).
 func (t *Tracker) BufferLen() int {
 	return len(t.buffer)
+}
+
+// Buffered returns the current number of usage events waiting to be flushed.
+func (t *Tracker) Buffered() int {
+	return len(t.buffer)
+}
+
+// Dropped returns the total number of usage events dropped because the buffer
+// was full.
+func (t *Tracker) Dropped() int64 {
+	return t.dropped.Load()
 }
 
 func toNullString(s string) sql.NullString {

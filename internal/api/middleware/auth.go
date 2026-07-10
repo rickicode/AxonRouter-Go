@@ -1,12 +1,11 @@
 package middleware
 
 import (
-	"crypto/subtle"
 	"database/sql"
-	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -18,7 +17,7 @@ func Auth(db *sql.DB) gin.HandlerFunc {
 		var count int
 		err := db.QueryRow(`SELECT COUNT(*) FROM api_keys WHERE is_active = 1`).Scan(&count)
 		if err != nil {
-			log.Printf("WARN: auth system error querying api_keys: %v", err)
+			logging.Logger.Warn("auth system error querying api_keys", "error", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "auth system error"})
 			c.Abort()
 			return
@@ -43,9 +42,8 @@ func Auth(db *sql.DB) gin.HandlerFunc {
 			key = authHeader[7:]
 		}
 
-		// Validate against stored key hashes
-		// ponytail: simple hash comparison — upgrade to bcrypt for production
-		rows, err := db.Query(`SELECT key_hash, rate_limit_per_min FROM api_keys WHERE is_active = 1`)
+		// Validate against stored key hashes (bcrypt only)
+		rows, err := db.Query(`SELECT id, key_hash, rate_limit_per_min FROM api_keys WHERE is_active = 1`)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "auth system error"})
 			c.Abort()
@@ -53,29 +51,24 @@ func Auth(db *sql.DB) gin.HandlerFunc {
 		}
 		defer rows.Close()
 
-		valid := false
+			var keyID string
 		var rateLimit int
 		for rows.Next() {
-			var hash string
-			rows.Scan(&hash, &rateLimit)
-			// Try bcrypt first (hashed keys)
+			var id, hash string
+			rows.Scan(&id, &hash, &rateLimit)
 			if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(key)); err == nil {
-				valid = true
-				break
-			}
-			// ponytail: backward compat — raw key comparison during migration window
-			if subtle.ConstantTimeCompare([]byte(key), []byte(hash)) == 1 {
-				valid = true
+				keyID = id
 				break
 			}
 		}
 
-		if !valid {
+		if keyID == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid api key"})
 			c.Abort()
 			return
 		}
 
+		c.Set("api_key_id", keyID)
 		c.Set("rate_limit", rateLimit)
 		c.Next()
 	}

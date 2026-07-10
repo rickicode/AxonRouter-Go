@@ -32,7 +32,7 @@ func (h *Handler) Images(c *gin.Context) {
 
 	imagesExec := executor.NewImagesExecutor(executor.NewBaseExecutor())
 
-	conn, err := h.getConnection(c.Request.Context(), provider, modelName) // Q1: pass modelID
+	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
 		return
@@ -54,25 +54,9 @@ func (h *Handler) Images(c *gin.Context) {
 
 	// Execute with reactive 401/403 retry (3 attempts, linear backoff)
 	var resp *executor.Response
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * time.Second)
-		}
-		resp, err = imagesExec.Execute(proxyCtx, req)
-		if err == nil {
-			break
-		}
-		if isUnrecoverableRefreshError(err) {
-			break
-		}
-		if attempt < 2 && isAuthError(err) && h.proactiveRefreshToken(c.Request.Context(), conn, provider) {
-			req.AccessToken = conn.AccessToken
-			continue
-		}
-		if !isAuthError(err) {
-			break
-		}
-	}
+	var streamResult *executor.StreamResult
+	resp, streamResult, err = h.executeWithRetry(proxyCtx, imagesExec, req, conn, provider, modelName)
+	_ = streamResult
 	if err != nil {
 		// Log failure
 		h.tracker.Log(&usage.LogEntry{
