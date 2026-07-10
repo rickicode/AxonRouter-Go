@@ -55,6 +55,8 @@ export interface CreateConnectionPayload {
   name: string;
   auth_type?: 'api_key' | 'oauth' | 'none' | 'custom';
   api_key?: string;
+  priority?: number;
+  provider_specific_data?: Record<string, string>;
 }
 
 export interface CreateConnectionResponse {
@@ -217,7 +219,7 @@ export const connectionsApi = {
       body: JSON.stringify(data),
     }),
 
-  bulkCreate: (providerId: string, data: { connections: { name: string; api_key: string }[] }) =>
+  bulkCreate: (providerId: string, data: { connections: { name: string; api_key: string; priority?: number; provider_specific_data?: Record<string, string> }[] }) =>
     fetchApi<BulkCreateConnectionResponse>(
       `/providers/${providerId}/connections/bulk`,
       {

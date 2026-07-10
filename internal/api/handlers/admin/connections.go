@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
@@ -238,13 +239,14 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 		APIKey         string
 		AccessToken    string
 		BaseURL        string
+		PSDRaw         string
 	}
 	err := h.db.QueryRow(`
 		SELECT c.id, c.provider_type_id, pt.format, COALESCE(c.api_key,''), COALESCE(c.oauth_token,''),
-		       COALESCE(pt.base_url,'')
+		       COALESCE(pt.base_url,''), COALESCE(c.provider_specific_data, '')
 		FROM connections c JOIN provider_types pt ON c.provider_type_id = pt.id
 		WHERE c.id = ?
-	`, id).Scan(&conn.ID, &conn.ProviderTypeID, &conn.Format, &conn.APIKey, &conn.AccessToken, &conn.BaseURL)
+	`, id).Scan(&conn.ID, &conn.ProviderTypeID, &conn.Format, &conn.APIKey, &conn.AccessToken, &conn.BaseURL, &conn.PSDRaw)
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
 		return
@@ -264,14 +266,22 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 	// Build format-specific test body with default model for this provider
 	model := defaultTestModel(conn.ProviderTypeID)
 	bodyBytes := buildTestBody(conn.Format, model)
+
+	// Parse provider_specific_data
+	var psdMap map[string]string
+	if conn.PSDRaw != "" {
+		json.Unmarshal([]byte(conn.PSDRaw), &psdMap)
+	}
+
 	start := time.Now()
 	streamResult, err := exec.ExecuteStream(c.Request.Context(), &executor.Request{
-		APIKey:      conn.APIKey,
-		AccessToken: conn.AccessToken,
-		BaseURL:     conn.BaseURL,
-		Body:        bodyBytes,
-		Provider:    conn.ProviderTypeID,
-		Model:       model,
+		APIKey:               conn.APIKey,
+		AccessToken:          conn.AccessToken,
+		BaseURL:              conn.BaseURL,
+		Body:                 bodyBytes,
+		Provider:             conn.ProviderTypeID,
+		Model:                model,
+		ProviderSpecificData: psdMap,
 	})
 	if err != nil {
 		latency := time.Since(start).Milliseconds()

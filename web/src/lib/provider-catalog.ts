@@ -27,6 +27,7 @@ export interface ProviderMeta {
   freeNote?: string;
   authHint?: string;
   apiHint?: string;
+  inputFormat?: string;
 }
 
 export const CATEGORIES: ProviderCategory[] = [
@@ -348,6 +349,25 @@ export const PROVIDER_CATALOG: ProviderMeta[] = [
     serviceKinds: ['llm'],
     hasFree: true,
     freeNote: 'No API key required. Bootstrap tokens are generated automatically.',
+  },
+  {
+    id: 'cf',
+    displayName: 'Cloudflare Workers AI',
+    icon: 'cloud',
+    textIcon: 'CF',
+    iconFile: '/providers/cloudflare.svg',
+    category: 'apikey',
+    description: 'Cloudflare Workers AI Gateway with OpenAI-compatible API. Supports @cf/ models.',
+    format: 'openai',
+    authType: 'custom',
+    prefix: 'cf/',
+    isBuiltIn: true,
+    website: 'https://developers.cloudflare.com/ai-gateway/',
+    color: '#F38020',
+    serviceKinds: ['llm'],
+    hasFree: true,
+    freeNote: 'Workers AI free tier: 10,000 neurons/day per account.',
+    inputFormat: 'pipe',
   },
 ];
 

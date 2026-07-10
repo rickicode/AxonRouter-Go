@@ -159,6 +159,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		{"opencode", "OpenCode Free", "openai", "https://opencode.ai/zen/v1"},
 		{"mimocode", "MiMoCode", "openai", "https://api.xiaomimimo.com/api/free-ai/openai"},
 		{"mimocode-free", "MiMoCode Free Tier", "openai", "https://api.xiaomimimo.com/api/free-ai/openai"},
+		{"cf", "Cloudflare Workers AI", "openai", "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/v1/chat/completions"},
 	}
 	for _, p := range providers {
 		db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, is_custom, created_at) VALUES (?, ?, ?, ?, 0, ?)`,

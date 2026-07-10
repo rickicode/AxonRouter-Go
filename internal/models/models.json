@@ -2725,5 +2725,20 @@
     {
       "id": "qwen3.6-plus"
     }
+  ],
+  "cf": [
+    {"id": "@cf/meta/llama-3.2-1b-instruct"},
+    {"id": "@cf/meta/llama-3.2-3b-instruct"},
+    {"id": "@cf/meta/llama-3.1-8b-instruct-fp8-fast"},
+    {"id": "@cf/meta/llama-3.1-70b-instruct-fp8-fast"},
+    {"id": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"},
+    {"id": "@cf/mistralai/mistral-small-3.1-24b-instruct"},
+    {"id": "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"},
+    {"id": "@cf/moonshotai/kimi-k2.5"},
+    {"id": "@cf/moonshotai/kimi-k2.6"},
+    {"id": "@cf/zai-org/glm-5.2"},
+    {"id": "@cf/zai-org/glm-4.7-flash"},
+    {"id": "@cf/qwen/qwq-32b"},
+    {"id": "@cf/qwen/qwen2.5-coder-32b-instruct"}
   ]
 }

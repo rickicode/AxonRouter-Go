@@ -31,6 +31,10 @@ var QuotaPatterns = []string{
 	"payment required",
 	"usage limit",
 	"monthly limit",
+	"neurons",               // CF Workers AI daily quota
+	"daily free allocation", // CF Workers AI daily quota
+	"upgrade to cloudflare", // CF Workers AI paid plan prompt
+	"4006",                  // CF Workers AI error code
 }
 
 var BalanceEmptyPatterns = []string{

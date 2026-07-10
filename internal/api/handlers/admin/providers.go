@@ -240,16 +240,10 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 
 	rows, err := h.db.Query(`
 		SELECT c.id, COALESCE(c.api_key,''), COALESCE(c.oauth_token,''),
-		       COALESCE(pt.base_url,'')
+		       COALESCE(pt.base_url,''), COALESCE(c.provider_specific_data, '')
 		FROM connections c JOIN provider_types pt ON c.provider_type_id = pt.id
 		WHERE c.provider_type_id = ? AND c.is_active = 1
 	`, providerID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	defer rows.Close()
-
 	type testResult struct {
 		ConnectionID string `json:"connection_id"`
 		Status       string `json:"status"`
@@ -266,16 +260,23 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 	bodyBytes := buildTestBody(format, defaultTestModel(providerID))
 	var results []testResult
 	for rows.Next() {
-		var connID, apiKey, accessToken, baseURL string
-		rows.Scan(&connID, &apiKey, &accessToken, &baseURL)
+		var connID, apiKey, accessToken, baseURL, psdRaw string
+		rows.Scan(&connID, &apiKey, &accessToken, &baseURL, &psdRaw)
+
+		// Parse provider_specific_data if present
+		var psdMap map[string]string
+		if psdRaw != "" {
+			json.Unmarshal([]byte(psdRaw), &psdMap)
+		}
 
 		start := time.Now()
 		streamResult, err := exec.ExecuteStream(context.Background(), &executor.Request{
-			APIKey:      apiKey,
-			AccessToken: accessToken,
-			BaseURL:     baseURL,
-			Body:        bodyBytes,
-			Provider:    providerID,
+			APIKey:               apiKey,
+			AccessToken:          accessToken,
+			BaseURL:              baseURL,
+			Body:                 bodyBytes,
+			Provider:             providerID,
+			ProviderSpecificData: psdMap,
 		})
 		if err != nil {
 			latency := time.Since(start).Milliseconds()
@@ -329,10 +330,11 @@ func joinStrings(ss []string, sep string) string {
 func (h *ProviderHandler) AddConnection(c *gin.Context) {
 	providerID := c.Param("id")
 	var req struct {
-		Name     string `json:"name" binding:"required"`
-		APIKey   string `json:"api_key"`
-		AuthType string `json:"auth_type"`
-		Priority int    `json:"priority"`
+		Name                 string            `json:"name" binding:"required"`
+		APIKey               string            `json:"api_key"`
+		AuthType             string            `json:"auth_type"`
+		Priority             int               `json:"priority"`
+		ProviderSpecificData map[string]string `json:"provider_specific_data,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -357,16 +359,25 @@ func (h *ProviderHandler) AddConnection(c *gin.Context) {
 	if req.APIKey != "" {
 		apiKey = sql.NullString{String: req.APIKey, Valid: true}
 	}
-
 	initialStatus := "ready"
 	if req.AuthType == "oauth" {
 		initialStatus = "auth_failed" // not eligible until OAuth completes
 	}
 
+	var psdJSON sql.NullString
+	if len(req.ProviderSpecificData) > 0 {
+		b, err := json.Marshal(req.ProviderSpecificData)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid provider_specific_data"})
+			return
+		}
+		psdJSON = sql.NullString{String: string(b), Valid: true}
+	}
+
 	_, err := h.db.Exec(`
-		INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, priority, status, is_active, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-	`, connID, providerID, req.Name, req.AuthType, apiKey, req.Priority, initialStatus, now, now)
+		INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, priority, provider_specific_data, status, is_active, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+	`, connID, providerID, req.Name, req.AuthType, apiKey, req.Priority, psdJSON, initialStatus, now, now)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -387,9 +398,10 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 	providerID := c.Param("id")
 	var req struct {
 		Connections []struct {
-			Name     string `json:"name"`
-			APIKey   string `json:"api_key"`
-			Priority int    `json:"priority"`
+			Name                 string            `json:"name"`
+			APIKey               string            `json:"api_key"`
+			Priority             int               `json:"priority"`
+			ProviderSpecificData map[string]string `json:"provider_specific_data,omitempty"`
 		} `json:"connections"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -402,10 +414,16 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 	for _, conn := range req.Connections {
 		connID := uuid.New().String()
 		apiKey := sql.NullString{String: conn.APIKey, Valid: conn.APIKey != ""}
+		var psdJSON sql.NullString
+		if len(conn.ProviderSpecificData) > 0 {
+			if b, err := json.Marshal(conn.ProviderSpecificData); err == nil {
+				psdJSON = sql.NullString{String: string(b), Valid: true}
+			}
+		}
 		_, err := h.db.Exec(`
-			INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, priority, status, is_active, created_at, updated_at)
-			VALUES (?, ?, ?, 'api_key', ?, ?, 'ready', 1, ?, ?)
-		`, connID, providerID, conn.Name, apiKey, conn.Priority, now, now)
+			INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, priority, provider_specific_data, status, is_active, created_at, updated_at)
+			VALUES (?, ?, ?, 'api_key', ?, ?, ?, 'ready', 1, ?, ?)
+		`, connID, providerID, conn.Name, apiKey, conn.Priority, psdJSON, now, now)
 		if err == nil {
 			created++
 			if h.store != nil {
@@ -425,8 +443,9 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 // ValidateKey checks if an API key is valid for a provider by attempting a lightweight model list request.
 func (h *ProviderHandler) ValidateKey(c *gin.Context) {
 	var req struct {
-		Provider string `json:"provider" binding:"required"`
-		APIKey   string `json:"api_key" binding:"required"`
+		Provider               string            `json:"provider" binding:"required"`
+		APIKey                 string            `json:"api_key" binding:"required"`
+		ProviderSpecificData   map[string]string `json:"provider_specific_data,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -462,16 +481,16 @@ func (h *ProviderHandler) ValidateKey(c *gin.Context) {
 
 	testModel := defaultTestModel(req.Provider)
 	if testModel == "" {
-		// No known model — just check if the key can list models
 		testModel = "gpt-4o-mini"
 	}
 
 	resp, err := exec.ExecuteStream(ctx, &executor.Request{
-		APIKey:   req.APIKey,
-		BaseURL:  provider.BaseURL,
-		Body:     buildTestBody(provider.Format, testModel),
-		Provider: req.Provider,
-		Model:    testModel,
+		APIKey:               req.APIKey,
+		BaseURL:              provider.BaseURL,
+		Body:                 buildTestBody(provider.Format, testModel),
+		Provider:             req.Provider,
+		Model:                testModel,
+		ProviderSpecificData: req.ProviderSpecificData,
 	})
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"valid": false})

@@ -32,6 +32,7 @@
   let showKey = $state(false);
   let bulkText = $state('');
   let connectionPriority = $state('1');
+  let customFields = $state<Record<string, string>>({});
   let submitting = $state(false);
   let errorMsg = $state('');
   let oauthPolling = $state(false);
@@ -49,13 +50,13 @@
   const isNoAuth = $derived(authType === 'none');
   const isApiKey = $derived(authType === 'apikey' || authType === 'custom');
   const supportsBulk = $derived(isApiKey);
-
   function reset() {
     step = 'form';
     mode = 'single';
     connectionName = '';
     apiKey = '';
     bulkText = '';
+    customFields = {};
     connectionPriority = '1';
     errorMsg = '';
     validating = false;
@@ -84,6 +85,23 @@
   }
 
   function parseBulkConnections() {
+    if (meta?.inputFormat === 'pipe') {
+      return bulkText
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line, index) => {
+          const parts = line.split('|').map((p) => p.trim());
+          if (parts.length < 3) return null;
+          const [email, accountId, apiToken] = parts;
+          return {
+            name: email || defaultName(index + 1),
+            api_key: apiToken,
+            provider_specific_data: { accountId },
+          };
+        })
+        .filter((c): c is NonNullable<typeof c> => c !== null);
+    }
     return bulkText
       .split('\n')
       .map((line) => line.trim())
@@ -174,6 +192,28 @@
         if (connections.length === 0) throw new Error('Paste at least one API key');
         const result = await connectionsApi.bulkCreate(providerId, { connections });
         toast.success(`Added ${result.created}/${result.total} connections`);
+        step = 'done';
+        onCreated?.();
+        return;
+      }
+
+      // Pipe-format single mode (e.g. Cloudflare: email|accountId|apiToken)
+      if (meta?.inputFormat === 'pipe') {
+        const { email, accountId, apiToken } = customFields;
+        if (!accountId || !apiToken) {
+          errorMsg = 'Account ID and API Token are required';
+          toast.error(errorMsg);
+          submitting = false;
+          return;
+        }
+        const name = connectionName.trim() || email || defaultName();
+        await connectionsApi.create(providerId, {
+          name,
+          auth_type: 'custom',
+          api_key: apiToken,
+          provider_specific_data: { accountId },
+        });
+        toast.success(`Connection added: ${name}`);
         step = 'done';
         onCreated?.();
         return;
@@ -375,7 +415,37 @@
           </div>
         {/if}
 
-        {#if isApiKey && mode === 'single'}
+        {#if meta?.inputFormat === 'pipe' && mode === 'single'}
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-sm font-medium">Email (identifier)</Label>
+            <Input bind:value={customFields['email']} placeholder="user@example.com" class="h-9 text-sm" />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-sm font-medium">Account ID</Label>
+            <Input bind:value={customFields['accountId']} placeholder="abcdef123456" class="h-9 text-sm" />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-sm font-medium">API Token</Label>
+            <div class="relative">
+              <Input
+                bind:value={customFields['apiToken']}
+                type={showKey ? 'text' : 'password'}
+                placeholder="cf-api-token"
+                class="h-9 pr-10 font-mono text-sm"
+                autocomplete="off"
+                spellcheck={false}
+              />
+              <button
+                type="button"
+                class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                onclick={() => showKey = !showKey}
+                tabindex={-1}
+              >
+                <span class="material-symbols-outlined text-base">{showKey ? 'visibility_off' : 'visibility'}</span>
+              </button>
+            </div>
+          </div>
+        {:else if isApiKey && mode === 'single'}
           <div class="flex flex-col gap-1.5">
             <Label class="text-sm font-medium">
               API key
@@ -417,20 +487,24 @@
           </div>
         {:else if isApiKey && mode === 'bulk'}
           <div class="flex flex-col gap-1.5">
-            <Label class="text-sm font-medium">API keys</Label>
+            <Label class="text-sm font-medium">{meta?.inputFormat === 'pipe' ? 'Connections' : 'API keys'}</Label>
             <Textarea
               bind:value={bulkText}
               class="min-h-36 font-mono text-xs"
-              placeholder={`sk-...\nmain: sk-...\nbackup, sk-...`}
+              placeholder={meta?.inputFormat === 'pipe' ? 'user@example.com|accountId|apiToken\n...' : `sk-...\nmain: sk-...\nbackup, sk-...`}
               spellcheck={false}
             />
             {#if bulkText.trim()}
               <p class="text-[11px] text-emerald-400">
-                {parseBulkConnections().length} key{parseBulkConnections().length !== 1 ? 's' : ''} detected
+                {parseBulkConnections().length} connection{parseBulkConnections().length !== 1 ? 's' : ''} detected
               </p>
             {/if}
             <p class="text-[11px] text-muted-foreground">
-              One key per line. Optional format: <span class="font-mono">name: key</span> or <span class="font-mono">name, key</span>.
+              {#if meta?.inputFormat === 'pipe'}
+                Format: <span class="font-mono">email|accountId|apiToken</span> (one per line)
+              {:else}
+                One key per line. Optional format: <span class="font-mono">name: key</span> or <span class="font-mono">name, key</span>.
+              {/if}
             </p>
           </div>
         {/if}
