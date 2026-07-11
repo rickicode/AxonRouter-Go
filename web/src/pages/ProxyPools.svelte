@@ -390,7 +390,6 @@ async function toggleGroupActive(group: ProxyGroup) {
                 <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Type</th>
                 <th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">State</th>
                 <th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Health</th>
-                <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">IP / Location</th>
                 <th class="text-right text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Latency</th>
                 <th class="text-right text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5"></th>
               </tr>
@@ -403,6 +402,11 @@ async function toggleGroupActive(group: ProxyGroup) {
                   </td>
                   <td class="px-4 py-2.5">
                     <span class="text-caption-mono text-muted-foreground truncate block max-w-[220px]">{pool.proxyUrl}</span>
+                    {#if pool.proxyCountry || pool.proxyIp}
+                      <span class="text-[10px] text-muted-foreground/60 truncate block max-w-[220px]" title={pool.proxyIp || ''}>
+                        {pool.proxyCountry || '—'}{pool.proxyCity ? ', ' + pool.proxyCity : ''}{pool.proxyOrg ? ' • ' + pool.proxyOrg.replace(/^AS\d+\s*/, '') : ''}
+                      </span>
+                    {/if}
                   </td>
                   <td class="px-4 py-2.5">
                     <span class="text-caption-mono text-muted-foreground">{typeLabel(pool.type)}</span>
@@ -431,15 +435,6 @@ async function toggleGroupActive(group: ProxyGroup) {
                         <span class="size-1.5 rounded-full bg-zinc-600"></span>
                         —
                       </span>
-                    {/if}
-                  </td>
-                  <td class="px-4 py-2.5">
-                    {#if pool.proxyCountry || pool.proxyIp}
-                      <span class="text-caption-mono text-muted-foreground truncate block max-w-[200px]" title={pool.proxyIp || ''}>
-                        {pool.proxyCountry || '—'}{pool.proxyCity ? ', ' + pool.proxyCity : ''}{pool.proxyOrg ? ' • ' + pool.proxyOrg.replace(/^AS\d+\s*/, '') : ''}
-                      </span>
-                    {:else}
-                      <span class="text-caption-mono text-muted-foreground/50">—</span>
                     {/if}
                   </td>
                   <td class="px-4 py-2.5 text-right">
