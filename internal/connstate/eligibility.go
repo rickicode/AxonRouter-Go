@@ -1,7 +1,7 @@
 package connstate
 
 import (
-	"sort"
+	"math/rand/v2"
 	"sync/atomic"
 )
 
@@ -30,7 +30,7 @@ func NewEligibilityManager(store *Store) *EligibilityManager {
 }
 
 // Update recomputes the eligibility snapshot from the current store state.
-// Connections are sorted by priority (higher first) within each prefix.
+// Connections are shuffled randomly within each prefix for load balancing.
 func (e *EligibilityManager) Update(store *Store) {
 	eligible := make(map[string][]string)
 	var all []string
@@ -45,15 +45,10 @@ func (e *EligibilityManager) Update(store *Store) {
 		return true
 	})
 
-	// Sort each prefix's connections by priority (higher first)
+	// Shuffle each prefix's connections for load balancing
 	for _, ids := range eligible {
-		sort.SliceStable(ids, func(i, j int) bool {
-			ci := store.Get(ids[i])
-			cj := store.Get(ids[j])
-			if ci == nil || cj == nil {
-				return false
-			}
-			return ci.GetPriority() > cj.GetPriority()
+		rand.Shuffle(len(ids), func(i, j int) {
+			ids[i], ids[j] = ids[j], ids[i]
 		})
 	}
 

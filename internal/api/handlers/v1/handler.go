@@ -533,16 +533,37 @@ func (h *Handler) handleFailoverError(conn *Connection, provider, modelName stri
 	h.elig.Update(h.store)
 	h.checkAutoDisable(conn.ID, provider)
 
-	logging.Logger.Error("failover: error, coba akun lain",
-		"provider", provider,
-		"name", conn.Name,
-		"conn", conn.ID[:8],
-		"model", modelName,
-		"category", string(det.Category),
-		"cooldown_until", det.CooldownUntil,
-		"attempt", attempt+1,
-		"error", err.Error(),
-	)
+	// Truncate error for log readability — full error goes to tracker DB
+	errMsg := err.Error()
+	if len(errMsg) > 120 {
+		errMsg = errMsg[:120] + "…"
+	}
+
+	switch det.Category {
+	case connstate.ErrorModelNotFound:
+		logging.Logger.Warn("⊘ model not found — stop failover",
+			"provider", provider, "model", modelName, "conn", conn.ID[:8], "name", conn.Name,
+		)
+	case connstate.ErrorAuth:
+		logging.Logger.Warn("⊘ auth failed — stop failover",
+			"provider", provider, "model", modelName, "conn", conn.ID[:8], "name", conn.Name,
+		)
+	case connstate.ErrorRateLimit:
+		logging.Logger.Warn("⟳ rate limited — try next",
+			"provider", provider, "model", modelName, "conn", conn.ID[:8], "name", conn.Name,
+			"cooldown", det.CooldownUntil, "attempt", attempt+1,
+		)
+	case connstate.ErrorQuota:
+		logging.Logger.Warn("⟳ quota exhausted — try next",
+			"provider", provider, "model", modelName, "conn", conn.ID[:8], "name", conn.Name,
+			"cooldown", det.CooldownUntil, "attempt", attempt+1,
+		)
+	default:
+		logging.Logger.Error("⟳ upstream error — try next",
+			"provider", provider, "model", modelName, "conn", conn.ID[:8], "name", conn.Name,
+			"category", string(det.Category), "attempt", attempt+1, "error", errMsg,
+		)
+	}
 
 	h.tracker.Log(&usage.LogEntry{
 		ConnectionID:   conn.ID,
