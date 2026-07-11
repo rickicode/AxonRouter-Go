@@ -1,158 +1,94 @@
 # AGENTS.md — AxonRouter-Go Project Rules
+
 ## Anti-Hallucination Rule — DATA FIRST (CRITICAL)
 
-**DILARANG NGARANG. SEMUA HARUS BY DATA.**
+**NO GUESSING. EVERYTHING MUST BE BACKED BY DATA.**
 
-### Prinsip Utama
-1. **DATA = bukti nyata** — API response, code, log, screenshot, terminal output
-2. **ASSUME = ngarang** — kalau tidak ada data, jangan pernah assume
-3. **VERIFY dulu, baru bicara** — jangan claim sebelum cek
-4. **Model names, URLs, endpoints, behavior** — SEMUA harus diverifikasi dari codebase atau live API
+### Core Principles
+1. **DATA = real evidence** — API responses, code, logs, screenshots, terminal output.
+2. **ASSUMPTION = hallucination** — if no data exists, do not assume.
+3. **VERIFY before claiming** — check first, then speak.
+4. **Model names, URLs, endpoints, behavior** — ALL must be verified from the codebase or live API.
 
-### Cara Kerja (WAJIB ikuti)
-```
-1. Cek codebase dulu (grep, read, lsp)
-2. Kalau tidak ada → cek reference codebases (OmniRoute, CLIProxyAPI, AxonRouter)
-3. Kalau tidak ada → cek internet (web search)
-4. Kalau tidak ada → bilang "tidak tau, tidak ada data"
-```
+### Workflow (MUST follow)
+1. Search the codebase first (`grep`, `read`, `lsp`).
+2. If missing, check reference codebases (`OmniRoute`, `CLIProxyAPI`, `AMRouter`).
+3. If still missing, use web search.
+4. If still missing, say: **"I don't know; no data available."**
 
-### Contoh Salah (NGARANG):
-```
-❌ "Mimo punya balance tracking" — belum cek codebase
-❌ "Codex quota reset setiap minggu" — belum verify dari code
-❌ "Model name gemini-3.5-flash" — belum cek API response actual
-❌ "Endpoint /api/foo/bar" — belum verify di router.go
-❌ "Quota 100% berarti unlimited" — belum cek response format
-```
-
-### Contoh Benar (BY DATA):
-```
-✅ "OmniRoute quotaCache.ts line 15: background refresh setiap 1 menit" — ada di code
-✅ "API return gemini-2.5-pro bukan gemini-3.1-pro" — verified dari curl response
-✅ "claude-sonnet-4-6 (bukan 4.6)" — verified dari actual API model key
-✅ "Endpoint ada di router.go line 219" — verified dari code
-```
-
-### Saat Tidak Tau:
-```
-✅ "Saya tidak tau. Tidak ada data di codebase yang tersedia."
-✅ "Perlu verify dulu — mau saya cek API response?"
-```
-
-### Untuk Model Names & Provider Data:
-- **WAJIB smoke test** dulu sebelum set model name/filter
-- **WAJIB cek actual API response** — jangan pernah tebak nama model
-- **WAJIB verify endpoint** dari router.go, jangan assume path
-- Kalau user bilang "gemini 3.5" tapi API return "gemini-2.5" → bilang datanya beda, jangan ngarang
-
+### Examples
+- ❌ Wrong: "Mimo has balance tracking" — not checked against code.
+- ❌ Wrong: "Codex quota resets weekly" — not verified.
+- ✅ Right: "OmniRoute quotaCache.ts line 15 refreshes every 1 minute."
+- ✅ Right: "Endpoint is at router.go line 219."
 
 ## Multi-Codebase Comparison Rule (CRITICAL)
 
-Ketika CLIProxyAPI, AxonRouter, dan OmniRoute punya implementasi berbeda untuk sistem yang sama:
+When CLIProxyAPI, AxonRouter, and OmniRoute implement the same subsystem:
+1. Read ALL three implementations.
+2. Compare: which is most efficient, complete, and stable?
+3. Pick the best one. Do not mix unrelated pieces.
+4. Quote the source and explain the choice.
 
-1. **Baca SEMUA versi** dari ketiga codebase
-2. **Bandingkan** — mana yang paling efisien, paling lengkap, paling stabil
-3. **Pilih yang terbaik** — ambil versi terbaik, bukan campur-caduk
-4. **Quote source** — tulis dari mana versi yang dipilih dan kenapa
-
-### Contoh:
-```
-✅ "Quota detection: pakai versi OmniRoute (getUsageForProvider) karena paling lengkap — support 8 provider.
-   AxonRouter hanya detect dari error text. CLIProxyAPI tidak ada quota system."
-
-✅ "Circuit breaker: pakai versi AxonRouter karena state machine paling jelas (CLOSED→OPEN→HALF_OPEN)
-   dengan configurable threshold. OmniRoute mirip tapi kurang fleksibel."
-
-✅ "Translator: pakai versi CLIProxyAPI karena sudah dalam Go, production-tested, 664 files.
-   AxonRouter lebih lengkap tapi dalam TypeScript."
-```
-
-### Jangan:
-```
-❌ Campur-caduk dari beberapa versi tanpa alasan
-❌ Pilih versi yang kurang bagus karena "sudah ada"
-❌ Ignore versi yang lebih baik karena "terlalu ribet"
-```
+### Examples
+- ✅ "Quota detection uses OmniRoute's `getUsageForProvider` because it supports 8 providers. AxonRouter only detects from error text."
+- ✅ "Circuit breaker uses AxonRouter because its state machine (CLOSED→OPEN→HALF_OPEN) is clearest."
 
 ## Reference Codebases
 
-| Codebase | Path | Bahasa | Kelebihan |
-|----------|------|--------|-----------|
-| **CLIProxyAPI** | `/workspaces/CLIProxyAPI` | Go | Translator, auth, executor (production-tested) |
-| **AxonRouter** | `/workspaces/AxonRouter` | TypeScript | Combo system, dashboard, usage tracking |
-| **OmniRoute** | `/workspaces/OmniRoute` | TypeScript | 231 providers, quota cache, policy engine |
+| Codebase | Path | Language | Strengths |
+|----------|------|----------|-----------|
+| CLIProxyAPI | `/workspaces/CLIProxyAPI` | Go | Translator, auth, executor (production-tested) |
+| AxonRouter | `/workspaces/AxonRouter` | TypeScript | Combo system, dashboard, usage tracking |
+| OmniRoute | `/workspaces/OmniRoute` | TypeScript | 231 providers, quota cache, policy engine |
 
 ## Tech Stack (Fixed)
 
 - Backend: Go + Gin + SQLite
 - Frontend: Svelte (embedded via `go:embed`)
 - CLI: Minimal — service management + status only
-- Config: SQLite (bukan YAML/file-based)
+- Config: SQLite (not YAML/file-based)
 
 ## Provider Naming
 
 - Prefix = provider identifier: `cx/`, `openai/`, `mimo/`, `ag/`, `kiro/`, etc.
-- Codex ≠ OpenAI: `cx/gpt-5.4` ≠ `openai/gpt-5.4`
-- Custom provider: nama user-given jadi prefix (e.g., `9router/gpt-4o`)
+- Codex ≠ OpenAI: `cx/gpt-5.4` is not `openai/gpt-5.4`.
+- Custom provider: user-given name becomes the prefix (e.g., `9router/gpt-4o`).
 
 ## Scale Assumptions
 
-- 100-1000+ connections per provider
-- Routing harus <1ms regardless of connection count
-- Pre-computed eligible list (O(1) routing)
-- Dashboard wajib pagination
+- 100–1000+ connections per provider.
+- Routing must be <1ms regardless of connection count.
+- Pre-computed eligible list for O(1) routing.
+- Dashboard pagination is mandatory.
 
 ## Execution & Build Rules
 
-1. **Selalu Commit:** Selalu commit hasil kerja ke git repo jika dirasa sudah cukup, semua sudah stabil, dan tidak ada error lagi.
-2. **Nol Warning:** Jika saat menjalankan `npm run build` ada warning, maka warning tersebut WAJIB diperbaiki/difiksasi.
+1. **Always commit** once the work is stable and tests pass.
+2. **Zero warnings** on `npm run build`.
 
-## UI/UX Toast Notifications (Wajib)
+## UI/UX Toast Notifications (Required)
 
-Semua aksi user yang memicu response dari backend WAJIB menggunakan toast notification (`svelte-sonner`). JANGAN pakai `alert()` atau silent update tanpa feedback.
+Every user action that triggers a backend response MUST use `svelte-sonner`.
 
-### Library
-- Pakai `svelte-sonner` (sudah terinstall)
-- Import: `import { toast } from 'svelte-sonner'`
-- `<Toaster />` sudah ada di `App.svelte`
+- Import: `import { toast } from 'svelte-sonner'`.
+- `<Toaster />` is already in `App.svelte`.
+- Use specific messages:
+  - `toast.success('Connection reset to ready')`
+  - `toast.error('Test failed: ' + err.message)`
+  - `toast.info('Syncing models...')`
+- Never use `alert()` or silent failures.
 
-### Pola Wajib
-```typescript
-// Success action
-toast.success('Connection reset to ready');
+## Page Layout Convention (Required)
 
-// Error action
-toast.error('Test failed: ' + err.message);
+All dashboard pages MUST use the same layout pattern.
 
-// Info/loading
-toast.info('Syncing models...');
-
-// Dengan detail
-toast.success(`${model} OK (${latency}ms)`);
-toast.error(`Test all: ${ok} passed, ${failed} failed`);
-```
-
-### Rules
-1. **Setiap API call** yang dipicu user action WAJIB ada toast response (success/error)
-2. **JANGAN pakai `alert()`** — gunakan `toast.error()` atau `toast.success()`
-3. **JANGAN silent fail** — kalau error, user harus tau via toast
-4. **Format toast**: singkat, actionable, include context (nama model, nama connection, jumlah)
-5. **Test/Test All**: toast harus show jumlah passed/failed/skipped
-6. **Model test**: toast per model show `modelName OK (Xms)` atau `modelName failed: reason`
-7. **Delete/Reset**: toast konfirmasi aksi berhasil
-8. **Bulk operations**: satu toast summary, bukan satu toast per item
-
-## Page Layout Convention (Wajib Konsisten)
-
-Semua dashboard pages HARUS menggunakan layout pattern yang sama. JANGAN buat `max-w-[Npx]` atau `w-full` di outer wrapper — biarkan flex-1 fill parent.
-
-### Outer wrapper (wajib):
+### Outer wrapper
 ```svelte
 <div class="flex flex-1 flex-col gap-6 p-6">
 ```
 
-### Heading pattern:
+### Heading pattern
 ```svelte
 <div class="space-y-1">
   <h1 class="text-display-lg">Page Title.</h1>
@@ -160,14 +96,14 @@ Semua dashboard pages HARUS menggunakan layout pattern yang sama. JANGAN buat `m
 </div>
 ```
 
-### Card surfaces:
-- `bg-card` (`#18181b`) untuk card backgrounds
-- `shadow-card` / `shadow-elevated` untuk elevation
-- `rounded-xl` (12px) untuk card radius
-- `border-border` untuk card borders
-- JANGAN pakai raw hex colors (`bg-[#18181b]`) — gunakan Tailwind tokens
+### Card surfaces
+- `bg-card` (`#18181b`) for card backgrounds
+- `shadow-card` / `shadow-elevated` for elevation
+- `rounded-xl` (12px) for radius
+- `border-border` for borders
+- NEVER use raw hex like `bg-[#18181b]` — use Tailwind tokens
 
-### Typography tokens (dari DESIGN.md):
+### Typography tokens
 - `text-display-lg` — page headings (32px, 600, -1.28px tracking)
 - `text-display-md` — section headings (24px, 600)
 - `text-body-sm` — body text (14px, 400)
@@ -175,48 +111,66 @@ Semua dashboard pages HARUS menggunakan layout pattern yang sama. JANGAN buat `m
 - `text-caption` — small labels (12px, 400)
 - `text-caption-mono` — mono labels (12px, mono)
 
-### Buttons:
-- `<Button variant="outline" size="sm" class="text-body-sm rounded-sm cursor-pointer">`
-- JANGAN bikin custom button styling — pakai Button component
+### Buttons
+```svelte
+<Button variant="outline" size="sm" class="text-body-sm rounded-sm cursor-pointer">
+```
+NEVER create custom button styling.
 
-### Reference pages:
+### Reference pages
 - `Providers.svelte` — gold standard layout
 - `Combos.svelte` — card grid pattern
 - `Logs.svelte` — table + filters pattern
 
-## Todo Tracking (Wajib)
-Untuk setiap pekerjaan yang terdiri dari beberapa langkah atau lebih dari satu file, SELALU
-buat dan update daftar tugas dengan tool `todo`:
-1. Inisialisasi task list sebelum mulai bekerja.
-2. Tandai task sebagai `in_progress` saat sedang dikerjakan.
-3. Tandai task sebagai `done` segera setelah selesai.
-4. Jangan hapus atau abaikan todo list sampai seluruh pekerjaan selesai.
+## Session Workflow (Todo + Git Hygiene)
 
-## Code dari Sesi Lain (Jangan Sentuh)
-Jika ada kode yang diedit di working tree/repository tetapi bukan kamu yang
-melakukannya di sesi ini, anggap itu kode dari sesi lain:
-- **JANGAN ubah, hapus, atau refactor** kode tersebut.
-- **JANGAN ikut commit** kode tersebut tanpa izin eksplisit dari user.
-- Jika memang **sangat dibutuhkan** (misal: kode yang baru saja kamu tulis
-  bergantung padanya atau crash), ubah seperlunya dan catat alasan spesifik
-  dalam commit message maupun komentar di kode.
-- Ketika harus menyentuhnya, tulis `NOTE: <kenapa disentuh>` di commit message
-  dan/atau di file yang diubah.
+### 1. Todo Tracking (Required)
+For any multi-step or multi-file task, always maintain a `todo` list:
+1. Initialize the list before starting work.
+2. Mark items `in_progress` while working.
+3. Mark items `done` when finished.
+4. Do not delete or ignore the list until the work is complete.
 
-## Cek Status Git Sebelum Edit (Hindari Bentrok)
-Sebelum menyentuh file apa pun, SELALU cek status repository:
-1. Jalankan `git status --short` atau `git diff --name-only`.
-2. File yang statusnya **M** (modified), **A** (added), atau **D** (deleted)
-   tetapi bukan kamu yang ubah di sesi ini = kode dari sesi lain. **Hands-off**.
-3. Kamu hanya boleh edit file yang:
-   - masih bersih di status git, atau
-   - memang sudah kamu ubah sendiri di sesi ini.
-4. Jika kode baru yang kamu tulis terpaksa butuh menyentuh file sesi lain,
-   lakukan perubahan **seefisien mungkin/sesuai kebutuhan**, **tambahkan komentar inline**
-   di tempat yang disentuh, dan catat alasan di commit message. Format komentar:
-   ```go
-   // NOTE: <alasan singkat kenapa kode ini disentuh>
-   ```
-   Juga tulis di commit message: `NOTE: <alasan>`.
-5. Sebelum commit, verifikasi dengan `git diff --cached --stat` agar tidak
-   ikut mencommit perubahan sesi lain.
+### 2. Check Git Status Before Editing
+Before touching any file, run:
+```bash
+git status --short
+# or
+git diff --name-only
+```
+Files with **M/A/D** status that you did not change in this session are code from another session — **hands-off**.
+
+### 3. If You Must Touch Another Session's Code
+If your new code truly depends on a file touched by another session:
+- Edit only as needed / as efficiently as needed.
+- Add an inline comment at the touched location:
+  ```go
+  // NOTE: <short reason this code was touched>
+  ```
+- Include in the commit message: `NOTE: <reason>`.
+
+### 5. Verify Before Commit
+Run:
+```bash
+git diff --cached --stat
+```
+Make sure you only commit changes you intended. Do not include unrelated changes from other sessions.
+
+## Local Real Testing (Without Disturbing the Main Gateway)
+
+When you need to run an actual instance for manual or smoke testing after building:
+
+```bash
+make run-dev
+```
+
+This builds the binary and starts a **dev server** on the alternate port (`3788` by default) with an **isolated data directory** at `/tmp/axon-dev`.
+
+### Why `run-dev`, not `make run`?
+- `make run` starts the server on the **main port (3777)** and uses the default data dir. This is the live AI gateway.
+- `make run-dev` leaves port 3777 and the default data dir untouched, so the main gateway keeps running normally while you rebuild or test.
+
+### How it works
+- `AXON_PORT` is set to `DEV_PORT` (default `3788`) instead of `3777`.
+- `AXON_DATA_DIR` is set to `/tmp/axon-dev`, so the dev instance uses its own SQLite database and PID file.
+- The `kill-dev-port` target clears the dev port if a previous dev server is still running, but it never touches port 3777.

@@ -7,6 +7,7 @@ FRONTEND_DIR=./web
 GO_BUILD_FLAGS=-ldflags="-s -w"
 GO=/usr/local/go/bin/go
 PORT=3777
+DEV_PORT ?= 3788
 
 # Default target
 all: build
@@ -41,10 +42,24 @@ kill-port:
 	@sleep 0.5
 	@echo "Port $(PORT) cleared."
 
+# Kill process on dev port
+kill-dev-port:
+	@echo "Killing process on port $(DEV_PORT)..."
+	@lsof -ti :$(DEV_PORT) | xargs kill -9 2>/dev/null || true
+	@sleep 0.5
+	@echo "Port $(DEV_PORT) cleared."
+
 # Run the server
 run: build kill-port
 	@echo "Starting server on port $(PORT)..."
 	$(BUILD_DIR)/$(BINARY_NAME)
+
+# Run a dev server on an alternate port with isolated data so the main gateway keeps running
+run-dev: build kill-dev-port
+	@mkdir -p /tmp/axon-dev
+	@echo "Starting dev server on port $(DEV_PORT)..."
+	@echo "Data directory: /tmp/axon-dev (main gateway on port $(PORT) is untouched)."
+	AXON_DATA_DIR=/tmp/axon-dev AXON_PORT=$(DEV_PORT) $(BUILD_DIR)/$(BINARY_NAME)
 
 # Development mode (frontend only)
 dev:
@@ -71,7 +86,7 @@ help:
 	@echo "  build-frontend - Build frontend only"
 	@echo "  build-backend - Build backend only"
 	@echo "  clean         - Clean build artifacts"
-	@echo "  run           - Kill port, build, and run the server"
+	@echo " run-dev  - Run server on alternate port $(DEV_PORT) (main port $(PORT) untouched)"
 	@echo "  kill-port     - Kill process on port $(PORT)"
 	@echo "  dev           - Start frontend development server"
 	@echo "  install       - Install frontend dependencies"
