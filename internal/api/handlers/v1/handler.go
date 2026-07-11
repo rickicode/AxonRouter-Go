@@ -17,7 +17,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
+	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
+	"github.com/rickicode/AxonRouter-Go/internal/compression"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
@@ -60,16 +62,18 @@ type Connection struct {
 
 // Handler is the base handler for all /v1/* endpoints.
 type Handler struct {
-	db         *sql.DB
-	registry   *executor.Registry
-	store      *connstate.Store
-	elig       *connstate.EligibilityManager
-	combo      *combo.Handler
-	tracker    *usage.Tracker
-	authMgr    *auth.Manager
-	resolver   *proxypool.Resolver
-	exhaustion *quota.ExhaustionCache
-	conns      sync.Map // provider -> cachedConns
+	db                  *sql.DB
+	registry            *executor.Registry
+	store               *connstate.Store
+	elig                *connstate.EligibilityManager
+	combo               *combo.Handler
+	tracker             *usage.Tracker
+	authMgr             *auth.Manager
+	resolver            *proxypool.Resolver
+	exhaustion          *quota.ExhaustionCache
+	conns               sync.Map // provider -> cachedConns
+	compressionStrategy compression.Strategy
+	exactCache          cache.CacheStorage
 }
 
 // cachedConns holds cached connections with expiry.
@@ -88,17 +92,21 @@ func NewHandler(
 	authManager *auth.Manager,
 	resolver *proxypool.Resolver,
 	exhaustionCache *quota.ExhaustionCache,
+	compressionStrategy compression.Strategy,
+	exactCache cache.CacheStorage,
 ) *Handler {
 	return &Handler{
-		db:         db,
-		registry:   executor.GetRegistry(),
-		store:      store,
-		elig:       elig,
-		combo:      comboHandler,
-		tracker:    tracker,
-		authMgr:    authManager,
-		resolver:   resolver,
-		exhaustion: exhaustionCache,
+		db:                  db,
+		registry:            executor.GetRegistry(),
+		store:               store,
+		elig:                elig,
+		combo:               comboHandler,
+		tracker:             tracker,
+		authMgr:             authManager,
+		resolver:            resolver,
+		exhaustion:          exhaustionCache,
+		compressionStrategy: compressionStrategy,
+		exactCache:          exactCache,
 	}
 }
 
@@ -485,6 +493,24 @@ func (h *Handler) executeWithRetry(
 	}
 
 	return resp, streamResult, err
+}
+
+// executeDirect runs the executor once with no retry — on any error, the caller
+// should failover to the next connection. This matches the user's preference:
+// "jika error ya langsung pindah ke akun lain".
+func (h *Handler) executeDirect(ctx context.Context, exec executor.Executor, req *executor.Request) (*executor.Response, *executor.StreamResult, error) {
+	if req.Stream {
+		streamer, ok := exec.(interface {
+			ExecuteStream(context.Context, *executor.Request) (*executor.StreamResult, error)
+		})
+		if !ok {
+			return nil, nil, errors.New("executor does not support streaming")
+		}
+		streamResult, err := streamer.ExecuteStream(ctx, req)
+		return nil, streamResult, err
+	}
+	resp, err := exec.Execute(ctx, req)
+	return resp, nil, err
 }
 
 // proxyContext resolves proxy config for a connection and returns a context with it attached.

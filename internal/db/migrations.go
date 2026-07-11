@@ -232,6 +232,21 @@ CREATE TABLE IF NOT EXISTS proxy_groups (
 		return err
 	}
 
+	// Response cache table (Phase 1: schema ready for Phase 2 persistence)
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS response_cache (
+	hash TEXT PRIMARY KEY,
+	body TEXT NOT NULL,
+	status_code INTEGER NOT NULL,
+	content_type TEXT NOT NULL DEFAULT 'application/json',
+	created_at INTEGER NOT NULL,
+	expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_response_cache_expires ON response_cache(expires_at);
+	`); err != nil {
+		return err
+	}
+
 	return nil
 }
 

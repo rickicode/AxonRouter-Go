@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
@@ -52,100 +53,106 @@ func (h *Handler) Messages(c *gin.Context) {
 	// Replace model with unprefixed name
 	body = executor.JSONSet(body, "model", modelName)
 
-	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
-	if err != nil {
-		c.JSON(http.StatusServiceUnavailable, claudeError("server_error", "no available connection"))
-		return
-	}
-
-	// Proactive token refresh
-	h.proactiveRefreshToken(c.Request.Context(), conn, provider)
-
-	// Translate request (Claude format → provider format)
-	clientFormat := executor.FormatClaude // /v1/messages is Claude format
+	// Connection failover loop: try up to 3 connections before giving up.
+	clientFormat := executor.FormatClaude
 	stream := executor.IsStreamRequest(body)
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
 
-	req := &executor.Request{
-		Model:       modelName,
-		Body:        translatedBody,
-		Stream:      stream,
-		APIKey:      conn.APIKey,
-		AccessToken: conn.AccessToken,
-		BaseURL:     conn.BaseURL,
-		Provider:    provider,
-	}
-
-	proxyCtx := h.proxyContext(c.Request.Context(), conn)
-
-	// Execute with reactive 401/403 retry
-	var resp *executor.Response
-	var streamResult *executor.StreamResult
-
-	resp, streamResult, err = h.executeWithRetry(proxyCtx, exec, req, conn, provider, modelName)
-
-	latency := time.Since(start).Milliseconds()
-
-	// Parse rate limit headers from response
-	if resp != nil {
-		connstate.ParseRateLimitHeaders(resp.Headers, h.store, conn.ID, modelName)
-	}
-	if streamResult != nil {
-		connstate.ParseRateLimitHeaders(streamResult.Headers, h.store, conn.ID, modelName)
-	}
-
-	if err != nil {
-		det := connstate.DetectError(0, "", err, provider, modelName, nil)
-		if det.Category == connstate.ErrorRateLimit {
-			h.exhaustion.MarkExhausted(conn.ID, quota.DefaultExhaustionTTL)
+	maxAttempts := 3
+	for attempt := range maxAttempts {
+		conn, err := h.getConnection(c.Request.Context(), provider, modelName)
+		if err != nil {
+			if attempt == 0 {
+				c.JSON(http.StatusServiceUnavailable, claudeError("server_error", "no available connection"))
+				return
+			}
+			break
 		}
-		h.combo.RecordFailure(conn.ID, det)
-		h.persistCooldown(conn.ID, det)
-		if det.Status != connstate.StatusReady {
+
+		h.proactiveRefreshToken(c.Request.Context(), conn, provider)
+
+		req := &executor.Request{
+			Model:       modelName,
+			Body:        translatedBody,
+			Stream:      stream,
+			APIKey:      conn.APIKey,
+			AccessToken: conn.AccessToken,
+			BaseURL:     conn.BaseURL,
+			Provider:    provider,
+		}
+
+		proxyCtx := h.proxyContext(c.Request.Context(), conn)
+		resp, streamResult, err := h.executeDirect(proxyCtx, exec, req)
+		latency := time.Since(start).Milliseconds()
+
+		if resp != nil {
+			connstate.ParseRateLimitHeaders(resp.Headers, h.store, conn.ID, modelName)
+		}
+		if streamResult != nil {
+			connstate.ParseRateLimitHeaders(streamResult.Headers, h.store, conn.ID, modelName)
+		}
+
+		if err != nil {
+			det := connstate.DetectError(0, "", err, provider, modelName, nil)
+			if det.Category == connstate.ErrorRateLimit {
+				h.exhaustion.MarkExhausted(conn.ID, quota.DefaultExhaustionTTL)
+			} else if det.Category == connstate.ErrorQuota && det.CooldownUntil != nil {
+				h.exhaustion.MarkExhausted(conn.ID, time.Until(*det.CooldownUntil))
+			}
+			h.combo.RecordFailure(conn.ID, det)
+			h.persistCooldown(conn.ID, det)
 			h.elig.Update(h.store)
+			h.checkAutoDisable(conn.ID, provider)
+
+			logging.Logger.Error("upstream error, trying next connection",
+				"provider", provider,
+				"conn", conn.ID[:8],
+				"model", modelName,
+				"error", det.Category,
+				"detail", err.Error(),
+				"attempt", attempt+1,
+			)
+
+			h.tracker.Log(&usage.LogEntry{
+				ConnectionID:   conn.ID,
+				ProviderTypeID: provider,
+				ModelID:        modelName,
+				Modality:        "chat",
+				LatencyMs:       latency,
+				ErrorMessage:   err.Error(),
+			})
+			continue
 		}
 
-		h.tracker.Log(&usage.LogEntry{
-			ConnectionID:   conn.ID,
-			ProviderTypeID: provider,
-			ModelID:        modelName,
-			Modality:       "chat",
-			LatencyMs:      latency,
-			ErrorMessage:   err.Error(),
-		})
+		h.resetBanCount(conn.ID)
+		h.combo.RecordSuccess(conn.ID)
+		h.elig.Update(h.store)
 
-		c.JSON(http.StatusBadGateway, claudeError("server_error", err.Error()))
+		if req.Stream {
+			h.handleClaudeStreamResponse(c, streamResult, conn, provider, modelName, start, translatedBody, body)
+		} else {
+			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
+			tokenCounts := ExtractTokensFromBody(translatedResp)
+			h.tracker.Log(&usage.LogEntry{
+				ConnectionID:    conn.ID,
+				ProviderTypeID:  provider,
+				ModelID:         modelName,
+				Modality:        "chat",
+				InputTokens:     tokenCounts.InputTokens,
+				OutputTokens:    tokenCounts.OutputTokens,
+				ReasoningTokens: tokenCounts.ReasoningTokens,
+				CachedTokens:    tokenCounts.CachedTokens,
+				LatencyMs:       latency,
+				StatusCode:      resp.StatusCode,
+			})
+			c.Header("Content-Type", "application/json")
+			c.Status(resp.StatusCode)
+			c.Writer.Write(translatedResp)
+		}
 		return
 	}
 
-	h.resetBanCount(conn.ID)
-	h.combo.RecordSuccess(conn.ID)
-	h.elig.Update(h.store) // refresh eligibility after success
-
-	if req.Stream {
-		h.handleClaudeStreamResponse(c, streamResult, conn, provider, modelName, start, translatedBody, body)
-	} else {
-		// Translate response (provider format → client format)
-		translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
-
-		tokenCounts := ExtractTokensFromBody(translatedResp)
-		h.tracker.Log(&usage.LogEntry{
-			ConnectionID:    conn.ID,
-			ProviderTypeID:  provider,
-			ModelID:         modelName,
-			Modality:        "chat",
-			InputTokens:     tokenCounts.InputTokens,
-			OutputTokens:    tokenCounts.OutputTokens,
-			ReasoningTokens: tokenCounts.ReasoningTokens,
-			CachedTokens:    tokenCounts.CachedTokens,
-			LatencyMs:       latency,
-			StatusCode:      resp.StatusCode,
-		})
-
-		c.Header("Content-Type", "application/json")
-		c.Status(resp.StatusCode)
-		c.Writer.Write(translatedResp)
-	}
+	c.JSON(http.StatusServiceUnavailable, claudeError("server_error", "all connections exhausted or failing for provider: "+provider))
 }
 
 // handleClaudeNonStreamResponse handles non-streaming Claude responses.

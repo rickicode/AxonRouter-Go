@@ -588,3 +588,47 @@ export const proxyDeployApi = {
   generateSource: (type: string) =>
     fetchApi<{ type: string; source: string }>(`/proxy-pools/generate-source?type=${type}`),
 };
+
+// Compression & Cache types
+export interface CompressionSettings {
+  mode: 'off' | 'lite' | 'standard' | 'aggressive' | 'ultra';
+  lite?: {
+    collapse_whitespace: boolean;
+    replace_image_urls: boolean;
+    remove_redundant_content: boolean;
+    dedup_system_prompt: boolean;
+  };
+}
+
+export interface CacheStats {
+  hits: number;
+  misses: number;
+  size: number;
+  hit_rate: number;
+}
+
+export interface CompressionPreviewRequest {
+  body: string;
+  mode: string;
+}
+
+export interface CompressionPreviewResult {
+  compressed: string;
+  original_tokens: number;
+  compressed_tokens: number;
+  savings_percent: number;
+  techniques_used: string[];
+}
+
+export const compressionApi = {
+  getSettings: () => fetchApi<CompressionSettings>('/settings/compression'),
+  updateSettings: (data: Partial<CompressionSettings>) =>
+    fetchApi<CompressionSettings>('/settings/compression', { method: 'PUT', body: JSON.stringify(data) }),
+  preview: (data: CompressionPreviewRequest) =>
+    fetchApi<CompressionPreviewResult>('/context/preview', { method: 'POST', body: JSON.stringify(data) }),
+};
+
+export const cacheApi = {
+  stats: () => fetchApi<CacheStats>('/cache/stats'),
+  flush: () => fetchApi<{ flushed: boolean }>('/cache/flush', { method: 'POST' }),
+};

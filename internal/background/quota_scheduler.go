@@ -153,6 +153,9 @@ func (qs *QuotaSchedulerDB) check() {
 	qs.store.RangeByConnID(func(connID string, cs *connstate.ConnectionState) bool {
 		if cs.CooldownUntil != nil && now.After(*cs.CooldownUntil) {
 			cs.SetStatus(connstate.StatusReady, "")
+			if qs.exhaustion != nil {
+				qs.exhaustion.Clear(connID)
+			}
 			recovered++
 		}
 		return true
@@ -176,6 +179,9 @@ func (qs *QuotaSchedulerDB) check() {
 		for _, id := range toRecover {
 			qs.db.Exec(`UPDATE connections SET status = 'ready', cooldown_until = NULL, updated_at = ? WHERE id = ?`,
 				now.Unix(), id)
+			if qs.exhaustion != nil {
+				qs.exhaustion.Clear(id)
+			}
 		}
 		recovered += len(toRecover)
 	}
@@ -209,7 +215,7 @@ func (qs *QuotaSchedulerDB) checkQuotas() {
 	statusChanged := false
 	for _, provider := range results {
 		for _, conn := range provider.Connections {
-			quota.UpdateConnectionQuotaStatus(qs.db, qs.store, conn.ConnectionID, conn.Quotas, conn.Error, &statusChanged)
+			quota.UpdateConnectionQuotaStatus(qs.db, qs.store, qs.exhaustion, conn.ConnectionID, conn.Quotas, conn.Error, &statusChanged)
 		}
 	}
 

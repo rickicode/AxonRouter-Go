@@ -319,6 +319,15 @@ func (b *BaseExecutor) DoRequest(ctx context.Context, method, rawURL string, hea
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 
+	if resp.StatusCode >= 400 {
+		logging.Logger.Error("upstream error response",
+			"request_id", RequestIDFromContext(ctx),
+			"status", resp.StatusCode,
+			"url", targetURL,
+			"body", string(respBody),
+		)
+	}
+
 	return &Response{
 		StatusCode: resp.StatusCode,
 		Headers:    resp.Header,
@@ -416,6 +425,12 @@ func (b *BaseExecutor) DoStreamRequestWithConfig(ctx context.Context, method, ra
 		defer resp.Body.Close()
 		errBody, _ := io.ReadAll(resp.Body)
 		fetchCancel()
+		logging.Logger.Error("upstream error response",
+			"request_id", RequestIDFromContext(ctx),
+			"status", resp.StatusCode,
+			"host", logHost,
+			"body", string(errBody),
+		)
 		return nil, fmt.Errorf("stream error %d: %s", resp.StatusCode, string(errBody))
 	}
 

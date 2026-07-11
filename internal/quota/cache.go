@@ -240,7 +240,9 @@ func buildCacheWhere(providerID, search, status string) (string, []any) {
 
 // UpdateConnectionQuotaStatus updates connection status in DB + connstate
 // based on quota data. Called by the background scheduler.
-func UpdateConnectionQuotaStatus(db *sql.DB, store *connstate.Store, connID string, quotas []QuotaItem, connError string, changed *bool) {
+// When a connection transitions to "ready", its ExhaustionCache entry is cleared
+// so routing picks it up immediately instead of waiting for the TTL to expire.
+func UpdateConnectionQuotaStatus(db *sql.DB, store *connstate.Store, exhaustion *ExhaustionCache, connID string, quotas []QuotaItem, connError string, changed *bool) {
 	newStatus := "ready"
 	if connError != "" {
 		return // don't change status on fetch errors
@@ -287,6 +289,12 @@ func UpdateConnectionQuotaStatus(db *sql.DB, store *connstate.Store, connID stri
 	if cs := store.Get(connID); cs != nil {
 		cs.SetStatus(connstate.Status(newStatus), "")
 	}
+
+	// Clear exhaustion cache when connection recovers so routing picks it up immediately
+	if newStatus == "ready" && exhaustion != nil {
+		exhaustion.Clear(connID)
+	}
+
 	*changed = true
 	log.Printf("quota: connection %s status: %s → %s", connID, currentStatus, newStatus)
 }

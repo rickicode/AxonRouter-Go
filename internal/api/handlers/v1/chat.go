@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
+	"github.com/rickicode/AxonRouter-Go/internal/compression"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
@@ -26,11 +28,19 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
+	// Apply compression (fail-open)
+	if h.compressionStrategy.Mode != compression.ModeOff {
+		compressed, _, _ := compression.Apply(h.compressionStrategy, body)
+		body = compressed
+	}
+
 	model := executor.JSONGet(body, "model")
 	if model == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "model is required", "type": "invalid_request_error"}})
 		return
 	}
+
+	stream := executor.IsStreamRequest(body)
 
 	// Combo-first routing
 	if comboResult, ok := h.combo.Resolve(model); ok {
@@ -45,6 +55,19 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
+	// Cache check (exact match, non-stream, no tools)
+	var cacheKey string
+	if !stream && h.exactCache != nil && !compression.HasTools(body) {
+		cacheKey = cache.ComputeKey(body, model)
+		if entry, ok := h.exactCache.Get(cacheKey); ok {
+			c.Header("Content-Type", entry.ContentType)
+			c.Header("X-Cache-Status", "HIT")
+			c.Status(entry.StatusCode)
+			c.Writer.Write(entry.Body)
+			return
+		}
+	}
+
 	// Replace model with unprefixed name
 	body = executor.JSONSet(body, "model", modelName)
 
@@ -54,123 +77,132 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
-	if err != nil {
-		logging.Logger.Info("chat: get connection failed", "err", err.Error())
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
-		return
-	}
-	// Parse provider-specific data early for logs + executor (e.g., Antigravity projectId)
-	var psdMap map[string]string
-	if conn.ProviderSpecificData != "" {
-		json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap)
-	}
-
-	// Compact route log: one line with all essential info
-	logArgs := []any{"model", model, "provider", provider, "conn", conn.ID[:8], "name", conn.Name}
-	if accountID := psdMap["accountId"]; accountID != "" {
-		logArgs = append(logArgs, "account_id", accountID)
-	}
-	logging.Logger.Info("route", logArgs...)
-
-	// Proactive token refresh (matches OmniRoute checkAndRefreshToken)
-	h.proactiveRefreshToken(c.Request.Context(), conn, provider)
-
-	clientFormat := executor.FormatOpenAI // /v1/chat/completions is OpenAI format
-	stream := executor.IsStreamRequest(body)
+	// Connection failover loop: try up to 3 connections before giving up.
+	// On each failure, mark the connection exhausted/cooldown and update eligibility
+	// so the next getConnection call picks a different connection.
+	clientFormat := executor.FormatOpenAI
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
 
-	// psdMap is already parsed above for route logging and is reused below
+	maxAttempts := 3
+	for attempt := range maxAttempts {
+		conn, err := h.getConnection(c.Request.Context(), provider, modelName)
+		if err != nil {
+			if attempt == 0 {
+				logging.Logger.Info("chat: get connection failed", "err", err.Error())
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
+				return
+			}
+			break // tried some connections, all failed
+		}
 
-	req := &executor.Request{
-		Model:                modelName,
-		Body:                 translatedBody,
-		Stream:               stream,
-		APIKey:               conn.APIKey,
-		AccessToken:          conn.AccessToken,
-		BaseURL:              conn.BaseURL,
-		Provider:             provider,
-		ProviderSpecificData: psdMap,
-	}
+		// Parse provider-specific data
+		var psdMap map[string]string
+		if conn.ProviderSpecificData != "" {
+			json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap)
+		}
 
-	proxyCtx := h.proxyContext(c.Request.Context(), conn)
+		logArgs := []any{"model", model, "provider", provider, "conn", conn.ID[:8], "name", conn.Name, "attempt", attempt + 1}
+		if accountID := psdMap["accountId"]; accountID != "" {
+			logArgs = append(logArgs, "account_id", accountID)
+		}
+		logging.Logger.Info("route", logArgs...)
 
-	// Execute with reactive 401/403 retry (3 attempts, linear backoff)
-	var resp *executor.Response
-	var streamResult *executor.StreamResult
+		h.proactiveRefreshToken(c.Request.Context(), conn, provider)
 
-	resp, streamResult, err = h.executeWithRetry(proxyCtx, exec, req, conn, provider, modelName)
+		req := &executor.Request{
+			Model:                modelName,
+			Body:                 translatedBody,
+			Stream:               stream,
+			APIKey:               conn.APIKey,
+			AccessToken:          conn.AccessToken,
+			BaseURL:              conn.BaseURL,
+			Provider:             provider,
+			ProviderSpecificData: psdMap,
+		}
 
-	latency := time.Since(start).Milliseconds()
+		proxyCtx := h.proxyContext(c.Request.Context(), conn)
+		resp, streamResult, err := h.executeDirect(proxyCtx, exec, req)
+		latency := time.Since(start).Milliseconds()
 
-	// Parse rate limit headers from response
-	if resp != nil {
-		connstate.ParseRateLimitHeaders(resp.Headers, h.store, conn.ID, modelName)
-	}
-	if streamResult != nil {
-		connstate.ParseRateLimitHeaders(streamResult.Headers, h.store, conn.ID, modelName)
-	}
+		if resp != nil {
+			connstate.ParseRateLimitHeaders(resp.Headers, h.store, conn.ID, modelName)
+		}
+		if streamResult != nil {
+			connstate.ParseRateLimitHeaders(streamResult.Headers, h.store, conn.ID, modelName)
+		}
 
-	// Handle errors
-	if err != nil {
-		det := connstate.DetectError(0, "", err, provider, modelName, nil)
-		// Mark connection exhausted on 429 rate limit (OmniRoute markAccountExhaustedFrom429)
+		if err != nil {
+			det := connstate.DetectError(0, "", err, provider, modelName, nil)
 		if det.Category == connstate.ErrorRateLimit {
-			h.exhaustion.MarkExhausted(conn.ID, quota.DefaultExhaustionTTL)
+				h.exhaustion.MarkExhausted(conn.ID, quota.DefaultExhaustionTTL)
+			} else if det.Category == connstate.ErrorQuota && det.CooldownUntil != nil {
+				h.exhaustion.MarkExhausted(conn.ID, time.Until(*det.CooldownUntil))
+			}
+			h.combo.RecordFailure(conn.ID, det)
+			h.persistCooldown(conn.ID, det)
+			h.elig.Update(h.store) // refresh so next getConnection skips this conn
+			h.checkAutoDisable(conn.ID, provider)
+
+			logging.Logger.Error("upstream error, trying next connection",
+				"provider", provider,
+				"conn", conn.ID[:8],
+				"model", modelName,
+				"error", det.Category,
+				"detail", err.Error(),
+				"attempt", attempt+1,
+			)
+
+			h.tracker.Log(&usage.LogEntry{
+				ConnectionID:   conn.ID,
+				ProviderTypeID: provider,
+				ModelID:        modelName,
+				Modality:       "chat",
+				LatencyMs:      latency,
+				ErrorMessage:   err.Error(),
+			})
+			continue // try next connection
 		}
-		h.combo.RecordFailure(conn.ID, det)
-		h.persistCooldown(conn.ID, det)
-		// Refresh eligibility only when connection becomes non-eligible
-		if det.Status != connstate.StatusReady {
-			h.elig.Update(h.store)
+
+		// Success
+		h.resetBanCount(conn.ID)
+		h.combo.RecordSuccess(conn.ID)
+		h.elig.Update(h.store)
+
+		if req.Stream {
+			h.handleStreamResponse(c, streamResult, conn, provider, modelName, start, translatedBody, body)
+		} else {
+			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
+			tokenCounts := ExtractTokensFromBody(translatedResp)
+			h.tracker.Log(&usage.LogEntry{
+				ConnectionID:    conn.ID,
+				ProviderTypeID: provider,
+				ModelID:         modelName,
+				Modality:        "chat",
+				InputTokens:     tokenCounts.InputTokens,
+				OutputTokens:    tokenCounts.OutputTokens,
+				ReasoningTokens: tokenCounts.ReasoningTokens,
+				CachedTokens:    tokenCounts.CachedTokens,
+				LatencyMs:       latency,
+				StatusCode:      resp.StatusCode,
+			})
+			// Cache store
+			if cacheKey != "" && h.exactCache != nil {
+				h.exactCache.Set(cacheKey, cache.CacheEntry{
+					Body:        translatedResp,
+					StatusCode:  resp.StatusCode,
+					ContentType: "application/json",
+				})
+			}
+			c.Header("Content-Type", "application/json")
+			c.Header("X-Cache-Status", "MISS")
+			c.Status(resp.StatusCode)
+			c.Writer.Write(translatedResp)
 		}
-
-		// Auto-disable banned accounts (auth/quota/balance failures)
-		h.checkAutoDisable(conn.ID, provider)
-
-		h.tracker.Log(&usage.LogEntry{
-			ConnectionID:   conn.ID,
-			ProviderTypeID: provider,
-			ModelID:        modelName,
-			Modality:       "chat",
-			LatencyMs:      latency,
-			ErrorMessage:   err.Error(),
-		})
-
-		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
 		return
 	}
 
-	// Record success (reset ban count BEFORE RecordSuccess which zeros in-memory BanCount)
-	h.resetBanCount(conn.ID)
-	h.combo.RecordSuccess(conn.ID)
-	h.elig.Update(h.store) // refresh eligibility after success
-
-	if req.Stream {
-		h.handleStreamResponse(c, streamResult, conn, provider, modelName, start, translatedBody, body)
-	} else {
-		// Translate response (provider format → client format)
-		translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
-
-		// Extract token counts from translated response (OpenAI format)
-		tokenCounts := ExtractTokensFromBody(translatedResp)
-		h.tracker.Log(&usage.LogEntry{
-			ConnectionID:    conn.ID,
-			ProviderTypeID:  provider,
-			ModelID:         modelName,
-			Modality:        "chat",
-			InputTokens:     tokenCounts.InputTokens,
-			OutputTokens:    tokenCounts.OutputTokens,
-			ReasoningTokens: tokenCounts.ReasoningTokens,
-			CachedTokens:    tokenCounts.CachedTokens,
-			LatencyMs:       latency,
-			StatusCode:      resp.StatusCode,
-		})
-
-		c.Header("Content-Type", "application/json")
-		c.Status(resp.StatusCode)
-		c.Writer.Write(translatedResp)
-	}
+	// All connections exhausted or failing
+	c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "all connections exhausted or failing for provider: " + provider, "type": "server_error"}})
 }
 
 // handleComboRequest handles a request that matched a combo.
@@ -219,7 +251,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 		}
 
 		proxyCtx := h.proxyContext(comboCtx, conn)
-		resp, streamResult, err := h.executeWithRetry(proxyCtx, exec, req, conn, provider, modelName)
+		resp, streamResult, err := h.executeDirect(proxyCtx, exec, req)
 		latency := time.Since(start).Milliseconds()
 
 		if err != nil {

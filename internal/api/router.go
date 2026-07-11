@@ -18,7 +18,10 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/auth/codex"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/kiro"
 	"github.com/rickicode/AxonRouter-Go/internal/background"
+	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
+	"github.com/rickicode/AxonRouter-Go/internal/compression"
+	_ "github.com/rickicode/AxonRouter-Go/internal/compression/engines/caveman"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
@@ -105,6 +108,19 @@ func New(cfg Config) *Router {
 	// Auto-migrate raw API keys to bcrypt
 	db.MigrateRawKeysToBcrypt(cfg.DB)
 
+	// Compression & cache setup
+	modeStr := db.GetSetting("compression_mode", "lite")
+	compStrategy := compression.Strategy{
+		Mode: compression.CompressionMode(modeStr),
+		Lite: compression.LiteConfig{
+			CollapseWhitespace:     db.GetSetting("compression_lite_collapse", "true") == "true",
+			ReplaceImageUrls:       db.GetSetting("compression_lite_image_urls", "true") == "true",
+			RemoveRedundantContent: db.GetSetting("compression_lite_redundant", "false") == "true",
+			DedupSystemPrompt:      db.GetSetting("compression_lite_dedup", "false") == "true",
+		},
+	}
+	exactCache := cache.NewExactCache(1000)
+
 	comboH := admin.NewComboHandler(cfg.DB, comboHandler)
 	logH := admin.NewLogHandler(cfg.DB)
 	settingH := settingHandler
@@ -113,9 +129,10 @@ func New(cfg Config) *Router {
 	proxyPoolH := admin.NewProxyPoolHandler(cfg.DB, proxyHealth)
 	proxyGroupH := admin.NewProxyGroupHandler(cfg.DB)
 	proxyDeployH := admin.NewProxyDeployHandler(cfg.DB, proxyHealth)
+	contextH := admin.NewContextHandler(cfg.DB, exactCache)
 
 	// Create v1 handler with all dependencies
-	v1H := v1.NewHandler(cfg.DB, store, elig, comboHandler, tracker, authManager, proxyResolver, exhaustionCache)
+	v1H := v1.NewHandler(cfg.DB, store, elig, comboHandler, tracker, authManager, proxyResolver, exhaustionCache, compStrategy, exactCache)
 
 	// Create Gin engine
 	engine := gin.New()
@@ -264,6 +281,13 @@ func New(cfg Config) *Router {
 	adminGroup.POST("/api-keys", apiKeyH.Create)
 	adminGroup.DELETE("/api-keys/:id", apiKeyH.Delete)
 	adminGroup.PATCH("/api-keys/:id/toggle", apiKeyH.ToggleActive)
+
+	// Compression & Cache
+	adminGroup.GET("/settings/compression", contextH.GetCompressionSettings)
+	adminGroup.PUT("/settings/compression", contextH.UpdateCompressionSettings)
+	adminGroup.GET("/cache/stats", contextH.GetCacheStats)
+	adminGroup.POST("/cache/flush", contextH.FlushCache)
+	adminGroup.POST("/context/preview", contextH.PreviewCompression)
 
 	// ---- Static frontend (SPA) ----
 	fsys := web.GetBuildFS()

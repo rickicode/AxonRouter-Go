@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
@@ -51,105 +52,118 @@ func (h *Handler) Responses(c *gin.Context) {
 
 	body = executor.JSONSet(body, "model", modelName)
 
-	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
-	if err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
-		return
-	}
-
-	// Proactive token refresh
-	h.proactiveRefreshToken(c.Request.Context(), conn, provider)
-
-	// Translate request (OpenAI Responses format → provider format)
+	// Connection failover loop: try up to 3 connections, no retry with same account.
 	clientFormat := executor.FormatOpenAIResponses
 	stream := executor.IsStreamRequest(body)
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
 
-	req := &executor.Request{
-		Model:       modelName,
-		Body:        translatedBody,
-		Stream:      stream,
-		APIKey:      conn.APIKey,
-		AccessToken: conn.AccessToken,
-		BaseURL:     conn.BaseURL,
-		Provider:    provider,
-	}
-
-	proxyCtx := h.proxyContext(c.Request.Context(), conn)
-
-	// Use OpenAI Responses-specific methods for codex format
-	if providerFormat == executor.FormatOpenAIResponses {
-		h.handleResponsesFormat(c, exec, req, provider, conn, start, translatedBody, body)
-		return
-	}
-
-	// Execute with reactive 401/403 retry (3 attempts, linear backoff)
-	var resp *executor.Response
-	var streamResult *executor.StreamResult
-
-	resp, streamResult, err = h.executeWithRetry(proxyCtx, exec, req, conn, provider, modelName)
-
-	latency := time.Since(start).Milliseconds()
-
-	// Parse rate limit headers from response
-	if resp != nil {
-		connstate.ParseRateLimitHeaders(resp.Headers, h.store, conn.ID, modelName)
-	}
-	if streamResult != nil {
-		connstate.ParseRateLimitHeaders(streamResult.Headers, h.store, conn.ID, modelName)
-	}
-
-	if err != nil {
-		det := connstate.DetectError(0, "", err, provider, modelName, nil)
-		if det.Category == connstate.ErrorRateLimit {
-			h.exhaustion.MarkExhausted(conn.ID, quota.DefaultExhaustionTTL)
+	maxAttempts := 3
+	for attempt := range maxAttempts {
+		conn, err := h.getConnection(c.Request.Context(), provider, modelName)
+		if err != nil {
+			if attempt == 0 {
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
+				return
+			}
+			break
 		}
-		h.combo.RecordFailure(conn.ID, det)
-		h.persistCooldown(conn.ID, det)
-		if det.Status != connstate.StatusReady {
+
+		h.proactiveRefreshToken(c.Request.Context(), conn, provider)
+
+		req := &executor.Request{
+			Model:       modelName,
+			Body:        translatedBody,
+			Stream:      stream,
+			APIKey:      conn.APIKey,
+			AccessToken: conn.AccessToken,
+			BaseURL:     conn.BaseURL,
+			Provider:    provider,
+		}
+
+		// Use OpenAI Responses-specific methods for codex format
+		if providerFormat == executor.FormatOpenAIResponses {
+			h.handleResponsesFormat(c, exec, req, provider, conn, start, translatedBody, body)
+			return
+		}
+
+		proxyCtx := h.proxyContext(c.Request.Context(), conn)
+		var resp *executor.Response
+		var streamResult *executor.StreamResult
+		if stream {
+			streamResult, err = exec.ExecuteStream(proxyCtx, req)
+		} else {
+			resp, err = exec.Execute(proxyCtx, req)
+		}
+		latency := time.Since(start).Milliseconds()
+
+		if resp != nil {
+			connstate.ParseRateLimitHeaders(resp.Headers, h.store, conn.ID, modelName)
+		}
+		if streamResult != nil {
+			connstate.ParseRateLimitHeaders(streamResult.Headers, h.store, conn.ID, modelName)
+		}
+
+		if err != nil {
+			det := connstate.DetectError(0, "", err, provider, modelName, nil)
+			if det.Category == connstate.ErrorRateLimit {
+				h.exhaustion.MarkExhausted(conn.ID, quota.DefaultExhaustionTTL)
+			} else if det.Category == connstate.ErrorQuota && det.CooldownUntil != nil {
+				h.exhaustion.MarkExhausted(conn.ID, time.Until(*det.CooldownUntil))
+			}
+			h.combo.RecordFailure(conn.ID, det)
+			h.persistCooldown(conn.ID, det)
 			h.elig.Update(h.store)
+			h.checkAutoDisable(conn.ID, provider)
+
+			logging.Logger.Error("upstream error, trying next connection",
+				"provider", provider,
+				"conn", conn.ID[:8],
+				"model", modelName,
+				"error", det.Category,
+				"detail", err.Error(),
+				"attempt", attempt+1,
+			)
+
+			h.tracker.Log(&usage.LogEntry{
+				ConnectionID:   conn.ID,
+				ProviderTypeID: provider,
+				ModelID:        modelName,
+				Modality:        "chat",
+				LatencyMs:       latency,
+				ErrorMessage:   err.Error(),
+			})
+			continue // immediately try next connection, no same-account retry
 		}
 
-		h.tracker.Log(&usage.LogEntry{
-			ConnectionID:   conn.ID,
-			ProviderTypeID: provider,
-			ModelID:        modelName,
-			Modality:       "chat",
-			LatencyMs:      latency,
-			ErrorMessage:   err.Error(),
-		})
+		h.resetBanCount(conn.ID)
+		h.combo.RecordSuccess(conn.ID)
+		h.elig.Update(h.store)
 
-		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
+		if req.Stream {
+			h.handleStreamResponse(c, streamResult, conn, provider, modelName, start, translatedBody, body)
+		} else {
+			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
+			tokenCounts := ExtractTokensFromBody(translatedResp)
+			h.tracker.Log(&usage.LogEntry{
+				ConnectionID:    conn.ID,
+				ProviderTypeID:  provider,
+				ModelID:         modelName,
+				Modality:        "chat",
+				InputTokens:     tokenCounts.InputTokens,
+				OutputTokens:    tokenCounts.OutputTokens,
+				ReasoningTokens: tokenCounts.ReasoningTokens,
+				CachedTokens:    tokenCounts.CachedTokens,
+				LatencyMs:       latency,
+				StatusCode:      resp.StatusCode,
+			})
+			c.Header("Content-Type", "application/json")
+			c.Status(resp.StatusCode)
+			c.Writer.Write(translatedResp)
+		}
 		return
 	}
 
-	h.resetBanCount(conn.ID)
-	h.combo.RecordSuccess(conn.ID)
-	h.elig.Update(h.store) // refresh eligibility after success
-
-	if req.Stream {
-		h.handleStreamResponse(c, streamResult, conn, provider, modelName, start, translatedBody, body)
-	} else {
-		translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
-
-		tokenCounts := ExtractTokensFromBody(translatedResp)
-		h.tracker.Log(&usage.LogEntry{
-			ConnectionID:    conn.ID,
-			ProviderTypeID:  provider,
-			ModelID:         modelName,
-			Modality:        "chat",
-			InputTokens:     tokenCounts.InputTokens,
-			OutputTokens:    tokenCounts.OutputTokens,
-			ReasoningTokens: tokenCounts.ReasoningTokens,
-			CachedTokens:    tokenCounts.CachedTokens,
-			LatencyMs:       latency,
-			StatusCode:      resp.StatusCode,
-		})
-
-		c.Header("Content-Type", "application/json")
-		c.Status(resp.StatusCode)
-		c.Writer.Write(translatedResp)
-	}
+	c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "all connections exhausted or failing for provider: " + provider, "type": "server_error"}})
 }
 
 // handleResponsesFormat handles OpenAI Responses API format.

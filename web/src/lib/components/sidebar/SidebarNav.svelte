@@ -10,6 +10,7 @@
     Gauge,
     Globe,
     Key,
+    MessageSquare,
   } from '@lucide/svelte';
 
   let { onclose }: { onclose?: () => void } = $props();
@@ -19,6 +20,7 @@
     { href: '/providers', label: 'Providers', icon: Server },
     { href: '/combos', label: 'Combos', icon: Layers },
     { href: '/quota', label: 'Quota', icon: Gauge },
+    { href: '/context', label: 'Context & Cache', icon: MessageSquare },
     { href: '/logs', label: 'Logs', icon: Terminal },
   ];
 

@@ -85,15 +85,20 @@ func (h *SettingHandler) Delete(c *gin.Context) {
 
 // DefaultSettings returns the default settings with their values.
 var DefaultSettings = map[string]string{
-	"quota_check_interval_min":    "30",
-	"port":                          "3777",
-	"rate_limit_per_min":            "600",
-	"log_retention_days":            "30",
-	"max_concurrent_requests":       "100",
-	"request_timeout_sec":           "120",
-	"circuit_breaker_threshold":     "3",
-	"circuit_breaker_timeout_sec":   "60",
-	"log_format":                    "text",
+	"quota_check_interval_min":       "30",
+	"port":                           "3777",
+	"rate_limit_per_min":             "600",
+	"log_retention_days":             "30",
+	"max_concurrent_requests":        "100",
+	"request_timeout_sec":            "120",
+	"circuit_breaker_threshold":      "3",
+	"circuit_breaker_timeout_sec":    "60",
+	"log_format":                     "text",
+	"compression_mode":               "lite",
+	"compression_lite_collapse":      "true",
+	"compression_lite_image_urls":  "true",
+	"compression_lite_redundant":   "false",
+	"compression_lite_dedup":       "false",
 }
 
 // SeedDefaults inserts default settings if they don't exist.
