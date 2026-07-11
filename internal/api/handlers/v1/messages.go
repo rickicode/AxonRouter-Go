@@ -9,7 +9,6 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
-	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
@@ -17,13 +16,11 @@ import (
 // Messages handles POST /v1/messages (Anthropic format)
 func (h *Handler) Messages(c *gin.Context) {
 	start := time.Now()
-
 	body, err := readBody(c)
 	if err != nil {
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": gin.H{"message": err.Error(), "type": "invalid_request_error"}})
+		c.JSON(http.StatusRequestEntityTooLarge, claudeError("invalid_request_error", err.Error()))
 		return
 	}
-
 	model := executor.JSONGet(body, "model")
 	if model == "" {
 		c.JSON(http.StatusBadRequest, claudeError("invalid_request_error", "model is required"))
@@ -39,28 +36,23 @@ func (h *Handler) Messages(c *gin.Context) {
 	// Direct routing
 	provider, modelName := executor.SplitModel(model)
 	if provider == "" {
-		// Default to claude if no prefix
 		provider = "claude"
 		modelName = model
 	}
-
 	exec, providerFormat, err := h.resolveExecutor(provider, modelName)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, claudeError("invalid_request_error", err.Error()))
 		return
 	}
-
-	// Replace model with unprefixed name
 	body = executor.JSONSet(body, "model", modelName)
 
 	// Connection failover loop: try up to 3 connections before giving up.
 	clientFormat := executor.FormatClaude
 	stream := executor.IsStreamRequest(body)
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
-
 	maxAttempts := 3
+	var lastConn *Connection
 	for attempt := range maxAttempts {
-		// Client disconnected — context is dead, no point trying next connection
 		if c.Request.Context().Err() != nil {
 			return
 		}
@@ -72,59 +64,39 @@ func (h *Handler) Messages(c *gin.Context) {
 			}
 			break
 		}
+		lastConn = conn
 
 		h.proactiveRefreshToken(c.Request.Context(), conn, provider)
 
+		psdMap := map[string]string{}
+		if conn.ProviderSpecificData != "" {
+			if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
+				logging.Logger.Error("failed to unmarshal provider_specific_data", "conn", conn.ID[:8], "error", err.Error())
+			}
+		}
+
 		req := &executor.Request{
-			Model:       modelName,
-			Body:        translatedBody,
-			Stream:      stream,
-			APIKey:      conn.APIKey,
-			AccessToken: conn.AccessToken,
-			BaseURL:     conn.BaseURL,
-			Provider:    provider,
+			Model:                modelName,
+			Body:                 translatedBody,
+			Stream:               stream,
+			APIKey:               conn.APIKey,
+			AccessToken:          conn.AccessToken,
+			BaseURL:              conn.BaseURL,
+			Provider:             provider,
+			ProviderSpecificData: psdMap,
 		}
 
 		proxyCtx := h.proxyContext(c.Request.Context(), conn)
 		resp, streamResult, err := h.executeDirect(proxyCtx, exec, req)
 		latency := time.Since(start).Milliseconds()
-
 		if resp != nil {
 			connstate.ParseRateLimitHeaders(resp.Headers, h.store, conn.ID, modelName)
 		}
 		if streamResult != nil {
 			connstate.ParseRateLimitHeaders(streamResult.Headers, h.store, conn.ID, modelName)
 		}
-
 		if err != nil {
-			det := connstate.DetectError(0, "", err, provider, modelName, nil)
-			if det.Category == connstate.ErrorRateLimit {
-				h.exhaustion.MarkExhausted(conn.ID, quota.DefaultExhaustionTTL)
-			} else if det.Category == connstate.ErrorQuota && det.CooldownUntil != nil {
-				h.exhaustion.MarkExhausted(conn.ID, time.Until(*det.CooldownUntil))
-			}
-			h.combo.RecordFailure(conn.ID, det)
-			h.persistCooldown(conn.ID, det)
-			h.elig.Update(h.store)
-			h.checkAutoDisable(conn.ID, provider)
-
-			logging.Logger.Error("upstream error, trying next connection",
-				"provider", provider,
-				"conn", conn.ID[:8],
-				"model", modelName,
-				"error", det.Category,
-				"detail", err.Error(),
-				"attempt", attempt+1,
-			)
-
-			h.tracker.Log(&usage.LogEntry{
-				ConnectionID:   conn.ID,
-				ProviderTypeID: provider,
-				ModelID:        modelName,
-				Modality:        "chat",
-				LatencyMs:       latency,
-				ErrorMessage:   err.Error(),
-			})
+			h.handleFailoverError(conn, provider, modelName, err, attempt, latency)
 			continue
 		}
 
@@ -156,7 +128,13 @@ func (h *Handler) Messages(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusServiceUnavailable, claudeError("server_error", "all connections exhausted or failing for provider: "+provider))
+	msg := "all connections exhausted or failing"
+	detail := gin.H{"provider": provider, "model": modelName}
+	if lastConn != nil {
+		detail["name"] = lastConn.Name
+	}
+	logging.Logger.Error("all connections exhausted", "provider", provider, "model", modelName, "detail", detail)
+	c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": msg, "type": "server_error", "detail": detail}})
 }
 
 // handleClaudeNonStreamResponse handles non-streaming Claude responses.
@@ -166,7 +144,6 @@ func (h *Handler) handleClaudeNonStreamResponse(c *gin.Context, exec executor.Ex
 		c.JSON(http.StatusBadGateway, claudeError("server_error", err.Error()))
 		return
 	}
-
 	c.Header("Content-Type", "application/json")
 	c.Status(resp.StatusCode)
 	c.Writer.Write(resp.Body)
@@ -189,33 +166,27 @@ func (h *Handler) CountTokens(c *gin.Context) {
 		c.JSON(http.StatusRequestEntityTooLarge, claudeError("invalid_request_error", err.Error()))
 		return
 	}
-
 	model := executor.JSONGet(body, "model")
 	if model == "" {
 		c.JSON(http.StatusBadRequest, claudeError("invalid_request_error", "model is required"))
 		return
 	}
-
 	provider, modelName := executor.SplitModel(model)
 	if provider == "" {
 		provider = "claude"
 		modelName = model
 	}
-
 	exec, _, err := h.resolveExecutor(provider, modelName)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, claudeError("invalid_request_error", err.Error()))
 		return
 	}
-
 	body = executor.JSONSet(body, "model", modelName)
-
 	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, claudeError("server_error", "no available connection"))
 		return
 	}
-
 	req := &executor.Request{
 		Model:       modelName,
 		Body:        body,
@@ -224,8 +195,6 @@ func (h *Handler) CountTokens(c *gin.Context) {
 		BaseURL:     conn.BaseURL,
 		Provider:    provider,
 	}
-
-	// Use Claude executor's CountTokens method
 	if claudeExec, ok := exec.(*executor.ClaudeExecutor); ok {
 		proxyCtx := h.proxyContext(c.Request.Context(), conn)
 		resp, err := claudeExec.CountTokens(proxyCtx, req)
@@ -238,7 +207,6 @@ func (h *Handler) CountTokens(c *gin.Context) {
 		c.Writer.Write(resp.Body)
 		return
 	}
-
 	c.JSON(http.StatusBadRequest, claudeError("invalid_request_error", "token counting only supported for Claude models"))
 }
 

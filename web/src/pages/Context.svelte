@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import * as Tabs from '$lib/components/ui/tabs';
-  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
+  import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Label } from '$lib/components/ui/label';
+  import { Input } from '$lib/components/ui/input';
   import { Textarea } from '$lib/components/ui/textarea';
   import { Switch } from '$lib/components/ui/switch';
   import * as Select from '$lib/components/ui/select';
@@ -16,8 +16,15 @@
   let cacheStats = $state<CacheStats>({ hits: 0, misses: 0, size: 0, hit_rate: 0 });
   let previewBody = $state('');
   let previewResult = $state<CompressionPreviewResult | null>(null);
-  let activeTab = $state('compression');
+  let activeTab = $state<'compression' | 'cache'>('compression');
   let loading = $state(false);
+  let saving = $state(false);
+
+  // Local lite config state — clean, no getter/setter hacks
+  let liteCollapse = $state(true);
+  let liteImageUrls = $state(true);
+  let liteRedundant = $state(false);
+  let liteDedup = $state(false);
 
   onMount(async () => {
     document.title = 'Context & Cache — AxonRouter';
@@ -27,25 +34,38 @@
   async function loadCompression() {
     try {
       compression = await compressionApi.getSettings();
-    } catch {
-      // keep defaults
-    }
+      if (compression.lite) {
+        liteCollapse = compression.lite.collapse_whitespace ?? true;
+        liteImageUrls = compression.lite.replace_image_urls ?? true;
+        liteRedundant = compression.lite.remove_redundant_content ?? false;
+        liteDedup = compression.lite.dedup_system_prompt ?? false;
+      }
+    } catch { /* keep defaults */ }
   }
 
   async function loadCacheStats() {
     try {
       cacheStats = await cacheApi.stats();
-    } catch {
-      // keep defaults
-    }
+    } catch { /* keep defaults */ }
   }
 
   async function saveCompression() {
+    saving = true;
     try {
-      compression = await compressionApi.updateSettings(compression);
+      compression = await compressionApi.updateSettings({
+        mode: compression.mode,
+        lite: {
+          collapse_whitespace: liteCollapse,
+          replace_image_urls: liteImageUrls,
+          remove_redundant_content: liteRedundant,
+          dedup_system_prompt: liteDedup,
+        },
+      });
       toast.success('Compression settings saved');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to save');
+    } finally {
+      saving = false;
     }
   }
 
@@ -78,78 +98,99 @@
     { value: 'off', label: 'Off' },
     { value: 'lite', label: 'Lite' },
     { value: 'standard', label: 'Standard' },
-    { value: 'aggressive', label: 'Aggressive', disabled: true },
-    { value: 'ultra', label: 'Ultra', disabled: true },
   ];
 </script>
 
-<div class="space-y-6">
-  <h1 class="text-2xl font-bold tracking-tight">Context & Cache</h1>
+<div class="flex flex-1 flex-col gap-6 p-6">
+  <div class="space-y-1">
+    <h1 class="text-display-lg">Context & Cache</h1>
+    <p class="text-body-sm text-muted-foreground">
+      Configure request compression and response caching for token savings.
+    </p>
+  </div>
 
-  <Tabs.Root bind:value={activeTab}>
-    <Tabs.List class="grid w-full grid-cols-2">
-      <Tabs.Trigger value="compression">Compression</Tabs.Trigger>
-      <Tabs.Trigger value="cache">Cache</Tabs.Trigger>
-    </Tabs.List>
+  <!-- Tab Switcher — simple buttons, no component dependency -->
+  <div class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-1">
+    <button
+      class="rounded-md px-4 py-1.5 text-sm font-medium transition-all {activeTab === 'compression'
+        ? 'bg-background text-foreground shadow-sm'
+        : 'text-muted-foreground hover:text-foreground'}"
+      onclick={() => (activeTab = 'compression')}
+    >
+      Compression
+    </button>
+    <button
+      class="rounded-md px-4 py-1.5 text-sm font-medium transition-all {activeTab === 'cache'
+        ? 'bg-background text-foreground shadow-sm'
+        : 'text-muted-foreground hover:text-foreground'}"
+      onclick={() => (activeTab = 'cache')}
+    >
+      Cache
+    </button>
+  </div>
 
+  {#if activeTab === 'compression'}
     <!-- Compression Tab -->
-    <Tabs.Content value="compression" class="space-y-4 mt-4">
-      <Card>
-        <CardHeader>
+    <div class="space-y-4">
+      <Card class="shadow-card">
+        <CardHeader class="pb-3">
           <CardTitle class="text-base">Compression Mode</CardTitle>
+          <CardDescription class="text-xs">
+            Lite strips whitespace and image data URLs. Standard adds Caveman rule-based prose condensation.
+          </CardDescription>
         </CardHeader>
         <CardContent class="space-y-4">
           <div class="grid gap-2">
             <Label for="mode">Mode</Label>
             <Select.Root type="single" bind:value={compression.mode}>
               <Select.Trigger class="w-full">
-                {modes.find(m => m.value === compression.mode)?.label ?? 'Select mode'}
+                {modes.find((m) => m.value === compression.mode)?.label ?? 'Select mode'}
               </Select.Trigger>
               <Select.Content>
                 {#each modes as mode}
-                  <Select.Item value={mode.value} disabled={mode.disabled}>
-                    {mode.label}
-                  </Select.Item>
+                  <Select.Item value={mode.value}>{mode.label}</Select.Item>
                 {/each}
               </Select.Content>
             </Select.Root>
-            <p class="text-muted-foreground text-xs">
-              Standard uses Lite + Caveman rule-based compression. Aggressive and Ultra coming in Phase 2.
-            </p>
           </div>
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
+      <Card class="shadow-card">
+        <CardHeader class="pb-3">
           <CardTitle class="text-base">Lite Options</CardTitle>
         </CardHeader>
         <CardContent class="space-y-4">
           <div class="flex items-center justify-between">
             <Label for="collapse" class="cursor-pointer">Collapse whitespace</Label>
-            <Switch id="collapse" bind:checked={() => compression.lite?.collapse_whitespace ?? true, (v) => { compression.lite ??= { collapse_whitespace: true, replace_image_urls: true, remove_redundant_content: false, dedup_system_prompt: false }; compression.lite.collapse_whitespace = v; }} />
+            <Switch id="collapse" bind:checked={liteCollapse} />
           </div>
           <div class="flex items-center justify-between">
             <Label for="image-urls" class="cursor-pointer">Replace image data URLs</Label>
-            <Switch id="image-urls" bind:checked={() => compression.lite?.replace_image_urls ?? true, (v) => { compression.lite ??= { collapse_whitespace: true, replace_image_urls: true, remove_redundant_content: false, dedup_system_prompt: false }; compression.lite.replace_image_urls = v; }} />
+            <Switch id="image-urls" bind:checked={liteImageUrls} />
           </div>
           <div class="flex items-center justify-between">
             <Label for="redundant" class="cursor-pointer">Remove redundant content</Label>
-            <Switch id="redundant" bind:checked={() => compression.lite?.remove_redundant_content ?? false, (v) => { compression.lite ??= { collapse_whitespace: true, replace_image_urls: true, remove_redundant_content: false, dedup_system_prompt: false }; compression.lite.remove_redundant_content = v; }} />
+            <Switch id="redundant" bind:checked={liteRedundant} />
           </div>
           <div class="flex items-center justify-between">
             <Label for="dedup" class="cursor-pointer">Deduplicate system prompts</Label>
-            <Switch id="dedup" bind:checked={() => compression.lite?.dedup_system_prompt ?? false, (v) => { compression.lite ??= { collapse_whitespace: true, replace_image_urls: true, remove_redundant_content: false, dedup_system_prompt: false }; compression.lite.dedup_system_prompt = v; }} />
+            <Switch id="dedup" bind:checked={liteDedup} />
           </div>
           <div class="pt-2">
-            <Button onclick={saveCompression}>Save Settings</Button>
+            <Button onclick={saveCompression} disabled={saving}>
+              {saving ? 'Saving...' : 'Save Settings'}
+            </Button>
           </div>
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
+      <Card class="shadow-card">
+        <CardHeader class="pb-3">
           <CardTitle class="text-base">Preview</CardTitle>
+          <CardDescription class="text-xs">
+            Paste an OpenAI-style request JSON to test compression.
+          </CardDescription>
         </CardHeader>
         <CardContent class="space-y-4">
           <Textarea
@@ -189,12 +230,12 @@
           {/if}
         </CardContent>
       </Card>
-    </Tabs.Content>
-
+    </div>
+  {:else}
     <!-- Cache Tab -->
-    <Tabs.Content value="cache" class="space-y-4 mt-4">
-      <Card>
-        <CardHeader>
+    <div class="space-y-4">
+      <Card class="shadow-card">
+        <CardHeader class="pb-3">
           <CardTitle class="text-base">Cache Statistics</CardTitle>
         </CardHeader>
         <CardContent>
@@ -219,14 +260,14 @@
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
+      <Card class="shadow-card">
+        <CardHeader class="pb-3">
           <CardTitle class="text-base">Actions</CardTitle>
         </CardHeader>
         <CardContent>
           <Button variant="destructive" onclick={flushCache}>Flush Cache</Button>
         </CardContent>
       </Card>
-    </Tabs.Content>
-  </Tabs.Root>
+    </div>
+  {/if}
 </div>

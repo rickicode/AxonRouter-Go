@@ -21,7 +21,6 @@ import (
 // ChatCompletions handles POST /v1/chat/completions
 func (h *Handler) ChatCompletions(c *gin.Context) {
 	start := time.Now()
-
 	body, err := readBody(c)
 	if err != nil {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": gin.H{"message": err.Error(), "type": "invalid_request_error"}})
@@ -39,7 +38,6 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "model is required", "type": "invalid_request_error"}})
 		return
 	}
-
 	stream := executor.IsStreamRequest(body)
 
 	// Combo-first routing
@@ -82,10 +80,9 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	// so the next getConnection call picks a different connection.
 	clientFormat := executor.FormatOpenAI
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
-
 	maxAttempts := 3
+	var lastConn *Connection
 	for attempt := range maxAttempts {
-		// Client disconnected — context is dead, no point trying next connection
 		if c.Request.Context().Err() != nil {
 			return
 		}
@@ -96,15 +93,14 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 				c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
 				return
 			}
-			break // tried some connections, all failed
+			break
 		}
+		lastConn = conn
 
-		// Parse provider-specific data
 		var psdMap map[string]string
 		if conn.ProviderSpecificData != "" {
 			json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap)
 		}
-
 		logArgs := []any{"model", model, "provider", provider, "conn", conn.ID[:8], "name", conn.Name, "attempt", attempt + 1}
 		if accountID := psdMap["accountId"]; accountID != "" {
 			logArgs = append(logArgs, "account_id", accountID)
@@ -127,47 +123,17 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		proxyCtx := h.proxyContext(c.Request.Context(), conn)
 		resp, streamResult, err := h.executeDirect(proxyCtx, exec, req)
 		latency := time.Since(start).Milliseconds()
-
 		if resp != nil {
 			connstate.ParseRateLimitHeaders(resp.Headers, h.store, conn.ID, modelName)
 		}
 		if streamResult != nil {
 			connstate.ParseRateLimitHeaders(streamResult.Headers, h.store, conn.ID, modelName)
 		}
-
 		if err != nil {
-			det := connstate.DetectError(0, "", err, provider, modelName, nil)
-			if det.Category == connstate.ErrorRateLimit {
-				h.exhaustion.MarkExhausted(conn.ID, quota.DefaultExhaustionTTL)
-			} else if det.Category == connstate.ErrorQuota && det.CooldownUntil != nil {
-				h.exhaustion.MarkExhausted(conn.ID, time.Until(*det.CooldownUntil))
-			}
-			h.combo.RecordFailure(conn.ID, det)
-			h.persistCooldown(conn.ID, det)
-			h.elig.Update(h.store) // refresh so next getConnection skips this conn
-			h.checkAutoDisable(conn.ID, provider)
-
-			logging.Logger.Error("upstream error, trying next connection",
-				"provider", provider,
-				"conn", conn.ID[:8],
-				"model", modelName,
-				"error", det.Category,
-				"detail", err.Error(),
-				"attempt", attempt+1,
-			)
-
-			h.tracker.Log(&usage.LogEntry{
-				ConnectionID:   conn.ID,
-				ProviderTypeID: provider,
-				ModelID:        modelName,
-				Modality:       "chat",
-				LatencyMs:      latency,
-				ErrorMessage:   err.Error(),
-			})
-			continue // try next connection
+			h.handleFailoverError(conn, provider, modelName, err, attempt, latency)
+			continue
 		}
 
-		// Success
 		h.resetBanCount(conn.ID)
 		h.combo.RecordSuccess(conn.ID)
 		h.elig.Update(h.store)
@@ -179,7 +145,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			h.tracker.Log(&usage.LogEntry{
 				ConnectionID:    conn.ID,
-				ProviderTypeID: provider,
+				ProviderTypeID:  provider,
 				ModelID:         modelName,
 				Modality:        "chat",
 				InputTokens:     tokenCounts.InputTokens,
@@ -189,7 +155,6 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 				LatencyMs:       latency,
 				StatusCode:      resp.StatusCode,
 			})
-			// Cache store
 			if cacheKey != "" && h.exactCache != nil {
 				h.exactCache.Set(cacheKey, cache.CacheEntry{
 					Body:        translatedResp,
@@ -205,45 +170,42 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	// All connections exhausted or failing
-	c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "all connections exhausted or failing for provider: " + provider, "type": "server_error"}})
+	msg := "all connections exhausted or failing"
+	detail := gin.H{"provider": provider, "model": modelName}
+	if lastConn != nil {
+		detail["name"] = lastConn.Name
+	}
+	logging.Logger.Error("all connections exhausted", "provider", provider, "model", modelName, "detail", detail)
+	c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": msg, "type": "server_error", "detail": detail}})
 }
 
 // handleComboRequest handles a request that matched a combo.
 func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboResult, body []byte, model string, start time.Time) {
-	// Enforce combo timeout budget
-	comboTimeout := 30 * time.Second // default
+	comboTimeout := 30 * time.Second
 	if comboResult.Combo != nil && comboResult.Combo.TimeoutMs > 0 {
 		comboTimeout = time.Duration(comboResult.Combo.TimeoutMs) * time.Millisecond
 	}
 	comboCtx, cancel := context.WithTimeout(c.Request.Context(), comboTimeout)
 	defer cancel()
 
-	// Try each step in the combo
 	for _, step := range comboResult.Steps {
 		connID, ok := h.combo.PickConnection(step)
 		if !ok {
 			continue
 		}
-
 		provider, modelName := executor.SplitModel(step.ModelID)
-
-		// Full preflight: cooldown, exhaustion, token refresh, load credentials.
 		conn, err := h.prepareConnection(comboCtx, connID, provider, modelName)
 		if err != nil {
 			continue
 		}
-
 		exec, providerFormat, err := h.resolveExecutor(provider, modelName)
 		if err != nil {
 			continue
 		}
 
-		// Translate request
 		clientFormat := executor.FormatOpenAI
 		stream := executor.IsStreamRequest(body)
 		translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
-
 		req := &executor.Request{
 			Model:       modelName,
 			Body:        translatedBody,
@@ -253,11 +215,9 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 			BaseURL:     conn.BaseURL,
 			Provider:    provider,
 		}
-
 		proxyCtx := h.proxyContext(comboCtx, conn)
 		resp, streamResult, err := h.executeDirect(proxyCtx, exec, req)
 		latency := time.Since(start).Milliseconds()
-
 		if err != nil {
 			det := connstate.DetectError(0, "", err, provider, modelName, nil)
 			if det.Category == connstate.ErrorRateLimit {
@@ -268,23 +228,21 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 			if det.Status != connstate.StatusReady {
 				h.elig.Update(h.store)
 			}
-			continue // Try next step
+			continue
 		}
 
-		// Success
 		h.resetBanCount(connID)
 		h.combo.RecordSuccess(connID)
-		h.elig.Update(h.store) // refresh eligibility after success
+		h.elig.Update(h.store)
 
 		if req.Stream {
 			h.handleStreamResponse(c, streamResult, conn, provider, modelName, start, translatedBody, body)
 		} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
-
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			h.tracker.Log(&usage.LogEntry{
 				ConnectionID:    connID,
-				ProviderTypeID:  provider,
+				ProviderTypeID: provider,
 				ModelID:         modelName,
 				Modality:        "chat",
 				InputTokens:     tokenCounts.InputTokens,
@@ -294,15 +252,12 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				LatencyMs:       latency,
 				StatusCode:      resp.StatusCode,
 			})
-
 			c.Header("Content-Type", "application/json")
 			c.Status(resp.StatusCode)
 			c.Writer.Write(translatedResp)
 		}
 		return
 	}
-
-	// All combo steps failed
 	c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "all combo steps failed", "type": "server_error"}})
 }
 
@@ -313,7 +268,6 @@ func (h *Handler) handleNonStreamResponse(c *gin.Context, exec executor.Executor
 		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
 		return
 	}
-
 	c.Header("Content-Type", "application/json")
 	c.Status(resp.StatusCode)
 	c.Writer.Write(resp.Body)

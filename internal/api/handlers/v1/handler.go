@@ -513,6 +513,41 @@ func (h *Handler) executeDirect(ctx context.Context, exec executor.Executor, req
 	return resp, nil, err
 }
 
+// handleFailoverError records an upstream failure, marks the connection
+// exhausted/cooled-down when appropriate, refreshes eligibility, and logs it.
+// It is shared by all chat modality handlers to avoid copy-pasted error blocks.
+func (h *Handler) handleFailoverError(conn *Connection, provider, modelName string, err error, attempt int, latency int64) {
+	det := connstate.DetectError(0, "", err, provider, modelName, nil)
+	if det.Category == connstate.ErrorRateLimit {
+		h.exhaustion.MarkExhausted(conn.ID, quota.DefaultExhaustionTTL)
+	} else if det.Category == connstate.ErrorQuota && det.CooldownUntil != nil {
+		h.exhaustion.MarkExhausted(conn.ID, time.Until(*det.CooldownUntil))
+	}
+	h.combo.RecordFailure(conn.ID, det)
+	h.persistCooldown(conn.ID, det)
+	h.elig.Update(h.store)
+	h.checkAutoDisable(conn.ID, provider)
+
+	logging.Logger.Error("upstream error, trying next connection",
+		"provider", provider,
+		"conn", conn.ID[:8],
+		"name", conn.Name,
+		"model", modelName,
+		"error", det.Category,
+		"detail", err.Error(),
+		"attempt", attempt+1,
+	)
+
+	h.tracker.Log(&usage.LogEntry{
+		ConnectionID:   conn.ID,
+		ProviderTypeID: provider,
+		ModelID:        modelName,
+		Modality:       "chat",
+		LatencyMs:      latency,
+		ErrorMessage:   err.Error(),
+	})
+}
+
 // proxyContext resolves proxy config for a connection and returns a context with it attached.
 func (h *Handler) proxyContext(ctx context.Context, conn *Connection) context.Context {
 	if h.resolver == nil {
