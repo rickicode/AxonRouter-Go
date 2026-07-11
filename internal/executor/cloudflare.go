@@ -27,11 +27,7 @@ func (e *CloudflareExecutor) Execute(ctx context.Context, req *Request) (*Respon
 	cp := cloneRequest(req)
 	cp.Body = sanitizeCFRequest(cp.Body)
 	resp, err := e.OpenAIExecutor.Execute(ctx, cp)
-	if err != nil {
-		if ue := toCloudflareUpstreamError(err); ue != nil {
-			return nil, ue
-		}
-	}
+	translateIfCloudflare(err)
 	return resp, err
 }
 
@@ -41,10 +37,19 @@ func (e *CloudflareExecutor) ExecuteStream(ctx context.Context, req *Request) (*
 	cp := cloneRequest(req)
 	cp.Body = sanitizeCFRequest(cp.Body)
 	result, err := e.OpenAIExecutor.ExecuteStream(ctx, cp)
-	if err != nil {
-		if ue := toCloudflareUpstreamError(err); ue != nil {
-			return nil, ue
-		}
-	}
+	translateIfCloudflare(err)
 	return result, err
+}
+
+func translateIfCloudflare(err error) {
+	if err == nil {
+		return
+	}
+	upErr, ok := err.(*UpstreamError)
+	if !ok {
+		return
+	}
+	if translated := translateCloudflareError(upErr.StatusCode, upErr.RawBody); translated != nil {
+		upErr.Body = translated
+	}
 }

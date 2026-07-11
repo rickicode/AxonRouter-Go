@@ -2,8 +2,6 @@ package executor
 
 import (
 	"encoding/json"
-	"errors"
-	"fmt"
 	"testing"
 )
 
@@ -38,52 +36,16 @@ func TestTranslateCloudflareError_ContextLength(t *testing.T) {
 	}
 }
 
-func TestToCloudflareUpstreamError_Stream(t *testing.T) {
-	cfBody := `{"errors":[{"message":"AiError: AiError: {\"object\":\"error\",\"message\":\"Requested token count exceeds the model's maximum context length of 262144 tokens.\",\"type\":\"BadRequestError\",\"param\":null,\"code\":400} (uuid)","code":8007}],"success":false,"result":{},"messages":[]}`
-	rawErr := fmt.Errorf("stream error 400: %s", cfBody)
+func TestTranslateCloudflareError_ModelNotFound(t *testing.T) {
+	raw := `{"errors":[{"message":"AiError: {\"object\":\"error\",\"message\":\"model not found\",\"type\":\"NotFoundError\",\"param\":null,\"code\":404}","code":7001}],"success":false,"result":{},"messages":[]}`
 
-	ue := toCloudflareUpstreamError(rawErr)
-	if ue == nil {
-		t.Fatal("expected UpstreamError, got nil")
-	}
-	if ue.StatusCode != 400 {
-		t.Errorf("status=%d, want 400", ue.StatusCode)
-	}
-	if ue.Error() == "" {
-		t.Error("UpstreamError.Error() is empty")
+	got := translateCloudflareError(404, []byte(raw))
+	if got == nil {
+		t.Fatal("expected translated error, got nil")
 	}
 
 	var out map[string]any
-	if err := json.Unmarshal(ue.Body, &out); err != nil {
-		t.Fatalf("invalid body json: %v", err)
-	}
-	errObj := out["error"].(map[string]any)
-	if errObj["code"] != "context_length_exceeded" {
-		t.Errorf("code=%v, want context_length_exceeded", errObj["code"])
-	}
-}
-
-func TestToCloudflareUpstreamError_NonCloudflare(t *testing.T) {
-	rawErr := errors.New("stream error 502: upstream gateway timeout")
-	if ue := toCloudflareUpstreamError(rawErr); ue != nil {
-		t.Errorf("expected nil, got %v", ue)
-	}
-}
-
-func TestToCloudflareUpstreamError_OpenAIErrorPrefix(t *testing.T) {
-	cfBody := `{"errors":[{"message":"AiError: {\"object\":\"error\",\"message\":\"model not found\",\"type\":\"NotFoundError\",\"param\":null,\"code\":404}","code":7001}],"success":false,"result":{},"messages":[]}`
-	rawErr := fmt.Errorf("openai error 404: %s", cfBody)
-
-	ue := toCloudflareUpstreamError(rawErr)
-	if ue == nil {
-		t.Fatal("expected UpstreamError, got nil")
-	}
-	if ue.StatusCode != 404 {
-		t.Errorf("status=%d, want 404", ue.StatusCode)
-	}
-
-	var out map[string]any
-	if err := json.Unmarshal(ue.Body, &out); err != nil {
+	if err := json.Unmarshal(got, &out); err != nil {
 		t.Fatalf("invalid body: %v", err)
 	}
 	errObj := out["error"].(map[string]any)
@@ -92,5 +54,11 @@ func TestToCloudflareUpstreamError_OpenAIErrorPrefix(t *testing.T) {
 	}
 	if errObj["type"] != "not_found_error" {
 		t.Errorf("type=%v, want not_found_error", errObj["type"])
+	}
+}
+
+func TestTranslateCloudflareError_NonCloudflare(t *testing.T) {
+	if got := translateCloudflareError(400, []byte(`{"error":"plain"}`)); got != nil {
+		t.Errorf("expected nil for non-CF body, got %s", string(got))
 	}
 }

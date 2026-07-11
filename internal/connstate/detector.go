@@ -1,10 +1,13 @@
 package connstate
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/rickicode/AxonRouter-Go/internal/executor"
 )
 
 // ErrorCategory classifies the type of error for circuit breaker decisions.
@@ -48,37 +51,40 @@ func NewDetector() *Detector {
 // headers is used to extract rate limit info and retry-after values.
 func DetectError(statusCode int, body string, err error, providerPrefix string, modelID string, headers http.Header) ErrorDetection {
 	d := NewDetector()
-
 	var msg string
 	if err != nil {
 		msg = err.Error()
 	} else {
 		msg = body
 	}
-
+	var upErr *executor.UpstreamError
+	if errors.As(err, &upErr) {
+		statusCode = upErr.StatusCode
+		msg = string(upErr.RawBody)
+		if len(msg) == 0 {
+			msg = string(upErr.Body)
+		}
+	}
 	cat := d.ClassifyFromMessage(msg)
 	if statusCode > 0 {
-		cat = d.ClassifyFromResponse(statusCode, body)
+		cat = d.ClassifyFromResponse(statusCode, msg)
 	}
 
 	det := ErrorDetection{
 		Category:  cat,
 		Retryable: d.IsRetryable(cat),
 		Message:   msg,
-		Scope:     "connection", // default scope
-		ModelID:   modelID,      // propagated from caller
+		Scope:     "connection",
+		ModelID:   modelID,
 	}
-
-	// Set status based on category (aligned to DB vocabulary)
 	switch cat {
 	case ErrorRateLimit:
 		det.Status = StatusRateLimited
-		det.Scope = "model" // 429 is model-specific
+		det.Scope = "model"
 		cooldown := 60 * time.Second
-		// Use Retry-After header if available
 		if headers != nil {
 			if retryAfter := headers.Get("Retry-After"); retryAfter != "" {
-				if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds > 0 {
+				if seconds, err2 := strconv.Atoi(retryAfter); err2 == nil && seconds > 0 {
 					cooldown = time.Duration(seconds) * time.Second
 				}
 			}
@@ -91,13 +97,11 @@ func DetectError(statusCode int, body string, err error, providerPrefix string, 
 		det.Status = StatusBalanceEmpty
 	case ErrorQuota:
 		det.Status = StatusQuotaExhausted
-		// Daily-quota providers (e.g. Cloudflare free tier) auto-recover at 00:01 UTC.
 		until := nextMidnightUTC().Add(time.Minute)
 		det.CooldownUntil = &until
 	case ErrorServer, ErrorTimeout, ErrorNetwork:
 		det.Status = StatusDegraded
 	}
-
 	return det
 }
 

@@ -2,66 +2,15 @@ package executor
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/tidwall/gjson"
 )
 
-// UpstreamError carries a translated upstream error response so the handler can
-// return it to the client with the original HTTP status and provider body.
-type UpstreamError struct {
-	StatusCode int
-	Body       []byte // provider/translated error body (usually JSON)
-	RawBody    []byte // original raw body before translation (for logging)
-}
-
-func (e *UpstreamError) Error() string {
-	return fmt.Sprintf("upstream error %d: %s", e.StatusCode, string(e.Body))
-}
-
-// IsClientError reports whether the upstream error is a 4xx client error.
-func (e *UpstreamError) IsClientError() bool {
-	return e.StatusCode >= 400 && e.StatusCode < 500
-}
-
-// upstreamErrorRE matches the error strings produced by BaseExecutor:
-//   "openai error 400: {...}" or "stream error 400: {...}"
-var upstreamErrorRE = regexp.MustCompile(`(?is)^(openai|stream) error (\d+):\s*(.*)$`)
-
-// toCloudflareUpstreamError attempts to turn a raw executor error into an
-// OpenAI-compatible UpstreamError. It only returns non-nil when the body matches
-// the Cloudflare Workers AI error envelope and can be translated.
-func toCloudflareUpstreamError(err error) *UpstreamError {
-	if err == nil {
-		return nil
-	}
-	m := upstreamErrorRE.FindStringSubmatch(err.Error())
-	if len(m) < 4 {
-		return nil
-	}
-	status, _ := strconv.Atoi(m[2])
-	if status == 0 {
-		return nil
-	}
-	raw := []byte(m[3])
-	translated := translateCloudflareError(status, raw)
-	if translated == nil {
-		return nil
-	}
-	return &UpstreamError{
-		StatusCode: status,
-		Body:       translated,
-		RawBody:    raw,
-	}
-}
-
 // translateCloudflareError converts a Cloudflare Workers AI error body like:
 //
-//	{"errors":[{"message":"AiError: AiError: {\"object\":\"error\",\"message\":\"...\",\"type\":\"BadRequestError\",\"param\":null,\"code\":400} (uuid)","code":8007}],"success":false,"result":{},"messages":[]}
+//	{"errors":[{"message":"AiError: AiError: {\"object\":\"error\",\"message\":\"...\",\"type\":\"BadRequestError\",\"param\":null,\"code\":400} (uuid)","code":8007}],"success":false,\"result\":{},\"messages\":[]}
 //
 // into an OpenAI-compatible error JSON:
 //
@@ -91,7 +40,6 @@ func translateCloudflareError(statusCode int, raw []byte) []byte {
 		return nil
 	}
 
-	// Fallback heuristic when the nested object doesn't set a type.
 	typ := cf.Type
 	if typ == "" && statusCode >= 400 {
 		typ = "BadRequestError"
@@ -146,7 +94,9 @@ func inferOpenAICode(statusCode int, message, oaiType string) string {
 		strings.Contains(lower, "incorrect api key"):
 		return "invalid_api_key"
 	case strings.Contains(lower, "insufficient_quota") ||
-		strings.Contains(lower, "quota"):
+		strings.Contains(lower, "insufficient quota"):
+		return "insufficient_quota"
+	case strings.Contains(lower, "quota"):
 		return "insufficient_quota"
 	case strings.Contains(lower, "content filter") ||
 		strings.Contains(lower, "safety"):
@@ -165,7 +115,7 @@ func inferOpenAICode(statusCode int, message, oaiType string) string {
 	case "permission_error":
 		return "permission_error"
 	case "not_found_error":
-		return "not_found_error"
+		return "model_not_found"
 	case "rate_limit_exceeded":
 		return "rate_limit_exceeded"
 	default:

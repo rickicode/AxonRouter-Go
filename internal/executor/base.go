@@ -431,7 +431,11 @@ func (b *BaseExecutor) DoStreamRequestWithConfig(ctx context.Context, method, ra
 			"host", logHost,
 			"body", string(errBody),
 		)
-		return nil, fmt.Errorf("stream error %d: %s", resp.StatusCode, string(errBody))
+		return nil, &UpstreamError{
+			StatusCode: resp.StatusCode,
+			Body:       errBody,
+			RawBody:    errBody,
+		}
 	}
 
 	chunks := make(chan StreamChunk, 64)

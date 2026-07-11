@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/rickicode/AxonRouter-Go/internal/executor/translator/providers"
 )
 
 // GeminiExecutor handles Google Gemini API.
@@ -61,7 +63,11 @@ func (e *GeminiExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("gemini error %d: %s", resp.StatusCode, string(resp.Body))
+		return nil, &UpstreamError{
+			StatusCode: resp.StatusCode,
+			Body:       providers.TranslateGemini(resp.StatusCode, resp.Body),
+			RawBody:    resp.Body,
+		}
 	}
 
 	return resp, nil
@@ -75,5 +81,11 @@ func (e *GeminiExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 	headers["Accept"] = "text/event-stream"
 	headers["Cache-Control"] = "no-cache"
 
-	return e.DoStreamRequest(ctx, "POST", url, headers, req.Body)
+	result, err := e.DoStreamRequest(ctx, "POST", url, headers, req.Body)
+	if err != nil {
+		if upErr, ok := err.(*UpstreamError); ok {
+			upErr.Body = providers.TranslateGemini(upErr.StatusCode, upErr.RawBody)
+		}
+	}
+	return result, err
 }
