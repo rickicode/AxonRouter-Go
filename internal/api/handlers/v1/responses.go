@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -185,57 +186,12 @@ func (h *Handler) handleResponsesFormat(c *gin.Context, exec executor.Executor, 
 			return
 		}
 
-		flusher, ok := c.Writer.(http.Flusher)
-		if !ok {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"message": "streaming not supported", "type": "server_error"}})
-			return
-		}
-
-		c.Header("Content-Type", "text/event-stream")
-		c.Header("Cache-Control", "no-cache")
-		c.Header("Connection", "keep-alive")
-		c.Status(http.StatusOK)
-
-		var lastChunk []byte
-		clientFormat := executor.FormatOpenAIResponses
 		_, providerFormat, _ := h.registry.Get(provider)
-
-		for chunk := range result.Chunks {
-			if chunk.Err != nil {
-				c.Writer.Write([]byte("data: {\"error\":{\"message\":\"" + chunk.Err.Error() + "\"}}\n\n"))
-				flusher.Flush()
-				return
-			}
-
-			// Translate chunk
-			translatedChunks := registry.Response(c.Request.Context(), string(providerFormat), string(clientFormat), req.Model, originalReq, translatedReq, chunk.Payload, nil)
-			for _, tc := range translatedChunks {
-				c.Writer.Write(tc)
-				c.Writer.Write([]byte("\n\n"))
-				flusher.Flush()
-			}
-			lastChunk = chunk.Payload
+		errFormatter := func(err error) []byte {
+			b, _ := json.Marshal(gin.H{"error": gin.H{"message": err.Error()}})
+			return b
 		}
-
-		c.Writer.Write([]byte("data: [DONE]\n\n"))
-		flusher.Flush()
-
-		// Extract tokens from final chunk
-		latency := time.Since(start).Milliseconds()
-		tokenCounts := ExtractTokensFromFinalChunk(lastChunk)
-
-		h.tracker.Log(&usage.LogEntry{
-			ConnectionID:    conn.ID,
-			ProviderTypeID:  provider,
-			ModelID:         req.Model,
-			Modality:        "chat",
-			InputTokens:     tokenCounts.InputTokens,
-			OutputTokens:    tokenCounts.OutputTokens,
-			ReasoningTokens: tokenCounts.ReasoningTokens,
-			CachedTokens:    tokenCounts.CachedTokens,
-			LatencyMs:       latency,
-			StatusCode:      http.StatusOK,
-		})
+		h.streamResponse(c, result, conn, provider, req.Model, executor.FormatOpenAIResponses, providerFormat, originalReq, translatedReq, errFormatter, start)
 	} else {
 		resp, err := openaiExec.Responses(proxyCtx, req)
 		if err != nil {

@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"os"
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -287,76 +285,10 @@ func (h *Handler) handleNonStreamResponse(c *gin.Context, exec executor.Executor
 
 // handleStreamResponse handles streaming chat completions.
 func (h *Handler) handleStreamResponse(c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte) {
-	flusher, ok := c.Writer.(http.Flusher)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"message": "streaming not supported", "type": "server_error"}})
-		return
-	}
-
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
-	c.Status(http.StatusOK)
-
-	heartbeatInterval := 15 * time.Second
-	if v := os.Getenv("SSE_HEARTBEAT_INTERVAL_MS"); v != "" {
-		if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
-			heartbeatInterval = time.Duration(ms) * time.Millisecond
-		}
-	}
-	ticker := time.NewTicker(heartbeatInterval)
-	defer ticker.Stop()
-
-	var lastChunk []byte
-	clientFormat := executor.FormatOpenAI
 	_, providerFormat, _ := h.registry.Get(provider)
-	lastChunkTime := time.Now()
-
-	for {
-		select {
-		case chunk, ok := <-result.Chunks:
-			if !ok {
-				c.Writer.Write([]byte("data: [DONE]\n\n"))
-				flusher.Flush()
-
-				latency := time.Since(start).Milliseconds()
-				tokenCounts := ExtractTokensFromFinalChunk(lastChunk)
-				h.tracker.Log(&usage.LogEntry{
-					ConnectionID:    conn.ID,
-					ProviderTypeID:  provider,
-					ModelID:         model,
-					Modality:        "chat",
-					InputTokens:     tokenCounts.InputTokens,
-					OutputTokens:    tokenCounts.OutputTokens,
-					ReasoningTokens: tokenCounts.ReasoningTokens,
-					CachedTokens:    tokenCounts.CachedTokens,
-					LatencyMs:       latency,
-					StatusCode:      http.StatusOK,
-				})
-				return
-			}
-
-			if chunk.Err != nil {
-				errJSON, _ := json.Marshal(gin.H{"error": gin.H{"message": chunk.Err.Error()}})
-				c.Writer.Write([]byte("event: error\ndata: " + string(errJSON) + "\n\n"))
-				c.Writer.Write([]byte("data: [DONE]\n\n"))
-				flusher.Flush()
-				return
-			}
-
-			lastChunkTime = time.Now()
-			translatedChunks := registry.Response(c.Request.Context(), string(providerFormat), string(clientFormat), model, originalReq, translatedReq, chunk.Payload, nil)
-			for _, tc := range translatedChunks {
-				c.Writer.Write(tc)
-				c.Writer.Write([]byte("\n\n"))
-				flusher.Flush()
-			}
-			lastChunk = chunk.Payload
-
-		case <-ticker.C:
-			if time.Since(lastChunkTime) >= heartbeatInterval {
-				executor.WriteSSEHeartbeat(c.Writer, flusher)
-			}
-		}
+	errFormatter := func(err error) []byte {
+		b, _ := json.Marshal(gin.H{"error": gin.H{"message": err.Error()}})
+		return b
 	}
+	h.streamResponse(c, result, conn, provider, model, executor.FormatOpenAI, providerFormat, originalReq, translatedReq, errFormatter, start)
 }

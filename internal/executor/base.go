@@ -531,10 +531,10 @@ func WriteSSEDone(w io.Writer, flusher http.Flusher) {
 // Matches OmniRoute OPENAI_CHUNK shape (sseHeartbeat.ts buildHeartbeatPayload).
 func WriteSSEHeartbeat(w io.Writer, flusher http.Flusher) {
 	payload := map[string]any{
-		"id":      "omniroute-keepalive",
+		"id":      "axonrouter-keepalive",
 		"object":  "chat.completion.chunk",
 		"created": time.Now().Unix(),
-		"model":   "omniroute",
+		"model":   "axonrouter",
 		"choices": []map[string]any{
 			{"index": 0, "delta": map[string]any{}, "finish_reason": nil},
 		},

@@ -163,57 +163,12 @@ func (h *Handler) handleClaudeNonStreamResponse(c *gin.Context, exec executor.Ex
 
 // handleClaudeStreamResponse handles streaming Claude responses.
 func (h *Handler) handleClaudeStreamResponse(c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte) {
-	flusher, ok := c.Writer.(http.Flusher)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, claudeError("server_error", "streaming not supported"))
-		return
-	}
-
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
-	c.Status(http.StatusOK)
-
-	var lastChunk []byte
-	clientFormat := executor.FormatClaude
 	_, providerFormat, _ := h.registry.Get(provider)
-
-	for chunk := range result.Chunks {
-		if chunk.Err != nil {
-			// Q6 fix: escape error message for valid JSON in SSE
-			errJSON, _ := json.Marshal(claudeError("api_error", chunk.Err.Error()))
-			c.Writer.Write([]byte("event: error\ndata: " + string(errJSON) + "\n\n"))
-			c.Writer.Write([]byte("data: [DONE]\n\n"))
-			flusher.Flush()
-			return
-		}
-
-		// Translate chunk
-		translatedChunks := registry.Response(c.Request.Context(), string(providerFormat), string(clientFormat), model, originalReq, translatedReq, chunk.Payload, nil)
-		for _, tc := range translatedChunks {
-			c.Writer.Write(tc)
-			c.Writer.Write([]byte("\n\n"))
-			flusher.Flush()
-		}
-		lastChunk = chunk.Payload
+	errFormatter := func(err error) []byte {
+		b, _ := json.Marshal(claudeError("api_error", err.Error()))
+		return b
 	}
-
-	// Extract tokens from final chunk
-	latency := time.Since(start).Milliseconds()
-	tokenCounts := ExtractTokensFromFinalChunk(lastChunk)
-
-	h.tracker.Log(&usage.LogEntry{
-		ConnectionID:    conn.ID,
-		ProviderTypeID:  provider,
-		ModelID:         model,
-		Modality:        "chat",
-		InputTokens:     tokenCounts.InputTokens,
-		OutputTokens:    tokenCounts.OutputTokens,
-		ReasoningTokens: tokenCounts.ReasoningTokens,
-		CachedTokens:    tokenCounts.CachedTokens,
-		LatencyMs:       latency,
-		StatusCode:      http.StatusOK,
-	})
+	h.streamResponse(c, result, conn, provider, model, executor.FormatClaude, providerFormat, originalReq, translatedReq, errFormatter, start)
 }
 
 // CountTokens handles POST /v1/messages/count_tokens

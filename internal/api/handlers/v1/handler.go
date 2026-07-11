@@ -9,6 +9,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +23,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
 
@@ -499,6 +502,95 @@ func (h *Handler) proxyContext(ctx context.Context, conn *Connection) context.Co
 		RelayType:   cfg.RelayType,
 		StrictProxy: cfg.StrictProxy,
 	})
+}
+
+// streamResponse writes a translated SSE stream to the client with heartbeat and
+// client-disconnect detection. Each translated chunk already includes the SSE
+// frame (data: ...\n\n), so the helper writes the bytes as-is and flushes.
+func (h *Handler) streamResponse(
+	c *gin.Context,
+	result *executor.StreamResult,
+	conn *Connection,
+	provider, model string,
+	clientFormat, providerFormat executor.ProviderFormat,
+	originalReq, translatedReq []byte,
+	errFormatter func(error) []byte,
+	start time.Time,
+) {
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"message": "streaming not supported", "type": "server_error"}})
+		return
+	}
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Status(http.StatusOK)
+
+	heartbeatInterval := 15 * time.Second
+	if v := os.Getenv("SSE_HEARTBEAT_INTERVAL_MS"); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
+			heartbeatInterval = time.Duration(ms) * time.Millisecond
+		}
+	}
+	ticker := time.NewTicker(heartbeatInterval)
+	defer ticker.Stop()
+
+	var lastChunk []byte
+	lastChunkTime := time.Now()
+	ctx := c.Request.Context()
+
+	for {
+		select {
+		case chunk, ok := <-result.Chunks:
+			if !ok {
+				c.Writer.Write([]byte("data: [DONE]\n\n"))
+				flusher.Flush()
+
+				latency := time.Since(start).Milliseconds()
+				tokenCounts := ExtractTokensFromFinalChunk(lastChunk)
+				h.tracker.Log(&usage.LogEntry{
+					ConnectionID:    conn.ID,
+					ProviderTypeID:  provider,
+					ModelID:         model,
+					Modality:        "chat",
+					InputTokens:     tokenCounts.InputTokens,
+					OutputTokens:    tokenCounts.OutputTokens,
+					ReasoningTokens: tokenCounts.ReasoningTokens,
+					CachedTokens:    tokenCounts.CachedTokens,
+					LatencyMs:       latency,
+					StatusCode:      http.StatusOK,
+				})
+				return
+			}
+
+			if chunk.Err != nil {
+				c.Writer.Write([]byte("event: error\ndata: "))
+				c.Writer.Write(errFormatter(chunk.Err))
+				c.Writer.Write([]byte("\n\n"))
+				c.Writer.Write([]byte("data: [DONE]\n\n"))
+				flusher.Flush()
+				return
+			}
+
+			lastChunkTime = time.Now()
+			translatedChunks := registry.Response(ctx, string(providerFormat), string(clientFormat), model, originalReq, translatedReq, chunk.Payload, nil)
+			for _, tc := range translatedChunks {
+				c.Writer.Write(tc)
+				flusher.Flush()
+			}
+			lastChunk = chunk.Payload
+
+		case <-ticker.C:
+			if time.Since(lastChunkTime) >= heartbeatInterval {
+				executor.WriteSSEHeartbeat(c.Writer, flusher)
+			}
+
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // checkAutoDisable checks if a connection should be auto-disabled due to repeated ban signals.
