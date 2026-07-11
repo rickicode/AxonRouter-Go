@@ -40,13 +40,14 @@ func TestPool(db *sql.DB, id string) (TestResult, error) {
 	return res, nil
 }
 
+// TestHTTPProxy tests whether an HTTP proxy is reachable by fetching the relay's outbound IP via ipify.
 func TestHTTPProxy(proxyURL string, timeout time.Duration) TestResult {
 	u, err := url.Parse(proxyURL)
 	if err != nil {
 		return TestResult{Error: "invalid proxy URL: " + err.Error()}
 	}
 	client := &http.Client{Timeout: timeout, Transport: &http.Transport{Proxy: http.ProxyURL(u)}}
-	resp, err := client.Get("https://google.com/")
+	resp, err := client.Get("https://api.ipify.org/?format=json")
 	if err != nil {
 		return TestResult{Error: err.Error()}
 	}
@@ -54,6 +55,8 @@ func TestHTTPProxy(proxyURL string, timeout time.Duration) TestResult {
 	return TestResult{OK: resp.StatusCode >= 200 && resp.StatusCode < 400, StatusCode: resp.StatusCode}
 }
 
+// TestRelay tests whether the relay endpoint is reachable and can proxy requests.
+// Uses ipify (no-auth IP checker) to verify relay connectivity and return the relay's outbound IP.
 func TestRelay(relayURL, relayAuth string, timeout time.Duration) TestResult {
 	req, err := http.NewRequest(http.MethodGet, relayURL, nil)
 	if err != nil {
@@ -62,8 +65,8 @@ func TestRelay(relayURL, relayAuth string, timeout time.Duration) TestResult {
 	if relayAuth != "" {
 		req.Header.Set("x-relay-auth", relayAuth)
 	}
-	req.Header.Set("x-relay-target", "https://api.openai.com")
-	req.Header.Set("x-relay-path", "/v1/models")
+	req.Header.Set("x-relay-target", "https://api.ipify.org")
+	req.Header.Set("x-relay-path", "/?format=json")
 	resp, err := (&http.Client{Timeout: timeout}).Do(req)
 	if err != nil {
 		return TestResult{Error: err.Error()}
