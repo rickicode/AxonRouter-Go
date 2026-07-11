@@ -154,7 +154,7 @@
         <CardContent class="space-y-4">
           <Textarea
             bind:value={previewBody}
-            placeholder='Paste an OpenAI-style request body, e.g. { "messages": [{"role":"user","content":"basically I need you to simply explain Go interfaces"}]}'
+            placeholder="Paste an OpenAI-style request JSON here"
             rows={6}
           />
           <Button onclick={runPreview} disabled={loading}>

@@ -132,8 +132,12 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		}
 
 		if err != nil {
+			// If client disconnected, don't try next connection — context is dead
+			if c.Request.Context().Err() != nil {
+				return
+			}
 			det := connstate.DetectError(0, "", err, provider, modelName, nil)
-		if det.Category == connstate.ErrorRateLimit {
+			if det.Category == connstate.ErrorRateLimit {
 				h.exhaustion.MarkExhausted(conn.ID, quota.DefaultExhaustionTTL)
 			} else if det.Category == connstate.ErrorQuota && det.CooldownUntil != nil {
 				h.exhaustion.MarkExhausted(conn.ID, time.Until(*det.CooldownUntil))
