@@ -53,7 +53,6 @@ type CLIToolStatic struct {
 	Color         string        `json:"color"`
 	ConfigType    string        `json:"configType"`
 	DocsURL       string        `json:"docsUrl"`
-	ModelAliases  []string      `json:"modelAliases,omitempty"`
 	DefaultModels []DefaultModel `json:"defaultModels,omitempty"`
 	GuideSteps    []GuideStep   `json:"guideSteps,omitempty"`
 	CodeBlock     *CodeBlock    `json:"codeBlock,omitempty"`
@@ -64,8 +63,8 @@ type CLIToolStatic struct {
 type CLIToolSelection struct {
 	Model        string            `json:"model"`
 	APIKeyID     string            `json:"apiKeyId"`
-	BaseURL      string            `json:"baseUrl"`
-	ModelAliases map[string]string `json:"modelAliases,omitempty"` // alias → gateway model id
+  BaseURL   string            `json:"baseUrl"`
+  ModelAliases map[string]string `json:"modelAliases,omitempty"` // alias → gateway model id
 }
 
 // CLIToolConfig is the tool-specific output shown to the user.
@@ -362,7 +361,12 @@ var cliToolCatalog = []CLIToolStatic{
 		ID: "amp", Name: "Amp CLI", Description: "Sourcegraph Amp coding assistant CLI.",
 		Image: "/providers/amp.png", Color: "#F97316", ConfigType: "guide",
 		DocsURL: "https://github.com/sst/amp",
-		ModelAliases: []string{"g25p", "g25f", "cs45", "g54"},
+   DefaultModels: []DefaultModel{
+     {ID: "g25p", Name: "g25p (Gemini 2.5 Pro)", Alias: "g25p", EnvKey: "g25p", DefaultValue: "gemini/gemini-2.5-pro"},
+     {ID: "g25f", Name: "g25f (Gemini 2.5 Flash)", Alias: "g25f", EnvKey: "g25f", DefaultValue: "gemini/gemini-2.5-flash"},
+     {ID: "cs45", Name: "cs45 (Claude Sonnet 4.5)", Alias: "cs45", EnvKey: "cs45", DefaultValue: "cc/claude-sonnet-4-5-20250929"},
+     {ID: "g54", Name: "g54 (Gemini 2.5 Pro)", Alias: "g54", EnvKey: "g54", DefaultValue: "gemini/gemini-2.5-pro"},
+   },
 		Notes: []Note{
 			{Type: "info", Text: "Use AxonRouter model aliases to keep Amp shorthand mappings stable across provider updates."},
 			{Type: "warning", Text: "Suggested shorthand examples: g25p → gemini/gemini-2.5-pro, g25f → gemini/gemini-2.5-flash, cs45 → cc/claude-sonnet-4-5-20250929."},
@@ -385,7 +389,16 @@ var cliToolCatalog = []CLIToolStatic{
 		ID: "qwen", Name: "Qwen Code", Description: "Alibaba Qwen Code CLI — supports OpenAI, Anthropic & Gemini providers.",
 		Image: "/providers/qwen.png", Color: "#10B981", ConfigType: "guide",
 		DocsURL: "https://qwenlm.github.io/qwen-code-docs",
-		ModelAliases: []string{"coder-model", "qwen3-coder-plus", "qwen3-coder-flash", "vision-model", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gemini-3-flash", "gemini-3.1-pro-high"},
+   DefaultModels: []DefaultModel{
+     {ID: "coder-model", Name: "coder-model", Alias: "coder-model", EnvKey: "coder-model", DefaultValue: "oc/mimo-v2.5-free"},
+     {ID: "qwen3-coder-plus", Name: "qwen3-coder-plus", Alias: "qwen3-coder-plus", EnvKey: "qwen3-coder-plus", DefaultValue: "qwen/qwen3-coder-plus"},
+     {ID: "qwen3-coder-flash", Name: "qwen3-coder-flash", Alias: "qwen3-coder-flash", EnvKey: "qwen3-coder-flash", DefaultValue: "qwen/qwen3-coder-flash"},
+     {ID: "vision-model", Name: "vision-model", Alias: "vision-model", EnvKey: "vision-model", DefaultValue: "oc/hy3-free"},
+     {ID: "claude-sonnet-4-6", Name: "claude-sonnet-4-6", Alias: "claude-sonnet-4-6", EnvKey: "claude-sonnet-4-6", DefaultValue: "cc/claude-sonnet-4-6"},
+     {ID: "claude-opus-4-6-thinking", Name: "claude-opus-4-6-thinking", Alias: "claude-opus-4-6-thinking", EnvKey: "claude-opus-4-6-thinking", DefaultValue: "cc/claude-opus-4-6"},
+     {ID: "gemini-3-flash", Name: "gemini-3-flash", Alias: "gemini-3-flash", EnvKey: "gemini-3-flash", DefaultValue: "gemini/gemini-3-flash"},
+     {ID: "gemini-3.1-pro-high", Name: "gemini-3.1-pro-high", Alias: "gemini-3.1-pro-high", EnvKey: "gemini-3.1-pro-high", DefaultValue: "gemini/gemini-3.1-pro-high"},
+   },
 		Notes: []Note{
 			{Type: "info", Text: "Qwen Code supports multiple provider types (openai, anthropic, gemini) via modelProviders in settings.json. AxonRouter works as an OpenAI-compatible endpoint."},
 			{Type: "info", Text: "Any model available in AxonRouter can be used — not just Qwen models."},
@@ -501,8 +514,8 @@ func generateConfig(toolID string, sel CLIToolSelection, apiKey string) CLIToolC
 		return guideConfig(sel.Model, apiKey, base)
 	case "cursor":
 		return guideConfig(sel.Model, apiKey, base)
-	case "amp":
-		return ampConfig(sel.Model, apiKey, base)
+   case "amp":
+     return ampConfig(sel, apiKey, base)
 	case "qwen":
 		return qwenConfig(sel, apiKey, base)
 	case "deepseek-tui":
@@ -593,27 +606,59 @@ func guideConfig(model, apiKey, base string) CLIToolConfig {
 	return CLIToolConfig{EnvBlock: env, ConfigPath: "", RunCommand: ""}
 }
 
-func ampConfig(model, apiKey, base string) CLIToolConfig {
-	env := fmt.Sprintf("export OPENAI_API_KEY=%q\n", apiKey)
-	env += fmt.Sprintf("export OPENAI_BASE_URL=%q\n", base)
-	cfg := fmt.Sprintf("export OPENAI_API_KEY=%q\nexport OPENAI_BASE_URL=%q\namp --model %q\n# Example shorthand aliases:\n# g25p -> gemini/gemini-2.5-pro\n# cs45 -> cc/claude-sonnet-4-5-20250929", apiKey, base, model)
-	return CLIToolConfig{EnvBlock: env, ConfigPath: "", ConfigContent: cfg, RunCommand: fmt.Sprintf("amp --model %q", model)}
+func ampConfig(sel CLIToolSelection, apiKey, base string) CLIToolConfig {
+  env := fmt.Sprintf("export OPENAI_API_KEY=%q\n", apiKey)
+  env += fmt.Sprintf("export OPENAI_BASE_URL=%q\n", base)
+  aliasLines := ""
+  if len(sel.ModelAliases) > 0 {
+    for alias, modelID := range sel.ModelAliases {
+      if modelID != "" {
+        aliasLines += fmt.Sprintf("# %s -> %s\n", alias, modelID)
+      }
+    }
+  }
+  model := sel.Model
+  if model == "" {
+    model = "g25p"
+  }
+  cfg := fmt.Sprintf("export OPENAI_API_KEY=%q\nexport OPENAI_BASE_URL=%q\namp --model %q\n%s", apiKey, base, model, aliasLines)
+  return CLIToolConfig{EnvBlock: env, ConfigPath: "", ConfigContent: cfg, RunCommand: fmt.Sprintf("amp --model %q", model)}
 }
 
 func qwenConfig(sel CLIToolSelection, apiKey, base string) CLIToolConfig {
-	env := fmt.Sprintf("# Qwen Code reads ~/.qwen/settings.json\n")
-	model := sel.Model
-	if sel.ModelAliases != nil {
-		if m, ok := sel.ModelAliases["coder-model"]; ok && m != "" {
-			model = m
-		}
-	}
-	if model == "" {
-		model = "coder-model"
-	}
-	cfg := fmt.Sprintf("{\n  \"security\": {\n    \"auth\": {\n      \"selectedType\": \"openai\",\n      \"apiKey\": %q,\n      \"baseUrl\": %q\n    }\n  },\n  \"model\": {\n    \"name\": %q\n  }\n}", apiKey, base, model)
-	return CLIToolConfig{EnvBlock: env, ConfigPath: "~/.qwen/settings.json", ConfigContent: cfg, RunCommand: fmt.Sprintf("qwen --model %q", model)}
+  env := fmt.Sprintf("# Qwen Code reads ~/.qwen/settings.json\n")
+  model := sel.Model
+  if sel.ModelAliases != nil {
+    if m, ok := sel.ModelAliases["coder-model"]; ok && m != "" {
+      model = m
+    }
+  }
+  if model == "" {
+    model = "coder-model"
+  }
+  aliasBlock := ""
+  if len(sel.ModelAliases) > 0 {
+    aliasBlock = ",\n \"modelAliases\": {\n"
+    first := true
+    for alias, modelID := range sel.ModelAliases {
+      if modelID == "" {
+        continue
+      }
+      if !first {
+        aliasBlock += ",\n"
+      }
+      aliasBlock += fmt.Sprintf("  %q: %q", alias, modelID)
+      first = false
+    }
+    aliasBlock += "\n }"
+  }
+  cfg := fmt.Sprintf("{\n \"security\": {\n \"auth\": {\n \"selectedType\": \"openai\",\n \"apiKey\": %q,\n \"baseUrl\": %q\n }\n },\n \"model\": {\n \"name\": %q\n }%s\n}", apiKey, base, model, aliasBlock)
+  return CLIToolConfig{EnvBlock: env, ConfigPath: "~/.qwen/settings.json", ConfigContent: cfg, RunCommand: fmt.Sprintf("qwen --model %q", model)}
 }
+
+
+
+
 
 func deepseekTuiConfig(sel CLIToolSelection, apiKey, base string) CLIToolConfig {
 	env := fmt.Sprintf("export OPENAI_API_KEY=%q\n", apiKey)

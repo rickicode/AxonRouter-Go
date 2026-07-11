@@ -295,8 +295,8 @@
           {/each}
         {/if}
 
-        <!-- ═══ GUIDE STEPS UI (for guide-type tools) ═══ -->
-        {#if selectedTool?.guideSteps?.length}
+        <!-- GUIDE STEPS UI (for guide-type tools) -->
+        {#if (selectedTool?.guideSteps?.length ?? 0) > 0}
           <div class="space-y-3">
             {#each selectedTool.guideSteps as step}
               <div class="flex gap-3">
@@ -305,12 +305,9 @@
                 </div>
                 <div class="min-w-0 flex-1 space-y-1.5">
                   <p class="text-body-sm-strong">{step.title}</p>
-
                   {#if step.desc}
                     <p class="text-body-sm text-muted-foreground">{step.desc}</p>
                   {/if}
-
-                  <!-- Copyable value with template substitution -->
                   {#if step.value && step.copyable}
                     <div class="flex items-center gap-2">
                       <code class="flex-1 rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-body-sm">{replaceVars(step.value)}</code>
@@ -323,8 +320,6 @@
                       </Button>
                     </div>
                   {/if}
-
-                  <!-- Interactive API key selector -->
                   {#if step.type === 'apiKeySelector'}
                     <select bind:value={sel.apiKeyId} class="w-full rounded-sm border border-border bg-background px-3 py-2 text-body-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50">
                       <option value="">— Select API key —</option>
@@ -333,8 +328,6 @@
                       {/each}
                     </select>
                   {/if}
-
-                  <!-- Interactive model selector -->
                   {#if step.type === 'modelSelector'}
                     <div class="flex gap-2">
                       <Input bind:value={sel.model} placeholder="provider/model-id" class="font-mono text-body-sm flex-1" />
@@ -347,39 +340,27 @@
               </div>
             {/each}
           </div>
+        {/if}
 
-          <!-- Code block with template substitution -->
-          {#if selectedTool?.codeBlock}
-            <div class="space-y-2">
-              <div class="flex items-center justify-between">
-                <Label class="text-caption-mono text-muted-foreground">Config snippet ({selectedTool.codeBlock.language})</Label>
-                <Button variant="ghost" size="sm" class="h-7 gap-1.5 text-caption" onclick={() => copyText(replaceVars(selectedTool!.codeBlock!.code), 'codeblock')}>
-                  {#if copiedField === 'codeblock'}
-                    <Check class="size-3.5" /> Copied
-                  {:else}
-                    <Copy class="size-3.5" /> Copy
-                  {/if}
-                </Button>
-              </div>
-              <Textarea readonly value={replaceVars(selectedTool.codeBlock.code)} rows={Math.min(16, selectedTool.codeBlock.code.split('\n').length)} class="font-mono text-body-sm bg-background" />
+        <!-- Code block with template substitution -->
+        {#if selectedTool?.codeBlock}
+          <div class="space-y-2">
+            <div class="flex items-center justify-between">
+              <Label class="text-caption-mono text-muted-foreground">Config snippet ({selectedTool.codeBlock.language})</Label>
+              <Button variant="ghost" size="sm" class="h-7 gap-1.5 text-caption" onclick={() => copyText(replaceVars(selectedTool!.codeBlock!.code), 'codeblock')}>
+                {#if copiedField === 'codeblock'}
+                  <Check class="size-3.5" /> Copied
+                {:else}
+                  <Copy class="size-3.5" /> Copy
+                {/if}
+              </Button>
             </div>
-          {/if}
-
-          <!-- API Key value for guide tools -->
-          <div class="space-y-2">
-            <Label class="text-caption-mono uppercase text-muted-foreground">Raw API Key Value</Label>
-            <Input type="password" bind:value={apiKeyValue} placeholder="Paste your AxonRouter API key value (not stored)" class="text-body-sm" />
-            <p class="text-caption text-muted-foreground">AxonRouter stores only bcrypt hashes. Paste the raw value to embed in generated config.</p>
+            <Textarea readonly value={replaceVars(selectedTool.codeBlock.code)} rows={Math.min(16, selectedTool.codeBlock.code.split('\n').length)} class="font-mono text-body-sm bg-background" />
           </div>
+        {/if}
 
-          <!-- Base URL for guide tools -->
-          <div class="space-y-2">
-            <Label class="text-caption-mono uppercase text-muted-foreground">Gateway Base URL</Label>
-            <Input bind:value={sel.baseUrl} placeholder={defaultBaseUrl} class="font-mono text-body-sm" />
-          </div>
-
-        <!-- ═══ MODEL ALIAS MAPPING UI (for tools with defaultModels) ═══ -->
-        {:else if selectedTool?.defaultModels?.length}
+        <!-- MODEL ALIAS MAPPING UI (for tools with defaultModels) -->
+        {#if (selectedTool?.defaultModels?.length ?? 0) > 0}
           <div class="space-y-3">
             {#each selectedTool.defaultModels as dm}
               <div class="space-y-1.5">
@@ -408,20 +389,7 @@
             {/each}
           </div>
 
-          <!-- Also show single model for tools like Claude (modelAliases + defaultModels) -->
-          {#if selectedTool?.modelAliases?.length}
-            <div class="space-y-2">
-              <Label class="text-caption-mono uppercase text-muted-foreground">Default Model</Label>
-              <div class="flex gap-2">
-                <Input bind:value={sel.model} placeholder="provider/model-id" class="font-mono text-body-sm flex-1" />
-                <Button variant="outline" size="sm" class="shrink-0 gap-1.5" onclick={() => openModelPicker('_main')} disabled={models.length === 0}>
-                  <Search class="size-3.5" /> Browse
-                </Button>
-              </div>
-            </div>
-          {/if}
-
-          <!-- API Key for alias tools -->
+          <!-- Shared fields for alias tools -->
           <div class="space-y-2">
             <Label class="text-caption-mono uppercase text-muted-foreground">API Key</Label>
             <select bind:value={sel.apiKeyId} class="w-full rounded-sm border border-border bg-background px-3 py-2 text-body-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50">
@@ -431,23 +399,18 @@
               {/each}
             </select>
           </div>
-
-          <!-- Raw API Key value -->
           <div class="space-y-2">
             <Label class="text-caption-mono uppercase text-muted-foreground">Raw API Key Value</Label>
             <Input type="password" bind:value={apiKeyValue} placeholder="Paste your AxonRouter API key value (not stored)" class="text-body-sm" />
             <p class="text-caption text-muted-foreground">AxonRouter stores only bcrypt hashes. Paste the raw value to embed in generated config.</p>
           </div>
-
-          <!-- Base URL -->
           <div class="space-y-2">
             <Label class="text-caption-mono uppercase text-muted-foreground">Gateway Base URL</Label>
             <Input bind:value={sel.baseUrl} placeholder={defaultBaseUrl} class="font-mono text-body-sm" />
           </div>
 
-        <!-- ═══ SINGLE MODEL UI (for simple tools) ═══ -->
-        {:else}
-          <!-- Model picker -->
+        <!-- SINGLE MODEL UI (for simple tools) -->
+        {:else if (selectedTool?.guideSteps?.length ?? 0) === 0 && (selectedTool?.defaultModels?.length ?? 0) === 0}
           <div class="space-y-2">
             <Label class="text-caption-mono uppercase text-muted-foreground">Model</Label>
             <div class="flex gap-2">
@@ -466,8 +429,6 @@
               {/if}
             </div>
           </div>
-
-          <!-- API Key -->
           <div class="space-y-2">
             <Label class="text-caption-mono uppercase text-muted-foreground">API Key</Label>
             <select bind:value={sel.apiKeyId} class="w-full rounded-sm border border-border bg-background px-3 py-2 text-body-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50">
@@ -477,15 +438,11 @@
               {/each}
             </select>
           </div>
-
-          <!-- Raw API Key value -->
           <div class="space-y-2">
             <Label class="text-caption-mono uppercase text-muted-foreground">Raw API Key Value</Label>
             <Input type="password" bind:value={apiKeyValue} placeholder="Paste your AxonRouter API key value (not stored)" class="text-body-sm" />
             <p class="text-caption text-muted-foreground">AxonRouter stores only bcrypt hashes. Paste the raw value to embed in generated config.</p>
           </div>
-
-          <!-- Base URL -->
           <div class="space-y-2">
             <Label class="text-caption-mono uppercase text-muted-foreground">Gateway Base URL</Label>
             <Input bind:value={sel.baseUrl} placeholder={defaultBaseUrl} class="font-mono text-body-sm" />
