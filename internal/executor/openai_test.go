@@ -2,6 +2,7 @@ package executor
 
 import (
 	"encoding/json"
+	"os"
 	"testing"
 )
 
@@ -45,7 +46,99 @@ func TestOpenAIEndpointNormalizesBaseURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := openAIEndpoint(tt.baseURL, tt.endpoint, nil); got != tt.want {
+			got, err := openAIEndpoint(tt.baseURL, tt.endpoint, nil)
+			if err != nil {
+				t.Fatalf("openAIEndpoint(%q, %q) unexpected error: %v", tt.baseURL, tt.endpoint, err)
+			}
+			if got != tt.want {
+				t.Fatalf("openAIEndpoint(%q, %q) = %q, want %q", tt.baseURL, tt.endpoint, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOpenAIEndpoint_AccountIdTemplate(t *testing.T) {
+	base := "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/v1/chat/completions"
+
+	t.Run("resolves from PSD", func(t *testing.T) {
+		got, err := openAIEndpoint(base, "chat/completions", map[string]string{"accountId": "abc123"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := "https://api.cloudflare.com/client/v4/accounts/abc123/ai/v1/chat/completions"
+		if got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("resolves from env var when PSD empty", func(t *testing.T) {
+		os.Setenv("CLOUDFLARE_ACCOUNT_ID", "env-account")
+		defer os.Unsetenv("CLOUDFLARE_ACCOUNT_ID")
+		got, err := openAIEndpoint(base, "chat/completions", nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := "https://api.cloudflare.com/client/v4/accounts/env-account/ai/v1/chat/completions"
+		if got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("errors when no accountId available", func(t *testing.T) {
+		os.Unsetenv("CLOUDFLARE_ACCOUNT_ID")
+		_, err := openAIEndpoint(base, "chat/completions", nil)
+		if err == nil {
+			t.Fatal("expected error for missing accountId, got nil")
+		}
+	})
+}
+
+func TestOpenAIEndpoint_FullyQualifiedURLCollision(t *testing.T) {
+	tests := []struct {
+		name     string
+		baseURL  string
+		endpoint string
+		want     string
+	}{
+		{
+			name:     "CF chat base + embeddings strips chat suffix",
+			baseURL:  "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1/chat/completions",
+			endpoint: "embeddings",
+			want:     "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1/embeddings",
+		},
+		{
+			name:     "CF chat base + chat/completions stays unchanged",
+			baseURL:  "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1/chat/completions",
+			endpoint: "chat/completions",
+			want:     "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1/chat/completions",
+		},
+		{
+			name:     "normal base appends chat/completions",
+			baseURL:  "https://api.openai.com/v1",
+			endpoint: "chat/completions",
+			want:     "https://api.openai.com/v1/chat/completions",
+		},
+		{
+			name:     "CF chat base + models strips chat suffix",
+			baseURL:  "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1/chat/completions",
+			endpoint: "models",
+			want:     "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1/models",
+		},
+		{
+			name:     "CF responses base + chat/completions strips responses suffix",
+			baseURL:  "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1/responses",
+			endpoint: "chat/completions",
+			want:     "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1/chat/completions",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := openAIEndpoint(tt.baseURL, tt.endpoint, nil)
+			if err != nil {
+				t.Fatalf("openAIEndpoint(%q, %q) unexpected error: %v", tt.baseURL, tt.endpoint, err)
+			}
+			if got != tt.want {
 				t.Fatalf("openAIEndpoint(%q, %q) = %q, want %q", tt.baseURL, tt.endpoint, got, tt.want)
 			}
 		})
@@ -64,6 +157,7 @@ func TestSanitizeCFRequest_CapsMaxTokens(t *testing.T) {
 		{"reasoning kimi k2.5", "@cf/moonshotai/kimi-k2.5", nil, 4096},
 		{"reasoning glm-5.2", "@cf/zai-org/glm-5.2", 16384, 4096},
 		{"normal llama", "@cf/meta/llama-3.2-1b-instruct", 20000, 8192},
+		{"negative max_tokens", "@cf/meta/llama-3.2-1b-instruct", -1, 8192},
 	}
 
 	for _, tt := range tests {
@@ -119,16 +213,39 @@ func TestSanitizeCFRequest_FiltersContentBlocks(t *testing.T) {
 		t.Fatalf("expected 2 messages, got %d", len(msgs))
 	}
 
-	// First message: text + image_url kept, thinking removed.
+	// First message: text flattened to string, thinking removed, image_url dropped.
 	first := msgs[0].(map[string]any)
-	content, ok := first["content"].([]any)
-	if !ok || len(content) != 2 {
-		t.Errorf("expected 2 safe blocks, got %d", len(content))
+	contentStr, ok := first["content"].(string)
+	if !ok || contentStr != "hello" {
+		t.Errorf("expected content string 'hello', got %v", first["content"])
 	}
 
 	// Second message: tool_result converted to role:tool.
 	second := msgs[1].(map[string]any)
 	if second["role"] != "tool" {
 		t.Errorf("expected role tool, got %v", second["role"])
+	}
+}
+
+func TestSplitModel_StripsAtPrefix(t *testing.T) {
+	tests := []struct {
+		model      string
+		wantPrefix string
+		wantName   string
+	}{
+		{"openai/gpt-4o", "openai", "gpt-4o"},
+		{"@cf/moonshotai/kimi-k2.6", "cf", "moonshotai/kimi-k2.6"},
+		{"@cf/meta/llama-3.2-1b-instruct", "cf", "meta/llama-3.2-1b-instruct"},
+		{"deepseek/deepseek-chat", "deepseek", "deepseek-chat"},
+		{"gpt-4o", "", "gpt-4o"},
+	}
+	for _, tt := range tests {
+		prefix, name := SplitModel(tt.model)
+		if prefix != tt.wantPrefix {
+			t.Errorf("SplitModel(%q) prefix = %q, want %q", tt.model, prefix, tt.wantPrefix)
+		}
+		if name != tt.wantName {
+			t.Errorf("SplitModel(%q) name = %q, want %q", tt.model, name, tt.wantName)
+		}
 	}
 }

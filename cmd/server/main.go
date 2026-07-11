@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
@@ -12,7 +13,65 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/config"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
+	"github.com/rickicode/AxonRouter-Go/internal/models"
 )
+
+func printStartupBanner(port string, database *sql.DB) {
+	if os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
+		printStartupBannerPlain(port, database)
+		return
+	}
+
+	const (
+		reset   = "\033[0m"
+		bold    = "\033[1m"
+		dim     = "\033[2m"
+		green   = "\033[32m"
+		yellow  = "\033[33m"
+		blue    = "\033[34m"
+		magenta = "\033[35m"
+		cyan    = "\033[36m"
+	)
+
+	var activeConns int
+	_ = database.QueryRow("SELECT COUNT(*) FROM connections WHERE is_active = 1").Scan(&activeConns)
+
+	providers := models.ProviderCount()
+	modelCount := models.ModelCount()
+	sep := cyan + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" + reset
+
+	fmt.Println()
+	fmt.Println(sep)
+	fmt.Printf("  %s%sAxonRouter-Go%s    ready on port %s%s%s\n", bold, cyan, reset, green, port, reset)
+	fmt.Println(sep)
+	fmt.Printf("  %sDashboard%s   http://localhost:%s\n", yellow, reset, port)
+	fmt.Printf("  %sRoutes%s      %s%d active connections%s · %s%d providers%s · %s%d models%s\n",
+		yellow, reset,
+		cyan, activeConns, reset,
+		cyan, providers, reset,
+		cyan, modelCount, reset)
+	fmt.Printf("  %sBackground%s  cleanup · quota · usage flush\n", yellow, reset)
+	fmt.Println(sep)
+	fmt.Println()
+}
+
+func printStartupBannerPlain(port string, database *sql.DB) {
+	var activeConns int
+	_ = database.QueryRow("SELECT COUNT(*) FROM connections WHERE is_active = 1").Scan(&activeConns)
+	providers := models.ProviderCount()
+	modelCount := models.ModelCount()
+
+	fmt.Println()
+	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	fmt.Println("  AxonRouter-Go    ready on port " + port)
+	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	fmt.Printf("  Dashboard   http://localhost:%s\n", port)
+	fmt.Printf("  Routes      %d active connections · %d providers · %d models\n",
+		activeConns, providers, modelCount)
+	fmt.Println("  Background  cleanup · quota · usage flush")
+	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	fmt.Println()
+}
 
 func main() {
 	gin.SetMode(gin.ReleaseMode)
@@ -25,8 +84,8 @@ func main() {
 		log.Fatalf("Failed to open database: %v", err)
 	}
 
-	// Initialise structured logger (default text; switch to json via setting)
-	logging.Init(db.GetSetting("log_format", "text"))
+	// Initialise compact logger (switch to json/text via log_format setting)
+	logging.Init(db.GetSetting("log_format", "compact"))
 
 	// Create router with all routes and background goroutines
 	router := api.New(api.Config{
@@ -38,8 +97,10 @@ func main() {
 	})
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
-	log.Printf("Starting AxonRouter-Go on %s", addr)
-	log.Printf("Dashboard: http://localhost:%s", cfg.Port)
+	printStartupBanner(cfg.Port, database)
+
+	log.Printf("starting server on %s", addr)
+	log.Printf("dashboard available at http://localhost:%s", cfg.Port)
 
 	// Graceful shutdown
 	sigCh := make(chan os.Signal, 1)

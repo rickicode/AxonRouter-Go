@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -27,16 +28,17 @@ func openRouterHeaders(headers map[string]string, provider string) {
 	}
 }
 
-// isCFReasoningModel mirrors AMRouter reasoning-model detection for
-// Cloudflare Workers AI strip flags (thinking).
-func isCFReasoningModel(model string) bool {
+// IsReasoningModel detects reasoning models generically (not CF-specific).
+// It checks catalog strip flags when available, otherwise falls back to
+// naming heuristics matching OmniRoute stripList behaviour.
+func IsReasoningModel(model string) bool {
 	lower := strings.ToLower(model)
 	switch {
 	case strings.Contains(lower, "r1"):
 		return true
 	case strings.Contains(lower, "qwq"):
 		return true
-	case strings.Contains(lower, "kimi-k2.5"), strings.Contains(lower, "kimi-k2.6"):
+	case strings.Contains(lower, "kimi-k2.5"), strings.Contains(lower, "kimi-k2.6"), strings.Contains(lower, "kimi-k2.7"):
 		return true
 	case strings.Contains(lower, "glm-5."):
 		return true
@@ -48,9 +50,8 @@ func isCFReasoningModel(model string) bool {
 
 // sanitizeCFRequest enforces Cloudflare Workers AI constraints:
 //   - max_tokens cap: 4096 for reasoning models, 8192 otherwise.
-//   - message content arrays may only contain {type:"text"} or {type:"image_url"}.
+//   - message content arrays are flattened to a plain string (CF rejects part arrays).
 //   - tool_result blocks are converted into role:tool messages.
-//   - A single remaining text block is collapsed to a plain string.
 //
 // This matches AMRouter chatCore.js san behaviour for the cloudflare-ai provider.
 func sanitizeCFRequest(body []byte) []byte {
@@ -61,10 +62,10 @@ func sanitizeCFRequest(body []byte) []byte {
 
 	model, _ := req["model"].(string)
 	maxCap := 8192
-	if isCFReasoningModel(model) {
+	if IsReasoningModel(model) {
 		maxCap = 4096
 	}
-	if current, ok := req["max_tokens"].(float64); !ok || current == 0 || current > float64(maxCap) {
+	if current, ok := req["max_tokens"].(float64); !ok || current <= 0 || current > float64(maxCap) {
 		req["max_tokens"] = maxCap
 	}
 
@@ -142,75 +143,86 @@ func sanitizeCFMessages(messages []any) []any {
 			})
 		}
 
-		var cfSafe []map[string]any
-		for _, b := range otherBlocks {
-			typ, _ := b["type"].(string)
-			if typ == "text" || typ == "image_url" {
-				if typ == "text" {
-					text, _ := b["text"].(string)
-					cfSafe = append(cfSafe, map[string]any{"type": "text", "text": text})
-				} else {
-					cfSafe = append(cfSafe, b)
-				}
-			}
-		}
-
 		// If this message only contained tool_result blocks, drop the original
 		// message and keep only the converted role:tool messages.
 		if len(otherBlocks) == 0 {
 			continue
 		}
 
+		// Flatten content to a plain string for CF Workers AI.
+		// OmniRoute #2539: Workers AI /ai/v1/chat/completions rejects
+		// content-part arrays like [{type:"text",text}] with HTTP 400.
+		var textParts []string
+		for _, b := range otherBlocks {
+			typ, _ := b["type"].(string)
+			if typ == "text" {
+				if s, ok := b["text"].(string); ok {
+					textParts = append(textParts, s)
+				}
+			}
+			// image_url and other non-text blocks are dropped: CF chat
+			// completions endpoint does not accept array content.
+		}
+
 		newMsg := make(map[string]any, len(msg))
 		for k, v := range msg {
 			newMsg[k] = v
 		}
-		switch len(cfSafe) {
-		case 0:
-			newMsg["content"] = ""
-		case 1:
-			if cfSafe[0]["type"] == "text" {
-				newMsg["content"] = cfSafe[0]["text"]
-			} else {
-				newMsg["content"] = cfSafe
-			}
-		default:
-			newMsg["content"] = cfSafe
-		}
+		newMsg["content"] = strings.Join(textParts, "")
 		sanitized = append(sanitized, newMsg)
 	}
 	return sanitized
 }
 
 
-func openAIEndpoint(baseURL, endpoint string, psd map[string]string) string {
+// openAIEndpoint resolves the full upstream URL for an OpenAI-compatible provider.
+// When the base URL contains {accountId}, the placeholder is resolved from psd
+// (provider_specific_data), then from the CLOUDFLARE_ACCOUNT_ID env var.
+// Returns an error if the placeholder cannot be resolved — matching OmniRoute's
+// CloudflareAIExecutor.buildUrl() which throws on missing accountId.
+func openAIEndpoint(baseURL, endpoint string, psd map[string]string) (string, error) {
 	if baseURL == "" {
-		return "https://api.openai.com/v1/" + endpoint
+		return "https://api.openai.com/v1/" + endpoint, nil
 	}
 	url := strings.TrimRight(baseURL, "/")
-	// Resolve {accountId} template from provider_specific_data
+	// Resolve {accountId} template — Cloudflare Workers AI pattern.
+	// Match OmniRoute: PSD → top-level creds → env var → error.
 	if strings.Contains(url, "{accountId}") {
-		if id, ok := psd["accountId"]; ok && id != "" {
-			url = strings.ReplaceAll(url, "{accountId}", id)
+		accountID := psd["accountId"]
+		if accountID == "" {
+			accountID = os.Getenv("CLOUDFLARE_ACCOUNT_ID")
 		}
+		if accountID == "" {
+			return "", fmt.Errorf(
+				"cloudflare Workers AI requires an Account ID. " +
+					"Add it in provider settings or set CLOUDFLARE_ACCOUNT_ID env var. " +
+					"Find it at: https://dash.cloudflare.com (right sidebar)")
+		}
+		url = strings.ReplaceAll(url, "{accountId}", accountID)
 	}
+	// If the base_url already ends with the requested endpoint, return as-is.
+	if strings.HasSuffix(url, "/"+endpoint) {
+		return url, nil
+	}
+	// If the base_url ends with a DIFFERENT known endpoint, strip it first.
 	for _, suffix := range []string{"/chat/completions", "/responses", "/embeddings", "/models"} {
 		if strings.HasSuffix(url, suffix) {
-			return url
+			url = strings.TrimSuffix(url, suffix)
+			break
 		}
 	}
-	return url + "/" + endpoint
+	return url + "/" + endpoint, nil
 }
 
 
 // Execute performs a non-streaming chat completion.
 func (e *OpenAIExecutor) Execute(ctx context.Context, req *Request) (*Response, error) {
-	url := openAIEndpoint(req.BaseURL, "chat/completions", req.ProviderSpecificData)
+	url, err := openAIEndpoint(req.BaseURL, "chat/completions", req.ProviderSpecificData)
+	if err != nil {
+		return nil, err
+	}
 
 	body := req.Body
-	if req.Provider == "cf" {
-		body = sanitizeCFRequest(body)
-	}
 	// Ensure stream is false
 	body = JSONSet(body, "stream", false)
 
@@ -234,12 +246,12 @@ func (e *OpenAIExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 
 // ExecuteStream performs a streaming chat completion.
 func (e *OpenAIExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
-	url := openAIEndpoint(req.BaseURL, "chat/completions", req.ProviderSpecificData)
+	url, err := openAIEndpoint(req.BaseURL, "chat/completions", req.ProviderSpecificData)
+	if err != nil {
+		return nil, err
+	}
 
 	body := req.Body
-	if req.Provider == "cf" {
-		body = sanitizeCFRequest(body)
-	}
 	// Ensure stream is true
 	body = JSONSet(body, "stream", true)
 
@@ -251,12 +263,15 @@ func (e *OpenAIExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
 	openRouterHeaders(headers, req.Provider)
 
-	return e.DoStreamRequest(ctx, "POST", url, headers, body)
+	return e.DoStreamRequestWithConfig(ctx, "POST", url, headers, body, req.StreamConfig)
 }
 
 // Embeddings performs an embedding request.
 func (e *OpenAIExecutor) Embeddings(ctx context.Context, req *Request) (*Response, error) {
-	url := openAIEndpoint(req.BaseURL, "embeddings", req.ProviderSpecificData)
+	url, err := openAIEndpoint(req.BaseURL, "embeddings", req.ProviderSpecificData)
+	if err != nil {
+		return nil, err
+	}
 
 
 	headers := map[string]string{
@@ -279,7 +294,10 @@ func (e *OpenAIExecutor) Embeddings(ctx context.Context, req *Request) (*Respons
 
 // Models returns available models for OpenAI.
 func (e *OpenAIExecutor) Models(ctx context.Context, req *Request) (*Response, error) {
-	url := openAIEndpoint(req.BaseURL, "models", req.ProviderSpecificData)
+	url, err := openAIEndpoint(req.BaseURL, "models", req.ProviderSpecificData)
+	if err != nil {
+		return nil, err
+	}
 
 
 	headers := map[string]string{
@@ -302,7 +320,10 @@ func (e *OpenAIExecutor) Models(ctx context.Context, req *Request) (*Response, e
 
 // Responses performs an OpenAI Responses API call (for Codex-style).
 func (e *OpenAIExecutor) Responses(ctx context.Context, req *Request) (*Response, error) {
-	url := openAIEndpoint(req.BaseURL, "responses", req.ProviderSpecificData)
+	url, err := openAIEndpoint(req.BaseURL, "responses", req.ProviderSpecificData)
+	if err != nil {
+		return nil, err
+	}
 
 
 	body := req.Body
@@ -328,7 +349,10 @@ func (e *OpenAIExecutor) Responses(ctx context.Context, req *Request) (*Response
 
 // ResponsesStream performs a streaming Responses API call.
 func (e *OpenAIExecutor) ResponsesStream(ctx context.Context, req *Request) (*StreamResult, error) {
-	url := openAIEndpoint(req.BaseURL, "responses", req.ProviderSpecificData)
+	url, err := openAIEndpoint(req.BaseURL, "responses", req.ProviderSpecificData)
+	if err != nil {
+		return nil, err
+	}
 
 	body := req.Body
 	body = JSONSet(body, "stream", true)
@@ -341,5 +365,5 @@ func (e *OpenAIExecutor) ResponsesStream(ctx context.Context, req *Request) (*St
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
 	openRouterHeaders(headers, req.Provider)
 
-	return e.DoStreamRequest(ctx, "POST", url, headers, body)
+	return e.DoStreamRequestWithConfig(ctx, "POST", url, headers, body, req.StreamConfig)
 }

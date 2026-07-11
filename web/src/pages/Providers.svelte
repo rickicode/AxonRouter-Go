@@ -344,7 +344,6 @@
                   {@const iconMeta = providerIconMeta(provider)}
                   {@const color = providerColor(provider)}
                   {@const category = getCategoryById(providerCategoryId(provider))}
-                  {@const result = testResults[provider.id]}
                   <a
                     href="/providers/{provider.id}"
                     class="group flex flex-col rounded-xl bg-card shadow-card transition-all duration-200 hover:-translate-y-0.5 hover:shadow-card-hover"

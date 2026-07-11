@@ -91,6 +91,9 @@ func DetectError(statusCode int, body string, err error, providerPrefix string, 
 		det.Status = StatusBalanceEmpty
 	case ErrorQuota:
 		det.Status = StatusQuotaExhausted
+		// Daily-quota providers (e.g. Cloudflare free tier) auto-recover at 00:01 UTC.
+		until := nextMidnightUTC().Add(time.Minute)
+		det.CooldownUntil = &until
 	case ErrorServer, ErrorTimeout, ErrorNetwork:
 		det.Status = StatusDegraded
 	}
@@ -106,6 +109,14 @@ func (d *Detector) ClassifyFromResponse(statusCode int, body string) ErrorCatego
 	case statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden:
 		return ErrorAuth
 	case statusCode == http.StatusTooManyRequests:
+		// CF daily limit (4006) and similar providers return 429 with quota body.
+		// Check body for quota patterns BEFORE defaulting to ErrorRateLimit.
+		if containsAny(body, QuotaPatterns...) {
+			return ErrorQuota
+		}
+		if containsAny(body, BalanceEmptyPatterns...) {
+			return ErrorBalanceEmpty
+		}
 		return ErrorRateLimit
 	case statusCode == http.StatusPaymentRequired:
 		// BalanceEmpty checked before Quota — balance-empty is a stricter classification (manual action required)
@@ -189,4 +200,11 @@ func containsAny(msg string, patterns ...string) bool {
 		}
 	}
 	return false
+}
+
+// nextMidnightUTC returns the next 00:00 UTC time (midnight).
+// Used for daily-quota providers (e.g. Cloudflare free tier) that reset at UTC midnight.
+func nextMidnightUTC() time.Time {
+	now := time.Now().UTC()
+	return time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
 }

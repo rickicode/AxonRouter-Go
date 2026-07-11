@@ -69,9 +69,37 @@ func loadEmbedded() {
 		log.Printf("WARN: failed to parse embedded models.json: %v", err)
 		return
 	}
+	stripAtPrefix(c)
 	mu.Lock()
 	current = c
 	mu.Unlock()
+}
+
+// stripAtPrefix removes leading "@" from all model IDs in the catalog.
+func stripAtPrefix(c catalog) {
+	for _, entries := range c {
+		for i := range entries {
+			entries[i].ID = strings.TrimPrefix(entries[i].ID, "@")
+		}
+	}
+}
+
+// ProviderCount returns the number of provider keys currently loaded in the catalog.
+func ProviderCount() int {
+	mu.RLock()
+	defer mu.RUnlock()
+	return len(current)
+}
+
+// ModelCount returns the total number of model entries across all providers.
+func ModelCount() int {
+	mu.RLock()
+	defer mu.RUnlock()
+	var total int
+	for _, entries := range current {
+		total += len(entries)
+	}
+	return total
 }
 
 // GetModelIDs returns model IDs (without provider prefix) for a provider key.
@@ -173,6 +201,7 @@ func tryFetch(ctx context.Context) {
 			log.Printf("WARN: model catalog fetch failed from %s: %v", url, err)
 			continue
 		}
+		stripAtPrefix(c)
 		mu.Lock()
 		// Merge: remote catalog updates existing keys and adds new ones,
 		// but preserves local-only providers (mimocode, opencode, etc.)
@@ -206,7 +235,7 @@ func tryFetchProviders(ctx context.Context) {
 			if providerFreeOnly[catalogKey] && !strings.HasSuffix(id, "-free") {
 				continue
 			}
-			entries = append(entries, modelEntry{ID: id})
+			entries = append(entries, modelEntry{ID: strings.TrimPrefix(id, "@")})
 		}
 		mu.Lock()
 		current[catalogKey] = entries

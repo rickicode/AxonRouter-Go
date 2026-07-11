@@ -80,7 +80,11 @@ func (r *Registry) List() []string {
 // If no prefix, returns empty prefix and full model.
 func SplitModel(model string) (prefix, name string) {
 	if idx := strings.Index(model, "/"); idx >= 0 {
-		return model[:idx], model[idx+1:]
+		prefix = model[:idx]
+		name = model[idx+1:]
+		// Strip leading "@" — CF models use "@cf/vendor/model" format
+		prefix = strings.TrimPrefix(prefix, "@")
+		return prefix, name
 	}
 	return "", model
 }
@@ -91,9 +95,13 @@ func RegisterDefaults() {
 
 	// OpenAI-compatible providers
 	openaiExec := NewOpenAIExecutor(base)
-	for _, p := range []string{"openai", "groq", "deepseek", "opencode", "oc", "oc-zen", "oc-go", "mimocode", "mimocode-free", "mimo", "mimo-tp", "mimo-token", "openrouter", "elevenlabs", "deepgram", "cf"} {
+	for _, p := range []string{"openai", "groq", "deepseek", "opencode", "oc", "oc-zen", "oc-go", "mimocode", "mimocode-free", "mimo", "mimo-tp", "mimo-token", "openrouter", "elevenlabs", "deepgram"} {
 		GetRegistry().Register(p, FormatOpenAI, openaiExec)
 	}
+
+	// Cloudflare Workers AI uses dedicated executor for sanitization.
+	cfExec := NewCloudflareExecutor(openaiExec)
+	GetRegistry().Register("cf", FormatOpenAI, cfExec)
 
 	// Claude + compatible providers
 	claudeExec := NewClaudeExecutor(base)

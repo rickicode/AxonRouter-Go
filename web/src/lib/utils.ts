@@ -1,17 +1,30 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
+import type { HTMLAttributes, HTMLInputAttributes, HTMLTextareaAttributes, HTMLSelectAttributes, HTMLButtonAttributes } from "svelte/elements";
 
 export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
+  return twMerge(clsx(...inputs));
 }
+
+// ── shadcn-svelte helper types ──────────────────────────────────────────
+// These types are expected by generated shadcn components for ref/class props.
+
+type RefProp<T> = { ref?: T | null };
+
+export type WithElementRef<T, RefType extends HTMLElement = HTMLElement> = T & RefProp<RefType>;
+
+export type WithoutChildren<T> = Omit<T, 'children'>;
+export type WithoutChild<T> = Omit<T, 'child'>;
+export type WithoutChildrenOrChild<T> = Omit<T, 'children' | 'child'>;
 
 // Unwrap Go sql.NullInt64 → number | null
 // ponytail: handles both raw number and {Int64, Valid} shape from Go JSON
 export function unwrapInt(v: unknown): number | null {
   if (v == null) return null;
   if (typeof v === 'number') return v;
-  if (typeof v === 'object' && 'Valid' in v) {
-    return (v as { Valid: boolean; Int64: number }).Valid ? (v as { Int64: number }).Int64 : null;
+  if (typeof v === 'object' && v !== null && 'Valid' in v) {
+    const nv = v as unknown as { Valid: boolean; Int64: number };
+    return nv.Valid ? nv.Int64 : null;
   }
   return null;
 }
@@ -20,8 +33,9 @@ export function unwrapInt(v: unknown): number | null {
 export function unwrapStr(v: unknown): string | null {
   if (v == null) return null;
   if (typeof v === 'string') return v;
-  if (typeof v === 'object' && 'Valid' in v) {
-    return (v as { Valid: boolean; String: string }).Valid ? (v as { String: string }).String : null;
+  if (typeof v === 'object' && v !== null && 'Valid' in v) {
+    const nv = v as unknown as { Valid: boolean; String: string };
+    return nv.Valid ? nv.String : null;
   }
   return null;
 }

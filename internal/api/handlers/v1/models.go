@@ -2,6 +2,7 @@ package v1
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/models"
@@ -94,8 +95,15 @@ func (h *Handler) getProviderModels(prefix string) []gin.H {
 
 	entries := make([]gin.H, 0, len(ids))
 	for _, id := range ids {
+		// Strip leading "@" — CF models use "@cf/vendor/model" format
+		cleanID := strings.TrimPrefix(id, "@")
+		// Avoid double prefix: if catalog ID already starts with prefix/, don't prepend again
+		modelID := cleanID
+		if !strings.HasPrefix(cleanID, prefix+"/") {
+			modelID = prefix + "/" + cleanID
+		}
 		entries = append(entries, gin.H{
-			"id":       prefix + "/" + id,
+			"id":       modelID,
 			"object":   "model",
 			"created":  1700000000,
 			"owned_by": cfg.ownedBy,

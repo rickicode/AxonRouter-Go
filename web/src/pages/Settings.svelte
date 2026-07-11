@@ -4,6 +4,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
+  import { Textarea } from '$lib/components/ui/textarea';
   import { settingsApi } from '$lib/api';
   import { toast } from 'svelte-sonner';
 
@@ -13,6 +14,7 @@
   let editingKey = $state<string | null>(null);
   let editingValue = $state('');
   let importText = $state('');
+  let showImport = $state(false);
 
   const defaultSettings: Record<string, string> = {
     'quota_check_interval': '60s',
@@ -41,8 +43,11 @@
     loading = true;
     error = null;
     try {
-      const response = await settingsApi.list() as Record<string, string> | { data: Record<string, string> };
-      settings = 'data' in response ? response.data : response;
+      const raw = await settingsApi.list() as Record<string, string> | { data: Record<string, string> };
+      const data = raw && typeof raw === 'object' && 'data' in raw && typeof raw.data === 'object' && raw.data !== null
+        ? raw.data as Record<string, string>
+        : raw as Record<string, string>;
+      settings = data;
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to load settings';
     } finally {
@@ -182,11 +187,11 @@
       {#if showImport}
         <div class="space-y-3 p-4 shadow-card rounded-md bg-card">
           <Label class="text-body-sm-strong">Paste settings JSON</Label>
-          <textarea
-            class="w-full h-32 bg-input rounded-md p-3 text-code font-mono text-foreground placeholder:text-muted-foreground resize-y focus:outline-none focus:ring-1 focus:ring-ring"
+          <Textarea
+            class="w-full h-32 font-mono text-xs"
             placeholder="Paste JSON settings object here..."
             bind:value={importText}
-          ></textarea>
+          />
           <div class="flex gap-2">
             <Button onclick={handleImport} disabled={!importText.trim()} size="sm" class="text-body-sm rounded-sm">Import</Button>
             <Button onclick={() => { showImport = false; importText = ''; }} variant="ghost" size="sm" class="text-body-sm">Cancel</Button>

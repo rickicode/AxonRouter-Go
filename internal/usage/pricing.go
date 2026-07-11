@@ -69,7 +69,8 @@ func lookupPricing(modelID string) Pricing {
 func splitModel(s string) (string, string) {
 	for i, c := range s {
 		if c == '/' {
-			return s[:i], s[i+1:]
+			prefix := strings.TrimPrefix(s[:i], "@")
+			return prefix, s[i+1:]
 		}
 	}
 	return "", s

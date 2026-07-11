@@ -86,6 +86,18 @@ func (cs *ConnectionState) SetCooldown(until time.Time) {
 	cs.Status = StatusCooldown
 }
 
+// SetQuotaCooldown sets a quota-exhausted cooldown (midnight UTC recovery).
+// Unlike SetCooldown, it preserves StatusQuotaExhausted so the DB recovery
+// path in QuotaScheduler recognises it correctly.
+func (cs *ConnectionState) SetQuotaCooldown(until time.Time) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.CooldownUntil = &until
+	cs.Status = StatusQuotaExhausted
+	cs.FailCount++
+	cs.BanCount++
+}
+
 // IsInCooldown checks if the connection is in cooldown.
 func (cs *ConnectionState) IsInCooldown() bool {
 	cs.mu.RLock()

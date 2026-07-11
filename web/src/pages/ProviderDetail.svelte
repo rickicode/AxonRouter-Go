@@ -67,7 +67,7 @@
   async function handleTestAll() {
     testingAll = true;
     try {
-      const res = await providersApi.test(providerId);
+      const res = (await providersApi.test(providerId)) as any;
       await loadProvider(providerId);
       await loadConnections(providerId, currentPage, perPage);
       const results = res?.results ?? [];
@@ -87,8 +87,8 @@
   async function handleTestConnection(connId: string) {
     actionLoading = connId;
     try {
-      const res = await connectionsApi.test(connId);
-      if (res?.status === 'ok') {
+      const res = (await connectionsApi.test(connId)) as any;
+      if (res?.success || res?.status === 'ok') {
         toast.success(`Connection OK (${res.latency_ms ?? 0}ms)`);
       } else {
         toast.error(`Test failed: ${res?.error ?? res?.message ?? 'Unknown error'}`);
@@ -125,6 +125,7 @@
   }
 
   async function executeDeleteConnection() {
+    if (!deleteTarget) return;
     const { id: connId, name } = deleteTarget;
     deleteTarget = null;
     deleteDialogOpen = false;
@@ -206,6 +207,7 @@
 
       <div class="flex flex-wrap gap-3">
         <Select.Root
+          type="single"
           value={$connectionFilter.status}
           onValueChange={(value: string) => { $connectionFilter.status = value || ''; currentPage = 1; loadConnections(providerId, currentPage, perPage); }}
         >

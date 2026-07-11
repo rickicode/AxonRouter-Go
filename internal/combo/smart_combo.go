@@ -3,6 +3,7 @@ package combo
 import (
 	"database/sql"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,28 +26,36 @@ type Telemetry struct {
 	FallbackRate float64
 	TotalCost    float64
 	AvgLatency   float64
+	WindowMin    int
 }
 
 // SmartCombo resolves which combo to use based on a goal.
+// Telemetry is cached in memory with a short TTL so the smart path does not
+// query SQLite on every request.
 type SmartCombo struct {
-	mu sync.RWMutex
-	db *sql.DB
+	mu              sync.RWMutex
+	db              *sql.DB
+	cachedTelemetry *Telemetry
+	cachedAt        time.Time
+	cacheTTL        time.Duration
 }
 
 // NewSmartCombo creates a new smart combo resolver.
 func NewSmartCombo(database *sql.DB) *SmartCombo {
-	return &SmartCombo{db: database}
+	return &SmartCombo{
+		db:       database,
+		cacheTTL: 60 * time.Second,
+	}
 }
 
-// Resolve selects the best combo for the given goal.
-func (sc *SmartCombo) Resolve(goal SmartGoal, telemetry *Telemetry) (*db.Combo, error) {
-	combos, err := sc.getSmartCombos()
-	if err != nil {
-		return nil, err
-	}
+// Resolve selects the best combo for the given goal from the provided smart combos.
+// Telemetry is resolved internally (and cached).
+func (sc *SmartCombo) Resolve(goal SmartGoal, combos []*db.Combo) (*db.Combo, error) {
 	if len(combos) == 0 {
 		return nil, nil
 	}
+
+	telemetry := sc.GetTelemetry(60)
 
 	switch goal {
 	case GoalAuto:
@@ -61,18 +70,23 @@ func (sc *SmartCombo) Resolve(goal SmartGoal, telemetry *Telemetry) (*db.Combo, 
 }
 
 // resolveAuto dynamically picks a goal based on telemetry.
+// Thresholds use rate-normalized values so they stay meaningful regardless of
+// the telemetry window.
 func (sc *SmartCombo) resolveAuto(combos []*db.Combo, telemetry *Telemetry) *db.Combo {
-	if telemetry == nil {
+	if telemetry == nil || telemetry.WindowMin <= 0 {
 		return sc.findByGoal(combos, "balanced")
 	}
+
+	costPerMinute := telemetry.TotalCost / float64(telemetry.WindowMin)
+
 	// High error rate → escalate to premium
 	if telemetry.ErrorRate >= 0.15 || telemetry.FallbackRate >= 0.2 {
 		if c := sc.findByGoal(combos, "premium"); c != nil {
 			return c
 		}
 	}
-	// High cost → shift to economy
-	if telemetry.TotalCost >= 50 {
+	// High burn rate → shift to economy
+	if costPerMinute >= 0.85 {
 		if c := sc.findByGoal(combos, "economy"); c != nil {
 			return c
 		}
@@ -90,37 +104,19 @@ func (sc *SmartCombo) findByGoal(combos []*db.Combo, goal string) *db.Combo {
 	return nil
 }
 
-// getSmartCombos loads all active smart combos from the database.
-func (sc *SmartCombo) getSmartCombos() ([]*db.Combo, error) {
-	rows, err := sc.db.Query(`
-		SELECT id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal,
-		       is_active, created_at, updated_at
-		FROM combos WHERE is_smart = 1 AND is_active = 1
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var combos []*db.Combo
-	for rows.Next() {
-		c := &db.Combo{}
-		err := rows.Scan(&c.ID, &c.Name, &c.Strategy, &c.StickyLimit,
-			&c.TimeoutMs, &c.IsSmart, &c.SmartGoal,
-			&c.IsActive, &c.CreatedAt, &c.UpdatedAt)
-		if err != nil {
-			continue
-		}
-		combos = append(combos, c)
-	}
-	return combos, nil
-}
-
-// GetTelemetry computes recent telemetry from request logs.
+// GetTelemetry computes recent telemetry from request logs with in-memory caching.
 func (sc *SmartCombo) GetTelemetry(minutes int) *Telemetry {
 	if minutes <= 0 {
 		minutes = 60
 	}
+
+	sc.mu.RLock()
+	if sc.cachedTelemetry != nil && time.Since(sc.cachedAt) < sc.cacheTTL {
+		sc.mu.RUnlock()
+		return sc.cachedTelemetry
+	}
+	sc.mu.RUnlock()
+
 	var total, errors int64
 	var cost float64
 	var latencySum int64
@@ -134,14 +130,19 @@ func (sc *SmartCombo) GetTelemetry(minutes int) *Telemetry {
 		FROM request_logs WHERE timestamp > ?
 	`, since).Scan(&total, &errors, &cost, &latencySum)
 
-	if total == 0 {
-		return &Telemetry{}
+	tel := &Telemetry{WindowMin: minutes}
+	if total > 0 {
+		tel.ErrorRate = float64(errors) / float64(total)
+		tel.TotalCost = cost
+		tel.AvgLatency = float64(latencySum) / float64(total)
 	}
-	return &Telemetry{
-		ErrorRate:    float64(errors) / float64(total),
-		TotalCost:    cost,
-		AvgLatency:   float64(latencySum) / float64(total),
-	}
+
+	sc.mu.Lock()
+	sc.cachedTelemetry = tel
+	sc.cachedAt = timeNow()
+	sc.mu.Unlock()
+
+	return tel
 }
 
 // EstimateCost scores a combo by average model pricing (lower = cheaper).
@@ -157,21 +158,17 @@ func EstimateCost(combo *db.Combo, steps []db.ComboStep) float64 {
 func getModelCostPer1K(modelID string) float64 {
 	// ponytail: hardcoded lookup, upgrade to DB pricing table later
 	switch {
-	case contains(modelID, "gpt-4o"):
+	case strings.Contains(modelID, "gpt-4o"):
 		return 0.005
-	case contains(modelID, "gpt-4"):
+	case strings.Contains(modelID, "gpt-4"):
 		return 0.03
-	case contains(modelID, "claude-sonnet"):
+	case strings.Contains(modelID, "claude-sonnet"):
 		return 0.003
-	case contains(modelID, "mimo"):
+	case strings.Contains(modelID, "mimo"):
 		return 0.001
 	default:
 		return 0.002
 	}
-}
-
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(s) > 0 && (s[0:len(sub)] == sub || contains(s[1:], sub)))
 }
 
 // timeNow and timeMinutes are functions so tests can mock them.

@@ -8,6 +8,7 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
+  import { Switch } from '$lib/components/ui/switch';
   import * as Dialog from '$lib/components/ui/dialog';
   import { toast } from 'svelte-sonner';
 
@@ -250,10 +251,10 @@
       </div>
 
       <div class="flex items-center gap-3 pt-2 border-t border-white/5">
-        <label class="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" bind:checked={newIsSmart} class="rounded cursor-pointer" />
-          <span class="text-body-sm-strong">Smart combo</span>
-        </label>
+        <div class="flex items-center space-x-2">
+          <Switch id="new-is-smart" bind:checked={newIsSmart} />
+          <Label for="new-is-smart" class="text-body-sm-strong cursor-pointer">Smart combo</Label>
+        </div>
       </div>
 
       {#if newIsSmart}

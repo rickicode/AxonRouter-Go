@@ -1,7 +1,7 @@
 <script lang="ts">
   import { PROVIDER_CATALOG, CATEGORIES, getProviderMeta } from '$lib/provider-catalog';
   import ProviderIcon from '$lib/components/ProviderIcon.svelte';
-  import { connectionsApi } from '$lib/api';
+  import { connectionsApi, type CreateConnectionPayload } from '$lib/api';
   import { Card, CardContent } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
@@ -54,7 +54,7 @@
     resultMsg = '';
     try {
       const name = connectionName.trim() || `${selectedProvider}-key-001`;
-      const data: Record<string, unknown> = { name };
+      const data: CreateConnectionPayload = { name };
       if (meta?.authType === 'apikey' && apiKey.trim()) {
         data.api_key = apiKey.trim();
       }

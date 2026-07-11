@@ -5,6 +5,7 @@
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { Badge } from '$lib/components/ui/badge';
+  import { AlertDialog, AlertDialogContent, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from '$lib/components/ui/alert-dialog';
   import { toast } from 'svelte-sonner';
   import { apiKeysApi } from '$lib/api';
   import type { APIKeyItem } from '$lib/api';
@@ -17,6 +18,8 @@
   let creating = $state(false);
   let createdKey = $state('');
   let createdKeyId = $state('');
+  let deleteConfirm = $state<{ id: string; name: string } | null>(null);
+  let showDeleteConfirm = $state(false);
 
   onMount(() => {
     document.title = 'API Keys — AxonRouter';
@@ -50,7 +53,15 @@
     }
   }
 
-  async function handleDelete(id: string, name: string) {
+  function handleDelete(id: string, name: string) {
+    deleteConfirm = { id, name };
+    showDeleteConfirm = true;
+  }
+  async function confirmDelete() {
+    if (!deleteConfirm) return;
+    const { id, name } = deleteConfirm;
+    deleteConfirm = null;
+    showDeleteConfirm = false;
     try {
       await apiKeysApi.delete(id);
       toast.success(`Deleted key: ${name || id.slice(0, 8)}`);
@@ -72,10 +83,22 @@
 
   async function copyKey() {
     try {
-      await navigator.clipboard.writeText(createdKey);
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(createdKey);
+      } else {
+        // Fallback for HTTP: temporary textarea + execCommand
+        const ta = document.createElement('textarea');
+        ta.value = createdKey;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
       toast.success('Key copied to clipboard');
     } catch {
-      toast.error('Copy failed');
+      toast.error('Copy failed — select and copy manually');
     }
   }
 
@@ -201,4 +224,17 @@
       </div>
     </div>
   {/if}
+
+  <AlertDialog bind:open={showDeleteConfirm}>
+    <AlertDialogContent>
+      <AlertDialogTitle>Delete API key</AlertDialogTitle>
+      <AlertDialogDescription>
+        Are you sure you want to delete <strong>{deleteConfirm?.name || deleteConfirm?.id.slice(0, 8)}</strong>? This action cannot be undone.
+      </AlertDialogDescription>
+      <div class="flex gap-2 justify-end mt-4">
+        <AlertDialogCancel onclick={() => { deleteConfirm = null; showDeleteConfirm = false; }}>Cancel</AlertDialogCancel>
+        <AlertDialogAction variant="destructive" onclick={confirmDelete}>Delete</AlertDialogAction>
+      </div>
+    </AlertDialogContent>
+  </AlertDialog>
 </div>

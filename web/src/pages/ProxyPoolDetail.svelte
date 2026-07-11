@@ -4,7 +4,7 @@
   import type { ProxyPool } from '$lib/api';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
-  import { Badge } from '$lib/components/ui/badge';
+  import { Badge, type BadgeVariant } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { toast } from 'svelte-sonner';
@@ -112,7 +112,7 @@
     return new Date(ts).toLocaleString();
   }
 
-  function statusColor(status: string): string {
+  function statusColor(status: string): BadgeVariant {
     if (status === 'active') return 'default';
     if (status === 'error') return 'destructive';
     return 'secondary';

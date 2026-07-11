@@ -8,6 +8,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
+  import { Switch } from '$lib/components/ui/switch';
   import { toast } from 'svelte-sonner';
 
   let { id = '' }: { id?: string } = $props();
@@ -125,10 +126,10 @@
               <Input type="number" bind:value={editStickyLimit} class="h-10 text-code font-mono" />
             </div>
           </div>
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" bind:checked={editIsActive} class="rounded cursor-pointer" />
-            <span class="text-body-sm">Active</span>
-          </label>
+          <div class="flex items-center space-x-2">
+            <Switch id="edit-is-active" bind:checked={editIsActive} />
+            <Label for="edit-is-active" class="text-body-sm cursor-pointer">Active</Label>
+          </div>
         </CardContent>
       </Card>
       <div class="flex gap-3">

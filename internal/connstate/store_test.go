@@ -52,3 +52,61 @@ func TestRecordFailure_ConnectionCooldown(t *testing.T) {
 		t.Error("expected connection to be in cooldown")
 	}
 }
+
+func TestRecordFailure_QuotaCooldownSetsMidnight(t *testing.T) {
+	store := NewStore()
+	store.SeedConnection("conn-1", "cf", "ready", 0)
+
+	det := ErrorDetection{
+		Category: ErrorQuota,
+		Status:   StatusQuotaExhausted,
+		Scope:    "connection",
+		// simulated: detector sets next midnight UTC + 1 min
+		CooldownUntil: func() *time.Time { u := nextMidnightUTC().Add(time.Minute); return &u }(),
+	}
+	store.RecordFailure("conn-1", det)
+
+	cs := store.Get("conn-1")
+	if cs == nil {
+		t.Fatal("connection state not found")
+	}
+	if cs.GetStatus() != StatusQuotaExhausted {
+		t.Errorf("expected status quota_exhausted, got %s", cs.GetStatus())
+	}
+	if !cs.IsInCooldown() {
+		t.Error("expected connection to be in cooldown")
+	}
+	if cs.BanCount != 1 {
+		t.Errorf("expected ban count 1, got %d", cs.BanCount)
+	}
+}
+
+func TestDetectError_429WithQuotaBody(t *testing.T) {
+	// CF daily limit returns 429 with body containing quota patterns.
+	// This must be classified as ErrorQuota, not ErrorRateLimit.
+	cfBody := `{"errors":[{"message":"AiError: AiError: you have used up your daily free allocation of 10,000 neurons, please upgrade to Cloudflare's Workers Paid plan if you would like to continue usage. (de3fabb0-569c-4e72-bec9-fedd0de629b3)","code":4006}],"success":false,"result":{},"messages":[]}`
+
+	det := DetectError(429, cfBody, nil, "cf", "", nil)
+	if det.Category != ErrorQuota {
+		t.Errorf("expected ErrorQuota for 429+neurons body, got %s", det.Category)
+	}
+	if det.Status != StatusQuotaExhausted {
+		t.Errorf("expected StatusQuotaExhausted, got %s", det.Status)
+	}
+	if det.CooldownUntil == nil {
+		t.Fatal("expected CooldownUntil to be set")
+	}
+	// Cooldown should be next midnight UTC + 1 min
+	expected := nextMidnightUTC().Add(time.Minute)
+	if det.CooldownUntil.Sub(expected).Abs() > time.Second {
+		t.Errorf("expected cooldown ~%v, got %v", expected, det.CooldownUntil)
+	}
+}
+
+func TestDetectError_429WithoutQuotaBody(t *testing.T) {
+	// Regular rate limit (e.g. OpenAI) — 429 without quota patterns
+	det := DetectError(429, `{"error":{"message":"rate limit exceeded"}}`, nil, "openai", "", nil)
+	if det.Category != ErrorRateLimit {
+		t.Errorf("expected ErrorRateLimit for plain 429, got %s", det.Category)
+	}
+}

@@ -3,6 +3,7 @@
     date: string;
     value: number;
     label?: string;
+    errors?: number;
   }
 
   let {
@@ -111,7 +112,7 @@
       >
         <p class="text-caption text-muted-foreground">{formatDate(b.date)}</p>
         <p class="font-medium">{formatVal(b.value)}</p>
-        {#if b.errors > 0}
+        {#if (b.errors ?? 0) > 0}
           <p class="text-caption text-red-400">{b.errors} errors</p>
         {/if}
       </div>

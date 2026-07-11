@@ -4,14 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/models"
 )
 
@@ -64,15 +65,22 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 		exec, _, ok := h.registry.Get(provider.ID)
 		if ok {
 			if tester, ok := exec.(modelTester); ok {
-				var apiKey, accessToken string
-				err := h.db.QueryRow(`SELECT COALESCE(api_key,''), COALESCE(oauth_token,'') FROM connections WHERE provider_type_id = ? AND status = 'ready' AND is_active = 1 LIMIT 1`, providerID).Scan(&apiKey, &accessToken)
-				if err == nil {
-					creds := &executor.Request{
-						APIKey:      apiKey,
-						AccessToken: accessToken,
-						BaseURL:     provider.BaseURL,
-						Provider:    providerID,
-					}
+			var apiKey, accessToken string
+			var psdJSON sql.NullString
+			err := h.db.QueryRow(`SELECT COALESCE(api_key,''), COALESCE(oauth_token,''), provider_specific_data FROM connections WHERE provider_type_id = ? AND status = 'ready' AND is_active = 1 LIMIT 1`, providerID).Scan(&apiKey, &accessToken, &psdJSON)
+			if err == nil {
+				// Parse provider_specific_data for {accountId} resolution
+				psd := make(map[string]string)
+				if psdJSON.Valid && psdJSON.String != "" {
+					json.Unmarshal([]byte(psdJSON.String), &psd)
+				}
+				creds := &executor.Request{
+					APIKey:      apiKey,
+					AccessToken: accessToken,
+					BaseURL:     provider.BaseURL,
+					Provider:    providerID,
+					ProviderSpecificData: psd,
+				}
 					resp, err := tester.Models(context.Background(), creds)
 					if err == nil {
 						var modelsResp struct {
@@ -82,20 +90,22 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 						}
 						if err := json.Unmarshal(resp.Body, &modelsResp); err == nil && len(modelsResp.Data) > 0 {
 							models := make([]string, 0, len(modelsResp.Data))
-							for _, m := range modelsResp.Data {
-								models = append(models, m.ID)
-							}
+						for _, m := range modelsResp.Data {
+							models = append(models, strings.TrimPrefix(m.ID, "@"))
+						}
 							c.JSON(http.StatusOK, gin.H{"data": models})
 							return
 						}
-						// Try parsing as flat array
 						var flat []string
 						if err2 := json.Unmarshal(resp.Body, &flat); err2 == nil && len(flat) > 0 {
-							c.JSON(http.StatusOK, gin.H{"data": flat})
-							return
+							stripped := make([]string, len(flat))
+							for i, m := range flat {
+								stripped[i] = strings.TrimPrefix(m, "@")
+							}
+							c.JSON(http.StatusOK, gin.H{"data": stripped})
 						}
 					} else {
-						log.Printf("WARN: dynamic model list failed for %s, using static fallback: %v", providerID, err)
+						logging.Logger.Debug("dynamic model list failed, using static", "provider", providerID, "err", err)
 					}
 				}
 			}
@@ -169,7 +179,7 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 				creds := &auth.Credentials{AccessToken: accessToken, RefreshToken: refreshToken.String, ExpiresAt: time.Unix(expiresAt, 0)}
 				newCreds, err := h.authMgr.RefreshToken(c.Request.Context(), auth.ProviderType(providerID), creds)
 				if err != nil {
-					log.Printf("TestModel: OAuth refresh failed for %s: %v", connID, err)
+					logging.Logger.Debug("OAuth refresh failed", "conn", connID, "err", err)
 				} else {
 					accessToken = newCreds.AccessToken
 					h.db.Exec(`UPDATE connections SET oauth_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
@@ -310,13 +320,18 @@ var providerCatalogKeys = map[string][]string{
 	"cf":            {"cf"},
 }
 
-// staticModels returns model IDs from the auto-updating catalog.
+// staticModels returns model IDs from the auto-updating catalog, stripped of leading "@".
 func staticModels(providerID string) []string {
 	keys, ok := providerCatalogKeys[providerID]
 	if !ok {
 		return []string{}
 	}
-	return models.GetAllModelIDs(keys...)
+	ids := models.GetAllModelIDs(keys...)
+	stripped := make([]string, len(ids))
+	for i, id := range ids {
+		stripped[i] = strings.TrimPrefix(id, "@")
+	}
+	return stripped
 }
 
 // defaultTestModel returns the first available model for a provider from the catalog.

@@ -42,16 +42,11 @@ func Open(dbPath string) (*sql.DB, error) {
 			return
 		}
 
-		d.SetMaxOpenConns(1) // SQLite: single writer
-		d.SetMaxIdleConns(1)
-		d.SetConnMaxLifetime(0)
+	d.SetMaxOpenConns(5)    // WAL mode: concurrent reads safe with >1 conn
+	d.SetMaxIdleConns(5)
+	d.SetConnMaxLifetime(0)
 
-		if err := RunMigrations(d); err != nil {
-			initErr = err
-			d.Close()
-			return
-		}
-		globalDB = d
+	globalDB = d
 	})
 	if initErr != nil {
 		return nil, initErr

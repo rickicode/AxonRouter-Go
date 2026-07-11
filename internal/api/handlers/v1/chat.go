@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
@@ -55,23 +58,31 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 
 	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
 	if err != nil {
+		logging.Logger.Info("chat: get connection failed", "err", err.Error())
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
 		return
 	}
-
-	// Proactive token refresh (matches OmniRoute checkAndRefreshToken)
-	h.proactiveRefreshToken(c.Request.Context(), conn, provider)
-
-	// Translate request (client format → provider format)
-	clientFormat := executor.FormatOpenAI // /v1/chat/completions is OpenAI format
-	stream := executor.IsStreamRequest(body)
-	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
-
-	// Parse provider-specific data for executor (e.g., Antigravity projectId)
+	// Parse provider-specific data early for logs + executor (e.g., Antigravity projectId)
 	var psdMap map[string]string
 	if conn.ProviderSpecificData != "" {
 		json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap)
 	}
+
+	// Compact route log: one line with all essential info
+	logArgs := []any{"model", model, "provider", provider, "conn", conn.ID[:8], "name", conn.Name}
+	if accountID := psdMap["accountId"]; accountID != "" {
+		logArgs = append(logArgs, "account_id", accountID)
+	}
+	logging.Logger.Info("route", logArgs...)
+
+	// Proactive token refresh (matches OmniRoute checkAndRefreshToken)
+	h.proactiveRefreshToken(c.Request.Context(), conn, provider)
+
+	clientFormat := executor.FormatOpenAI // /v1/chat/completions is OpenAI format
+	stream := executor.IsStreamRequest(body)
+	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+
+	// psdMap is already parsed above for route logging and is reused below
 
 	req := &executor.Request{
 		Model:                modelName,
@@ -109,12 +120,12 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		if det.Category == connstate.ErrorRateLimit {
 			h.exhaustion.MarkExhausted(conn.ID, quota.DefaultExhaustionTTL)
 		}
-		h.store.RecordFailure(conn.ID, det)
+		h.combo.RecordFailure(conn.ID, det)
+		h.persistCooldown(conn.ID, det)
 		// Refresh eligibility only when connection becomes non-eligible
 		if det.Status != connstate.StatusReady {
 			h.elig.Update(h.store)
 		}
-		h.combo.RecordFailure(conn.ID, 0, err.Error())
 
 		// Auto-disable banned accounts (auth/quota/balance failures)
 		h.checkAutoDisable(conn.ID, provider)
@@ -134,9 +145,8 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 
 	// Record success (reset ban count BEFORE RecordSuccess which zeros in-memory BanCount)
 	h.resetBanCount(conn.ID)
-	h.store.RecordSuccess(conn.ID)
-	h.elig.Update(h.store) // refresh eligibility after success
 	h.combo.RecordSuccess(conn.ID)
+	h.elig.Update(h.store) // refresh eligibility after success
 
 	if req.Stream {
 		h.handleStreamResponse(c, streamResult, conn, provider, modelName, start, translatedBody, body)
@@ -182,15 +192,14 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 			continue
 		}
 
-		// Load connection details
-		conn, err := h.loadConnectionByID(c.Request.Context(), connID)
+		provider, modelName := executor.SplitModel(step.ModelID)
+
+		// Full preflight: cooldown, exhaustion, token refresh, load credentials.
+		conn, err := h.prepareConnection(comboCtx, connID, provider, modelName)
 		if err != nil {
 			continue
 		}
 
-		proxyCtx := h.proxyContext(comboCtx, conn)
-
-		provider, modelName := executor.SplitModel(step.ModelID)
 		exec, providerFormat, err := h.resolveExecutor(provider, modelName)
 		if err != nil {
 			continue
@@ -211,15 +220,8 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 			Provider:    provider,
 		}
 
-		var resp *executor.Response
-		var streamResult *executor.StreamResult
-
-		if req.Stream {
-			streamResult, err = exec.ExecuteStream(proxyCtx, req)
-		} else {
-			resp, err = exec.Execute(proxyCtx, req)
-		}
-
+		proxyCtx := h.proxyContext(comboCtx, conn)
+		resp, streamResult, err := h.executeWithRetry(proxyCtx, exec, req, conn, provider, modelName)
 		latency := time.Since(start).Milliseconds()
 
 		if err != nil {
@@ -227,18 +229,17 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 			if det.Category == connstate.ErrorRateLimit {
 				h.exhaustion.MarkExhausted(connID, quota.DefaultExhaustionTTL)
 			}
-			h.store.RecordFailure(connID, det)
+			h.combo.RecordFailure(connID, det)
+			h.persistCooldown(connID, det)
 			if det.Status != connstate.StatusReady {
 				h.elig.Update(h.store)
 			}
-			h.combo.RecordFailure(connID, 0, err.Error())
 			continue // Try next step
 		}
 
 		// Success
 		h.resetBanCount(connID)
 		h.combo.RecordSuccess(connID)
-		h.store.RecordSuccess(connID)
 		h.elig.Update(h.store) // refresh eligibility after success
 
 		if req.Stream {
@@ -297,47 +298,65 @@ func (h *Handler) handleStreamResponse(c *gin.Context, result *executor.StreamRe
 	c.Header("Connection", "keep-alive")
 	c.Status(http.StatusOK)
 
+	heartbeatInterval := 15 * time.Second
+	if v := os.Getenv("SSE_HEARTBEAT_INTERVAL_MS"); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
+			heartbeatInterval = time.Duration(ms) * time.Millisecond
+		}
+	}
+	ticker := time.NewTicker(heartbeatInterval)
+	defer ticker.Stop()
+
 	var lastChunk []byte
 	clientFormat := executor.FormatOpenAI
 	_, providerFormat, _ := h.registry.Get(provider)
+	lastChunkTime := time.Now()
 
-	for chunk := range result.Chunks {
-		if chunk.Err != nil {
-			// Q6 fix: escape error message for valid JSON in SSE
-			errJSON, _ := json.Marshal(gin.H{"error": gin.H{"message": chunk.Err.Error()}})
-			c.Writer.Write([]byte("data: " + string(errJSON) + "\n\n"))
-			flusher.Flush()
-			return
-		}
+	for {
+		select {
+		case chunk, ok := <-result.Chunks:
+			if !ok {
+				c.Writer.Write([]byte("data: [DONE]\n\n"))
+				flusher.Flush()
 
-		// Translate chunk
-		translatedChunks := registry.Response(c.Request.Context(), string(providerFormat), string(clientFormat), model, originalReq, translatedReq, chunk.Payload, nil)
-		for _, tc := range translatedChunks {
-			c.Writer.Write(tc)
-			c.Writer.Write([]byte("\n\n"))
-			flusher.Flush()
+				latency := time.Since(start).Milliseconds()
+				tokenCounts := ExtractTokensFromFinalChunk(lastChunk)
+				h.tracker.Log(&usage.LogEntry{
+					ConnectionID:    conn.ID,
+					ProviderTypeID:  provider,
+					ModelID:         model,
+					Modality:        "chat",
+					InputTokens:     tokenCounts.InputTokens,
+					OutputTokens:    tokenCounts.OutputTokens,
+					ReasoningTokens: tokenCounts.ReasoningTokens,
+					CachedTokens:    tokenCounts.CachedTokens,
+					LatencyMs:       latency,
+					StatusCode:      http.StatusOK,
+				})
+				return
+			}
+
+			if chunk.Err != nil {
+				errJSON, _ := json.Marshal(gin.H{"error": gin.H{"message": chunk.Err.Error()}})
+				c.Writer.Write([]byte("event: error\ndata: " + string(errJSON) + "\n\n"))
+				c.Writer.Write([]byte("data: [DONE]\n\n"))
+				flusher.Flush()
+				return
+			}
+
+			lastChunkTime = time.Now()
+			translatedChunks := registry.Response(c.Request.Context(), string(providerFormat), string(clientFormat), model, originalReq, translatedReq, chunk.Payload, nil)
+			for _, tc := range translatedChunks {
+				c.Writer.Write(tc)
+				c.Writer.Write([]byte("\n\n"))
+				flusher.Flush()
+			}
+			lastChunk = chunk.Payload
+
+		case <-ticker.C:
+			if time.Since(lastChunkTime) >= heartbeatInterval {
+				executor.WriteSSEHeartbeat(c.Writer, flusher)
+			}
 		}
-		lastChunk = chunk.Payload
 	}
-
-	// Send [DONE] marker
-	c.Writer.Write([]byte("data: [DONE]\n\n"))
-	flusher.Flush()
-
-	// Extract tokens from final chunk
-	latency := time.Since(start).Milliseconds()
-	tokenCounts := ExtractTokensFromFinalChunk(lastChunk)
-
-	h.tracker.Log(&usage.LogEntry{
-		ConnectionID:    conn.ID,
-		ProviderTypeID:  provider,
-		ModelID:         model,
-		Modality:        "chat",
-		InputTokens:     tokenCounts.InputTokens,
-		OutputTokens:    tokenCounts.OutputTokens,
-		ReasoningTokens: tokenCounts.ReasoningTokens,
-		CachedTokens:    tokenCounts.CachedTokens,
-		LatencyMs:       latency,
-		StatusCode:      http.StatusOK,
-	})
 }

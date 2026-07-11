@@ -9,14 +9,20 @@ import (
 )
 
 // RotationManager manages round-robin rotation state per combo.
+// Counters are kept in memory so combo resolution never blocks on SQLite I/O.
+// Best-effort async writes flush state to the DB for continuity across restarts.
 type RotationManager struct {
-	mu sync.Mutex
-	db *sql.DB
+	mu       sync.RWMutex
+	db       *sql.DB
+	counters map[string]int
 }
 
 // NewRotationManager creates a new rotation manager.
 func NewRotationManager(database *sql.DB) *RotationManager {
-	return &RotationManager{db: database}
+	return &RotationManager{
+		db:       database,
+		counters: make(map[string]int),
+	}
 }
 
 // GetRotatedSteps returns combo steps rotated according to the round-robin counter.
@@ -26,24 +32,38 @@ func (rm *RotationManager) GetRotatedSteps(comboID string, strategy string, stic
 		return steps
 	}
 
-	rm.mu.Lock()
-	defer rm.mu.Unlock()
-
-	counter := rm.getCounter(comboID)
+	counter := rm.nextCounter(comboID)
 	effectiveIndex := (counter / stickyLimit) % len(steps)
-	rm.incrementCounter(comboID)
 
-	// Rotate: move first N elements to end
 	rotated := make([]db.ComboStep, len(steps))
-	copy(rotated, steps)
-	for i := 0; i < effectiveIndex; i++ {
-		rotated = append(rotated[1:], rotated[0])
+	for i := range steps {
+		rotated[i] = steps[(effectiveIndex+i)%len(steps)]
 	}
 	return rotated
 }
 
-// getCounter reads the current rotation counter from SQLite.
-func (rm *RotationManager) getCounter(comboID string) int {
+// nextCounter returns the current counter for comboID and advances it in memory.
+// The first call lazily seeds the in-memory value from the DB so restarts keep
+// approximate position. DB writes are async and best-effort.
+func (rm *RotationManager) nextCounter(comboID string) int {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
+	counter, ok := rm.counters[comboID]
+	if !ok {
+		counter = rm.loadCounter(comboID)
+		rm.counters[comboID] = counter
+	}
+	rm.counters[comboID] = counter + 1
+
+	// Flush counter asynchronously so the hot path never waits on SQLite.
+	go rm.persistCounter(comboID, counter+1)
+
+	return counter
+}
+
+// loadCounter reads the current rotation counter from SQLite.
+func (rm *RotationManager) loadCounter(comboID string) int {
 	var counter int
 	err := rm.db.QueryRow(`SELECT counter FROM rotation_state WHERE combo_id = ?`, comboID).Scan(&counter)
 	if err != nil {
@@ -52,19 +72,20 @@ func (rm *RotationManager) getCounter(comboID string) int {
 	return counter
 }
 
-// incrementCounter bumps the rotation counter and persists.
-func (rm *RotationManager) incrementCounter(comboID string) {
+// persistCounter bumps the rotation counter in SQLite.
+func (rm *RotationManager) persistCounter(comboID string, counter int) {
 	now := time.Now().Unix()
-	_, err := rm.db.Exec(`
-		INSERT INTO rotation_state (combo_id, counter, updated_at) VALUES (?, 1, ?)
-		ON CONFLICT(combo_id) DO UPDATE SET counter = counter + 1, updated_at = ?
-	`, comboID, now, now)
-	if err != nil {
-		// ponytail: silent fail — rotation is best-effort
-	}
+	rm.db.Exec(`
+		INSERT INTO rotation_state (combo_id, counter, updated_at) VALUES (?, ?, ?)
+		ON CONFLICT(combo_id) DO UPDATE SET counter = ?, updated_at = ?
+	`, comboID, counter, now, counter, now)
 }
 
-// ResetCounter resets the rotation counter for a combo.
+// ResetCounter resets the rotation counter for a combo in memory and on disk.
 func (rm *RotationManager) ResetCounter(comboID string) {
+	rm.mu.Lock()
+	delete(rm.counters, comboID)
+	rm.mu.Unlock()
+
 	rm.db.Exec(`DELETE FROM rotation_state WHERE combo_id = ?`, comboID)
 }

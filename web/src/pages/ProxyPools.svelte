@@ -7,6 +7,8 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
+  import { Switch } from '$lib/components/ui/switch';
+  import * as Select from '$lib/components/ui/select';
   import * as Dialog from '$lib/components/ui/dialog';
   import { toast } from 'svelte-sonner';
 
@@ -475,24 +477,30 @@
                     <span class="text-caption-mono text-muted-foreground ml-1">({prov.id})</span>
                   </td>
                   <td class="px-4 py-2.5">
-                    <select class="h-8 rounded-md border border-input bg-background px-2 text-body-sm cursor-pointer w-full max-w-[200px]"
-                      value={proxyDefaults[prov.id]?.proxyGroupId ?? ''}
-                      onchange={(e) => setProxyDefault(prov.id, 'proxyGroupId', (e.target as HTMLSelectElement).value)}>
-                      <option value="">None</option>
-                      {#each groups as group}
-                        <option value={group.id}>{group.name}</option>
-                      {/each}
-                    </select>
+                    <Select.Root type="single" value={proxyDefaults[prov.id]?.proxyGroupId ?? ''} onValueChange={(v: string) => setProxyDefault(prov.id, 'proxyGroupId', v ?? '')}>
+                      <Select.Trigger class="h-8 w-full max-w-[200px] text-body-sm rounded-sm">
+                        {groups.find(g => g.id === (proxyDefaults[prov.id]?.proxyGroupId ?? ''))?.name ?? 'None'}
+                      </Select.Trigger>
+                      <Select.Content>
+                        <Select.Item value="" class="text-body-sm">None</Select.Item>
+                        {#each groups as group}
+                          <Select.Item value={group.id} class="text-body-sm">{group.name}</Select.Item>
+                        {/each}
+                      </Select.Content>
+                    </Select.Root>
                   </td>
                   <td class="px-4 py-2.5">
-                    <select class="h-8 rounded-md border border-input bg-background px-2 text-body-sm cursor-pointer w-full max-w-[200px]"
-                      value={proxyDefaults[prov.id]?.proxyPoolId ?? ''}
-                      onchange={(e) => setProxyDefault(prov.id, 'proxyPoolId', (e.target as HTMLSelectElement).value)}>
-                      <option value="">None</option>
-                      {#each pools as pool}
-                        <option value={pool.id}>{pool.name}</option>
-                      {/each}
-                    </select>
+                    <Select.Root type="single" value={proxyDefaults[prov.id]?.proxyPoolId ?? ''} onValueChange={(v: string) => setProxyDefault(prov.id, 'proxyPoolId', v ?? '')}>
+                      <Select.Trigger class="h-8 w-full max-w-[200px] text-body-sm rounded-sm">
+                        {pools.find(p => p.id === (proxyDefaults[prov.id]?.proxyPoolId ?? ''))?.name ?? 'None'}
+                      </Select.Trigger>
+                      <Select.Content>
+                        <Select.Item value="" class="text-body-sm">None</Select.Item>
+                        {#each pools as pool}
+                          <Select.Item value={pool.id} class="text-body-sm">{pool.name}</Select.Item>
+                        {/each}
+                      </Select.Content>
+                    </Select.Root>
                   </td>
                 </tr>
               {/each}
@@ -649,9 +657,9 @@
           <Input type="number" bind:value={groupStickyLimit} min={1} class="h-10 text-code font-mono" />
         </div>
       {/if}
-      <div class="flex items-center gap-2">
-        <input type="checkbox" bind:checked={groupStrict} class="rounded cursor-pointer" />
-        <Label class="text-body-sm-strong cursor-pointer">Strict proxy</Label>
+      <div class="flex items-center space-x-2">
+        <Switch id="group-strict" bind:checked={groupStrict} />
+        <Label for="group-strict" class="text-body-sm-strong cursor-pointer">Strict proxy</Label>
       </div>
       {#if pools.length > 0}
         <div class="space-y-2">
@@ -699,9 +707,9 @@
           <Input type="number" bind:value={groupStickyLimit} min={1} class="h-10 text-code font-mono" />
         </div>
       {/if}
-      <div class="flex items-center gap-2">
-        <input type="checkbox" bind:checked={groupStrict} class="rounded cursor-pointer" />
-        <Label class="text-body-sm-strong cursor-pointer">Strict proxy</Label>
+      <div class="flex items-center space-x-2">
+        <Switch id="group-strict" bind:checked={groupStrict} />
+        <Label for="group-strict" class="text-body-sm-strong cursor-pointer">Strict proxy</Label>
       </div>
       {#if pools.length > 0}
         <div class="space-y-2">

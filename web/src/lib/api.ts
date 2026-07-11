@@ -14,6 +14,7 @@ interface ApiResponse<T> {
 
 export interface Provider {
   id: string;
+  name?: string;
   display_name: string;
   format: string;
   base_url: string;

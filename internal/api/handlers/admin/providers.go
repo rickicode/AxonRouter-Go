@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -349,6 +351,18 @@ func (h *ProviderHandler) AddConnection(c *gin.Context) {
 		return
 	}
 
+	// Validate CF connections require an Account ID
+	if providerID == "cf" {
+		accountID := req.ProviderSpecificData["accountId"]
+		if accountID == "" {
+			accountID = os.Getenv("CLOUDFLARE_ACCOUNT_ID")
+		}
+		if accountID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Cloudflare Workers AI requires an Account ID. Add it in provider_specific_data.accountId or set CLOUDFLARE_ACCOUNT_ID env var."})
+			return
+		}
+	}
+
 	connID := uuid.New().String()
 	now := time.Now().Unix()
 	if req.AuthType == "" {
@@ -407,6 +421,20 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Validate CF connections require Account ID (fail fast before any inserts)
+	if providerID == "cf" {
+		for i, conn := range req.Connections {
+			accountID := conn.ProviderSpecificData["accountId"]
+			if accountID == "" {
+				accountID = os.Getenv("CLOUDFLARE_ACCOUNT_ID")
+			}
+			if accountID == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "connection #" + fmt.Sprintf("%d", i+1) + ": Cloudflare Workers AI requires an Account ID"})
+				return
+			}
+		}
 	}
 
 	now := time.Now().Unix()

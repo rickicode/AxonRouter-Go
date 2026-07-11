@@ -43,7 +43,7 @@
     return labels[segment] ?? segment.charAt(0).toUpperCase() + segment.slice(1);
   }
 
-  function matchRoute(path: string): { component: typeof Dashboard; params: Record<string, string> } {
+  function matchRoute(path: string): { component: any; params: Record<string, string> } {
     const segments = path.split('/').filter(Boolean);
 
     // / → Dashboard

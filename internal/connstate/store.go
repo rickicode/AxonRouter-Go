@@ -85,9 +85,15 @@ func (s *Store) RecordFailure(connID string, det ErrorDetection) {
 		}
 	} else {
 		// Connection-level status change
-		if det.Category == ErrorRateLimit && det.CooldownUntil != nil {
+		switch {
+		case det.Category == ErrorQuota && det.CooldownUntil != nil:
+			cs.SetQuotaCooldown(*det.CooldownUntil)
+		case det.CooldownUntil != nil:
 			cs.SetCooldown(*det.CooldownUntil)
-		} else {
+		case det.Category == ErrorRateLimit:
+			// Rate limit without explicit CooldownUntil: use default short cooldown
+			cs.SetCooldown(time.Now().Add(60 * time.Second))
+		default:
 			cs.SetStatus(det.Status, det.Message)
 		}
 	}

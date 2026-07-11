@@ -18,6 +18,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
@@ -42,6 +43,7 @@ func readBody(c *gin.Context) ([]byte, error) {
 type Connection struct {
 	ID                   string
 	Provider             string
+	Name                 string
 	Priority             int
 	APIKey               string
 	AccessToken          string
@@ -111,6 +113,7 @@ func (h *Handler) resolveExecutor(provider, model string) (executor.Executor, ex
 func (h *Handler) getConnection(ctx context.Context, provider string, modelID string) (*Connection, error) {
 	// Get all eligible connections for this provider (sorted by priority)
 	connIDs := h.elig.GetByPrefix(provider)
+	logging.Logger.Debug("getConnection", "provider", provider, "eligible", len(connIDs))
 	if len(connIDs) == 0 {
 		return nil, fmt.Errorf("no eligible connection for provider: %s", provider)
 	}
@@ -136,12 +139,43 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 		// Load credentials by ID
 		conn, err := h.loadConnectionByID(ctx, connID)
 		if err != nil {
+			logging.Logger.Debug("load conn failed", "conn", connID[:8], "err", err)
 			continue
 		}
+		logging.Logger.Info("getConnection selected", "provider", provider, "conn", conn.ID[:8], "name", conn.Name)
 		return conn, nil
 	}
 	// All eligible connections exhausted or failed to load
 	return nil, fmt.Errorf("no available connection for provider: %s (all exhausted or failing)", provider)
+}
+
+// prepareConnection performs preflight checks and proactive token refresh for a
+// specific connection. Used by combo routing so it gets the same cooldown/exhaustion
+// guards and OAuth refresh as the regular single-model path.
+func (h *Handler) prepareConnection(ctx context.Context, connID, provider, modelID string) (*Connection, error) {
+	cs := h.store.Get(connID)
+	if cs == nil {
+		return nil, fmt.Errorf("connection state not found")
+	}
+	if cs.IsInCooldown() {
+		return nil, fmt.Errorf("connection in cooldown")
+	}
+	if modelID != "" && cs.IsModelInCooldown(modelID) {
+		return nil, fmt.Errorf("model in cooldown")
+	}
+	if h.exhaustion.IsExhausted(connID) {
+		return nil, fmt.Errorf("connection exhausted")
+	}
+
+	conn, err := h.loadConnectionByID(ctx, connID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Proactive token refresh (same as regular routing path)
+	h.proactiveRefreshToken(ctx, conn, provider)
+	logging.Logger.Info("combo step selected", "provider", provider, "conn", conn.ID[:8], "name", conn.Name)
+	return conn, nil
 }
 
 // RefreshConnections clears the connection cache for a provider.
@@ -203,7 +237,7 @@ func (h *Handler) loadConnectionByID(ctx context.Context, connID string) (*Conne
 	var expiresAt int64
 	var psd sql.NullString
 	err := h.db.QueryRowContext(ctx, `
-		SELECT c.id, c.provider_type_id as provider_prefix,
+		SELECT c.id, c.name, c.provider_type_id as provider_prefix,
 			COALESCE(c.api_key, '') as api_key,
 			COALESCE(c.oauth_token, '') as oauth_token,
 			COALESCE(c.oauth_refresh_token, '') as oauth_refresh_token,
@@ -214,7 +248,7 @@ func (h *Handler) loadConnectionByID(ctx context.Context, connID string) (*Conne
 		FROM connections c
 		JOIN provider_types pt ON c.provider_type_id = pt.id
 		WHERE c.id = ?
-	`, connID).Scan(&conn.ID, &conn.Provider, &conn.APIKey, &conn.AccessToken,
+	`, connID).Scan(&conn.ID, &conn.Name, &conn.Provider, &conn.APIKey, &conn.AccessToken,
 		&conn.RefreshToken, &expiresAt, &conn.BaseURL, &conn.Status, &psd)
 	if err != nil {
 		return nil, err
@@ -499,4 +533,17 @@ func (h *Handler) resetBanCount(connID string) {
 		h.db.Exec(`UPDATE connections SET consecutive_ban_count = 0, updated_at = ? WHERE id = ?`,
 			time.Now().Unix(), connID)
 	}
+}
+
+// persistCooldown writes a quota/rate-limit cooldown to the DB so it survives restarts.
+func (h *Handler) persistCooldown(connID string, det connstate.ErrorDetection) {
+	if det.CooldownUntil == nil {
+		return
+	}
+	status := string(det.Status)
+	if det.Category == connstate.ErrorQuota {
+		status = string(connstate.StatusQuotaExhausted)
+	}
+	h.db.Exec(`UPDATE connections SET status = ?, cooldown_until = ?, updated_at = ? WHERE id = ?`,
+		status, det.CooldownUntil.Unix(), time.Now().Unix(), connID)
 }

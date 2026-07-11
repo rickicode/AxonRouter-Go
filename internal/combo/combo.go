@@ -3,6 +3,7 @@ package combo
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -27,8 +28,9 @@ type Handler struct {
 	elig     *connstate.EligibilityManager
 
 	// In-memory combo cache
-	combos map[string]*db.Combo
-	steps  map[string][]db.ComboStep // comboID → steps
+	combos      map[string]*db.Combo
+	steps       map[string][]db.ComboStep // comboID → steps
+	smartCombos map[string]*db.Combo       // comboID → smart combo
 }
 
 // NewHandler creates a new combo handler.
@@ -38,14 +40,15 @@ func NewHandler(
 	elig *connstate.EligibilityManager,
 ) *Handler {
 	h := &Handler{
-		db:       database,
-		rotation: NewRotationManager(database),
-		smart:    NewSmartCombo(database),
-		fallback: NewFallbackManager(),
-		store:    store,
-		elig:     elig,
-		combos:   make(map[string]*db.Combo),
-		steps:    make(map[string][]db.ComboStep),
+		db:          database,
+		rotation:    NewRotationManager(database),
+		smart:       NewSmartCombo(database),
+		fallback:    NewFallbackManager(),
+		store:       store,
+		elig:        elig,
+		combos:      make(map[string]*db.Combo),
+		steps:       make(map[string][]db.ComboStep),
+		smartCombos: make(map[string]*db.Combo),
 	}
 	h.loadFromDB()
 	return h
@@ -69,6 +72,9 @@ func (h *Handler) loadFromDB() {
 			&c.TimeoutMs, &c.IsSmart, &c.SmartGoal,
 			&c.IsActive, &c.CreatedAt, &c.UpdatedAt)
 		h.combos[c.ID] = c
+		if c.IsSmart {
+			h.smartCombos[c.ID] = c
+		}
 	}
 
 	// Load steps
@@ -125,8 +131,14 @@ func (h *Handler) Resolve(modelStr string) (*ComboResult, bool) {
 
 // resolveSmart resolves a smart combo goal to actual combo steps.
 func (h *Handler) resolveSmart(goal SmartGoal) (*ComboResult, bool) {
-	telemetry := h.smart.GetTelemetry(60)
-	combo, err := h.smart.Resolve(goal, telemetry)
+	h.mu.RLock()
+	combos := make([]*db.Combo, 0, len(h.smartCombos))
+	for _, c := range h.smartCombos {
+		combos = append(combos, c)
+	}
+	h.mu.RUnlock()
+
+	combo, err := h.smart.Resolve(goal, combos)
 	if err != nil || combo == nil {
 		return nil, false
 	}
@@ -168,9 +180,8 @@ func (h *Handler) RecordSuccess(connID string) {
 }
 
 // RecordFailure records a failed request for a connection.
-func (h *Handler) RecordFailure(connID string, statusCode int, body string) {
+func (h *Handler) RecordFailure(connID string, det connstate.ErrorDetection) {
 	h.fallback.RecordFailure(connID)
-	det := connstate.DetectError(statusCode, body, nil, "", "", nil)
 	if det.Category != connstate.ErrorNone {
 		h.store.RecordFailure(connID, det)
 	}
@@ -226,6 +237,7 @@ func (h *Handler) DeleteCombo(comboID string) error {
 	}
 	delete(h.combos, comboID)
 	delete(h.steps, comboID)
+	delete(h.smartCombos, comboID)
 	return nil
 }
 
@@ -288,7 +300,8 @@ func isSmartCombo(s string) (SmartGoal, bool) {
 func splitModel(modelStr string) (string, string) {
 	for i, c := range modelStr {
 		if c == '/' {
-			return modelStr[:i], modelStr[i+1:]
+			prefix := strings.TrimPrefix(modelStr[:i], "@")
+			return prefix, modelStr[i+1:]
 		}
 	}
 	return "", modelStr
@@ -309,6 +322,7 @@ func (h *Handler) RefreshFromDB() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.combos = make(map[string]*db.Combo)
+	h.smartCombos = make(map[string]*db.Combo)
 	h.steps = make(map[string][]db.ComboStep)
 	h.loadFromDB()
 }

@@ -99,11 +99,11 @@ func (h *Handler) Messages(c *gin.Context) {
 		if det.Category == connstate.ErrorRateLimit {
 			h.exhaustion.MarkExhausted(conn.ID, quota.DefaultExhaustionTTL)
 		}
-		h.store.RecordFailure(conn.ID, det)
+		h.combo.RecordFailure(conn.ID, det)
+		h.persistCooldown(conn.ID, det)
 		if det.Status != connstate.StatusReady {
 			h.elig.Update(h.store)
 		}
-		h.combo.RecordFailure(conn.ID, 0, err.Error())
 
 		h.tracker.Log(&usage.LogEntry{
 			ConnectionID:   conn.ID,
@@ -119,9 +119,8 @@ func (h *Handler) Messages(c *gin.Context) {
 	}
 
 	h.resetBanCount(conn.ID)
-	h.store.RecordSuccess(conn.ID)
-	h.elig.Update(h.store) // refresh eligibility after success
 	h.combo.RecordSuccess(conn.ID)
+	h.elig.Update(h.store) // refresh eligibility after success
 
 	if req.Stream {
 		h.handleClaudeStreamResponse(c, streamResult, conn, provider, modelName, start, translatedBody, body)
@@ -184,6 +183,7 @@ func (h *Handler) handleClaudeStreamResponse(c *gin.Context, result *executor.St
 			// Q6 fix: escape error message for valid JSON in SSE
 			errJSON, _ := json.Marshal(claudeError("api_error", chunk.Err.Error()))
 			c.Writer.Write([]byte("event: error\ndata: " + string(errJSON) + "\n\n"))
+			c.Writer.Write([]byte("data: [DONE]\n\n"))
 			flusher.Flush()
 			return
 		}

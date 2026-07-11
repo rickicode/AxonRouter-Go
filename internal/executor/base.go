@@ -5,11 +5,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +31,13 @@ type StreamResult struct {
 	Chunks    chan StreamChunk
 	Headers   http.Header
 	StatusCode int
+}
+
+// StreamConfig holds per-request streaming tunables.
+type StreamConfig struct {
+	FetchTimeoutMs       int // timeout for response headers, e.g. 90000
+	StreamIdleTimeoutMs  int // timeout between chunks, e.g. 60000
+	StreamReadinessTimeoutMs int // timeout for first chunk, e.g. 300000
 }
 
 // Response is a non-streaming response.
@@ -51,6 +61,8 @@ type Request struct {
 	ProviderSpecificData map[string]string
 	// Extra headers
 	Headers map[string]string
+	// Streaming tunables (nil → use BaseExecutor defaults)
+	StreamConfig *StreamConfig
 }
 
 // Executor executes requests against a provider.
@@ -61,17 +73,35 @@ type Executor interface {
 
 // BaseExecutor provides shared HTTP logic for all executors.
 type BaseExecutor struct {
-	Client       *http.Client
-	Timeout      time.Duration
-	proxyClients sync.Map // proxyURL -> *http.Client
+	Client              *http.Client
+	Timeout             time.Duration
+	FetchTimeout        time.Duration
+	StreamIdleTimeout   time.Duration
+	StreamReadinessTimeout time.Duration
+	proxyClients        sync.Map // proxyURL -> *http.Client
 }
 
 // NewBaseExecutor creates a base executor with default settings.
+// Timeout defaults match OmniRoute runtimeTimeouts.ts:
+//   FETCH_TIMEOUT_MS=600000 (10m), STREAM_IDLE_TIMEOUT_MS=600000 (10m),
+//   STREAM_READINESS_TIMEOUT_MS=80000 (80s).
 func NewBaseExecutor() *BaseExecutor {
 	return &BaseExecutor{
-		Client:  &http.Client{Timeout: 5 * time.Minute},
-		Timeout: 5 * time.Minute,
+		Client:                 &http.Client{Timeout: 5 * time.Minute},
+		Timeout:                5 * time.Minute,
+		FetchTimeout:           time.Duration(getEnvInt("FETCH_TIMEOUT_MS", 600000)) * time.Millisecond,
+		StreamIdleTimeout:      time.Duration(getEnvInt("STREAM_IDLE_TIMEOUT_MS", 600000)) * time.Millisecond,
+		StreamReadinessTimeout: time.Duration(getEnvInt("STREAM_READINESS_TIMEOUT_MS", 80000)) * time.Millisecond,
 	}
+}
+
+func getEnvInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
 }
 
 type proxyContextKey struct{}
@@ -108,7 +138,8 @@ func ContextWithProxy(ctx context.Context, cfg ProxyConfig) context.Context {
 }
 
 // validateURL checks for SSRF-safe URLs. Blocks private IPs and localhost.
-func validateURL(rawURL string) error {
+// Defined as a var so tests can override it.
+var validateURL = func(rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return fmt.Errorf("invalid URL: %w", err)
@@ -297,6 +328,11 @@ func (b *BaseExecutor) DoRequest(ctx context.Context, method, rawURL string, hea
 
 // DoStreamRequest performs a streaming HTTP request and returns chunks via channel.
 func (b *BaseExecutor) DoStreamRequest(ctx context.Context, method, rawURL string, headers map[string]string, body []byte) (*StreamResult, error) {
+	return b.DoStreamRequestWithConfig(ctx, method, rawURL, headers, body, nil)
+}
+
+// DoStreamRequestWithConfig performs a streaming HTTP request with per-request timeout overrides.
+func (b *BaseExecutor) DoStreamRequestWithConfig(ctx context.Context, method, rawURL string, headers map[string]string, body []byte, cfg *StreamConfig) (*StreamResult, error) {
 	if err := validateURL(rawURL); err != nil {
 		return nil, fmt.Errorf("blocked URL: %w", err)
 	}
@@ -311,8 +347,28 @@ func (b *BaseExecutor) DoStreamRequest(ctx context.Context, method, rawURL strin
 		bodyReader = bytes.NewReader(body)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, targetURL, bodyReader)
+	// Determine effective timeouts
+	fetchTimeout := b.FetchTimeout
+	idleTimeout := b.StreamIdleTimeout
+	readinessTimeout := b.StreamReadinessTimeout
+	if cfg != nil {
+		if cfg.FetchTimeoutMs > 0 {
+			fetchTimeout = time.Duration(cfg.FetchTimeoutMs) * time.Millisecond
+		}
+		if cfg.StreamIdleTimeoutMs > 0 {
+			idleTimeout = time.Duration(cfg.StreamIdleTimeoutMs) * time.Millisecond
+		}
+		if cfg.StreamReadinessTimeoutMs > 0 {
+			readinessTimeout = time.Duration(cfg.StreamReadinessTimeoutMs) * time.Millisecond
+		}
+	}
+
+	// Fetch timeout covers until response headers arrive.
+	fetchCtx, fetchCancel := context.WithTimeout(ctx, fetchTimeout)
+
+	req, err := http.NewRequestWithContext(fetchCtx, method, targetURL, bodyReader)
 	if err != nil {
+		fetchCancel()
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
@@ -327,26 +383,39 @@ func (b *BaseExecutor) DoStreamRequest(ctx context.Context, method, rawURL strin
 		req.Header.Set("X-Request-ID", id)
 	}
 
+	logHost := targetURL
+	if parsed, err := url.Parse(targetURL); err == nil && parsed.Host != "" {
+		logHost = parsed.Host
+	}
 	logging.Logger.Info("upstream stream request start",
 		"request_id", RequestIDFromContext(ctx),
 		"method", method,
-		"url", targetURL,
+		"host", logHost,
 	)
 
 	resp, err := client.Do(req)
 	if err != nil {
+		fetchCancel()
+		logHost := targetURL
+		if parsed, err := url.Parse(targetURL); err == nil && parsed.Host != "" {
+			logHost = parsed.Host
+		}
 		logging.Logger.Warn("upstream stream request failed",
 			"request_id", RequestIDFromContext(ctx),
 			"method", method,
-			"url", targetURL,
+			"host", logHost,
 			"error", err,
 		)
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("stream fetch timeout (%v): %w", fetchTimeout, err)
+		}
 		return nil, fmt.Errorf("do request: %w", err)
 	}
 
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
 		errBody, _ := io.ReadAll(resp.Body)
+		fetchCancel()
 		return nil, fmt.Errorf("stream error %d: %s", resp.StatusCode, string(errBody))
 	}
 
@@ -360,28 +429,82 @@ func (b *BaseExecutor) DoStreamRequest(ctx context.Context, method, rawURL strin
 	go func() {
 		defer close(chunks)
 		defer resp.Body.Close()
+		defer fetchCancel()
 
 		scanner := bufio.NewScanner(resp.Body)
 		// ponytail: 64KB max line size, good enough for SSE
 		scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
 
-		for scanner.Scan() {
-			line := scanner.Bytes()
-			if len(line) == 0 {
-				continue
+		// Run scanner in its own goroutine so we can select on idle timeout
+		scanCh := make(chan []byte, 1)
+		scanErrCh := make(chan error, 1)
+		go func() {
+			for scanner.Scan() {
+				scanCh <- append([]byte{}, scanner.Bytes()...)
 			}
+			if err := scanner.Err(); err != nil {
+				scanErrCh <- err
+			}
+			close(scanCh)
+			close(scanErrCh)
+		}()
 
-			// Pass through full SSE lines (data: ...)
+		readinessTimer := time.NewTimer(readinessTimeout)
+		defer readinessTimer.Stop()
+
+		idleTimer := time.NewTimer(idleTimeout)
+		idleTimer.Stop()
+		var sawFirst bool
+
+		for {
 			select {
-			case chunks <- StreamChunk{Payload: append([]byte{}, line...)}:
+			case line, ok := <-scanCh:
+				if !ok {
+					if err := <-scanErrCh; err != nil {
+						chunks <- StreamChunk{Err: err}
+					}
+					return
+				}
+				if len(line) == 0 {
+					continue
+				}
+				if !sawFirst {
+					sawFirst = true
+					if !readinessTimer.Stop() {
+						select {
+						case <-readinessTimer.C:
+						default:
+						}
+					}
+					idleTimer.Reset(idleTimeout)
+				} else {
+					if !idleTimer.Stop() {
+						select {
+						case <-idleTimer.C:
+						default:
+						}
+					}
+					idleTimer.Reset(idleTimeout)
+				}
+				select {
+				case chunks <- StreamChunk{Payload: line}:
+				case <-ctx.Done():
+					chunks <- StreamChunk{Err: ctx.Err()}
+					return
+				}
+
+			case <-readinessTimer.C:
+				chunks <- StreamChunk{Err: fmt.Errorf("stream readiness timeout after %v: %w", readinessTimeout, context.DeadlineExceeded)}
+				return
+
+			case <-idleTimer.C:
+				chunks <- StreamChunk{Err: fmt.Errorf("stream idle timeout after %v: %w", idleTimeout, context.DeadlineExceeded)}
+				return
+
 			case <-ctx.Done():
 				chunks <- StreamChunk{Err: ctx.Err()}
 				return
 			}
-		}
-
-		if err := scanner.Err(); err != nil {
-			chunks <- StreamChunk{Err: err}
 		}
 	}()
 
@@ -399,6 +522,25 @@ func WriteSSE(w io.Writer, flusher http.Flusher, data []byte) {
 // WriteSSEDone writes the [DONE] marker.
 func WriteSSEDone(w io.Writer, flusher http.Flusher) {
 	fmt.Fprintf(w, "data: [DONE]\n\n")
+	if flusher != nil {
+		flusher.Flush()
+	}
+}
+
+// WriteSSEHeartbeat writes a synthetic OpenAI-style heartbeat chunk.
+// Matches OmniRoute OPENAI_CHUNK shape (sseHeartbeat.ts buildHeartbeatPayload).
+func WriteSSEHeartbeat(w io.Writer, flusher http.Flusher) {
+	payload := map[string]any{
+		"id":      "omniroute-keepalive",
+		"object":  "chat.completion.chunk",
+		"created": time.Now().Unix(),
+		"model":   "omniroute",
+		"choices": []map[string]any{
+			{"index": 0, "delta": map[string]any{}, "finish_reason": nil},
+		},
+	}
+	b, _ := json.Marshal(payload)
+	fmt.Fprintf(w, "data: %s\n\n", b)
 	if flusher != nil {
 		flusher.Flush()
 	}
@@ -426,7 +568,7 @@ func ExtractModel(model string) string {
 // "openai/gpt-4o" → "openai", "gpt-4o" → ""
 func ExtractProvider(model string) string {
 	if idx := strings.Index(model, "/"); idx >= 0 {
-		return model[:idx]
+		return strings.TrimPrefix(model[:idx], "@")
 	}
 	return ""
 }
