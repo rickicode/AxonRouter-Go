@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
+	"github.com/rickicode/AxonRouter-Go/internal/errorcode"
 )
 
 // LogEntry represents a single request to be logged.
@@ -57,6 +58,12 @@ func (t *Tracker) Log(entry *LogEntry) {
 	entry.Timestamp = time.Now().UnixMilli()
 	if entry.Modality == "" {
 		entry.Modality = "chat"
+	}
+	// Many error paths only know that the request failed. When the error text
+	// carries a status code (e.g. "stream error 400: ..."), lift it into
+	// StatusCode so filters and badges can display the real upstream code.
+	if entry.StatusCode == 0 && entry.ErrorMessage != "" {
+		entry.StatusCode = errorcode.FromString(entry.ErrorMessage)
 	}
 	if entry.CostUsd == 0 {
 		entry.CostUsd = EstimateCost(entry.ModelID, entry.InputTokens, entry.OutputTokens, entry.ReasoningTokens, entry.CachedTokens)

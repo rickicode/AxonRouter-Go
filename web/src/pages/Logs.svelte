@@ -98,17 +98,27 @@ onMount(() => {
   };
  }
 
+function extractErrorCodeFromMessage(msg?: string): number | null {
+	if (!msg) return null;
+	const m = msg.match(/^stream error (\d+):/);
+	return m ? parseInt(m[1], 10) : null;
+}
 function getStatusBadgeProps(statusCode: number | null | undefined, errorMsg?: string, category?: string) {
-  if (typeof statusCode === 'number' && statusCode >= 200 && statusCode < 300) return { label: `${statusCode} OK`, variant: 'default' as const };
-  if (statusCode === 429) {
-    if (category === 'quota') return { label: '429 EXHAUSTED', variant: 'destructive' as const };
-    if (category === 'rate_limit') return { label: '429 COOLDOWN', variant: 'secondary' as const };
-    return { label: '429 RATE LIMITED', variant: 'secondary' as const };
-  }
-  if (typeof statusCode === 'number' && statusCode >= 400 && statusCode < 500) return { label: `${statusCode} CLIENT ERR`, variant: 'secondary' as const };
-  if (typeof statusCode === 'number' && statusCode >= 500) return { label: `${statusCode} SERVER ERR`, variant: 'destructive' as const };
-  if (errorMsg) return { label: 'ERROR', variant: 'destructive' as const };
-  return { label: '—', variant: 'outline' as const };
+	const msgCode = extractErrorCodeFromMessage(errorMsg);
+	if (msgCode && (typeof statusCode !== 'number' || statusCode <= 0)) {
+		statusCode = msgCode;
+	}
+	if (typeof statusCode === 'number' && statusCode >= 200 && statusCode < 300) return { label: `${statusCode} OK`, variant: 'default' as const };
+	if (statusCode === 429) {
+		if (category === 'quota') return { label: '429 EXHAUSTED', variant: 'destructive' as const };
+		if (category === 'rate_limit') return { label: '429 COOLDOWN', variant: 'secondary' as const };
+		return { label: '429 RATE LIMITED', variant: 'secondary' as const };
+	}
+	if (statusCode === 401) return { label: '401 AUTH', variant: 'destructive' as const };
+	if (typeof statusCode === 'number' && statusCode >= 400 && statusCode < 500) return { label: `${statusCode} CLIENT ERR`, variant: 'secondary' as const };
+	if (typeof statusCode === 'number' && statusCode >= 500) return { label: `${statusCode} SERVER ERR`, variant: 'destructive' as const };
+	if (errorMsg) return { label: 'ERROR', variant: 'destructive' as const };
+	return { label: '—', variant: 'outline' as const };
 }
 function formatCooldown(cd?: number) {
   if (!cd) return '';
@@ -178,7 +188,7 @@ function formatCooldown(cd?: number) {
           { code: 200, label: '200 OK' },
           { code: 429, label: '429 Limited' },
           { code: 401, label: '401 Auth' },
-          { code: 500, label: '5xx Error' },
+          { code: 500, label: 'Error' },
         ] as pill}
           <button
             class="rounded-pill-sm px-3 py-1 text-caption-mono transition-colors

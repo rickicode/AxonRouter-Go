@@ -3,6 +3,8 @@ package db
 import (
 	"database/sql"
 	"time"
+
+	"github.com/rickicode/AxonRouter-Go/internal/errorcode"
 )
 
 // RunMigrations creates all tables if they don't exist.
@@ -142,6 +144,12 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		}
 	}
 
+	// Backfill status_code for legacy request_logs rows that only recorded the
+	// error message. This is idempotent: rows with a non-zero status_code keep it.
+	if err := migrateRequestLogStatusCodes(db); err != nil {
+		return err
+	}
+
 	// Fix provider_types defaults (idempotent upserts)
 	now := time.Now().Unix()
 	providers := []struct {
@@ -169,12 +177,12 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 	}
 
 	// Normalize legacy `opencode` provider type to canonical `oc` alias, keeping
-// connections and quota cache consistent. Must run after seeding `oc` above.
-db.Exec(`UPDATE connections SET provider_type_id = 'oc' WHERE provider_type_id = 'opencode'`)
-db.Exec(`UPDATE quota_cache SET provider_type_id = 'oc' WHERE provider_type_id = 'opencode'`)
-db.Exec(`DELETE FROM provider_types WHERE id = 'opencode'`)
+	// connections and quota cache consistent. Must run after seeding `oc` above.
+	db.Exec(`UPDATE connections SET provider_type_id = 'oc' WHERE provider_type_id = 'opencode'`)
+	db.Exec(`UPDATE quota_cache SET provider_type_id = 'oc' WHERE provider_type_id = 'opencode'`)
+	db.Exec(`DELETE FROM provider_types WHERE id = 'opencode'`)
 
-// Quota cache table (stores upstream quota data from background scheduler)
+	// Quota cache table (stores upstream quota data from background scheduler)
 	if _, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS quota_cache (
 	id TEXT PRIMARY KEY,
@@ -413,4 +421,50 @@ func searchString(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// migrateRequestLogStatusCodes fills status_code for rows that only captured an
+// error message such as "stream error 429: ...". It keeps the DB consistent
+// with the runtime tracker, which now derives the status code automatically.
+func migrateRequestLogStatusCodes(database *sql.DB) error {
+	rows, err := database.Query(`SELECT id, error_message FROM request_logs WHERE (status_code = 0 OR status_code IS NULL) AND error_message IS NOT NULL AND error_message != ''`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type row struct {
+		id   string
+		text string
+	}
+	var toUpdate []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.text); err != nil {
+			return err
+		}
+		if code := errorcode.FromString(r.text); code != 0 {
+			toUpdate = append(toUpdate, r)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(toUpdate) == 0 {
+		return nil
+	}
+
+	stmt, err := database.Prepare(`UPDATE request_logs SET status_code = ? WHERE id = ?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, r := range toUpdate {
+		code := errorcode.FromString(r.text)
+		if _, err := stmt.Exec(code, r.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
