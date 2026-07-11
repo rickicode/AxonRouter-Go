@@ -26,7 +26,7 @@
     showErrors?: boolean;
   } = $props();
 
-  const c2 = color2 ?? color;
+  let c2 = $derived(color2 ?? color);
 
   // SVG dimensions — real coordinate system
   const W = 760;
