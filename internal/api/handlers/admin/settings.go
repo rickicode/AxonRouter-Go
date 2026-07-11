@@ -2,6 +2,7 @@ package admin
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -62,6 +63,17 @@ func (h *SettingHandler) Set(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Block provider_proxy_defaults containing oc key
+	if key == "provider_proxy_defaults" {
+		var defaults map[string]map[string]any
+		if json.Unmarshal([]byte(req.Value), &defaults) == nil {
+			if _, ok := defaults["oc"]; ok {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "OpenCode Free (oc) cannot be assigned a provider default proxy. Assign a proxy pool per connection instead."})
+				return
+			}
+		}
 	}
 
 	now := time.Now().Unix()

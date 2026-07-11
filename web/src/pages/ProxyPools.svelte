@@ -88,8 +88,8 @@
  groups = groupsRes.data ?? [];
  providers = provRes.data ?? [];
  const settings = ('data' in settingsRes ? (settingsRes as any).data : settingsRes) as Record<string, string>;
- const raw = settings?.['provider_proxy_defaults'];
- if (raw) { try { proxyDefaults = JSON.parse(raw); } catch { proxyDefaults = {}; } }
+            const raw = settings?.['provider_proxy_defaults'];
+            if (raw) { try { proxyDefaults = JSON.parse(raw); } catch { proxyDefaults = {}; } delete proxyDefaults['oc']; }
  } catch (err) {
  error = err instanceof Error ? err.message : 'Failed to load';
  }
@@ -109,8 +109,8 @@
  providers = provRes.data ?? [];
  // Load proxy defaults
  const settings = ('data' in settingsRes ? (settingsRes as any).data : settingsRes) as Record<string, string>;
- const raw = settings?.['provider_proxy_defaults'];
- if (raw) { try { proxyDefaults = JSON.parse(raw); } catch { proxyDefaults = {}; } }
+                const raw = settings?.['provider_proxy_defaults'];
+                if (raw) { try { proxyDefaults = JSON.parse(raw); } catch { proxyDefaults = {}; } delete proxyDefaults['oc']; }
  } catch (err) {
  error = err instanceof Error ? err.message : 'Failed to load';
  } finally {
@@ -229,11 +229,13 @@ async function toggleGroupActive(group: ProxyGroup) {
     proxyDefaults = { ...proxyDefaults };
   }
 
-  async function saveProxyDefaults() {
+async function saveProxyDefaults() {
     proxySaving = true;
     try {
-      await settingsApi.update('provider_proxy_defaults', JSON.stringify(proxyDefaults));
-      toast.success('Proxy assignments saved');
+        const defaultsToSave = { ...proxyDefaults };
+        delete defaultsToSave['oc'];
+        await settingsApi.update('provider_proxy_defaults', JSON.stringify(defaultsToSave));
+        toast.success('Proxy assignments saved');
     } catch (err) { toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
     finally { proxySaving = false; }
   }
@@ -531,9 +533,8 @@ async function toggleGroupActive(group: ProxyGroup) {
       {/if}
     {/if}
 
-    <!-- Assignments Tab -->
-    {#if tab === 'assignments'}
-      {#if providers.length > 0 && pools.length > 0}
+{#if tab === 'assignments'}
+{#if providers.some(p => p.id !== 'oc') && pools.length > 0}
         <Card class="shadow-card overflow-hidden p-0">
           <div class="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-white/[0.02]">
             <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Provider → Proxy Assignment</p>
@@ -547,10 +548,10 @@ async function toggleGroupActive(group: ProxyGroup) {
                 <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Provider</th>
                 <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Proxy Group</th>
                 <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Proxy Pool</th>
-              </tr>
+            </tr>
             </thead>
             <tbody>
-              {#each providers as prov}
+              {#each providers.filter(p => p.id !== 'oc') as prov}
                 <tr class="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
                   <td class="px-4 py-2.5">
                     <span class="text-body-sm-strong">{prov.display_name ?? prov.id}</span>
