@@ -51,6 +51,7 @@ func (h *Handler) Responses(c *gin.Context) {
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
 	maxAttempts := 3
 	var lastConn *Connection
+	var lastErrCategory string
 	for attempt := range maxAttempts {
 		if c.Request.Context().Err() != nil {
 			return
@@ -99,7 +100,9 @@ func (h *Handler) Responses(c *gin.Context) {
 			connstate.ParseRateLimitHeaders(streamResult.Headers, h.store, conn.ID, modelName)
 		}
 		if err != nil {
-			if !h.handleFailoverError(conn, provider, modelName, err, attempt, latency) {
+			retry, cat := h.handleFailoverError(conn, provider, modelName, err, attempt, latency)
+			lastErrCategory = cat
+			if !retry {
 				break
 			}
 			continue
@@ -139,10 +142,19 @@ func (h *Handler) Responses(c *gin.Context) {
 		return
 	}
 	msg := "all connections exhausted or failing"
+	statusCode := http.StatusServiceUnavailable
+	switch lastErrCategory {
+	case string(connstate.ErrorModelNotFound):
+		msg = "model not found: " + modelName
+		statusCode = http.StatusNotFound
+	case string(connstate.ErrorAuth):
+		msg = "authentication failed for all connections"
+		statusCode = http.StatusUnauthorized
+	}
 	detail := gin.H{"provider": provider, "model": modelName}
 	if lastConn != nil {
 		detail["name"] = lastConn.Name
 	}
-	logging.Logger.Error("all connections exhausted", "provider", provider, "model", modelName, "last_conn", detail)
-	c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": msg, "type": "server_error", "detail": detail}})
+	logging.Logger.Error(msg, "provider", provider, "model", modelName, "category", lastErrCategory)
+	c.JSON(statusCode, gin.H{"error": gin.H{"message": msg, "type": "server_error", "detail": detail}})
 }

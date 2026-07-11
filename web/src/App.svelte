@@ -21,7 +21,8 @@
   import ProxyPools from './pages/ProxyPools.svelte';
   import ProxyPoolDetail from './pages/ProxyPoolDetail.svelte';
   import APIKeys from './pages/APIKeys.svelte';
-  import Optimization from './pages/Optimization.svelte';
+import Optimization from './pages/Optimization.svelte';
+import NotFound from './pages/NotFound.svelte';
 
   let cleanup: (() => void) | undefined;
 
@@ -87,8 +88,8 @@
     // /optimization → Optimization
     if (segments[0] === 'optimization' && segments.length === 1) return { component: Optimization, params: {} };
 
-    // Fallback
-    return { component: Dashboard, params: {} };
+ // Fallback → 404
+ return { component: NotFound, params: {} };
   }
 
   let route = $derived(matchRoute($currentPath));

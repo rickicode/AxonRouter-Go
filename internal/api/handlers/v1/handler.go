@@ -515,9 +515,9 @@ func (h *Handler) executeDirect(ctx context.Context, exec executor.Executor, req
 
 // handleFailoverError records an upstream failure, marks the connection
 // exhausted/cooled-down when appropriate, refreshes eligibility, and logs it.
-// Returns true if the caller should try the next connection, false if the error
-// is non-retryable (model_not_found, auth_failed) and failover should stop.
-func (h *Handler) handleFailoverError(conn *Connection, provider, modelName string, err error, attempt int, latency int64) bool {
+// Returns (shouldRetry, category): shouldRetry=false for non-retryable errors
+// (model_not_found, auth_failed), category for the caller to build better error messages.
+func (h *Handler) handleFailoverError(conn *Connection, provider, modelName string, err error, attempt int, latency int64) (bool, string) {
 	det := connstate.DetectError(0, "", err, provider, modelName, nil)
 	if det.Category == connstate.ErrorRateLimit {
 		h.exhaustion.MarkExhausted(conn.ID, quota.DefaultExhaustionTTL)
@@ -578,9 +578,9 @@ func (h *Handler) handleFailoverError(conn *Connection, provider, modelName stri
 	// retrying with another connection won't help.
 	switch det.Category {
 	case connstate.ErrorModelNotFound, connstate.ErrorAuth:
-		return false
+		return false, string(det.Category)
 	}
-	return true
+	return true, string(det.Category)
 }
 
 // proxyContext resolves proxy config for a connection and returns a context with it attached.
