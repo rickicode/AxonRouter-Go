@@ -22,6 +22,7 @@
   import ProxyPoolDetail from './pages/ProxyPoolDetail.svelte';
   import APIKeys from './pages/APIKeys.svelte';
 import Optimization from './pages/Optimization.svelte';
+import CLITools from './pages/CLITools.svelte';
 import NotFound from './pages/NotFound.svelte';
 
   let cleanup: (() => void) | undefined;
@@ -41,6 +42,7 @@ import NotFound from './pages/NotFound.svelte';
       quota: 'Quota',
       settings: 'Settings',
       'proxy-pools': 'Proxy Pools',
+      'cli-tools': 'CLI Tools',
     };
     return labels[segment] ?? segment.charAt(0).toUpperCase() + segment.slice(1);
   }
@@ -85,10 +87,13 @@ import NotFound from './pages/NotFound.svelte';
     // /api-keys → APIKeys
     if (segments[0] === 'api-keys') return { component: APIKeys, params: {} };
 
-    // /optimization → Optimization
-    if (segments[0] === 'optimization' && segments.length === 1) return { component: Optimization, params: {} };
+  // /optimization → Optimization
+  if (segments[0] === 'optimization' && segments.length === 1) return { component: Optimization, params: {} };
 
- // Fallback → 404
+  // /cli-tools → CLI Tools
+  if (segments[0] === 'cli-tools' && segments.length === 1) return { component: CLITools, params: {} };
+
+  // Fallback → 404
  return { component: NotFound, params: {} };
   }
 

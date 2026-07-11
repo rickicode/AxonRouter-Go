@@ -42,20 +42,22 @@ func Open(dbPath string) (*sql.DB, error) {
 			return
 		}
 
-	d.SetMaxOpenConns(5)    // WAL mode: concurrent reads safe with >1 conn
-	d.SetMaxIdleConns(5)
-	d.SetConnMaxLifetime(0)
-	// Run migrations (idempotent: CREATE TABLE IF NOT EXISTS + INSERT OR IGNORE
-	// seed + provider-id normalization). Must run on every startup so seeded
-	// provider_types and connection renames (e.g. opencode -> oc) stay in sync.
-	if err := RunMigrations(d); err != nil {
-		d.Close()
-		initErr = err
-		return
-	}
+		d.SetMaxOpenConns(5) // WAL mode: concurrent reads safe with >1 conn
+		d.SetMaxIdleConns(5)
+		d.SetConnMaxLifetime(0)
 
-	globalDB = d
+		// Run migrations (idempotent: CREATE TABLE IF NOT EXISTS + INSERT OR IGNORE
+		// seed + provider-id normalization). Must run on every startup so seeded
+		// provider_types and connection renames (e.g. opencode -> oc) stay in sync.
+		if err := RunMigrations(d); err != nil {
+			d.Close()
+			initErr = err
+			return
+		}
+
+		globalDB = d
 	})
+
 	if initErr != nil {
 		return nil, initErr
 	}
@@ -133,4 +135,17 @@ func GetSetting(key, defaultValue string) string {
 		return defaultValue
 	}
 	return value
+}
+
+// SetSetting persists a setting value to the database, creating or replacing
+// the row. It does not use the global store wrapper, mirroring GetSetting.
+func SetSetting(key, value string) error {
+	if globalDB == nil {
+		return nil
+	}
+	_, err := globalDB.Exec(`
+		INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+	`, key, value, UnixNow())
+	return err
 }

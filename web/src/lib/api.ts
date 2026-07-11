@@ -828,3 +828,57 @@ export const cacheApi = {
   flush: () =>
     fetchApi<{ flushed: boolean }>("/cache/flush", { method: "POST" }),
 };
+
+
+// Global gateway model catalog (same list served by /v1/models, exposed for dashboard pickers)
+export interface GatewayModel {
+  id: string;
+  object: string;
+  created: number;
+  owned_by: string;
+}
+
+export const modelsApi = {
+  list: () => fetchApi<{ data: GatewayModel[] }>("/models"),
+};
+
+// CLI Tools model picker + generated config snippets for external AI CLIs
+export interface CLITool {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  configKind: "json" | "toml" | "yaml" | "env";
+  docsUrl: string;
+}
+
+export interface CLIToolSelection {
+  model: string;
+  apiKeyId: string;
+  baseUrl: string;
+}
+
+export interface CLIToolConfig {
+  envBlock: string;
+  configPath: string;
+  configContent: string;
+  runCommand: string;
+}
+
+export interface CLIToolState {
+  tool: CLITool;
+  selection: CLIToolSelection;
+  defaultBaseUrl: string;
+}
+
+export interface CLIToolSavedResponse {
+  selection: CLIToolSelection;
+  config: CLIToolConfig;
+}
+
+export const cliToolsApi = {
+  list: () => fetchApi<{ data: CLITool[] }>("/cli-tools"),
+  get: (toolId: string) => fetchApi<CLIToolState>(`/cli-tools/${toolId}`),
+  save: (toolId: string, data: CLIToolSelection & { apiKeyValue?: string }) =>
+    fetchApi<CLIToolSavedResponse>(`/cli-tools/${toolId}`, { method: "POST", body: JSON.stringify(data) }),
+};

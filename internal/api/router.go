@@ -299,6 +299,25 @@ func New(cfg Config) *Router {
 	adminGroup.DELETE("/api-keys/:id", apiKeyH.Delete)
 	adminGroup.PATCH("/api-keys/:id/toggle", apiKeyH.ToggleActive)
 
+	// CLI Tools — unified model catalog for dashboard pickers + per-tool config generation
+	modelLister := func() []map[string]string {
+		list := v1H.ListModels()
+		out := make([]map[string]string, 0, len(list))
+		for _, m := range list {
+			if id, ok := m["id"].(string); ok {
+				out = append(out, map[string]string{"id": id})
+			}
+		}
+		return out
+	}
+	adminGroup.GET("/models", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"data": v1H.ListModels()})
+	})
+	cliToolsH := admin.NewCLIToolsHandler(cfg.DB, modelLister)
+	adminGroup.GET("/cli-tools", cliToolsH.ListTools)
+	adminGroup.GET("/cli-tools/:toolId", cliToolsH.GetConfig)
+	adminGroup.POST("/cli-tools/:toolId", cliToolsH.SaveConfig)
+
 	// Compression & Cache
 	adminGroup.GET("/settings/compression", optimizationH.GetCompressionSettings)
 	adminGroup.PUT("/settings/compression", optimizationH.UpdateCompressionSettings)

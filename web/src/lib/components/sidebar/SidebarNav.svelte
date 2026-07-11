@@ -11,6 +11,7 @@
     Globe,
     Key,
     MessageSquare,
+    Bot,
   } from '@lucide/svelte';
 
   let { onclose }: { onclose?: () => void } = $props();
@@ -30,6 +31,7 @@
   const systemItems = [
     { href: '/proxy-pools', label: 'Proxy Pools', icon: Globe },
     apiKeysItem,
+    { href: '/cli-tools', label: 'CLI Tools', icon: Bot },
     settingsItem,
   ];
 
@@ -43,7 +45,6 @@
     router.navigate(href);
     onclose?.();
   }
-
 </script>
 
 <div class="flex flex-col gap-1">
@@ -58,18 +59,11 @@
         <a
           href={item.href}
           onclick={(e) => handleClick(e, item.href)}
-          class="group relative flex items-center gap-3 rounded-md px-3 py-2 text-body-sm-strong transition-all duration-150
-            {active
-              ? 'bg-sidebar-accent text-sidebar-foreground'
-              : 'text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/60'}"
+          class="group relative flex items-center gap-3 rounded-md px-3 py-2 text-body-sm-strong transition-all duration-150 {active ? 'bg-sidebar-accent text-sidebar-foreground' : 'text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/60'}"
           aria-current={active ? 'page' : undefined}
         >
-          <span class="absolute left-0 inset-y-0 w-0.5 rounded-r-full transition-all duration-150
-            {active ? 'bg-sidebar-primary opacity-100' : 'opacity-0'}"></span>
-          <item.icon
-            class="size-4 shrink-0 transition-colors duration-150
-              {active ? 'text-sidebar-foreground' : 'text-sidebar-foreground/40 group-hover:text-sidebar-foreground/80'}"
-          />
+          <span class="absolute left-0 inset-y-0 w-0.5 rounded-r-full transition-all duration-150 {active ? 'bg-sidebar-primary opacity-100' : 'opacity-0'}"></span>
+          <item.icon class="size-4 shrink-0 transition-colors duration-150 {active ? 'text-sidebar-foreground' : 'text-sidebar-foreground/40 group-hover:text-sidebar-foreground/80'}" />
           <span class="truncate">{item.label}</span>
           {#if active}
             <span class="ml-auto size-1.5 rounded-full bg-sidebar-primary shrink-0"></span>
@@ -92,18 +86,11 @@
         <a
           href={item.href}
           onclick={(e) => handleClick(e, item.href)}
-          class="group relative flex items-center gap-3 rounded-md px-3 py-2 text-body-sm-strong transition-all duration-150
-            {active
-              ? 'bg-sidebar-accent text-sidebar-foreground'
-              : 'text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/60'}"
+          class="group relative flex items-center gap-3 rounded-md px-3 py-2 text-body-sm-strong transition-all duration-150 {active ? 'bg-sidebar-accent text-sidebar-foreground' : 'text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/60'}"
           aria-current={active ? 'page' : undefined}
         >
-          <span class="absolute left-0 inset-y-0 w-0.5 rounded-r-full transition-all duration-150
-            {active ? 'bg-sidebar-primary opacity-100' : 'opacity-0'}"></span>
-          <item.icon
-            class="size-4 shrink-0 transition-colors duration-150
-              {active ? 'text-sidebar-foreground' : 'text-sidebar-foreground/40 group-hover:text-sidebar-foreground/80'}"
-          />
+          <span class="absolute left-0 inset-y-0 w-0.5 rounded-r-full transition-all duration-150 {active ? 'bg-sidebar-primary opacity-100' : 'opacity-0'}"></span>
+          <item.icon class="size-4 shrink-0 transition-colors duration-150 {active ? 'text-sidebar-foreground' : 'text-sidebar-foreground/40 group-hover:text-sidebar-foreground/80'}" />
           <span class="truncate">{item.label}</span>
           {#if active}
             <span class="ml-auto size-1.5 rounded-full bg-sidebar-primary shrink-0"></span>

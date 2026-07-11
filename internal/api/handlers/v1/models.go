@@ -18,10 +18,10 @@ var v1ProviderCatalog = map[string]struct {
 	"cx":            {keys: []string{"codex-free", "codex-team", "codex-plus", "codex-pro"}, ownedBy: "openai"},
 	"ag":            {keys: []string{"antigravity"}, ownedBy: "google"},
 	"kiro":          {keys: []string{"kimi"}, ownedBy: "moonshot"},
-	"aistudio":    {keys: []string{"aistudio"}, ownedBy: "google"},
-	"oc":          {keys: []string{"oc"}, ownedBy: "opencode"},
-	"oc-zen":      {keys: []string{"oc-zen"}, ownedBy: "opencode"},
-	"oc-go":       {keys: []string{"oc-go"}, ownedBy: "opencode"},
+	"aistudio":      {keys: []string{"aistudio"}, ownedBy: "google"},
+	"oc":            {keys: []string{"oc"}, ownedBy: "opencode"},
+	"oc-zen":        {keys: []string{"oc-zen"}, ownedBy: "opencode"},
+	"oc-go":         {keys: []string{"oc-go"}, ownedBy: "opencode"},
 	"mimocode":      {keys: []string{"mimocode"}, ownedBy: "xiaomi"},
 	"mimocode-free": {keys: []string{"mimocode"}, ownedBy: "xiaomi"},
 	"mimo":          {keys: []string{"mimocode"}, ownedBy: "xiaomi"},
@@ -35,11 +35,11 @@ var v1ProviderCatalog = map[string]struct {
 	"cf":            {keys: []string{"cf"}, ownedBy: "cloudflare"},
 }
 
-// Models handles GET /v1/models — includes combos and virtual models.
-func (h *Handler) Models(c *gin.Context) {
+// buildModelList returns the unified gateway model catalog: registered providers,
+// combo names, and smart virtual models.
+func (h *Handler) buildModelList() []gin.H {
 	prefixes := h.registry.List()
 	var allModels []gin.H
-
 	for _, prefix := range prefixes {
 		for _, m := range h.getProviderModels(prefix) {
 			allModels = append(allModels, m)
@@ -49,9 +49,9 @@ func (h *Handler) Models(c *gin.Context) {
 	// Add combo names as virtual models
 	for _, combo := range h.combo.ListCombos() {
 		allModels = append(allModels, gin.H{
-			"id":       combo.Combo.Name,
-			"object":   "model",
-			"created":  combo.Combo.CreatedAt,
+			"id":      combo.Combo.Name,
+			"object":  "model",
+			"created": combo.Combo.CreatedAt,
 			"owned_by": "axonrouter",
 		})
 	}
@@ -60,9 +60,9 @@ func (h *Handler) Models(c *gin.Context) {
 	virtualModels := []string{"auto", "economy", "balanced", "premium"}
 	for _, name := range virtualModels {
 		allModels = append(allModels, gin.H{
-			"id":       "smart/" + name,
-			"object":   "model",
-			"created":  1700000000,
+			"id":      "smart/" + name,
+			"object":  "model",
+			"created": 1700000000,
 			"owned_by": "axonrouter",
 		})
 	}
@@ -71,9 +71,20 @@ func (h *Handler) Models(c *gin.Context) {
 		allModels = h.defaultModels()
 	}
 
+	return allModels
+}
+
+// ListModels exposes the internal list of resolved model entries.
+// Other handlers (e.g. CLI Tools) reuse it so the model catalog stays single-source.
+func (h *Handler) ListModels() []gin.H {
+	return h.buildModelList()
+}
+
+// Models handles GET /v1/models — includes combos and virtual models.
+func (h *Handler) Models(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"object": "list",
-		"data":   allModels,
+		"data":   h.buildModelList(),
 	})
 }
 
@@ -85,12 +96,10 @@ func (h *Handler) getProviderModels(prefix string) []gin.H {
 	if !ok {
 		return nil
 	}
-
 	ids := models.GetAllModelIDs(cfg.keys...)
 	if len(ids) == 0 {
 		return nil
 	}
-
 	entries := make([]gin.H, 0, len(ids))
 	for _, id := range ids {
 		// Strip leading "@" — CF models use "@cf/vendor/model" format
@@ -101,9 +110,9 @@ func (h *Handler) getProviderModels(prefix string) []gin.H {
 			modelID = prefix + "/" + cleanID
 		}
 		entries = append(entries, gin.H{
-			"id":       modelID,
-			"object":   "model",
-			"created":  1700000000,
+			"id":      modelID,
+			"object":  "model",
+			"created": 1700000000,
 			"owned_by": cfg.ownedBy,
 		})
 	}
