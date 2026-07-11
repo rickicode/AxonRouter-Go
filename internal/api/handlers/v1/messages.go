@@ -153,7 +153,8 @@ func (h *Handler) handleClaudeNonStreamResponse(c *gin.Context, exec executor.Ex
 func (h *Handler) handleClaudeStreamResponse(c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte) {
 	_, providerFormat, _ := h.registry.Get(provider)
 	errFormatter := func(err error) []byte {
-		b, _ := json.Marshal(claudeError("api_error", err.Error()))
+		logging.Logger.Error("upstream streaming error", "provider", provider, "model", model, "error", err)
+		b, _ := json.Marshal(claudeError("api_error", "upstream streaming error"))
 		return b
 	}
 	h.streamResponse(c, result, conn, provider, model, executor.FormatClaude, providerFormat, originalReq, translatedReq, errFormatter, start)

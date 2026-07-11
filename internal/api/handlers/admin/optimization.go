@@ -10,18 +10,18 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/compression"
 )
 
-// ContextHandler handles compression and cache admin endpoints.
-type ContextHandler struct {
+// OptimizationHandler handles compression and cache admin endpoints.
+type OptimizationHandler struct {
 	db    *sql.DB
 	cache cache.CacheStorage
 }
 
-// NewContextHandler creates a new context handler.
-func NewContextHandler(database *sql.DB, c cache.CacheStorage) *ContextHandler {
-	return &ContextHandler{db: database, cache: c}
+// NewOptimizationHandler creates a new optimization handler.
+func NewOptimizationHandler(database *sql.DB, c cache.CacheStorage) *OptimizationHandler {
+	return &OptimizationHandler{db: database, cache: c}
 }
 
-func (h *ContextHandler) getSetting(key, def string) string {
+func (h *OptimizationHandler) getSetting(key, def string) string {
 	var value string
 	err := h.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, key).Scan(&value)
 	if err != nil || value == "" {
@@ -30,7 +30,7 @@ func (h *ContextHandler) getSetting(key, def string) string {
 	return value
 }
 
-func (h *ContextHandler) setSetting(key, value string) error {
+func (h *OptimizationHandler) setSetting(key, value string) error {
 	now := time.Now().Unix()
 	_, err := h.db.Exec(`
 		INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
@@ -40,13 +40,13 @@ func (h *ContextHandler) setSetting(key, value string) error {
 }
 
 // GetCompressionSettings returns current compression configuration.
-func (h *ContextHandler) GetCompressionSettings(c *gin.Context) {
+func (h *OptimizationHandler) GetCompressionSettings(c *gin.Context) {
 	mode := h.getSetting("compression_mode", "lite")
 	c.JSON(http.StatusOK, h.compressionSettingsMap(mode))
 }
 
 // UpdateCompressionSettings persists compression configuration.
-func (h *ContextHandler) UpdateCompressionSettings(c *gin.Context) {
+func (h *OptimizationHandler) UpdateCompressionSettings(c *gin.Context) {
 	var req struct {
 		Mode string `json:"mode"`
 		Lite struct {
@@ -76,7 +76,7 @@ func (h *ContextHandler) UpdateCompressionSettings(c *gin.Context) {
 }
 
 // GetCacheStats returns current cache statistics.
-func (h *ContextHandler) GetCacheStats(c *gin.Context) {
+func (h *OptimizationHandler) GetCacheStats(c *gin.Context) {
 	stats := h.cache.Stats()
 	c.JSON(http.StatusOK, gin.H{
 		"hits":     stats.Hits,
@@ -87,13 +87,13 @@ func (h *ContextHandler) GetCacheStats(c *gin.Context) {
 }
 
 // FlushCache clears all cached responses.
-func (h *ContextHandler) FlushCache(c *gin.Context) {
+func (h *OptimizationHandler) FlushCache(c *gin.Context) {
 	h.cache.Flush()
 	c.JSON(http.StatusOK, gin.H{"flushed": true})
 }
 
 // PreviewCompression runs compression on a sample body and returns stats.
-func (h *ContextHandler) PreviewCompression(c *gin.Context) {
+func (h *OptimizationHandler) PreviewCompression(c *gin.Context) {
 	var req struct {
 		Body string `json:"body" binding:"required"`
 		Mode string `json:"mode"`
@@ -124,7 +124,7 @@ func (h *ContextHandler) PreviewCompression(c *gin.Context) {
 	})
 }
 
-func (h *ContextHandler) compressionSettingsMap(mode string) gin.H {
+func (h *OptimizationHandler) compressionSettingsMap(mode string) gin.H {
 	return gin.H{
 		"mode": mode,
 		"lite": gin.H{
@@ -136,7 +136,7 @@ func (h *ContextHandler) compressionSettingsMap(mode string) gin.H {
 	}
 }
 
-func (h *ContextHandler) liteConfigFromDB() compression.LiteConfig {
+func (h *OptimizationHandler) liteConfigFromDB() compression.LiteConfig {
 	return compression.LiteConfig{
 		CollapseWhitespace:     parseBool(h.getSetting("compression_lite_collapse", "true")),
 		ReplaceImageUrls:       parseBool(h.getSetting("compression_lite_image_urls", "true")),

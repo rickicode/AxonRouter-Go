@@ -668,7 +668,7 @@ func (h *Handler) checkAutoDisable(connID, provider string) {
 		return
 	}
 	threshold := 3
-	banCount := cs.BanCount
+	banCount := cs.GetBanCount()
 
 	// Persist ban count to DB
 	h.db.Exec(`UPDATE connections SET consecutive_ban_count = ?, updated_at = ? WHERE id = ?`,
@@ -686,14 +686,15 @@ func (h *Handler) checkAutoDisable(connID, provider string) {
 // resetBanCount resets the consecutive ban count on success (persists to DB).
 func (h *Handler) resetBanCount(connID string) {
 	cs := h.store.Get(connID)
-	if cs != nil && cs.BanCount > 0 {
-		cs.BanCount = 0
+	if cs != nil && cs.GetBanCount() > 0 {
+		cs.ResetBanCount()
 		h.db.Exec(`UPDATE connections SET consecutive_ban_count = 0, updated_at = ? WHERE id = ?`,
 			time.Now().Unix(), connID)
 	}
 }
 
 // persistCooldown writes a quota/rate-limit cooldown to the DB so it survives restarts.
+// Also updates last_error fields for debugging.
 func (h *Handler) persistCooldown(connID string, det connstate.ErrorDetection) {
 	if det.CooldownUntil == nil {
 		return
@@ -702,6 +703,6 @@ func (h *Handler) persistCooldown(connID string, det connstate.ErrorDetection) {
 	if det.Category == connstate.ErrorQuota {
 		status = string(connstate.StatusQuotaExhausted)
 	}
-	h.db.Exec(`UPDATE connections SET status = ?, cooldown_until = ?, updated_at = ? WHERE id = ?`,
-		status, det.CooldownUntil.Unix(), time.Now().Unix(), connID)
+	h.db.Exec(`UPDATE connections SET status = ?, cooldown_until = ?, last_error = ?, last_error_code = ?, consecutive_error_count = consecutive_error_count + 1, updated_at = ? WHERE id = ?`,
+		status, det.CooldownUntil.Unix(), det.Message, string(det.Category), time.Now().Unix(), connID)
 }

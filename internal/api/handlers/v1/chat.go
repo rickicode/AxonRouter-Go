@@ -277,7 +277,8 @@ func (h *Handler) handleNonStreamResponse(c *gin.Context, exec executor.Executor
 func (h *Handler) handleStreamResponse(c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte) {
 	_, providerFormat, _ := h.registry.Get(provider)
 	errFormatter := func(err error) []byte {
-		b, _ := json.Marshal(gin.H{"error": gin.H{"message": err.Error()}})
+		logging.Logger.Error("upstream streaming error", "provider", provider, "model", model, "error", err)
+		b, _ := json.Marshal(gin.H{"error": gin.H{"message": "upstream streaming error"}})
 		return b
 	}
 	h.streamResponse(c, result, conn, provider, model, executor.FormatOpenAI, providerFormat, originalReq, translatedReq, errFormatter, start)

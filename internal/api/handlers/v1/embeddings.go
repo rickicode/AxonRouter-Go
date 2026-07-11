@@ -2,8 +2,10 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"time"
+
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
@@ -48,13 +50,20 @@ func (h *Handler) Embeddings(c *gin.Context) {
 
 	// Proactive token refresh
 	h.proactiveRefreshToken(c.Request.Context(), conn, provider)
+	// Parse provider-specific data
+	var psdMap map[string]string
+	if conn.ProviderSpecificData != "" {
+		json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap)
+	}
+
 	req := &executor.Request{
-		Model:       modelName,
-		Body:        body,
-		APIKey:      conn.APIKey,
-		AccessToken: conn.AccessToken,
-		BaseURL:     conn.BaseURL,
-		Provider:    provider,
+		Model:                modelName,
+		Body:                 body,
+		APIKey:               conn.APIKey,
+		AccessToken:          conn.AccessToken,
+		BaseURL:              conn.BaseURL,
+		Provider:             provider,
+		ProviderSpecificData: psdMap,
 	}
 
 	proxyCtx := h.proxyContext(c.Request.Context(), conn)

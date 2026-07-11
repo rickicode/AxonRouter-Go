@@ -625,7 +625,7 @@ export const compressionApi = {
   updateSettings: (data: Partial<CompressionSettings>) =>
     fetchApi<CompressionSettings>('/settings/compression', { method: 'PUT', body: JSON.stringify(data) }),
   preview: (data: CompressionPreviewRequest) =>
-    fetchApi<CompressionPreviewResult>('/context/preview', { method: 'POST', body: JSON.stringify(data) }),
+    fetchApi<CompressionPreviewResult>('/optimization/preview', { method: 'POST', body: JSON.stringify(data) }),
 };
 
 export const cacheApi = {

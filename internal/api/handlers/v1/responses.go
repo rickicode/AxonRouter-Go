@@ -108,7 +108,13 @@ func (h *Handler) Responses(c *gin.Context) {
 		h.elig.Update(h.store)
 
 		if stream {
-			h.handleStreamResponse(c, streamResult, conn, provider, modelName, start, translatedBody, body)
+			_, providerFmt, _ := h.registry.Get(provider)
+			errFormatter := func(err error) []byte {
+				logging.Logger.Error("upstream streaming error", "provider", provider, "model", modelName, "error", err)
+				b, _ := json.Marshal(gin.H{"error": gin.H{"message": "upstream streaming error", "type": "server_error"}})
+				return b
+			}
+			h.streamResponse(c, streamResult, conn, provider, modelName, executor.FormatOpenAIResponses, providerFmt, body, translatedBody, errFormatter, start)
 		} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)

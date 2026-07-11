@@ -206,6 +206,21 @@ func (h *ConnectionHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
 		return
 	}
+
+	// Sync in-memory state
+	if h.store != nil && req.Status != "" {
+		h.store.UpdateStatus(id, connstate.Status(req.Status))
+		if h.elig != nil {
+			h.elig.Update(h.store)
+		}
+	}
+	if req.IsActive != nil && !*req.IsActive && h.store != nil {
+		h.store.UpdateStatus(id, connstate.StatusDisabled)
+		if h.elig != nil {
+			h.elig.Update(h.store)
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -223,6 +238,15 @@ func (h *ConnectionHandler) Delete(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
 		return
 	}
+
+	// Sync in-memory state
+	if h.store != nil {
+		h.store.UpdateStatus(id, connstate.StatusDisabled)
+		if h.elig != nil {
+			h.elig.Update(h.store)
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -389,15 +413,38 @@ func (h *ConnectionHandler) BulkUpdate(c *gin.Context) {
 	case "disable":
 		args = append([]interface{}{false, now}, args...)
 		h.db.Exec("UPDATE connections SET is_active = ?, updated_at = ? WHERE id IN ("+inClause+")", args...)
+		if h.store != nil {
+			for _, id := range req.IDs {
+				h.store.UpdateStatus(id, connstate.StatusDisabled)
+			}
+		}
 	case "enable":
 		args = append([]interface{}{true, now}, args...)
 		h.db.Exec("UPDATE connections SET is_active = ?, updated_at = ? WHERE id IN ("+inClause+")", args...)
+		if h.store != nil {
+			for _, id := range req.IDs {
+				h.store.UpdateStatus(id, connstate.StatusReady)
+			}
+		}
 	case "reset":
 		args = append([]interface{}{now}, args...)
 		h.db.Exec("UPDATE connections SET status = 'ready', failure_count = 0, updated_at = ? WHERE id IN ("+inClause+")", args...)
+		if h.store != nil {
+			for _, id := range req.IDs {
+				h.store.UpdateStatus(id, connstate.StatusReady)
+			}
+		}
 	case "delete":
 		args = append([]interface{}{false, now}, args...)
 		h.db.Exec("UPDATE connections SET is_active = ?, updated_at = ? WHERE id IN ("+inClause+")", args...)
+		if h.store != nil {
+			for _, id := range req.IDs {
+				h.store.UpdateStatus(id, connstate.StatusDisabled)
+			}
+		}
+	}
+	if h.store != nil && h.elig != nil {
+		h.elig.Update(h.store)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "affected": len(req.IDs)})

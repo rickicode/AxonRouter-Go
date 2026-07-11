@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -40,14 +41,20 @@ func (h *Handler) Images(c *gin.Context) {
 
 	// Proactive token refresh
 	h.proactiveRefreshToken(c.Request.Context(), conn, provider)
+	// Parse provider-specific data
+	var psdMap map[string]string
+	if conn.ProviderSpecificData != "" {
+		json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap)
+	}
 
 	req := &executor.Request{
-		Model:       modelName,
-		Body:        body,
-		APIKey:      conn.APIKey,
-		AccessToken: conn.AccessToken,
-		BaseURL:     conn.BaseURL,
-		Provider:    provider,
+		Model:                modelName,
+		Body:                 body,
+		APIKey:               conn.APIKey,
+		AccessToken:          conn.AccessToken,
+		BaseURL:              conn.BaseURL,
+		Provider:             provider,
+		ProviderSpecificData: psdMap,
 	}
 
 	proxyCtx := h.proxyContext(c.Request.Context(), conn)

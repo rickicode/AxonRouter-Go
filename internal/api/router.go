@@ -94,6 +94,7 @@ func New(cfg Config) *Router {
 	cleanup := background.NewCleanup(comboHandler, cfg.DB, cfg.LogRetentionDays)
 	quotaScheduler.Start(ctx)
 	usageFlush.Start(ctx)
+	cleanup.Start(ctx)
 	models.StartUpdater(ctx)
 
 	// Proxy pool system
@@ -129,7 +130,7 @@ func New(cfg Config) *Router {
 	proxyPoolH := admin.NewProxyPoolHandler(cfg.DB, proxyHealth)
 	proxyGroupH := admin.NewProxyGroupHandler(cfg.DB)
 	proxyDeployH := admin.NewProxyDeployHandler(cfg.DB, proxyHealth)
-	contextH := admin.NewContextHandler(cfg.DB, exactCache)
+	optimizationH := admin.NewOptimizationHandler(cfg.DB, exactCache)
 
 	// Create v1 handler with all dependencies
 	v1H := v1.NewHandler(cfg.DB, store, elig, comboHandler, tracker, authManager, proxyResolver, exhaustionCache, compStrategy, exactCache)
@@ -283,11 +284,11 @@ func New(cfg Config) *Router {
 	adminGroup.PATCH("/api-keys/:id/toggle", apiKeyH.ToggleActive)
 
 	// Compression & Cache
-	adminGroup.GET("/settings/compression", contextH.GetCompressionSettings)
-	adminGroup.PUT("/settings/compression", contextH.UpdateCompressionSettings)
-	adminGroup.GET("/cache/stats", contextH.GetCacheStats)
-	adminGroup.POST("/cache/flush", contextH.FlushCache)
-	adminGroup.POST("/context/preview", contextH.PreviewCompression)
+	adminGroup.GET("/settings/compression", optimizationH.GetCompressionSettings)
+	adminGroup.PUT("/settings/compression", optimizationH.UpdateCompressionSettings)
+	adminGroup.GET("/cache/stats", optimizationH.GetCacheStats)
+	adminGroup.POST("/cache/flush", optimizationH.FlushCache)
+	adminGroup.POST("/optimization/preview", optimizationH.PreviewCompression)
 
 	// ---- Static frontend (SPA) ----
 	fsys := web.GetBuildFS()

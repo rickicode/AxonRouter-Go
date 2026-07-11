@@ -53,7 +53,7 @@ func (e *EligibilityManager) Update(store *Store) {
 			if ci == nil || cj == nil {
 				return false
 			}
-			return ci.Priority > cj.Priority
+			return ci.GetPriority() > cj.GetPriority()
 		})
 	}
 

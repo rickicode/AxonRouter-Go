@@ -2,6 +2,7 @@ package v1
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
@@ -81,14 +82,20 @@ func (h *Handler) STT(c *gin.Context) {
 
 	// Proactive token refresh
 	h.proactiveRefreshToken(c.Request.Context(), conn, provider)
+	// Parse provider-specific data
+	var psdMap map[string]string
+	if conn.ProviderSpecificData != "" {
+		json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap)
+	}
 
 	req := &executor.Request{
-		Model:       model,
-		Body:        multipartBody,
-		APIKey:      conn.APIKey,
-		AccessToken: conn.AccessToken,
-		BaseURL:     conn.BaseURL,
-		Provider:    provider,
+		Model:                model,
+		Body:                 multipartBody,
+		APIKey:               conn.APIKey,
+		AccessToken:          conn.AccessToken,
+		BaseURL:              conn.BaseURL,
+		Provider:             provider,
+		ProviderSpecificData: psdMap,
 		Headers: map[string]string{
 			"Content-Type": multipartContentType,
 		},

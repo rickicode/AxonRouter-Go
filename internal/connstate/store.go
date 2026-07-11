@@ -151,32 +151,48 @@ func (s *Store) HealthyCount() int {
 
 // SeedConnection creates or updates a connection state entry from DB data.
 // Used to keep the in-memory store in sync with the database.
+// Builds a fully-initialized ConnectionState before publishing to map to avoid partial-read races.
 func (s *Store) SeedConnection(connID, prefix, status string, priority int) {
-	cs := s.GetOrCreate(connID)
-	cs.mu.Lock()
-	cs.Prefix = prefix
-	cs.Priority = priority
+	// Build status first so the struct is complete before anyone can see it.
+	var st Status
 	switch status {
 	case "ready":
-		cs.Status = StatusReady
+		st = StatusReady
 	case "rate_limited":
-		cs.Status = StatusRateLimited
+		st = StatusRateLimited
 	case "quota_exhausted":
-		cs.Status = StatusQuotaExhausted
+		st = StatusQuotaExhausted
 	case "balance_empty":
-		cs.Status = StatusBalanceEmpty
+		st = StatusBalanceEmpty
 	case "auth_failed":
-		cs.Status = StatusAuthFailed
+		st = StatusAuthFailed
 	case "suspended":
-		cs.Status = StatusSuspended
+		st = StatusSuspended
 	case "disabled":
-		cs.Status = StatusDisabled
+		st = StatusDisabled
 	case "degraded":
-		cs.Status = StatusDegraded
+		st = StatusDegraded
 	default:
-		cs.Status = StatusUnknown
+		st = StatusUnknown
 	}
-	cs.mu.Unlock()
+
+	// Try atomic insert with a fully-initialized struct.
+	full := &ConnectionState{
+		ID:       connID,
+		Prefix:   prefix,
+		Priority: priority,
+		Status:   st,
+	}
+	actual, loaded := s.states.LoadOrStore(connID, full)
+	if loaded {
+		// Already exists — update under lock.
+		cs := actual.(*ConnectionState)
+		cs.mu.Lock()
+		cs.Prefix = prefix
+		cs.Priority = priority
+		cs.Status = st
+		cs.mu.Unlock()
+	}
 }
 
 // All returns all connection states as a slice.

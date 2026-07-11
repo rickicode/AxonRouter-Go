@@ -61,6 +61,27 @@ func (cs *ConnectionState) GetStatus() Status {
 	return cs.Status
 }
 
+// GetPriority returns the priority (thread-safe).
+func (cs *ConnectionState) GetPriority() int {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return cs.Priority
+}
+
+// GetBanCount returns the ban count (thread-safe).
+func (cs *ConnectionState) GetBanCount() int {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return cs.BanCount
+}
+
+// ResetBanCount clears the ban count to 0 (thread-safe).
+func (cs *ConnectionState) ResetBanCount() {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.BanCount = 0
+}
+
 // SetStatus updates the status and timestamps (thread-safe).
 func (cs *ConnectionState) SetStatus(status Status, err string) {
 	cs.mu.Lock()
@@ -106,6 +127,13 @@ func (cs *ConnectionState) IsInCooldown() bool {
 		return false
 	}
 	return time.Now().Before(*cs.CooldownUntil)
+}
+
+// IsCooldownExpired checks if the connection has an expired cooldown timer (thread-safe).
+func (cs *ConnectionState) IsCooldownExpired() bool {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return cs.CooldownUntil != nil && time.Now().After(*cs.CooldownUntil)
 }
 
 // SetResponseTime updates the response time metric (thread-safe).
