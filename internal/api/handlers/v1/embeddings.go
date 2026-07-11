@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 
-
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
@@ -15,39 +14,38 @@ import (
 // Embeddings handles POST /v1/embeddings
 func (h *Handler) Embeddings(c *gin.Context) {
 	start := time.Now()
-
 	body, err := readBody(c)
 	if err != nil {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": gin.H{"message": err.Error(), "type": "invalid_request_error"}})
 		return
 	}
 
+	// Apply compression (fail-open); skip if the request uses prompt-cache markers.
+	// Embeddings bodies rarely benefit, but this keeps the handler consistent with
+	// the rest of the v1 surface and is essentially a no-op when no messages exist.
+	body = h.compressRequestBody(body)
+
 	model := executor.JSONGet(body, "model")
 	if model == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "model is required", "type": "invalid_request_error"}})
 		return
 	}
-
 	provider, modelName := executor.SplitModel(model)
 	if provider == "" {
 		provider = "openai"
 		modelName = model
 	}
-
 	exec, _, err := h.resolveExecutor(provider, modelName)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": err.Error(), "type": "invalid_request_error"}})
 		return
 	}
-
 	body = executor.JSONSet(body, "model", modelName)
-
 	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
 		return
 	}
-
 	// Proactive token refresh
 	h.proactiveRefreshToken(c.Request.Context(), conn, provider)
 	// Parse provider-specific data
@@ -55,7 +53,6 @@ func (h *Handler) Embeddings(c *gin.Context) {
 	if conn.ProviderSpecificData != "" {
 		json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap)
 	}
-
 	req := &executor.Request{
 		Model:                modelName,
 		Body:                 body,
@@ -65,9 +62,7 @@ func (h *Handler) Embeddings(c *gin.Context) {
 		Provider:             provider,
 		ProviderSpecificData: psdMap,
 	}
-
 	proxyCtx := h.proxyContext(c.Request.Context(), conn)
-
 	// Use OpenAI executor's Embeddings method with reactive 401/403 retry
 	if openaiExec, ok := exec.(*executor.OpenAIExecutor); ok {
 		embedExec := &embeddingsAdapter{OpenAIExecutor: openaiExec}
@@ -84,7 +79,6 @@ func (h *Handler) Embeddings(c *gin.Context) {
 			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
 			return
 		}
-
 		h.tracker.Log(&usage.LogEntry{
 			ConnectionID:   conn.ID,
 			ProviderTypeID: provider,
@@ -93,13 +87,11 @@ func (h *Handler) Embeddings(c *gin.Context) {
 			LatencyMs:      time.Since(start).Milliseconds(),
 			StatusCode:     resp.StatusCode,
 		})
-
 		c.Header("Content-Type", "application/json")
 		c.Status(resp.StatusCode)
 		c.Writer.Write(resp.Body)
 		return
 	}
-
 	c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "embeddings only supported for OpenAI-compatible providers", "type": "invalid_request_error"}})
 }
 

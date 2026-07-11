@@ -8,9 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
-	"github.com/rickicode/AxonRouter-Go/internal/compression"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
@@ -28,11 +26,8 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	// Apply compression (fail-open)
-	if h.compressionStrategy.Mode != compression.ModeOff {
-		compressed, _, _ := compression.Apply(h.compressionStrategy, body)
-		body = compressed
-	}
+	// Apply compression (fail-open); skip if the request uses prompt-cache markers.
+	body = h.compressRequestBody(body)
 
 	model := executor.JSONGet(body, "model")
 	if model == "" {
@@ -54,15 +49,11 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	// Cache check (exact match, non-stream, no tools)
-	var cacheKey string
-	if !stream && h.exactCache != nil && !compression.HasTools(body) {
-		cacheKey = cache.ComputeKey(body, model)
+	// Cache check (exact match, non-stream, no tools, no cache_control)
+	cacheKey := h.exactCacheKey(body, model, stream)
+	if cacheKey != "" {
 		if entry, ok := h.exactCache.Get(cacheKey); ok {
-			c.Header("Content-Type", entry.ContentType)
-			c.Header("X-Cache-Status", "HIT")
-			c.Status(entry.StatusCode)
-			c.Writer.Write(entry.Body)
+			h.serveCacheHit(c, entry)
 			return
 		}
 	}
@@ -164,17 +155,8 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 				LatencyMs:       latency,
 				StatusCode:      resp.StatusCode,
 			})
-			if cacheKey != "" && h.exactCache != nil {
-				h.exactCache.Set(cacheKey, cache.CacheEntry{
-					Body:        translatedResp,
-					StatusCode:  resp.StatusCode,
-					ContentType: "application/json",
-				})
-			}
-			c.Header("Content-Type", "application/json")
-			c.Header("X-Cache-Status", "MISS")
-			c.Status(resp.StatusCode)
-			c.Writer.Write(translatedResp)
+			h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
+			h.writeJSONResponse(c, resp.StatusCode, translatedResp)
 		}
 		return
 	}
@@ -261,7 +243,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			h.tracker.Log(&usage.LogEntry{
 				ConnectionID:    connID,
-				ProviderTypeID: provider,
+				ProviderTypeID:  provider,
 				ModelID:         modelName,
 				Modality:        "chat",
 				InputTokens:     tokenCounts.InputTokens,

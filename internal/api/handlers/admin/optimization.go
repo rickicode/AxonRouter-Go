@@ -72,6 +72,10 @@ func (h *OptimizationHandler) UpdateCompressionSettings(c *gin.Context) {
 	_ = h.setSetting("compression_lite_dedup", boolStr(req.Lite.DedupSystemPrompt))
 	_ = h.setSetting("compression_lite_redundant", boolStr(req.Lite.RemoveRedundantContent))
 
+	// NOTE: Changing compression settings invalidates any exact-cache entries
+	// that were computed with the previous configuration.
+	h.cache.Flush()
+
 	c.JSON(http.StatusOK, h.compressionSettingsMap(mode))
 }
 
@@ -128,10 +132,10 @@ func (h *OptimizationHandler) compressionSettingsMap(mode string) gin.H {
 	return gin.H{
 		"mode": mode,
 		"lite": gin.H{
-			"collapse_whitespace":        parseBool(h.getSetting("compression_lite_collapse", "true")),
-			"replace_image_urls":           parseBool(h.getSetting("compression_lite_image_urls", "true")),
-			"remove_redundant_content":     parseBool(h.getSetting("compression_lite_redundant", "false")),
-			"dedup_system_prompt":          parseBool(h.getSetting("compression_lite_dedup", "false")),
+			"collapse_whitespace":      parseBool(h.getSetting("compression_lite_collapse", "true")),
+			"replace_image_urls":       parseBool(h.getSetting("compression_lite_image_urls", "true")),
+			"remove_redundant_content": parseBool(h.getSetting("compression_lite_redundant", "false")),
+			"dedup_system_prompt":      parseBool(h.getSetting("compression_lite_dedup", "false")),
 		},
 	}
 }

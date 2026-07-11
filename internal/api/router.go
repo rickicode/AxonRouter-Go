@@ -7,7 +7,9 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/api/handlers/admin"
@@ -121,7 +123,12 @@ func New(cfg Config) *Router {
 			DedupSystemPrompt:      db.GetSetting("compression_lite_dedup", "false") == "true",
 		},
 	}
-	exactCache := cache.NewExactCache(1000)
+
+	ttlSec, _ := strconv.Atoi(db.GetSetting("cache_ttl_seconds", "300"))
+	if ttlSec <= 0 {
+		ttlSec = 300
+	}
+	exactCache := cache.NewPersistentCache(cfg.DB, 1000, time.Duration(ttlSec)*time.Second)
 
 	comboH := admin.NewComboHandler(cfg.DB, comboHandler)
 	logH := admin.NewLogHandler(cfg.DB)

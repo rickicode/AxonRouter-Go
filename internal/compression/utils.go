@@ -28,6 +28,38 @@ func HasTools(body []byte) bool {
 	return ok && len(arr) > 0
 }
 
+// HasCacheControl detects whether a request body contains Anthropic-style
+// cache_control markers. Compression should be skipped for such requests to
+// avoid breaking provider-side prompt-cache prefixes.
+func HasCacheControl(body []byte) bool {
+	var v any
+	if err := json.Unmarshal(body, &v); err != nil {
+		return false
+	}
+	return valueHasCacheControl(v)
+}
+
+func valueHasCacheControl(v any) bool {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, val := range x {
+			if k == "cache_control" {
+				return true
+			}
+			if valueHasCacheControl(val) {
+				return true
+			}
+		}
+	case []any:
+		for _, val := range x {
+			if valueHasCacheControl(val) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // CleanSpaces collapses multiple spaces/newlines and trims.
 func CleanSpaces(s string) string {
 	var b strings.Builder

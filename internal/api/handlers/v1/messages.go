@@ -21,10 +21,25 @@ func (h *Handler) Messages(c *gin.Context) {
 		c.JSON(http.StatusRequestEntityTooLarge, claudeError("invalid_request_error", err.Error()))
 		return
 	}
+
+	// Apply compression (fail-open); skip if the request uses prompt-cache markers.
+	body = h.compressRequestBody(body)
+
 	model := executor.JSONGet(body, "model")
 	if model == "" {
 		c.JSON(http.StatusBadRequest, claudeError("invalid_request_error", "model is required"))
 		return
+	}
+
+	stream := executor.IsStreamRequest(body)
+
+	// Exact cache check (non-stream, no tools, no cache_control)
+	cacheKey := h.exactCacheKey(body, model, stream)
+	if cacheKey != "" {
+		if entry, ok := h.exactCache.Get(cacheKey); ok {
+			h.serveCacheHit(c, entry)
+			return
+		}
 	}
 
 	// Combo-first routing
@@ -48,7 +63,6 @@ func (h *Handler) Messages(c *gin.Context) {
 
 	// Connection failover loop: try up to 3 connections before giving up.
 	clientFormat := executor.FormatClaude
-	stream := executor.IsStreamRequest(body)
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
 	maxAttempts := 3
 	var lastConn *Connection
@@ -126,9 +140,8 @@ func (h *Handler) Messages(c *gin.Context) {
 				LatencyMs:       latency,
 				StatusCode:      resp.StatusCode,
 			})
-			c.Header("Content-Type", "application/json")
-			c.Status(resp.StatusCode)
-			c.Writer.Write(translatedResp)
+			h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
+			h.writeJSONResponse(c, resp.StatusCode, translatedResp)
 		}
 		return
 	}

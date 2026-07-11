@@ -21,10 +21,25 @@ func (h *Handler) Responses(c *gin.Context) {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": gin.H{"message": err.Error(), "type": "invalid_request_error"}})
 		return
 	}
+
+	// Apply compression (fail-open); skip if the request uses prompt-cache markers.
+	body = h.compressRequestBody(body)
+
 	model := executor.JSONGet(body, "model")
 	if model == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "model is required", "type": "invalid_request_error"}})
 		return
+	}
+
+	stream := executor.IsStreamRequest(body)
+
+	// Exact cache check (non-stream, no tools, no cache_control)
+	cacheKey := h.exactCacheKey(body, model, stream)
+	if cacheKey != "" {
+		if entry, ok := h.exactCache.Get(cacheKey); ok {
+			h.serveCacheHit(c, entry)
+			return
+		}
 	}
 
 	// Combo-first routing
@@ -45,10 +60,9 @@ func (h *Handler) Responses(c *gin.Context) {
 		return
 	}
 	body = executor.JSONSet(body, "model", modelName)
-
 	clientFormat := executor.FormatOpenAIResponses
-	stream := executor.IsStreamRequest(body)
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+
 	maxAttempts := 3
 	var lastConn *Connection
 	var lastErrCategory string
@@ -65,14 +79,11 @@ func (h *Handler) Responses(c *gin.Context) {
 			break
 		}
 		lastConn = conn
-
 		h.proactiveRefreshToken(c.Request.Context(), conn, provider)
-
 		psdMap := map[string]string{}
 		if conn.ProviderSpecificData != "" {
 			json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap)
 		}
-
 		req := &executor.Request{
 			Model:                modelName,
 			Body:                 translatedBody,
@@ -83,7 +94,6 @@ func (h *Handler) Responses(c *gin.Context) {
 			Provider:             provider,
 			ProviderSpecificData: psdMap,
 		}
-
 		proxyCtx := h.proxyContext(c.Request.Context(), conn)
 		var resp *executor.Response
 		var streamResult *executor.StreamResult
@@ -107,7 +117,6 @@ func (h *Handler) Responses(c *gin.Context) {
 			}
 			continue
 		}
-
 		h.resetBanCount(conn.ID)
 		h.combo.RecordSuccess(conn.ID)
 		h.elig.Update(h.store)
@@ -135,9 +144,8 @@ func (h *Handler) Responses(c *gin.Context) {
 				LatencyMs:       latency,
 				StatusCode:      resp.StatusCode,
 			})
-			c.Header("Content-Type", "application/json")
-			c.Status(resp.StatusCode)
-			c.Writer.Write(translatedResp)
+			h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
+			h.writeJSONResponse(c, resp.StatusCode, translatedResp)
 		}
 		return
 	}
