@@ -515,8 +515,9 @@ func (h *Handler) executeDirect(ctx context.Context, exec executor.Executor, req
 
 // handleFailoverError records an upstream failure, marks the connection
 // exhausted/cooled-down when appropriate, refreshes eligibility, and logs it.
-// It is shared by all chat modality handlers to avoid copy-pasted error blocks.
-func (h *Handler) handleFailoverError(conn *Connection, provider, modelName string, err error, attempt int, latency int64) {
+// Returns true if the caller should try the next connection, false if the error
+// is non-retryable (model_not_found, auth_failed) and failover should stop.
+func (h *Handler) handleFailoverError(conn *Connection, provider, modelName string, err error, attempt int, latency int64) bool {
 	det := connstate.DetectError(0, "", err, provider, modelName, nil)
 	if det.Category == connstate.ErrorRateLimit {
 		h.exhaustion.MarkExhausted(conn.ID, quota.DefaultExhaustionTTL)
@@ -532,7 +533,7 @@ func (h *Handler) handleFailoverError(conn *Connection, provider, modelName stri
 	h.elig.Update(h.store)
 	h.checkAutoDisable(conn.ID, provider)
 
-	logging.Logger.Error("failover: akun exhausted, ganti akun",
+	logging.Logger.Error("failover: error, coba akun lain",
 		"provider", provider,
 		"name", conn.Name,
 		"conn", conn.ID[:8],
@@ -551,6 +552,14 @@ func (h *Handler) handleFailoverError(conn *Connection, provider, modelName stri
 		LatencyMs:      latency,
 		ErrorMessage:   err.Error(),
 	})
+
+	// Non-retryable errors: model doesn't exist or auth failed —
+	// retrying with another connection won't help.
+	switch det.Category {
+	case connstate.ErrorModelNotFound, connstate.ErrorAuth:
+		return false
+	}
+	return true
 }
 
 // proxyContext resolves proxy config for a connection and returns a context with it attached.

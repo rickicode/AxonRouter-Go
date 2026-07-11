@@ -99,7 +99,9 @@ func (h *Handler) Responses(c *gin.Context) {
 			connstate.ParseRateLimitHeaders(streamResult.Headers, h.store, conn.ID, modelName)
 		}
 		if err != nil {
-			h.handleFailoverError(conn, provider, modelName, err, attempt, latency)
+			if !h.handleFailoverError(conn, provider, modelName, err, attempt, latency) {
+				break
+			}
 			continue
 		}
 

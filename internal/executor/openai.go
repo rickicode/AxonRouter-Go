@@ -61,6 +61,13 @@ func sanitizeCFRequest(body []byte) []byte {
 	}
 
 	model, _ := req["model"].(string)
+	// CF Workers AI requires @cf/ prefix on model names.
+	// Catalog stores them as cf/author/model (provider prefix stripped).
+	// Re-add @cf/ before sending upstream.
+	if model != "" && !strings.HasPrefix(model, "@cf/") {
+		model = "@cf/" + model
+		req["model"] = model
+	}
 	maxCap := 8192
 	if IsReasoningModel(model) {
 		maxCap = 4096
