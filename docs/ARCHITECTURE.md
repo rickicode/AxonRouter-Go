@@ -2,323 +2,230 @@
 
 ## Overview
 
-AxonRouter-Go adalah universal API proxy untuk coding agents. Dirancang sebagai single Go binary dengan embedded SQLite dan Svelte dashboard.
+AxonRouter-Go is a universal AI API proxy delivered as a single Go binary with an embedded SQLite database and a Svelte dashboard. It accepts requests in OpenAI, Anthropic, Gemini, or OpenAI Responses format, routes them to one of many provider connections, and returns a normalized response.
 
 ## Design Principles
 
-1. **Single Binary** — Zero external dependencies, semua embedded
-2. **O(1) Routing** — Eligibility snapshot, <1ms regardless of connection count
-3. **Fail-Safe** — Circuit breaker, auto-recovery, graceful degradation
-4. **Observable** — Per-request logging, usage tracking, dashboard
+1. **Single Binary** — No external runtime dependencies; frontend assets are embedded with `go:embed`.
+2. **O(1) Routing** — Eligibility snapshot keeps routing latency low regardless of connection count.
+3. **Fail-Safe** — Per-connection circuit breaker, automatic failover, cooldown recovery, and quota exhaustion detection.
+4. **Observable** — Per-request logging, usage/cost tracking, live active-request panel, and admin dashboard.
 
 ## High-Level Architecture
 
 ```
+Client Request (OpenAI / Claude / Gemini / Responses format)
+           │
+           ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    Client Request                            │
-│                    (OpenAI/Claude/Gemini format)             │
+│ Gin Router                                                  │
+│  - Auth middleware            (bcrypt API keys)               │
+│  - Rate limit middleware      (token bucket)                  │
+│  - Logging / Request-ID / CORS                              │
+│  - /v1/* → proxy handlers                                   │
+│  - /api/admin/* → admin handlers                            │
 └──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
+           │
+           ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    Gin Router                               │
-│  ┌─────────────────┐  ┌─────────────────────────────────┐  │
-│  │   Middleware     │  │                                 │  │
-│  │  - Auth (bcrypt) │  │  Route Matching                 │  │
-│  │  - Rate Limit    │  │  /v1/* → Proxy Handlers         │  │
-│  │  - CORS          │  │  /api/admin/* → Admin Handlers  │  │
-│  │  - Logging       │  │                                 │  │
-│  └─────────────────┘  └─────────────────────────────────┘  │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Proxy Handler                             │
-│                                                             │
-│  1. Parse request (model, format)                           │
-│  2. Combo-first routing (if model matches combo)            │
-│  3. Direct routing via eligibility snapshot                  │
-│  4. OAuth refresh (if needed)                               │
-│  5. Translate request (client → provider format)            │
-│  6. Execute request                                         │
-│  7. Parse rate limit headers                                │
-│  8. Translate response (provider → client format)           │
-│  9. Log usage                                               │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Connection State                          │
-│                                                             │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  │
-│  │  Connection   │  │   Circuit    │  │  Model Rate      │  │
-│  │  State        │  │   Breaker    │  │  Limit           │  │
-│  │  (sync.Map)   │  │  (per-conn)  │  │  (per-model)     │  │
-│  └──────────────┘  └──────────────┘  └──────────────────┘  │
-│                                                             │
-│  Layer 1: Connection status (ready/rate_limited/etc)        │
-│  Layer 2: Circuit breaker (CLOSED→OPEN→HALF_OPEN)           │
-│  Layer 3: Model-level TPM/RPM tracking                      │
+│ Proxy Handler                                               │
+│  1. Parse model string                                      │
+│  2. Resolve combo (if model is a combo)                     │
+│  3. Pick eligible connection via in-memory snapshot           │
+│  4. Apply request compression (chat only)                   │
+│  5. Check exact cache (chat, non-stream, no tools)          │
+│  6. Refresh OAuth token if needed                           │
+│  7. Translate request → provider format                     │
+│  8. Execute upstream request (HTTP proxy or relay)          │
+│  9. Parse rate-limit headers, classify errors               │
+│ 10. Translate response → client format                       │
+│ 11. Log usage (async)                                       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ## Package Structure
 
+### `cmd/`
+Entry point binaries.
+
+- `cmd/server` — standalone server that opens the DB, runs migrations, starts background jobs, and runs the HTTP server.
+- `cmd/cli` — lightweight CLI for start/stop/status/restart using the PID file.
+
 ### `internal/api/`
+HTTP layer built on Gin.
 
-HTTP layer — Gin handlers, middleware, routing.
+- `router.go` boots all services and mounts `/v1` and `/api/admin` groups.
+- `middleware/` — auth, rate limit, request ID, logging, CORS.
+- `handlers/v1/` — proxy endpoints (`chat/completions`, `messages`, `responses`, models, TTS, STT, images, video).
+- `handlers/admin/` — dashboard endpoints for providers, connections, combos, logs, quota, proxy pools, model pricing, and settings.
 
-- `handlers/v1/` — Proxy endpoints (chat, messages, responses, models, etc.)
-- `handlers/admin/` — Admin endpoints (providers, connections, combos, logs)
-- `middleware/` — Auth (bcrypt), rate limiting, CORS, logging
-- `router.go` — Route registration, dependency injection
-
-### `internal/translator/`
-
-Format translation layer — hub-and-spoke via OpenAI format.
-
-- `registry/` — Global translator registry
-- `types/` — Format identifiers (openai, claude, gemini, etc.)
-- `openai/` — OpenAI → provider translators
-- `claude/` — Claude → OpenAI translator
-- `gemini/` — Gemini → OpenAI translator
-- `codex/` — Codex → OpenAI translator
-- `antigravity/` — Antigravity → OpenAI translator
-- `kiro/` — Kiro → OpenAI translator
-
-**Translation Flow:**
-```
-Client Request (any format)
-    ↓
-Translate to OpenAI format (if needed)
-    ↓
-Translate to Provider format
-    ↓
-Execute request
-    ↓
-Translate response to OpenAI format
-    ↓
-Translate to Client format (if needed)
-```
-
-### `internal/auth/`
-
-OAuth flows for provider authentication.
-
-- `manager.go` — Central auth manager with singleflight dedup
-- `codex/` — Codex OAuth (device code flow)
-- `antigravity/` — Antigravity OAuth (Google)
-- `kiro/` — Kiro OAuth (AWS Cognito)
-
-**Token Refresh Flow:**
-```
-401 detected
-    ↓
-Check if OAuth provider
-    ↓
-RefreshToken() via singleflight
-    ↓
-Update in-memory + SQLite
-    ↓
-Retry request with new token
-```
+All handler dependencies are injected via constructors; the v1 `Handler` receives the connection store, eligibility manager, combo handler, usage tracker, auth manager, proxy resolver, quota cache, compression strategy, and exact cache.
 
 ### `internal/executor/`
+Upstream request execution.
 
-Provider-specific request execution.
+- `base.go` — shared HTTP client, proxy/relay helpers, SSE utilities, and `Executor` interface.
+- `registry.go` — maps provider prefix (`oc`, `cf`, `cx`, …) to a concrete executor + provider format.
+- `openai.go`, `claude.go`, `gemini.go`, `codex.go`, `antigravity.go`, `cloudflare.go`, `kiro.go` — provider-specific executors.
+- `tts.go`, `stt.go`, `images.go`, `video.go` — modality-specific executors.
 
-- `base.go` — Base executor with HTTP client
-- `openai.go` — OpenAI executor (chat, embeddings, TTS, STT, images, video)
-- `claude.go` — Claude executor (messages, count_tokens)
-- `gemini.go` — Gemini executor
-- `registry.go` — Executor registry
+The executor layer applies `ProxyConfig` from the request context: standard HTTP proxy transport or relay URL rewriting with `x-relay-*` headers.
+
+### `internal/translator/`
+Hub-and-spoke format translation.
+
+- `registry/` — thread-safe registry of request/response translators indexed by `(from, to)` format.
+- OpenAI Chat Completions is the canonical hub; providers register direct bidirectional translators.
+- `init.go` triggers registration of all translator packages at startup.
 
 ### `internal/connstate/`
+Core routing state engine.
 
-Connection state management — the core routing engine.
-
-- `store.go` — In-memory sync.Map store
-- `state.go` — Connection state, ModelLimitState
-- `eligibility.go` — Eligibility snapshot (O(1) routing)
-- `circuit_breaker.go` — Circuit breaker (3/2/60s)
-- `detector.go` — Error classification
-- `patterns.go` — Error patterns (rate_limit, quota, balance_empty, etc.)
-- `headers.go` — Rate limit header parsing
-
-**3-Layer Defense:**
-```
-Layer 1: Connection State (sync.Map)
-    - ready, rate_limited, quota_exhausted, balance_empty, auth_failed, suspended, disabled
-
-Layer 2: Circuit Breaker (per-connection)
-    - CLOSED → OPEN (3 failures) → HALF_OPEN (60s) → CLOSED (2 successes)
-
-Layer 3: Model Rate Limit (per model per connection)
-    - TPM/RPM tracking from response headers
-    - Cooldown timers
-```
-
-**Eligibility Snapshot:**
-```go
-// Pre-computed eligible list, updated async when state changes
-type EligibilityManager struct {
-    eligible map[string][]string  // prefix → []connID
-    store    *Store
-}
-
-// O(1) routing — pick from pre-computed list
-func (e *EligibilityManager) PickConnection(prefix, modelID string) *ConnectionState {
-    conns := e.GetByPrefix(prefix)
-    for _, connID := range conns {
-        cs := e.store.Get(connID)
-        if cs != nil && !cs.IsInCooldown() && !cs.IsModelInCooldown(modelID) {
-            return cs
-        }
-    }
-    return nil
-}
-```
+- `store.go` — `sync.Map`-backed in-memory store keyed by connection ID.
+- `eligibility.go` — pre-computed, atomic snapshot for O(1) provider-prefix lookups.
+- `state.go` — `ConnectionState` with status enum and per-model `ModelLimitState`.
+- `detector.go`, `patterns.go`, `headers.go` — error classification, keyword matching, and rate-limit header parsing.
+- `circuit_breaker.go` — `CLOSED → OPEN → HALF_OPEN` state machine.
 
 ### `internal/combo/`
+Model combo routing.
 
-Combo routing system.
+- `combo.go` — resolves combo names to ordered steps, records success/failure, refreshes from DB.
+- `smart_combo.go` — telemetry-driven selection (`auto`, `economy`, `balanced`, `premium`).
+- `rotation.go` — round-robin rotation with sticky windows.
+- `fallback.go` — circuit-breaker gating over eligible connections.
+- `default.go` — built-in combo seeds.
 
-- `handler.go` — Combo resolution, step execution
-- `rotation.go` — Round-robin rotation
-- `smart.go` — Smart combo (auto, economy, balanced, premium)
+### `internal/auth/`
+Authentication.
 
-**Combo Flow:**
-```
-Model: "balanced"
-    ↓
-Resolve combo → [mimo/mimo-v2-pro, cx/gpt-5.4, oc/gpt-4o]
-    ↓
-Try step 1: mimo/mimo-v2-pro
-    ↓ (if failed)
-Try step 2: cx/gpt-5.4
-    ↓ (if failed)
-Try step 3: oc/gpt-4o
-    ↓ (if all failed)
-Return 503
-```
+- `manager.go` — OAuth manager with singleflight dedup, rotation-group serialization, and a 60-second token-rotation cache.
+- `codex/`, `antigravity/`, `kiro/` — provider-specific OAuth services.
+- API key auth lives in `internal/api/middleware/auth.go` and uses bcrypt.
+
+### `internal/quota/`
+OAuth provider quota monitoring.
+
+- `fetcher.go` — fetches quota for Codex, Antigravity, and Kiro with proactive token refresh.
+- `cache.go` — persists quota records in `quota_cache` and syncs connection status.
+- `exhaustion.go` — in-memory TTL cache for 429-driven exhaustion.
+- Provider fetchers: `codex.go`, `antigravity.go`, `kiro.go`.
 
 ### `internal/usage/`
+Request logging and cost tracking.
 
-Usage tracking and logging.
+- `tracker.go` — async buffered logger; flushes to `request_logs` every 5 seconds or 100 entries.
+- `pricing.go` — DB-backed model pricing with prefix stripping and deterministic longest-substring fallback.
+- `queries.go` — paginated, filterable request log queries.
+- `aggregator.go` — provider/model/daily usage roll-ups.
 
-- `tracker.go` — Async buffered logger
-- `models.go` — Log entry models
+### `internal/proxypool/`
+Proxy and relay pool resolution.
 
-**Async Logging:**
-```
-Request → Log entry → Buffer (memory)
-    ↓ (every 5s or 100 entries)
-Batch insert → SQLite
-```
+- `resolver.go` — four pool types (`http`, `vercel`, `deno`, `cloudflare`), 30-second cache, group strategies (round-robin / sticky).
+- `health.go` — periodic background health checks.
+- `test.go` — HTTP CONNECT and relay tests.
+- Admin handlers in `internal/api/handlers/admin/` for CRUD, groups, and one-click deploy.
+
+### `internal/models/`
+Model catalog.
+
+- `catalog.go` — loads `models.json`, refreshes from remote URLs every 3 hours, syncs live no-auth provider endpoints every 24 hours.
+- `models.json` — embedded static catalog keyed by provider prefix.
+- Serves `GET /v1/models` and admin model listing.
+
+### `internal/cache/`, `internal/compression/`
+Optimization pipelines.
+
+- `cache/exact.go` — bounded in-memory exact-response cache for non-streaming chat completions.
+- `compression/strategy.go` — lite baseline compressor + optional Caveman filler stripping; fail-open.
+- Compression is applied only on the `/v1/chat/completions` path.
 
 ### `internal/db/`
+SQLite layer.
 
-SQLite database layer.
+- `sqlite.go` — singleton connection, WAL mode, busy timeout, foreign keys.
+- `migrations.go` — idempotent schema migrations, provider seeds, pricing seeds, legacy provider ID normalization.
+- `models.go` — Go structs mirroring tables.
+- `key_migration.go` — one-time bcrypt migration for plaintext API keys.
 
-- `models.go` — Data models
-- `migrations.go` — Schema migrations
-- `key_migration.go` — Bcrypt key migration
+### `internal/config/`
+Process-wide configuration singleton.
 
-### `internal/background/`
+- Reads `AXON_PORT`, `AXON_DATA_DIR`, and `AXON_ADMIN_KEY`.
+- Default data directory is `~/.axonrouter` unless overridden.
 
-Background goroutines.
+### `internal/active/`, `internal/errorcode/`, `internal/logging/`, `internal/provider/`, `internal/background/`
+- `active` — in-flight request registry for the dashboard live panel.
+- `errorcode` — extracts numeric status codes from streaming error strings.
+- `logging` — global `slog` logger with compact/text/json handlers.
+- `provider` — canonical provider ID resolution and legacy alias mapping.
+- `background` — quota scheduler, cleanup, and usage-buffer monitoring goroutines.
 
-- `quota_scheduler.go` — Cooldown recovery (30 min interval)
-- `usage_flush.go` — Usage log flush (5s interval)
-- `cleanup.go` — General cleanup (5 min interval)
+## Request Flow
 
-## Data Flow
-
-### Proxy Request Flow
-
-```
-1. Client → POST /v1/chat/completions
-2. Auth middleware → validate API key (bcrypt)
-3. Rate limit middleware → check per-key/per-IP limit
-4. ChatCompletions handler:
-   a. Parse body, extract model
-   b. Check combo resolution
-   c. Get connection via eligibility snapshot (O(1))
-   d. Check OAuth expiry, refresh if needed
-   e. Translate request (OpenAI → provider format)
-   f. Execute request
-   g. Parse rate limit headers
-   h. Detect errors, update connection state
-   i. Translate response (provider → OpenAI format)
-   j. Log usage (async)
-   k. Return response
-```
-
-### Error Detection Flow
-
-```
-Response received
-    ↓
-Check HTTP status code
-    ↓
-429 → rate_limited (model-level, auto-recover via Retry-After)
-402 → Check body patterns:
-    - "insufficient funds" → balance_empty (manual)
-    - "quota exceeded" → quota_exhausted (auto-recover)
-401 → auth_failed (manual)
-403 → suspended (manual)
-500+ → circuit breaker (auto-recover after 60s)
-```
+1. Client → `POST /v1/chat/completions` (or `/messages`, `/responses`).
+2. Middleware validates bearer API key and sets rate limit.
+3. Handler parses the model string.
+4. If the model matches a combo, the combo handler resolves ordered steps.
+5. `getConnection()` uses the eligibility snapshot to find a ready connection.
+6. Request body is compressed if compression is enabled.
+7. OAuth token is refreshed proactively if close to expiry.
+8. The translator converts the request to the provider's native format.
+9. The executor performs the upstream call via HTTP proxy or relay.
+10. Rate-limit headers are parsed; errors are classified and may trigger cooldown, circuit breaker, or failover.
+11. The response is translated back to the client format.
+12. Tokens and cost are extracted and logged asynchronously.
 
 ## Frontend Architecture
 
-SvelteKit dengan static adapter untuk `go:embed`.
+The dashboard is a **Vite SPA** built with Svelte 5 and Tailwind CSS v4, not SvelteKit.
 
 ```
 web/
 ├── src/
-│   ├── routes/
-│   │   ├── +page.svelte           ← Home (dashboard overview)
-│   │   ├── providers/
-│   │   │   ├── +page.svelte       ← Provider list
-│   │   │   └── [id]/
-│   │   │       ├── +page.svelte   ← Provider detail
-│   │   │       └── [connId]/
-│   │   │           └── +page.svelte ← Connection detail
-│   │   ├── combos/
-│   │   │   └── +page.svelte       ← Combo management
-│   │   ├── logs/
-│   │   │   └── +page.svelte       ← Request logs
-│   │   └── settings/
-│   │       └── +page.svelte       ← Settings
+│   ├── main.ts              # Entry point, mounts App.svelte
+│   ├── App.svelte           # Root layout, sidebar, route dispatch
+│   ├── app.css              # Tailwind + global tokens
+│   ├── pages/               # 16 page components
 │   ├── lib/
-│   │   ├── components/            ← Shared components
-│   │   ├── stores/                ← Svelte stores
-│   │   └── utils/                 ← Utilities
-│   ├── app.css                    ← Global styles
-│   └── app.html                   ← HTML template
-├── build/                         ← Static output (embedded)
-├── package.json
-├── svelte.config.js
-├── vite.config.js
-└── tailwind.config.js
+│   │   ├── api.ts           # Typed fetch wrapper for /api/admin/*
+│   │   ├── router.ts        # History-API SPA router
+│   │   ├── stores.ts        # Svelte writable/derived stores
+│   │   ├── provider-catalog.ts
+│   │   └── components/ui/   # shadcn-svelte component port
+├── build/                   # Static output embedded by Go
+├── embed.go                 # //go:embed all:build
+└── vite.config.js           # Dev proxy to Go on port 3777
 ```
 
-## Performance Characteristics
+The Go binary embeds `web/build/` and serves it through `http.FileServer`, with a `NoRoute` fallback to `index.html` for the SPA.
+
+## Background Jobs
+
+| Job | File | Interval | Responsibility |
+|-----|------|----------|----------------|
+| Quota scheduler | `background/quota_scheduler.go` | 1 min | Cooldown recovery, proactive quota fetch, exhaustion cleanup |
+| Cleanup | `background/cleanup.go` | 5 min / 24 h | Circuit-breaker sweep, request-logs retention |
+| Usage flush monitor | `background/usage_flush.go` | 30 s | Buffer-depth warning |
+| Model catalog refresh | `internal/models/catalog.go` | 3 h / 24 h | Remote catalog refresh, live no-auth sync |
+| Proxy health checks | `internal/proxypool/health.go` | 30 min | Test all pools and update status |
+
+## Performance Targets
 
 | Metric | Target | Implementation |
 |--------|--------|----------------|
-| Routing latency | <1ms | Eligibility snapshot (O(1)) |
-| Proxy overhead | <5ms | Minimal middleware chain |
-| Concurrent streams | 1000+ | Goroutine per request |
-| Memory (idle) | <100MB | sync.Map + SQLite WAL |
-| Memory (5000 conn) | <500MB | Compact state structs |
-| Startup time | <1s | Embedded assets, no external deps |
+| Routing latency | <1 ms | Eligibility snapshot with atomic.Value |
+| Proxy overhead | <5 ms | Minimal middleware, goroutine per request |
+| Concurrent streams | 1000+ | Goroutine per upstream connection |
+| Idle memory | <100 MB | sync.Map state + SQLite WAL |
+| 5000 connections | <500 MB | Compact state structs |
+| Startup time | <1 s | Embedded assets, no external services required |
 
 ## Security
 
-1. **API Key Auth** — bcrypt hashed keys, auto-migration on startup
-2. **Admin Auth** — X-Admin-Key header
-3. **Rate Limiting** — Per-key or per-IP
-4. **Constant-Time Comparison** — API key validation
-5. **Fail-Closed** — No keys configured = deny all requests
+1. **API keys** — bcrypt hashed, fail-closed when configured.
+2. **Admin endpoints** — protected by `X-Admin-Key` header when `AXON_ADMIN_KEY` is set.
+3. **Rate limiting** — per-key or per-IP token bucket.
+4. **Constant-time comparison** — API key validation.
+5. **Relay pools** — auto-generated relay auth tokens.
