@@ -1,7 +1,7 @@
 <script lang="ts">
   import { PROVIDER_CATALOG, CATEGORIES, getProviderMeta } from '$lib/provider-catalog';
   import ProviderIcon from '$lib/components/ProviderIcon.svelte';
-  import { connectionsApi, type CreateConnectionPayload } from '$lib/api';
+  import { connectionsApi, proxyPoolsApi, type CreateConnectionPayload, type ProxyPool } from '$lib/api';
   import { Card, CardContent } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
@@ -16,6 +16,10 @@
 
   let connectionName = $state('');
   let apiKey = $state('');
+  let noAuthMode = $state<'direct' | 'http' | 'relay'>('direct');
+  let selectedProxyPoolId = $state('');
+  let proxyPools = $state<ProxyPool[]>([]);
+  let loadingPools = $state(false);
   let loading = $state(false);
   let resultMsg = $state('');
   let resultOk = $state(false);
@@ -40,13 +44,34 @@
 
   onMount(() => { document.title = 'Add Provider — AxonRouter'; });
 
-  function selectProvider(id: string) {
-    selectedProvider = id;
-    connectionName = '';
-    apiKey = '';
-    resultMsg = '';
-    step = 'configure';
-  }
+function selectProvider(id: string) {
+	selectedProvider = id;
+	connectionName = '';
+	apiKey = '';
+	noAuthMode = 'direct';
+	selectedProxyPoolId = '';
+	resultMsg = '';
+	step = 'configure';
+	if (getProviderMeta(id)?.authType === 'none') {
+		loadProxyPools();
+	}
+}
+
+async function loadProxyPools() {
+	loadingPools = true;
+	try {
+		const res = await proxyPoolsApi.list({ is_active: '1', per_page: '200' });
+		proxyPools = res.data?.data ?? [];
+	} catch {
+		proxyPools = [];
+	} finally {
+		loadingPools = false;
+	}
+}
+
+const httpProxyPools = $derived(proxyPools.filter(p => p.type === 'http' || p.type === 'https'));
+const relayProxyPools = $derived(proxyPools.filter(p => p.type === 'relay' || p.type === 'vercel' || p.type === 'deno' || p.type === 'cloudflare'));
+const availableProxyPools = $derived(noAuthMode === 'http' ? httpProxyPools : relayProxyPools);
 
   async function handleAddConnection() {
     if (!selectedProvider) return;
@@ -54,11 +79,16 @@
     resultMsg = '';
     try {
       const name = connectionName.trim() || `${selectedProvider}-key-001`;
-      const data: CreateConnectionPayload = { name };
-      if (meta?.authType === 'apikey' && apiKey.trim()) {
-        data.api_key = apiKey.trim();
-      }
-      await connectionsApi.create(selectedProvider, data);
+		const data: CreateConnectionPayload = { name };
+		if (meta?.authType === 'none') {
+			data.auth_type = 'none';
+			if (noAuthMode !== 'direct' && selectedProxyPoolId) {
+				data.provider_specific_data = { proxyPoolId: selectedProxyPoolId };
+			}
+		} else if (meta?.authType === 'apikey' && apiKey.trim()) {
+			data.api_key = apiKey.trim();
+		}
+		await connectionsApi.create(selectedProvider, data);
       resultOk = true;
       resultMsg = `Connection "${name}" added successfully!`;
       step = 'done';
@@ -197,12 +227,42 @@
               This provider uses OAuth authentication. After creating the connection, you'll be redirected to authorize access.
             </p>
           </div>
-        {:else if meta.authType === 'none'}
-          <div class="p-4 rounded-md bg-accent/50">
-            <p class="text-body-sm text-muted-foreground">
-              This provider is free and requires no authentication. The connection will be activated automatically.
-            </p>
-          </div>
+{:else if meta.authType === 'none'}
+<div class="space-y-3">
+<div class="grid grid-cols-3 gap-2 rounded-lg border border-border/50 bg-muted/20 p-1">
+<button type="button" class="rounded-md px-3 py-2 text-sm transition-colors cursor-pointer {noAuthMode === 'direct' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => noAuthMode = 'direct'}>
+Direct
+</button>
+<button type="button" class="rounded-md px-3 py-2 text-sm transition-colors cursor-pointer {noAuthMode === 'http' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => noAuthMode = 'http'}>
+HTTP Proxy
+</button>
+<button type="button" class="rounded-md px-3 py-2 text-sm transition-colors cursor-pointer {noAuthMode === 'relay' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => noAuthMode = 'relay'}>
+Relay
+</button>
+</div>
+
+{#if noAuthMode !== 'direct'}
+<div class="flex flex-col gap-1.5">
+<Label class="text-body-sm-strong">{noAuthMode === 'http' ? 'HTTP proxy pool' : 'Relay proxy pool'}</Label>
+<select bind:value={selectedProxyPoolId} class="h-10 w-full rounded-md border border-input bg-background px-3 text-body-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+<option value="">Select a proxy pool…</option>
+{#each availableProxyPools as pool}
+<option value={pool.id}>{pool.name} · {pool.proxy_url}</option>
+{:else}
+<option value="" disabled>No active {noAuthMode} proxy pools</option>
+{/each}
+</select>
+{#if loadingPools}
+<p class="text-caption text-muted-foreground">Loading proxy pools…</p>
+{/if}
+<p class="text-caption text-muted-foreground">Direct = shared AxonRouter egress. Proxy/Relay = distinct egress identity for this connection.</p>
+</div>
+{:else}
+<div class="p-4 rounded-md bg-accent/50">
+<p class="text-body-sm text-muted-foreground">Uses AxonRouter direct egress. Only one direct connection is allowed per no-auth provider; add proxy/relay accounts for rotation.</p>
+</div>
+{/if}
+</div>
         {/if}
 
         {#if resultMsg}

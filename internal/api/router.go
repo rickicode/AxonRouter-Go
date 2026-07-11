@@ -74,6 +74,7 @@ func New(cfg Config) *Router {
 
 	comboHandler := combo.NewHandler(cfg.DB, store, elig)
 	tracker := usage.NewTracker(cfg.DB)
+	usage.InitPricing(cfg.DB)
 	authManager := auth.NewManager()
 
 	// Register OAuth services
@@ -127,9 +128,9 @@ func New(cfg Config) *Router {
 	settingH := settingHandler
 	dashboardH := admin.NewDashboardHandler(cfg.DB, store, tracker)
 	healthH := admin.NewHealthHandler(cfg.DB, store, tracker)
-	proxyPoolH := admin.NewProxyPoolHandler(cfg.DB, proxyHealth)
-	proxyGroupH := admin.NewProxyGroupHandler(cfg.DB)
-	proxyDeployH := admin.NewProxyDeployHandler(cfg.DB, proxyHealth)
+	proxyPoolH := admin.NewProxyPoolHandler(cfg.DB, proxyHealth, proxyResolver)
+	proxyGroupH := admin.NewProxyGroupHandler(cfg.DB, proxyResolver)
+	proxyDeployH := admin.NewProxyDeployHandler(cfg.DB, proxyHealth, proxyResolver)
 	optimizationH := admin.NewOptimizationHandler(cfg.DB, exactCache)
 
 	// Create v1 handler with all dependencies
@@ -149,6 +150,7 @@ func New(cfg Config) *Router {
 	v1Group := engine.Group("/v1")
 	v1Group.Use(middleware.Auth(cfg.DB))
 	v1Group.Use(middleware.RateLimit(limiter))
+	v1Group.Use(v1H.TrackActive())
 
 	v1Group.POST("/chat/completions", v1H.ChatCompletions)
 	v1Group.POST("/messages", v1H.Messages)
@@ -232,8 +234,8 @@ func New(cfg Config) *Router {
 
 	// Logs
 	adminGroup.GET("/logs", logH.List)
-	adminGroup.GET("/logs/:id", logH.Get)
 	adminGroup.GET("/logs/stats", logH.Stats)
+	adminGroup.GET("/logs/active", logH.ActiveRequests)
 
 	// Settings
 	adminGroup.GET("/settings", settingH.List)
@@ -254,6 +256,12 @@ func New(cfg Config) *Router {
 	adminGroup.GET("/quota", quotaH.List)
 	adminGroup.GET("/quota/summary", quotaH.Summary)
 	adminGroup.POST("/quota/:connId/refresh", quotaH.Refresh)
+	// Model Pricing — single source of truth for per-model cost rates.
+	modelPricingH := admin.NewModelPricingHandler()
+	adminGroup.GET("/model-pricing", modelPricingH.List)
+	adminGroup.POST("/model-pricing", modelPricingH.Create)
+	adminGroup.PATCH("/model-pricing/:id", modelPricingH.Update)
+	adminGroup.DELETE("/model-pricing/:id", modelPricingH.Delete)
 
 	// Proxy Pools (static routes before :id to avoid wildcard capture)
 	adminGroup.GET("/proxy-pools", proxyPoolH.List)
@@ -264,6 +272,7 @@ func New(cfg Config) *Router {
 	adminGroup.POST("/proxy-pools/deno-deploy", proxyDeployH.DeployDeno)
 	adminGroup.POST("/proxy-pools/cloudflare-deploy", proxyDeployH.DeployCloudflare)
 	adminGroup.POST("/proxy-pools", proxyPoolH.Create)
+	adminGroup.POST("/proxy-pools/bulk", proxyPoolH.BulkCreate)
 	adminGroup.GET("/proxy-pools/:id", proxyPoolH.Get)
 	adminGroup.PATCH("/proxy-pools/:id", proxyPoolH.Update)
 	adminGroup.DELETE("/proxy-pools/:id", proxyPoolH.Delete)

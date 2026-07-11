@@ -14,6 +14,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/provider"
 )
 
 // ProviderHandler handles provider CRUD operations.
@@ -57,6 +58,9 @@ func (h *ProviderHandler) List(c *gin.Context) {
 	// Fill status counts after outer rows are closed (avoids SQLite deadlock)
 	for i := range providers {
 		providers[i].StatusCounts = h.getStatusCounts(providers[i].ID)
+		if info, ok := provider.Registry[providers[i].ID]; ok {
+			providers[i].Aliases = info.Aliases
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": providers})
@@ -82,7 +86,9 @@ func (h *ProviderHandler) Get(c *gin.Context) {
 
 	h.db.QueryRow(`SELECT COUNT(*) FROM connections WHERE provider_type_id = ? AND is_active = 1`, id).Scan(&p.ConnectionCount)
 	p.StatusCounts = h.getStatusCounts(id)
-
+	if info, ok := provider.Registry[id]; ok {
+		p.Aliases = info.Aliases
+	}
 	c.JSON(http.StatusOK, p)
 }
 

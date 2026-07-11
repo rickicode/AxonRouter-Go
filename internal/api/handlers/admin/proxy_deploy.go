@@ -15,12 +15,13 @@ import (
 )
 
 type ProxyDeployHandler struct {
-	db     *sql.DB
-	health *proxypool.HealthChecker
+	db       *sql.DB
+	health   *proxypool.HealthChecker
+	resolver *proxypool.Resolver
 }
 
-func NewProxyDeployHandler(db *sql.DB, health *proxypool.HealthChecker) *ProxyDeployHandler {
-	return &ProxyDeployHandler{db: db, health: health}
+func NewProxyDeployHandler(db *sql.DB, health *proxypool.HealthChecker, resolver *proxypool.Resolver) *ProxyDeployHandler {
+	return &ProxyDeployHandler{db: db, health: health, resolver: resolver}
 }
 
 // DeployVercel deploys a relay edge function to Vercel.
@@ -41,6 +42,7 @@ func (h *ProxyDeployHandler) DeployVercel(c *gin.Context) {
 
 	relayAuth := proxypool.GenerateRelayAuth()
 	source := buildRelayEdgeFunctionSource("vercel")
+	source = strings.ReplaceAll(source, "process.env.RELAY_AUTH", fmt.Sprintf(`"%s"`, relayAuth))
 
 	// Create deployment with files (matching TS: api/relay.js + package.json + vercel.json)
 	deployBody := map[string]any{
@@ -108,6 +110,9 @@ func (h *ProxyDeployHandler) DeployVercel(c *gin.Context) {
 
 	// Save proxy pool
 	poolID := saveDeployPool(h.db, projectName, "vercel", deployURL, relayAuth, testRes.OK, testedAt, testRes.Error)
+	if h.resolver != nil {
+		h.resolver.Invalidate()
+	}
 	c.JSON(http.StatusCreated, gin.H{
 		"proxyPoolId": poolID,
 		"deployUrl":   deployURL,
@@ -139,9 +144,17 @@ func (h *ProxyDeployHandler) DeployDeno(c *gin.Context) {
 
 	relayAuth := proxypool.GenerateRelayAuth()
 	source := buildRelayEdgeFunctionSource("deno")
+	source = strings.ReplaceAll(source, `Deno.env.get("RELAY_AUTH")`, fmt.Sprintf(`"%s"`, relayAuth))
 
 	// Create project (TS: POST /v2/apps)
-	projBody, _ := json.Marshal(map[string]string{"name": projectName, "type": "playground"})
+	projBody, _ := json.Marshal(map[string]any{
+		"slug":   projectName,
+		"labels": map[string]string{"custom.kind": "axonrouter-relay"},
+		"config": map[string]any{
+			"install": "deno install",
+			"runtime": map[string]string{"type": "dynamic", "entrypoint": "main.ts"},
+		},
+	})
 	projReq, _ := http.NewRequest("POST", "https://api.deno.com/v2/apps", bytes.NewReader(projBody))
 	projReq.Header.Set("Authorization", "Bearer "+req.DenoToken)
 	projReq.Header.Set("Content-Type", "application/json")
@@ -164,11 +177,9 @@ func (h *ProxyDeployHandler) DeployDeno(c *gin.Context) {
 	// Deploy relay function (TS: POST /v2/apps/{projectId}/deploy)
 	deployBody, _ := json.Marshal(map[string]any{
 		"entrypointUrl": "main.ts",
-		"manifest":      map[string]any{},
-		"assets": []map[string]string{
-			{"kind": "file", "path": "main.ts", "content": source, "encoding": "utf-8"},
+		"assets": map[string]map[string]string{
+			"main.ts": {"kind": "file", "content": source, "encoding": "utf-8"},
 		},
-		"envVars": map[string]string{"RELAY_AUTH": relayAuth},
 	})
 	deployReq, _ := http.NewRequest("POST", fmt.Sprintf("https://api.deno.com/v2/apps/%s/deploy", projResult.ID), bytes.NewReader(deployBody))
 	deployReq.Header.Set("Authorization", "Bearer "+req.DenoToken)
@@ -204,11 +215,15 @@ func (h *ProxyDeployHandler) DeployDeno(c *gin.Context) {
 		return
 	}
 
-	deployURL := fmt.Sprintf("https://%s.%s.deno.net", projectName, req.OrgDomain)
+	orgSlug := denoOrgSlug(req.OrgDomain)
+	deployURL := fmt.Sprintf("https://%s.%s.deno.net", projectName, orgSlug)
 	testRes := testRelayURL(deployURL, relayAuth)
 	testedAt := time.Now().Format(time.RFC3339)
 
 	poolID := saveDeployPool(h.db, projectName, "deno", deployURL, relayAuth, testRes.OK, testedAt, testRes.Error)
+	if h.resolver != nil {
+		h.resolver.Invalidate()
+	}
 	c.JSON(http.StatusCreated, gin.H{
 		"proxyPoolId": poolID,
 		"deployUrl":   deployURL,
@@ -291,6 +306,9 @@ func (h *ProxyDeployHandler) DeployCloudflare(c *gin.Context) {
 	testedAt := time.Now().Format(time.RFC3339)
 
 	poolID := saveDeployPool(h.db, projectName, "cloudflare", cfDeployURL, relayAuth, testRes.OK, testedAt, testRes.Error)
+	if h.resolver != nil {
+		h.resolver.Invalidate()
+	}
 	c.JSON(http.StatusCreated, gin.H{
 		"proxyPoolId": poolID,
 		"deployUrl":   cfDeployURL,
@@ -311,32 +329,84 @@ func (h *ProxyDeployHandler) GenerateSource(c *gin.Context) {
 
 // --- Helpers ---
 
+const relayGuardJS = `function resolveRelayTarget(target, relayPath) {
+  let targetUrl;
+  try { targetUrl = new URL(target); } catch { return {ok:false, status:400, reason:"invalid x-relay-target"}; }
+  if (typeof relayPath !== "string" || relayPath.indexOf("@") !== -1 || relayPath.indexOf("\\") !== -1 || relayPath.charAt(0) !== "/") {
+    return {ok:false, status:403, reason:"forbidden x-relay-path"};
+  }
+  let finalUrl;
+  try { finalUrl = new URL(relayPath, targetUrl); } catch { return {ok:false, status:403, reason:"forbidden x-relay-path"}; }
+  if (finalUrl.hostname !== targetUrl.hostname || finalUrl.protocol !== targetUrl.protocol || finalUrl.port !== targetUrl.port || finalUrl.username || finalUrl.password) {
+    return {ok:false, status:403, reason:"forbidden x-relay-path (host mismatch)"};
+  }
+  return {ok:true, url:finalUrl.toString()};
+}
+function isPrivateHostname(h) {
+  if (!h) return true;
+  const host = h.trim().toLowerCase().replace(/^\\[|\\]$/g, "");
+  if (host === "localhost" || host === "0.0.0.0" || host === "127.0.0.1" || host === "::1" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal") || host.startsWith("::ffff:")) return true;
+  const parts = host.split(".");
+  if (parts.length === 4 && parts.every(function(p) { const n = parseInt(p, 10); return !isNaN(n) && n >= 0 && n <= 255 && p !== ""; })) {
+    const a = +parts[0], b = +parts[1];
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+  }
+  if (host.includes(":")) {
+    return host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:");
+  }
+  return false;
+}`
+
 func buildRelayEdgeFunctionSource(relayType string) string {
 	switch relayType {
 	case "deno":
-		return `Deno.serve(async (req) => {
+		return relayGuardJS + `
+Deno.serve(async (req) => {
   const auth = req.headers.get("x-relay-auth");
   const expected = Deno.env.get("RELAY_AUTH");
   if (expected && auth !== expected) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { "content-type": "application/json" } });
   }
   const target = req.headers.get("x-relay-target");
-  const relayPath = req.headers.get("x-relay-path") || "/";
   if (!target) {
     return new Response(JSON.stringify({ error: "Missing x-relay-target header" }), { status: 400, headers: { "content-type": "application/json" } });
   }
-  const targetUrl = new URL(target.replace(/\/$/, "") + relayPath);
-  if (["127.0.0.1","localhost","::1","0.0.0.0"].includes(targetUrl.hostname) || targetUrl.hostname.startsWith("10.") || targetUrl.hostname.startsWith("192.168.") || targetUrl.hostname.endsWith(".local")) {
-    return new Response(JSON.stringify({ error: "Blocked private target" }), { status: 403, headers: { "content-type": "application/json" } });
+  let targetUrl;
+  try { targetUrl = new URL(target); } catch {
+    return new Response(JSON.stringify({ error: "invalid x-relay-target" }), { status: 400, headers: { "content-type": "application/json" } });
+  }
+  if (targetUrl.protocol !== "http:" && targetUrl.protocol !== "https:") {
+    return new Response(JSON.stringify({ error: "forbidden x-relay-target protocol" }), { status: 403, headers: { "content-type": "application/json" } });
+  }
+  if (targetUrl.username || targetUrl.password) {
+    return new Response(JSON.stringify({ error: "forbidden x-relay-target (embedded credentials)" }), { status: 403, headers: { "content-type": "application/json" } });
+  }
+  if (isPrivateHostname(targetUrl.hostname)) {
+    return new Response(JSON.stringify({ error: "forbidden x-relay-target (private/loopback host)" }), { status: 403, headers: { "content-type": "application/json" } });
+  }
+  const relayPath = req.headers.get("x-relay-path") || "/";
+  const resolved = resolveRelayTarget(target, relayPath);
+  if (!resolved.ok) {
+    return new Response(JSON.stringify({ error: resolved.reason }), { status: resolved.status, headers: { "content-type": "application/json" } });
   }
   const headers = new Headers(req.headers);
-  headers.delete("x-relay-target"); headers.delete("x-relay-path"); headers.delete("x-relay-auth"); headers.delete("host");
-  const response = await fetch(targetUrl.href, { method: req.method, headers, body: req.method !== "GET" && req.method !== "HEAD" ? req.body : undefined, duplex: "half" });
-  return new Response(response.body, { status: response.status, headers: response.headers });
+  ["x-relay-target", "x-relay-path", "x-relay-auth", "host"].forEach(function(h) { headers.delete(h); });
+  const init = { method: req.method, headers };
+  if (req.method !== "GET" && req.method !== "HEAD") { init.body = req.body; init.duplex = "half"; }
+  try {
+    const response = await fetch(resolved.url, init);
+    return new Response(response.body, { status: response.status, headers: response.headers });
+  } catch (error) {
+    return new Response(JSON.stringify({ error: String(error && error.message || error) }), { status: 502, headers: { "content-type": "application/json" } });
+  }
 });`
-
 	case "cloudflare":
-		return `export default {
+		return relayGuardJS + `
+export default {
   async fetch(request, env, ctx) {
     const auth = request.headers.get("x-relay-auth");
     const expected = env.RELAY_AUTH;
@@ -344,24 +414,42 @@ func buildRelayEdgeFunctionSource(relayType string) string {
       return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { "content-type": "application/json" } });
     }
     const target = request.headers.get("x-relay-target");
-    const relayPath = request.headers.get("x-relay-path") || "/";
     if (!target) {
       return new Response(JSON.stringify({ error: "Missing x-relay-target header" }), { status: 400, headers: { "content-type": "application/json" } });
     }
-    const targetUrl = new URL(target.replace(/\/$/, "") + relayPath);
-    if (["127.0.0.1","localhost","::1","0.0.0.0"].includes(targetUrl.hostname) || targetUrl.hostname.startsWith("10.") || targetUrl.hostname.startsWith("192.168.") || targetUrl.hostname.endsWith(".local")) {
-      return new Response(JSON.stringify({ error: "Blocked private target" }), { status: 403, headers: { "content-type": "application/json" } });
+    let targetUrl;
+    try { targetUrl = new URL(target); } catch {
+      return new Response(JSON.stringify({ error: "invalid x-relay-target" }), { status: 400, headers: { "content-type": "application/json" } });
+    }
+    if (targetUrl.protocol !== "http:" && targetUrl.protocol !== "https:") {
+      return new Response(JSON.stringify({ error: "forbidden x-relay-target protocol" }), { status: 403, headers: { "content-type": "application/json" } });
+    }
+    if (targetUrl.username || targetUrl.password) {
+      return new Response(JSON.stringify({ error: "forbidden x-relay-target (embedded credentials)" }), { status: 403, headers: { "content-type": "application/json" } });
+    }
+    if (isPrivateHostname(targetUrl.hostname)) {
+      return new Response(JSON.stringify({ error: "forbidden x-relay-target (private/loopback host)" }), { status: 403, headers: { "content-type": "application/json" } });
+    }
+    const relayPath = request.headers.get("x-relay-path") || "/";
+    const resolved = resolveRelayTarget(target, relayPath);
+    if (!resolved.ok) {
+      return new Response(JSON.stringify({ error: resolved.reason }), { status: resolved.status, headers: { "content-type": "application/json" } });
     }
     const headers = new Headers(request.headers);
-    headers.delete("x-relay-target"); headers.delete("x-relay-path"); headers.delete("x-relay-auth"); headers.delete("host");
-    const response = await fetch(targetUrl.href, { method: request.method, headers, body: request.method !== "GET" && request.method !== "HEAD" ? request.body : undefined, duplex: "half" });
-    return new Response(response.body, { status: response.status, headers: response.headers });
+    ["x-relay-target", "x-relay-path", "x-relay-auth", "host"].forEach(function(h) { headers.delete(h); });
+    const init = { method: request.method, headers };
+    if (request.method !== "GET" && request.method !== "HEAD") { init.body = request.body; init.duplex = "half"; }
+    try {
+      const response = await fetch(resolved.url, init);
+      return new Response(response.body, { status: response.status, headers: response.headers });
+    } catch (error) {
+      return new Response(JSON.stringify({ error: String(error && error.message || error) }), { status: 502, headers: { "content-type": "application/json" } });
+    }
   }
 };`
-
 	default: // vercel
-		return `export const config = { runtime: "edge" };
-
+		return relayGuardJS + `
+export const config = { runtime: "edge" };
 export default async function handler(req) {
   const auth = req.headers.get("x-relay-auth");
   const expected = process.env.RELAY_AUTH;
@@ -369,22 +457,40 @@ export default async function handler(req) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { "content-type": "application/json" } });
   }
   const target = req.headers.get("x-relay-target");
-  const relayPath = req.headers.get("x-relay-path") || "/";
   if (!target) {
     return new Response(JSON.stringify({ error: "Missing x-relay-target header" }), { status: 400, headers: { "content-type": "application/json" } });
   }
-  const targetUrl = new URL(target.replace(/\/$/, "") + relayPath);
-  if (["127.0.0.1","localhost","::1","0.0.0.0"].includes(targetUrl.hostname) || targetUrl.hostname.startsWith("10.") || targetUrl.hostname.startsWith("192.168.") || targetUrl.hostname.endsWith(".local")) {
-    return new Response(JSON.stringify({ error: "Blocked private target" }), { status: 403, headers: { "content-type": "application/json" } });
+  let targetUrl;
+  try { targetUrl = new URL(target); } catch {
+    return new Response(JSON.stringify({ error: "invalid x-relay-target" }), { status: 400, headers: { "content-type": "application/json" } });
+  }
+  if (targetUrl.protocol !== "http:" && targetUrl.protocol !== "https:") {
+    return new Response(JSON.stringify({ error: "forbidden x-relay-target protocol" }), { status: 403, headers: { "content-type": "application/json" } });
+  }
+  if (targetUrl.username || targetUrl.password) {
+    return new Response(JSON.stringify({ error: "forbidden x-relay-target (embedded credentials)" }), { status: 403, headers: { "content-type": "application/json" } });
+  }
+  if (isPrivateHostname(targetUrl.hostname)) {
+    return new Response(JSON.stringify({ error: "forbidden x-relay-target (private/loopback host)" }), { status: 403, headers: { "content-type": "application/json" } });
+  }
+  const relayPath = req.headers.get("x-relay-path") || "/";
+  const resolved = resolveRelayTarget(target, relayPath);
+  if (!resolved.ok) {
+    return new Response(JSON.stringify({ error: resolved.reason }), { status: resolved.status, headers: { "content-type": "application/json" } });
   }
   const headers = new Headers(req.headers);
-  headers.delete("x-relay-target"); headers.delete("x-relay-path"); headers.delete("x-relay-auth"); headers.delete("host");
-  const response = await fetch(targetUrl.href, { method: req.method, headers, body: req.method !== "GET" && req.method !== "HEAD" ? req.body : undefined, duplex: "half" });
-  return new Response(response.body, { status: response.status, headers: response.headers });
+  ["x-relay-target", "x-relay-path", "x-relay-auth", "host"].forEach(function(h) { headers.delete(h); });
+  const init = { method: req.method, headers };
+  if (req.method !== "GET" && req.method !== "HEAD") { init.body = req.body; init.duplex = "half"; }
+  try {
+    const response = await fetch(resolved.url, init);
+    return new Response(response.body, { status: response.status, headers: response.headers });
+  } catch (error) {
+    return new Response(JSON.stringify({ error: String(error && error.message || error) }), { status: 502, headers: { "content-type": "application/json" } });
+  }
 }`
 	}
 }
-
 func pollVercelDeployment(deploymentID, token string, timeout time.Duration) (string, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -427,10 +533,10 @@ func pollDenoRevision(revisionID, token string, timeout time.Duration) error {
 			Status string `json:"status"`
 		}
 		json.Unmarshal(body, &result)
-		if result.Status == "deployed" {
+		if result.Status == "succeeded" || result.Status == "deployed" {
 			return nil
 		}
-		if result.Status == "failed" {
+		if result.Status == "failed" || result.Status == "errored" {
 			return fmt.Errorf("deployment failed")
 		}
 		time.Sleep(2 * time.Second)
@@ -443,6 +549,9 @@ type deployTestResult struct {
 	StatusCode int    `json:"status"`
 	Error      string `json:"error,omitempty"`
 	ElapsedMs  int64  `json:"elapsedMs"`
+	IP         string `json:"ip,omitempty"`
+	Country    string `json:"country,omitempty"`
+	Org        string `json:"org,omitempty"`
 }
 
 func testRelayURL(relayURL, relayAuth string) deployTestResult {
@@ -454,14 +563,38 @@ func testRelayURL(relayURL, relayAuth string) deployTestResult {
 	if relayAuth != "" {
 		req.Header.Set("x-relay-auth", relayAuth)
 	}
-	req.Header.Set("x-relay-target", "https://api.openai.com")
-	req.Header.Set("x-relay-path", "/v1/models")
+	// Probe a geo/ISP echo service so the dashboard can show the egress location.
+	req.Header.Set("x-relay-target", "https://ipinfo.io")
+	req.Header.Set("x-relay-path", "/json")
 	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
 		return deployTestResult{Error: err.Error(), ElapsedMs: time.Since(start).Milliseconds()}
 	}
 	defer resp.Body.Close()
-	return deployTestResult{OK: resp.StatusCode < 400, StatusCode: resp.StatusCode, ElapsedMs: time.Since(start).Milliseconds()}
+	var info struct {
+		IP      string `json:"ip"`
+		Country string `json:"country"`
+		Org     string `json:"org"`
+	}
+	decErr := json.NewDecoder(resp.Body).Decode(&info)
+	ok := resp.StatusCode < 400 && decErr == nil && info.IP != ""
+	var errStr string
+	if !ok {
+		if decErr != nil {
+			errStr = decErr.Error()
+		} else {
+			errStr = http.StatusText(resp.StatusCode)
+		}
+	}
+	return deployTestResult{
+		OK:         ok,
+		StatusCode: resp.StatusCode,
+		Error:      errStr,
+		ElapsedMs:  time.Since(start).Milliseconds(),
+		IP:         info.IP,
+		Country:    info.Country,
+		Org:        info.Org,
+	}
 }
 
 func saveDeployPool(db *sql.DB, name, poolType, deployURL, relayAuth string, active bool, testedAt, lastErr string) string {
@@ -514,4 +647,14 @@ func parseCFError(body []byte) string {
 		return e.Errors[0].Message
 	}
 	return "Cloudflare deploy error"
+}
+
+func denoOrgSlug(org string) string {
+	clean := strings.TrimPrefix(strings.TrimPrefix(org, "http://"), "https://")
+	clean = strings.TrimRight(clean, "/")
+	parts := strings.Split(clean, ".")
+	if len(parts) == 0 || parts[0] == "" {
+		return org
+	}
+	return parts[0]
 }

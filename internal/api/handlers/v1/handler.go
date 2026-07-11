@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/active"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
@@ -27,6 +29,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
+	provideralias "github.com/rickicode/AxonRouter-Go/internal/provider"
 )
 
 const maxBodySize = 10 * 1024 * 1024 // 10MB
@@ -42,6 +45,76 @@ func readBody(c *gin.Context) ([]byte, error) {
 		return nil, fmt.Errorf("read body: %w", err)
 	}
 	return body, nil
+}
+
+// TrackActive registers an in-flight request so the dashboard's live
+// "ActiveOctopus" / in-flight panel can display it, and deregisters it
+// once the handler returns. The chosen account is bound lazily in
+// getConnection/prepareConnection once connection selection completes.
+func (h *Handler) TrackActive() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.Method != http.MethodPost {
+			c.Next()
+			return
+		}
+		raw, err := io.ReadAll(io.LimitReader(c.Request.Body, maxBodySize))
+		if err != nil {
+			c.Next()
+			return
+		}
+		// Restore body for downstream handlers (readBody reads it again).
+		c.Request.Body = io.NopCloser(bytes.NewReader(raw))
+		model := executor.JSONGet(raw, "model")
+		if model == "" {
+			c.Next()
+			return
+		}
+		provider, _ := executor.SplitModel(model)
+		id := active.NewID()
+		active.Register(&active.Request{
+			ID:             id,
+			StartedAt:      time.Now().UnixMilli(),
+			ProviderTypeID: provider,
+			ModelID:        model,
+			Modality:       modalityFromPath(c.Request.URL.Path),
+			Stream:         executor.IsStreamRequest(raw),
+		})
+		c.Request = c.Request.WithContext(active.WithID(c.Request.Context(), id))
+		defer active.Deregister(id)
+		c.Next()
+	}
+}
+
+// modalityFromPath derives a human modality label from the request path.
+func modalityFromPath(path string) string {
+	switch {
+	case strings.Contains(path, "chat"):
+		return "chat"
+	case strings.Contains(path, "messages"):
+		return "messages"
+	case strings.Contains(path, "responses"):
+		return "responses"
+	case strings.Contains(path, "embeddings"):
+		return "embeddings"
+	case strings.Contains(path, "images"):
+		return "images"
+	case strings.Contains(path, "video"):
+		return "video"
+	case strings.Contains(path, "speech"), strings.Contains(path, "tts"):
+		return "tts"
+	case strings.Contains(path, "transcriptions"), strings.Contains(path, "stt"):
+		return "stt"
+	default:
+		return "chat"
+	}
+}
+
+// bindActiveConn fills in the chosen account for the in-flight request
+// tracked on the request context (if any).
+func (h *Handler) bindActiveConn(ctx context.Context, conn *Connection) {
+	if id, ok := active.IDFrom(ctx); ok {
+		active.BindConn(id, conn.ID, conn.Name)
+	}
 }
 
 // Connection holds runtime connection data for a provider.
@@ -112,6 +185,7 @@ func NewHandler(
 
 // resolveExecutor finds the executor for a provider/model.
 func (h *Handler) resolveExecutor(provider, model string) (executor.Executor, executor.ProviderFormat, error) {
+	provider = provideralias.ResolveAlias(provider)
 	exec, format, ok := h.registry.Get(provider)
 	if !ok {
 		return nil, "", fmt.Errorf("unknown provider: %s", provider)
@@ -119,9 +193,12 @@ func (h *Handler) resolveExecutor(provider, model string) (executor.Executor, ex
 	return exec, format, nil
 }
 
+
 // getConnection returns an active connection for a provider using O(1) eligibility snapshot.
 // Preflight: skips connections marked as exhausted in the quota exhaustion cache.
 func (h *Handler) getConnection(ctx context.Context, provider string, modelID string) (*Connection, error) {
+	// Resolve legacy long-form aliases to the canonical short prefix.
+	provider = provideralias.ResolveAlias(provider)
 	// Get all eligible connections for this provider (sorted by priority)
 	connIDs := h.elig.GetByPrefix(provider)
 	logging.Logger.Debug("getConnection", "provider", provider, "eligible", len(connIDs))
@@ -154,6 +231,7 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 			continue
 		}
 		logging.Logger.Info("getConnection selected", "provider", provider, "conn", conn.ID[:8], "name", conn.Name)
+		h.bindActiveConn(ctx, conn)
 		return conn, nil
 	}
 	// All eligible connections exhausted or failed to load
@@ -186,6 +264,7 @@ func (h *Handler) prepareConnection(ctx context.Context, connID, provider, model
 	// Proactive token refresh (same as regular routing path)
 	h.proactiveRefreshToken(ctx, conn, provider)
 	logging.Logger.Info("combo step selected", "provider", provider, "conn", conn.ID[:8], "name", conn.Name)
+	h.bindActiveConn(ctx, conn)
 	return conn, nil
 }
 
@@ -571,6 +650,7 @@ func (h *Handler) handleFailoverError(conn *Connection, provider, modelName stri
 		ModelID:        modelName,
 		Modality:       "chat",
 		LatencyMs:      latency,
+		StatusCode:     usage.ExtractErrorStatus(err),
 		ErrorMessage:   err.Error(),
 	})
 
@@ -667,12 +747,21 @@ func (h *Handler) streamResponse(
 				c.Writer.Write([]byte("\n\n"))
 				c.Writer.Write([]byte("data: [DONE]\n\n"))
 				flusher.Flush()
+				h.tracker.Log(&usage.LogEntry{
+					ConnectionID:   conn.ID,
+					ProviderTypeID: provider,
+					ModelID:        model,
+					Modality:       "chat",
+					LatencyMs:      time.Since(start).Milliseconds(),
+					StatusCode:     usage.ExtractErrorStatus(chunk.Err),
+					ErrorMessage:   chunk.Err.Error(),
+				})
 				return
 			}
 
 			lastChunkTime = time.Now()
 			translatedChunks := registry.Response(ctx, string(providerFormat), string(clientFormat), model, originalReq, translatedReq, chunk.Payload, nil)
-		for _, tc := range translatedChunks {
+			for _, tc := range translatedChunks {
 				c.Writer.Write(tc)
 				flusher.Flush()
 			}

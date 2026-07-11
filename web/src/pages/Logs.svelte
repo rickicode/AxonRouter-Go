@@ -1,19 +1,28 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { loadLogs, logs, logPagination, logFilter, isLoading, error, formatTimestamp, formatLatency, formatTokens, formatCost } from '$lib/stores';
+  import { loadLogs, logs, logPagination, logFilter, activeRequests, loadActiveRequests, isLoading, error, formatLatency, formatTokens, formatCost } from '$lib/stores';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
+import ActiveOctopus from '$lib/components/ActiveOctopus.svelte';
+import ProviderIcon from '$lib/components/ProviderIcon.svelte';
+import { getProviderMeta } from '$lib/provider-catalog';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
+import * as Dialog from '$lib/components/ui/dialog';
+import { type RequestLog } from '$lib/api';
   import { Terminal, Filter, RefreshCw, Download } from '@lucide/svelte';
 
   let currentPage = $state(1);
   let perPage = $state(100);
+let selectedErrorLog = $state<RequestLog | null>(null);
 
-  onMount(() => {
-    document.title = 'Logs — AxonRouter';
-    loadLogs(currentPage, perPage);
-  });
+onMount(() => {
+	document.title = 'Logs — AxonRouter';
+	loadLogs(currentPage, perPage);
+	loadActiveRequests();
+	const interval = setInterval(loadActiveRequests, 3000);
+	return () => clearInterval(interval);
+});
 
   function handlePageChange(page: number) {
     currentPage = page;
@@ -35,21 +44,34 @@
     handleFilterChange();
   }
 
-  function handleExport() {
-    const headers = ['Time', 'Provider', 'Model', 'Modality', 'Status', 'Latency', 'Input', 'Output', 'Cached', 'Cost'];
-    const rows = $logs.map(row => [
-      formatTimestamp(row.timestamp),
-      row.provider_type_id,
-      row.model_id,
-      row.modality,
-      row.status_code.toString(),
-      `${row.latency_ms}ms`,
-      row.input_tokens.toString(),
-      row.output_tokens.toString(),
-      row.cached_tokens.toString(),
-      `$${row.cost_usd.toFixed(4)}`,
-    ]);
-    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+ function formatDurationMs(startedAt: number, now = Date.now()): string {
+		const ms = now - startedAt;
+		if (ms < 1000) return `${ms}ms`;
+		return `${(ms / 1000).toFixed(1)}s`;
+	}
+
+ function formatLogTime(ts: number): string {
+		// request_logs stores timestamps as Unix milliseconds.
+		const d = ts > 1_000_000_000_000 ? new Date(ts) : new Date(ts * 1000);
+		return isNaN(d.getTime()) ? '—' : d.toLocaleString();
+	}
+
+ function handleExport() {
+	const headers = ['Time', 'Provider', 'Account', 'Model', 'Status', 'Latency', 'Input', 'Output', 'Cached', 'Cost', 'Error'];
+	const rows = $logs.map(row => [
+		formatLogTime(row.timestamp),
+		row.provider_name || row.provider_type_id,
+		row.connection_name || row.connection_id || '',
+		row.model_id,
+		row.status_code?.toString() || '',
+		`${row.latency_ms}ms`,
+		row.input_tokens.toString(),
+		row.output_tokens.toString(),
+		row.cached_tokens.toString(),
+		`$${row.cost_usd.toFixed(4)}`,
+		row.error_message || '',
+	]);
+	const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -59,30 +81,63 @@
     URL.revokeObjectURL(url);
   }
 
-  function getStatusBadgeProps(statusCode: number) {
-    if (statusCode >= 200 && statusCode < 300) return { label: `${statusCode} OK`, variant: 'default' as const };
-    if (statusCode === 429) return { label: `${statusCode} RATE LIMITED`, variant: 'secondary' as const };
-    if (statusCode >= 400 && statusCode < 500) return { label: `${statusCode} CLIENT ERR`, variant: 'secondary' as const };
-    if (statusCode >= 500) return { label: `${statusCode} SERVER ERR`, variant: 'destructive' as const };
-    return { label: `${statusCode}`, variant: 'secondary' as const };
+ function providerMeta(id: string | undefined | null) {
+  const safeId = id ?? 'unknown';
+  return getProviderMeta(safeId) ?? {
+    id: safeId,
+    displayName: safeId,
+    icon: 'network',
+    textIcon: safeId.slice(0, 2).toUpperCase(),
+    color: '#a1a1aa',
+    category: 'compatible',
+    description: '',
+    format: 'openai',
+    authType: 'apikey',
+    prefix: `${safeId}/`,
+    isBuiltIn: false,
+  };
+ }
+
+function getStatusBadgeProps(statusCode: number | null | undefined, errorMsg?: string, category?: string) {
+  if (typeof statusCode === 'number' && statusCode >= 200 && statusCode < 300) return { label: `${statusCode} OK`, variant: 'default' as const };
+  if (statusCode === 429) {
+    if (category === 'quota') return { label: '429 EXHAUSTED', variant: 'destructive' as const };
+    if (category === 'rate_limit') return { label: '429 COOLDOWN', variant: 'secondary' as const };
+    return { label: '429 RATE LIMITED', variant: 'secondary' as const };
   }
+  if (typeof statusCode === 'number' && statusCode >= 400 && statusCode < 500) return { label: `${statusCode} CLIENT ERR`, variant: 'secondary' as const };
+  if (typeof statusCode === 'number' && statusCode >= 500) return { label: `${statusCode} SERVER ERR`, variant: 'destructive' as const };
+  if (errorMsg) return { label: 'ERROR', variant: 'destructive' as const };
+  return { label: '—', variant: 'outline' as const };
+}
+function formatCooldown(cd?: number) {
+  if (!cd) return '';
+  const left = cd - Date.now();
+  if (left <= 0) return '';
+  const mins = Math.ceil(left / 60000);
+  if (mins >= 60) {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return m ? `${h}h${m}m` : `${h}h`;
+  }
+  return `${mins}m`;
+}
 
   let hasActiveFilters = $derived(
     $logFilter.provider_id || $logFilter.connection_id || $logFilter.model_id || $logFilter.status_code || $logFilter.start_date || $logFilter.end_date
   );
 
-  const columns = [
-    { key: 'timestamp', label: 'Time' },
-    { key: 'provider_type_id', label: 'Provider' },
-    { key: 'model_id', label: 'Model' },
-    { key: 'modality', label: 'Modality' },
-    { key: 'status_code', label: 'Status' },
-    { key: 'latency_ms', label: 'Latency' },
-    { key: 'input_tokens', label: 'Input' },
-    { key: 'output_tokens', label: 'Output' },
-    { key: 'cached_tokens', label: 'Cached' },
-    { key: 'cost_usd', label: 'Cost' },
-  ];
+ const columns = [
+	{ key: 'timestamp', label: 'Time' },
+	{ key: 'provider_name', label: 'Provider' },
+	{ key: 'connection_name', label: 'Account' },
+	{ key: 'model_id', label: 'Model' },
+	{ key: 'status_code', label: 'Status' },
+	{ key: 'latency_ms', label: 'Latency' },
+	{ key: 'tokens', label: 'Tokens' },
+	{ key: 'cost_usd', label: 'Cost' },
+	{ key: 'error_message', label: 'Error' },
+ ];
 </script>
 
 <div class="flex flex-1 flex-col gap-6 p-6 w-full">
@@ -160,6 +215,54 @@
     </CardContent>
   </Card>
 
+
+<Card class="shadow-card overflow-hidden">
+	<CardContent class="p-0 flex justify-center bg-gradient-to-b from-background to-card">
+		<ActiveOctopus requests={$activeRequests} />
+	</CardContent>
+</Card>
+
+<Card class="shadow-card border-l-4 border-l-amber-500">
+ <CardHeader class="pb-3 flex flex-row items-center justify-between space-y-0">
+  <div class="flex items-center gap-2">
+   <RefreshCw class="size-4 text-amber-500 animate-spin" />
+   <CardTitle class="text-body-md-strong">In-flight requests</CardTitle>
+  </div>
+  <p class="text-caption text-muted-foreground">{$activeRequests.length} active</p>
+ </CardHeader>
+ <CardContent class="p-0">
+  <div class="overflow-x-auto">
+   <table class="w-full text-left border-collapse">
+    <thead>
+     <tr class="border-b border-white/5 bg-muted/30">
+      <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-4">Started</th>
+      <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-4">Provider</th>
+      <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-4">Account</th>
+      <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-4">Model</th>
+      <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-4">Type</th>
+     </tr>
+    </thead>
+    <tbody class="divide-y divide-border/60">
+{#if $activeRequests.length > 0}
+     {#each $activeRequests as ar}
+     <tr class="transition-colors hover:bg-accent/20">
+      <td class="py-2 px-4 text-body-sm text-muted-foreground">{formatDurationMs(ar.started_at)}</td>
+      <td class="py-2 px-4 text-body-sm-strong">{ar.provider_type_id}</td>
+      <td class="py-2 px-4 text-body-sm text-foreground">{ar.connection_name || ar.connection_id || '-'}</td>
+      <td class="py-2 px-4 text-code text-foreground truncate max-w-[220px]" title={ar.model_id}>{ar.model_id}</td>
+      <td class="py-2 px-4"><Badge variant={ar.stream ? 'default' : 'secondary'} class="text-caption-mono rounded-sm py-0.5">{ar.stream ? 'stream' : 'json'}</Badge></td>
+     </tr>
+     {/each}
+{:else}
+    <tr>
+     <td colspan="5" class="py-6 px-4 text-center text-body-sm text-muted-foreground">No active requests</td>
+    </tr>
+   {/if}
+    </tbody>
+   </table>
+  </div>
+ </CardContent>
+</Card>
   {#if $isLoading}
     <div class="flex flex-col gap-3">
       {#each Array(8) as _}
@@ -188,28 +291,52 @@
           <table class="w-full text-left border-collapse">
             <thead>
               <tr class="border-b border-white/5 bg-muted/30">
-                {#each columns as column}
-                  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">{column.label}</th>
-                {/each}
+										{#each columns as column}
+											<th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 {column.key === 'timestamp' ? 'min-w-[180px]' : ''} {column.key === 'provider_name' ? 'min-w-[140px]' : ''} {column.key === 'connection_name' ? 'min-w-[120px]' : ''} {column.key === 'model_id' ? 'min-w-[180px]' : ''} {column.key === 'tokens' ? 'text-right min-w-[120px]' : ''} {column.key === 'cost_usd' ? 'text-right min-w-[80px]' : ''} {column.key === 'error_message' ? 'min-w-[160px]' : ''}">{column.label}</th>
+										{/each}
               </tr>
             </thead>
             <tbody class="divide-y divide-border/60">
               {#each $logs as row}
-                {@const statusProps = getStatusBadgeProps(row.status_code)}
-                <tr class="transition-colors hover:bg-accent/20">
-                  <td class="py-3 px-4 font-mono text-caption text-muted-foreground whitespace-nowrap">{formatTimestamp(row.timestamp)}</td>
-                  <td class="py-3 px-4 text-body-sm-strong">
-                    <a href="/providers/{row.provider_type_id}" class="hover:underline text-foreground">{row.provider_type_id}</a>
-                  </td>
-                  <td class="py-3 px-4 text-code text-foreground">{row.model_id}</td>
-                  <td class="py-3 px-4"><Badge variant="secondary" class="text-caption-mono rounded-sm py-0.5">{row.modality}</Badge></td>
-                  <td class="py-3 px-4"><Badge variant={statusProps.variant} class="text-caption-mono rounded-sm py-0.5">{statusProps.label}</Badge></td>
-                  <td class="py-3 px-4 text-code text-muted-foreground">{formatLatency(row.latency_ms)}</td>
-                  <td class="py-3 px-4 text-code text-muted-foreground">{formatTokens(row.input_tokens)}</td>
-                  <td class="py-3 px-4 text-code text-muted-foreground">{formatTokens(row.output_tokens)}</td>
-                  <td class="py-3 px-4 text-code text-muted-foreground">{formatTokens(row.cached_tokens)}</td>
-                  <td class="py-3 px-4 text-code text-foreground font-medium">{formatCost(row.cost_usd)}</td>
-                </tr>
+		{@const statusProps = getStatusBadgeProps(row.status_code, row.error_message, row.error_category)}
+										<tr class="transition-colors hover:bg-accent/20">
+											<td class="py-3 px-4 font-mono text-caption text-muted-foreground whitespace-nowrap">{formatLogTime(row.timestamp)}</td>
+											<td class="py-3 px-4">
+												<div class="flex items-center gap-2.5">
+													<ProviderIcon meta={providerMeta(row.provider_type_id)} size={24} />
+													<div class="flex flex-col">
+														<a href="/providers/{row.provider_type_id}" class="text-body-sm-strong hover:underline text-foreground leading-none">{row.provider_name || row.provider_type_id}</a>
+														<span class="text-caption text-muted-foreground leading-none mt-0.5">{row.modality}</span>
+													</div>
+												</div>
+											</td>
+											<td class="py-3 px-4 text-body-sm text-foreground">{row.connection_name || row.connection_id || '—'}</td>
+											<td class="py-3 px-4 text-code text-foreground truncate max-w-[220px]" title={row.model_id}>{row.model_id}</td>
+	<td class="py-3 px-4">
+		<div class="flex flex-col gap-1">
+			<Badge variant={statusProps.variant} class="text-caption-mono rounded-sm py-0.5 w-fit">{statusProps.label}</Badge>
+			{#if row.cooldown_until && formatCooldown(row.cooldown_until)}
+				<span class="text-caption-mono text-amber-500">cooldown {formatCooldown(row.cooldown_until)}</span>
+			{/if}
+		</div>
+	</td>
+											<td class="py-3 px-4 text-code text-muted-foreground">{formatLatency(row.latency_ms)}</td>
+											<td class="py-3 px-4 text-code text-right whitespace-nowrap">
+												<span class="text-muted-foreground">{formatTokens(row.input_tokens)}</span>
+												<span class="text-muted-foreground/60">/</span>
+												<span class="text-foreground">{formatTokens(row.output_tokens)}</span>
+												<span class="text-muted-foreground/60">/</span>
+												<span class="text-muted-foreground">{formatTokens(row.cached_tokens)}</span>
+											</td>
+											<td class="py-3 px-4 text-code text-foreground font-medium text-right">{formatCost(row.cost_usd)}</td>
+											<td class="py-3 px-4 text-caption">
+										{#if row.error_message && row.error_message !== ''}
+											<Button variant="outline" size="sm" onclick={() => selectedErrorLog = row} class="text-caption-mono h-7 px-2 py-0 border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive">View Error</Button>
+										{:else}
+											<span class="text-muted-foreground">—</span>
+										{/if}
+									</td>
+										</tr>
               {/each}
             </tbody>
           </table>
@@ -232,6 +359,23 @@
           <Button variant="outline" size="sm" disabled={currentPage === $logPagination.total_pages} onclick={() => handlePageChange(currentPage + 1)} class="text-body-sm h-8 rounded-sm">Next</Button>
         </div>
       </div>
-    {/if}
-  {/if}
+{/if}
+{/if}
+
+<Dialog.Root open={selectedErrorLog !== null} onOpenChange={(o) => { if (!o) selectedErrorLog = null; }}>
+	<Dialog.Content class="sm:max-w-[640px] max-h-[90vh] overflow-hidden flex flex-col">
+		<Dialog.Header>
+			<Dialog.Title class="text-lg font-semibold">Request Error</Dialog.Title>
+			<Dialog.Description class="text-sm text-muted-foreground">
+				{selectedErrorLog?.provider_type_id || '—'} / {selectedErrorLog?.model_id || '—'} at {selectedErrorLog ? formatLogTime(selectedErrorLog.timestamp) : ''}
+			</Dialog.Description>
+		</Dialog.Header>
+		<div class="flex-1 overflow-auto my-4">
+			<pre class="whitespace-pre-wrap break-words font-mono text-xs text-foreground bg-muted/40 p-4 rounded-sm">{selectedErrorLog?.error_message || ''}</pre>
+		</div>
+		<Dialog.Footer>
+			<Button variant="outline" size="sm" onclick={() => selectedErrorLog = null}>Close</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
 </div>

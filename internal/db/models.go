@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"time"
 )
 
@@ -18,34 +19,34 @@ type ProviderType struct {
 
 // Connection represents a single API key/token instance for a provider.
 type Connection struct {
-	ID               string         `json:"id"`
-	ProviderTypeID   string         `json:"provider_type_id"`
-	Name             string         `json:"name"`
-	AuthType         string         `json:"auth_type"`
-	APIKey           sql.NullString `json:"-"`
-	OAuthToken       sql.NullString `json:"-"`
-	OAuthRefreshToken sql.NullString `json:"-"`
-	OAuthExpiresAt    sql.NullInt64  `json:"-"`
+	ID                   string         `json:"id"`
+	ProviderTypeID       string         `json:"provider_type_id"`
+	Name                 string         `json:"name"`
+	AuthType             string         `json:"auth_type"`
+	APIKey               sql.NullString `json:"-"`
+	OAuthToken           sql.NullString `json:"-"`
+	OAuthRefreshToken    sql.NullString `json:"-"`
+	OAuthExpiresAt       sql.NullInt64  `json:"-"`
 	ProviderSpecificData sql.NullString `json:"-"`
-	Priority         int            `json:"priority"`
-	Status           string         `json:"status"`
-	CooldownUntil    sql.NullInt64  `json:"cooldown_until,omitempty"`
-	LastError        sql.NullString `json:"last_error,omitempty"`
-	LastErrorCode    sql.NullInt64  `json:"last_error_code,omitempty"`
-	LastSuccessAt    sql.NullInt64  `json:"last_success_at,omitempty"`
-	LastFailureAt    sql.NullInt64  `json:"last_failure_at,omitempty"`
-	FailureCount     int            `json:"failure_count"`
-	Capabilities     sql.NullString `json:"capabilities,omitempty"`
-	IsActive         bool           `json:"is_active"`
-	CreatedAt        int64          `json:"created_at"`
-	UpdatedAt        int64          `json:"updated_at"`
+	Priority             int            `json:"priority"`
+	Status               string         `json:"status"`
+	CooldownUntil        sql.NullInt64  `json:"cooldown_until,omitempty"`
+	LastError            sql.NullString `json:"last_error,omitempty"`
+	LastErrorCode        sql.NullInt64  `json:"last_error_code,omitempty"`
+	LastSuccessAt        sql.NullInt64  `json:"last_success_at,omitempty"`
+	LastFailureAt        sql.NullInt64  `json:"last_failure_at,omitempty"`
+	FailureCount         int            `json:"failure_count"`
+	Capabilities         sql.NullString `json:"capabilities,omitempty"`
+	IsActive             bool           `json:"is_active"`
+	CreatedAt            int64          `json:"created_at"`
+	UpdatedAt            int64          `json:"updated_at"`
 }
 
 // ModelRateLimit tracks per-model rate limits on a connection.
 type ModelRateLimit struct {
-	ID            string `json:"id"`
-	ConnectionID  string `json:"connection_id"`
-	ModelID       string `json:"model_id"`
+	ID            string        `json:"id"`
+	ConnectionID  string        `json:"connection_id"`
+	ModelID       string        `json:"model_id"`
 	TPMRemaining  sql.NullInt64 `json:"tpm_remaining,omitempty"`
 	TPMLimit      sql.NullInt64 `json:"tpm_limit,omitempty"`
 	RPMRemaining  sql.NullInt64 `json:"rpm_remaining,omitempty"`
@@ -56,26 +57,26 @@ type ModelRateLimit struct {
 
 // APIKey is a client-facing API key for authenticating to the proxy.
 type APIKey struct {
-	ID             string `json:"id"`
-	KeyHash        string `json:"key_hash"`
-	Name           sql.NullString `json:"name,omitempty"`
-	RateLimitPerMin int   `json:"rate_limit_per_min"`
-	IsActive       bool   `json:"is_active"`
-	CreatedAt      int64  `json:"created_at"`
+	ID              string         `json:"id"`
+	KeyHash         string         `json:"key_hash"`
+	Name            sql.NullString `json:"name,omitempty"`
+	RateLimitPerMin int            `json:"rate_limit_per_min"`
+	IsActive        bool           `json:"is_active"`
+	CreatedAt       int64          `json:"created_at"`
 }
 
 // Combo is a named ordered list of model steps with a routing strategy.
 type Combo struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Strategy   string `json:"strategy"`
-	StickyLimit int   `json:"sticky_limit"`
-	TimeoutMs  int    `json:"timeout_ms"`
-	IsSmart    bool   `json:"is_smart"`
-	SmartGoal  sql.NullString `json:"smart_goal,omitempty"`
-	IsActive   bool   `json:"is_active"`
-	CreatedAt  int64  `json:"created_at"`
-	UpdatedAt  int64  `json:"updated_at"`
+	ID          string         `json:"id"`
+	Name        string         `json:"name"`
+	Strategy    string         `json:"strategy"`
+	StickyLimit int            `json:"sticky_limit"`
+	TimeoutMs   int            `json:"timeout_ms"`
+	IsSmart     bool           `json:"is_smart"`
+	SmartGoal   sql.NullString `json:"smart_goal,omitempty"`
+	IsActive    bool           `json:"is_active"`
+	CreatedAt   int64          `json:"created_at"`
+	UpdatedAt   int64          `json:"updated_at"`
 }
 
 // ComboStep is a single step inside a combo.
@@ -107,6 +108,61 @@ type RequestLog struct {
 	ErrorMessage    sql.NullString `json:"error_message,omitempty"`
 	CostUsd         float64        `json:"cost_usd"`
 	CreatedAt       int64          `json:"created_at"`
+}
+
+// MarshalJSON emits plain strings/numbers instead of database/sql null
+// wrapper objects ({"String":..,"Valid":..}). Consumers such as the
+// dashboard expect scalar values; the wrapper objects crash JSON-based
+// rendering (e.g. calling .slice on an object).
+func (r RequestLog) MarshalJSON() ([]byte, error) {
+	getStr := func(n sql.NullString) string {
+		if n.Valid {
+			return n.String
+		}
+		return ""
+	}
+	getInt := func(n sql.NullInt64) int64 {
+		if n.Valid {
+			return n.Int64
+		}
+		return 0
+	}
+	type plain struct {
+		ID              string  `json:"id"`
+		Timestamp       int64   `json:"timestamp"`
+		ConnectionID    string  `json:"connection_id,omitempty"`
+		ProviderTypeID  string  `json:"provider_type_id,omitempty"`
+		ModelID         string  `json:"model_id,omitempty"`
+		ComboID         string  `json:"combo_id,omitempty"`
+		Modality        string  `json:"modality"`
+		InputTokens     int64   `json:"input_tokens"`
+		OutputTokens    int64   `json:"output_tokens"`
+		ReasoningTokens int64   `json:"reasoning_tokens"`
+		CachedTokens    int64   `json:"cached_tokens"`
+		LatencyMs       int64   `json:"latency_ms,omitempty"`
+		StatusCode      int64   `json:"status_code,omitempty"`
+		ErrorMessage    string  `json:"error_message,omitempty"`
+		CostUsd         float64 `json:"cost_usd"`
+		CreatedAt       int64   `json:"created_at"`
+	}
+	return json.Marshal(plain{
+		ID:              r.ID,
+		Timestamp:       r.Timestamp,
+		ConnectionID:    getStr(r.ConnectionID),
+		ProviderTypeID:  getStr(r.ProviderTypeID),
+		ModelID:         getStr(r.ModelID),
+		ComboID:         getStr(r.ComboID),
+		Modality:        r.Modality,
+		InputTokens:     r.InputTokens,
+		OutputTokens:    r.OutputTokens,
+		ReasoningTokens: r.ReasoningTokens,
+		CachedTokens:    r.CachedTokens,
+		LatencyMs:       getInt(r.LatencyMs),
+		StatusCode:      getInt(r.StatusCode),
+		ErrorMessage:    getStr(r.ErrorMessage),
+		CostUsd:         r.CostUsd,
+		CreatedAt:       r.CreatedAt,
+	})
 }
 
 // Setting is a key-value configuration pair.
@@ -154,18 +210,19 @@ type ProviderWithCounts struct {
 	ProviderType
 	ConnectionCount int            `json:"connection_count"`
 	StatusCounts    map[string]int `json:"status_counts"`
+	Aliases         []string       `json:"aliases"`
 }
 
 // ProxyPool represents a proxy endpoint (HTTP proxy or relay).
 type ProxyPool struct {
 	ID             string         `json:"id"`
 	Name           string         `json:"name"`
-	Type           string         `json:"type"`            // http, vercel, deno, cloudflare
+	Type           string         `json:"type"` // http, vercel, deno, cloudflare
 	ProxyURL       string         `json:"proxyUrl"`
 	NoProxy        string         `json:"noProxy"`
-	RelayAuth      string         `json:"relayAuth"`       // auth token for relay types
+	RelayAuth      string         `json:"relayAuth"` // auth token for relay types
 	IsActive       bool           `json:"isActive"`
-	TestStatus     string         `json:"testStatus"`      // untested, active, error
+	TestStatus     string         `json:"testStatus"` // untested, active, error
 	LastTestedAt   sql.NullString `json:"lastTestedAt"`
 	LastError      sql.NullString `json:"lastError"`
 	ResponseTimeMs sql.NullInt64  `json:"responseTimeMs"`
@@ -177,10 +234,10 @@ type ProxyPool struct {
 type ProxyGroup struct {
 	ID           string   `json:"id"`
 	Name         string   `json:"name"`
-	Mode         string   `json:"mode"`         // roundrobin, sticky
+	Mode         string   `json:"mode"` // roundrobin, sticky
 	StickyLimit  int      `json:"stickyLimit"`
 	StrictProxy  bool     `json:"strictProxy"`
-	ProxyPoolIDs []string `json:"proxyPoolIds"`  // ordered list of pool IDs
+	ProxyPoolIDs []string `json:"proxyPoolIds"` // ordered list of pool IDs
 	IsActive     bool     `json:"isActive"`
 	CreatedAt    int64    `json:"createdAt"`
 	UpdatedAt    int64    `json:"updatedAt"`

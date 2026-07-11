@@ -16,6 +16,7 @@ type LogFilter struct {
 	ComboID        string
 	Modality       string
 	StatusFilter   string // "success", "error", or ""
+	StatusCode     int    // exact HTTP status (500 means >=500 i.e. 5xx)
 	Search         string // search in error_message
 	Since          int64  // unix ms timestamp
 	Until          int64  // unix ms timestamp
@@ -108,7 +109,18 @@ func buildWhereClause(f LogFilter) (string, []interface{}) {
 	if f.StatusFilter == "success" {
 		conditions = append(conditions, "(error_message IS NULL OR error_message = '')")
 	} else if f.StatusFilter == "error" {
-		conditions = append(conditions, "error_message IS NOT NULL AND error_message != ''")
+		conditions = append(conditions, "error_message IS NOT NULL AND error_message != '')")
+	}
+	if f.StatusCode > 0 {
+		// The dashboard "Error" pill sends status_code=500 to mean any
+		// client or server error except the dedicated 401/429 filters.
+		// Exact 200/401/429/xxx pills use status_code = ? below.
+		if f.StatusCode == 500 {
+			conditions = append(conditions, "((status_code >= 400 AND status_code NOT IN (401, 429)) OR (status_code = 0 AND error_message IS NOT NULL AND error_message != ''))")
+		} else {
+			conditions = append(conditions, "status_code = ?")
+			args = append(args, f.StatusCode)
+		}
 	}
 	if f.Search != "" {
 		conditions = append(conditions, "error_message LIKE ?")

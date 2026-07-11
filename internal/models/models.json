@@ -2299,7 +2299,7 @@
       "max_completion_tokens": 32768
     }
   ],
-  "opencode": [
+  "oc": [
     {
       "id": "deepseek-v4-flash-free"
     },

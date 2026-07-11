@@ -2,10 +2,11 @@
   import { onMount } from 'svelte';
   import { proxyPoolsApi, proxyGroupsApi, proxyDeployApi, providersApi, settingsApi } from '$lib/api';
   import type { ProxyPool, ProxyGroup, DeployResult, Provider } from '$lib/api';
-  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
+  import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
+  import { Textarea } from '$lib/components/ui/textarea';
   import { Label } from '$lib/components/ui/label';
   import { Switch } from '$lib/components/ui/switch';
   import * as Select from '$lib/components/ui/select';
@@ -23,6 +24,7 @@
   let showCreatePool = $state(false);
   let showCreateGroup = $state(false);
   let showEditGroup = $state(false);
+  let showBulkImport = $state(false);
 
   // Create pool form
   let poolName = $state('');
@@ -30,6 +32,14 @@
   let poolType = $state('http');
   let poolNoProxy = $state('');
   let createPoolLoading = $state(false);
+
+  // Bulk import form
+  let bulkText = $state('');
+  let bulkType = $state('http');
+  let bulkNamePrefix = $state('bulk');
+  let bulkNoProxy = $state('');
+  let bulkActive = $state(true);
+  let bulkLoading = $state(false);
 
   // Create/Edit group form
   let groupName = $state('');
@@ -103,11 +113,20 @@
     finally { createPoolLoading = false; }
   }
 
+  function shortOrg(org?: string) {
+    if (!org) return '';
+    return org.replace(/^AS\d+\s*/, '').trim();
+  }
+
   async function testPool(id: string) {
     try {
       const res = await proxyPoolsApi.test(id);
-      if (res.ok) toast.success(`Proxy OK (${res.elapsedMs}ms)`);
-      else toast.error(`Proxy failed: ${res.error || 'unknown'}`);
+      if (res.ok) {
+        const parts = [`${res.country || 'Unknown'}`, shortOrg(res.org)].filter(Boolean);
+        toast.success(`Proxy OK (${res.elapsedMs}ms)${parts.length ? ' — ' + parts.join(' • ') : ''}`);
+      } else {
+        toast.error(`Proxy failed: ${res.error || 'unknown'}`);
+      }
       await loadAll();
     } catch (err) { toast.error('Test failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
   }
@@ -230,12 +249,48 @@
         if (!deployAccountId.trim()) { toast.error('Account ID is required'); deployLoading = false; return; }
         res = await proxyDeployApi.cloudflare({ cfToken: deployToken.trim(), accountId: deployAccountId.trim(), projectName: deployProjectName.trim() || undefined });
       }
-      deployResult = res;
-      if (res.relayTest.ok) toast.success(`Deployed to ${deployPlatform}! ${res.deployUrl}`);
-      else toast.error(`Deployed but test failed: ${res.relayTest.error}`);
+	deployResult = res;
+			if (res.relayTest.ok) {
+				const parts = [`${res.relayTest.country || 'Unknown'}`, shortOrg(res.relayTest.org)].filter(Boolean);
+				toast.success(`Deployed to ${deployPlatform}! ${parts.length ? parts.join(' • ') : res.deployUrl}`);
+			} else {
+				toast.error(`Deployed but test failed: ${res.relayTest.error}`);
+			}
       await loadAll();
     } catch (err) { toast.error('Deploy failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
     finally { deployLoading = false; }
+  }
+
+  async function handleBulkImport() {
+    const raw = bulkText.trim();
+    if (!raw) return;
+    bulkLoading = true;
+    try {
+      const items = raw
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0 && !line.startsWith('#'));
+      const res = await proxyPoolsApi.bulkCreate({
+        items,
+        defaultType: bulkType,
+        namePrefix: bulkNamePrefix.trim() || 'bulk',
+        noProxy: bulkNoProxy.trim() || undefined,
+        isActive: bulkActive,
+      });
+      const msg = `${res.created} created, ${res.skipped} skipped, ${res.errors} errors`;
+      if (res.errors === 0) {
+        toast.success('Bulk import complete', { description: msg });
+        showBulkImport = false;
+      } else {
+        toast.error('Bulk import finished with errors', { description: msg });
+      }
+      bulkText = '';
+      await loadAll();
+    } catch (err) {
+      toast.error('Bulk import failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+    } finally {
+      bulkLoading = false;
+    }
   }
 </script>
 
@@ -287,17 +342,18 @@
         </Button>
         {#if tab === 'pools'}
           <Button onclick={() => (showCreatePool = true)} class="text-button-md rounded-pill px-5">Add pool</Button>
+          <Button onclick={() => { bulkText = ''; bulkType = 'http'; bulkNamePrefix = 'bulk'; bulkNoProxy = ''; bulkActive = true; showBulkImport = true; }} variant="outline" class="text-button-md rounded-pill px-5">Bulk import</Button>
         {:else if tab === 'groups'}
           <Button onclick={() => { groupName = ''; groupMode = 'roundrobin'; groupStickyLimit = 1; groupStrict = false; groupPoolIds = []; showCreateGroup = true; }} class="text-button-md rounded-pill px-5">Add group</Button>
         {/if}
       </div>
     </div>
 
-    <!-- Tabs -->
-    <div class="flex gap-1 border-b border-white/10">
+<!-- Tabs -->
+		<div class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-1">
       {#each ([['pools', `Pools (${pools.length})`], ['groups', `Groups (${groups.length})`], ['assignments', 'Assignments'], ['deploy', 'Deploy']] as const) as [key, label]}
         <button
-          class="cursor-pointer px-4 py-2 text-body-sm transition-colors {tab === key ? 'border-b-2 border-foreground text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+          class="cursor-pointer rounded-md px-4 py-1.5 text-sm font-medium transition-all {tab === key ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}"
           onclick={() => (tab = key)}
         >{label}</button>
       {/each}
@@ -524,70 +580,102 @@
       {/if}
     {/if}
 
-    <!-- Deploy Tab -->
-    {#if tab === 'deploy'}
-      <Card class="shadow-card">
-        <CardHeader class="pb-3">
-          <CardTitle class="text-body-md-strong">Deploy Relay Edge Function</CardTitle>
-          <p class="text-body-sm text-muted-foreground">Auto-deploy a relay proxy to Vercel, Deno Deploy, or Cloudflare Workers.</p>
-        </CardHeader>
-        <CardContent class="space-y-4">
-          <div class="space-y-2">
-            <Label class="text-body-sm-strong">Platform</Label>
-            <div class="flex gap-2">
-              {#each (['vercel', 'deno', 'cloudflare'] as const) as p}
-                <button class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {deployPlatform === p ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}" onclick={() => (deployPlatform = p)}>
-                  {p === 'vercel' ? 'Vercel' : p === 'deno' ? 'Deno Deploy' : 'Cloudflare'}
-                </button>
-              {/each}
-            </div>
-          </div>
-          <div class="space-y-2">
-            <Label class="text-body-sm-strong">{deployPlatform === 'vercel' ? 'Vercel Token' : deployPlatform === 'deno' ? 'Deno Token' : 'Cloudflare API Token'}</Label>
+<!-- Deploy Tab -->
+	{#if tab === 'deploy'}
+		<Card class="shadow-card">
+			<CardHeader class="pb-3">
+				<CardTitle class="text-base">Deploy Relay Edge Function</CardTitle>
+				<CardDescription class="text-xs">
+					Auto-deploy a relay proxy to Vercel, Deno Deploy, or Cloudflare Workers. The relay forwards upstream AI requests through your edge endpoint.
+				</CardDescription>
+			</CardHeader>
+			<CardContent class="space-y-5">
+				<div class="space-y-2">
+					<Label class="text-sm font-medium">Platform</Label>
+					<div class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-1">
+						{#each (['vercel', 'deno', 'cloudflare'] as const) as p}
+							<button class="cursor-pointer rounded-md px-4 py-1.5 text-sm font-medium transition-all {deployPlatform === p ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (deployPlatform = p)}>
+								{p === 'vercel' ? 'Vercel' : p === 'deno' ? 'Deno Deploy' : 'Cloudflare'}
+							</button>
+						{/each}
+					</div>
+				</div>
+				<div class="space-y-2">
+            <Label class="text-sm font-medium">{deployPlatform === 'vercel' ? 'Vercel Token' : deployPlatform === 'deno' ? 'Deno Token' : 'Cloudflare API Token'}</Label>
             <Input bind:value={deployToken} type="password" placeholder="pat_xxx or API token" class="h-10 text-body-sm font-mono" />
           </div>
           {#if deployPlatform === 'deno'}
             <div class="space-y-2">
-              <Label class="text-body-sm-strong">Organization Domain</Label>
+              <Label class="text-sm font-medium">Organization Domain</Label>
               <Input bind:value={deployOrgDomain} placeholder="your-org" class="h-10 text-body-sm font-mono" />
             </div>
           {/if}
           {#if deployPlatform === 'cloudflare'}
             <div class="space-y-2">
-              <Label class="text-body-sm-strong">Account ID</Label>
+              <Label class="text-sm font-medium">Account ID</Label>
               <Input bind:value={deployAccountId} placeholder="abcdef1234567890" class="h-10 text-body-sm font-mono" />
             </div>
           {/if}
           <div class="space-y-2">
-            <Label class="text-body-sm-strong">Project Name (optional)</Label>
+            <Label class="text-sm font-medium">Project Name (optional)</Label>
             <Input bind:value={deployProjectName} placeholder="auto-generated if empty" class="h-10 text-body-sm" />
           </div>
-          <Button onclick={handleDeploy} disabled={deployLoading || !deployToken.trim()} class="text-button-md rounded-pill px-5">
-            {deployLoading ? 'Deploying...' : `Deploy to ${deployPlatform === 'vercel' ? 'Vercel' : deployPlatform === 'deno' ? 'Deno' : 'Cloudflare'}`}
-          </Button>
-          {#if deployResult}
-            <Card class="shadow-card border {deployResult.relayTest.ok ? 'border-green-500/30' : 'border-destructive/30'}">
-              <CardContent class="pt-4 space-y-2">
-                <Badge variant={deployResult.relayTest.ok ? 'default' : 'destructive'} class="text-caption-mono rounded-sm">
-                  {deployResult.relayTest.ok ? 'Deployed' : 'Test Failed'}
-                </Badge>
-                <div class="space-y-1">
-                  <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Deploy URL</p>
-                  <p class="text-code font-mono break-all">{deployResult.deployUrl}</p>
-                </div>
-                <div class="space-y-1">
-                  <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Relay Auth</p>
-                  <p class="text-code font-mono break-all">{deployResult.relayAuth}</p>
-                </div>
-                {#if !deployResult.relayTest.ok}
-                  <div class="space-y-1">
-                    <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Test Error</p>
-                    <p class="text-body-sm font-mono text-destructive">{deployResult.relayTest.error}</p>
-                  </div>
-                {/if}
-              </CardContent>
-            </Card>
-          {/if}
+				<div class="pt-1">
+					<Button onclick={handleDeploy} disabled={deployLoading || !deployToken.trim()} class="text-button-md rounded-pill px-5">
+						{deployLoading ? 'Deploying...' : `Deploy to ${deployPlatform === 'vercel' ? 'Vercel' : deployPlatform === 'deno' ? 'Deno' : 'Cloudflare'}`}
+					</Button>
+				</div>
+			{#if deployResult}
+				<Card class="shadow-card border {deployResult.relayTest.ok ? 'border-emerald-500/30' : 'border-destructive/30'}">
+					<CardHeader class="pb-3">
+						<div class="flex items-center justify-between">
+							<CardTitle class="text-base">{deployResult.relayTest.ok ? 'Deployed' : 'Test Failed'}</CardTitle>
+							<Badge variant={deployResult.relayTest.ok ? 'default' : 'destructive'} class="text-caption-mono rounded-sm">
+								{deployResult.relayTest.ok ? 'Online' : 'Error'}
+							</Badge>
+						</div>
+						{#if deployResult.relayTest.ok}
+							<CardDescription class="text-xs">Relay is online and returning geo/ISP information.</CardDescription>
+						{:else}
+							<CardDescription class="text-xs">The relay was deployed but the health probe failed. Check the error below.</CardDescription>
+						{/if}
+					</CardHeader>
+					<CardContent class="space-y-4 pt-0">
+						{#if deployResult.relayTest.ok && (deployResult.relayTest.country || deployResult.relayTest.org)}
+							<div class="grid grid-cols-3 gap-3 rounded-lg bg-muted p-3">
+								<div class="space-y-1">
+									<p class="text-caption-mono text-muted-foreground uppercase font-semibold">IP</p>
+									<p class="text-code font-mono break-all">{deployResult.relayTest.ip ?? '-'}</p>
+								</div>
+								<div class="space-y-1">
+									<p class="text-caption-mono text-muted-foreground uppercase font-semibold">Country</p>
+									<p class="text-code font-mono">{deployResult.relayTest.country ?? '-'}</p>
+								</div>
+								<div class="space-y-1">
+									<p class="text-caption-mono text-muted-foreground uppercase font-semibold">ISP</p>
+									<p class="text-code font-mono break-all">{shortOrg(deployResult.relayTest.org) ?? '-'}</p>
+								</div>
+							</div>
+						{/if}
+						<div class="space-y-4 rounded-lg bg-muted p-3">
+							<div class="space-y-1">
+								<p class="text-caption-mono text-muted-foreground uppercase font-semibold">Deploy URL</p>
+								<p class="text-code font-mono break-all">{deployResult.deployUrl}</p>
+							</div>
+							<div class="space-y-1">
+								<p class="text-caption-mono text-muted-foreground uppercase font-semibold">Relay Auth</p>
+								<p class="text-code font-mono break-all">{deployResult.relayAuth}</p>
+							</div>
+						</div>
+						{#if !deployResult.relayTest.ok}
+							<div class="space-y-1">
+								<p class="text-caption-mono text-muted-foreground uppercase font-semibold">Test Error</p>
+								<p class="text-body-sm font-mono text-destructive">{deployResult.relayTest.error}</p>
+							</div>
+						{/if}
+					</CardContent>
+				</Card>
+			{/if}
         </CardContent>
       </Card>
     {/if}
@@ -599,28 +687,29 @@
   <Dialog.Content class="sm:max-w-lg">
     <Dialog.Header>
       <Dialog.Title class="text-body-md-strong">Create proxy pool</Dialog.Title>
+      <Dialog.Description class="text-xs">Add an HTTP proxy or hosted relay to route provider traffic.</Dialog.Description>
     </Dialog.Header>
-    <div class="space-y-4">
+    <div class="space-y-4 py-2">
       <div class="space-y-2">
-        <Label class="text-body-sm-strong">Name</Label>
+        <Label class="text-sm font-medium">Name</Label>
         <Input bind:value={poolName} placeholder="e.g. us-east-proxy" class="h-10 text-body-sm" />
       </div>
       <div class="space-y-2">
-        <Label class="text-body-sm-strong">Proxy URL</Label>
+        <Label class="text-sm font-medium">Proxy URL</Label>
         <Input bind:value={poolUrl} placeholder="http://proxy:8080" class="h-10 text-body-sm font-mono" />
       </div>
       <div class="space-y-2">
-        <Label class="text-body-sm-strong">Type</Label>
-        <div class="flex gap-2">
+        <Label class="text-sm font-medium">Type</Label>
+        <div class="inline-flex w-fit flex-wrap items-center gap-1 rounded-lg bg-muted p-1">
           {#each typeOptions as opt}
-            <button class="cursor-pointer px-3 py-1.5 rounded-sm text-body-sm border transition-colors {poolType === opt ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}" onclick={() => (poolType = opt)}>
+            <button class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-all {poolType === opt ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (poolType = opt)}>
               {typeLabel(opt)}
             </button>
           {/each}
         </div>
       </div>
       <div class="space-y-2">
-        <Label class="text-body-sm-strong">No Proxy (optional)</Label>
+        <Label class="text-sm font-medium">No Proxy (optional)</Label>
         <Input bind:value={poolNoProxy} placeholder="localhost,127.0.0.1" class="h-10 text-body-sm font-mono" />
       </div>
     </div>
@@ -638,32 +727,33 @@
   <Dialog.Content class="sm:max-w-lg">
     <Dialog.Header>
       <Dialog.Title class="text-body-md-strong">Create proxy group</Dialog.Title>
+      <Dialog.Description class="text-xs">Combine multiple pools with round-robin or sticky routing.</Dialog.Description>
     </Dialog.Header>
     <div class="space-y-4">
       <div class="space-y-2">
-        <Label class="text-body-sm-strong">Name</Label>
+        <Label class="text-sm font-medium">Name</Label>
         <Input bind:value={groupName} placeholder="e.g. us-proxies" class="h-10 text-body-sm" />
       </div>
       <div class="space-y-2">
-        <Label class="text-body-sm-strong">Mode</Label>
-        <div class="flex gap-2">
-          <button class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {groupMode === 'roundrobin' ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'roundrobin')}>Round Robin</button>
-          <button class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {groupMode === 'sticky' ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'sticky')}>Sticky</button>
-        </div>
-      </div>
+        <Label class="text-sm font-medium">Mode</Label>
+				<div class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-1">
+					<button class="cursor-pointer rounded-md px-4 py-1.5 text-sm font-medium transition-all {groupMode === 'roundrobin' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'roundrobin')}>Round Robin</button>
+					<button class="cursor-pointer rounded-md px-4 py-1.5 text-sm font-medium transition-all {groupMode === 'sticky' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'sticky')}>Sticky</button>
+				</div>
+			</div>
       {#if groupMode === 'sticky'}
         <div class="space-y-2">
-          <Label class="text-body-sm-strong">Sticky Limit</Label>
+          <Label class="text-sm font-medium">Sticky Limit</Label>
           <Input type="number" bind:value={groupStickyLimit} min={1} class="h-10 text-code font-mono" />
         </div>
       {/if}
       <div class="flex items-center space-x-2">
         <Switch id="group-strict" bind:checked={groupStrict} />
-        <Label for="group-strict" class="text-body-sm-strong cursor-pointer">Strict proxy</Label>
+        <Label for="group-strict" class="text-sm font-medium cursor-pointer">Strict proxy</Label>
       </div>
       {#if pools.length > 0}
         <div class="space-y-2">
-          <Label class="text-body-sm-strong">Pools</Label>
+          <Label class="text-sm font-medium">Pools</Label>
           <div class="flex flex-wrap gap-1.5">
             {#each pools as pool}
               <button class="cursor-pointer px-2.5 py-1 rounded-md text-caption-mono border transition-colors {groupPoolIds.includes(pool.id) ? 'bg-foreground text-background border-foreground' : 'border-white/10 text-muted-foreground hover:text-foreground'}" onclick={() => toggleGroupPool(pool.id)}>
@@ -688,32 +778,33 @@
   <Dialog.Content class="sm:max-w-lg">
     <Dialog.Header>
       <Dialog.Title class="text-body-md-strong">Edit proxy group</Dialog.Title>
+      <Dialog.Description class="text-xs">Update routing mode, strict proxy, and pool membership.</Dialog.Description>
     </Dialog.Header>
     <div class="space-y-4">
       <div class="space-y-2">
-        <Label class="text-body-sm-strong">Name</Label>
+        <Label class="text-sm font-medium">Name</Label>
         <Input bind:value={groupName} class="h-10 text-body-sm" />
       </div>
       <div class="space-y-2">
-        <Label class="text-body-sm-strong">Mode</Label>
-        <div class="flex gap-2">
-          <button class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {groupMode === 'roundrobin' ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'roundrobin')}>Round Robin</button>
-          <button class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {groupMode === 'sticky' ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'sticky')}>Sticky</button>
-        </div>
-      </div>
+        <Label class="text-sm font-medium">Mode</Label>
+				<div class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-1">
+					<button class="cursor-pointer rounded-md px-4 py-1.5 text-sm font-medium transition-all {groupMode === 'roundrobin' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'roundrobin')}>Round Robin</button>
+					<button class="cursor-pointer rounded-md px-4 py-1.5 text-sm font-medium transition-all {groupMode === 'sticky' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'sticky')}>Sticky</button>
+				</div>
+			</div>
       {#if groupMode === 'sticky'}
         <div class="space-y-2">
-          <Label class="text-body-sm-strong">Sticky Limit</Label>
+          <Label class="text-sm font-medium">Sticky Limit</Label>
           <Input type="number" bind:value={groupStickyLimit} min={1} class="h-10 text-code font-mono" />
         </div>
       {/if}
       <div class="flex items-center space-x-2">
         <Switch id="group-strict" bind:checked={groupStrict} />
-        <Label for="group-strict" class="text-body-sm-strong cursor-pointer">Strict proxy</Label>
+        <Label for="group-strict" class="text-sm font-medium cursor-pointer">Strict proxy</Label>
       </div>
       {#if pools.length > 0}
         <div class="space-y-2">
-          <Label class="text-body-sm-strong">Pools</Label>
+          <Label class="text-sm font-medium">Pools</Label>
           <div class="flex flex-wrap gap-1.5">
             {#each pools as pool}
               <button class="cursor-pointer px-2.5 py-1 rounded-md text-caption-mono border transition-colors {groupPoolIds.includes(pool.id) ? 'bg-foreground text-background border-foreground' : 'border-white/10 text-muted-foreground hover:text-foreground'}" onclick={() => toggleGroupPool(pool.id)}>
@@ -726,9 +817,55 @@
     </div>
     <Dialog.Footer>
       <Button variant="ghost" onclick={() => (showEditGroup = false)}>Cancel</Button>
-      <Button onclick={handleEditGroup} disabled={editGroupLoading || !groupName.trim()}>
-        {editGroupLoading ? 'Saving...' : 'Save'}
-      </Button>
-    </Dialog.Footer>
-  </Dialog.Content>
+	<Button onclick={handleEditGroup} disabled={editGroupLoading || !groupName.trim()}>
+		{editGroupLoading ? 'Saving...' : 'Save'}
+	</Button>
+</Dialog.Footer>
+</Dialog.Content>
+</Dialog.Root>
+
+<!-- Bulk Import Dialog -->
+<Dialog.Root bind:open={showBulkImport}>
+	<Dialog.Content class="sm:max-w-xl">
+		<Dialog.Header>
+			<Dialog.Title class="text-body-md-strong">Bulk import proxy pools</Dialog.Title>
+			<Dialog.Description class="text-xs">
+				Paste one proxy URL per line. Lines starting with # are ignored. Optionally use <code>name|url</code>.
+			</Dialog.Description>
+		</Dialog.Header>
+		<div class="space-y-4 py-2">
+			<div class="space-y-2">
+				<Label class="text-sm font-medium">Proxy URLs</Label>
+				<Textarea bind:value={bulkText} placeholder="http://user:pass@proxy:8080&#10;my-relay|https://relay.vercel.app" rows={8} class="text-body-sm font-mono" />
+			</div>
+			<div class="grid grid-cols-2 gap-4">
+				<div class="space-y-2">
+					<Label class="text-sm font-medium">Default type</Label>
+					<div class="inline-flex w-fit flex-wrap items-center gap-1 rounded-lg bg-muted p-1">
+						{#each typeOptions as opt}
+							<button class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-all {bulkType === opt ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (bulkType = opt)}>{typeLabel(opt)}</button>
+						{/each}
+					</div>
+				</div>
+				<div class="space-y-2">
+					<Label class="text-sm font-medium">Name prefix</Label>
+					<Input bind:value={bulkNamePrefix} placeholder="bulk" class="h-10 text-body-sm" />
+				</div>
+			</div>
+			<div class="space-y-2">
+				<Label class="text-sm font-medium">No Proxy (optional)</Label>
+				<Input bind:value={bulkNoProxy} placeholder="localhost,127.0.0.1" class="h-10 text-body-sm font-mono" />
+			</div>
+			<div class="flex items-center gap-3">
+				<Switch id="bulk-active" bind:checked={bulkActive} />
+				<Label for="bulk-active" class="text-sm font-medium">Active after import</Label>
+			</div>
+		</div>
+		<Dialog.Footer>
+			<Button variant="ghost" onclick={() => (showBulkImport = false)}>Cancel</Button>
+			<Button onclick={handleBulkImport} disabled={bulkLoading || !bulkText.trim()}>
+				{bulkLoading ? 'Importing...' : 'Import pools'}
+			</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
 </Dialog.Root>

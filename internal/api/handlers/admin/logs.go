@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/active"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
 
@@ -24,26 +26,7 @@ func (h *LogHandler) List(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "100"))
 
-	filter := usage.LogFilter{
-		ProviderTypeID: c.Query("provider_type_id"),
-		ConnectionID:   c.Query("connection_id"),
-		ModelID:        c.Query("model_id"),
-		ComboID:        c.Query("combo_id"),
-		Modality:       c.Query("modality"),
-		StatusFilter:   c.Query("status"),
-		Search:         c.Query("search"),
-	}
-
-	if since := c.Query("since"); since != "" {
-		if ts, err := strconv.ParseInt(since, 10, 64); err == nil {
-			filter.Since = ts
-		}
-	}
-	if until := c.Query("until"); until != "" {
-		if ts, err := strconv.ParseInt(until, 10, 64); err == nil {
-			filter.Until = ts
-		}
-	}
+	filter := parseLogFilter(c)
 
 	result, err := usage.QueryLogs(h.db, page, perPage, filter)
 	if err != nil {
@@ -52,6 +35,61 @@ func (h *LogHandler) List(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, result)
+}
+
+// parseLogFilter maps HTTP query parameters to a usage.LogFilter using the
+// query names expected by the dashboard UI (with simple legacy fallbacks).
+func parseLogFilter(c *gin.Context) usage.LogFilter {
+	filter := usage.LogFilter{
+		ProviderTypeID: firstQuery(c, "provider_id", "provider_type_id"),
+		ConnectionID:   firstQuery(c, "connection_id"),
+		ModelID:        firstQuery(c, "model_id"),
+		ComboID:        firstQuery(c, "combo_id"),
+		Modality:       firstQuery(c, "modality"),
+		StatusFilter:   firstQuery(c, "status"),
+		Search:         firstQuery(c, "search"),
+	}
+
+	if codeStr := firstQuery(c, "status_code"); codeStr != "" {
+		filter.StatusCode, _ = strconv.Atoi(codeStr)
+	}
+
+	// Date filters: UI sends ISO dates; legacy callers may send raw ms timestamps.
+	if start := firstQuery(c, "start_date"); start != "" {
+		t, _ := time.Parse(time.DateOnly, start)
+		if !t.IsZero() {
+			filter.Since = t.UnixMilli()
+		}
+	} else if since := firstQuery(c, "since"); since != "" {
+		filter.Since, _ = strconv.ParseInt(since, 10, 64)
+	}
+
+	if end := firstQuery(c, "end_date"); end != "" {
+		t, _ := time.Parse(time.DateOnly, end)
+		if !t.IsZero() {
+			filter.Until = t.Add(24*time.Hour - time.Millisecond).UnixMilli()
+		}
+	} else if until := firstQuery(c, "until"); until != "" {
+		filter.Until, _ = strconv.ParseInt(until, 10, 64)
+	}
+
+	return filter
+}
+
+// firstQuery returns the first non-empty query value among the given keys.
+func firstQuery(c *gin.Context, keys ...string) string {
+	for _, k := range keys {
+		if v := c.Query(k); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// ActiveRequests returns currently in-flight proxied requests for the
+// live in-flight panel on the Logs page.
+func (h *LogHandler) ActiveRequests(c *gin.Context) {
+	c.JSON(http.StatusOK, active.List())
 }
 
 // Get returns a single log entry.

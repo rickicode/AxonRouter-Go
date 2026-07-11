@@ -157,7 +157,7 @@
         valuePrefix="$"
         color="#10b981"
         color2="#34d399"
-        height={200}
+ height={240}
       />
     {:else}
       <Card class="shadow-card">

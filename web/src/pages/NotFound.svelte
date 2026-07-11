@@ -13,13 +13,13 @@
 <div class="flex flex-1 flex-col items-center justify-center p-6 min-h-[70vh] text-center">
   <div class="relative">
     <!-- Giant 404 with mesh gradient -->
-    <h1 class="text-[120px] md:text-[180px] font-bold leading-none tracking-tighter gradient-text select-none" aria-hidden="true">
+    <div class="text-[120px] md:text-[180px] font-bold leading-none tracking-tighter gradient-text select-none" aria-hidden="true">
       404
-    </h1>
+    </div>
   </div>
 
   <div class="space-y-2 max-w-md -mt-4">
-    <h2 class="text-display-md">Page not found.</h2>
+    <h1 class="text-display-md">Page not found.</h1>
     <p class="text-body-sm text-muted-foreground">
       {#if path && path !== '/'}
         <code class="text-code text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded">{path}</code>

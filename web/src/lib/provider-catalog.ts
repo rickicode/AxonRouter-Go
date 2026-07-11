@@ -315,7 +315,7 @@ export const PROVIDER_CATALOG: ProviderMeta[] = [
     serviceKinds: ['stt'],
   },
   {
-    id: 'opencode',
+	id: 'oc',
     displayName: 'OpenCode Free',
     icon: 'terminal',
     textIcon: 'OC',
@@ -355,7 +355,7 @@ export const PROVIDER_CATALOG: ProviderMeta[] = [
     displayName: 'Cloudflare Workers AI',
     icon: 'cloud',
     textIcon: 'CF',
-    iconFile: '/providers/cloudflare.svg',
+    iconFile: '/providers/cloudflare.png',
     category: 'apikey',
     description: 'Cloudflare Workers AI Gateway with OpenAI-compatible API. Supports @cf/ models.',
     format: 'openai',
@@ -371,14 +371,27 @@ export const PROVIDER_CATALOG: ProviderMeta[] = [
   },
 ];
 
-const PROVIDER_ALIASES: Record<string, string> = {
-  ag: 'antigravity',
-  cx: 'codex',
-  'mimocode-free': 'mimocode',
-  'mimo-token': 'mimo-tp',
-  'opencode-go': 'oc-go',
-  'opencode-zen': 'oc-zen',
-};
+// Provider aliases are loaded from the backend so legacy URLs/IDs continue to work.
+// The frontend does not keep a redundant copy of alias data; it populates this map
+// at runtime from the API response and uses it only for catalog lookups.
+let PROVIDER_ALIASES: Record<string, string> = {};
+
+/**
+ * loadProviderAliases populates the alias lookup from the backend canonical list.
+ * Each backend provider object has `id` (canonical) and optional `aliases` array.
+ * The reverse map (alias -> canonical) is rebuilt so resolveProviderCatalogId works.
+ */
+export function loadProviderAliases(providers: { id: string; aliases?: string[] }[]): void {
+	const map: Record<string, string> = {};
+	for (const p of providers) {
+		if (p.aliases) {
+			for (const alias of p.aliases) {
+				map[alias] = p.id;
+			}
+		}
+	}
+	PROVIDER_ALIASES = { ...PROVIDER_ALIASES, ...map };
+}
 
 export function resolveProviderCatalogId(id: string): string {
   return PROVIDER_ALIASES[id] ?? id;

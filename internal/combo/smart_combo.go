@@ -121,7 +121,7 @@ func (sc *SmartCombo) GetTelemetry(minutes int) *Telemetry {
 	var cost float64
 	var latencySum int64
 
-	since := timeNow().Add(-timeMinutes(minutes)).Unix()
+	since := timeNow().Add(-timeMinutes(minutes)).UnixMilli()
 	sc.db.QueryRow(`
 		SELECT COUNT(*), 
 		       SUM(CASE WHEN error_message IS NOT NULL AND error_message != '' THEN 1 ELSE 0 END),

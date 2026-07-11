@@ -45,6 +45,14 @@ func Open(dbPath string) (*sql.DB, error) {
 	d.SetMaxOpenConns(5)    // WAL mode: concurrent reads safe with >1 conn
 	d.SetMaxIdleConns(5)
 	d.SetConnMaxLifetime(0)
+	// Run migrations (idempotent: CREATE TABLE IF NOT EXISTS + INSERT OR IGNORE
+	// seed + provider-id normalization). Must run on every startup so seeded
+	// provider_types and connection renames (e.g. opencode -> oc) stay in sync.
+	if err := RunMigrations(d); err != nil {
+		d.Close()
+		initErr = err
+		return
+	}
 
 	globalDB = d
 	})

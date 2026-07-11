@@ -32,10 +32,8 @@ func NewModelHandler(db *sql.DB, registry *executor.Registry, store *connstate.S
 // noAuthBaseURLs maps no-auth provider IDs to their base URLs.
 // Used for testing and model listing when no DB entry or connection exists.
 var noAuthBaseURLs = map[string]string{
-	"opencode":      "https://opencode.ai/zen/v1",
-	"opencode-free": "https://opencode.ai/zen/v1",
-	"oc":            "https://opencode.ai/zen/v1",
-	"mimocode":      "https://api.xiaomimimo.com/api/free-ai/openai",
+	"oc":          "https://opencode.ai/zen/v1",
+	"mimocode":    "https://api.xiaomimimo.com/api/free-ai/openai",
 	"mimocode-free": "https://api.xiaomimimo.com/api/free-ai/openai",
 }
 
@@ -300,14 +298,12 @@ var providerCatalogKeys = map[string][]string{
 	"ag":            {"antigravity"},
 	"antigravity":   {"antigravity"},
 	"kiro":          {"kimi"},
-	"aistudio":      {"aistudio"},
-	"xai":           {"xai"},
-	"opencode":      {"opencode"},
-	"opencode-free": {"opencode"},
-	"oc":            {"opencode"},
-	"oc-zen":        {"oc-zen"},
-	"oc-go":         {"oc-go"},
-	"mimocode":      {"mimocode"},
+	"aistudio": {"aistudio"},
+	"xai":      {"xai"},
+	"oc":       {"oc"},
+	"oc-zen":   {"oc-zen"},
+	"oc-go":    {"oc-go"},
+	"mimocode": {"mimocode"},
 	"mimocode-free": {"mimocode"},
 	"mimo":          {"mimocode"},
 	"mimo-tp":       {"mimocode"},
@@ -348,7 +344,7 @@ func defaultTestModel(providerID string) string {
 		return "deepseek-chat"
 	case "mimo", "mimocode", "mimocode-free", "mimo-tp", "mimo-token":
 		return "mimo-auto"
-	case "opencode", "oc", "oc-zen", "oc-go", "opencode-go", "opencode-zen", "opencode-free":
+	case "oc", "oc-zen", "oc-go":
 		return "deepseek-v4-flash-free"
 	case "openrouter":
 		return "openai/gpt-4o"

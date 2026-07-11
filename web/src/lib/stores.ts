@@ -2,7 +2,8 @@
 
 import { writable, derived } from 'svelte/store';
 import { providersApi, connectionsApi, combosApi, logsApi, dashboardApi, quotaApi, fetchApi } from './api';
-import type { Provider, Connection, Combo, RequestLog, QuotaCacheEntry, QuotaCacheResponse, QuotaProviderSummary, ConnectionQuota } from './api';
+import type { Provider, Connection, Combo, RequestLog, ActiveRequest, QuotaCacheEntry, QuotaCacheResponse, QuotaProviderSummary, ConnectionQuota } from './api';
+import { loadProviderAliases } from './provider-catalog';
 import { toast } from 'svelte-sonner';
 function friendlyError(err: unknown, fallback: string): string {
   const msg = err instanceof Error ? err.message : fallback;
@@ -75,6 +76,17 @@ export const logFilter = writable({
   start_date: '',
   end_date: '',
 });
+export const activeRequests = writable<ActiveRequest[]>([]);
+
+export async function loadActiveRequests() {
+  try {
+    const data = await logsApi.active();
+    activeRequests.set(data || []);
+  } catch {
+    // silently ignore; these are best-effort live updates
+  }
+}
+
 
 // Derived stores
 export const activeProviders = derived(providers, ($providers) =>
@@ -162,8 +174,9 @@ export async function loadProviders() {
   error.set(null);
   
   try {
-    const response = await providersApi.list();
-    providers.set(response.data || []);
+		const response = await providersApi.list();
+		providers.set(response.data || []);
+		loadProviderAliases(response.data || []);
   } catch (err) {
     error.set(friendlyError(err, 'Failed to load providers'));
   } finally {
@@ -176,9 +189,10 @@ export async function loadProvider(id: string) {
   error.set(null);
   
   try {
-    const provider = await providersApi.get(id);
-    selectedProvider.set(provider);
-    return provider;
+		const provider = await providersApi.get(id);
+		selectedProvider.set(provider);
+		loadProviderAliases([provider]);
+		return provider;
   } catch (err) {
     error.set(friendlyError(err, 'Failed to load provider'));
     return null;
