@@ -25,11 +25,11 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
+	provideralias "github.com/rickicode/AxonRouter-Go/internal/provider"
 	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
-	provideralias "github.com/rickicode/AxonRouter-Go/internal/provider"
 )
 
 const maxBodySize = 10 * 1024 * 1024 // 10MB
@@ -192,7 +192,6 @@ func (h *Handler) resolveExecutor(provider, model string) (executor.Executor, ex
 	}
 	return exec, format, nil
 }
-
 
 // getConnection returns an active connection for a provider using O(1) eligibility snapshot.
 // Preflight: skips connections marked as exhausted in the quota exhaustion cache.
@@ -650,7 +649,6 @@ func (h *Handler) handleFailoverError(conn *Connection, provider, modelName stri
 		ModelID:        modelName,
 		Modality:       "chat",
 		LatencyMs:      latency,
-		StatusCode:     usage.ExtractErrorStatus(err),
 		ErrorMessage:   err.Error(),
 	})
 
@@ -661,6 +659,45 @@ func (h *Handler) handleFailoverError(conn *Connection, provider, modelName stri
 		return false, string(det.Category)
 	}
 	return true, string(det.Category)
+}
+
+// writeUpstreamClientError writes an OpenAI-compatible upstream error directly
+// to the client and returns true if the error was a non-retryable client error.
+// 429 is intentionally excluded so the failover loop can cooldown/mark exhausted
+// and try the next connection.
+func (h *Handler) writeUpstreamClientError(
+	c *gin.Context,
+	err error,
+	conn *Connection,
+	provider, modelName string,
+	start time.Time,
+) bool {
+	var upErr *executor.UpstreamError
+	if !errors.As(err, &upErr) {
+		return false
+	}
+	if upErr.StatusCode == http.StatusTooManyRequests {
+		return false
+	}
+	c.Header("Content-Type", "application/json")
+	c.Status(upErr.StatusCode)
+	c.Writer.Write(upErr.Body)
+	if h.tracker != nil && conn != nil {
+		errBody := upErr.RawBody
+		if len(errBody) == 0 {
+			errBody = upErr.Body
+		}
+		h.tracker.Log(&usage.LogEntry{
+			ConnectionID:   conn.ID,
+			ProviderTypeID: provider,
+			ModelID:        modelName,
+			Modality:       "chat",
+			LatencyMs:      time.Since(start).Milliseconds(),
+			StatusCode:     upErr.StatusCode,
+			ErrorMessage:   string(errBody),
+		})
+	}
+	return true
 }
 
 // proxyContext resolves proxy config for a connection and returns a context with it attached.
@@ -753,7 +790,6 @@ func (h *Handler) streamResponse(
 					ModelID:        model,
 					Modality:       "chat",
 					LatencyMs:      time.Since(start).Milliseconds(),
-					StatusCode:     usage.ExtractErrorStatus(chunk.Err),
 					ErrorMessage:   chunk.Err.Error(),
 				})
 				return

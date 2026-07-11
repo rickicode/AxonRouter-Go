@@ -3,10 +3,15 @@ package v1
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
 
 	_ "modernc.org/sqlite"
 
@@ -160,5 +165,46 @@ func TestExecuteWithRetry_GivesUpAfter3(t *testing.T) {
 	// Linear backoff: sleeps of 1s + 2s = 3s minimum.
 	if elapsed < 3*time.Second {
 		t.Errorf("expected at least 3s delay, got %v", elapsed)
+	}
+}
+
+func TestWriteUpstreamClientError_WritesTranslatedError(t *testing.T) {
+	h := newTestHandler(t)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	body := []byte(`{"error":{"message":"context too long","type":"invalid_request_error","code":"context_length_exceeded"}}`)
+	upErr := &executor.UpstreamError{StatusCode: http.StatusBadRequest, Body: body}
+
+	if !h.writeUpstreamClientError(c, upErr, nil, "cf", "@cf/meta/llama-3.3-70b", time.Now()) {
+		t.Fatal("expected writeUpstreamClientError to return true")
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status=%d, want 400", rec.Code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("invalid response body: %v", err)
+	}
+	if got["error"].(map[string]any)["code"] != "context_length_exceeded" {
+		t.Errorf("code=%v, want context_length_exceeded", got["error"])
+	}
+}
+
+func TestWriteUpstreamClientError_SkipsRateLimit(t *testing.T) {
+	h := newTestHandler(t)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	upErr := &executor.UpstreamError{
+		StatusCode: http.StatusTooManyRequests,
+		Body:       []byte(`{"error":{"message":"rate limited","type":"rate_limit_error","code":"rate_limit_exceeded"}}`),
+	}
+
+	if h.writeUpstreamClientError(c, upErr, nil, "cf", "model", time.Now()) {
+		t.Fatal("expected writeUpstreamClientError to return false for 429")
+	}
+	if rec.Code != http.StatusOK {
+		t.Errorf("response should not be written for 429, got status=%d", rec.Code)
 	}
 }

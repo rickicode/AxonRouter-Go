@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -131,6 +132,9 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 			connstate.ParseRateLimitHeaders(streamResult.Headers, h.store, conn.ID, modelName)
 		}
 		if err != nil {
+			if h.writeUpstreamClientError(c, err, conn, provider, modelName, start) {
+				return
+			}
 			retry, cat := h.handleFailoverError(conn, provider, modelName, err, attempt, latency)
 			lastErrCategory = cat
 			if !retry {
@@ -278,8 +282,12 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 
 // handleNonStreamResponse handles non-streaming chat completions.
 func (h *Handler) handleNonStreamResponse(c *gin.Context, exec executor.Executor, req *executor.Request) {
+	start := time.Now()
 	resp, err := exec.Execute(c.Request.Context(), req)
 	if err != nil {
+		if h.writeUpstreamClientError(c, err, nil, "", req.Model, start) {
+			return
+		}
 		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
 		return
 	}
@@ -292,6 +300,10 @@ func (h *Handler) handleNonStreamResponse(c *gin.Context, exec executor.Executor
 func (h *Handler) handleStreamResponse(c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte) {
 	_, providerFormat, _ := h.registry.Get(provider)
 	errFormatter := func(err error) []byte {
+		var upErr *executor.UpstreamError
+		if errors.As(err, &upErr) {
+			return upErr.Body
+		}
 		logging.Logger.Error("upstream streaming error", "provider", provider, "model", model, "error", err)
 		b, _ := json.Marshal(gin.H{"error": gin.H{"message": "upstream streaming error"}})
 		return b

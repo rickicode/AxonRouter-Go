@@ -26,13 +26,25 @@ func cloneRequest(req *Request) *Request {
 func (e *CloudflareExecutor) Execute(ctx context.Context, req *Request) (*Response, error) {
 	cp := cloneRequest(req)
 	cp.Body = sanitizeCFRequest(cp.Body)
-	return e.OpenAIExecutor.Execute(ctx, cp)
+	resp, err := e.OpenAIExecutor.Execute(ctx, cp)
+	if err != nil {
+		if ue := toCloudflareUpstreamError(err); ue != nil {
+			return nil, ue
+		}
+	}
+	return resp, err
 }
 
-// ExecuteStream sanitizes the request for Cloudflare constraints and delegates
-// to the underlying OpenAI executor.
+// ExecuteStream sanitizes the request for Cloudflare constraints and delegates to
+// the underlying OpenAI executor.
 func (e *CloudflareExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
 	cp := cloneRequest(req)
 	cp.Body = sanitizeCFRequest(cp.Body)
-	return e.OpenAIExecutor.ExecuteStream(ctx, cp)
+	result, err := e.OpenAIExecutor.ExecuteStream(ctx, cp)
+	if err != nil {
+		if ue := toCloudflareUpstreamError(err); ue != nil {
+			return nil, ue
+		}
+	}
+	return result, err
 }
