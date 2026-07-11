@@ -13,22 +13,59 @@ import (
 
 const cliToolKeyPrefix = "clitools:"
 
+// DefaultModel describes one model-alias slot that the user can override (e.g. "sonnet" → "cc/claude-sonnet-5").
+type DefaultModel struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Alias        string `json:"alias"`
+	EnvKey       string `json:"envKey,omitempty"`
+	DefaultValue string `json:"defaultValue,omitempty"`
+}
+
+// GuideStep is one numbered step in a setup guide.
+type GuideStep struct {
+	Step     int    `json:"step"`
+	Title    string `json:"title"`
+	Desc     string `json:"desc,omitempty"`
+	Value    string `json:"value,omitempty"`    // template string with {{baseUrl}}, {{apiKey}}, {{model}}
+	Copyable bool   `json:"copyable,omitempty"` // true = show copy button for Value
+	Type     string `json:"type,omitempty"`     // "apiKeySelector" | "modelSelector" | "text"
+}
+
+// CodeBlock is a copyable config snippet with template variables.
+type CodeBlock struct {
+	Language string `json:"language"`
+	Code     string `json:"code"`
+}
+
+// Note is an informational callout shown above the config form.
+type Note struct {
+	Type string `json:"type"` // "info" | "warning" | "error"
+	Text string `json:"text"`
+}
+
 // CLIToolStatic holds the catalog metadata for one supported CLI agent.
 type CLIToolStatic struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Image       string `json:"image"`
-	Color       string `json:"color"`
-	ConfigType  string `json:"configType"` // "env" | "custom" | "guide"
-	DocsURL     string `json:"docsUrl"`
+	ID            string        `json:"id"`
+	Name          string        `json:"name"`
+	Description   string        `json:"description"`
+	Image         string        `json:"image"`
+	Color         string        `json:"color"`
+	ConfigType    string        `json:"configType"`
+	DocsURL       string        `json:"docsUrl"`
+	ModelAliases  []string      `json:"modelAliases,omitempty"`
+	DefaultModels []DefaultModel `json:"defaultModels,omitempty"`
+	GuideSteps    []GuideStep   `json:"guideSteps,omitempty"`
+	CodeBlock     *CodeBlock    `json:"codeBlock,omitempty"`
+	Notes         []Note        `json:"notes,omitempty"`
 }
 
 // CLIToolSelection is what we persist and what the frontend submits.
 type CLIToolSelection struct {
-	Model    string `json:"model"`
-	APIKeyID string `json:"apiKeyId"`
-	BaseURL  string `json:"baseUrl"`
+	Model        string            `json:"model"`
+	APIKeyID     string            `json:"apiKeyId"`
+	BaseURL      string            `json:"baseUrl"`
+	ModelAliases map[string]string `json:"modelAliases,omitempty"` // alias → gateway model id
 }
 
 // CLIToolConfig is the tool-specific output shown to the user.
@@ -55,12 +92,12 @@ func NewCLIToolsHandler(database *sql.DB, modelLister func() []map[string]string
 	return &CLIToolsHandler{db: database, modelLister: modelLister}
 }
 
-// ListTools returns the supported CLI tool catalog. No secrets.
+// ListTools returns the supported CLI tool catalog.
 func (h *CLIToolsHandler) ListTools(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": cliToolCatalog})
 }
 
-// AllStatuses returns the configured/not-configured status for every tool in one round-trip.
+// AllStatuses returns the configured/not-configured status for every tool.
 func (h *CLIToolsHandler) AllStatuses(c *gin.Context) {
 	statuses := make(map[string]CLIToolStatus, len(cliToolCatalog))
 	for _, tool := range cliToolCatalog {
@@ -70,25 +107,23 @@ func (h *CLIToolsHandler) AllStatuses(c *gin.Context) {
 	c.JSON(http.StatusOK, statuses)
 }
 
-// GetConfig returns the persisted selection for a tool, plus the gateway base URL default.
+// GetConfig returns the persisted selection for a tool.
 func (h *CLIToolsHandler) GetConfig(c *gin.Context) {
 	toolID := c.Param("toolId")
 	if !isKnownTool(toolID) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "unknown cli tool"})
 		return
 	}
-
 	raw := db.GetSetting(cliToolKeyPrefix+toolID, "")
 	var sel CLIToolSelection
 	if raw != "" {
 		_ = json.Unmarshal([]byte(raw), &sel)
 	}
-
 	c.JSON(http.StatusOK, gin.H{
-		"tool":            findTool(toolID),
-		"selection":       sel,
-		"defaultBaseUrl":  defaultBaseURL(c),
-		"configured":      raw != "",
+		"tool":           findTool(toolID),
+		"selection":      sel,
+		"defaultBaseUrl": defaultBaseURL(c),
+		"configured":     raw != "",
 	})
 }
 
@@ -115,20 +150,40 @@ func (h *CLIToolsHandler) SaveConfig(c *gin.Context) {
 	}
 	baseURL = strings.TrimSuffix(baseURL, "/")
 
-	if req.Model == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
-		return
+	tool := findTool(toolID)
+
+	// For tools with modelAliases, model can be empty (aliases drive the config).
+	// For tools without aliases, model is required.
+	if len(tool.DefaultModels) == 0 && len(tool.GuideSteps) == 0 {
+		if req.Model == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+			return
+		}
+		if !h.isModelAvailable(req.Model) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "selected model is not available on this gateway"})
+			return
+		}
 	}
-	if !h.isModelAvailable(req.Model) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "selected model is not available on this gateway"})
-		return
+
+	// Validate alias models too
+	for alias, modelID := range req.ModelAliases {
+		if modelID != "" && !h.isModelAvailable(modelID) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model for alias %q is not available", alias)})
+			return
+		}
 	}
+
 	if req.APIKeyID != "" && !h.isAPIKeyActive(req.APIKeyID) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "selected api key is not active"})
 		return
 	}
 
-	sel := CLIToolSelection{Model: req.Model, APIKeyID: req.APIKeyID, BaseURL: baseURL}
+	sel := CLIToolSelection{
+		Model:        req.Model,
+		APIKeyID:     req.APIKeyID,
+		BaseURL:      baseURL,
+		ModelAliases: req.ModelAliases,
+	}
 	selJSON, err := json.Marshal(sel)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to marshal selection"})
@@ -179,61 +234,257 @@ func defaultBaseURL(c *gin.Context) string {
 }
 
 func isKnownTool(id string) bool {
-	for _, t := range cliToolCatalog {
-		if t.ID == id {
-			return true
-		}
-	}
-	return false
+	return findTool(id) != nil
 }
 
 func findTool(id string) *CLIToolStatic {
-	for _, t := range cliToolCatalog {
-		if t.ID == id {
-			return &t
+	for i := range cliToolCatalog {
+		if cliToolCatalog[i].ID == id {
+			return &cliToolCatalog[i]
 		}
 	}
 	return nil
 }
 
-// cliToolCatalog is the full CLI agent catalog, mirroring 9router's set.
-var cliToolCatalog = []CLIToolStatic{
-	{ID: "claude", Name: "Claude Code", Description: "Anthropic Claude Code CLI", Image: "/providers/claude.png", Color: "#D97757", ConfigType: "env", DocsURL: "https://docs.anthropic.com/en/docs/claude-code/overview"},
-	{ID: "codex", Name: "OpenAI Codex CLI", Description: "OpenAI Codex CLI / App", Image: "/providers/codex.png", Color: "#10A37F", ConfigType: "env", DocsURL: "https://github.com/openai/codex"},
-	{ID: "opencode", Name: "OpenCode", Description: "OpenCode AI Terminal Assistant", Image: "/providers/opencode.png", Color: "#E87040", ConfigType: "env", DocsURL: "https://github.com/sst/opencode"},
-	{ID: "openclaw", Name: "Open Claw", Description: "Open Claw AI Assistant", Image: "/providers/openclaw.png", Color: "#FF6B35", ConfigType: "custom", DocsURL: "https://github.com/openclawhq/openclaw"},
-	{ID: "cline", Name: "Cline", Description: "Cline AI Coding Assistant (VS Code)", Image: "/providers/cline.png", Color: "#00D1B2", ConfigType: "custom", DocsURL: "https://github.com/cline/cline"},
-	{ID: "kilo", Name: "Kilo Code", Description: "Kilo Code AI Assistant (VS Code)", Image: "/providers/kilocode.png", Color: "#FF6B6B", ConfigType: "custom", DocsURL: "https://github.com/kilo-ai/kilo-code"},
-	{ID: "roo", Name: "Roo", Description: "Roo AI Assistant (VS Code)", Image: "/providers/roo.png", Color: "#FF6B6B", ConfigType: "guide", DocsURL: "https://github.com/RooCodeInc/RooCode"},
-	{ID: "continue", Name: "Continue", Description: "Continue AI Assistant (VS Code)", Image: "/providers/continue.png", Color: "#7C3AED", ConfigType: "guide", DocsURL: "https://www.continue.dev"},
-	{ID: "cursor", Name: "Cursor", Description: "Cursor AI Code Editor", Image: "/providers/cursor.png", Color: "#000000", ConfigType: "guide", DocsURL: "https://cursor.com"},
-	{ID: "amp", Name: "Amp CLI", Description: "Sourcegraph Amp coding assistant CLI", Image: "/providers/amp.png", Color: "#F97316", ConfigType: "guide", DocsURL: "https://github.com/sst/amp"},
-	{ID: "qwen", Name: "Qwen Code", Description: "Alibaba Qwen Code CLI — OpenAI-compatible", Image: "/providers/qwen.png", Color: "#10B981", ConfigType: "guide", DocsURL: "https://qwenlm.github.io/qwen-code-docs"},
-	{ID: "deepseek-tui", Name: "DeepSeek TUI", Description: "DeepSeek Terminal Coding Agent (Rust TUI)", Image: "/providers/deepseek-tui.png", Color: "#4D6BFE", ConfigType: "custom", DocsURL: "https://github.com/DeepSeek-TUI/DeepSeek-TUI"},
-	{ID: "jcode", Name: "jcode", Description: "High-performance Rust-based coding agent harness", Image: "/providers/jcode.png", Color: "#FF6B35", ConfigType: "custom", DocsURL: "https://github.com/1jehuang/jcode"},
-	{ID: "hermes", Name: "Hermes Agent", Description: "Nous Research self-improving AI agent", Image: "/providers/hermes.png", Color: "#8B5CF6", ConfigType: "custom", DocsURL: "https://github.com/NousResearch/hermes"},
-	{ID: "droid", Name: "Factory Droid", Description: "Factory Droid AI Assistant", Image: "/providers/droid.png", Color: "#00D4FF", ConfigType: "custom", DocsURL: "https://factory.ai"},
-	{ID: "copilot", Name: "GitHub Copilot", Description: "GitHub Copilot CLI coding agent", Image: "/providers/copilot.png", Color: "#24292E", ConfigType: "guide", DocsURL: "https://docs.github.com/copilot"},
-	{ID: "generic", Name: "Generic OpenAI-compatible", Description: "Any CLI that accepts OPENAI_BASE_URL + OPENAI_API_KEY", Image: "/providers/openai.png", Color: "#10A37F", ConfigType: "env", DocsURL: ""},
-}
-
 // ensureBaseV1 appends /v1 if the base URL doesn't already end with it.
 func ensureBaseV1(base string) string {
+	if base == "" {
+		return "http://localhost:3777/v1"
+	}
 	if strings.HasSuffix(base, "/v1") {
 		return base
 	}
 	return base + "/v1"
 }
 
+// --- Full CLI Tool Catalog ---
+
+var cliToolCatalog = []CLIToolStatic{
+	// ─── Claude Code ────────────────────────────────────────────────
+	{
+		ID: "claude", Name: "Claude Code", Description: "Anthropic's agentic coding assistant CLI.",
+		Image: "/providers/claude.png", Color: "#D97757", ConfigType: "env",
+		DocsURL: "https://docs.anthropic.com/en/docs/claude-code/overview",
+		DefaultModels: []DefaultModel{
+			{ID: "fable", Name: "Claude Fable", Alias: "fable", EnvKey: "ANTHROPIC_DEFAULT_FABLE_MODEL", DefaultValue: "cc/claude-fable-5"},
+			{ID: "opus", Name: "Claude Opus", Alias: "opus", EnvKey: "ANTHROPIC_DEFAULT_OPUS_MODEL", DefaultValue: "cc/claude-opus-4-8"},
+			{ID: "sonnet", Name: "Claude Sonnet", Alias: "sonnet", EnvKey: "ANTHROPIC_DEFAULT_SONNET_MODEL", DefaultValue: "cc/claude-sonnet-5"},
+			{ID: "haiku", Name: "Claude Haiku", Alias: "haiku", EnvKey: "ANTHROPIC_DEFAULT_HAIKU_MODEL", DefaultValue: "cc/claude-haiku-4-5-20251001"},
+		},
+	},
+
+	// ─── OpenAI Codex ───────────────────────────────────────────────
+	{
+		ID: "codex", Name: "OpenAI Codex CLI", Description: "OpenAI Codex CLI / App.",
+		Image: "/providers/codex.png", Color: "#10A37F", ConfigType: "env",
+		DocsURL: "https://github.com/openai/codex",
+	},
+
+	// ─── OpenCode ───────────────────────────────────────────────────
+	{
+		ID: "opencode", Name: "OpenCode", Description: "OpenCode AI Terminal Assistant.",
+		Image: "/providers/opencode.png", Color: "#E87040", ConfigType: "env",
+		DocsURL: "https://github.com/sst/opencode",
+	},
+
+	// ─── OpenClaw ───────────────────────────────────────────────────
+	{
+		ID: "openclaw", Name: "Open Claw", Description: "Open Claw AI Assistant.",
+		Image: "/providers/openclaw.png", Color: "#FF6B35", ConfigType: "custom",
+		DocsURL: "https://github.com/openclawhq/openclaw",
+	},
+
+	// ─── Cline ──────────────────────────────────────────────────────
+	{
+		ID: "cline", Name: "Cline", Description: "Cline AI Coding Assistant (VS Code).",
+		Image: "/providers/cline.png", Color: "#00D1B2", ConfigType: "custom",
+		DocsURL: "https://github.com/cline/cline",
+	},
+
+	// ─── Kilo Code ──────────────────────────────────────────────────
+	{
+		ID: "kilo", Name: "Kilo Code", Description: "Kilo Code AI Assistant (VS Code).",
+		Image: "/providers/kilocode.png", Color: "#FF6B6B", ConfigType: "custom",
+		DocsURL: "https://github.com/kilo-ai/kilo-code",
+	},
+
+	// ─── Roo ────────────────────────────────────────────────────────
+	{
+		ID: "roo", Name: "Roo", Description: "Roo AI Assistant (VS Code).",
+		Image: "/providers/roo.png", Color: "#FF6B6B", ConfigType: "guide",
+		DocsURL: "https://github.com/RooCodeInc/RooCode",
+		GuideSteps: []GuideStep{
+			{Step: 1, Title: "Open Settings", Desc: "Go to Roo Settings panel"},
+			{Step: 2, Title: "Select Provider", Desc: "Choose API Provider → Ollama"},
+			{Step: 3, Title: "Base URL", Value: "{{baseUrl}}", Copyable: true},
+			{Step: 4, Title: "API Key", Type: "apiKeySelector"},
+			{Step: 5, Title: "Select Model", Type: "modelSelector"},
+		},
+	},
+
+	// ─── Continue ───────────────────────────────────────────────────
+	{
+		ID: "continue", Name: "Continue", Description: "Continue AI Assistant (VS Code / JetBrains).",
+		Image: "/providers/continue.png", Color: "#7C3AED", ConfigType: "guide",
+		DocsURL: "https://www.continue.dev",
+		GuideSteps: []GuideStep{
+			{Step: 1, Title: "Open Config", Desc: "Open Continue configuration file"},
+			{Step: 2, Title: "API Key", Type: "apiKeySelector"},
+			{Step: 3, Title: "Select Model", Type: "modelSelector"},
+			{Step: 4, Title: "Add Model Config", Desc: "Add the following configuration to your models array:"},
+		},
+		CodeBlock: &CodeBlock{
+			Language: "json",
+			Code:     "{\n  \"apiBase\": \"{{baseUrl}}\",\n  \"title\": \"{{model}}\",\n  \"model\": \"{{model}}\",\n  \"provider\": \"openai\",\n  \"apiKey\": \"{{apiKey}}\"\n}",
+		},
+	},
+
+	// ─── Cursor ─────────────────────────────────────────────────────
+	{
+		ID: "cursor", Name: "Cursor", Description: "Cursor AI Code Editor.",
+		Image: "/providers/cursor.png", Color: "#000000", ConfigType: "guide",
+		DocsURL: "https://cursor.com",
+		Notes: []Note{
+			{Type: "warning", Text: "Requires Cursor Pro account to use this feature."},
+		},
+		GuideSteps: []GuideStep{
+			{Step: 1, Title: "Open Settings", Desc: "Go to Settings → Models"},
+			{Step: 2, Title: "Enable OpenAI API", Desc: "Enable \"OpenAI API key\" option"},
+			{Step: 3, Title: "Base URL", Value: "{{baseUrl}}", Copyable: true},
+			{Step: 4, Title: "API Key", Type: "apiKeySelector"},
+			{Step: 5, Title: "Add Custom Model", Desc: "Click \"View All Model\" → \"Add Custom Model\""},
+			{Step: 6, Title: "Select Model", Type: "modelSelector"},
+		},
+	},
+
+	// ─── Amp CLI ────────────────────────────────────────────────────
+	{
+		ID: "amp", Name: "Amp CLI", Description: "Sourcegraph Amp coding assistant CLI.",
+		Image: "/providers/amp.png", Color: "#F97316", ConfigType: "guide",
+		DocsURL: "https://github.com/sst/amp",
+		ModelAliases: []string{"g25p", "g25f", "cs45", "g54"},
+		Notes: []Note{
+			{Type: "info", Text: "Use AxonRouter model aliases to keep Amp shorthand mappings stable across provider updates."},
+			{Type: "warning", Text: "Suggested shorthand examples: g25p → gemini/gemini-2.5-pro, g25f → gemini/gemini-2.5-flash, cs45 → cc/claude-sonnet-4-5-20250929."},
+		},
+		GuideSteps: []GuideStep{
+			{Step: 1, Title: "Install Amp", Desc: "Install the Amp CLI using the package manager supported by your environment."},
+			{Step: 2, Title: "API Key", Type: "apiKeySelector"},
+			{Step: 3, Title: "Base URL", Value: "{{baseUrl}}", Copyable: true},
+			{Step: 4, Title: "Select Model", Type: "modelSelector"},
+			{Step: 5, Title: "Add Shorthands", Desc: "Map Amp shorthand names such as g25p or cs45 to AxonRouter aliases in your local config."},
+		},
+		CodeBlock: &CodeBlock{
+			Language: "bash",
+			Code:     "export OPENAI_API_KEY=\"{{apiKey}}\"\nexport OPENAI_BASE_URL=\"{{baseUrl}}\"\namp --model \"{{model}}\"\n# Example shorthand aliases you can map locally:\n# g25p -> gemini/gemini-2.5-pro\n# cs45 -> cc/claude-sonnet-4-5-20250929",
+		},
+	},
+
+	// ─── Qwen Code ──────────────────────────────────────────────────
+	{
+		ID: "qwen", Name: "Qwen Code", Description: "Alibaba Qwen Code CLI — supports OpenAI, Anthropic & Gemini providers.",
+		Image: "/providers/qwen.png", Color: "#10B981", ConfigType: "guide",
+		DocsURL: "https://qwenlm.github.io/qwen-code-docs",
+		ModelAliases: []string{"coder-model", "qwen3-coder-plus", "qwen3-coder-flash", "vision-model", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gemini-3-flash", "gemini-3.1-pro-high"},
+		Notes: []Note{
+			{Type: "info", Text: "Qwen Code supports multiple provider types (openai, anthropic, gemini) via modelProviders in settings.json. AxonRouter works as an OpenAI-compatible endpoint."},
+			{Type: "info", Text: "Any model available in AxonRouter can be used — not just Qwen models."},
+			{Type: "warning", Text: "Config path: Linux/macOS ~/.qwen/settings.json • Windows %USERPROFILE%\\.qwen\\settings.json"},
+		},
+		GuideSteps: []GuideStep{
+			{Step: 1, Title: "Install Qwen Code", Desc: "npm install -g @qwen-code/qwen-code"},
+			{Step: 2, Title: "API Key", Type: "apiKeySelector"},
+			{Step: 3, Title: "Base URL", Value: "{{baseUrl}}", Copyable: true},
+			{Step: 4, Title: "Select Model", Type: "modelSelector"},
+			{Step: 5, Title: "Save Config", Desc: "Copy the JSON below to your ~/.qwen/settings.json file."},
+		},
+		CodeBlock: &CodeBlock{
+			Language: "json",
+			Code:     "{\n  \"security\": {\n    \"auth\": {\n      \"selectedType\": \"openai\",\n      \"apiKey\": \"{{apiKey}}\",\n      \"baseUrl\": \"{{baseUrl}}\"\n    }\n  },\n  \"model\": {\n    \"name\": \"{{model}}\"\n  }\n}",
+		},
+	},
+
+	// ─── DeepSeek TUI ───────────────────────────────────────────────
+	{
+		ID: "deepseek-tui", Name: "DeepSeek TUI", Description: "DeepSeek Terminal Coding Agent (Rust TUI).",
+		Image: "/providers/deepseek-tui.png", Color: "#4D6BFE", ConfigType: "custom",
+		DocsURL: "https://github.com/DeepSeek-TUI/DeepSeek-TUI",
+		DefaultModels: []DefaultModel{
+			{ID: "deepseek-v4-pro", Name: "DeepSeek V4 Pro", Alias: "deepseek-v4-pro"},
+			{ID: "deepseek-v4-flash", Name: "DeepSeek V4 Flash", Alias: "deepseek-v4-flash"},
+			{ID: "deepseek-chat", Name: "DeepSeek V3 Chat", Alias: "deepseek-chat"},
+		},
+		Notes: []Note{
+			{Type: "info", Text: "DeepSeek TUI uses ~/.deepseek/config.toml for configuration. AxonRouter will update the provider to 'openai' mode with your base_url, api_key, and model."},
+			{Type: "warning", Text: "Config path: Linux/macOS ~/.deepseek/config.toml • Windows %USERPROFILE%\\.deepseek\\config.toml"},
+		},
+	},
+
+	// ─── jcode ──────────────────────────────────────────────────────
+	{
+		ID: "jcode", Name: "jcode", Description: "High-performance Rust-based coding agent harness.",
+		Image: "/providers/jcode.png", Color: "#FF6B35", ConfigType: "custom",
+		DocsURL: "https://github.com/1jehuang/jcode",
+		DefaultModels: []DefaultModel{
+			{ID: "claude-opus-4-7", Name: "Claude Opus 4.7", Alias: "opus", DefaultValue: "cc/claude-opus-4-7"},
+			{ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6", Alias: "sonnet", DefaultValue: "cc/claude-sonnet-4-6"},
+			{ID: "gpt-5.5", Name: "GPT 5.5", Alias: "gpt5", DefaultValue: "cx/gpt-5.5"},
+			{ID: "gemini-3.1-pro", Name: "Gemini 3.1 Pro", Alias: "gemini", DefaultValue: "gemini/gemini-3.1-pro"},
+		},
+		Notes: []Note{
+			{Type: "info", Text: "jcode is a Rust-based coding agent with semantic memory and extreme performance."},
+			{Type: "info", Text: "Configure AxonRouter as an OpenAI-compatible provider to route all jcode requests."},
+			{Type: "warning", Text: "Requires jcode installed. Install via: curl -fsSL https://raw.githubusercontent.com/1jehuang/jcode/master/scripts/install.sh | bash"},
+		},
+	},
+
+	// ─── Hermes Agent ───────────────────────────────────────────────
+	{
+		ID: "hermes", Name: "Hermes Agent", Description: "Nous Research self-improving AI agent.",
+		Image: "/providers/hermes.png", Color: "#8B5CF6", ConfigType: "custom",
+		DocsURL: "https://github.com/NousResearch/hermes",
+	},
+
+	// ─── Factory Droid ──────────────────────────────────────────────
+	{
+		ID: "droid", Name: "Factory Droid", Description: "Factory Droid AI Assistant.",
+		Image: "/providers/droid.png", Color: "#00D4FF", ConfigType: "custom",
+		DocsURL: "https://factory.ai",
+	},
+
+	// ─── GitHub Copilot ─────────────────────────────────────────────
+	{
+		ID: "copilot", Name: "GitHub Copilot", Description: "GitHub Copilot CLI coding agent.",
+		Image: "/providers/copilot.png", Color: "#24292E", ConfigType: "guide",
+		DocsURL: "https://docs.github.com/copilot",
+		GuideSteps: []GuideStep{
+			{Step: 1, Title: "Enable Copilot", Desc: "Ensure GitHub Copilot is enabled in your VS Code or IDE."},
+			{Step: 2, Title: "API Key", Type: "apiKeySelector"},
+			{Step: 3, Title: "Base URL", Value: "{{baseUrl}}", Copyable: true},
+			{Step: 4, Title: "Select Model", Type: "modelSelector"},
+			{Step: 5, Title: "Configure", Desc: "Set the OpenAI-compatible endpoint in Copilot settings."},
+		},
+		CodeBlock: &CodeBlock{
+			Language: "json",
+			Code:     "{\n  \"github.copilot.advanced\": {\n    \"debug.overrideModel\": \"{{model}}\",\n    \"debug.overrideProxyUrl\": \"{{baseUrl}}\"\n  }\n}",
+		},
+	},
+
+	// ─── Generic OpenAI-compatible ──────────────────────────────────
+	{
+		ID: "generic", Name: "Generic OpenAI-compatible", Description: "Any CLI that accepts OPENAI_BASE_URL + OPENAI_API_KEY.",
+		Image: "/providers/openai.png", Color: "#10A37F", ConfigType: "env",
+	},
+}
+
+// --- Config generators ---
+
 func generateConfig(toolID string, sel CLIToolSelection, apiKey string) CLIToolConfig {
 	base := ensureBaseV1(sel.BaseURL)
-	if base == "" {
-		base = "http://localhost:3777/v1"
-	}
 
 	switch toolID {
 	case "claude":
-		return claudeConfig(sel.Model, apiKey, base)
+		return claudeConfig(sel, apiKey, base)
 	case "codex":
 		return codexConfig(sel.Model, apiKey, base)
 	case "opencode":
@@ -241,61 +492,72 @@ func generateConfig(toolID string, sel CLIToolSelection, apiKey string) CLIToolC
 	case "openclaw":
 		return openclawConfig(sel.Model, apiKey, base)
 	case "cline":
-		return vscodeConfig(sel.Model, apiKey, base, "cline")
+		return clineConfig(sel.Model, apiKey, base)
 	case "kilo":
-		return vscodeConfig(sel.Model, apiKey, base, "kilocode")
+		return kiloConfig(sel.Model, apiKey, base)
 	case "roo":
-		return vscodeConfig(sel.Model, apiKey, base, "roo")
+		return guideConfig(sel.Model, apiKey, base)
 	case "continue":
-		return continueConfig(sel.Model, apiKey, base)
+		return guideConfig(sel.Model, apiKey, base)
 	case "cursor":
-		return cursorConfig(sel.Model, apiKey, base)
+		return guideConfig(sel.Model, apiKey, base)
 	case "amp":
 		return ampConfig(sel.Model, apiKey, base)
 	case "qwen":
-		return qwenConfig(sel.Model, apiKey, base)
+		return qwenConfig(sel, apiKey, base)
 	case "deepseek-tui":
-		return deepseekTuiConfig(sel.Model, apiKey, base)
+		return deepseekTuiConfig(sel, apiKey, base)
 	case "jcode":
-		return jcodeConfig(sel.Model, apiKey, base)
+		return jcodeConfig(sel, apiKey, base)
 	case "hermes":
 		return hermesConfig(sel.Model, apiKey, base)
 	case "droid":
 		return droidConfig(sel.Model, apiKey, base)
 	case "copilot":
-		return copilotConfig(sel.Model, apiKey, base)
+		return guideConfig(sel.Model, apiKey, base)
 	case "generic":
 		return genericConfig(sel.Model, apiKey, base)
 	}
 	return CLIToolConfig{}
 }
 
-// --- Per-tool generators ---
-
-func claudeConfig(model, apiKey, base string) CLIToolConfig {
+func claudeConfig(sel CLIToolSelection, apiKey, base string) CLIToolConfig {
+	// Build env block with alias mappings
 	env := fmt.Sprintf("export ANTHROPIC_BASE_URL=%q\n", base)
 	env += fmt.Sprintf("export ANTHROPIC_API_KEY=%q\n", apiKey)
-	env += fmt.Sprintf("export ANTHROPIC_MODEL=%q\n", model)
-	cfg := fmt.Sprintf(`{
-  "env": {
-    "ANTHROPIC_BASE_URL": %q,
-    "ANTHROPIC_API_KEY": %q
-  },
-  "model": %q
-}`, base, apiKey, model)
-	return CLIToolConfig{EnvBlock: env, ConfigPath: "~/.claude/settings.json", ConfigContent: cfg, RunCommand: fmt.Sprintf("claude --model %q", model)}
+
+	// Map aliases to env keys
+	tool := findTool("claude")
+	if tool != nil && len(sel.ModelAliases) > 0 {
+		for _, dm := range tool.DefaultModels {
+			if mapped, ok := sel.ModelAliases[dm.Alias]; ok && mapped != "" {
+				env += fmt.Sprintf("export %s=%q\n", dm.EnvKey, mapped)
+			} else if dm.DefaultValue != "" {
+				env += fmt.Sprintf("export %s=%q\n", dm.EnvKey, dm.DefaultValue)
+			}
+		}
+	}
+
+	cfg := fmt.Sprintf("{\n  \"env\": {\n    \"ANTHROPIC_BASE_URL\": %q,\n    \"ANTHROPIC_API_KEY\": %q", base, apiKey)
+	if tool != nil && len(sel.ModelAliases) > 0 {
+		for _, dm := range tool.DefaultModels {
+			if mapped, ok := sel.ModelAliases[dm.Alias]; ok && mapped != "" {
+				cfg += fmt.Sprintf(",\n    %q: %q", dm.EnvKey, mapped)
+			} else if dm.DefaultValue != "" {
+				cfg += fmt.Sprintf(",\n    %q: %q", dm.EnvKey, dm.DefaultValue)
+			}
+		}
+	}
+	cfg += "\n  }\n}"
+
+	return CLIToolConfig{EnvBlock: env, ConfigPath: "~/.claude/settings.json", ConfigContent: cfg, RunCommand: "claude"}
 }
 
 func codexConfig(model, apiKey, base string) CLIToolConfig {
 	env := fmt.Sprintf("export OPENAI_BASE_URL=%q\n", base)
 	env += fmt.Sprintf("export OPENAI_API_KEY=%q\n", apiKey)
 	env += fmt.Sprintf("export OPENAI_MODEL=%q\n", model)
-	cfg := fmt.Sprintf(`model = %q
-
-[model.axonrouter]
-base_url = %q
-api_key = %q
-`, model, base, apiKey)
+	cfg := fmt.Sprintf("model = %q\n\n[model.axonrouter]\nbase_url = %q\napi_key = %q\n", model, base, apiKey)
 	return CLIToolConfig{EnvBlock: env, ConfigPath: "~/.codex/config.toml", ConfigContent: cfg, RunCommand: fmt.Sprintf("codex --model %q", model)}
 }
 
@@ -303,158 +565,95 @@ func opencodeConfig(model, apiKey, base string) CLIToolConfig {
 	env := fmt.Sprintf("export OPENAI_BASE_URL=%q\n", base)
 	env += fmt.Sprintf("export OPENAI_API_KEY=%q\n", apiKey)
 	env += fmt.Sprintf("export OPENAI_MODEL=%q\n", model)
-	cfg := fmt.Sprintf(`{
-  "provider": "openai",
-  "baseUrl": %q,
-  "apiKey": %q,
-  "model": %q
-}`, base, apiKey, model)
-	return CLIToolConfig{EnvBlock: env, ConfigPath: "~/.opencode/config.json", ConfigContent: cfg, RunCommand: fmt.Sprintf("opencode --model %q", model)}
+	return CLIToolConfig{EnvBlock: env, ConfigPath: "~/.opencode/config.json", RunCommand: fmt.Sprintf("opencode --model %q", model)}
 }
 
 func openclawConfig(model, apiKey, base string) CLIToolConfig {
 	env := fmt.Sprintf("# OpenClaw reads ~/.openclaw/openclaw.json\n")
-	cfg := fmt.Sprintf(`{
-  "providers": [
-    {
-      "name": "axonrouter",
-      "baseUrl": %q,
-      "apiKey": %q,
-      "models": [%q]
-    }
-  ],
-  "defaultProvider": "axonrouter",
-  "defaultModel": %q
-}`, base, apiKey, model, model)
+	cfg := fmt.Sprintf("{\n  \"providers\": [{\n    \"name\": \"axonrouter\",\n    \"baseUrl\": %q,\n    \"apiKey\": %q,\n    \"models\": [%q]\n  }],\n  \"defaultProvider\": \"axonrouter\",\n  \"defaultModel\": %q\n}", base, apiKey, model, model)
 	return CLIToolConfig{EnvBlock: env, ConfigPath: "~/.openclaw/openclaw.json", ConfigContent: cfg, RunCommand: fmt.Sprintf("openclaw --model %q", model)}
 }
 
-// vscodeConfig generates config for Cline/Kilo/Roo — VS Code extensions with OpenAI-compatible settings.
-func vscodeConfig(model, apiKey, base, keyPrefix string) CLIToolConfig {
-	env := fmt.Sprintf("# %s reads these keys from VS Code settings.json\n", keyPrefix)
-	cfg := fmt.Sprintf(`{
-  "%s.apiProvider": "openai-compatible",
-  "%s.openAiBaseUrl": %q,
-  "%s.openAiApiKey": %q,
-  "%s.openAiModelId": %q
-}`, keyPrefix, keyPrefix, base, keyPrefix, apiKey, keyPrefix, model)
-	return CLIToolConfig{EnvBlock: env, ConfigPath: "<VS Code user settings.json>", ConfigContent: cfg, RunCommand: fmt.Sprintf("Select OpenAI-compatible provider in %s settings", keyPrefix)}
+func clineConfig(model, apiKey, base string) CLIToolConfig {
+	env := fmt.Sprintf("# Cline reads VS Code settings.json\n")
+	cfg := fmt.Sprintf("{\n  \"cline.openAiBaseUrl\": %q,\n  \"cline.openAiApiKey\": %q,\n  \"cline.openAiModelId\": %q\n}", base, apiKey, model)
+	return CLIToolConfig{EnvBlock: env, ConfigPath: "<VS Code user settings.json>", ConfigContent: cfg, RunCommand: "Open Cline in VS Code → Settings → OpenAI-compatible provider"}
 }
 
-func continueConfig(model, apiKey, base string) CLIToolConfig {
-	env := fmt.Sprintf("# Continue reads ~/.continue/config.json\n")
-	cfg := fmt.Sprintf(`{
-  "apiBase": %q,
-  "title": %q,
-  "model": %q,
-  "provider": "openai",
-  "apiKey": %q
-}`, base, model, model, apiKey)
-	return CLIToolConfig{EnvBlock: env, ConfigPath: "~/.continue/config.json", ConfigContent: cfg, RunCommand: fmt.Sprintf("Add model in Continue config")}
+func kiloConfig(model, apiKey, base string) CLIToolConfig {
+	env := fmt.Sprintf("# Kilo Code reads VS Code settings.json\n")
+	cfg := fmt.Sprintf("{\n  \"kilocode.openAiBaseUrl\": %q,\n  \"kilocode.openAiApiKey\": %q,\n  \"kilocode.openAiModelId\": %q\n}", base, apiKey, model)
+	return CLIToolConfig{EnvBlock: env, ConfigPath: "~/.local/share/kilo/auth.json", ConfigContent: cfg, RunCommand: "Open Kilo Code in VS Code → Settings → OpenAI-compatible provider"}
 }
 
-func cursorConfig(model, apiKey, base string) CLIToolConfig {
-	env := fmt.Sprintf("# Cursor: Settings → Models → Enable OpenAI API\n")
-	env += fmt.Sprintf("# Base URL: %s\n", base)
-	env += fmt.Sprintf("# API Key: %s\n", apiKey)
-	cfg := fmt.Sprintf(`// In Cursor: Settings → Models → OpenAI API
-// Base URL: %s
-// API Key: %s
-// Add custom model: %s`, base, apiKey, model)
-	return CLIToolConfig{EnvBlock: env, ConfigPath: "Cursor Settings → Models", ConfigContent: cfg, RunCommand: fmt.Sprintf("Cursor → Settings → Models → Add %q", model)}
+func guideConfig(model, apiKey, base string) CLIToolConfig {
+	env := fmt.Sprintf("export OPENAI_BASE_URL=%q\n", base)
+	env += fmt.Sprintf("export OPENAI_API_KEY=%q\n", apiKey)
+	env += fmt.Sprintf("export OPENAI_MODEL=%q\n", model)
+	return CLIToolConfig{EnvBlock: env, ConfigPath: "", RunCommand: ""}
 }
 
 func ampConfig(model, apiKey, base string) CLIToolConfig {
 	env := fmt.Sprintf("export OPENAI_API_KEY=%q\n", apiKey)
 	env += fmt.Sprintf("export OPENAI_BASE_URL=%q\n", base)
-	cfg := fmt.Sprintf(`export OPENAI_API_KEY=%q
-export OPENAI_BASE_URL=%q
-amp --model %q
-# Example shorthand aliases:
-# g25p -> gemini/gemini-2.5-pro
-# cs45 -> cc/claude-sonnet-4-5-20250929`, apiKey, base, model)
-	return CLIToolConfig{EnvBlock: env, ConfigPath: "~/.amp/.env", ConfigContent: cfg, RunCommand: fmt.Sprintf("amp --model %q", model)}
+	cfg := fmt.Sprintf("export OPENAI_API_KEY=%q\nexport OPENAI_BASE_URL=%q\namp --model %q\n# Example shorthand aliases:\n# g25p -> gemini/gemini-2.5-pro\n# cs45 -> cc/claude-sonnet-4-5-20250929", apiKey, base, model)
+	return CLIToolConfig{EnvBlock: env, ConfigPath: "", ConfigContent: cfg, RunCommand: fmt.Sprintf("amp --model %q", model)}
 }
 
-func qwenConfig(model, apiKey, base string) CLIToolConfig {
+func qwenConfig(sel CLIToolSelection, apiKey, base string) CLIToolConfig {
 	env := fmt.Sprintf("# Qwen Code reads ~/.qwen/settings.json\n")
-	cfg := fmt.Sprintf(`{
-  "security": {
-    "auth": {
-      "selectedType": "openai",
-      "apiKey": %q,
-      "baseUrl": %q
-    }
-  },
-  "model": {
-    "name": %q
-  }
-}`, apiKey, base, model)
+	model := sel.Model
+	if sel.ModelAliases != nil {
+		if m, ok := sel.ModelAliases["coder-model"]; ok && m != "" {
+			model = m
+		}
+	}
+	if model == "" {
+		model = "coder-model"
+	}
+	cfg := fmt.Sprintf("{\n  \"security\": {\n    \"auth\": {\n      \"selectedType\": \"openai\",\n      \"apiKey\": %q,\n      \"baseUrl\": %q\n    }\n  },\n  \"model\": {\n    \"name\": %q\n  }\n}", apiKey, base, model)
 	return CLIToolConfig{EnvBlock: env, ConfigPath: "~/.qwen/settings.json", ConfigContent: cfg, RunCommand: fmt.Sprintf("qwen --model %q", model)}
 }
 
-func deepseekTuiConfig(model, apiKey, base string) CLIToolConfig {
+func deepseekTuiConfig(sel CLIToolSelection, apiKey, base string) CLIToolConfig {
 	env := fmt.Sprintf("export OPENAI_API_KEY=%q\n", apiKey)
 	env += fmt.Sprintf("export OPENAI_BASE_URL=%q\n", base)
-	env += fmt.Sprintf("export OPENAI_MODEL=%q\n", model)
-	cfg := fmt.Sprintf(`[provider]
-type = "openai"
-base_url = %q
-api_key = %q
-model = %q
-`, base, apiKey, model)
+	model := sel.Model
+	if model == "" {
+		model = "deepseek-v4-pro"
+	}
+	cfg := fmt.Sprintf("[providers.openai]\nbase_url = %q\napi_key = %q\nmodel = %q\n", base, apiKey, model)
 	return CLIToolConfig{EnvBlock: env, ConfigPath: "~/.deepseek/config.toml", ConfigContent: cfg, RunCommand: fmt.Sprintf("deepseek --model %q", model)}
 }
 
-func jcodeConfig(model, apiKey, base string) CLIToolConfig {
+func jcodeConfig(sel CLIToolSelection, apiKey, base string) CLIToolConfig {
 	env := fmt.Sprintf("export OPENAI_API_KEY=%q\n", apiKey)
 	env += fmt.Sprintf("export OPENAI_BASE_URL=%q\n", base)
-	env += fmt.Sprintf("export OPENAI_MODEL=%q\n", model)
-	cfg := fmt.Sprintf(`{
-  "provider": "openai",
-  "baseUrl": %q,
-  "apiKey": %q,
-  "model": %q
-}`, base, apiKey, model)
-	return CLIToolConfig{EnvBlock: env, ConfigPath: "~/.jcode/config.json", ConfigContent: cfg, RunCommand: fmt.Sprintf("jcode --model %q", model)}
+	model := sel.Model
+	if model == "" {
+		model = "cc/claude-sonnet-4-6"
+	}
+	cfg := fmt.Sprintf("[providers.axonrouter]\ntype = \"openai\"\nbase_url = %q\napi_key = %q\ndefault_model = %q\n\n[[providers.axonrouter.models]]\nid = %q\n", base, apiKey, model, model)
+	return CLIToolConfig{EnvBlock: env, ConfigPath: "~/.jcode/config.toml", ConfigContent: cfg, RunCommand: fmt.Sprintf("jcode --model %q", model)}
 }
 
 func hermesConfig(model, apiKey, base string) CLIToolConfig {
 	env := fmt.Sprintf("export OPENAI_API_KEY=%q\n", apiKey)
 	env += fmt.Sprintf("export OPENAI_BASE_URL=%q\n", base)
-	env += fmt.Sprintf("export OPENAI_MODEL=%q\n", model)
-	return CLIToolConfig{EnvBlock: env, ConfigPath: "~/.hermes/.env", ConfigContent: "", RunCommand: fmt.Sprintf("hermes --model %q", model)}
+	cfg := fmt.Sprintf("model:\n  default: %q\nprovider:\n  name: custom\n  base_url: %q\n", model, base)
+	return CLIToolConfig{EnvBlock: env, ConfigPath: "~/.hermes/config.yaml + ~/.hermes/.env", ConfigContent: cfg, RunCommand: fmt.Sprintf("hermes --model %q", model)}
 }
 
 func droidConfig(model, apiKey, base string) CLIToolConfig {
 	env := fmt.Sprintf("export OPENAI_API_KEY=%q\n", apiKey)
 	env += fmt.Sprintf("export OPENAI_BASE_URL=%q\n", base)
-	env += fmt.Sprintf("export OPENAI_MODEL=%q\n", model)
-	cfg := fmt.Sprintf(`{
-  "provider": "openai",
-  "baseUrl": %q,
-  "apiKey": %q,
-  "model": %q
-}`, base, apiKey, model)
-	return CLIToolConfig{EnvBlock: env, ConfigPath: "~/.droid/config.json", ConfigContent: cfg, RunCommand: fmt.Sprintf("droid --model %q", model)}
-}
-
-func copilotConfig(model, apiKey, base string) CLIToolConfig {
-	env := fmt.Sprintf("# GitHub Copilot CLI\n")
-	env += fmt.Sprintf("export OPENAI_API_KEY=%q\n", apiKey)
-	env += fmt.Sprintf("export OPENAI_BASE_URL=%q\n", base)
-	env += fmt.Sprintf("export OPENAI_MODEL=%q\n", model)
-	cfg := fmt.Sprintf(`# Set environment variables:
-export OPENAI_API_KEY=%q
-export OPENAI_BASE_URL=%q
-export OPENAI_MODEL=%q
-# Then run: gh copilot --model %q`, apiKey, base, model, model)
-	return CLIToolConfig{EnvBlock: env, ConfigPath: "~/.copilot/config", ConfigContent: cfg, RunCommand: fmt.Sprintf("gh copilot --model %q", model)}
+	cfg := fmt.Sprintf("{\n  \"customModels\": [{\n    \"id\": \"custom:axr-0\",\n    \"model\": %q,\n    \"baseUrl\": %q,\n    \"apiKey\": %q,\n    \"provider\": \"openai\",\n    \"maxOutputTokens\": 131072\n  }]\n}", model, base, apiKey)
+	return CLIToolConfig{EnvBlock: env, ConfigPath: "~/.factory/settings.json", ConfigContent: cfg, RunCommand: fmt.Sprintf("droid --model %q", model)}
 }
 
 func genericConfig(model, apiKey, base string) CLIToolConfig {
 	env := fmt.Sprintf("export OPENAI_BASE_URL=%q\n", base)
 	env += fmt.Sprintf("export OPENAI_API_KEY=%q\n", apiKey)
 	env += fmt.Sprintf("export OPENAI_MODEL=%q\n", model)
-	return CLIToolConfig{EnvBlock: env, ConfigPath: "", ConfigContent: "", RunCommand: fmt.Sprintf("<your-cli> --base-url %q --api-key %q --model %q", base, apiKey, model)}
+	return CLIToolConfig{EnvBlock: env, ConfigPath: "", RunCommand: fmt.Sprintf("<your-cli> --model %q", model)}
 }

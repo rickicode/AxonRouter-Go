@@ -846,6 +846,33 @@ export const modelsApi = {
 };
 
 // CLI Tools model picker + generated config snippets for external AI CLIs
+export interface DefaultModel {
+  id: string;
+  name: string;
+  alias: string;
+  envKey?: string;
+  defaultValue?: string;
+}
+
+export interface GuideStep {
+  step: number;
+  title: string;
+  desc?: string;
+  value?: string;
+  copyable?: boolean;
+  type?: string;
+}
+
+export interface CodeBlock {
+  language: string;
+  code: string;
+}
+
+export interface Note {
+  type: string;
+  text: string;
+}
+
 export interface CLITool {
   id: string;
   name: string;
@@ -854,6 +881,11 @@ export interface CLITool {
   color: string;
   configType: "env" | "custom" | "guide";
   docsUrl: string;
+  modelAliases?: string[];
+  defaultModels?: DefaultModel[];
+  guideSteps?: GuideStep[];
+  codeBlock?: CodeBlock;
+  notes?: Note[];
 }
 
 export interface CLIToolStatus {
@@ -871,6 +903,7 @@ export interface CLIToolSelection {
   model: string;
   apiKeyId: string;
   baseUrl: string;
+  modelAliases?: Record<string, string>;
 }
 
 export interface CLIToolConfig {
@@ -880,11 +913,6 @@ export interface CLIToolConfig {
   runCommand: string;
 }
 
-export interface CLIToolState {
-  tool: CLITool;
-  selection: CLIToolSelection;
-  defaultBaseUrl: string;
-}
 
 export interface CLIToolSavedResponse {
   selection: CLIToolSelection;
