@@ -65,6 +65,7 @@ func (h *Handler) Responses(c *gin.Context) {
 
 	maxAttempts := 3
 	var lastConn *Connection
+	var lastErr error
 	var lastErrCategory string
 	for attempt := range maxAttempts {
 		if c.Request.Context().Err() != nil {
@@ -111,6 +112,7 @@ func (h *Handler) Responses(c *gin.Context) {
 		}
 		if err != nil {
 			retry, cat := h.handleFailoverError(conn, provider, modelName, err, attempt, latency)
+			lastErr = err
 			lastErrCategory = cat
 			if !retry {
 				break
@@ -151,18 +153,37 @@ func (h *Handler) Responses(c *gin.Context) {
 	}
 	msg := "all connections exhausted or failing"
 	statusCode := http.StatusServiceUnavailable
+	errType := "server_error"
 	switch lastErrCategory {
 	case string(connstate.ErrorModelNotFound):
 		msg = "model not found: " + modelName
 		statusCode = http.StatusNotFound
+		errType = "invalid_request_error"
 	case string(connstate.ErrorAuth):
 		msg = "authentication failed for all connections"
 		statusCode = http.StatusUnauthorized
+		errType = "authentication_error"
+	case string(connstate.ErrorRateLimit):
+		statusCode = http.StatusTooManyRequests
+		errType = "rate_limit_error"
 	}
+
+	if lastErrCategory == string(connstate.ErrorRateLimit) {
+		if upErr := extractUpstreamError(lastErr); upErr != nil {
+			msg = extractErrorMessage(upErr.Body)
+			if msg == "" {
+				msg = upErr.Error()
+			}
+		}
+		if msg == "" || msg == "all connections exhausted or failing" {
+			msg = "rate limit exceeded for all connections"
+		}
+	}
+
 	detail := gin.H{"provider": provider, "model": modelName}
 	if lastConn != nil {
 		detail["name"] = lastConn.Name
 	}
 	logging.Logger.Error(msg, "provider", provider, "model", modelName, "category", lastErrCategory)
-	c.JSON(statusCode, gin.H{"error": gin.H{"message": msg, "type": "server_error", "detail": detail}})
+	c.JSON(statusCode, gin.H{"error": gin.H{"message": msg, "type": errType, "detail": detail}})
 }
