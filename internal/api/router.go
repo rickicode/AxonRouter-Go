@@ -314,9 +314,10 @@ func New(cfg Config) *Router {
 		c.JSON(http.StatusOK, gin.H{"data": v1H.ListModels()})
 	})
 	cliToolsH := admin.NewCLIToolsHandler(cfg.DB, modelLister)
-	adminGroup.GET("/cli-tools", cliToolsH.ListTools)
-	adminGroup.GET("/cli-tools/:toolId", cliToolsH.GetConfig)
-	adminGroup.POST("/cli-tools/:toolId", cliToolsH.SaveConfig)
+adminGroup.GET("/cli-tools", cliToolsH.ListTools)
+adminGroup.GET("/cli-tools/statuses", cliToolsH.AllStatuses)
+adminGroup.GET("/cli-tools/:toolId", cliToolsH.GetConfig)
+adminGroup.POST("/cli-tools/:toolId", cliToolsH.SaveConfig)
 
 	// Compression & Cache
 	adminGroup.GET("/settings/compression", optimizationH.GetCompressionSettings)
