@@ -3,7 +3,6 @@
   import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Label } from '$lib/components/ui/label';
-  import { Input } from '$lib/components/ui/input';
   import { Textarea } from '$lib/components/ui/textarea';
   import { Switch } from '$lib/components/ui/switch';
   import * as Select from '$lib/components/ui/select';
@@ -20,14 +19,13 @@
   let loading = $state(false);
   let saving = $state(false);
 
-  // Local lite config state — clean, no getter/setter hacks
   let liteCollapse = $state(true);
   let liteImageUrls = $state(true);
   let liteRedundant = $state(false);
   let liteDedup = $state(false);
 
   onMount(async () => {
-    document.title = 'Context & Cache — AxonRouter';
+    document.title = 'Optimization — AxonRouter';
     await Promise.all([loadCompression(), loadCacheStats()]);
   });
 
@@ -103,16 +101,16 @@
 
 <div class="flex flex-1 flex-col gap-6 p-6">
   <div class="space-y-1">
-    <h1 class="text-display-lg">Context & Cache</h1>
+    <h1 class="text-display-lg">Optimization.</h1>
     <p class="text-body-sm text-muted-foreground">
-      Configure request compression and response caching for token savings.
+      Token compression and response caching to reduce upstream costs.
     </p>
   </div>
 
-  <!-- Tab Switcher — simple buttons, no component dependency -->
+  <!-- Tab Switcher -->
   <div class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-1">
     <button
-      class="rounded-md px-4 py-1.5 text-sm font-medium transition-all {activeTab === 'compression'
+      class="cursor-pointer rounded-md px-4 py-1.5 text-sm font-medium transition-all {activeTab === 'compression'
         ? 'bg-background text-foreground shadow-sm'
         : 'text-muted-foreground hover:text-foreground'}"
       onclick={() => (activeTab = 'compression')}
@@ -120,7 +118,7 @@
       Compression
     </button>
     <button
-      class="rounded-md px-4 py-1.5 text-sm font-medium transition-all {activeTab === 'cache'
+      class="cursor-pointer rounded-md px-4 py-1.5 text-sm font-medium transition-all {activeTab === 'cache'
         ? 'bg-background text-foreground shadow-sm'
         : 'text-muted-foreground hover:text-foreground'}"
       onclick={() => (activeTab = 'cache')}
@@ -130,7 +128,6 @@
   </div>
 
   {#if activeTab === 'compression'}
-    <!-- Compression Tab -->
     <div class="space-y-4">
       <Card class="shadow-card">
         <CardHeader class="pb-3">
@@ -232,7 +229,6 @@
       </Card>
     </div>
   {:else}
-    <!-- Cache Tab -->
     <div class="space-y-4">
       <Card class="shadow-card">
         <CardHeader class="pb-3">

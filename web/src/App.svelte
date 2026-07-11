@@ -21,7 +21,7 @@
   import ProxyPools from './pages/ProxyPools.svelte';
   import ProxyPoolDetail from './pages/ProxyPoolDetail.svelte';
   import APIKeys from './pages/APIKeys.svelte';
-  import Context from './pages/Context.svelte';
+  import Optimization from './pages/Optimization.svelte';
 
   let cleanup: (() => void) | undefined;
 
@@ -84,8 +84,8 @@
     // /api-keys → APIKeys
     if (segments[0] === 'api-keys') return { component: APIKeys, params: {} };
 
-    // /context → Context & Cache
-    if (segments[0] === 'context' && segments.length === 1) return { component: Context, params: {} };
+    // /optimization → Optimization
+    if (segments[0] === 'optimization' && segments.length === 1) return { component: Optimization, params: {} };
 
     // Fallback
     return { component: Dashboard, params: {} };

@@ -5,7 +5,7 @@ import "context"
 // convertKiroResponseToOpenAIStream converts Kiro streaming chunks to OpenAI format.
 // Kiro uses OpenAI format natively, so this is a passthrough.
 func convertKiroResponseToOpenAIStream(_ context.Context, _ string, _, _, rawChunk []byte, _ *any) [][]byte {
-	return [][]byte{rawChunk}
+	return [][]byte{append(rawChunk, "\n\n"...)}
 }
 
 // convertKiroResponseToOpenAINonStream converts a complete Kiro response to OpenAI format.

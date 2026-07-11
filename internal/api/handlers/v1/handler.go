@@ -520,22 +520,27 @@ func (h *Handler) handleFailoverError(conn *Connection, provider, modelName stri
 	det := connstate.DetectError(0, "", err, provider, modelName, nil)
 	if det.Category == connstate.ErrorRateLimit {
 		h.exhaustion.MarkExhausted(conn.ID, quota.DefaultExhaustionTTL)
-	} else if det.Category == connstate.ErrorQuota && det.CooldownUntil != nil {
-		h.exhaustion.MarkExhausted(conn.ID, time.Until(*det.CooldownUntil))
+	} else if det.Category == connstate.ErrorQuota {
+		ttl := 24 * time.Hour // fallback for daily quotas
+		if det.CooldownUntil != nil {
+			ttl = time.Until(*det.CooldownUntil)
+		}
+		h.exhaustion.MarkExhausted(conn.ID, ttl)
 	}
 	h.combo.RecordFailure(conn.ID, det)
 	h.persistCooldown(conn.ID, det)
 	h.elig.Update(h.store)
 	h.checkAutoDisable(conn.ID, provider)
 
-	logging.Logger.Error("upstream error, trying next connection",
+	logging.Logger.Error("failover: akun exhausted, ganti akun",
 		"provider", provider,
-		"conn", conn.ID[:8],
 		"name", conn.Name,
+		"conn", conn.ID[:8],
 		"model", modelName,
-		"error", det.Category,
-		"detail", err.Error(),
+		"category", string(det.Category),
+		"cooldown_until", det.CooldownUntil,
 		"attempt", attempt+1,
+		"error", err.Error(),
 	)
 
 	h.tracker.Log(&usage.LogEntry{
@@ -639,7 +644,6 @@ func (h *Handler) streamResponse(
 			translatedChunks := registry.Response(ctx, string(providerFormat), string(clientFormat), model, originalReq, translatedReq, chunk.Payload, nil)
 		for _, tc := range translatedChunks {
 				c.Writer.Write(tc)
-				c.Writer.Write([]byte("\n\n"))
 				flusher.Flush()
 			}
 			lastChunk = chunk.Payload

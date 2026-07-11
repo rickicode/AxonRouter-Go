@@ -78,7 +78,7 @@ func (r *Registry) TranslateStream(ctx context.Context, from, to types.Format, m
 	if fn != nil {
 		return fn(ctx, model, originalReq, translatedReq, rawChunk, param)
 	}
-	return [][]byte{rawChunk}
+	return [][]byte{append(rawChunk, "\n\n"...)}
 }
 
 // TranslateNonStream translates a non-streaming response body.

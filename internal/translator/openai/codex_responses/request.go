@@ -27,7 +27,7 @@ func openaiToCodexRequest(model string, rawJSON []byte, stream bool) []byte {
 }
 
 func passthroughStream(_ context.Context, _ string, _, _, rawChunk []byte, _ *any) [][]byte {
-	return [][]byte{rawChunk}
+	return [][]byte{append(rawChunk, "\n\n"...)}
 }
 
 func passthroughNonStream(_ context.Context, _ string, _, _, rawResponse []byte, _ *any) []byte {

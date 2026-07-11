@@ -20,7 +20,7 @@
     { href: '/providers', label: 'Providers', icon: Server },
     { href: '/combos', label: 'Combos', icon: Layers },
     { href: '/quota', label: 'Quota', icon: Gauge },
-    { href: '/context', label: 'Context & Cache', icon: MessageSquare },
+    { href: '/optimization', label: 'Optimization', icon: Layers },
     { href: '/logs', label: 'Logs', icon: Terminal },
   ];
 
