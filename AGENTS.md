@@ -183,3 +183,40 @@ Semua dashboard pages HARUS menggunakan layout pattern yang sama. JANGAN buat `m
 - `Providers.svelte` — gold standard layout
 - `Combos.svelte` — card grid pattern
 - `Logs.svelte` — table + filters pattern
+
+## Todo Tracking (Wajib)
+Untuk setiap pekerjaan yang terdiri dari beberapa langkah atau lebih dari satu file, SELALU
+buat dan update daftar tugas dengan tool `todo`:
+1. Inisialisasi task list sebelum mulai bekerja.
+2. Tandai task sebagai `in_progress` saat sedang dikerjakan.
+3. Tandai task sebagai `done` segera setelah selesai.
+4. Jangan hapus atau abaikan todo list sampai seluruh pekerjaan selesai.
+
+## Code dari Sesi Lain (Jangan Sentuh)
+Jika ada kode yang diedit di working tree/repository tetapi bukan kamu yang
+melakukannya di sesi ini, anggap itu kode dari sesi lain:
+- **JANGAN ubah, hapus, atau refactor** kode tersebut.
+- **JANGAN ikut commit** kode tersebut tanpa izin eksplisit dari user.
+- Jika memang **sangat dibutuhkan** (misal: kode yang baru saja kamu tulis
+  bergantung padanya atau crash), ubah seperlunya dan catat alasan spesifik
+  dalam commit message maupun komentar di kode.
+- Ketika harus menyentuhnya, tulis `NOTE: <kenapa disentuh>` di commit message
+  dan/atau di file yang diubah.
+
+## Cek Status Git Sebelum Edit (Hindari Bentrok)
+Sebelum menyentuh file apa pun, SELALU cek status repository:
+1. Jalankan `git status --short` atau `git diff --name-only`.
+2. File yang statusnya **M** (modified), **A** (added), atau **D** (deleted)
+   tetapi bukan kamu yang ubah di sesi ini = kode dari sesi lain. **Hands-off**.
+3. Kamu hanya boleh edit file yang:
+   - masih bersih di status git, atau
+   - memang sudah kamu ubah sendiri di sesi ini.
+4. Jika kode baru yang kamu tulis terpaksa butuh menyentuh file sesi lain,
+   lakukan perubahan **seefisien mungkin/sesuai kebutuhan**, **tambahkan komentar inline**
+   di tempat yang disentuh, dan catat alasan di commit message. Format komentar:
+   ```go
+   // NOTE: <alasan singkat kenapa kode ini disentuh>
+   ```
+   Juga tulis di commit message: `NOTE: <alasan>`.
+5. Sebelum commit, verifikasi dengan `git diff --cached --stat` agar tidak
+   ikut mencommit perubahan sesi lain.
