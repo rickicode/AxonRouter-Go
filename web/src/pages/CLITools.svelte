@@ -9,7 +9,8 @@
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { Skeleton } from '$lib/components/ui/skeleton';
   import { toast } from 'svelte-sonner';
-  import { Copy, Check, ChevronRight, ExternalLink, Search, ArrowLeft } from '@lucide/svelte';
+  import { Copy, Check, ChevronRight, ExternalLink, Search } from '@lucide/svelte';
+  import ModelPickerDialog from '$lib/components/ModelPickerDialog.svelte';
   import { cliToolsApi, modelsApi, apiKeysApi } from '$lib/api';
   import type {
     CLITool,
@@ -44,7 +45,6 @@
 
   // Model picker modal state
   let modelModalOpen = $state(false);
-  let modelSearch = $state('');
 
   const defaultBaseUrl =
     typeof window !== 'undefined' ? `${window.location.origin}/v1` : 'http://localhost:3777/v1';
@@ -153,22 +153,8 @@
   }
 
   function openModelPicker() {
-    modelSearch = '';
     modelModalOpen = true;
   }
-
-  function pickModel(modelId: string) {
-    sel.model = modelId;
-    modelModalOpen = false;
-  }
-
-  let filteredModels = $derived(
-    models.filter((m) =>
-      modelSearch
-        ? m.id.toLowerCase().includes(modelSearch.toLowerCase())
-        : true,
-    ),
-  );
 
   function getStatusBadge(toolId: string) {
     const isConfigured = statuses[toolId]?.configured;
@@ -437,40 +423,10 @@
   </Dialog.Content>
 </Dialog.Root>
 
-<!-- Model Picker Dialog -->
-<Dialog.Root bind:open={modelModalOpen}>
-  <Dialog.Content class="sm:max-w-lg max-h-[80vh] overflow-hidden flex flex-col gap-0 p-0">
-    <div class="border-b border-border p-4">
-      <Dialog.Title class="text-body-md-strong">Select model</Dialog.Title>
-      <Dialog.Description class="text-caption text-muted-foreground">
-        Browse all models available on this gateway.
-      </Dialog.Description>
-      <div class="mt-3 flex items-center gap-2">
-        <Search class="size-4 text-muted-foreground" />
-        <Input
-          bind:value={modelSearch}
-          placeholder="Search models…"
-          class="text-body-sm"
-        />
-      </div>
-    </div>
-    <ScrollArea class="flex-1 max-h-[50vh]">
-      <div class="flex flex-col">
-        {#each filteredModels as model (model.id)}
-          <button
-            class="flex items-center justify-between border-b border-border/50 px-4 py-2.5 text-left text-body-sm font-mono hover:bg-card/50 transition-colors cursor-pointer {sel.model === model.id ? 'bg-primary/5 text-primary' : ''}"
-            onclick={() => pickModel(model.id)}
-          >
-            <span class="truncate">{model.id}</span>
-            <span class="ml-2 shrink-0 text-caption text-muted-foreground">{model.owned_by}</span>
-          </button>
-        {/each}
-        {#if filteredModels.length === 0}
-          <div class="px-4 py-6 text-center text-body-sm text-muted-foreground">
-            No models found.
-          </div>
-        {/if}
-      </div>
-    </ScrollArea>
-  </Dialog.Content>
-</Dialog.Root>
+<!-- Model Picker Dialog (reusable component) -->
+<ModelPickerDialog
+  bind:open={modelModalOpen}
+  {models}
+  selectedModel={sel.model}
+  onSelect={(modelId) => (sel.model = modelId)}
+/>

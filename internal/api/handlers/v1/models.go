@@ -80,6 +80,45 @@ func (h *Handler) ListModels() []gin.H {
 	return h.buildModelList()
 }
 
+// ListActiveModels returns only models from providers that have at least one
+// connection added, plus combos and smart virtual models. Used by the dashboard
+// model picker so users only browse models they can actually route to.
+func (h *Handler) ListActiveModels() []gin.H {
+	rows, err := h.db.Query(`SELECT DISTINCT provider_type_id FROM connections`)
+	if err != nil {
+		return h.buildModelList()
+	}
+	defer rows.Close()
+	connected := make(map[string]bool)
+	for rows.Next() {
+		var p string
+		if rows.Scan(&p) == nil {
+			connected[p] = true
+		}
+	}
+
+	all := h.buildModelList()
+	var result []gin.H
+	for _, m := range all {
+		id, _ := m["id"].(string)
+		ownedBy, _ := m["owned_by"].(string)
+		// Combos and smart virtual models are always available
+		if ownedBy == "axonrouter" {
+			result = append(result, m)
+			continue
+		}
+		prefix := strings.SplitN(id, "/", 2)[0]
+		if connected[prefix] {
+			result = append(result, m)
+		}
+	}
+
+	if len(result) == 0 {
+		return all
+	}
+	return result
+}
+
 // Models handles GET /v1/models — includes combos and virtual models.
 func (h *Handler) Models(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{

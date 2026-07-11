@@ -310,9 +310,9 @@ func New(cfg Config) *Router {
 		}
 		return out
 	}
-	adminGroup.GET("/models", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"data": v1H.ListModels()})
-	})
+adminGroup.GET("/models", func(c *gin.Context) {
+c.JSON(http.StatusOK, gin.H{"data": v1H.ListActiveModels()})
+})
 	cliToolsH := admin.NewCLIToolsHandler(cfg.DB, modelLister)
 adminGroup.GET("/cli-tools", cliToolsH.ListTools)
 adminGroup.GET("/cli-tools/statuses", cliToolsH.AllStatuses)
