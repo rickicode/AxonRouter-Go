@@ -332,6 +332,7 @@ func (b *BaseExecutor) DoRequest(ctx context.Context, method, rawURL string, hea
 			"request_id", RequestIDFromContext(ctx),
 			"method", method,
 			"url", targetURL,
+			"proxy", proxyLabelFromCtx(ctx),
 			"error", err,
 		)
 		return nil, fmt.Errorf("do request: %w", err)
@@ -348,6 +349,7 @@ func (b *BaseExecutor) DoRequest(ctx context.Context, method, rawURL string, hea
 			"request_id", RequestIDFromContext(ctx),
 			"status", resp.StatusCode,
 			"url", targetURL,
+			"proxy", proxyLabelFromCtx(ctx),
 			"body", string(respBody),
 		)
 	}
@@ -438,6 +440,7 @@ func (b *BaseExecutor) DoStreamRequestWithConfig(ctx context.Context, method, ra
 			"request_id", RequestIDFromContext(ctx),
 			"method", method,
 			"host", logHost,
+			"proxy", proxyLabelFromCtx(ctx),
 			"error", err,
 		)
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -449,11 +452,11 @@ func (b *BaseExecutor) DoStreamRequestWithConfig(ctx context.Context, method, ra
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
 		errBody, _ := io.ReadAll(resp.Body)
-		fetchCancel()
 		logging.Logger.Error("upstream error response",
 			"request_id", RequestIDFromContext(ctx),
 			"status", resp.StatusCode,
 			"host", logHost,
+			"proxy", proxyLabelFromCtx(ctx),
 			"body", string(errBody),
 		)
 		return nil, &UpstreamError{
