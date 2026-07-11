@@ -1,4 +1,4 @@
-package executor
+package providers
 
 import (
 	"encoding/json"
@@ -8,7 +8,7 @@ import (
 func TestTranslateCloudflareError_ContextLength(t *testing.T) {
 	raw := `{"errors":[{"message":"AiError: AiError: {\"object\":\"error\",\"message\":\"Requested token count exceeds the model's maximum context length of 262144 tokens. You requested a total of 263925 tokens: 199925 tokens from the input messages and 64000 tokens for the completion. Please reduce the number of tokens in the input messages or the completion to fit within the limit.\",\"type\":\"BadRequestError\",\"param\":null,\"code\":400} (82a04848-3949-4645-83f0-94050e19f74b)","code":8007}],"success":false,"result":{},"messages":[]}`
 
-	got := translateCloudflareError(400, []byte(raw))
+	got := TranslateCloudflare(400, []byte(raw))
 	if got == nil {
 		t.Fatal("expected translated error, got nil")
 	}
@@ -39,7 +39,7 @@ func TestTranslateCloudflareError_ContextLength(t *testing.T) {
 func TestTranslateCloudflareError_ModelNotFound(t *testing.T) {
 	raw := `{"errors":[{"message":"AiError: {\"object\":\"error\",\"message\":\"model not found\",\"type\":\"NotFoundError\",\"param\":null,\"code\":404}","code":7001}],"success":false,"result":{},"messages":[]}`
 
-	got := translateCloudflareError(404, []byte(raw))
+	got := TranslateCloudflare(404, []byte(raw))
 	if got == nil {
 		t.Fatal("expected translated error, got nil")
 	}
@@ -58,7 +58,7 @@ func TestTranslateCloudflareError_ModelNotFound(t *testing.T) {
 }
 
 func TestTranslateCloudflareError_NonCloudflare(t *testing.T) {
-	if got := translateCloudflareError(400, []byte(`{"error":"plain"}`)); got != nil {
+	if got := TranslateCloudflare(400, []byte(`{"error":"plain"}`)); got != nil {
 		t.Errorf("expected nil for non-CF body, got %s", string(got))
 	}
 }

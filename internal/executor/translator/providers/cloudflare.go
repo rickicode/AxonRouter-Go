@@ -1,4 +1,4 @@
-package executor
+package providers
 
 import (
 	"encoding/json"
@@ -8,14 +8,14 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// translateCloudflareError converts a Cloudflare Workers AI error body like:
+// TranslateCloudflare converts a Cloudflare Workers AI error body like:
 //
-//	{"errors":[{"message":"AiError: AiError: {\"object\":\"error\",\"message\":\"...\",\"type\":\"BadRequestError\",\"param\":null,\"code\":400} (uuid)","code":8007}],"success":false,\"result\":{},\"messages\":[]}
+//	{"errors":[{"message":"AiError: AiError: {\"object\":\"error\",\"message\":\"...\",\"type\":\"BadRequestError\",\"param\":null,\"code\":400} (uuid)","code":8007}],"success":false,"result":{},"messages":[]}
 //
 // into an OpenAI-compatible error JSON:
 //
 //	{"error":{"message":"...","type":"invalid_request_error","param":null,"code":"context_length_exceeded"}}
-func translateCloudflareError(statusCode int, raw []byte) []byte {
+func TranslateCloudflare(statusCode int, raw []byte) []byte {
 	if !gjson.ValidBytes(raw) {
 		return nil
 	}
@@ -59,7 +59,7 @@ func translateCloudflareError(statusCode int, raw []byte) []byte {
 	case "NotFoundError":
 		oai["type"] = "not_found_error"
 	case "RateLimitError":
-		oai["type"] = "rate_limit_exceeded"
+		oai["type"] = "rate_limit_error"
 	default:
 		if statusCode >= 500 {
 			oai["type"] = "server_error"
@@ -72,19 +72,20 @@ func translateCloudflareError(statusCode int, raw []byte) []byte {
 		oai["param"] = *cf.Param
 	}
 
-	oai["code"] = inferOpenAICode(statusCode, cf.Message, oai["type"].(string))
+	oai["code"] = inferCloudflareOpenAICode(statusCode, cf.Message, oai["type"].(string))
 
 	out := map[string]any{"error": oai}
 	b, _ := json.Marshal(out)
 	return b
 }
 
-func inferOpenAICode(statusCode int, message, oaiType string) string {
+func inferCloudflareOpenAICode(statusCode int, message, oaiType string) string {
 	lower := strings.ToLower(message)
 	switch {
 	case strings.Contains(lower, "maximum context length") ||
 		strings.Contains(lower, "context length") ||
-		strings.Contains(lower, "exceeds the model's maximum"):
+		strings.Contains(lower, "exceeds the model's maximum") ||
+		strings.Contains(lower, "token count exceeds"):
 		return "context_length_exceeded"
 	case strings.Contains(lower, "model not found") ||
 		strings.Contains(lower, "no such model") ||
@@ -116,7 +117,7 @@ func inferOpenAICode(statusCode int, message, oaiType string) string {
 		return "permission_error"
 	case "not_found_error":
 		return "model_not_found"
-	case "rate_limit_exceeded":
+	case "rate_limit_error":
 		return "rate_limit_exceeded"
 	default:
 		return "server_error"

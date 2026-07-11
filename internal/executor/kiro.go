@@ -2,7 +2,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 )
 
 // KiroExecutor handles AWS Kiro API.
@@ -39,7 +38,14 @@ func (e *KiroExecutor) Execute(ctx context.Context, req *Request) (*Response, er
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("kiro error %d: %s", resp.StatusCode, string(resp.Body))
+		upErr := &UpstreamError{
+			StatusCode: resp.StatusCode,
+			Body:       resp.Body,
+			RawBody:    resp.Body,
+			Headers:    resp.Headers,
+		}
+		upErr.TranslateErrorBody(req.Provider)
+		return nil, upErr
 	}
 
 	return resp, nil

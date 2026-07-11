@@ -512,6 +512,35 @@ func extractOAuthErrorCodeFromParsed(raw any, depth int) string {
 	return ""
 }
 
+// extractUpstreamError unwraps an *executor.UpstreamError from err.
+func extractUpstreamError(err error) *executor.UpstreamError {
+	if err == nil {
+		return nil
+	}
+	var upErr *executor.UpstreamError
+	if errors.As(err, &upErr) {
+		return upErr
+	}
+	return nil
+}
+
+// extractErrorMessage extracts the .error.message string from an OpenAI-style
+// error body. Returns "" for invalid or non-JSON bodies.
+func extractErrorMessage(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return ""
+	}
+	return envelope.Error.Message
+}
+
 // isAuthError checks if an error indicates an authentication failure (401/403).
 // Used for reactive retry: refresh token and retry once on auth errors.
 func isAuthError(err error) bool {
@@ -779,7 +808,9 @@ func (h *Handler) streamResponse(
 			}
 
 			if chunk.Err != nil {
-				c.Writer.Write([]byte("event: error\ndata: "))
+				// Keep errors inside OpenAI-compatible `data:` events so standard
+				// clients can surface them; avoid non-standard `event: error`.
+				c.Writer.Write([]byte("data: "))
 				c.Writer.Write(errFormatter(chunk.Err))
 				c.Writer.Write([]byte("\n\n"))
 				c.Writer.Write([]byte("data: [DONE]\n\n"))

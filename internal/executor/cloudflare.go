@@ -49,7 +49,5 @@ func translateIfCloudflare(err error) {
 	if !ok {
 		return
 	}
-	if translated := translateCloudflareError(upErr.StatusCode, upErr.RawBody); translated != nil {
-		upErr.Body = translated
-	}
+	upErr.TranslateErrorBody("cf")
 }

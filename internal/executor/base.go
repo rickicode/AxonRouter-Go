@@ -435,6 +435,7 @@ func (b *BaseExecutor) DoStreamRequestWithConfig(ctx context.Context, method, ra
 			StatusCode: resp.StatusCode,
 			Body:       errBody,
 			RawBody:    errBody,
+			Headers:    resp.Header,
 		}
 	}
 

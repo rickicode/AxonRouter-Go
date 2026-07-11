@@ -47,6 +47,9 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 
 	streamResult, err := e.DoStreamRequest(ctx, "POST", url, headers, body)
 	if err != nil {
+		if upErr, ok := err.(*UpstreamError); ok {
+			upErr.TranslateErrorBody(req.Provider)
+		}
 		return nil, err
 	}
 
@@ -99,5 +102,11 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, req *Request) (*Strea
 		headers["Authorization"] = "Bearer " + req.APIKey
 	}
 
-	return e.DoStreamRequest(ctx, "POST", url, headers, body)
+	result, err := e.DoStreamRequest(ctx, "POST", url, headers, body)
+	if err != nil {
+		if upErr, ok := err.(*UpstreamError); ok {
+			upErr.TranslateErrorBody(req.Provider)
+		}
+	}
+	return result, err
 }

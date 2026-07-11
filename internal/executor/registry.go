@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+
+	"github.com/rickicode/AxonRouter-Go/internal/executor/translator"
+	"github.com/rickicode/AxonRouter-Go/internal/executor/translator/providers"
 )
 
 // ProviderFormat identifies the native API format of a provider.
@@ -102,6 +105,14 @@ func RegisterDefaults() {
 	// Cloudflare Workers AI uses dedicated executor for sanitization.
 	cfExec := NewCloudflareExecutor(openaiExec)
 	GetRegistry().Register("cf", FormatOpenAI, cfExec)
+	translator.Register("cf", translator.Func(providers.TranslateCloudflare))
+
+	// Provider-specific error translators.
+	translator.Register("claude", translator.Func(providers.TranslateClaude))
+	translator.Register("zai", translator.Func(providers.TranslateClaude))
+	translator.Register("gemini", translator.Func(providers.TranslateGemini))
+	translator.Register("ag", translator.Func(providers.TranslateAntigravity))
+
 
 	// Claude + compatible providers
 	claudeExec := NewClaudeExecutor(base)

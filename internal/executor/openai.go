@@ -245,11 +245,14 @@ func (e *OpenAIExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, &UpstreamError{
+		upErr := &UpstreamError{
 			StatusCode: resp.StatusCode,
 			Body:       resp.Body,
 			RawBody:    resp.Body,
+			Headers:    resp.Headers,
 		}
+		upErr.TranslateErrorBody(req.Provider)
+		return nil, upErr
 	}
 
 	return resp, nil

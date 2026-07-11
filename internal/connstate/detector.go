@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/tidwall/gjson"
 )
 
 // ErrorCategory classifies the type of error for circuit breaker decisions.
@@ -64,6 +65,9 @@ func DetectError(statusCode int, body string, err error, providerPrefix string, 
 		if len(msg) == 0 {
 			msg = string(upErr.Body)
 		}
+		if headers == nil {
+			headers = upErr.Headers
+		}
 	}
 	cat := d.ClassifyFromMessage(msg)
 	if statusCode > 0 {
@@ -87,6 +91,11 @@ func DetectError(statusCode int, body string, err error, providerPrefix string, 
 				if seconds, err2 := strconv.Atoi(retryAfter); err2 == nil && seconds > 0 {
 					cooldown = time.Duration(seconds) * time.Second
 				}
+			}
+		}
+		if cooldown == 60*time.Second && msg != "" {
+			if retryBody := parseRetryAfterFromBody(msg); retryBody > 0 {
+				cooldown = time.Duration(retryBody) * time.Second
 			}
 		}
 		until := time.Now().Add(cooldown)
@@ -204,6 +213,17 @@ func containsAny(msg string, patterns ...string) bool {
 		}
 	}
 	return false
+}
+
+// parseRetryAfterFromBody looks for retry_after / retryAfter values inside
+// provider error JSON (e.g. {"retry_after": 120}) and returns seconds.
+func parseRetryAfterFromBody(body string) int {
+	for _, path := range []string{"retry_after", "retryAfter", "error.retry_after", "error.retryAfter"} {
+		if val := gjson.Get(body, path).Int(); val > 0 {
+			return int(val)
+		}
+	}
+	return 0
 }
 
 // nextMidnightUTC returns the next 00:00 UTC time (midnight).

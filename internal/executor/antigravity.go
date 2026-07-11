@@ -127,7 +127,14 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, req *Request) (*Respo
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("antigravity error %d: %s", resp.StatusCode, string(resp.Body))
+		upErr := &UpstreamError{
+			StatusCode: resp.StatusCode,
+			Body:       resp.Body,
+			RawBody:    resp.Body,
+			Headers:    resp.Headers,
+		}
+		upErr.TranslateErrorBody(req.Provider)
+		return nil, upErr
 	}
 
 	return resp, nil

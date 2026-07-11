@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"github.com/rickicode/AxonRouter-Go/internal/executor/translator/providers"
 )
 
 // ClaudeExecutor handles Anthropic Claude API.
@@ -127,11 +125,14 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, &UpstreamError{
+		upErr := &UpstreamError{
 			StatusCode: resp.StatusCode,
-			Body:       providers.TranslateClaude(resp.StatusCode, resp.Body),
+			Body:       resp.Body,
 			RawBody:    resp.Body,
+			Headers:    resp.Headers,
 		}
+		upErr.TranslateErrorBody(req.Provider)
+		return nil, upErr
 	}
 
 	return resp, nil
@@ -164,7 +165,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 	result, err := e.DoStreamRequest(ctx, "POST", url, headers, body)
 	if err != nil {
 		if upErr, ok := err.(*UpstreamError); ok {
-			upErr.Body = providers.TranslateClaude(upErr.StatusCode, upErr.RawBody)
+			upErr.TranslateErrorBody(req.Provider)
 		}
 	}
 	return result, err
