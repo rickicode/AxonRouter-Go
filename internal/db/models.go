@@ -226,6 +226,10 @@ type ProxyPool struct {
 	LastTestedAt   sql.NullString `json:"lastTestedAt"`
 	LastError      sql.NullString `json:"lastError"`
 	ResponseTimeMs sql.NullInt64  `json:"responseTimeMs"`
+	ProxyIP        string         `json:"proxyIp"`
+	ProxyCountry   string         `json:"proxyCountry"`
+	ProxyCity      string         `json:"proxyCity"`
+	ProxyOrg       string         `json:"proxyOrg"`
 	CreatedAt      int64          `json:"createdAt"`
 	UpdatedAt      int64          `json:"updatedAt"`
 }

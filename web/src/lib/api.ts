@@ -621,8 +621,11 @@ export interface ProxyPool {
   lastTestedAt: string | null;
   lastError: string | null;
   responseTimeMs: number | null;
+  proxyIp?: string;
+  proxyCountry?: string;
+  proxyCity?: string;
+  proxyOrg?: string;
   createdAt: number;
-  updatedAt: number;
 }
 
 export interface ProxyGroup {
@@ -847,9 +850,21 @@ export interface CLITool {
   id: string;
   name: string;
   description: string;
-  icon: string;
-  configKind: "json" | "toml" | "yaml" | "env";
+  image: string;
+  color: string;
+  configType: "env" | "custom" | "guide";
   docsUrl: string;
+}
+
+export interface CLIToolStatus {
+  configured: boolean;
+}
+
+export interface CLIToolState {
+  tool: CLITool;
+  selection: CLIToolSelection;
+  defaultBaseUrl: string;
+  configured: boolean;
 }
 
 export interface CLIToolSelection {
@@ -878,6 +893,7 @@ export interface CLIToolSavedResponse {
 
 export const cliToolsApi = {
   list: () => fetchApi<{ data: CLITool[] }>("/cli-tools"),
+  statuses: () => fetchApi<Record<string, CLIToolStatus>>("/cli-tools/statuses"),
   get: (toolId: string) => fetchApi<CLIToolState>(`/cli-tools/${toolId}`),
   save: (toolId: string, data: CLIToolSelection & { apiKeyValue?: string }) =>
     fetchApi<CLIToolSavedResponse>(`/cli-tools/${toolId}`, { method: "POST", body: JSON.stringify(data) }),

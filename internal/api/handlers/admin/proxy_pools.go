@@ -53,7 +53,7 @@ func (h *ProxyPoolHandler) List(c *gin.Context) {
 
 	var total int
 	_ = h.db.QueryRow("SELECT COUNT(*) FROM proxy_pools WHERE "+where, args...).Scan(&total)
-	rows, err := h.db.Query(`SELECT id, name, type, proxy_url, no_proxy, relay_auth, is_active, test_status, last_tested_at, last_error, response_time_ms, created_at, updated_at FROM proxy_pools WHERE `+where+` ORDER BY created_at DESC LIMIT ? OFFSET ?`, append(args, perPage, (page-1)*perPage)...)
+	rows, err := h.db.Query(`SELECT id, name, type, proxy_url, no_proxy, relay_auth, is_active, test_status, last_tested_at, last_error, response_time_ms, proxy_ip, proxy_country, proxy_city, proxy_org, created_at, updated_at FROM proxy_pools WHERE `+where+` ORDER BY created_at DESC LIMIT ? OFFSET ?`, append(args, perPage, (page-1)*perPage)...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -366,7 +366,7 @@ func (h *ProxyPoolHandler) HealthRun(c *gin.Context) {
 }
 
 func (h *ProxyPoolHandler) get(id string) (db.ProxyPool, bool) {
-	row := h.db.QueryRow(`SELECT id, name, type, proxy_url, no_proxy, relay_auth, is_active, test_status, last_tested_at, last_error, response_time_ms, created_at, updated_at FROM proxy_pools WHERE id = ?`, id)
+	row := h.db.QueryRow(`SELECT id, name, type, proxy_url, no_proxy, relay_auth, is_active, test_status, last_tested_at, last_error, response_time_ms, proxy_ip, proxy_country, proxy_city, proxy_org, created_at, updated_at FROM proxy_pools WHERE id = ?`, id)
 	p, ok := scanPool(row)
 	return p, ok
 }
@@ -376,7 +376,7 @@ type rowScanner interface{ Scan(dest ...any) error }
 func scanPool(row rowScanner) (db.ProxyPool, bool) {
 	var p db.ProxyPool
 	var active int
-	if err := row.Scan(&p.ID, &p.Name, &p.Type, &p.ProxyURL, &p.NoProxy, &p.RelayAuth, &active, &p.TestStatus, &p.LastTestedAt, &p.LastError, &p.ResponseTimeMs, &p.CreatedAt, &p.UpdatedAt); err != nil {
+	if err := row.Scan(&p.ID, &p.Name, &p.Type, &p.ProxyURL, &p.NoProxy, &p.RelayAuth, &active, &p.TestStatus, &p.LastTestedAt, &p.LastError, &p.ResponseTimeMs, &p.ProxyIP, &p.ProxyCountry, &p.ProxyCity, &p.ProxyOrg, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return p, false
 	}
 	p.IsActive = active != 0
@@ -384,7 +384,7 @@ func scanPool(row rowScanner) (db.ProxyPool, bool) {
 }
 
 func poolJSON(p db.ProxyPool) gin.H {
-	return gin.H{"id": p.ID, "name": p.Name, "type": p.Type, "proxyUrl": p.ProxyURL, "noProxy": p.NoProxy, "relayAuth": p.RelayAuth, "isActive": p.IsActive, "testStatus": p.TestStatus, "lastTestedAt": nullString(p.LastTestedAt), "lastError": nullString(p.LastError), "responseTimeMs": nullInt(p.ResponseTimeMs), "createdAt": p.CreatedAt, "updatedAt": p.UpdatedAt}
+	return gin.H{"id": p.ID, "name": p.Name, "type": p.Type, "proxyUrl": p.ProxyURL, "noProxy": p.NoProxy, "relayAuth": p.RelayAuth, "isActive": p.IsActive, "testStatus": p.TestStatus, "lastTestedAt": nullString(p.LastTestedAt), "lastError": nullString(p.LastError), "responseTimeMs": nullInt(p.ResponseTimeMs), "proxyIp": p.ProxyIP, "proxyCountry": p.ProxyCountry, "proxyCity": p.ProxyCity, "proxyOrg": p.ProxyOrg, "createdAt": p.CreatedAt, "updatedAt": p.UpdatedAt}
 }
 
 func nullString(v sql.NullString) any {
