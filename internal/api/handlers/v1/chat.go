@@ -95,7 +95,23 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		if conn.ProviderSpecificData != "" {
 			json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap)
 		}
-		logArgs := []any{"model", model, "provider", provider, "conn", conn.ID[:8], "name", conn.Name, "attempt", attempt + 1}
+
+		// Resolve proxy config early so we can log it
+		var proxyCfg executor.ProxyConfig
+		if h.resolver != nil {
+			resolved := h.resolver.Resolve(conn.ProviderSpecificData, conn.Provider)
+			proxyCfg = executor.ProxyConfig{
+				Enabled:     resolved.Enabled,
+				ProxyURL:    resolved.ProxyURL,
+				NoProxy:     resolved.NoProxy,
+				RelayURL:    resolved.RelayURL,
+				RelayAuth:   resolved.RelayAuth,
+				RelayType:   resolved.RelayType,
+				StrictProxy: resolved.StrictProxy,
+			}
+		}
+
+		logArgs := []any{"model", model, "provider", provider, "conn", conn.ID[:8], "name", conn.Name, "attempt", attempt + 1, "proxy", proxyCfg.ProxyLabel()}
 		if accountID := psdMap["accountId"]; accountID != "" {
 			logArgs = append(logArgs, "account_id", accountID)
 		}
@@ -114,7 +130,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 			ProviderSpecificData: psdMap,
 		}
 
-		proxyCtx := h.proxyContext(c.Request.Context(), conn)
+		proxyCtx := executor.ContextWithProxy(c.Request.Context(), proxyCfg)
 		resp, streamResult, err := h.executeDirect(proxyCtx, exec, req)
 		latency := time.Since(start).Milliseconds()
 		if resp != nil {

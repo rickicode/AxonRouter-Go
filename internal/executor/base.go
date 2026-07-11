@@ -130,6 +130,29 @@ type ProxyConfig struct {
 	StrictProxy bool
 }
 
+// ProxyLabel returns a human-readable proxy description for logging.
+func (c ProxyConfig) ProxyLabel() string {
+	if c.RelayURL != "" {
+		host := c.RelayURL
+		if parsed, err := url.Parse(c.RelayURL); err == nil && parsed.Host != "" {
+			host = parsed.Host
+		}
+		return "relay/" + c.RelayType + " " + host
+	}
+	if c.ProxyURL != "" {
+		return "http " + c.ProxyURL
+	}
+	return "direct"
+}
+
+// proxyLabelFromCtx extracts the proxy label from context for logging.
+func proxyLabelFromCtx(ctx context.Context) string {
+	if cfg, ok := ctx.Value(proxyContextKey{}).(ProxyConfig); ok {
+		return cfg.ProxyLabel()
+	}
+	return "direct"
+}
+
 func ContextWithProxy(ctx context.Context, cfg ProxyConfig) context.Context {
 	if !cfg.Enabled && cfg.RelayURL == "" {
 		return ctx
@@ -300,6 +323,7 @@ func (b *BaseExecutor) DoRequest(ctx context.Context, method, rawURL string, hea
 		"request_id", RequestIDFromContext(ctx),
 		"method", method,
 		"url", targetURL,
+		"proxy", proxyLabelFromCtx(ctx),
 	)
 
 	resp, err := client.Do(req)
@@ -400,6 +424,7 @@ func (b *BaseExecutor) DoStreamRequestWithConfig(ctx context.Context, method, ra
 		"request_id", RequestIDFromContext(ctx),
 		"method", method,
 		"host", logHost,
+		"proxy", proxyLabelFromCtx(ctx),
 	)
 
 	resp, err := client.Do(req)
