@@ -75,29 +75,48 @@
     loadAll();
   });
 
-  async function loadAll() {
-    loading = true;
-    error = '';
-    try {
-      const [poolsRes, groupsRes, provRes, settingsRes] = await Promise.all([
-        proxyPoolsApi.list(),
-        proxyGroupsApi.list(),
-        providersApi.list(),
-        settingsApi.list().catch(() => ({})),
-      ]);
-      pools = poolsRes.data ?? [];
-      groups = groupsRes.data ?? [];
-      providers = provRes.data ?? [];
-      // Load proxy defaults
-      const settings = ('data' in settingsRes ? (settingsRes as any).data : settingsRes) as Record<string, string>;
-      const raw = settings?.['provider_proxy_defaults'];
-      if (raw) { try { proxyDefaults = JSON.parse(raw); } catch { proxyDefaults = {}; } }
-    } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to load';
-    } finally {
-      loading = false;
-    }
-  }
+ async function loadAll(silent = false) {
+ if (silent) {
+ try {
+ const [poolsRes, groupsRes, provRes, settingsRes] = await Promise.all([
+ proxyPoolsApi.list(),
+ proxyGroupsApi.list(),
+ providersApi.list(),
+ settingsApi.list().catch(() => ({})),
+ ]);
+ pools = poolsRes.data ?? [];
+ groups = groupsRes.data ?? [];
+ providers = provRes.data ?? [];
+ const settings = ('data' in settingsRes ? (settingsRes as any).data : settingsRes) as Record<string, string>;
+ const raw = settings?.['provider_proxy_defaults'];
+ if (raw) { try { proxyDefaults = JSON.parse(raw); } catch { proxyDefaults = {}; } }
+ } catch (err) {
+ error = err instanceof Error ? err.message : 'Failed to load';
+ }
+ return;
+ }
+ loading = true;
+ error = '';
+ try {
+ const [poolsRes, groupsRes, provRes, settingsRes] = await Promise.all([
+ proxyPoolsApi.list(),
+ proxyGroupsApi.list(),
+ providersApi.list(),
+ settingsApi.list().catch(() => ({})),
+ ]);
+ pools = poolsRes.data ?? [];
+ groups = groupsRes.data ?? [];
+ providers = provRes.data ?? [];
+ // Load proxy defaults
+ const settings = ('data' in settingsRes ? (settingsRes as any).data : settingsRes) as Record<string, string>;
+ const raw = settings?.['provider_proxy_defaults'];
+ if (raw) { try { proxyDefaults = JSON.parse(raw); } catch { proxyDefaults = {}; } }
+ } catch (err) {
+ error = err instanceof Error ? err.message : 'Failed to load';
+ } finally {
+ loading = false;
+ }
+ }
 
   // --- Pool CRUD ---
   async function handleCreatePool() {
@@ -108,7 +127,7 @@
       toast.success('Proxy pool created');
       showCreatePool = false;
       poolName = ''; poolUrl = ''; poolNoProxy = '';
-      await loadAll();
+ await loadAll(true);
     } catch (err) { toast.error('Create failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
     finally { createPoolLoading = false; }
   }
@@ -127,19 +146,19 @@
       } else {
         toast.error(`Proxy failed: ${res.error || 'unknown'}`);
       }
-      await loadAll();
+ await loadAll(true);
     } catch (err) { toast.error('Test failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
   }
 
-  async function deletePool(id: string) {
-    try { await proxyPoolsApi.delete(id); toast.success('Proxy pool deleted'); await loadAll(); }
-    catch (err) { toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
-  }
+async function deletePool(id: string) {
+ try { await proxyPoolsApi.delete(id); toast.success('Proxy pool deleted'); await loadAll(true); }
+ catch (err) { toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+}
 
-  async function togglePoolActive(pool: ProxyPool) {
-    try { await proxyPoolsApi.update(pool.id, { isActive: !pool.isActive }); toast.success(pool.isActive ? 'Pool disabled' : 'Pool enabled'); await loadAll(); }
-    catch (err) { toast.error('Update failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
-  }
+async function togglePoolActive(pool: ProxyPool) {
+ try { await proxyPoolsApi.update(pool.id, { isActive: !pool.isActive }); toast.success(pool.isActive ? 'Pool disabled' : 'Pool enabled'); await loadAll(true); }
+ catch (err) { toast.error('Update failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+}
 
   // --- Group CRUD ---
   async function handleCreateGroup() {
@@ -150,7 +169,7 @@
       toast.success('Proxy group created');
       showCreateGroup = false;
       groupName = ''; groupPoolIds = [];
-      await loadAll();
+ await loadAll(true);
     } catch (err) { toast.error('Create failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
     finally { createGroupLoading = false; }
   }
@@ -178,7 +197,7 @@
       });
       toast.success('Group updated');
       showEditGroup = false;
-      await loadAll();
+ await loadAll(true);
     } catch (err) { toast.error('Update failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
     finally { editGroupLoading = false; }
   }
@@ -191,15 +210,15 @@
     }
   }
 
-  async function deleteGroup(id: string) {
-    try { await proxyGroupsApi.delete(id); toast.success('Proxy group deleted'); await loadAll(); }
-    catch (err) { toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
-  }
+async function deleteGroup(id: string) {
+ try { await proxyGroupsApi.delete(id); toast.success('Proxy group deleted'); await loadAll(true); }
+ catch (err) { toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+}
 
-  async function toggleGroupActive(group: ProxyGroup) {
-    try { await proxyGroupsApi.update(group.id, { isActive: !group.isActive }); toast.success(group.isActive ? 'Group disabled' : 'Group enabled'); await loadAll(); }
-    catch (err) { toast.error('Update failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
-  }
+async function toggleGroupActive(group: ProxyGroup) {
+ try { await proxyGroupsApi.update(group.id, { isActive: !group.isActive }); toast.success(group.isActive ? 'Group disabled' : 'Group enabled'); await loadAll(true); }
+ catch (err) { toast.error('Update failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+}
 
   // --- Assignments ---
   function setProxyDefault(providerId: string, field: 'proxyPoolId' | 'proxyGroupId', value: string) {
@@ -224,7 +243,7 @@
     try {
       const res = await proxyPoolsApi.healthRun();
       toast.success(`Health check done (${res.results?.length ?? 0} pools)`);
-      await loadAll();
+ await loadAll(true);
     } catch (err) { toast.error('Health check failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
   }
 
@@ -256,7 +275,7 @@
 			} else {
 				toast.error(`Deployed but test failed: ${res.relayTest.error}`);
 			}
-      await loadAll();
+ await loadAll(true);
     } catch (err) { toast.error('Deploy failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
     finally { deployLoading = false; }
   }
@@ -285,7 +304,7 @@
         toast.error('Bulk import finished with errors', { description: msg });
       }
       bulkText = '';
-      await loadAll();
+ await loadAll(true);
     } catch (err) {
       toast.error('Bulk import failed: ' + (err instanceof Error ? err.message : 'Unknown'));
     } finally {
