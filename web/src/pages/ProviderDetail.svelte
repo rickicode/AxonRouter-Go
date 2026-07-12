@@ -12,6 +12,7 @@
   import { getProviderMeta, getStatusDotColor, getStatusVariant, getStatusLabel } from '$lib/provider-catalog';
   import { toast } from 'svelte-sonner';
   import AddConnectionModal from '$lib/components/AddConnectionModal.svelte';
+import Pagination from '$lib/components/Pagination.svelte';
   import * as AlertDialog from '$lib/components/ui/alert-dialog';
 
   let showAddModal = $state(false);
@@ -59,10 +60,32 @@
     return new Date(ts * 1000).toLocaleDateString();
   }
 
+  function isDefaultDirect(conn: any): boolean {
+    if (!conn.provider_specific_data) return false;
+    try {
+      const psd = typeof conn.provider_specific_data === 'string' ? JSON.parse(conn.provider_specific_data) : conn.provider_specific_data;
+      return psd?.direct === true || psd?.direct === 'true';
+    } catch { return false; }
+  }
+
+  function getAccountLabel(conn: any): string | null {
+    if (!conn.provider_specific_data) return null;
+    try {
+      const psd = typeof conn.provider_specific_data === 'string' ? JSON.parse(conn.provider_specific_data) : conn.provider_specific_data;
+      return psd?.accountLabel || null;
+    } catch { return null; }
+  }
+
   function handlePageChange(page: number) {
     currentPage = page;
     loadConnections(providerId, currentPage, perPage);
   }
+
+function handlePerPageChange(p: number) {
+  perPage = p;
+  currentPage = 1;
+  loadConnections(providerId, currentPage, perPage);
+}
 
   async function handleTestAll() {
     testingAll = true;
@@ -262,6 +285,7 @@
                   </td></tr>
                 {:else}
                   {#each $connections as row}
+                    {@const isDefault = isDefaultDirect(row)}
                     {@const isOAuth = row.auth_type === 'oauth'}
                     {@const expiry = isOAuth ? getTokenExpiry(row.oauth_expires_at) : null}
                     <tr class="transition-colors hover:bg-accent/20 group">
@@ -270,6 +294,12 @@
                           <span class="size-2 rounded-full shrink-0" style="background-color: {getStatusDotColor(row.status)}"></span>
                           {row.name}
                         </a>
+                        {#if isDefault}
+                          <span class="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-sky-500/15 text-sky-400">Default</span>
+                        {/if}
+                        {#if !isDefault && getAccountLabel(row)}
+                          <span class="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-500/15 text-violet-400">{getAccountLabel(row)}</span>
+                        {/if}
                         {#if expiry}
                           {#if expiry.status === 'expired'}
                             <span class="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-500/15 text-red-400">{expiry.text}</span>
@@ -307,9 +337,11 @@
                           <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" disabled={actionLoading === row.id} onclick={() => handleResetConnection(row.id)}>
                             Reset
                           </Button>
-                          <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm text-destructive hover:text-destructive" disabled={actionLoading === row.id} onclick={() => confirmDeleteConnection(row.id, row.name)}>
-                            Del
-                          </Button>
+                          {#if !isDefault}
+                            <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm text-destructive hover:text-destructive" disabled={actionLoading === row.id} onclick={() => confirmDeleteConnection(row.id, row.name)}>
+                              Del
+                            </Button>
+                          {/if}
                         </div>
                       </td>
                     </tr>
@@ -321,39 +353,21 @@
         </CardContent>
       </Card>
 
-      {#if $connectionPagination.total_pages > 1}
-        <div class="flex items-center justify-between">
-          <p class="text-body-sm text-muted-foreground">
-            Showing {((currentPage - 1) * perPage) + 1}–{Math.min(currentPage * perPage, $connectionPagination.total)} of {$connectionPagination.total}
-          </p>
-          <div class="flex gap-1">
-            <Button variant="outline" size="sm" disabled={currentPage === 1} onclick={() => handlePageChange(currentPage - 1)} class="text-body-sm h-8 rounded-sm">Prev</Button>
-            {#each Array.from({ length: Math.min(5, $connectionPagination.total_pages) }, (_, i) => i + Math.max(1, currentPage - 2)) as p}
-              {#if p <= $connectionPagination.total_pages}
-                <Button variant={p === currentPage ? 'default' : 'outline'} size="sm" onclick={() => handlePageChange(p)} class="text-body-sm h-8 w-8 p-0 rounded-sm">{p}</Button>
-              {/if}
-            {/each}
-            <Button variant="outline" size="sm" disabled={currentPage === $connectionPagination.total_pages} onclick={() => handlePageChange(currentPage + 1)} class="text-body-sm h-8 rounded-sm">Next</Button>
-          </div>
-        </div>
-      {/if}
-    </div>
+<Pagination
+  page={currentPage}
+  totalPages={$connectionPagination.total_pages}
+  total={$connectionPagination.total}
+  perPage={perPage}
+  perPageOptions={[25, 50, 100]}
+  onPerPageChange={handlePerPageChange}
+  onChange={handlePageChange}
+/>
 
-    <!-- Models Section (below connections) -->
-    <div class="space-y-4">
-      <div class="flex items-center justify-between">
-        <h2 class="text-display-sm">Models.</h2>
-        <span class="text-caption-mono text-muted-foreground">{$providerModels.length} available</span>
-      </div>
+</div>
 
-      {#if $providerModels.length === 0}
-        <Card class="shadow-card">
-          <CardContent class="flex flex-col items-center justify-center py-12">
-            <p class="text-body-sm text-muted-foreground">No models discovered yet. Models appear after connecting an account.</p>
-          </CardContent>
-        </Card>
-      {:else}
-        <div class="flex flex-wrap gap-2">
+
+<!-- Models Section (below connections) -->
+<div class="space-y-4">
           {#each $providerModels as model}
             {@const result = $modelTestResults[model]}
             <button
@@ -374,8 +388,7 @@
         </div>
       {/if}
     </div>
-  {/if}
-</div>
+
 
 <AddConnectionModal bind:open={showAddModal} {providerId} {meta} onCreated={() => { loadConnections(providerId, currentPage, perPage); loadProvider(providerId); loadProviderModels(providerId); }} />
 <AlertDialog.Root bind:open={deleteDialogOpen}>

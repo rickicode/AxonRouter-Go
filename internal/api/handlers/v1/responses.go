@@ -120,6 +120,7 @@ func (h *Handler) Responses(c *gin.Context) {
 			continue
 		}
 		h.resetBanCount(conn.ID)
+	h.persistSuccess(conn.ID)
 		h.combo.RecordSuccess(conn.ID)
 
 		if stream {

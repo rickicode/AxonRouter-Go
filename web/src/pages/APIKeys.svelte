@@ -81,26 +81,26 @@
     }
   }
 
-  async function copyKey() {
-    try {
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(createdKey);
-      } else {
-        // Fallback for HTTP: temporary textarea + execCommand
-        const ta = document.createElement('textarea');
-        ta.value = createdKey;
-        ta.style.position = 'fixed';
-        ta.style.left = '-9999px';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-      }
-      toast.success('Key copied to clipboard');
-    } catch {
-      toast.error('Copy failed — select and copy manually');
-    }
-  }
+async function copyValue(text: string, label = 'Key') {
+	try {
+		if (navigator.clipboard && window.isSecureContext) {
+			await navigator.clipboard.writeText(text);
+		} else {
+			// Fallback for HTTP: temporary textarea + execCommand
+			const ta = document.createElement('textarea');
+			ta.value = text;
+			ta.style.position = 'fixed';
+			ta.style.left = '-9999px';
+			document.body.appendChild(ta);
+			ta.select();
+			document.execCommand('copy');
+			document.body.removeChild(ta);
+		}
+		toast.success(`${label} copied to clipboard`);
+	} catch {
+		toast.error('Copy failed — select and copy manually');
+	}
+}
 
   function formatDate(ts: number): string {
     return new Date(ts * 1000).toLocaleDateString();
@@ -168,12 +168,15 @@
                   <td class="py-3 px-4 text-body-sm text-muted-foreground">{formatDate(key.created_at)}</td>
                   <td class="py-3 px-4">
                     <div class="flex gap-1">
-                      <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" onclick={() => handleToggle(key.id, key.is_active)}>
-                        {key.is_active ? 'Disable' : 'Enable'}
-                      </Button>
-                      <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm text-destructive hover:text-destructive" onclick={() => handleDelete(key.id, key.name)}>
-                        Del
-                      </Button>
+								<Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" onclick={() => copyValue(key.key_preview, 'Key preview')}>
+									Copy
+								</Button>
+								<Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" onclick={() => handleToggle(key.id, key.is_active)}>
+									{key.is_active ? 'Disable' : 'Enable'}
+								</Button>
+								<Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm text-destructive hover:text-destructive" onclick={() => handleDelete(key.id, key.name)}>
+									Del
+								</Button>
                     </div>
                   </td>
                 </tr>
@@ -196,7 +199,7 @@
             <p class="font-mono text-sm break-all select-all">{createdKey}</p>
           </div>
           <div class="flex gap-2">
-            <Button onclick={copyKey} class="flex-1 gap-2 text-sm">
+            <Button onclick={() => copyValue(createdKey, 'Key')} class="flex-1 gap-2 text-sm">
               <svg class="size-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
               Copy key
             </Button>

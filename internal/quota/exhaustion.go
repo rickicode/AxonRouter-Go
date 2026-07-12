@@ -72,3 +72,18 @@ func (ec *ExhaustionCache) Cleanup() {
 
 // Default exhaustion TTL: 5 minutes (matches OmniRoute EXHAUSTED_TTL_MS).
 const DefaultExhaustionTTL = 5 * time.Minute
+
+// TTLFromCooldown returns the time-to-live for an exhaustion mark derived from
+// a detection result. When CooldownUntil is present (rate-limit or quota cooldown),
+// the exhaustion mirror expires at the same time so cooldown and exhaustion stay
+// consistent. Falls back to defaultTTL when no cooldown is set.
+func TTLFromCooldown(cooldownUntil *time.Time, defaultTTL time.Duration) time.Duration {
+	if cooldownUntil == nil {
+		return defaultTTL
+	}
+	ttl := time.Until(*cooldownUntil)
+	if ttl <= 0 {
+		return defaultTTL
+	}
+	return ttl
+}

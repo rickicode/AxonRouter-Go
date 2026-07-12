@@ -7,8 +7,11 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
@@ -159,5 +162,58 @@ func TestModelsEndpoint(t *testing.T) {
 	}
 	if _, ok := body["data"]; !ok {
 		t.Errorf("expected data field in models response, got %+v", body)
+	}
+}
+
+// TestSeedConnectionsFromDB_RestoresCooldown proves that a connection with an
+// active cooldown_until in the DB is not considered eligible right after startup.
+func TestSeedConnectionsFromDB_RestoresCooldown(t *testing.T) {
+	database := openTestDB(t)
+	now := time.Now().Unix()
+	future := now + 3600 // 1 hour from now
+
+	if _, err := database.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, cooldown_until, is_active, created_at, updated_at) VALUES ('conn-oc-1','oc','prox8','none','rate_limited',?,1,?,?)`, future, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+
+	store := connstate.NewStore()
+	seedConnectionsFromDB(database, store)
+
+	cs := store.Get("conn-oc-1")
+	if cs == nil {
+		t.Fatal("connection not seeded")
+	}
+	if cs.Status != connstate.StatusCooldown {
+		// SetCooldown stores status as "cooldown" in memory, while DB keeps "rate_limited".
+		t.Fatalf("status = %q, want cooldown", cs.Status)
+	}
+	if !cs.IsInCooldown() {
+		t.Fatal("expected connection to be in cooldown after seed")
+	}
+}
+
+// TestSeedConnectionsFromDB_ExpiresStaleCooldown proves that a connection whose
+// cooldown_until is in the past is treated as ready on startup.
+func TestSeedConnectionsFromDB_ExpiresStaleCooldown(t *testing.T) {
+	database := openTestDB(t)
+	now := time.Now().Unix()
+	past := now - 3600 // 1 hour ago
+
+	if _, err := database.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, cooldown_until, is_active, created_at, updated_at) VALUES ('conn-oc-2','oc','prox9','none','rate_limited',?,1,?,?)`, past, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+
+	store := connstate.NewStore()
+	seedConnectionsFromDB(database, store)
+
+	cs := store.Get("conn-oc-2")
+	if cs == nil {
+		t.Fatal("connection not seeded")
+	}
+	if cs.Status != connstate.StatusReady {
+		t.Fatalf("status = %q, want ready (stale cooldown should be ignored)", cs.Status)
+	}
+	if cs.IsInCooldown() {
+		t.Fatal("expected connection to be ready after expired cooldown")
 	}
 }

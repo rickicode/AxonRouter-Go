@@ -49,11 +49,18 @@ func (e *EligibilityManager) Update(store *Store) {
 
 	store.RangeByConnID(func(connID string, cs *ConnectionState) bool {
 		status := cs.GetStatus()
-		if status == StatusReady || status == StatusDegraded {
-			all = append(all, connID)
-			prefix := cs.Prefix
-			eligible[prefix] = append(eligible[prefix], connID)
+		// Exclude connections that are actively cooled down or exhausted.  This keeps
+		// the eligibility snapshot consistent with getConnection's preflight checks
+		// and guarantees we never route to rate-limited/exhausted accounts.
+		if status != StatusReady && status != StatusDegraded {
+			return true
 		}
+		if cs.IsInCooldown() {
+			return true
+		}
+		all = append(all, connID)
+		prefix := cs.Prefix
+		eligible[prefix] = append(eligible[prefix], connID)
 		return true
 	})
 

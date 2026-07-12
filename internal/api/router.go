@@ -123,7 +123,7 @@ func New(cfg Config) *Router {
 	proxyHealth.Start(ctx)
 
 	// Create admin handlers
-	connectionH := admin.NewConnectionHandler(cfg.DB, executor.GetRegistry(), store, elig, authManager)
+	connectionH := admin.NewConnectionHandler(cfg.DB, executor.GetRegistry(), store, elig, exhaustionCache, authManager)
 	providerH := admin.NewProviderHandler(cfg.DB, executor.GetRegistry(), store, elig)
 
 	// Auto-migrate raw API keys to bcrypt
@@ -416,7 +416,8 @@ func (r *Router) ComboHandler() *combo.Handler {
 func seedConnectionsFromDB(db *sql.DB, store *connstate.Store) {
 	rows, err := db.Query(`
 		SELECT c.id, c.provider_type_id, COALESCE(c.status, 'ready'),
-		       COALESCE(c.priority, 0), COALESCE(c.consecutive_ban_count, 0)
+		COALESCE(c.priority, 0), COALESCE(c.consecutive_ban_count, 0),
+		COALESCE(c.cooldown_until, 0)
 		FROM connections c
 		WHERE c.is_active = 1
 	`)
@@ -427,16 +428,32 @@ func seedConnectionsFromDB(db *sql.DB, store *connstate.Store) {
 	defer rows.Close()
 
 	count := 0
+	now := time.Now()
 	for rows.Next() {
 		var connID, providerID, status string
 		var priority, banCount int
-		if err := rows.Scan(&connID, &providerID, &status, &priority, &banCount); err != nil {
+		var cooldownUntil int64
+		if err := rows.Scan(&connID, &providerID, &status, &priority, &banCount, &cooldownUntil); err != nil {
 			continue
 		}
+		// If a cooldown window is still active, reflect it in-memory so
+		// getConnection() does not select the connection right after restart.
+		activeCooldown := cooldownUntil > 0 && now.Before(time.Unix(cooldownUntil, 0))
+		if !activeCooldown && (status == "rate_limited" || status == "quota_exhausted") {
+			// Cooldown has expired while we were down; treat connection as ready.
+			status = "ready"
+		}
 		store.SeedConnection(connID, providerID, status, priority)
-		// Restore persisted ban count
 		if cs := store.Get(connID); cs != nil {
 			cs.BanCount = banCount
+			if activeCooldown {
+				until := time.Unix(cooldownUntil, 0)
+				if status == "quota_exhausted" {
+					cs.SetQuotaCooldown(until)
+				} else {
+					cs.SetCooldown(until)
+				}
+			}
 		}
 		count++
 	}

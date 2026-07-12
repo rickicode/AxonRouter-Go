@@ -122,6 +122,7 @@ func (h *Handler) Messages(c *gin.Context) {
 		}
 
 		h.resetBanCount(conn.ID)
+	h.persistSuccess(conn.ID)
 		h.combo.RecordSuccess(conn.ID)
 
 		if req.Stream {

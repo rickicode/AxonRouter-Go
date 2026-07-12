@@ -369,6 +369,34 @@ func (h *ProviderHandler) AddConnection(c *gin.Context) {
 		}
 	}
 
+ // OpenCode Free (oc): additional connections must use a proxy pool.
+ // The default direct connection is auto-seeded by migration and cannot be added via API.
+	if providerID == "oc" {
+		proxyPoolID := req.ProviderSpecificData["proxyPoolId"]
+		if proxyPoolID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "OpenCode Free connections require a proxy pool. Select one from the proxy pools list."})
+			return
+		}
+		// Verify the proxy pool exists and is active
+		var poolExists bool
+		h.db.QueryRow("SELECT COUNT(*) > 0 FROM proxy_pools WHERE id = ? AND is_active = 1", proxyPoolID).Scan(&poolExists)
+		if !poolExists {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Selected proxy pool not found or inactive"})
+			return
+		}
+		// oc is no-auth; force auth_type to none
+		req.AuthType = "none"
+		req.APIKey = ""
+		// Each additional oc connection is treated as a distinct logical account.
+		// Assign a stable account id and label so it can be tracked/exhausted independently.
+		if req.ProviderSpecificData["accountId"] == "" {
+			req.ProviderSpecificData["accountId"] = "oc-" + uuid.New().String()[:8]
+		}
+		if req.ProviderSpecificData["accountLabel"] == "" {
+			req.ProviderSpecificData["accountLabel"] = req.Name
+		}
+	}
+
 	connID := uuid.New().String()
 	now := time.Now().Unix()
 	if req.AuthType == "" {
@@ -428,6 +456,12 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+ // OpenCode Free (oc): bulk add not supported — each connection requires a proxy pool.
+ if providerID == "oc" {
+ c.JSON(http.StatusBadRequest, gin.H{"error": "OpenCode Free connections require a proxy pool and cannot be bulk-added. Use the single add connection form."})
+ return
+ }
 
 	// Validate CF connections require Account ID (fail fast before any inserts)
 	if providerID == "cf" {

@@ -5,9 +5,10 @@
   import { Label } from '$lib/components/ui/label';
   import { Textarea } from '$lib/components/ui/textarea';
   import { Badge } from '$lib/components/ui/badge';
-  import { connectionsApi, providersApi, oauthApi } from '$lib/api';
+ import { connectionsApi, providersApi, oauthApi, proxyPoolsApi } from '$lib/api';
   import { toast } from 'svelte-sonner';
   import ProviderIcon from '$lib/components/ProviderIcon.svelte';
+ import * as Select from '$lib/components/ui/select';
   import type { ProviderMeta } from '$lib/provider-catalog';
 
   let {
@@ -44,12 +45,16 @@
   let submittingCallback = $state(false);
   let validating = $state(false);
   let validationResult = $state<'success' | 'failed' | null>(null);
+  let proxyPools = $state<{ id: string; name: string; type: string; proxyUrl: string }[]>([]);
+  let proxyPoolsLoading = $state(false);
+  let selectedPoolId = $state('');
 
   const authType = $derived(meta?.authType ?? 'apikey');
   const isOAuth = $derived(authType === 'oauth');
   const isNoAuth = $derived(authType === 'none');
   const isApiKey = $derived(authType === 'apikey' || authType === 'custom');
   const supportsBulk = $derived(isApiKey);
+  const isOCProvider = $derived(providerId === 'oc');
   function reset() {
     step = 'form';
     mode = 'single';
@@ -69,6 +74,9 @@
     oauthStatusText = 'Waiting for browser authorization...';
     callbackUrl = '';
     submittingCallback = false;
+    proxyPools = [];
+    proxyPoolsLoading = false;
+    selectedPoolId = '';
   }
 
   function handleOpenChange(isOpen: boolean) {
@@ -77,6 +85,19 @@
       reset();
     }
     open = isOpen;
+  }
+
+  async function fetchProxyPools() {
+    if (!isOCProvider) return;
+    proxyPoolsLoading = true;
+    try {
+      const res = await proxyPoolsApi.list({ is_active: 'true' });
+      proxyPools = res.data ?? [];
+    } catch {
+      proxyPools = [];
+    } finally {
+      proxyPoolsLoading = false;
+    }
   }
 
   function defaultName(index?: number): string {
@@ -258,10 +279,17 @@
     submitting = true;
     try {
       const name = connectionName.trim() || defaultName();
-      await connectionsApi.create(providerId, {
+      const payload: Record<string, unknown> = {
         name,
         auth_type: 'none',
-      });
+      };
+      // OpenCode Free: require proxy pool selection, attach accountLabel
+      if (isOCProvider && selectedPoolId) {
+        const psd: Record<string, string> = { proxyPoolId: selectedPoolId };
+        if (connectionName.trim()) psd.accountLabel = connectionName.trim();
+        payload.provider_specific_data = psd;
+      }
+      await connectionsApi.create(providerId, payload as any);
       toast.success(`Connection added: ${name}`);
       step = 'done';
       onCreated?.();
@@ -352,6 +380,12 @@
     if (open && isOAuth && step === 'form' && !submitting && !oauthPolling) {
       // Use setTimeout to avoid calling during render
       setTimeout(() => handleOAuthSubmit(), 50);
+    }
+  });
+  // Fetch proxy pools when modal opens for OpenCode Free
+  $effect(() => {
+    if (open && isOCProvider && step === 'form') {
+      fetchProxyPools();
     }
   });
 
@@ -515,7 +549,37 @@
           </div>
         {/if}
 
-        {#if isNoAuth}
+        {#if isNoAuth && isOCProvider}
+          <div class="flex flex-col gap-1.5">
+            <Label>Account Label</Label>
+            <Input bind:value={connectionName} placeholder="e.g. us-east-1, pool-A account" class="h-9 text-body-sm" />
+            <p class="text-xs text-muted-foreground">Optional label to identify this account in the dashboard and logs.</p>
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <Label>Proxy Pool <span class="text-destructive">*</span></Label>
+            {#if proxyPoolsLoading}
+              <div class="text-sm text-muted-foreground py-2">Loading proxy pools...</div>
+            {:else if proxyPools.length === 0}
+              <div class="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-400">
+                No proxy pools available. Add a proxy pool first in the Proxy Pools page.
+              </div>
+            {:else}
+              <Select.Root type="single" value={selectedPoolId} onValueChange={(v: string) => selectedPoolId = v}>
+                <Select.Trigger class="w-full h-9 text-body-sm">
+                  {proxyPools.find(p => p.id === selectedPoolId)?.name || 'Select a proxy pool'}
+                </Select.Trigger>
+                <Select.Content>
+                  {#each proxyPools as pool}
+                    <Select.Item value={pool.id} class="text-body-sm">
+                      {pool.name} ({pool.type})
+                    </Select.Item>
+                  {/each}
+                </Select.Content>
+              </Select.Root>
+            {/if}
+            <p class="text-xs text-muted-foreground">OpenCode Free connections must use a proxy pool. The default direct connection is always available.</p>
+          </div>
+        {:else if isNoAuth}
           <div class="rounded-lg border border-border/50 bg-muted/30 p-3 text-sm text-muted-foreground">
             This provider does not require a credential. Add a named ready connection for routing.
           </div>
@@ -534,7 +598,7 @@
 
       <Dialog.Footer>
         <Button variant="outline" onclick={() => handleOpenChange(false)} class="text-sm">Cancel</Button>
-        <Button onclick={handleSubmit} disabled={submitting} class="text-sm">
+        <Button onclick={handleSubmit} disabled={submitting || (isNoAuth && isOCProvider && !selectedPoolId)} class="text-sm">
           {#if submitting}
             {isOAuth ? 'Starting OAuth...' : mode === 'bulk' ? 'Importing...' : 'Adding...'}
           {:else if isOAuth}

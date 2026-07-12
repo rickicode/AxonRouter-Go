@@ -33,6 +33,7 @@ var QuotaPatterns = []string{
 	"payment required",
 	"usage limit",
 	"monthly limit",
+	"freeusage",             // OpenCode Zen FreeUsageLimitError (daily free quota, not per-minute rate limit)
 	"neurons",               // CF Workers AI daily quota
 	"daily free allocation", // CF Workers AI daily quota
 	"upgrade to cloudflare", // CF Workers AI paid plan prompt

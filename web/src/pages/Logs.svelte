@@ -9,6 +9,7 @@ import { getProviderMeta } from '$lib/provider-catalog';
   import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
 import * as Dialog from '$lib/components/ui/dialog';
+import Pagination from '$lib/components/Pagination.svelte';
 import { type RequestLog } from '$lib/api';
   import { Terminal, Filter, RefreshCw, Download } from '@lucide/svelte';
 
@@ -28,6 +29,12 @@ onMount(() => {
     currentPage = page;
     loadLogs(currentPage, perPage);
   }
+
+function handlePerPageChange(p: number) {
+  perPage = p;
+  currentPage = 1;
+  loadLogs(currentPage, perPage);
+}
 
   function handleFilterChange() {
     currentPage = 1;
@@ -354,22 +361,15 @@ function formatCooldown(cd?: number) {
       </CardContent>
     </Card>
 
-    {#if $logPagination.total_pages > 1}
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2">
-        <p class="text-body-sm text-muted-foreground">
-          Showing <strong class="text-foreground">{((currentPage - 1) * perPage) + 1}–{Math.min(currentPage * perPage, $logPagination.total)}</strong> of <strong class="text-foreground">{$logPagination.total}</strong> logs
-        </p>
-        <div class="flex items-center gap-1">
-          <Button variant="outline" size="sm" disabled={currentPage === 1} onclick={() => handlePageChange(currentPage - 1)} class="text-body-sm h-8 rounded-sm">Prev</Button>
-          {#each Array.from({ length: Math.min(5, $logPagination.total_pages) }, (_, i) => i + Math.max(1, currentPage - 2)) as page}
-            {#if page <= $logPagination.total_pages}
-              <Button variant={page === currentPage ? 'default' : 'outline'} size="sm" onclick={() => handlePageChange(page)} class="text-body-sm h-8 w-8 p-0 rounded-sm">{page}</Button>
-            {/if}
-          {/each}
-          <Button variant="outline" size="sm" disabled={currentPage === $logPagination.total_pages} onclick={() => handlePageChange(currentPage + 1)} class="text-body-sm h-8 rounded-sm">Next</Button>
-        </div>
-      </div>
-{/if}
+<Pagination
+  page={currentPage}
+  totalPages={$logPagination.total_pages}
+  total={$logPagination.total}
+  perPage={perPage}
+  perPageOptions={[50, 100, 200]}
+  onPerPageChange={handlePerPageChange}
+  onChange={handlePageChange}
+/>
 {/if}
 
 <Dialog.Root open={selectedErrorLog !== null} onOpenChange={(o) => { if (!o) selectedErrorLog = null; }}>

@@ -15,6 +15,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/quota"
 )
 
 // modelTester is an interface for testing provider connectivity via Models() endpoint.
@@ -25,16 +26,17 @@ type modelTester interface {
 
 // ConnectionHandler handles connection CRUD operations.
 type ConnectionHandler struct {
-	db       *sql.DB
-	registry *executor.Registry
-	store    *connstate.Store
-	elig     *connstate.EligibilityManager
-	authMgr  *auth.Manager
+	db        *sql.DB
+	registry  *executor.Registry
+	store     *connstate.Store
+	elig      *connstate.EligibilityManager
+	exhaustion *quota.ExhaustionCache
+	authMgr   *auth.Manager
 }
 
 // NewConnectionHandler creates a new connection handler.
-func NewConnectionHandler(database *sql.DB, registry *executor.Registry, store *connstate.Store, elig *connstate.EligibilityManager, authMgr *auth.Manager) *ConnectionHandler {
-	return &ConnectionHandler{db: database, registry: registry, store: store, elig: elig, authMgr: authMgr}
+func NewConnectionHandler(database *sql.DB, registry *executor.Registry, store *connstate.Store, elig *connstate.EligibilityManager, exhaustion *quota.ExhaustionCache, authMgr *auth.Manager) *ConnectionHandler {
+	return &ConnectionHandler{db: database, registry: registry, store: store, elig: elig, exhaustion: exhaustion, authMgr: authMgr}
 }
 
 // List returns paginated connections for a provider.
@@ -71,32 +73,40 @@ func (h *ConnectionHandler) List(c *gin.Context) {
 	// Fetch page
 	offset := (page - 1) * perPage
 	queryArgs := append(args, perPage, offset)
-	rows, err := h.db.Query(`
-		SELECT id, provider_type_id, name, auth_type, status,
-		       COALESCE(priority, 0), cooldown_until, last_error, last_error_code,
-		       last_success_at, last_failure_at, failure_count,
-		       capabilities, is_active, created_at, updated_at,
-		       COALESCE(oauth_expires_at, 0)
-		FROM connections WHERE `+where+`
-		ORDER BY priority DESC, created_at DESC
-		LIMIT ? OFFSET ?
-	`, queryArgs...)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	defer rows.Close()
+ rows, err := h.db.Query(`
+ SELECT id, provider_type_id, name, auth_type, status,
+ COALESCE(priority, 0), cooldown_until, last_error, last_error_code,
+ last_success_at, last_failure_at, failure_count,
+ capabilities, is_active, created_at, updated_at,
+ COALESCE(oauth_expires_at, 0),
+ COALESCE(provider_specific_data, '')
+ FROM connections WHERE `+where+`
+ ORDER BY priority DESC, created_at DESC
+ LIMIT ? OFFSET ?
+ `, queryArgs...)
+ if err != nil {
+ c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+ return
+ }
+ defer rows.Close()
 
-	var conns []gin.H
-	for rows.Next() {
-		conn := db.Connection{}
-		rows.Scan(&conn.ID, &conn.ProviderTypeID, &conn.Name, &conn.AuthType,
-			&conn.Status, &conn.Priority, &conn.CooldownUntil, &conn.LastError, &conn.LastErrorCode,
-			&conn.LastSuccessAt, &conn.LastFailureAt, &conn.FailureCount,
-			&conn.Capabilities, &conn.IsActive, &conn.CreatedAt, &conn.UpdatedAt,
-			&conn.OAuthExpiresAt)
-		conns = append(conns, connToJSON(conn))
-	}
+ var conns []gin.H
+ for rows.Next() {
+ conn := db.Connection{}
+ var psd string
+ rows.Scan(&conn.ID, &conn.ProviderTypeID, &conn.Name, &conn.AuthType,
+ &conn.Status, &conn.Priority, &conn.CooldownUntil, &conn.LastError, &conn.LastErrorCode,
+ &conn.LastSuccessAt, &conn.LastFailureAt, &conn.FailureCount,
+ &conn.Capabilities, &conn.IsActive, &conn.CreatedAt, &conn.UpdatedAt,
+ &conn.OAuthExpiresAt, &psd)
+ entry := connToJSON(conn)
+ if psd != "" {
+ entry["provider_specific_data"] = psd
+ } else {
+ entry["provider_specific_data"] = nil
+ }
+ conns = append(conns, entry)
+ }
 
 	totalPages := total / perPage
 	if total%perPage > 0 {
@@ -226,28 +236,36 @@ func (h *ConnectionHandler) Update(c *gin.Context) {
 
 // Delete soft-deletes a connection.
 func (h *ConnectionHandler) Delete(c *gin.Context) {
-	id := c.Param("id")
-	result, err := h.db.Exec(`UPDATE connections SET is_active = 0, updated_at = ? WHERE id = ?`,
-		time.Now().Unix(), id)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
-		return
-	}
+ id := c.Param("id")
 
-	// Sync in-memory state
-	if h.store != nil {
-		h.store.UpdateStatus(id, connstate.StatusDisabled)
-		if h.elig != nil {
-			h.elig.Update(h.store)
-		}
-	}
+ // Block deletion of the default direct oc connection (OpenCode Free).
+ var psd string
+ h.db.QueryRow("SELECT COALESCE(provider_specific_data, '') FROM connections WHERE id = ?", id).Scan(&psd)
+ if strings.Contains(psd, `"direct":"true"`) {
+ c.JSON(http.StatusForbidden, gin.H{"error": "Cannot delete the default direct OpenCode Free connection"})
+ return
+ }
 
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+ result, err := h.db.Exec(`UPDATE connections SET is_active = 0, updated_at = ? WHERE id = ?`, time.Now().Unix(), id)
+ if err != nil {
+ c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+ return
+ }
+ rows, _ := result.RowsAffected()
+ if rows == 0 {
+ c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
+ return
+ }
+
+ // Sync in-memory state
+ if h.store != nil {
+ h.store.UpdateStatus(id, connstate.StatusDisabled)
+ if h.elig != nil {
+ h.elig.Update(h.store)
+ }
+ }
+
+ c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 // TestConnection tests a single connection by sending a minimal streaming request.
@@ -310,9 +328,7 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 	if err != nil {
 		latency := time.Since(start).Milliseconds()
 		det := connstate.DetectError(0, "", err, conn.ProviderTypeID, "", nil)
-		if h.store != nil {
-			h.store.RecordFailure(id, det)
-		}
+		h.recordTestFailure(id, det)
 		c.JSON(http.StatusOK, gin.H{
 			"connection_id": id,
 			"status":        "failed",
@@ -334,9 +350,7 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 
 	if firstErr != nil {
 		det := connstate.DetectError(0, "", firstErr, conn.ProviderTypeID, "", nil)
-		if h.store != nil {
-			h.store.RecordFailure(id, det)
-		}
+		h.recordTestFailure(id, det)
 		c.JSON(http.StatusOK, gin.H{
 			"connection_id": id,
 			"status":        "failed",
@@ -346,9 +360,7 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 		return
 	}
 
-	if h.store != nil {
-		h.store.RecordSuccess(id)
-	}
+	h.recordTestSuccess(id)
 
 	c.JSON(http.StatusOK, gin.H{
 		"connection_id": id,
@@ -356,6 +368,79 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 		"status_code":   streamResult.StatusCode,
 		"latency_ms":    latency,
 	})
+}
+
+// recordTestSuccess marks a connection as ready after a successful test,
+// clears any cooldown/error/exhaustion state, and refreshes eligibility.
+func (h *ConnectionHandler) recordTestSuccess(connID string) {
+	now := time.Now().Unix()
+	if _, err := h.db.Exec(`
+		UPDATE connections SET status = 'ready', cooldown_until = NULL,
+		last_error = NULL, last_error_code = NULL, failure_count = 0,
+		last_success_at = ?, updated_at = ? WHERE id = ?
+	`, now, now, connID); err != nil {
+		log.Printf("recordTestSuccess db update failed for %s: %v", connID, err)
+	}
+	if h.store != nil {
+		h.store.RecordSuccess(connID)
+		h.store.UpdateStatus(connID, connstate.StatusReady)
+	}
+	if h.exhaustion != nil {
+		h.exhaustion.Clear(connID)
+	}
+	if h.elig != nil {
+		h.elig.Update(h.store)
+	}
+}
+
+// recordTestFailure persists a test failure just like the proxy path does:
+// cooldown, last_error, failure_count, last_failure_at in the DB plus the
+// in-memory exhaustion cache and status update.
+func (h *ConnectionHandler) recordTestFailure(connID string, det connstate.ErrorDetection) {
+	if h.store != nil {
+		h.store.RecordFailure(connID, det)
+	}
+	status := det.Status
+	if det.Category == connstate.ErrorQuota {
+		status = connstate.StatusQuotaExhausted
+	}
+	if status != "" && h.store != nil {
+		h.store.UpdateStatus(connID, status)
+	}
+	if status != "" {
+		errCode := string(det.Category)
+		now := time.Now().Unix()
+		if det.CooldownUntil != nil {
+			if _, err := h.db.Exec(`
+				UPDATE connections SET status = ?, cooldown_until = ?, last_error = ?, last_error_code = ?,
+				failure_count = failure_count + 1, last_failure_at = ?, updated_at = ? WHERE id = ?
+			`, status, det.CooldownUntil.Unix(), det.Message, errCode, now, now, connID); err != nil {
+				log.Printf("recordTestFailure db update failed for %s: %v", connID, err)
+			}
+		} else {
+			if _, err := h.db.Exec(`
+				UPDATE connections SET status = ?, last_error = ?, last_error_code = ?,
+				failure_count = failure_count + 1, last_failure_at = ?, updated_at = ? WHERE id = ?
+			`, status, det.Message, errCode, now, now, connID); err != nil {
+				log.Printf("recordTestFailure db update failed for %s: %v", connID, err)
+			}
+		}
+	}
+	if h.exhaustion != nil {
+		switch det.Category {
+		case connstate.ErrorRateLimit:
+			h.exhaustion.MarkExhausted(connID, quota.TTLFromCooldown(det.CooldownUntil, quota.DefaultExhaustionTTL))
+		case connstate.ErrorQuota:
+			ttl := 24 * time.Hour
+			if det.CooldownUntil != nil {
+				ttl = time.Until(*det.CooldownUntil)
+			}
+			h.exhaustion.MarkExhausted(connID, ttl)
+		}
+	}
+	if h.elig != nil {
+		h.elig.Update(h.store)
+	}
 }
 
 // ResetStatus resets a connection's status and syncs in-memory state.
@@ -379,6 +464,9 @@ func (h *ConnectionHandler) ResetStatus(c *gin.Context) {
 	// Sync in-memory state
 	if h.store != nil {
 		h.store.UpdateStatus(id, connstate.StatusReady)
+		if h.exhaustion != nil {
+			h.exhaustion.Clear(id)
+		}
 		if h.elig != nil {
 			h.elig.Update(h.store)
 		}

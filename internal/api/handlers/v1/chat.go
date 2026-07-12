@@ -153,6 +153,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		}
 
 		h.resetBanCount(conn.ID)
+	h.persistSuccess(conn.ID)
 		h.combo.RecordSuccess(conn.ID)
 
 		if req.Stream {
@@ -259,7 +260,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 		if err != nil {
 			det := connstate.DetectError(0, "", err, provider, modelName, nil)
 			if det.Category == connstate.ErrorRateLimit {
-				h.exhaustion.MarkExhausted(connID, quota.DefaultExhaustionTTL)
+				h.exhaustion.MarkExhausted(connID, quota.TTLFromCooldown(det.CooldownUntil, quota.DefaultExhaustionTTL))
 			}
 			h.combo.RecordFailure(connID, det)
 			h.persistCooldown(connID, det)
@@ -270,6 +271,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 		}
 
 		h.resetBanCount(connID)
+	h.persistSuccess(connID)
 		h.combo.RecordSuccess(connID)
 
 		if req.Stream {

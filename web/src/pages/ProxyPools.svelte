@@ -11,6 +11,7 @@
   import { Switch } from '$lib/components/ui/switch';
   import * as Select from '$lib/components/ui/select';
   import * as Dialog from '$lib/components/ui/dialog';
+import Pagination from '$lib/components/Pagination.svelte';
   import { toast } from 'svelte-sonner';
 
   let tab = $state<'pools' | 'groups' | 'assignments' | 'deploy'>('pools');
@@ -19,6 +20,11 @@
   let providers = $state<Provider[]>([]);
   let loading = $state(true);
   let error = $state('');
+// Pools pagination
+let poolPage = $state(1);
+let poolPerPage = $state(10);
+let poolTotal = $state(0);
+let poolTotalPages = $state(1);
 
   // Modal state
   let showCreatePool = $state(false);
@@ -75,48 +81,53 @@
     loadAll();
   });
 
- async function loadAll(silent = false) {
- if (silent) {
- try {
- const [poolsRes, groupsRes, provRes, settingsRes] = await Promise.all([
- proxyPoolsApi.list(),
- proxyGroupsApi.list(),
- providersApi.list(),
- settingsApi.list().catch(() => ({})),
- ]);
- pools = poolsRes.data ?? [];
- groups = groupsRes.data ?? [];
- providers = provRes.data ?? [];
- const settings = ('data' in settingsRes ? (settingsRes as any).data : settingsRes) as Record<string, string>;
-            const raw = settings?.['provider_proxy_defaults'];
-            if (raw) { try { proxyDefaults = JSON.parse(raw); } catch { proxyDefaults = {}; } delete proxyDefaults['oc']; }
- } catch (err) {
- error = err instanceof Error ? err.message : 'Failed to load';
- }
- return;
- }
- loading = true;
- error = '';
- try {
- const [poolsRes, groupsRes, provRes, settingsRes] = await Promise.all([
- proxyPoolsApi.list(),
- proxyGroupsApi.list(),
- providersApi.list(),
- settingsApi.list().catch(() => ({})),
- ]);
- pools = poolsRes.data ?? [];
- groups = groupsRes.data ?? [];
- providers = provRes.data ?? [];
- // Load proxy defaults
- const settings = ('data' in settingsRes ? (settingsRes as any).data : settingsRes) as Record<string, string>;
-                const raw = settings?.['provider_proxy_defaults'];
-                if (raw) { try { proxyDefaults = JSON.parse(raw); } catch { proxyDefaults = {}; } delete proxyDefaults['oc']; }
- } catch (err) {
- error = err instanceof Error ? err.message : 'Failed to load';
- } finally {
- loading = false;
- }
- }
+async function loadPools() {
+  try {
+    const res = await proxyPoolsApi.list({ page: String(poolPage), per_page: String(poolPerPage) });
+    pools = res.data ?? [];
+    poolTotal = res.pagination?.total ?? 0;
+    poolTotalPages = res.pagination?.total_pages ?? 1;
+  } catch (err) {
+    toast.error('Failed to load pools: ' + (err instanceof Error ? err.message : 'Unknown'));
+  }
+}
+
+async function onPoolPageChange(p: number) {
+  if (p === poolPage) return;
+  poolPage = p;
+  await loadPools();
+}
+
+async function onPerPageChange(p: number) {
+  if (p === poolPerPage) return;
+  poolPerPage = p;
+  poolPage = 1;
+  await loadPools();
+}
+
+async function loadAll(silent = false) {
+  if (!silent) {
+    loading = true;
+    error = '';
+  }
+  try {
+    const [groupsRes, provRes, settingsRes] = await Promise.all([
+      proxyGroupsApi.list(),
+      providersApi.list(),
+      settingsApi.list().catch(() => ({})),
+    ]);
+    groups = groupsRes.data ?? [];
+    providers = provRes.data ?? [];
+    const settings = ('data' in settingsRes ? (settingsRes as any).data : settingsRes) as Record<string, string>;
+    const raw = settings?.['provider_proxy_defaults'];
+    if (raw) { try { proxyDefaults = JSON.parse(raw); } catch { proxyDefaults = {}; } delete proxyDefaults['oc']; }
+    await loadPools();
+  } catch (err) {
+    error = err instanceof Error ? err.message : 'Failed to load';
+  } finally {
+    if (!silent) loading = false;
+  }
+}
 
   // --- Pool CRUD ---
   async function handleCreatePool() {
@@ -127,7 +138,8 @@
       toast.success('Proxy pool created');
       showCreatePool = false;
       poolName = ''; poolUrl = ''; poolNoProxy = '';
- await loadAll(true);
+  poolPage = 1;
+  await loadAll(true);
     } catch (err) { toast.error('Create failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
     finally { createPoolLoading = false; }
   }
@@ -151,7 +163,7 @@
   }
 
 async function deletePool(id: string) {
- try { await proxyPoolsApi.delete(id); toast.success('Proxy pool deleted'); await loadAll(true); }
+  try { await proxyPoolsApi.delete(id); toast.success('Proxy pool deleted'); poolPage = 1; await loadAll(true); }
  catch (err) { toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
 }
 
@@ -306,7 +318,8 @@ async function saveProxyDefaults() {
         toast.error('Bulk import finished with errors', { description: msg });
       }
       bulkText = '';
- await loadAll(true);
+  poolPage = 1;
+  await loadAll(true);
     } catch (err) {
       toast.error('Bulk import failed: ' + (err instanceof Error ? err.message : 'Unknown'));
     } finally {
@@ -450,11 +463,15 @@ async function saveProxyDefaults() {
                       <Button onclick={() => deletePool(pool.id)} variant="ghost" size="sm" class="text-caption-mono text-destructive h-6 px-2 rounded-sm">Del</Button>
                     </div>
                   </td>
-                </tr>
+      </tr>
               {/each}
             </tbody>
           </table>
         </Card>
+
+  <div class="mt-4">
+    <Pagination page={poolPage} totalPages={poolTotalPages} total={poolTotal} perPage={poolPerPage} onPerPageChange={onPerPageChange} onChange={onPoolPageChange} />
+  </div>
       {:else}
         <Card class="shadow-card">
           <CardContent class="flex flex-col items-center justify-center py-16">
