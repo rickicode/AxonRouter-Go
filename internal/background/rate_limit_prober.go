@@ -119,8 +119,9 @@ func (p *RateLimitProber) check() {
 		resp.Body.Close()
 
 		if resp.StatusCode == http.StatusOK {
-			// Connection recovered — reset everything
-			p.exhaustion.Clear(r.id)
+			// Connection recovered — reset connection-wide exhaustion only.
+			// Per-model scoped marks expire via their own TTL so other models stay blocked.
+			p.exhaustion.Clear(quota.ExhaustKey(r.id, ""))
 			p.store.UpdateStatus(r.id, connstate.StatusReady)
 			connID := r.id
 			updatedAt := now

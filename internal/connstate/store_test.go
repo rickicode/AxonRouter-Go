@@ -81,6 +81,33 @@ func TestRecordFailure_QuotaCooldownSetsMidnight(t *testing.T) {
 	}
 }
 
+func TestRecordFailure_PerModelKeepsConnectionReady(t *testing.T) {
+	store := NewStore()
+	store.SeedConnection("conn-1", "oc", "ready", 0)
+	until := time.Now().Add(time.Minute)
+	det := ErrorDetection{
+		Category:      ErrorQuota,
+		Status:        StatusQuotaExhausted,
+		Scope:         "model",
+		ModelID:       "oc/hy3-free",
+		CooldownUntil: &until,
+	}
+	store.RecordFailure("conn-1", det)
+	cs := store.Get("conn-1")
+	if cs == nil {
+		t.Fatal("connection state not found")
+	}
+	if !cs.IsModelInCooldown("oc/hy3-free") {
+		t.Error("expected oc/hy3-free to be in cooldown")
+	}
+	if cs.GetStatus() != StatusReady {
+		t.Errorf("expected connection status to stay ready, got %s", cs.GetStatus())
+	}
+	if cs.IsInCooldown() {
+		t.Error("expected connection-level cooldown to be unset")
+	}
+}
+
 func TestDetectError_429WithQuotaBody(t *testing.T) {
 	// CF daily limit returns 429 with body containing quota patterns.
 	// This must be classified as ErrorQuota, not ErrorRateLimit.

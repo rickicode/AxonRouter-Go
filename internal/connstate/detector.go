@@ -3,6 +3,7 @@ package connstate
 import (
 	"errors"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -84,7 +85,6 @@ func DetectError(statusCode int, body string, err error, providerPrefix string, 
 	switch cat {
 	case ErrorRateLimit:
 		det.Status = StatusRateLimited
-		det.Scope = "model"
 		cooldown := 60 * time.Second
 		if headers != nil {
 			if retryAfter := headers.Get("Retry-After"); retryAfter != "" {
@@ -111,6 +111,14 @@ func DetectError(statusCode int, body string, err error, providerPrefix string, 
 	case ErrorServer, ErrorTimeout, ErrorNetwork:
 		det.Status = StatusDegraded
 	}
+
+	// Per-model quota/rate-limit: only oc/ag mark at model scope; other providers
+	// keep connection-wide cooldown/exhaustion as before.
+	if HasPerModelQuota(providerPrefix) && det.ModelID != "" && (cat == ErrorRateLimit || cat == ErrorQuota) {
+		det.Scope = "model"
+		det.CooldownUntil = exactCooldown(msg, headers, defaultCooldownFor(cat))
+	}
+
 	return det
 }
 
@@ -231,4 +239,45 @@ func parseRetryAfterFromBody(body string) int {
 func nextMidnightUTC() time.Time {
 	now := time.Now().UTC()
 	return time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+}
+
+// exactCooldown extracts the most precise cooldown horizon from upstream signals:
+// 1. Retry-After header (seconds), 2. "resets in N (hour|h|min|m)" in body,
+// 3. fallback def.
+// Returns a pointer so callers can distinguish "unset" from "zero" easily.
+var resetInRe = regexp.MustCompile(`(?i)resets?\s+in\s+(\d+)\s*(hour|h|min|m)`)
+
+func exactCooldown(msg string, headers http.Header, def time.Duration) *time.Time {
+	if headers != nil {
+		if retryAfter := headers.Get("Retry-After"); retryAfter != "" {
+			if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds > 0 {
+				until := time.Now().Add(time.Duration(seconds) * time.Second)
+				return &until
+			}
+		}
+	}
+	if msg != "" {
+		if matches := resetInRe.FindStringSubmatch(msg); len(matches) == 3 {
+			n, _ := strconv.Atoi(matches[1])
+			if n > 0 {
+				multiplier := time.Minute
+				switch strings.ToLower(matches[2]) {
+				case "hour", "h":
+					multiplier = time.Hour
+				}
+				until := time.Now().Add(time.Duration(n) * multiplier)
+				return &until
+			}
+		}
+	}
+	until := time.Now().Add(def)
+	return &until
+}
+
+// defaultCooldownFor returns the fallback cooldown horizon for a category.
+func defaultCooldownFor(cat ErrorCategory) time.Duration {
+	if cat == ErrorQuota {
+		return nextMidnightUTC().Sub(time.Now()) + time.Minute
+	}
+	return 5 * time.Minute
 }

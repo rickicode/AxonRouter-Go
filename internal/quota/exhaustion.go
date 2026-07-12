@@ -7,7 +7,7 @@ import (
 
 // exhaustionEntry tracks a 429-sourced exhaustion mark with a TTL.
 type exhaustionEntry struct {
-	markedAt time.Time
+	markedAt  time.Time
 	expiresAt time.Time
 }
 
@@ -26,23 +26,33 @@ func NewExhaustionCache() *ExhaustionCache {
 	}
 }
 
-// MarkExhausted marks a connection as quota-exhausted for the given TTL.
+// ExhaustKey builds a composite key for per-model or per-connection exhaustion.
+// scope may be empty for the connection-wide key.
+func ExhaustKey(connID, scope string) string {
+	if scope == "" {
+		return connID
+	}
+	return connID + "\x00" + scope
+}
+
+// MarkExhausted marks a key as quota-exhausted for the given TTL.
 // Called when a 429 is received from an upstream provider.
-func (ec *ExhaustionCache) MarkExhausted(connID string, ttl time.Duration) {
+// For per-model scope use MarkExhausted(ExhaustKey(connID, modelScope), ttl).
+func (ec *ExhaustionCache) MarkExhausted(key string, ttl time.Duration) {
 	ec.mu.Lock()
 	defer ec.mu.Unlock()
 	now := time.Now()
-	ec.entries[connID] = exhaustionEntry{
+	ec.entries[key] = exhaustionEntry{
 		markedAt:  now,
 		expiresAt: now.Add(ttl),
 	}
 }
 
-// IsExhausted returns true if the connection is currently marked as exhausted
+// IsExhausted returns true if the given key is currently marked as exhausted
 // and the TTL has not expired. Returns false if not marked or expired.
-func (ec *ExhaustionCache) IsExhausted(connID string) bool {
+func (ec *ExhaustionCache) IsExhausted(key string) bool {
 	ec.mu.RLock()
-	entry, ok := ec.entries[connID]
+	entry, ok := ec.entries[key]
 	ec.mu.RUnlock()
 	if !ok {
 		return false
@@ -50,12 +60,17 @@ func (ec *ExhaustionCache) IsExhausted(connID string) bool {
 	return time.Now().Before(entry.expiresAt)
 }
 
-// Clear removes the exhaustion mark for a connection (e.g. after successful
+// IsExhaustedScope is a convenience for checking a connID + scope composite key.
+func (ec *ExhaustionCache) IsExhaustedScope(connID, scope string) bool {
+	return ec.IsExhausted(ExhaustKey(connID, scope))
+}
+
+// Clear removes the exhaustion mark for a key (e.g. after successful
 // quota fetch confirms the connection is no longer exhausted).
-func (ec *ExhaustionCache) Clear(connID string) {
+func (ec *ExhaustionCache) Clear(key string) {
 	ec.mu.Lock()
 	defer ec.mu.Unlock()
-	delete(ec.entries, connID)
+	delete(ec.entries, key)
 }
 
 // Cleanup removes expired entries. Should be called periodically.

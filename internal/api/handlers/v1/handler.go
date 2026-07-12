@@ -136,19 +136,19 @@ type Connection struct {
 
 // Handler is the base handler for all /v1/* endpoints.
 type Handler struct {
-	db          *sql.DB
-	writeQueue  *db.WriteQueue // centralized async writer — removes sync writes from request path
-	registry    *executor.Registry
-	store       *connstate.Store
-	elig        *connstate.EligibilityManager
-	combo       *combo.Handler
-	tracker     *usage.Tracker
-	authMgr     *auth.Manager
-	resolver    *proxypool.Resolver
-	exhaustion  *quota.ExhaustionCache
-	conns sync.Map // connID -> *Connection (write-through credential cache)
+	db                  *sql.DB
+	writeQueue          *db.WriteQueue // centralized async writer — removes sync writes from request path
+	registry            *executor.Registry
+	store               *connstate.Store
+	elig                *connstate.EligibilityManager
+	combo               *combo.Handler
+	tracker             *usage.Tracker
+	authMgr             *auth.Manager
+	resolver            *proxypool.Resolver
+	exhaustion          *quota.ExhaustionCache
+	conns               sync.Map // connID -> *Connection (write-through credential cache)
 	compressionStrategy compression.Strategy
-	exactCache cache.CacheStorage
+	exactCache          cache.CacheStorage
 }
 
 // NewHandler creates a new v1 handler with all dependencies.
@@ -166,18 +166,18 @@ func NewHandler(
 	exactCache cache.CacheStorage,
 ) *Handler {
 	return &Handler{
-		db:                   db,
-		writeQueue:           writeQueue,
-		registry:             executor.GetRegistry(),
-		store:                store,
-		elig:                 elig,
-		combo:                comboHandler,
-		tracker:              tracker,
-		authMgr:              authManager,
-		resolver:             resolver,
-		exhaustion:           exhaustionCache,
-		compressionStrategy:  compressionStrategy,
-		exactCache:           exactCache,
+		db:                  db,
+		writeQueue:          writeQueue,
+		registry:            executor.GetRegistry(),
+		store:               store,
+		elig:                elig,
+		combo:               comboHandler,
+		tracker:             tracker,
+		authMgr:             authManager,
+		resolver:            resolver,
+		exhaustion:          exhaustionCache,
+		compressionStrategy: compressionStrategy,
+		exactCache:          exactCache,
 	}
 }
 
@@ -217,12 +217,17 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 		if modelID != "" && cs.IsModelInCooldown(modelID) {
 			continue
 		}
+		// Preflight per-model exhaustion check (oc/ag only).
+		if modelID != "" && h.exhaustion.IsExhaustedScope(connID, connstate.ModelScope(provider, modelID)) {
+			continue
+		}
+
 		// Preflight quota exhaustion check (OmniRoute isAccountQuotaExhausted)
 		if h.exhaustion.IsExhausted(connID) {
 			continue
 		}
 		// Load credentials by ID
-	conn, err := h.getCachedConn(ctx, connID)
+		conn, err := h.getCachedConn(ctx, connID)
 		if err != nil {
 			logging.Logger.Debug("load conn failed", "conn", connID[:8], "err", err)
 			continue
@@ -248,6 +253,9 @@ func (h *Handler) prepareConnection(ctx context.Context, connID, provider, model
 	}
 	if modelID != "" && cs.IsModelInCooldown(modelID) {
 		return nil, fmt.Errorf("model in cooldown")
+	}
+	if modelID != "" && h.exhaustion.IsExhaustedScope(connID, connstate.ModelScope(provider, modelID)) {
+		return nil, fmt.Errorf("model exhausted")
 	}
 	if h.exhaustion.IsExhausted(connID) {
 		return nil, fmt.Errorf("connection exhausted")
@@ -277,7 +285,7 @@ const connCacheTTL = 60 * time.Second
 
 // cachedConn holds a connection with a cache timestamp for TTL expiry.
 type cachedConn struct {
-	conn    *Connection
+	conn     *Connection
 	cachedAt time.Time
 }
 
@@ -288,8 +296,8 @@ func (h *Handler) getCachedConn(ctx context.Context, connID string) (*Connection
 	if v, ok := h.conns.Load(connID); ok {
 		cc := v.(cachedConn)
 		if time.Since(cc.cachedAt) < connCacheTTL {
-		copied := *cc.conn
-		return &copied, nil
+			copied := *cc.conn
+			return &copied, nil
 		}
 	}
 	// Cache miss or expired — load from DB (write-through).
@@ -384,15 +392,15 @@ func (h *Handler) refreshOAuthToken(ctx context.Context, conn *Connection, provi
 	if err != nil {
 		// Check for unrecoverable errors (matches OmniRoute isUnrecoverableRefreshError)
 		if isUnrecoverableRefreshError(err) {
-		log.Printf("Unrecoverable refresh error for %s/%s: %v — blocking connection", provider, conn.ID, err)
-		connID := conn.ID
-		h.writeQueue.EnqueueOrBlock(ctx, "refreshOAuth:authFailed", func(d *sql.DB) error {
-			_, err := d.Exec(`UPDATE connections SET is_active = 0, status = 'auth_failed', updated_at = ? WHERE id = ?`,
-				time.Now().Unix(), connID)
-			return err
-		})
-		h.store.UpdateStatus(conn.ID, connstate.StatusAuthFailed)
-		h.elig.ScheduleUpdate()
+			log.Printf("Unrecoverable refresh error for %s/%s: %v — blocking connection", provider, conn.ID, err)
+			connID := conn.ID
+			h.writeQueue.EnqueueOrBlock(ctx, "refreshOAuth:authFailed", func(d *sql.DB) error {
+				_, err := d.Exec(`UPDATE connections SET is_active = 0, status = 'auth_failed', updated_at = ? WHERE id = ?`,
+					time.Now().Unix(), connID)
+				return err
+			})
+			h.store.UpdateStatus(conn.ID, connstate.StatusAuthFailed)
+			h.elig.ScheduleUpdate()
 		}
 		return fmt.Errorf("refresh token: %w", err)
 	}
@@ -616,17 +624,25 @@ func (h *Handler) executeDirect(ctx context.Context, exec executor.Executor, req
 // (model_not_found, auth_failed), category for the caller to build better error messages.
 func (h *Handler) handleFailoverError(conn *Connection, provider, modelName string, err error, attempt int, latency int64) (bool, string) {
 	det := connstate.DetectError(0, "", err, provider, modelName, nil)
-	if det.Category == connstate.ErrorRateLimit {
-		h.exhaustion.MarkExhausted(conn.ID, quota.TTLFromCooldown(det.CooldownUntil, quota.DefaultExhaustionTTL))
-	} else if det.Category == connstate.ErrorQuota {
-		ttl := 24 * time.Hour // fallback for daily quotas
-		if det.CooldownUntil != nil {
-			ttl = time.Until(*det.CooldownUntil)
+	if connstate.HasPerModelQuota(provider) && det.ModelID != "" &&
+		(det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
+		scope := connstate.ModelScope(provider, det.ModelID)
+		h.exhaustion.MarkExhausted(quota.ExhaustKey(conn.ID, scope), quota.TTLFromCooldown(det.CooldownUntil, 5*time.Minute))
+		// Per-model scope keeps the connection itself ready/eligible so other
+		// models can still route through it.
+	} else {
+		if det.Category == connstate.ErrorRateLimit {
+			h.exhaustion.MarkExhausted(conn.ID, quota.TTLFromCooldown(det.CooldownUntil, quota.DefaultExhaustionTTL))
+		} else if det.Category == connstate.ErrorQuota {
+			ttl := 24 * time.Hour // fallback for daily quotas
+			if det.CooldownUntil != nil {
+				ttl = time.Until(*det.CooldownUntil)
+			}
+			h.exhaustion.MarkExhausted(conn.ID, ttl)
 		}
-		h.exhaustion.MarkExhausted(conn.ID, ttl)
 	}
 	h.combo.RecordFailure(conn.ID, det)
-	h.persistCooldown(conn.ID, det)
+	h.persistCooldownScoped(conn.ID, det)
 	// Update in-memory status so dashboard reflects rate_limited/quota_exhausted immediately.
 	if det.Status != "" {
 		h.store.UpdateStatus(conn.ID, det.Status)
@@ -873,6 +889,7 @@ func (h *Handler) checkAutoDisable(connID, provider string) {
 		h.elig.ScheduleUpdate()
 	}
 }
+
 // resetBanCount resets the consecutive ban count on success (persists to DB).
 func (h *Handler) resetBanCount(connID string) {
 	cs := h.store.Get(connID)
@@ -886,8 +903,62 @@ func (h *Handler) resetBanCount(connID string) {
 	}
 }
 
+// persistCooldownScoped writes a quota/rate-limit cooldown to the DB so it survives restarts.
+// Also updates last_error fields for debugging.
+// For per-model scope the connection status and cooldown_until are left untouched
+// so the connection stays eligible for other models.
+func (h *Handler) persistCooldownScoped(connID string, det connstate.ErrorDetection) {
+	if det.Scope == "model" {
+		errMsg := det.Message
+		errCode := string(det.Category)
+		h.writeQueue.Enqueue("persistCooldownScoped", func(d *sql.DB) error {
+			now := time.Now().Unix()
+			_, err := d.Exec(`
+				UPDATE connections
+				SET last_error = ?,
+				    last_error_code = ?,
+				    failure_count = failure_count + 1,
+				    last_failure_at = ?,
+				    updated_at = ?
+				WHERE id = ?
+			`, errMsg, errCode, now, now, connID)
+			return err
+		})
+		return
+	}
+
+	if det.CooldownUntil == nil {
+		return
+	}
+	status := string(det.Status)
+	if det.Category == connstate.ErrorQuota {
+		status = string(connstate.StatusQuotaExhausted)
+	}
+	statusVal := status
+	cooldownUntil := det.CooldownUntil.Unix()
+	errMsg := det.Message
+	errCode := string(det.Category)
+	h.writeQueue.Enqueue("persistCooldownScoped", func(d *sql.DB) error {
+		now := time.Now().Unix()
+		_, err := d.Exec(`
+			UPDATE connections
+			SET status = ?,
+			    cooldown_until = ?,
+			    last_error = ?,
+			    last_error_code = ?,
+			    failure_count = failure_count + 1,
+			    last_failure_at = ?,
+			    updated_at = ?
+			WHERE id = ?
+		`, statusVal, cooldownUntil, errMsg, errCode, now, now, connID)
+		return err
+	})
+}
+
 // persistCooldown writes a quota/rate-limit cooldown to the DB so it survives restarts.
 // Also updates last_error fields for debugging.
+// Deprecated: use persistCooldownScoped in new code; kept for callers that intentionally
+// want connection-wide behavior regardless of detection scope.
 func (h *Handler) persistCooldown(connID string, det connstate.ErrorDetection) {
 	if det.CooldownUntil == nil {
 		return
