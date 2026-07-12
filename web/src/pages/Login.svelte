@@ -105,7 +105,7 @@
         <ShieldCheckIcon class="mt-0.5 size-4 shrink-0 text-primary" />
         <span>
           Default password <code class="text-foreground">12345677</code>. Change it with
-          <code class="text-foreground">axonrouter setpass &lt;password&gt;</code>.
+          <code class="text-foreground">axonrouter --setpass &lt;password&gt;</code>.
         </span>
       </div>
     </div>

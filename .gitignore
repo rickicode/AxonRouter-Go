@@ -1,10 +1,9 @@
 # Binaries
-axonrouter
-axonrouter-cli
-server
-bin/
-build/axonrouter
-build/axonrouter-dev
+/axonrouter
+/server
+/bin/
+/build/axonrouter
+/build/axonrouter-dev
 *.exe
 *.dll
 *.so

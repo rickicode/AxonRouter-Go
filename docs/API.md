@@ -225,7 +225,7 @@ Modes: `text`, `image`, `audio`, `video`
 ## Admin API
 #### POST /api/admin/login
 
-Login dengan password admin (default `12345677`, diubah via `axonrouter setpass <password>`). Mengembalikan JWT di header `X-Auth-Token` dan body `{"token": "..."}`.
+Login dengan password admin (default `12345677`, diubah via `axonrouter --setpass <password>`). Mengembalikan JWT di header `X-Auth-Token` dan body `{"token": "..."}`.
 
 **Request:** `{"password": "string"}`
 

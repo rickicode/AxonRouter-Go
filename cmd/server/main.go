@@ -14,6 +14,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/models"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func printStartupBanner(port string, database *sql.DB) {
@@ -73,8 +74,31 @@ func printStartupBannerPlain(port string, database *sql.DB) {
 	fmt.Println()
 }
 
+func setAdminPassword(password string) {
+	cfg := config.Get()
+	database, err := db.Open(cfg.DBPath)
+	if err != nil {
+		log.Fatalf("Failed to open database: %v", err)
+	}
+	defer database.Close()
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		log.Fatalf("Failed to hash password: %v", err)
+	}
+	if err := db.SetSetting("admin_password_hash", string(hash)); err != nil {
+		log.Fatalf("Failed to save password: %v", err)
+	}
+	fmt.Println("Admin password updated.")
+	os.Exit(0)
+}
+
 func main() {
 	gin.SetMode(gin.ReleaseMode)
+
+	if len(os.Args) >= 3 && os.Args[1] == "--setpass" {
+		setAdminPassword(os.Args[2])
+	}
 
 	cfg := config.Get()
 

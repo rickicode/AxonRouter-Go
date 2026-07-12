@@ -43,7 +43,7 @@ clean:
 	rm -rf $(FRONTEND_DIR)/build
 	rm -rf $(FRONTEND_DIR)/.svelte-kit
 	# Also remove stray binaries, DB files, and session logs left in the workspace
-	rm -f server axonrouter axonrouter-cli v1.test
+	rm -f server axonrouter v1.test
 	rm -rf bin/
 	rm -f *.db *.db-wal *.db-shm
 	rm -f console-*.log
