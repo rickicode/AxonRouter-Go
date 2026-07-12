@@ -73,6 +73,7 @@ func (h *Handler) Embeddings(c *gin.Context) {
 				ProviderTypeID: provider,
 				ModelID:        modelName,
 				Modality:       "embedding",
+				Stream:         false,
 				LatencyMs:      time.Since(start).Milliseconds(),
 				ErrorMessage:   err.Error(),
 			})
@@ -84,6 +85,7 @@ func (h *Handler) Embeddings(c *gin.Context) {
 			ProviderTypeID: provider,
 			ModelID:        modelName,
 			Modality:       "embedding",
+			Stream:         false,
 			LatencyMs:      time.Since(start).Milliseconds(),
 			StatusCode:     resp.StatusCode,
 		})

@@ -38,7 +38,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 
 	// Combo-first routing
 	if comboResult, ok := h.combo.Resolve(model); ok {
-		h.handleComboRequest(c, comboResult, body, model, start)
+		h.handleComboRequest(c, comboResult, body, model, start, stream)
 		return
 	}
 
@@ -143,10 +143,10 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 			if h.isClientCanceled(c, err) {
 				return
 			}
-			if h.writeUpstreamClientError(c, err, conn, provider, modelName, start) {
+			if h.writeUpstreamClientError(c, err, conn, provider, modelName, start, stream) {
 				return
 			}
-			retry, cat := h.handleFailoverError(c, conn, provider, modelName, err, attempt, latency)
+			retry, cat := h.handleFailoverError(c, conn, provider, modelName, err, attempt, latency, stream)
 			lastErr = err
 			lastErrCategory = cat
 			if !retry {
@@ -169,6 +169,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 				ProviderTypeID:  provider,
 				ModelID:         modelName,
 				Modality:        "chat",
+				Stream:          stream,
 				InputTokens:     tokenCounts.InputTokens,
 				OutputTokens:    tokenCounts.OutputTokens,
 				ReasoningTokens: tokenCounts.ReasoningTokens,
@@ -222,7 +223,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 }
 
 // handleComboRequest handles a request that matched a combo.
-func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboResult, body []byte, model string, start time.Time) {
+func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboResult, body []byte, model string, start time.Time, stream bool) {
 	comboTimeout := 30 * time.Second
 	if comboResult.Combo != nil && comboResult.Combo.TimeoutMs > 0 {
 		comboTimeout = time.Duration(comboResult.Combo.TimeoutMs) * time.Millisecond
@@ -294,6 +295,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				ProviderTypeID:  provider,
 				ModelID:         modelName,
 				Modality:        "chat",
+				Stream:          stream,
 				InputTokens:     tokenCounts.InputTokens,
 				OutputTokens:    tokenCounts.OutputTokens,
 				ReasoningTokens: tokenCounts.ReasoningTokens,
@@ -315,7 +317,7 @@ func (h *Handler) handleNonStreamResponse(c *gin.Context, exec executor.Executor
 	start := time.Now()
 	resp, err := exec.Execute(c.Request.Context(), req)
 	if err != nil {
-		if h.writeUpstreamClientError(c, err, nil, "", req.Model, start) {
+		if h.writeUpstreamClientError(c, err, nil, "", req.Model, start, false) {
 			return
 		}
 		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})

@@ -29,6 +29,7 @@ type LogEntry struct {
 	StatusCode      int
 	ErrorMessage    string
 	CostUsd         float64
+	Stream          bool
 }
 
 // Tracker is an async usage logger with channel-based buffering.
@@ -166,8 +167,9 @@ func (t *Tracker) writeBatchDirect(database *sql.DB, batch []*LogEntry) error {
 	stmt, err := tx.Prepare(`INSERT INTO request_logs
 		(id, timestamp, connection_id, provider_type_id, model_id, combo_id,
 		 modality, input_tokens, output_tokens, reasoning_tokens, cached_tokens,
+  stream,
 		 latency_ms, status_code, error_message, cost_usd, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		tx.Rollback()
 		return fmt.Errorf("usage: prepare: %w", err)
@@ -186,6 +188,7 @@ func (t *Tracker) writeBatchDirect(database *sql.DB, batch []*LogEntry) error {
 
 		if _, err := stmt.Exec(uuid.New().String(), e.Timestamp, connID, providerID, modelID, comboID,
 			e.Modality, e.InputTokens, e.OutputTokens, e.ReasoningTokens, e.CachedTokens,
+			e.Stream,
 			latency, statusCode, errMsg, e.CostUsd, now); err != nil {
 			log.Printf("usage: exec: %v", err)
 		}

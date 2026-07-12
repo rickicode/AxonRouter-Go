@@ -103,6 +103,7 @@ type RequestLog struct {
 	OutputTokens    int64          `json:"output_tokens"`
 	ReasoningTokens int64          `json:"reasoning_tokens"`
 	CachedTokens    int64          `json:"cached_tokens"`
+	Stream          bool           `json:"stream"`
 	LatencyMs       sql.NullInt64  `json:"latency_ms,omitempty"`
 	StatusCode      sql.NullInt64  `json:"status_code,omitempty"`
 	ErrorMessage    sql.NullString `json:"error_message,omitempty"`
@@ -139,6 +140,7 @@ func (r RequestLog) MarshalJSON() ([]byte, error) {
 		OutputTokens    int64   `json:"output_tokens"`
 		ReasoningTokens int64   `json:"reasoning_tokens"`
 		CachedTokens    int64   `json:"cached_tokens"`
+		Stream          bool    `json:"stream"`
 		LatencyMs       int64   `json:"latency_ms,omitempty"`
 		StatusCode      int64   `json:"status_code,omitempty"`
 		ErrorMessage    string  `json:"error_message,omitempty"`
@@ -157,6 +159,7 @@ func (r RequestLog) MarshalJSON() ([]byte, error) {
 		OutputTokens:    r.OutputTokens,
 		ReasoningTokens: r.ReasoningTokens,
 		CachedTokens:    r.CachedTokens,
+		Stream:          r.Stream,
 		LatencyMs:       getInt(r.LatencyMs),
 		StatusCode:      getInt(r.StatusCode),
 		ErrorMessage:    getStr(r.ErrorMessage),

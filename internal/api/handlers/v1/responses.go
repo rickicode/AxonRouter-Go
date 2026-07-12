@@ -44,7 +44,7 @@ func (h *Handler) Responses(c *gin.Context) {
 
 	// Combo-first routing
 	if comboResult, ok := h.combo.Resolve(model); ok {
-		h.handleComboRequest(c, comboResult, body, model, start)
+		h.handleComboRequest(c, comboResult, body, model, start, stream)
 		return
 	}
 
@@ -114,7 +114,7 @@ func (h *Handler) Responses(c *gin.Context) {
 			if h.isClientCanceled(c, err) {
 				return
 			}
-			retry, cat := h.handleFailoverError(c, conn, provider, modelName, err, attempt, latency)
+			retry, cat := h.handleFailoverError(c, conn, provider, modelName, err, attempt, latency, stream)
 			lastErr = err
 			lastErrCategory = cat
 			if !retry {
@@ -123,7 +123,7 @@ func (h *Handler) Responses(c *gin.Context) {
 			continue
 		}
 		h.resetBanCount(conn.ID)
-	h.persistSuccess(conn.ID)
+		h.persistSuccess(conn.ID)
 		h.combo.RecordSuccess(conn.ID)
 
 		if stream {
@@ -142,6 +142,7 @@ func (h *Handler) Responses(c *gin.Context) {
 				ProviderTypeID:  provider,
 				ModelID:         modelName,
 				Modality:        "chat",
+				Stream:          stream,
 				InputTokens:     tokenCounts.InputTokens,
 				OutputTokens:    tokenCounts.OutputTokens,
 				ReasoningTokens: tokenCounts.ReasoningTokens,

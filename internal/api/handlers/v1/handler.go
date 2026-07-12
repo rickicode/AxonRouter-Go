@@ -612,6 +612,7 @@ func (h *Handler) isClientCanceled(c *gin.Context, err error) bool {
 	}
 	return c != nil && c.Request.Context().Err() != nil
 }
+
 // executeDirect runs the executor once with no retry — on any error, the caller
 // should failover to the next connection. This matches the user's preference:
 // "jika error ya langsung pindah ke akun lain".
@@ -634,7 +635,7 @@ func (h *Handler) executeDirect(ctx context.Context, exec executor.Executor, req
 // exhausted/cooled-down when appropriate, refreshes eligibility, and logs it.
 // Returns (shouldRetry, category): shouldRetry=false for non-retryable errors
 // (model_not_found, auth_failed), category for the caller to build better error messages.
-func (h *Handler) handleFailoverError(c *gin.Context, conn *Connection, provider, modelName string, err error, attempt int, latency int64) (bool, string) {
+func (h *Handler) handleFailoverError(c *gin.Context, conn *Connection, provider, modelName string, err error, attempt int, latency int64, stream bool) (bool, string) {
 	det := connstate.DetectError(c.Request.Context(), 0, "", err, provider, modelName, nil)
 	if connstate.HasPerModelQuota(provider) && det.ModelID != "" &&
 		(det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
@@ -670,25 +671,30 @@ func (h *Handler) handleFailoverError(c *gin.Context, conn *Connection, provider
 
 	switch det.Category {
 	case connstate.ErrorModelNotFound:
-		logging.Logger.Warn("⊘ model not found — stop failover",
+		logging.Logger.Warn(
+			"⊘ model not found — stop failover",
 			"provider", provider, "model", modelName, "conn", conn.ID[:8], "name", conn.Name,
 		)
 	case connstate.ErrorAuth:
-		logging.Logger.Warn("⊘ auth failed — stop failover",
+		logging.Logger.Warn(
+			"⊘ auth failed — stop failover",
 			"provider", provider, "model", modelName, "conn", conn.ID[:8], "name", conn.Name,
 		)
 	case connstate.ErrorRateLimit:
-		logging.Logger.Warn("⟳ rate limited — try next",
+		logging.Logger.Warn(
+			"⟳ rate limited — try next",
 			"provider", provider, "model", modelName, "conn", conn.ID[:8], "name", conn.Name,
 			"cooldown", det.CooldownUntil, "attempt", attempt+1,
 		)
 	case connstate.ErrorQuota:
-		logging.Logger.Warn("⟳ quota exhausted — try next",
+		logging.Logger.Warn(
+			"⟳ quota exhausted — try next",
 			"provider", provider, "model", modelName, "conn", conn.ID[:8], "name", conn.Name,
 			"cooldown", det.CooldownUntil, "attempt", attempt+1,
 		)
 	default:
-		logging.Logger.Error("⟳ upstream error — try next",
+		logging.Logger.Error(
+			"⟳ upstream error — try next",
 			"provider", provider, "model", modelName, "conn", conn.ID[:8], "name", conn.Name,
 			"category", string(det.Category), "attempt", attempt+1, "error", errMsg,
 		)
@@ -699,6 +705,7 @@ func (h *Handler) handleFailoverError(c *gin.Context, conn *Connection, provider
 		ProviderTypeID: provider,
 		ModelID:        modelName,
 		Modality:       "chat",
+		Stream:         stream,
 		LatencyMs:      latency,
 		ErrorMessage:   err.Error(),
 	})
@@ -722,6 +729,7 @@ func (h *Handler) writeUpstreamClientError(
 	conn *Connection,
 	provider, modelName string,
 	start time.Time,
+	stream bool,
 ) bool {
 	var upErr *executor.UpstreamError
 	if !errors.As(err, &upErr) {
@@ -743,6 +751,7 @@ func (h *Handler) writeUpstreamClientError(
 			ProviderTypeID: provider,
 			ModelID:        modelName,
 			Modality:       "chat",
+			Stream:         stream,
 			LatencyMs:      time.Since(start).Milliseconds(),
 			StatusCode:     upErr.StatusCode,
 			ErrorMessage:   string(errBody),
@@ -820,6 +829,7 @@ func (h *Handler) streamResponse(
 					ProviderTypeID:  provider,
 					ModelID:         model,
 					Modality:        "chat",
+					Stream:          true,
 					InputTokens:     tokenCounts.InputTokens,
 					OutputTokens:    tokenCounts.OutputTokens,
 					ReasoningTokens: tokenCounts.ReasoningTokens,
@@ -843,6 +853,7 @@ func (h *Handler) streamResponse(
 					ProviderTypeID: provider,
 					ModelID:        model,
 					Modality:       "chat",
+					Stream:         true,
 					LatencyMs:      time.Since(start).Milliseconds(),
 					ErrorMessage:   chunk.Err.Error(),
 				})

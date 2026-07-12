@@ -109,26 +109,25 @@ func (h *Handler) STT(c *gin.Context) {
 	resp, streamResult, err = h.executeWithRetry(proxyCtx, sttExec, req, conn, provider, model)
 	_ = streamResult
 	if err != nil {
-		// Log failure
 		h.tracker.Log(&usage.LogEntry{
 			ConnectionID:   conn.ID,
 			ProviderTypeID: provider,
 			ModelID:        model,
 			Modality:       "audio",
+			Stream:         false,
 			LatencyMs:      time.Since(start).Milliseconds(),
 			ErrorMessage:   err.Error(),
 		})
-
 		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
 		return
 	}
 
-	// Log success
 	h.tracker.Log(&usage.LogEntry{
 		ConnectionID:   conn.ID,
 		ProviderTypeID: provider,
 		ModelID:        model,
 		Modality:       "audio",
+		Stream:         false,
 		LatencyMs:      time.Since(start).Milliseconds(),
 		StatusCode:     resp.StatusCode,
 	})

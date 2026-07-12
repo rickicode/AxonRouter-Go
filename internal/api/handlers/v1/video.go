@@ -66,26 +66,25 @@ func (h *Handler) Video(c *gin.Context) {
 	resp, streamResult, err = h.executeWithRetry(proxyCtx, videoExec, req, conn, provider, modelName)
 	_ = streamResult
 	if err != nil {
-		// Log failure
 		h.tracker.Log(&usage.LogEntry{
 			ConnectionID:   conn.ID,
 			ProviderTypeID: provider,
 			ModelID:        modelName,
 			Modality:       "video",
+			Stream:         false,
 			LatencyMs:      time.Since(start).Milliseconds(),
 			ErrorMessage:   err.Error(),
 		})
-
 		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
 		return
 	}
 
-	// Log success
 	h.tracker.Log(&usage.LogEntry{
 		ConnectionID:   conn.ID,
 		ProviderTypeID: provider,
 		ModelID:        modelName,
 		Modality:       "video",
+		Stream:         false,
 		LatencyMs:      time.Since(start).Milliseconds(),
 		StatusCode:     resp.StatusCode,
 	})

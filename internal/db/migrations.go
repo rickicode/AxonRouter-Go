@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
     input_tokens INTEGER DEFAULT 0,
     output_tokens INTEGER DEFAULT 0,
     reasoning_tokens INTEGER DEFAULT 0,
+  stream INTEGER NOT NULL DEFAULT 0,
     latency_ms INTEGER,
     status_code INTEGER,
     error_message TEXT,
@@ -136,6 +137,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 	for _, stmt := range []string{
 		`ALTER TABLE connections ADD COLUMN provider_specific_data TEXT`,
 		`ALTER TABLE request_logs ADD COLUMN cached_tokens INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE request_logs ADD COLUMN stream INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE api_keys ADD COLUMN key_value TEXT`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
@@ -183,16 +185,16 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 	db.Exec(`UPDATE connections SET provider_type_id = 'oc' WHERE provider_type_id = 'opencode'`)
 	db.Exec(`UPDATE quota_cache SET provider_type_id = 'oc' WHERE provider_type_id = 'opencode'`)
 	db.Exec(`DELETE FROM provider_types WHERE id = 'opencode'`)
-// Seed a default direct connection for OpenCode Free (oc). This connection
-// is always-on, cannot be deleted, and serves as the direct route. Additional
-// oc connections must use a proxy pool (provider_specific_data.proxyPoolId).
-var ocDirectCount int
-db.QueryRow(`SELECT COUNT(*) FROM connections WHERE provider_type_id = 'oc' AND is_active = 1 AND provider_specific_data LIKE '%"direct":"true"%'`).Scan(&ocDirectCount)
-if ocDirectCount == 0 {
-	db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, provider_specific_data, status, is_active, created_at, updated_at) VALUES ('oc-direct-default', 'oc', 'Direct (Default)', 'none', '{"direct":"true"}', 'ready', 1, ?, ?)`, now, now)
-}
-// Deactivate stale oc connections that have incorrect auth_type (should be 'none').
-db.Exec(`UPDATE connections SET is_active = 0 WHERE provider_type_id = 'oc' AND auth_type != 'none'`)
+	// Seed a default direct connection for OpenCode Free (oc). This connection
+	// is always-on, cannot be deleted, and serves as the direct route. Additional
+	// oc connections must use a proxy pool (provider_specific_data.proxyPoolId).
+	var ocDirectCount int
+	db.QueryRow(`SELECT COUNT(*) FROM connections WHERE provider_type_id = 'oc' AND is_active = 1 AND provider_specific_data LIKE '%"direct":"true"%'`).Scan(&ocDirectCount)
+	if ocDirectCount == 0 {
+		db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, provider_specific_data, status, is_active, created_at, updated_at) VALUES ('oc-direct-default', 'oc', 'Direct (Default)', 'none', '{"direct":"true"}', 'ready', 1, ?, ?)`, now, now)
+	}
+	// Deactivate stale oc connections that have incorrect auth_type (should be 'none').
+	db.Exec(`UPDATE connections SET is_active = 0 WHERE provider_type_id = 'oc' AND auth_type != 'none'`)
 
 	// Quota cache table (stores upstream quota data from background scheduler)
 	if _, err := db.Exec(`
@@ -310,7 +312,7 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 
 	// Seed default model pricing (INSERT OR IGNORE — never overwrites operator edits).
 	now = time.Now().Unix()
-			seedPricing := []struct {
+	seedPricing := []struct {
 		ID, Name                                 string
 		In, Out, Reason, CachedRead, CachedWrite float64
 	}{
@@ -539,7 +541,8 @@ func migrateRequestLogStatusCodes(database *sql.DB) error {
 func validateSeedPricing(seed []struct {
 	ID, Name                                 string
 	In, Out, Reason, CachedRead, CachedWrite float64
-}) error {
+},
+) error {
 	seen := make(map[string]bool, len(seed))
 	for _, p := range seed {
 		if p.ID == "" {

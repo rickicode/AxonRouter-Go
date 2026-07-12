@@ -44,7 +44,7 @@ func (h *Handler) Messages(c *gin.Context) {
 
 	// Combo-first routing
 	if comboResult, ok := h.combo.Resolve(model); ok {
-		h.handleComboRequest(c, comboResult, body, model, start)
+		h.handleComboRequest(c, comboResult, body, model, start, stream)
 		return
 	}
 
@@ -115,7 +115,7 @@ func (h *Handler) Messages(c *gin.Context) {
 			if h.isClientCanceled(c, err) {
 				return
 			}
-			retry, cat := h.handleFailoverError(c, conn, provider, modelName, err, attempt, latency)
+			retry, cat := h.handleFailoverError(c, conn, provider, modelName, err, attempt, latency, stream)
 			lastErr = err
 			lastErrCategory = cat
 			if !retry {
@@ -125,7 +125,7 @@ func (h *Handler) Messages(c *gin.Context) {
 		}
 
 		h.resetBanCount(conn.ID)
-	h.persistSuccess(conn.ID)
+		h.persistSuccess(conn.ID)
 		h.combo.RecordSuccess(conn.ID)
 
 		if req.Stream {
@@ -138,6 +138,7 @@ func (h *Handler) Messages(c *gin.Context) {
 				ProviderTypeID:  provider,
 				ModelID:         modelName,
 				Modality:        "chat",
+				Stream:          stream,
 				InputTokens:     tokenCounts.InputTokens,
 				OutputTokens:    tokenCounts.OutputTokens,
 				ReasoningTokens: tokenCounts.ReasoningTokens,
@@ -187,7 +188,6 @@ func (h *Handler) Messages(c *gin.Context) {
 	logging.Logger.Error(msg, "provider", provider, "model", modelName, "category", lastErrCategory)
 	c.JSON(statusCode, claudeError(errType, msg))
 }
-
 
 // handleClaudeStreamResponse handles streaming Claude responses.
 func (h *Handler) handleClaudeStreamResponse(c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte) {

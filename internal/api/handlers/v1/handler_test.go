@@ -177,7 +177,7 @@ func TestWriteUpstreamClientError_WritesTranslatedError(t *testing.T) {
 	body := []byte(`{"error":{"message":"context too long","type":"invalid_request_error","code":"context_length_exceeded"}}`)
 	upErr := &executor.UpstreamError{StatusCode: http.StatusBadRequest, Body: body}
 
-	if !h.writeUpstreamClientError(c, upErr, nil, "cf", "@cf/meta/llama-3.3-70b", time.Now()) {
+	if !h.writeUpstreamClientError(c, upErr, nil, "cf", "@cf/meta/llama-3.3-70b", time.Now(), false) {
 		t.Fatal("expected writeUpstreamClientError to return true")
 	}
 	if rec.Code != http.StatusBadRequest {
@@ -202,7 +202,7 @@ func TestWriteUpstreamClientError_SkipsRateLimit(t *testing.T) {
 		Body:       []byte(`{"error":{"message":"rate limited","type":"rate_limit_error","code":"rate_limit_exceeded"}}`),
 	}
 
-	if h.writeUpstreamClientError(c, upErr, nil, "cf", "model", time.Now()) {
+	if h.writeUpstreamClientError(c, upErr, nil, "cf", "model", time.Now(), false) {
 		t.Fatal("expected writeUpstreamClientError to return false for 429")
 	}
 	if rec.Code != http.StatusOK {
