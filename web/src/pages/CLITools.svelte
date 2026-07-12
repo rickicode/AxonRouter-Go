@@ -33,7 +33,7 @@
   // Detail modal
   let selectedTool = $state<CLITool | null>(null);
   let detailOpen = $state(false);
-  let sel = $state<CLIToolSelection>({ model: '', apiKeyId: '', baseUrl: '' });
+  let sel = $state<CLIToolSelection>({ model: '', apiKeyId: '', baseUrl: '', models: [] as string[], useDiscovery: false });
   let configured = $state(false);
   let apiKeyValue = $state('');
   let generated = $state<CLIToolConfig | null>(null);
@@ -46,6 +46,7 @@
   // Model picker (reusable)
   let modelPickerOpen = $state(false);
   let modelPickerTarget = $state<string>('_main'); // '_main' or alias name
+let modelPickerMulti = $state(false);
 
   const defaultBaseUrl =
     typeof window !== 'undefined' ? `${window.location.origin}/v1` : 'http://localhost:3777/v1';
@@ -88,19 +89,21 @@
 
     try {
       const res = await cliToolsApi.get(tool.id);
-      sel = {
-        model: res.selection?.model ?? '',
-        apiKeyId: res.selection?.apiKeyId ?? '',
-        baseUrl: res.selection?.baseUrl || res.defaultBaseUrl || defaultBaseUrl,
-        modelAliases: res.selection?.modelAliases,
-      };
+sel = {
+					model: res.selection?.model ?? '',
+					apiKeyId: res.selection?.apiKeyId ?? '',
+					baseUrl: res.selection?.baseUrl || res.defaultBaseUrl || defaultBaseUrl,
+					modelAliases: res.selection?.modelAliases,
+					models: res.selection?.models ?? [],
+					useDiscovery: res.selection?.useDiscovery ?? false,
+				};
       configured = res.configured;
       // Restore saved model aliases
       if (res.selection?.modelAliases) {
         modelAliases = { ...res.selection.modelAliases };
       }
     } catch {
-      sel = { model: '', apiKeyId: '', baseUrl: defaultBaseUrl };
+sel = { model: '', apiKeyId: '', baseUrl: defaultBaseUrl, models: [], useDiscovery: false };
       configured = false;
     }
 
@@ -127,7 +130,9 @@
       generated = res.config;
       configured = true;
       statuses[selectedTool.id] = { configured: true };
-      toast.success('Config generated');
+			const path = res.config?.configPath;
+			toast.success(`Generated config for ${selectedTool.name}${path ? ' → ' + path : ''}`);
+			setTimeout(() => document.getElementById('generated-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to generate config');
     } finally {
@@ -159,9 +164,10 @@
     }
   }
 
-  function openModelPicker(target: string) {
-    modelPickerTarget = target;
-    modelPickerOpen = true;
+function openModelPicker(target: string, multi = false) {
+	modelPickerTarget = target;
+	modelPickerMulti = multi;
+	modelPickerOpen = true;
   }
 
   function onModelPick(modelId: string) {
@@ -172,11 +178,28 @@
     }
   }
 
+function onMultiSelect(modelIds: string[]) {
+  if (modelPickerTarget === '_main') {
+    sel.models = modelIds;
+  }
+}
+function addModel() {
+  const m = sel.model.trim();
+  if (!m) return;
+  if (!sel.models?.includes(m)) {
+    sel.models = [...(sel.models || []), m];
+  }
+  sel.model = '';
+}
+function removeModel(index: number) {
+  sel.models = (sel.models || []).filter((_, i) => i !== index);
+}
+
   // Template variable substitution for code blocks and guide step values
   function replaceVars(text: string): string {
     const key = apiKeyValue || '__YOUR_AXONROUTER_API_KEY__';
     const base = sel.baseUrl ? (sel.baseUrl.endsWith('/v1') ? sel.baseUrl : `${sel.baseUrl}/v1`) : defaultBaseUrl;
-    const model = sel.model || getFirstAliasModel() || 'provider/model-id';
+    const model = sel.models?.[0] || sel.model || getFirstAliasModel() || 'provider/model-id';
     return text
       .replace(/\{\{baseUrl\}\}/g, base)
       .replace(/\{\{apiKey\}\}/g, key)
@@ -328,16 +351,36 @@
                       {/each}
                     </select>
                   {/if}
-                  {#if step.type === 'modelSelector'}
-                    <div class="flex gap-2">
-                      <Input bind:value={sel.model} placeholder="provider/model-id" class="font-mono text-body-sm flex-1" />
-                      <Button variant="outline" size="sm" class="shrink-0 gap-1.5" onclick={() => openModelPicker('_main')} disabled={models.length === 0}>
-                        <Search class="size-3.5" /> Browse
-                      </Button>
-                    </div>
-                  {/if}
-                </div>
-              </div>
+{#if step.type === 'modelSelector'}
+  <div class="space-y-3">
+    {#if selectedTool?.supportsDiscovery}
+      <label class="flex cursor-pointer items-center gap-2">
+        <input type="checkbox" bind:checked={sel.useDiscovery} class="rounded border-border" />
+        <span class="text-body-sm">Auto-discover models from gateway</span>
+      </label>
+    {/if}
+    {#if !sel.useDiscovery || !selectedTool?.supportsDiscovery}
+      <div class="flex flex-wrap gap-2">
+        {#each sel.models || [] as m, i (m)}
+          <div class="flex items-center gap-1 rounded-md border border-border px-2 py-1 font-mono text-caption">
+            <span class="max-w-[200px] truncate">{m}</span>
+            <button class="text-muted-foreground hover:text-foreground cursor-pointer" onclick={() => removeModel(i)}><XCircle class="size-3" /></button>
+            <button class="text-muted-foreground hover:text-foreground cursor-pointer" onclick={() => copyText(m, `chip-${i}`)}>
+              {#if copiedField === `chip-${i}`}<Check class="size-3 text-emerald-400" />{:else}<Copy class="size-3" />{/if}
+            </button>
+          </div>
+        {/each}
+      </div>
+      <div class="flex gap-2">
+        <Input bind:value={sel.model} placeholder="provider/model-id" class="font-mono text-body-sm flex-1" />
+        <Button variant="outline" size="sm" class="gap-1.5" onclick={() => openModelPicker('_main', true)} disabled={models.length === 0}><Search class="size-3.5" /> Browse</Button>
+        <Button variant="outline" size="sm" onclick={addModel} disabled={!sel.model?.trim()}>Add</Button>
+      </div>
+    {/if}
+  </div>
+{/if}
+  </div>
+  </div>
             {/each}
           </div>
         {/if}
@@ -456,7 +499,7 @@
 
         <!-- Generated config output -->
         {#if generated}
-          <div class="mt-2 space-y-4 rounded-lg border border-border bg-background/50 p-4">
+          <div id="generated-section" class="mt-2 space-y-4 rounded-lg border border-border bg-background/50 p-4">
             <h3 class="text-body-sm-strong">Generated config</h3>
 
             {#if generated.envBlock}
@@ -511,8 +554,11 @@
 
 <!-- Reusable Model Picker Dialog -->
 <ModelPickerDialog
-  bind:open={modelPickerOpen}
-  {models}
-  selectedModel={modelPickerTarget === '_main' ? sel.model : (modelAliases[modelPickerTarget] || '')}
-  onSelect={onModelPick}
+	bind:open={modelPickerOpen}
+	{models}
+	selectedModel={modelPickerTarget === '_main' ? sel.model : (modelAliases[modelPickerTarget] || '')}
+	selectedModels={sel.models}
+	onSelect={onModelPick}
+	onMultiSelect={onMultiSelect}
+	multi={modelPickerMulti}
 />

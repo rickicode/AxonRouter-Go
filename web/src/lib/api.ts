@@ -881,6 +881,8 @@ export interface CLITool {
   color: string;
   configType: "env" | "custom" | "guide";
   docsUrl: string;
+  supportsDiscovery?: boolean;
+  multiModel?: boolean;
   modelAliases?: string[];
   defaultModels?: DefaultModel[];
   guideSteps?: GuideStep[];
@@ -895,8 +897,8 @@ export interface CLIToolStatus {
 export interface CLIToolState {
   tool: CLITool;
   selection: CLIToolSelection;
-  defaultBaseUrl: string;
-  configured: boolean;
+ defaultBaseUrl: string;
+ configured: boolean;
 }
 
 export interface CLIToolSelection {
@@ -904,6 +906,8 @@ export interface CLIToolSelection {
   apiKeyId: string;
   baseUrl: string;
   modelAliases?: Record<string, string>;
+  models?: string[];
+  useDiscovery?: boolean;
 }
 
 export interface CLIToolConfig {

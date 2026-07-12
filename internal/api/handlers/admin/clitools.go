@@ -46,17 +46,19 @@ type Note struct {
 
 // CLIToolStatic holds the catalog metadata for one supported CLI agent.
 type CLIToolStatic struct {
-	ID            string         `json:"id"`
-	Name          string         `json:"name"`
-	Description   string         `json:"description"`
-	Image         string         `json:"image"`
-	Color         string         `json:"color"`
-	ConfigType    string         `json:"configType"`
-	DocsURL       string         `json:"docsUrl"`
-	DefaultModels []DefaultModel `json:"defaultModels,omitempty"`
-	GuideSteps    []GuideStep    `json:"guideSteps,omitempty"`
-	CodeBlock     *CodeBlock     `json:"codeBlock,omitempty"`
-	Notes         []Note         `json:"notes,omitempty"`
+	ID                string         `json:"id"`
+	Name              string         `json:"name"`
+	Description       string         `json:"description"`
+	Image             string         `json:"image"`
+	Color             string         `json:"color"`
+	ConfigType        string         `json:"configType"`
+	DocsURL           string         `json:"docsUrl"`
+	DefaultModels     []DefaultModel `json:"defaultModels,omitempty"`
+	GuideSteps        []GuideStep    `json:"guideSteps,omitempty"`
+	CodeBlock         *CodeBlock     `json:"codeBlock,omitempty"`
+	Notes             []Note         `json:"notes,omitempty"`
+	SupportsDiscovery bool           `json:"supportsDiscovery,omitempty"`
+	MultiModel        bool           `json:"multiModel,omitempty"`
 }
 
 // CLIToolSelection is what we persist and what the frontend submits.
@@ -65,6 +67,8 @@ type CLIToolSelection struct {
 	APIKeyID     string            `json:"apiKeyId"`
 	BaseURL      string            `json:"baseUrl"`
 	ModelAliases map[string]string `json:"modelAliases,omitempty"` // alias → gateway model id
+	Models       []string          `json:"models,omitempty"`
+	UseDiscovery bool              `json:"useDiscovery,omitempty"`
 }
 
 // CLIToolConfig is the tool-specific output shown to the user.
@@ -164,6 +168,20 @@ func (h *CLIToolsHandler) SaveConfig(c *gin.Context) {
 		}
 	}
 
+	// For tools that support discovery, require either discovery mode or a non-empty model list.
+	if tool.SupportsDiscovery && !req.UseDiscovery {
+		if len(req.Models) == 0 && req.Model == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "select at least one model or enable auto-discovery"})
+			return
+		}
+		for _, m := range req.Models {
+			if !h.isModelAvailable(m) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q is not available", m)})
+				return
+			}
+		}
+	}
+
 	// Validate alias models too
 	for alias, modelID := range req.ModelAliases {
 		if modelID != "" && !h.isModelAvailable(modelID) {
@@ -182,6 +200,8 @@ func (h *CLIToolsHandler) SaveConfig(c *gin.Context) {
 		APIKeyID:     req.APIKeyID,
 		BaseURL:      baseURL,
 		ModelAliases: req.ModelAliases,
+		Models:       req.Models,
+		UseDiscovery: req.UseDiscovery,
 	}
 	selJSON, err := json.Marshal(sel)
 	if err != nil {
@@ -490,13 +510,15 @@ var cliToolCatalog = []CLIToolStatic{
 	},
 	// ─── PI Coding Agent ───────────────────────────────────────────
 	{
-		ID:          "pi",
-		Name:        "PI Coding Agent",
-		Description: "Oh-My-Pi coding agent — register AxonRouter as an OpenAI-compatible provider in ~/.pi/agent/models.json.",
-		Image:       "/providers/pi.png",
-		Color:       "#8B5CF6",
-		ConfigType:  "guide",
-		DocsURL:     "https://github.com/oh-my-pi/pi-coding-agent",
+		ID:                "pi",
+		Name:              "PI Coding Agent",
+		Description:       "Oh-My-Pi coding agent — register AxonRouter as an OpenAI-compatible provider in ~/.pi/agent/models.json.",
+		Image:             "/providers/pi.png",
+		Color:             "#8B5CF6",
+		ConfigType:        "guide",
+		DocsURL:           "https://github.com/oh-my-pi/pi-coding-agent",
+		SupportsDiscovery: true,
+		MultiModel:        true,
 		GuideSteps: []GuideStep{
 			{Step: 1, Title: "Open pi models config", Desc: "Edit ~/.pi/agent/models.json and find the providers object."},
 			{Step: 2, Title: "Select a model", Desc: "Pick which AxonRouter model to register (browse or type provider/model-id).", Type: "modelSelector"},
@@ -522,13 +544,15 @@ var cliToolCatalog = []CLIToolStatic{
 	},
 	// ─── OMP (Oh My Pi) ─────────────────────────────────────────────
 	{
-		ID:          "omp",
-		Name:        "OMP (Oh My Pi)",
-		Description: "Oh-My-Pi shell/agent — register AxonRouter as an OpenAI-compatible provider in ~/.omp/agent/models.yml.",
-		Image:       "/providers/omp.png",
-		Color:       "#EC4899",
-		ConfigType:  "guide",
-		DocsURL:     "https://github.com/oh-my-pi/omp",
+		ID:                "omp",
+		Name:              "OMP (Oh My Pi)",
+		Description:       "Oh-My-Pi shell/agent — register AxonRouter as an OpenAI-compatible provider in ~/.omp/agent/models.yml.",
+		Image:             "/providers/omp.png",
+		Color:             "#EC4899",
+		ConfigType:        "guide",
+		DocsURL:           "https://github.com/oh-my-pi/omp",
+		SupportsDiscovery: true,
+		MultiModel:        true,
 		GuideSteps: []GuideStep{
 			{Step: 1, Title: "Open omp models config", Desc: "Edit ~/.omp/agent/models.yml and find the providers section."},
 			{Step: 2, Title: "Merge provider block", Desc: "Paste the YAML entry below into the providers section. Models are auto-discovered."},
@@ -590,32 +614,75 @@ func generateConfig(toolID string, sel CLIToolSelection, apiKey string) CLIToolC
 	case "generic":
 		return genericConfig(sel.Model, apiKey, base)
 	case "pi":
-		return snippetConfig("pi", sel, apiKey, base)
+		return piConfig(sel, apiKey, base)
 	case "omp":
-		return snippetConfig("omp", sel, apiKey, base)
+		return ompConfig(sel, apiKey, base)
 	}
 	return CLIToolConfig{}
 }
 
-// snippetConfig renders a tool's CodeBlock with {{baseUrl}}/{{apiKey}}/{{model}} substituted.
-func snippetConfig(toolID string, sel CLIToolSelection, apiKey, base string) CLIToolConfig {
-	tool := findTool(toolID)
-	if tool == nil || tool.CodeBlock == nil {
-		return CLIToolConfig{}
+// collectModels resolves the model list from sel.Models, falling back to sel.Model.
+func collectModels(sel CLIToolSelection) []string {
+	if len(sel.Models) > 0 {
+		return sel.Models
 	}
-	model := sel.Model
-	if model == "" {
-		model = "provider/model-id"
+	if sel.Model != "" {
+		return []string{sel.Model}
 	}
-	code := tool.CodeBlock.Code
-	code = strings.ReplaceAll(code, "{{baseUrl}}", base)
-	code = strings.ReplaceAll(code, "{{apiKey}}", apiKey)
-	code = strings.ReplaceAll(code, "{{model}}", model)
-	cfgPath := "~/.pi/agent/models.json"
-	if toolID == "omp" {
-		cfgPath = "~/.omp/agent/models.yml"
+	return []string{"provider/model-id"}
+}
+
+// piConfig builds the PI Coding Agent provider block. With UseDiscovery it emits a
+// discovery mapping; otherwise it lists the selected models explicitly.
+func piConfig(sel CLIToolSelection, apiKey, base string) CLIToolConfig {
+	provider := map[string]interface{}{
+		"baseUrl":    base,
+		"api":        "openai-completions",
+		"apiKey":     apiKey,
+		"authHeader": true,
 	}
-	return CLIToolConfig{ConfigPath: cfgPath, ConfigContent: code}
+	if sel.UseDiscovery {
+		provider["discovery"] = map[string]string{"type": "openai-models-list"}
+	} else {
+		models := collectModels(sel)
+		entries := make([]map[string]interface{}, 0, len(models))
+		for _, m := range models {
+			entries = append(entries, map[string]interface{}{
+				"id":            m,
+				"name":          "AxonRouter",
+				"reasoning":     false,
+				"input":         []string{"text", "image"},
+				"contextWindow": 200000,
+				"maxTokens":     16384,
+			})
+		}
+		provider["models"] = entries
+	}
+	out := map[string]interface{}{"AxonRouter": provider}
+	b, _ := json.MarshalIndent(out, "", "  ")
+	return CLIToolConfig{ConfigPath: "~/.pi/agent/models.json", ConfigContent: string(b)}
+}
+
+// ompConfig builds the OMP provider block (YAML). Discovery or explicit models.
+func ompConfig(sel CLIToolSelection, apiKey, base string) CLIToolConfig {
+	var b strings.Builder
+	b.WriteString("axonrouter-go:\n")
+	b.WriteString("  api: openai-completions\n")
+	b.WriteString(fmt.Sprintf("  apiKey: %q\n", apiKey))
+	b.WriteString("  authHeader: true\n")
+	b.WriteString(fmt.Sprintf("  baseUrl: %q\n", base))
+	if sel.UseDiscovery {
+		b.WriteString("  discovery:\n")
+		b.WriteString("    type: openai-models-list\n")
+	} else {
+		models := collectModels(sel)
+		b.WriteString("  models:\n")
+		for _, m := range models {
+			b.WriteString(fmt.Sprintf("    - id: %s\n", m))
+			b.WriteString("      name: AxonRouter\n")
+		}
+	}
+	return CLIToolConfig{ConfigPath: "~/.omp/agent/models.yml", ConfigContent: b.String()}
 }
 
 func claudeConfig(sel CLIToolSelection, apiKey, base string) CLIToolConfig {
