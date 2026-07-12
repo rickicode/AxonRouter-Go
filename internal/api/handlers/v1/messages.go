@@ -32,6 +32,9 @@ func (h *Handler) Messages(c *gin.Context) {
 	}
 
 	stream := executor.IsStreamRequest(body)
+	if h.checkTokenBudget(c, body) != nil {
+		return
+	}
 
 	// Exact cache check (non-stream, no tools, no cache_control)
 	cacheKey := h.exactCacheKey(body, model, stream)
@@ -132,6 +135,7 @@ func (h *Handler) Messages(c *gin.Context) {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(clientFormat), string(providerFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			h.tracker.Log(&usage.LogEntry{
+				ApiKeyID:        c.GetString("api_key_id"),
 				ConnectionID:    conn.ID,
 				ProviderTypeID:  provider,
 				ModelID:         modelName,
@@ -144,6 +148,8 @@ func (h *Handler) Messages(c *gin.Context) {
 				LatencyMs:       latency,
 				StatusCode:      resp.StatusCode,
 			})
+			h.incrementAPIKeyUsage(c.GetString("api_key_id"), tokenCounts.InputTokens+tokenCounts.OutputTokens)
+			h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
 			h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
 			h.writeJSONResponse(c, resp.StatusCode, translatedResp)
 		}

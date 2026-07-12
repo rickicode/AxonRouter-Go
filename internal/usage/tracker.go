@@ -20,6 +20,7 @@ type LogEntry struct {
 	ProviderTypeID  string
 	ModelID         string
 	ComboID         string
+	ApiKeyID        string
 	Modality        string
 	InputTokens     int64
 	OutputTokens    int64
@@ -166,10 +167,10 @@ func (t *Tracker) writeBatchDirect(database *sql.DB, batch []*LogEntry) error {
 
 	stmt, err := tx.Prepare(`INSERT INTO request_logs
 		(id, timestamp, connection_id, provider_type_id, model_id, combo_id,
-		 modality, input_tokens, output_tokens, reasoning_tokens, cached_tokens,
+	api_key_id, modality, input_tokens, output_tokens, reasoning_tokens, cached_tokens,
   stream,
 		 latency_ms, status_code, error_message, cost_usd, created_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		tx.Rollback()
 		return fmt.Errorf("usage: prepare: %w", err)
@@ -183,11 +184,12 @@ func (t *Tracker) writeBatchDirect(database *sql.DB, batch []*LogEntry) error {
 		modelID := toNullString(e.ModelID)
 		comboID := toNullString(e.ComboID)
 		latency := sql.NullInt64{Int64: e.LatencyMs, Valid: e.LatencyMs > 0}
+		apiKeyID := toNullString(e.ApiKeyID)
 		statusCode := sql.NullInt64{Int64: int64(e.StatusCode), Valid: e.StatusCode > 0}
 		errMsg := toNullString(e.ErrorMessage)
 
 		if _, err := stmt.Exec(uuid.New().String(), e.Timestamp, connID, providerID, modelID, comboID,
-			e.Modality, e.InputTokens, e.OutputTokens, e.ReasoningTokens, e.CachedTokens,
+			apiKeyID, e.Modality, e.InputTokens, e.OutputTokens, e.ReasoningTokens, e.CachedTokens,
 			e.Stream,
 			latency, statusCode, errMsg, e.CostUsd, now); err != nil {
 			log.Printf("usage: exec: %v", err)

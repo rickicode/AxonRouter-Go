@@ -67,27 +67,27 @@ func (h *Handler) TTS(c *gin.Context) {
 	_ = streamResult
 	if err != nil {
 		h.tracker.Log(&usage.LogEntry{
+			ApiKeyID:       c.GetString("api_key_id"),
 			ConnectionID:   conn.ID,
 			ProviderTypeID: provider,
 			ModelID:        modelName,
 			Modality:       "audio",
 			Stream:         false,
 			LatencyMs:      time.Since(start).Milliseconds(),
-			ErrorMessage:   err.Error(),
-		})
+			ErrorMessage:   err.Error()})
 		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
 		return
 	}
 
 	h.tracker.Log(&usage.LogEntry{
+		ApiKeyID:       c.GetString("api_key_id"),
 		ConnectionID:   conn.ID,
 		ProviderTypeID: provider,
 		ModelID:        modelName,
 		Modality:       "audio",
 		Stream:         false,
 		LatencyMs:      time.Since(start).Milliseconds(),
-		StatusCode:     resp.StatusCode,
-	})
+		StatusCode:     resp.StatusCode})
 
 	// Return audio bytes
 	c.Header("Content-Type", "audio/mpeg")

@@ -31,6 +31,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
+	"github.com/tidwall/gjson"
 )
 
 const maxBodySize = 10 * 1024 * 1024 // 10MB
@@ -757,6 +758,7 @@ func (h *Handler) handleFailoverError(c *gin.Context, conn *Connection, provider
 	}
 
 	h.tracker.Log(&usage.LogEntry{
+		ApiKeyID:       c.GetString("api_key_id"),
 		ConnectionID:   conn.ID,
 		ProviderTypeID: provider,
 		ModelID:        modelName,
@@ -803,6 +805,7 @@ func (h *Handler) writeUpstreamClientError(
 			errBody = upErr.Body
 		}
 		h.tracker.Log(&usage.LogEntry{
+			ApiKeyID:       c.GetString("api_key_id"),
 			ConnectionID:   conn.ID,
 			ProviderTypeID: provider,
 			ModelID:        modelName,
@@ -881,6 +884,7 @@ func (h *Handler) streamResponse(
 				latency := time.Since(start).Milliseconds()
 				tokenCounts := ExtractTokensFromFinalChunk(lastChunk)
 				h.tracker.Log(&usage.LogEntry{
+					ApiKeyID:        c.GetString("api_key_id"),
 					ConnectionID:    conn.ID,
 					ProviderTypeID:  provider,
 					ModelID:         model,
@@ -893,6 +897,7 @@ func (h *Handler) streamResponse(
 					LatencyMs:       latency,
 					StatusCode:      http.StatusOK,
 				})
+				h.incrementAPIKeyUsage(c.GetString("api_key_id"), tokenCounts.InputTokens+tokenCounts.OutputTokens)
 				return
 			}
 
@@ -905,6 +910,7 @@ func (h *Handler) streamResponse(
 				c.Writer.Write([]byte("data: [DONE]\n\n"))
 				flusher.Flush()
 				h.tracker.Log(&usage.LogEntry{
+					ApiKeyID:       c.GetString("api_key_id"),
 					ConnectionID:   conn.ID,
 					ProviderTypeID: provider,
 					ModelID:        model,
@@ -1066,4 +1072,45 @@ func (h *Handler) persistSuccess(connID string) {
 		_, err := d.Exec(`UPDATE connections SET last_success_at = ?, updated_at = ? WHERE id = ?`, now, now, connID)
 		return err
 	})
+}
+
+// checkTokenBudget returns an error if the API key's lifetime token budget would be exceeded.
+func (h *Handler) checkTokenBudget(c *gin.Context, body []byte) error {
+	apiKeyID := c.GetString("api_key_id")
+	if apiKeyID == "" {
+		return nil
+	}
+	maxTokensVal, ok := c.Get("max_tokens")
+	if !ok {
+		return nil
+	}
+	maxTokens, ok := maxTokensVal.(int64)
+	if !ok || maxTokens <= 0 {
+		return nil
+	}
+	var total int64
+	if err := h.db.QueryRow(`SELECT COALESCE(total_tokens, 0) FROM api_key_usage WHERE api_key_id = ?`, apiKeyID).Scan(&total); err != nil && err != sql.ErrNoRows {
+		logging.Logger.Warn("checkTokenBudget: failed to read usage", "error", err.Error())
+	}
+	if total >= maxTokens {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": gin.H{"message": "API key token budget exhausted", "code": "api_key_token_budget_exhausted"}})
+		return errors.New("api key token budget exhausted")
+	}
+	requested := gjson.GetBytes(body, "max_tokens").Int()
+	if requested > 0 && total+requested > maxTokens {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "requested tokens exceed API key budget", "code": "request_exceeds_api_key_token_budget"}})
+		return errors.New("request exceeds api key token budget")
+	}
+	return nil
+}
+
+// incrementAPIKeyUsage adds consumed tokens to the API key's cumulative lifetime total.
+func (h *Handler) incrementAPIKeyUsage(apiKeyID string, tokens int64) {
+	if apiKeyID == "" || tokens <= 0 {
+		return
+	}
+	now := time.Now().Unix()
+	if _, err := h.db.Exec(`INSERT INTO api_key_usage (api_key_id, total_tokens, updated_at) VALUES (?, ?, ?) ON CONFLICT(api_key_id) DO UPDATE SET total_tokens = total_tokens + excluded.total_tokens, updated_at = excluded.updated_at`, apiKeyID, tokens, now); err != nil {
+		logging.Logger.Warn("incrementAPIKeyUsage: failed to update usage", "error", err.Error())
+	}
 }

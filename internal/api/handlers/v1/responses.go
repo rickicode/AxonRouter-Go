@@ -141,6 +141,7 @@ func (h *Handler) Responses(c *gin.Context) {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			h.tracker.Log(&usage.LogEntry{
+				ApiKeyID:        c.GetString("api_key_id"),
 				ConnectionID:    conn.ID,
 				ProviderTypeID:  provider,
 				ModelID:         modelName,
@@ -151,8 +152,7 @@ func (h *Handler) Responses(c *gin.Context) {
 				ReasoningTokens: tokenCounts.ReasoningTokens,
 				CachedTokens:    tokenCounts.CachedTokens,
 				LatencyMs:       latency,
-				StatusCode:      resp.StatusCode,
-			})
+				StatusCode:      resp.StatusCode})
 			h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
 			h.writeJSONResponse(c, resp.StatusCode, translatedResp)
 		}

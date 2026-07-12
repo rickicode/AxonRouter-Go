@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/adminapi"
 	"github.com/rickicode/AxonRouter-Go/internal/api/handlers/admin"
 	v1 "github.com/rickicode/AxonRouter-Go/internal/api/handlers/v1"
 	"github.com/rickicode/AxonRouter-Go/internal/api/middleware"
@@ -90,6 +91,8 @@ func New(cfg Config) *Router {
 	tracker := usage.NewTracker(cfg.DB)
 	tracker.SetWriteQueue(writeQueue) // route all batch inserts through the single writer goroutine
 	usage.InitPricing(cfg.DB)
+	usage.StartPeriodicReload(context.Background(), time.Hour)
+	km := adminapi.NewKeyManager(cfg.DB)
 	authManager := auth.NewManager()
 
 	// Register OAuth services
@@ -156,6 +159,15 @@ func New(cfg Config) *Router {
 	proxyDeployH := admin.NewProxyDeployHandler(cfg.DB, proxyHealth, proxyResolver)
 	optimizationH := admin.NewOptimizationHandler(cfg.DB, exactCache)
 
+	// Additional admin handlers (moved here so the JWT /api/admin and master-key
+	// /admin/api/v1 groups can share the same route table).
+	apiKeyH := admin.NewAPIKeyHandler(cfg.DB)
+	modelH := admin.NewModelHandler(cfg.DB, executor.GetRegistry(), store, authManager)
+	oauthH := admin.NewOAuthHandler(cfg.DB, authManager, store, elig)
+	quotaH := admin.NewQuotaHandler(cfg.DB)
+	modelPricingH := admin.NewModelPricingHandler()
+	developersH := admin.NewDevelopersHandler(cfg.DB, km, cfg.Port)
+
 	// Create Gin engine
 	engine := gin.New()
 	engine.Use(gin.Recovery())
@@ -185,6 +197,19 @@ func New(cfg Config) *Router {
 	// Some Anthropic clients append an extra /v1 segment to the base URL.
 	v1Group.POST("/v1/messages", v1H.Messages)
 
+	// CLI Tools model catalog used by both the dashboard and programmatic admin API.
+	modelLister := func() []map[string]string {
+		list := v1H.ListModels()
+		out := make([]map[string]string, 0, len(list))
+		for _, m := range list {
+			if id, ok := m["id"].(string); ok {
+				out = append(out, map[string]string{"id": id})
+			}
+		}
+		return out
+	}
+	cliToolsH := admin.NewCLIToolsHandler(cfg.DB, modelLister)
+
 	// Health check is reachable without admin auth for sidebar/lb probes.
 	engine.HEAD("/api/admin/health", healthH.Health)
 	engine.GET("/api/admin/health", healthH.Health)
@@ -196,137 +221,135 @@ func New(cfg Config) *Router {
 	adminGroup := engine.Group("/api/admin")
 	adminGroup.Use(SessionAuth())
 
-	// Providers
-	adminGroup.GET("/providers", providerH.List)
-	adminGroup.GET("/providers/:id", providerH.Get)
-	adminGroup.POST("/providers", providerH.Create)
-	adminGroup.PATCH("/providers/:id", providerH.Update)
-	adminGroup.DELETE("/providers/:id", providerH.Delete)
-	adminGroup.POST("/providers/:id/test", providerH.TestAll)
-	adminGroup.POST("/providers/:id/connections", providerH.AddConnection)
-	adminGroup.POST("/providers/:id/connections/bulk", providerH.BulkAddConnections)
-	adminGroup.POST("/providers/validate", providerH.ValidateKey)
+	registerAdminRoutes := func(g *gin.RouterGroup) {
+		// Providers
+		g.GET("/providers", providerH.List)
+		g.GET("/providers/:id", providerH.Get)
+		g.POST("/providers", providerH.Create)
+		g.PATCH("/providers/:id", providerH.Update)
+		g.DELETE("/providers/:id", providerH.Delete)
+		g.POST("/providers/:id/test", providerH.TestAll)
+		g.POST("/providers/:id/connections", providerH.AddConnection)
+		g.POST("/providers/:id/connections/bulk", providerH.BulkAddConnections)
+		g.POST("/providers/validate", providerH.ValidateKey)
 
-	// Connections
-	adminGroup.GET("/providers/:id/connections", connectionH.List)
-	adminGroup.GET("/connections/:id", connectionH.Get)
-	adminGroup.PATCH("/connections/:id", connectionH.Update)
-	adminGroup.DELETE("/connections/:id", connectionH.Delete)
-	adminGroup.POST("/connections/:id/test", connectionH.TestConnection)
-	adminGroup.POST("/connections/:id/refresh", connectionH.RefreshToken)
-	adminGroup.POST("/connections/:id/reset", connectionH.ResetStatus)
-	adminGroup.PATCH("/connections/bulk", connectionH.BulkUpdate)
+		// Connections
+		g.GET("/providers/:id/connections", connectionH.List)
+		g.GET("/connections/:id", connectionH.Get)
+		g.PATCH("/connections/:id", connectionH.Update)
+		g.DELETE("/connections/:id", connectionH.Delete)
+		g.POST("/connections/:id/test", connectionH.TestConnection)
+		g.POST("/connections/:id/refresh", connectionH.RefreshToken)
+		g.POST("/connections/:id/reset", connectionH.ResetStatus)
+		g.PATCH("/connections/bulk", connectionH.BulkUpdate)
 
-	// Models
-	modelH := admin.NewModelHandler(cfg.DB, executor.GetRegistry(), store, authManager)
-	adminGroup.GET("/providers/:id/models", modelH.ListModels)
-	adminGroup.POST("/providers/:id/models/test", modelH.TestModel)
-	adminGroup.POST("/models/sync", modelH.SyncModels)
+		// Models
+		g.GET("/providers/:id/models", modelH.ListModels)
+		g.POST("/providers/:id/models/test", modelH.TestModel)
+		g.POST("/models/sync", modelH.SyncModels)
 
-	// OAuth — connection created only on success (no orphaned connections)
-	oauthH := admin.NewOAuthHandler(cfg.DB, authManager, store, elig)
-	adminGroup.POST("/oauth/start", oauthH.StartOAuth)
-	adminGroup.GET("/oauth/:sessionId/poll", oauthH.PollOAuth)
-	adminGroup.POST("/oauth/callback", oauthH.SubmitOAuthCallback)
+		// OAuth — connection created only on success (no orphaned connections)
+		g.POST("/oauth/start", oauthH.StartOAuth)
+		g.GET("/oauth/:sessionId/poll", oauthH.PollOAuth)
+		g.POST("/oauth/callback", oauthH.SubmitOAuthCallback)
 
-	// Combos
-	adminGroup.GET("/combos", comboH.List)
-	adminGroup.GET("/combos/:id", comboH.Get)
-	adminGroup.POST("/combos", comboH.Create)
-	adminGroup.PATCH("/combos/:id", comboH.Update)
-	adminGroup.DELETE("/combos/:id", comboH.Delete)
-	adminGroup.POST("/combos/:id/steps", comboH.AddStep)
-	adminGroup.DELETE("/combos/steps/:stepId", comboH.RemoveStep)
-	adminGroup.POST("/combos/seed-defaults", comboH.SeedDefaults)
+		// Combos
+		g.GET("/combos", comboH.List)
+		g.GET("/combos/:id", comboH.Get)
+		g.POST("/combos", comboH.Create)
+		g.PATCH("/combos/:id", comboH.Update)
+		g.DELETE("/combos/:id", comboH.Delete)
+		g.POST("/combos/:id/steps", comboH.AddStep)
+		g.DELETE("/combos/steps/:stepId", comboH.RemoveStep)
+		g.POST("/combos/seed-defaults", comboH.SeedDefaults)
 
-	// Logs
-	adminGroup.GET("/logs", logH.List)
-	adminGroup.GET("/logs/stats", logH.Stats)
-	adminGroup.GET("/logs/active", logH.ActiveRequests)
+		// Logs
+		g.GET("/logs", logH.List)
+		g.GET("/logs/stats", logH.Stats)
+		g.GET("/logs/active", logH.ActiveRequests)
 
-	// Settings
-	adminGroup.GET("/settings", settingH.List)
-	adminGroup.GET("/settings/:key", settingH.Get)
-	adminGroup.PUT("/settings/:key", settingH.Set)
-	adminGroup.DELETE("/settings/:key", settingH.Delete)
+		// Settings
+		g.GET("/settings", settingH.List)
+		g.GET("/settings/:key", settingH.Get)
+		g.PUT("/settings/:key", settingH.Set)
+		g.DELETE("/settings/:key", settingH.Delete)
 
-	// Dashboard
-	adminGroup.GET("/dashboard/stats", dashboardH.Stats)
-	adminGroup.GET("/dashboard/providers", dashboardH.ProviderSummary)
-	adminGroup.GET("/dashboard/recent-logs", dashboardH.RecentLogs)
+		// Dashboard
+		g.GET("/dashboard/stats", dashboardH.Stats)
+		g.GET("/dashboard/providers", dashboardH.ProviderSummary)
+		g.GET("/dashboard/recent-logs", dashboardH.RecentLogs)
 
-	// Metrics
-	adminGroup.GET("/metrics", healthH.Metrics)
+		// Metrics
+		g.GET("/metrics", healthH.Metrics)
 
-	// Quota
-	quotaH := admin.NewQuotaHandler(cfg.DB)
-	adminGroup.GET("/quota", quotaH.List)
-	adminGroup.GET("/quota/summary", quotaH.Summary)
-	adminGroup.POST("/quota/:connId/refresh", quotaH.Refresh)
-	// Model Pricing — single source of truth for per-model cost rates.
-	modelPricingH := admin.NewModelPricingHandler()
-	adminGroup.GET("/model-pricing", modelPricingH.List)
-	adminGroup.POST("/model-pricing", modelPricingH.Create)
-	adminGroup.PATCH("/model-pricing/:id", modelPricingH.Update)
-	adminGroup.DELETE("/model-pricing/:id", modelPricingH.Delete)
+		// Quota
+		g.GET("/quota", quotaH.List)
+		g.GET("/quota/summary", quotaH.Summary)
+		g.POST("/quota/:connId/refresh", quotaH.Refresh)
+		// Model Pricing — single source of truth for per-model cost rates.
+		g.GET("/model-pricing", modelPricingH.List)
+		g.POST("/model-pricing", modelPricingH.Create)
+		g.PATCH("/model-pricing/:id", modelPricingH.Update)
+		g.DELETE("/model-pricing/:id", modelPricingH.Delete)
 
-	// Proxy Pools (static routes before :id to avoid wildcard capture)
-	adminGroup.GET("/proxy-pools", proxyPoolH.List)
-	adminGroup.GET("/proxy-pools/health-check", proxyPoolH.HealthGet)
-	adminGroup.POST("/proxy-pools/health-check", proxyPoolH.HealthRun)
-	adminGroup.GET("/proxy-pools/generate-source", proxyDeployH.GenerateSource)
-	adminGroup.POST("/proxy-pools/vercel-deploy", proxyDeployH.DeployVercel)
-	adminGroup.POST("/proxy-pools/deno-deploy", proxyDeployH.DeployDeno)
-	adminGroup.POST("/proxy-pools/cloudflare-deploy", proxyDeployH.DeployCloudflare)
-	adminGroup.POST("/proxy-pools", proxyPoolH.Create)
-	adminGroup.POST("/proxy-pools/bulk", proxyPoolH.BulkCreate)
-	adminGroup.GET("/proxy-pools/:id", proxyPoolH.Get)
-	adminGroup.PATCH("/proxy-pools/:id", proxyPoolH.Update)
-	adminGroup.DELETE("/proxy-pools/:id", proxyPoolH.Delete)
-	adminGroup.POST("/proxy-pools/:id/test", proxyPoolH.Test)
+		// Proxy Pools (static routes before :id to avoid wildcard capture)
+		g.GET("/proxy-pools", proxyPoolH.List)
+		g.GET("/proxy-pools/health-check", proxyPoolH.HealthGet)
+		g.POST("/proxy-pools/health-check", proxyPoolH.HealthRun)
+		g.GET("/proxy-pools/generate-source", proxyDeployH.GenerateSource)
+		g.POST("/proxy-pools/vercel-deploy", proxyDeployH.DeployVercel)
+		g.POST("/proxy-pools/deno-deploy", proxyDeployH.DeployDeno)
+		g.POST("/proxy-pools/cloudflare-deploy", proxyDeployH.DeployCloudflare)
+		g.POST("/proxy-pools", proxyPoolH.Create)
+		g.POST("/proxy-pools/bulk", proxyPoolH.BulkCreate)
+		g.GET("/proxy-pools/:id", proxyPoolH.Get)
+		g.PATCH("/proxy-pools/:id", proxyPoolH.Update)
+		g.DELETE("/proxy-pools/:id", proxyPoolH.Delete)
+		g.POST("/proxy-pools/:id/test", proxyPoolH.Test)
 
-	// Proxy Groups
-	adminGroup.GET("/proxy-groups", proxyGroupH.List)
-	adminGroup.GET("/proxy-groups/:id", proxyGroupH.Get)
-	adminGroup.POST("/proxy-groups", proxyGroupH.Create)
-	adminGroup.PATCH("/proxy-groups/:id", proxyGroupH.Update)
-	adminGroup.DELETE("/proxy-groups/:id", proxyGroupH.Delete)
+		// Proxy Groups
+		g.GET("/proxy-groups", proxyGroupH.List)
+		g.GET("/proxy-groups/:id", proxyGroupH.Get)
+		g.POST("/proxy-groups", proxyGroupH.Create)
+		g.PATCH("/proxy-groups/:id", proxyGroupH.Update)
+		g.DELETE("/proxy-groups/:id", proxyGroupH.Delete)
 
-	// API Keys
-	apiKeyH := admin.NewAPIKeyHandler(cfg.DB)
-	adminGroup.GET("/api-keys", apiKeyH.List)
-	adminGroup.POST("/api-keys", apiKeyH.Create)
-	adminGroup.DELETE("/api-keys/:id", apiKeyH.Delete)
-	adminGroup.PATCH("/api-keys/:id/toggle", apiKeyH.ToggleActive)
-	adminGroup.GET("/api-keys/:id/value", apiKeyH.GetValue)
+		// API Keys
+		g.GET("/api-keys", apiKeyH.List)
+		g.POST("/api-keys", apiKeyH.Create)
+		g.DELETE("/api-keys/:id", apiKeyH.Delete)
+		g.PATCH("/api-keys/:id/toggle", apiKeyH.ToggleActive)
+		g.GET("/api-keys/:id/value", apiKeyH.GetValue)
 
-	// CLI Tools — unified model catalog for dashboard pickers + per-tool config generation
-	modelLister := func() []map[string]string {
-		list := v1H.ListModels()
-		out := make([]map[string]string, 0, len(list))
-		for _, m := range list {
-			if id, ok := m["id"].(string); ok {
-				out = append(out, map[string]string{"id": id})
-			}
-		}
-		return out
+		// CLI Tools — unified model catalog for dashboard pickers + per-tool config generation
+		g.GET("/models", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"data": v1H.ListActiveModels()})
+		})
+		g.GET("/cli-tools/statuses", cliToolsH.AllStatuses)
+		g.GET("/cli-tools/:toolId", cliToolsH.GetConfig)
+		g.POST("/cli-tools/:toolId", cliToolsH.SaveConfig)
+		g.DELETE("/cli-tools/:toolId", cliToolsH.DeleteConfig)
+		g.GET("/cli-tools", cliToolsH.ListTools)
+
+		// Compression & Cache
+		g.GET("/settings/compression", optimizationH.GetCompressionSettings)
+		g.PUT("/settings/compression", optimizationH.UpdateCompressionSettings)
+		g.GET("/cache/stats", optimizationH.GetCacheStats)
+		g.POST("/cache/flush", optimizationH.FlushCache)
+		g.POST("/optimization/preview", optimizationH.PreviewCompression)
+
+		// Developers
+		g.GET("/developers/master-key", developersH.GetMasterKey)
+		g.POST("/developers/master-key/regenerate", developersH.RegenerateMasterKey)
 	}
-	adminGroup.GET("/models", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"data": v1H.ListActiveModels()})
-	})
-	cliToolsH := admin.NewCLIToolsHandler(cfg.DB, modelLister)
-	adminGroup.GET("/cli-tools", cliToolsH.ListTools)
-	adminGroup.GET("/cli-tools/statuses", cliToolsH.AllStatuses)
-	adminGroup.GET("/cli-tools/:toolId", cliToolsH.GetConfig)
-	adminGroup.POST("/cli-tools/:toolId", cliToolsH.SaveConfig)
-	adminGroup.DELETE("/cli-tools/:toolId", cliToolsH.DeleteConfig)
 
-	// Compression & Cache
-	adminGroup.GET("/settings/compression", optimizationH.GetCompressionSettings)
-	adminGroup.PUT("/settings/compression", optimizationH.UpdateCompressionSettings)
-	adminGroup.GET("/cache/stats", optimizationH.GetCacheStats)
-	adminGroup.POST("/cache/flush", optimizationH.FlushCache)
-	adminGroup.POST("/optimization/preview", optimizationH.PreviewCompression)
+	registerAdminRoutes(adminGroup)
+
+	// ---- /admin/api/v1 routes (master key protected) ----
+	masterGroup := engine.Group("/admin/api/v1")
+	masterGroup.Use(middleware.MasterAuth(km))
+	masterGroup.Use(admin.ProgrammaticResponseWrapper())
+	registerAdminRoutes(masterGroup)
 
 	// ---- Static frontend (SPA) ----
 	fsys := web.GetBuildFS()

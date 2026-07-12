@@ -23,7 +23,7 @@ func NewAPIKeyHandler(db *sql.DB) *APIKeyHandler {
 
 // List returns all API keys (masked).
 func (h *APIKeyHandler) List(c *gin.Context) {
-	rows, err := h.db.Query(`SELECT id, COALESCE(name, ''), rate_limit_per_min, is_active, created_at FROM api_keys ORDER BY created_at DESC`)
+	rows, err := h.db.Query(`SELECT id, COALESCE(name, ''), rate_limit_per_min, max_tokens, is_active, created_at FROM api_keys ORDER BY created_at DESC`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -35,18 +35,21 @@ func (h *APIKeyHandler) List(c *gin.Context) {
 		Name            string `json:"name"`
 		KeyPreview      string `json:"key_preview"`
 		RateLimitPerMin int    `json:"rate_limit_per_min"`
+		MaxTokens       int64  `json:"max_tokens"`
 		IsActive        bool   `json:"is_active"`
 		CreatedAt       int64  `json:"created_at"`
 	}
 
-	var keys []apiKeyView
+	keys := make([]apiKeyView, 0)
 	for rows.Next() {
 		var k apiKeyView
 		var isActive int
-		if err := rows.Scan(&k.ID, &k.Name, &k.RateLimitPerMin, &isActive, &k.CreatedAt); err != nil {
+		var maxTokens int64
+		if err := rows.Scan(&k.ID, &k.Name, &k.RateLimitPerMin, &maxTokens, &isActive, &k.CreatedAt); err != nil {
 			continue
 		}
 		k.IsActive = isActive == 1
+		k.MaxTokens = maxTokens
 		k.KeyPreview = k.ID[:8] + "..."
 		keys = append(keys, k)
 	}
@@ -59,6 +62,7 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 	var req struct {
 		Name            string `json:"name"`
 		RateLimitPerMin int    `json:"rate_limit_per_min"`
+		MaxTokens       int64  `json:"max_tokens"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		// Defaults are fine
@@ -91,19 +95,20 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 	}
 
 	_, err = h.db.Exec(`
-		INSERT INTO api_keys (id, key_hash, key_value, name, rate_limit_per_min, is_active, created_at)
-		VALUES (?, ?, ?, ?, ?, 1, ?)
-	`, id, string(hash), keyHex, name, req.RateLimitPerMin, now)
+		INSERT INTO api_keys (id, key_hash, key_value, name, rate_limit_per_min, max_tokens, is_active, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+	`, id, string(hash), keyHex, name, req.RateLimitPerMin, req.MaxTokens, now)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"id":      id,
-		"key":     keyHex, // Only shown once
-		"name":    req.Name,
-		"message": "Save this key — it won't be shown again",
+		"id":         id,
+		"key":        keyHex, // Only shown once
+		"name":       req.Name,
+		"max_tokens": req.MaxTokens,
+		"message":    "Save this key — it won't be shown again",
 	})
 }
 
@@ -142,7 +147,8 @@ func (h *APIKeyHandler) Delete(c *gin.Context) {
 func (h *APIKeyHandler) ToggleActive(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		IsActive bool `json:"is_active"`
+		IsActive  bool  `json:"is_active"`
+		MaxTokens int64 `json:"max_tokens"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -152,7 +158,11 @@ func (h *APIKeyHandler) ToggleActive(c *gin.Context) {
 	if req.IsActive {
 		active = 1
 	}
-	_, err := h.db.Exec(`UPDATE api_keys SET is_active = ? WHERE id = ?`, active, id)
+	maxTokens := req.MaxTokens
+	if maxTokens == 0 {
+		_ = h.db.QueryRow(`SELECT COALESCE(max_tokens, 0) FROM api_keys WHERE id = ?`, id).Scan(&maxTokens)
+	}
+	_, err := h.db.Exec(`UPDATE api_keys SET is_active = ?, max_tokens = ? WHERE id = ?`, active, maxTokens, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

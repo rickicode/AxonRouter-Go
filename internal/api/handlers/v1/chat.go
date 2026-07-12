@@ -35,6 +35,9 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		return
 	}
 	stream := executor.IsStreamRequest(body)
+	if h.checkTokenBudget(c, body) != nil {
+		return
+	}
 
 	// Combo-first routing
 	if comboResult, ok := h.combo.Resolve(model); ok {
@@ -168,6 +171,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			h.tracker.Log(&usage.LogEntry{
+				ApiKeyID:        c.GetString("api_key_id"),
 				ConnectionID:    conn.ID,
 				ProviderTypeID:  provider,
 				ModelID:         modelName,
@@ -181,6 +185,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 				StatusCode:      resp.StatusCode,
 			})
 			h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
+			h.incrementAPIKeyUsage(c.GetString("api_key_id"), tokenCounts.InputTokens+tokenCounts.OutputTokens)
 			h.writeJSONResponse(c, resp.StatusCode, translatedResp)
 		}
 		return
@@ -266,6 +271,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			h.tracker.Log(&usage.LogEntry{
+				ApiKeyID:        c.GetString("api_key_id"),
 				ConnectionID:    connID,
 				ProviderTypeID:  provider,
 				ModelID:         modelName,
@@ -279,6 +285,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				StatusCode:      resp.StatusCode,
 			})
 			c.Header("Content-Type", "application/json")
+			h.incrementAPIKeyUsage(c.GetString("api_key_id"), tokenCounts.InputTokens+tokenCounts.OutputTokens)
 			c.Status(resp.StatusCode)
 			c.Writer.Write(translatedResp)
 		}

@@ -29,6 +29,7 @@ import { Button } from '$lib/components/ui/button';
 import Optimization from './pages/Optimization.svelte';
 import CLITools from './pages/CLITools.svelte';
 	import ModelPricing from './pages/ModelPricing.svelte';
+	import Developers from './pages/Developers.svelte';
 	import NotFound from './pages/NotFound.svelte';
 
   let cleanup: (() => void) | undefined;
@@ -50,6 +51,7 @@ const labels: Record<string, string> = {
 		'proxy-pools': 'Proxy Pools',
 		'cli-tools': 'CLI Tools',
 		'model-pricing': 'Model Pricing',
+	'developers': 'Developers',
 	};
     return labels[segment] ?? segment.charAt(0).toUpperCase() + segment.slice(1);
   }
@@ -102,6 +104,9 @@ const labels: Record<string, string> = {
 
   // /model-pricing → ModelPricing
   if (segments[0] === 'model-pricing' && segments.length === 1) return { component: ModelPricing, params: {} };
+
+  // /developers → Developers
+  if (segments[0] === 'developers' && segments.length === 1) return { component: Developers, params: {} };
 
   // Fallback → 404
  return { component: NotFound, params: {} };

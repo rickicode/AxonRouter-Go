@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 )
+
 // Auth validates API keys from the Authorization header.
 // Fail-closed: returns 401 when no keys are configured.
 func Auth(db *sql.DB, cache *AuthCache) gin.HandlerFunc {
@@ -23,14 +24,15 @@ func Auth(db *sql.DB, cache *AuthCache) gin.HandlerFunc {
 			if r := cache.Get(presented); r != nil {
 				c.Set("api_key_id", r.keyID)
 				c.Set("rate_limit", r.rateLimit)
+				c.Set("max_tokens", r.maxTokens)
 				c.Next()
 				return
 			}
 		}
 
-	// Cache miss (or no cache): validate with singleflight to collapse
-	// concurrent misses for the same key into one DB+bcrypt call.
-	keyID, rateLimit, ok := cache.Validate(db, presented)
+		// Cache miss (or no cache): validate with singleflight to collapse
+		// concurrent misses for the same key into one DB+bcrypt call.
+		keyID, rateLimit, maxTokens, ok := cache.Validate(db, presented)
 		if !ok {
 			// Either no keys configured (open access) or invalid key.
 			var count int
@@ -51,10 +53,11 @@ func Auth(db *sql.DB, cache *AuthCache) gin.HandlerFunc {
 		}
 
 		if cache != nil {
-			cache.Put(presented, keyID, rateLimit)
+			cache.Put(presented, keyID, rateLimit, maxTokens)
 		}
 		c.Set("api_key_id", keyID)
 		c.Set("rate_limit", rateLimit)
+		c.Set("max_tokens", maxTokens)
 		c.Next()
 	}
 }

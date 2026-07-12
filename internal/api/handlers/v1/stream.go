@@ -18,6 +18,11 @@ type StreamTokenCounts struct {
 func ExtractTokensFromFinalChunk(chunk []byte) StreamTokenCounts {
 	var counts StreamTokenCounts
 
+	// SSE chunks may still carry the leading `data: ` prefix.
+	if strings.HasPrefix(string(chunk), "data: ") {
+		chunk = chunk[len("data: "):]
+	}
+
 	// Try OpenAI format: {"usage": {"prompt_tokens": N, "completion_tokens": N, "prompt_tokens_details": {"cached_tokens": N}}}
 	var openai struct {
 		Usage struct {
@@ -90,6 +95,9 @@ func ExtractTokensFromBody(body []byte) StreamTokenCounts {
 		Usage struct {
 			PromptTokens        int64 `json:"prompt_tokens"`
 			CompletionTokens    int64 `json:"completion_tokens"`
+			TotalTokens         int64 `json:"total_tokens"`
+			InputTokens         int64 `json:"input_tokens"`
+			OutputTokens        int64 `json:"output_tokens"`
 			PromptTokensDetails *struct {
 				CachedTokens int64 `json:"cached_tokens"`
 			} `json:"prompt_tokens_details"`
@@ -98,11 +106,16 @@ func ExtractTokensFromBody(body []byte) StreamTokenCounts {
 			} `json:"completion_tokens_details"`
 		} `json:"usage"`
 	}
-	if err := json.Unmarshal(body, &resp); err != nil || resp.Usage.PromptTokens == 0 {
+	if err := json.Unmarshal(body, &resp); err != nil {
 		return counts
 	}
-	counts.InputTokens = resp.Usage.PromptTokens
-	counts.OutputTokens = resp.Usage.CompletionTokens
+	if resp.Usage.PromptTokens > 0 || resp.Usage.CompletionTokens > 0 || resp.Usage.TotalTokens > 0 {
+		counts.InputTokens = resp.Usage.PromptTokens
+		counts.OutputTokens = resp.Usage.CompletionTokens
+	} else if resp.Usage.InputTokens > 0 || resp.Usage.OutputTokens > 0 {
+		counts.InputTokens = resp.Usage.InputTokens
+		counts.OutputTokens = resp.Usage.OutputTokens
+	}
 	if resp.Usage.PromptTokensDetails != nil {
 		counts.CachedTokens = resp.Usage.PromptTokensDetails.CachedTokens
 	}

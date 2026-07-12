@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"context"
 	"database/sql"
 	"sort"
 	"strings"
@@ -20,17 +21,17 @@ type Pricing struct {
 var defaultPricing = Pricing{InputPer1K: 0.001, OutputPer1K: 0.002}
 
 type ModelPricingRow struct {
-	ModelID         string  `json:"model_id"`
-	DisplayName     string  `json:"display_name"`
-	InputPer1K      float64 `json:"input_per_1k"`
-	OutputPer1K     float64 `json:"output_per_1k"`
-	ReasonPer1K     float64 `json:"reason_per_1k"`
-	CachedReadPer1K float64 `json:"cached_read_per_1k"`
+	ModelID          string  `json:"model_id"`
+	DisplayName      string  `json:"display_name"`
+	InputPer1K       float64 `json:"input_per_1k"`
+	OutputPer1K      float64 `json:"output_per_1k"`
+	ReasonPer1K      float64 `json:"reason_per_1k"`
+	CachedReadPer1K  float64 `json:"cached_read_per_1k"`
 	CachedWritePer1K float64 `json:"cached_write_per_1k"`
-	ImagePerUnit    float64 `json:"image_per_unit"`
-	AudioPerMin     float64 `json:"audio_per_min"`
-	Currency        string  `json:"currency"`
-	UpdatedAt       int64   `json:"updated_at"`
+	ImagePerUnit     float64 `json:"image_per_unit"`
+	AudioPerMin      float64 `json:"audio_per_min"`
+	Currency         string  `json:"currency"`
+	UpdatedAt        int64   `json:"updated_at"`
 }
 
 var (
@@ -73,6 +74,23 @@ func ReloadPricing() {
 }
 
 // splitModel splits a model id after the first slash.
+
+// StartPeriodicReload refreshes the pricing cache at the given interval.
+func StartPeriodicReload(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				ReloadPricing()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
 func splitModel(s string) (string, string) {
 	for i, c := range s {
 		if c == '/' {
@@ -136,10 +154,10 @@ func EstimateCost(modelID string, inputTokens, outputTokens, reasoningTokens, ca
 	if nonCached < 0 {
 		nonCached = 0
 	}
-	cost := float64(nonCached)/1000.0*p.InputPer1K
-	cost += float64(cachedTokens)/1000.0*p.CachedReadPer1K
-	cost += float64(outputTokens)/1000.0*p.OutputPer1K
-	cost += float64(reasoningTokens)/1000.0*p.ReasonPer1K
+	cost := float64(nonCached) / 1000.0 * p.InputPer1K
+	cost += float64(cachedTokens) / 1000.0 * p.CachedReadPer1K
+	cost += float64(outputTokens) / 1000.0 * p.OutputPer1K
+	cost += float64(reasoningTokens) / 1000.0 * p.ReasonPer1K
 	return cost
 }
 
@@ -179,7 +197,8 @@ func UpsertPricing(row ModelPricingRow) error {
 	if row.UpdatedAt == 0 {
 		row.UpdatedAt = time.Now().Unix()
 	}
-	_, err := pricingDB.Exec(`
+	_, err := pricingDB.Exec(
+		`
 		INSERT INTO model_pricing (model_id, display_name, input_per_1k, output_per_1k, reason_per_1k, cached_read_per_1k, cached_write_per_1k, image_per_unit, audio_per_min, currency, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(model_id) DO UPDATE SET

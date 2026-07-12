@@ -857,6 +857,13 @@ export const modelsApi = {
 };
 
 // CLI Tools model picker + generated config snippets for external AI CLIs
+export interface MasterKeyInfo {
+  key: string;
+  prefix: string;
+  base_url: string;
+  created_at: number;
+}
+
 export interface DefaultModel {
   id: string;
   name: string;
@@ -950,4 +957,9 @@ export const cliToolsApi = {
   get: (toolId: string) => fetchApi<CLIToolState>(`/cli-tools/${toolId}`),
   save: (toolId: string, data: CLIToolSelection & { apiKeyValue?: string }) => fetchApi<CLIToolSavedResponse>(`/cli-tools/${toolId}`, { method: "POST", body: JSON.stringify(data) }),
   delete: (toolId: string) => fetchApi<{ success: boolean }>(`/cli-tools/${toolId}`, { method: "DELETE" }),
+};
+
+export const developersApi = {
+  getMasterKey: () => fetchApi<{ data: MasterKeyInfo }>("/developers/master-key"),
+  regenerateMasterKey: () => fetchApi<{ data: MasterKeyInfo }>("/developers/master-key/regenerate", { method: "POST" }),
 };

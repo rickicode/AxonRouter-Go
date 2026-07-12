@@ -139,6 +139,8 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		`ALTER TABLE request_logs ADD COLUMN cached_tokens INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE request_logs ADD COLUMN stream INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE api_keys ADD COLUMN key_value TEXT`,
+		`ALTER TABLE request_logs ADD COLUMN api_key_id TEXT`,
+		`ALTER TABLE api_keys ADD COLUMN max_tokens INTEGER DEFAULT 0`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			// Ignore "duplicate column name" errors
@@ -150,6 +152,18 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 
 	// Backfill status_code for legacy request_logs rows that only recorded the
 	// error message. This is idempotent: rows with a non-zero status_code keep it.
+
+	// Lifetime token budget tracking per proxy API key.
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS api_key_usage (
+			api_key_id TEXT PRIMARY KEY REFERENCES api_keys(id),
+			total_tokens INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL
+		)
+	`); err != nil {
+		return err
+	}
+
 	if err := migrateRequestLogStatusCodes(db); err != nil {
 		return err
 	}
