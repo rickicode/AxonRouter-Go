@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"os"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -73,5 +74,48 @@ func TestOmpConfigManual(t *testing.T) {
 	}
 	if !strings.Contains(c.ConfigContent, "- id: cx/gpt-5.4") {
 		t.Fatalf("manual model missing: %s", c.ConfigContent)
+	}
+}
+
+
+func TestWriteConfigFileBacksUpExisting(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/models.json"
+	// pre-existing file
+	if err := os.WriteFile(path, []byte("OLD CONTENT"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved, backup, err := writeConfigFile(path, "NEW CONTENT")
+	if err != nil {
+		t.Fatalf("writeConfigFile err: %v", err)
+	}
+	if resolved != path {
+		t.Fatalf("resolved = %q", resolved)
+	}
+	if backup == "" {
+		t.Fatalf("expected a backup path, got empty")
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != "NEW CONTENT" {
+		t.Fatalf("file content = %q, want NEW CONTENT", got)
+	}
+	old, _ := os.ReadFile(backup)
+	if string(old) != "OLD CONTENT" {
+		t.Fatalf("backup content = %q, want OLD CONTENT", old)
+	}
+}
+
+func TestIsWritableConfigPath(t *testing.T) {
+	cases := map[string]bool{
+		"~/.pi/agent/models.json":            true,
+		"/etc/foo.json":                      true,
+		"":                                   false,
+		"<VS Code user settings.json>":       false,
+		"~/.hermes/config.yaml + ~/.hermes/.env": false,
+	}
+	for p, want := range cases {
+		if got := isWritableConfigPath(p); got != want {
+			t.Fatalf("isWritableConfigPath(%q) = %v, want %v", p, got, want)
+		}
 	}
 }

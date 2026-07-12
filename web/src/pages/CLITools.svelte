@@ -98,6 +98,7 @@ sel = {
 					useDiscovery: res.selection?.useDiscovery ?? false,
 				};
       configured = res.configured;
+		generated = res.config ?? null;
       // Restore saved model aliases
       if (res.selection?.modelAliases) {
         modelAliases = { ...res.selection.modelAliases };
@@ -527,6 +528,9 @@ function removeModel(index: number) {
                       <span class="text-muted-foreground/70"> · {generated.configPath}</span>
                     {/if}
                   </Label>
+{#if generated.backupPath}
+  <p class="mt-1 text-caption text-muted-foreground">Backup tersimpan di: <code class="font-mono">{generated.backupPath}</code></p>
+{/if}
                   <Button variant="ghost" size="sm" class="h-7 gap-1.5 text-caption" onclick={() => copyText(generated!.configContent, 'config')}>
                     {#if copiedField === 'config'}
                       <Check class="size-3.5" /> Copied

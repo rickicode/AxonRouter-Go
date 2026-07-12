@@ -5,13 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 )
 
 const cliToolKeyPrefix = "clitools:"
+const cliToolConfigKeyPrefix = "clitools:config:"
 
 // DefaultModel describes one model-alias slot that the user can override (e.g. "sonnet" → "cc/claude-sonnet-5").
 type DefaultModel struct {
@@ -77,6 +81,7 @@ type CLIToolConfig struct {
 	ConfigPath    string `json:"configPath"`
 	ConfigContent string `json:"configContent"`
 	RunCommand    string `json:"runCommand"`
+	BackupPath    string `json:"backupPath,omitempty"`
 }
 
 // CLIToolStatus reports whether a tool has been configured through the dashboard.
@@ -122,11 +127,16 @@ func (h *CLIToolsHandler) GetConfig(c *gin.Context) {
 	if raw != "" {
 		_ = json.Unmarshal([]byte(raw), &sel)
 	}
+	var savedCfg CLIToolConfig
+	if cfgRaw := db.GetSetting(cliToolConfigKeyPrefix+toolID, ""); cfgRaw != "" {
+		_ = json.Unmarshal([]byte(cfgRaw), &savedCfg)
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"tool":           findTool(toolID),
 		"selection":      sel,
 		"defaultBaseUrl": defaultBaseURL(c),
 		"configured":     raw != "",
+		"config":         savedCfg,
 	})
 }
 
@@ -219,6 +229,18 @@ func (h *CLIToolsHandler) SaveConfig(c *gin.Context) {
 	}
 
 	cfg := generateConfig(toolID, sel, apiKey)
+	if cfg.ConfigPath != "" && isWritableConfigPath(cfg.ConfigPath) {
+		resolved, backup, werr := writeConfigFile(cfg.ConfigPath, cfg.ConfigContent)
+		if werr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to write config file: " + werr.Error()})
+			return
+		}
+		cfg.ConfigPath = resolved
+		cfg.BackupPath = backup
+	}
+	if cfgJSON, jerr := json.Marshal(cfg); jerr == nil {
+		_ = db.SetSetting(cliToolConfigKeyPrefix+toolID, string(cfgJSON))
+	}
 	c.JSON(http.StatusOK, gin.H{"selection": sel, "config": cfg})
 }
 
@@ -574,6 +596,54 @@ var cliToolCatalog = []CLIToolStatic{
 }
 
 // --- Config generators ---
+
+// expandHome resolves a leading ~ to the current user's home directory.
+func expandHome(p string) string {
+	if p == "~" {
+		if h, err := os.UserHomeDir(); err == nil {
+			return h
+		}
+		return p
+	}
+	if strings.HasPrefix(p, "~/") {
+		if h, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(h, p[2:])
+		}
+	}
+	return p
+}
+
+// isWritableConfigPath reports whether cfg.ConfigPath points at a single real
+// file we may write, excluding placeholder or multi-file descriptions such as
+// "<VS Code user settings.json>" or "~/.hermes/config.yaml + ~/.hermes/.env".
+func isWritableConfigPath(p string) bool {
+	if p == "" {
+		return false
+	}
+	if strings.ContainsAny(p, " \t<>+") {
+		return false
+	}
+	return strings.HasPrefix(p, "~") || filepath.IsAbs(p)
+}
+
+// writeConfigFile writes content to the resolved config path, backing up any
+// existing file to a timestamped .bak first. It returns the resolved path and
+// the backup path (empty when the destination did not previously exist).
+func writeConfigFile(cfgPath, content string) (resolved string, backup string, err error) {
+	resolved = expandHome(cfgPath)
+	if _, statErr := os.Stat(resolved); statErr == nil {
+		ts := time.Now().Format("20060102-150405")
+		backup = resolved + ".bak-" + ts
+		if data, rerr := os.ReadFile(resolved); rerr == nil {
+			_ = os.WriteFile(backup, data, 0o644)
+		}
+	}
+	if mkErr := os.MkdirAll(filepath.Dir(resolved), 0o755); mkErr != nil {
+		return resolved, backup, mkErr
+	}
+	err = os.WriteFile(resolved, []byte(content), 0o644)
+	return resolved, backup, err
+}
 
 func generateConfig(toolID string, sel CLIToolSelection, apiKey string) CLIToolConfig {
 	base := ensureBaseV1(sel.BaseURL)
