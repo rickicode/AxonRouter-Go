@@ -539,6 +539,38 @@ func extractErrorMessage(body []byte) string {
 	return envelope.Error.Message
 }
 
+// buildFailoverErrorResponse builds the final client-facing message, status code,
+// and error type when every connection in the failover loop has been exhausted.
+// It preserves the upstream provider message for quota/rate-limit errors so the
+// client sees the real cause (e.g. Cloudflare's "daily free allocation" message)
+// instead of the generic "all connections exhausted" fallback.
+func buildFailoverErrorResponse(category string, lastErr error, modelName string) (string, int, string) {
+	upstreamMessage := func(fallback string) string {
+		if upErr := extractUpstreamError(lastErr); upErr != nil {
+			if m := extractErrorMessage(upErr.Body); m != "" {
+				return m
+			}
+			if upErr.Error() != "" {
+				return upErr.Error()
+			}
+		}
+		return fallback
+	}
+
+	switch connstate.ErrorCategory(category) {
+	case connstate.ErrorModelNotFound:
+		return "model not found: " + modelName, http.StatusNotFound, "invalid_request_error"
+	case connstate.ErrorAuth:
+		return "authentication failed for all connections", http.StatusUnauthorized, "authentication_error"
+	case connstate.ErrorRateLimit:
+		return upstreamMessage("rate limit exceeded for all connections"), http.StatusTooManyRequests, "rate_limit_error"
+	case connstate.ErrorQuota:
+		return upstreamMessage("quota exhausted for all connections"), http.StatusTooManyRequests, "insufficient_quota"
+	default:
+		return "all connections exhausted or failing", http.StatusServiceUnavailable, "server_error"
+	}
+}
+
 // isAuthError checks if an error indicates an authentication failure (401/403).
 // Used for reactive retry: refresh token and retry once on auth errors.
 func isAuthError(err error) bool {

@@ -155,34 +155,7 @@ func (h *Handler) Responses(c *gin.Context) {
 		}
 		return
 	}
-	msg := "all connections exhausted or failing"
-	statusCode := http.StatusServiceUnavailable
-	errType := "server_error"
-	switch lastErrCategory {
-	case string(connstate.ErrorModelNotFound):
-		msg = "model not found: " + modelName
-		statusCode = http.StatusNotFound
-		errType = "invalid_request_error"
-	case string(connstate.ErrorAuth):
-		msg = "authentication failed for all connections"
-		statusCode = http.StatusUnauthorized
-		errType = "authentication_error"
-	case string(connstate.ErrorRateLimit):
-		statusCode = http.StatusTooManyRequests
-		errType = "rate_limit_error"
-	}
-
-	if lastErrCategory == string(connstate.ErrorRateLimit) {
-		if upErr := extractUpstreamError(lastErr); upErr != nil {
-			msg = extractErrorMessage(upErr.Body)
-			if msg == "" {
-				msg = upErr.Error()
-			}
-		}
-		if msg == "" || msg == "all connections exhausted or failing" {
-			msg = "rate limit exceeded for all connections"
-		}
-	}
+	msg, statusCode, errType := buildFailoverErrorResponse(lastErrCategory, lastErr, modelName)
 
 	detail := gin.H{"provider": provider, "model": modelName}
 	if lastConn != nil {

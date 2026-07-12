@@ -339,3 +339,75 @@ func TestIsClientCanceled(t *testing.T) {
 		t.Fatal("expected false when request context is not cancelled")
 	}
 }
+
+func TestBuildFailoverErrorResponse(t *testing.T) {
+	tests := []struct {
+		name        string
+		category    connstate.ErrorCategory
+		lastErr     error
+		modelName   string
+		wantMsg     string
+		wantStatus  int
+		wantErrType string
+	}{
+		{
+			name:      "model not found",
+			category:  connstate.ErrorModelNotFound,
+			modelName: "unknown-model",
+			wantMsg:     "model not found: unknown-model",
+			wantStatus:  http.StatusNotFound,
+			wantErrType: "invalid_request_error",
+		},
+		{
+			name:        "auth error",
+			category:    connstate.ErrorAuth,
+			wantMsg:     "authentication failed for all connections",
+			wantStatus:  http.StatusUnauthorized,
+			wantErrType: "authentication_error",
+		},
+		{
+			name:     "rate limit preserves upstream message",
+			category: connstate.ErrorRateLimit,
+			lastErr:  &executor.UpstreamError{StatusCode: 429, Body: []byte(`{"error":{"message":"rate limiting: inference request per min rate reached"}}`)},
+			wantMsg:     "rate limiting: inference request per min rate reached",
+			wantStatus:  http.StatusTooManyRequests,
+			wantErrType: "rate_limit_error",
+		},
+		{
+			name:     "quota preserves upstream message",
+			category: connstate.ErrorQuota,
+			lastErr:  &executor.UpstreamError{StatusCode: 429, Body: []byte(`{"error":{"message":"you have used up your daily free allocation of 10,000 neurons"}}`)},
+			wantMsg:     "you have used up your daily free allocation of 10,000 neurons",
+			wantStatus:  http.StatusTooManyRequests,
+			wantErrType: "insufficient_quota",
+		},
+		{
+			name:        "quota fallback without upstream error",
+			category:    connstate.ErrorQuota,
+			wantMsg:     "quota exhausted for all connections",
+			wantStatus:  http.StatusTooManyRequests,
+			wantErrType: "insufficient_quota",
+		},
+		{
+			name:        "default",
+			category:    connstate.ErrorUnknown,
+			wantMsg:     "all connections exhausted or failing",
+			wantStatus:  http.StatusServiceUnavailable,
+			wantErrType: "server_error",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg, status, errType := buildFailoverErrorResponse(string(tt.category), tt.lastErr, tt.modelName)
+			if msg != tt.wantMsg {
+				t.Errorf("msg: got %q, want %q", msg, tt.wantMsg)
+			}
+			if status != tt.wantStatus {
+				t.Errorf("status: got %d, want %d", status, tt.wantStatus)
+			}
+			if errType != tt.wantErrType {
+				t.Errorf("errType: got %q, want %q", errType, tt.wantErrType)
+			}
+		})
+	}
+}
