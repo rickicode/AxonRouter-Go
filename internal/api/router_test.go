@@ -17,7 +17,6 @@ import (
 	"strings"
 )
 
-const testAdminKey = "admin-test-key"
 
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
@@ -49,8 +48,7 @@ func newTestRouter(t *testing.T) (*Router, *httptest.Server) {
 
 	router := New(Config{
 		DB:               database,
-		Port:             "0",
-		AdminKey:         testAdminKey,
+		Port: "0",
 		QuotaIntervalMin: 1,
 		LogRetentionDays: 30,
 		WebFS:            web.GetBuildFS(),

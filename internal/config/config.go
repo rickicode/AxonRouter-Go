@@ -10,9 +10,8 @@ type Config struct {
 	Port        string
 	DBPath      string
 	PIDFile     string
-	LogDir      string
-	AdminAPIKey string
-	Debug       bool
+	LogDir string
+	Debug bool
 	JWTSecret   string
 }
 
@@ -40,9 +39,8 @@ func Get() Config {
 			Port:          getEnv("AXON_PORT", "3777"),
 			DBPath:        filepath.Join(dataDir, "axonrouter.db"),
 			PIDFile:       filepath.Join(dataDir, "axonrouter.pid"),
-			LogDir:        filepath.Join(dataDir, "logs"),
-			AdminAPIKey:   os.Getenv("AXON_ADMIN_KEY"),
-		}
+		LogDir: filepath.Join(dataDir, "logs"),
+	}
 		os.MkdirAll(dataDir, 0755)
 		os.MkdirAll(global.LogDir, 0755)
 	})

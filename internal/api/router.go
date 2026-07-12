@@ -56,9 +56,8 @@ type Router struct {
 type Config struct {
 	DB                *sql.DB
 	WriteQueue        *db.WriteQueue // centralized async writer (nil → one is created)
-	Port              string
-	AdminKey          string
-	QuotaIntervalMin  int
+	Port string
+	QuotaIntervalMin int
 	LogRetentionDays  int
 	WebFS             fs.FS // embedded frontend filesystem
 }

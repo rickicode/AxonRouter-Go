@@ -39,8 +39,7 @@ func TestAuthCacheEliminatesRepeatedBcrypt(t *testing.T) {
 
 	router := New(Config{
 		DB:               database,
-		Port:             "0",
-		AdminKey:         testAdminKey,
+		Port: "0",
 		QuotaIntervalMin: 1,
 		LogRetentionDays: 30,
 	})
@@ -126,8 +125,7 @@ func TestConcurrentRequestsDoNotBlockHealth(t *testing.T) {
 
 	router := New(Config{
 		DB:               database,
-		Port:             "0",
-		AdminKey:         testAdminKey,
+		Port: "0",
 		QuotaIntervalMin: 1,
 		LogRetentionDays: 30,
 	})

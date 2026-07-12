@@ -89,8 +89,7 @@ func cmdRun() {
 	// Create router with all routes and background goroutines
 	router := api.New(api.Config{
 		DB:               database,
-		Port:             cfg.Port,
-		AdminKey:         cfg.AdminAPIKey,
+		Port: cfg.Port,
 		QuotaIntervalMin: 30,
 		LogRetentionDays: 30,
 	})
