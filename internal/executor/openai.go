@@ -61,11 +61,21 @@ func sanitizeCFRequest(body []byte) []byte {
 	}
 
 	model, _ := req["model"].(string)
-	// CF Workers AI requires @cf/ prefix on model names.
-	// Catalog stores them as cf/author/model (provider prefix stripped).
-	// Re-add @cf/ before sending upstream.
-	if model != "" && !strings.HasPrefix(model, "@cf/") {
-		model = "@cf/" + model
+	// CF Workers AI requires @cf/ prefix on model names. The caller may pass
+	// the gateway model ID (cf/author/model) or just the upstream name
+	// (author/model). Normalize so the upstream always sees exactly
+	// @cf/author/model — never @cf/cf/... or double prefixes.
+	if model != "" {
+		switch {
+		case strings.HasPrefix(model, "@cf/"):
+			// already normalized
+		case strings.HasPrefix(model, "cf/"):
+			// gateway full ID like cf/author/model
+			model = "@" + model
+		default:
+			// model name only like author/model
+			model = "@cf/" + model
+		}
 		req["model"] = model
 	}
 	maxCap := 8192
@@ -144,9 +154,9 @@ func sanitizeCFMessages(messages []any) []any {
 				toolCallID, _ = tr["tool_call_id"].(string)
 			}
 			sanitized = append(sanitized, map[string]any{
-				"role":        "tool",
+				"role":         "tool",
 				"tool_call_id": toolCallID,
-				"content":     text,
+				"content":      text,
 			})
 		}
 
@@ -180,7 +190,6 @@ func sanitizeCFMessages(messages []any) []any {
 	}
 	return sanitized
 }
-
 
 // openAIEndpoint resolves the full upstream URL for an OpenAI-compatible provider.
 // When the base URL contains {accountId}, the placeholder is resolved from psd
@@ -220,7 +229,6 @@ func openAIEndpoint(baseURL, endpoint string, psd map[string]string) (string, er
 	}
 	return url + "/" + endpoint, nil
 }
-
 
 // Execute performs a non-streaming chat completion.
 func (e *OpenAIExecutor) Execute(ctx context.Context, req *Request) (*Response, error) {
@@ -287,7 +295,6 @@ func (e *OpenAIExecutor) Embeddings(ctx context.Context, req *Request) (*Respons
 		return nil, err
 	}
 
-
 	headers := map[string]string{
 		"Content-Type": "application/json",
 	}
@@ -313,7 +320,6 @@ func (e *OpenAIExecutor) Models(ctx context.Context, req *Request) (*Response, e
 		return nil, err
 	}
 
-
 	headers := map[string]string{
 		"Content-Type": "application/json",
 	}
@@ -338,7 +344,6 @@ func (e *OpenAIExecutor) Responses(ctx context.Context, req *Request) (*Response
 	if err != nil {
 		return nil, err
 	}
-
 
 	body := req.Body
 	body = JSONSet(body, "stream", false)

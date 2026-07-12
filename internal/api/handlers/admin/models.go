@@ -196,7 +196,12 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 		}
 	}
 
-	bodyBytes := buildTestBody(format, req.Model)
+	modelName := req.Model
+	if providerID == "cf" && strings.HasPrefix(modelName, "cf/") {
+		modelName = strings.TrimPrefix(modelName, "cf/")
+	}
+
+	bodyBytes := buildTestBody(format, modelName)
 
 	start := time.Now()
 	streamResult, err := exec.ExecuteStream(c.Request.Context(), &executor.Request{
@@ -205,7 +210,7 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 		BaseURL:              baseURL,
 		Body:                 bodyBytes,
 		Provider:             providerID,
-		Model:                req.Model,
+		Model:                modelName,
 		ProviderSpecificData: providerSpecificData,
 	})
 	if err != nil {
@@ -331,9 +336,16 @@ func staticModels(providerID string) []string {
 }
 
 // defaultTestModel returns the first available model for a provider from the catalog.
+// For Cloudflare, the catalog stores gateway IDs like cf/author/model; the test
+// body should contain only the upstream model name (author/model) so the CF
+// sanitizer can prepend @cf/ exactly once.
 func defaultTestModel(providerID string) string {
 	if ids := staticModels(providerID); len(ids) > 0 {
-		return ids[0]
+		id := ids[0]
+		if providerID == "cf" && strings.HasPrefix(id, "cf/") {
+			id = strings.TrimPrefix(id, "cf/")
+		}
+		return id
 	}
 	switch providerID {
 	case "openai":

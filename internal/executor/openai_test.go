@@ -180,6 +180,32 @@ func TestSanitizeCFRequest_CapsMaxTokens(t *testing.T) {
 	}
 }
 
+func TestSanitizeCFRequest_NormalizesModelPrefix(t *testing.T) {
+	tests := []struct {
+		name  string
+		model string
+		want  string
+	}{
+		{"already normalized @cf", "@cf/meta/llama-3.2-1b-instruct", "@cf/meta/llama-3.2-1b-instruct"},
+		{"gateway full ID cf/", "cf/meta/llama-3.2-1b-instruct", "@cf/meta/llama-3.2-1b-instruct"},
+		{"model name only", "meta/llama-3.2-1b-instruct", "@cf/meta/llama-3.2-1b-instruct"},
+		{"moonshot gateway ID", "cf/moonshotai/kimi-k2.6", "@cf/moonshotai/kimi-k2.6"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, _ := json.Marshal(map[string]any{"model": tt.model})
+			out := sanitizeCFRequest(body)
+			var got map[string]any
+			if err := json.Unmarshal(out, &got); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if got["model"] != tt.want {
+				t.Errorf("model = %q, want %q", got["model"], tt.want)
+			}
+		})
+	}
+}
+
 func TestSanitizeCFRequest_FiltersContentBlocks(t *testing.T) {
 	req := map[string]any{
 		"model": "@cf/meta/llama-3.2-1b-instruct",
