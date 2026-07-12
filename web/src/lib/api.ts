@@ -905,8 +905,9 @@ export interface CLIToolStatus {
 export interface CLIToolState {
   tool: CLITool;
   selection: CLIToolSelection;
- defaultBaseUrl: string;
- configured: boolean;
+  defaultBaseUrl: string;
+  configured: boolean;
+  config?: CLIToolConfig;
 }
 
 export interface CLIToolSelection {
@@ -923,6 +924,7 @@ export interface CLIToolConfig {
   configPath: string;
   configContent: string;
   runCommand: string;
+  backupPath?: string;
 }
 
 
