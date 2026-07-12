@@ -1,7 +1,10 @@
 # Binaries
 axonrouter
 axonrouter-cli
+server
+bin/
 build/axonrouter
+build/axonrouter-dev
 *.exe
 *.dll
 *.so
@@ -36,7 +39,7 @@ Thumbs.db
 # AI tools
 .rpiv/
 .serena/
-AGENTS.md
+.playwright-mcp/
 
 # Logs
 *.log
