@@ -22,8 +22,79 @@
 - ✅ Right: "OmniRoute quotaCache.ts line 15 refreshes every 1 minute."
 - ✅ Right: "Endpoint is at router.go line 219."
 
-## Multi-Codebase Comparison Rule (CRITICAL)
+## Code Tool Policy (CRITICAL)
 
+- Unknown implementation, behavior, or code location → use **Semble**.
+- Known class, function, method, type, or symbol → use **Serena**.
+- Exact text, regex, or exhaustive occurrence search → use **`rg`**.
+- Do not use **`rg`** to discover how a feature is implemented when Semble is available.
+
+When **Serena** is unavailable, fall back to `lsp`, `ast_grep`, and `ast_edit` as the semantic-equivalent tools for code navigation and editing.
+
+### Semble — discovery
+
+Use Semble first when the relevant file, symbol, or behavior is not yet known. Use it for:
+- Natural-language and semantic code searches.
+- Finding features, flows, retry logic, error handling, and relevant modules.
+- Exploring unfamiliar or large repositories.
+- Narrowing the search area before reading files or using symbol-level tools.
+
+### Serena / `lsp` / `ast_grep` — semantic navigation and editing
+
+Use Serena when it is available for symbol-level work:
+- Finding classes, functions, methods, interfaces, types, and constants.
+- Finding references, callers, declarations, and implementations.
+- Renaming symbols, replacing whole method/function bodies, and cross-file refactoring.
+
+When Serena is unavailable, use this harness's built-in tools in order:
+1. `lsp` for go-to-definition, references, rename, code actions, and diagnostics.
+2. `ast_grep` for structural pattern discovery.
+3. `ast_edit` for safe codemods and structural rewrites.
+4. `edit` for small localized changes.
+
+### `rg` / `grep` — textual/regex search
+
+Use `rg` (or this harness's built-in `grep` tool) only when textual matching is the correct operation:
+- Exact strings, regular expressions, and literal patterns.
+- Error messages, logs, comments, TODOs, URLs, and environment-variable names.
+- Configuration, documentation, templates, scripts, and non-code files.
+- Verifying that an old name or value has been completely removed.
+- Cases where Semble, Serena, `lsp`, or `ast_grep` cannot locate the target.
+
+Do not use `rg`/`grep` as the default tool for semantic code exploration.
+
+### Editing
+
+Use Serena for structural source-code edits when available.
+Use built-in `edit` (or `write` for new files / full-file replacement) for:
+- Small localized code changes.
+- Documentation and non-code files.
+- Creating new files.
+- Cases where Serena, `lsp`, or `ast_edit` cannot modify the target.
+
+If a textual source-code edit fails:
+1. Re-read the current file and retry once with fresh context.
+2. If the second attempt fails, stop textual retries and switch to `ast_edit` or Serena.
+3. Fall back to textual editing only if no semantic tool can modify the target.
+
+### Preferred workflow
+
+For an unknown implementation:
+1. **Semble** → discover relevant code.
+2. **Serena / `lsp` / `ast_grep`** → locate exact symbols and references.
+3. **Serena / `ast_edit` / `edit`** → make the change.
+4. **`ast_grep` or `rg`/`grep`** → verify removals.
+5. Inspect the diff and run relevant diagnostics, tests, linting, type checks, or builds.
+
+### Verification
+
+After every edit:
+- Inspect the diff and confirm only intended locations changed.
+- Check for duplicated, truncated, or misplaced code.
+- Run `go build ./...` and `go test ./...` (or the relevant package tests).
+- For frontend changes, run `npm run build` in `web/` until zero warnings.
+
+## Multi-Codebase Comparison Rule (CRITICAL)
 When CLIProxyAPI, AxonRouter, and OmniRoute implement the same subsystem:
 1. Read ALL three implementations.
 2. Compare: which is most efficient, complete, and stable?
