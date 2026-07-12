@@ -7,8 +7,10 @@
   import SidebarNav from '$lib/components/sidebar/SidebarNav.svelte';
   import SidebarBrand from '$lib/components/sidebar/SidebarBrand.svelte';
   import SidebarHealth from '$lib/components/sidebar/SidebarHealth.svelte';
-import { authStore } from '$lib/auth';
+import { authStore, logout } from '$lib/auth';
 import Login from './pages/Login.svelte';
+import LogOutIcon from '@lucide/svelte/icons/log-out';
+import { Button } from '$lib/components/ui/button';
 
   // Page components
   import Dashboard from './pages/Dashboard.svelte';
@@ -100,6 +102,11 @@ import NotFound from './pages/NotFound.svelte';
   }
 
   let route = $derived(matchRoute($currentPath));
+
+function handleLogout() {
+  logout();
+  toast.success('Signed out');
+}
   let pageLabel = $derived(getPageLabel($currentPath));
 </script>
 
@@ -123,10 +130,16 @@ import NotFound from './pages/NotFound.svelte';
     <header class="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background/50 backdrop-blur-md sticky top-0 z-50 px-6">
       <Sidebar.Trigger class="md:hidden text-muted-foreground hover:text-foreground transition-colors cursor-pointer" />
       <h1 class="text-body-md-strong text-foreground">{pageLabel}</h1>
-      <div class="ml-auto flex items-center gap-1.5 text-caption-mono text-muted-foreground">
-        <span class="size-1.5 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
-        <span class="hidden sm:inline">Live</span>
-      </div>
+<div class="ml-auto flex items-center gap-2">
+  <span class="flex items-center gap-1.5 text-caption-mono text-muted-foreground">
+    <span class="size-1.5 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
+    <span class="hidden sm:inline">Live</span>
+  </span>
+  <Button variant="ghost" size="sm" class="gap-1.5" onclick={handleLogout}>
+    <LogOutIcon class="size-4" />
+    <span class="hidden sm:inline">Logout</span>
+  </Button>
+</div>
     </header>
 
     <main class="flex-1 overflow-auto">
