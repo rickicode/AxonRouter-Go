@@ -2,27 +2,30 @@ package openai
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
-// convertClaudeRequestToOpenAI converts an Anthropic Messages request to OpenAI Chat Completions format.
-func convertClaudeRequestToOpenAI(modelName string, body []byte, stream bool) []byte {
+// ConvertClaudeRequestToOpenAI converts an Anthropic Messages request to OpenAI Chat Completions format.
+// It builds a single map[string]any and marshals once, avoiding ~12 sjson round-trips.
+func ConvertClaudeRequestToOpenAI(modelName string, body []byte, stream bool) []byte {
 	root := gjson.ParseBytes(body)
 
-	out := []byte(`{"model":"","messages":[]}`)
-	out, _ = sjson.SetBytes(out, "model", modelName)
-	out, _ = sjson.SetBytes(out, "stream", stream)
+	out := map[string]any{
+		"model":  modelName,
+		"stream": stream,
+	}
+	messages := []any{}
 
 	if maxTokens := root.Get("max_tokens"); maxTokens.Exists() {
-		out, _ = sjson.SetBytes(out, "max_tokens", maxTokens.Int())
+		out["max_tokens"] = maxTokens.Int()
 	}
 	if temp := root.Get("temperature"); temp.Exists() {
-		out, _ = sjson.SetBytes(out, "temperature", temp.Float())
+		out["temperature"] = temp.Float()
 	}
 	if topP := root.Get("top_p"); topP.Exists() {
-		out, _ = sjson.SetBytes(out, "top_p", topP.Float())
+		out["top_p"] = topP.Float()
 	}
 
 	// Stop sequences
@@ -33,22 +36,66 @@ func convertClaudeRequestToOpenAI(modelName string, body []byte, stream bool) []
 			return true
 		})
 		if len(stops) == 1 {
-			out, _ = sjson.SetBytes(out, "stop", stops[0])
+			out["stop"] = stops[0]
 		} else if len(stops) > 1 {
-			out, _ = sjson.SetBytes(out, "stop", stops)
+			out["stop"] = stops
 		}
 	}
 
-	// System message
+	// System message (string or array of {text,...})
 	if sys := root.Get("system"); sys.Exists() {
 		systemContent := ""
 		if sys.Type == gjson.String {
 			systemContent = sys.String()
+		} else if sys.IsArray() {
+			var parts []string
+			sys.ForEach(func(_, part gjson.Result) bool {
+				if t := part.Get("text"); t.Exists() {
+					parts = append(parts, t.String())
+				}
+				return true
+			})
+			systemContent = strings.Join(parts, "\n")
 		}
 		if systemContent != "" {
-			sysMsg := []byte(`{"role":"system","content":""}`)
-			sysMsg, _ = sjson.SetBytes(sysMsg, "content", systemContent)
-			out, _ = sjson.SetRawBytes(out, "messages.-1", sysMsg)
+			messages = append(messages, map[string]any{
+				"role":    "system",
+				"content": systemContent,
+			})
+		}
+	}
+
+	// tool_choice
+	if tc := root.Get("tool_choice"); tc.Exists() {
+		switch tc.Type {
+		case gjson.String:
+			switch tc.String() {
+			case "auto":
+				out["tool_choice"] = "auto"
+			case "any":
+				out["tool_choice"] = "required"
+			case "none":
+				out["tool_choice"] = "none"
+			}
+		case gjson.JSON:
+			if tc.Get("type").String() == "tool" {
+				out["tool_choice"] = map[string]any{
+					"type":     "function",
+					"function": map[string]any{"name": tc.Get("name").String()},
+				}
+			}
+		}
+	}
+
+	// thinking (request-level) → reasoning_effort
+	if thinking := root.Get("thinking"); thinking.Exists() && thinking.Type == gjson.JSON {
+		switch thinking.Get("type").String() {
+		case "enabled":
+			out["reasoning_effort"] = "high"
+		case "disabled":
+			out["reasoning_effort"] = "none"
+		case "adaptive", "auto":
+			out["reasoning_effort"] = "medium"
 		}
 	}
 
@@ -56,95 +103,138 @@ func convertClaudeRequestToOpenAI(modelName string, body []byte, stream bool) []
 	if msgs := root.Get("messages"); msgs.Exists() && msgs.IsArray() {
 		msgs.ForEach(func(_, msg gjson.Result) bool {
 			role := msg.Get("role").String()
-
-			// Skip thinking blocks in user messages
-			if content := msg.Get("content"); content.Exists() {
-				if content.Type == gjson.String {
-					oaiMsg := []byte(`{"role":"","content":""}`)
-					oaiMsg, _ = sjson.SetBytes(oaiMsg, "role", role)
-					oaiMsg, _ = sjson.SetBytes(oaiMsg, "content", content.String())
-					out, _ = sjson.SetRawBytes(out, "messages.-1", oaiMsg)
-				} else if content.IsArray() {
-					oaiMsg := []byte(`{"role":"","content":[]}`)
-					oaiMsg, _ = sjson.SetBytes(oaiMsg, "role", role)
-
-					var toolCalls []map[string]interface{}
-
-					content.ForEach(func(_, part gjson.Result) bool {
-						pType := part.Get("type").String()
-						switch pType {
-						case "text":
-							partJSON := []byte(`{"type":"text","text":""}`)
-							partJSON, _ = sjson.SetBytes(partJSON, "text", part.Get("text").String())
-							oaiMsg, _ = sjson.SetRawBytes(oaiMsg, "content.-1", partJSON)
-						case "image":
-							if source := part.Get("source"); source.Exists() {
-								partJSON := []byte(`{"type":"image_url","image_url":{"url":""}}`)
-								partJSON, _ = sjson.SetBytes(partJSON, "image_url.url", source.Get("url").String())
-								oaiMsg, _ = sjson.SetRawBytes(oaiMsg, "content.-1", partJSON)
-							}
-						case "tool_use":
-							tc := map[string]interface{}{
-								"id":   part.Get("id").String(),
-								"type": "function",
-								"function": map[string]interface{}{
-									"name":      part.Get("name").String(),
-									"arguments": part.Get("input").Raw,
-								},
-							}
-							toolCalls = append(toolCalls, tc)
-						case "tool_result":
-							partJSON := []byte(`{"type":"tool_result","tool_use_id":"","content":""}`)
-							partJSON, _ = sjson.SetBytes(partJSON, "tool_use_id", part.Get("tool_use_id").String())
-							if c := part.Get("content"); c.Exists() {
-								partJSON, _ = sjson.SetBytes(partJSON, "content", c.String())
-							}
-							oaiMsg, _ = sjson.SetRawBytes(oaiMsg, "content.-1", partJSON)
-						case "thinking":
-							// skip thinking blocks
-						}
-						return true
-					})
-
-					if len(toolCalls) > 0 {
-						oaiMsg, _ = sjson.SetRawBytes(oaiMsg, "tool_calls", mustMarshal(toolCalls))
-					}
-
-					out, _ = sjson.SetRawBytes(out, "messages.-1", oaiMsg)
-				}
+			content := msg.Get("content")
+			if !content.Exists() {
+				return true
 			}
+			if content.Type == gjson.String {
+				messages = append(messages, map[string]any{
+					"role":    role,
+					"content": content.String(),
+				})
+				return true
+			}
+
+			var contentParts []map[string]any
+			var toolCalls []map[string]any
+			type toolResult struct {
+				id      string
+				content any
+			}
+			var toolResults []toolResult
+
+			content.ForEach(func(_, part gjson.Result) bool {
+				switch part.Get("type").String() {
+				case "text":
+					contentParts = append(contentParts, map[string]any{
+						"type": "text",
+						"text": part.Get("text").String(),
+					})
+				case "image":
+					if source := part.Get("source"); source.Exists() {
+						url := ""
+						if source.Get("type").String() == "base64" {
+							url = "data:" + source.Get("media_type").String() + ";base64," + source.Get("data").String()
+						} else {
+							url = source.Get("url").String()
+						}
+						contentParts = append(contentParts, map[string]any{
+							"type":      "image_url",
+							"image_url": map[string]any{"url": url},
+						})
+					}
+				case "tool_use":
+					toolCalls = append(toolCalls, map[string]any{
+						"id":   part.Get("id").String(),
+						"type": "function",
+						"function": map[string]any{
+							"name":      part.Get("name").String(),
+							"arguments": json.RawMessage(part.Get("input").Raw),
+						},
+					})
+				case "tool_result":
+					var c any
+					if cRaw := part.Get("content"); cRaw.Exists() {
+						if cRaw.Type == gjson.String {
+							c = cRaw.String()
+						} else {
+							c = json.RawMessage(cRaw.Raw)
+						}
+					} else {
+						c = ""
+					}
+					toolResults = append(toolResults, toolResult{id: part.Get("tool_use_id").String(), content: c})
+				case "thinking", "redacted_thinking":
+					// dropped in request translation (never mapped to OpenAI)
+				}
+				return true
+			})
+
+			// assistant tool_use → tool_calls (content may be null)
+			if role == "assistant" && len(toolCalls) > 0 {
+				m := map[string]any{
+					"role":      role,
+					"content":   nil,
+					"tool_calls": toolCalls,
+				}
+				if len(contentParts) > 0 {
+					m["content"] = contentParts
+				}
+				messages = append(messages, m)
+				return true
+			}
+
+			// user message with tool_result parts → emit tool messages first (correct ordering), then text
+			if role == "user" && len(toolResults) > 0 {
+				for _, tr := range toolResults {
+					messages = append(messages, map[string]any{
+						"role":         "tool",
+						"tool_call_id": tr.id,
+						"content":      tr.content,
+					})
+				}
+				if len(contentParts) > 0 {
+					messages = append(messages, map[string]any{
+						"role":    "user",
+						"content": contentParts,
+					})
+				}
+				return true
+			}
+
+			// default: plain content (array of parts, or empty string)
+			m := map[string]any{"role": role}
+			if len(contentParts) > 0 {
+				m["content"] = contentParts
+			} else {
+				m["content"] = ""
+			}
+			messages = append(messages, m)
 			return true
 		})
 	}
+
+	out["messages"] = messages
 
 	// Tools
 	if tools := root.Get("tools"); tools.Exists() && tools.IsArray() {
-		var oaiTools []map[string]interface{}
+		var oaiTools []map[string]any
 		tools.ForEach(func(_, tool gjson.Result) bool {
-			oaiTool := map[string]interface{}{
-				"type": "function",
-				"function": map[string]interface{}{
-					"name": tool.Get("name").String(),
-				},
-			}
+			fn := map[string]any{"name": tool.Get("name").String()}
 			if desc := tool.Get("description"); desc.Exists() {
-				oaiTool["function"].(map[string]interface{})["description"] = desc.String()
+				fn["description"] = desc.String()
 			}
 			if schema := tool.Get("input_schema"); schema.Exists() {
-				oaiTool["function"].(map[string]interface{})["parameters"] = json.RawMessage(schema.Raw)
+				fn["parameters"] = json.RawMessage(schema.Raw)
 			}
-			oaiTools = append(oaiTools, oaiTool)
+			oaiTools = append(oaiTools, map[string]any{"type": "function", "function": fn})
 			return true
 		})
 		if len(oaiTools) > 0 {
-			out, _ = sjson.SetRawBytes(out, "tools", mustMarshal(oaiTools))
+			out["tools"] = oaiTools
 		}
 	}
 
-	return out
-}
-
-func mustMarshal(v interface{}) []byte {
-	b, _ := json.Marshal(v)
+	b, _ := json.Marshal(out)
 	return b
 }

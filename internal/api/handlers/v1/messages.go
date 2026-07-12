@@ -188,17 +188,6 @@ func (h *Handler) Messages(c *gin.Context) {
 	c.JSON(statusCode, claudeError(errType, msg))
 }
 
-// handleClaudeNonStreamResponse handles non-streaming Claude responses.
-func (h *Handler) handleClaudeNonStreamResponse(c *gin.Context, exec executor.Executor, req *executor.Request) {
-	resp, err := exec.Execute(c.Request.Context(), req)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, claudeError("server_error", err.Error()))
-		return
-	}
-	c.Header("Content-Type", "application/json")
-	c.Status(resp.StatusCode)
-	c.Writer.Write(resp.Body)
-}
 
 // handleClaudeStreamResponse handles streaming Claude responses.
 func (h *Handler) handleClaudeStreamResponse(c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte) {

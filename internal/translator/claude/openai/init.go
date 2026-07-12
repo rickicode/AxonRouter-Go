@@ -9,10 +9,10 @@ func init() {
 	registry.Register(
 		types.FormatClaude,
 		types.FormatOpenAI,
-		convertClaudeRequestToOpenAI,
+		ConvertClaudeRequestToOpenAI,
 		types.ResponseTransform{
-			Stream:    convertOpenAIResponseToClaudeStream,
-			NonStream: convertOpenAIResponseToClaudeNonStream,
+			Stream:    ConvertOpenAIResponseToClaudeStream,
+			NonStream: ConvertOpenAIResponseToClaudeNonStream,
 		},
 	)
 }

@@ -181,6 +181,7 @@ func New(cfg Config) *Router {
 	v1Group.POST("/video/generations", v1H.Video)
 	v1Group.POST("/unified", v1H.Unified)
 	v1Group.POST("/messages/count_tokens", v1H.CountTokens)
+	v1Group.POST("/messages", v1H.Messages)
 
 	// Health check is reachable without admin auth for sidebar/lb probes.
 	engine.HEAD("/api/admin/health", healthH.Health)
@@ -315,6 +316,7 @@ func New(cfg Config) *Router {
 	adminGroup.GET("/cli-tools/statuses", cliToolsH.AllStatuses)
 	adminGroup.GET("/cli-tools/:toolId", cliToolsH.GetConfig)
 	adminGroup.POST("/cli-tools/:toolId", cliToolsH.SaveConfig)
+	adminGroup.DELETE("/cli-tools/:toolId", cliToolsH.DeleteConfig)
 
 	// Compression & Cache
 	adminGroup.GET("/settings/compression", optimizationH.GetCompressionSettings)

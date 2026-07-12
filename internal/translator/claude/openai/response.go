@@ -12,24 +12,27 @@ import (
 
 // claudeStreamState holds accumulated state for OpenAI→Claude streaming.
 type claudeStreamState struct {
-	MessageID             string
-	Model                 string
-	CreatedAt             int64
-	ToolNameMap           map[string]string
-	ContentBlockStarted   bool
-	ContentBlockIndex     int
-	ThinkingBlockStarted  bool
-	ThinkingBlockIndex    int
-	ToolBlocks            map[int]int
-	ToolStartEmitted      map[int]bool
-	ToolArgsAccum         map[int]*strings.Builder
-	TextAccum             strings.Builder
-	ThinkingAccum         strings.Builder
-	FinishReason          string
-	MessageStartSent      bool
-	MessageStopSent       bool
-	SawToolCall           bool
+	MessageID            string
+	Model                string
+	CreatedAt            int64
+	ToolNameMap          map[string]string
+	ContentBlockStarted  bool
+	ContentBlockIndex    int
+	ThinkingBlockStarted bool
+	ThinkingBlockIndex   int
+	ToolBlocks           map[int]int
+	ToolStartEmitted     map[int]bool
+	ToolArgsAccum        map[int]*strings.Builder
+	TextAccum            strings.Builder
+	ThinkingAccum        strings.Builder
+	FinishReason         string
+	MessageStartSent     bool
+	MessageStopSent      bool
+	SawToolCall          bool
 	NextContentBlockIndex int
+	InputTokens          int64
+	OutputTokens         int64
+	CachedTokens         int64
 }
 
 var dataTag = []byte("data:")
@@ -37,28 +40,25 @@ var dataTag = []byte("data:")
 func getState(param *any) *claudeStreamState {
 	if *param == nil {
 		*param = &claudeStreamState{
-			ToolBlocks:            make(map[int]int),
-			ToolStartEmitted:      make(map[int]bool),
-			ToolArgsAccum:         make(map[int]*strings.Builder),
+			ToolBlocks:       make(map[int]int),
+			ToolStartEmitted: make(map[int]bool),
+			ToolArgsAccum:    make(map[int]*strings.Builder),
 			NextContentBlockIndex: 0,
 		}
 	}
 	return (*param).(*claudeStreamState)
 }
 
-// convertOpenAIResponseToClaudeStream converts OpenAI streaming chunks to Claude SSE events.
-func convertOpenAIResponseToClaudeStream(_ context.Context, _ string, _, _ []byte, rawChunk []byte, param *any) [][]byte {
+// ConvertOpenAIResponseToClaudeStream converts OpenAI streaming chunks to Claude SSE events.
+func ConvertOpenAIResponseToClaudeStream(_ context.Context, _ string, _, _ []byte, rawChunk []byte, param *any) [][]byte {
 	state := getState(param)
-
 	if !bytes.HasPrefix(rawChunk, dataTag) {
 		return nil
 	}
 	rawChunk = bytes.TrimSpace(rawChunk[5:])
-
 	if bytes.Equal(rawChunk, []byte("[DONE]")) {
 		return handleClaudeDone(state)
 	}
-
 	root := gjson.ParseBytes(rawChunk)
 
 	// Initialize from first chunk
@@ -74,6 +74,19 @@ func convertOpenAIResponseToClaudeStream(_ context.Context, _ string, _, _ []byt
 	if !state.MessageStartSent {
 		results = append(results, buildClaudeMessageStart(state))
 		state.MessageStartSent = true
+	}
+
+	// Capture usage if present (OpenAI may include it in any chunk, often the last).
+	if usage := root.Get("usage"); usage.Exists() {
+		if pt := usage.Get("prompt_tokens"); pt.Exists() {
+			state.InputTokens = pt.Int()
+		}
+		if ct := usage.Get("completion_tokens"); ct.Exists() {
+			state.OutputTokens = ct.Int()
+		}
+		if dt := usage.Get("prompt_tokens_details.cached_tokens"); dt.Exists() {
+			state.CachedTokens = dt.Int()
+		}
 	}
 
 	if choices := root.Get("choices"); choices.Exists() && choices.IsArray() {
@@ -144,14 +157,12 @@ func convertOpenAIResponseToClaudeStream(_ context.Context, _ string, _, _ []byt
 			return true
 		})
 	}
-
 	return results
 }
 
-// convertOpenAIResponseToClaudeNonStream converts a complete OpenAI response to Claude format.
-func convertOpenAIResponseToClaudeNonStream(_ context.Context, _ string, _, _ []byte, rawResponse []byte, _ *any) []byte {
+// ConvertOpenAIResponseToClaudeNonStream converts a complete OpenAI response to Claude format.
+func ConvertOpenAIResponseToClaudeNonStream(_ context.Context, _ string, _, _ []byte, rawResponse []byte, _ *any) []byte {
 	root := gjson.ParseBytes(rawResponse)
-
 	out := make(map[string]interface{})
 	out["id"] = root.Get("id").String()
 	out["type"] = "message"
@@ -170,7 +181,6 @@ func convertOpenAIResponseToClaudeNonStream(_ context.Context, _ string, _, _ []
 					"thinking": reasoningContent.String(),
 				})
 			}
-
 			if text := msg.Get("content"); text.Exists() && text.String() != "" {
 				content = append(content, map[string]interface{}{
 					"type": "text",
@@ -208,10 +218,14 @@ func convertOpenAIResponseToClaudeNonStream(_ context.Context, _ string, _, _ []
 	out["content"] = content
 
 	if usage := root.Get("usage"); usage.Exists() {
-		out["usage"] = map[string]interface{}{
+		usageOut := map[string]interface{}{
 			"input_tokens":  usage.Get("prompt_tokens").Int(),
 			"output_tokens": usage.Get("completion_tokens").Int(),
 		}
+		if dt := usage.Get("prompt_tokens_details.cached_tokens"); dt.Exists() && dt.Int() > 0 {
+			usageOut["cache_read_input_tokens"] = dt.Int()
+		}
+		out["usage"] = usageOut
 	}
 
 	result, _ := json.Marshal(out)
@@ -222,14 +236,14 @@ func buildClaudeMessageStart(state *claudeStreamState) []byte {
 	event := map[string]interface{}{
 		"type": "message_start",
 		"message": map[string]interface{}{
-			"id":            state.MessageID,
-			"type":          "message",
-			"role":          "assistant",
-			"model":         state.Model,
-			"content":       []interface{}{},
-			"stop_reason":   nil,
+			"id":          state.MessageID,
+			"type":        "message",
+			"role":        "assistant",
+			"model":       state.Model,
+			"content":     []interface{}{},
+			"stop_reason": nil,
 			"stop_sequence": nil,
-			"usage":         map[string]interface{}{"input_tokens": 0, "output_tokens": 0},
+			"usage": map[string]interface{}{"input_tokens": 0, "output_tokens": 0},
 		},
 	}
 	b, _ := json.Marshal(event)
@@ -293,14 +307,13 @@ func buildClaudeToolUseStart(state *claudeStreamState, idx int, id, name string)
 	blockIndex := state.NextContentBlockIndex
 	state.ToolBlocks[idx] = blockIndex
 	state.NextContentBlockIndex++
-
 	event := map[string]interface{}{
 		"type":  "content_block_start",
 		"index": blockIndex,
 		"content_block": map[string]interface{}{
-			"type":  "tool_use",
-			"id":    id,
-			"name":  name,
+			"type": "tool_use",
+			"id":   id,
+			"name": name,
 			"input": map[string]interface{}{},
 		},
 	}
@@ -339,14 +352,24 @@ func handleClaudeDone(state *claudeStreamState) [][]byte {
 		results = append(results, buildClaudeContentBlockStop(blockIndex))
 	}
 
-	// message_delta with stop_reason
+	// message_delta with stop_reason + usage
 	stopReason := "end_turn"
 	if state.SawToolCall || state.FinishReason == "tool_calls" {
 		stopReason = "tool_use"
 	}
+	usage := map[string]interface{}{
+		"input_tokens":  state.InputTokens,
+		"output_tokens": state.OutputTokens,
+	}
+	if state.CachedTokens > 0 {
+		usage["cache_read_input_tokens"] = state.CachedTokens
+	}
 	msgDelta := map[string]interface{}{
-		"type":  "message_delta",
-		"delta": map[string]interface{}{"stop_reason": stopReason},
+		"type": "message_delta",
+		"delta": map[string]interface{}{
+			"stop_reason": stopReason,
+			"usage":       usage,
+		},
 	}
 	md, _ := json.Marshal(msgDelta)
 	results = append(results, []byte("data: "+string(md)+"\n\n"))
