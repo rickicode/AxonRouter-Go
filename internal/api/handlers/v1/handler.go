@@ -571,6 +571,30 @@ func buildFailoverErrorResponse(category string, lastErr error, modelName string
 	}
 }
 
+// failoverBackoff sleeps briefly before the next failover attempt so the
+// eligibility snapshot has time to rebuild (updateCoalesceWindow is 50ms) and
+// transient upstream errors (e.g. CF capacity exceeded) have a moment to clear.
+// It returns false if the request context is canceled.
+// The delay is skipped for the final attempt since the loop will exit anyway.
+func failoverBackoff(ctx context.Context, attempt int, maxAttempts int) bool {
+	if attempt >= maxAttempts-1 {
+		return true
+	}
+	// 50ms, 100ms, 200ms, 400ms, capped at 500ms.
+	delay := time.Duration(50*(1<<attempt)) * time.Millisecond
+	if delay > 500*time.Millisecond {
+		delay = 500 * time.Millisecond
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
 // isAuthError checks if an error indicates an authentication failure (401/403).
 // Used for reactive retry: refresh token and retry once on auth errors.
 func isAuthError(err error) bool {

@@ -120,6 +120,9 @@ func (h *Handler) Responses(c *gin.Context) {
 			if !retry {
 				break
 			}
+			if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+				return
+			}
 			continue
 		}
 		h.resetBanCount(conn.ID)

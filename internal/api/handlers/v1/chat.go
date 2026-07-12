@@ -152,6 +152,9 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 			if !retry {
 				break // non-retryable error, stop failover
 			}
+			if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+				return
+			}
 			continue
 		}
 

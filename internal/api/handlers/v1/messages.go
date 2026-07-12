@@ -116,6 +116,9 @@ func (h *Handler) Messages(c *gin.Context) {
 			if !retry {
 				break
 			}
+			if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+				return
+			}
 			continue
 		}
 
