@@ -34,19 +34,21 @@ func QueryLogs(database *sql.DB, page, perPage int, filter LogFilter) (*db.Pagin
 	where, args := buildWhereClause(filter)
 
 	var total int
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM request_logs WHERE %s", where)
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM request_logs r LEFT JOIN connections c ON r.connection_id = c.id WHERE %s", where)
 	database.QueryRow(countQuery, args...).Scan(&total)
 
 	offset := (page - 1) * perPage
 	dataQuery := fmt.Sprintf(`
-		SELECT id, timestamp, connection_id, provider_type_id, model_id, combo_id,
-		       modality, input_tokens, output_tokens, reasoning_tokens, cached_tokens,
-							  stream,
-		       latency_ms, status_code, error_message, cost_usd, created_at
-		FROM request_logs WHERE %s
-		ORDER BY timestamp DESC
-		LIMIT ? OFFSET ?
-	`, where)
+SELECT r.id, r.timestamp, r.connection_id, c.name AS connection_name, r.provider_type_id, r.model_id, r.combo_id,
+  r.modality, r.input_tokens, r.output_tokens, r.reasoning_tokens, r.cached_tokens,
+  r.stream,
+  r.latency_ms, r.status_code, r.error_message, r.cost_usd, r.created_at
+FROM request_logs r
+LEFT JOIN connections c ON r.connection_id = c.id
+WHERE %s
+ORDER BY r.timestamp DESC
+LIMIT ? OFFSET ?
+`, where)
 	args = append(args, perPage, offset)
 
 	rows, err := database.Query(dataQuery, args...)
@@ -58,7 +60,7 @@ func QueryLogs(database *sql.DB, page, perPage int, filter LogFilter) (*db.Pagin
 	var logs []db.RequestLog
 	for rows.Next() {
 		l := db.RequestLog{}
-		rows.Scan(&l.ID, &l.Timestamp, &l.ConnectionID, &l.ProviderTypeID,
+		rows.Scan(&l.ID, &l.Timestamp, &l.ConnectionID, &l.ConnectionName, &l.ProviderTypeID,
 			&l.ModelID, &l.ComboID, &l.Modality,
 			&l.InputTokens, &l.OutputTokens, &l.ReasoningTokens, &l.CachedTokens,
 			&l.Stream,
@@ -89,51 +91,51 @@ func buildWhereClause(f LogFilter) (string, []interface{}) {
 	conditions = append(conditions, "1=1")
 
 	if f.ProviderTypeID != "" {
-		conditions = append(conditions, "provider_type_id = ?")
+		conditions = append(conditions, "r.provider_type_id = ?")
 		args = append(args, f.ProviderTypeID)
 	}
 	if f.ConnectionID != "" {
-		conditions = append(conditions, "connection_id = ?")
+		conditions = append(conditions, "r.connection_id = ?")
 		args = append(args, f.ConnectionID)
 	}
 	if f.ModelID != "" {
-		conditions = append(conditions, "model_id = ?")
+		conditions = append(conditions, "r.model_id = ?")
 		args = append(args, f.ModelID)
 	}
 	if f.ComboID != "" {
-		conditions = append(conditions, "combo_id = ?")
+		conditions = append(conditions, "r.combo_id = ?")
 		args = append(args, f.ComboID)
 	}
 	if f.Modality != "" {
-		conditions = append(conditions, "modality = ?")
+		conditions = append(conditions, "r.modality = ?")
 		args = append(args, f.Modality)
 	}
 	if f.StatusFilter == "success" {
-		conditions = append(conditions, "(error_message IS NULL OR error_message = '')")
+		conditions = append(conditions, "(r.error_message IS NULL OR r.error_message = '')")
 	} else if f.StatusFilter == "error" {
-		conditions = append(conditions, "error_message IS NOT NULL AND error_message != '')")
+		conditions = append(conditions, "r.error_message IS NOT NULL AND r.error_message != ''")
 	}
 	if f.StatusCode > 0 {
 		// The dashboard "Error" pill sends status_code=500 to mean any
 		// client or server error except the dedicated 401/429 filters.
 		// Exact 200/401/429/xxx pills use status_code = ? below.
 		if f.StatusCode == 500 {
-			conditions = append(conditions, "((status_code >= 400 AND status_code NOT IN (401, 429)) OR (status_code = 0 AND error_message IS NOT NULL AND error_message != ''))")
+			conditions = append(conditions, "((r.status_code >= 400 AND r.status_code NOT IN (401, 429)) OR (r.status_code = 0 AND r.error_message IS NOT NULL AND r.error_message != ''))")
 		} else {
-			conditions = append(conditions, "status_code = ?")
+			conditions = append(conditions, "r.status_code = ?")
 			args = append(args, f.StatusCode)
 		}
 	}
 	if f.Search != "" {
-		conditions = append(conditions, "error_message LIKE ?")
+		conditions = append(conditions, "r.error_message LIKE ?")
 		args = append(args, "%"+f.Search+"%")
 	}
 	if f.Since > 0 {
-		conditions = append(conditions, "timestamp >= ?")
+		conditions = append(conditions, "r.timestamp >= ?")
 		args = append(args, f.Since)
 	}
 	if f.Until > 0 {
-		conditions = append(conditions, "timestamp <= ?")
+		conditions = append(conditions, "r.timestamp <= ?")
 		args = append(args, f.Until)
 	}
 

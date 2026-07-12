@@ -95,6 +95,7 @@ type RequestLog struct {
 	ID              string         `json:"id"`
 	Timestamp       int64          `json:"timestamp"`
 	ConnectionID    sql.NullString `json:"connection_id,omitempty"`
+	ConnectionName  sql.NullString `json:"connection_name,omitempty"`
 	ProviderTypeID  sql.NullString `json:"provider_type_id,omitempty"`
 	ModelID         sql.NullString `json:"model_id,omitempty"`
 	ComboID         sql.NullString `json:"combo_id,omitempty"`
@@ -132,6 +133,7 @@ func (r RequestLog) MarshalJSON() ([]byte, error) {
 		ID              string  `json:"id"`
 		Timestamp       int64   `json:"timestamp"`
 		ConnectionID    string  `json:"connection_id,omitempty"`
+		ConnectionName  string  `json:"connection_name,omitempty"`
 		ProviderTypeID  string  `json:"provider_type_id,omitempty"`
 		ModelID         string  `json:"model_id,omitempty"`
 		ComboID         string  `json:"combo_id,omitempty"`
@@ -151,6 +153,7 @@ func (r RequestLog) MarshalJSON() ([]byte, error) {
 		ID:              r.ID,
 		Timestamp:       r.Timestamp,
 		ConnectionID:    getStr(r.ConnectionID),
+		ConnectionName:  getStr(r.ConnectionName),
 		ProviderTypeID:  getStr(r.ProviderTypeID),
 		ModelID:         getStr(r.ModelID),
 		ComboID:         getStr(r.ComboID),

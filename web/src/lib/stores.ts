@@ -312,8 +312,15 @@ export async function testProviderModel(providerId: string, model: string) {
 export async function loadLogs(page = 1, perPage = 100) {
   isLoading.set(true);
   error.set(null);
-  
+
   try {
+    await refreshLogs(page, perPage);
+  } finally {
+    isLoading.set(false);
+  }
+}
+
+export async function refreshLogs(page = 1, perPage = 100) {
     const filter = {
       provider_id: '',
       connection_id: '',
@@ -322,7 +329,7 @@ export async function loadLogs(page = 1, perPage = 100) {
       start_date: '',
       end_date: '',
     };
-    
+
     logFilter.subscribe((f) => {
       filter.provider_id = f.provider_id;
       filter.connection_id = f.connection_id;
@@ -331,7 +338,8 @@ export async function loadLogs(page = 1, perPage = 100) {
       filter.start_date = f.start_date;
       filter.end_date = f.end_date;
     })();
-    
+
+  try {
     const response = await logsApi.list({
       page,
       per_page: perPage,
@@ -342,15 +350,14 @@ export async function loadLogs(page = 1, perPage = 100) {
       start_date: filter.start_date || undefined,
       end_date: filter.end_date || undefined,
     });
-    
+
     logs.set(response.data || []);
     if (response.pagination) {
       logPagination.set(response.pagination);
     }
   } catch (err) {
-    error.set(friendlyError(err, 'Failed to load logs'));
-  } finally {
-    isLoading.set(false);
+    // Silent refresh should not spam toasts; ignore best-effort failures.
+    console.error('refreshLogs failed', err);
   }
 }
 

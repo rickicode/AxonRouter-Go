@@ -7,12 +7,13 @@
 		logFilter,
 		activeRequests,
 		loadActiveRequests,
+		refreshLogs,
 		isLoading,
 		error,
 		formatLatency,
 		formatTokens,
 		formatCost,
-	} from '$lib/stores';
+} from '$lib/stores';
 	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
 	import ActiveOctopus from '$lib/components/ActiveOctopus.svelte';
 	import ProviderIcon from '$lib/components/ProviderIcon.svelte';
@@ -38,7 +39,7 @@
 		loadLogs(currentPage, perPage);
 		loadActiveRequests();
 		const activeInterval = setInterval(loadActiveRequests, 3000);
-		const logsInterval = setInterval(() => loadLogs(currentPage, perPage), 3000);
+		const logsInterval = setInterval(() => refreshLogs(currentPage, perPage), 3000);
 		return () => {
 			clearInterval(activeInterval);
 			clearInterval(logsInterval);
@@ -432,7 +433,7 @@
 												<a
 													href="/providers/{row.provider_type_id}"
 													class="text-body-sm-strong hover:underline text-foreground leading-none"
-												>{row.provider_name || row.provider_type_id}</a
+>{row.provider_name || providerMeta(row.provider_type_id).displayName}</a
 												>
 												<Badge
 													variant={row.stream ? 'default' : 'secondary'}
