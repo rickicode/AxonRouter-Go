@@ -78,8 +78,9 @@ func TestArraySystemJoined(t *testing.T) {
 	if sys.Get("role").String() != "system" {
 		t.Fatalf("first message role = %q, want system", sys.Get("role").String())
 	}
-	if got := sys.Get("content").String(); got != "You are a bot\nBe concise" {
-		t.Errorf("system content = %q, want joined text", got)
+	content := sys.Get("content")
+	if !content.IsArray() || content.Get("0.type").String() != "text" || content.Get("1.type").String() != "text" {
+		t.Errorf("system content = %q, want array of text blocks", content.Raw)
 	}
 }
 

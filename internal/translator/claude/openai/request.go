@@ -42,26 +42,32 @@ func ConvertClaudeRequestToOpenAI(modelName string, body []byte, stream bool) []
 		}
 	}
 
-	// System message (string or array of {text,...})
+// System message (string or array of {text,...}).
+	// We preserve array form so cache_control blocks can be dropped while still
+	// keeping multi-part system prompts intact; pure strings stay strings.
 	if sys := root.Get("system"); sys.Exists() {
-		systemContent := ""
 		if sys.Type == gjson.String {
-			systemContent = sys.String()
+			messages = append(messages, map[string]any{
+				"role":    "system",
+				"content": sys.String(),
+			})
 		} else if sys.IsArray() {
-			var parts []string
+			var sysParts []map[string]any
 			sys.ForEach(func(_, part gjson.Result) bool {
 				if t := part.Get("text"); t.Exists() {
-					parts = append(parts, t.String())
+					sysParts = append(sysParts, map[string]any{
+						"type": "text",
+						"text": t.String(),
+					})
 				}
 				return true
 			})
-			systemContent = strings.Join(parts, "\n")
-		}
-		if systemContent != "" {
-			messages = append(messages, map[string]any{
-				"role":    "system",
-				"content": systemContent,
-			})
+			if len(sysParts) > 0 {
+				messages = append(messages, map[string]any{
+					"role":    "system",
+					"content": sysParts,
+				})
+			}
 		}
 	}
 
@@ -144,12 +150,16 @@ func ConvertClaudeRequestToOpenAI(modelName string, body []byte, stream bool) []
 						})
 					}
 				case "tool_use":
+					args := part.Get("input").String()
+					if args == "" {
+						args = "{}"
+					}
 					toolCalls = append(toolCalls, map[string]any{
-						"id":   part.Get("id").String(),
+						"id": part.Get("id").String(),
 						"type": "function",
 						"function": map[string]any{
 							"name":      part.Get("name").String(),
-							"arguments": part.Get("input").String(),
+							"arguments": args,
 						},
 					})
 				case "tool_result":
@@ -242,18 +252,26 @@ func normalizeToolResultContent(c gjson.Result) string {
 		return c.String()
 	}
 	if c.IsArray() {
-		var sb strings.Builder
+		var parts []string
+		hasNonText := false
 		c.ForEach(func(_, item gjson.Result) bool {
-			if item.Get("type").String() == "text" {
-				if sb.Len() > 0 {
-					sb.WriteByte('\n')
-				}
-				sb.WriteString(item.Get("text").String())
+			switch {
+			case item.Type == gjson.String:
+				parts = append(parts, item.String())
+			case item.Get("type").String() == "text":
+				parts = append(parts, item.Get("text").String())
+			default:
+				hasNonText = true
 			}
 			return true
 		})
-		if sb.Len() > 0 {
-			return sb.String()
+		if len(parts) > 0 && !hasNonText {
+			return strings.Join(parts, "\n\n")
+		}
+	}
+	if c.IsObject() {
+		if text := c.Get("text"); text.Exists() && text.Type == gjson.String {
+			return text.String()
 		}
 	}
 	b, _ := json.Marshal(c.Value())
