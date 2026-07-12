@@ -61,11 +61,10 @@ func (h *Handler) Messages(c *gin.Context) {
 	}
 	body = executor.JSONSet(body, "model", modelName)
 
-	// Connection failover loop: try up to 3 connections before giving up.
+	// Connection failover loop: try up to 5 connections before giving up.
 	clientFormat := executor.FormatClaude
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
-	maxAttempts := 3
-	var lastConn *Connection
+	maxAttempts := 5
 	var lastErr error
 	var lastErrCategory string
 	for attempt := range maxAttempts {
@@ -80,10 +79,7 @@ func (h *Handler) Messages(c *gin.Context) {
 			}
 			break
 		}
-		lastConn = conn
-
 		h.proactiveRefreshToken(c.Request.Context(), conn, provider)
-
 		psdMap := map[string]string{}
 		if conn.ProviderSpecificData != "" {
 			if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
@@ -101,7 +97,6 @@ func (h *Handler) Messages(c *gin.Context) {
 			Provider:             provider,
 			ProviderSpecificData: psdMap,
 		}
-
 		proxyCtx := h.proxyContext(c.Request.Context(), conn)
 		resp, streamResult, err := h.executeDirect(proxyCtx, exec, req)
 		latency := time.Since(start).Milliseconds()
@@ -153,11 +148,6 @@ func (h *Handler) Messages(c *gin.Context) {
 	}
 
 	msg, statusCode, errType := buildFailoverErrorResponse(lastErrCategory, lastErr, modelName)
-
-	detail := gin.H{"provider": provider, "model": modelName}
-	if lastConn != nil {
-		detail["name"] = lastConn.Name
-	}
 	logging.Logger.Error(msg, "provider", provider, "model", modelName, "category", lastErrCategory)
 	c.JSON(statusCode, claudeError(errType, msg))
 }
@@ -196,11 +186,13 @@ func (h *Handler) CountTokens(c *gin.Context) {
 		return
 	}
 	body = executor.JSONSet(body, "model", modelName)
+
 	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, claudeError("server_error", "no available connection"))
 		return
 	}
+
 	req := &executor.Request{
 		Model:       modelName,
 		Body:        body,
@@ -209,6 +201,7 @@ func (h *Handler) CountTokens(c *gin.Context) {
 		BaseURL:     conn.BaseURL,
 		Provider:    provider,
 	}
+
 	if claudeExec, ok := exec.(*executor.ClaudeExecutor); ok {
 		proxyCtx := h.proxyContext(c.Request.Context(), conn)
 		resp, err := claudeExec.CountTokens(proxyCtx, req)
@@ -221,6 +214,7 @@ func (h *Handler) CountTokens(c *gin.Context) {
 		c.Writer.Write(resp.Body)
 		return
 	}
+
 	c.JSON(http.StatusBadRequest, claudeError("invalid_request_error", "token counting only supported for Claude models"))
 }
 

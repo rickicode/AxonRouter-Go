@@ -63,7 +63,7 @@ func (h *Handler) Responses(c *gin.Context) {
 	clientFormat := executor.FormatOpenAIResponses
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
 
-	maxAttempts := 3
+	maxAttempts := 5
 	var lastConn *Connection
 	var lastErr error
 	var lastErrCategory string

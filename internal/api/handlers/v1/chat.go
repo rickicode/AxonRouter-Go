@@ -72,7 +72,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	// so the next getConnection call picks a different connection.
 	clientFormat := executor.FormatOpenAI
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
-	maxAttempts := 3
+	maxAttempts := 5
 	var lastConn *Connection
 	var lastErr error
 	var lastErrCategory string
