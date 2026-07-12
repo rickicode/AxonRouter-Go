@@ -107,7 +107,7 @@
 		];
 		const rows = $logs.map((row) => [
 			formatLogTime(row.timestamp),
-			row.provider_name || row.provider_type_id,
+row.provider_name || providerMeta(row.provider_type_id).displayName,
 			row.connection_name || row.connection_id || '',
 			row.model_id,
 			row.status_code?.toString() || '',
@@ -358,7 +358,7 @@
 							{#each $activeRequests as ar}
 								<tr class="transition-colors hover:bg-accent/20">
 									<td class="py-2 px-4 text-body-sm text-muted-foreground">{formatDurationMs(ar.started_at)}</td>
-									<td class="py-2 px-4 text-body-sm-strong">{ar.provider_type_id}</td>
+<td class="py-2 px-4 text-body-sm-strong">{providerMeta(ar.provider_type_id).displayName}</td>
 									<td class="py-2 px-4 text-body-sm text-foreground">{ar.connection_name || ar.connection_id || '-'}</td>
 									<td class="py-2 px-4 text-code text-foreground truncate max-w-[220px]" title={ar.model_id}>{ar.model_id}</td>
 									<td class="py-2 px-4">
