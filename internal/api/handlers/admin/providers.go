@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -234,6 +235,12 @@ func (h *ProviderHandler) getStatusCounts(providerID string) map[string]int {
 	return counts
 }
 
+// testAllBatchSize limits how many connections are tested in parallel at once.
+// Connections are processed in fixed batches (not a sliding semaphore) so a
+// provider with hundreds or thousands of connections never creates more than
+// 10 in-flight goroutines/streams.
+const testAllBatchSize = 10
+
 // TestAll tests all connections for a provider using streaming.
 func (h *ProviderHandler) TestAll(c *gin.Context) {
 	providerID := c.Param("id")
@@ -247,11 +254,24 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 	}
 
 	rows, err := h.db.Query(`
-		SELECT c.id, COALESCE(c.api_key,''), COALESCE(c.oauth_token,''),
-		       COALESCE(pt.base_url,''), COALESCE(c.provider_specific_data, '')
-		FROM connections c JOIN provider_types pt ON c.provider_type_id = pt.id
+		SELECT c.id, COALESCE(c.api_key,''), COALESCE(c.oauth_token,''), COALESCE(pt.base_url,''), COALESCE(c.provider_specific_data, '')
+		FROM connections c
+		JOIN provider_types pt ON c.provider_type_id = pt.id
 		WHERE c.provider_type_id = ? AND c.is_active = 1
 	`, providerID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	type testInput struct {
+		connID  string
+		apiKey  string
+		access  string
+		baseURL string
+		psdMap  map[string]string
+	}
 	type testResult struct {
 		ConnectionID string `json:"connection_id"`
 		Status       string `json:"status"`
@@ -266,58 +286,86 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 	}
 
 	bodyBytes := buildTestBody(format, defaultTestModel(providerID))
-	var results []testResult
+	ctx := c.Request.Context()
+
+	var inputs []testInput
 	for rows.Next() {
 		var connID, apiKey, accessToken, baseURL, psdRaw string
-		rows.Scan(&connID, &apiKey, &accessToken, &baseURL, &psdRaw)
-
-		// Parse provider_specific_data if present
+		if err := rows.Scan(&connID, &apiKey, &accessToken, &baseURL, &psdRaw); err != nil {
+			continue
+		}
 		var psdMap map[string]string
 		if psdRaw != "" {
 			json.Unmarshal([]byte(psdRaw), &psdMap)
 		}
+		inputs = append(inputs, testInput{connID: connID, apiKey: apiKey, access: accessToken, baseURL: baseURL, psdMap: psdMap})
+	}
+	if err := rows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
-		start := time.Now()
-		streamResult, err := exec.ExecuteStream(context.Background(), &executor.Request{
-			APIKey:               apiKey,
-			AccessToken:          accessToken,
-			BaseURL:              baseURL,
-			Body:                 bodyBytes,
-			Provider:             providerID,
-			ProviderSpecificData: psdMap,
-		})
-		if err != nil {
-			latency := time.Since(start).Milliseconds()
-			if h.store != nil {
-				det := connstate.DetectError(0, "", err, providerID, "", nil)
-				h.store.RecordFailure(connID, det)
-			}
-			results = append(results, testResult{ConnectionID: connID, Status: "failed", Error: err.Error(), LatencyMs: latency})
-			continue
+	results := make([]testResult, len(inputs))
+
+	// Process in fixed batches to cap peak concurrency.
+	for batchStart := 0; batchStart < len(inputs); batchStart += testAllBatchSize {
+		batchEnd := batchStart + testAllBatchSize
+		if batchEnd > len(inputs) {
+			batchEnd = len(inputs)
 		}
 
-		// Drain stream
-		var firstErr error
-		for chunk := range streamResult.Chunks {
-			if chunk.Err != nil {
-				firstErr = chunk.Err
-				break
-			}
-		}
-		latency := time.Since(start).Milliseconds()
+		var wg sync.WaitGroup
+		for i := batchStart; i < batchEnd; i++ {
+			i, in := i, inputs[i]
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 
-		if firstErr != nil {
-			if h.store != nil {
-				det := connstate.DetectError(0, "", firstErr, providerID, "", nil)
-				h.store.RecordFailure(connID, det)
-			}
-			results = append(results, testResult{ConnectionID: connID, Status: "failed", Error: firstErr.Error(), LatencyMs: latency})
-		} else {
-			if h.store != nil {
-				h.store.RecordSuccess(connID)
-			}
-			results = append(results, testResult{ConnectionID: connID, Status: "ok", LatencyMs: latency})
+				start := time.Now()
+				streamResult, err := exec.ExecuteStream(ctx, &executor.Request{
+					APIKey:               in.apiKey,
+					AccessToken:          in.access,
+					BaseURL:              in.baseURL,
+					Body:                 bodyBytes,
+					Provider:             providerID,
+					ProviderSpecificData: in.psdMap,
+				})
+				if err != nil {
+					latency := time.Since(start).Milliseconds()
+					if h.store != nil {
+						det := connstate.DetectError(0, "", err, providerID, "", nil)
+						h.store.RecordFailure(in.connID, det)
+					}
+					results[i] = testResult{ConnectionID: in.connID, Status: "failed", Error: err.Error(), LatencyMs: latency}
+					return
+				}
+
+				// Drain stream
+				var firstErr error
+				for chunk := range streamResult.Chunks {
+					if chunk.Err != nil {
+						firstErr = chunk.Err
+						break
+					}
+				}
+				latency := time.Since(start).Milliseconds()
+
+				if firstErr != nil {
+					if h.store != nil {
+						det := connstate.DetectError(0, "", firstErr, providerID, "", nil)
+						h.store.RecordFailure(in.connID, det)
+					}
+					results[i] = testResult{ConnectionID: in.connID, Status: "failed", Error: firstErr.Error(), LatencyMs: latency}
+				} else {
+					if h.store != nil {
+						h.store.RecordSuccess(in.connID)
+					}
+					results[i] = testResult{ConnectionID: in.connID, Status: "ok", LatencyMs: latency}
+				}
+			}()
 		}
+
+		wg.Wait()
 	}
 
 	c.JSON(http.StatusOK, gin.H{"provider_id": providerID, "results": results})
@@ -369,8 +417,8 @@ func (h *ProviderHandler) AddConnection(c *gin.Context) {
 		}
 	}
 
- // OpenCode Free (oc): additional connections must use a proxy pool.
- // The default direct connection is auto-seeded by migration and cannot be added via API.
+	// OpenCode Free (oc): additional connections must use a proxy pool.
+	// The default direct connection is auto-seeded by migration and cannot be added via API.
 	if providerID == "oc" {
 		proxyPoolID := req.ProviderSpecificData["proxyPoolId"]
 		if proxyPoolID == "" {
@@ -457,11 +505,11 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 		return
 	}
 
- // OpenCode Free (oc): bulk add not supported — each connection requires a proxy pool.
- if providerID == "oc" {
- c.JSON(http.StatusBadRequest, gin.H{"error": "OpenCode Free connections require a proxy pool and cannot be bulk-added. Use the single add connection form."})
- return
- }
+	// OpenCode Free (oc): bulk add not supported — each connection requires a proxy pool.
+	if providerID == "oc" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "OpenCode Free connections require a proxy pool and cannot be bulk-added. Use the single add connection form."})
+		return
+	}
 
 	// Validate CF connections require Account ID (fail fast before any inserts)
 	if providerID == "cf" {
@@ -511,9 +559,9 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 // ValidateKey checks if an API key is valid for a provider by attempting a lightweight model list request.
 func (h *ProviderHandler) ValidateKey(c *gin.Context) {
 	var req struct {
-		Provider               string            `json:"provider" binding:"required"`
-		APIKey                 string            `json:"api_key" binding:"required"`
-		ProviderSpecificData   map[string]string `json:"provider_specific_data,omitempty"`
+		Provider             string            `json:"provider" binding:"required"`
+		APIKey               string            `json:"api_key" binding:"required"`
+		ProviderSpecificData map[string]string `json:"provider_specific_data,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
