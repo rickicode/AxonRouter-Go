@@ -102,6 +102,8 @@ func New(cfg Config) *Router {
 	combo.SeedDefaultCombos(cfg.DB)
 	settingHandler := admin.NewSettingHandler(cfg.DB)
 	settingHandler.SeedDefaults()
+	// Bootstrap dashboard login auth (JWT secret + default admin password)
+	InitAuth(cfg.DB)
 
 	// Background goroutines
 	ctx := context.Background()
@@ -187,26 +189,12 @@ func New(cfg Config) *Router {
 	engine.HEAD("/api/admin/health", healthH.Health)
 	engine.GET("/api/admin/health", healthH.Health)
 
-	// ---- /api/admin routes ----
+	// Public login endpoint (issues a session JWT).
+	engine.POST("/api/admin/login", LoginHandler(cfg.DB))
+
+	// ---- /api/admin routes (JWT session protected) ----
 	adminGroup := engine.Group("/api/admin")
-	// Admin auth: check admin key if configured
-	if cfg.AdminKey != "" {
-		adminGroup.Use(func(c *gin.Context) {
-			key := c.GetHeader("X-Admin-Key")
-			if key == "" {
-				auth := c.GetHeader("Authorization")
-				if len(auth) > 7 && auth[:7] == "Bearer " {
-					key = auth[7:]
-				}
-			}
-			if key != cfg.AdminKey {
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid admin key"})
-				c.Abort()
-				return
-			}
-			c.Next()
-		})
-	}
+	adminGroup.Use(SessionAuth())
 
 	// Providers
 	adminGroup.GET("/providers", providerH.List)

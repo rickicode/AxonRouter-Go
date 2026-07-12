@@ -14,6 +14,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/web"
 	"golang.org/x/crypto/bcrypt"
+	"strings"
 )
 
 const testAdminKey = "admin-test-key"
@@ -81,18 +82,53 @@ func TestHealth(t *testing.T) {
 	}
 }
 
-func TestMetricsRequiresAdminKey(t *testing.T) {
+// loginForToken obtains a dashboard session JWT from the public login endpoint.
+func loginForToken(t *testing.T, srv *httptest.Server) string {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/admin/login", strings.NewReader(`{"password":"12345677"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("login request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	tok := resp.Header.Get("X-Auth-Token")
+	if tok == "" {
+		t.Fatalf("login response missing X-Auth-Token")
+	}
+	return tok
+}
+
+// TestAdminEndpointRequiresJWT proves that /api/admin routes reject
+// unauthenticated requests and accept a valid session JWT.
+func TestAdminEndpointRequiresJWT(t *testing.T) {
 	_, srv := newTestRouter(t)
 	defer srv.Close()
 
+	// Unauthenticated → 401.
 	resp, err := http.Get(srv.URL + "/api/admin/metrics")
 	if err != nil {
 		t.Fatalf("metrics request: %v", err)
 	}
-	defer resp.Body.Close()
-
+	resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
+		t.Errorf("unauthenticated status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
+	}
+
+	// Valid JWT → 200.
+	tok := loginForToken(t, srv)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/admin/metrics", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	okResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("authenticated metrics request: %v", err)
+	}
+	defer okResp.Body.Close()
+	if okResp.StatusCode != http.StatusOK {
+		t.Errorf("authenticated status = %d, want %d", okResp.StatusCode, http.StatusOK)
 	}
 }
 

@@ -225,7 +225,7 @@ The Go binary embeds `web/build/` and serves it through `http.FileServer`, with 
 ## Security
 
 1. **API keys** — bcrypt hashed, fail-closed when configured.
-2. **Admin endpoints** — protected by `X-Admin-Key` header when `AXON_ADMIN_KEY` is set.
+2. **Admin endpoints** — protected by a session JWT (HS256). `POST /api/admin/login` mints a token (default password `12345677`, changed via `axonrouter setpass`); the token is sent as `Authorization: Bearer <token>` and slid on every `/api/admin/*` request (idle 72h = logout). `POST /api/admin/health` stays public.
 3. **Rate limiting** — per-key or per-IP token bucket.
 4. **Constant-time comparison** — API key validation.
 5. **Relay pools** — auto-generated relay auth tokens.

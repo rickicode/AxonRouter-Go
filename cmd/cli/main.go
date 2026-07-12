@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/api"
@@ -39,6 +40,8 @@ func main() {
 		cmdRestart()
 	case "version":
 		fmt.Printf("AxonRouter-Go v%s\n", version)
+	case "setpass":
+		cmdSetpass()
 	case "help", "--help", "-h":
 		showHelp()
 	default:
@@ -177,6 +180,28 @@ func cmdRestart() {
 	time.Sleep(500 * time.Millisecond)
 	cmdRun()
 }
+	
+	// cmdSetpass hashes a new admin dashboard password and persists it to settings.
+	func cmdSetpass() {
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "Usage: axonrouter setpass <password>")
+			os.Exit(1)
+		}
+		pw := os.Args[2]
+		database, err := db.Open(config.Get().DBPath)
+		if err != nil {
+			log.Fatalf("Failed to open database: %v", err)
+		}
+		defer database.Close()
+		hash, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
+		if err != nil {
+			log.Fatalf("Failed to hash password: %v", err)
+		}
+		if err := db.SetSetting("admin_password_hash", string(hash)); err != nil {
+			log.Fatalf("Failed to save password: %v", err)
+		}
+		fmt.Println("Admin password updated.")
+	}
 
 // ---- Status display ----
 

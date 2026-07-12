@@ -1,4 +1,5 @@
 // API Client for AxonRouter-Go Dashboard
+import { getToken, setToken, logout } from './auth';
 
 const API_BASE = "/api/admin";
 
@@ -140,17 +141,23 @@ export async function fetchApi<T>(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
 
+  const token = getToken();
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token && endpoint !== "/login") headers["Authorization"] = "Bearer " + token;
+  if (options.headers) Object.assign(headers, options.headers);
+
   try {
     const response = await fetch(url, {
-      headers: {
-        "Content-Type": "application/json",
-        ...options.headers,
-      },
-      signal: controller.signal,
       ...options,
+      headers,
+      signal: controller.signal,
     });
 
+    const newTok = response.headers.get("X-Auth-Token");
+    if (newTok) setToken(newTok);
+
     if (!response.ok) {
+      if (response.status === 401) logout();
       const err = await response
         .json()
         .catch(() => ({ message: response.statusText }));
@@ -892,6 +899,7 @@ export interface CLITool {
 
 export interface CLIToolStatus {
   configured: boolean;
+ config?: CLIToolConfig;
 }
 
 export interface CLIToolState {

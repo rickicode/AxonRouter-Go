@@ -223,8 +223,15 @@ Modes: `text`, `image`, `audio`, `video`
 ---
 
 ## Admin API
+#### POST /api/admin/login
 
-Admin API memerlukan `X-Admin-Key` header (jika dikonfigurasi).
+Login dengan password admin (default `12345677`, diubah via `axonrouter setpass <password>`). Mengembalikan JWT di header `X-Auth-Token` dan body `{"token": "..."}`.
+
+**Request:** `{"password": "string"}`
+
+**Response (200):** `{"token": "eyJ..."}`
+
+Admin API memerlukan sesi JWT. Login via `POST /api/admin/login` dengan body `{"password": "..."}`; respons mengembalikan token di header `X-Auth-Token` dan field `token`. Kirim token lewat header `Authorization: Bearer <token>` (atau `X-Auth-Token`) pada setiap request `/api/admin/*`. Token di-slide (exp diperbarui tiap request) sehingga idle 72 jam = logout. `POST /api/admin/health` tetap publik.
 
 ### Providers
 

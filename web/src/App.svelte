@@ -7,6 +7,8 @@
   import SidebarNav from '$lib/components/sidebar/SidebarNav.svelte';
   import SidebarBrand from '$lib/components/sidebar/SidebarBrand.svelte';
   import SidebarHealth from '$lib/components/sidebar/SidebarHealth.svelte';
+import { authStore } from '$lib/auth';
+import Login from './pages/Login.svelte';
 
   // Page components
   import Dashboard from './pages/Dashboard.svelte';
@@ -102,6 +104,8 @@ import NotFound from './pages/NotFound.svelte';
 </script>
 
 <Toaster />
+
+{#if $authStore}
 <Sidebar.Provider style="--sidebar-width: 16rem;">
   <Sidebar.Root collapsible="offcanvas" class="border-r border-sidebar-border">
     <Sidebar.Header class="border-b border-sidebar-border/50 px-2 py-3">
@@ -130,3 +134,6 @@ import NotFound from './pages/NotFound.svelte';
     </main>
   </Sidebar.Inset>
 </Sidebar.Provider>
+{:else}
+<Login />
+{/if}
