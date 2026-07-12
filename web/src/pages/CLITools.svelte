@@ -8,8 +8,17 @@
   import { Badge } from '$lib/components/ui/badge';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { Skeleton } from '$lib/components/ui/skeleton';
+  import * as Select from '$lib/components/ui/select';
   import { toast } from 'svelte-sonner';
-  import { Copy, Check, ChevronRight, ExternalLink, Search, Info, AlertTriangle, XCircle } from '@lucide/svelte';
+  import Copy from '@lucide/svelte/icons/copy';
+  import Check from '@lucide/svelte/icons/check';
+  import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
+  import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
+  import SearchIcon from '@lucide/svelte/icons/search';
+  import InfoIcon from '@lucide/svelte/icons/info';
+  import AlertTriangleIcon from '@lucide/svelte/icons/alert-triangle';
+  import XCircleIcon from '@lucide/svelte/icons/x-circle';
+  import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
   import { cliToolsApi, modelsApi, apiKeysApi } from '$lib/api';
   import ModelPickerDialog from '$lib/components/ModelPickerDialog.svelte';
   import type {
@@ -19,6 +28,7 @@
     CLIToolSelection,
     CLIToolConfig,
     CLIToolStatus,
+    CLIToolState,
     DefaultModel,
   } from '$lib/api';
 
@@ -33,11 +43,25 @@
   // Detail modal
   let selectedTool = $state<CLITool | null>(null);
   let detailOpen = $state(false);
-  let sel = $state<CLIToolSelection>({ model: '', apiKeyId: '', baseUrl: '', models: [] as string[], useDiscovery: false });
-  let configured = $state(false);
+  let sel = $state<CLIToolSelection>({
+    model: '',
+    apiKeyId: '',
+    baseUrl: '',
+    models: [] as string[],
+    useDiscovery: false,
+    activeModel: '',
+    subagentModel: '',
+    agentModels: {},
+  });
+  let detailInstalled = $state(false);
+  let detailHasRouter = $state(false);
+  let detailState = $state<unknown>(null);
+  let detailConfigured = $state(false);
+  let detailConfig = $state<CLIToolConfig | null>(null);
   let apiKeyValue = $state('');
   let generated = $state<CLIToolConfig | null>(null);
   let generating = $state(false);
+  let resetting = $state(false);
   let copiedField = $state<string | null>(null);
 
   // Model alias mappings: { alias: gatewayModelId }
@@ -46,7 +70,7 @@
   // Model picker (reusable)
   let modelPickerOpen = $state(false);
   let modelPickerTarget = $state<string>('_main'); // '_main' or alias name
-let modelPickerMulti = $state(false);
+  let modelPickerMulti = $state(false);
 
   const defaultBaseUrl =
     typeof window !== 'undefined' ? `${window.location.origin}/v1` : 'http://localhost:3777/v1';
@@ -82,30 +106,51 @@ let modelPickerMulti = $state(false);
     selectedTool = tool;
     detailOpen = true;
     generated = null;
+    detailConfig = null;
     apiKeyValue = '';
     generating = false;
+    resetting = false;
     copiedField = null;
     modelAliases = {};
-
+    sel = {
+      model: '',
+      apiKeyId: '',
+      baseUrl: defaultBaseUrl,
+      models: [],
+      useDiscovery: false,
+      activeModel: '',
+      subagentModel: '',
+      agentModels: {},
+    };
     try {
-      const res = await cliToolsApi.get(tool.id);
-sel = {
-					model: res.selection?.model ?? '',
-					apiKeyId: res.selection?.apiKeyId ?? '',
-					baseUrl: res.selection?.baseUrl || res.defaultBaseUrl || defaultBaseUrl,
-					modelAliases: res.selection?.modelAliases,
-					models: res.selection?.models ?? [],
-					useDiscovery: res.selection?.useDiscovery ?? false,
-				};
-      configured = res.configured;
-		generated = res.config ?? null;
+      const res: CLIToolState = await cliToolsApi.get(tool.id);
+      const s = res.selection ?? ({} as CLIToolSelection);
+      detailInstalled = res.installed ?? false;
+      detailHasRouter = res.hasRouter ?? false;
+      detailState = res.state ?? null;
+      detailConfigured = res.configured ?? false;
+      detailConfig = res.config ?? null;
+      sel = {
+        model: s.model ?? '',
+        apiKeyId: s.apiKeyId ?? '',
+        baseUrl: s.baseUrl || res.defaultBaseUrl || defaultBaseUrl,
+        models: s.models ?? [],
+        useDiscovery: s.useDiscovery ?? false,
+        activeModel: s.activeModel ?? '',
+        subagentModel: s.subagentModel ?? '',
+        agentModels: s.agentModels ?? {},
+      };
       // Restore saved model aliases
-      if (res.selection?.modelAliases) {
-        modelAliases = { ...res.selection.modelAliases };
+      if (s.modelAliases) {
+        modelAliases = { ...s.modelAliases };
       }
+      generated = res.config ?? null;
     } catch {
-sel = { model: '', apiKeyId: '', baseUrl: defaultBaseUrl, models: [], useDiscovery: false };
-      configured = false;
+      detailInstalled = false;
+      detailHasRouter = false;
+      detailState = null;
+      detailConfigured = false;
+      detailConfig = null;
     }
 
     // Initialize alias defaults for tools with defaultModels
@@ -118,7 +163,7 @@ sel = { model: '', apiKeyId: '', baseUrl: defaultBaseUrl, models: [], useDiscove
     }
   }
 
-  async function generate() {
+  async function applyConfig() {
     if (!selectedTool) return;
     generating = true;
     try {
@@ -129,15 +174,46 @@ sel = { model: '', apiKeyId: '', baseUrl: defaultBaseUrl, models: [], useDiscove
       });
       sel = res.selection;
       generated = res.config;
-      configured = true;
-      statuses[selectedTool.id] = { configured: true };
-			const path = res.config?.configPath;
-			toast.success(`Generated config for ${selectedTool.name}${path ? ' → ' + path : ''}`);
-			setTimeout(() => document.getElementById('generated-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+      detailConfig = res.config;
+      detailConfigured = true;
+      detailHasRouter = true;
+      statuses[selectedTool.id] = {
+        installed: detailInstalled,
+        hasRouter: true,
+        configured: true,
+      };
+      const path = res.config?.configPath;
+      toast.success(`Generated config for ${selectedTool.name}${path ? ' → ' + path : ''}`);
+      setTimeout(
+        () => document.getElementById('generated-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+        50,
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to generate config');
     } finally {
       generating = false;
+    }
+  }
+
+  async function resetConfig() {
+    if (!selectedTool) return;
+    resetting = true;
+    try {
+      await cliToolsApi.delete(selectedTool.id);
+      generated = null;
+      detailConfig = null;
+      detailConfigured = false;
+      detailHasRouter = false;
+      statuses[selectedTool.id] = {
+        installed: detailInstalled,
+        hasRouter: false,
+        configured: false,
+      };
+      toast.success(`Reset ${selectedTool.name} configuration`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to reset configuration');
+    } finally {
+      resetting = false;
     }
   }
 
@@ -165,41 +241,51 @@ sel = { model: '', apiKeyId: '', baseUrl: defaultBaseUrl, models: [], useDiscove
     }
   }
 
-function openModelPicker(target: string, multi = false) {
-	modelPickerTarget = target;
-	modelPickerMulti = multi;
-	modelPickerOpen = true;
+  function openModelPicker(target: string, multi = false) {
+    modelPickerTarget = target;
+    modelPickerMulti = multi;
+    modelPickerOpen = true;
   }
 
   function onModelPick(modelId: string) {
     if (modelPickerTarget === '_main') {
       sel.model = modelId;
+    } else if (modelPickerTarget === 'activeModel') {
+      sel.activeModel = modelId;
+    } else if (modelPickerTarget === 'subagentModel') {
+      sel.subagentModel = modelId;
     } else {
       modelAliases[modelPickerTarget] = modelId;
     }
   }
 
-function onMultiSelect(modelIds: string[]) {
-  if (modelPickerTarget === '_main') {
-    sel.models = modelIds;
+  function onMultiSelect(modelIds: string[]) {
+    if (modelPickerTarget === '_main') {
+      sel.models = modelIds;
+    }
   }
-}
-function addModel() {
-  const m = sel.model.trim();
-  if (!m) return;
-  if (!sel.models?.includes(m)) {
-    sel.models = [...(sel.models || []), m];
+
+  function addModel() {
+    const m = sel.model.trim();
+    if (!m) return;
+    if (!sel.models?.includes(m)) {
+      sel.models = [...(sel.models || []), m];
+    }
+    sel.model = '';
   }
-  sel.model = '';
-}
-function removeModel(index: number) {
-  sel.models = (sel.models || []).filter((_, i) => i !== index);
-}
+
+  function removeModel(index: number) {
+    sel.models = (sel.models || []).filter((_, i) => i !== index);
+  }
 
   // Template variable substitution for code blocks and guide step values
   function replaceVars(text: string): string {
     const key = apiKeyValue || '__YOUR_AXONROUTER_API_KEY__';
-    const base = sel.baseUrl ? (sel.baseUrl.endsWith('/v1') ? sel.baseUrl : `${sel.baseUrl}/v1`) : defaultBaseUrl;
+    const base = sel.baseUrl
+      ? sel.baseUrl.endsWith('/v1')
+        ? sel.baseUrl
+        : `${sel.baseUrl}/v1`
+      : defaultBaseUrl;
     const model = sel.models?.[0] || sel.model || getFirstAliasModel() || 'provider/model-id';
     return text
       .replace(/\{\{baseUrl\}\}/g, base)
@@ -216,23 +302,54 @@ function removeModel(index: number) {
     return sel.model || getFirstAliasModel() || '';
   }
 
+  // Combined status badge (mirrors 9router's ToolSummaryCard):
+  // Installed → Connected (has router) / Not configured (no router) ; Not installed otherwise.
   function getStatusBadge(toolId: string) {
-    if (statuses[toolId]?.configured) {
+    const s = statuses[toolId];
+    if (!s || !s.installed) {
+      return { label: 'Not installed', cls: 'bg-muted/40 text-muted-foreground border-border' };
+    }
+    if (s.hasRouter) {
       return { label: 'Connected', cls: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' };
+    }
+    if (s.configured) {
+      return { label: 'Configured', cls: 'bg-sky-500/10 text-sky-400 border-sky-500/20' };
+    }
+    return { label: 'Not configured', cls: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' };
+  }
+
+  function getDetailBadge() {
+    if (!detailInstalled) {
+      return { label: 'Not installed', cls: 'bg-muted/40 text-muted-foreground border-border' };
+    }
+    if (detailHasRouter) {
+      return { label: 'Connected', cls: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' };
+    }
+    if (detailConfigured) {
+      return { label: 'Configured', cls: 'bg-sky-500/10 text-sky-400 border-sky-500/20' };
     }
     return { label: 'Not configured', cls: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' };
   }
 
   function getNoteIcon(type: string) {
-    if (type === 'warning') return AlertTriangle;
-    if (type === 'error') return XCircle;
-    return Info;
+    if (type === 'warning') return AlertTriangleIcon;
+    if (type === 'error') return XCircleIcon;
+    return InfoIcon;
   }
 
   function getNoteColors(type: string) {
     if (type === 'warning') return 'border-yellow-500/30 bg-yellow-500/10 text-yellow-400';
     if (type === 'error') return 'border-red-500/30 bg-red-500/10 text-red-400';
     return 'border-blue-500/30 bg-blue-500/10 text-blue-400';
+  }
+
+  // Tools that expose a subagent model slot in addition to the main model.
+  function showsSubagentModel(tool: CLITool | null): boolean {
+    return !!tool && (tool.id === 'codex' || tool.id === 'opencode' || tool.id === 'droid');
+  }
+  // Tools that expose an active model slot (primary default for multi-model tools).
+  function showsActiveModel(tool: CLITool | null): boolean {
+    return !!tool && (tool.id === 'opencode' || tool.id === 'droid');
   }
 </script>
 
@@ -265,13 +382,22 @@ function removeModel(index: number) {
           onclick={() => openTool(tool)}
         >
           <div class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-background/50">
-            <img src={tool.image} alt={tool.name} class="size-8 rounded-lg object-contain" onerror={(e) => (e.currentTarget.style.display = 'none')} />
+            <img
+              src={tool.image}
+              alt={tool.name}
+              class="size-8 rounded-lg object-contain"
+              onerror={(e) => (e.currentTarget.style.display = 'none')}
+            />
           </div>
           <div class="min-w-0 flex-1">
             <h3 class="truncate text-body-sm-strong">{tool.name}</h3>
-            <span class="mt-1 inline-block rounded-full border px-1.5 py-0.5 text-[10px] font-medium {s.cls}">{s.label}</span>
+            <span class="mt-1 inline-block rounded-full border px-1.5 py-0.5 text-[10px] font-medium {s.cls}"
+              >{s.label}</span
+            >
           </div>
-          <ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+          <ChevronRightIcon
+            class="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
+          />
         </button>
       {/each}
     </div>
@@ -285,26 +411,54 @@ function removeModel(index: number) {
     <div class="flex items-center gap-3 border-b border-border p-4">
       <div class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-background/50">
         {#if selectedTool}
-          <img src={selectedTool.image} alt={selectedTool.name} class="size-8 rounded-lg object-contain" onerror={(e) => (e.currentTarget.style.display = 'none')} />
+          <img
+            src={selectedTool.image}
+            alt={selectedTool.name}
+            class="size-8 rounded-lg object-contain"
+            onerror={(e) => (e.currentTarget.style.display = 'none')}
+          />
         {/if}
       </div>
       <div class="min-w-0 flex-1">
         <Dialog.Title class="text-body-md-strong">{selectedTool?.name}</Dialog.Title>
-        <Dialog.Description class="text-caption text-muted-foreground">{selectedTool?.description}</Dialog.Description>
+        <Dialog.Description class="text-caption text-muted-foreground"
+          >{selectedTool?.description}</Dialog.Description
+        >
       </div>
-      {#if selectedTool}
-        {@const s = getStatusBadge(selectedTool.id)}
-        <Badge variant="outline" class="border-0 {s.cls} shrink-0">{s.label}</Badge>
-      {/if}
+      <Badge variant="outline" class="border-0 {getDetailBadge().cls} shrink-0">{getDetailBadge().label}</Badge>
     </div>
 
     <!-- Body -->
     <ScrollArea class="flex-1 max-h-[60vh]">
       <div class="flex flex-col gap-4 p-4">
+        <!-- Install / connection hint when tool is not detected locally -->
+        {#if selectedTool && !detailInstalled}
+          <div class="flex items-start gap-2.5 rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3 text-yellow-400">
+            <AlertTriangleIcon class="size-4 shrink-0 mt-0.5" />
+            <p class="text-body-sm">
+              {selectedTool.name} is not detected on this machine. You can still generate a manual config
+              if AxonRouter runs on a remote server.
+            </p>
+          </div>
+        {:else if selectedTool && detailInstalled && !detailHasRouter}
+          <div class="flex items-start gap-2.5 rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 text-sky-400">
+            <InfoIcon class="size-4 shrink-0 mt-0.5" />
+            <p class="text-body-sm">
+              {selectedTool.name} is installed but not yet connected to AxonRouter. Apply a config to wire
+              it up.
+            </p>
+          </div>
+        {/if}
+
         <!-- Docs link -->
         {#if selectedTool?.docsUrl}
-          <a href={selectedTool.docsUrl} target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 text-caption text-muted-foreground hover:text-primary">
-            <ExternalLink class="size-3" /> Documentation
+          <a
+            href={selectedTool.docsUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center gap-1.5 text-caption text-muted-foreground hover:text-primary"
+          >
+            <ExternalLinkIcon class="size-3" /> Documentation
           </a>
         {/if}
 
@@ -324,7 +478,9 @@ function removeModel(index: number) {
           <div class="space-y-3">
             {#each selectedTool.guideSteps as step}
               <div class="flex gap-3">
-                <div class="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-[11px] font-bold">
+                <div
+                  class="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-[11px] font-bold"
+                >
                   {step.step}
                 </div>
                 <div class="min-w-0 flex-1 space-y-1.5">
@@ -334,8 +490,16 @@ function removeModel(index: number) {
                   {/if}
                   {#if step.value && step.copyable}
                     <div class="flex items-center gap-2">
-                      <code class="flex-1 rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-body-sm">{replaceVars(step.value)}</code>
-                      <Button variant="ghost" size="sm" class="h-7 shrink-0" onclick={() => copyText(replaceVars(step.value!), `step-${step.step}`)}>
+                      <code
+                        class="flex-1 rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-body-sm"
+                        >{replaceVars(step.value)}</code
+                      >
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        class="h-7 shrink-0"
+                        onclick={() => copyText(replaceVars(step.value!), `step-${step.step}`)}
+                      >
                         {#if copiedField === `step-${step.step}`}
                           <Check class="size-3.5 text-emerald-400" />
                         {:else}
@@ -345,43 +509,80 @@ function removeModel(index: number) {
                     </div>
                   {/if}
                   {#if step.type === 'apiKeySelector'}
-                    <select bind:value={sel.apiKeyId} class="w-full rounded-sm border border-border bg-background px-3 py-2 text-body-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50">
-                      <option value="">— Select API key —</option>
-                      {#each keys as key}
-                        <option value={key.id}>{key.name || 'Untitled'} ({key.key_preview})</option>
-                      {/each}
-                    </select>
+                    <Select.Root type="single" value={sel.apiKeyId} onValueChange={(v: string) => (sel.apiKeyId = v)}>
+                      <Select.Trigger class="w-full h-10 text-body-sm">
+                        {@const selectedKey = keys.find((k) => k.id === sel.apiKeyId)}
+                        {selectedKey ? `${selectedKey.name || 'Untitled'} (${selectedKey.key_preview})` : '— Select API key —'}
+                      </Select.Trigger>
+                      <Select.Content>
+                        <Select.Item value="">— Select API key —</Select.Item>
+                        {#each keys as key}
+                          <Select.Item value={key.id}>{key.name || 'Untitled'} ({key.key_preview})</Select.Item>
+                        {/each}
+                      </Select.Content>
+                    </Select.Root>
                   {/if}
-{#if step.type === 'modelSelector'}
-  <div class="space-y-3">
-    {#if selectedTool?.supportsDiscovery}
-      <label class="flex cursor-pointer items-center gap-2">
-        <input type="checkbox" bind:checked={sel.useDiscovery} class="rounded border-border" />
-        <span class="text-body-sm">Auto-discover models from gateway</span>
-      </label>
-    {/if}
-    {#if !sel.useDiscovery || !selectedTool?.supportsDiscovery}
-      <div class="flex flex-wrap gap-2">
-        {#each sel.models || [] as m, i (m)}
-          <div class="flex items-center gap-1 rounded-md border border-border px-2 py-1 font-mono text-caption">
-            <span class="max-w-[200px] truncate">{m}</span>
-            <button class="text-muted-foreground hover:text-foreground cursor-pointer" onclick={() => removeModel(i)}><XCircle class="size-3" /></button>
-            <button class="text-muted-foreground hover:text-foreground cursor-pointer" onclick={() => copyText(m, `chip-${i}`)}>
-              {#if copiedField === `chip-${i}`}<Check class="size-3 text-emerald-400" />{:else}<Copy class="size-3" />{/if}
-            </button>
-          </div>
-        {/each}
-      </div>
-      <div class="flex gap-2">
-        <Input bind:value={sel.model} placeholder="provider/model-id" class="font-mono text-body-sm flex-1" />
-        <Button variant="outline" size="sm" class="gap-1.5" onclick={() => openModelPicker('_main', true)} disabled={models.length === 0}><Search class="size-3.5" /> Browse</Button>
-        <Button variant="outline" size="sm" onclick={addModel} disabled={!sel.model?.trim()}>Add</Button>
-      </div>
-    {/if}
-  </div>
-{/if}
-  </div>
-  </div>
+                  {#if step.type === 'modelSelector'}
+                    <div class="space-y-3">
+                      {#if selectedTool?.supportsDiscovery}
+                        <label class="flex cursor-pointer items-center gap-2">
+                          <input
+                            type="checkbox"
+                            bind:checked={sel.useDiscovery}
+                            class="rounded border-border"
+                          />
+                          <span class="text-body-sm">Auto-discover models from gateway</span>
+                        </label>
+                      {/if}
+                      {#if !sel.useDiscovery || !selectedTool?.supportsDiscovery}
+                        <div class="flex flex-wrap gap-2">
+                          {#each sel.models || [] as m, i (m)}
+                            <div
+                              class="flex items-center gap-1 rounded-md border border-border px-2 py-1 font-mono text-caption"
+                            >
+                              <span class="max-w-[200px] truncate">{m}</span>
+                              <button
+                                class="text-muted-foreground hover:text-foreground cursor-pointer"
+                                onclick={() => removeModel(i)}><XCircleIcon class="size-3" /></button
+                              >
+                              <button
+                                class="text-muted-foreground hover:text-foreground cursor-pointer"
+                                onclick={() => copyText(m, `chip-${i}`)}
+                              >
+                                {#if copiedField === `chip-${i}`}
+                                  <Check class="size-3 text-emerald-400" />
+                                {:else}
+                                  <Copy class="size-3" />
+                                {/if}
+                              </button>
+                            </div>
+                          {/each}
+                        </div>
+                        <div class="flex gap-2">
+                          <Input
+                            bind:value={sel.model}
+                            placeholder="provider/model-id"
+                            class="font-mono text-body-sm flex-1"
+                          />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            class="gap-1.5"
+                            onclick={() => openModelPicker('_main', true)}
+                            disabled={models.length === 0}><SearchIcon class="size-3.5" /> Browse</Button
+                          >
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onclick={addModel}
+                            disabled={!sel.model?.trim()}>Add</Button
+                          >
+                        </div>
+                      {/if}
+                    </div>
+                  {/if}
+                </div>
+              </div>
             {/each}
           </div>
         {/if}
@@ -390,8 +591,15 @@ function removeModel(index: number) {
         {#if selectedTool?.codeBlock}
           <div class="space-y-2">
             <div class="flex items-center justify-between">
-              <Label class="text-caption-mono text-muted-foreground">Config snippet ({selectedTool.codeBlock.language})</Label>
-              <Button variant="ghost" size="sm" class="h-7 gap-1.5 text-caption" onclick={() => copyText(replaceVars(selectedTool!.codeBlock!.code), 'codeblock')}>
+              <Label class="text-caption-mono text-muted-foreground"
+                >Config snippet ({selectedTool.codeBlock.language})</Label
+              >
+              <Button
+                variant="ghost"
+                size="sm"
+                class="h-7 gap-1.5 text-caption"
+                onclick={() => copyText(replaceVars(selectedTool!.codeBlock!.code), 'codeblock')}
+              >
                 {#if copiedField === 'codeblock'}
                   <Check class="size-3.5" /> Copied
                 {:else}
@@ -399,62 +607,97 @@ function removeModel(index: number) {
                 {/if}
               </Button>
             </div>
-            <Textarea readonly value={replaceVars(selectedTool.codeBlock.code)} rows={Math.min(16, selectedTool.codeBlock.code.split('\n').length)} class="font-mono text-body-sm bg-background" />
+            <Textarea
+              readonly
+              value={replaceVars(selectedTool.codeBlock.code)}
+              rows={Math.min(16, selectedTool.codeBlock.code.split('\n').length)}
+              class="font-mono text-body-sm bg-background"
+            />
           </div>
         {/if}
 
         <!-- MODEL ALIAS MAPPING UI (for tools with defaultModels) -->
         {#if (selectedTool?.defaultModels?.length ?? 0) > 0}
           <div class="space-y-3">
+            <Label class="text-caption-mono uppercase text-muted-foreground">Model aliases</Label>
             {#each selectedTool.defaultModels as dm}
               <div class="space-y-1.5">
-                <Label class="text-caption-mono text-muted-foreground">{dm.name}</Label>
-                <div class="flex gap-2">
-                  <Input
-                    value={modelAliases[dm.alias] ?? dm.defaultValue ?? ''}
-                    oninput={(e) => (modelAliases[dm.alias] = e.currentTarget.value)}
-                    placeholder={dm.defaultValue || 'provider/model-id'}
-                    class="font-mono text-body-sm flex-1"
-                  />
-                  <Button variant="outline" size="sm" class="shrink-0 gap-1.5" onclick={() => openModelPicker(dm.alias)} disabled={models.length === 0}>
-                    <Search class="size-3.5" /> Browse
-                  </Button>
+                <div class="flex items-center justify-between">
+                  <Label class="text-caption-mono text-muted-foreground">{dm.name}</Label>
                   {#if modelAliases[dm.alias]}
-                    <Button variant="ghost" size="sm" class="shrink-0" onclick={() => copyText(modelAliases[dm.alias], `alias-${dm.alias}`)}>
+                    <button
+                      class="text-caption text-muted-foreground hover:text-foreground"
+                      onclick={() => copyText(modelAliases[dm.alias], `alias-${dm.alias}`)}
+                    >
                       {#if copiedField === `alias-${dm.alias}`}
-                        <Check class="size-3.5 text-emerald-400" />
+                        <span class="inline-flex items-center gap-1 text-emerald-400"
+                          ><Check class="size-3" /> Copied</span
+                        >
                       {:else}
-                        <Copy class="size-3.5" />
+                        <span class="inline-flex items-center gap-1"><Copy class="size-3" /> Copy</span>
                       {/if}
-                    </Button>
+                    </button>
                   {/if}
+                </div>
+                <div
+                  class="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 font-mono text-body-sm"
+                >
+                  <span class="min-w-0 flex-1 truncate">{modelAliases[dm.alias] ?? dm.defaultValue ?? '— not set —'}</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    class="shrink-0 gap-1.5"
+                    onclick={() => openModelPicker(dm.alias)}
+                    disabled={models.length === 0}
+                  >
+                    <SearchIcon class="size-3.5" /> Change
+                  </Button>
                 </div>
               </div>
             {/each}
           </div>
-
           <!-- Shared fields for alias tools -->
           <div class="space-y-2">
             <Label class="text-caption-mono uppercase text-muted-foreground">API Key</Label>
-            <select bind:value={sel.apiKeyId} class="w-full rounded-sm border border-border bg-background px-3 py-2 text-body-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50">
-              <option value="">— Select API key —</option>
-              {#each keys as key}
-                <option value={key.id}>{key.name || 'Untitled'} ({key.key_preview})</option>
-              {/each}
-            </select>
+            <Select.Root type="single" value={sel.apiKeyId} onValueChange={(v: string) => (sel.apiKeyId = v)}>
+              <Select.Trigger class="w-full h-10 text-body-sm">
+                {@const selectedKey = keys.find((k) => k.id === sel.apiKeyId)}
+                {selectedKey ? `${selectedKey.name || 'Untitled'} (${selectedKey.key_preview})` : '— Select API key —'}
+              </Select.Trigger>
+              <Select.Content>
+                <Select.Item value="">— Select API key —</Select.Item>
+                {#each keys as key}
+                  <Select.Item value={key.id}>{key.name || 'Untitled'} ({key.key_preview})</Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
           </div>
+        {/if}
 
-        <!-- SINGLE MODEL UI (for simple tools) -->
-        {:else if (selectedTool?.guideSteps?.length ?? 0) === 0 && (selectedTool?.defaultModels?.length ?? 0) === 0}
+        <!-- SINGLE MODEL UI (for simple tools without defaultModels / guideSteps) -->
+        {#if (selectedTool?.guideSteps?.length ?? 0) === 0 && (selectedTool?.defaultModels?.length ?? 0) === 0}
           <div class="space-y-2">
             <Label class="text-caption-mono uppercase text-muted-foreground">Model</Label>
             <div class="flex gap-2">
-              <Input bind:value={sel.model} placeholder="provider/model-id" class="font-mono text-body-sm flex-1" />
-              <Button variant="outline" size="sm" class="shrink-0 gap-1.5" onclick={() => openModelPicker('_main')} disabled={models.length === 0}>
-                <Search class="size-3.5" /> Browse
-              </Button>
+              <Input
+                bind:value={sel.model}
+                placeholder="provider/model-id"
+                class="font-mono text-body-sm flex-1"
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                class="shrink-0 gap-1.5"
+                onclick={() => openModelPicker('_main')}
+                disabled={models.length === 0}><SearchIcon class="size-3.5" /> Browse</Button
+              >
               {#if sel.model}
-                <Button variant="ghost" size="sm" class="shrink-0" onclick={() => copyText(sel.model, 'model')}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  class="shrink-0"
+                  onclick={() => copyText(sel.model, 'model')}
+                >
                   {#if copiedField === 'model'}
                     <Check class="size-3.5 text-emerald-400" />
                   {:else}
@@ -464,37 +707,86 @@ function removeModel(index: number) {
               {/if}
             </div>
           </div>
+        {/if}
+
+        <!-- Extra model slots (active / subagent) for tool drivers that accept them -->
+        {#if showsActiveModel(selectedTool)}
           <div class="space-y-2">
-            <Label class="text-caption-mono uppercase text-muted-foreground">API Key</Label>
-            <select bind:value={sel.apiKeyId} class="w-full rounded-sm border border-border bg-background px-3 py-2 text-body-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50">
-              <option value="">— Select API key —</option>
-              {#each keys as key}
-                <option value={key.id}>{key.name || 'Untitled'} ({key.key_preview})</option>
-              {/each}
-            </select>
+            <Label class="text-caption-mono uppercase text-muted-foreground">Active model</Label>
+            <div class="flex gap-2">
+              <Input
+                bind:value={sel.activeModel}
+                placeholder="provider/model-id (default when empty)"
+                class="font-mono text-body-sm flex-1"
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                class="shrink-0 gap-1.5"
+                onclick={() => openModelPicker('activeModel')}
+                disabled={models.length === 0}><SearchIcon class="size-3.5" /> Browse</Button
+              >
+            </div>
           </div>
         {/if}
-<!-- Shared: Raw API Key Value + Base URL (render once for every tool) -->
-<div class="space-y-2">
-  <Label class="text-caption-mono uppercase text-muted-foreground">Raw API Key Value</Label>
-  <Input type="password" bind:value={apiKeyValue} placeholder="Paste your AxonRouter API key value (not stored)" class="text-body-sm" />
-  <p class="text-caption text-muted-foreground">AxonRouter stores only bcrypt hashes. Paste the raw value to embed in generated config.</p>
-</div>
-<div class="space-y-2">
-  <Label class="text-caption-mono uppercase text-muted-foreground">Gateway Base URL</Label>
-  <Input bind:value={sel.baseUrl} placeholder={defaultBaseUrl} class="font-mono text-body-sm" />
-</div>
+        {#if showsSubagentModel(selectedTool)}
+          <div class="space-y-2">
+            <Label class="text-caption-mono uppercase text-muted-foreground">Subagent model</Label>
+            <div class="flex gap-2">
+              <Input
+                bind:value={sel.subagentModel}
+                placeholder="provider/model-id (defaults to main model)"
+                class="font-mono text-body-sm flex-1"
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                class="shrink-0 gap-1.5"
+                onclick={() => openModelPicker('subagentModel')}
+                disabled={models.length === 0}><SearchIcon class="size-3.5" /> Browse</Button
+              >
+            </div>
+          </div>
+        {/if}
 
-        <!-- Generate button (always shown) -->
+        <!-- Shared: Raw API Key Value + Base URL (render once for every tool) -->
+        <div class="space-y-2">
+          <Label class="text-caption-mono uppercase text-muted-foreground">Raw API Key Value</Label>
+          <Input
+            type="password"
+            bind:value={apiKeyValue}
+            placeholder="Paste your AxonRouter API key value (not stored)"
+            class="text-body-sm"
+          />
+          <p class="text-caption text-muted-foreground">
+            AxonRouter stores only bcrypt hashes. Paste the raw value to embed in generated config.
+          </p>
+        </div>
+        <div class="space-y-2">
+          <Label class="text-caption-mono uppercase text-muted-foreground">Gateway Base URL</Label>
+          <Input bind:value={sel.baseUrl} placeholder={defaultBaseUrl} class="font-mono text-body-sm" />
+        </div>
+
+        <!-- Apply / Reset -->
         <div class="flex items-center gap-2 pt-2">
           <Button
             variant="default"
             size="sm"
             class="text-body-sm rounded-sm cursor-pointer"
-            onclick={generate}
+            onclick={applyConfig}
             disabled={generating}
           >
-            {generating ? 'Generating…' : 'Generate config'}
+            {generating ? 'Generating…' : 'Apply'}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            class="text-body-sm rounded-sm cursor-pointer"
+            onclick={resetConfig}
+            disabled={resetting || !detailConfigured}
+          >
+            <RotateCcwIcon class="size-3.5" />
+            {resetting ? 'Resetting…' : 'Reset'}
           </Button>
         </div>
 
@@ -502,12 +794,16 @@ function removeModel(index: number) {
         {#if generated}
           <div id="generated-section" class="mt-2 space-y-4 rounded-lg border border-border bg-background/50 p-4">
             <h3 class="text-body-sm-strong">Generated config</h3>
-
             {#if generated.envBlock}
               <div class="space-y-2">
                 <div class="flex items-center justify-between">
                   <Label class="text-caption-mono text-muted-foreground">Environment variables</Label>
-                  <Button variant="ghost" size="sm" class="h-7 gap-1.5 text-caption" onclick={() => copyText(generated!.envBlock, 'env')}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="h-7 gap-1.5 text-caption"
+                    onclick={() => copyText(generated!.envBlock, 'env')}
+                  >
                     {#if copiedField === 'env'}
                       <Check class="size-3.5" /> Copied
                     {:else}
@@ -515,23 +811,28 @@ function removeModel(index: number) {
                     {/if}
                   </Button>
                 </div>
-                <Textarea readonly value={generated.envBlock} rows={Math.min(10, generated.envBlock.split('\n').length)} class="font-mono text-body-sm bg-background" />
+                <Textarea
+                  readonly
+                  value={generated.envBlock}
+                  rows={Math.min(10, generated.envBlock.split('\n').length)}
+                  class="font-mono text-body-sm bg-background"
+                />
               </div>
             {/if}
-
             {#if generated.configContent}
               <div class="space-y-2">
                 <div class="flex items-center justify-between">
                   <Label class="text-caption-mono text-muted-foreground">
-                    Config file
-                    {#if generated.configPath}
+                    Config file {#if generated.configPath}
                       <span class="text-muted-foreground/70"> · {generated.configPath}</span>
                     {/if}
                   </Label>
-{#if generated.backupPath}
-  <p class="mt-1 text-caption text-muted-foreground">Backup tersimpan di: <code class="font-mono">{generated.backupPath}</code></p>
-{/if}
-                  <Button variant="ghost" size="sm" class="h-7 gap-1.5 text-caption" onclick={() => copyText(generated!.configContent, 'config')}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="h-7 gap-1.5 text-caption"
+                    onclick={() => copyText(generated!.configContent, 'config')}
+                  >
                     {#if copiedField === 'config'}
                       <Check class="size-3.5" /> Copied
                     {:else}
@@ -539,14 +840,25 @@ function removeModel(index: number) {
                     {/if}
                   </Button>
                 </div>
-                <Textarea readonly value={generated.configContent} rows={Math.min(14, generated.configContent.split('\n').length)} class="font-mono text-body-sm bg-background" />
+                <Textarea
+                  readonly
+                  value={generated.configContent}
+                  rows={Math.min(14, generated.configContent.split('\n').length)}
+                  class="font-mono text-body-sm bg-background"
+                />
+                {#if generated.backupPath}
+                  <p class="mt-1 text-caption text-muted-foreground">
+                    Backup tersimpan di: <code class="font-mono">{generated.backupPath}</code>
+                  </p>
+                {/if}
               </div>
             {/if}
-
             {#if generated.runCommand}
               <div class="space-y-2">
                 <Label class="text-caption-mono text-muted-foreground">Example command</Label>
-                <div class="rounded-md border border-border bg-background px-3 py-2 font-mono text-body-sm">{generated.runCommand}</div>
+                <div class="rounded-md border border-border bg-background px-3 py-2 font-mono text-body-sm">
+                  {generated.runCommand}
+                </div>
               </div>
             {/if}
           </div>
@@ -558,11 +870,17 @@ function removeModel(index: number) {
 
 <!-- Reusable Model Picker Dialog -->
 <ModelPickerDialog
-	bind:open={modelPickerOpen}
-	{models}
-	selectedModel={modelPickerTarget === '_main' ? sel.model : (modelAliases[modelPickerTarget] || '')}
-	selectedModels={sel.models}
-	onSelect={onModelPick}
-	onMultiSelect={onMultiSelect}
-	multi={modelPickerMulti}
+  bind:open={modelPickerOpen}
+  {models}
+  selectedModel={modelPickerTarget === '_main'
+    ? sel.model
+    : modelPickerTarget === 'activeModel'
+      ? sel.activeModel ?? ''
+      : modelPickerTarget === 'subagentModel'
+        ? sel.subagentModel ?? ''
+        : (modelAliases[modelPickerTarget] || '')}
+  selectedModels={sel.models}
+  onSelect={onModelPick}
+  onMultiSelect={onMultiSelect}
+  multi={modelPickerMulti}
 />

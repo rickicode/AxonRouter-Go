@@ -898,14 +898,18 @@ export interface CLITool {
 }
 
 export interface CLIToolStatus {
-  configured: boolean;
- config?: CLIToolConfig;
+  configured?: boolean;
+  installed?: boolean;
+  hasRouter?: boolean;
 }
 
 export interface CLIToolState {
-  tool: CLITool;
+  tool?: CLITool;
   selection: CLIToolSelection;
   defaultBaseUrl: string;
+  installed: boolean;
+  hasRouter: boolean;
+  state?: unknown;
   configured: boolean;
   config?: CLIToolConfig;
 }
@@ -917,6 +921,9 @@ export interface CLIToolSelection {
   modelAliases?: Record<string, string>;
   models?: string[];
   useDiscovery?: boolean;
+  activeModel?: string;
+  subagentModel?: string;
+  agentModels?: Record<string, string>;
 }
 
 export interface CLIToolConfig {
@@ -937,6 +944,6 @@ export const cliToolsApi = {
   list: () => fetchApi<{ data: CLITool[] }>("/cli-tools"),
   statuses: () => fetchApi<Record<string, CLIToolStatus>>("/cli-tools/statuses"),
   get: (toolId: string) => fetchApi<CLIToolState>(`/cli-tools/${toolId}`),
-  save: (toolId: string, data: CLIToolSelection & { apiKeyValue?: string }) =>
-    fetchApi<CLIToolSavedResponse>(`/cli-tools/${toolId}`, { method: "POST", body: JSON.stringify(data) }),
+  save: (toolId: string, data: CLIToolSelection & { apiKeyValue?: string }) => fetchApi<CLIToolSavedResponse>(`/cli-tools/${toolId}`, { method: "POST", body: JSON.stringify(data) }),
+  delete: (toolId: string) => fetchApi<{ success: boolean }>(`/cli-tools/${toolId}`, { method: "DELETE" }),
 };

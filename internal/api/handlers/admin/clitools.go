@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -73,6 +74,14 @@ type CLIToolSelection struct {
 	ModelAliases map[string]string `json:"modelAliases,omitempty"` // alias → gateway model id
 	Models       []string          `json:"models,omitempty"`
 	UseDiscovery bool              `json:"useDiscovery,omitempty"`
+	// ActiveModel selects which registered model is the default/primary for
+	// tools that support a default slot (e.g. opencode, droid).
+	ActiveModel string `json:"activeModel,omitempty"`
+	// SubagentModel overrides the model used for subagents (e.g. codex, opencode).
+	SubagentModel string `json:"subagentModel,omitempty"`
+	// AgentModels maps an agent id to a gateway model id for per-agent overrides
+	// (e.g. openclaw's per-agent model selection).
+	AgentModels map[string]string `json:"agentModels,omitempty"`
 }
 
 // CLIToolConfig is the tool-specific output shown to the user.
@@ -84,9 +93,11 @@ type CLIToolConfig struct {
 	BackupPath    string `json:"backupPath,omitempty"`
 }
 
-// CLIToolStatus reports whether a tool has been configured through the dashboard.
+// CLIToolStatus reports the per-tool status returned by AllStatuses.
 type CLIToolStatus struct {
 	Configured bool `json:"configured"`
+	Installed  bool `json:"installed"`
+	HasRouter  bool `json:"hasRouter"`
 }
 
 // CLIToolsHandler manages the dashboard CLI tools feature.
@@ -105,17 +116,34 @@ func (h *CLIToolsHandler) ListTools(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": cliToolCatalog})
 }
 
-// AllStatuses returns the configured/not-configured status for every tool.
+// AllStatuses returns the configured/installed/hasRouter status for every tool.
 func (h *CLIToolsHandler) AllStatuses(c *gin.Context) {
 	statuses := make(map[string]CLIToolStatus, len(cliToolCatalog))
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
 	for _, tool := range cliToolCatalog {
 		raw := db.GetSetting(cliToolKeyPrefix+tool.ID, "")
-		statuses[tool.ID] = CLIToolStatus{Configured: raw != ""}
+		configured := raw != ""
+		installed := false
+		hasRouter := false
+		if driver, ok := toolDrivers[tool.ID]; ok {
+			inst, has, _, derr := driver.detect(ctx)
+			if derr == nil {
+				installed = inst
+				hasRouter = has
+			}
+		}
+		statuses[tool.ID] = CLIToolStatus{
+			Configured: configured,
+			Installed:  installed,
+			HasRouter:  hasRouter,
+		}
 	}
 	c.JSON(http.StatusOK, statuses)
 }
 
-// GetConfig returns the persisted selection for a tool.
+// GetConfig returns the persisted selection for a tool, enriched with the
+// live install/router state reported by its driver (if any).
 func (h *CLIToolsHandler) GetConfig(c *gin.Context) {
 	toolID := c.Param("toolId")
 	if !isKnownTool(toolID) {
@@ -131,11 +159,29 @@ func (h *CLIToolsHandler) GetConfig(c *gin.Context) {
 	if cfgRaw := db.GetSetting(cliToolConfigKeyPrefix+toolID, ""); cfgRaw != "" {
 		_ = json.Unmarshal([]byte(cfgRaw), &savedCfg)
 	}
+
+	installed := false
+	hasRouter := false
+	var state map[string]any
+	if driver, ok := toolDrivers[toolID]; ok {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+		inst, has, st, derr := driver.detect(ctx)
+		if derr == nil {
+			installed = inst
+			hasRouter = has
+			state = st
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"tool":           findTool(toolID),
 		"selection":      sel,
 		"defaultBaseUrl": defaultBaseURL(c),
 		"configured":     raw != "",
+		"installed":      installed,
+		"hasRouter":      hasRouter,
+		"state":          state,
 		"config":         savedCfg,
 	})
 }
@@ -166,8 +212,8 @@ func (h *CLIToolsHandler) SaveConfig(c *gin.Context) {
 	tool := findTool(toolID)
 
 	// For tools with modelAliases, model can be empty (aliases drive the config).
-	// For tools without aliases, model is required.
-	if len(tool.DefaultModels) == 0 && len(tool.GuideSteps) == 0 {
+	// For tools without aliases and not multi-model, model is required.
+	if len(tool.DefaultModels) == 0 && len(tool.GuideSteps) == 0 && !tool.MultiModel {
 		if req.Model == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 			return
@@ -178,8 +224,9 @@ func (h *CLIToolsHandler) SaveConfig(c *gin.Context) {
 		}
 	}
 
-	// For tools that support discovery, require either discovery mode or a non-empty model list.
-	if tool.SupportsDiscovery && !req.UseDiscovery {
+	// For tools that support discovery or multiple models, require either discovery mode
+	// or a non-empty model list (or a single model fallback).
+	if (tool.SupportsDiscovery || tool.MultiModel) && !req.UseDiscovery {
 		if len(req.Models) == 0 && req.Model == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "select at least one model or enable auto-discovery"})
 			return
@@ -206,12 +253,15 @@ func (h *CLIToolsHandler) SaveConfig(c *gin.Context) {
 	}
 
 	sel := CLIToolSelection{
-		Model:        req.Model,
-		APIKeyID:     req.APIKeyID,
-		BaseURL:      baseURL,
-		ModelAliases: req.ModelAliases,
-		Models:       req.Models,
-		UseDiscovery: req.UseDiscovery,
+		Model:         req.Model,
+		APIKeyID:      req.APIKeyID,
+		BaseURL:       baseURL,
+		ModelAliases:  req.ModelAliases,
+		Models:        req.Models,
+		UseDiscovery:  req.UseDiscovery,
+		ActiveModel:   req.ActiveModel,
+		SubagentModel: req.SubagentModel,
+		AgentModels:   req.AgentModels,
 	}
 	selJSON, err := json.Marshal(sel)
 	if err != nil {
@@ -227,21 +277,54 @@ func (h *CLIToolsHandler) SaveConfig(c *gin.Context) {
 	if apiKey == "" {
 		apiKey = "__YOUR_AXONROUTER_API_KEY__"
 	}
-
-	cfg := generateConfig(toolID, sel, apiKey)
-	if cfg.ConfigPath != "" && isWritableConfigPath(cfg.ConfigPath) {
-		resolved, backup, werr := writeConfigFile(cfg.ConfigPath, cfg.ConfigContent)
-		if werr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to write config file: " + werr.Error()})
+	// Driver-based tools write their own config files via driver.apply.
+	var cfg CLIToolConfig
+	if driver, ok := toolDrivers[toolID]; ok {
+		dctx, dcancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+		defer dcancel()
+		applied, aerr := driver.apply(dctx, sel, apiKey)
+		if aerr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": aerr.Error()})
 			return
 		}
-		cfg.ConfigPath = resolved
-		cfg.BackupPath = backup
+		cfg = applied
+	} else {
+		cfg = generateConfig(toolID, sel, apiKey)
+		if cfg.ConfigPath != "" && isWritableConfigPath(cfg.ConfigPath) {
+			resolved, backup, werr := writeConfigFile(cfg.ConfigPath, cfg.ConfigContent)
+			if werr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to write config file: " + werr.Error()})
+				return
+			}
+			cfg.ConfigPath = resolved
+			cfg.BackupPath = backup
+		}
 	}
 	if cfgJSON, jerr := json.Marshal(cfg); jerr == nil {
 		_ = db.SetSetting(cliToolConfigKeyPrefix+toolID, string(cfgJSON))
 	}
 	c.JSON(http.StatusOK, gin.H{"selection": sel, "config": cfg})
+}
+
+// DeleteConfig calls the tool's driver.reset (if any) and clears the persisted
+// selection + saved config settings.
+func (h *CLIToolsHandler) DeleteConfig(c *gin.Context) {
+	toolID := c.Param("toolId")
+	if !isKnownTool(toolID) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "unknown cli tool"})
+		return
+	}
+	if driver, ok := toolDrivers[toolID]; ok {
+		dctx, dcancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+		defer dcancel()
+		if err := driver.reset(dctx); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	_ = db.SetSetting(cliToolKeyPrefix+toolID, "")
+	_ = db.SetSetting(cliToolConfigKeyPrefix+toolID, "")
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
 func (h *CLIToolsHandler) isModelAvailable(modelID string) bool {
@@ -325,7 +408,7 @@ var cliToolCatalog = []CLIToolStatic{
 	{
 		ID: "opencode", Name: "OpenCode", Description: "OpenCode AI Terminal Assistant.",
 		Image: "/providers/opencode.png", Color: "#E87040", ConfigType: "env",
-		DocsURL: "https://github.com/sst/opencode",
+		DocsURL: "https://github.com/sst/opencode", MultiModel: true,
 	},
 
 	// ─── OpenClaw ───────────────────────────────────────────────────
@@ -504,14 +587,14 @@ var cliToolCatalog = []CLIToolStatic{
 	{
 		ID: "droid", Name: "Factory Droid", Description: "Factory Droid AI Assistant.",
 		Image: "/providers/droid.png", Color: "#00D4FF", ConfigType: "custom",
-		DocsURL: "https://factory.ai",
+		DocsURL: "https://factory.ai", MultiModel: true,
 	},
 
 	// ─── GitHub Copilot ─────────────────────────────────────────────
 	{
 		ID: "copilot", Name: "GitHub Copilot", Description: "GitHub Copilot CLI coding agent.",
 		Image: "/providers/copilot.png", Color: "#24292E", ConfigType: "guide",
-		DocsURL: "https://docs.github.com/copilot",
+		DocsURL: "https://docs.github.com/copilot", MultiModel: true,
 		GuideSteps: []GuideStep{
 			{Step: 1, Title: "Enable Copilot", Desc: "Ensure GitHub Copilot is enabled in your VS Code or IDE."},
 			{Step: 2, Title: "API Key", Type: "apiKeySelector"},
