@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1000" fill="none" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif">
+  <defs>
+    <linearGradient id="b-tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f472b6"/>
+      <stop offset="100%" stop-color="#db2777"/>
+    </linearGradient>
+    <linearGradient id="b-loop" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#fce7f3"/>
+    </linearGradient>
+    <linearGradient id="b-word" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#f472b6"/>
+      <stop offset="100%" stop-color="#db2777"/>
+    </linearGradient>
+    <clipPath id="b-card"><rect width="1200" height="1000" rx="0"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#b-card)">
+    <!-- canvas -->
+    <rect width="1200" height="1000" fill="#0e0e12"/>
+
+    <!-- top hairline + label -->
+    <line x1="48" y1="48" x2="1152" y2="48" stroke="#26262e" stroke-width="1"/>
+    <text x="48" y="36" font-size="13" letter-spacing="3" fill="#6b6b76">AXONROUTER — BRAND SYSTEM</text>
+    <text x="1152" y="36" font-size="13" letter-spacing="2" fill="#6b6b76" text-anchor="end">v1 / 2026</text>
+
+    <!-- ============ 3x3 GRID ============ -->
+    <!-- gutter 28, panel 368x300, start x:48/444/840  y:88/408/728 -->
+
+    <!-- 1. LOGO COVER -->
+    <rect x="48" y="88" width="368" height="300" rx="18" fill="#16161c"/>
+    <rect x="184" y="120" width="96" height="96" rx="24" fill="url(#b-tile)"/>
+    <g transform="translate(184,120)">
+      <path d="M22 64 C 22 44 32 44 32 50 C 32 56 42 56 42 38 C 42 22 22 25 22 46 C 22 70 42 73 42 64"
+            stroke="url(#b-loop)" stroke-width="7" stroke-linecap="round" fill="none" opacity="0.95"/>
+      <circle cx="32" cy="50" r="6" fill="#ff0080"/>
+    </g>
+    <text x="232" y="262" font-size="26" font-weight="700" fill="#fafafa" text-anchor="middle">Axon<tspan fill="url(#b-word)">Router</tspan></text>
+    <text x="232" y="286" font-size="12" letter-spacing="2" fill="#6b6b76" text-anchor="middle">UNIVERSAL API PROXY</text>
+
+    <!-- 2. LOGO CONSTRUCTION -->
+    <rect x="444" y="88" width="368" height="300" rx="18" fill="#16161c"/>
+    <g transform="translate(444,88)">
+      <circle cx="184" cy="150" r="78" stroke="#2a2a33" stroke-width="1" fill="none"/>
+      <circle cx="184" cy="150" r="52" stroke="#2a2a33" stroke-width="1" fill="none"/>
+      <line x1="106" y1="150" x2="262" y2="150" stroke="#2a2a33" stroke-width="1"/>
+      <line x1="184" y1="72" x2="184" y2="228" stroke="#2a2a33" stroke-width="1"/>
+      <rect x="150" y="116" width="68" height="68" rx="18" fill="url(#b-tile)"/>
+      <path d="M168 150 C 168 134 178 134 178 138 C 178 144 188 144 188 128 C 188 114 168 117 168 136 C 168 158 188 160 188 150"
+            stroke="url(#b-loop)" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.95"/>
+      <circle cx="178" cy="143" r="4.6" fill="#ff0080"/>
+    </g>
+    <text x="628" y="286" font-size="12" letter-spacing="2" fill="#6b6b76" text-anchor="middle">CONSTRUCTION — 14PX GRID</text>
+
+    <!-- 3. DIGITAL APPLICATION (terminal) -->
+    <rect x="840" y="88" width="368" height="300" rx="18" fill="#16161c"/>
+    <g transform="translate(840,108)">
+      <rect x="0" y="0" width="368" height="220" rx="10" fill="#0c0c10"/>
+      <circle cx="20" cy="20" r="5" fill="#3a3a44"/><circle cx="38" cy="20" r="5" fill="#3a3a44"/><circle cx="56" cy="20" r="5" fill="#3a3a44"/>
+      <text x="20" y="62" font-size="13" fill="#9aa0aa">$ curl -fsSL install.sh | bash</text>
+      <text x="20" y="86" font-size="13" fill="#6b6b76">==> linux/amd64 detected</text>
+      <text x="20" y="110" font-size="13" fill="#6b6b76">==> installed → /usr/local/bin/axonrouter</text>
+      <text x="20" y="138" font-size="13" fill="#fafafa">axonrouter ready :3777</text>
+    </g>
+    <text x="1024" y="335" font-size="12" letter-spacing="2" fill="#6b6b76" text-anchor="middle">DASHBOARD · TERMINAL</text>
+
+    <!-- 4. BRAND ESSENCE -->
+    <rect x="48" y="408" width="368" height="300" rx="18" fill="#16161c"/>
+    <text x="74" y="500" font-size="34" font-weight="700" fill="#fafafa">Route</text>
+    <text x="74" y="544" font-size="34" font-weight="700" fill="#fafafa">every model.</text>
+    <text x="74" y="588" font-size="34" font-weight="700" fill="url(#b-word)">Never stop.</text>
+    <text x="74" y="640" font-size="13" letter-spacing="1" fill="#6b6b76">ONE PORT · ALL FORMATS · ALWAYS ON</text>
+
+    <!-- 5. COLOR SYSTEM -->
+    <rect x="444" y="408" width="368" height="300" rx="18" fill="#16161c"/>
+    <g transform="translate(444,408)">
+      <rect x="24" y="40" width="100" height="100" rx="14" fill="#f472b6"/>
+      <rect x="134" y="40" width="100" height="100" rx="14" fill="#db2777"/>
+      <rect x="244" y="40" width="100" height="100" rx="14" fill="#ff0080"/>
+      <text x="24"  y="178" font-size="12" fill="#9aa0aa">#f472b6</text>
+      <text x="134" y="178" font-size="12" fill="#9aa0aa">#db2777</text>
+      <text x="244" y="178" font-size="12" fill="#9aa0aa">#ff0080</text>
+      <rect x="24" y="200" width="320" height="44" rx="10" fill="#0e0e12"/>
+      <text x="40" y="228" font-size="13" fill="#6b6b76">BASE  #0e0e12   INK  #fafafa</text>
+    </g>
+
+    <!-- 6. TYPOGRAPHY -->
+    <rect x="840" y="408" width="368" height="300" rx="18" fill="#16161c"/>
+    <text x="864" y="478" font-size="13" letter-spacing="2" fill="#6b6b76">PRIMARY — SANS</text>
+    <text x="864" y="540" font-size="40" font-weight="700" fill="#fafafa">AxonRouter</text>
+    <text x="864" y="588" font-size="13" letter-spacing="2" fill="#6b6b76">SECONDARY — MONO</text>
+    <text x="864" y="624" font-size="20" fill="#9aa0aa" font-family="ui-monospace, Menlo, monospace">openai/ claude/ cx/</text>
+
+    <!-- 7. PHYSICAL APPLICATION (badge) -->
+    <rect x="48" y="728" width="368" height="244" rx="18" fill="#16161c"/>
+    <g transform="translate(48,728)">
+      <rect x="120" y="60" width="128" height="44" rx="22" fill="url(#b-tile)"/>
+      <text x="184" y="88" font-size="16" font-weight="700" fill="#fafafa" text-anchor="middle">v1.2.3</text>
+      <rect x="92" y="128" width="184" height="64" rx="12" fill="#0c0c10"/>
+      <text x="184" y="150" font-size="12" letter-spacing="1" fill="#6b6b76" text-anchor="middle">RELEASE</text>
+      <text x="184" y="174" font-size="18" font-weight="700" fill="#fafafa" text-anchor="middle">axonrouter</text>
+    </g>
+
+    <!-- 8. IMAGE DIRECTION (atmosphere) -->
+    <rect x="444" y="728" width="368" height="244" rx="18" fill="#16161c"/>
+    <g transform="translate(444,728)">
+      <rect x="0" y="0" width="368" height="244" rx="18" fill="#0c0c10"/>
+      <!-- routed signal waves -->
+      <path d="M0 200 C 80 120 160 280 240 200 S 360 120 368 180" stroke="#db2777" stroke-width="2" fill="none" opacity="0.5"/>
+      <path d="M0 160 C 80 90 160 230 240 160 S 360 90 368 140" stroke="#f472b6" stroke-width="2" fill="none" opacity="0.35"/>
+      <circle cx="284" cy="120" r="6" fill="#ff0080"/>
+      <text x="24" y="226" font-size="12" letter-spacing="2" fill="#6b6b76">ATMOSPHERE — ROUTED SIGNAL</text>
+    </g>
+
+    <!-- 9. SYSTEM DETAIL (icon row) -->
+    <rect x="840" y="728" width="368" height="244" rx="18" fill="#16161c"/>
+    <g transform="translate(840,728)">
+      <rect x="24" y="56" width="56" height="56" rx="14" fill="url(#b-tile)"/>
+      <rect x="100" y="56" width="56" height="56" rx="14" fill="#1d1d24"/>
+      <rect x="176" y="56" width="56" height="56" rx="14" fill="#1d1d24"/>
+      <rect x="252" y="56" width="56" height="56" rx="14" fill="#1d1d24"/>
+      <text x="24" y="150" font-size="12" letter-spacing="2" fill="#9aa0aa">ICON  ·  TILE  ·  LOOP  ·  PULSE</text>
+      <rect x="24" y="170" width="320" height="40" rx="10" fill="#0c0c10"/>
+      <text x="40" y="195" font-size="13" fill="#9aa0aa">openai · claude · gemini · cx · kiro · ag</text>
+    </g>
+
+    <!-- footer -->
+    <line x1="48" y1="988" x2="1152" y2="988" stroke="#26262e" stroke-width="1"/>
+    <text x="48" y="978" font-size="11" letter-spacing="2" fill="#4a4a54">AXONROUTER-GO</text>
+    <text x="1152" y="978" font-size="11" letter-spacing="2" fill="#4a4a54" text-anchor="end">© 2026</text>
+  </g>
+</svg>

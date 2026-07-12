@@ -10,6 +10,7 @@
   import { Label } from '$lib/components/ui/label';
   import { Switch } from '$lib/components/ui/switch';
   import * as Dialog from '$lib/components/ui/dialog';
+import StatusBadge from '$lib/components/StatusBadge.svelte';
   import { toast } from 'svelte-sonner';
 
   let showCreate = $state(false);
@@ -120,7 +121,7 @@
           {/if}
         </div>
       </div>
-      <Button onclick={() => showCreate = true} class="text-button-md rounded-pill px-5">
+      <Button onclick={() => showCreate = true} class="text-button-md rounded-sm px-5">
         Add combo
       </Button>
     </div>
@@ -130,7 +131,7 @@
       <Card class="shadow-card overflow-hidden p-0">
         <table class="w-full text-body-sm">
           <thead>
-            <tr class="border-b border-white/5 bg-white/[0.02]">
+            <tr class="border-b border-border bg-muted/50">
               <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Name</th>
               <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Strategy</th>
               <th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Timeout</th>
@@ -141,9 +142,9 @@
           </thead>
           <tbody>
             {#each $combos as combo}
-              <tr class="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
+              <tr class="border-b border-border hover:bg-muted/50 transition-colors">
                 <td class="px-4 py-2.5">
-                  <a href="/combos/{combo.id}" class="text-body-sm-strong hover:underline truncate block max-w-[200px]">{combo.name}</a>
+                  <a href="/combos/{combo.id}" class="text-body-sm-strong hover:underline truncate block ">{combo.name}</a>
                 </td>
                 <td class="px-4 py-2.5">
                   <span class="inline-flex items-center gap-1 text-caption-mono text-muted-foreground">
@@ -159,25 +160,10 @@
                   <span class="text-caption-mono text-muted-foreground">{combo.timeout_ms >= 1000 ? (combo.timeout_ms / 1000) + 's' : combo.timeout_ms + 'ms'}</span>
                 </td>
                 <td class="px-4 py-2.5 text-center">
-                  {#if combo.is_smart}
-                    <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase bg-violet-500/15 text-violet-400 border border-violet-500/30">
-                      {unwrapStr(combo.smart_goal) || 'on'}
-                    </span>
-                  {:else}
-                    <span class="text-muted-foreground">—</span>
-                  {/if}
+                  <StatusBadge status="smart" label={unwrapStr(combo.smart_goal) || 'on'} />
                 </td>
                 <td class="px-4 py-2.5 text-center">
-                  <button
-                    onclick={() => toggleCombo(combo)}
-                    class="cursor-pointer inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase transition-colors
-                      {combo.is_active
-                        ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25'
-                        : 'bg-zinc-500/15 text-zinc-500 border border-zinc-500/20 hover:bg-zinc-500/25'}"
-                  >
-                    <span class="size-1.5 rounded-full {combo.is_active ? 'bg-emerald-400' : 'bg-zinc-600'}"></span>
-                    {combo.is_active ? 'On' : 'Off'}
-                  </button>
+                  <StatusBadge status={combo.is_active ? 'active' : 'disabled'} label={combo.is_active ? 'On' : 'Off'} onclick={() => toggleCombo(combo)} />
                 </td>
                 <td class="px-4 py-2.5 text-right">
                   <div class="flex gap-1 justify-end">
@@ -202,7 +188,7 @@
           <p class="text-body-sm text-muted-foreground mb-4">
             Create a routing combo for fallback, load balancing, or smart routing.
           </p>
-          <Button onclick={() => showCreate = true} class="text-button-md rounded-pill px-5">Add combo</Button>
+          <Button onclick={() => showCreate = true} class="text-button-md rounded-sm px-5">Add combo</Button>
         </CardContent>
       </Card>
     {/if}
@@ -225,7 +211,7 @@
         <div class="flex gap-2">
           {#each strategyOptions as opt}
             <button
-              class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {newStrategy === opt ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}"
+              class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {newStrategy === opt ? 'bg-foreground text-background border-foreground' : 'border-border text-muted-foreground hover:text-foreground'}"
               onclick={() => newStrategy = opt}
             >
               {opt === 'priority' ? 'Priority' : 'Round Robin'}
@@ -250,7 +236,7 @@
         </div>
       </div>
 
-      <div class="flex items-center gap-3 pt-2 border-t border-white/5">
+      <div class="flex items-center gap-3 pt-2 border-t border-border">
         <div class="flex items-center space-x-2">
           <Switch id="new-is-smart" bind:checked={newIsSmart} />
           <Label for="new-is-smart" class="text-body-sm-strong cursor-pointer">Smart combo</Label>
@@ -263,7 +249,7 @@
           <div class="grid grid-cols-2 gap-2">
             {#each smartGoalOptions as opt}
               <button
-                class="cursor-pointer flex flex-col items-start gap-0.5 p-2.5 rounded-md border text-left transition-colors {newSmartGoal === opt.value ? 'border-foreground bg-accent' : 'border-white/8 hover:border-foreground/50'}"
+                class="cursor-pointer flex flex-col items-start gap-0.5 p-2.5 rounded-md border text-left transition-colors {newSmartGoal === opt.value ? 'border-foreground bg-accent' : 'border-border hover:border-foreground/50'}"
                 onclick={() => newSmartGoal = opt.value}
               >
                 <span class="text-body-sm-strong">{opt.label}</span>

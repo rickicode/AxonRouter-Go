@@ -2,8 +2,9 @@
   import './app.css';
   import { onMount } from 'svelte';
   import { router, currentPath } from '$lib/router';
-  import * as Sidebar from '$lib/components/ui/sidebar';
+import * as Sidebar from '$lib/components/ui/sidebar';
   import { Toaster } from '$lib/components/ui/sonner';
+  import { toast } from 'svelte-sonner';
   import SidebarNav from '$lib/components/sidebar/SidebarNav.svelte';
   import SidebarBrand from '$lib/components/sidebar/SidebarBrand.svelte';
   import SidebarHealth from '$lib/components/sidebar/SidebarHealth.svelte';
@@ -27,7 +28,8 @@ import { Button } from '$lib/components/ui/button';
   import APIKeys from './pages/APIKeys.svelte';
 import Optimization from './pages/Optimization.svelte';
 import CLITools from './pages/CLITools.svelte';
-import NotFound from './pages/NotFound.svelte';
+	import ModelPricing from './pages/ModelPricing.svelte';
+	import NotFound from './pages/NotFound.svelte';
 
   let cleanup: (() => void) | undefined;
 
@@ -39,15 +41,16 @@ import NotFound from './pages/NotFound.svelte';
   function getPageLabel(path: string): string {
     if (path === '/') return 'Dashboard';
     const segment = path.split('/').filter(Boolean)[0];
-    const labels: Record<string, string> = {
-      providers: 'Providers',
-      combos: 'Combos',
-      logs: 'Logs',
-      quota: 'Quota',
-      settings: 'Settings',
-      'proxy-pools': 'Proxy Pools',
-      'cli-tools': 'CLI Tools',
-    };
+const labels: Record<string, string> = {
+		providers: 'Providers',
+		combos: 'Combos',
+		logs: 'Logs',
+		quota: 'Quota',
+		settings: 'Settings',
+		'proxy-pools': 'Proxy Pools',
+		'cli-tools': 'CLI Tools',
+		'model-pricing': 'Model Pricing',
+	};
     return labels[segment] ?? segment.charAt(0).toUpperCase() + segment.slice(1);
   }
 
@@ -94,8 +97,11 @@ import NotFound from './pages/NotFound.svelte';
   // /optimization → Optimization
   if (segments[0] === 'optimization' && segments.length === 1) return { component: Optimization, params: {} };
 
-  // /cli-tools → CLI Tools
+// /cli-tools → CLI Tools
   if (segments[0] === 'cli-tools' && segments.length === 1) return { component: CLITools, params: {} };
+
+  // /model-pricing → ModelPricing
+  if (segments[0] === 'model-pricing' && segments.length === 1) return { component: ModelPricing, params: {} };
 
   // Fallback → 404
  return { component: NotFound, params: {} };

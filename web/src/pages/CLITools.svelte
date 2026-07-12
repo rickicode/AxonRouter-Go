@@ -58,7 +58,6 @@
   let detailState = $state<unknown>(null);
   let detailConfigured = $state(false);
   let detailConfig = $state<CLIToolConfig | null>(null);
-  let apiKeyValue = $state('');
   let generated = $state<CLIToolConfig | null>(null);
   let generating = $state(false);
   let resetting = $state(false);
@@ -107,7 +106,6 @@
     detailOpen = true;
     generated = null;
     detailConfig = null;
-    apiKeyValue = '';
     generating = false;
     resetting = false;
     copiedField = null;
@@ -170,7 +168,6 @@
       const res = await cliToolsApi.save(selectedTool.id, {
         ...sel,
         modelAliases: Object.keys(modelAliases).length > 0 ? modelAliases : undefined,
-        apiKeyValue,
       });
       sel = res.selection;
       generated = res.config;
@@ -280,7 +277,7 @@
 
   // Template variable substitution for code blocks and guide step values
   function replaceVars(text: string): string {
-    const key = apiKeyValue || '__YOUR_AXONROUTER_API_KEY__';
+    const key = '__YOUR_AXONROUTER_API_KEY__';
     const base = sel.baseUrl
       ? sel.baseUrl.endsWith('/v1')
         ? sel.baseUrl
@@ -462,6 +459,26 @@
           </a>
         {/if}
 
+        <!-- Shared: API Key (always shown; raw value resolved server-side from the selected key) -->
+        <div class="space-y-2">
+          <Label class="text-caption-mono uppercase text-muted-foreground">API Key</Label>
+          <Select.Root type="single" value={sel.apiKeyId} onValueChange={(v: string) => (sel.apiKeyId = v)}>
+            <Select.Trigger class="w-full h-10 text-body-sm">
+              {@const selectedKey = keys.find((k) => k.id === sel.apiKeyId)}
+              {selectedKey ? `${selectedKey.name || 'Untitled'} (${selectedKey.key_preview})` : '— Select API key —'}
+            </Select.Trigger>
+            <Select.Content>
+              <Select.Item value="">— Select API key —</Select.Item>
+              {#each keys as key}
+                <Select.Item value={key.id}>{key.name || 'Untitled'} ({key.key_preview})</Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
+          <p class="text-caption text-muted-foreground">
+            The real key is pulled from this selection automatically — no need to paste it.
+          </p>
+        </div>
+
         <!-- Notes -->
         {#if selectedTool?.notes?.length}
           {#each selectedTool.notes as note}
@@ -489,38 +506,10 @@
                     <p class="text-body-sm text-muted-foreground">{step.desc}</p>
                   {/if}
                   {#if step.value && step.copyable}
-                    <div class="flex items-center gap-2">
-                      <code
-                        class="flex-1 rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-body-sm"
-                        >{replaceVars(step.value)}</code
-                      >
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        class="h-7 shrink-0"
-                        onclick={() => copyText(replaceVars(step.value!), `step-${step.step}`)}
-                      >
-                        {#if copiedField === `step-${step.step}`}
-                          <Check class="size-3.5 text-emerald-400" />
-                        {:else}
-                          <Copy class="size-3.5" />
-                        {/if}
-                      </Button>
-                    </div>
-                  {/if}
-                  {#if step.type === 'apiKeySelector'}
-                    <Select.Root type="single" value={sel.apiKeyId} onValueChange={(v: string) => (sel.apiKeyId = v)}>
-                      <Select.Trigger class="w-full h-10 text-body-sm">
-                        {@const selectedKey = keys.find((k) => k.id === sel.apiKeyId)}
-                        {selectedKey ? `${selectedKey.name || 'Untitled'} (${selectedKey.key_preview})` : '— Select API key —'}
-                      </Select.Trigger>
-                      <Select.Content>
-                        <Select.Item value="">— Select API key —</Select.Item>
-                        {#each keys as key}
-                          <Select.Item value={key.id}>{key.name || 'Untitled'} ({key.key_preview})</Select.Item>
-                        {/each}
-                      </Select.Content>
-                    </Select.Root>
+                    <code
+                      class="block rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-body-sm"
+                      >{replaceVars(step.value)}</code
+                    >
                   {/if}
                   {#if step.type === 'modelSelector'}
                     <div class="space-y-3">
@@ -545,16 +534,6 @@
                                 class="text-muted-foreground hover:text-foreground cursor-pointer"
                                 onclick={() => removeModel(i)}><XCircleIcon class="size-3" /></button
                               >
-                              <button
-                                class="text-muted-foreground hover:text-foreground cursor-pointer"
-                                onclick={() => copyText(m, `chip-${i}`)}
-                              >
-                                {#if copiedField === `chip-${i}`}
-                                  <Check class="size-3 text-emerald-400" />
-                                {:else}
-                                  <Copy class="size-3" />
-                                {/if}
-                              </button>
                             </div>
                           {/each}
                         </div>
@@ -590,23 +569,9 @@
         <!-- Code block with template substitution -->
         {#if selectedTool?.codeBlock}
           <div class="space-y-2">
-            <div class="flex items-center justify-between">
-              <Label class="text-caption-mono text-muted-foreground"
-                >Config snippet ({selectedTool.codeBlock.language})</Label
-              >
-              <Button
-                variant="ghost"
-                size="sm"
-                class="h-7 gap-1.5 text-caption"
-                onclick={() => copyText(replaceVars(selectedTool!.codeBlock!.code), 'codeblock')}
-              >
-                {#if copiedField === 'codeblock'}
-                  <Check class="size-3.5" /> Copied
-                {:else}
-                  <Copy class="size-3.5" /> Copy
-                {/if}
-              </Button>
-            </div>
+            <Label class="text-caption-mono text-muted-foreground"
+              >Config snippet ({selectedTool.codeBlock.language})</Label
+            >
             <Textarea
               readonly
               value={replaceVars(selectedTool.codeBlock.code)}
@@ -616,61 +581,28 @@
           </div>
         {/if}
 
-        <!-- MODEL ALIAS MAPPING UI (for tools with defaultModels) -->
+        <!-- MODEL ALIAS MAPPING UI (for tools with defaultModels) — 2-column grid -->
         {#if (selectedTool?.defaultModels?.length ?? 0) > 0}
-          <div class="space-y-3">
-            <Label class="text-caption-mono uppercase text-muted-foreground">Model aliases</Label>
-            {#each selectedTool.defaultModels as dm}
-              <div class="space-y-1.5">
-                <div class="flex items-center justify-between">
-                  <Label class="text-caption-mono text-muted-foreground">{dm.name}</Label>
-                  {#if modelAliases[dm.alias]}
-                    <button
-                      class="text-caption text-muted-foreground hover:text-foreground"
-                      onclick={() => copyText(modelAliases[dm.alias], `alias-${dm.alias}`)}
-                    >
-                      {#if copiedField === `alias-${dm.alias}`}
-                        <span class="inline-flex items-center gap-1 text-emerald-400"
-                          ><Check class="size-3" /> Copied</span
-                        >
-                      {:else}
-                        <span class="inline-flex items-center gap-1"><Copy class="size-3" /> Copy</span>
-                      {/if}
-                    </button>
-                  {/if}
-                </div>
-                <div
-                  class="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 font-mono text-body-sm"
-                >
-                  <span class="min-w-0 flex-1 truncate">{modelAliases[dm.alias] ?? dm.defaultValue ?? '— not set —'}</span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    class="shrink-0 gap-1.5"
-                    onclick={() => openModelPicker(dm.alias)}
-                    disabled={models.length === 0}
-                  >
-                    <SearchIcon class="size-3.5" /> Change
-                  </Button>
-                </div>
-              </div>
-            {/each}
-          </div>
-          <!-- Shared fields for alias tools -->
           <div class="space-y-2">
-            <Label class="text-caption-mono uppercase text-muted-foreground">API Key</Label>
-            <Select.Root type="single" value={sel.apiKeyId} onValueChange={(v: string) => (sel.apiKeyId = v)}>
-              <Select.Trigger class="w-full h-10 text-body-sm">
-                {@const selectedKey = keys.find((k) => k.id === sel.apiKeyId)}
-                {selectedKey ? `${selectedKey.name || 'Untitled'} (${selectedKey.key_preview})` : '— Select API key —'}
-              </Select.Trigger>
-              <Select.Content>
-                <Select.Item value="">— Select API key —</Select.Item>
-                {#each keys as key}
-                  <Select.Item value={key.id}>{key.name || 'Untitled'} ({key.key_preview})</Select.Item>
-                {/each}
-              </Select.Content>
-            </Select.Root>
+            <Label class="text-caption-mono uppercase text-muted-foreground">Model aliases</Label>
+            <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {#each selectedTool.defaultModels as dm}
+                <button
+                  type="button"
+                  class="group flex flex-col gap-1 rounded-lg border border-border bg-background p-3 text-left transition-colors hover:border-primary/50 disabled:cursor-not-allowed disabled:opacity-50"
+                  onclick={() => openModelPicker(dm.alias)}
+                  disabled={models.length === 0}
+                >
+                  <span class="text-caption-mono text-muted-foreground">{dm.name}</span>
+                  <span class="flex items-center justify-between gap-2">
+                    <span class="min-w-0 flex-1 truncate font-mono text-body-sm">
+                      {modelAliases[dm.alias] ?? dm.defaultValue ?? '— not set —'}
+                    </span>
+                    <SearchIcon class="size-3.5 shrink-0 text-muted-foreground group-hover:text-primary" />
+                  </span>
+                </button>
+              {/each}
+            </div>
           </div>
         {/if}
 
@@ -691,20 +623,6 @@
                 onclick={() => openModelPicker('_main')}
                 disabled={models.length === 0}><SearchIcon class="size-3.5" /> Browse</Button
               >
-              {#if sel.model}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="shrink-0"
-                  onclick={() => copyText(sel.model, 'model')}
-                >
-                  {#if copiedField === 'model'}
-                    <Check class="size-3.5 text-emerald-400" />
-                  {:else}
-                    <Copy class="size-3.5" />
-                  {/if}
-                </Button>
-              {/if}
             </div>
           </div>
         {/if}
@@ -749,45 +667,10 @@
           </div>
         {/if}
 
-        <!-- Shared: Raw API Key Value + Base URL (render once for every tool) -->
-        <div class="space-y-2">
-          <Label class="text-caption-mono uppercase text-muted-foreground">Raw API Key Value</Label>
-          <Input
-            type="password"
-            bind:value={apiKeyValue}
-            placeholder="Paste your AxonRouter API key value (not stored)"
-            class="text-body-sm"
-          />
-          <p class="text-caption text-muted-foreground">
-            AxonRouter stores only bcrypt hashes. Paste the raw value to embed in generated config.
-          </p>
-        </div>
+        <!-- Shared: Base URL (render once for every tool) -->
         <div class="space-y-2">
           <Label class="text-caption-mono uppercase text-muted-foreground">Gateway Base URL</Label>
           <Input bind:value={sel.baseUrl} placeholder={defaultBaseUrl} class="font-mono text-body-sm" />
-        </div>
-
-        <!-- Apply / Reset -->
-        <div class="flex items-center gap-2 pt-2">
-          <Button
-            variant="default"
-            size="sm"
-            class="text-body-sm rounded-sm cursor-pointer"
-            onclick={applyConfig}
-            disabled={generating}
-          >
-            {generating ? 'Generating…' : 'Apply'}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            class="text-body-sm rounded-sm cursor-pointer"
-            onclick={resetConfig}
-            disabled={resetting || !detailConfigured}
-          >
-            <RotateCcwIcon class="size-3.5" />
-            {resetting ? 'Resetting…' : 'Reset'}
-          </Button>
         </div>
 
         <!-- Generated config output -->
@@ -865,6 +748,27 @@
         {/if}
       </div>
     </ScrollArea>
+
+    <!-- Sticky footer: Apply / Reset (always visible, outside scroll) -->
+    <div class="flex items-center gap-2 border-t border-border p-4">
+      <Button
+        variant="default"
+        class="flex-1 cursor-pointer"
+        onclick={applyConfig}
+        disabled={generating}
+      >
+        {generating ? 'Generating…' : 'Generate config'}
+      </Button>
+      <Button
+        variant="outline"
+        class="cursor-pointer gap-1.5"
+        onclick={resetConfig}
+        disabled={resetting || !detailConfigured}
+      >
+        <RotateCcwIcon class="size-3.5" />
+        {resetting ? 'Resetting…' : 'Reset'}
+      </Button>
+    </div>
   </Dialog.Content>
 </Dialog.Root>
 

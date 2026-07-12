@@ -252,6 +252,16 @@ func (h *CLIToolsHandler) SaveConfig(c *gin.Context) {
 		return
 	}
 
+	// Resolve the raw API key value server-side from the selected key id. This
+	// removes the need to paste the raw secret and guarantees the generated
+	// config embeds the real key (falling back to a manual paste or placeholder).
+	apiKey := strings.TrimSpace(req.APIKeyValue)
+	if apiKey == "" && req.APIKeyID != "" {
+		if v, err := h.rawAPIKeyValue(req.APIKeyID); err == nil {
+			apiKey = v
+		}
+	}
+
 	sel := CLIToolSelection{
 		Model:         req.Model,
 		APIKeyID:      req.APIKeyID,
@@ -273,7 +283,6 @@ func (h *CLIToolsHandler) SaveConfig(c *gin.Context) {
 		return
 	}
 
-	apiKey := strings.TrimSpace(req.APIKeyValue)
 	if apiKey == "" {
 		apiKey = "__YOUR_AXONROUTER_API_KEY__"
 	}
@@ -340,6 +349,17 @@ func (h *CLIToolsHandler) isAPIKeyActive(id string) bool {
 	var isActive int
 	err := h.db.QueryRow(`SELECT is_active FROM api_keys WHERE id = ?`, id).Scan(&isActive)
 	return err == nil && isActive == 1
+}
+
+// rawAPIKeyValue resolves the stored raw secret for a key id. Returns an error
+// when the key has no stored value (legacy keys created before value storage).
+func (h *CLIToolsHandler) rawAPIKeyValue(id string) (string, error) {
+	var raw string
+	err := h.db.QueryRow(`SELECT COALESCE(key_value, '') FROM api_keys WHERE id = ?`, id).Scan(&raw)
+	if err != nil || raw == "" {
+		return "", fmt.Errorf("no stored value for key %s", id)
+	}
+	return raw, nil
 }
 
 func defaultBaseURL(c *gin.Context) string {

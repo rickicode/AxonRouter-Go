@@ -298,6 +298,7 @@ func New(cfg Config) *Router {
 	adminGroup.POST("/api-keys", apiKeyH.Create)
 	adminGroup.DELETE("/api-keys/:id", apiKeyH.Delete)
 	adminGroup.PATCH("/api-keys/:id/toggle", apiKeyH.ToggleActive)
+	adminGroup.GET("/api-keys/:id/value", apiKeyH.GetValue)
 
 	// CLI Tools — unified model catalog for dashboard pickers + per-tool config generation
 	modelLister := func() []map[string]string {

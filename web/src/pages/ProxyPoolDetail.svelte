@@ -8,6 +8,7 @@
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { toast } from 'svelte-sonner';
+import * as AlertDialog from '$lib/components/ui/alert-dialog';
   import { router } from '$lib/router';
 
   let { id = '' }: { id?: string } = $props();
@@ -16,6 +17,7 @@
   let error = $state('');
   let editing = $state(false);
   let actionLoading = $state('');
+let showDeleteConfirm = $state(false);
 
   // Edit form
   let editName = $state('');
@@ -94,20 +96,28 @@
     }
   }
 
-  async function handleDelete() {
-    if (!pool || !confirm('Delete this proxy pool? This will clean up all references.')) return;
-    actionLoading = 'delete';
-    try {
-      await proxyPoolsApi.delete(pool.id);
-      toast.success('Pool deleted');
-      router.navigate('/proxy-pools');
-    } catch (err) {
-      toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-      actionLoading = '';
-    }
-  }
+  function handleDelete() {
+ showDeleteConfirm = true;
+}
 
-  function formatTimestamp(ts: string | null): string {
+async function confirmDelete() {
+ if (!pool) return;
+ actionLoading = 'delete';
+ try {
+ await proxyPoolsApi.delete(pool.id);
+ showDeleteConfirm = false;
+ toast.success('Pool deleted');
+ router.navigate('/proxy-pools');
+ }
+ catch (err) {
+ toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+ }
+ finally {
+ actionLoading = '';
+ }
+}
+
+function formatTimestamp(ts: string | null): string {
     if (!ts) return 'Never';
     return new Date(ts).toLocaleString();
   }
@@ -151,7 +161,7 @@
       <div class="flex items-center gap-3">
         {#if editing}
           <div class="flex items-center gap-2">
-            <Input bind:value={editName} class="h-9 text-display-lg font-semibold w-64" onkeydown={(e) => e.key === 'Enter' && handleSave()} />
+            <Input bind:value={editName} class="h-9 text-display-lg font-semibold w-full sm:w-64" onkeydown={(e) => e.key === 'Enter' && handleSave()} />
             <Button onclick={handleSave} size="sm" class="h-8 text-body-sm rounded-sm">Save</Button>
             <Button onclick={() => (editing = false)} variant="ghost" size="sm" class="h-8 text-body-sm">Cancel</Button>
           </div>
@@ -255,5 +265,23 @@
         </div>
       </CardContent>
     </Card>
-  {/if}
+
+  <AlertDialog.Root bind:open={showDeleteConfirm}>
+    <AlertDialog.Content>
+      <AlertDialog.Header>
+        <AlertDialog.Title>Delete proxy pool?</AlertDialog.Title>
+        <AlertDialog.Description>
+          This will permanently delete <strong>{pool?.name ?? 'this pool'}</strong> and clean up all references. This action cannot be undone.
+        </AlertDialog.Description>
+      </AlertDialog.Header>
+      <AlertDialog.Footer>
+        <AlertDialog.Cancel onclick={() => (showDeleteConfirm = false)}>Cancel</AlertDialog.Cancel>
+        <AlertDialog.Action variant="destructive" onclick={confirmDelete}>
+          {actionLoading === 'delete' ? 'Deleting...' : 'Delete'}
+        </AlertDialog.Action>
+      </AlertDialog.Footer>
+    </AlertDialog.Content>
+  </AlertDialog.Root>
+
+ {/if}
 </div>

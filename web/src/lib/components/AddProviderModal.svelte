@@ -4,6 +4,7 @@
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { providersApi, type Provider } from '$lib/api';
+import { toast } from 'svelte-sonner';
   import { resolveProviderCatalogId } from '$lib/provider-catalog';
 
   let { open = $bindable(false), onCreated }: { open: boolean; onCreated?: (provider: Provider) => void } = $props();
@@ -71,12 +72,14 @@
         display_name: name.trim(),
         is_custom: true,
       });
-      createdProvider = result;
-      step = 'done';
-      onCreated?.(result);
-    } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to create provider';
-    } finally {
+		createdProvider = result;
+		step = 'done';
+		toast.success(`Provider "${name}" created`);
+		onCreated?.(result);
+	} catch (e) {
+		error = e instanceof Error ? e.message : 'Failed to create provider';
+		toast.error(error);
+	} finally {
       submitting = false;
     }
   }

@@ -6,6 +6,7 @@
   import { Label } from '$lib/components/ui/label';
   import { Badge } from '$lib/components/ui/badge';
   import { AlertDialog, AlertDialogContent, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from '$lib/components/ui/alert-dialog';
+import * as Dialog from '$lib/components/ui/dialog';
   import { toast } from 'svelte-sonner';
   import { apiKeysApi } from '$lib/api';
   import type { APIKeyItem } from '$lib/api';
@@ -68,6 +69,16 @@
       await loadKeys();
     } catch (err) {
       toast.error('Failed to delete key');
+    }
+  }
+
+  async function handleCopy(id: string, preview: string) {
+    try {
+      const res = await apiKeysApi.value(id);
+      await copyValue(res.key, 'API key');
+    } catch {
+      // Legacy keys may have no stored value — fall back to copying the preview.
+      await copyValue(preview, 'Key preview');
     }
   }
 
@@ -145,7 +156,7 @@ async function copyValue(text: string, label = 'Key') {
         <div class="overflow-x-auto">
           <table class="w-full text-left border-collapse">
             <thead>
-              <tr class="border-b border-white/5 bg-muted/30">
+              <tr class="border-b border-border bg-muted/30">
                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Name</th>
                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Key</th>
                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Rate Limit</th>
@@ -168,7 +179,7 @@ async function copyValue(text: string, label = 'Key') {
                   <td class="py-3 px-4 text-body-sm text-muted-foreground">{formatDate(key.created_at)}</td>
                   <td class="py-3 px-4">
                     <div class="flex gap-1">
-								<Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" onclick={() => copyValue(key.key_preview, 'Key preview')}>
+								<Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" onclick={() => handleCopy(key.id, key.key_preview)}>
 									Copy
 								</Button>
 								<Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" onclick={() => handleToggle(key.id, key.is_active)}>
@@ -189,10 +200,9 @@ async function copyValue(text: string, label = 'Key') {
   {/if}
 
   <!-- Create dialog -->
-  {#if showCreate}
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div class="w-full max-w-md rounded-lg bg-card border border-border p-6 shadow-lg">
-        {#if createdKey}
+<Dialog.Root bind:open={showCreate}>
+  <Dialog.Content class="sm:max-w-md">
+    {#if createdKey}
           <h2 class="text-lg font-semibold mb-2">Key created</h2>
           <p class="text-sm text-muted-foreground mb-4">Copy this key now — it won't be shown again.</p>
           <div class="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 mb-4">
@@ -224,9 +234,8 @@ async function copyValue(text: string, label = 'Key') {
             <Button variant="outline" onclick={() => { showCreate = false; createdKey = ''; }} class="text-sm">Cancel</Button>
           </div>
         {/if}
-      </div>
-    </div>
-  {/if}
+  </Dialog.Content>
+</Dialog.Root>
 
   <AlertDialog bind:open={showDeleteConfirm}>
     <AlertDialogContent>

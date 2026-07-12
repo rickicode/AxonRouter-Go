@@ -11,7 +11,10 @@ import { getProviderMeta } from '$lib/provider-catalog';
 import * as Dialog from '$lib/components/ui/dialog';
 import Pagination from '$lib/components/Pagination.svelte';
 import { type RequestLog } from '$lib/api';
-  import { Terminal, Filter, RefreshCw, Download } from '@lucide/svelte';
+  import TerminalIcon from '@lucide/svelte/icons/terminal';
+import FilterIcon from '@lucide/svelte/icons/filter';
+import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
+import DownloadIcon from '@lucide/svelte/icons/download';
 
   let currentPage = $state(1);
   let perPage = $state(100);
@@ -167,20 +170,20 @@ function formatCooldown(cd?: number) {
     </div>
     <div class="flex items-center gap-2">
       <Button onclick={handleExport} disabled={$logs.length === 0} variant="outline" size="sm" class="text-body-sm h-9 rounded-sm">
-        <Download class="size-3.5 mr-1.5" />
+        <DownloadIcon class="size-3.5 mr-1.5" />
         Export CSV
       </Button>
       <Button onclick={() => loadLogs(currentPage, perPage)} disabled={$isLoading} variant="outline" size="sm" class="text-body-sm h-9 rounded-sm">
-        <RefreshCw class="size-3.5 mr-1.5 {$isLoading ? 'animate-spin' : ''}" />
+        <RefreshCwIcon class="size-3.5 mr-1.5 {$isLoading ? 'animate-spin' : ''}" />
         Refresh
       </Button>
     </div>
   </div>
 
   <Card class="shadow-card">
-    <CardHeader class="pb-3 border-b border-white/5 flex flex-row items-center justify-between space-y-0">
+    <CardHeader class="pb-3 border-b border-border flex flex-row items-center justify-between space-y-0">
       <div class="flex items-center gap-2">
-        <Filter class="size-4 text-muted-foreground" />
+        <FilterIcon class="size-4 text-muted-foreground" />
         <CardTitle class="text-body-md-strong">Filters</CardTitle>
         {#if hasActiveFilters}
           <Button onclick={clearFilters} variant="ghost" size="sm" class="text-caption-mono h-6 px-2 text-muted-foreground">
@@ -198,7 +201,7 @@ function formatCooldown(cd?: number) {
           { code: 500, label: 'Error' },
         ] as pill}
           <button
-            class="rounded-pill-sm px-3 py-1 text-caption-mono transition-colors
+            class="rounded-sm px-3 py-1 text-caption-mono transition-colors
               {$logFilter.status_code === pill.code
                 ? 'bg-foreground text-background'
                 : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'}"
@@ -242,7 +245,7 @@ function formatCooldown(cd?: number) {
 <Card class="shadow-card border-l-4 border-l-amber-500">
  <CardHeader class="pb-3 flex flex-row items-center justify-between space-y-0">
   <div class="flex items-center gap-2">
-   <RefreshCw class="size-4 text-amber-500 animate-spin" />
+   <RefreshCwIcon class="size-4 text-amber-500 animate-spin" />
    <CardTitle class="text-body-md-strong">In-flight requests</CardTitle>
   </div>
   <p class="text-caption text-muted-foreground">{$activeRequests.length} active</p>
@@ -251,7 +254,7 @@ function formatCooldown(cd?: number) {
   <div class="overflow-x-auto">
    <table class="w-full text-left border-collapse">
     <thead>
-     <tr class="border-b border-white/5 bg-muted/30">
+     <tr class="border-b border-border bg-muted/30">
       <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-4">Started</th>
       <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-4">Provider</th>
       <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-4">Account</th>
@@ -296,7 +299,7 @@ function formatCooldown(cd?: number) {
   {:else if $logs.length === 0}
     <Card class="shadow-card">
       <CardContent class="flex flex-col items-center justify-center py-16 text-center">
-        <Terminal class="size-8 text-muted-foreground mb-3" />
+        <TerminalIcon class="size-8 text-muted-foreground mb-3" />
         <p class="text-foreground font-semibold text-body-sm mb-1">No logs found.</p>
         <p class="text-muted-foreground text-body-sm">Adjust filters or send requests to the proxy to generate logs.</p>
       </CardContent>
@@ -307,7 +310,7 @@ function formatCooldown(cd?: number) {
         <div class="overflow-x-auto">
           <table class="w-full text-left border-collapse">
             <thead>
-              <tr class="border-b border-white/5 bg-muted/30">
+              <tr class="border-b border-border bg-muted/30">
 										{#each columns as column}
 											<th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 {column.key === 'timestamp' ? 'min-w-[180px]' : ''} {column.key === 'provider_name' ? 'min-w-[140px]' : ''} {column.key === 'connection_name' ? 'min-w-[120px]' : ''} {column.key === 'model_id' ? 'min-w-[180px]' : ''} {column.key === 'tokens' ? 'text-right min-w-[120px]' : ''} {column.key === 'cost_usd' ? 'text-right min-w-[80px]' : ''} {column.key === 'error_message' ? 'min-w-[160px]' : ''}">{column.label}</th>
 										{/each}

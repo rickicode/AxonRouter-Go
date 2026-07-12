@@ -111,7 +111,7 @@
               <Label class="text-body-sm-strong">Strategy</Label>
               <div class="flex gap-2">
                 {#each strategyOptions as opt}
-                  <button class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {editStrategy === opt ? 'bg-foreground text-background border-foreground' : 'border-white/8 text-muted-foreground hover:text-foreground'}" onclick={() => editStrategy = opt}>
+                  <button class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {editStrategy === opt ? 'bg-foreground text-background border-foreground' : 'border-border text-muted-foreground hover:text-foreground'}" onclick={() => editStrategy = opt}>
                     {opt === 'priority' ? 'Priority' : 'Round Robin'}
                   </button>
                 {/each}
@@ -133,7 +133,7 @@
         </CardContent>
       </Card>
       <div class="flex gap-3">
-        <Button onclick={handleSave} disabled={!!actionLoading} class="text-button-md rounded-pill px-5">
+        <Button onclick={handleSave} disabled={!!actionLoading} class="text-button-md rounded-sm px-5">
           {actionLoading === 'save' ? 'Saving...' : 'Save'}
         </Button>
         <Button onclick={() => editing = false} variant="ghost" class="text-body-sm">Cancel</Button>
@@ -199,7 +199,7 @@
             </div>
           </div>
           {#if $selectedCombo.is_smart && unwrapStr($selectedCombo.smart_goal)}
-            <div class="mt-3 pt-3 border-t border-white/5">
+            <div class="mt-3 pt-3 border-t border-border">
               <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Smart goal</p>
               <p class="text-body-sm mt-0.5">{smartGoalDescriptions[unwrapStr($selectedCombo.smart_goal) ?? ''] ?? 'Custom smart routing goal.'}</p>
             </div>
@@ -216,7 +216,7 @@
           </div>
         </CardHeader>
         <CardContent>
-          <div class="p-6 border border-dashed border-white/10 rounded-md text-center">
+          <div class="p-6 border border-dashed border-border rounded-md text-center">
             <p class="text-body-sm text-muted-foreground mb-1">No steps configured yet.</p>
             <p class="text-caption text-muted-foreground">Add connection/model steps via the API to define routing order.</p>
           </div>

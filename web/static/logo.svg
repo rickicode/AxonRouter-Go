@@ -1,33 +1,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
   <defs>
-    <linearGradient id="axGrad" x1="14" y1="14" x2="50" y2="50" gradientUnits="userSpaceOnUse">
+    <linearGradient id="axTile" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#f472b6"/>
-      <stop offset="100%" stop-color="#ec4899"/>
-    </linearGradient>
-    <radialGradient id="axHub" cx="0.5" cy="0.42" r="0.62">
-      <stop offset="0%" stop-color="#fbcfe8"/>
-      <stop offset="55%" stop-color="#ec4899"/>
       <stop offset="100%" stop-color="#db2777"/>
-    </radialGradient>
+    </linearGradient>
+    <linearGradient id="axLoop" x1="14" y1="32" x2="50" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#fce7f3"/>
+    </linearGradient>
   </defs>
 
-  <!-- Axon branches: organic signal paths from the hub to routed destinations -->
-  <g stroke="url(#axGrad)" stroke-width="3" stroke-linecap="round" fill="none" opacity="0.95">
-    <path d="M32 30 C 29 24 35 18 32 11"/>
-    <path d="M38 36 C 45 37 49 40 51 43"/>
-    <path d="M26 36 C 19 37 15 40 13 43"/>
-  </g>
+  <!-- Rounded-square app tile (100% different from the old radial synapse) -->
+  <rect x="6" y="6" width="52" height="52" rx="14" fill="url(#axTile)"/>
 
-  <!-- Destination synapse nodes -->
-  <circle cx="32" cy="11" r="3.4" fill="#fbcfe8"/>
-  <circle cx="51" cy="43" r="3.4" fill="#fbcfe8"/>
-  <circle cx="13" cy="43" r="3.4" fill="#fbcfe8"/>
+  <!-- Continuous routing loop: infinite path = always-on proxying, no triangles -->
+  <path d="M22 40
+           C 22 28 32 28 32 32
+           C 32 36 42 36 42 24
+           C 42 14 22 16 22 30
+           C 22 44 42 46 42 40"
+        stroke="url(#axLoop)" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.95"/>
 
-  <!-- Traveling pulses (active routing) -->
-  <circle cx="32" cy="19" r="2.6" fill="#ff0080"/>
-  <circle cx="46" cy="40" r="2" fill="#ff0080" opacity="0.85"/>
-
-  <!-- Central hub: the router synapse -->
-  <circle cx="32" cy="32" r="8" fill="url(#axHub)"/>
-  <circle cx="32" cy="32" r="3.4" fill="#18181b"/>
+  <!-- Active pulse riding the route -->
+  <circle cx="32" cy="32" r="4.2" fill="#ff0080"/>
 </svg>

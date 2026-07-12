@@ -11,9 +11,11 @@
   import ProviderIcon from '$lib/components/ProviderIcon.svelte';
   import { getProviderMeta, getStatusDotColor, getStatusVariant, getStatusLabel } from '$lib/provider-catalog';
   import { toast } from 'svelte-sonner';
+import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
   import AddConnectionModal from '$lib/components/AddConnectionModal.svelte';
 import Pagination from '$lib/components/Pagination.svelte';
   import * as AlertDialog from '$lib/components/ui/alert-dialog';
+import StatusBadge from '$lib/components/StatusBadge.svelte';
 
   let showAddModal = $state(false);
 
@@ -166,7 +168,7 @@ function handlePerPageChange(p: number) {
 
 <div class="flex flex-1 flex-col gap-6 p-6">
   <a href="/providers" class="inline-flex items-center gap-1.5 text-body-sm text-muted-foreground hover:text-foreground transition-colors w-fit">
-    <svg class="size-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg>
+    <ArrowLeftIcon class="size-3.5" />
     Back to providers
   </a>
   {#if $isLoading && !$selectedProvider}
@@ -234,7 +236,7 @@ function handlePerPageChange(p: number) {
           value={$connectionFilter.status}
           onValueChange={(value: string) => { $connectionFilter.status = value || ''; currentPage = 1; loadConnections(providerId, currentPage, perPage); }}
         >
-          <Select.Trigger class="w-[180px] h-9 text-body-sm rounded-sm">
+          <Select.Trigger class="w-full sm:w-[180px] h-9 text-body-sm rounded-sm">
             {statusOptions.find(o => o.value === $connectionFilter.status)?.label || 'All statuses'}
           </Select.Trigger>
           <Select.Content>
@@ -251,7 +253,7 @@ function handlePerPageChange(p: number) {
           <div class="overflow-x-auto">
             <table class="w-full text-left border-collapse">
               <thead>
-                <tr class="border-b border-white/5 bg-muted/30">
+                <tr class="border-b border-border bg-muted/30">
                   <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Name</th>
                   <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Status</th>
                   <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Auth</th>
@@ -295,20 +297,14 @@ function handlePerPageChange(p: number) {
                           {row.name}
                         </a>
                         {#if isDefault}
-                          <span class="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-sky-500/15 text-sky-400">Default</span>
+                          <StatusBadge status="default" label="Default" class="ml-1" />
                         {/if}
                         {#if !isDefault && getAccountLabel(row)}
-                          <span class="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-500/15 text-violet-400">{getAccountLabel(row)}</span>
+                          <StatusBadge status="smart" label={getAccountLabel(row)} class="ml-1" />
                         {/if}
                         {#if expiry}
-                          {#if expiry.status === 'expired'}
-                            <span class="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-500/15 text-red-400">{expiry.text}</span>
-                          {:else if expiry.status === 'expiring'}
-                            <span class="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-400">{expiry.text}</span>
-                          {:else}
-                            <span class="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/15 text-emerald-400">{expiry.text}</span>
-                          {/if}
-                        {/if}
+						<StatusBadge status={expiry.status === 'expired' ? 'error' : expiry.status === 'expiring' ? 'testing' : 'active'} label={expiry.text} class="ml-1" />
+					{/if}
 
                       </td>
                       <td class="py-3 px-4">

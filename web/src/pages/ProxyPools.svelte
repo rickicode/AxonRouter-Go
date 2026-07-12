@@ -4,14 +4,15 @@
   import type { ProxyPool, ProxyGroup, DeployResult, Provider } from '$lib/api';
   import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
-  import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
   import { Textarea } from '$lib/components/ui/textarea';
   import { Label } from '$lib/components/ui/label';
   import { Switch } from '$lib/components/ui/switch';
   import * as Select from '$lib/components/ui/select';
   import * as Dialog from '$lib/components/ui/dialog';
+  import * as Tabs from '$lib/components/ui/tabs';
 import Pagination from '$lib/components/Pagination.svelte';
+  import StatusBadge from '$lib/components/StatusBadge.svelte';
   import { toast } from 'svelte-sonner';
 
   let tab = $state<'pools' | 'groups' | 'assignments' | 'deploy'>('pools');
@@ -344,7 +345,8 @@ async function saveProxyDefaults() {
         <Button onclick={loadAll} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
       </CardContent>
     </Card>
-  {:else}
+  {/if}
+  {#if !loading && !error}
     <!-- Header -->
     <div class="flex items-center justify-between">
       <div class="space-y-1">
@@ -371,35 +373,33 @@ async function saveProxyDefaults() {
         </div>
       </div>
       <div class="flex gap-2">
-        <Button onclick={runHealthCheck} variant="outline" class="text-body-sm rounded-pill px-4">
+        <Button onclick={runHealthCheck} variant="outline" class="text-body-sm rounded-sm px-4">
           Health check
         </Button>
         {#if tab === 'pools'}
-          <Button onclick={() => (showCreatePool = true)} class="text-button-md rounded-pill px-5">Add pool</Button>
-          <Button onclick={() => { bulkText = ''; bulkType = 'http'; bulkNamePrefix = 'bulk'; bulkNoProxy = ''; bulkActive = true; showBulkImport = true; }} variant="outline" class="text-button-md rounded-pill px-5">Bulk import</Button>
+          <Button onclick={() => (showCreatePool = true)} class="text-button-md rounded-sm px-5">Add pool</Button>
+          <Button onclick={() => { bulkText = ''; bulkType = 'http'; bulkNamePrefix = 'bulk'; bulkNoProxy = ''; bulkActive = true; showBulkImport = true; }} variant="outline" class="text-button-md rounded-sm px-5">Bulk import</Button>
         {:else if tab === 'groups'}
-          <Button onclick={() => { groupName = ''; groupMode = 'roundrobin'; groupStickyLimit = 1; groupStrict = false; groupPoolIds = []; showCreateGroup = true; }} class="text-button-md rounded-pill px-5">Add group</Button>
+          <Button onclick={() => { groupName = ''; groupMode = 'roundrobin'; groupStickyLimit = 1; groupStrict = false; groupPoolIds = []; showCreateGroup = true; }} class="text-button-md rounded-sm px-5">Add group</Button>
         {/if}
       </div>
     </div>
 
-<!-- Tabs -->
-		<div class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-1">
-      {#each ([['pools', `Pools (${pools.length})`], ['groups', `Groups (${groups.length})`], ['assignments', 'Assignments'], ['deploy', 'Deploy']] as const) as [key, label]}
-        <button
-          class="cursor-pointer rounded-md px-4 py-1.5 text-sm font-medium transition-all {tab === key ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}"
-          onclick={() => (tab = key)}
-        >{label}</button>
-      {/each}
-    </div>
+    <Tabs.Root bind:value={tab} class="w-full flex flex-col gap-6">
+      <Tabs.List class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-1">
+        <Tabs.Trigger value="pools" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Pools ({pools.length})</Tabs.Trigger>
+        <Tabs.Trigger value="groups" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Groups ({groups.length})</Tabs.Trigger>
+        <Tabs.Trigger value="assignments" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Assignments</Tabs.Trigger>
+        <Tabs.Trigger value="deploy" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Deploy</Tabs.Trigger>
+      </Tabs.List>
 
     <!-- Pool Table -->
-    {#if tab === 'pools'}
+      <Tabs.Content value="pools">
       {#if pools.length > 0}
         <Card class="shadow-card overflow-hidden p-0">
           <table class="w-full text-body-sm">
             <thead>
-              <tr class="border-b border-white/5 bg-white/[0.02]">
+              <tr class="border-b border-border bg-muted/50">
                 <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Name</th>
                 <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Proxy URL</th>
                 <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Type</th>
@@ -411,7 +411,7 @@ async function saveProxyDefaults() {
             </thead>
             <tbody>
               {#each pools as pool}
-                <tr class="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
+                <tr class="border-b border-border hover:bg-muted/50 transition-colors">
                   <td class="px-4 py-2.5">
                     <a href="/proxy-pools/{pool.id}" class="text-body-sm-strong hover:underline truncate block max-w-[160px]">{pool.name}</a>
                   </td>
@@ -427,30 +427,16 @@ async function saveProxyDefaults() {
                     <span class="text-caption-mono text-muted-foreground">{typeLabel(pool.type)}</span>
                   </td>
                   <td class="px-4 py-2.5 text-center">
-                    <button onclick={() => togglePoolActive(pool)}
-                      class="cursor-pointer inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase transition-colors
-                        {pool.isActive ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25' : 'bg-zinc-500/15 text-zinc-500 border border-zinc-500/20 hover:bg-zinc-500/25'}">
-                      <span class="size-1.5 rounded-full {pool.isActive ? 'bg-emerald-400' : 'bg-zinc-600'}"></span>
-                      {pool.isActive ? 'On' : 'Off'}
-                    </button>
+                    <StatusBadge status={pool.isActive ? 'active' : 'inactive'} onclick={() => togglePoolActive(pool)}>{pool.isActive ? 'On' : 'Off'}</StatusBadge>
                   </td>
                   <td class="px-4 py-2.5 text-center">
                     {#if pool.testStatus === 'active'}
-                      <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase bg-sky-500/15 text-sky-400 border border-sky-500/30">
-                        <span class="size-1.5 rounded-full bg-sky-400 animate-pulse"></span>
-                        Online
-                      </span>
-                    {:else if pool.testStatus === 'error'}
-                      <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase bg-red-500/15 text-red-400 border border-red-500/30" title={pool.lastError || ''}>
-                        <span class="size-1.5 rounded-full bg-red-400"></span>
-                        Error
-                      </span>
-                    {:else}
-                      <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase bg-zinc-500/10 text-zinc-500 border border-zinc-500/20">
-                        <span class="size-1.5 rounded-full bg-zinc-600"></span>
-                        —
-                      </span>
-                    {/if}
+                        <StatusBadge status="healthy">Online</StatusBadge>
+                      {:else if pool.testStatus === 'error'}
+                        <StatusBadge status="error" title={pool.lastError || ''}>Error</StatusBadge>
+                      {:else}
+                        <StatusBadge status="idle">—</StatusBadge>
+                      {/if}
                   </td>
                   <td class="px-4 py-2.5 text-right">
                     <span class="text-caption-mono {pool.responseTimeMs != null && pool.responseTimeMs < 500 ? 'text-emerald-400' : pool.responseTimeMs != null && pool.responseTimeMs < 2000 ? 'text-yellow-400' : 'text-muted-foreground'}">
@@ -477,19 +463,19 @@ async function saveProxyDefaults() {
           <CardContent class="flex flex-col items-center justify-center py-16">
             <h3 class="text-body-md-strong mb-1">No proxy pools configured.</h3>
             <p class="text-body-sm text-muted-foreground mb-4">Add an HTTP proxy or relay to route traffic through external endpoints.</p>
-            <Button onclick={() => (showCreatePool = true)} class="text-button-md rounded-pill px-5">Add pool</Button>
+            <Button onclick={() => (showCreatePool = true)} class="text-button-md rounded-sm px-5">Add pool</Button>
           </CardContent>
         </Card>
       {/if}
-    {/if}
+      </Tabs.Content>
 
     <!-- Group Table -->
-    {#if tab === 'groups'}
+      <Tabs.Content value="groups">
       {#if groups.length > 0}
         <Card class="shadow-card overflow-hidden p-0">
           <table class="w-full text-body-sm">
             <thead>
-              <tr class="border-b border-white/5 bg-white/[0.02]">
+              <tr class="border-b border-border bg-muted/50">
                 <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Name</th>
                 <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Mode</th>
                 <th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Pools</th>
@@ -500,7 +486,7 @@ async function saveProxyDefaults() {
             </thead>
             <tbody>
               {#each groups as group}
-                <tr class="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
+                <tr class="border-b border-border hover:bg-muted/50 transition-colors">
                   <td class="px-4 py-2.5">
                     <span class="text-body-sm-strong truncate block max-w-[160px]">{group.name}</span>
                   </td>
@@ -514,12 +500,7 @@ async function saveProxyDefaults() {
                     <span class="text-caption-mono">{group.proxyPoolIds?.length ?? 0}</span>
                   </td>
                   <td class="px-4 py-2.5 text-center">
-                    <button onclick={() => toggleGroupActive(group)}
-                      class="cursor-pointer inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase transition-colors
-                        {group.isActive ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25' : 'bg-zinc-500/15 text-zinc-500 border border-zinc-500/20 hover:bg-zinc-500/25'}">
-                      <span class="size-1.5 rounded-full {group.isActive ? 'bg-emerald-400' : 'bg-zinc-600'}"></span>
-                      {group.isActive ? 'On' : 'Off'}
-                    </button>
+                    <StatusBadge status={group.isActive ? 'active' : 'inactive'} onclick={() => toggleGroupActive(group)}>{group.isActive ? 'On' : 'Off'}</StatusBadge>
                   </td>
                   <td class="px-4 py-2.5 text-center">
                     {#if group.strictProxy}
@@ -544,16 +525,16 @@ async function saveProxyDefaults() {
           <CardContent class="flex flex-col items-center justify-center py-16">
             <h3 class="text-body-md-strong mb-1">No proxy groups configured.</h3>
             <p class="text-body-sm text-muted-foreground mb-4">Group pools together with round-robin or sticky routing.</p>
-            <Button onclick={() => { groupName = ''; groupMode = 'roundrobin'; groupStickyLimit = 1; groupStrict = false; groupPoolIds = []; showCreateGroup = true; }} class="text-button-md rounded-pill px-5">Add group</Button>
+            <Button onclick={() => { groupName = ''; groupMode = 'roundrobin'; groupStickyLimit = 1; groupStrict = false; groupPoolIds = []; showCreateGroup = true; }} class="text-button-md rounded-sm px-5">Add group</Button>
           </CardContent>
         </Card>
       {/if}
-    {/if}
+      </Tabs.Content>
 
-{#if tab === 'assignments'}
+      <Tabs.Content value="assignments">
 {#if providers.some(p => p.id !== 'oc') && pools.length > 0}
         <Card class="shadow-card overflow-hidden p-0">
-          <div class="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-white/[0.02]">
+          <div class="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/50">
             <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Provider → Proxy Assignment</p>
             <Button onclick={saveProxyDefaults} disabled={proxySaving} size="sm" class="text-body-sm rounded-sm">
               {proxySaving ? 'Saving...' : 'Save'}
@@ -561,7 +542,7 @@ async function saveProxyDefaults() {
           </div>
           <table class="w-full text-body-sm">
             <thead>
-              <tr class="border-b border-white/5">
+              <tr class="border-b border-border">
                 <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Provider</th>
                 <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Proxy Group</th>
                 <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Proxy Pool</th>
@@ -569,7 +550,7 @@ async function saveProxyDefaults() {
             </thead>
             <tbody>
               {#each providers.filter(p => p.id !== 'oc') as prov}
-                <tr class="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
+                <tr class="border-b border-border hover:bg-muted/50 transition-colors">
                   <td class="px-4 py-2.5">
                     <span class="text-body-sm-strong">{prov.display_name ?? prov.id}</span>
                     <span class="text-caption-mono text-muted-foreground ml-1">({prov.id})</span>
@@ -620,10 +601,10 @@ async function saveProxyDefaults() {
           </CardContent>
         </Card>
       {/if}
-    {/if}
+      </Tabs.Content>
 
-<!-- Deploy Tab -->
-	{#if tab === 'deploy'}
+        <!-- Deploy Tab -->
+      <Tabs.Content value="deploy">
 		<Card class="shadow-card">
 			<CardHeader class="pb-3">
 				<CardTitle class="text-base">Deploy Relay Edge Function</CardTitle>
@@ -663,7 +644,7 @@ async function saveProxyDefaults() {
             <Input bind:value={deployProjectName} placeholder="auto-generated if empty" class="h-10 text-body-sm" />
           </div>
 				<div class="pt-1">
-					<Button onclick={handleDeploy} disabled={deployLoading || !deployToken.trim()} class="text-button-md rounded-pill px-5">
+					<Button onclick={handleDeploy} disabled={deployLoading || !deployToken.trim()} class="text-button-md rounded-sm px-5">
 						{deployLoading ? 'Deploying...' : `Deploy to ${deployPlatform === 'vercel' ? 'Vercel' : deployPlatform === 'deno' ? 'Deno' : 'Cloudflare'}`}
 					</Button>
 				</div>
@@ -720,7 +701,8 @@ async function saveProxyDefaults() {
 			{/if}
         </CardContent>
       </Card>
-    {/if}
+      </Tabs.Content>
+    </Tabs.Root>
   {/if}
 </div>
 
@@ -798,7 +780,7 @@ async function saveProxyDefaults() {
           <Label class="text-sm font-medium">Pools</Label>
           <div class="flex flex-wrap gap-1.5">
             {#each pools as pool}
-              <button class="cursor-pointer px-2.5 py-1 rounded-md text-caption-mono border transition-colors {groupPoolIds.includes(pool.id) ? 'bg-foreground text-background border-foreground' : 'border-white/10 text-muted-foreground hover:text-foreground'}" onclick={() => toggleGroupPool(pool.id)}>
+              <button class="cursor-pointer px-2.5 py-1 rounded-md text-caption-mono border transition-colors {groupPoolIds.includes(pool.id) ? 'bg-foreground text-background border-foreground' : 'border-border text-muted-foreground hover:text-foreground'}" onclick={() => toggleGroupPool(pool.id)}>
                 {pool.name}
               </button>
             {/each}
@@ -849,7 +831,7 @@ async function saveProxyDefaults() {
           <Label class="text-sm font-medium">Pools</Label>
           <div class="flex flex-wrap gap-1.5">
             {#each pools as pool}
-              <button class="cursor-pointer px-2.5 py-1 rounded-md text-caption-mono border transition-colors {groupPoolIds.includes(pool.id) ? 'bg-foreground text-background border-foreground' : 'border-white/10 text-muted-foreground hover:text-foreground'}" onclick={() => toggleGroupPool(pool.id)}>
+              <button class="cursor-pointer px-2.5 py-1 rounded-md text-caption-mono border transition-colors {groupPoolIds.includes(pool.id) ? 'bg-foreground text-background border-foreground' : 'border-border text-muted-foreground hover:text-foreground'}" onclick={() => toggleGroupPool(pool.id)}>
                 {pool.name}
               </button>
             {/each}

@@ -3,7 +3,8 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { ScrollArea } from '$lib/components/ui/scroll-area';
-	import { Search, Check } from '@lucide/svelte';
+	import SearchIcon from '@lucide/svelte/icons/search';
+import CheckIcon from '@lucide/svelte/icons/check';
 	import type { GatewayModel } from '$lib/api';
 
 	let {
@@ -71,7 +72,7 @@
 				Browse all active models available on this gateway.
 			</Dialog.Description>
 			<div class="mt-3 flex items-center gap-2">
-				<Search class="size-4 text-muted-foreground" />
+				<SearchIcon class="size-4 text-muted-foreground" />
 				<Input bind:value={modelSearch} placeholder="Search models…" class="text-body-sm" />
 			</div>
 		</div>
@@ -86,7 +87,7 @@
 						<div class="flex items-center gap-2">
 							<span class="shrink-0 text-caption text-muted-foreground">{model.owned_by}</span>
 							{#if localSelection.has(model.id)}
-								<Check class="size-3.5 text-primary" />
+      <CheckIcon class="size-3.5 text-primary" />
 							{/if}
 						</div>
 					</button>

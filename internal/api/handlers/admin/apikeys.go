@@ -91,9 +91,9 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 	}
 
 	_, err = h.db.Exec(`
-		INSERT INTO api_keys (id, key_hash, name, rate_limit_per_min, is_active, created_at)
-		VALUES (?, ?, ?, ?, 1, ?)
-	`, id, string(hash), name, req.RateLimitPerMin, now)
+		INSERT INTO api_keys (id, key_hash, key_value, name, rate_limit_per_min, is_active, created_at)
+		VALUES (?, ?, ?, ?, ?, 1, ?)
+	`, id, string(hash), keyHex, name, req.RateLimitPerMin, now)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -105,6 +105,21 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 		"name":    req.Name,
 		"message": "Save this key — it won't be shown again",
 	})
+}
+
+// GetValue returns the raw API key value for a given id. The value is only
+// available at creation time and stored for convenience; it is served here so
+// the dashboard can copy the full key and so CLI tool configs can embed it
+// directly from the selected key (no manual paste needed).
+func (h *APIKeyHandler) GetValue(c *gin.Context) {
+	id := c.Param("id")
+	var raw string
+	err := h.db.QueryRow(`SELECT COALESCE(key_value, '') FROM api_keys WHERE id = ?`, id).Scan(&raw)
+	if err != nil || raw == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "api key value is not available"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"id": id, "key": raw})
 }
 
 // Delete removes an API key.

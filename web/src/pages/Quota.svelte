@@ -17,10 +17,19 @@
   import { Card, CardContent } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
-  import {
-    RefreshCw, Gauge, AlertCircle, Clock, Search, ChevronLeft, ChevronRight,
-    X, Infinity, AlertTriangle, CheckCircle2, HelpCircle, Zap, User
-  } from '@lucide/svelte';
+  import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
+  import GaugeIcon from '@lucide/svelte/icons/gauge';
+  import AlertCircleIcon from '@lucide/svelte/icons/alert-circle';
+  import ClockIcon from '@lucide/svelte/icons/clock';
+  import SearchIcon from '@lucide/svelte/icons/search';
+  import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
+  import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
+  import XIcon from '@lucide/svelte/icons/x';
+  import AlertTriangleIcon from '@lucide/svelte/icons/alert-triangle';
+  import CheckCircle2Icon from '@lucide/svelte/icons/check-circle-2';
+  import HelpCircleIcon from '@lucide/svelte/icons/help-circle';
+  import ZapIcon from '@lucide/svelte/icons/zap';
+  import UserIcon from '@lucide/svelte/icons/user';
 
   let searchQuery = $state('');
   let filterProvider = $state('');
@@ -162,10 +171,10 @@
 
   function getPlanBadge(plan: string) {
     const p = plan.toLowerCase();
-    if (p.includes('free')) return { cls: 'border-muted text-muted-foreground', icon: User };
-    if (p.includes('plus') || p.includes('pro')) return { cls: 'border-emerald-500/30 text-emerald-400', icon: Zap };
-    if (p.includes('ultra') || p.includes('premium')) return { cls: 'border-violet-500/30 text-violet-400', icon: Zap };
-    return { cls: 'border-muted text-muted-foreground', icon: Zap };
+    if (p.includes('free')) return { cls: 'border-muted text-muted-foreground', icon: UserIcon };
+    if (p.includes('plus') || p.includes('pro')) return { cls: 'border-emerald-500/30 text-emerald-400', icon: ZapIcon };
+    if (p.includes('ultra') || p.includes('premium')) return { cls: 'border-violet-500/30 text-violet-400', icon: ZapIcon };
+    return { cls: 'border-muted text-muted-foreground', icon: ZapIcon };
   }
 
   let providerOptions = $derived(() => {
@@ -187,7 +196,7 @@
     <div class="flex items-center gap-2">
       {#if hasActiveFilters}
         <Button variant="outline" size="sm" onclick={clearFilters} class="gap-1.5 text-body-sm rounded-sm cursor-pointer">
-          <X class="size-3.5" /> Clear
+          <XIcon class="size-3.5" /> Clear
         </Button>
       {/if}
       <Button
@@ -197,7 +206,7 @@
         disabled={$quotaLoading || $quotaItems.length === 0}
         class="gap-1.5 text-body-sm rounded-sm cursor-pointer"
       >
-        <RefreshCw class="size-3.5" /> Refresh Page
+        <RefreshCwIcon class="size-3.5" /> Refresh Page
       </Button>
     </div>
   </div>
@@ -208,7 +217,7 @@
     <div class="flex flex-col gap-4">
       <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div class="relative w-full lg:max-w-md">
-          <Search class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+          <SearchIcon class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
           <Input
             type="text"
             bind:value={searchQuery}
@@ -230,7 +239,7 @@
       </div>
 
       <!-- Status pills -->
-      <div class="flex flex-wrap gap-1.5 border-t border-white/5 pt-3">
+      <div class="flex flex-wrap gap-1.5 border-t border-border pt-3">
         {#each statusOptions as opt}
           <button
             class="inline-flex items-center rounded-full px-3 py-1 text-caption font-medium transition-colors cursor-pointer
@@ -285,7 +294,7 @@
   {:else if $quotaError && $quotaItems.length === 0}
     <Card class="shadow-card">
       <CardContent class="flex flex-col items-center justify-center py-12 gap-3">
-        <AlertCircle class="size-6 text-rose-400" />
+        <AlertCircleIcon class="size-6 text-rose-400" />
         <p class="text-body-sm text-muted-foreground">{$quotaError}</p>
         <Button variant="outline" onclick={() => applyFilters()} class="text-body-sm rounded-sm cursor-pointer">Retry</Button>
       </CardContent>
@@ -293,7 +302,7 @@
   {:else if $quotaItems.length === 0}
     <Card class="shadow-card">
       <CardContent class="flex flex-col items-center justify-center py-12 gap-3">
-        <Gauge class="size-6 text-muted-foreground" />
+        <GaugeIcon class="size-6 text-muted-foreground" />
         <p class="text-body-sm text-muted-foreground">
           {hasActiveFilters ? 'No connections match your filters.' : 'No quota data yet. The scheduler will populate this on its next run.'}
         </p>
@@ -323,7 +332,7 @@
               class="size-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer disabled:opacity-40"
               title="Refresh"
             >
-              <RefreshCw class="size-3.5 {refreshing ? 'animate-spin' : ''}" />
+              <RefreshCwIcon class="size-3.5 {refreshing ? 'animate-spin' : ''}" />
             </button>
           </div>
 
@@ -345,7 +354,7 @@
           <div class="px-4 pb-3 space-y-2.5">
             {#if item.error}
               <div class="flex items-start gap-2 rounded-md bg-rose-500/5 border border-rose-500/10 px-3 py-2">
-                <AlertCircle class="size-3.5 text-rose-400 shrink-0 mt-0.5" />
+                <AlertCircleIcon class="size-3.5 text-rose-400 shrink-0 mt-0.5" />
                 <p class="text-caption text-rose-400/80 leading-snug">{item.error}</p>
               </div>
             {:else if item.quotas.length === 0}
@@ -365,7 +374,7 @@
                       {/if}
                       {#if qi.reset_at}
                         <span class="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
-                          <Clock class="size-2.5" />{formatResetTime(qi.reset_at)}
+                          <ClockIcon class="size-2.5" />{formatResetTime(qi.reset_at)}
                         </span>
                       {/if}
                     </div>
@@ -387,11 +396,11 @@
           <div class="px-4 py-2.5 border-t border-border">
             {#if expiry}
               {#if expiry.status === 'expired'}
-                <span class="text-caption text-red-400 flex items-center gap-1"><AlertCircle class="size-3" /> Token expired</span>
+                <span class="text-caption text-red-400 flex items-center gap-1"><AlertCircleIcon class="size-3" /> Token expired</span>
               {:else if expiry.status === 'expiring'}
-                <span class="text-caption text-amber-400 flex items-center gap-1"><AlertTriangle class="size-3" /> Token expires in {expiry.text}</span>
+                <span class="text-caption text-amber-400 flex items-center gap-1"><AlertTriangleIcon class="size-3" /> Token expires in {expiry.text}</span>
               {:else}
-                <span class="text-caption text-emerald-400 flex items-center gap-1"><CheckCircle2 class="size-3" /> Token expires in {expiry.text}</span>
+                <span class="text-caption text-emerald-400 flex items-center gap-1"><CheckCircle2Icon class="size-3" /> Token expires in {expiry.text}</span>
               {/if}
             {:else}
               <span class="text-caption text-muted-foreground">Updated {formatFetched(item.fetched_at)}</span>
@@ -409,11 +418,11 @@
         </p>
         <div class="flex items-center gap-1.5">
           <Button variant="outline" size="icon" class="size-8 rounded-sm cursor-pointer" disabled={$quotaPage <= 1} onclick={() => goToPage($quotaPage - 1)}>
-            <ChevronLeft class="size-4" />
+            <ChevronLeftIcon class="size-4" />
           </Button>
           <span class="text-caption-mono px-2">{$quotaPage} / {$quotaTotalPages}</span>
           <Button variant="outline" size="icon" class="size-8 rounded-sm cursor-pointer" disabled={$quotaPage >= $quotaTotalPages} onclick={() => goToPage($quotaPage + 1)}>
-            <ChevronRight class="size-4" />
+            <ChevronRightIcon class="size-4" />
           </Button>
         </div>
       </div>

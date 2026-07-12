@@ -215,7 +215,8 @@
   {:else}
     <section class="overflow-hidden rounded-xl bg-card shadow-elevated">
       <div class="relative p-5 md:p-6">
-        <div class="pointer-events-none absolute inset-x-0 top-0 h-32 bg-[radial-gradient(circle_at_20%_0%,rgba(0,124,240,0.16),transparent_34%),radial-gradient(circle_at_70%_0%,rgba(255,0,128,0.10),transparent_28%)]"></div>
+        <div class="pointer-events-none absolute -left-16 top-0 size-48 rounded-full bg-primary/10 blur-3xl"></div>
+			<div class="pointer-events-none absolute right-0 top-0 size-40 rounded-full bg-violet-500/10 blur-3xl"></div>
         <div class="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div class="max-w-3xl space-y-2">
             <h1 class="text-display-lg text-foreground">Providers</h1>
@@ -282,10 +283,10 @@
           </div>
         </div>
 
-        <div class="flex flex-wrap gap-2 border-t border-white/5 pt-4">
+        <div class="flex flex-wrap gap-2 border-t border-border pt-4">
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-caption font-medium transition-colors {activeCategory === '' ? 'border-foreground bg-foreground text-background' : 'border-white/8 bg-background text-muted-foreground hover:border-foreground/30 hover:text-foreground'}"
+            class="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-caption font-medium transition-colors {activeCategory === '' ? 'border-foreground bg-foreground text-background' : 'border-border bg-background text-muted-foreground hover:border-foreground/30 hover:text-foreground'}"
             aria-pressed={activeCategory === ''}
             onclick={() => (activeCategory = '')}
           >
@@ -297,7 +298,7 @@
             <button
               type="button"
               title={cat.description}
-              class="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-caption font-medium transition-colors {activeCategory === cat.id ? 'border-foreground bg-foreground text-background' : 'border-white/8 bg-background text-muted-foreground hover:border-foreground/30 hover:text-foreground'}"
+              class="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-caption font-medium transition-colors {activeCategory === cat.id ? 'border-foreground bg-foreground text-background' : 'border-border bg-background text-muted-foreground hover:border-foreground/30 hover:text-foreground'}"
               aria-pressed={activeCategory === cat.id}
               onclick={() => (activeCategory = activeCategory === cat.id ? '' : cat.id)}
             >

@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/errorcode"
@@ -135,6 +136,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 	for _, stmt := range []string{
 		`ALTER TABLE connections ADD COLUMN provider_specific_data TEXT`,
 		`ALTER TABLE request_logs ADD COLUMN cached_tokens INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE api_keys ADD COLUMN key_value TEXT`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			// Ignore "duplicate column name" errors
@@ -308,11 +310,11 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 
 	// Seed default model pricing (INSERT OR IGNORE — never overwrites operator edits).
 	now = time.Now().Unix()
-	seedPricing := []struct {
+			seedPricing := []struct {
 		ID, Name                                 string
 		In, Out, Reason, CachedRead, CachedWrite float64
 	}{
-		// OpenAI
+		// ── OpenAI (per 1K tokens) ──
 		{"gpt-4o", "GPT-4o", 0.0025, 0.01, 0, 0.00125, 0},
 		{"gpt-4o-mini", "GPT-4o mini", 0.00015, 0.0006, 0, 0.000075, 0},
 		{"gpt-4-turbo", "GPT-4 Turbo", 0.01, 0.03, 0, 0, 0},
@@ -320,6 +322,7 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 		{"gpt-3.5-turbo", "GPT-3.5 Turbo", 0.0005, 0.0015, 0, 0, 0},
 		{"o1", "OpenAI o1", 0.015, 0.06, 0.06, 0.0075, 0},
 		{"o1-mini", "OpenAI o1-mini", 0.0011, 0.0044, 0.0044, 0.00055, 0},
+		{"o1-pro", "OpenAI o1-pro", 0.15, 0.6, 0.6, 0, 0},
 		{"o3", "OpenAI o3", 0.002, 0.008, 0.008, 0.0005, 0},
 		{"o3-mini", "OpenAI o3-mini", 0.0011, 0.0044, 0.0044, 0.00055, 0},
 		{"o4-mini", "OpenAI o4-mini", 0.0011, 0.0044, 0.0044, 0.000275, 0},
@@ -327,97 +330,134 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 		{"gpt-5-mini", "GPT-5 mini", 0.00025, 0.002, 0, 0.000025, 0},
 		{"gpt-5-nano", "GPT-5 nano", 0.00005, 0.0004, 0, 0.000005, 0},
 		{"gpt-5-pro", "GPT-5 Pro", 0.015, 0.12, 0, 0, 0},
+		{"gpt-5-codex", "GPT-5 Codex", 0.0025, 0.01, 0, 0, 0},
+		{"gpt-5.1", "GPT-5.1", 0.0015, 0.012, 0, 0.00015, 0},
+		{"gpt-5.1-codex", "GPT-5.1 Codex", 0.0025, 0.01, 0, 0, 0},
+		{"gpt-5.1-codex-max", "GPT-5.1 Codex Max", 0.005, 0.02, 0, 0, 0},
+		{"gpt-5.1-codex-mini", "GPT-5.1 Codex Mini", 0.001, 0.004, 0, 0, 0},
+		{"gpt-5.2", "GPT-5.2", 0.002, 0.015, 0, 0.0002, 0},
+		{"gpt-5.2-codex", "GPT-5.2 Codex", 0.003, 0.012, 0, 0, 0},
+		{"gpt-5.3-codex", "GPT-5.3 Codex", 0.003, 0.012, 0, 0, 0},
+		{"gpt-5.3-codex-spark", "GPT-5.3 Codex Spark", 0.001, 0.004, 0, 0, 0},
+		{"gpt-5.4", "GPT-5.4", 0.0025, 0.02, 0, 0.00025, 0},
+		{"gpt-5.4-mini", "GPT-5.4 mini", 0.0004, 0.003, 0, 0.00004, 0},
+		{"gpt-5.4-nano", "GPT-5.4 nano", 0.00008, 0.0006, 0, 0.000008, 0},
+		{"gpt-5.4-pro", "GPT-5.4 Pro", 0.02, 0.15, 0, 0, 0},
+		{"gpt-5.5", "GPT-5.5", 0.003, 0.025, 0, 0.0003, 0},
+		{"gpt-5.5-pro", "GPT-5.5 Pro", 0.025, 0.2, 0, 0, 0},
 		{"gpt-4.1", "GPT-4.1", 0.002, 0.008, 0, 0.0005, 0},
 		{"gpt-4.1-mini", "GPT-4.1 mini", 0.0004, 0.0016, 0, 0.0001, 0},
 		{"gpt-4.1-nano", "GPT-4.1 nano", 0.0001, 0.0004, 0, 0.000025, 0},
-		// Anthropic (bare + dated served keys)
-		{"claude-3-5-haiku", "Claude 3.5 Haiku", 0.0008, 0.004, 0, 0.00008, 0.001},
-		{"claude-3-5-haiku-20241022", "Claude 3.5 Haiku", 0.0008, 0.004, 0, 0.00008, 0.001},
-		{"claude-3-5-sonnet", "Claude 3.5 Sonnet", 0.003, 0.015, 0, 0.0003, 0.00375},
-		{"claude-3-7-sonnet", "Claude 3.7 Sonnet", 0.003, 0.015, 0, 0.0003, 0.00375},
-		{"claude-opus-4", "Claude Opus 4", 0.015, 0.075, 0, 0.0015, 0.01875},
-		{"claude-opus-4-20250514", "Claude Opus 4", 0.015, 0.075, 0, 0.0015, 0.01875},
+		{"codex-mini", "Codex Mini", 0.0015, 0.006, 0, 0, 0},
+
+		// ── Anthropic ──
+		{"claude-3-opus", "Claude 3 Opus", 0.015, 0.075, 0, 0, 0},
+		{"claude-3.5-haiku", "Claude 3.5 Haiku", 0.0008, 0.004, 0, 0.00008, 0.001},
+		{"claude-3.5-sonnet", "Claude 3.5 Sonnet", 0.003, 0.015, 0, 0.0003, 0.00375},
+		{"claude-3.7-sonnet", "Claude 3.7 Sonnet", 0.003, 0.015, 0, 0.0003, 0.00375},
 		{"claude-sonnet-4", "Claude Sonnet 4", 0.003, 0.015, 0, 0.0003, 0.00375},
-		{"claude-sonnet-4-20250514", "Claude Sonnet 4", 0.003, 0.015, 0, 0.0003, 0.00375},
-		{"claude-opus-4-1", "Claude Opus 4.1", 0.015, 0.075, 0, 0.0015, 0.01875},
-		{"claude-opus-4-1-20250805", "Claude Opus 4.1", 0.015, 0.075, 0, 0.0015, 0.01875},
-		{"claude-opus-4-5", "Claude Opus 4.5", 0.005, 0.025, 0, 0.0005, 0.00625},
-		{"claude-opus-4-5-20251101", "Claude Opus 4.5", 0.005, 0.025, 0, 0.0005, 0.00625},
 		{"claude-sonnet-4-5", "Claude Sonnet 4.5", 0.003, 0.015, 0, 0.0003, 0.00375},
-		{"claude-sonnet-4-5-20250929", "Claude Sonnet 4.5", 0.003, 0.015, 0, 0.0003, 0.00375},
+		{"claude-sonnet-4-6", "Claude Sonnet 4.6", 0.003, 0.015, 0, 0.0003, 0.00375},
+		{"claude-opus-4", "Claude Opus 4", 0.015, 0.075, 0, 0.0015, 0.01875},
+		{"claude-opus-4-1", "Claude Opus 4.1", 0.015, 0.075, 0, 0.0015, 0.01875},
+		{"claude-opus-4-5", "Claude Opus 4.5", 0.005, 0.025, 0, 0.0005, 0.00625},
 		{"claude-opus-4-6", "Claude Opus 4.6", 0.005, 0.025, 0, 0.0005, 0.00625},
 		{"claude-haiku-4-5", "Claude Haiku 4.5", 0.001, 0.005, 0, 0.0001, 0.00125},
-		{"claude-haiku-4-5-20251001", "Claude Haiku 4.5", 0.001, 0.005, 0, 0.0001, 0.00125},
-		// Google
+		{"claude-opus-4-7", "Claude Opus 4.7", 0.005, 0.025, 0, 0.0005, 0.00625},
+		{"claude-opus-4-8", "Claude Opus 4.8", 0.005, 0.025, 0, 0.0005, 0.00625},
+		{"claude-fable-5", "Claude Fable 5", 0.003, 0.015, 0, 0.0003, 0.00375},
+		{"claude-sonnet-5", "Claude Sonnet 5", 0.003, 0.015, 0, 0.0003, 0.00375},
+
+		// ── Google Gemini ──
 		{"gemini-2.5-pro", "Gemini 2.5 Pro", 0.00125, 0.01, 0, 0.000125, 0.000125},
 		{"gemini-2.5-flash", "Gemini 2.5 Flash", 0.0003, 0.0025, 0, 0.00003, 0.00003},
 		{"gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite", 0.0001, 0.0004, 0, 0.00001, 0.00001},
 		{"gemini-2.0-flash", "Gemini 2.0 Flash", 0.0001, 0.0004, 0, 0.000025, 0.000025},
 		{"gemini-2.0-flash-lite", "Gemini 2.0 Flash Lite", 0.000075, 0.0003, 0, 0, 0},
-		// DeepSeek (USD native)
-		{"deepseek/deepseek-chat", "DeepSeek Chat", 0.00014, 0.00028, 0, 0.0000028, 0},
-		{"deepseek/deepseek-reasoner", "DeepSeek Reasoner", 0.00014, 0.00028, 0.00028, 0.0000028, 0},
-		// Groq
+		{"gemini-3-pro-preview", "Gemini 3 Pro Preview", 0.00125, 0.01, 0, 0.000125, 0},
+		{"gemini-3-flash", "Gemini 3 Flash", 0.00015, 0.0006, 0, 0.000015, 0},
+
+		// ── DeepSeek ──
+		{"deepseek-chat", "DeepSeek Chat", 0.00014, 0.00028, 0, 0.0000028, 0},
+		{"deepseek-coder", "DeepSeek Coder", 0.00014, 0.00028, 0, 0, 0},
+		{"deepseek-reasoner", "DeepSeek Reasoner", 0.00014, 0.00028, 0.00028, 0.0000028, 0},
+		{"deepseek-r1", "DeepSeek R1", 0.00055, 0.00219, 0, 0.00014, 0},
+		{"deepseek-v3", "DeepSeek V3", 0.00027, 0.0011, 0, 0.00007, 0},
+		{"deepseek-v4-flash", "DeepSeek v4 Flash", 0.0001, 0.0004, 0, 0, 0},
+		{"deepseek-v4-pro", "DeepSeek v4 Pro", 0.0005, 0.002, 0, 0, 0},
+
+		// ── Meta / Llama ──
 		{"llama-3.3-70b-versatile", "Llama 3.3 70B", 0.00059, 0.00079, 0, 0, 0},
 		{"llama-3.1-8b-instant", "Llama 3.1 8B", 0.00005, 0.00008, 0, 0, 0},
-		{"meta-llama/llama-4-scout-17b-16e-instruct", "Llama 4 Scout", 0.00011, 0.00034, 0, 0, 0},
-		// Moonshot Kimi (CNY→USD @7.15)
+		{"llama-3.1-70b-versatile", "Llama 3.1 70B", 0.00059, 0.00079, 0, 0, 0},
+		{"llama-4-scout", "Llama 4 Scout", 0.00011, 0.00034, 0, 0, 0},
+		{"llama-4-maverick", "Llama 4 Maverick", 0.0002, 0.0006, 0, 0, 0},
+
+		// ── xAI Grok ──
+		{"grok-3-mini", "Grok 3 Mini", 0.0003, 0.0005, 0, 0, 0},
+		{"grok-3-mini-fast", "Grok 3 Mini Fast", 0.0006, 0.004, 0, 0, 0},
+		{"grok-4.3", "Grok 4.3", 0.003, 0.015, 0, 0, 0},
+
+		// ── Moonshot Kimi ──
+		{"kimi-k2", "Kimi K2", 0.000559, 0.002378, 0, 0, 0},
 		{"kimi-k2.5", "Kimi K2.5", 0.000559, 0.002937, 0, 0.0000979, 0},
 		{"kimi-k2.6", "Kimi K2.6", 0.000909, 0.003776, 0, 0.0001538, 0},
 		{"kimi-k2.7-code", "Kimi K2.7 Code", 0.000909, 0.003776, 0, 0.0001818, 0},
 		{"kimi-k2.7-code-highspeed", "Kimi K2.7 Code HighSpeed", 0.001818, 0.007552, 0, 0.0003636, 0},
-		{"kimi-k2", "Kimi K2", 0.0006, 0.0024, 0, 0, 0},
-		// MiMo v2 family
+
+		// ── MiMo ──
 		{"mimo-v2-pro", "MiMo v2 Pro", 0.001, 0.002, 0, 0, 0},
 		{"mimo-v2", "MiMo v2", 0.0005, 0.001, 0, 0, 0},
 		{"mimo-v2-flash", "MiMo v2 Flash", 0.0001, 0.0002, 0, 0, 0},
 		{"mimo-v2-omni", "MiMo v2 Omni", 0.001, 0.002, 0, 0, 0},
-		// Relay / free providers — notional $0
-		{"codex-free/deepseek-v4-flash-free", "Codex Free", 0, 0, 0, 0, 0},
-		{"codex-free/mimo-v2.5-free", "Codex Free", 0, 0, 0, 0, 0},
-		{"codex-free/hy3-free", "Codex Free", 0, 0, 0, 0, 0},
-		{"codex-free/nemotron-3-ultra-free", "Codex Free", 0, 0, 0, 0, 0},
-		{"codex-free/north-mini-code-free", "Codex Free", 0, 0, 0, 0, 0},
-		{"oc/deepseek-v4-flash-free", "OC Free", 0, 0, 0, 0, 0},
-		{"oc/mimo-v2.5-free", "OC Free", 0, 0, 0, 0, 0},
-		{"oc/hy3-free", "OC Free", 0, 0, 0, 0, 0},
-		{"oc/nemotron-3-ultra-free", "OC Free", 0, 0, 0, 0, 0},
-		{"oc/north-mini-code-free", "OC Free", 0, 0, 0, 0, 0},
-		{"mimocode/mimo-auto", "MiMo", 0, 0, 0, 0, 0},
-		{"mimocode-free/mimo-auto", "MiMo Free", 0, 0, 0, 0, 0},
-		{"mimo/mimo-auto", "MiMo", 0, 0, 0, 0, 0},
-		{"mimo-tp/mimo-auto", "MiMo TP", 0, 0, 0, 0, 0},
-		{"mimo-token/mimo-auto", "MiMo Token", 0, 0, 0, 0, 0},
-		{"oc-go/glm-5", "GLM 5", 0, 0, 0, 0, 0},
-		{"oc-go/glm-5.1", "GLM 5.1", 0, 0, 0, 0, 0},
-		{"oc-go/glm-5.2", "GLM 5.2", 0, 0, 0, 0, 0},
-		{"oc-go/hy3-preview", "HY3 Preview", 0, 0, 0, 0, 0},
-		{"oc-go/minimax-m2.5", "MiniMax M2.5", 0, 0, 0, 0, 0},
-		{"oc-go/minimax-m2.7", "MiniMax M2.7", 0, 0, 0, 0, 0},
-		{"oc-go/minimax-m3", "MiniMax M3", 0, 0, 0, 0, 0},
-		{"oc-go/qwen3.5-plus", "Qwen 3.5 Plus", 0, 0, 0, 0, 0},
-		{"oc-go/qwen3.6-plus", "Qwen 3.6 Plus", 0, 0, 0, 0, 0},
-		{"oc-go/qwen3.7-max", "Qwen 3.7 Max", 0, 0, 0, 0, 0},
-		{"oc-go/qwen3.7-plus", "Qwen 3.7 Plus", 0, 0, 0, 0, 0},
-		{"oc-zen/big-pickle", "Big Pickle", 0, 0, 0, 0, 0},
-		{"oc-zen/hy3-preview", "HY3 Preview", 0, 0, 0, 0, 0},
-		{"oc-zen/glm-5", "GLM 5", 0, 0, 0, 0, 0},
-		{"oc-zen/glm-5.1", "GLM 5.1", 0, 0, 0, 0, 0},
-		{"oc-zen/glm-5.2", "GLM 5.2", 0, 0, 0, 0, 0},
-		{"oc-zen/grok-build-0.1", "Grok Build", 0, 0, 0, 0, 0},
-		{"oc-zen/minimax-m2.5", "MiniMax M2.5", 0, 0, 0, 0, 0},
-		{"oc-zen/minimax-m2.7", "MiniMax M2.7", 0, 0, 0, 0, 0},
-		{"oc-zen/minimax-m3", "MiniMax M3", 0, 0, 0, 0, 0},
-		{"oc-zen/mimo-v2.5-free", "OC Zen Free", 0, 0, 0, 0, 0},
-		{"oc-zen/nemotron-3-ultra-free", "OC Zen Free", 0, 0, 0, 0, 0},
-		{"oc-zen/north-mini-code-free", "OC Zen Free", 0, 0, 0, 0, 0},
-		{"oc-zen/qwen3.5-plus", "Qwen 3.5 Plus", 0, 0, 0, 0, 0},
-		{"oc-zen/qwen3.6-plus", "Qwen 3.6 Plus", 0, 0, 0, 0, 0},
+		{"mimo-v2.5", "MiMo v2.5", 0.0008, 0.0016, 0, 0, 0},
+		{"mimo-v2.5-pro", "MiMo v2.5 Pro", 0.0015, 0.003, 0, 0, 0},
+		{"mimo-v2.5-free", "MiMo v2.5 Free", 0.0005, 0.001, 0, 0, 0},
+		{"mimo-auto", "MiMo Auto", 0.0005, 0.001, 0, 0, 0},
+
+		// ── GLM / Zhipu ──
+		{"glm-5", "GLM 5", 0.0005, 0.001, 0, 0, 0},
+		{"glm-5.1", "GLM 5.1", 0.0005, 0.001, 0, 0, 0},
+		{"glm-5.2", "GLM 5.2", 0.0005, 0.001, 0, 0, 0},
+
+		// ── Alibaba Qwen ──
+		{"qwen3.5-plus", "Qwen 3.5 Plus", 0.0004, 0.0012, 0, 0, 0},
+		{"qwen3.6-plus", "Qwen 3.6 Plus", 0.0004, 0.0012, 0, 0, 0},
+		{"qwen3.7-max", "Qwen 3.7 Max", 0.0008, 0.0024, 0, 0, 0},
+		{"qwen3.7-plus", "Qwen 3.7 Plus", 0.0004, 0.0012, 0, 0, 0},
+
+		// ── MiniMax ──
+		{"minimax-m2.5", "MiniMax M2.5", 0.0005, 0.001, 0, 0, 0},
+		{"minimax-m2.7", "MiniMax M2.7", 0.0008, 0.0016, 0, 0, 0},
+		{"minimax-m3", "MiniMax M3", 0.001, 0.002, 0, 0, 0},
+
+		// ── Free-tier (real model price, offered free by some providers) ──
+		{"hy3-preview", "HY3 Preview", 0.0005, 0.001, 0, 0, 0},
+		{"hy3-free", "HY3 Free", 0.0003, 0.0006, 0, 0, 0},
+		{"deepseek-v4-flash-free", "DeepSeek v4 Flash Free", 0.0001, 0.0004, 0, 0, 0},
+		{"nemotron-3-ultra-free", "Nemotron 3 Ultra Free", 0.0003, 0.0006, 0, 0, 0},
+		{"north-mini-code-free", "North Mini Code Free", 0.0002, 0.0004, 0, 0, 0},
+
+		// ── Misc ──
+		{"big-pickle", "Big Pickle", 0.0005, 0.001, 0, 0, 0},
+		{"grok-build-0.1", "Grok Build", 0.0003, 0.0005, 0, 0, 0},
+	}
+	// Guard: seed must never contain duplicate model IDs or $0 (free-tier) rows.
+	// Every seeded model must carry a real price; duplicates would surface as
+	// duplicate cards in the UI. Fail the migration loudly if this is violated.
+	if err := validateSeedPricing(seedPricing); err != nil {
+		return err
+	}
+	// One-time reset: wipe any previously-seeded rows so stale IDs / $0 free-tier
+	// entries from older builds cannot coexist with the new canonical seed.
+	// The pricing table is seed-only (no runtime writes), so this is safe.
+	if _, err := db.Exec(`DELETE FROM model_pricing`); err != nil {
+		return err
 	}
 	for _, p := range seedPricing {
-		if _, err := db.Exec(`INSERT OR IGNORE INTO model_pricing
-			(model_id, display_name, input_per_1k, output_per_1k, reason_per_1k, cached_read_per_1k, cached_write_per_1k, currency, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, 'USD', ?)`,
+		if _, err := db.Exec(`INSERT OR REPLACE INTO model_pricing
+		(model_id, display_name, input_per_1k, output_per_1k, reason_per_1k, cached_read_per_1k, cached_write_per_1k, currency, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 'USD', ?)`,
 			p.ID, p.Name, p.In, p.Out, p.Reason, p.CachedRead, p.CachedWrite, now); err != nil {
 			return err
 		}
@@ -488,6 +528,29 @@ func migrateRequestLogStatusCodes(database *sql.DB) error {
 		code := errorcode.FromString(r.text)
 		if _, err := stmt.Exec(code, r.id); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// validateSeedPricing enforces the model-pricing seed contract:
+//   - no duplicate model IDs (would render as duplicate cards)
+//   - no $0 input+output rows (every model must carry a real price)
+func validateSeedPricing(seed []struct {
+	ID, Name                                 string
+	In, Out, Reason, CachedRead, CachedWrite float64
+}) error {
+	seen := make(map[string]bool, len(seed))
+	for _, p := range seed {
+		if p.ID == "" {
+			return fmt.Errorf("seed pricing: empty model_id for %q", p.Name)
+		}
+		if seen[p.ID] {
+			return fmt.Errorf("seed pricing: duplicate model_id %q", p.ID)
+		}
+		seen[p.ID] = true
+		if p.In == 0 && p.Out == 0 {
+			return fmt.Errorf("seed pricing: %q has $0 input+output (free-tier must carry a real price)", p.ID)
 		}
 	}
 	return nil

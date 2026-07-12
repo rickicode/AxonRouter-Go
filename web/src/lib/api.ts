@@ -381,6 +381,9 @@ export const apiKeysApi = {
       method: "PATCH",
       body: JSON.stringify({ is_active: isActive }),
     }),
+
+  value: (id: string) =>
+    fetchApi<{ id: string; key: string }>(`/api-keys/${id}/value`),
 };
 
 // Combo API

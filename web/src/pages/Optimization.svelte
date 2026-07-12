@@ -6,6 +6,7 @@
   import { Textarea } from '$lib/components/ui/textarea';
   import { Switch } from '$lib/components/ui/switch';
   import * as Select from '$lib/components/ui/select';
+import * as Tabs from '$lib/components/ui/tabs';
   import { Badge } from '$lib/components/ui/badge';
   import { compressionApi, cacheApi } from '$lib/api';
   import type { CompressionSettings, CacheStats, CompressionPreviewResult } from '$lib/api';
@@ -15,8 +16,7 @@
   let cacheStats = $state<CacheStats>({ hits: 0, misses: 0, size: 0, hit_rate: 0 });
   let previewBody = $state('');
   let previewResult = $state<CompressionPreviewResult | null>(null);
-  let activeTab = $state<'compression' | 'cache'>('compression');
-  let loading = $state(false);
+    let loading = $state(false);
   let saving = $state(false);
 
   let liteCollapse = $state(true);
@@ -107,27 +107,12 @@
     </p>
   </div>
 
-  <!-- Tab Switcher -->
-  <div class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-1">
-    <button
-      class="cursor-pointer rounded-md px-4 py-1.5 text-sm font-medium transition-all {activeTab === 'compression'
-        ? 'bg-background text-foreground shadow-sm'
-        : 'text-muted-foreground hover:text-foreground'}"
-      onclick={() => (activeTab = 'compression')}
-    >
-      Compression
-    </button>
-    <button
-      class="cursor-pointer rounded-md px-4 py-1.5 text-sm font-medium transition-all {activeTab === 'cache'
-        ? 'bg-background text-foreground shadow-sm'
-        : 'text-muted-foreground hover:text-foreground'}"
-      onclick={() => (activeTab = 'cache')}
-    >
-      Cache
-    </button>
-  </div>
-
-  {#if activeTab === 'compression'}
+  <Tabs.Root value="compression">
+  <Tabs.List>
+    <Tabs.Trigger value="compression">Compression</Tabs.Trigger>
+    <Tabs.Trigger value="cache">Cache</Tabs.Trigger>
+  </Tabs.List>
+  <Tabs.Content value="compression">
     <div class="space-y-4">
       <Card class="shadow-card">
         <CardHeader class="pb-3">
@@ -228,7 +213,8 @@
         </CardContent>
       </Card>
     </div>
-  {:else}
+  </Tabs.Content>
+  <Tabs.Content value="cache">
     <div class="space-y-4">
       <Card class="shadow-card">
         <CardHeader class="pb-3">
@@ -265,5 +251,6 @@
         </CardContent>
       </Card>
     </div>
-  {/if}
+  </Tabs.Content>
+</Tabs.Root>
 </div>

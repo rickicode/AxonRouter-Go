@@ -1,37 +1,37 @@
 <script lang="ts">
   import { currentPath, router } from '$lib/router';
   import * as Sidebar from '$lib/components/ui/sidebar';
-  import {
-    Home,
-    Server,
-    Layers,
-    Terminal,
-    Settings,
-    Gauge,
-    Globe,
-    Key,
-    MessageSquare,
-    Bot,
-  } from '@lucide/svelte';
+  import HomeIcon from '@lucide/svelte/icons/home';
+  import ServerIcon from '@lucide/svelte/icons/server';
+  import LayersIcon from '@lucide/svelte/icons/layers';
+  import TerminalIcon from '@lucide/svelte/icons/terminal';
+  import SettingsIcon from '@lucide/svelte/icons/settings';
+  import GaugeIcon from '@lucide/svelte/icons/gauge';
+  import GlobeIcon from '@lucide/svelte/icons/globe';
+  import KeyIcon from '@lucide/svelte/icons/key';
+  import ZapIcon from '@lucide/svelte/icons/zap';
+  import BotIcon from '@lucide/svelte/icons/bot';
+  import BadgeDollarSignIcon from '@lucide/svelte/icons/badge-dollar-sign';
 
   let { onclose }: { onclose?: () => void } = $props();
 
-  const platformItems = [
-    { href: '/', label: 'Dashboard', icon: Home },
-    { href: '/providers', label: 'Providers', icon: Server },
-    { href: '/combos', label: 'Combos', icon: Layers },
-    { href: '/quota', label: 'Quota', icon: Gauge },
-    { href: '/optimization', label: 'Optimization', icon: Layers },
-    { href: '/logs', label: 'Logs', icon: Terminal },
-  ];
+const platformItems = [
+	{ href: '/', label: 'Dashboard', icon: HomeIcon },
+	{ href: '/providers', label: 'Providers', icon: ServerIcon },
+	{ href: '/combos', label: 'Combos', icon: LayersIcon },
+	{ href: '/quota', label: 'Quota', icon: GaugeIcon },
+	{ href: '/optimization', label: 'Optimization', icon: ZapIcon },
+	{ href: '/logs', label: 'Logs', icon: TerminalIcon },
+];
 
-  const settingsItem = { href: '/settings', label: 'Settings', icon: Settings };
-  const apiKeysItem = { href: '/api-keys', label: 'API Keys', icon: Key };
+  const settingsItem = { href: '/settings', label: 'Settings', icon: SettingsIcon };
+  const apiKeysItem = { href: '/api-keys', label: 'API Keys', icon: KeyIcon };
 
   const systemItems = [
-    { href: '/proxy-pools', label: 'Proxy Pools', icon: Globe },
+    { href: '/proxy-pools', label: 'Proxy Pools', icon: GlobeIcon },
     apiKeysItem,
-    { href: '/cli-tools', label: 'CLI Tools', icon: Bot },
+    { href: '/cli-tools', label: 'CLI Tools', icon: BotIcon },
+  { href: '/model-pricing', label: 'Model Pricing', icon: BadgeDollarSignIcon },
     settingsItem,
   ];
 

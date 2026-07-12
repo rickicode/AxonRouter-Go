@@ -7,7 +7,10 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
+import * as Select from '$lib/components/ui/select';
   import { onMount } from 'svelte';
+import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
+import { toast } from 'svelte-sonner';
 
   let step = $state<'select' | 'configure' | 'done'>('select');
   let selectedProvider = $state<string | null>(null);
@@ -89,13 +92,15 @@ const availableProxyPools = $derived(noAuthMode === 'http' ? httpProxyPools : re
 			data.api_key = apiKey.trim();
 		}
 		await connectionsApi.create(selectedProvider, data);
-      resultOk = true;
-      resultMsg = `Connection "${name}" added successfully!`;
-      step = 'done';
-    } catch (err) {
-      resultOk = false;
-      resultMsg = err instanceof Error ? err.message : 'Failed to add connection';
-    } finally {
+			resultOk = true;
+			resultMsg = `Connection "${name}" added successfully!`;
+			step = 'done';
+			toast.success(`Connection "${name}" added`);
+	} catch (err) {
+		resultOk = false;
+		resultMsg = '';
+		toast.error(err instanceof Error ? err.message : 'Failed to add connection');
+	} finally {
       loading = false;
     }
   }
@@ -128,7 +133,7 @@ const availableProxyPools = $derived(noAuthMode === 'http' ? httpProxyPools : re
       />
       <div class="flex flex-wrap gap-2">
         <button
-          class="rounded-pill-sm px-4 py-1.5 text-body-sm transition-colors
+          class="rounded-sm px-4 py-1.5 text-body-sm transition-colors
             {!activeCategory ? 'bg-foreground text-background' : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'}"
           onclick={() => activeCategory = ''}
         >
@@ -136,7 +141,7 @@ const availableProxyPools = $derived(noAuthMode === 'http' ? httpProxyPools : re
         </button>
         {#each filterCategories as cat}
           <button
-            class="rounded-pill-sm px-4 py-1.5 text-body-sm transition-colors
+            class="rounded-sm px-4 py-1.5 text-body-sm transition-colors
               {activeCategory === cat.id ? 'bg-foreground text-background' : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'}"
             onclick={() => activeCategory = activeCategory === cat.id ? '' : cat.id}
           >
@@ -192,7 +197,7 @@ const availableProxyPools = $derived(noAuthMode === 'http' ? httpProxyPools : re
     <div class="space-y-1">
       <div class="flex items-center gap-3">
         <button class="text-muted-foreground hover:text-foreground transition-colors" onclick={() => step = 'select'} aria-label="Back to provider selection">
-          <svg class="size-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg>
+          <ArrowLeftIcon class="size-5" />
         </button>
         <div
           class="flex size-10 shrink-0 items-center justify-center rounded-md overflow-hidden"
@@ -244,14 +249,19 @@ Relay
 {#if noAuthMode !== 'direct'}
 <div class="flex flex-col gap-1.5">
 <Label class="text-body-sm-strong">{noAuthMode === 'http' ? 'HTTP proxy pool' : 'Relay proxy pool'}</Label>
-<select bind:value={selectedProxyPoolId} class="h-10 w-full rounded-md border border-input bg-background px-3 text-body-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
-<option value="">Select a proxy pool…</option>
-{#each availableProxyPools as pool}
-<option value={pool.id}>{pool.name} · {pool.proxy_url}</option>
-{:else}
-<option value="" disabled>No active {noAuthMode} proxy pools</option>
-{/each}
-</select>
+<Select.Root type="single" value={selectedProxyPoolId} onValueChange={(v: string) => selectedProxyPoolId = v}>
+								<Select.Trigger class="h-10 w-full text-body-sm">
+									{availableProxyPools.find(p => p.id === selectedProxyPoolId)?.name ?? 'Select a proxy pool…'}
+								</Select.Trigger>
+								<Select.Content>
+									<Select.Item value="">Select a proxy pool…</Select.Item>
+									{#each availableProxyPools as pool}
+										<Select.Item value={pool.id}>{pool.name} · {pool.proxy_url}</Select.Item>
+									{:else}
+										<Select.Item value="" disabled>No active {noAuthMode} proxy pools</Select.Item>
+									{/each}
+								</Select.Content>
+							</Select.Root>
 {#if loadingPools}
 <p class="text-caption text-muted-foreground">Loading proxy pools…</p>
 {/if}
@@ -270,7 +280,7 @@ Relay
         {/if}
 
         <div class="flex gap-3 pt-2">
-          <Button onclick={handleAddConnection} disabled={loading} class="text-button-md rounded-pill px-5">
+          <Button onclick={handleAddConnection} disabled={loading} class="text-button-md rounded-sm px-5">
             {loading ? 'Adding...' : 'Add connection'}
           </Button>
           <Button onclick={() => step = 'select'} variant="ghost" class="text-body-sm">Back</Button>
@@ -289,10 +299,10 @@ Relay
         <h3 class="text-body-md-strong mb-1">Connection added.</h3>
         <p class="text-body-sm text-muted-foreground mb-6">{resultMsg}</p>
         <div class="flex gap-3">
-          <Button onclick={() => { step = 'select'; selectedProvider = null; resultMsg = ''; }} variant="outline" class="text-body-sm rounded-pill px-5">
+          <Button onclick={() => { step = 'select'; selectedProvider = null; resultMsg = ''; }} variant="outline" class="text-body-sm rounded-sm px-5">
             Add another
           </Button>
-          <a href="/providers/{selectedProvider}" class="inline-flex items-center justify-center h-10 px-5 text-button-md bg-primary text-primary-foreground rounded-pill hover:opacity-90 transition-opacity">
+          <a href="/providers/{selectedProvider}" class="inline-flex items-center justify-center h-10 px-5 text-button-md bg-primary text-primary-foreground rounded-sm hover:opacity-90 transition-opacity">
             View provider
           </a>
         </div>

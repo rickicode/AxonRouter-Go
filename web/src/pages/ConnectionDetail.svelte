@@ -7,6 +7,9 @@
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
+import * as Select from '$lib/components/ui/select';
+import { Label } from '$lib/components/ui/label';
+import * as AlertDialog from '$lib/components/ui/alert-dialog';
   import { Input } from '$lib/components/ui/input';
   import { router } from '$lib/router';
   import { getProviderMeta, getStatusDotColor, getStatusVariant, getStatusLabel } from '$lib/provider-catalog';
@@ -23,6 +26,7 @@
   let selectedGroupId = $state('');
   let proxySaving = $state(false);
   let editName = $state('');
+  let showDeleteConfirm = $state(false);
 
   onMount(async () => {
     document.title = 'Connection — AxonRouter';
@@ -101,14 +105,27 @@
     finally { actionLoading = ''; }
   }
 
-  async function handleDelete() {
-    if (!confirm('Delete this connection? This cannot be undone.')) return;
-    actionLoading = 'delete';
-    try { await connectionsApi.delete(connectionId); toast.success('Connection deleted'); router.navigate(`/providers/${providerId}`); }
-    catch (err) { toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown')); actionLoading = ''; }
-  }
+  function handleDelete() {
+ showDeleteConfirm = true;
+}
 
-  async function handleSaveName() {
+async function confirmDelete() {
+ actionLoading = 'delete';
+ try {
+ await connectionsApi.delete(connectionId);
+ showDeleteConfirm = false;
+ toast.success('Connection deleted');
+ router.navigate(`/providers/${providerId}`);
+ }
+ catch (err) {
+ toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+ }
+ finally {
+ actionLoading = '';
+ }
+}
+
+async function handleSaveName() {
     if (!$selectedConnection || !editName.trim()) return;
     try { await connectionsApi.update(connectionId, { name: editName.trim() }); editingName = false; await loadConnection(connectionId); toast.success('Name updated'); }
     catch (err) { toast.error('Rename failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
@@ -159,7 +176,7 @@
         <span class="size-3 rounded-full shrink-0" style="background-color: {getStatusDotColor($selectedConnection.status)}"></span>
         {#if editingName}
           <div class="flex items-center gap-2">
-            <Input bind:value={editName} class="h-9 text-display-lg font-semibold w-64" onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && handleSaveName()} />
+            <Input bind:value={editName} class="h-9 text-display-lg font-semibold w-full sm:w-64" onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && handleSaveName()} />
             <Button onclick={handleSaveName} size="sm" class="h-8 text-body-sm rounded-sm">Save</Button>
             <Button onclick={() => editingName = false} variant="ghost" size="sm" class="h-8 text-body-sm">Cancel</Button>
           </div>
@@ -260,30 +277,32 @@
         <p class="text-body-sm text-muted-foreground">Assign a proxy pool or group to route traffic for this connection.</p>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div class="space-y-2">
-            <label for="proxy-group-select" class="text-body-sm-strong">Proxy Group</label>
-            <select
-              id="proxy-group-select"
-              class="w-full h-9 rounded-md border border-input bg-background px-3 text-body-sm cursor-pointer"
-              bind:value={selectedGroupId}
-            >
-              <option value="">None</option>
-              {#each groups as group}
-                <option value={group.id}>{group.name} ({group.mode})</option>
-              {/each}
-            </select>
+            <Label class="text-body-sm-strong">Proxy Group</Label>
+				<Select.Root type="single" value={selectedGroupId} onValueChange={(v: string) => selectedGroupId = v}>
+					<Select.Trigger class="w-full h-9 text-body-sm">
+						{groups.find(g => g.id === selectedGroupId)?.name ?? 'None'}
+					</Select.Trigger>
+					<Select.Content>
+						<Select.Item value="">None</Select.Item>
+						{#each groups as group}
+							<Select.Item value={group.id}>{group.name} ({group.mode})</Select.Item>
+						{/each}
+					</Select.Content>
+				</Select.Root>
           </div>
           <div class="space-y-2">
-            <label for="proxy-pool-select" class="text-body-sm-strong">Proxy Pool</label>
-            <select
-              id="proxy-pool-select"
-              class="w-full h-9 rounded-md border border-input bg-background px-3 text-body-sm cursor-pointer"
-              bind:value={selectedPoolId}
-            >
-              <option value="">None</option>
-              {#each pools as pool}
-                <option value={pool.id}>{pool.name} ({pool.type})</option>
-              {/each}
-            </select>
+            <Label class="text-body-sm-strong">Proxy Pool</Label>
+				<Select.Root type="single" value={selectedPoolId} onValueChange={(v: string) => selectedPoolId = v}>
+					<Select.Trigger class="w-full h-9 text-body-sm">
+						{pools.find(p => p.id === selectedPoolId)?.name ?? 'None'}
+					</Select.Trigger>
+					<Select.Content>
+						<Select.Item value="">None</Select.Item>
+						{#each pools as pool}
+							<Select.Item value={pool.id}>{pool.name} ({pool.type})</Select.Item>
+						{/each}
+					</Select.Content>
+				</Select.Root>
           </div>
         </div>
         <Button onclick={saveProxyAssignment} disabled={proxySaving} class="text-body-sm rounded-sm">
@@ -311,5 +330,23 @@
         </div>
       </CardContent>
     </Card>
-  {/if}
+
+  <AlertDialog.Root bind:open={showDeleteConfirm}>
+    <AlertDialog.Content>
+      <AlertDialog.Header>
+        <AlertDialog.Title>Delete connection?</AlertDialog.Title>
+        <AlertDialog.Description>
+          This will permanently delete <strong>{$selectedConnection?.name ?? 'this connection'}</strong>. This action cannot be undone.
+        </AlertDialog.Description>
+      </AlertDialog.Header>
+      <AlertDialog.Footer>
+        <AlertDialog.Cancel onclick={() => (showDeleteConfirm = false)}>Cancel</AlertDialog.Cancel>
+        <AlertDialog.Action variant="destructive" onclick={confirmDelete}>
+          {actionLoading === 'delete' ? 'Deleting...' : 'Delete'}
+        </AlertDialog.Action>
+      </AlertDialog.Footer>
+    </AlertDialog.Content>
+  </AlertDialog.Root>
+
+ {/if}
 </div>

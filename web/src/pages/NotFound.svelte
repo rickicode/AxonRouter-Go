@@ -13,7 +13,7 @@
 <div class="flex flex-1 flex-col items-center justify-center p-6 min-h-[70vh] text-center">
   <div class="relative">
     <!-- Giant 404 with mesh gradient -->
-    <div class="text-[120px] md:text-[180px] font-bold leading-none tracking-tighter gradient-text select-none" aria-hidden="true">
+    <div class="text-[120px] md:text-[180px] font-bold leading-none tracking-tighter select-none bg-gradient-to-br from-primary via-violet-400 to-cyan-400 bg-clip-text text-transparent" aria-hidden="true">
       404
     </div>
   </div>
@@ -50,11 +50,4 @@
   </div>
 </div>
 
-<style>
-  .gradient-text {
-    background: linear-gradient(135deg, #ec4899 0%, #f472b6 30%, #818cf8 70%, #50e3c2 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-</style>
+
