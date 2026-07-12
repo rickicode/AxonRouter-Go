@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // OpenAIExecutor handles OpenAI-compatible providers.
@@ -49,12 +52,46 @@ func IsReasoningModel(model string) bool {
 }
 
 // sanitizeCFRequest enforces Cloudflare Workers AI constraints:
-//   - max_tokens cap: 4096 for reasoning models, 8192 otherwise.
-//   - message content arrays are flattened to a plain string (CF rejects part arrays).
-//   - tool_result blocks are converted into role:tool messages.
+// - max_tokens cap: 4096 for reasoning models, 8192 otherwise.
+// - message content arrays are flattened to a plain string (CF rejects part arrays).
+// - tool_result blocks are converted into role:tool messages.
 //
 // This matches AMRouter chatCore.js san behaviour for the cloudflare-ai provider.
 func sanitizeCFRequest(body []byte) []byte {
+	// Fast path: if no message has an array content, we only need to adjust
+	// top-level fields (model prefix, reasoning_effort, max_tokens). That lets
+	// us skip the expensive full map[string]any round-trip and the message
+	// allocation churn for the common string-content case.
+	messages := gjson.GetBytes(body, "messages")
+	if messages.Exists() && messages.IsArray() && !cfMessagesNeedSanitize(messages.Array()) {
+		modelNode := gjson.GetBytes(body, "model")
+		model := normalizeCFModelName(modelNode.String())
+		if model != modelNode.String() {
+			body, _ = sjson.SetBytes(body, "model", model)
+		}
+
+		if reNode := gjson.GetBytes(body, "reasoning_effort"); reNode.Type == gjson.String {
+			re := strings.ToLower(strings.TrimSpace(reNode.String()))
+			switch re {
+			case "none", "low", "medium", "high", "max":
+				if re != reNode.String() {
+					body, _ = sjson.SetBytes(body, "reasoning_effort", re)
+				}
+			default:
+				body, _ = sjson.DeleteBytes(body, "reasoning_effort")
+			}
+		}
+
+		maxCap := 8192
+		if IsReasoningModel(model) {
+			maxCap = 4096
+		}
+		if mt := gjson.GetBytes(body, "max_tokens"); !mt.Exists() || mt.Int() <= 0 || mt.Int() > int64(maxCap) {
+			body, _ = sjson.SetBytes(body, "max_tokens", maxCap)
+		}
+		return body
+	}
+
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
 		return body
@@ -109,6 +146,31 @@ func sanitizeCFRequest(body []byte) []byte {
 		return body
 	}
 	return out
+}
+
+func normalizeCFModelName(model string) string {
+	if model == "" {
+		return ""
+	}
+	switch {
+	case strings.HasPrefix(model, "@cf/"):
+		return model
+	case strings.HasPrefix(model, "cf/"):
+		return "@" + model
+	default:
+		return "@cf/" + model
+	}
+}
+
+// cfMessagesNeedSanitize reports whether any message contains an array
+// content that may need flattening or tool_result conversion.
+func cfMessagesNeedSanitize(messages []gjson.Result) bool {
+	for _, msg := range messages {
+		if msg.Get("content").IsArray() {
+			return true
+		}
+	}
+	return false
 }
 
 func sanitizeCFMessages(messages []any) []any {
