@@ -182,6 +182,30 @@ func (cs *ConnectionState) SetModelCooldown(modelID string, until time.Time) {
 	mls.SetCooldown(until)
 }
 
+// ModelCooldowns returns a snapshot of all models currently in cooldown.
+// Used by the model prober to test locked models after proxy/IP rotation.
+func (cs *ConnectionState) ModelCooldowns() map[string]time.Time {
+	m := make(map[string]time.Time)
+	cs.ModelLimits.Range(func(key, value any) bool {
+		modelID := key.(string)
+		mls := value.(*ModelLimitState)
+		mls.mu.RLock()
+		until := mls.CooldownUntil
+		mls.mu.RUnlock()
+		if until != nil && time.Now().Before(*until) {
+			m[modelID] = *until
+		}
+		return true
+	})
+	return m
+}
+
+// ClearModelCooldown clears the cooldown for a specific model.
+func (cs *ConnectionState) ClearModelCooldown(modelID string) {
+	mls := cs.GetModelLimit(modelID)
+	mls.ClearCooldown()
+}
+
 // ConnectionStateSnapshot is an immutable copy of connection state.
 type ConnectionStateSnapshot struct {
 	ID           string

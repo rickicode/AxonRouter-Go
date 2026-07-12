@@ -1,6 +1,7 @@
 package quota
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -71,6 +72,23 @@ func (ec *ExhaustionCache) Clear(key string) {
 	ec.mu.Lock()
 	defer ec.mu.Unlock()
 	delete(ec.entries, key)
+}
+
+// ScopesForConn returns the non-empty scopes currently marked exhausted for a
+// given connection ID. Used by the model prober to recover per-model locks.
+func (ec *ExhaustionCache) ScopesForConn(connID string) []string {
+	ec.mu.RLock()
+	defer ec.mu.RUnlock()
+	prefix := connID + "\x00"
+	scopes := make([]string, 0)
+	for k := range ec.entries {
+		if strings.HasPrefix(k, prefix) {
+			if now := time.Now(); now.Before(ec.entries[k].expiresAt) {
+				scopes = append(scopes, k[len(prefix):])
+			}
+		}
+	}
+	return scopes
 }
 
 // Cleanup removes expired entries. Should be called periodically.

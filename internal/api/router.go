@@ -36,30 +36,30 @@ import (
 
 // Router holds all dependencies and mounts all routes.
 type Router struct {
-	engine      *gin.Engine
-	db          *sql.DB
-	writeQueue  *db.WriteQueue // centralized async writer; drained on Shutdown
-	store       *connstate.Store
-	elig        *connstate.EligibilityManager
-	combo       *combo.Handler
-	tracker     *usage.Tracker
-	authMgr     *auth.Manager
+	engine     *gin.Engine
+	db         *sql.DB
+	writeQueue *db.WriteQueue // centralized async writer; drained on Shutdown
+	store      *connstate.Store
+	elig       *connstate.EligibilityManager
+	combo      *combo.Handler
+	tracker    *usage.Tracker
+	authMgr    *auth.Manager
 
 	// Background goroutines
-	quotaScheduler   *background.QuotaSchedulerDB
-	usageFlush       *background.UsageFlush
-	cleanup          *background.Cleanup
-	rateLimitProber  *background.RateLimitProber
+	quotaScheduler  *background.QuotaSchedulerDB
+	usageFlush      *background.UsageFlush
+	cleanup         *background.Cleanup
+	rateLimitProber *background.RateLimitProber
 }
 
 // Config holds configuration for creating a router.
 type Config struct {
-	DB                *sql.DB
-	WriteQueue        *db.WriteQueue // centralized async writer (nil → one is created)
-	Port string
+	DB               *sql.DB
+	WriteQueue       *db.WriteQueue // centralized async writer (nil → one is created)
+	Port             string
 	QuotaIntervalMin int
-	LogRetentionDays  int
-	WebFS             fs.FS // embedded frontend filesystem
+	LogRetentionDays int
+	WebFS            fs.FS // embedded frontend filesystem
 }
 
 // New creates and configures the Gin router with all routes and middleware.
@@ -113,12 +113,11 @@ func New(cfg Config) *Router {
 	quotaScheduler.Start(ctx)
 	usageFlush.Start(ctx)
 	cleanup.Start(ctx)
-	rateLimitProber := background.NewRateLimitProber(cfg.DB, writeQueue, store, elig, exhaustionCache)
-	rateLimitProber.Start(ctx)
-	models.StartUpdater(ctx)
-
 	// Proxy pool system
 	proxyResolver := proxypool.NewResolver(cfg.DB)
+	rateLimitProber := background.NewRateLimitProber(cfg.DB, writeQueue, store, elig, exhaustionCache, executor.GetRegistry(), proxyResolver)
+	rateLimitProber.Start(ctx)
+	models.StartUpdater(ctx)
 	proxyHealth := proxypool.NewHealthChecker(cfg.DB)
 	proxyHealth.Start(ctx)
 
@@ -156,7 +155,6 @@ func New(cfg Config) *Router {
 	proxyGroupH := admin.NewProxyGroupHandler(cfg.DB, proxyResolver)
 	proxyDeployH := admin.NewProxyDeployHandler(cfg.DB, proxyHealth, proxyResolver)
 	optimizationH := admin.NewOptimizationHandler(cfg.DB, exactCache)
-
 
 	// Create Gin engine
 	engine := gin.New()
@@ -309,14 +307,14 @@ func New(cfg Config) *Router {
 		}
 		return out
 	}
-adminGroup.GET("/models", func(c *gin.Context) {
-c.JSON(http.StatusOK, gin.H{"data": v1H.ListActiveModels()})
-})
+	adminGroup.GET("/models", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"data": v1H.ListActiveModels()})
+	})
 	cliToolsH := admin.NewCLIToolsHandler(cfg.DB, modelLister)
-adminGroup.GET("/cli-tools", cliToolsH.ListTools)
-adminGroup.GET("/cli-tools/statuses", cliToolsH.AllStatuses)
-adminGroup.GET("/cli-tools/:toolId", cliToolsH.GetConfig)
-adminGroup.POST("/cli-tools/:toolId", cliToolsH.SaveConfig)
+	adminGroup.GET("/cli-tools", cliToolsH.ListTools)
+	adminGroup.GET("/cli-tools/statuses", cliToolsH.AllStatuses)
+	adminGroup.GET("/cli-tools/:toolId", cliToolsH.GetConfig)
+	adminGroup.POST("/cli-tools/:toolId", cliToolsH.SaveConfig)
 
 	// Compression & Cache
 	adminGroup.GET("/settings/compression", optimizationH.GetCompressionSettings)
@@ -357,18 +355,18 @@ adminGroup.POST("/cli-tools/:toolId", cliToolsH.SaveConfig)
 	})
 
 	return &Router{
-		engine:           engine,
-		db:               cfg.DB,
-		writeQueue:       writeQueue,
-		store:            store,
-		elig:             elig,
-		combo:            comboHandler,
-		tracker:          tracker,
-		authMgr:          authManager,
-		quotaScheduler:   quotaScheduler,
-		usageFlush:       usageFlush,
-		cleanup:          cleanup,
-		rateLimitProber:  rateLimitProber,
+		engine:          engine,
+		db:              cfg.DB,
+		writeQueue:      writeQueue,
+		store:           store,
+		elig:            elig,
+		combo:           comboHandler,
+		tracker:         tracker,
+		authMgr:         authManager,
+		quotaScheduler:  quotaScheduler,
+		usageFlush:      usageFlush,
+		cleanup:         cleanup,
+		rateLimitProber: rateLimitProber,
 	}
 }
 
