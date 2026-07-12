@@ -54,6 +54,9 @@ func NewWriteQueue(database *sql.DB) *WriteQueue {
 // Non-blocking: if the buffer is full the write is dropped (best-effort for
 // cooldown/ban persistence — the in-memory state is already updated synchronously).
 func (wq *WriteQueue) Enqueue(label string, fn func(*sql.DB) error) {
+	if wq == nil || wq.db == nil {
+		return // no write queue configured — in-memory state is already updated
+	}
 	op := WriteOp{fn: fn, label: label}
 	select {
 	case wq.ch <- op:
@@ -62,10 +65,10 @@ func (wq *WriteQueue) Enqueue(label string, fn func(*sql.DB) error) {
 		logging.Logger.Warn("writequeue: buffer full, dropped write", "op", label)
 	}
 }
-
-// EnqueueOrBlock submits a write operation, blocking until the buffer has space.
-// Use this for writes that must not be dropped (e.g. OAuth token refresh).
 func (wq *WriteQueue) EnqueueOrBlock(ctx context.Context, label string, fn func(*sql.DB) error) {
+	if wq == nil || wq.db == nil {
+		return // no write queue configured
+	}
 	select {
 	case wq.ch <- WriteOp{fn: fn, label: label}:
 	case <-ctx.Done():

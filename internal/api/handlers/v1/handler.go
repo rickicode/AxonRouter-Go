@@ -406,11 +406,15 @@ func (h *Handler) refreshOAuthToken(ctx context.Context, conn *Connection, provi
 	if err != nil {
 		// Check for unrecoverable errors (matches OmniRoute isUnrecoverableRefreshError)
 		if isUnrecoverableRefreshError(err) {
-			log.Printf("Unrecoverable refresh error for %s/%s: %v — blocking connection", provider, conn.ID, err)
-			h.db.ExecContext(ctx, `UPDATE connections SET is_active = 0, status = 'auth_failed', updated_at = ? WHERE id = ?`,
-				time.Now().Unix(), conn.ID)
-			h.store.UpdateStatus(conn.ID, connstate.StatusAuthFailed)
-			h.elig.Update(h.store)
+		log.Printf("Unrecoverable refresh error for %s/%s: %v — blocking connection", provider, conn.ID, err)
+		connID := conn.ID
+		h.writeQueue.EnqueueOrBlock(ctx, "refreshOAuth:authFailed", func(d *sql.DB) error {
+			_, err := d.Exec(`UPDATE connections SET is_active = 0, status = 'auth_failed', updated_at = ? WHERE id = ?`,
+				time.Now().Unix(), connID)
+			return err
+		})
+		h.store.UpdateStatus(conn.ID, connstate.StatusAuthFailed)
+		h.elig.Update(h.store)
 		}
 		return fmt.Errorf("refresh token: %w", err)
 	}
@@ -418,17 +422,19 @@ func (h *Handler) refreshOAuthToken(ctx context.Context, conn *Connection, provi
 	// Update connection in memory
 	conn.AccessToken = newCreds.AccessToken
 	conn.OAuthExpiresAt = newCreds.ExpiresAt
-	if newCreds.RefreshToken != "" {
-		conn.RefreshToken = newCreds.RefreshToken
-	}
-
-	// Persist to DB (use conn.RefreshToken which preserves existing token when newCreds omits it)
-	_, err = h.db.ExecContext(ctx, `UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
-		conn.AccessToken, conn.RefreshToken, conn.OAuthExpiresAt.Unix(), time.Now().Unix(), conn.ID)
-	if err != nil {
-		log.Printf("WARN: failed to persist OAuth token for connection %s: %v", conn.ID, err)
-	}
-
+	// Persist to DB (async — does not block the request path).
+	connID := conn.ID
+	accessToken := conn.AccessToken
+	refreshToken := conn.RefreshToken
+	expiresAt := conn.OAuthExpiresAt.Unix()
+	h.writeQueue.EnqueueOrBlock(ctx, "refreshOAuth:persist", func(d *sql.DB) error {
+		_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
+			accessToken, refreshToken, expiresAt, time.Now().Unix(), connID)
+		if err != nil {
+			log.Printf("WARN: failed to persist OAuth token for connection %s: %v", connID, err)
+		}
+		return err
+	})
 	return nil
 }
 
@@ -864,26 +870,39 @@ func (h *Handler) checkAutoDisable(connID, provider string) {
 	threshold := 3
 	banCount := cs.GetBanCount()
 
-	// Persist ban count to DB
-	h.db.Exec(`UPDATE connections SET consecutive_ban_count = ?, updated_at = ? WHERE id = ?`,
-		banCount, time.Now().Unix(), connID)
+	// Persist ban count to DB (async — does not block the request path).
+	banCountCopy := banCount
+	h.writeQueue.Enqueue("checkAutoDisable", func(d *sql.DB) error {
+		if _, err := d.Exec(`UPDATE connections SET consecutive_ban_count = ?, updated_at = ? WHERE id = ?`,
+			banCountCopy, time.Now().Unix(), connID); err != nil {
+			return err
+		}
+		if banCountCopy >= threshold {
+			log.Printf("Auto-disabling connection %s after %d consecutive ban signals", connID, banCountCopy)
+			if _, err := d.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', updated_at = ? WHERE id = ?`,
+				time.Now().Unix(), connID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 
+	// In-memory status update is synchronous (cheap, lock-free sync.Map).
 	if banCount >= threshold {
-		log.Printf("Auto-disabling connection %s after %d consecutive ban signals", connID, banCount)
-		h.db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', updated_at = ? WHERE id = ?`,
-			time.Now().Unix(), connID)
 		h.store.UpdateStatus(connID, connstate.StatusDisabled)
 		h.elig.Update(h.store)
 	}
 }
-
 // resetBanCount resets the consecutive ban count on success (persists to DB).
 func (h *Handler) resetBanCount(connID string) {
 	cs := h.store.Get(connID)
 	if cs != nil && cs.GetBanCount() > 0 {
 		cs.ResetBanCount()
-		h.db.Exec(`UPDATE connections SET consecutive_ban_count = 0, updated_at = ? WHERE id = ?`,
-			time.Now().Unix(), connID)
+		h.writeQueue.Enqueue("resetBanCount", func(d *sql.DB) error {
+			_, err := d.Exec(`UPDATE connections SET consecutive_ban_count = 0, updated_at = ? WHERE id = ?`,
+				time.Now().Unix(), connID)
+			return err
+		})
 	}
 }
 
@@ -897,6 +916,13 @@ func (h *Handler) persistCooldown(connID string, det connstate.ErrorDetection) {
 	if det.Category == connstate.ErrorQuota {
 		status = string(connstate.StatusQuotaExhausted)
 	}
-	h.db.Exec(`UPDATE connections SET status = ?, cooldown_until = ?, last_error = ?, last_error_code = ?, consecutive_error_count = consecutive_error_count + 1, updated_at = ? WHERE id = ?`,
-		status, det.CooldownUntil.Unix(), det.Message, string(det.Category), time.Now().Unix(), connID)
+	statusVal := status
+	cooldownUntil := det.CooldownUntil.Unix()
+	errMsg := det.Message
+	errCode := string(det.Category)
+	h.writeQueue.Enqueue("persistCooldown", func(d *sql.DB) error {
+		_, err := d.Exec(`UPDATE connections SET status = ?, cooldown_until = ?, last_error = ?, last_error_code = ?, consecutive_error_count = consecutive_error_count + 1, updated_at = ? WHERE id = ?`,
+			statusVal, cooldownUntil, errMsg, errCode, time.Now().Unix(), connID)
+		return err
+	})
 }
