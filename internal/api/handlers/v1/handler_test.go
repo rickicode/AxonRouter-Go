@@ -311,3 +311,31 @@ func TestGetConnectionRejectsCooledDownConnection(t *testing.T) {
 		t.Fatalf("expected error for cooled-down connection, got conn %s", conn.ID)
 	}
 }
+
+func TestIsClientCanceled(t *testing.T) {
+	h := &Handler{}
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	c := &gin.Context{Request: req.WithContext(ctx)}
+
+	// Client cancelled (request context done) → true.
+	cancel()
+	if !h.isClientCanceled(c, context.Canceled) {
+		t.Fatal("expected true for cancelled request context")
+	}
+
+	// Non-cancel error → false.
+	req2 := httptest.NewRequest(http.MethodGet, "/x", nil)
+	c2 := &gin.Context{Request: req2.WithContext(context.Background())}
+	if h.isClientCanceled(c2, errors.New("boom")) {
+		t.Fatal("expected false for non-cancel error")
+	}
+
+	// Cancelled error but client context still alive → false
+	// (server-side cancel, not a client disconnect).
+	req3 := httptest.NewRequest(http.MethodGet, "/x", nil)
+	c3 := &gin.Context{Request: req3.WithContext(context.Background())}
+	if h.isClientCanceled(c3, context.Canceled) {
+		t.Fatal("expected false when request context is not cancelled")
+	}
+}

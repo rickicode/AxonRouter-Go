@@ -112,7 +112,10 @@ func (h *Handler) Messages(c *gin.Context) {
 			connstate.ParseRateLimitHeaders(streamResult.Headers, h.store, conn.ID, modelName)
 		}
 		if err != nil {
-			retry, cat := h.handleFailoverError(conn, provider, modelName, err, attempt, latency)
+			if h.isClientCanceled(c, err) {
+				return
+			}
+			retry, cat := h.handleFailoverError(c, conn, provider, modelName, err, attempt, latency)
 			lastErr = err
 			lastErrCategory = cat
 			if !retry {

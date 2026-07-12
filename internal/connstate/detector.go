@@ -1,6 +1,7 @@
 package connstate
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"regexp"
@@ -51,13 +52,28 @@ func NewDetector() *Detector {
 // DetectError classifies an error from HTTP status code, response body, and headers.
 // modelID is passed through so callers can identify which model was rate-limited.
 // headers is used to extract rate limit info and retry-after values.
-func DetectError(statusCode int, body string, err error, providerPrefix string, modelID string, headers http.Header) ErrorDetection {
+func DetectError(ctx context.Context, statusCode int, body string, err error, providerPrefix string, modelID string, headers http.Header) ErrorDetection {
 	d := NewDetector()
 	var msg string
 	if err != nil {
 		msg = err.Error()
 	} else {
 		msg = body
+	}
+	// A plain "context canceled" that is NOT the inbound request context
+	// means the server-side fetch was cancelled (proxy/relay teardown,
+	// upstream closing mid-flight). Treat it as a transient timeout so it
+	// is retryable and marks the connection degraded. The handler still
+	// short-circuits client-side cancellations before calling this.
+	if errors.Is(err, context.Canceled) {
+		return ErrorDetection{
+			Category:  ErrorTimeout,
+			Retryable: true,
+			Message:   msg,
+			Status:    StatusDegraded,
+			Scope:     "connection",
+			ModelID:   modelID,
+		}
 	}
 	var upErr *executor.UpstreamError
 	if errors.As(err, &upErr) {

@@ -275,7 +275,7 @@ func (p *RateLimitProber) probePerModelLocks() {
 			ProviderSpecificData: psdMap,
 		})
 		if err != nil {
-			det := connstate.DetectError(0, "", err, l.provider, l.modelID, nil)
+		det := connstate.DetectError(context.Background(),0, "", err, l.provider, l.modelID, nil)
 			if det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota {
 				// Model is still locked — update cooldown with fresh detection.
 				cs := p.store.Get(l.connID)
@@ -297,7 +297,7 @@ func (p *RateLimitProber) probePerModelLocks() {
 			}
 		}
 		if probeErr != nil {
-			det := connstate.DetectError(0, "", probeErr, l.provider, l.modelID, nil)
+		det := connstate.DetectError(context.Background(),0, "", probeErr, l.provider, l.modelID, nil)
 			if det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota {
 				cs := p.store.Get(l.connID)
 				if cs != nil && det.CooldownUntil != nil {

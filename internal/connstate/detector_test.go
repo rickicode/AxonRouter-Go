@@ -1,6 +1,7 @@
 package connstate
 
 import (
+	"context"
 	"net/http"
 	"testing"
 	"time"
@@ -10,8 +11,7 @@ func TestDetectError_PerModelQuota_WithRetryAfter(t *testing.T) {
 	body := `{"error":{"message":"Daily freeusage limit reached. Resets in 10 hours"}}`
 	headers := http.Header{}
 	headers.Set("Retry-After", "600")
-
-	det := DetectError(429, body, nil, "oc", "oc/hy3-free", headers)
+	det := DetectError(context.Background(),429, body, nil, "oc", "oc/hy3-free", headers)
 
 	if det.Category != ErrorQuota {
 		t.Errorf("category=%v, want ErrorQuota", det.Category)
@@ -31,8 +31,7 @@ func TestDetectError_PerModelQuota_WithRetryAfter(t *testing.T) {
 
 func TestDetectError_PerModelQuota_ResetsInBody(t *testing.T) {
 	body := `{"error":{"message":"FreeUsageLimitError: daily quota exhausted. Resets in 16h"}}`
-
-	det := DetectError(429, body, nil, "oc", "oc/deepseek-free", nil)
+	det := DetectError(context.Background(),429, body, nil, "oc", "oc/deepseek-free", nil)
 
 	if det.Category != ErrorQuota {
 		t.Errorf("category=%v, want ErrorQuota", det.Category)
@@ -53,8 +52,7 @@ func TestDetectError_PerModelRateLimit_AGFamily(t *testing.T) {
 	body := `{"error":{"message":"rate limit exceeded"}}`
 	headers := http.Header{}
 	headers.Set("Retry-After", "120")
-
-	det := DetectError(429, body, nil, "ag", "ag/gemini-3-5", headers)
+	det := DetectError(context.Background(),429, body, nil, "ag", "ag/gemini-3-5", headers)
 
 	if det.Scope != "model" {
 		t.Errorf("scope=%v, want model", det.Scope)
@@ -76,8 +74,7 @@ func TestDetectError_NonPerModelRateLimit_KeepsConnectionScope(t *testing.T) {
 	body := `{"error":{"message":"rate limit exceeded"}}`
 	headers := http.Header{}
 	headers.Set("Retry-After", "60")
-
-	det := DetectError(429, body, nil, "openai", "gpt-4o", headers)
+	det := DetectError(context.Background(),429, body, nil, "openai", "gpt-4o", headers)
 
 	if det.Scope != "connection" {
 		t.Errorf("scope=%v, want connection", det.Scope)
@@ -103,5 +100,20 @@ func TestModelScope_AntigravityFamilies(t *testing.T) {
 		if got := ModelScope("ag", tc.model); got != tc.want {
 			t.Errorf("ModelScope(%q)=%q, want %q", tc.model, got, tc.want)
 		}
+	}
+}
+
+func TestDetectError_ContextCanceled_IsTimeout(t *testing.T) {
+	// A server-side cancellation (not the inbound request) must classify as a
+	// retryable timeout, not ErrorUnknown.
+	det := DetectError(context.Background(), 0, "", context.Canceled, "cf", "", nil)
+	if det.Category != ErrorTimeout {
+		t.Errorf("category=%v, want ErrorTimeout", det.Category)
+	}
+	if !det.Retryable {
+		t.Error("expected Retryable=true")
+	}
+	if det.Status != StatusDegraded {
+		t.Errorf("status=%v, want StatusDegraded", det.Status)
 	}
 }

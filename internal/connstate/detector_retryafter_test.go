@@ -1,6 +1,7 @@
 package connstate
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -16,7 +17,7 @@ func TestDetectError_UsesRetryAfterHeader(t *testing.T) {
 	upErr.Headers = make(map[string][]string)
 	upErr.Headers.Set("Retry-After", "120")
 
-	det := DetectError(0, "", upErr, "openai", "gpt-4o", nil)
+	det := DetectError(context.Background(),0, "", upErr, "openai", "gpt-4o", nil)
 	if det.Category != ErrorRateLimit {
 		t.Errorf("category=%v, want ErrorRateLimit", det.Category)
 	}
@@ -35,7 +36,7 @@ func TestDetectError_UsesRetryAfterFromBody(t *testing.T) {
 		Body:       []byte(`{"error":{"message":"rate limited","retry_after":90}}`),
 		RawBody:    []byte(`{"error":{"message":"rate limited","retry_after":90}}`),
 	}
-	det := DetectError(0, "", upErr, "openai", "gpt-4o", nil)
+	det := DetectError(context.Background(),0, "", upErr, "openai", "gpt-4o", nil)
 	if det.CooldownUntil == nil {
 		t.Fatal("expected cooldown")
 	}

@@ -600,6 +600,18 @@ func (h *Handler) executeWithRetry(
 	return resp, streamResult, err
 }
 
+// isClientCanceled reports whether err is a context cancellation that originated
+// from the inbound request (client disconnect / client timeout), not from a
+// server-side deadline. A plain "context canceled" from client.Do is almost
+// always the client hanging up, so we must NOT failover or mark the
+// connection degraded on it — it would just burn the retry budget and surface
+// a misleading "all connections exhausted" 503.
+func (h *Handler) isClientCanceled(c *gin.Context, err error) bool {
+	if !errors.Is(err, context.Canceled) {
+		return false
+	}
+	return c != nil && c.Request.Context().Err() != nil
+}
 // executeDirect runs the executor once with no retry — on any error, the caller
 // should failover to the next connection. This matches the user's preference:
 // "jika error ya langsung pindah ke akun lain".
@@ -622,8 +634,8 @@ func (h *Handler) executeDirect(ctx context.Context, exec executor.Executor, req
 // exhausted/cooled-down when appropriate, refreshes eligibility, and logs it.
 // Returns (shouldRetry, category): shouldRetry=false for non-retryable errors
 // (model_not_found, auth_failed), category for the caller to build better error messages.
-func (h *Handler) handleFailoverError(conn *Connection, provider, modelName string, err error, attempt int, latency int64) (bool, string) {
-	det := connstate.DetectError(0, "", err, provider, modelName, nil)
+func (h *Handler) handleFailoverError(c *gin.Context, conn *Connection, provider, modelName string, err error, attempt int, latency int64) (bool, string) {
+	det := connstate.DetectError(c.Request.Context(), 0, "", err, provider, modelName, nil)
 	if connstate.HasPerModelQuota(provider) && det.ModelID != "" &&
 		(det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
 		scope := connstate.ModelScope(provider, det.ModelID)

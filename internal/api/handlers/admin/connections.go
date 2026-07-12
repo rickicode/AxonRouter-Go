@@ -327,7 +327,7 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 	})
 	if err != nil {
 		latency := time.Since(start).Milliseconds()
-		det := connstate.DetectError(0, "", err, conn.ProviderTypeID, "", nil)
+		det := connstate.DetectError(context.Background(),0, "", err, conn.ProviderTypeID, "", nil)
 		h.recordTestFailure(id, det)
 		c.JSON(http.StatusOK, gin.H{
 			"connection_id": id,
@@ -349,7 +349,7 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 	latency := time.Since(start).Milliseconds()
 
 	if firstErr != nil {
-		det := connstate.DetectError(0, "", firstErr, conn.ProviderTypeID, "", nil)
+		det := connstate.DetectError(context.Background(),0, "", firstErr, conn.ProviderTypeID, "", nil)
 		h.recordTestFailure(id, det)
 		c.JSON(http.StatusOK, gin.H{
 			"connection_id": id,

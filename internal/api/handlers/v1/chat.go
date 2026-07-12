@@ -140,10 +140,13 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 			connstate.ParseRateLimitHeaders(streamResult.Headers, h.store, conn.ID, modelName)
 		}
 		if err != nil {
+			if h.isClientCanceled(c, err) {
+				return
+			}
 			if h.writeUpstreamClientError(c, err, conn, provider, modelName, start) {
 				return
 			}
-			retry, cat := h.handleFailoverError(conn, provider, modelName, err, attempt, latency)
+			retry, cat := h.handleFailoverError(c, conn, provider, modelName, err, attempt, latency)
 			lastErr = err
 			lastErrCategory = cat
 			if !retry {
@@ -258,7 +261,10 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 		resp, streamResult, err := h.executeDirect(proxyCtx, exec, req)
 		latency := time.Since(start).Milliseconds()
 		if err != nil {
-			det := connstate.DetectError(0, "", err, provider, modelName, nil)
+			if h.isClientCanceled(c, err) {
+				return
+			}
+			det := connstate.DetectError(c.Request.Context(), 0, "", err, provider, modelName, nil)
 			if connstate.HasPerModelQuota(provider) && det.ModelID != "" &&
 				(det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
 				scope := connstate.ModelScope(provider, det.ModelID)

@@ -333,7 +333,7 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 				if err != nil {
 					latency := time.Since(start).Milliseconds()
 					if h.store != nil {
-						det := connstate.DetectError(0, "", err, providerID, "", nil)
+				det := connstate.DetectError(context.Background(),0, "", err, providerID, "", nil)
 						h.store.RecordFailure(in.connID, det)
 					}
 					results[i] = testResult{ConnectionID: in.connID, Status: "failed", Error: err.Error(), LatencyMs: latency}
@@ -352,7 +352,7 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 
 				if firstErr != nil {
 					if h.store != nil {
-						det := connstate.DetectError(0, "", firstErr, providerID, "", nil)
+				det := connstate.DetectError(context.Background(),0, "", firstErr, providerID, "", nil)
 						h.store.RecordFailure(in.connID, det)
 					}
 					results[i] = testResult{ConnectionID: in.connID, Status: "failed", Error: firstErr.Error(), LatencyMs: latency}
