@@ -392,7 +392,7 @@ func (h *Handler) refreshOAuthToken(ctx context.Context, conn *Connection, provi
 			return err
 		})
 		h.store.UpdateStatus(conn.ID, connstate.StatusAuthFailed)
-		h.elig.Update(h.store)
+		h.elig.ScheduleUpdate()
 		}
 		return fmt.Errorf("refresh token: %w", err)
 	}
@@ -631,7 +631,7 @@ func (h *Handler) handleFailoverError(conn *Connection, provider, modelName stri
 	if det.Status != "" {
 		h.store.UpdateStatus(conn.ID, det.Status)
 	}
-	h.elig.Update(h.store)
+	h.elig.ScheduleUpdate()
 	h.checkAutoDisable(conn.ID, provider)
 
 	// Truncate error for log readability — full error goes to tracker DB
@@ -870,7 +870,7 @@ func (h *Handler) checkAutoDisable(connID, provider string) {
 	// In-memory status update is synchronous (cheap, lock-free sync.Map).
 	if banCount >= threshold {
 		h.store.UpdateStatus(connID, connstate.StatusDisabled)
-		h.elig.Update(h.store)
+		h.elig.ScheduleUpdate()
 	}
 }
 // resetBanCount resets the consecutive ban count on success (persists to DB).

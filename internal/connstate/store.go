@@ -63,6 +63,12 @@ func (s *Store) Delete(connID string) {
 // RecordSuccess records a successful request.
 func (s *Store) RecordSuccess(connID string) {
 	cs := s.GetOrCreate(connID)
+	// Fast-path: if already Ready, skip the write lock entirely. Under high
+	// concurrent throughput most successful requests hit an already-Ready
+	// connection, so this avoids a per-conn Lock on every success.
+	if cs.GetStatus() == StatusReady {
+		return
+	}
 	cs.SetStatus(StatusReady, "")
 }
 

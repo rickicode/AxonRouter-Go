@@ -6,26 +6,28 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/sync/singleflight"
 )
 
 // authResult holds a cached API key validation outcome.
 type authResult struct {
-	keyID      string
-	rateLimit  int
-	cachedAt   time.Time
+	keyID     string
+	rateLimit int
+	cachedAt  time.Time
 }
 
 // AuthCache caches validated API keys in memory so the hot path avoids:
-//   - 2 DB queries per request (COUNT(*) + SELECT all keys)
-//   - a bcrypt comparison per stored key (~50-100ms of CPU each)
+// - 2 DB queries per request (COUNT(*) + SELECT all keys)
+// - a bcrypt comparison per stored key (~50-100ms of CPU each)
 //
 // The cache has a short TTL (30s) because keys can be added/rotated via the
 // admin API; staleness only means a deleted key stays valid for ≤30s, which is
 // an acceptable trade-off for eliminating per-request DB + bcrypt load.
 type AuthCache struct {
-	mu      sync.RWMutex
+	mu     sync.RWMutex
 	entries map[string]*authResult
-	ttl     time.Duration
+	ttl    time.Duration
+	group  singleflight.Group // collapses concurrent cache-miss validations for the same key
 }
 
 // NewAuthCache creates a cache with the given TTL.
@@ -116,4 +118,23 @@ func validateKey(db *sql.DB, presentedKey string) (string, int, bool) {
 		return "", 0, false
 	}
 	return keyID, rateLimit, true
+}
+
+// Validate collapses concurrent cache-miss validations for the same presented
+// key into a single DB+bcrypt call via singleflight. This prevents a
+// thundering herd at the 30s TTL boundary (cold start or key rotation) when
+// hundreds of concurrent requests all miss the cache simultaneously.
+func (c *AuthCache) Validate(db *sql.DB, presentedKey string) (string, int, bool) {
+	if c == nil {
+		return validateKey(db, presentedKey)
+	}
+	v, err, _ := c.group.Do(presentedKey, func() (interface{}, error) {
+		keyID, rateLimit, ok := validateKey(db, presentedKey)
+		return [3]interface{}{keyID, rateLimit, ok}, nil
+	})
+	if err != nil {
+		return "", 0, false
+	}
+	res := v.([3]interface{})
+	return res[0].(string), res[1].(int), res[2].(bool)
 }

@@ -486,16 +486,24 @@ func (b *BaseExecutor) DoStreamRequestWithConfig(ctx context.Context, method, ra
 		// Run scanner in its own goroutine so we can select on idle timeout
 		scanCh := make(chan []byte, 1)
 		scanErrCh := make(chan error, 1)
-		go func() {
-			for scanner.Scan() {
-				scanCh <- append([]byte{}, scanner.Bytes()...)
+	go func() {
+		defer close(scanCh)
+		defer close(scanErrCh)
+		for scanner.Scan() {
+			line := append([]byte{}, scanner.Bytes()...)
+			select {
+			case scanCh <- line:
+			case <-ctx.Done():
+				return
 			}
-			if err := scanner.Err(); err != nil {
-				scanErrCh <- err
+		}
+		if err := scanner.Err(); err != nil {
+			select {
+			case scanErrCh <- err:
+			case <-ctx.Done():
 			}
-			close(scanCh)
-			close(scanErrCh)
-		}()
+		}
+	}()
 
 		readinessTimer := time.NewTimer(readinessTimeout)
 		defer readinessTimer.Stop()

@@ -264,7 +264,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 			h.combo.RecordFailure(connID, det)
 			h.persistCooldown(connID, det)
 			if det.Status != connstate.StatusReady {
-				h.elig.Update(h.store)
+				h.elig.ScheduleUpdate()
 			}
 			continue
 		}

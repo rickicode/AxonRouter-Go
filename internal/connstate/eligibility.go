@@ -2,7 +2,9 @@ package connstate
 
 import (
 	"math/rand/v2"
+	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // EligibilitySnapshot is an immutable set of eligible provider IDs for fast routing.
@@ -13,9 +15,19 @@ type EligibilitySnapshot struct {
 
 // EligibilityManager manages eligibility snapshots for O(1) routing decisions.
 type EligibilityManager struct {
-	store    *Store
-	snapshot atomic.Value // *EligibilitySnapshot
+	store     *Store
+	snapshot  atomic.Value // *EligibilitySnapshot
+	updateMu  sync.Mutex    // guards coalescing window state
+	updateScheduled bool    // true while a coalesced Update is pending
+	lastUpdate time.Time    // timestamp of last actual rebuild
 }
+
+// updateCoalesceWindow bounds how often the O(N) snapshot rebuild runs when
+// triggered by concurrent failovers. Multiple status changes within this window
+// collapse into a single rebuild, preventing O(N) CPU spikes under bursty
+// 429/5xx load (hundreds of concurrent failovers would otherwise each scan all
+// connections + shuffle). Latency for status propagation stays ≤ this window.
+const updateCoalesceWindow = 50 * time.Millisecond
 
 // NewEligibilityManager creates a new eligibility manager.
 func NewEligibilityManager(store *Store) *EligibilityManager {
@@ -56,6 +68,40 @@ func (e *EligibilityManager) Update(store *Store) {
 		Providers: all,
 		ByPrefix:  eligible,
 	})
+}
+
+// ScheduleUpdate coalesces concurrent eligibility rebuild requests into a single
+// O(N) rebuild per updateCoalesceWindow. This is called on every status change
+// (failover error, ban→disabled, recovery). Under bursty failover load (hundreds
+// of concurrent 429s), all the status changes within a 50ms window collapse into
+// ONE rebuild instead of N, bounding CPU cost. Status propagation latency stays
+// ≤ updateCoalesceWindow. The immediate Update() is still used by admin/background
+// paths that need a guaranteed synchronous rebuild.
+func (e *EligibilityManager) ScheduleUpdate() {
+	e.updateMu.Lock()
+	if e.updateScheduled {
+		// Another goroutine already owns the window — skip.
+		e.updateMu.Unlock()
+		return
+	}
+	if time.Since(e.lastUpdate) >= updateCoalesceWindow {
+		// Enough time has passed — rebuild immediately (no goroutine, no delay).
+		e.lastUpdate = time.Now()
+		e.updateMu.Unlock()
+		e.Update(e.store)
+		return
+	}
+	// Within the window — mark pending and spawn a coalescing rebuild.
+	e.updateScheduled = true
+	e.updateMu.Unlock()
+	go func() {
+		time.Sleep(updateCoalesceWindow)
+		e.updateMu.Lock()
+		e.updateScheduled = false
+		e.lastUpdate = time.Now()
+		e.updateMu.Unlock()
+		e.Update(e.store)
+	}()
 }
 
 // Get returns the current eligibility snapshot (lock-free).

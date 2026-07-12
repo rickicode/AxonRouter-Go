@@ -28,8 +28,9 @@ func Auth(db *sql.DB, cache *AuthCache) gin.HandlerFunc {
 			}
 		}
 
-		// Cache miss (or no cache): validate, then cache for subsequent requests.
-		keyID, rateLimit, ok := validateKey(db, presented)
+	// Cache miss (or no cache): validate with singleflight to collapse
+	// concurrent misses for the same key into one DB+bcrypt call.
+	keyID, rateLimit, ok := cache.Validate(db, presented)
 		if !ok {
 			// Either no keys configured (open access) or invalid key.
 			var count int
