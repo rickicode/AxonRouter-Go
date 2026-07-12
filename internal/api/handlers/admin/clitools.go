@@ -488,8 +488,65 @@ var cliToolCatalog = []CLIToolStatic{
 		ID: "generic", Name: "Generic OpenAI-compatible", Description: "Any CLI that accepts OPENAI_BASE_URL + OPENAI_API_KEY.",
 		Image: "/providers/openai.png", Color: "#10A37F", ConfigType: "env",
 	},
+  // ─── PI Coding Agent ───────────────────────────────────────────
+  {
+    ID: "pi",
+    Name: "PI Coding Agent",
+    Description: "Oh-My-Pi coding agent — register AxonRouter as an OpenAI-compatible provider in ~/.pi/agent/models.json.",
+    Image: "/providers/pi.png",
+    Color: "#8B5CF6",
+    ConfigType: "guide",
+    DocsURL: "https://github.com/oh-my-pi/pi-coding-agent",
+    GuideSteps: []GuideStep{
+      {Step: 1, Title: "Open pi models config", Desc: "Edit ~/.pi/agent/models.json and find the providers object."},
+      {Step: 2, Title: "Select a model", Desc: "Pick which AxonRouter model to register (browse or type provider/model-id).", Type: "modelSelector"},
+      {Step: 3, Title: "Merge provider block", Desc: "Paste the JSON entry below into the providers object."},
+    },
+    CodeBlock: &CodeBlock{
+      Language: "json",
+      Code: "  \"AxonRouter\": {\n" +
+        "    \"baseUrl\": \"{{baseUrl}}\",\n" +
+        "    \"api\": \"openai-completions\",\n" +
+        "    \"apiKey\": \"{{apiKey}}\",\n" +
+        "    \"authHeader\": true,\n" +
+        "    \"compat\": { \"supportsDeveloperRole\": true, \"supportsReasoningEffort\": true },\n" +
+        "    \"models\": [\n" +
+        "      { \"id\": \"{{model}}\", \"name\": \"AxonRouter\", \"reasoning\": false, \"input\": [\"text\",\"image\"], \"contextWindow\": 200000, \"maxTokens\": 16384 }\n" +
+        "    ]\n" +
+        "  }",
+    },
+    Notes: []Note{
+      {Type: "info", Text: "AxonRouter exposes /v1/models — you can add more model entries from there."},
+      {Type: "info", Text: "If your pi build supports discovery, replace the models array with \"discovery\": { \"type\": \"openai-models-list\" }."},
+    },
+  },
+  // ─── OMP (Oh My Pi) ─────────────────────────────────────────────
+  {
+    ID: "omp",
+    Name: "OMP (Oh My Pi)",
+    Description: "Oh-My-Pi shell/agent — register AxonRouter as an OpenAI-compatible provider in ~/.omp/agent/models.yml.",
+    Image: "/providers/omp.png",
+    Color: "#EC4899",
+    ConfigType: "guide",
+    DocsURL: "https://github.com/oh-my-pi/omp",
+    GuideSteps: []GuideStep{
+      {Step: 1, Title: "Open omp models config", Desc: "Edit ~/.omp/agent/models.yml and find the providers section."},
+      {Step: 2, Title: "Merge provider block", Desc: "Paste the YAML entry below into the providers section. Models are auto-discovered."},
+    },
+    CodeBlock: &CodeBlock{
+      Language: "yaml",
+      Code: "axonrouter-go:\n" +
+        "  api: openai-completions\n" +
+        "  apiKey: \"{{apiKey}}\"\n" +
+        "  authHeader: true\n" +
+        "  baseUrl: \"{{baseUrl}}\"\n" +
+        "  discovery: type: openai-models-list",
+    },
+    Notes: []Note{
+      {Type: "info", Text: "OMP auto-discovers models via /v1/models, so no manual model list is needed."},
+    },
+  },
 }
-
 // --- Config generators ---
 
 func generateConfig(toolID string, sel CLIToolSelection, apiKey string) CLIToolConfig {
@@ -530,8 +587,33 @@ func generateConfig(toolID string, sel CLIToolSelection, apiKey string) CLIToolC
 		return guideConfig(sel.Model, apiKey, base)
 	case "generic":
 		return genericConfig(sel.Model, apiKey, base)
+ case "pi":
+   return snippetConfig("pi", sel, apiKey, base)
+ case "omp":
+   return snippetConfig("omp", sel, apiKey, base)
 	}
 	return CLIToolConfig{}
+}
+
+// snippetConfig renders a tool's CodeBlock with {{baseUrl}}/{{apiKey}}/{{model}} substituted.
+func snippetConfig(toolID string, sel CLIToolSelection, apiKey, base string) CLIToolConfig {
+  tool := findTool(toolID)
+  if tool == nil || tool.CodeBlock == nil {
+    return CLIToolConfig{}
+  }
+  model := sel.Model
+  if model == "" {
+    model = "provider/model-id"
+  }
+  code := tool.CodeBlock.Code
+  code = strings.ReplaceAll(code, "{{baseUrl}}", base)
+  code = strings.ReplaceAll(code, "{{apiKey}}", apiKey)
+  code = strings.ReplaceAll(code, "{{model}}", model)
+  cfgPath := "~/.pi/agent/models.json"
+  if toolID == "omp" {
+    cfgPath = "~/.omp/agent/models.yml"
+  }
+  return CLIToolConfig{ConfigPath: cfgPath, ConfigContent: code}
 }
 
 func claudeConfig(sel CLIToolSelection, apiKey, base string) CLIToolConfig {

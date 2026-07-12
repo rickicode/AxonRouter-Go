@@ -399,15 +399,6 @@
               {/each}
             </select>
           </div>
-          <div class="space-y-2">
-            <Label class="text-caption-mono uppercase text-muted-foreground">Raw API Key Value</Label>
-            <Input type="password" bind:value={apiKeyValue} placeholder="Paste your AxonRouter API key value (not stored)" class="text-body-sm" />
-            <p class="text-caption text-muted-foreground">AxonRouter stores only bcrypt hashes. Paste the raw value to embed in generated config.</p>
-          </div>
-          <div class="space-y-2">
-            <Label class="text-caption-mono uppercase text-muted-foreground">Gateway Base URL</Label>
-            <Input bind:value={sel.baseUrl} placeholder={defaultBaseUrl} class="font-mono text-body-sm" />
-          </div>
 
         <!-- SINGLE MODEL UI (for simple tools) -->
         {:else if (selectedTool?.guideSteps?.length ?? 0) === 0 && (selectedTool?.defaultModels?.length ?? 0) === 0}
@@ -438,16 +429,17 @@
               {/each}
             </select>
           </div>
-          <div class="space-y-2">
-            <Label class="text-caption-mono uppercase text-muted-foreground">Raw API Key Value</Label>
-            <Input type="password" bind:value={apiKeyValue} placeholder="Paste your AxonRouter API key value (not stored)" class="text-body-sm" />
-            <p class="text-caption text-muted-foreground">AxonRouter stores only bcrypt hashes. Paste the raw value to embed in generated config.</p>
-          </div>
-          <div class="space-y-2">
-            <Label class="text-caption-mono uppercase text-muted-foreground">Gateway Base URL</Label>
-            <Input bind:value={sel.baseUrl} placeholder={defaultBaseUrl} class="font-mono text-body-sm" />
-          </div>
         {/if}
+<!-- Shared: Raw API Key Value + Base URL (render once for every tool) -->
+<div class="space-y-2">
+  <Label class="text-caption-mono uppercase text-muted-foreground">Raw API Key Value</Label>
+  <Input type="password" bind:value={apiKeyValue} placeholder="Paste your AxonRouter API key value (not stored)" class="text-body-sm" />
+  <p class="text-caption text-muted-foreground">AxonRouter stores only bcrypt hashes. Paste the raw value to embed in generated config.</p>
+</div>
+<div class="space-y-2">
+  <Label class="text-caption-mono uppercase text-muted-foreground">Gateway Base URL</Label>
+  <Input bind:value={sel.baseUrl} placeholder={defaultBaseUrl} class="font-mono text-body-sm" />
+</div>
 
         <!-- Generate button (always shown) -->
         <div class="flex items-center gap-2 pt-2">
