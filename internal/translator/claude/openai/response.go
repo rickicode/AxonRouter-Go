@@ -190,11 +190,14 @@ func ConvertOpenAIResponseToClaudeNonStream(_ context.Context, _ string, _, _ []
 			if toolCalls := msg.Get("tool_calls"); toolCalls.Exists() && toolCalls.IsArray() {
 				toolCalls.ForEach(func(_, tc gjson.Result) bool {
 					var args interface{}
-					json.Unmarshal([]byte(tc.Get("function.arguments").String()), &args)
+					argsJSON := tc.Get("function.arguments").String()
+					if err := json.Unmarshal([]byte(argsJSON), &args); err != nil || args == nil {
+						args = map[string]interface{}{}
+					}
 					content = append(content, map[string]interface{}{
-						"type":  "tool_use",
-						"id":    tc.Get("id").String(),
-						"name":  tc.Get("function.name").String(),
+						"type": "tool_use",
+						"id":   tc.Get("id").String(),
+						"name": tc.Get("function.name").String(),
 						"input": args,
 					})
 					return true

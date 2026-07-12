@@ -153,16 +153,7 @@ func ConvertClaudeRequestToOpenAI(modelName string, body []byte, stream bool) []
 						},
 					})
 				case "tool_result":
-					var c any
-					if cRaw := part.Get("content"); cRaw.Exists() {
-						if cRaw.Type == gjson.String {
-							c = cRaw.String()
-						} else {
-							c = json.RawMessage(cRaw.Raw)
-						}
-					} else {
-						c = ""
-					}
+					c := normalizeToolResultContent(part.Get("content"))
 					toolResults = append(toolResults, toolResult{id: part.Get("tool_use_id").String(), content: c})
 				case "thinking", "redacted_thinking":
 					// dropped in request translation (never mapped to OpenAI)
@@ -237,4 +228,34 @@ func ConvertClaudeRequestToOpenAI(modelName string, body []byte, stream bool) []
 
 	b, _ := json.Marshal(out)
 	return b
+}
+
+// normalizeToolResultContent converts an Anthropic tool_result.content value
+// (which can be a string or an array of content blocks) into a plain string for
+// OpenAI's tool role message. Upstreams such as Cloudflare Workers AI reject
+// non-string tool message content with "Tool use input must be a string or object".
+func normalizeToolResultContent(c gjson.Result) string {
+	if !c.Exists() || c.Type == gjson.Null {
+		return ""
+	}
+	if c.Type == gjson.String {
+		return c.String()
+	}
+	if c.IsArray() {
+		var sb strings.Builder
+		c.ForEach(func(_, item gjson.Result) bool {
+			if item.Get("type").String() == "text" {
+				if sb.Len() > 0 {
+					sb.WriteByte('\n')
+				}
+				sb.WriteString(item.Get("text").String())
+			}
+			return true
+		})
+		if sb.Len() > 0 {
+			return sb.String()
+		}
+	}
+	b, _ := json.Marshal(c.Value())
+	return string(b)
 }
