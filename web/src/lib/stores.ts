@@ -1,6 +1,6 @@
 // Svelte Stores for AxonRouter-Go Dashboard
 
-import { writable, derived } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
 import { providersApi, connectionsApi, combosApi, logsApi, dashboardApi, quotaApi, fetchApi } from './api';
 import type { Provider, Connection, Combo, RequestLog, ActiveRequest, QuotaCacheEntry, QuotaCacheResponse, QuotaProviderSummary, ConnectionQuota } from './api';
 import { loadProviderAliases } from './provider-catalog';
@@ -321,34 +321,18 @@ export async function loadLogs(page = 1, perPage = 100) {
 }
 
 export async function refreshLogs(page = 1, perPage = 100) {
-    const filter = {
-      provider_id: '',
-      connection_id: '',
-      model_id: '',
-      status_code: 0,
-      start_date: '',
-      end_date: '',
-    };
-
-    logFilter.subscribe((f) => {
-      filter.provider_id = f.provider_id;
-      filter.connection_id = f.connection_id;
-      filter.model_id = f.model_id;
-      filter.status_code = f.status_code;
-      filter.start_date = f.start_date;
-      filter.end_date = f.end_date;
-    })();
+  const f = get(logFilter);
 
   try {
     const response = await logsApi.list({
       page,
       per_page: perPage,
-      provider_id: filter.provider_id || undefined,
-      connection_id: filter.connection_id || undefined,
-      model_id: filter.model_id || undefined,
-      status_code: filter.status_code || undefined,
-      start_date: filter.start_date || undefined,
-      end_date: filter.end_date || undefined,
+      provider_id: f.provider_id || undefined,
+      connection_id: f.connection_id || undefined,
+      model_id: f.model_id || undefined,
+      status_code: f.status_code || undefined,
+      start_date: f.start_date || undefined,
+      end_date: f.end_date || undefined,
     });
 
     logs.set(response.data || []);
