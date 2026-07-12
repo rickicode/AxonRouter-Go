@@ -34,7 +34,7 @@ const (
 var (
 	signatureCache   sync.Map // groupKey -> *groupCache
 	cacheCleanupOnce sync.Once
-	replayMu         sync.Mutex
+	replayMu sync.RWMutex
 	replayEntries    = make(map[string]replayEntry)
 )
 
@@ -182,14 +182,11 @@ func GetReplayItems(modelName, sessionKey string) ([][]byte, bool) {
 	if key == "" {
 		return nil, false
 	}
-	replayMu.Lock()
-	defer replayMu.Unlock()
+	replayMu.RLock()
+	defer replayMu.RUnlock()
 	entry, ok := replayEntries[key]
 	if !ok || time.Since(entry.Timestamp) > ReplayCacheTTL {
-		if ok {
-			delete(replayEntries, key)
-		}
-		return nil, false
+		return nil, false // expired entry will be purged by PurgeExpiredReplayEntries
 	}
 	return entry.Items, true
 }

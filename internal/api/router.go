@@ -106,13 +106,13 @@ func New(cfg Config) *Router {
 	// Background goroutines
 	ctx := context.Background()
 	exhaustionCache := quota.NewExhaustionCache()
-	quotaScheduler := background.NewQuotaSchedulerDB(cfg.DB, store, elig, cfg.QuotaIntervalMin, exhaustionCache)
+	quotaScheduler := background.NewQuotaSchedulerDB(cfg.DB, writeQueue, store, elig, cfg.QuotaIntervalMin, exhaustionCache)
 	usageFlush := background.NewUsageFlush(tracker)
 	cleanup := background.NewCleanup(comboHandler, cfg.DB, cfg.LogRetentionDays)
 	quotaScheduler.Start(ctx)
 	usageFlush.Start(ctx)
 	cleanup.Start(ctx)
-	rateLimitProber := background.NewRateLimitProber(cfg.DB, store, elig, exhaustionCache)
+	rateLimitProber := background.NewRateLimitProber(cfg.DB, writeQueue, store, elig, exhaustionCache)
 	rateLimitProber.Start(ctx)
 	models.StartUpdater(ctx)
 

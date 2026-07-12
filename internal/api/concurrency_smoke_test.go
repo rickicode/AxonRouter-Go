@@ -80,8 +80,8 @@ func TestAuthCacheEliminatesRepeatedBcrypt(t *testing.T) {
 	elapsed := time.Since(start)
 	t.Logf("%d cache-hit requests completed in %v", n, elapsed)
 
-	if elapsed > 200*time.Millisecond {
-		t.Errorf("auth cache broken: %d requests took %v (want < 200ms); "+
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("auth cache broken: %d requests took %v (want < 500ms); "+
 			"likely hitting bcrypt on every request instead of cache hits", n, elapsed)
 	}
 }

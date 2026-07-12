@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
+	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 )
 
@@ -17,6 +18,7 @@ import (
 type RateLimitProber struct {
 	once       sync.Once
 	db         *sql.DB
+	writeQueue *db.WriteQueue
 	store      *connstate.Store
 	elig       *connstate.EligibilityManager
 	exhaustion *quota.ExhaustionCache
@@ -24,13 +26,15 @@ type RateLimitProber struct {
 }
 
 func NewRateLimitProber(
-	db *sql.DB,
+	database *sql.DB,
+	writeQueue *db.WriteQueue,
 	store *connstate.Store,
 	elig *connstate.EligibilityManager,
 	exhaustion *quota.ExhaustionCache,
 ) *RateLimitProber {
 	return &RateLimitProber{
-		db:         db,
+		db:         database,
+		writeQueue: writeQueue,
 		store:      store,
 		elig:       elig,
 		exhaustion: exhaustion,
@@ -52,7 +56,6 @@ func (p *RateLimitProber) run(ctx context.Context) {
 	log.Println("background: rate-limit prober started (1 min interval)")
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -66,30 +69,42 @@ func (p *RateLimitProber) run(ctx context.Context) {
 }
 
 // check finds oc connections with expired cooldown and probes them.
+// Rows are loaded into a slice and the cursor is closed BEFORE any HTTP probes
+// to avoid holding a pooled DB connection across network I/O.
 func (p *RateLimitProber) check() {
 	now := time.Now().Unix()
 	rows, err := p.db.Query(`
 		SELECT id, name
 		FROM connections
 		WHERE provider_type_id = 'oc'
-		  AND is_active = 1
-		  AND status IN ('rate_limited', 'quota_exhausted')
-		  AND cooldown_until IS NOT NULL
-		  AND cooldown_until <= ?
+		AND is_active = 1
+		AND status IN ('rate_limited', 'quota_exhausted')
+		AND cooldown_until IS NOT NULL
+		AND cooldown_until <= ?
 	`, now)
 	if err != nil {
 		return
 	}
-	defer rows.Close()
+
+	// Scan all rows into a slice, then close the cursor immediately.
+	type connRow struct{ id, name string }
+	var candidates []connRow
+	for rows.Next() {
+		var r connRow
+		if err := rows.Scan(&r.id, &r.name); err != nil {
+			continue
+		}
+		candidates = append(candidates, r)
+	}
+	rows.Close()
+
+	if len(candidates) == 0 {
+		return
+	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 
-	for rows.Next() {
-		var id, name string
-		if err := rows.Scan(&id, &name); err != nil {
-			continue
-		}
-
+	for _, r := range candidates {
 		// Probe OpenCode Free endpoint
 		req, err := http.NewRequest("POST", "https://opencode.ai/zen/v1/chat/completions", nil)
 		if err != nil {
@@ -105,12 +120,17 @@ func (p *RateLimitProber) check() {
 
 		if resp.StatusCode == http.StatusOK {
 			// Connection recovered — reset everything
-			p.exhaustion.Clear(id)
-			p.store.UpdateStatus(id, connstate.StatusReady)
-			p.db.Exec(`UPDATE connections SET status='ready', cooldown_until=NULL, last_error=NULL, updated_at=? WHERE id=?`,
-				now, id)
+			p.exhaustion.Clear(r.id)
+			p.store.UpdateStatus(r.id, connstate.StatusReady)
+			connID := r.id
+			updatedAt := now
+			p.writeQueue.Enqueue("rateLimitProber:recover", func(d *sql.DB) error {
+				_, err := d.Exec(`UPDATE connections SET status='ready', cooldown_until=NULL, last_error=NULL, updated_at=? WHERE id=?`,
+					updatedAt, connID)
+				return err
+			})
 			p.elig.Update(p.store)
-			log.Printf("rate-limit prober: %s (%s) recovered → ready", name, id[:8])
+			log.Printf("rate-limit prober: %s (%s) recovered → ready", r.name, r.id[:8])
 		}
 	}
 }

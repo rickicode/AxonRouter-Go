@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
+	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 )
 
@@ -90,10 +91,10 @@ func (qs *QuotaScheduler) Stop() {
 
 // QuotaSchedulerDB is a version that also queries DB for proactive quota checks.
 // Runs cooldown recovery + proactive quota fetching from provider APIs (Codex, Antigravity, Kiro).
-// Default interval: 1 minute (matches OmniRoute REFRESH_INTERVAL_MS).
 type QuotaSchedulerDB struct {
 	once       sync.Once
 	db         *sql.DB
+	writeQueue *db.WriteQueue
 	store      *connstate.Store
 	elig       *connstate.EligibilityManager
 	exhaustion *quota.ExhaustionCache
@@ -103,15 +104,16 @@ type QuotaSchedulerDB struct {
 
 // NewQuotaSchedulerDB creates a DB-aware quota scheduler.
 // Default interval: 1 minute (matches OmniRoute REFRESH_INTERVAL_MS).
-func NewQuotaSchedulerDB(database *sql.DB, store *connstate.Store, elig *connstate.EligibilityManager, intervalMin int, exhaustionCache *quota.ExhaustionCache) *QuotaSchedulerDB {
+func NewQuotaSchedulerDB(database *sql.DB, writeQueue *db.WriteQueue, store *connstate.Store, elig *connstate.EligibilityManager, intervalMin int, exhaustionCache *quota.ExhaustionCache) *QuotaSchedulerDB {
 	if intervalMin <= 0 {
 		intervalMin = 1
 	}
 	return &QuotaSchedulerDB{
 		db:         database,
+		writeQueue: writeQueue,
 		store:      store,
 		elig:       elig,
-		exhaustion: exhaustionCache,
+		exhaustion:  exhaustionCache,
 		interval:   time.Duration(intervalMin) * time.Minute,
 		stopCh:     make(chan struct{}),
 	}
@@ -177,8 +179,13 @@ func (qs *QuotaSchedulerDB) check() {
 			toRecover = append(toRecover, id)
 		}
 		for _, id := range toRecover {
-			qs.db.Exec(`UPDATE connections SET status = 'ready', cooldown_until = NULL, updated_at = ? WHERE id = ?`,
-				now.Unix(), id)
+		connID := id
+		updatedAt := now.Unix()
+		qs.writeQueue.Enqueue("quotaScheduler:recover", func(d *sql.DB) error {
+			_, err := d.Exec(`UPDATE connections SET status = 'ready', cooldown_until = NULL, updated_at = ? WHERE id = ?`,
+				updatedAt, connID)
+			return err
+		})
 			qs.store.UpdateStatus(id, connstate.StatusReady)
 			if qs.exhaustion != nil {
 				qs.exhaustion.Clear(id)

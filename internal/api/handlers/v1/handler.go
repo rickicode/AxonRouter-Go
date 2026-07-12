@@ -146,15 +146,9 @@ type Handler struct {
 	authMgr     *auth.Manager
 	resolver    *proxypool.Resolver
 	exhaustion  *quota.ExhaustionCache
-	conns       sync.Map // provider -> cachedConns
+	conns sync.Map // connID -> *Connection (write-through credential cache)
 	compressionStrategy compression.Strategy
-	exactCache  cache.CacheStorage
-}
-
-// cachedConns holds cached connections with expiry.
-type cachedConns struct {
-	conns     []*Connection
-	expiresAt time.Time
+	exactCache cache.CacheStorage
 }
 
 // NewHandler creates a new v1 handler with all dependencies.
@@ -228,7 +222,7 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 			continue
 		}
 		// Load credentials by ID
-		conn, err := h.loadConnectionByID(ctx, connID)
+	conn, err := h.getCachedConn(ctx, connID)
 		if err != nil {
 			logging.Logger.Debug("load conn failed", "conn", connID[:8], "err", err)
 			continue
@@ -259,7 +253,7 @@ func (h *Handler) prepareConnection(ctx context.Context, connID, provider, model
 		return nil, fmt.Errorf("connection exhausted")
 	}
 
-	conn, err := h.loadConnectionByID(ctx, connID)
+	conn, err := h.getCachedConn(ctx, connID)
 	if err != nil {
 		return nil, err
 	}
@@ -271,76 +265,60 @@ func (h *Handler) prepareConnection(ctx context.Context, connID, provider, model
 	return conn, nil
 }
 
-// RefreshConnections clears the connection cache for a provider.
-// ponytail: kept for backward compat but no longer used by getConnection (eligibility snapshot is always fresh).
-func (h *Handler) RefreshConnections(provider string) {
-	h.conns.Delete(provider)
+// RefreshConnections clears the connection cache for a specific connection ID.
+// Called by admin handlers after connection CRUD operations.
+func (h *Handler) RefreshConnections(connID string) {
+	h.conns.Delete(connID)
 }
 
-// invalidateCache clears the connection cache for a provider.
-// ponytail: kept for backward compat but no longer needed — eligibility snapshot is always fresh.
-func (h *Handler) invalidateCache(provider string) {
-	h.conns.Delete(provider)
+// connCacheTTL bounds credential staleness. Admin changes (API key rotation,
+// connection update) are reflected within this window.
+const connCacheTTL = 60 * time.Second
+
+// cachedConn holds a connection with a cache timestamp for TTL expiry.
+type cachedConn struct {
+	conn    *Connection
+	cachedAt time.Time
 }
 
-// loadConnections loads connections from the database.
-func (h *Handler) loadConnections(ctx context.Context, provider string) ([]*Connection, error) {
-	rows, err := h.db.QueryContext(ctx, `
-		SELECT c.id, pt.id as provider_prefix,
-			COALESCE(c.priority, 0) as priority,
-			COALESCE(c.api_key, '') as api_key,
-			COALESCE(c.oauth_token, '') as oauth_token,
-			COALESCE(c.oauth_refresh_token, '') as oauth_refresh_token,
-			COALESCE(c.oauth_expires_at, 0) as oauth_expires_at,
-			COALESCE(pt.base_url, '') as base_url,
-			COALESCE(c.status, 'ready') as status
-		FROM connections c
-		JOIN provider_types pt ON c.provider_type_id = pt.id
-		WHERE pt.id = ? AND c.is_active = 1
-		ORDER BY c.priority DESC, c.id
-	`, provider)
+// getCachedConn returns a cached connection by ID, falling back to a DB load
+// on miss or TTL expiry (60s). This eliminates the per-request DB SELECT on the
+// hot path — the last remaining DB call in getConnection/prepareConnection.
+func (h *Handler) getCachedConn(ctx context.Context, connID string) (*Connection, error) {
+	if v, ok := h.conns.Load(connID); ok {
+		cc := v.(cachedConn)
+		if time.Since(cc.cachedAt) < connCacheTTL {
+		copied := *cc.conn
+		return &copied, nil
+		}
+	}
+	// Cache miss or expired — load from DB (write-through).
+	conn, err := h.loadConnectionByID(ctx, connID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var conns []*Connection
-	for rows.Next() {
-		var conn Connection
-		var expiresAt int64
-		if err := rows.Scan(&conn.ID, &conn.Provider, &conn.Priority, &conn.APIKey, &conn.AccessToken,
-			&conn.RefreshToken, &expiresAt, &conn.BaseURL, &conn.Status); err != nil {
-			continue
-		}
-		if expiresAt > 0 {
-			conn.OAuthExpiresAt = time.Unix(expiresAt, 0)
-		}
-		if conn.Status == "" {
-			conn.Status = "ready"
-		}
-		conns = append(conns, &conn)
-	}
-
-	return conns, nil
+	h.conns.Store(connID, cachedConn{conn: conn, cachedAt: time.Now()})
+	copied := *conn
+	return &copied, nil
 }
 
-// loadConnectionByID loads a single connection by ID.
+// loadConnectionByID loads a single connection by ID from the database.
 func (h *Handler) loadConnectionByID(ctx context.Context, connID string) (*Connection, error) {
 	var conn Connection
 	var expiresAt int64
 	var psd sql.NullString
 	err := h.db.QueryRowContext(ctx, `
-		SELECT c.id, c.name, c.provider_type_id as provider_prefix,
-			COALESCE(c.api_key, '') as api_key,
-			COALESCE(c.oauth_token, '') as oauth_token,
-			COALESCE(c.oauth_refresh_token, '') as oauth_refresh_token,
-			COALESCE(c.oauth_expires_at, 0) as oauth_expires_at,
-			COALESCE(pt.base_url, '') as base_url,
-			COALESCE(c.status, 'ready') as status,
-			c.provider_specific_data
-		FROM connections c
-		JOIN provider_types pt ON c.provider_type_id = pt.id
-		WHERE c.id = ?
+	SELECT c.id, c.name, c.provider_type_id as provider_prefix,
+		COALESCE(c.api_key, '') as api_key,
+		COALESCE(c.oauth_token, '') as oauth_token,
+		COALESCE(c.oauth_refresh_token, '') as oauth_refresh_token,
+		COALESCE(c.oauth_expires_at, 0) as oauth_expires_at,
+		COALESCE(pt.base_url, '') as base_url,
+		COALESCE(c.status, 'ready') as status,
+		c.provider_specific_data
+	FROM connections c
+	JOIN provider_types pt ON c.provider_type_id = pt.id
+	WHERE c.id = ?
 	`, connID).Scan(&conn.ID, &conn.Name, &conn.Provider, &conn.APIKey, &conn.AccessToken,
 		&conn.RefreshToken, &expiresAt, &conn.BaseURL, &conn.Status, &psd)
 	if err != nil {
@@ -422,6 +400,8 @@ func (h *Handler) refreshOAuthToken(ctx context.Context, conn *Connection, provi
 	// Update connection in memory
 	conn.AccessToken = newCreds.AccessToken
 	conn.OAuthExpiresAt = newCreds.ExpiresAt
+	// Update the credential cache so subsequent requests see the new token immediately.
+	h.conns.Store(conn.ID, cachedConn{conn: conn, cachedAt: time.Now()})
 	// Persist to DB (async — does not block the request path).
 	connID := conn.ID
 	accessToken := conn.AccessToken
