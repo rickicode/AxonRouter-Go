@@ -31,6 +31,18 @@
 
 When **Serena** is unavailable, fall back to `lsp`, `ast_grep`, and `ast_edit` as the semantic-equivalent tools for code navigation and editing.
 
+### Serena Configuration (Project-Specific)
+
+This project uses **Go** for the backend and **Svelte/TypeScript** for the frontend. Before relying on Serena, ensure `/workspaces/AxonRouter-GO/.serena/project.yml` lists both languages:
+
+```yaml
+languages:
+  - go
+  - svelte
+```
+
+If only `svelte` is listed, Go symbol queries will time out because `gopls` is not started.
+
 ### Semble — discovery
 
 Use Semble first when the relevant file, symbol, or behavior is not yet known. Use it for:
