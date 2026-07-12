@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // StreamChunk is a single SSE chunk from a streaming response.
@@ -631,41 +633,26 @@ func ExtractProvider(model string) string {
 
 // JSONSet is a helper to set a field in raw JSON.
 func JSONSet(data []byte, path string, value any) []byte {
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
+	out, err := sjson.SetBytes(data, path, value)
+	if err != nil {
 		return data
 	}
-	m[path] = value
-	out, _ := json.Marshal(m)
 	return out
 }
 
 // JSONGet extracts a string field from raw JSON.
 func JSONGet(data []byte, path string) string {
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
-		return ""
-	}
-	if v, ok := m[path]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
+	return gjson.GetBytes(data, path).String()
 }
 
 // IsStreamRequest checks if the body requests streaming.
 func IsStreamRequest(body []byte) bool {
-	var m map[string]any
-	if err := json.Unmarshal(body, &m); err != nil {
-		return false
+	r := gjson.GetBytes(body, "stream")
+	if r.Type == gjson.String {
+		b, _ := strconv.ParseBool(r.String())
+		return b
 	}
-	v, ok := m["stream"]
-	if !ok {
-		return false
-	}
-	b, ok := v.(bool)
-	return ok && b
+	return r.Bool()
 }
 
 // JSONToReader wraps a byte slice as an io.Reader.

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -95,27 +94,6 @@ func canonicalJSON(body []byte) []byte {
 	return out
 }
 
-// IsStreamRequest detects whether body asks for streaming.
-func IsStreamRequest(body []byte) bool {
-	var m map[string]any
-	if err := json.Unmarshal(body, &m); err != nil {
-		return false
-	}
-	v, ok := m["stream"]
-	if !ok {
-		return false
-	}
-	switch val := v.(type) {
-	case bool:
-		return val
-	case string:
-		b, _ := strconv.ParseBool(val)
-		return b
-	}
-	return false
-}
-
-// Get retrieves a cached entry. Expired entries are removed lazily.
 func (c *ExactCache) Get(key string) (CacheEntry, bool) {
 	c.mu.RLock()
 	entry, ok := c.data[key]
