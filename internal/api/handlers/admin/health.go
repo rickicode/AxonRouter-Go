@@ -28,13 +28,24 @@ func NewHealthHandler(database *sql.DB, store *connstate.Store, tracker *usage.T
 // Health returns a simple liveness check. It is reachable without admin auth
 // so the dashboard and load balancers can use it for online checks.
 func (h *HealthHandler) Health(c *gin.Context) {
+	// Health is a liveness probe. It must NEVER block on DB access — under load
+	// the DB pool can be saturated by request-path reads/writes, and a slow
+	// health check makes load balancers flap the backend offline.
+	//
+	// We report "ok" as long as the in-memory connection store is alive and the
+	// usage-tracker buffer is not overflowing (which would indicate the write
+	// path is backed up). The store is a sync.Map — always available, never blocks.
 	dbStatus := "ok"
-	if err := h.db.QueryRow(`SELECT 1`).Scan(new(int)); err != nil {
+	if h.store == nil || h.tracker == nil {
 		dbStatus = "error"
+	} else if h.tracker.Dropped() > 0 {
+		// Already-dropped events mean the write pipeline is saturated; surface it
+		// but keep status 200 so probes don't flap during transient spikes.
+		dbStatus = "degraded"
 	}
 
 	status := http.StatusOK
-	if dbStatus != "ok" {
+	if dbStatus == "error" {
 		status = http.StatusServiceUnavailable
 	}
 

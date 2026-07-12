@@ -25,8 +25,8 @@ func openTestDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	database.SetMaxOpenConns(1)
-	database.SetMaxIdleConns(1)
+	database.SetMaxOpenConns(50)
+	database.SetMaxIdleConns(25)
 	if _, err := database.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		t.Fatalf("wal mode: %v", err)
 	}

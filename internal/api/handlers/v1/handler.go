@@ -23,6 +23,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/compression"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
+	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	provideralias "github.com/rickicode/AxonRouter-Go/internal/provider"
@@ -135,18 +136,19 @@ type Connection struct {
 
 // Handler is the base handler for all /v1/* endpoints.
 type Handler struct {
-	db                  *sql.DB
-	registry            *executor.Registry
-	store               *connstate.Store
-	elig                *connstate.EligibilityManager
-	combo               *combo.Handler
-	tracker             *usage.Tracker
-	authMgr             *auth.Manager
-	resolver            *proxypool.Resolver
-	exhaustion          *quota.ExhaustionCache
-	conns               sync.Map // provider -> cachedConns
+	db          *sql.DB
+	writeQueue  *db.WriteQueue // centralized async writer — removes sync writes from request path
+	registry    *executor.Registry
+	store       *connstate.Store
+	elig        *connstate.EligibilityManager
+	combo       *combo.Handler
+	tracker     *usage.Tracker
+	authMgr     *auth.Manager
+	resolver    *proxypool.Resolver
+	exhaustion  *quota.ExhaustionCache
+	conns       sync.Map // provider -> cachedConns
 	compressionStrategy compression.Strategy
-	exactCache          cache.CacheStorage
+	exactCache  cache.CacheStorage
 }
 
 // cachedConns holds cached connections with expiry.
@@ -158,6 +160,7 @@ type cachedConns struct {
 // NewHandler creates a new v1 handler with all dependencies.
 func NewHandler(
 	db *sql.DB,
+	writeQueue *db.WriteQueue,
 	store *connstate.Store,
 	elig *connstate.EligibilityManager,
 	comboHandler *combo.Handler,
@@ -169,17 +172,18 @@ func NewHandler(
 	exactCache cache.CacheStorage,
 ) *Handler {
 	return &Handler{
-		db:                  db,
-		registry:            executor.GetRegistry(),
-		store:               store,
-		elig:                elig,
-		combo:               comboHandler,
-		tracker:             tracker,
-		authMgr:             authManager,
-		resolver:            resolver,
-		exhaustion:          exhaustionCache,
-		compressionStrategy: compressionStrategy,
-		exactCache:          exactCache,
+		db:                   db,
+		writeQueue:           writeQueue,
+		registry:             executor.GetRegistry(),
+		store:                store,
+		elig:                 elig,
+		combo:                comboHandler,
+		tracker:              tracker,
+		authMgr:              authManager,
+		resolver:             resolver,
+		exhaustion:           exhaustionCache,
+		compressionStrategy:  compressionStrategy,
+		exactCache:           exactCache,
 	}
 }
 
@@ -637,6 +641,10 @@ func (h *Handler) handleFailoverError(conn *Connection, provider, modelName stri
 	}
 	h.combo.RecordFailure(conn.ID, det)
 	h.persistCooldown(conn.ID, det)
+	// Update in-memory status so dashboard reflects rate_limited/quota_exhausted immediately.
+	if det.Status != "" {
+		h.store.UpdateStatus(conn.ID, det.Status)
+	}
 	h.elig.Update(h.store)
 	h.checkAutoDisable(conn.ID, provider)
 

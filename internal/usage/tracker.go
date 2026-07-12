@@ -1,7 +1,9 @@
 package usage
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 	"log"
 	"sync/atomic"
 	"time"
@@ -30,13 +32,23 @@ type LogEntry struct {
 }
 
 // Tracker is an async usage logger with channel-based buffering.
+// When a WriteQueue is set via SetWriteQueue, all batch inserts are routed
+// through the single writer goroutine, preserving the "one SQLite writer"
+// invariant and preventing WAL write-lock contention with cooldown/ban writes.
 type Tracker struct {
 	buffer      chan *LogEntry
 	db          *sql.DB
+	writeQueue  *db.WriteQueue // optional; nil → direct DB writes (legacy)
 	flushTicker *time.Ticker
 	batchSize   int
 	stopCh      chan struct{}
 	dropped     atomic.Int64
+}
+
+// SetWriteQueue routes all batch inserts through the centralized WriteQueue.
+// Must be called before any Log() calls to avoid race with flushLoop.
+func (t *Tracker) SetWriteQueue(wq *db.WriteQueue) {
+	t.writeQueue = wq
 }
 
 // NewTracker creates a new async usage tracker.
@@ -124,27 +136,41 @@ func (t *Tracker) flushLoop() {
 }
 
 // flushBatch writes a batch of entries to SQLite in a single transaction.
+// When a WriteQueue is set, the entire batch is enqueued as a single WriteOp,
+// preserving the "one SQLite writer at a time" invariant. Without a WriteQueue
+// (legacy/tests), it writes directly.
 func (t *Tracker) flushBatch(batch []*LogEntry) {
 	if len(batch) == 0 {
 		return
 	}
 
-	tx, err := t.db.Begin()
-	if err != nil {
-		log.Printf("usage: begin tx: %v", err)
+	if t.writeQueue != nil {
+		batchCopy := make([]*LogEntry, len(batch))
+		copy(batchCopy, batch)
+		t.writeQueue.EnqueueOrBlock(context.Background(), "tracker:flushBatch", func(d *sql.DB) error {
+			return t.writeBatchDirect(d, batchCopy)
+		})
 		return
 	}
 
-	stmt, err := tx.Prepare(`
-		INSERT INTO request_logs (id, timestamp, connection_id, provider_type_id, model_id, combo_id,
-			modality, input_tokens, output_tokens, reasoning_tokens, cached_tokens, latency_ms, status_code,
-			error_message, cost_usd, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`)
+	t.writeBatchDirect(t.db, batch)
+}
+
+// writeBatchDirect performs the actual batch insert in a single transaction.
+func (t *Tracker) writeBatchDirect(database *sql.DB, batch []*LogEntry) error {
+	tx, err := database.Begin()
+	if err != nil {
+		return fmt.Errorf("usage: begin tx: %w", err)
+	}
+
+	stmt, err := tx.Prepare(`INSERT INTO request_logs
+		(id, timestamp, connection_id, provider_type_id, model_id, combo_id,
+		 modality, input_tokens, output_tokens, reasoning_tokens, cached_tokens,
+		 latency_ms, status_code, error_message, cost_usd, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		tx.Rollback()
-		log.Printf("usage: prepare: %v", err)
-		return
+		return fmt.Errorf("usage: prepare: %w", err)
 	}
 	defer stmt.Close()
 
@@ -158,14 +184,17 @@ func (t *Tracker) flushBatch(batch []*LogEntry) {
 		statusCode := sql.NullInt64{Int64: int64(e.StatusCode), Valid: e.StatusCode > 0}
 		errMsg := toNullString(e.ErrorMessage)
 
-		stmt.Exec(uuid.New().String(), e.Timestamp, connID, providerID, modelID, comboID,
+		if _, err := stmt.Exec(uuid.New().String(), e.Timestamp, connID, providerID, modelID, comboID,
 			e.Modality, e.InputTokens, e.OutputTokens, e.ReasoningTokens, e.CachedTokens,
-			latency, statusCode, errMsg, e.CostUsd, now)
+			latency, statusCode, errMsg, e.CostUsd, now); err != nil {
+			log.Printf("usage: exec: %v", err)
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		log.Printf("usage: commit: %v", err)
+		return fmt.Errorf("usage: commit: %w", err)
 	}
+	return nil
 }
 
 // Stop gracefully shuts down the tracker, flushing remaining entries.

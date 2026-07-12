@@ -64,7 +64,7 @@ func TestAuth_RequiresBcryptHash(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			router := gin.New()
-			router.Use(Auth(database))
+			router.Use(Auth(database, nil))
 			router.GET("/test", func(c *gin.Context) { c.Status(http.StatusOK) })
 
 			req := httptest.NewRequest(http.MethodGet, "/test", nil)
@@ -95,7 +95,7 @@ func TestAuth_SetsRateLimit(t *testing.T) {
 	}
 
 	router := gin.New()
-	router.Use(Auth(database))
+	router.Use(Auth(database, nil))
 	var got int
 	router.GET("/test", func(c *gin.Context) {
 		if v, ok := c.Get("rate_limit"); ok {

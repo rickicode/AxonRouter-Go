@@ -36,28 +36,31 @@ import (
 
 // Router holds all dependencies and mounts all routes.
 type Router struct {
-	engine  *gin.Engine
-	db      *sql.DB
-	store   *connstate.Store
-	elig    *connstate.EligibilityManager
-	combo   *combo.Handler
-	tracker *usage.Tracker
-	authMgr *auth.Manager
+	engine      *gin.Engine
+	db          *sql.DB
+	writeQueue  *db.WriteQueue // centralized async writer; drained on Shutdown
+	store       *connstate.Store
+	elig        *connstate.EligibilityManager
+	combo       *combo.Handler
+	tracker     *usage.Tracker
+	authMgr     *auth.Manager
 
 	// Background goroutines
-	quotaScheduler *background.QuotaSchedulerDB
-	usageFlush     *background.UsageFlush
-	cleanup        *background.Cleanup
+	quotaScheduler   *background.QuotaSchedulerDB
+	usageFlush       *background.UsageFlush
+	cleanup          *background.Cleanup
+	rateLimitProber  *background.RateLimitProber
 }
 
 // Config holds configuration for creating a router.
 type Config struct {
-	DB               *sql.DB
-	Port             string
-	AdminKey         string
-	QuotaIntervalMin int
-	LogRetentionDays int
-	WebFS            fs.FS // embedded frontend filesystem
+	DB                *sql.DB
+	WriteQueue        *db.WriteQueue // centralized async writer (nil → one is created)
+	Port              string
+	AdminKey          string
+	QuotaIntervalMin  int
+	LogRetentionDays  int
+	WebFS             fs.FS // embedded frontend filesystem
 }
 
 // New creates and configures the Gin router with all routes and middleware.
@@ -75,7 +78,18 @@ func New(cfg Config) *Router {
 	elig.RecomputeAll()
 
 	comboHandler := combo.NewHandler(cfg.DB, store, elig)
+	// Centralized async write queue: all non-critical DB writes (cooldowns, ban
+	// counts, OAuth token persistence) funnel through this single writer goroutine.
+	// SQLite only allows one writer at a time anyway, so serializing at the app
+	// layer avoids write-lock contention reaching the connection pool.
+	writeQueue := cfg.WriteQueue
+	if writeQueue == nil {
+		writeQueue = db.NewWriteQueue(cfg.DB)
+	}
+	// Auth cache: eliminates 2 DB queries + bcrypt per request on the hot path.
+	authCache := middleware.NewAuthCache(30 * time.Second)
 	tracker := usage.NewTracker(cfg.DB)
+	tracker.SetWriteQueue(writeQueue) // route all batch inserts through the single writer goroutine
 	usage.InitPricing(cfg.DB)
 	authManager := auth.NewManager()
 
@@ -98,6 +112,8 @@ func New(cfg Config) *Router {
 	quotaScheduler.Start(ctx)
 	usageFlush.Start(ctx)
 	cleanup.Start(ctx)
+	rateLimitProber := background.NewRateLimitProber(cfg.DB, store, elig, exhaustionCache)
+	rateLimitProber.Start(ctx)
 	models.StartUpdater(ctx)
 
 	// Proxy pool system
@@ -140,8 +156,6 @@ func New(cfg Config) *Router {
 	proxyDeployH := admin.NewProxyDeployHandler(cfg.DB, proxyHealth, proxyResolver)
 	optimizationH := admin.NewOptimizationHandler(cfg.DB, exactCache)
 
-	// Create v1 handler with all dependencies
-	v1H := v1.NewHandler(cfg.DB, store, elig, comboHandler, tracker, authManager, proxyResolver, exhaustionCache, compStrategy, exactCache)
 
 	// Create Gin engine
 	engine := gin.New()
@@ -152,18 +166,16 @@ func New(cfg Config) *Router {
 
 	// Rate limiter
 	limiter := middleware.NewRateLimiter(600)
-
+	// Create v1 handler with all dependencies (must exist before wiring routes)
+	v1H := v1.NewHandler(cfg.DB, writeQueue, store, elig, comboHandler, tracker, authManager, proxyResolver, exhaustionCache, compStrategy, exactCache)
 	// ---- /v1 routes (proxy) ----
 	v1Group := engine.Group("/v1")
-	v1Group.Use(middleware.Auth(cfg.DB))
+	v1Group.Use(middleware.Auth(cfg.DB, authCache))
 	v1Group.Use(middleware.RateLimit(limiter))
 	v1Group.Use(v1H.TrackActive())
 
 	v1Group.POST("/chat/completions", v1H.ChatCompletions)
-	v1Group.POST("/messages", v1H.Messages)
-	v1Group.POST("/responses", v1H.Responses)
 	v1Group.GET("/models", v1H.Models)
-	v1Group.POST("/embeddings", v1H.Embeddings)
 	v1Group.POST("/audio/speech", v1H.TTS)
 	v1Group.POST("/audio/transcriptions", v1H.STT)
 	v1Group.POST("/images/generations", v1H.Images)
@@ -358,16 +370,18 @@ adminGroup.POST("/cli-tools/:toolId", cliToolsH.SaveConfig)
 	})
 
 	return &Router{
-		engine:         engine,
-		db:             cfg.DB,
-		store:          store,
-		elig:           elig,
-		combo:          comboHandler,
-		tracker:        tracker,
-		authMgr:        authManager,
-		quotaScheduler: quotaScheduler,
-		usageFlush:     usageFlush,
-		cleanup:        cleanup,
+		engine:           engine,
+		db:               cfg.DB,
+		writeQueue:       writeQueue,
+		store:            store,
+		elig:             elig,
+		combo:            comboHandler,
+		tracker:          tracker,
+		authMgr:          authManager,
+		quotaScheduler:   quotaScheduler,
+		usageFlush:       usageFlush,
+		cleanup:          cleanup,
+		rateLimitProber:  rateLimitProber,
 	}
 }
 
@@ -382,6 +396,7 @@ func (r *Router) Shutdown() {
 	r.quotaScheduler.Stop()
 	r.usageFlush.Stop()
 	r.cleanup.Stop()
+	r.rateLimitProber.Stop()
 }
 
 // Engine returns the underlying Gin engine (for testing).

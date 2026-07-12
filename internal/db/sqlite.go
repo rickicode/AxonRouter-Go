@@ -19,32 +19,48 @@ var (
 func Open(dbPath string) (*sql.DB, error) {
 	var initErr error
 	dbOnce.Do(func() {
-		d, err := sql.Open("sqlite", dbPath)
-		if err != nil {
-			initErr = err
-			return
-		}
+	d, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		initErr = err
+		return
+	}
 
-		// WAL mode + busy timeout for concurrent reads
-		if _, err := d.Exec("PRAGMA journal_mode=WAL"); err != nil {
+	// ── PRAGMA: WAL mode for concurrent reads ──
+	// journal_mode=WAL: readers don't block writers and vice versa.
+	// busy_timeout=5000: wait up to 5s for a lock instead of returning SQLITE_BUSY.
+	// synchronous=NORMAL: WAL-safe and ~10x faster than FULL; the only risk is
+	//   losing the last few transactions on a power loss, acceptable for a router.
+	// cache_size=-65536: 64MB page cache (negative = KiB).
+	// mmap_size=268435456: 256MB memory-mapped I/O for faster reads.
+	// temp_store=MEMORY: avoid temp files for large queries.
+	// wal_autocheckpoint=1000: auto-checkpoint WAL every 1000 pages (~4MB).
+	pragmas := []string{
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA busy_timeout=5000",
+		"PRAGMA foreign_keys=ON",
+		"PRAGMA synchronous=NORMAL",
+		"PRAGMA cache_size=-65536",
+		"PRAGMA mmap_size=268435456",
+		"PRAGMA temp_store=MEMORY",
+		"PRAGMA wal_autocheckpoint=1000",
+	}
+	for _, p := range pragmas {
+		if _, err := d.Exec(p); err != nil {
 			d.Close()
 			initErr = err
 			return
 		}
-		if _, err := d.Exec("PRAGMA busy_timeout=5000"); err != nil {
-			d.Close()
-			initErr = err
-			return
-		}
-		if _, err := d.Exec("PRAGMA foreign_keys=ON"); err != nil {
-			d.Close()
-			initErr = err
-			return
-		}
+	}
 
-		d.SetMaxOpenConns(5) // WAL mode: concurrent reads safe with >1 conn
-		d.SetMaxIdleConns(5)
-		d.SetConnMaxLifetime(0)
+	// ── Connection pool: allow many concurrent readers ──
+	// WAL mode permits unlimited concurrent readers; only writers serialize.
+	// The async WriteQueue ensures there is a single writer, so no write-lock
+	// contention ever reaches the pool. 50 open conns is conservative for Go
+	// (each is a lightweight goroutine-friendly handle in modernc.org/sqlite).
+	d.SetMaxOpenConns(50)
+	d.SetMaxIdleConns(25)
+	d.SetConnMaxLifetime(30 * time.Minute)
+	d.SetConnMaxIdleTime(5 * time.Minute)
 
 		// Run migrations (idempotent: CREATE TABLE IF NOT EXISTS + INSERT OR IGNORE
 		// seed + provider-id normalization). Must run on every startup so seeded
