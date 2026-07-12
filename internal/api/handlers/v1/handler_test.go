@@ -19,6 +19,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 )
 
@@ -206,5 +207,107 @@ func TestWriteUpstreamClientError_SkipsRateLimit(t *testing.T) {
 	}
 	if rec.Code != http.StatusOK {
 		t.Errorf("response should not be written for 429, got status=%d", rec.Code)
+	}
+}
+
+// TestPersistCooldown_WritesRealColumns proves the cooldown/error UPDATE lands in
+// the DB using real schema columns (regression for the phantom consecutive_error_count
+// column that made the whole UPDATE fail silently in the write queue).
+func TestPersistCooldown_WritesRealColumns(t *testing.T) {
+	h := newTestHandler(t)
+	database := h.db
+	wq := db.NewWriteQueue(database)
+	h.writeQueue = wq
+
+	if _, err := database.Exec(`INSERT INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('test','Test','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-1','test','c1','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+
+	cooldown := time.Now().Add(5 * time.Minute)
+	det := connstate.ErrorDetection{
+		Category:      connstate.ErrorRateLimit,
+		Message:       "Rate limit exceeded",
+		Status:        connstate.StatusRateLimited,
+		CooldownUntil: &cooldown,
+	}
+	h.persistCooldown("conn-1", det)
+	h.persistSuccess("conn-1")
+
+	wq.Stop() // flush all queued writes
+
+	var (
+		status      string
+		cooldownU   sql.NullInt64
+		lastErr     sql.NullString
+		lastErrCode sql.NullString
+		failCount   int
+		lastFail    sql.NullInt64
+		lastSucc    sql.NullInt64
+	)
+	row := database.QueryRow(`SELECT status, cooldown_until, last_error, last_error_code, failure_count, last_failure_at, last_success_at FROM connections WHERE id='conn-1'`)
+	if err := row.Scan(&status, &cooldownU, &lastErr, &lastErrCode, &failCount, &lastFail, &lastSucc); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if status != string(connstate.StatusRateLimited) {
+		t.Fatalf("status = %q, want rate_limited", status)
+	}
+	if !cooldownU.Valid || cooldownU.Int64 == 0 {
+		t.Fatalf("cooldown_until not persisted: %+v", cooldownU)
+	}
+	if lastErr.String != "Rate limit exceeded" {
+		t.Fatalf("last_error = %q", lastErr.String)
+	}
+	if lastErrCode.String != string(connstate.ErrorRateLimit) {
+		t.Fatalf("last_error_code = %q", lastErrCode.String)
+	}
+	if failCount != 1 {
+		t.Fatalf("failure_count = %d, want 1", failCount)
+	}
+	if !lastFail.Valid || lastFail.Int64 == 0 {
+		t.Fatalf("last_failure_at not persisted")
+	}
+	if !lastSucc.Valid || lastSucc.Int64 == 0 {
+		t.Fatalf("last_success_at not persisted")
+	}
+}
+
+// TestGetConnectionRejectsCooledDownConnection proves that getConnection never
+// returns a connection that is actively in cooldown, even when an eligibility
+// snapshot is stale.
+func TestGetConnectionRejectsCooledDownConnection(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+	if _, err := h.db.Exec(`
+		INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at)
+		VALUES ('conn-oc-1','oc','prox1','none','ready',1,?,?)
+	`, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+
+	h.store.SeedConnection("conn-oc-1", "oc", "ready", 0)
+	h.elig.RecomputeAll()
+
+	cs := h.store.Get("conn-oc-1")
+
+	// Normal case: connection is eligible.
+	conn, err := h.getConnection(context.Background(), "oc", "hy3-free")
+	if err != nil {
+		t.Fatalf("expected eligible connection: %v", err)
+	}
+	if conn.ID != "conn-oc-1" {
+		t.Fatalf("expected conn-oc-1, got %s", conn.ID)
+	}
+
+	// Mark cooldown and rebuild snapshot.
+	cs.SetCooldown(time.Now().Add(time.Hour))
+	h.elig.RecomputeAll()
+
+	conn, err = h.getConnection(context.Background(), "oc", "hy3-free")
+	if err == nil {
+		t.Fatalf("expected error for cooled-down connection, got conn %s", conn.ID)
 	}
 }

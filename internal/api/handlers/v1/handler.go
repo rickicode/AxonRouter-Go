@@ -617,7 +617,7 @@ func (h *Handler) executeDirect(ctx context.Context, exec executor.Executor, req
 func (h *Handler) handleFailoverError(conn *Connection, provider, modelName string, err error, attempt int, latency int64) (bool, string) {
 	det := connstate.DetectError(0, "", err, provider, modelName, nil)
 	if det.Category == connstate.ErrorRateLimit {
-		h.exhaustion.MarkExhausted(conn.ID, quota.DefaultExhaustionTTL)
+		h.exhaustion.MarkExhausted(conn.ID, quota.TTLFromCooldown(det.CooldownUntil, quota.DefaultExhaustionTTL))
 	} else if det.Category == connstate.ErrorQuota {
 		ttl := 24 * time.Hour // fallback for daily quotas
 		if det.CooldownUntil != nil {
@@ -901,8 +901,18 @@ func (h *Handler) persistCooldown(connID string, det connstate.ErrorDetection) {
 	errMsg := det.Message
 	errCode := string(det.Category)
 	h.writeQueue.Enqueue("persistCooldown", func(d *sql.DB) error {
-		_, err := d.Exec(`UPDATE connections SET status = ?, cooldown_until = ?, last_error = ?, last_error_code = ?, consecutive_error_count = consecutive_error_count + 1, updated_at = ? WHERE id = ?`,
-			statusVal, cooldownUntil, errMsg, errCode, time.Now().Unix(), connID)
+		now := time.Now().Unix()
+		_, err := d.Exec(`UPDATE connections SET status = ?, cooldown_until = ?, last_error = ?, last_error_code = ?, failure_count = failure_count + 1, last_failure_at = ?, updated_at = ? WHERE id = ?`,
+			statusVal, cooldownUntil, errMsg, errCode, now, now, connID)
+		return err
+	})
+}
+
+// persistSuccess records a successful request so the dashboard reflects last_success_at.
+func (h *Handler) persistSuccess(connID string) {
+	now := time.Now().Unix()
+	h.writeQueue.Enqueue("persistSuccess", func(d *sql.DB) error {
+		_, err := d.Exec(`UPDATE connections SET last_success_at = ?, updated_at = ? WHERE id = ?`, now, now, connID)
 		return err
 	})
 }
