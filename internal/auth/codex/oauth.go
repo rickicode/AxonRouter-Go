@@ -31,6 +31,8 @@ type OAuthService struct {
 	httpClient *http.Client
 	mu         sync.Mutex
 	pkce       map[string]string
+	tokenURL   string
+	deviceURL  string
 }
 
 // NewOAuthService creates a new Codex OAuth service.
@@ -38,7 +40,57 @@ func NewOAuthService(httpClient *http.Client) *OAuthService {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
-	return &OAuthService{httpClient: httpClient, pkce: make(map[string]string)}
+	return &OAuthService{
+		httpClient: httpClient,
+		pkce:       make(map[string]string),
+		tokenURL:   TokenURL,
+		deviceURL:  DeviceCodeURL,
+	}
+}
+
+// refreshError surfaces the HTTP status code from a failed token refresh so
+// callers can decide whether to retry.
+type refreshError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *refreshError) Error() string {
+	return fmt.Sprintf("token refresh failed %d: %s", e.StatusCode, e.Body)
+}
+
+// IsAuthFailure reports whether the error indicates invalid or revoked credentials.
+func isAuthFailure(err error) bool {
+	if e, ok := err.(*refreshError); ok {
+		return e.StatusCode == http.StatusUnauthorized || e.StatusCode == http.StatusForbidden
+	}
+	return false
+}
+
+// RefreshTokenWithRetry refreshes the access token, retrying on transient
+// failures (5xx, network errors) with exponential backoff (100ms, 200ms).
+// It fails fast on 401/403 because retrying will not help.
+func (s *OAuthService) RefreshTokenWithRetry(ctx context.Context, creds *auth.Credentials) (*auth.Credentials, error) {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			delay := time.Duration(attempt*100) * time.Millisecond
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+		newCreds, err := s.RefreshToken(ctx, creds)
+		if err == nil {
+			return newCreds, nil
+		}
+		lastErr = err
+		if isAuthFailure(err) {
+			break
+		}
+	}
+	return nil, lastErr
 }
 
 // GenerateAuthURL creates the OAuth authorization URL with PKCE.
@@ -94,7 +146,7 @@ func (s *OAuthService) exchangeCode(ctx context.Context, code, redirectURI, code
 	if codeVerifier != "" {
 		data.Set("code_verifier", codeVerifier)
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", TokenURL, strings.NewReader(data.Encode()))
+	req, err := http.NewRequestWithContext(ctx, "POST", s.tokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -153,7 +205,7 @@ func (s *OAuthService) RefreshToken(ctx context.Context, creds *auth.Credentials
 		"refresh_token": {creds.RefreshToken},
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", TokenURL, strings.NewReader(data.Encode()))
+	req, err := http.NewRequestWithContext(ctx, "POST", s.tokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -171,7 +223,7 @@ func (s *OAuthService) RefreshToken(ctx context.Context, creds *auth.Credentials
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token refresh failed %d: %s", resp.StatusCode, string(body))
+		return nil, &refreshError{StatusCode: resp.StatusCode, Body: string(body)}
 	}
 
 	var tokenResp struct {
@@ -192,6 +244,13 @@ func (s *OAuthService) RefreshToken(ctx context.Context, creds *auth.Credentials
 	}
 	if tokenResp.IDToken != "" {
 		newCreds.IDToken = tokenResp.IDToken
+		accountID, email := extractTokenClaims(tokenResp.IDToken)
+		if accountID != "" {
+			newCreds.AccountID = accountID
+		}
+		if email != "" {
+			newCreds.Email = email
+		}
 	}
 	newCreds.ExpiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 

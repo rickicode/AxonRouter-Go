@@ -30,15 +30,15 @@ type StreamChunk struct {
 
 // StreamResult wraps a streaming response.
 type StreamResult struct {
-	Chunks    chan StreamChunk
-	Headers   http.Header
+	Chunks     chan StreamChunk
+	Headers    http.Header
 	StatusCode int
 }
 
 // StreamConfig holds per-request streaming tunables.
 type StreamConfig struct {
-	FetchTimeoutMs       int // timeout for response headers, e.g. 90000
-	StreamIdleTimeoutMs  int // timeout between chunks, e.g. 60000
+	FetchTimeoutMs           int // timeout for response headers, e.g. 90000
+	StreamIdleTimeoutMs      int // timeout between chunks, e.g. 60000
 	StreamReadinessTimeoutMs int // timeout for first chunk, e.g. 300000
 }
 
@@ -47,13 +47,14 @@ type Response struct {
 	StatusCode int
 	Headers    http.Header
 	Body       []byte
+	Usage      map[string]int64 // optional provider-reported token usage
 }
 
 // Request is the unified execution request.
 type Request struct {
-	Model    string
-	Body     []byte
-	Stream   bool
+	Model  string
+	Body   []byte
+	Stream bool
 	// Connection credentials
 	APIKey      string
 	AccessToken string
@@ -75,18 +76,19 @@ type Executor interface {
 
 // BaseExecutor provides shared HTTP logic for all executors.
 type BaseExecutor struct {
-	Client              *http.Client
-	Timeout             time.Duration
-	FetchTimeout        time.Duration
-	StreamIdleTimeout   time.Duration
+	Client                 *http.Client
+	Timeout                time.Duration
+	FetchTimeout           time.Duration
+	StreamIdleTimeout      time.Duration
 	StreamReadinessTimeout time.Duration
-	proxyClients        sync.Map // proxyURL -> *http.Client
+	proxyClients           sync.Map // proxyURL -> *http.Client
 }
 
 // NewBaseExecutor creates a base executor with default settings.
 // Timeout defaults match OmniRoute runtimeTimeouts.ts:
-//   FETCH_TIMEOUT_MS=600000 (10m), STREAM_IDLE_TIMEOUT_MS=600000 (10m),
-//   STREAM_READINESS_TIMEOUT_MS=80000 (80s).
+//
+//	FETCH_TIMEOUT_MS=600000 (10m), STREAM_IDLE_TIMEOUT_MS=600000 (10m),
+//	STREAM_READINESS_TIMEOUT_MS=80000 (80s).
 func NewBaseExecutor() *BaseExecutor {
 	return &BaseExecutor{
 		Client:                 &http.Client{Timeout: 5 * time.Minute},
@@ -106,8 +108,10 @@ func getEnvInt(key string, fallback int) int {
 	return fallback
 }
 
-type proxyContextKey struct{}
-type requestIDKey struct{}
+type (
+	proxyContextKey struct{}
+	requestIDKey    struct{}
+)
 
 // ContextWithRequestID attaches a request ID to a context for propagation
 // to upstream providers.
@@ -250,6 +254,7 @@ func noProxyMatch(host, noProxy string) bool {
 	}
 	return false
 }
+
 // clientForContext picks the right http.Client and target URL for a request.
 // Returns error only when StrictProxy is true and proxy is unavailable.
 func (b *BaseExecutor) clientForContext(ctx context.Context, rawURL string, headers map[string]string) (*http.Client, string, error) {
@@ -321,7 +326,8 @@ func (b *BaseExecutor) DoRequest(ctx context.Context, method, rawURL string, hea
 		req.Header.Set("X-Request-ID", id)
 	}
 
-	logging.Logger.Info("upstream request start",
+	logging.Logger.Info(
+		"upstream request start",
 		"request_id", RequestIDFromContext(ctx),
 		"method", method,
 		"url", targetURL,
@@ -330,7 +336,8 @@ func (b *BaseExecutor) DoRequest(ctx context.Context, method, rawURL string, hea
 
 	resp, err := client.Do(req)
 	if err != nil {
-		logging.Logger.Warn("upstream request failed",
+		logging.Logger.Warn(
+			"upstream request failed",
 			"request_id", RequestIDFromContext(ctx),
 			"method", method,
 			"url", targetURL,
@@ -347,7 +354,8 @@ func (b *BaseExecutor) DoRequest(ctx context.Context, method, rawURL string, hea
 	}
 
 	if resp.StatusCode >= 400 {
-		logging.Logger.Error("upstream error response",
+		logging.Logger.Error(
+			"upstream error response",
 			"request_id", RequestIDFromContext(ctx),
 			"status", resp.StatusCode,
 			"url", targetURL,
@@ -424,7 +432,8 @@ func (b *BaseExecutor) DoStreamRequestWithConfig(ctx context.Context, method, ra
 	if parsed, err := url.Parse(targetURL); err == nil && parsed.Host != "" {
 		logHost = parsed.Host
 	}
-	logging.Logger.Info("upstream stream request start",
+	logging.Logger.Info(
+		"upstream stream request start",
 		"request_id", RequestIDFromContext(ctx),
 		"method", method,
 		"host", logHost,
@@ -438,7 +447,8 @@ func (b *BaseExecutor) DoStreamRequestWithConfig(ctx context.Context, method, ra
 		if parsed, err := url.Parse(targetURL); err == nil && parsed.Host != "" {
 			logHost = parsed.Host
 		}
-		logging.Logger.Warn("upstream stream request failed",
+		logging.Logger.Warn(
+			"upstream stream request failed",
 			"request_id", RequestIDFromContext(ctx),
 			"method", method,
 			"host", logHost,
@@ -454,7 +464,8 @@ func (b *BaseExecutor) DoStreamRequestWithConfig(ctx context.Context, method, ra
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
 		errBody, _ := io.ReadAll(resp.Body)
-		logging.Logger.Error("upstream error response",
+		logging.Logger.Error(
+			"upstream error response",
 			"request_id", RequestIDFromContext(ctx),
 			"status", resp.StatusCode,
 			"host", logHost,
@@ -488,24 +499,24 @@ func (b *BaseExecutor) DoStreamRequestWithConfig(ctx context.Context, method, ra
 		// Run scanner in its own goroutine so we can select on idle timeout
 		scanCh := make(chan []byte, 1)
 		scanErrCh := make(chan error, 1)
-	go func() {
-		defer close(scanCh)
-		defer close(scanErrCh)
-		for scanner.Scan() {
-			line := append([]byte{}, scanner.Bytes()...)
-			select {
-			case scanCh <- line:
-			case <-ctx.Done():
-				return
+		go func() {
+			defer close(scanCh)
+			defer close(scanErrCh)
+			for scanner.Scan() {
+				line := append([]byte{}, scanner.Bytes()...)
+				select {
+				case scanCh <- line:
+				case <-ctx.Done():
+					return
+				}
 			}
-		}
-		if err := scanner.Err(); err != nil {
-			select {
-			case scanErrCh <- err:
-			case <-ctx.Done():
+			if err := scanner.Err(); err != nil {
+				select {
+				case scanErrCh <- err:
+				case <-ctx.Done():
+				}
 			}
-		}
-	}()
+		}()
 
 		readinessTimer := time.NewTimer(readinessTimeout)
 		defer readinessTimer.Stop()

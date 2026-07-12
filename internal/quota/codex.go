@@ -69,13 +69,13 @@ func parseCodexQuotas(rateLimit map[string]any, data map[string]any) []QuotaItem
 
 	// Primary window (session)
 	if pw := getMapField(rateLimit, "primary_window", "primaryWindow"); len(pw) > 0 {
-		qi := buildPercentageQuota(pw, "Session", "codex")
+		qi := buildWindowQuota(pw, "Session", "codex")
 		quotas = append(quotas, qi)
 	}
 
 	// Secondary window (weekly)
 	if sw := getMapField(rateLimit, "secondary_window", "secondaryWindow"); len(sw) > 0 {
-		qi := buildPercentageQuota(sw, "Weekly", "codex")
+		qi := buildWindowQuota(sw, "Weekly", "codex")
 		quotas = append(quotas, qi)
 	}
 
@@ -86,10 +86,10 @@ func parseCodexQuotas(rateLimit map[string]any, data map[string]any) []QuotaItem
 	}
 	if len(reviewRL) > 0 {
 		if pw := getMapField(reviewRL, "primary_window", "primaryWindow"); len(pw) > 0 {
-			quotas = append(quotas, buildPercentageQuota(pw, "Code Review", "codex"))
+			quotas = append(quotas, buildWindowQuota(pw, "Code Review", "codex"))
 		}
 		if sw := getMapField(reviewRL, "secondary_window", "secondaryWindow"); len(sw) > 0 {
-			quotas = append(quotas, buildPercentageQuota(sw, "Code Review Weekly", "codex"))
+			quotas = append(quotas, buildWindowQuota(sw, "Code Review Weekly", "codex"))
 		}
 	}
 
@@ -97,28 +97,39 @@ func parseCodexQuotas(rateLimit map[string]any, data map[string]any) []QuotaItem
 	sparkRL := findSparkRateLimit(data)
 	if sparkRL != nil {
 		if pw := getMapField(sparkRL, "primary_window", "primaryWindow"); len(pw) > 0 {
-			quotas = append(quotas, buildPercentageQuota(pw, "Spark Session", "spark"))
+			quotas = append(quotas, buildWindowQuota(pw, "Spark Session", "spark"))
 		}
 		if sw := getMapField(sparkRL, "secondary_window", "secondaryWindow"); len(sw) > 0 {
-			quotas = append(quotas, buildPercentageQuota(sw, "Spark Weekly", "spark"))
+			quotas = append(quotas, buildWindowQuota(sw, "Spark Weekly", "spark"))
 		}
 	}
 
 	return quotas
 }
 
-func buildPercentageQuota(window map[string]any, name string, scope string) QuotaItem {
+func buildWindowQuota(window map[string]any, name string, scope string) QuotaItem {
 	usedPct := getNumberField(window, "used_percent", "usedPercent")
 	resetAt := parseWindowReset(window)
-	return QuotaItem{
-		Name:         name,
-		Used:         usedPct,
-		Total:        100,
-		RemainingPct: 100 - usedPct,
-		ResetAt:      resetAt,
-		Unlimited:    false,
-		Scope:        scope,
+	qi := QuotaItem{
+		Name:      name,
+		ResetAt:   resetAt,
+		Unlimited: false,
+		Scope:     scope,
 	}
+	if usedPct > 0 {
+		qi.Used = usedPct
+		qi.Total = 100
+		qi.RemainingPct = 100 - usedPct
+		return qi
+	}
+	used := getNumberField(window, "used", "consumed")
+	limit := getNumberField(window, "limit", "max", "capacity")
+	if limit > 0 {
+		qi.Used = used
+		qi.Total = limit
+		qi.RemainingPct = (1.0 - used/limit) * 100
+	}
+	return qi
 }
 
 func parseWindowReset(window map[string]any) string {

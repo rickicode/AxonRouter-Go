@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -69,22 +70,25 @@ func convertGeminiResponseToCodexStream(_ context.Context, _ string, _, _ []byte
 						name := fc.Get("name").String()
 						callID := fc.Get("id").String()
 						if callID == "" {
-							callID = "call_" + name
+							callID = fmt.Sprintf("call_%s_%d", name, state.ToolIndex)
 						}
 						args := fc.Get("args").Raw
+						if args == "" || args == "{}" {
+							args = "{}"
+						}
 
-						// Emit function_call item
 						item := map[string]interface{}{
-							"type":  "response.output_item.done",
+							"type": "response.output_item.done",
 							"item": map[string]interface{}{
-								"type":       "function_call",
-								"id":         callID,
-								"call_id":    callID,
-								"name":       name,
-								"arguments":  args,
-								"status":     "completed",
+								"type":      "function_call",
+								"id":        callID,
+								"call_id":   callID,
+								"name":      name,
+								"arguments": args,
+								"status":    "completed",
 							},
 						}
+						state.ToolIndex++
 						state.OutputIndex++
 						b, _ := json.Marshal(item)
 						results = append(results, b)
@@ -123,6 +127,7 @@ func convertGeminiResponseToCodexNonStream(_ context.Context, _ string, _, _ []b
 
 	var outputItems []map[string]interface{}
 	var textParts []string
+	toolIdx := 0
 
 	if candidates := root.Get("candidates"); candidates.Exists() && candidates.IsArray() {
 		candidates.ForEach(func(_, candidate gjson.Result) bool {
@@ -132,7 +137,7 @@ func convertGeminiResponseToCodexNonStream(_ context.Context, _ string, _, _ []b
 						textParts = append(textParts, text.String())
 					}
 					if fc := part.Get("functionCall"); fc.Exists() {
-						// Flush text
+						// Flush any buffered text as a message item before this tool call.
 						if len(textParts) > 0 {
 							outputItems = append(outputItems, map[string]interface{}{
 								"type": "message",
@@ -146,14 +151,19 @@ func convertGeminiResponseToCodexNonStream(_ context.Context, _ string, _, _ []b
 						name := fc.Get("name").String()
 						callID := fc.Get("id").String()
 						if callID == "" {
-							callID = "call_" + name
+							callID = fmt.Sprintf("call_%s_%d", name, toolIdx)
+						}
+						toolIdx++
+						args := fc.Get("args").Raw
+						if args == "" || args == "{}" {
+							args = "{}"
 						}
 						outputItems = append(outputItems, map[string]interface{}{
 							"type":      "function_call",
 							"id":        callID,
 							"call_id":   callID,
 							"name":      name,
-							"arguments": fc.Get("args").Raw,
+							"arguments": args,
 							"status":    "completed",
 						})
 					}
@@ -176,11 +186,13 @@ func convertGeminiResponseToCodexNonStream(_ context.Context, _ string, _, _ []b
 
 	out["output"] = outputItems
 
-	// Usage
+	// Usage metadata
 	usage := map[string]interface{}{
-		"input_tokens":  root.Get("usageMetadata.promptTokenCount").Int(),
-		"output_tokens": root.Get("usageMetadata.candidatesTokenCount").Int(),
-		"total_tokens":  root.Get("usageMetadata.totalTokenCount").Int(),
+		"input_tokens":    root.Get("usageMetadata.promptTokenCount").Int(),
+		"output_tokens":   root.Get("usageMetadata.candidatesTokenCount").Int(),
+		"total_tokens":    root.Get("usageMetadata.totalTokenCount").Int(),
+		"cached_tokens":   root.Get("usageMetadata.cachedContentTokenCount").Int(),
+		"reasoning_tokens": root.Get("usageMetadata.thoughtsTokenCount").Int(),
 	}
 	out["usage"] = usage
 

@@ -112,7 +112,7 @@ func RegisterDefaults() {
 	translator.Register("zai", translator.Func(providers.TranslateClaude))
 	translator.Register("gemini", translator.Func(providers.TranslateGemini))
 	translator.Register("ag", translator.Func(providers.TranslateAntigravity))
-
+	translator.Register("cx", translator.Func(providers.TranslateCodex))
 
 	// Claude + compatible providers
 	claudeExec := NewClaudeExecutor(base)

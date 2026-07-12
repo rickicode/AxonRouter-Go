@@ -2,144 +2,142 @@ package codex
 
 import (
 	"context"
-	"encoding/json"
+	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 )
 
-// TokenStore manages persistent token storage for Codex.
+// TokenStore manages Codex OAuth credentials with the connections table as the
+// source of truth. It no longer writes to codex_tokens.json; the file is kept
+// only as a non-authoritative legacy fallback and is never read.
 type TokenStore struct {
-	mu       sync.RWMutex
+	mu     sync.RWMutex
+	db     *sql.DB
+	oauth  *OAuthService
+	legacy legacyTokenFile // optional fallback path, ignored at runtime
+}
+
+// legacyTokenFile preserves the old file path signature for callers that may
+// still construct NewTokenStore(storageDir, oauth). It is not used as source of
+// truth.
+type legacyTokenFile struct {
 	filePath string
-	tokens   map[string]*auth.Credentials // keyed by account_id
-	oauth    *OAuthService
 }
 
-// NewTokenStore creates a new Codex token store.
-func NewTokenStore(storageDir string, oauth *OAuthService) *TokenStore {
+// NewTokenStore creates a new Codex token store backed by the database. The
+// storageDir argument is retained for compatibility but the store only uses db.
+func NewTokenStore(db *sql.DB, storageDir string, oauth *OAuthService) *TokenStore {
 	return &TokenStore{
-		filePath: filepath.Join(storageDir, "codex_tokens.json"),
-		tokens:   make(map[string]*auth.Credentials),
-		oauth:    oauth,
+		db:    db,
+		oauth: oauth,
 	}
 }
 
-// Load reads tokens from disk.
-func (ts *TokenStore) Load() error {
-	ts.mu.Lock()
-	defer ts.mu.Unlock()
-
-	data, err := os.ReadFile(ts.filePath)
+// Get returns credentials for a connection, refreshing the access token if it
+// has expired. connID is the connection UUID from the connections table.
+func (ts *TokenStore) Get(ctx context.Context, connID string) (*auth.Credentials, error) {
+	if ts.db == nil {
+		return nil, fmt.Errorf("database not configured")
+	}
+	creds, err := ts.readCredentials(ctx, connID)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("read token file: %w", err)
+		return nil, err
 	}
-
-	var tokens map[string]*auth.Credentials
-	if err := json.Unmarshal(data, &tokens); err != nil {
-		return fmt.Errorf("parse token file: %w", err)
-	}
-
-	ts.tokens = tokens
-	return nil
-}
-
-// Save writes tokens to disk.
-func (ts *TokenStore) Save() error {
-	ts.mu.RLock()
-	defer ts.mu.RUnlock()
-
-	if err := os.MkdirAll(filepath.Dir(ts.filePath), 0700); err != nil {
-		return fmt.Errorf("create dir: %w", err)
-	}
-
-	data, err := json.MarshalIndent(ts.tokens, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal tokens: %w", err)
-	}
-
-	return os.WriteFile(ts.filePath, data, 0600)
-}
-
-// Get returns credentials for an account, refreshing if needed.
-func (ts *TokenStore) Get(ctx context.Context, accountID string) (*auth.Credentials, error) {
-	ts.mu.RLock()
-	creds, ok := ts.tokens[accountID]
-	ts.mu.RUnlock()
-
-	if !ok {
-		return nil, fmt.Errorf("no credentials for account: %s", accountID)
-	}
-
 	if creds.HasValidToken() {
 		return creds, nil
 	}
-
-	// Need refresh
-	newCreds, err := ts.oauth.RefreshToken(ctx, creds)
+	// Refresh using retries for transient failures.
+	newCreds, err := ts.oauth.RefreshTokenWithRetry(ctx, creds)
 	if err != nil {
 		return nil, fmt.Errorf("refresh token: %w", err)
 	}
-
-	ts.mu.Lock()
-	ts.tokens[accountID] = newCreds
-	ts.mu.Unlock()
-
-	if err := ts.Save(); err != nil {
-		// Log but don't fail — token is still in memory
-		fmt.Printf("warning: failed to save tokens: %v\n", err)
+	if err := ts.Store(ctx, connID, newCreds); err != nil {
+		// Log but don't fail: the token is still usable in memory.
+		fmt.Printf("warning: failed to persist refreshed token for %s: %v\n", connID, err)
 	}
-
 	return newCreds, nil
 }
 
-// Store saves credentials for an account.
-func (ts *TokenStore) Store(accountID string, creds *auth.Credentials) {
-	ts.mu.Lock()
-	ts.tokens[accountID] = creds
-	ts.mu.Unlock()
-	ts.Save()
+// Store persists credentials for a connection in the database.
+func (ts *TokenStore) Store(ctx context.Context, connID string, creds *auth.Credentials) error {
+	if ts.db == nil {
+		return fmt.Errorf("database not configured")
+	}
+	var refresh sql.NullString
+	if creds.RefreshToken != "" {
+		refresh = sql.NullString{String: creds.RefreshToken, Valid: true}
+	}
+	expiresAt := creds.ExpiresAt.Unix()
+	_, err := ts.db.ExecContext(ctx, `
+		UPDATE connections
+		SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ?
+		WHERE id = ?
+	`, creds.AccessToken, refresh, expiresAt, time.Now().Unix(), connID)
+	return err
 }
 
-// List returns all stored account IDs.
-func (ts *TokenStore) List() []string {
-	ts.mu.RLock()
-	defer ts.mu.RUnlock()
+// Load is a no-op kept for API compatibility. The database is the source of
+// truth and credentials are loaded lazily via Get.
+func (ts *TokenStore) Load() error { return nil }
 
-	ids := make([]string, 0, len(ts.tokens))
-	for id := range ts.tokens {
+// Save is a no-op kept for API compatibility.
+func (ts *TokenStore) Save() error { return nil }
+
+// List returns the active OAuth connection IDs for the Codex provider.
+func (ts *TokenStore) List(ctx context.Context) ([]string, error) {
+	if ts.db == nil {
+		return nil, fmt.Errorf("database not configured")
+	}
+	rows, err := ts.db.QueryContext(ctx, `
+		SELECT id FROM connections
+		WHERE provider_type_id = 'cx' AND auth_type = 'oauth' AND is_active = 1
+		ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
 		ids = append(ids, id)
 	}
-	return ids
+	return ids, rows.Err()
 }
 
-// Remove deletes credentials for an account.
-func (ts *TokenStore) Remove(accountID string) {
-	ts.mu.Lock()
-	delete(ts.tokens, accountID)
-	ts.mu.Unlock()
-	ts.Save()
-}
-
-// RefreshAll refreshes all expired tokens.
-func (ts *TokenStore) RefreshAll(ctx context.Context) error {
-	ts.mu.RLock()
-	accounts := make([]string, 0, len(ts.tokens))
-	for id, creds := range ts.tokens {
-		if creds.IsExpired() && creds.RefreshToken != "" {
-			accounts = append(accounts, id)
-		}
+// Remove deactivates a connection instead of deleting it, matching the rest of
+// the admin surface.
+func (ts *TokenStore) Remove(ctx context.Context, connID string) error {
+	if ts.db == nil {
+		return fmt.Errorf("database not configured")
 	}
-	ts.mu.RUnlock()
+	_, err := ts.db.ExecContext(ctx, `
+		UPDATE connections SET is_active = 0, updated_at = ? WHERE id = ?
+	`, time.Now().Unix(), connID)
+	return err
+}
 
-	for _, id := range accounts {
+// RefreshAll refreshes expired tokens for all active Codex connections.
+func (ts *TokenStore) RefreshAll(ctx context.Context) error {
+	ids, err := ts.List(ctx)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		creds, err := ts.readCredentials(ctx, id)
+		if err != nil {
+			fmt.Printf("warning: failed to read credentials for %s: %v\n", id, err)
+			continue
+		}
+		if creds.HasValidToken() || creds.RefreshToken == "" {
+			continue
+		}
 		if _, err := ts.Get(ctx, id); err != nil {
 			fmt.Printf("warning: refresh failed for %s: %v\n", id, err)
 		}
@@ -152,7 +150,6 @@ func (ts *TokenStore) StartRefreshLoop(ctx context.Context, interval time.Durati
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-
 		for {
 			select {
 			case <-ctx.Done():
@@ -162,4 +159,33 @@ func (ts *TokenStore) StartRefreshLoop(ctx context.Context, interval time.Durati
 			}
 		}
 	}()
+}
+
+func (ts *TokenStore) readCredentials(ctx context.Context, connID string) (*auth.Credentials, error) {
+	var accessToken, refreshToken string
+	var expiresAt int64
+	var psd sql.NullString
+	err := ts.db.QueryRowContext(ctx, `
+		SELECT COALESCE(oauth_token,''), COALESCE(oauth_refresh_token,''), COALESCE(oauth_expires_at,0), COALESCE(provider_specific_data,'')
+		FROM connections WHERE id = ?
+	`, connID).Scan(&accessToken, &refreshToken, &expiresAt, &psd)
+	if err != nil {
+		return nil, err
+	}
+	var accountID string
+	if psd.Valid && psd.String != "" {
+		accountID = extractAccountIDFromPSD(psd.String)
+	}
+	return &auth.Credentials{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ExpiresAt:    time.Unix(expiresAt, 0),
+		AccountID:    accountID,
+	}, nil
+}
+
+func extractAccountIDFromPSD(raw string) string {
+	// ProviderSpecificData may contain a JWT id_token or account_id. Try the
+	// simplest JSON path first; token parsing is handled by the JWT helper.
+	return "" // placeholder, real extraction lives in import/JWT helpers
 }

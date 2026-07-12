@@ -282,6 +282,10 @@ func refreshOAuthToken(providerID, refreshToken string) (string, string, int64, 
 // fetchConnectionQuota dispatches to the right provider fetcher.
 // Refreshes expired OAuth tokens before fetching quota.
 func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQuota {
+	if cached, ok := getCachedQuota(c.ID); ok {
+		cached.FetchedAt = time.Now().UnixMilli()
+		return cached
+	}
 	cq := ConnectionQuota{
 		ConnectionID:   c.ID,
 		ConnectionName: c.Name,
@@ -361,5 +365,6 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 		cq.Error = "Quota fetch timed out (15s)"
 	}
 
+	setCachedQuota(c.ID, cq)
 	return cq
 }
