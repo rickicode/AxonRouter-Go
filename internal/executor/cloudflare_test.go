@@ -133,6 +133,66 @@ func TestCloudflareExecutor_RoutesEmbeddingsAwayFromChatURL(t *testing.T) {
 	}
 }
 
+func TestCloudflareExecutor_SanitizesReasoningEffort(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantKey  bool
+		wantVal  string
+	}{
+		{"invalid minimal", "minimal", false, ""},
+		{"invalid auto", "auto", false, ""},
+		{"valid low", "low", true, "low"},
+		{"valid max", "max", true, "max"},
+		{"valid none", "none", true, "none"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var receivedBody []byte
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				receivedBody, _ = io.ReadAll(r.Body)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				fmt.Fprintln(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+			}))
+			defer ts.Close()
+
+			base := NewBaseExecutor()
+			cf := NewCloudflareExecutor(NewOpenAIExecutor(base))
+			req := &Request{
+				Model:   "@cf/meta/llama-3.2-1b-instruct",
+				BaseURL: ts.URL + "/v1/chat/completions",
+				Body: mustJSON(map[string]any{
+					"model":             "@cf/meta/llama-3.2-1b-instruct",
+					"messages":          []any{map[string]any{"role": "user", "content": "hi"}},
+					"reasoning_effort":  tt.input,
+				}),
+			}
+
+			_, err := cf.Execute(context.Background(), req)
+			if err != nil {
+				t.Fatalf("Execute error: %v", err)
+			}
+
+			var got map[string]any
+			if err := json.Unmarshal(receivedBody, &got); err != nil {
+				t.Fatalf("unmarshal body: %v", err)
+			}
+
+			_, exists := got["reasoning_effort"]
+			if exists != tt.wantKey {
+				t.Fatalf("reasoning_effort existence=%v, want=%v; body=%s", exists, tt.wantKey, string(receivedBody))
+			}
+			if tt.wantKey {
+				if got["reasoning_effort"] != tt.wantVal {
+					t.Fatalf("reasoning_effort=%v, want=%v", got["reasoning_effort"], tt.wantVal)
+				}
+			}
+		})
+	}
+}
+
 func TestDoStreamRequest_IdleTimeout(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

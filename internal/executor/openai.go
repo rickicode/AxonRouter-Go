@@ -78,6 +78,20 @@ func sanitizeCFRequest(body []byte) []byte {
 		}
 		req["model"] = model
 	}
+
+	// CF Workers AI may route to backends (e.g. SGLang) that only accept
+	// reasoning_effort values: none, low, medium, high, max. Reject unknown
+	// values by dropping the field instead of letting upstream return 400.
+	if re, ok := req["reasoning_effort"].(string); ok {
+		re = strings.ToLower(strings.TrimSpace(re))
+		switch re {
+		case "none", "low", "medium", "high", "max":
+			req["reasoning_effort"] = re
+		default:
+			delete(req, "reasoning_effort")
+		}
+	}
+
 	maxCap := 8192
 	if IsReasoningModel(model) {
 		maxCap = 4096
