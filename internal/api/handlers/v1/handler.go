@@ -804,6 +804,7 @@ func (h *Handler) streamResponse(
 	var lastChunk []byte
 	lastChunkTime := time.Now()
 	ctx := c.Request.Context()
+	var streamState any
 
 	for {
 		select {
@@ -849,7 +850,7 @@ func (h *Handler) streamResponse(
 			}
 
 			lastChunkTime = time.Now()
-			translatedChunks := registry.Response(ctx, string(clientFormat), string(providerFormat), model, originalReq, translatedReq, chunk.Payload, nil)
+			translatedChunks := registry.Response(ctx, string(clientFormat), string(providerFormat), model, originalReq, translatedReq, chunk.Payload, &streamState)
 			for _, tc := range translatedChunks {
 				c.Writer.Write(tc)
 				flusher.Flush()

@@ -182,6 +182,8 @@ func New(cfg Config) *Router {
 	v1Group.POST("/unified", v1H.Unified)
 	v1Group.POST("/messages/count_tokens", v1H.CountTokens)
 	v1Group.POST("/messages", v1H.Messages)
+	// Some Anthropic clients append an extra /v1 segment to the base URL.
+	v1Group.POST("/v1/messages", v1H.Messages)
 
 	// Health check is reachable without admin auth for sidebar/lb probes.
 	engine.HEAD("/api/admin/health", healthH.Health)
