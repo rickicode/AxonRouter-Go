@@ -130,11 +130,11 @@ func (c *AuthCache) Validate(db *sql.DB, presentedKey string) (string, int, bool
 	}
 	v, err, _ := c.group.Do(presentedKey, func() (interface{}, error) {
 		keyID, rateLimit, ok := validateKey(db, presentedKey)
-		return [3]interface{}{keyID, rateLimit, ok}, nil
+		return []interface{}{keyID, rateLimit, ok}, nil
 	})
 	if err != nil {
 		return "", 0, false
 	}
-	res := v.([3]interface{})
+	res := v.([]interface{})
 	return res[0].(string), res[1].(int), res[2].(bool)
 }
