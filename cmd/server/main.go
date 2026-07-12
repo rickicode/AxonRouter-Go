@@ -14,6 +14,9 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/models"
+	// Trigger registration of all request/response format translators.
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator"
+
 	"golang.org/x/crypto/bcrypt"
 )
 

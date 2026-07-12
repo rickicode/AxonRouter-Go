@@ -149,7 +149,7 @@ func ConvertClaudeRequestToOpenAI(modelName string, body []byte, stream bool) []
 						"type": "function",
 						"function": map[string]any{
 							"name":      part.Get("name").String(),
-							"arguments": json.RawMessage(part.Get("input").Raw),
+							"arguments": part.Get("input").String(),
 						},
 					})
 				case "tool_result":

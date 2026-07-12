@@ -7,6 +7,7 @@ package translator
 import (
 	// Existing translators
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/antigravity/openai"
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/claude/antigravity"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/claude/openai"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/codex/responses"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/gemini/openai"

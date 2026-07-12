@@ -131,7 +131,7 @@ func (h *Handler) Messages(c *gin.Context) {
 		if req.Stream {
 			h.handleClaudeStreamResponse(c, streamResult, conn, provider, modelName, start, translatedBody, body)
 		} else {
-			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
+			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(clientFormat), string(providerFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			h.tracker.Log(&usage.LogEntry{
 				ConnectionID:    conn.ID,

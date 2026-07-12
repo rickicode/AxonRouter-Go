@@ -49,17 +49,18 @@ clean:
 	rm -f console-*.log
 	@echo "Cleaned!"
 
-# Kill process on port
+# Kill process listening on a port. Use LISTEN filter so outbound connections
+# (e.g. OMP tunnels to a remote :3777) are not killed.
 kill-port:
-	@echo "Killing process on port $(PORT)..."
-	@lsof -ti :$(PORT) | xargs kill -9 2>/dev/null || true
+	@echo "Killing process listening on port $(PORT)..."
+	@lsof -ti TCP:$(PORT) -sTCP:LISTEN | xargs kill -9 2>/dev/null || true
 	@sleep 0.5
 	@echo "Port $(PORT) cleared."
 
-# Kill process on dev port
+# Kill process listening on dev port.
 kill-dev-port:
-	@echo "Killing process on port $(DEV_PORT)..."
-	@lsof -ti :$(DEV_PORT) | xargs kill -9 2>/dev/null || true
+	@echo "Killing process listening on port $(DEV_PORT)..."
+	@lsof -ti TCP:$(DEV_PORT) -sTCP:LISTEN | xargs kill -9 2>/dev/null || true
 	@sleep 0.5
 	@echo "Port $(DEV_PORT) cleared."
 
