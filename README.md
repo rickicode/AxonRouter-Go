@@ -223,10 +223,8 @@ AxonRouter-Go/
 │   ├── build/               ← Static output (embedded)
 │   └── package.json
 ├── docs/
-│   ├── PRD.md               ← Product Requirements Document
-│   ├── TDD.md               ← Technical Design Document
-│   ├── DESIGN.md            ← Design System
-│   └── CLI-BEHAVIOR.md      ← CLI behavior docs
+│ ├── TDD.md ← Technical Design Document
+│ └── DESIGN.md ← Design System
 ├── Makefile
 ├── go.mod
 └── README.md

@@ -1,8 +1,8 @@
 ---
 version: alpha
 name: AxonRouter Dark
-website: "https://vercel.com"
-description: A dark-only design system inspired by Vercel's design language — deep zinc-black surfaces (#0f0f12), pink primary accent (#ec4899) for all interactive elements, and a multi-color mesh gradient (cyan / blue / magenta / amber) as the sole decorative system. Hardcoded dark theme with no light mode toggle.
+website: "https://github.com/rickicode/AxonRouter-Go"
+description: Current dark-only design system for the AxonRouter-Go dashboard. Deep zinc-black surfaces (#0f0f12), pink primary accent (#ec4899), and a mesh gradient for atmospheric hero sections. Hardcoded dark theme with no light mode toggle. Built with Svelte + Tailwind CSS v4 + shadcn-svelte components.
 
 seo:
   title: "AxonRouter Dark Design System — Pink #ec4899, Dark Zinc Surfaces, Geist Typography"
@@ -16,27 +16,15 @@ seo:
   tags:
     - "Web Infrastructure & Hosting"
     - "Developer Tools & IDEs"
-  lastUpdated: "2026-05-12"
+  lastUpdated: "2026-07-12"
   author:
     name: "Dov Azencot"
     url: "https://x.com/dovazencot"
   opening: |
-    Vercel's design language is the dashboard marketing surface for a developer platform, written for engineers who already know the syntax. The page operates with one of the strictest stark systems on the web: a near-white #fafafa body, ink-near-black #171717 for type, and a 200-step gray scale where every divider, border, and disabled state lives on its own deliberate step. There is no brand-blue or marketing accent — the ink IS the brand. Conversion targets, dark bands, code mockups, and primary CTAs all share the same #171717 tone, polarity-flipped onto white when a section needs depth.
+  AxonRouter-Go is a dark-only AI gateway dashboard for managing providers, connections, combos, quotas, and request logs. The interface is an embedded Svelte SPA served by the Go binary, styled with Tailwind CSS v4 and shadcn-svelte components. The design system is hardcoded to dark: near-black zinc surfaces (#0f0f12), slightly lifted card surfaces (#18181b), and a pink primary accent (#ec4899) that carries every CTA, active state, focus ring, and brand highlight. There is no light mode toggle.
 
-    This DESIGN.md packages the system into a single machine-readable file. Inside: 40 color tokens (including the three-pair Develop / Preview / Ship gradient stack), 15 typography styles across Geist and Geist Mono, 9 corner radii (from 0px to 9999px, with the 100px pill as the marketing-CTA signature), 12 spacing values stepping from 4px to a 192px section gap, and 40+ components from `nav-bar` to `pricing-card-featured` to the polarity-flipped `showcase-band-dark`. The format follows the Google Labs DESIGN.md spec — colors, typography, rounded, spacing, components, all token-referenced.
-
-    Feed the file to Claude, Cursor, or Copilot when you need a React component that reads as Vercel rather than as a generic shadcn theme. The agent picks up the discipline — 100px pill CTAs, sentence-case headlines with -2.4px tracking, mono eyebrows above geometric-sans body, stacked shadows instead of heavy drops. Reference the tokens directly in Tailwind config, or use the spec as an audit checklist. The system is worth studying because of what it refuses: no second accent color, no display weight above 600, no gradient miniaturization. Restraint is the product.
-  related:
-    - href: "https://vercel.com/design"
-      title: "Vercel's design site"
-      description: "The Geist design system and brand resources direct from Vercel."
-    - href: "/design"
-      title: "Browse all design systems"
-      description: "The full directory of DESIGN.md files on shadcn.io, with live mockups for each."
-    - href: "/blocks"
-      title: "React blocks for shadcn/ui"
-      description: "Production-ready hero, pricing, CTA, and dashboard sections built with the same Tailwind + shadcn primitives."
-  questions:
+  This DESIGN.md packages the current visual system into a single machine-readable file. Inside: color tokens, typography styles, radii, spacing, and component conventions used across the admin dashboard. Reference the tokens directly in `web/src/app.css` and the Tailwind config, or use this file as an audit checklist when adding new dashboard pages or components.
+questions:
     - id: "primary-color"
       title: "What is AxonRouter's primary brand color?"
       answer: "AxonRouter's primary is #ec4899 — a vibrant pink (Tailwind pink-500) that carries every CTA, active sidebar indicator, focus ring, and interactive accent on dark surfaces (#0f0f12 background). It achieves WCAG AA contrast on dark backgrounds. Links use #f472b6 (pink-400), one step lighter for inline readability."
