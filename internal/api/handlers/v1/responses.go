@@ -121,7 +121,6 @@ func (h *Handler) Responses(c *gin.Context) {
 		}
 		h.resetBanCount(conn.ID)
 		h.combo.RecordSuccess(conn.ID)
-		h.elig.Update(h.store)
 
 		if stream {
 			_, providerFmt, _ := h.registry.Get(provider)

@@ -123,7 +123,6 @@ func (h *Handler) Messages(c *gin.Context) {
 
 		h.resetBanCount(conn.ID)
 		h.combo.RecordSuccess(conn.ID)
-		h.elig.Update(h.store)
 
 		if req.Stream {
 			h.handleClaudeStreamResponse(c, streamResult, conn, provider, modelName, start, translatedBody, body)

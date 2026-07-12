@@ -154,7 +154,6 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 
 		h.resetBanCount(conn.ID)
 		h.combo.RecordSuccess(conn.ID)
-		h.elig.Update(h.store)
 
 		if req.Stream {
 			h.handleStreamResponse(c, streamResult, conn, provider, modelName, start, translatedBody, body)
@@ -272,7 +271,6 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 
 		h.resetBanCount(connID)
 		h.combo.RecordSuccess(connID)
-		h.elig.Update(h.store)
 
 		if req.Stream {
 			h.handleStreamResponse(c, streamResult, conn, provider, modelName, start, translatedBody, body)
