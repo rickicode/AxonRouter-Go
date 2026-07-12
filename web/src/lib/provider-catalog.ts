@@ -48,7 +48,7 @@ export const CATEGORIES: ProviderCategory[] = [
 
 export const PROVIDER_CATALOG: ProviderMeta[] = [
   {
-    id: 'codex',
+    id: 'cx',
     displayName: 'OpenAI Codex',
     icon: 'code',
     textIcon: 'CX',
@@ -64,7 +64,7 @@ export const PROVIDER_CATALOG: ProviderMeta[] = [
     serviceKinds: ['llm'],
   },
   {
-    id: 'antigravity',
+    id: 'ag',
     displayName: 'Antigravity',
     icon: 'rocket_launch',
     textIcon: 'AG',
