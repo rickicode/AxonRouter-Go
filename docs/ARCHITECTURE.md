@@ -56,7 +56,7 @@ HTTP layer built on Gin.
 
 - `router.go` boots all services and mounts `/v1` and `/api/admin` groups.
 - `auth_session.go` — `InitAuth` (auto-seeds JWT secret + default admin password), `LoginHandler`, and `SessionAuth` (sliding JWT middleware) for `/api/admin/*`.
-- `middleware/` — auth, rate limit, request ID, logging, CORS.
+- `middleware/` — auth, rate limit, request ID, logging, CORS. The API-key auth middleware (`auth.go`) uses an in-memory `AuthCache` (30s TTL) to skip per-request bcrypt + DB lookups; `AuthCache.Validate` wraps the cache miss in `singleflight` so concurrent misses for the same key collapse into a single bcrypt+DB load (thundering-herd protection at the TTL boundary / cold start).
 - `handlers/v1/` — proxy endpoints (`chat/completions`, `messages`, `responses`, models, TTS, STT, images, video).
 - `handlers/admin/` — dashboard endpoints for providers, connections, combos, logs, quota, proxy pools, model pricing, and settings.
 
@@ -65,7 +65,7 @@ All handler dependencies are injected via constructors; the v1 `Handler` receive
 ### `internal/executor/`
 Upstream request execution.
 
-- `base.go` — shared HTTP client, proxy/relay helpers, SSE utilities, and `Executor` interface.
+- `base.go` — shared HTTP client, proxy/relay helpers, SSE utilities, and `Executor` interface. The SSE stream scanner goroutine is **ctx-aware**: it `select`s on `scanCh` vs `ctx.Done()` so it exits promptly on client disconnect/backpressure instead of leaking a goroutine per abandoned stream.
 - `registry.go` — maps provider prefix (`oc`, `cf`, `cx`, …) to a concrete executor + provider format.
 - `openai.go`, `claude.go`, `gemini.go`, `codex.go`, `antigravity.go`, `cloudflare.go`, `kiro.go` — provider-specific executors.
 - `tts.go`, `stt.go`, `images.go`, `video.go` — modality-specific executors.
@@ -82,11 +82,16 @@ Hub-and-spoke format translation.
 ### `internal/connstate/`
 Core routing state engine.
 
-- `store.go` — `sync.Map`-backed in-memory store keyed by connection ID.
-- `eligibility.go` — pre-computed, atomic snapshot for O(1) provider-prefix lookups.
+- `store.go` — `sync.Map`-backed in-memory store keyed by connection ID. `RecordSuccess` fast-paths: if the connection is already `StatusReady` it returns without taking a per-connection write lock, so the hot success path stays lock-free under high throughput.
+- `eligibility.go` — pre-computed, atomic snapshot for O(1) provider-prefix lookups. `Update()` rebuilds the snapshot (O(all connections)); `ScheduleUpdate()` **coalesces** concurrent rebuild requests within a 50ms window so bursty failovers (hundreds of concurrent 429s) collapse into one rebuild instead of N. Admin/background paths call `Update()` synchronously when they need a guaranteed immediate rebuild.
 - `state.go` — `ConnectionState` with status enum and per-model `ModelLimitState`.
-- `detector.go`, `patterns.go`, `headers.go` — error classification, keyword matching, and rate-limit header parsing.
+- `detector.go`, `patterns.go`, `headers.go` — error classification, keyword matching, and rate-limit header parsing. Cloudflare Workers AI daily-quota errors (`neurons`, `daily free allocation`, `upgrade to cloudflare`, `4006`) classify as `ErrorQuota` → `StatusQuotaExhausted` with a cooldown that expires at **UTC midnight** (see Quota/Exhaustion).
 - `circuit_breaker.go` — `CLOSED → OPEN → HALF_OPEN` state machine.
+
+### `internal/db/`
+SQLite layer — WAL mode, busy timeout, foreign keys. The **write path** is split: a centralized `WriteQueue` (`writequeue.go`) funnels non-critical writes (cooldown/ban persistence, OAuth token persistence) through a single draining goroutine (`Enqueue` = non-blocking, drop-on-full, best-effort; `EnqueueOrBlock` = never drops), so request handlers never block on a synchronous DB write lock. Request usage logs are batched separately by the usage tracker (see `internal/usage/`).
+
+Storage internals: `sqlite.go` (singleton connection, migrations runner), `models.go` (Go structs mirroring tables), `key_migration.go` (one-time bcrypt migration for plaintext API keys), `migrations.go` (idempotent schema migrations, provider seeds, pricing seeds, legacy provider ID normalization).
 
 ### `internal/combo/`
 Model combo routing.
@@ -123,7 +128,8 @@ Request logging and cost tracking.
 ### `internal/proxypool/`
 Proxy and relay pool resolution.
 
-- `resolver.go` — four pool types (`http`, `vercel`, `deno`, `cloudflare`), 30-second cache, group strategies (round-robin / sticky).
+- `resolver.go` — four pool types (`http`, `vercel`, `deno`, `cloudflare`), **30-second cache** (`DefaultCacheTTL = 30s`), group strategies (round-robin / sticky). `Resolve()` prioritizes per-connection `proxyGroupId`/`proxyPoolId` (read fresh-ish from the cached pool/group rows), then falls back to the **provider default** stored in the `provider_proxy_defaults` settings key.
+- **Hot-reload:** most write paths call `h.resolver.Invalidate()` immediately after mutating pools/groups (e.g. `proxy_pools.go`, `proxy_groups.go`, `proxy_deploy.go`), so create/update/delete via the proxy UI takes effect on the next request. **Known gap:** the generic Settings API write for `provider_proxy_defaults` (`handlers/admin/settings.go`, `PUT /api/admin/settings/provider_proxy_defaults`) and the cleanup blocks that *remove* a provider default (`proxy_pools.go` ~458, `proxy_groups.go` ~303) do **not** call `Invalidate()`. New assignments or removals via those paths lag until the 30s cache TTL expires — no restart required, max ~30s delay.
 - `health.go` — periodic background health checks.
 - `test.go` — HTTP CONNECT and relay tests.
 - Admin handlers in `internal/api/handlers/admin/` for CRUD, groups, and one-click deploy.
@@ -142,13 +148,6 @@ Optimization pipelines.
 - `compression/strategy.go` — lite baseline compressor + optional Caveman filler stripping; fail-open.
 - Compression is applied only on the `/v1/chat/completions` path.
 
-### `internal/db/`
-SQLite layer.
-
-- `sqlite.go` — singleton connection, WAL mode, busy timeout, foreign keys.
-- `migrations.go` — idempotent schema migrations, provider seeds, pricing seeds, legacy provider ID normalization.
-- `models.go` — Go structs mirroring tables.
-- `key_migration.go` — one-time bcrypt migration for plaintext API keys.
 
 ### `internal/config/`
 Process-wide configuration singleton.
@@ -172,8 +171,7 @@ Process-wide configuration singleton.
 5. `getConnection()` uses the eligibility snapshot to find a ready connection.
 6. Request body is compressed if compression is enabled.
 7. OAuth token is refreshed proactively if close to expiry.
-8. The translator converts the request to the provider's native format.
-9. The executor performs the upstream call via HTTP proxy or relay.
+9. The executor performs the upstream call via HTTP proxy or relay, using the proxy config resolved by `proxypool.Resolver` (cached, 30s TTL; see Proxy Pool Resolution).
 10. Rate-limit headers are parsed; errors are classified and may trigger cooldown, circuit breaker, or failover.
 11. The response is translated back to the client format.
 12. Tokens and cost are extracted and logged asynchronously.
@@ -212,16 +210,18 @@ The Go binary embeds `web/build/` and serves it through `http.FileServer`, with 
 | Model catalog refresh | `internal/models/catalog.go` | 3 h / 24 h | Remote catalog refresh, live no-auth sync |
 | Proxy health checks | `internal/proxypool/health.go` | 30 min | Test all pools and update status |
 
-## Performance Targets
+## Performance Targets & Verified Metrics
 
-| Metric | Target | Implementation |
-|--------|--------|----------------|
-| Routing latency | <1 ms | Eligibility snapshot with atomic.Value |
-| Proxy overhead | <5 ms | Minimal middleware, goroutine per request |
-| Concurrent streams | 1000+ | Goroutine per upstream connection |
-| Idle memory | <100 MB | sync.Map state + SQLite WAL |
-| 5000 connections | <500 MB | Compact state structs |
-| Startup time | <1 s | Embedded assets, no external services required |
+| Metric | Target | Verified (this session) | Implementation |
+|--------|--------|-------------------------|----------------|
+| Routing latency | <1 ms | — | Eligibility snapshot with atomic.Value + 50ms coalesce rebuild |
+| Auth cache miss (concurrent, cold) | singleflight | 500 concurrent same-key, 0 failures, ~161 ms | `AuthCache.Validate` + `singleflight.Group` |
+| Throughput | hundreds–thousands req/min | 2000 req / 200 workers → 1.565 s (~76k req/min), 0 failures | goroutine per request, async WriteQueue |
+| Proxy overhead | <5 ms | — | Minimal middleware, goroutine per request |
+| Concurrent streams | 1000+ | — | Goroutine per upstream connection |
+| Idle memory | <100 MB | — | sync.Map state + SQLite WAL |
+| 5000 connections | <500 MB | — | Compact state structs |
+| Startup time | <1 s | — | Embedded assets, no external services required |
 
 ## Security
 
