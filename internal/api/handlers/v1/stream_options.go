@@ -13,15 +13,17 @@ import (
 // usage in streaming responses are met.
 //
 // Injection occurs only when ALL of these conditions are true:
-//   - stream == true
-//   - clientFmt == FormatOpenAI
-//   - providerFmt == FormatOpenAI
-//   - path ends with "/chat/completions"
+// - stream == true
+// - clientFmt == FormatOpenAI
+// - providerFmt == FormatOpenAI
+// - path ends with "/chat/completions" OR path is "/v1/unified" with mode "text"
 //
 // In all other cases (non-streaming, non-OpenAI client, non-OpenAI provider,
 // or non-chat path), the entire stream_options object is removed from the body.
 func sanitizeStreamOptions(body []byte, stream bool, clientFmt, providerFmt executor.ProviderFormat, path string) []byte {
-	if stream && clientFmt == executor.FormatOpenAI && providerFmt == executor.FormatOpenAI && strings.HasSuffix(path, "/chat/completions") {
+	isChat := strings.HasSuffix(path, "/chat/completions")
+	isUnifiedText := path == "/v1/unified" && gjson.GetBytes(body, "mode").String() == "text"
+	if stream && clientFmt == executor.FormatOpenAI && providerFmt == executor.FormatOpenAI && (isChat || isUnifiedText) {
 		// Inject stream_options.include_usage so the OpenAI provider sends back
 		// token usage in the final streaming chunk, enabling accurate cost tracking.
 		out, err := sjson.SetBytes(body, "stream_options.include_usage", true)

@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bounded routing selection so the hot path samples a constant number of candidates before falling back to a full scan.
 - Missing `database.Close()` on graceful shutdown.
 - Flaky `TestParseFiltersUsesMilliseconds` assertion that depended on time-of-day.
+- `stream_options.include_usage` injection now applies to `/v1/unified` text-mode streaming requests.
+- Mid-stream `chunk.Err` failures now call failover handling only for upstream errors; client cancellations no longer mark connections exhausted.
 
 ### Changed
 - `ExtractTokensFromBody` extended to parse Gemini `usageMetadata` and OpenAI Responses API `response.usage`/`usage` shapes.
