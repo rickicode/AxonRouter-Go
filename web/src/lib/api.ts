@@ -115,8 +115,9 @@ export interface RequestLog {
   input_tokens: number;
   output_tokens: number;
   reasoning_tokens: number;
-  cached_tokens: number;
-  latency_ms: number;
+	cached_tokens: number;
+	tokens_estimated?: boolean;
+	latency_ms: number;
   status_code: number;
   error_message: string;
   error_category?: string;
