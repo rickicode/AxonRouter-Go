@@ -3,15 +3,21 @@
 
   let isOnline = $state(true);
   let latencyMs = $state(1);
-  let version = $state('0.1.0');
+  let version = $state('');
+
+  const CHANGELOG_URL = 'https://github.com/rickicode/AxonRouter-Go/blob/main/CHANGELOG.md';
 
   onMount(() => {
     const checkHealth = async () => {
       const start = performance.now();
       try {
-        const response = await fetch('/api/admin/health', { method: 'HEAD' });
+        const response = await fetch('/api/admin/health');
         latencyMs = Math.max(1, Math.round(performance.now() - start));
         isOnline = response.ok;
+        if (response.ok) {
+          const data = await response.json().catch(() => ({}));
+          if (data.version) version = String(data.version);
+        }
       } catch {
         isOnline = false;
         latencyMs = 0;
@@ -58,6 +64,17 @@
   <!-- Version row -->
   <div class="flex items-center justify-between text-[10px] font-mono text-muted-foreground/50">
     <span>axonrouter</span>
-    <span>v{version}</span>
+    {#if version}
+      <a
+        href={CHANGELOG_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        class="hover:text-primary hover:underline"
+      >
+        v{version}
+      </a>
+    {:else}
+      <span>-</span>
+    {/if}
   </div>
 </div>

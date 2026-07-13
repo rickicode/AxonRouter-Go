@@ -1,10 +1,9 @@
 name: Release
 
 # Build cross-platform binaries and attach them to a GitHub Release.
-# Trigger: push a tag matching v* (e.g. v1.2.3). Create the release from
-# the "Releases" page (Draft a new release, set the tag to vX.Y.Z) and the
-# workflow runs automatically. The `installer.sh` script downloads the asset
-# that matches the runner's OS/architecture.
+# Trigger: push a tag matching v* (e.g. v1.2.3). The release is created or
+# updated automatically, with notes extracted from CHANGELOG.md. The
+# `installer.sh` script downloads the asset that matches the runner's OS/arch.
 
 on:
   push:
@@ -34,6 +33,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7.0.0
 
+      - name: Validate version matches tag
+        run: |
+          VERSION="$(cat internal/version/VERSION)"
+          TAG="${GITHUB_REF_NAME}"
+          if [ "v${VERSION}" != "${TAG}" ]; then
+            echo "Tag ${TAG} does not match VERSION file (${VERSION})."
+            exit 1
+          fi
+
       - name: Set up Go
         uses: actions/setup-go@v6.5.0
         with:
@@ -51,8 +59,14 @@ jobs:
         run: npm install
 
       - name: Build frontend
-        working-directory: web
-        run: npm run build
+        run: make build-frontend
+
+      - name: Build backend
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: make release-binary
 
       - name: Compute binary name
         id: bin
@@ -61,17 +75,12 @@ jobs:
           if [ "${{ matrix.goos }}" = "windows" ]; then BIN="${BIN}.exe"; fi
           echo "name=${BIN}" >> "$GITHUB_OUTPUT"
 
-      - name: Build backend
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "0"
-        run: |
-          go build -ldflags="-s -w" -o "${{ steps.bin.outputs.name }}" ./cmd/server
+      - name: Extract release notes
+        run: node scripts/extract-changelog.js "$(cat internal/version/VERSION)" > RELEASE_NOTES.md
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v3.0.1
         with:
           files: ${{ steps.bin.outputs.name }}
-          # Tag-triggered releases already exist; append assets to it.
+          body_path: RELEASE_NOTES.md
           append_body: false

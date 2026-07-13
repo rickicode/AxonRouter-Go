@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
+	"github.com/rickicode/AxonRouter-Go/internal/version"
 )
 
 // HealthHandler exposes liveness and operational metrics.
@@ -50,8 +51,9 @@ func (h *HealthHandler) Health(c *gin.Context) {
 	}
 
 	c.JSON(status, gin.H{
-		"status": dbStatus,
-		"db":     dbStatus,
+		"status":  dbStatus,
+		"db":      dbStatus,
+		"version": version.String(),
 	})
 }
 

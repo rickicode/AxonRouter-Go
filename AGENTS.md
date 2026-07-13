@@ -257,3 +257,44 @@ This builds the binary and starts a **dev server** on the alternate port (`3788`
 - `AXON_PORT` is set to `DEV_PORT` (default `3788`) instead of `3777`.
 - `AXON_DATA_DIR` is set to `/tmp/axon-dev`, so the dev instance uses its own SQLite database and PID file.
 - The `kill-dev-port` target clears the dev port if a previous dev server is still running, but it never touches port 3777.
+
+## Versioning & Changelog
+
+AxonRouter-Go uses a single-file versioning system so that every release is consistent across binary, dashboard, GitHub Releases, and `CHANGELOG.md`.
+
+### 1. Single Source of Truth
+- The canonical version lives in **`internal/version/VERSION`**.
+- Never change the version directly in `web/package.json`, dashboard code, banner strings, or Git tags.
+- All tooling reads `internal/version/VERSION`; derived files are updated automatically.
+
+### 2. Changing the Version
+- Always use the Makefile targets; do **not** edit `internal/version/VERSION` by hand as the only step.
+- Bump and sync version across files:
+  ```bash
+  make set-version v=0.3.1
+  ```
+- Create a release (commits, tags, and pushes):
+  ```bash
+  make release v=0.3.1
+  ```
+  `make release` will fail if the working tree is dirty or `CHANGELOG.md` has no entries under `## [Unreleased]`.
+
+### 3. CHANGELOG.md Is Mandatory
+- Every release **must** update `CHANGELOG.md`.
+- Add entries under `## [Unreleased]` as you build features/fixes.
+- Use categories from [Keep a Changelog](https://keepachangelog.com): `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`.
+- During release, the `## [Unreleased]` section is moved into a new `## [X.Y.Z] - YYYY-MM-DD` section.
+- GitHub Releases uses `scripts/extract-changelog.js` to pull the matching section from `CHANGELOG.md` automatically.
+
+### 4. Git Tags and GitHub Actions
+- Release tags must match `v<VERSION>` (e.g. `internal/version/VERSION` = `0.3.1` → tag `v0.3.1`).
+- The `.github/workflows/release.yml` workflow:
+  1. Validates that the pushed tag matches `internal/version/VERSION`.
+  2. Builds the frontend and backend via Makefile targets.
+  3. Extracts the changelog section for the release version.
+  4. Publishes the release notes and binaries to GitHub Releases.
+
+### 5. Where Version Is Exposed
+- **Startup banner**: printed by `cmd/server/main.go` using `internal/version`.
+- **Health endpoint**: `GET /api/admin/health` returns `{ "status": "...", "version": "0.3.1" }`.
+- **Dashboard sidebar**: reads `version` from the health response and links to the GitHub `CHANGELOG.md`.

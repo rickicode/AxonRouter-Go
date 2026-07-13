@@ -14,6 +14,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/models"
+	"github.com/rickicode/AxonRouter-Go/internal/version"
 	// Trigger registration of all request/response format translators.
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator"
 
@@ -42,13 +43,14 @@ func printStartupBanner(port string, database *sql.DB) {
 
 	providers := models.ProviderCount()
 	modelCount := models.ModelCount()
+	ver := version.String()
 	sep := cyan + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" + reset
 
 	fmt.Println()
 	fmt.Println(sep)
-	fmt.Printf("  %s%sAxonRouter-Go%s    ready on port %s%s%s\n", bold, cyan, reset, green, port, reset)
+	fmt.Printf(" %s%sAxonRouter-Go%s %s%s%s ready on port %s%s%s\n", bold, cyan, reset, dim, ver, reset, green, port, reset)
 	fmt.Println(sep)
-	fmt.Printf("  %sDashboard%s   http://localhost:%s\n", yellow, reset, port)
+	fmt.Printf(" %sDashboard%s http://localhost:%s\n", yellow, reset, port)
 	fmt.Printf("  %sRoutes%s      %s%d active connections%s · %s%d providers%s · %s%d models%s\n",
 		yellow, reset,
 		cyan, activeConns, reset,
@@ -64,12 +66,13 @@ func printStartupBannerPlain(port string, database *sql.DB) {
 	_ = database.QueryRow("SELECT COUNT(*) FROM connections WHERE is_active = 1").Scan(&activeConns)
 	providers := models.ProviderCount()
 	modelCount := models.ModelCount()
+	ver := version.String()
 
 	fmt.Println()
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	fmt.Println("  AxonRouter-Go    ready on port " + port)
+	fmt.Println(" AxonRouter-Go " + ver + " ready on port " + port)
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	fmt.Printf("  Dashboard   http://localhost:%s\n", port)
+	fmt.Printf(" Dashboard http://localhost:%s\n", port)
 	fmt.Printf("  Routes      %d active connections · %d providers · %d models\n",
 		activeConns, providers, modelCount)
 	fmt.Println("  Background  cleanup · quota · usage flush")
@@ -117,7 +120,7 @@ func main() {
 	// Create router with all routes and background goroutines
 	router := api.New(api.Config{
 		DB:               database,
-		Port: cfg.Port,
+		Port:             cfg.Port,
 		QuotaIntervalMin: 1,
 		LogRetentionDays: 30,
 	})

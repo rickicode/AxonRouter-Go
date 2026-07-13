@@ -1,4 +1,4 @@
-.PHONY: all build build-frontend build-backend build-dev build-backend-dev clean run kill-port dev
+.PHONY: all build build-frontend build-backend build-dev build-backend-dev clean run kill-port dev install frontend backend help version set-version release release-binary extract-changelog
 
 # Variables
 BINARY_NAME=axonrouter
@@ -9,6 +9,11 @@ GO_BUILD_FLAGS=-ldflags="-s -w"
 GO=/usr/local/go/bin/go
 PORT=3777
 DEV_PORT ?= 3788
+VERSION_FILE=internal/version/VERSION
+VERSION := $(shell cat $(VERSION_FILE) 2>/dev/null || echo unknown)
+VERSION_TAG=v$(VERSION)
+GOOS ?= $(shell $(GO) env GOOS)
+GOARCH ?= $(shell $(GO) env GOARCH)
 
 # Default target
 all: build
@@ -25,6 +30,7 @@ build-frontend:
 # Build backend (requires Go)
 build-backend:
 	@echo "Building backend..."
+	@echo "Version: $(VERSION)"
 	$(GO) build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/server
 	@echo "Backend built successfully!"
 # Build dev backend (separate axonrouter-dev binary; never clobbers the live axonrouter)
@@ -98,7 +104,12 @@ backend: build-backend
 # Show help
 help:
 	@echo "Available targets:"
-	@echo "  all           - Build everything (default)"
+	@echo " version           - Show current version from $(VERSION_FILE)"
+	@echo " set-version       - Bump version and sync derived files (usage: make set-version v=0.3.1)"
+	@echo " extract-changelog - Extract changelog notes for the current VERSION"
+	@echo " release           - Bump version, commit, tag, and push (usage: make release v=0.3.1)"
+	@echo " release-binary    - Cross-compile a release binary for GOOS/GOARCH"
+	@echo " all - Build everything (default)"
 	@echo "  build         - Build frontend and backend"
 	@echo "  build-frontend - Build frontend only"
 	@echo "  build-backend - Build backend only"
@@ -109,4 +120,46 @@ help:
 	@echo "  install       - Install frontend dependencies"
 	@echo "  frontend      - Build frontend only"
 	@echo "  backend       - Build backend only"
-	@echo "  help          - Show this help"
+	@echo " help - Show this help"
+
+# Show current version
+version:
+	@echo $(VERSION)
+
+# Bump version and sync derived files. Requires v=X.Y.Z.
+set-version:
+	@if [ -z "$(v)" ]; then \
+		echo "Usage: make set-version v=0.3.1"; \
+		exit 1; \
+	fi
+	@node scripts/bump-version.js $(v)
+
+# Extract changelog notes for the current VERSION. Redirect to a file as needed.
+extract-changelog:
+	@node scripts/extract-changelog.js $(VERSION)
+
+# Build a release binary for the configured GOOS/GOARCH.
+release-binary:
+	@mkdir -p $(BUILD_DIR)
+	@if [ "$(GOOS)" = "windows" ]; then \
+		GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-$(GOOS)-$(GOARCH).exe ./cmd/server; \
+	else \
+		GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-$(GOOS)-$(GOARCH) ./cmd/server; \
+	fi
+
+# Bump version, commit, tag, and push. Requires v=X.Y.Z and a clean working tree.
+release:
+	@if [ -z "$(v)" ]; then \
+		echo "Usage: make release v=0.3.1"; \
+		exit 1; \
+	fi
+	@if ! git diff --cached --quiet || ! git diff --quiet; then \
+		echo "Working tree is not clean. Commit or stash changes before release."; \
+		exit 1; \
+	fi
+	@$(MAKE) set-version v=$(v)
+	@git add -A
+	@git commit -m "release: v$(v)"
+	@git tag -a "v$(v)" -m "Release v$(v)"
+	@git push origin main "v$(v)"
+	@echo "Released v$(v)"
