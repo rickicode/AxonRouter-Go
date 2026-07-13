@@ -103,43 +103,34 @@ func TestFallbackEstimate_EstimateTokensFromResponse_OpenAIText(t *testing.T) {
 
 func TestFallbackEstimate_EstimateTokensFromResponse_ClaudeText(t *testing.T) {
 	body := []byte(`{
-		"content": [
-			{"type": "text", "text": "Hello world"}
-		]
-	}`)
-	// First try `output_text` - not present
-	// Try `response.output[0].content[0].text` - not present
-	// None of the known paths matched → fallback to body length / 4
-	// But wait, the spec says try choices.0.message.content, choices.0.text, output_text, response.output.0.content.0.text
-	// Actually for Claude the response format is different. Looking at the spec more carefully:
-	// `response.output.0.content.0.text` - this matches the format
-	// This particular body doesn't have that structure, so fallback.
-	bodyLen := len(body)
+  "content": [
+    {"type": "text", "text": "Hello world"}
+  ]
+}`)
+	// Top-level content[0].text path should be recognized.
+	textLen := len("Hello world")
 	got := EstimateTokensFromResponse(body)
-	want := int64(bodyLen / 4)
+	want := int64(textLen / 4)
 	if got != want {
-		t.Errorf("EstimateTokensFromResponse(claude) = %d, want %d (body len %d / 4)", got, want, bodyLen)
+		t.Errorf("EstimateTokensFromResponse(claude) = %d, want %d (text len %d / 4)", got, want, textLen)
 	}
 }
 
 func TestFallbackEstimate_EstimateTokensFromResponse_ClaudeMessages(t *testing.T) {
 	body := []byte(`{
-		"id": "msg_123",
-		"type": "message",
-		"content": [
-			{"type": "text", "text": "The capital of France is Paris."}
-		]
-	}`)
-	// Try "choices.0.message.content" - absent
-	// Try "choices.0.text" - absent
-	// Try "output_text" - absent
-	// Try "response.output.0.content.0.text" - absent
-	// Fallback: body length / 4
-	bodyLen := len(body)
+  "id": "msg_123",
+  "type": "message",
+  "content": [
+    {"type": "text", "text": "The capital of France is Paris."}
+  ]
+}`)
+	// Top-level content[0].text path should be recognized.
+	text := "The capital of France is Paris."
+	textLen := len(text)
 	got := EstimateTokensFromResponse(body)
-	want := int64(bodyLen / 4)
+	want := int64(textLen / 4)
 	if got != want {
-		t.Errorf("EstimateTokensFromResponse(claude messages) = %d, want %d (body len %d / 4)", got, want, bodyLen)
+		t.Errorf("EstimateTokensFromResponse(claude messages) = %d, want %d (text len %d / 4)", got, want, textLen)
 	}
 }
 

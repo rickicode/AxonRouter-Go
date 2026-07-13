@@ -11,9 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tokens_estimated` column to request logs via database migration, with DB model field and zero-default.
 - Fallback token estimator (`internal/usage/fallback.go`) using content-length heuristics for requests and responses.
 - `tokens_estimated` badge in dashboard `Logs.svelte` and `tokens_estimated` field in admin API (`RequestLog` interface).
-- `JSONDelete` helper in `internal/executor/base.go` for removing JSON fields from serialized responses.
-- SSE data line parser (`IsSSEDataLine`, `ParseSSEDataLine`) in `internal/api/handlers/v1/sse.go` for streaming response handling.
-- Per-chunk token extraction from streaming SSE chunks and `MergeTokenCounts` aggregator in `internal/usage/stream.go`.
+- Per-chunk token extraction from streaming SSE chunks and `MergeTokenCounts` aggregator in `internal/api/handlers/v1/stream.go`.
 - `stream_options.include_usage` injection for OpenAI-compatible streaming requests and automatic stripping in all other cases.
 - Per-chunk token accumulation in streaming response handler via `StreamTokenCounts` replacing final-chunk-only extraction.
 - Fallback token estimation applied in request handlers (chat, messages, responses) when API usage is absent.

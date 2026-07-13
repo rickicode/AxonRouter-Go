@@ -165,13 +165,14 @@ func (h *Handler) Responses(c *gin.Context) {
 				OutputTokens:        tokenCounts.OutputTokens,
 				ReasoningTokens:     tokenCounts.ReasoningTokens,
 				CachedTokens:        tokenCounts.CachedTokens,
-				CacheCreationTokens: tokenCounts.CacheCreationTokens,
-				LatencyMs:           latency,
-				StatusCode:          resp.StatusCode,
-				TokensEstimated:     tokensEstimated,
-			})
-			h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
-			h.writeJSONResponse(c, resp.StatusCode, translatedResp)
+			CacheCreationTokens: tokenCounts.CacheCreationTokens,
+			LatencyMs: latency,
+			StatusCode: resp.StatusCode,
+			TokensEstimated: tokensEstimated,
+		})
+		h.incrementAPIKeyUsage(c.GetString("api_key_id"), tokenCounts.InputTokens+tokenCounts.OutputTokens)
+		h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
+		h.writeJSONResponse(c, resp.StatusCode, translatedResp)
 		}
 		return
 	}

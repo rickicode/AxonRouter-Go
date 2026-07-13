@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/active"
@@ -908,6 +909,35 @@ func (h *Handler) proxyContext(ctx context.Context, conn *Connection) context.Co
 	})
 }
 
+// estimateOutputFromTranslatedChunk tries to extract actual output text from a
+// translated SSE chunk so the streaming fallback estimate is based on content
+// characters rather than raw upstream payload bytes (which include framing and
+// JSON wrappers). It returns the rune count of the best matching content path.
+func estimateOutputFromTranslatedChunk(tc []byte) int64 {
+	line := bytes.TrimSpace(tc)
+	if bytes.HasPrefix(line, []byte("data:")) {
+		line = bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+	}
+	if len(line) == 0 || bytes.Equal(line, []byte("[DONE]")) {
+		return 0
+	}
+
+	var n int64
+	paths := []string{
+		"choices.0.delta.content",
+		"choices.0.delta.text",
+		"delta.text",
+		"output.0.content.0.text",
+		"response.output.0.content.0.text",
+	}
+	for _, p := range paths {
+		if v := gjson.GetBytes(line, p); v.Type == gjson.String {
+			n += int64(utf8.RuneCountInString(v.String()))
+		}
+	}
+	return n
+}
+
 // streamResponse writes a translated SSE stream to the client with heartbeat and
 // client-disconnect detection. Each translated chunk already includes the SSE
 // frame (data: ...\n\n), so the helper writes the bytes as-is and flushes.
@@ -1010,15 +1040,15 @@ latency := time.Since(start).Milliseconds()
 			}
 
 			lastChunkTime = time.Now()
-			translatedChunks := registry.Response(ctx, string(clientFormat), string(providerFormat), model, originalReq, translatedReq, chunk.Payload, &streamState)
-			for _, tc := range translatedChunks {
-				c.Writer.Write(tc)
-				flusher.Flush()
-}
+		translatedChunks := registry.Response(ctx, string(clientFormat), string(providerFormat), model, originalReq, translatedReq, chunk.Payload, &streamState)
+		for _, tc := range translatedChunks {
+			c.Writer.Write(tc)
+			flusher.Flush()
+			totalOutputBytes += estimateOutputFromTranslatedChunk(tc)
+		}
 		if counts, found := ExtractTokensFromSSEChunk(chunk.Payload); found {
 			MergeTokenCounts(&acc, &counts)
 		}
-		totalOutputBytes += int64(len(chunk.Payload))
 
 	case <-ticker.C:
 			if time.Since(lastChunkTime) >= heartbeatInterval {

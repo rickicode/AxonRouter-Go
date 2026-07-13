@@ -67,17 +67,37 @@ func EstimateTokensFromResponse(body []byte) int64 {
 
 	content := ""
 
-	// 1. choices[0].message.content (OpenAI chat)
+	// 1. choices[0].message.content (OpenAI chat) or choices[0].message.content[0].text (Claude content array)
 	if choices, ok := doc["choices"].([]interface{}); ok && len(choices) > 0 {
 		if first, ok := choices[0].(map[string]interface{}); ok {
 			if msg, ok := first["message"].(map[string]interface{}); ok {
 				if c, ok := msg["content"].(string); ok {
 					content = c
 				}
+				if content == "" {
+					if cArr, ok := msg["content"].([]interface{}); ok && len(cArr) > 0 {
+						if cObj, ok := cArr[0].(map[string]interface{}); ok {
+							if t, ok := cObj["text"].(string); ok {
+								content = t
+							}
+						}
+					}
+				}
 			}
 			if content == "" {
 				if c, ok := first["text"].(string); ok {
 					content = c
+				}
+			}
+		}
+	}
+
+	// 1b. top-level content[0].text (Claude messages response shape)
+	if content == "" {
+		if cArr, ok := doc["content"].([]interface{}); ok && len(cArr) > 0 {
+			if cObj, ok := cArr[0].(map[string]interface{}); ok {
+				if t, ok := cObj["text"].(string); ok {
+					content = t
 				}
 			}
 		}

@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
+	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
@@ -102,13 +104,17 @@ func newTestHandler(t *testing.T) *Handler {
 	store := connstate.NewStore()
 	store.SeedConnection("conn-1", "test", "ready", 0)
 	mgr := auth.NewManager()
+	database := openTestDB(t)
+	elig := connstate.NewEligibilityManager(store)
 	return &Handler{
-		db:         openTestDB(t),
-		store:      store,
-		elig:       connstate.NewEligibilityManager(store),
-		authMgr:    mgr,
-		exhaustion: quota.NewExhaustionCache(),
+		db:          database,
+		store:       store,
+		elig:        elig,
+		authMgr:     mgr,
+		exhaustion:  quota.NewExhaustionCache(),
 		providerCfg: providercfg.NewManager(t.TempDir()),
+		combo:       combo.NewHandler(database, store, elig),
+		registry:    executor.GetRegistry(),
 	}
 }
 
@@ -697,4 +703,74 @@ func TestFallbackUsage(t *testing.T) {
 		tracker.Stop()
 		wq.Stop()
 	})
+}
+
+// TestChatCompletions_FallbackUsage verifies that a successful non-streaming
+// response without upstream usage triggers fallback token estimation and marks
+// the log row as estimated.
+func TestChatCompletions_FallbackUsage(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+
+	wq := db.NewWriteQueue(h.db)
+	tracker := usage.NewTracker(h.db)
+	tracker.SetWriteQueue(wq)
+	h.tracker = tracker
+
+	// Seed required rows.
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('testchat','TestChat','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('testchatconn1','testchat','c1','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_keys (id, name, key_value, created_at) VALUES ('test-key-chat', 'test-key-chat', 'sk-test', 0)`); err != nil {
+		t.Fatalf("seed api_key: %v", err)
+	}
+
+	// Register a fake OpenAI-compatible executor that returns a response without usage.
+	fe := &fakeExecutor{
+		responses: []struct {
+			resp *executor.Response
+			err  error
+		}{
+			{
+				resp: &executor.Response{
+					StatusCode: http.StatusOK,
+					Body:       []byte(`{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"Hello world, this is a test response"}}]}`),
+				},
+			},
+		},
+	}
+	executor.GetRegistry().Register("testchat", executor.FormatOpenAI, fe)
+	defer executor.GetRegistry().Unregister("testchat")
+
+	h.store.SeedConnection("testchatconn1", "testchat", "ready", 0)
+	h.elig.RecomputeAll()
+
+	body := []byte(`{"model":"testchat/model","messages":[{"role":"user","content":"Hello world, this is a test request"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("api_key_id", "test-key-chat")
+
+	h.ChatCompletions(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Give the async tracker time to flush to the write queue before stopping.
+	time.Sleep(200 * time.Millisecond)
+	tracker.Stop()
+	wq.Stop()
+
+	var totalTokens int64
+	if err := h.db.QueryRow(`SELECT COALESCE(total_tokens, 0) FROM api_key_usage WHERE api_key_id = 'test-key-chat'`).Scan(&totalTokens); err != nil {
+		t.Fatalf("query api_key_usage: %v", err)
+	}
+	if totalTokens == 0 {
+		t.Fatalf("expected non-zero api_key_usage from fallback estimation")
+	}
 }
