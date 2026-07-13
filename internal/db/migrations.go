@@ -322,7 +322,17 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 	currency TEXT NOT NULL DEFAULT 'USD',
 	updated_at INTEGER NOT NULL DEFAULT 0
 );
-	`); err != nil {
+`); err != nil {
+		return err
+	}
+
+	// User-added custom models for custom providers.
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS provider_models (
+		provider_type_id TEXT NOT NULL,
+		model TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		PRIMARY KEY (provider_type_id, model)
+);`); err != nil {
 		return err
 	}
 

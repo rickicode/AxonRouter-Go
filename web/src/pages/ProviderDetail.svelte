@@ -392,6 +392,7 @@ function handlePerPageChange(p: number) {
 </div>
           {#each $providerModels as model}
             {@const result = $modelTestResults[model]}
+  <div class="flex items-center gap-1">
             <button
               class="group inline-flex items-center gap-2 px-3 py-1.5 bg-card border border-border rounded-md hover:border-primary/40 transition-colors cursor-pointer disabled:opacity-50"
               disabled={result?.status === 'testing'}
@@ -403,18 +404,17 @@ function handlePerPageChange(p: number) {
                 <span class="size-1.5 rounded-full shrink-0 {result.status === 'ok' ? 'bg-emerald-500' : result.status === 'testing' ? 'bg-yellow-500 animate-pulse' : 'bg-destructive'}"></span>
                 {#if result.latency_ms}
                   <span class="text-[10px] font-mono text-muted-foreground">{result.latency_ms}ms</span>
-                {/if}
-              {/if}
- <span
-  class="ml-1 size-4 inline-flex items-center justify-center rounded-sm text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
-  title="Remove model"
-   role="button"
-   tabindex="0"
-   aria-label="Remove model"
-  onclick={(e) => { e.stopPropagation(); deleteProviderModel(providerId, model); }}
-					onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); deleteProviderModel(providerId, model); } }}
- >×</span>
+        {/if}
+      {/if}
             </button>
+            <button
+      type="button"
+      class="ml-1 size-4 inline-flex items-center justify-center rounded-sm text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer border-0 bg-transparent p-0"
+  title="Remove model"
+   aria-label="Remove model"
+      onclick={() => deleteProviderModel(providerId, model)}
+    >×</button>
+  </div>
           {/each}
         </div>
       {/if}

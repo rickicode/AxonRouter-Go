@@ -141,6 +141,8 @@ func (h *ProviderHandler) Create(c *gin.Context) {
 		return
 	}
 
+	executor.RegisterCustomProviders(h.db)
+
 	c.JSON(http.StatusCreated, gin.H{
 		"id":           req.Name,
 		"display_name": displayName,
@@ -214,6 +216,7 @@ func (h *ProviderHandler) Delete(c *gin.Context) {
 	}
 
 	h.db.Exec(`DELETE FROM provider_types WHERE id = ?`, id)
+	executor.GetRegistry().Unregister(id)
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 

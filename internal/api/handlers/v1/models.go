@@ -49,9 +49,9 @@ func (h *Handler) buildModelList() []gin.H {
 	// Add combo names as virtual models
 	for _, combo := range h.combo.ListCombos() {
 		allModels = append(allModels, gin.H{
-			"id":      combo.Combo.Name,
-			"object":  "model",
-			"created": combo.Combo.CreatedAt,
+			"id":       combo.Combo.Name,
+			"object":   "model",
+			"created":  combo.Combo.CreatedAt,
 			"owned_by": "axonrouter",
 		})
 	}
@@ -60,9 +60,9 @@ func (h *Handler) buildModelList() []gin.H {
 	virtualModels := []string{"auto", "economy", "balanced", "premium"}
 	for _, name := range virtualModels {
 		allModels = append(allModels, gin.H{
-			"id":      "smart/" + name,
-			"object":  "model",
-			"created": 1700000000,
+			"id":       "smart/" + name,
+			"object":   "model",
+			"created":  1700000000,
 			"owned_by": "axonrouter",
 		})
 	}
@@ -133,7 +133,8 @@ func (h *Handler) Models(c *gin.Context) {
 func (h *Handler) getProviderModels(prefix string) []gin.H {
 	cfg, ok := v1ProviderCatalog[prefix]
 	if !ok {
-		return nil
+		// Not a catalog-backed provider: serve user-added custom models.
+		return h.customModels(prefix)
 	}
 	ids := models.GetAllModelIDs(cfg.keys...)
 	if len(ids) == 0 {
@@ -149,11 +150,37 @@ func (h *Handler) getProviderModels(prefix string) []gin.H {
 			modelID = prefix + "/" + cleanID
 		}
 		entries = append(entries, gin.H{
-			"id":      modelID,
-			"object":  "model",
-			"created": 1700000000,
+			"id":       modelID,
+			"object":   "model",
+			"created":  1700000000,
 			"owned_by": cfg.ownedBy,
 		})
+	}
+	return entries
+}
+
+// customModels returns user-added models stored for a provider prefix (custom providers).
+func (h *Handler) customModels(prefix string) []gin.H {
+	rows, err := h.db.Query(`SELECT model FROM provider_models WHERE provider_type_id = ? ORDER BY model`, prefix)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	entries := make([]gin.H, 0)
+	for rows.Next() {
+		var model string
+		if rows.Scan(&model) != nil || model == "" {
+			continue
+		}
+		entries = append(entries, gin.H{
+			"id":       prefix + "/" + model,
+			"object":   "model",
+			"created":  1700000000,
+			"owned_by": "custom",
+		})
+	}
+	if len(entries) == 0 {
+		return nil
 	}
 	return entries
 }

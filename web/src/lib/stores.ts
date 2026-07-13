@@ -307,6 +307,28 @@ export async function testProviderModel(providerId: string, model: string) {
     }));
     toast.error(`${model} failed: ${errMsg}`);
   }
+
+  }
+
+  export async function addProviderModel(providerId: string, model: string) {
+  try {
+    await providersApi.addModel(providerId, model);
+    await loadProviderModels(providerId);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    toast.error(`Failed to add model: ${msg}`);
+  }
+  }
+
+  export async function deleteProviderModel(providerId: string, model: string) {
+  try {
+    await providersApi.deleteModel(providerId, model);
+    await loadProviderModels(providerId);
+    toast.success(`Removed ${model}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    toast.error(`Failed to remove model: ${msg}`);
+  }
 }
 
 export async function loadLogs(page = 1, perPage = 100) {

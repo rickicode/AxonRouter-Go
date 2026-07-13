@@ -32,8 +32,8 @@ func NewModelHandler(db *sql.DB, registry *executor.Registry, store *connstate.S
 // noAuthBaseURLs maps no-auth provider IDs to their base URLs.
 // Used for testing and model listing when no DB entry or connection exists.
 var noAuthBaseURLs = map[string]string{
-	"oc":          "https://opencode.ai/zen/v1",
-	"mimocode":    "https://api.xiaomimimo.com/api/free-ai/openai",
+	"oc":            "https://opencode.ai/zen/v1",
+	"mimocode":      "https://api.xiaomimimo.com/api/free-ai/openai",
 	"mimocode-free": "https://api.xiaomimimo.com/api/free-ai/openai",
 }
 
@@ -42,11 +42,12 @@ var noAuthBaseURLs = map[string]string{
 // Works even when the provider has no DB entry (fresh install) — falls back to catalog.
 func (h *ModelHandler) ListModels(c *gin.Context) {
 	providerID := c.Param("id")
+	stored := h.storedModels(providerID)
 	if _, ok := noAuthBaseURLs[providerID]; ok {
 		// No-auth providers use the static/synced catalog. Their chat base URL
 		// is not necessarily the /models URL, so dynamic executor probing can
 		// hit HTML/404 pages (opencode.ai/zen/v1) and spam warnings.
-		c.JSON(http.StatusOK, gin.H{"data": staticModels(providerID)})
+		c.JSON(http.StatusOK, gin.H{"data": mergeUnique(staticModels(providerID), stored)})
 		return
 	}
 
@@ -63,22 +64,22 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 		exec, _, ok := h.registry.Get(provider.ID)
 		if ok {
 			if tester, ok := exec.(modelTester); ok {
-			var apiKey, accessToken string
-			var psdJSON sql.NullString
-			err := h.db.QueryRow(`SELECT COALESCE(api_key,''), COALESCE(oauth_token,''), provider_specific_data FROM connections WHERE provider_type_id = ? AND status = 'ready' AND is_active = 1 LIMIT 1`, providerID).Scan(&apiKey, &accessToken, &psdJSON)
-			if err == nil {
-				// Parse provider_specific_data for {accountId} resolution
-				psd := make(map[string]string)
-				if psdJSON.Valid && psdJSON.String != "" {
-					json.Unmarshal([]byte(psdJSON.String), &psd)
-				}
-				creds := &executor.Request{
-					APIKey:      apiKey,
-					AccessToken: accessToken,
-					BaseURL:     provider.BaseURL,
-					Provider:    providerID,
-					ProviderSpecificData: psd,
-				}
+				var apiKey, accessToken string
+				var psdJSON sql.NullString
+				err := h.db.QueryRow(`SELECT COALESCE(api_key,''), COALESCE(oauth_token,''), provider_specific_data FROM connections WHERE provider_type_id = ? AND status = 'ready' AND is_active = 1 LIMIT 1`, providerID).Scan(&apiKey, &accessToken, &psdJSON)
+				if err == nil {
+					// Parse provider_specific_data for {accountId} resolution
+					psd := make(map[string]string)
+					if psdJSON.Valid && psdJSON.String != "" {
+						json.Unmarshal([]byte(psdJSON.String), &psd)
+					}
+					creds := &executor.Request{
+						APIKey:               apiKey,
+						AccessToken:          accessToken,
+						BaseURL:              provider.BaseURL,
+						Provider:             providerID,
+						ProviderSpecificData: psd,
+					}
 					resp, err := tester.Models(context.Background(), creds)
 					if err == nil {
 						var modelsResp struct {
@@ -88,10 +89,10 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 						}
 						if err := json.Unmarshal(resp.Body, &modelsResp); err == nil && len(modelsResp.Data) > 0 {
 							models := make([]string, 0, len(modelsResp.Data))
-						for _, m := range modelsResp.Data {
-							models = append(models, strings.TrimPrefix(m.ID, "@"))
-						}
-							c.JSON(http.StatusOK, gin.H{"data": models})
+							for _, m := range modelsResp.Data {
+								models = append(models, strings.TrimPrefix(m.ID, "@"))
+							}
+							c.JSON(http.StatusOK, gin.H{"data": mergeUnique(models, stored)})
 							return
 						}
 						var flat []string
@@ -100,7 +101,7 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 							for i, m := range flat {
 								stripped[i] = strings.TrimPrefix(m, "@")
 							}
-							c.JSON(http.StatusOK, gin.H{"data": stripped})
+							c.JSON(http.StatusOK, gin.H{"data": mergeUnique(stripped, stored)})
 						}
 					} else {
 						logging.Logger.Debug("dynamic model list failed, using static", "provider", providerID, "err", err)
@@ -110,8 +111,74 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 		}
 	}
 
-	// Fallback: return static/synced model list from catalog
-	c.JSON(http.StatusOK, gin.H{"data": staticModels(providerID)})
+	// Fallback: return static/synced model list from catalog, merged with stored models.
+	c.JSON(http.StatusOK, gin.H{"data": mergeUnique(staticModels(providerID), stored)})
+}
+
+// storedModels returns user-added custom models persisted for a provider.
+func (h *ModelHandler) storedModels(providerID string) []string {
+	rows, err := h.db.Query(`SELECT model FROM provider_models WHERE provider_type_id = ? ORDER BY model`, providerID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var m string
+		if rows.Scan(&m) == nil && m != "" {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// mergeUnique merges string slices, dropping empty strings and duplicates.
+func mergeUnique(sets ...[]string) []string {
+	seen := make(map[string]bool)
+	out := []string{}
+	for _, set := range sets {
+		for _, s := range set {
+			if s == "" || seen[s] {
+				continue
+			}
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// CreateModel adds a user-defined model to a custom provider.
+func (h *ModelHandler) CreateModel(c *gin.Context) {
+	providerID := c.Param("id")
+	var req struct {
+		Model string `json:"model" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+	model := strings.TrimSpace(req.Model)
+	if model == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_models (provider_type_id, model, created_at) VALUES (?, ?, ?)`, providerID, model, time.Now().Unix()); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": h.storedModels(providerID)})
+}
+
+// DeleteModel removes a user-defined model from a custom provider.
+func (h *ModelHandler) DeleteModel(c *gin.Context) {
+	providerID := c.Param("id")
+	model := c.Param("model")
+	if _, err := h.db.Exec(`DELETE FROM provider_models WHERE provider_type_id = ? AND model = ?`, providerID, model); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": h.storedModels(providerID)})
 }
 
 // TestModel tests a specific model by sending a minimal streaming request.
@@ -302,13 +369,13 @@ var providerCatalogKeys = map[string][]string{
 	"cx":            {"codex-free", "codex-team", "codex-plus", "codex-pro"},
 	"ag":            {"antigravity"},
 	"antigravity":   {"antigravity"},
-	"kiro": {"kiro"},
-	"aistudio": {"aistudio"},
-	"xai":      {"xai"},
-	"oc":       {"oc"},
-	"oc-zen":   {"oc-zen"},
-	"oc-go":    {"oc-go"},
-	"mimocode": {"mimocode"},
+	"kiro":          {"kiro"},
+	"aistudio":      {"aistudio"},
+	"xai":           {"xai"},
+	"oc":            {"oc"},
+	"oc-zen":        {"oc-zen"},
+	"oc-go":         {"oc-go"},
+	"mimocode":      {"mimocode"},
 	"mimocode-free": {"mimocode"},
 	"mimo":          {"mimocode"},
 	"mimo-tp":       {"mimocode"},

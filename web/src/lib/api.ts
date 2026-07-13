@@ -237,6 +237,15 @@ export const providersApi = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
+addModel: (id: string, model: string) =>
+ fetchApi<{ data: string[] }>(`/providers/${id}/models`, {
+  method: "POST",
+  body: JSON.stringify({ model }),
+    }),
+deleteModel: (id: string, model: string) =>
+ fetchApi<{ data: string[] }>(`/providers/${id}/models/${encodeURIComponent(model)}`, {
+  method: "DELETE",
+    }),
 };
 
 // Connection API

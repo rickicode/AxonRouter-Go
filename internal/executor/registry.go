@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 	"sync"
@@ -135,4 +136,58 @@ func RegisterDefaults() {
 	// Kiro
 	kiroExec := NewKiroExecutor(base)
 	GetRegistry().Register("kiro", FormatKiro, kiroExec)
+}
+
+// RegisterCustomProviders registers all user-added custom providers from the DB
+// so they become routable and appear in /v1/models. Must run after RegisterDefaults.
+func RegisterCustomProviders(db *sql.DB) {
+	reg := GetRegistry()
+	base := NewBaseExecutor()
+	openaiExec := NewOpenAIExecutor(base)
+	claudeExec := NewClaudeExecutor(base)
+	geminiExec := NewGeminiExecutor(base)
+	agExec := NewAntigravityExecutor(base)
+	kiroExec := NewKiroExecutor(base)
+
+	rows, err := db.Query(`SELECT id, format FROM provider_types WHERE is_custom = 1`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, format string
+		if err := rows.Scan(&id, &format); err != nil {
+			continue
+		}
+		registerCustomProvider(reg, openaiExec, claudeExec, geminiExec, agExec, kiroExec, id, format)
+	}
+}
+
+// registerCustomProvider maps a provider format to the reusable built-in executor
+// and translator so the custom provider routes and translates like a built-in.
+func registerCustomProvider(reg *Registry, openaiExec, claudeExec, geminiExec, agExec, kiroExec Executor, id, format string) {
+	switch format {
+	case "anthropic", "claude":
+		reg.Register(id, FormatClaude, claudeExec)
+		translator.Register(id, translator.Func(providers.TranslateClaude))
+	case "gemini":
+		reg.Register(id, FormatGemini, geminiExec)
+		translator.Register(id, translator.Func(providers.TranslateGemini))
+	case "antigravity":
+		reg.Register(id, FormatAntigravity, agExec)
+		translator.Register(id, translator.Func(providers.TranslateAntigravity))
+	case "kiro":
+		reg.Register(id, FormatKiro, kiroExec)
+		translator.Register(id, translator.Func(providers.TranslateKiro))
+	default: // openai, openai-responses, and unknown -> OpenAI-compatible
+		reg.Register(id, FormatOpenAI, openaiExec)
+	}
+}
+
+// Unregister removes a provider prefix from the registry (used on custom provider delete).
+func (r *Registry) Unregister(prefix string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.executors, prefix)
+	delete(r.formats, prefix)
 }
