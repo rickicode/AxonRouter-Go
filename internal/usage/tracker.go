@@ -80,7 +80,7 @@ func (t *Tracker) Log(entry *LogEntry) {
 		entry.StatusCode = errorcode.FromString(entry.ErrorMessage)
 	}
 	if entry.CostUsd == 0 {
-		entry.CostUsd = EstimateCost(entry.ModelID, entry.InputTokens, entry.OutputTokens, entry.ReasoningTokens, entry.CachedTokens)
+		entry.CostUsd = EstimateCost(entry.ModelID, entry.InputTokens, entry.OutputTokens, entry.ReasoningTokens, entry.CachedTokens, 0)
 	}
 	select {
 	case t.buffer <- entry:

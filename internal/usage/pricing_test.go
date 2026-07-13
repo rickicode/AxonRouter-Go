@@ -69,7 +69,7 @@ func TestEstimateCostTokenBreakdown(t *testing.T) {
 	// 1000 input (200 cached) + 1000 output, 0 reasoning.
 	p := GetPricing("gpt-4o")
 	want := float64(800)/1000*p.InputPer1K + float64(200)/1000*p.CachedReadPer1K + float64(1000)/1000*p.OutputPer1K
-	got := EstimateCost("gpt-4o", 1000, 1000, 0, 200)
+	got := EstimateCost("gpt-4o", 1000, 1000, 0, 200, 0)
 	if math.Abs(got-want) > 1e-9 {
 		t.Fatalf("EstimateCost cached = %.6f, want %.6f", got, want)
 	}
@@ -80,13 +80,13 @@ func TestEstimateCostTokenBreakdown(t *testing.T) {
 	}
 	rp := GetPricing("rtest")
 	rw := float64(1000)/1000*rp.InputPer1K + float64(1000)/1000*rp.OutputPer1K + float64(500)/1000*rp.ReasonPer1K
-	rg := EstimateCost("rtest", 1000, 1000, 500, 0)
+	rg := EstimateCost("rtest", 1000, 1000, 500, 0, 0)
 	if math.Abs(rg-rw) > 1e-9 {
 		t.Fatalf("EstimateCost reasoning = %.6f, want %.6f", rg, rw)
 	}
 
 	// Cached never overcharges: when input is fully cached, nonCached clamps to 0.
-	cg := EstimateCost("gpt-4o", 1000, 1000, 0, 1000)
+	cg := EstimateCost("gpt-4o", 1000, 1000, 0, 1000, 0)
 	cw := float64(1000)/1000*p.CachedReadPer1K + float64(1000)/1000*p.OutputPer1K
 	if math.Abs(cg-cw) > 1e-9 {
 		t.Fatalf("EstimateCost cached-clamp = %.6f, want %.6f", cg, cw)
