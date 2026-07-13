@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Copy icon on each model card in the provider detail page to copy the full model name.
+- `copyToClipboard` utility with `execCommand` fallback so copy buttons work on plain HTTP deployments.
 - `tokens_estimated` column to request logs via database migration, with DB model field and zero-default.
 - Fallback token estimator (`internal/usage/fallback.go`) using content-length heuristics for requests and responses.
 - `tokens_estimated` badge in dashboard `Logs.svelte` and `tokens_estimated` field in admin API (`RequestLog` interface).
@@ -22,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Frontend unit-test harness with Vitest and smoke tests for auth/password API.
 
 ### Fixed
+- Provider detail header: provider name and prefix now sit next to the logo on the left instead of being pushed to the right.
 - Responses API `input_tokens`/`output_tokens` no longer zeroed out by the old `TotalTokens` check in `ExtractTokensFromBody`.
 - `go test ./...` failure caused by stale `NewProviderHandler` call in `providers_test.go`.
 - Context/timer leak in `internal/executor/base.go` reported by `go vet`.

@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { toast } from 'svelte-sonner';
-  import { Button } from '$lib/components/ui/button';
-  import { Input } from '$lib/components/ui/input';
-  import * as Card from '$lib/components/ui/card';
-  import { developersApi } from '$lib/api';
-  import CopyIcon from '@lucide/svelte/icons/copy';
+import { Button } from '$lib/components/ui/button';
+import { Input } from '$lib/components/ui/input';
+import * as Card from '$lib/components/ui/card';
+import { developersApi } from '$lib/api';
+import { copyToClipboard } from '$lib/utils';
+import CopyIcon from '@lucide/svelte/icons/copy';
   import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
   import CodeIcon from '@lucide/svelte/icons/code';
 
@@ -44,13 +45,14 @@
     }
   }
 
-  function copy(text: string, label: string) {
-    navigator.clipboard.writeText(text).then(() => {
-      toast.success(`${label} copied to clipboard`);
-    }).catch(() => {
-      toast.error('Copy failed');
-    });
-  }
+async function copy(text: string, label: string) {
+	try {
+		await copyToClipboard(text);
+		toast.success(`${label} copied to clipboard`);
+	} catch {
+		toast.error('Copy failed');
+	}
+}
 
   const endpoints = [
     { method: 'GET', path: '/admin/api/v1/providers' },

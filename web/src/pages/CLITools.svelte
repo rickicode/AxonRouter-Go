@@ -9,8 +9,9 @@
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { Skeleton } from '$lib/components/ui/skeleton';
   import * as Select from '$lib/components/ui/select';
-  import { toast } from 'svelte-sonner';
-  import Copy from '@lucide/svelte/icons/copy';
+import { toast } from 'svelte-sonner';
+import { copyToClipboard } from '$lib/utils';
+import Copy from '@lucide/svelte/icons/copy';
   import Check from '@lucide/svelte/icons/check';
   import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
   import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
@@ -214,29 +215,17 @@
     }
   }
 
-  async function copyText(text: string, field: string) {
-    if (!text) return;
-    try {
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.position = 'fixed';
-        ta.style.left = '-9999px';
-        document.body.appendChild(ta);
-        ta.focus();
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-      }
-      copiedField = field;
-      toast.success('Copied to clipboard');
-      setTimeout(() => (copiedField = null), 2000);
-    } catch {
-      toast.error('Failed to copy');
-    }
-  }
+async function copyText(text: string, field: string) {
+	if (!text) return;
+	try {
+		await copyToClipboard(text);
+		copiedField = field;
+		toast.success('Copied to clipboard');
+		setTimeout(() => (copiedField = null), 2000);
+	} catch {
+		toast.error('Failed to copy');
+	}
+}
 
   function openModelPicker(target: string, multi = false) {
     modelPickerTarget = target;
