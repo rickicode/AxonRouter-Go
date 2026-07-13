@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Auto-add missing proxy pool connections UI in OpenCode Free AddConnectionModal.
 - Searchable, scrollable proxy pool selector in OpenCode Free AddConnectionModal.
 - Settings page now groups runtime settings by category and supports live search.
+- Proxy pool bulk select with row checkboxes, bulk test/delete toolbar, and "Delete all error/timeout" confirmation.
+- Unified "Add pool" dialog with Single/Bulk tabs; bulk import supports healthy-only filtering and optional <1s response-time filtering.
+- `POST /proxy-pools/bulk-delete` endpoint supporting deletion by `ids` or `test_status`.
 
 ### Fixed
 - Provider detail header: provider name and prefix now sit next to the logo on the left instead of being pushed to the right.
