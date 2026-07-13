@@ -23,13 +23,13 @@ func TestParseCodexQuotaHeaders_CodexDualWindow(t *testing.T) {
 		t.Fatalf("expected 2 quotas, got %d", len(qs))
 	}
 	five, seven := qs[0], qs[1]
-	if five.Name != "5h Window" || five.Used != 12000 || five.Total != 100000 {
+	if five.Name != "5h" || five.Used != 12000 || five.Total != 100000 {
 		t.Errorf("5h mismatch: %+v", five)
 	}
 	if five.RemainingPct < 87 || five.RemainingPct > 89 {
 		t.Errorf("expected ~88%% remaining, got %.2f", five.RemainingPct)
 	}
-	if seven.Name != "7d Window" || seven.Used != 240000 || seven.Total != 1000000 {
+	if seven.Name != "7d" || seven.Used != 240000 || seven.Total != 1000000 {
 		t.Errorf("7d mismatch: %+v", seven)
 	}
 	if seven.ResetAt != "2026-07-20T18:00:00Z" {
@@ -42,7 +42,7 @@ func TestParseCodexQuotaHeaders_5hOnly(t *testing.T) {
 	h.Set("x-codex-5h-usage", "50000")
 	h.Set("x-codex-5h-limit", "100000")
 	qs := ParseCodexQuotaHeaders(h)
-	if len(qs) != 1 || qs[0].Name != "5h Window" {
+	if len(qs) != 1 || qs[0].Name != "5h" {
 		t.Fatalf("expected single 5h quota, got %+v", qs)
 	}
 	if qs[0].RemainingPct != 50 {
@@ -141,7 +141,7 @@ func TestSaveCodexHeaderQuota_MergesExisting(t *testing.T) {
 		if q.Name == "Session" {
 			hasSession = true
 		}
-		if q.Name == "5h Window" {
+		if q.Name == "5h" {
 			has5h = true
 		}
 	}

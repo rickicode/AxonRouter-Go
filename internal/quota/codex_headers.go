@@ -28,10 +28,10 @@ import (
 // per-request window view for other OpenAI-compatible responses.
 func ParseCodexQuotaHeaders(h http.Header) []QuotaItem {
 	var codexQuotas []QuotaItem
-	if q := parseCodexHeaderWindow(h, "5h", "5h Window"); q.Name != "" {
+	if q := parseCodexHeaderWindow(h, "5h", "5h"); q.Name != "" {
 		codexQuotas = append(codexQuotas, q)
 	}
-	if q := parseCodexHeaderWindow(h, "7d", "7d Window"); q.Name != "" {
+	if q := parseCodexHeaderWindow(h, "7d", "7d"); q.Name != "" {
 		codexQuotas = append(codexQuotas, q)
 	}
 	if len(codexQuotas) > 0 {
@@ -144,7 +144,7 @@ func readCachedQuotas(db *sql.DB, connID string) []QuotaItem {
 func mergeCodexQuotas(existing, snap []QuotaItem) []QuotaItem {
 	keep := make([]QuotaItem, 0, len(existing)+len(snap))
 	for _, q := range existing {
-		if q.Name == "5h Window" || q.Name == "7d Window" {
+		if q.Name == "5h" || q.Name == "7d" {
 			continue
 		}
 		keep = append(keep, q)

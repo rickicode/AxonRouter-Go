@@ -177,34 +177,35 @@ func TestCodexQuotaCooldown_DefaultsTo60Seconds(t *testing.T) {
 
 func TestParseCodexQuotaHeaders_BothWindows(t *testing.T) {
 	h := http.Header{}
-	h.Set("X-Ratelimit-Limit-Requests", "100")
-	h.Set("X-Ratelimit-Remaining-Requests", "90")
-	h.Set("X-Ratelimit-Reset-Requests", time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
-	h.Set("X-Ratelimit-Limit-Tokens", "10000")
-	h.Set("X-Ratelimit-Remaining-Tokens", "5000")
+	h.Set("x-codex-5h-usage", "10")
+	h.Set("x-codex-5h-limit", "100")
+	h.Set("x-codex-5h-reset-at", time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
+	h.Set("x-codex-7d-usage", "2000")
+	h.Set("x-codex-7d-limit", "10000")
+	h.Set("x-codex-7d-reset-at", time.Now().Add(2*time.Hour).UTC().Format(time.RFC3339))
 	qs := ParseCodexQuotaHeaders(h)
 	if len(qs) != 2 {
 		t.Fatalf("got %d quotas", len(qs))
 	}
-	if qs[0].RemainingPct != 90 {
-		t.Errorf("requests remaining pct = %f", qs[0].RemainingPct)
+	if qs[0].Name != "5h" || qs[0].RemainingPct != 90 {
+		t.Errorf("5h window = %+v", qs[0])
 	}
-	if qs[1].RemainingPct != 50 {
-		t.Errorf("tokens remaining pct = %f", qs[1].RemainingPct)
+	if qs[1].Name != "7d" || qs[1].RemainingPct != 80 {
+		t.Errorf("7d window = %+v", qs[1])
 	}
 }
 
 func TestParseCodexQuotaHeaders_EpochReset(t *testing.T) {
 	h := http.Header{}
-	h.Set("X-Ratelimit-Limit-Requests", "10")
-	h.Set("X-Ratelimit-Remaining-Requests", "5")
-	h.Set("X-Ratelimit-Reset-Requests", "1893456000")
+	h.Set("x-codex-5h-usage", "50")
+	h.Set("x-codex-5h-limit", "100")
+	h.Set("x-codex-5h-reset-at", "2026-07-13T10:00:00Z")
 	qs := ParseCodexQuotaHeaders(h)
 	if len(qs) != 1 {
 		t.Fatalf("got %d quotas", len(qs))
 	}
-	if qs[0].ResetAt == "" {
-		t.Error("expected reset_at parsed")
+	if qs[0].ResetAt != "2026-07-13T10:00:00Z" {
+		t.Errorf("reset_at = %q", qs[0].ResetAt)
 	}
 }
 
