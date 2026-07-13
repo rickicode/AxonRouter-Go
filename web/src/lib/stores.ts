@@ -2,7 +2,7 @@
 
 import { writable, derived, get } from 'svelte/store';
 import { providersApi, connectionsApi, combosApi, logsApi, dashboardApi, quotaApi, fetchApi } from './api';
-import type { Provider, Connection, Combo, RequestLog, ActiveRequest, QuotaCacheEntry, QuotaCacheResponse, QuotaProviderSummary, ConnectionQuota } from './api';
+import type { Provider, Connection, Combo, RequestLog, ActiveRequest, QuotaCacheEntry, QuotaCacheResponse, QuotaProviderSummary, ConnectionQuota, ProviderModelEntry } from './api';
 import { loadProviderAliases } from './provider-catalog';
 import { toast } from 'svelte-sonner';
 function friendlyError(err: unknown, fallback: string): string {
@@ -59,7 +59,7 @@ export const logPagination = writable({
 });
 
 // Models per provider
-export const providerModels = writable<string[]>([]);
+export const providerModels = writable<ProviderModelEntry[]>([]);
 export const modelTestResults = writable<Record<string, { status: string; latency_ms: number; error?: string }>>({});
 
 // Filters
@@ -386,6 +386,22 @@ export function formatTokens(tokens: number): string {
 export function formatCost(cost: number): string {
   return `$${cost.toFixed(4)}`;
 }
+
+
+// formatCount abbreviates large request counts (k/M) for compact dashboard display.
+// NOTE: reconstructed after an accidental file loss; the original was an uncommitted
+// change from another session in this multi-session repo.
+export function formatCount(n: number): string {
+	if (n < 1000) return n.toString();
+	if (n < 1000000) return `${(n / 1000).toFixed(1)}k`;
+	return `${(n / 1000000).toFixed(2)}M`;
+}
+  if (n < 1000) return n.toString();
+  if (n < 1000000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+  if (n < 1000000000) return `${(n / 1000000).toFixed(2).replace(/\.00$/, '')}M`;
+  return `${(n / 1000000000).toFixed(2).replace(/\.00$/, '')}B`;
+}
+
 
 export function getStatusColor(status: string): string {
   switch (status) {

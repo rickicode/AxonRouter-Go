@@ -3,7 +3,7 @@
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { usageApi, dashboardApi, type UsageData } from '$lib/api';
-import { formatTokens } from '$lib/stores';
+import { formatTokens, formatCount } from '$lib/stores';
   import { toast } from 'svelte-sonner';
 
   import ActivityIcon from '@lucide/svelte/icons/activity';
@@ -85,7 +85,7 @@ import { formatTokens } from '$lib/stores';
   let cards = $derived.by(() => {
     const s = usage?.summary;
     return [
-      { label: 'Requests', value: s ? fmtInt(s.requests) : '0', sub: 'in selected period', icon: ActivityIcon, accent: 'pink' },
+      { label: 'Requests', value: s ? formatCount(s.requests) : '0', sub: 'in selected period', icon: ActivityIcon, accent: 'pink' },
       { label: 'Total Tokens', value: s ? formatTokens(s.total_tokens) : '0', sub: 'in selected period', icon: CpuIcon, accent: 'violet' },
       { label: 'Total Cost', value: s ? money(s.cost_usd) : '$0', sub: 'in selected period', icon: DollarSignIcon, accent: 'emerald' },
       {

@@ -7,7 +7,7 @@
 	import { Badge } from '$lib/components/ui/badge';
 	import ProviderOctopus from '$lib/components/ProviderOctopus.svelte';
 	import { usageApi, apiKeysApi, providersApi, type UsageData, type UsageBreakdown, type UsageTimeBucket, type APIKeyItem, type Provider } from '$lib/api';
-	import { formatTokens, formatCost, activeRequests, loadActiveRequests } from '$lib/stores';
+	import { formatTokens, formatCost, formatCount, activeRequests, loadActiveRequests } from '$lib/stores';
 	import { toast } from 'svelte-sonner';
 
 	import BarChartIcon from '@lucide/svelte/icons/bar-chart';
@@ -38,6 +38,8 @@
 	let filterModel = $state('');
 	let filterModality = $state('');
 	let filterStatus = $state('');
+let realtime = $state(true);
+let rangePreset = $state<'day' | 'weekly' | 'month'>('month');
 	let hasActiveFilters = $derived(
   !!(filterKey || filterProvider || filterModel || filterModality || filterStatus)
 	);
@@ -86,9 +88,9 @@ let totalStreams = $derived(($activeRequests || []).length);
 		return new Date(ts + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 	}
 
-	async function load() {
+	async function load(silent = false) {
 		if (!from || !to) return;
-		loading = true;
+		if (!silent) loading = true;
 		try {
 			const statusCode = filterStatus ? parseInt(filterStatus, 10) : undefined;
 			const res = await usageApi.get({
@@ -105,9 +107,9 @@ let totalStreams = $derived(($activeRequests || []).length);
 			await tick();
 			updateCharts();
 		} catch (err) {
-			toast.error('Failed to load usage: ' + (err instanceof Error ? err.message : 'unknown error'));
+			if (!silent) toast.error('Failed to load usage: ' + (err instanceof Error ? err.message : 'unknown error'));
 		} finally {
-			loading = false;
+			if (!silent) loading = false;
 		}
 	}
 
@@ -127,7 +129,28 @@ let totalStreams = $derived(($activeRequests || []).length);
 		void load();
 	}
 
-	async function initPage() {
+	function setPreset(p: 'day' | 'weekly' | 'month') {
+  rangePreset = p;
+  if (p === 'day') setRange(today(), today());
+  else if (p === 'weekly') setRange(daysAgo(7), today());
+  else setRange(daysAgo(30), today());
+}
+
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+function startPolling() {
+  stopPolling();
+  pollTimer = setInterval(() => {
+    if (realtime && from && to && !loading) void load(true);
+  }, 5000);
+}
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+function toggleRealtime() {
+  realtime = !realtime;
+}
+
+async function initPage() {
 		await Promise.all([
 			apiKeysApi.list().then((r) => { apiKeys = r.data; }).catch(() => {}),
 			providersApi.list().then((r) => { providers = r.data; }).catch(() => {}),
@@ -140,10 +163,12 @@ onMount(() => {
 		void initPage();
 		void loadActiveRequests();
 		const activeInterval = setInterval(loadActiveRequests, 3000);
+  startPolling();
 		return () => {
 			tokensChart?.destroy();
 			costChart?.destroy();
 			clearInterval(activeInterval);
+    stopPolling();
 		};
 });
 
@@ -288,14 +313,17 @@ return `${lbl}: ${v.toLocaleString()}`;
 				</div>
  <div class="flex flex-wrap items-center gap-2">
 					<div class="flex gap-1">
-						<Button variant={granularity === 'day' ? 'default' : 'outline'} size="sm" class="text-body-sm cursor-pointer" onclick={() => { granularity = 'day'; void load(); }}>Day</Button>
-						<Button variant={granularity === 'month' ? 'default' : 'outline'} size="sm" class="text-body-sm cursor-pointer" onclick={() => { granularity = 'month'; void load(); }}>Month</Button>
-				</div>
-					<div class="flex gap-1">
-						<Button variant="outline" size="sm" class="text-body-sm cursor-pointer" onclick={() => setRange(daysAgo(7), today())}>7d</Button>
-						<Button variant="outline" size="sm" class="text-body-sm cursor-pointer" onclick={() => setRange(daysAgo(30), today())}>30d</Button>
-						<Button variant="outline" size="sm" class="text-body-sm cursor-pointer" onclick={() => setRange(startOfMonth(), today(), 'month')}>Month</Button>
+						<Button variant={rangePreset === 'day' ? 'default' : 'outline'} size="sm" class="text-body-sm cursor-pointer" onclick={() => setPreset('day')}>Day</Button>
+						<Button variant={rangePreset === 'weekly' ? 'default' : 'outline'} size="sm" class="text-body-sm cursor-pointer" onclick={() => setPreset('weekly')}>Weekly</Button>
+						<Button variant={rangePreset === 'month' ? 'default' : 'outline'} size="sm" class="text-body-sm cursor-pointer" onclick={() => setPreset('month')}>Month</Button>
 					</div>
+					<Button variant={realtime ? 'default' : 'outline'} size="sm" class="text-body-sm cursor-pointer gap-1.5" onclick={toggleRealtime}>
+						{#if realtime}
+							<span class="size-2 rounded-full bg-green-400 animate-pulse"></span> Live
+						{:else}
+							<span class="size-2 rounded-full bg-muted-foreground/50"></span> Paused
+						{/if}
+					</Button>
 				</div>
  </CardHeader>
  <CardContent class="pt-4">
@@ -358,7 +386,7 @@ return `${lbl}: ${v.toLocaleString()}`;
 			<Card class="shadow-card">
 				<CardContent class="p-3">
 					<p class="text-caption text-muted-foreground uppercase">Requests</p>
-					<p class="text-display-md">{data.summary.requests.toLocaleString()}</p>
+					<p class="text-display-md">{formatCount(data.summary.requests)}</p>
 				</CardContent>
 			</Card>
 			<Card class="shadow-card">
@@ -496,7 +524,7 @@ return `${lbl}: ${v.toLocaleString()}`;
 									<td class="py-2 px-3">
 										<Badge variant={row.status_code >= 400 ? 'destructive' : 'default'} class="text-caption-mono rounded-sm font-mono">{row.status_code || 0}</Badge>
 									</td>
-									<td class="py-2 px-3 text-caption-mono text-right">{row.requests.toLocaleString()}</td>
+									<td class="py-2 px-3 text-caption-mono text-right">{formatCount(row.requests)}</td>
 									<td class="py-2 px-3 text-caption-mono text-right">{formatTokens(row.total_tokens)}</td>
 									<td class="py-2 px-3 text-caption-mono text-right">{formatCost(row.cost_usd)}</td>
 									<td class="py-2 px-3 text-caption-mono text-right">{row.errors.toLocaleString()}</td>
@@ -563,7 +591,7 @@ return `${lbl}: ${v.toLocaleString()}`;
 									<div class="font-mono text-xs text-muted-foreground truncate max-w-[180px]" title={subLabel(row)}>{subLabel(row)}</div>
 								{/if}
 							</td>
-							<td class="py-2 px-3 text-caption-mono text-right">{row.requests.toLocaleString()}</td>
+							<td class="py-2 px-3 text-caption-mono text-right">{formatCount(row.requests)}</td>
 							<td class="py-2 px-3 text-caption-mono text-right">{formatTokens(row.input_tokens)}</td>
 							<td class="py-2 px-3 text-caption-mono text-right">{formatTokens(row.output_tokens)}</td>
 							<td class="py-2 px-3 text-caption-mono text-right">{formatTokens(row.total_tokens)}</td>
