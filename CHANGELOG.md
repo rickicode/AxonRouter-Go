@@ -46,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed dead `handleNonStreamResponse` code from `internal/api/handlers/v1/chat.go`.
 - Token-bucket refill math fixed for per-minute limits under 60 requests/min, avoiding zero-refill rounding errors.
 - Dashboard login is now rate-limited per IP to slow brute-force attempts.
+- `ReplaceImageUrls` in `internal/compression/lite.go` now correctly replaces inline data-image URLs and preserves real OpenAI vision `image_url` parts; regex compile errors fail open.
 
 ### Changed
 - Optimization dashboard page redesigned: tabs now use pill-style controls matching ProxyPools, and the Cache tab gained a header row with refresh/flush actions, proper stat cards for hits/misses/hit rate/entries, plus a clarification note explaining cache eligibility for non-streaming/tool/cache_control responses.
