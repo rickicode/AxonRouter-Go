@@ -54,8 +54,8 @@ func SaveQuotaCache(db *sql.DB, results []ProviderQuota) {
 
 // saveQuotaCacheEntry persists a single quota cache entry to the DB.
 func saveQuotaCacheEntry(db *sql.DB, cacheID, connID, providerID, connName, plan string,
-	quotas []QuotaItem, connError string, fetchedAt, now int64) {
-
+	quotas []QuotaItem, connError string, fetchedAt, now int64,
+) {
 	status := evaluateCacheStatus(quotas, connError)
 	quotasJSON, err := json.Marshal(quotas)
 	if err != nil {
@@ -245,6 +245,27 @@ func buildCacheWhere(providerID, search, status string) (string, []any) {
 func UpdateConnectionQuotaStatus(db *sql.DB, store *connstate.Store, exhaustion *ExhaustionCache, connID string, quotas []QuotaItem, connError string, changed *bool) {
 	newStatus := "ready"
 	if connError != "" {
+		// On a clear auth/permission failure (token expired, access denied, missing
+		// projectId, refresh failed) disable the connection so routing stops using it
+		// and the dashboard surfaces the cause. Manual terminal states are preserved.
+		if strings.Contains(connError, "token expired") || strings.Contains(connError, "access denied") ||
+			strings.Contains(connError, "no projectId") || strings.Contains(connError, "token refresh failed") {
+			var cur string
+			if err := db.QueryRow(`SELECT status FROM connections WHERE id = ?`, connID).Scan(&cur); err == nil {
+				switch cur {
+				case "disabled", "suspended", "balance_empty":
+					// already in a terminal state; leave it
+				default:
+					if _, derr := db.Exec(`UPDATE connections SET status = 'disabled', updated_at = ? WHERE id = ?`, time.Now().Unix(), connID); derr == nil {
+						if cs := store.Get(connID); cs != nil {
+							cs.SetStatus(connstate.Status("disabled"), connError)
+						}
+						*changed = true
+						log.Printf("quota: connection %s disabled: %s", connID, connError)
+					}
+				}
+			}
+		}
 		return // don't change status on fetch errors
 	}
 	if len(quotas) > 0 {

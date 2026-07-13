@@ -1074,6 +1074,37 @@ func (h *Handler) persistSuccess(connID string) {
 	})
 }
 
+// codexPersistIfCodex refreshes the connection's cached quota from the live
+// x-codex-5h-* / x-codex-7d-* response headers (plan item C.3). The /wham/usage
+// endpoint only returns the session window, so the dual-window 5h/7d view must
+// be sourced from real traffic. Safe no-op when no Codex quota headers present.
+func (h *Handler) codexPersistIfCodex(conn *Connection, resp *executor.Response, sr *executor.StreamResult) {
+	if conn == nil || conn.Provider != "cx" {
+		return
+	}
+	var headers http.Header
+	if resp != nil {
+		headers = resp.Headers
+	} else if sr != nil {
+		headers = sr.Headers
+	}
+	if headers == nil || len(headers.Values("x-codex-5h-limit")) == 0 && len(headers.Values("x-codex-7d-limit")) == 0 {
+		return
+	}
+	connID := conn.ID
+	provider := conn.Provider
+	connName := conn.Name
+	h.writeQueue.Enqueue("codexHeaderQuota", func(d *sql.DB) error {
+		var ptype, plan string
+		_ = d.QueryRow(`SELECT provider_type_id, COALESCE(plan,'') FROM connections WHERE id = ?`, connID).Scan(&ptype, &plan)
+		if ptype == "" {
+			ptype = provider
+		}
+		quota.SaveCodexHeaderQuota(d, connID, ptype, connName, plan, headers)
+		return nil
+	})
+}
+
 // checkTokenBudget returns an error if the API key's lifetime token budget would be exceeded.
 func (h *Handler) checkTokenBudget(c *gin.Context, body []byte) error {
 	apiKeyID := c.GetString("api_key_id")

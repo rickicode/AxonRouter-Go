@@ -30,8 +30,10 @@ var antigravityLoadURLs = []string{
 	"https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
 }
 
-const antigravityUserAgent = "Antigravity/1.0.0 (Linux) Chrome/132.0.6834.160 Electron/39.2.3"
-const antigravityLoadUA = "vscode/1.X.X (Antigravity/1.0.0)"
+const (
+	antigravityUserAgent = "Antigravity/1.0.0 (Linux) Chrome/132.0.6834.160 Electron/39.2.3"
+	antigravityLoadUA    = "vscode/1.X.X (Antigravity/1.0.0)"
+)
 
 // upstreamQuotaBucketToClient maps upstream Antigravity quota-bucket model IDs
 // to client-visible tier IDs. Matches OmniRoute's ANTIGRAVITY_QUOTA_BUCKET_TO_CLIENT.
@@ -58,8 +60,10 @@ var droppedQuotaBuckets = map[string]bool{
 var internalModelSignals = []string{"internal", "test", "tab_flash", "tab_jump"}
 
 // antigravityDisplayNames caches display names from models.json.
-var antigravityDisplayNamesOnce sync.Once
-var antigravityDisplayNames map[string]string
+var (
+	antigravityDisplayNamesOnce sync.Once
+	antigravityDisplayNames     map[string]string
+)
 
 func getAntigravityDisplayNames() map[string]string {
 	antigravityDisplayNamesOnce.Do(func() {
@@ -193,6 +197,11 @@ func fetchAntigravityModels(accessToken string, psd map[string]any) ([]QuotaItem
 	// If fetchAvailableModels failed, fall back to retrieveUserQuota-only
 	if mr.err != nil && mr.data == nil {
 		if qr.err != nil {
+			// Surface specific errors (auth, projectId) clearly instead of burying them
+			qMsg := qr.err.Error()
+			if strings.Contains(qMsg, "no projectId") || strings.Contains(qMsg, "token expired") || strings.Contains(qMsg, "access denied") {
+				return nil, qr.err
+			}
 			return nil, fmt.Errorf("antigravity api unavailable: models=%v, quota=%v", mr.err, qr.err)
 		}
 		return parseQuotaBucketsOnly(quotaBuckets), nil

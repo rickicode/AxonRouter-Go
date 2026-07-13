@@ -110,6 +110,9 @@ func (h *Handler) Responses(c *gin.Context) {
 		if streamResult != nil {
 			connstate.ParseRateLimitHeaders(streamResult.Headers, h.store, conn.ID, modelName)
 		}
+		if provider == "cx" {
+			h.codexPersistIfCodex(conn, resp, streamResult)
+		}
 		if err != nil {
 			if h.isClientCanceled(c, err) {
 				return
@@ -152,7 +155,8 @@ func (h *Handler) Responses(c *gin.Context) {
 				ReasoningTokens: tokenCounts.ReasoningTokens,
 				CachedTokens:    tokenCounts.CachedTokens,
 				LatencyMs:       latency,
-				StatusCode:      resp.StatusCode})
+				StatusCode:      resp.StatusCode,
+			})
 			h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
 			h.writeJSONResponse(c, resp.StatusCode, translatedResp)
 		}

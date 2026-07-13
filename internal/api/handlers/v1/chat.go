@@ -142,6 +142,9 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		if streamResult != nil {
 			connstate.ParseRateLimitHeaders(streamResult.Headers, h.store, conn.ID, modelName)
 		}
+		if provider == "cx" {
+			h.codexPersistIfCodex(conn, resp, streamResult)
+		}
 		if err != nil {
 			if h.isClientCanceled(c, err) {
 				return
@@ -264,6 +267,9 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 		h.resetBanCount(connID)
 		h.persistSuccess(connID)
 		h.combo.RecordSuccess(connID)
+		if provider == "cx" {
+			h.codexPersistIfCodex(conn, resp, streamResult)
+		}
 
 		if req.Stream {
 			h.handleStreamResponse(c, streamResult, conn, provider, modelName, start, translatedBody, body)

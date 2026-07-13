@@ -109,6 +109,9 @@ func (h *Handler) Messages(c *gin.Context) {
 		if streamResult != nil {
 			connstate.ParseRateLimitHeaders(streamResult.Headers, h.store, conn.ID, modelName)
 		}
+		if provider == "cx" {
+			h.codexPersistIfCodex(conn, resp, streamResult)
+		}
 		if err != nil {
 			if h.isClientCanceled(c, err) {
 				return
