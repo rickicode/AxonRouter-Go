@@ -28,9 +28,10 @@ type Handler struct {
 	elig     *connstate.EligibilityManager
 
 	// In-memory combo cache
-	combos      map[string]*db.Combo
-	steps       map[string][]db.ComboStep // comboID → steps
-	smartCombos map[string]*db.Combo       // comboID → smart combo
+	combos map[string]*db.Combo
+	byName map[string]*db.Combo // combo name → combo (O(1) resolve by name)
+	steps map[string][]db.ComboStep // comboID → steps
+	smartCombos map[string]*db.Combo // comboID → smart combo
 }
 
 // NewHandler creates a new combo handler.
@@ -40,14 +41,15 @@ func NewHandler(
 	elig *connstate.EligibilityManager,
 ) *Handler {
 	h := &Handler{
-		db:          database,
-		rotation:    NewRotationManager(database),
-		smart:       NewSmartCombo(database),
-		fallback:    NewFallbackManager(),
-		store:       store,
-		elig:        elig,
-		combos:      make(map[string]*db.Combo),
-		steps:       make(map[string][]db.ComboStep),
+		db: database,
+		rotation: NewRotationManager(database),
+		smart: NewSmartCombo(database),
+		fallback: NewFallbackManager(),
+		store: store,
+		elig: elig,
+		combos: make(map[string]*db.Combo),
+		byName: make(map[string]*db.Combo),
+		steps: make(map[string][]db.ComboStep),
 		smartCombos: make(map[string]*db.Combo),
 	}
 	h.loadFromDB()
@@ -72,6 +74,7 @@ func (h *Handler) loadFromDB() {
 			&c.TimeoutMs, &c.IsSmart, &c.SmartGoal,
 			&c.IsActive, &c.CreatedAt, &c.UpdatedAt)
 		h.combos[c.ID] = c
+		h.byName[c.Name] = c
 		if c.IsSmart {
 			h.smartCombos[c.ID] = c
 		}
@@ -112,21 +115,21 @@ func (h *Handler) Resolve(modelStr string) (*ComboResult, bool) {
 		return h.resolveSmart(goal)
 	}
 
-	// Check regular combos
+	// Check regular combos (O(1) by name)
 	h.mu.RLock()
-	defer h.mu.RUnlock()
-	for _, c := range h.combos {
-		if c.Name == modelStr {
-			steps := h.steps[c.ID]
-			if len(steps) == 0 {
-				continue
-			}
-			// Apply rotation
-			rotated := h.rotation.GetRotatedSteps(c.ID, c.Strategy, c.StickyLimit, steps)
-			return &ComboResult{Combo: c, Steps: rotated}, true
-		}
+	c, ok := h.byName[modelStr]
+	if !ok {
+		h.mu.RUnlock()
+		return nil, false
 	}
-	return nil, false
+	steps := h.steps[c.ID]
+	h.mu.RUnlock()
+	if len(steps) == 0 {
+		return nil, false
+	}
+	// Apply rotation / strategy ordering
+	rotated := h.rotation.GetRotatedSteps(c.ID, c.Strategy, c.StickyLimit, steps)
+	return &ComboResult{Combo: c, Steps: rotated}, true
 }
 
 // resolveSmart resolves a smart combo goal to actual combo steps.
@@ -171,6 +174,33 @@ func (h *Handler) PickConnection(step db.ComboStep) (string, bool) {
 		return cs.ID, true
 	}
 	return "", false
+}
+
+// PickConnections returns all eligible, breaker-ok connection IDs for a step's
+// prefix/model, in eligibility-snapshot order (already shuffled for load
+// balancing). The combo request path uses this to retry multiple connections
+// within a single step before falling through to the next step, instead of
+// picking just one connection and jumping straight to a different model.
+func (h *Handler) PickConnections(prefix, modelID string) []string {
+	conns := h.elig.GetByPrefix(prefix)
+	out := make([]string, 0, len(conns))
+	for _, id := range conns {
+		cs := h.store.Get(id)
+		if cs == nil {
+			continue
+		}
+		if cs.IsInCooldown() {
+			continue
+		}
+		if modelID != "" && cs.IsModelInCooldown(modelID) {
+			continue
+		}
+		if !h.fallback.CanUseConnection(cs) {
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
 }
 
 // RecordSuccess records a successful request for a connection.
@@ -220,6 +250,7 @@ func (h *Handler) CreateCombo(name, strategy string, timeoutMs int, steps []Crea
 		UpdatedAt: now,
 	}
 	h.combos[comboID] = combo
+	h.byName[combo.Name] = combo
 	h.loadSteps(comboID)
 	return combo, nil
 }
@@ -234,6 +265,9 @@ func (h *Handler) DeleteCombo(comboID string) error {
 	_, err := h.db.Exec(`DELETE FROM combos WHERE id = ?`, comboID)
 	if err != nil {
 		return err
+	}
+	if c, ok := h.combos[comboID]; ok {
+		delete(h.byName, c.Name)
 	}
 	delete(h.combos, comboID)
 	delete(h.steps, comboID)
@@ -322,6 +356,7 @@ func (h *Handler) RefreshFromDB() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.combos = make(map[string]*db.Combo)
+	h.byName = make(map[string]*db.Combo)
 	h.smartCombos = make(map[string]*db.Combo)
 	h.steps = make(map[string][]db.ComboStep)
 	h.loadFromDB()

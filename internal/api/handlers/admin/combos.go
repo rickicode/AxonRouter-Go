@@ -141,9 +141,10 @@ func (h *ComboHandler) Create(c *gin.Context) {
 func (h *ComboHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		Name      string `json:"name"`
-		Strategy  string `json:"strategy"`
-		TimeoutMs int    `json:"timeout_ms"`
+		Name     string `json:"name"`
+		Strategy string `json:"strategy"`
+		TimeoutMs int   `json:"timeout_ms"`
+		IsActive *bool  `json:"is_active"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -163,6 +164,10 @@ func (h *ComboHandler) Update(c *gin.Context) {
 	if req.TimeoutMs > 0 {
 		sets = append(sets, "timeout_ms = ?")
 		args = append(args, req.TimeoutMs)
+	}
+	if req.IsActive != nil {
+		sets = append(sets, "is_active = ?")
+		args = append(args, boolToInt(*req.IsActive))
 	}
 	if len(sets) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "nothing to update"})

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { loadCombos, combos, isLoading, error } from '$lib/stores';
+import { onMount } from 'svelte';
+import { loadCombos, combos, isLoading, error, combosPagination } from '$lib/stores';
   import { combosApi } from '$lib/api';
   import { unwrapStr } from '$lib/utils';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
@@ -72,16 +72,26 @@ import StatusBadge from '$lib/components/StatusBadge.svelte';
     }
   }
 
-  const strategyOptions = ['priority', 'round-robin'];
-  const smartGoalOptions = [
-    { value: 'auto', label: 'Auto', desc: 'Dynamic selection based on telemetry' },
-    { value: 'economy', label: 'Economy', desc: 'Lowest cost routing' },
-    { value: 'balanced', label: 'Balanced', desc: 'Cost, latency, quality balance' },
-    { value: 'premium', label: 'Premium', desc: 'Highest quality regardless of cost' },
-  ];
+const strategyOptions = ['priority', 'round-robin', 'weighted'];
+function strategyLabel(opt: string) {
+  if (opt === 'priority') return 'Priority';
+  if (opt === 'round-robin') return 'Round Robin';
+  return 'Weighted';
+}
+const smartGoalOptions = [
+  { value: 'auto', label: 'Auto', desc: 'Dynamic selection based on telemetry' },
+  { value: 'economy', label: 'Economy', desc: 'Lowest cost routing' },
+  { value: 'balanced', label: 'Balanced', desc: 'Cost, latency, quality balance' },
+  { value: 'premium', label: 'Premium', desc: 'Highest quality regardless of cost' },
+];
 
-  const enabledCount = $derived($combos.filter(c => c.is_active).length);
-  const smartCount = $derived($combos.filter(c => c.is_smart).length);
+const enabledCount = $derived($combos.filter(c => c.is_active).length);
+const smartCount = $derived($combos.filter(c => c.is_smart).length);
+const totalCombos = $derived($combosPagination.total || $combos.length);
+
+function goToPage(page: number) {
+  loadCombos(page, $combosPagination.per_page);
+}
 </script>
 
 <div class="flex flex-1 flex-col gap-6 p-6">
@@ -106,7 +116,7 @@ import StatusBadge from '$lib/components/StatusBadge.svelte';
       <div class="space-y-1">
         <h1 class="text-display-lg">Combos.</h1>
         <div class="flex items-center gap-3 text-body-sm text-muted-foreground">
-          <span>{$combos.length} combos</span>
+          <span>{totalCombos} combos</span>
           <span class="text-border">·</span>
           <span class="inline-flex items-center gap-1">
             <span class="size-1.5 rounded-full bg-emerald-400"></span>
@@ -190,9 +200,33 @@ import StatusBadge from '$lib/components/StatusBadge.svelte';
           </p>
           <Button onclick={() => showCreate = true} class="text-button-md rounded-sm px-5">Add combo</Button>
         </CardContent>
-      </Card>
-    {/if}
-  {/if}
+</Card>
+{/if}
+
+{#if $combosPagination.total_pages > 1}
+<div class="flex items-center justify-between">
+  <span class="text-caption text-muted-foreground">
+    Page {$combosPagination.page} of {$combosPagination.total_pages}
+  </span>
+  <div class="flex gap-2">
+    <Button
+      variant="outline"
+      size="sm"
+      class="text-caption-mono rounded-sm"
+      disabled={$combosPagination.page <= 1}
+      onclick={() => goToPage($combosPagination.page - 1)}
+    >Prev</Button>
+    <Button
+      variant="outline"
+      size="sm"
+      class="text-caption-mono rounded-sm"
+      disabled={$combosPagination.page >= $combosPagination.total_pages}
+      onclick={() => goToPage($combosPagination.page + 1)}
+    >Next</Button>
+  </div>
+</div>
+{/if}
+{/if}
 </div>
 
 <!-- Create Dialog -->
@@ -213,13 +247,17 @@ import StatusBadge from '$lib/components/StatusBadge.svelte';
             <button
               class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {newStrategy === opt ? 'bg-foreground text-background border-foreground' : 'border-border text-muted-foreground hover:text-foreground'}"
               onclick={() => newStrategy = opt}
-            >
-              {opt === 'priority' ? 'Priority' : 'Round Robin'}
-            </button>
+> 
+{strategyLabel(opt)}
+</button>
           {/each}
         </div>
         <p class="text-caption text-muted-foreground">
-          {newStrategy === 'priority' ? 'Try steps in order. First success wins.' : 'Distribute requests across steps.'}
+          {newStrategy === 'priority'
+            ? 'Try steps in order. First success wins.'
+            : newStrategy === 'round-robin'
+              ? 'Distribute requests across steps.'
+              : 'Weighted-random order by step weight.'}
         </p>
       </div>
       <div class="grid grid-cols-2 gap-4">

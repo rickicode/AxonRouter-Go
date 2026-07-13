@@ -2,8 +2,6 @@ package combo
 
 import (
 	"database/sql"
-	"math"
-	"strings"
 	"sync"
 	"time"
 
@@ -143,32 +141,6 @@ func (sc *SmartCombo) GetTelemetry(minutes int) *Telemetry {
 	sc.mu.Unlock()
 
 	return tel
-}
-
-// EstimateCost scores a combo by average model pricing (lower = cheaper).
-func EstimateCost(combo *db.Combo, steps []db.ComboStep) float64 {
-	// ponytail: simple — sum of step costs, no weighting
-	total := 0.0
-	for _, s := range steps {
-		total += getModelCostPer1K(s.ModelID)
-	}
-	return total / math.Max(1, float64(len(steps)))
-}
-
-func getModelCostPer1K(modelID string) float64 {
-	// ponytail: hardcoded lookup, upgrade to DB pricing table later
-	switch {
-	case strings.Contains(modelID, "gpt-4o"):
-		return 0.005
-	case strings.Contains(modelID, "gpt-4"):
-		return 0.03
-	case strings.Contains(modelID, "claude-sonnet"):
-		return 0.003
-	case strings.Contains(modelID, "mimo"):
-		return 0.001
-	default:
-		return 0.002
-	}
 }
 
 // timeNow and timeMinutes are functions so tests can mock them.

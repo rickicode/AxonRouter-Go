@@ -47,6 +47,7 @@ export const connectionPagination = writable({
 
 // Combos
 export const combos = writable<Combo[]>([]);
+export const combosPagination = writable({ page: 1, per_page: 200, total: 0, total_pages: 0 });
 export const selectedCombo = writable<Combo | null>(null);
 
 // Logs
@@ -250,13 +251,16 @@ export async function loadConnection(id: string) {
   }
 }
 
-export async function loadCombos() {
+export async function loadCombos(page = 1, perPage = 200) {
   isLoading.set(true);
   error.set(null);
-  
+
   try {
-    const response = await combosApi.list();
+    const response = await combosApi.list({ page, per_page: perPage });
     combos.set(response.data || []);
+    if (response.pagination) {
+      combosPagination.set(response.pagination);
+    }
   } catch (err) {
     error.set(friendlyError(err, 'Failed to load combos'));
   } finally {

@@ -45,6 +45,7 @@ export interface Connection {
   provider_type_id: string;
   name: string;
   auth_type: string;
+ api_key?: string;
   status: string;
   cooldown_until: number | null;
   last_error: string | null;
@@ -520,7 +521,13 @@ export const usageApi = {
 
 // Combo API
 export const combosApi = {
-  list: () => fetchApi<ApiResponse<Combo[]>>("/combos"),
+  list: (params?: { page?: number; per_page?: number }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.page) searchParams.set("page", params.page.toString());
+    if (params?.per_page) searchParams.set("per_page", params.per_page.toString());
+    const query = searchParams.toString();
+    return fetchApi<ApiResponse<Combo[]>>(`/combos${query ? `?${query}` : ""}`);
+  },
 
   get: (id: string) => fetchApi<ComboDetailResponse>(`/combos/${id}`),
 
