@@ -371,17 +371,27 @@ export interface UsageBreakdown {
   model_id?: string;
   provider_id?: string;
   provider_name?: string;
+  status_code?: number;
+  modality?: string;
   requests: number;
   input_tokens: number;
   output_tokens: number;
   reasoning_tokens: number;
   total_tokens: number;
   cost_usd: number;
+  errors: number;
+  error_rate: number;
+  avg_latency_ms: number;
+  first_request_at?: number;
+  last_request_at?: number;
 }
 
 export interface UsageTimeBucket {
   bucket: string;
   requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
   tokens: number;
   cost_usd: number;
 }
@@ -393,6 +403,9 @@ export interface UsageSummary {
   reasoning_tokens: number;
   total_tokens: number;
   cost_usd: number;
+  errors: number;
+  error_rate: number;
+  avg_latency_ms: number;
 }
 
 export interface UsageData {
@@ -400,7 +413,19 @@ export interface UsageData {
   by_api_key: UsageBreakdown[];
   by_model: UsageBreakdown[];
   by_provider: UsageBreakdown[];
+  by_modality: UsageBreakdown[];
+  by_status: UsageBreakdown[];
   by_time: UsageTimeBucket[];
+  filters: {
+    from: number;
+    to: number;
+    granularity: 'day' | 'month';
+    api_key_id?: string;
+    model_id?: string;
+    provider_id?: string;
+    modality?: string;
+    status_code?: number;
+  };
 }
 
 export const apiKeysApi = {
@@ -429,7 +454,16 @@ export const apiKeysApi = {
 
 // Usage API
 export const usageApi = {
-  get: (params?: { from?: string; to?: string; granularity?: "day" | "month" }) => {
+	get: (params?: {
+		from?: string;
+		to?: string;
+		granularity?: "day" | "month";
+		api_key_id?: string;
+		model_id?: string;
+		provider_id?: string;
+		modality?: string;
+		status_code?: number;
+	}) => {
     const qs = params
       ? "?" +
 			  new URLSearchParams(
