@@ -22,14 +22,13 @@
   import AlertCircleIcon from '@lucide/svelte/icons/alert-circle';
   import ClockIcon from '@lucide/svelte/icons/clock';
   import SearchIcon from '@lucide/svelte/icons/search';
-  import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
-  import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
   import XIcon from '@lucide/svelte/icons/x';
   import AlertTriangleIcon from '@lucide/svelte/icons/alert-triangle';
   import CheckCircle2Icon from '@lucide/svelte/icons/check-circle-2';
   import HelpCircleIcon from '@lucide/svelte/icons/help-circle';
   import ZapIcon from '@lucide/svelte/icons/zap';
   import UserIcon from '@lucide/svelte/icons/user';
+  import Pagination from '$lib/components/Pagination.svelte';
 
   let searchQuery = $state('');
   let filterProvider = $state('');
@@ -37,7 +36,7 @@
   let searchTimeout: ReturnType<typeof setTimeout> | undefined;
   let refreshingIds = $state<Set<string>>(new Set());
 
-  const perPage = 50;
+  let perPage = $state(50);
 
   const statusOptions = [
     { value: '', label: 'All Status' },
@@ -462,22 +461,13 @@ function visibleQuotas(item: QuotaCacheEntry): QuotaItem[] {
       {/each}
     </div>
 
-    <!-- Pagination -->
-    {#if $quotaTotalPages > 1}
-      <div class="flex items-center justify-between">
-        <p class="text-caption text-muted-foreground">
-          Showing {($quotaPage - 1) * perPage + 1}–{Math.min($quotaPage * perPage, $quotaTotal)} of {$quotaTotal}
-        </p>
-        <div class="flex items-center gap-1.5">
-          <Button variant="outline" size="icon" class="size-8 rounded-sm cursor-pointer" disabled={$quotaPage <= 1} onclick={() => goToPage($quotaPage - 1)}>
-            <ChevronLeftIcon class="size-4" />
-          </Button>
-          <span class="text-caption-mono px-2">{$quotaPage} / {$quotaTotalPages}</span>
-          <Button variant="outline" size="icon" class="size-8 rounded-sm cursor-pointer" disabled={$quotaPage >= $quotaTotalPages} onclick={() => goToPage($quotaPage + 1)}>
-            <ChevronRightIcon class="size-4" />
-          </Button>
-        </div>
-      </div>
-    {/if}
+    <Pagination
+      page={$quotaPage}
+      totalPages={$quotaTotalPages}
+      total={$quotaTotal}
+      perPage={perPage}
+      onChange={(p) => goToPage(p)}
+      onPerPageChange={(n) => { perPage = n; applyFilters(1); }}
+    />
   {/if}
 </div>
