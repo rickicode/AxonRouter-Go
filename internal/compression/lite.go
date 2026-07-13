@@ -2,8 +2,11 @@ package compression
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 )
+
+var imageDataURLRE, imageDataURLREErr = regexp.Compile(strings.ReplaceAll("data:IMAGE/[^;]+;base64,[A-Za-z0-9+/=]+", "IMAGE", "image"))
 
 // LiteConfig controls the always-on baseline compressor.
 type LiteConfig struct {
@@ -142,29 +145,10 @@ func ApplyLite(body []byte, cfg LiteConfig) ([]byte, EngineStats, error) {
 
 // replaceImageDataURLs substitutes base64 image data URLs with [image].
 func replaceImageDataURLs(text string) string {
-	// Quick check
-	if !strings.Contains(text, "data:image/") {
+	if imageDataURLREErr != nil || !strings.Contains(text, "data:") {
 		return text
 	}
-	var out strings.Builder
-	i := 0
-	for i < len(text) {
-		idx := strings.Index(text[i:], "data:image/")
-		if idx == -1 {
-			out.WriteString(text[i:])
-			break
-		}
-		start := i + idx
-		out.WriteString(text[i:start])
-		// find closing quote or space
-		end := start + 11
-		for end < len(text) && text[end] != '"' && text[end] != ' ' && text[end] != '\n' {
-			end++
-		}
-		out.WriteString("[image]")
-		i = end
-	}
-	return out.String()
+	return imageDataURLRE.ReplaceAllString(text, "[image]")
 }
 
 func appendUnique(slice []string, s string) []string {
