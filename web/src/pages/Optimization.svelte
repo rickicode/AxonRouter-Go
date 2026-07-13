@@ -8,9 +8,11 @@
   import * as Select from '$lib/components/ui/select';
 import * as Tabs from '$lib/components/ui/tabs';
   import { Badge } from '$lib/components/ui/badge';
-  import { compressionApi, cacheApi } from '$lib/api';
-  import type { CompressionSettings, CacheStats, CompressionPreviewResult } from '$lib/api';
-  import { toast } from 'svelte-sonner';
+import { compressionApi, cacheApi } from '$lib/api';
+import type { CompressionSettings, CacheStats, CompressionPreviewResult } from '$lib/api';
+import { toast } from 'svelte-sonner';
+import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
+import InfoIcon from '@lucide/svelte/icons/info';
 
   let compression = $state<CompressionSettings>({ mode: 'off' });
   let cacheStats = $state<CacheStats>({ hits: 0, misses: 0, size: 0, hit_rate: 0 });
@@ -107,10 +109,10 @@ import * as Tabs from '$lib/components/ui/tabs';
     </p>
   </div>
 
-  <Tabs.Root value="compression">
-  <Tabs.List>
-    <Tabs.Trigger value="compression">Compression</Tabs.Trigger>
-    <Tabs.Trigger value="cache">Cache</Tabs.Trigger>
+  <Tabs.Root value="compression" class="w-full flex flex-col gap-6">
+  <Tabs.List class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-1">
+    <Tabs.Trigger value="compression" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Compression</Tabs.Trigger>
+    <Tabs.Trigger value="cache" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Cache</Tabs.Trigger>
   </Tabs.List>
   <Tabs.Content value="compression">
     <div class="space-y-4">
@@ -214,43 +216,52 @@ import * as Tabs from '$lib/components/ui/tabs';
       </Card>
     </div>
   </Tabs.Content>
-  <Tabs.Content value="cache">
-    <div class="space-y-4">
-      <Card class="shadow-card">
-        <CardHeader class="pb-3">
-          <CardTitle class="text-base">Cache Statistics</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div class="grid grid-cols-3 gap-4">
-            <div>
-              <p class="text-muted-foreground text-xs">Hits</p>
-              <p class="text-xl font-bold">{cacheStats.hits.toLocaleString()}</p>
-            </div>
-            <div>
-              <p class="text-muted-foreground text-xs">Misses</p>
-              <p class="text-xl font-bold">{cacheStats.misses.toLocaleString()}</p>
-            </div>
-            <div>
-              <p class="text-muted-foreground text-xs">Hit Rate</p>
-              <p class="text-xl font-bold">{cacheStats.hit_rate.toFixed(1)}%</p>
-            </div>
-          </div>
-          <div class="mt-4">
-            <p class="text-muted-foreground text-xs">Entries</p>
-            <p class="text-lg font-semibold">{cacheStats.size}</p>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card class="shadow-card">
-        <CardHeader class="pb-3">
-          <CardTitle class="text-base">Actions</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Button variant="destructive" onclick={flushCache}>Flush Cache</Button>
-        </CardContent>
-      </Card>
+<Tabs.Content value="cache">
+  <div class="space-y-4">
+    <div class="flex items-center justify-between">
+      <div class="space-y-1">
+        <h2 class="text-display-md">Cache Statistics</h2>
+        <p class="text-body-sm text-muted-foreground">Response cache metrics and management.</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <Button onclick={loadCacheStats} variant="outline" size="sm" class="text-body-sm rounded-sm cursor-pointer">
+          <RefreshCwIcon class="size-3.5 mr-1.5" /> Refresh
+        </Button>
+        <Button onclick={flushCache} variant="destructive" size="sm" class="text-body-sm rounded-sm cursor-pointer">
+          Flush Cache
+        </Button>
+      </div>
     </div>
-  </Tabs.Content>
+
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="bg-card rounded-xl shadow-card p-4">
+        <p class="text-caption-mono text-muted-foreground uppercase">Hits</p>
+        <p class="text-display-md font-semibold mt-1">{cacheStats.hits.toLocaleString()}</p>
+      </div>
+      <div class="bg-card rounded-xl shadow-card p-4">
+        <p class="text-caption-mono text-muted-foreground uppercase">Misses</p>
+        <p class="text-display-md font-semibold mt-1">{cacheStats.misses.toLocaleString()}</p>
+      </div>
+      <div class="bg-card rounded-xl shadow-card p-4">
+        <p class="text-caption-mono text-muted-foreground uppercase">Hit Rate</p>
+        <p class="text-display-md font-semibold mt-1">{cacheStats.hit_rate.toFixed(1)}%</p>
+      </div>
+      <div class="bg-card rounded-xl shadow-card p-4">
+        <p class="text-caption-mono text-muted-foreground uppercase">Entries</p>
+        <p class="text-display-md font-semibold mt-1">{cacheStats.size}</p>
+      </div>
+    </div>
+
+    <div class="flex items-start gap-3 rounded-xl bg-muted p-4">
+      <InfoIcon class="size-4 mt-0.5 shrink-0 text-muted-foreground" />
+      <p class="text-body-sm text-muted-foreground">
+        Cache is active only for non-streaming requests that do not include
+        <code class="bg-background px-1 py-0.5 rounded text-caption-mono">tools</code>
+        or
+        <code class="bg-background px-1 py-0.5 rounded text-caption-mono">cache_control</code>.
+      </p>
+    </div>
+  </div>
+</Tabs.Content>
 </Tabs.Root>
 </div>
