@@ -252,34 +252,33 @@ func TestImportCredentials_ExtractsAccountIDFromIDToken(t *testing.T) {
 
 func TestDeviceFlow_Start(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"device_code":"dc","user_code":"uc","verification_uri":"http://verify","verification_uri_complete":"http://verify?uc","expires_in":600,"interval":5}`))
+		w.Write([]byte(`{"device_auth_id":"daid","user_code":"UC-1234","verification_uri":"http://verify","interval":5}`))
 	}))
 	defer ts.Close()
 	svc := NewOAuthService(ts.Client())
-	svc.deviceURL = ts.URL + "/device"
-	flow, err := svc.StartDeviceFlow(context.Background())
+	svc.deviceUserCodeURL = ts.URL + "/usercode"
+	resp, err := svc.RequestDeviceUserCode(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if flow.UserCode != "uc" || flow.DeviceCode != "dc" {
-		t.Errorf("unexpected flow values: %+v", flow)
+	if resp.DeviceAuthID != "daid" || resp.UserCode != "UC-1234" {
+		t.Errorf("unexpected response: %+v", resp)
 	}
 }
 
 func TestDeviceFlow_PollSucceeds(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(tokenResponse("device-access", "device-refresh", "", 3600)))
+		w.Write([]byte(`{"authorization_code":"ac123","code_verifier":"cv","code_challenge":"cc"}`))
 	}))
 	defer ts.Close()
 	svc := NewOAuthService(ts.Client())
-	svc.tokenURL = ts.URL + "/token"
-	flow := &DeviceFlow{DeviceCode: "dc", Interval: 1, ExpiresIn: 5}
-	creds, err := svc.PollDeviceFlow(context.Background(), flow)
+	svc.deviceTokenURL = ts.URL + "/token"
+	resp, err := svc.PollDeviceToken(context.Background(), "daid", "UC-1234", time.Millisecond, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if creds.AccessToken != "device-access" {
-		t.Errorf("access token = %q", creds.AccessToken)
+	if resp.AuthorizationCode != "ac123" {
+		t.Errorf("auth code = %q", resp.AuthorizationCode)
 	}
 }
 
@@ -287,20 +286,20 @@ func TestDeviceFlow_PollExpires(t *testing.T) {
 	calls := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(`{"error":"authorization_pending"}`))
 	}))
 	defer ts.Close()
 	svc := NewOAuthService(ts.Client())
-	svc.tokenURL = ts.URL + "/token"
-	flow := &DeviceFlow{DeviceCode: "dc", Interval: 1, ExpiresIn: 2}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	svc.deviceTokenURL = ts.URL + "/token"
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_, err := svc.PollDeviceFlow(ctx, flow)
-	if err == nil || !strings.Contains(err.Error(), "expired") {
-		t.Fatalf("expected expired error, got %v", err)
+	_, err := svc.PollDeviceToken(ctx, "daid", "UC-1234", time.Millisecond, time.Second)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected timeout error, got %v", err)
 	}
 	if calls == 0 {
 		t.Error("server was never called")
 	}
 }
+

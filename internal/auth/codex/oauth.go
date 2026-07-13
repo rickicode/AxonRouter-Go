@@ -28,11 +28,12 @@ const (
 
 // OAuthService handles Codex OAuth2 PKCE flow.
 type OAuthService struct {
-	httpClient *http.Client
-	mu         sync.Mutex
-	pkce       map[string]string
-	tokenURL   string
-	deviceURL  string
+	httpClient        *http.Client
+	mu                sync.Mutex
+	pkce              map[string]string
+	tokenURL          string
+	deviceUserCodeURL string
+	deviceTokenURL    string
 }
 
 // NewOAuthService creates a new Codex OAuth service.
@@ -41,10 +42,11 @@ func NewOAuthService(httpClient *http.Client) *OAuthService {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
 	return &OAuthService{
-		httpClient: httpClient,
-		pkce:       make(map[string]string),
-		tokenURL:   TokenURL,
-		deviceURL:  DeviceCodeURL,
+		httpClient:        httpClient,
+		pkce:              make(map[string]string),
+		tokenURL:          TokenURL,
+		deviceUserCodeURL: DeviceUserCodeURL,
+		deviceTokenURL:    DeviceTokenURL,
 	}
 }
 

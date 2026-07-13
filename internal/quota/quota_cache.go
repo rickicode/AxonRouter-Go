@@ -20,7 +20,10 @@ var quotaCache sync.Map // string connectionID -> cachedQuota
 // entries if connID is empty.
 func ClearQuotaCache(connID string) {
 	if connID == "" {
-		quotaCache = sync.Map{}
+		quotaCache.Range(func(key, value any) bool {
+			quotaCache.Delete(key)
+			return true
+		})
 		return
 	}
 	quotaCache.Delete(connID)

@@ -1,102 +1,102 @@
 package codex
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 )
 
-// DeviceCodeEndpoints are the OAuth device-code endpoints for OpenAI.
+// Codex device-flow endpoints as used by the official Codex CLI.
 const (
-	DeviceCodeURL = "https://auth.openai.com/oauth/device/code"
+	DeviceUserCodeURL         = "https://auth.openai.com/api/accounts/deviceauth/usercode"
+	DeviceTokenURL            = "https://auth.openai.com/api/accounts/deviceauth/token"
+	DeviceVerificationURL     = "https://auth.openai.com/codex/device"
+	DeviceExchangeRedirectURI = "https://auth.openai.com/deviceauth/callback"
+	DeviceDefaultTimeout      = 15 * time.Minute
+	DeviceDefaultPollInterval = 5 * time.Second
 )
 
-// DeviceFlow represents an in-progress device authorization grant.
-type DeviceFlow struct {
-	DeviceCode      string
-	UserCode        string
-	VerificationURI string
-	CompleteURI     string
-	ExpiresIn       int
-	Interval        int
+// DeviceUserCodeResponse is returned by the user-code endpoint.
+type DeviceUserCodeResponse struct {
+	DeviceAuthID string          `json:"device_auth_id"`
+	UserCode     string          `json:"user_code"`
+	UserCodeAlt  string          `json:"usercode"`
+	Interval     json.RawMessage `json:"interval"`
 }
 
-// StartDeviceFlow requests a device code from the OpenAI authorization server.
-func (s *OAuthService) StartDeviceFlow(ctx context.Context) (*DeviceFlow, error) {
-	form := url.Values{}
-	form.Set("client_id", ClientID)
-	form.Set("scope", "openid profile email offline_access")
+// DeviceTokenResponse is returned by the token endpoint once the user approves.
+type DeviceTokenResponse struct {
+	AuthorizationCode string `json:"authorization_code"`
+	CodeVerifier      string `json:"code_verifier"`
+	CodeChallenge     string `json:"code_challenge"`
+}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", s.deviceURL, strings.NewReader(form.Encode()))
+// RequestDeviceUserCode asks the OpenAI authorization server for a device code.
+func (s *OAuthService) RequestDeviceUserCode(ctx context.Context) (*DeviceUserCodeResponse, error) {
+	body, err := json.Marshal(map[string]string{"client_id": ClientID})
 	if err != nil {
-		return nil, fmt.Errorf("create device-code request: %w", err)
+		return nil, fmt.Errorf("marshal device user-code request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.deviceUserCodeURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create device user-code request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("device-code request: %w", err)
+		return nil, fmt.Errorf("device user-code request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read device-code response: %w", err)
+		return nil, fmt.Errorf("read device user-code response: %w", err)
 	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("device-code failed %d: %s", resp.StatusCode, string(body))
+	if !isDeviceSuccessStatus(resp.StatusCode) {
+		trimmed := strings.TrimSpace(string(respBody))
+		if trimmed == "" {
+			trimmed = "empty response body"
+		}
+		return nil, fmt.Errorf("device user-code failed %d: %s", resp.StatusCode, trimmed)
 	}
 
-	var payload struct {
-		DeviceCode              string `json:"device_code"`
-		UserCode                string `json:"user_code"`
-		VerificationURI         string `json:"verification_uri"`
-		VerificationURIComplete string `json:"verification_uri_complete"`
-		ExpiresIn               int    `json:"expires_in"`
-		Interval                int    `json:"interval"`
+	var parsed DeviceUserCodeResponse
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return nil, fmt.Errorf("parse device user-code response: %w", err)
 	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, fmt.Errorf("parse device-code response: %w", err)
+	if parsed.UserCode == "" {
+		parsed.UserCode = strings.TrimSpace(parsed.UserCodeAlt)
 	}
-	if payload.Interval <= 0 {
-		payload.Interval = 5
+	if parsed.DeviceAuthID == "" || parsed.UserCode == "" {
+		return nil, fmt.Errorf("device user-code response missing required fields")
 	}
-	if payload.ExpiresIn <= 0 {
-		payload.ExpiresIn = 600
-	}
-	return &DeviceFlow{
-		DeviceCode:      payload.DeviceCode,
-		UserCode:        payload.UserCode,
-		VerificationURI: payload.VerificationURI,
-		CompleteURI:     payload.VerificationURIComplete,
-		ExpiresIn:       payload.ExpiresIn,
-		Interval:        payload.Interval,
-	}, nil
+	return &parsed, nil
 }
 
-// PollDeviceFlow periodically exchanges the device code for tokens.
-// It returns either credentials or an error. interval and expiry are taken from
-// the DeviceFlow response; override values may be passed for tests.
-func (s *OAuthService) PollDeviceFlow(ctx context.Context, flow *DeviceFlow) (*auth.Credentials, error) {
-	if flow == nil {
-		return nil, fmt.Errorf("nil device flow")
+// PollDeviceToken polls the device token endpoint until the user approves or
+// the deadline is reached. 403/404 are treated as "authorization pending".
+func (s *OAuthService) PollDeviceToken(ctx context.Context, deviceAuthID, userCode string, interval, timeout time.Duration) (*DeviceTokenResponse, error) {
+	if timeout <= 0 {
+		timeout = DeviceDefaultTimeout
 	}
-	interval := time.Duration(flow.Interval) * time.Second
-	if interval < time.Second {
-		interval = time.Second
+	if interval <= 0 {
+		interval = DeviceDefaultPollInterval
 	}
-	deadline := time.Now().Add(time.Duration(flow.ExpiresIn) * time.Second)
+	deadline := time.Now().Add(timeout)
 
 	for {
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("device-code expired")
+			return nil, fmt.Errorf("device authentication timed out after %v", timeout)
 		}
 		select {
 		case <-ctx.Done():
@@ -104,72 +104,86 @@ func (s *OAuthService) PollDeviceFlow(ctx context.Context, flow *DeviceFlow) (*a
 		case <-time.After(interval):
 		}
 
-		form := url.Values{}
-		form.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
-		form.Set("client_id", ClientID)
-		form.Set("device_code", flow.DeviceCode)
-
-		req, err := http.NewRequestWithContext(ctx, "POST", s.tokenURL, strings.NewReader(form.Encode()))
+		body, err := json.Marshal(map[string]string{
+			"device_auth_id": deviceAuthID,
+			"user_code":      userCode,
+		})
 		if err != nil {
-			return nil, fmt.Errorf("create token request: %w", err)
+			return nil, fmt.Errorf("marshal device token request: %w", err)
 		}
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.deviceTokenURL, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("create device token request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
 
 		resp, err := s.httpClient.Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("token request: %w", err)
+			return nil, fmt.Errorf("device token request: %w", err)
 		}
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("read token response: %w", err)
-		}
-
-		if resp.StatusCode == http.StatusOK {
-			return s.parseTokenResponse(body)
+		respBody, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("read device token response: %w", readErr)
 		}
 
-		// Handle OAuth 2.0 device-flow errors.
-		var oerr struct {
-			Error string `json:"error"`
-		}
-		_ = json.Unmarshal(body, &oerr)
-		switch oerr.Error {
-		case "authorization_pending", "slow_down":
-			if oerr.Error == "slow_down" {
-				interval += 5 * time.Second
+		switch {
+		case isDeviceSuccessStatus(resp.StatusCode):
+			var parsed DeviceTokenResponse
+			if err := json.Unmarshal(respBody, &parsed); err != nil {
+				return nil, fmt.Errorf("parse device token response: %w", err)
 			}
+			if strings.TrimSpace(parsed.AuthorizationCode) == "" || strings.TrimSpace(parsed.CodeVerifier) == "" {
+				return nil, fmt.Errorf("device token response missing authorization_code or code_verifier")
+			}
+			return &parsed, nil
+		case resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound:
+			// Authorization still pending; keep polling.
 			continue
-		case "expired_token":
-			return nil, fmt.Errorf("device-code expired")
-		case "access_denied":
-			return nil, fmt.Errorf("device-code denied")
 		default:
-			return nil, fmt.Errorf("token exchange failed %d: %s", resp.StatusCode, string(body))
+			trimmed := strings.TrimSpace(string(respBody))
+			if trimmed == "" {
+				trimmed = "empty response body"
+			}
+			return nil, fmt.Errorf("device token polling failed %d: %s", resp.StatusCode, trimmed)
 		}
 	}
 }
 
-func (s *OAuthService) parseTokenResponse(body []byte) (*auth.Credentials, error) {
-	var tokenResp struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		IDToken      string `json:"id_token"`
-		ExpiresIn    int64  `json:"expires_in"`
-		TokenType    string `json:"token_type"`
-		Scope        string `json:"scope"`
+// RunDeviceFlow performs the full device-code flow and returns credentials.
+func (s *OAuthService) RunDeviceFlow(ctx context.Context) (*auth.Credentials, string, error) {
+	userCodeResp, err := s.RequestDeviceUserCode(ctx)
+	if err != nil {
+		return nil, "", err
 	}
-	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return nil, fmt.Errorf("parse token response: %w", err)
+	interval := parseDevicePollInterval(userCodeResp.Interval)
+	tokenResp, err := s.PollDeviceToken(ctx, userCodeResp.DeviceAuthID, userCodeResp.UserCode, interval, DeviceDefaultTimeout)
+	if err != nil {
+		return nil, "", err
 	}
-	accountID, email := extractTokenClaims(tokenResp.IDToken)
-	expiresAt := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
-	return &auth.Credentials{
-		AccessToken:  tokenResp.AccessToken,
-		RefreshToken: tokenResp.RefreshToken,
-		IDToken:      tokenResp.IDToken,
-		AccountID:    accountID,
-		Email:        email,
-		ExpiresAt:    expiresAt,
-	}, nil
+	creds, err := s.exchangeCode(ctx, tokenResp.AuthorizationCode, DeviceExchangeRedirectURI, tokenResp.CodeVerifier)
+	if err != nil {
+		return nil, "", fmt.Errorf("exchange device authorization code: %w", err)
+	}
+	return creds, userCodeResp.UserCode, nil
 }
+
+func parseDevicePollInterval(raw json.RawMessage) time.Duration {
+	if len(raw) == 0 {
+		return DeviceDefaultPollInterval
+	}
+	var asStr string
+	if err := json.Unmarshal(raw, &asStr); err == nil {
+		if sec, convErr := strconv.Atoi(strings.TrimSpace(asStr)); convErr == nil && sec > 0 {
+			return time.Duration(sec) * time.Second
+		}
+	}
+	var asInt int
+	if err := json.Unmarshal(raw, &asInt); err == nil && asInt > 0 {
+		return time.Duration(asInt) * time.Second
+	}
+	return DeviceDefaultPollInterval
+}
+
+func isDeviceSuccessStatus(code int) bool { return code >= 200 && code < 300 }
