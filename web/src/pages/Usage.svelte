@@ -5,8 +5,9 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { Badge } from '$lib/components/ui/badge';
+	import ProviderOctopus from '$lib/components/ProviderOctopus.svelte';
 	import { usageApi, apiKeysApi, providersApi, type UsageData, type UsageBreakdown, type UsageTimeBucket, type APIKeyItem, type Provider } from '$lib/api';
-	import { formatTokens, formatCost } from '$lib/stores';
+	import { formatTokens, formatCost, activeRequests, loadActiveRequests } from '$lib/stores';
 	import { toast } from 'svelte-sonner';
 
 	import BarChartIcon from '@lucide/svelte/icons/bar-chart';
@@ -40,6 +41,11 @@
 	let hasActiveFilters = $derived(
   !!(filterKey || filterProvider || filterModel || filterModality || filterStatus)
 	);
+let activeProviders = $derived((providers || []).filter((p) => (p.connection_count ?? 0) > 0));
+let activeProviderIds = $derived(
+  Array.from(new Set(($activeRequests || []).map((r) => r.provider_type_id)))
+	);
+let totalStreams = $derived(($activeRequests || []).length);
 
 	let tokensCanvas = $state<HTMLCanvasElement | null>(null);
 	let costCanvas = $state<HTMLCanvasElement | null>(null);
@@ -129,14 +135,17 @@
 		setRange(daysAgo(30), today(), 'day');
 	}
 
-	onMount(() => {
+onMount(() => {
 		document.title = 'Usage — AxonRouter';
 		void initPage();
+		void loadActiveRequests();
+		const activeInterval = setInterval(loadActiveRequests, 3000);
 		return () => {
 			tokensChart?.destroy();
 			costChart?.destroy();
+			clearInterval(activeInterval);
 		};
-	});
+});
 
 	function chartOptions(title: string): any {
 		return {
@@ -343,6 +352,7 @@ return `${lbl}: ${v.toLocaleString()}`;
 		</CardContent>
 	</Card>
 
+
 	{#if data}
 		<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
 			<Card class="shadow-card">
@@ -397,6 +407,19 @@ return `${lbl}: ${v.toLocaleString()}`;
 				</CardContent>
 			</Card>
 		</div>
+
+		<Card class="shadow-card">
+ <CardHeader class="pb-3 border-b border-border flex flex-row items-center justify-between space-y-0">
+ <div class="flex items-center gap-2">
+ <ActivityIcon class="size-4 text-muted-foreground" />
+ <CardTitle class="text-body-md-strong">Provider Network</CardTitle>
+ </div>
+ <span class="text-caption-mono text-muted-foreground">Real-time stream status</span>
+ </CardHeader>
+ <CardContent class="pt-4">
+ <ProviderOctopus providers={activeProviders} activeIds={activeProviderIds} streamCount={totalStreams} />
+ </CardContent>
+		</Card>
 
 		{#if data.by_time.length}
 			<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
