@@ -170,10 +170,15 @@ jobs:
       - name: 📋 List release assets
         run: ls -la build/
 
+      - name: 🔐 Generate checksums
+        run: sha256sum build/axonrouter-* > build/checksums.txt
+
       - name: 🚀 Publish GitHub Release v${{ steps.version.outputs.version }}
         uses: softprops/action-gh-release@v3.0.1
         with:
           name: Release v${{ steps.version.outputs.version }}
-          files: build/axonrouter-*
+          files:
+            - build/axonrouter-*
+            - build/checksums.txt
           body_path: RELEASE_NOTES.md
           append_body: false
