@@ -9,10 +9,10 @@ import { connectionsApi, providersApi, oauthApi, proxyPoolsApi } from '$lib/api'
 import { toast } from 'svelte-sonner';
 import { copyToClipboard } from '$lib/utils';
 import { connections } from '$lib/stores';
-import { getProxyPoolId } from '$lib/auto-add-proxy-pools';
+import { getProxyPoolId, filterProxyPools } from '$lib/auto-add-proxy-pools';
 import ProviderIcon from '$lib/components/ProviderIcon.svelte';
- import * as Select from '$lib/components/ui/select';
-  import type { ProviderMeta } from '$lib/provider-catalog';
+import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
+import type { ProviderMeta } from '$lib/provider-catalog';
 
   let {
     open = $bindable(false),
@@ -48,9 +48,12 @@ import ProviderIcon from '$lib/components/ProviderIcon.svelte';
   let submittingCallback = $state(false);
   let validating = $state(false);
   let validationResult = $state<'success' | 'failed' | null>(null);
-  let proxyPools = $state<{ id: string; name: string; type: string; proxyUrl: string }[]>([]);
-  let proxyPoolsLoading = $state(false);
-  let selectedPoolId = $state('');
+let proxyPools = $state<{ id: string; name: string; type: string; proxyUrl: string }[]>([]);
+let proxyPoolsLoading = $state(false);
+let selectedPoolId = $state('');
+let poolSearch = $state('');
+let poolDropdownOpen = $state(false);
+let poolDropdownRef: HTMLDivElement | undefined = $state();
 
   const authType = $derived(meta?.authType ?? 'apikey');
   const isOAuth = $derived(authType === 'oauth');
@@ -68,6 +71,7 @@ const existingPoolIds = $derived(
 const missingPools = $derived(proxyPools.filter((pool) => !existingPoolIds.has(pool.id)));
 const connectedPoolCount = $derived(existingPoolIds.size);
 const missingPoolCount = $derived(missingPools.length);
+const filteredPools = $derived(filterProxyPools(proxyPools, poolSearch));
   function reset() {
     step = 'form';
     mode = 'single';
@@ -87,20 +91,38 @@ const missingPoolCount = $derived(missingPools.length);
     oauthStatusText = 'Waiting for browser authorization...';
     callbackUrl = '';
     submittingCallback = false;
-    proxyPools = [];
-    proxyPoolsLoading = false;
-    selectedPoolId = '';
-  }
+  proxyPools = [];
+  proxyPoolsLoading = false;
+  selectedPoolId = '';
+  poolSearch = '';
+  poolDropdownOpen = false;
+}
 
-  function handleOpenChange(isOpen: boolean) {
-    if (!isOpen) {
-      oauthPolling = false;
-      reset();
+function handleOpenChange(isOpen: boolean) {
+  if (!isOpen) {
+    oauthPolling = false;
+    reset();
+  }
+  open = isOpen;
+}
+
+function closePoolDropdown() {
+  poolDropdownOpen = false;
+  poolSearch = '';
+}
+
+$effect(() => {
+  if (!poolDropdownOpen) return;
+  function onPointerDown(event: PointerEvent) {
+    if (poolDropdownRef && !poolDropdownRef.contains(event.target as Node)) {
+      closePoolDropdown();
     }
-    open = isOpen;
   }
+  window.addEventListener('pointerdown', onPointerDown, true);
+  return () => window.removeEventListener('pointerdown', onPointerDown, true);
+});
 
-  async function fetchProxyPools() {
+async function fetchProxyPools() {
     if (!isOCProvider) return;
     proxyPoolsLoading = true;
     try {
@@ -609,18 +631,50 @@ async function handleOAuthSubmit() {
                 No proxy pools available. Add a proxy pool first in the Proxy Pools page.
               </div>
             {:else}
-              <Select.Root type="single" value={selectedPoolId} onValueChange={(v: string) => selectedPoolId = v}>
-                <Select.Trigger class="w-full h-9 text-body-sm">
+<div class="relative" bind:this={poolDropdownRef}>
+              <button
+                type="button"
+                class="flex h-9 w-full items-center justify-between gap-1.5 rounded-lg border border-input bg-transparent px-3 py-2 text-body-sm outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50"
+                onclick={() => poolDropdownOpen = !poolDropdownOpen}
+                aria-haspopup="listbox"
+                aria-expanded={poolDropdownOpen}
+              >
+                <span class="truncate">
                   {proxyPools.find(p => p.id === selectedPoolId)?.name || 'Select a proxy pool'}
-                </Select.Trigger>
-                <Select.Content>
-                  {#each proxyPools as pool}
-                    <Select.Item value={pool.id} class="text-body-sm">
-                      {pool.name} ({pool.type})
-                    </Select.Item>
-                  {/each}
-                </Select.Content>
-      </Select.Root>
+                </span>
+                <ChevronDownIcon class="size-4 shrink-0 text-muted-foreground {poolDropdownOpen ? 'rotate-180' : ''}" />
+              </button>
+              {#if poolDropdownOpen}
+                <div class="absolute z-50 mt-1 w-full rounded-lg border border-border bg-card shadow-md">
+                  <div class="p-2">
+                    <Input
+                      type="text"
+                      bind:value={poolSearch}
+                      placeholder="Search pools..."
+                      class="h-8 text-body-sm"
+                    />
+                  </div>
+                  <div class="max-h-52 overflow-y-auto p-1">
+                    {#if filteredPools.length === 0}
+                      <div class="px-2 py-3 text-center text-body-sm text-muted-foreground">
+                        No pools match.
+                      </div>
+                    {:else}
+                      {#each filteredPools as pool (pool.id)}
+                        <button
+                          type="button"
+                          class="w-full rounded-md px-2 py-1.5 text-left text-body-sm outline-none transition-colors hover:bg-accent focus:bg-accent {pool.id === selectedPoolId ? 'bg-primary/10 text-primary' : ''}"
+                          onclick={() => { selectedPoolId = pool.id; closePoolDropdown(); }}
+                        >
+                          <span class="truncate">{pool.name}</span>
+                          <span class="text-muted-foreground">({pool.type})</span>
+                        </button>
+                      {/each}
+                    {/if}
+                  </div>
+                </div>
+              {/if}
+            </div>
       {/if}
       {#if !proxyPoolsLoading && proxyPools.length > 0}
       <div class="rounded-lg border border-border/50 bg-muted/20 p-3 flex flex-col gap-2">
