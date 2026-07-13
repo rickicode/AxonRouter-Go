@@ -6,7 +6,7 @@ DEV_BINARY_NAME=axonrouter-dev
 BUILD_DIR=./build
 FRONTEND_DIR=./web
 GO_BUILD_FLAGS=-ldflags="-s -w"
-GO=/usr/local/go/bin/go
+GO ?= /usr/local/go/bin/go
 PORT=3777
 DEV_PORT ?= 3788
 VERSION_FILE=internal/version/VERSION
