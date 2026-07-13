@@ -62,6 +62,7 @@ func (h *Handler) Responses(c *gin.Context) {
 	body = executor.JSONSet(body, "model", modelName)
 	clientFormat := executor.FormatOpenAIResponses
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+	translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
 
 	maxAttempts := 5
 	var lastConn *Connection
