@@ -12,7 +12,7 @@
     loadQuotaSummary,
     refreshConnectionQuota,
   } from '$lib/stores';
-  import type { QuotaCacheEntry } from '$lib/api';
+  import type { QuotaCacheEntry, QuotaItem } from '$lib/api';
   import { getTokenExpiry } from '$lib/utils';
   import { Card, CardContent } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
@@ -156,10 +156,48 @@ function isAntigravityMainModel(name: string): boolean {
   return ANTIGRAVITY_MAIN_FAMILIES.some(f => raw.includes(f) || display.includes(f));
   }
 
-function visibleQuotas(item: QuotaCacheEntry): typeof item.quotas {
-  if (item.provider_id !== 'ag') return item.quotas;
-  return item.quotas.filter(q => isAntigravityMainModel(q.name));
+function antigravityQuotaGroup(name: string): string {
+  const display = modelDisplayName(name).toLowerCase();
+  if (display.includes('gemini 3.5 flash')) return 'Gemini 3.5 Flash';
+  if (display.includes('gemini 3.1 flash image')) return 'Gemini 3.1 Flash Image';
+  if (display.includes('gemini 3.1 flash lite')) return 'Gemini 3.1 Flash Lite';
+  if (display.includes('gemini 3.1 flash')) return 'Gemini 3.1 Flash';
+  if (display.includes('gemini 3.1 pro')) return 'Gemini 3.1 Pro';
+  if (display.includes('claude')) return 'Claude';
+  return modelDisplayName(name);
   }
+
+function aggregateQuotas(quotas: QuotaItem[]): QuotaItem[] {
+  const groups = new Map<string, { used: number; total: number; unlimited: boolean; reset_at?: string }>();
+  for (const q of quotas) {
+    const key = antigravityQuotaGroup(q.name);
+    const existing = groups.get(key);
+    if (!existing) {
+      groups.set(key, { used: q.used, total: q.total, unlimited: q.unlimited, reset_at: q.reset_at });
+    } else {
+      existing.used += q.used;
+      existing.total += q.total;
+      if (!q.unlimited) existing.unlimited = false;
+      if (q.reset_at && (!existing.reset_at || q.reset_at < existing.reset_at)) {
+        existing.reset_at = q.reset_at;
+      }
+    }
+  }
+  return Array.from(groups.entries()).map(([name, g]) => ({
+    name,
+    used: g.used,
+    total: g.total,
+    remaining_pct: g.total > 0 ? ((g.total - g.used) / g.total) * 100 : 0,
+    unlimited: g.unlimited,
+    reset_at: g.reset_at,
+  }));
+}
+
+function visibleQuotas(item: QuotaCacheEntry): QuotaItem[] {
+  if (item.provider_id !== 'ag') return item.quotas;
+  const filtered = item.quotas.filter(q => isAntigravityMainModel(q.name));
+  return aggregateQuotas(filtered);
+}
 
   function formatResetTime(iso?: string): string {
     if (!iso) return '';
