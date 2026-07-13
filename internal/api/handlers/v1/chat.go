@@ -75,6 +75,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	// so the next getConnection call picks a different connection.
 	clientFormat := executor.FormatOpenAI
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+	translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
 	maxAttempts := 5
 	var lastConn *Connection
 	var lastErr error
@@ -264,8 +265,9 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 			if conn.ProviderSpecificData != "" {
 				json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap)
 			}
-			translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
-			req := &executor.Request{
+		translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+			translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
+		req := &executor.Request{
 				Model: modelName,
 				Body: translatedBody,
 				Stream: stream,
