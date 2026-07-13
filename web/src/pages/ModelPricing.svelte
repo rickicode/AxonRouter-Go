@@ -219,6 +219,9 @@ let totalPages = $derived(Math.max(1, Math.ceil(filtered.length / perPage)));
       <p class="text-body-sm text-muted-foreground">
         Canonical per-model cost rates. Providers reference these for usage tracking and cost estimation.
       </p>
+  <p class="text-caption text-muted-foreground">
+    Rates are per 1,000 tokens — multiply by 1,000 for the per-1M-token figure.
+      </p>
     </div>
     <Button onclick={openAdd} class="gap-1.5 text-body-sm rounded-sm">
       <PlusIcon class="size-4" /> Add pricing
@@ -299,11 +302,11 @@ let totalPages = $derived(Math.max(1, Math.ceil(filtered.length / perPage)));
                 <!-- Primary rates -->
                 <div class="grid grid-cols-2 gap-2 mb-2">
                   <div class="rounded-lg bg-muted/50 px-3 py-2">
-                    <p class="text-caption text-muted-foreground mb-0.5">Input</p>
+                    <p class="text-caption text-muted-foreground mb-0.5">Input / 1K</p>
                     <p class="text-body-sm-strong font-mono">{fmtShort(m.input_per_1k)}</p>
                   </div>
                   <div class="rounded-lg bg-muted/50 px-3 py-2">
-                    <p class="text-caption text-muted-foreground mb-0.5">Output</p>
+                    <p class="text-caption text-muted-foreground mb-0.5">Output / 1K</p>
                     <p class="text-body-sm-strong font-mono">{fmtShort(m.output_per_1k)}</p>
                   </div>
                 </div>
@@ -312,13 +315,13 @@ let totalPages = $derived(Math.max(1, Math.ceil(filtered.length / perPage)));
                 {#if m.reason_per_1k || m.cached_read_per_1k || m.cached_write_per_1k}
                   <div class="flex flex-wrap gap-x-4 gap-y-1 text-caption-mono text-muted-foreground">
                     {#if m.reason_per_1k}
-                      <span>Reason: {fmtShort(m.reason_per_1k)}</span>
+                      <span>Reason: {fmtShort(m.reason_per_1k)} /1K</span>
                     {/if}
                     {#if m.cached_read_per_1k}
-                      <span>Cache R: {fmtShort(m.cached_read_per_1k)}</span>
+                      <span>Cache R: {fmtShort(m.cached_read_per_1k)} /1K</span>
                     {/if}
                     {#if m.cached_write_per_1k}
-                      <span>Cache W: {fmtShort(m.cached_write_per_1k)}</span>
+                      <span>Cache W: {fmtShort(m.cached_write_per_1k)} /1K</span>
                     {/if}
                   </div>
                 {/if}
