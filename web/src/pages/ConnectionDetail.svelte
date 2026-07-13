@@ -26,6 +26,12 @@ import * as AlertDialog from '$lib/components/ui/alert-dialog';
   let selectedGroupId = $state('');
   let proxySaving = $state(false);
   let editName = $state('');
+  let editApiKey = $state('');
+  let editingApiKey = $state(false);
+  let apiKeySaving = $state(false);
+  let editAccountLabel = $state('');
+  let editingAccountLabel = $state(false);
+  let accountSaving = $state(false);
   let showDeleteConfirm = $state(false);
 
   onMount(async () => {
@@ -45,6 +51,7 @@ import * as AlertDialog from '$lib/components/ui/alert-dialog';
           const psd = JSON.parse($selectedConnection.provider_specific_data);
           selectedPoolId = psd.proxyPoolId ?? '';
           selectedGroupId = psd.proxyGroupId ?? '';
+          editAccountLabel = psd.accountLabel ?? '';
         } catch { /* ignore */ }
       }
     } catch { /* ignore */ }
@@ -133,6 +140,47 @@ async function handleSaveName() {
 
   function startEditName() {
     if ($selectedConnection) { editName = $selectedConnection.name; editingName = true; }
+  }
+function currentAccountLabel(): string {
+ if (!$selectedConnection?.provider_specific_data) return '';
+ try { return JSON.parse($selectedConnection.provider_specific_data).accountLabel ?? ''; } catch { return ''; }
+  }
+
+async function handleSaveApiKey() {
+ if (!$selectedConnection) return;
+ if (!editApiKey.trim()) { editingApiKey = false; return; }
+ apiKeySaving = true;
+ try {
+ await connectionsApi.update(connectionId, { api_key: editApiKey.trim() });
+ editingApiKey = false;
+ editApiKey = '';
+ toast.success('API key updated');
+ } catch (err) {
+ toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+ } finally {
+ apiKeySaving = false;
+  }
+  }
+
+async function handleSaveAccountLabel() {
+ if (!$selectedConnection) return;
+ accountSaving = true;
+ try {
+ const existing = $selectedConnection.provider_specific_data
+ ? JSON.parse($selectedConnection.provider_specific_data)
+ : {};
+ const psd = { ...existing };
+ if (editAccountLabel.trim()) psd.accountLabel = editAccountLabel.trim();
+ else delete psd.accountLabel;
+ await connectionsApi.update(connectionId, { provider_specific_data: JSON.stringify(psd) });
+ await loadConnection(connectionId);
+ editingAccountLabel = false;
+ toast.success('Account label updated');
+ } catch (err) {
+ toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+ } finally {
+ accountSaving = false;
+  }
   }
 
   let capabilities = $derived.by(() => {
@@ -308,6 +356,46 @@ async function handleSaveName() {
         <Button onclick={saveProxyAssignment} disabled={proxySaving} class="text-body-sm rounded-sm">
           {proxySaving ? 'Saving...' : 'Save proxy assignment'}
         </Button>
+      </CardContent>
+    </Card>
+    <Card class="shadow-card">
+      <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Credentials</CardTitle></CardHeader>
+      <CardContent class="space-y-4">
+        {#if $selectedConnection.auth_type !== 'oauth'}
+        <div class="space-y-2">
+          <Label class="text-body-sm-strong">API Key</Label>
+          {#if editingApiKey}
+          <div class="flex items-center gap-2">
+            <Input type="password" bind:value={editApiKey} placeholder="Enter new API key" class="h-9 text-body-sm" onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && handleSaveApiKey()} />
+            <Button onclick={handleSaveApiKey} disabled={apiKeySaving} size="sm" class="h-8 text-body-sm rounded-sm">{apiKeySaving ? 'Saving...' : 'Save'}</Button>
+            <Button onclick={() => { editingApiKey = false; editApiKey = ''; }} variant="ghost" size="sm" class="h-8 text-body-sm">Cancel</Button>
+          </div>
+          {:else}
+          <div class="flex items-center gap-2">
+            <code class="text-body-sm font-mono text-muted-foreground bg-muted px-2 py-1 rounded-sm">••••••••</code>
+            <Button onclick={() => { editingApiKey = true; editApiKey = ''; }} variant="outline" size="sm" class="h-8 text-body-sm rounded-sm">Edit</Button>
+          </div>
+          {/if}
+        </div>
+        {/if}
+
+        {#if $selectedConnection.provider_type_id === 'oc'}
+        <div class="space-y-2">
+          <Label class="text-body-sm-strong">Account Label</Label>
+          {#if editingAccountLabel}
+          <div class="flex items-center gap-2">
+            <Input bind:value={editAccountLabel} placeholder="e.g. Account 2" class="h-9 text-body-sm" onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && handleSaveAccountLabel()} />
+            <Button onclick={handleSaveAccountLabel} disabled={accountSaving} size="sm" class="h-8 text-body-sm rounded-sm">{accountSaving ? 'Saving...' : 'Save'}</Button>
+            <Button onclick={() => { editingAccountLabel = false; editAccountLabel = currentAccountLabel(); }} variant="ghost" size="sm" class="h-8 text-body-sm">Cancel</Button>
+          </div>
+          {:else}
+          <div class="flex items-center gap-2">
+            <code class="text-body-sm font-mono text-muted-foreground bg-muted px-2 py-1 rounded-sm break-all">{currentAccountLabel() || '—'}</code>
+            <Button onclick={() => { editingAccountLabel = true; }} variant="outline" size="sm" class="h-8 text-body-sm rounded-sm">Edit</Button>
+          </div>
+          {/if}
+        </div>
+        {/if}
       </CardContent>
     </Card>
 

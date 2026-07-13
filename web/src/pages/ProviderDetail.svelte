@@ -14,14 +14,17 @@ import type { RoutingMode } from '$lib/api';
  import { toast } from 'svelte-sonner';
 import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
 import Settings2Icon from '@lucide/svelte/icons/settings-2';
+import PencilIcon from '@lucide/svelte/icons/pencil';
  import AddConnectionModal from '$lib/components/AddConnectionModal.svelte';
 import ProviderRoutingModal from '$lib/components/ProviderRoutingModal.svelte';
+import ProviderEditModal from '$lib/components/ProviderEditModal.svelte';
 import Pagination from '$lib/components/Pagination.svelte';
  import * as AlertDialog from '$lib/components/ui/alert-dialog';
 import StatusBadge from '$lib/components/StatusBadge.svelte';
 
  let showAddModal = $state(false);
 let showRoutingModal = $state(false);
+let showEditModal = $state(false);
 let routingMode = $state<RoutingMode>('round_robin');
 
 const routingModeLabels: Record<RoutingMode, string> = {
@@ -207,7 +210,7 @@ function handlePerPageChange(p: number) {
  </Card>
  {:else if $selectedProvider}
  <!-- Provider Header -->
- <div class="flex items-start gap-4">
+ <div class="flex items-start gap-4 justify-between">
  <div
  class="size-12 rounded-lg flex items-center justify-center shrink-0 overflow-hidden"
  style="background-color: {(meta?.color ?? '#888')}15"
@@ -228,6 +231,11 @@ function handlePerPageChange(p: number) {
  Prefix: {meta?.prefix ?? ($selectedProvider.id + '/')} · Format: {$selectedProvider.format} · ID: {$selectedProvider.id}
  </p>
  </div>
+  {#if $selectedProvider.is_custom}
+  <Button variant="outline" size="sm" class="text-body-sm rounded-sm gap-1.5 shrink-0" onclick={() => (showEditModal = true)}>
+   <PencilIcon class="size-3.5" /> Edit provider
+  </Button>
+  {/if}
  </div>
 
  <!-- Connections Section -->
@@ -344,6 +352,9 @@ function handlePerPageChange(p: number) {
  <td class="py-3 px-4 text-body-sm text-muted-foreground">{formatTimestamp(row.last_success_at)}</td>
  <td class="py-3 px-4">
  <div class="flex gap-1">
+  <a href="/providers/{providerId}/{row.id}" class="inline-flex" title="Edit connection">
+   <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm">Edit</Button>
+  </a>
  <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" disabled={actionLoading === row.id} onclick={() => handleTestConnection(row.id)}>
  {actionLoading === row.id ? '...' : 'Test'}
  </Button>
@@ -437,6 +448,7 @@ function handlePerPageChange(p: number) {
 
 <AddConnectionModal bind:open={showAddModal} {providerId} {meta} onCreated={() => { loadConnections(providerId, currentPage, perPage); loadProvider(providerId); loadProviderModels(providerId); }} />
 <ProviderRoutingModal bind:open={showRoutingModal} {providerId} currentMode={routingMode} onSaved={(mode) => (routingMode = mode)} />
+<ProviderEditModal bind:open={showEditModal} {providerId} currentBaseUrl={$selectedProvider?.base_url ?? ''} currentDisplayName={$selectedProvider?.display_name ?? ''} onSaved={() => loadProvider(providerId)} />
 
 <AlertDialog.Root bind:open={deleteDialogOpen}>
  <AlertDialog.Content>
