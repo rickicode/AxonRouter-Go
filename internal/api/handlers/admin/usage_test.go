@@ -91,8 +91,12 @@ func TestParseFiltersUsesMilliseconds(t *testing.T) {
 
 	f := parseFilters(c)
 	nowMs := time.Now().UnixMilli()
-	if f.From > nowMs || f.To > nowMs+1000 {
-		t.Fatalf("parseFilters returned non-millisecond bounds: From=%d To=%d (nowMs~%d)", f.From, f.To, nowMs)
+	if f.From > nowMs || f.To < f.From {
+		t.Fatalf("parseFilters returned invalid bounds: From=%d To=%d (nowMs~%d)", f.From, f.To, nowMs)
+	}
+	// Default "to" is the end of the current day, so it can be slightly ahead of now.
+	if f.To > nowMs+24*3600*1000 {
+		t.Fatalf("parseFilters To is more than one day ahead: From=%d To=%d (nowMs~%d)", f.From, f.To, nowMs)
 	}
 	// A second-resolution value would be ~1000x smaller than a millisecond one.
 	if f.To < 1_000_000_000_000 {

@@ -129,7 +129,7 @@ When CLIProxyAPI, AxonRouter, and OmniRoute implement the same subsystem:
 
 - Backend: Go + Gin + SQLite
 - Frontend: Svelte (embedded via `go:embed`)
-- CLI: Minimal — service management + status only
+- CLI: Planned — service management + status only (not yet shipped)
 - Config: SQLite (not YAML/file-based)
 
 ## Provider Naming

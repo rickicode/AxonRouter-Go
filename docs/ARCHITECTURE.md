@@ -49,7 +49,7 @@ Client Request (OpenAI / Claude / Gemini / Responses format)
 Entry point binaries.
 
 - `cmd/server` — standalone server that opens the DB, runs migrations, starts background jobs, and runs the HTTP server.
-- `cmd/cli` — lightweight CLI for start/stop/status/restart using the PID file.
+- `cmd/cli` — lightweight CLI for start/stop/status/restart using the PID file (planned, not yet shipped).
 
 ### `internal/api/`
 HTTP layer built on Gin.

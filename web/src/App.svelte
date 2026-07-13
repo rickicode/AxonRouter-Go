@@ -8,8 +8,9 @@ import * as Sidebar from '$lib/components/ui/sidebar';
   import SidebarNav from '$lib/components/sidebar/SidebarNav.svelte';
   import SidebarBrand from '$lib/components/sidebar/SidebarBrand.svelte';
   import SidebarHealth from '$lib/components/sidebar/SidebarHealth.svelte';
-import { authStore, logout } from '$lib/auth';
+import { authStore, logout, mustChangePasswordStore } from '$lib/auth';
 import Login from './pages/Login.svelte';
+import ChangePasswordModal from '$lib/components/ChangePasswordModal.svelte';
 import LogOutIcon from '@lucide/svelte/icons/log-out';
 import { Button } from '$lib/components/ui/button';
 
@@ -161,7 +162,12 @@ function handleLogout() {
       <route.component {...route.params} />
     </main>
   </Sidebar.Inset>
-</Sidebar.Provider>
+  </Sidebar.Provider>
+
+  {#if $mustChangePasswordStore}
+    <ChangePasswordModal />
+  {/if}
 {:else}
-<Login />
+  <Login />
 {/if}
+

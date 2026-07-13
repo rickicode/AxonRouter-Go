@@ -231,6 +231,9 @@ func New(cfg Config) *Router {
 	adminGroup.Use(SessionAuth())
 
 	registerAdminRoutes := func(g *gin.RouterGroup) {
+		// Auth / security
+		g.POST("/change-password", ChangePasswordHandler(cfg.DB))
+		g.POST("/defer-password-change", DeferPasswordChangeHandler(cfg.DB))
 		// Providers
 		g.GET("/providers", providerH.List)
 		g.GET("/providers/:id", providerH.Get)

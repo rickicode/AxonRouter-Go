@@ -402,8 +402,8 @@ Total: **18 registered pairs** (hub-and-spoke via OpenAI + direct translation fo
 ```
 AxonRouter-Go/
 ├── cmd/
-│   ├── server/          ← Server entry point
-│   └── cli/             ← CLI entry point
+│ ├── server/ ← Server entry point
+│ └── cli/ ← CLI entry point (planned, not yet shipped)
 ├── internal/
 │   ├── api/
 │   │   ├── handlers/

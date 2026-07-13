@@ -1111,3 +1111,21 @@ export const developersApi = {
       method: "POST",
     }),
 };
+
+export const passwordApi = {
+  change: (oldPassword: string, newPassword: string, confirmPassword: string) =>
+    fetchApi<{ message: string }>("/change-password", {
+      method: "POST",
+      body: JSON.stringify({
+        old_password: oldPassword,
+        new_password: newPassword,
+        confirm_password: confirmPassword,
+      }),
+    }),
+
+  deferChange: () =>
+    fetchApi<{ message: string }>("/defer-password-change", {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+};

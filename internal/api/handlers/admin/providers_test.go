@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 )
 
 // countingMockExecutor counts the maximum number of concurrent ExecuteStream calls.
@@ -80,7 +81,8 @@ func TestAll_BatchesToMaxTen(t *testing.T) {
 
 	store := connstate.NewStore()
 	elig := connstate.NewEligibilityManager(store)
-	h := NewProviderHandler(database, registry, store, elig)
+	providerCfg := providercfg.NewManager("")
+	h := NewProviderHandler(database, registry, store, elig, providerCfg)
 
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

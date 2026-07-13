@@ -139,6 +139,9 @@ func main() {
 		<-sigCh
 		log.Println("Shutting down...")
 		router.Shutdown()
+		if err := database.Close(); err != nil {
+			log.Printf("WARN: failed to close database: %v", err)
+		}
 		os.Exit(0)
 	}()
 

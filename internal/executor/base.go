@@ -89,12 +89,24 @@ type BaseExecutor struct {
 //
 //	FETCH_TIMEOUT_MS=600000 (10m), STREAM_IDLE_TIMEOUT_MS=600000 (10m),
 //	STREAM_READINESS_TIMEOUT_MS=80000 (80s).
+func defaultHTTPTransport() *http.Transport {
+	return &http.Transport{
+		MaxIdleConns:        1000,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+		ForceAttemptHTTP2:   true,
+	}
+}
+
 func NewBaseExecutor() *BaseExecutor {
 	return &BaseExecutor{
-		Client:                 &http.Client{Timeout: 5 * time.Minute},
-		Timeout:                5 * time.Minute,
-		FetchTimeout:           time.Duration(getEnvInt("FETCH_TIMEOUT_MS", 600000)) * time.Millisecond,
-		StreamIdleTimeout:      time.Duration(getEnvInt("STREAM_IDLE_TIMEOUT_MS", 600000)) * time.Millisecond,
+		Client: &http.Client{
+			Timeout:   5 * time.Minute,
+			Transport: defaultHTTPTransport(),
+		},
+		Timeout: 5 * time.Minute,
+		FetchTimeout: time.Duration(getEnvInt("FETCH_TIMEOUT_MS", 600000)) * time.Millisecond,
+		StreamIdleTimeout: time.Duration(getEnvInt("STREAM_IDLE_TIMEOUT_MS", 600000)) * time.Millisecond,
 		StreamReadinessTimeout: time.Duration(getEnvInt("STREAM_READINESS_TIMEOUT_MS", 80000)) * time.Millisecond,
 	}
 }
@@ -228,7 +240,9 @@ func (b *BaseExecutor) proxyClient(proxyURL string) (*http.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid proxy URL: %w", err)
 	}
-	c := &http.Client{Timeout: b.Timeout, Transport: &http.Transport{Proxy: http.ProxyURL(u)}}
+	transport := defaultHTTPTransport()
+	transport.Proxy = http.ProxyURL(u)
+	c := &http.Client{Timeout: b.Timeout, Transport: transport}
 	b.proxyClients.Store(proxyURL, c)
 	return c, nil
 }
@@ -463,6 +477,7 @@ func (b *BaseExecutor) DoStreamRequestWithConfig(ctx context.Context, method, ra
 
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
+		defer fetchCancel()
 		errBody, _ := io.ReadAll(resp.Body)
 		logging.Logger.Error(
 			"upstream error response",

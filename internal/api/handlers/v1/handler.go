@@ -197,8 +197,13 @@ func (h *Handler) resolveExecutor(provider, model string) (executor.Executor, ex
 	return exec, format, nil
 }
 
-// getConnection returns an active connection for a provider using O(1) eligibility snapshot.
-// Preflight: skips connections marked as exhausted in the quota exhaustion cache.
+const pickMaxAttempts = 10
+
+// getConnection returns an active connection for a provider using the precomputed
+// eligibility snapshot. The hot path samples up to pickMaxAttempts candidates
+// so routing cost stays bounded regardless of how many eligible connections a
+// provider has. A full scan is only used as a fallback when every sampled
+// connection fails model-level cooldown/exhaustion checks.
 func (h *Handler) getConnection(ctx context.Context, provider string, modelID string) (*Connection, error) {
 	provider = provideralias.ResolveAlias(provider)
 
@@ -208,47 +213,72 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 		return nil, fmt.Errorf("no eligible connection for provider: %s", provider)
 	}
 
-	// Build the list of preflight-eligible candidates first. We never consider
-	// connections that are actively cooled down or quota-exhausted.
-	var candidates []string
-	for _, connID := range connIDs {
-		cs := h.store.Get(connID)
-		if cs == nil {
-			continue
+	start := h.pickStartIndex(provider, len(connIDs))
+	bound := pickMaxAttempts
+	if bound > len(connIDs) {
+		bound = len(connIDs)
+	}
+	for i := 0; i < bound; i++ {
+		idx := (start + i) % len(connIDs)
+		if conn, ok := h.tryPickConnection(ctx, connIDs[idx], provider, modelID); ok {
+			return conn, nil
 		}
-		if cs.IsInCooldown() {
-			continue
-		}
-		if modelID != "" && cs.IsModelInCooldown(modelID) {
-			continue
-		}
-		if modelID != "" && h.exhaustion.IsExhaustedScope(connID, connstate.ModelScope(provider, modelID)) {
-			continue
-		}
-		if h.exhaustion.IsExhausted(connID) {
-			continue
-		}
-		candidates = append(candidates, connID)
 	}
 
-	if len(candidates) == 0 {
-		return nil, fmt.Errorf("no available connection for provider: %s (all exhausted or failing)", provider)
-	}
-
-	ordered := h.orderCandidates(provider, candidates)
-
-	for _, connID := range ordered {
-		conn, err := h.getCachedConn(ctx, connID)
-		if err != nil {
-			logging.Logger.Debug("load conn failed", "conn", connID[:8], "err", err)
-			continue
+	for i := bound; i < len(connIDs); i++ {
+		idx := (start + i) % len(connIDs)
+		if conn, ok := h.tryPickConnection(ctx, connIDs[idx], provider, modelID); ok {
+			return conn, nil
 		}
-		logging.Logger.Info("getConnection selected", "provider", provider, "conn", conn.ID[:8], "name", conn.Name, "mode", h.providerCfg.RoutingMode(provider))
-		h.bindActiveConn(ctx, conn)
-		return conn, nil
 	}
 
 	return nil, fmt.Errorf("no available connection for provider: %s (all exhausted or failing)", provider)
+}
+
+// pickStartIndex returns the first index to inspect based on the configured
+// routing mode. first_eligible always starts at 0; round_robin rotates an
+// atomic counter; random chooses a uniform index.
+func (h *Handler) pickStartIndex(provider string, total int) int {
+	if total <= 1 {
+		return 0
+	}
+	switch h.providerCfg.RoutingMode(provider) {
+	case providercfg.RoundRobin:
+		return h.providerCfg.NextRoundRobinIndex(provider, total)
+	case providercfg.Random:
+		return rand.IntN(total)
+	default:
+		return 0
+	}
+}
+
+// tryPickConnection checks a single eligible connection for model-level
+// cooldowns/quota exhaustion and loads its DB credentials when it passes.
+func (h *Handler) tryPickConnection(ctx context.Context, connID, provider, modelID string) (*Connection, bool) {
+	cs := h.store.Get(connID)
+	if cs == nil {
+		return nil, false
+	}
+	if cs.IsInCooldown() {
+		return nil, false
+	}
+	if modelID != "" && cs.IsModelInCooldown(modelID) {
+		return nil, false
+	}
+	if modelID != "" && h.exhaustion.IsExhaustedScope(connID, connstate.ModelScope(provider, modelID)) {
+		return nil, false
+	}
+	if h.exhaustion.IsExhausted(connID) {
+		return nil, false
+	}
+	conn, err := h.getCachedConn(ctx, connID)
+	if err != nil {
+		logging.Logger.Debug("load conn failed", "conn", connID[:8], "err", err)
+		return nil, false
+	}
+	logging.Logger.Info("getConnection selected", "provider", provider, "conn", conn.ID[:8], "name", conn.Name, "mode", h.providerCfg.RoutingMode(provider))
+	h.bindActiveConn(ctx, conn)
+	return conn, true
 }
 
 // orderCandidates reorders eligible connection IDs according to the provider's

@@ -1,4 +1,4 @@
-.PHONY: all build build-frontend build-backend build-dev build-backend-dev clean run kill-port dev install frontend backend help version set-version release release-binary extract-changelog
+.PHONY: all build build-frontend build-backend build-dev build-backend-dev clean run run-dev kill-port kill-dev-port dev install frontend backend test lint help version set-version release release-binary extract-changelog
 
 # Variables
 BINARY_NAME=axonrouter
@@ -101,6 +101,16 @@ frontend: build-frontend
 # Build backend only
 backend: build-backend
 
+# Run backend tests
+test:
+	@echo "Running Go tests..."
+	$(GO) test ./...
+
+# Run static analysis (go vet)
+lint:
+	@echo "Running go vet..."
+	$(GO) vet ./...
+
 # Show help
 help:
 	@echo "Available targets:"
@@ -118,8 +128,10 @@ help:
 	@echo "  kill-port     - Kill process on port $(PORT)"
 	@echo "  dev           - Start frontend development server"
 	@echo "  install       - Install frontend dependencies"
-	@echo "  frontend      - Build frontend only"
-	@echo "  backend       - Build backend only"
+	@echo " frontend - Build frontend only"
+	@echo " backend - Build backend only"
+	@echo " test - Run Go tests"
+	@echo " lint - Run go vet"
 	@echo " help - Show this help"
 
 # Show current version
