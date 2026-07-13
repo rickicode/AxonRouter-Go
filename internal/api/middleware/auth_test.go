@@ -113,3 +113,42 @@ func TestAuth_SetsRateLimit(t *testing.T) {
 		t.Errorf("rate_limit = %d, want 42", got)
 	}
 }
+
+func TestAuth_EmptyKeyTable_FailsClosed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	database := openTestDB(t)
+
+	router := gin.New()
+	router.Use(Auth(database, nil))
+	router.GET("/test", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	t.Run("no key configured", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+		}
+	})
+
+	t.Run("valid key", func(t *testing.T) {
+		key := "configured-key"
+		hash, _ := bcrypt.GenerateFromPassword([]byte(key), bcrypt.DefaultCost)
+		if _, err := database.Exec(
+			`INSERT INTO api_keys (id, name, key_hash, is_active, rate_limit_per_min, created_at) VALUES (?, ?, ?, 1, 10, ?)`,
+			"auth-key", "test", string(hash), time.Now().Unix(),
+		); err != nil {
+			t.Fatalf("insert key: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Authorization", "Bearer "+key)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+	})
+}

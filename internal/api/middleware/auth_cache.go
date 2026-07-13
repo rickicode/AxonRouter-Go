@@ -94,7 +94,6 @@ func validateKey(db *sql.DB, presentedKey string) (string, int, int64, bool) {
 		return "", 0, 0, false
 	}
 	if count == 0 {
-		// No keys configured — open access (fail-open until user sets up auth).
 		return "", 0, 0, false
 	}
 

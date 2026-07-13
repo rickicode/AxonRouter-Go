@@ -33,24 +33,22 @@ func Auth(db *sql.DB, cache *AuthCache) gin.HandlerFunc {
 		// Cache miss (or no cache): validate with singleflight to collapse
 		// concurrent misses for the same key into one DB+bcrypt call.
 		keyID, rateLimit, maxTokens, ok := cache.Validate(db, presented)
-		if !ok {
-			// Either no keys configured (open access) or invalid key.
-			var count int
-			if err := db.QueryRow(`SELECT COUNT(*) FROM api_keys WHERE is_active = 1`).Scan(&count); err != nil {
-				logging.Logger.Warn("auth system error querying api_keys", "error", err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "auth system error"})
-				c.Abort()
-				return
-			}
-			if count == 0 {
-				// No keys configured — open access (user hasn't set up auth yet)
-				c.Next()
-				return
-			}
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid api key"})
+	if !ok {
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM api_keys WHERE is_active = 1`).Scan(&count); err != nil {
+			logging.Logger.Warn("auth system error querying api_keys", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "auth system error"})
 			c.Abort()
 			return
 		}
+		if count == 0 {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "no api keys configured"})
+			return
+		}
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid api key"})
+		return
+	}
+
 
 		if cache != nil {
 			cache.Put(presented, keyID, rateLimit, maxTokens)

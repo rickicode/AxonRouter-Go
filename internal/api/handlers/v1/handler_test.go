@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	_ "modernc.org/sqlite"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
@@ -97,6 +98,15 @@ func openTestDB(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { database.Close() })
 	return database
+}
+
+func mustHashKey(t *testing.T, key string) string {
+	t.Helper()
+	hash, err := bcrypt.GenerateFromPassword([]byte(key), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("hash key: %v", err)
+	}
+	return string(hash)
 }
 
 func newTestHandler(t *testing.T) *Handler {
@@ -455,19 +465,23 @@ func TestBuildFailoverErrorResponse(t *testing.T) {
 		if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-1','test','c1','none','ready',1,0,0)`); err != nil {
 			t.Fatalf("seed connection: %v", err)
 		}
-		// Seed the test API key so the increment path has a row to update.
-		if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_keys (id, name, key_value, created_at) VALUES ('test-key-1', 'test-key', 'sk-test', 0)`); err != nil {
-			t.Fatalf("seed api_key: %v", err)
-		}
+	// Seed the test API key so the increment path has a row to update.
+	hash := mustHashKey(t, "sk-test")
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_keys (id, name, key_hash, created_at) VALUES ('test-key-1', 'test-key', ?, 0)`, hash); err != nil {
+		t.Fatalf("seed api_key: %v", err)
+	}
+
 		if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_key_usage (api_key_id, total_tokens, updated_at) VALUES ('test-key-1', 0, 0)`); err != nil {
 			t.Fatalf("seed api_key_usage: %v", err)
 		}
 
-		// Create a gin test context with api_key_id set.
-		rec := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(rec)
-		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-		c.Set("api_key_id", "test-key-1")
+	// Create a gin test context with api_key_id set.
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	c.Request.Header.Set("Authorization", "Bearer sk-test")
+	c.Set("api_key_id", "test-key-1")
+
 
 		// Build a stream with Claude message_start (input tokens + cache)
 		// and message_delta (output tokens).
@@ -588,7 +602,8 @@ func TestFallbackUsage(t *testing.T) {
 		if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-1','test','c1','none','ready',1,0,0)`); err != nil {
 			t.Fatalf("seed connection: %v", err)
 		}
-		if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_keys (id, name, key_value, created_at) VALUES ('test-key-1', 'test-key', 'sk-test', 0)`); err != nil {
+		hash := mustHashKey(t, "sk-test")
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_keys (id, name, key_hash, created_at) VALUES ('test-key-1', 'test-key', ?, 0)`, hash); err != nil {
 			t.Fatalf("seed api_key: %v", err)
 		}
 		if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_key_usage (api_key_id, total_tokens, updated_at) VALUES ('test-key-1', 0, 0)`); err != nil {
@@ -598,6 +613,7 @@ func TestFallbackUsage(t *testing.T) {
 		rec := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(rec)
 		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		c.Request.Header.Set("Authorization", "Bearer sk-test")
 		c.Set("api_key_id", "test-key-1")
 
 		// Stream chunks without any usage info.
@@ -653,7 +669,8 @@ func TestFallbackUsage(t *testing.T) {
 		if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-1','test','c1','none','ready',1,0,0)`); err != nil {
 			t.Fatalf("seed connection: %v", err)
 		}
-		if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_keys (id, name, key_value, created_at) VALUES ('test-key-2', 'test-key-2', 'sk-test-2', 0)`); err != nil {
+		hash := mustHashKey(t, "sk-test-2")
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_keys (id, name, key_hash, created_at) VALUES ('test-key-2', 'test-key-2', ?, 0)`, hash); err != nil {
 			t.Fatalf("seed api_key: %v", err)
 		}
 		if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_key_usage (api_key_id, total_tokens, updated_at) VALUES ('test-key-2', 0, 0)`); err != nil {
@@ -663,6 +680,7 @@ func TestFallbackUsage(t *testing.T) {
 		rec := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(rec)
 		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		c.Request.Header.Set("Authorization", "Bearer sk-test-2")
 		c.Set("api_key_id", "test-key-2")
 
 		// Stream with usage chunk.
@@ -724,7 +742,8 @@ func TestChatCompletions_FallbackUsage(t *testing.T) {
 	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('testchatconn1','testchat','c1','none','ready',1,0,0)`); err != nil {
 		t.Fatalf("seed connection: %v", err)
 	}
-	if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_keys (id, name, key_value, created_at) VALUES ('test-key-chat', 'test-key-chat', 'sk-test', 0)`); err != nil {
+	hash := mustHashKey(t, "sk-test")
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_keys (id, name, key_hash, created_at) VALUES ('test-key-chat', 'test-key-chat', ?, 0)`, hash); err != nil {
 		t.Fatalf("seed api_key: %v", err)
 	}
 
@@ -753,6 +772,7 @@ func TestChatCompletions_FallbackUsage(t *testing.T) {
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("Authorization", "Bearer sk-test")
 	c.Set("api_key_id", "test-key-chat")
 
 	h.ChatCompletions(c)
