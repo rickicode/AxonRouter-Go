@@ -3,8 +3,9 @@ name: Release
 # Build cross-platform binaries and publish a GitHub Release with changelog notes.
 # Trigger: push a tag matching v* (e.g. v1.2.3).
 # The Makefile and scripts/ folder can still drive a local release bump; this
-# workflow syncs the version and changelog from the pushed tag, builds, and
-# attaches assets to the release.
+# workflow derives the version from the pushed tag, syncs the changelog, builds
+# frontend once, compiles binaries in parallel, then publishes a single release
+# containing all artifacts.
 
 on:
   push:
@@ -13,27 +14,15 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 env:
   VERSION: ""
 
 jobs:
-  build:
-    name: 🖥️ Build ${{ matrix.goos }}/${{ matrix.goarch }}
+  prepare:
+    name: Prepare version and frontend
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - goos: windows
-            goarch: amd64
-          - goos: linux
-            goarch: amd64
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
-
     steps:
       - name: 📥 Checkout
         uses: actions/checkout@v7.0.0
@@ -49,12 +38,6 @@ jobs:
 
       - name: 📌 Sync version and changelog from tag
         run: node scripts/sync-release-from-tag.js
-
-      - name: ⚙️ Set up Go
-        uses: actions/setup-go@v6.5.0
-        with:
-          go-version: "1.23"
-          cache: true
 
       - name: ⚙️ Set up Node.js
         uses: actions/setup-node@v6.4.0
@@ -73,11 +56,52 @@ jobs:
       - name: 🎨 Build frontend
         run: make build-frontend
 
+      - name: 📤 Upload frontend build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: web/build
+          if-no-files-found: error
+
+  build:
+    name: 🖥️ Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+          - goos: linux
+            goarch: amd64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v7.0.0
+
+      - name: ⚙️ Set up Go
+        uses: actions/setup-go@v6.5.0
+        with:
+          go-version: "1.23"
+          cache: true
+
+      - name: 📥 Download frontend build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-build
+          path: web/build
+
       - name: 🔨 Build backend binary
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
+          GO: go
         run: make release-binary
 
       - name: 🏷️ Compute binary name
@@ -86,7 +110,38 @@ jobs:
           BIN="./build/axonrouter-${{ matrix.goos }}-${{ matrix.goarch }}"
           if [ "${{ matrix.goos }}" = "windows" ]; then BIN="${BIN}.exe"; fi
           echo "name=${BIN}" >> "$GITHUB_OUTPUT"
-          echo "- Built: ${BIN}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 📤 Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: axonrouter-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ${{ steps.bin.outputs.name }}
+          if-no-files-found: error
+
+  release:
+    name: 🚀 Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v7.0.0
+
+      - name: 🔖 Derive version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Using version ${VERSION} from tag ${TAG}."
+
+      - name: 📌 Sync version and changelog from tag
+        run: node scripts/sync-release-from-tag.js
+
+      - name: ⚙️ Set up Node.js
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version: "20.19"
 
       - name: 📝 Prepare release notes
         env:
@@ -95,10 +150,20 @@ jobs:
           node scripts/prepare-release-notes.js
           echo "- Release notes source: $(grep -oP '(?<=Release notes source: ).*' RELEASE_NOTES.md || echo 'unknown')" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: 📥 Download all binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: build
+          pattern: axonrouter-*
+          merge-multiple: true
+
+      - name: 📋 List release assets
+        run: ls -la build/
+
       - name: 🚀 Publish GitHub Release v${{ steps.version.outputs.version }}
         uses: softprops/action-gh-release@v3.0.1
         with:
           name: Release v${{ steps.version.outputs.version }}
-          files: ${{ steps.bin.outputs.name }}
+          files: build/axonrouter-*
           body_path: RELEASE_NOTES.md
           append_body: false
