@@ -10,6 +10,7 @@
 	import { formatTokens, formatCost, formatCount, activeRequests, loadActiveRequests } from '$lib/stores';
 	import { toast } from 'svelte-sonner';
 
+	import { logout } from '$lib/auth';
 	import BarChartIcon from '@lucide/svelte/icons/bar-chart';
 	import CalendarIcon from '@lucide/svelte/icons/calendar';
 	import KeyIcon from '@lucide/svelte/icons/key';
@@ -542,7 +543,10 @@ return `${lbl}: ${v.toLocaleString()}`;
 		</Card>
 	{:else if !loading}
 		<Card class="shadow-card">
-			<CardContent class="p-6 text-body-sm text-muted-foreground">Select a date range to view usage analytics.</CardContent>
+			<CardContent class="p-6 flex flex-col items-center gap-3 text-center">
+				<p class="text-body-sm text-muted-foreground">Sesi berakhir atau data gagal dimuat. Silakan login ulang.</p>
+				<Button variant="default" size="sm" class="text-body-sm cursor-pointer" onclick={() => logout()}>Login ulang</Button>
+			</CardContent>
 		</Card>
 	{/if}
 </div>
