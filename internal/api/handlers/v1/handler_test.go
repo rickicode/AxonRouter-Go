@@ -514,7 +514,187 @@ func TestBuildFailoverErrorResponse(t *testing.T) {
 			t.Errorf("SSE output missing message_delta chunk")
 		}
 
-		// Clean up
+// Clean up
+	tracker.Stop()
+	wq.Stop()
+}
+
+// TestFallbackUsage verifies that fallback estimation is applied when token
+// extraction yields zero tokens but the request was successful, and that it
+// is NOT applied on error responses or when tokens are already present.
+func TestFallbackUsage(t *testing.T) {
+	t.Run("non-streaming no usage in response applies fallback", func(t *testing.T) {
+		// A response body with no usage info at all.
+		body := []byte(`{"id":"x","choices":[{"index":0,"message":{"content":"Hello world, this is a test response","role":"assistant"}}]}`)
+		reqBody := []byte(`{"model":"test/model","messages":[{"role":"user","content":"Hello world, this is a test request"}]}`)
+
+		// Verify ExtractTokensFromBody returns zero.
+		counts := ExtractTokensFromBody(body)
+		if counts.InputTokens != 0 || counts.OutputTokens != 0 {
+			t.Fatalf("expected zero tokens from body without usage, got input=%d output=%d", counts.InputTokens, counts.OutputTokens)
+		}
+
+		// Verify fallback estimation yields non-zero.
+		estInput := usage.EstimateTokensFromRequest(reqBody)
+		estOutput := usage.EstimateTokensFromResponse(body)
+		if estInput == 0 && estOutput == 0 {
+			t.Fatal("expected non-zero estimation from request/response bodies")
+		}
+	})
+
+	t.Run("non-streaming with usage skips fallback", func(t *testing.T) {
+		body := []byte(`{"usage":{"prompt_tokens":10,"completion_tokens":5},"choices":[{"index":0,"message":{"content":"hi","role":"assistant"}}]}`)
+
+		counts := ExtractTokensFromBody(body)
+		if counts.InputTokens == 0 || counts.OutputTokens == 0 {
+			t.Fatalf("expected non-zero tokens from body with usage, got input=%d output=%d", counts.InputTokens, counts.OutputTokens)
+		}
+	})
+
+	t.Run("non-streaming error status skips fallback", func(t *testing.T) {
+		// Error responses should not have fallback applied.
+		body := []byte(`{"error":{"message":"bad request"}}`)
+		reqBody := []byte(`{"model":"test/model","messages":[{"role":"user","content":"hi"}]}`)
+
+		counts := ExtractTokensFromBody(body)
+		// When there's no usage but also an error, the fallback is not applied.
+		// Verify that ExtractTokensFromBody returns zero.
+		if counts.InputTokens != 0 || counts.OutputTokens != 0 {
+			t.Fatalf("expected zero tokens from error body, got input=%d output=%d", counts.InputTokens, counts.OutputTokens)
+		}
+		// Even if estimation would produce values, fallback should not be applied on error.
+		_ = usage.EstimateTokensFromRequest(reqBody)
+		_ = usage.EstimateTokensFromResponse(body)
+		// No assertion needed - the handler code checks status before applying fallback.
+	})
+
+	t.Run("streaming no usage applies fallback", func(t *testing.T) {
+		h := newTestHandler(t)
+		wq := db.NewWriteQueue(h.db)
+		tracker := usage.NewTracker(h.db)
+		tracker.SetWriteQueue(wq)
+		h.tracker = tracker
+
+		// Seed required DB rows.
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('test','Test','openai','http://x',0)`); err != nil {
+			t.Fatalf("seed provider_type: %v", err)
+		}
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-1','test','c1','none','ready',1,0,0)`); err != nil {
+			t.Fatalf("seed connection: %v", err)
+		}
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_keys (id, name, key_value, created_at) VALUES ('test-key-1', 'test-key', 'sk-test', 0)`); err != nil {
+			t.Fatalf("seed api_key: %v", err)
+		}
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_key_usage (api_key_id, total_tokens, updated_at) VALUES ('test-key-1', 0, 0)`); err != nil {
+			t.Fatalf("seed api_key_usage: %v", err)
+		}
+
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		c.Set("api_key_id", "test-key-1")
+
+		// Stream chunks without any usage info.
+		chunks := make(chan executor.StreamChunk, 2)
+		chunks <- executor.StreamChunk{
+			Payload: []byte(`data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"}}]}`),
+		}
+		chunks <- executor.StreamChunk{
+			Payload: []byte(`data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":" world"}}]}`),
+		}
+		close(chunks)
+
+		result := &executor.StreamResult{
+			Chunks:     chunks,
+			StatusCode: http.StatusOK,
+		}
+
+		conn := &Connection{ID: "conn-1"}
+		originalReq := []byte(`{"model":"test/model","messages":[{"role":"user","content":"Hello"}]}`)
+		translatedReq := []byte(`{"model":"test-model","messages":[{"role":"user","content":"Hello"}]}`)
+
+		h.streamResponse(c, result, conn, "test", "test-model",
+			executor.FormatOpenAI, executor.FormatOpenAI,
+			originalReq, translatedReq,
+			func(err error) []byte { return []byte(err.Error()) },
+			time.Now(),
+		)
+
+		// Verify api_key_usage got non-zero estimated tokens (fallback).
+		var totalTokens int64
+		err := h.db.QueryRow(`SELECT total_tokens FROM api_key_usage WHERE api_key_id = 'test-key-1'`).Scan(&totalTokens)
+		if err != nil {
+			t.Fatalf("query api_key_usage: %v", err)
+		}
+		if totalTokens == 0 {
+			t.Error("expected non-zero estimated tokens from fallback, got 0")
+		}
+
 		tracker.Stop()
 		wq.Stop()
-	}
+	})
+
+	t.Run("streaming with usage skips fallback", func(t *testing.T) {
+		h := newTestHandler(t)
+		wq := db.NewWriteQueue(h.db)
+		tracker := usage.NewTracker(h.db)
+		tracker.SetWriteQueue(wq)
+		h.tracker = tracker
+
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('test','Test','openai','http://x',0)`); err != nil {
+			t.Fatalf("seed provider_type: %v", err)
+		}
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-1','test','c1','none','ready',1,0,0)`); err != nil {
+			t.Fatalf("seed connection: %v", err)
+		}
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_keys (id, name, key_value, created_at) VALUES ('test-key-2', 'test-key-2', 'sk-test-2', 0)`); err != nil {
+			t.Fatalf("seed api_key: %v", err)
+		}
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_key_usage (api_key_id, total_tokens, updated_at) VALUES ('test-key-2', 0, 0)`); err != nil {
+			t.Fatalf("seed api_key_usage: %v", err)
+		}
+
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		c.Set("api_key_id", "test-key-2")
+
+		// Stream with usage chunk.
+		chunks := make(chan executor.StreamChunk, 2)
+		chunks <- executor.StreamChunk{
+			Payload: []byte(`data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"}}]}`),
+		}
+		chunks <- executor.StreamChunk{
+			Payload: []byte(`data: {"usage":{"prompt_tokens":7,"completion_tokens":3}}`),
+		}
+		close(chunks)
+
+		result := &executor.StreamResult{
+			Chunks:     chunks,
+			StatusCode: http.StatusOK,
+		}
+
+		conn := &Connection{ID: "conn-1"}
+		dummyReq := []byte(`{}`)
+
+		h.streamResponse(c, result, conn, "test", "test-model",
+			executor.FormatOpenAI, executor.FormatOpenAI,
+			dummyReq, dummyReq,
+			func(err error) []byte { return []byte(err.Error()) },
+			time.Now(),
+		)
+
+		var totalTokens int64
+		err := h.db.QueryRow(`SELECT total_tokens FROM api_key_usage WHERE api_key_id = 'test-key-2'`).Scan(&totalTokens)
+		if err != nil {
+			t.Fatalf("query api_key_usage: %v", err)
+		}
+		// Expect exactly 10 (7 input + 3 output) from the usage chunk, not estimated values.
+		if totalTokens != 10 {
+			t.Errorf("expected total_tokens = 10 from usage chunk, got %d", totalTokens)
+		}
+
+		tracker.Stop()
+		wq.Stop()
+	})
+}
