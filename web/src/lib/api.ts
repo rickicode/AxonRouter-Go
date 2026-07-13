@@ -833,9 +833,14 @@ export const proxyPoolsApi = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
-  delete: (id: string) =>
-    fetchApi<{ ok: boolean }>(`/proxy-pools/${id}`, { method: "DELETE" }),
-  test: (id: string) =>
+	delete: (id: string) =>
+		fetchApi<{ ok: boolean }>(`/proxy-pools/${id}`, { method: "DELETE" }),
+	bulkDelete: (data: { ids?: string[]; status?: string }) =>
+		fetchApi<{ ok: boolean; deleted: number; skipped: number }>("/proxy-pools/bulk-delete", {
+			method: "POST",
+			body: JSON.stringify(data),
+		}),
+	test: (id: string) =>
     fetchApi<{
       ok: boolean;
       status: number;
