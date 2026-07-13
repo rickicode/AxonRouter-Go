@@ -180,7 +180,9 @@ function formatMaxTokens(tokens: number): string {
 					<div class="text-body-sm font-medium">{key.name || '—'}</div>
 					<div class="flex items-center gap-2 mt-1">
 						<code class="font-mono text-xs text-muted-foreground break-all">{key.key || '—'}</code>
-						<button class="text-caption-mono text-muted-foreground hover:text-foreground rounded-sm px-1.5 py-0.5 border border-border" onclick={() => handleCopy(key.key)}>Copy</button>
+						{#if key.key}
+						<Button variant="outline" size="sm" class="h-6 px-1.5 py-0.5 text-caption-mono cursor-pointer" onclick={() => handleCopy(key.key)}>Copy</Button>
+						{/if}
 					</div>
 				</td>
 				<td class="py-3 px-4 text-body-sm text-muted-foreground">{key.rate_limit_per_min}/min · {key.max_tokens > 0 ? formatMaxTokens(key.max_tokens) : 'Unlimited'}</td>
