@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
 
@@ -85,7 +86,9 @@ func (h *Handler) STT(c *gin.Context) {
 	// Parse provider-specific data
 	var psdMap map[string]string
 	if conn.ProviderSpecificData != "" {
-		json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap)
+		if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
+			logging.Logger.Warn("malformed provider_specific_data", "conn", shortID(conn.ID, 8), "error", err.Error())
+		}
 	}
 
 	req := &executor.Request{

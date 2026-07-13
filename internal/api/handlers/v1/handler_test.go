@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -29,6 +30,27 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
+
+// errReader is an io.ReadCloser that always returns a configured error.
+type errReader struct {
+	err error
+}
+
+func (e *errReader) Read(p []byte) (int, error) { return 0, e.err }
+func (e *errReader) Close() error               { return nil }
+
+// memoryHandler captures slog records for assertions.
+type memoryHandler struct {
+	records []slog.Record
+}
+
+func (m *memoryHandler) Enabled(_ context.Context, level slog.Level) bool { return true }
+func (m *memoryHandler) Handle(_ context.Context, r slog.Record) error {
+	m.records = append(m.records, r)
+	return nil
+}
+func (m *memoryHandler) WithAttrs(attrs []slog.Attr) slog.Handler { return m }
+func (m *memoryHandler) WithGroup(name string) slog.Handler       { return m }
 
 // fakeExecutor records calls and returns programmed responses.
 type fakeExecutor struct {
@@ -129,6 +151,27 @@ func newTestHandler(t *testing.T) *Handler {
 	}
 }
 
+func TestShortID(t *testing.T) {
+	tests := []struct {
+		id   string
+		n    int
+		want string
+	}{
+		{"abcdefgh", 8, "abcdefgh"},
+		{"abcdefghij", 8, "abcdefgh"},
+		{"abc", 8, "abc"},
+		{"", 8, ""},
+		{"x", 0, "x"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			if got := shortID(tt.id, tt.n); got != tt.want {
+				t.Errorf("shortID(%q, %d) = %q, want %q", tt.id, tt.n, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestExecuteWithRetry_AuthRefreshThenSuccess(t *testing.T) {
 	h := newTestHandler(t)
 	h.authMgr.RegisterService(auth.ProviderType("test"), &fakeOAuthService{
@@ -199,6 +242,38 @@ func TestExecuteWithRetry_GivesUpAfter3(t *testing.T) {
 	// Linear backoff: sleeps of 1s + 2s = 3s minimum.
 	if elapsed < 3*time.Second {
 		t.Errorf("expected at least 3s delay, got %v", elapsed)
+	}
+}
+
+func TestExecuteWithRetry_ContextCanceled(t *testing.T) {
+	h := newTestHandler(t)
+
+	fe := &fakeExecutor{
+		responses: []struct {
+			resp *executor.Response
+			err  error
+		}{
+			{nil, errors.New("transient error")},
+			{nil, errors.New("transient error")},
+			{nil, errors.New("transient error")},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	_, _, err := h.executeWithRetry(ctx, fe, &executor.Request{Stream: false}, &Connection{ID: "conn-1"}, "test", "model-1")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if fe.callCount != 1 {
+		t.Errorf("expected 1 call before context cancel, got %d", fe.callCount)
+	}
+	if elapsed >= time.Second {
+		t.Errorf("expected immediate return, got %v", elapsed)
 	}
 }
 
@@ -370,6 +445,127 @@ func TestIsClientCanceled(t *testing.T) {
 	c3 := &gin.Context{Request: req3.WithContext(context.Background())}
 	if h.isClientCanceled(c3, context.Canceled) {
 		t.Fatal("expected false when request context is not cancelled")
+	}
+}
+
+func TestChatCompletions_ContextCanceled(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+
+	fe := &fakeExecutor{}
+	executor.GetRegistry().Register("ctxtest", executor.FormatOpenAI, fe)
+	defer executor.GetRegistry().Unregister("ctxtest")
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('ctxtest','CtxTest','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('ctxtest-conn','ctxtest','c1','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("ctxtest-conn", "ctxtest", "ready", 0)
+	h.elig.RecomputeAll()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if ctx.Err() == nil {
+		t.Fatal("test setup failed: context was not canceled")
+	}
+	body := []byte(`{"model":"ctxtest/model","messages":[{"role":"user","content":"hi"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body)).WithContext(ctx)
+	c.Request.Header.Set("Content-Type", "application/json")
+	if c.Request.Context().Err() == nil {
+		t.Fatal("test setup failed: c.Request context was not canceled")
+	}
+
+	h.ChatCompletions(c)
+	if rec.Code != 499 {
+		t.Errorf("expected status 499, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMessages_ContextDeadlineExceeded(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+
+	fe := &fakeExecutor{}
+	executor.GetRegistry().Register("ctxtestclaude", executor.FormatClaude, fe)
+	defer executor.GetRegistry().Unregister("ctxtestclaude")
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('ctxtestclaude','CtxClaude','claude','http://x',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('ctxtestclaude-conn','ctxtestclaude','c1','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("ctxtestclaude-conn", "ctxtestclaude", "ready", 0)
+	h.elig.RecomputeAll()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	body := []byte(`{"model":"ctxtestclaude/model","messages":[{"role":"user","content":"hi"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body)).WithContext(ctx)
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.Messages(c)
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Errorf("expected status 504, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMalformedProviderSpecificData_Warns(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	mh := &memoryHandler{}
+	logging.Logger = slog.New(mh)
+
+	wq := db.NewWriteQueue(h.db)
+	tracker := usage.NewTracker(h.db)
+	tracker.SetWriteQueue(wq)
+	h.tracker = tracker
+
+	fe := &fakeExecutor{
+		responses: []struct {
+			resp *executor.Response
+			err  error
+		}{
+			{resp: &executor.Response{StatusCode: http.StatusOK, Body: []byte(`{"id":"x"}`)}},
+		},
+	}
+	executor.GetRegistry().Register("psdtest", executor.FormatOpenAI, fe)
+	defer executor.GetRegistry().Unregister("psdtest")
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('psdtest','PsdTest','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, provider_specific_data, created_at, updated_at) VALUES ('psdtest-conn','psdtest','c1','none','ready',1,'not-json',0,0)`); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("psdtest-conn", "psdtest", "ready", 0)
+	h.elig.RecomputeAll()
+
+	body := []byte(`{"model":"psdtest/model","messages":[{"role":"user","content":"hi"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.ChatCompletions(c)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var found bool
+	for _, r := range mh.records {
+		if r.Message == "malformed provider_specific_data" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected warning log for malformed provider_specific_data, got %d records", len(mh.records))
 	}
 }
 
@@ -878,6 +1074,36 @@ func TestCacheOnlySuccess_UpstreamErrorNotCached(t *testing.T) {
 	}
 	if stats := h.exactCache.Stats(); stats.Size != 0 {
 		t.Errorf("expected cache size 0 after upstream error, got %d", stats.Size)
+	}
+}
+
+func TestReadBody_OtherError(t *testing.T) {
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", &errReader{err: errors.New("connection reset")})
+
+	_, err := readBody(c)
+	if !errors.Is(err, errReadBody) {
+		t.Errorf("expected errReadBody, got %v", err)
+	}
+}
+
+func TestChatCompletions_ReadBodyErrorReturns400(t *testing.T) {
+	h := newTestHandler(t)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", &errReader{err: errors.New("connection reset")})
+
+	h.ChatCompletions(c)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid response body: %v", err)
+	}
+	if body["error"].(map[string]any)["message"] != errReadBody.Error() {
+		t.Errorf("unexpected message: %v", body)
 	}
 }
 

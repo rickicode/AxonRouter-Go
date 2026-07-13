@@ -99,6 +99,9 @@ func (h *Handler) ListActiveModels() []gin.H {
 			connected[p] = true
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return h.buildModelList()
+	}
 
 	all := h.buildModelList()
 	var result []gin.H
@@ -178,6 +181,9 @@ func (h *Handler) customModels(prefix string) []gin.H {
 			"created":  1700000000,
 			"owned_by": "custom",
 		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil
 	}
 	if len(entries) == 0 {
 		return nil

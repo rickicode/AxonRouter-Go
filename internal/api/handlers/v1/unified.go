@@ -12,7 +12,7 @@ import (
 func (h *Handler) Unified(c *gin.Context) {
 	body, err := readBody(c)
 	if err != nil {
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": gin.H{"message": err.Error(), "type": "invalid_request_error"}})
+		writeReadBodyError(c, err)
 		return
 	}
 
