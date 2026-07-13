@@ -731,7 +731,90 @@ func TestBuildFailoverErrorResponse(t *testing.T) {
 			t.Errorf("SSE output missing message_delta chunk")
 		}
 
-// Clean up
+	// Clean up
+	tracker.Stop()
+	wq.Stop()
+}
+
+func TestStreamResponse_UpstreamChunkErrMarksExhausted(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	wq := db.NewWriteQueue(h.db)
+	tracker := usage.NewTracker(h.db)
+	tracker.SetWriteQueue(wq)
+	h.tracker = tracker
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('test','Test','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-err','test','c1','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	chunks := make(chan executor.StreamChunk, 1)
+	chunks <- executor.StreamChunk{Err: &executor.UpstreamError{StatusCode: http.StatusTooManyRequests, Body: []byte(`{"error":"rate limit"}`)}}
+	close(chunks)
+	result := &executor.StreamResult{Chunks: chunks, StatusCode: http.StatusOK}
+
+	conn := &Connection{ID: "conn-err"}
+	h.streamResponse(c, result, conn, "test", "test-model",
+		executor.FormatOpenAI, executor.FormatOpenAI,
+		[]byte(`{}`), []byte(`{}`),
+		func(err error) []byte { return []byte(`{"error":"upstream"}`) },
+		time.Now(),
+	)
+
+	if !h.exhaustion.IsExhausted("conn-err") {
+		t.Error("expected connection marked exhausted after rate-limit chunk error")
+	}
+
+	tracker.Stop()
+	wq.Stop()
+}
+
+func TestStreamResponse_ClientCanceledChunkErrDoesNotMarkExhausted(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	wq := db.NewWriteQueue(h.db)
+	tracker := usage.NewTracker(h.db)
+	tracker.SetWriteQueue(wq)
+	h.tracker = tracker
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('test','Test','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-cancel','test','c2','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+	cancel()
+
+	chunks := make(chan executor.StreamChunk, 1)
+	chunks <- executor.StreamChunk{Err: context.Canceled}
+	close(chunks)
+	result := &executor.StreamResult{Chunks: chunks, StatusCode: http.StatusOK}
+
+	conn := &Connection{ID: "conn-cancel"}
+	h.streamResponse(c, result, conn, "test", "test-model",
+		executor.FormatOpenAI, executor.FormatOpenAI,
+		[]byte(`{}`), []byte(`{}`),
+		func(err error) []byte { return []byte(`{"error":"canceled"}`) },
+		time.Now(),
+	)
+
+	if h.exhaustion.IsExhausted("conn-cancel") {
+		t.Error("expected connection NOT marked exhausted after client cancellation mid-stream")
+	}
+
 	tracker.Stop()
 	wq.Stop()
 }

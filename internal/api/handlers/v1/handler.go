@@ -1071,10 +1071,16 @@ latency := time.Since(start).Milliseconds()
 				return
 			}
 
-			if chunk.Err != nil {
-				// Keep errors inside OpenAI-compatible `data:` events so standard
-				// clients can surface them; avoid non-standard `event: error`.
-				c.Writer.Write([]byte("data: "))
+		if chunk.Err != nil {
+			// Keep errors inside OpenAI-compatible `data:` events so standard
+			// clients can surface them; avoid non-standard `event: error`.
+			// Only record upstream failures as exhaustion/cooldown; client
+			// cancellations (e.g. disconnects) must not penalize connections.
+			if !h.isClientCanceled(c, chunk.Err) {
+				latency := time.Since(start).Milliseconds()
+				h.handleFailoverError(c, conn, provider, model, chunk.Err, 0, latency, true)
+			}
+			c.Writer.Write([]byte("data: "))
 				c.Writer.Write(errFormatter(chunk.Err))
 				c.Writer.Write([]byte("\n\n"))
 				c.Writer.Write([]byte("data: [DONE]\n\n"))
