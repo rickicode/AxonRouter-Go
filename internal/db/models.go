@@ -105,8 +105,9 @@ type RequestLog struct {
 	ReasoningTokens     int64          `json:"reasoning_tokens"`
 	CachedTokens        int64          `json:"cached_tokens"`
 	CacheCreationTokens int64          `json:"cache_creation_tokens"`
-	Stream              bool           `json:"stream"`
-	LatencyMs           sql.NullInt64  `json:"latency_ms,omitempty"`
+	Stream bool `json:"stream"`
+	TokensEstimated bool `json:"tokens_estimated"`
+	LatencyMs sql.NullInt64 `json:"latency_ms,omitempty"`
 	StatusCode          sql.NullInt64  `json:"status_code,omitempty"`
 	ErrorMessage        sql.NullString `json:"error_message,omitempty"`
 	CostUsd             float64        `json:"cost_usd"`
@@ -144,8 +145,9 @@ func (r RequestLog) MarshalJSON() ([]byte, error) {
 		ReasoningTokens     int64   `json:"reasoning_tokens"`
 		CachedTokens        int64   `json:"cached_tokens"`
 		CacheCreationTokens int64   `json:"cache_creation_tokens"`
-		Stream              bool    `json:"stream"`
-		LatencyMs           int64   `json:"latency_ms,omitempty"`
+		Stream bool `json:"stream"`
+		TokensEstimated bool `json:"tokens_estimated"`
+		LatencyMs int64 `json:"latency_ms,omitempty"`
 		StatusCode          int64   `json:"status_code,omitempty"`
 		ErrorMessage        string  `json:"error_message,omitempty"`
 		CostUsd             float64 `json:"cost_usd"`
@@ -165,7 +167,8 @@ func (r RequestLog) MarshalJSON() ([]byte, error) {
 		ReasoningTokens:     r.ReasoningTokens,
 		CachedTokens:        r.CachedTokens,
 		CacheCreationTokens: r.CacheCreationTokens,
-		Stream:              r.Stream,
+		Stream: r.Stream,
+		TokensEstimated: r.TokensEstimated,
 		LatencyMs:           getInt(r.LatencyMs),
 		StatusCode:          getInt(r.StatusCode),
 		ErrorMessage:        getStr(r.ErrorMessage),
