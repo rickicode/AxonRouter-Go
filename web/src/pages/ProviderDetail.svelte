@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { loadProvider, selectedProvider, loadConnections, connections, connectionPagination, connectionFilter, loadProviderModels, providerModels, modelTestResults, testProviderModel, isLoading, error } from '$lib/stores';
+  import { loadProvider, selectedProvider, loadConnections, connections, connectionPagination, connectionFilter, loadProviderModels, providerModels, modelTestResults, testProviderModel, addProviderModel, deleteProviderModel, isLoading, error } from '$lib/stores';
   import { unwrapInt, getTokenExpiry } from '$lib/utils';
   import { connectionsApi, providersApi } from '$lib/api';
 import type { RoutingMode } from '$lib/api';
@@ -23,6 +23,13 @@ import StatusBadge from '$lib/components/StatusBadge.svelte';
   let showAddModal = $state(false);
 let showRoutingModal = $state(false);
 let routingMode = $state<RoutingMode>('round_robin');
+
+const routingModeLabels: Record<RoutingMode, string> = {
+	round_robin: 'Round robin',
+	random: 'Random',
+	first_eligible: 'First eligible',
+};
+let newModel = $state('');
 
   let { id = '' }: { id?: string } = $props();
   let providerId = $derived(id);
@@ -218,7 +225,7 @@ function handlePerPageChange(p: number) {
           {/if}
         </div>
         <p class="text-caption-mono text-muted-foreground">
-          Prefix: {meta?.prefix ?? '—'} · Format: {$selectedProvider.format} · ID: {$selectedProvider.id}
+          Prefix: {meta?.prefix ?? ($selectedProvider.id + '/')} · Format: {$selectedProvider.format} · ID: {$selectedProvider.id}
         </p>
       </div>
     </div>
@@ -231,6 +238,7 @@ function handlePerPageChange(p: number) {
           <span class="text-caption-mono text-muted-foreground">{$connectionPagination.total} total</span>
         </div>
         <div class="flex items-center gap-2">
+					<Badge variant="outline" class="text-caption-mono rounded-sm">{routingModeLabels[routingMode] ?? routingMode}</Badge>
           						<Button onclick={() => showRoutingModal = true} variant="outline" size="sm" class="text-body-sm rounded-sm gap-1.5">
 							<Settings2Icon class="size-3.5" />
 							Settings
@@ -378,6 +386,10 @@ function handlePerPageChange(p: number) {
 
 <!-- Models Section (below connections) -->
 <div class="space-y-4">
+<div class="flex items-center gap-2">
+ <Input bind:value={newModel} placeholder="Add model (e.g. my-model)" class="text-body-sm rounded-sm" />
+ <Button onclick={async () => { if (!newModel.trim()) return; await addProviderModel(providerId, newModel.trim()); newModel = ''; }} variant="outline" size="sm" class="text-body-sm rounded-sm cursor-pointer" disabled={!newModel.trim()}>Add model</Button>
+</div>
           {#each $providerModels as model}
             {@const result = $modelTestResults[model]}
             <button
@@ -393,6 +405,15 @@ function handlePerPageChange(p: number) {
                   <span class="text-[10px] font-mono text-muted-foreground">{result.latency_ms}ms</span>
                 {/if}
               {/if}
+ <span
+  class="ml-1 size-4 inline-flex items-center justify-center rounded-sm text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+  title="Remove model"
+   role="button"
+   tabindex="0"
+   aria-label="Remove model"
+  onclick={(e) => { e.stopPropagation(); deleteProviderModel(providerId, model); }}
+					onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); deleteProviderModel(providerId, model); } }}
+ >×</span>
             </button>
           {/each}
         </div>
