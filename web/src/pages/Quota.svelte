@@ -147,6 +147,20 @@
     return map[name] || name;
   }
 
+// For Antigravity, only show the three main model families on the Quota page.
+const ANTIGRAVITY_MAIN_FAMILIES = ['claude', 'gemini 3.1', 'gemini 3.5'];
+
+function isAntigravityMainModel(name: string): boolean {
+  const raw = name.toLowerCase();
+  const display = modelDisplayName(name).toLowerCase();
+  return ANTIGRAVITY_MAIN_FAMILIES.some(f => raw.includes(f) || display.includes(f));
+  }
+
+function visibleQuotas(item: QuotaCacheEntry): typeof item.quotas {
+  if (item.provider_id !== 'ag') return item.quotas;
+  return item.quotas.filter(q => isAntigravityMainModel(q.name));
+  }
+
   function formatResetTime(iso?: string): string {
     if (!iso) return '';
     try {
@@ -357,10 +371,10 @@
                 <AlertCircleIcon class="size-3.5 text-rose-400 shrink-0 mt-0.5" />
                 <p class="text-caption text-rose-400/80 leading-snug">{item.error}</p>
               </div>
-            {:else if item.quotas.length === 0}
+            {:else if visibleQuotas(item).length === 0}
               <p class="text-caption text-muted-foreground">No quota data.</p>
             {:else}
-              {#each item.quotas as qi}
+              {#each visibleQuotas(item) as qi}
                 <div class="space-y-1">
                   <div class="flex items-center justify-between">
                     <span class="text-caption text-muted-foreground truncate max-w-[60%]">{modelDisplayName(qi.name)}</span>
