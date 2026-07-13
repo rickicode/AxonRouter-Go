@@ -223,7 +223,7 @@ func (h *UsageHandler) byAPIKey(ctx context.Context, f usageFilters) ([]usageBre
 		LEFT JOIN api_keys ak ON ak.id = rl.api_key_id
 		%s
 		GROUP BY rl.api_key_id
-		ORDER BY total_tokens DESC
+		ORDER BY 6 DESC
 	`, where), args...)
 	if err != nil {
 		return nil, err
@@ -250,7 +250,7 @@ func (h *UsageHandler) byModel(ctx context.Context, f usageFilters) ([]usageBrea
 		FROM request_logs rl
 		%s
 		GROUP BY rl.model_id
-		ORDER BY total_tokens DESC
+		ORDER BY 6 DESC
 	`, where), args...)
 	if err != nil {
 		return nil, err
@@ -279,7 +279,7 @@ func (h *UsageHandler) byProvider(ctx context.Context, f usageFilters) ([]usageB
 		LEFT JOIN provider_types pt ON pt.id = rl.provider_type_id
 		%s
 		GROUP BY rl.provider_type_id
-		ORDER BY total_tokens DESC
+		ORDER BY 6 DESC
 	`, where), args...)
 	if err != nil {
 		return nil, err
@@ -306,7 +306,7 @@ func (h *UsageHandler) byModality(ctx context.Context, f usageFilters) ([]usageB
 		FROM request_logs rl
 		%s
 		GROUP BY rl.modality
-		ORDER BY total_tokens DESC
+		ORDER BY 6 DESC
 	`, where), args...)
 	if err != nil {
 		return nil, err
@@ -333,7 +333,7 @@ func (h *UsageHandler) byStatus(ctx context.Context, f usageFilters) ([]usageBre
 		FROM request_logs rl
 		%s
 		GROUP BY rl.status_code
-		ORDER BY requests DESC
+		ORDER BY 2 DESC
 	`, where), args...)
 	if err != nil {
 		return nil, err

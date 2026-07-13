@@ -18,28 +18,22 @@
   let { onclose }: { onclose?: () => void } = $props();
 
 const platformItems = [
-	{ href: '/', label: 'Dashboard', icon: HomeIcon },
-	{ href: '/providers', label: 'Providers', icon: ServerIcon },
-	{ href: '/combos', label: 'Combos', icon: LayersIcon },
-	{ href: '/quota', label: 'Quota', icon: GaugeIcon },
-	{ href: '/optimization', label: 'Optimization', icon: ZapIcon },
-	{ href: '/logs', label: 'Logs', icon: TerminalIcon },
+ { href: '/', label: 'Dashboard', icon: HomeIcon },
+ { href: '/providers', label: 'Providers', icon: ServerIcon },
+ { href: '/combos', label: 'Combos', icon: LayersIcon },
+ { href: '/usage', label: 'Usage', icon: BarChartIcon },
+ { href: '/quota', label: 'Quota', icon: GaugeIcon },
+ { href: '/optimization', label: 'Optimization', icon: ZapIcon },
+ { href: '/logs', label: 'Logs', icon: TerminalIcon },
 ];
-
-  const settingsItem = { href: '/settings', label: 'Settings', icon: SettingsIcon };
-  const apiKeysItem = { href: '/api-keys', label: 'API Keys', icon: KeyIcon };
-  const developersItem = { href: '/developers', label: 'Developers', icon: CodeIcon };
-  const usageItem = { href: '/usage', label: 'Usage', icon: BarChartIcon };
-
-  const systemItems = [
+const systemItems = [
     { href: '/proxy-pools', label: 'Proxy Pools', icon: GlobeIcon },
-    apiKeysItem,
-	usageItem,
-	developersItem,
+ { href: '/api-keys', label: 'API Keys', icon: KeyIcon },
+ { href: '/developers', label: 'Developers', icon: CodeIcon },
     { href: '/cli-tools', label: 'CLI Tools', icon: BotIcon },
   { href: '/model-pricing', label: 'Model Pricing', icon: BadgeDollarSignIcon },
-    settingsItem,
-  ];
+ { href: '/settings', label: 'Settings', icon: SettingsIcon },
+];
 
   function isActive(pathname: string, href: string): boolean {
     if (href === '/') return pathname === '/';

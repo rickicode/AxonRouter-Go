@@ -39,8 +39,8 @@
 	let filterModality = $state('');
 	let filterStatus = $state('');
 
-	let tokensCanvas: HTMLCanvasElement | null = null;
-	let costCanvas: HTMLCanvasElement | null = null;
+	let tokensCanvas = $state<HTMLCanvasElement | null>(null);
+	let costCanvas = $state<HTMLCanvasElement | null>(null);
 	let tokensChart = $state<any>(null);
 	let costChart = $state<any>(null);
 
