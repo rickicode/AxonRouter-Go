@@ -300,7 +300,6 @@ AxonRouter-Go uses a single-file versioning system so that every release is cons
 - `make release` calls `update-readme.js` automatically before committing.
 - CI verifies README is in sync by running `node scripts/update-readme.js --check`; a stale README fails the build.
 
-### 5. Where Version Is Exposed
 ### 6. Where Version Is Exposed
 - **Startup banner**: printed by `cmd/server/main.go` using `internal/version`.
 - **Health endpoint**: `GET /api/admin/health` returns `{ "status": "...", "version": "0.3.1" }`.
