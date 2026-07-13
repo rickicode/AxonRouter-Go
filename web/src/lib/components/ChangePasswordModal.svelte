@@ -1,7 +1,7 @@
 <script lang="ts">
 import * as Dialog from '$lib/components/ui/dialog';
 import { Button } from '$lib/components/ui/button';
-import { setMustChangePassword } from '$lib/auth';
+import { setMustChangePassword, dismissPasswordWarning } from '$lib/auth';
 import { router } from '$lib/router';
 import ShieldAlertIcon from '@lucide/svelte/icons/shield-alert';
 
@@ -10,13 +10,13 @@ let open = $state(true);
 $effect(() => {
 	if (!open) {
 		setMustChangePassword(false);
+		dismissPasswordWarning();
 	}
 });
 
 function goToSettings() {
-	open = false;
-	setMustChangePassword(false);
 	router.navigate('/settings');
+	open = false;
 }
 </script>
 
@@ -28,9 +28,9 @@ function goToSettings() {
 					<ShieldAlertIcon class="size-5" />
 				</span>
 				<div>
-					<Dialog.Title class="text-display-md">Peringatan Keamanan</Dialog.Title>
+					<Dialog.Title class="text-display-md">Security Warning</Dialog.Title>
 					<Dialog.Description class="text-body-sm text-muted-foreground">
-						Password administrator masih default atau belum diubah.
+						The admin password is still the default or has not been changed.
 					</Dialog.Description>
 				</div>
 			</div>
@@ -38,14 +38,13 @@ function goToSettings() {
 
 		<div class="py-2 text-body-sm text-muted-foreground space-y-2">
 			<p>
-				Demi keamanan dashboard, ubah password default melalui halaman Pengaturan.
-				Tidak ada akses API yang diblokir, hanya peringatan ini.
+				For dashboard security, update the password in Settings. No API access is blocked — this is only a warning.
 			</p>
 		</div>
 
 		<Dialog.Footer class="flex-col gap-2 sm:flex-col">
 			<Button onclick={goToSettings} class="h-11 w-full">
-				Ya, Ubah Password
+				Update Password
 			</Button>
 			<Button
 				type="button"
@@ -53,7 +52,7 @@ function goToSettings() {
 				class="h-11 w-full"
 				onclick={() => (open = false)}
 			>
-				Tutup Peringatan
+				Close Warning
 			</Button>
 		</Dialog.Footer>
 	</Dialog.Content>

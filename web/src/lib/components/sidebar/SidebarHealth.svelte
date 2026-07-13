@@ -1,6 +1,11 @@
 <script lang="ts">
 import { onMount } from 'svelte';
-import { setMustChangePassword } from '$lib/auth';
+import {
+	setMustChangePassword,
+	isPasswordWarningDismissed,
+	dismissPasswordWarning,
+	clearPasswordWarningDismissal,
+} from '$lib/auth';
 
 let isOnline = $state(true);
 let latencyMs = $state(1);
@@ -19,7 +24,14 @@ let version = $state('');
 				const data = await response.json().catch(() => ({}));
 				if (data.version) version = String(data.version);
 				if (typeof data.must_change_password === 'boolean') {
-					setMustChangePassword(data.must_change_password);
+					if (data.must_change_password) {
+						if (!isPasswordWarningDismissed()) {
+							setMustChangePassword(true);
+						}
+					} else {
+						clearPasswordWarningDismissal();
+						setMustChangePassword(false);
+					}
 				}
 			}
       } catch {
