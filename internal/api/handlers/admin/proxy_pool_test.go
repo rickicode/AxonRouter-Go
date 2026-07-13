@@ -177,10 +177,11 @@ func TestProxyPoolBulkCreateUsesTestHook(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk", jsonBodyProxyPool(t, map[string]any{
-		"items":       []any{"http://stub.example:8080"},
-		"namePrefix":  "bulk",
-		"defaultType": "http",
-		"isActive":    true,
+		"items":          []any{"http://stub.example:8080"},
+		"namePrefix":     "bulk",
+		"defaultType":    "http",
+		"isActive":       true,
+		"requireHealthy": true,
 	}))
 	h.BulkCreate(c)
 
@@ -201,6 +202,101 @@ func TestProxyPoolBulkCreateUsesTestHook(t *testing.T) {
 	}
 	if ip != "1.2.3.4" || country != "US" || city != "NYC" || org != "TestOrg" {
 		t.Fatalf("expected proxy metadata from hook, got ip=%s country=%s city=%s org=%s", ip, country, city, org)
+	}
+}
+
+func TestProxyPoolBulkCreateSkipsUnhealthy(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database))
+	h.testProxy = func(proxyURL, typ, auth string) proxypool.TestResult {
+		if proxyURL == "http://good.example:8080" {
+			return proxypool.TestResult{OK: true, StatusCode: 200, IP: "1.2.3.4", ElapsedMs: 100}
+		}
+		return proxypool.TestResult{OK: false, Error: "timeout"}
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk", jsonBodyProxyPool(t, map[string]any{
+		"items": []any{
+			"http://good.example:8080",
+			"http://bad.example:8080",
+		},
+		"defaultType":    "http",
+		"requireHealthy": true,
+	}))
+	h.BulkCreate(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("BulkCreate status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Created int `json:"created"`
+		Skipped int `json:"skipped"`
+		Errors  int `json:"errors"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Created != 1 || resp.Skipped != 1 || resp.Errors != 0 {
+		t.Fatalf("expected 1 created + 1 skipped, got %+v", resp)
+	}
+
+	var count int
+	if err := database.QueryRow("SELECT COUNT(*) FROM proxy_pools WHERE proxy_url = ?", "http://bad.example:8080").Scan(&count); err != nil {
+		t.Fatalf("count bad pool: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected unhealthy pool to not be inserted, got %d", count)
+	}
+}
+
+func TestProxyPoolBulkCreateSkipsSlow(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database))
+	h.testProxy = func(proxyURL, typ, auth string) proxypool.TestResult {
+		if proxyURL == "http://fast.example:8080" {
+			return proxypool.TestResult{OK: true, StatusCode: 200, ElapsedMs: 500}
+		}
+		return proxypool.TestResult{OK: true, StatusCode: 200, ElapsedMs: 1500}
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk", jsonBodyProxyPool(t, map[string]any{
+		"items": []any{
+			"http://fast.example:8080",
+			"http://slow.example:8080",
+		},
+		"defaultType":       "http",
+		"requireHealthy":    true,
+		"maxResponseTimeMs": 1000,
+	}))
+	h.BulkCreate(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("BulkCreate status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Created int `json:"created"`
+		Skipped int `json:"skipped"`
+		Errors  int `json:"errors"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Created != 1 || resp.Skipped != 1 || resp.Errors != 0 {
+		t.Fatalf("expected 1 created + 1 skipped, got %+v", resp)
+	}
+
+	var count int
+	if err := database.QueryRow("SELECT COUNT(*) FROM proxy_pools WHERE proxy_url = ?", "http://slow.example:8080").Scan(&count); err != nil {
+		t.Fatalf("count slow pool: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected slow pool to not be inserted, got %d", count)
 	}
 }
 

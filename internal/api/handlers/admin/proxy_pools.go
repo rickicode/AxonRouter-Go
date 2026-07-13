@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -165,11 +166,13 @@ func (h *ProxyPoolHandler) insertPoolRow(name, proxyURL, typ, noProxy, relayAuth
 
 func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 	var req struct {
-		Items       []any  `json:"items"`
-		NamePrefix  string `json:"namePrefix"`
-		DefaultType string `json:"defaultType"`
-		NoProxy     string `json:"noProxy"`
-		IsActive    *bool  `json:"isActive"`
+		Items             []any  `json:"items"`
+		NamePrefix        string `json:"namePrefix"`
+		DefaultType       string `json:"defaultType"`
+		NoProxy           string `json:"noProxy"`
+		IsActive          *bool  `json:"isActive"`
+		RequireHealthy    bool   `json:"requireHealthy"`
+		MaxResponseTimeMs int64  `json:"maxResponseTimeMs"`
 	}
 	if c.ShouldBindJSON(&req) != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON"})
@@ -195,6 +198,21 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 	// unique for the proxies being imported together.
 	usedNames := map[string]bool{}
 
+	type normalizedItem struct {
+		index     int
+		name      string
+		proxyURL  string
+		typ       string
+		noProxy   string
+		relayAuth string
+		dup       bool
+	}
+
+	normalized := make([]normalizedItem, 0, len(req.Items))
+
+	// Phase 1: parse and normalize all items sequentially. Duplicate checks and
+	// name generation happen here so the subsequent test phase never wastes
+	// network calls on entries that will be skipped anyway.
 	for i, raw := range req.Items {
 		var item struct {
 			Name     string `json:"name"`
@@ -265,18 +283,82 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 		if noProxy == "" {
 			noProxy = req.NoProxy
 		}
+		// Generate relay auth before testing so relay health checks and the
+		// eventual insert use the exact same credentials.
+		relayAuth := ""
+		if proxypool.IsRelayType(item.Type) {
+			relayAuth = proxypool.GenerateRelayAuth()
+		}
 
-		id, relayAuth, reason := h.insertPoolRow(item.Name, item.ProxyURL, item.Type, noProxy, "", active, false)
-		if reason == "duplicate" {
+		var existingCount int
+		dup := h.db.QueryRow("SELECT COUNT(*) FROM proxy_pools WHERE proxy_url = ?", item.ProxyURL).Scan(&existingCount) == nil && existingCount > 0
+
+		normalized = append(normalized, normalizedItem{
+			index:     i,
+			name:      item.Name,
+			proxyURL:  item.ProxyURL,
+			typ:       item.Type,
+			noProxy:   noProxy,
+			relayAuth: relayAuth,
+			dup:       dup,
+		})
+	}
+
+	// Phase 2: when healthy import is requested, test non-duplicate items
+	// concurrently with a bounded worker pool.
+	testResults := make([]proxypool.TestResult, len(normalized))
+	if req.RequireHealthy {
+		sem := make(chan struct{}, 8)
+		var wg sync.WaitGroup
+		for i, it := range normalized {
+			if it.dup {
+				continue
+			}
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(idx int, it normalizedItem) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				testResults[idx] = h.testProxy(it.proxyURL, it.typ, it.relayAuth)
+			}(i, it)
+		}
+		wg.Wait()
+	}
+
+	// Phase 3: insert passing items and update their test metadata.
+	for i, it := range normalized {
+		if it.dup {
 			skipped++
-			details = append(details, gin.H{"index": i, "url": item.ProxyURL, "status": "skipped", "reason": reason})
-		} else if reason != "" {
+			details = append(details, gin.H{"index": it.index, "url": it.proxyURL, "status": "skipped", "reason": "duplicate"})
+			continue
+		}
+
+		if req.RequireHealthy {
+			res := testResults[i]
+			if !res.OK {
+				skipped++
+				details = append(details, gin.H{"index": it.index, "url": it.proxyURL, "status": "skipped", "reason": "unhealthy"})
+				continue
+			}
+			if req.MaxResponseTimeMs > 0 && res.ElapsedMs > req.MaxResponseTimeMs {
+				skipped++
+				details = append(details, gin.H{"index": it.index, "url": it.proxyURL, "status": "skipped", "reason": "slow"})
+				continue
+			}
+		}
+
+		id, _, reason := h.insertPoolRow(it.name, it.proxyURL, it.typ, it.noProxy, it.relayAuth, active, false)
+		if reason != "" {
 			errors++
-			details = append(details, gin.H{"index": i, "url": item.ProxyURL, "status": "error", "reason": reason})
-		} else {
-			created++
-			details = append(details, gin.H{"index": i, "url": item.ProxyURL, "id": id, "status": "created"})
-			res := h.testProxy(item.ProxyURL, item.Type, relayAuth)
+			details = append(details, gin.H{"index": it.index, "url": it.proxyURL, "status": "error", "reason": reason})
+			continue
+		}
+
+		created++
+		details = append(details, gin.H{"index": it.index, "url": it.proxyURL, "id": id, "status": "created"})
+
+		if req.RequireHealthy {
+			res := testResults[i]
 			status := "active"
 			var lastErr any = nil
 			if !res.OK {
