@@ -796,6 +796,32 @@ func TestChatCompletions_FallbackUsage(t *testing.T) {
 	}
 }
 
+func TestWriteUpstreamClientError_PassesStatusAndBody(t *testing.T) {
+	h := newTestHandler(t)
+	conn := &Connection{ID: "conn-test", Provider: "testimage"}
+	upErr := &executor.UpstreamError{
+		StatusCode: http.StatusUnauthorized,
+		Body:       []byte(`{"error":{"message":"bad key","type":"authentication_error"}}`),
+		RawBody:    []byte(`{"error":{"message":"bad key","type":"authentication_error"}}`),
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	c.Set("api_key_id", "test-key")
+
+	if !h.writeUpstreamClientError(c, upErr, conn, "testimage", "dall-e-3", time.Now(), false) {
+		t.Fatal("writeUpstreamClientError returned false for UpstreamError")
+	}
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "bad key") {
+		t.Errorf("expected upstream body in response, got %q", rec.Body.String())
+	}
+}
+
 func TestCacheOnlySuccess_UpstreamErrorNotCached(t *testing.T) {
 	logging.Init("text")
 	h := newTestHandler(t)

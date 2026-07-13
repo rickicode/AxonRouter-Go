@@ -65,16 +65,9 @@ func (h *Handler) Images(c *gin.Context) {
 	resp, streamResult, err = h.executeWithRetry(proxyCtx, imagesExec, req, conn, provider, modelName)
 	_ = streamResult
 	if err != nil {
-		h.tracker.Log(&usage.LogEntry{
-			ApiKeyID:       c.GetString("api_key_id"),
-			ConnectionID:   conn.ID,
-			ProviderTypeID: provider,
-			ModelID:        modelName,
-			Modality:       "image",
-			Stream:         false,
-			LatencyMs:      time.Since(start).Milliseconds(),
-			ErrorMessage:   err.Error()})
-		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
+		if !h.writeUpstreamClientError(c, err, conn, provider, modelName, start, false) {
+			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": "internal server error", "type": "server_error"}})
+		}
 		return
 	}
 

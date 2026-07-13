@@ -60,9 +60,8 @@ func (e *STTExecutor) Execute(ctx context.Context, req *Request) (*Response, err
 	}
 
 	if httpResp.StatusCode >= 400 {
-		return nil, fmt.Errorf("stt error %d: %s", httpResp.StatusCode, string(body))
+		return nil, &UpstreamError{StatusCode: httpResp.StatusCode, Body: body, RawBody: body, Headers: httpResp.Header}
 	}
-
 	return &Response{
 		StatusCode: httpResp.StatusCode,
 		Headers:    httpResp.Header,

@@ -36,9 +36,8 @@ func (e *VideoExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("video error %d: %s", resp.StatusCode, string(resp.Body))
+		return nil, &UpstreamError{StatusCode: resp.StatusCode, Body: resp.Body, RawBody: resp.Body, Headers: resp.Headers}
 	}
-
 	return resp, nil
 }
 
