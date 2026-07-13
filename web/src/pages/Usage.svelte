@@ -39,7 +39,7 @@
 	let filterModality = $state('');
 	let filterStatus = $state('');
 let realtime = $state(true);
-let rangePreset = $state<'day' | 'weekly' | 'month'>('month');
+let rangePreset = $state<'day' | 'weekly' | 'month'>('day');
 	let hasActiveFilters = $derived(
   !!(filterKey || filterProvider || filterModel || filterModality || filterStatus)
 	);
@@ -155,8 +155,8 @@ async function initPage() {
 			apiKeysApi.list().then((r) => { apiKeys = r.data; }).catch(() => {}),
 			providersApi.list().then((r) => { providers = r.data; }).catch(() => {}),
 		]);
-		setRange(daysAgo(30), today(), 'day');
-	}
+		setPreset('day');
+}
 
 onMount(() => {
 		document.title = 'Usage — AxonRouter';
