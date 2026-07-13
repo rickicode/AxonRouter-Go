@@ -44,7 +44,7 @@ func readBody(c *gin.Context) ([]byte, error) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodySize)
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		if err.Error() == "http: request body too large" {
+		if strings.Contains(err.Error(), "http: request body too large") {
 			return nil, fmt.Errorf("request body too large (max %d bytes)", maxBodySize)
 		}
 		return nil, fmt.Errorf("read body: %w", err)
@@ -62,8 +62,17 @@ func (h *Handler) TrackActive() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		raw, err := io.ReadAll(io.LimitReader(c.Request.Body, maxBodySize))
+		// Enforce max body size here too, before any tracking reads.
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodySize)
+		raw, err := io.ReadAll(c.Request.Body)
 		if err != nil {
+			if strings.Contains(err.Error(), "http: request body too large") {
+				c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{
+					"error": gin.H{"message": fmt.Sprintf("request body too large (max %d bytes)", maxBodySize), "type": "invalid_request_error"},
+				})
+				return
+			}
+			// For non-size read failures, continue without tracking rather than failing the request.
 			c.Next()
 			return
 		}
