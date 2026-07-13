@@ -400,22 +400,6 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 	c.JSON(statusCode, gin.H{"error": gin.H{"message": msg, "type": errType, "detail": detail}})
 }
 
-// handleNonStreamResponse handles non-streaming chat completions.
-func (h *Handler) handleNonStreamResponse(c *gin.Context, exec executor.Executor, req *executor.Request) {
-	start := time.Now()
-	resp, err := exec.Execute(c.Request.Context(), req)
-	if err != nil {
-		if h.writeUpstreamClientError(c, err, nil, "", req.Model, start, false) {
-			return
-		}
-		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
-		return
-	}
-	c.Header("Content-Type", "application/json")
-	c.Status(resp.StatusCode)
-	c.Writer.Write(resp.Body)
-}
-
 // handleStreamResponse handles streaming chat completions.
 func (h *Handler) handleStreamResponse(c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte) {
 	_, providerFormat, _ := h.registry.Get(provider)
