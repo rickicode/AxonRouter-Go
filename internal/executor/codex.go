@@ -92,11 +92,12 @@ func codexRequestBody(body []byte) []byte {
 
 // CodexUsage holds token counts parsed from a Codex response.usage object.
 type CodexUsage struct {
-	InputTokens     int64
-	OutputTokens    int64
-	TotalTokens     int64
-	CachedTokens    int64
-	ReasoningTokens int64
+	InputTokens         int64
+	OutputTokens        int64
+	TotalTokens         int64
+	CachedTokens        int64
+	CacheCreationTokens int64
+	ReasoningTokens     int64
 }
 
 func extractCodexUsage(raw []byte) CodexUsage {
@@ -113,11 +114,12 @@ func extractCodexUsage(raw []byte) CodexUsage {
 		return CodexUsage{}
 	}
 	return CodexUsage{
-		InputTokens:     usage.Get("input_tokens").Int(),
-		OutputTokens:    usage.Get("output_tokens").Int(),
-		TotalTokens:     usage.Get("total_tokens").Int(),
-		CachedTokens:    usage.Get("input_tokens_details.cached_tokens").Int(),
-		ReasoningTokens: usage.Get("output_tokens_details.reasoning_tokens").Int(),
+		InputTokens:         usage.Get("input_tokens").Int(),
+		OutputTokens:        usage.Get("output_tokens").Int(),
+		TotalTokens:         usage.Get("total_tokens").Int(),
+		CachedTokens:        usage.Get("input_tokens_details.cached_tokens").Int(),
+		CacheCreationTokens: usage.Get("input_tokens_details.cache_creation_tokens").Int(),
+		ReasoningTokens:     usage.Get("output_tokens_details.reasoning_tokens").Int(),
 	}
 }
 
@@ -209,11 +211,12 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, req *Request) (*Strea
 // ToMap returns the usage as a map suitable for the Response.Usage field.
 func (u CodexUsage) ToMap() map[string]int64 {
 	return map[string]int64{
-		"prompt_tokens":     u.InputTokens,
-		"completion_tokens": u.OutputTokens,
-		"total_tokens":      u.TotalTokens,
-		"cached_tokens":     u.CachedTokens,
-		"reasoning_tokens":  u.ReasoningTokens,
+		"prompt_tokens":         u.InputTokens,
+		"completion_tokens":     u.OutputTokens,
+		"total_tokens":          u.TotalTokens,
+		"cached_tokens":         u.CachedTokens,
+		"cache_creation_tokens": u.CacheCreationTokens,
+		"reasoning_tokens":      u.ReasoningTokens,
 	}
 }
 

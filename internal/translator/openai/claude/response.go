@@ -12,23 +12,23 @@ import (
 
 // claudeStreamState holds accumulated state for streaming response translation.
 type claudeStreamState struct {
-	MessageID               string
-	Model                   string
-	ContentBlockStarted     bool
-	ContentBlockIndex       int
-	ThinkingBlockStarted    bool
-	ThinkingBlockIndex      int
-	ToolBlocks              map[int]int // upstream tool index -> claude content block index
-	ToolNames               map[int]string
-	ToolStartEmitted        map[int]bool
-	ToolArgsAccum           map[int]*strings.Builder
-	TextAccum               strings.Builder
-	ThinkingAccum           strings.Builder
-	FinishReason            string
-	MessageStartSent        bool
-	MessageStopSent         bool
-	ContentBlocksStopped    bool
-	SawToolCall             bool
+	MessageID            string
+	Model                string
+	ContentBlockStarted  bool
+	ContentBlockIndex    int
+	ThinkingBlockStarted bool
+	ThinkingBlockIndex   int
+	ToolBlocks           map[int]int // upstream tool index -> claude content block index
+	ToolNames            map[int]string
+	ToolStartEmitted     map[int]bool
+	ToolArgsAccum        map[int]*strings.Builder
+	TextAccum            strings.Builder
+	ThinkingAccum        strings.Builder
+	FinishReason         string
+	MessageStartSent     bool
+	MessageStopSent      bool
+	ContentBlocksStopped bool
+	SawToolCall          bool
 }
 
 var dataTag = []byte("data:")
@@ -36,10 +36,10 @@ var dataTag = []byte("data:")
 func getStreamState(param *any) *claudeStreamState {
 	if *param == nil {
 		*param = &claudeStreamState{
-			ToolBlocks:      make(map[int]int),
-			ToolNames:       make(map[int]string),
+			ToolBlocks:       make(map[int]int),
+			ToolNames:        make(map[int]string),
 			ToolStartEmitted: make(map[int]bool),
-			ToolArgsAccum:   make(map[int]*strings.Builder),
+			ToolArgsAccum:    make(map[int]*strings.Builder),
 		}
 	}
 	return (*param).(*claudeStreamState)
@@ -143,10 +143,17 @@ func convertClaudeResponseToOpenAINonStream(_ context.Context, _ string, _, _ []
 	out["choices"] = []map[string]interface{}{{"index": 0, "message": msg}}
 
 	if usage := root.Get("usage"); usage.Exists() {
+		in := usage.Get("input_tokens").Int()
+		read := usage.Get("cache_read_input_tokens").Int()
+		creation := usage.Get("cache_creation_input_tokens").Int()
 		out["usage"] = map[string]interface{}{
-			"prompt_tokens":     usage.Get("input_tokens").Int(),
+			"prompt_tokens":     in + read + creation,
 			"completion_tokens": usage.Get("output_tokens").Int(),
-			"total_tokens":      usage.Get("input_tokens").Int() + usage.Get("output_tokens").Int(),
+			"total_tokens":      in + read + creation + usage.Get("output_tokens").Int(),
+			"prompt_tokens_details": map[string]interface{}{
+				"cached_tokens":         read,
+				"cache_creation_tokens": creation,
+			},
 		}
 	}
 

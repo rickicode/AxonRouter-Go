@@ -137,6 +137,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 	for _, stmt := range []string{
 		`ALTER TABLE connections ADD COLUMN provider_specific_data TEXT`,
 		`ALTER TABLE request_logs ADD COLUMN cached_tokens INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE request_logs ADD COLUMN cache_creation_tokens INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE request_logs ADD COLUMN stream INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE api_keys ADD COLUMN key_value TEXT`,
 		`ALTER TABLE request_logs ADD COLUMN api_key_id TEXT`,

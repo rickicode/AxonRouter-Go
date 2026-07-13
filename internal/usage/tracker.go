@@ -15,22 +15,23 @@ import (
 
 // LogEntry represents a single request to be logged.
 type LogEntry struct {
-	Timestamp       int64
-	ConnectionID    string
-	ProviderTypeID  string
-	ModelID         string
-	ComboID         string
-	ApiKeyID        string
-	Modality        string
-	InputTokens     int64
-	OutputTokens    int64
-	ReasoningTokens int64
-	CachedTokens    int64
-	LatencyMs       int64
-	StatusCode      int
-	ErrorMessage    string
-	CostUsd         float64
-	Stream          bool
+	Timestamp           int64
+	ConnectionID        string
+	ProviderTypeID      string
+	ModelID             string
+	ComboID             string
+	ApiKeyID            string
+	Modality            string
+	InputTokens         int64
+	OutputTokens        int64
+	ReasoningTokens     int64
+	CachedTokens        int64
+	CacheCreationTokens int64
+	LatencyMs           int64
+	StatusCode          int
+	ErrorMessage        string
+	CostUsd             float64
+	Stream              bool
 }
 
 // Tracker is an async usage logger with channel-based buffering.
@@ -80,7 +81,7 @@ func (t *Tracker) Log(entry *LogEntry) {
 		entry.StatusCode = errorcode.FromString(entry.ErrorMessage)
 	}
 	if entry.CostUsd == 0 {
-		entry.CostUsd = EstimateCost(entry.ModelID, entry.InputTokens, entry.OutputTokens, entry.ReasoningTokens, entry.CachedTokens, 0)
+		entry.CostUsd = EstimateCost(entry.ModelID, entry.InputTokens, entry.OutputTokens, entry.ReasoningTokens, entry.CachedTokens, entry.CacheCreationTokens)
 	}
 	select {
 	case t.buffer <- entry:
@@ -167,10 +168,10 @@ func (t *Tracker) writeBatchDirect(database *sql.DB, batch []*LogEntry) error {
 
 	stmt, err := tx.Prepare(`INSERT INTO request_logs
 		(id, timestamp, connection_id, provider_type_id, model_id, combo_id,
-	api_key_id, modality, input_tokens, output_tokens, reasoning_tokens, cached_tokens,
-  stream,
+	api_key_id, modality, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_creation_tokens,
+	 stream,
 		 latency_ms, status_code, error_message, cost_usd, created_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		tx.Rollback()
 		return fmt.Errorf("usage: prepare: %w", err)
@@ -189,7 +190,7 @@ func (t *Tracker) writeBatchDirect(database *sql.DB, batch []*LogEntry) error {
 		errMsg := toNullString(e.ErrorMessage)
 
 		if _, err := stmt.Exec(uuid.New().String(), e.Timestamp, connID, providerID, modelID, comboID,
-			apiKeyID, e.Modality, e.InputTokens, e.OutputTokens, e.ReasoningTokens, e.CachedTokens,
+			apiKeyID, e.Modality, e.InputTokens, e.OutputTokens, e.ReasoningTokens, e.CachedTokens, e.CacheCreationTokens,
 			e.Stream,
 			latency, statusCode, errMsg, e.CostUsd, now); err != nil {
 			log.Printf("usage: exec: %v", err)

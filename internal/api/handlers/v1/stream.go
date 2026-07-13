@@ -7,10 +7,11 @@ import (
 
 // StreamTokenCounts holds extracted token counts from streaming response.
 type StreamTokenCounts struct {
-	InputTokens     int64
-	OutputTokens    int64
-	ReasoningTokens int64
-	CachedTokens    int64
+	InputTokens         int64
+	OutputTokens        int64
+	ReasoningTokens     int64
+	CachedTokens        int64 // cache READ only
+	CacheCreationTokens int64 // cache WRITE (new)
 }
 
 // ExtractTokensFromFinalChunk extracts token counts from the final SSE chunk.
@@ -23,14 +24,15 @@ func ExtractTokensFromFinalChunk(chunk []byte) StreamTokenCounts {
 		chunk = chunk[len("data: "):]
 	}
 
-	// Try OpenAI format: {"usage": {"prompt_tokens": N, "completion_tokens": N, "prompt_tokens_details": {"cached_tokens": N}}}
+	// Try OpenAI format: {"usage": {"prompt_tokens": N, "completion_tokens": N, "prompt_tokens_details": {"cached_tokens": N, "cache_creation_tokens": N}}}
 	var openai struct {
 		Usage struct {
 			PromptTokens        int64 `json:"prompt_tokens"`
 			CompletionTokens    int64 `json:"completion_tokens"`
 			TotalTokens         int64 `json:"total_tokens"`
 			PromptTokensDetails *struct {
-				CachedTokens int64 `json:"cached_tokens"`
+				CachedTokens        int64 `json:"cached_tokens"`
+				CacheCreationTokens int64 `json:"cache_creation_tokens"`
 			} `json:"prompt_tokens_details"`
 			CompletionTokensDetails *struct {
 				ReasoningTokens int64 `json:"reasoning_tokens"`
@@ -42,6 +44,7 @@ func ExtractTokensFromFinalChunk(chunk []byte) StreamTokenCounts {
 		counts.OutputTokens = openai.Usage.CompletionTokens
 		if openai.Usage.PromptTokensDetails != nil {
 			counts.CachedTokens = openai.Usage.PromptTokensDetails.CachedTokens
+			counts.CacheCreationTokens = openai.Usage.PromptTokensDetails.CacheCreationTokens
 		}
 		if openai.Usage.CompletionTokensDetails != nil {
 			counts.ReasoningTokens = openai.Usage.CompletionTokensDetails.ReasoningTokens
@@ -61,9 +64,10 @@ func ExtractTokensFromFinalChunk(chunk []byte) StreamTokenCounts {
 		} `json:"message"`
 	}
 	if err := json.Unmarshal(chunk, &claude); err == nil && claude.Message.Usage.InputTokens > 0 {
-		counts.InputTokens = claude.Message.Usage.InputTokens
+		counts.InputTokens = claude.Message.Usage.InputTokens + claude.Message.Usage.CacheCreationInputTokens + claude.Message.Usage.CacheReadInputTokens
 		counts.OutputTokens = claude.Message.Usage.OutputTokens
-		counts.CachedTokens = claude.Message.Usage.CacheCreationInputTokens + claude.Message.Usage.CacheReadInputTokens
+		counts.CachedTokens = claude.Message.Usage.CacheReadInputTokens
+		counts.CacheCreationTokens = claude.Message.Usage.CacheCreationInputTokens
 		return counts
 	}
 
@@ -87,10 +91,12 @@ func ExtractTokensFromFinalChunk(chunk []byte) StreamTokenCounts {
 	return counts
 }
 
-// ExtractTokensFromBody extracts token counts from a non-streaming OpenAI-format response body.
-// The translated response has usage at top level: {"usage": {"prompt_tokens": N, ...}}
+// ExtractTokensFromBody extracts token counts from a non-streaming response body.
+// Handles both OpenAI-format (emitted by translators) and native Claude-format usage.
 func ExtractTokensFromBody(body []byte) StreamTokenCounts {
 	var counts StreamTokenCounts
+
+	// OpenAI-format (also what translators emit).
 	var resp struct {
 		Usage struct {
 			PromptTokens        int64 `json:"prompt_tokens"`
@@ -99,29 +105,51 @@ func ExtractTokensFromBody(body []byte) StreamTokenCounts {
 			InputTokens         int64 `json:"input_tokens"`
 			OutputTokens        int64 `json:"output_tokens"`
 			PromptTokensDetails *struct {
-				CachedTokens int64 `json:"cached_tokens"`
+				CachedTokens        int64 `json:"cached_tokens"`
+				CacheCreationTokens int64 `json:"cache_creation_tokens"`
 			} `json:"prompt_tokens_details"`
 			CompletionTokensDetails *struct {
 				ReasoningTokens int64 `json:"reasoning_tokens"`
 			} `json:"completion_tokens_details"`
 		} `json:"usage"`
 	}
-	if err := json.Unmarshal(body, &resp); err != nil {
+	if err := json.Unmarshal(body, &resp); err == nil {
+		if resp.Usage.PromptTokens > 0 || resp.Usage.CompletionTokens > 0 || resp.Usage.TotalTokens > 0 {
+			counts.InputTokens = resp.Usage.PromptTokens
+			counts.OutputTokens = resp.Usage.CompletionTokens
+		} else if resp.Usage.InputTokens > 0 || resp.Usage.OutputTokens > 0 {
+			counts.InputTokens = resp.Usage.InputTokens
+			counts.OutputTokens = resp.Usage.OutputTokens
+		}
+		if resp.Usage.PromptTokensDetails != nil {
+			counts.CachedTokens = resp.Usage.PromptTokensDetails.CachedTokens
+			counts.CacheCreationTokens = resp.Usage.PromptTokensDetails.CacheCreationTokens
+		}
+		if resp.Usage.CompletionTokensDetails != nil {
+			counts.ReasoningTokens = resp.Usage.CompletionTokensDetails.ReasoningTokens
+		}
+		if counts.InputTokens > 0 {
+			return counts
+		}
+	}
+
+	// Native Claude-format usage (input_tokens is base only; cache is reported separately).
+	var claude struct {
+		Usage struct {
+			InputTokens              int64 `json:"input_tokens"`
+			OutputTokens             int64 `json:"output_tokens"`
+			CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+			CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &claude); err == nil && claude.Usage.InputTokens > 0 {
+		counts.InputTokens = claude.Usage.InputTokens + claude.Usage.CacheCreationInputTokens + claude.Usage.CacheReadInputTokens
+		counts.OutputTokens = claude.Usage.OutputTokens
+		counts.CachedTokens = claude.Usage.CacheReadInputTokens
+		counts.CacheCreationTokens = claude.Usage.CacheCreationInputTokens
 		return counts
 	}
-	if resp.Usage.PromptTokens > 0 || resp.Usage.CompletionTokens > 0 || resp.Usage.TotalTokens > 0 {
-		counts.InputTokens = resp.Usage.PromptTokens
-		counts.OutputTokens = resp.Usage.CompletionTokens
-	} else if resp.Usage.InputTokens > 0 || resp.Usage.OutputTokens > 0 {
-		counts.InputTokens = resp.Usage.InputTokens
-		counts.OutputTokens = resp.Usage.OutputTokens
-	}
-	if resp.Usage.PromptTokensDetails != nil {
-		counts.CachedTokens = resp.Usage.PromptTokensDetails.CachedTokens
-	}
-	if resp.Usage.CompletionTokensDetails != nil {
-		counts.ReasoningTokens = resp.Usage.CompletionTokensDetails.ReasoningTokens
-	}
+
 	return counts
 }
 

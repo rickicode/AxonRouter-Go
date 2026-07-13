@@ -10,12 +10,13 @@ import (
 )
 
 type Pricing struct {
-	InputPer1K      float64
-	OutputPer1K     float64
-	ReasonPer1K     float64
-	ImagePerUnit    float64
-	AudioPerMin     float64
-	CachedReadPer1K float64
+	InputPer1K       float64
+	OutputPer1K      float64
+	ReasonPer1K      float64
+	ImagePerUnit     float64
+	AudioPerMin      float64
+	CachedReadPer1K  float64
+	CachedWritePer1K float64
 }
 
 var defaultPricing = Pricing{InputPer1K: 0.001, OutputPer1K: 0.002}
@@ -74,7 +75,6 @@ func ReloadPricing() {
 }
 
 // splitModel splits a model id after the first slash.
-
 // StartPeriodicReload refreshes the pricing cache at the given interval.
 func StartPeriodicReload(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
@@ -111,12 +111,13 @@ func GetPricing(modelID string) Pricing {
 
 	if r, ok := rows[model]; ok {
 		return Pricing{
-			InputPer1K:      r.InputPer1K,
-			OutputPer1K:     r.OutputPer1K,
-			ReasonPer1K:     r.ReasonPer1K,
-			ImagePerUnit:    r.ImagePerUnit,
-			AudioPerMin:     r.AudioPerMin,
-			CachedReadPer1K: r.CachedReadPer1K,
+			InputPer1K:       r.InputPer1K,
+			OutputPer1K:      r.OutputPer1K,
+			ReasonPer1K:      r.ReasonPer1K,
+			ImagePerUnit:     r.ImagePerUnit,
+			AudioPerMin:      r.AudioPerMin,
+			CachedReadPer1K:  r.CachedReadPer1K,
+			CachedWritePer1K: r.CachedWritePer1K,
 		}
 	}
 
@@ -136,26 +137,36 @@ func GetPricing(modelID string) Pricing {
 		})
 		r := rows[matches[0]]
 		return Pricing{
-			InputPer1K:      r.InputPer1K,
-			OutputPer1K:     r.OutputPer1K,
-			ReasonPer1K:     r.ReasonPer1K,
-			ImagePerUnit:    r.ImagePerUnit,
-			AudioPerMin:     r.AudioPerMin,
-			CachedReadPer1K: r.CachedReadPer1K,
+			InputPer1K:       r.InputPer1K,
+			OutputPer1K:      r.OutputPer1K,
+			ReasonPer1K:      r.ReasonPer1K,
+			ImagePerUnit:     r.ImagePerUnit,
+			AudioPerMin:      r.AudioPerMin,
+			CachedReadPer1K:  r.CachedReadPer1K,
+			CachedWritePer1K: r.CachedWritePer1K,
 		}
 	}
 	return defaultPricing
 }
 
 // EstimateCost returns the estimated cost in USD.
-func EstimateCost(modelID string, inputTokens, outputTokens, reasoningTokens, cachedTokens int64) float64 {
+// Token convention: inputTokens is cache-inclusive (input + cache_read + cache_creation),
+// matching the per-provider usage reports after extraction. Cache-read tokens are billed at the
+// read rate and cache-creation tokens at the write rate (falling back to the input rate when no
+// dedicated write rate is configured). This mirrors OmniRoute's computeCostFromPricing.
+func EstimateCost(modelID string, inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheCreationTokens int64) float64 {
 	p := GetPricing(modelID)
-	nonCached := inputTokens - cachedTokens
+	nonCached := inputTokens - cachedTokens - cacheCreationTokens
 	if nonCached < 0 {
 		nonCached = 0
 	}
+	writeRate := p.CachedWritePer1K
+	if writeRate == 0 {
+		writeRate = p.InputPer1K
+	}
 	cost := float64(nonCached) / 1000.0 * p.InputPer1K
 	cost += float64(cachedTokens) / 1000.0 * p.CachedReadPer1K
+	cost += float64(cacheCreationTokens) / 1000.0 * writeRate
 	cost += float64(outputTokens) / 1000.0 * p.OutputPer1K
 	cost += float64(reasoningTokens) / 1000.0 * p.ReasonPer1K
 	return cost
@@ -199,19 +210,19 @@ func UpsertPricing(row ModelPricingRow) error {
 	}
 	_, err := pricingDB.Exec(
 		`
-		INSERT INTO model_pricing (model_id, display_name, input_per_1k, output_per_1k, reason_per_1k, cached_read_per_1k, cached_write_per_1k, image_per_unit, audio_per_min, currency, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(model_id) DO UPDATE SET
-			display_name = excluded.display_name,
-			input_per_1k = excluded.input_per_1k,
-			output_per_1k = excluded.output_per_1k,
-			reason_per_1k = excluded.reason_per_1k,
-			cached_read_per_1k = excluded.cached_read_per_1k,
-			cached_write_per_1k = excluded.cached_write_per_1k,
-			image_per_unit = excluded.image_per_unit,
-			audio_per_min = excluded.audio_per_min,
-			currency = excluded.currency,
-			updated_at = excluded.updated_at`,
+INSERT INTO model_pricing (model_id, display_name, input_per_1k, output_per_1k, reason_per_1k, cached_read_per_1k, cached_write_per_1k, image_per_unit, audio_per_min, currency, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(model_id) DO UPDATE SET
+display_name = excluded.display_name,
+input_per_1k = excluded.input_per_1k,
+output_per_1k = excluded.output_per_1k,
+reason_per_1k = excluded.reason_per_1k,
+cached_read_per_1k = excluded.cached_read_per_1k,
+cached_write_per_1k = excluded.cached_write_per_1k,
+image_per_unit = excluded.image_per_unit,
+audio_per_min = excluded.audio_per_min,
+currency = excluded.currency,
+updated_at = excluded.updated_at`,
 		row.ModelID, row.DisplayName, row.InputPer1K, row.OutputPer1K, row.ReasonPer1K,
 		row.CachedReadPer1K, row.CachedWritePer1K, row.ImagePerUnit, row.AudioPerMin,
 		row.Currency, row.UpdatedAt,

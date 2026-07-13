@@ -21,7 +21,7 @@ func TestExtractTokensFromFinalChunk(t *testing.T) {
 		{
 			name:  "claude sse",
 			chunk: `data: {"message":{"usage":{"input_tokens":4,"output_tokens":8,"cache_creation_input_tokens":1,"cache_read_input_tokens":2}}}`,
-			want:  StreamTokenCounts{InputTokens: 4, OutputTokens: 8, CachedTokens: 3},
+			want:  StreamTokenCounts{InputTokens: 7, OutputTokens: 8, CachedTokens: 2, CacheCreationTokens: 1},
 		},
 		{
 			name:  "gemini sse",

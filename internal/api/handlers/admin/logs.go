@@ -96,32 +96,33 @@ func (h *LogHandler) ActiveRequests(c *gin.Context) {
 func (h *LogHandler) Get(c *gin.Context) {
 	id := c.Param("id")
 	var l struct {
-		ID              string  `json:"id"`
-		Timestamp       int64   `json:"timestamp"`
-		ConnectionID    *string `json:"connection_id"`
-		ProviderTypeID  *string `json:"provider_type_id"`
-		ModelID         *string `json:"model_id"`
-		ComboID         *string `json:"combo_id"`
-		Modality        string  `json:"modality"`
-		InputTokens     int64   `json:"input_tokens"`
-		OutputTokens    int64   `json:"output_tokens"`
-		ReasoningTokens int64   `json:"reasoning_tokens"`
-		CachedTokens    int64   `json:"cached_tokens"`
-		LatencyMs       *int64  `json:"latency_ms"`
-		StatusCode      *int64  `json:"status_code"`
-		ErrorMessage    *string `json:"error_message"`
-		CostUsd         float64 `json:"cost_usd"`
-		CreatedAt       int64   `json:"created_at"`
+		ID                  string  `json:"id"`
+		Timestamp           int64   `json:"timestamp"`
+		ConnectionID        *string `json:"connection_id"`
+		ProviderTypeID      *string `json:"provider_type_id"`
+		ModelID             *string `json:"model_id"`
+		ComboID             *string `json:"combo_id"`
+		Modality            string  `json:"modality"`
+		InputTokens         int64   `json:"input_tokens"`
+		OutputTokens        int64   `json:"output_tokens"`
+		ReasoningTokens     int64   `json:"reasoning_tokens"`
+		CachedTokens        int64   `json:"cached_tokens"`
+		CacheCreationTokens int64   `json:"cache_creation_tokens"`
+		LatencyMs           *int64  `json:"latency_ms"`
+		StatusCode          *int64  `json:"status_code"`
+		ErrorMessage        *string `json:"error_message"`
+		CostUsd             float64 `json:"cost_usd"`
+		CreatedAt           int64   `json:"created_at"`
 	}
 
 	err := h.db.QueryRow(`
 		SELECT id, timestamp, connection_id, provider_type_id, model_id, combo_id,
-		       modality, input_tokens, output_tokens, reasoning_tokens, cached_tokens,
+	modality, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_creation_tokens,
 		       latency_ms, status_code, error_message, cost_usd, created_at
 		FROM request_logs WHERE id = ?
 	`, id).Scan(&l.ID, &l.Timestamp, &l.ConnectionID, &l.ProviderTypeID,
 		&l.ModelID, &l.ComboID, &l.Modality,
-		&l.InputTokens, &l.OutputTokens, &l.ReasoningTokens, &l.CachedTokens,
+		&l.InputTokens, &l.OutputTokens, &l.ReasoningTokens, &l.CachedTokens, &l.CacheCreationTokens,
 		&l.LatencyMs, &l.StatusCode, &l.ErrorMessage,
 		&l.CostUsd, &l.CreatedAt)
 	if err == sql.ErrNoRows {

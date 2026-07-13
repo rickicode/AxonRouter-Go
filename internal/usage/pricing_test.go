@@ -91,6 +91,17 @@ func TestEstimateCostTokenBreakdown(t *testing.T) {
 	if math.Abs(cg-cw) > 1e-9 {
 		t.Fatalf("EstimateCost cached-clamp = %.6f, want %.6f", cg, cw)
 	}
+	// Cache creation billed at write rate (falls back to input rate when write rate is 0).
+	if err := UpsertPricing(ModelPricingRow{ModelID: "ctest", InputPer1K: 0.003, OutputPer1K: 0.015, CachedReadPer1K: 0.0003, CachedWritePer1K: 0.00375}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	cp := GetPricing("ctest")
+	// cache-inclusive input 1000 = base 500 + read 200 + creation 300.
+	cg2 := EstimateCost("ctest", 1000, 1000, 0, 200, 300)
+	cw2 := float64(500)/1000*cp.InputPer1K + float64(200)/1000*cp.CachedReadPer1K + float64(300)/1000*cp.CachedWritePer1K + float64(1000)/1000*cp.OutputPer1K
+	if math.Abs(cg2-cw2) > 1e-9 {
+		t.Fatalf("EstimateCost cache-creation = %.6f, want %.6f", cg2, cw2)
+	}
 }
 
 func TestGetPricingUnknownFallsBackToDefault(t *testing.T) {

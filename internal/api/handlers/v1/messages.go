@@ -138,18 +138,19 @@ func (h *Handler) Messages(c *gin.Context) {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(clientFormat), string(providerFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			h.tracker.Log(&usage.LogEntry{
-				ApiKeyID:        c.GetString("api_key_id"),
-				ConnectionID:    conn.ID,
-				ProviderTypeID:  provider,
-				ModelID:         modelName,
-				Modality:        "chat",
-				Stream:          stream,
-				InputTokens:     tokenCounts.InputTokens,
-				OutputTokens:    tokenCounts.OutputTokens,
-				ReasoningTokens: tokenCounts.ReasoningTokens,
-				CachedTokens:    tokenCounts.CachedTokens,
-				LatencyMs:       latency,
-				StatusCode:      resp.StatusCode,
+				ApiKeyID:            c.GetString("api_key_id"),
+				ConnectionID:        conn.ID,
+				ProviderTypeID:      provider,
+				ModelID:             modelName,
+				Modality:            "chat",
+				Stream:              stream,
+				InputTokens:         tokenCounts.InputTokens,
+				OutputTokens:        tokenCounts.OutputTokens,
+				ReasoningTokens:     tokenCounts.ReasoningTokens,
+				CachedTokens:        tokenCounts.CachedTokens,
+				CacheCreationTokens: tokenCounts.CacheCreationTokens,
+				LatencyMs:           latency,
+				StatusCode:          resp.StatusCode,
 			})
 			h.incrementAPIKeyUsage(c.GetString("api_key_id"), tokenCounts.InputTokens+tokenCounts.OutputTokens)
 			h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
