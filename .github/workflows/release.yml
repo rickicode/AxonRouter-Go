@@ -84,6 +84,16 @@ jobs:
       - name: 📥 Checkout
         uses: actions/checkout@v7.0.0
 
+      - name: 🔖 Derive version from tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "Using version ${VERSION} from tag ${TAG}."
+
+      - name: 📌 Sync version from tag
+        run: node scripts/sync-release-from-tag.js
+
       - name: ⚙️ Set up Go
         uses: actions/setup-go@v6.5.0
         with:
