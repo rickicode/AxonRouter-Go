@@ -20,7 +20,6 @@
 	import AlertTriangleIcon from '@lucide/svelte/icons/alert-triangle';
 	import FilterIcon from '@lucide/svelte/icons/filter';
 	import DownloadIcon from '@lucide/svelte/icons/download';
-	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
 	import LayersIcon from '@lucide/svelte/icons/layers';
 	import ZapIcon from '@lucide/svelte/icons/zap';
 	import CodeIcon from '@lucide/svelte/icons/code';
@@ -38,6 +37,9 @@
 	let filterModel = $state('');
 	let filterModality = $state('');
 	let filterStatus = $state('');
+	let hasActiveFilters = $derived(
+  !!(filterKey || filterProvider || filterModel || filterModality || filterStatus)
+	);
 
 	let tokensCanvas = $state<HTMLCanvasElement | null>(null);
 	let costCanvas = $state<HTMLCanvasElement | null>(null);
@@ -267,68 +269,61 @@ return `${lbl}: ${v.toLocaleString()}`;
 	</div>
 
 	<Card class="shadow-card">
-		<CardContent class="p-4 space-y-4">
-			<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 items-end">
-				<div class="flex flex-col gap-1.5">
-					<Label class="text-caption-mono text-muted-foreground">From</Label>
-					<Input type="date" bind:value={from} class="h-9 text-sm w-full" />
+ <CardHeader class="pb-3 border-b border-border flex flex-wrap items-center justify-between gap-3">
+ <div class="flex items-center gap-2">
+ <FilterIcon class="size-4 text-muted-foreground" />
+ <CardTitle class="text-body-md-strong">Filters</CardTitle>
+ {#if hasActiveFilters}
+ <Button variant="ghost" size="sm" class="text-caption-mono h-6 px-2 text-muted-foreground" onclick={resetFilters}>Clear</Button>
+ {/if}
 				</div>
-				<div class="flex flex-col gap-1.5">
-					<Label class="text-caption-mono text-muted-foreground">To</Label>
-					<Input type="date" bind:value={to} class="h-9 text-sm w-full" />
-				</div>
-				<div class="flex flex-col gap-1.5">
-					<Label class="text-caption-mono text-muted-foreground">Granularity</Label>
+ <div class="flex flex-wrap items-center gap-2">
 					<div class="flex gap-1">
 						<Button variant={granularity === 'day' ? 'default' : 'outline'} size="sm" class="text-body-sm cursor-pointer" onclick={() => { granularity = 'day'; void load(); }}>Day</Button>
 						<Button variant={granularity === 'month' ? 'default' : 'outline'} size="sm" class="text-body-sm cursor-pointer" onclick={() => { granularity = 'month'; void load(); }}>Month</Button>
-					</div>
 				</div>
-				<div class="flex flex-col gap-1.5">
-					<Label class="text-caption-mono text-muted-foreground">Quick</Label>
 					<div class="flex gap-1">
 						<Button variant="outline" size="sm" class="text-body-sm cursor-pointer" onclick={() => setRange(daysAgo(7), today())}>7d</Button>
 						<Button variant="outline" size="sm" class="text-body-sm cursor-pointer" onclick={() => setRange(daysAgo(30), today())}>30d</Button>
 						<Button variant="outline" size="sm" class="text-body-sm cursor-pointer" onclick={() => setRange(startOfMonth(), today(), 'month')}>Month</Button>
 					</div>
 				</div>
-				<div class="flex flex-col gap-1.5">
-					<Label class="text-caption-mono text-muted-foreground">Actions</Label>
-					<div class="flex gap-1">
-						<Button size="sm" class="text-body-sm cursor-pointer" onclick={() => void load()} disabled={loading}>
-							<RefreshCwIcon class="w-4 h-4 mr-1" />
-							{loading ? 'Loading...' : 'Refresh'}
-						</Button>
+ </CardHeader>
+ <CardContent class="pt-4">
+ <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+ <div class="space-y-1.5">
+ <Label class="text-caption-mono text-muted-foreground uppercase font-semibold">From</Label>
+ <Input type="date" bind:value={from} onchange={() => void load()} class="h-9 font-mono text-body-sm w-full" />
 					</div>
+ <div class="space-y-1.5">
+ <Label class="text-caption-mono text-muted-foreground uppercase font-semibold">To</Label>
+ <Input type="date" bind:value={to} onchange={() => void load()} class="h-9 font-mono text-body-sm w-full" />
 				</div>
-			</div>
-
-			<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 items-end pt-4 border-t border-border">
-				<div class="flex flex-col gap-1.5">
-					<Label class="text-caption-mono text-muted-foreground">API Key</Label>
-					<select bind:value={filterKey} class="h-9 text-sm rounded-sm border border-input bg-transparent px-3 py-1 w-full text-foreground">
+ <div class="space-y-1.5">
+ <Label class="text-caption-mono text-muted-foreground uppercase font-semibold">API Key</Label>
+ <select bind:value={filterKey} onchange={() => void load()} class="h-9 font-mono text-body-sm rounded-sm border border-input bg-transparent px-3 py-1 w-full text-foreground">
 						<option value="">All keys</option>
 						{#each apiKeys as k}
 							<option value={k.id}>{k.name || k.id}</option>
 						{/each}
 					</select>
-				</div>
-				<div class="flex flex-col gap-1.5">
-					<Label class="text-caption-mono text-muted-foreground">Provider</Label>
-					<select bind:value={filterProvider} class="h-9 text-sm rounded-sm border border-input bg-transparent px-3 py-1 w-full text-foreground">
+					</div>
+ <div class="space-y-1.5">
+ <Label class="text-caption-mono text-muted-foreground uppercase font-semibold">Provider</Label>
+ <select bind:value={filterProvider} onchange={() => void load()} class="h-9 font-mono text-body-sm rounded-sm border border-input bg-transparent px-3 py-1 w-full text-foreground">
 						<option value="">All providers</option>
 						{#each providers as p}
 							<option value={p.id}>{p.display_name || p.id}</option>
 						{/each}
 					</select>
 				</div>
-				<div class="flex flex-col gap-1.5">
-					<Label class="text-caption-mono text-muted-foreground">Model</Label>
-					<Input bind:value={filterModel} placeholder="e.g. cx/gpt-5.4" class="h-9 text-sm w-full" />
-				</div>
-				<div class="flex flex-col gap-1.5">
-					<Label class="text-caption-mono text-muted-foreground">Modality</Label>
-					<select bind:value={filterModality} class="h-9 text-sm rounded-sm border border-input bg-transparent px-3 py-1 w-full text-foreground">
+ <div class="space-y-1.5">
+ <Label class="text-caption-mono text-muted-foreground uppercase font-semibold">Model</Label>
+ <Input bind:value={filterModel} onchange={() => void load()} placeholder="e.g. cx/gpt-5.4" class="h-9 font-mono text-body-sm w-full" />
+			</div>
+ <div class="space-y-1.5">
+ <Label class="text-caption-mono text-muted-foreground uppercase font-semibold">Modality</Label>
+ <select bind:value={filterModality} onchange={() => void load()} class="h-9 font-mono text-body-sm rounded-sm border border-input bg-transparent px-3 py-1 w-full text-foreground">
 						<option value="">All</option>
 						<option value="chat">chat</option>
 						<option value="messages">messages</option>
@@ -340,18 +335,11 @@ return `${lbl}: ${v.toLocaleString()}`;
 						<option value="stt">stt</option>
 					</select>
 				</div>
-				<div class="flex flex-col gap-1.5">
-					<Label class="text-caption-mono text-muted-foreground">Status</Label>
-					<Input bind:value={filterStatus} type="number" placeholder="e.g. 200" class="h-9 text-sm w-full" />
+ <div class="space-y-1.5">
+ <Label class="text-caption-mono text-muted-foreground uppercase font-semibold">Status</Label>
+ <Input bind:value={filterStatus} onchange={() => void load()} type="number" placeholder="e.g. 200" class="h-9 font-mono text-body-sm w-full" />
 				</div>
-				<div class="flex gap-2 ml-auto">
-					<Button variant="outline" size="sm" class="text-body-sm cursor-pointer" onclick={() => void load()}>
-						<FilterIcon class="w-4 h-4 mr-1" />
-						Apply
-					</Button>
-					<Button variant="ghost" size="sm" class="text-body-sm cursor-pointer" onclick={resetFilters}>Reset</Button>
 				</div>
-			</div>
 		</CardContent>
 	</Card>
 
