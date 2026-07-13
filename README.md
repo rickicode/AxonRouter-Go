@@ -1,37 +1,81 @@
 # AxonRouter-Go
 
-Universal API proxy for coding agents (Claude Code, Codex CLI, Cursor, Kiro, dll). Single Go binary, single port, embedded Svelte dashboard, SQLite storage, zero external dependencies.
+<p align="center">
+  <a href="https://github.com/rickicode/AxonRouter-Go/releases/latest">
+    <img src="https://img.shields.io/github/v/release/rickicode/AxonRouter-Go?style=flat-square&color=ec4899" alt="Latest Release">
+  </a>
+  <a href="https://github.com/rickicode/AxonRouter-Go/actions/workflows/release.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/rickicode/AxonRouter-Go/release.yml?style=flat-square&label=release%20build" alt="Release Build">
+  </a>
+  <img src="https://img.shields.io/badge/Go-1.23%2B-blue?style=flat-square" alt="Go 1.23+">
+  <img src="https://img.shields.io/badge/Svelte-5%2B-ff3e00?style=flat-square" alt="Svelte 5+">
+  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License">
+</p>
 
-## Features
+<p align="center">
+  <strong>Universal API proxy for coding agents.</strong><br>
+  Claude Code · Codex CLI · Cursor · Kiro · and more.
+</p>
 
-- **Universal Proxy** — Translate antara OpenAI, Claude, Gemini, Codex, Antigravity, Kiro formats
-- **11 Translation Pairs** — Hub-and-spoke via OpenAI format + direct translation untuk known pairs
-- **Connection Management** — Manage 100-1000+ API keys per provider
-- **Combo Routing** — Smart fallback routing dengan circuit breaker (3 failures → OPEN → 60s → HALF_OPEN → 2 successes → CLOSED)
-- **O(1) Routing** — Eligibility snapshot, <1ms regardless of connection count
-- **OAuth Support** — Auto-refresh untuk Codex, Antigravity, Kiro
-- **Rate Limiting** — Per-key rate limiting + rate limit header parsing (OpenAI & Claude style)
-- **Error Detection** — Auto-detect rate_limit, quota_exhausted, balance_empty, auth_failed dari response
-- **Dashboard** — Web-based management UI (Svelte + Tailwind)
-- **Zero Dependencies** — Single binary dengan embedded SQLite dan frontend
+AxonRouter-Go is a single Go binary with an embedded Svelte dashboard and SQLite storage. It translates between OpenAI, Claude, Gemini, Codex, Antigravity, Kiro, and other formats so your coding agents can talk to any provider through one endpoint — with smart combo routing, circuit breakers, and per-key rate limiting.
 
-## Tech Stack
+> **No external dependencies.** One port. Zero config after first run.
+
+---
+
+## ✨ Features
+
+- **Universal Proxy** — Translate between OpenAI, Claude, Gemini, Codex, Antigravity, Kiro formats.
+- **18 Translation Pairs** — Hub-and-spoke via OpenAI plus direct translation for known pairs.
+- **Connection Management** — Manage hundreds to thousands of API keys per provider.
+- **Combo Routing** — Smart fallback routing with circuit breaker (`3 failures → OPEN → 60s → HALF_OPEN → 2 successes → CLOSED`).
+- **O(1) Routing** — Pre-computed eligibility snapshot, routing stays <1 ms regardless of connection count.
+- **OAuth Support** — Auto-refresh for Codex, Antigravity, and Kiro.
+- **Rate Limiting** — Per-key rate limiting plus rate-limit header parsing (OpenAI & Claude style).
+- **Error Detection** — Auto-detect `rate_limit`, `quota_exhausted`, `balance_empty`, `auth_failed` from provider responses.
+- **Dashboard** — Web-based management UI (Svelte + Tailwind CSS v4 + shadcn-svelte).
+- **Single Binary** — Embedded SQLite and frontend via `go:embed`.
+
+---
+
+## 🚀 Latest Release Notes
+
+<!-- LATEST_CHANGELOG_START -->
+### What's New in v0.3.1
+
+### Added
+- Single-source versioning system using `internal/version/VERSION`.
+- Build-time version embedding via `//go:embed`.
+- Version exposed in startup banner and `/api/admin/health` response.
+- Dashboard sidebar now displays the running version and links to this changelog.
+- Makefile targets for automated version bump and release (`make release v=X.Y.Z`).
+- GitHub Actions release workflow reads version from `internal/version/VERSION`.
+- CHANGELOG management rules added to `AGENTS.md`.
+<!-- LATEST_CHANGELOG_END -->
+
+See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
+
+---
+
+## 🛠️ Tech Stack
 
 | Component | Technology |
-|-----------|-----------|
-| Backend | Go + Gin + SQLite (WAL mode) |
-| Frontend | SvelteKit + Vite + Tailwind CSS |
+|-----------|------------|
+| Backend | Go 1.23 + Gin + SQLite (WAL mode) |
+| Frontend | Svelte 5 + Vite + Tailwind CSS v4 + shadcn-svelte |
 | Database | SQLite (embedded, zero config) |
 | Build | Static frontend embedded via `go:embed` |
 
-## Quick Start
+---
+
+## 📦 Quick Start
 
 ### Prerequisites
 
-- Go 1.22+
-- Node.js 18+ (untuk frontend build)
+- Go 1.23+
+- Node.js 18+ (for frontend build)
 
-### Installation
+### Installation from Source
 
 ```bash
 git clone https://github.com/rickicode/AxonRouter-Go.git
@@ -47,39 +91,51 @@ make build
 ./build/axonrouter
 ```
 
-Server starts di port **3777**. Dashboard: http://localhost:3777
+The server starts on port **3777**. Dashboard: http://localhost:3777
 
-### Install via installer (no build needed)
-
-The `installer.sh` script auto-detects your OS/architecture, downloads the
-matching binary from the latest GitHub Release, and installs it onto your PATH:
+### Install via `installer.sh` (Recommended)
 
 ```bash
-# One-liner (downloads + runs the installer)
+# One-liner
 curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/main/installer.sh | bash
 
-# Or clone first and run locally
-./installer.sh                 # latest release, auto OS/arch detection
-./installer.sh --version v1.2.3 # pin a specific tag
-./installer.sh --to /usr/local/bin  # change install directory
+# Or clone and run locally
+./installer.sh                           # latest release, auto OS/arch detection
+./installer.sh --version v1.2.3        # pin a specific tag
+./installer.sh --to /usr/local/bin     # change install directory
 ```
 
-Supported targets: **windows/amd64**, **linux/amd64**, **darwin/amd64**,
-**darwin/arm64**. The script fetches the asset named
-`axonrouter-<os>-<arch>[.exe]` that the release workflow publishes.
+Supported targets: `windows/amd64`, `linux/amd64`, `darwin/amd64`, `darwin/arm64`.
 
-> Requires `curl` on the host. On Windows, run it from Git Bash / WSL.
+> Requires `curl`. On Windows, run from Git Bash / WSL.
 
-### Releases (GitHub Actions)
+---
 
-Pushing a tag matching `v*` (e.g. `v1.2.3`) triggers
-[`.github/workflows/release.yml`](.github/workflows/release.yml), which builds
-a cross-platform matrix (Windows / Linux / macOS) and attaches the binaries to
-the GitHub Release. Create the release from the **Releases** page (Draft a new
-release, tag it `vX.Y.Z`) and the workflow uploads the assets automatically —
-`installer.sh` then pulls the right one for each user.
+## 🔄 Releases (GitHub Actions)
 
-### Development
+Pushing a tag matching `v*` (e.g. `v1.2.3`) triggers [`.github/workflows/release.yml`](.github/workflows/release.yml). The workflow:
+
+1. Validates that the tag matches `internal/version/VERSION`.
+2. Builds the cross-platform matrix (Windows / Linux / macOS) using Makefile targets.
+3. Extracts release notes from `CHANGELOG.md`.
+4. Publishes the GitHub Release with notes + binaries.
+
+`installer.sh` then pulls the matching asset for each user's OS/arch automatically.
+
+### Versioning & Changelog
+
+This project uses a single-source versioning system. To release:
+
+```bash
+# Update VERSION, sync files, move CHANGELOG Unreleased → release section, tag, and push
+make release v=1.2.3
+```
+
+Every release must update `CHANGELOG.md` under `## [Unreleased]`. See `AGENTS.md` for details.
+
+---
+
+## 🧑‍💻 Development
 
 ```bash
 # Frontend hot reload (port 5173)
@@ -91,11 +147,16 @@ make frontend
 # Build backend only
 make backend
 
-# Full build
+# Full production build
 make build
+
+# Run a dev server (port 3788, isolated data dir)
+make run-dev
 ```
 
-## API Endpoints
+---
+
+## 🔌 API Endpoints
 
 ### Proxy Endpoints
 
@@ -111,30 +172,25 @@ make build
 | `POST /v1/video/generations` | OpenAI | Video generation |
 | `POST /v1/unified` | Multi | Unified multi-modality gateway |
 
-> **Note:** Anthropic clients that append an extra `/v1` segment to the base URL
-> are handled via the `/v1/v1/messages` alias. The Codex Responses API is reached
-> through the OpenAI Chat `/v1/chat/completions` path (translated to
-> `openai-responses` format internally) — there is no standalone `/v1/responses`
-> route.
+> **Note:** Anthropic clients that append an extra `/v1` segment are handled via the `/v1/v1/messages` alias. The Codex Responses API is reached through `/v1/chat/completions` (translated to `openai-responses` internally) — there is no standalone `/v1/responses` route.
 
 ### Admin API
 
-Authentication: JWT session issued by `POST /api/admin/login`. All `/api/admin/*`
-routes (except `login` and `health`) require the session cookie.
+Authentication: JWT session issued by `POST /api/admin/login`. All `/api/admin/*` routes except `login` and `health` require the session cookie.
 
 **Auth / Health**
 
 | Endpoint | Description |
 |----------|-------------|
 | `POST /api/admin/login` | Issue a session JWT |
-| `GET /api/admin/health` | Health check (no auth) |
+| `GET /api/admin/health` | Health check (no auth) — returns `version` |
 | `GET /api/admin/metrics` | Prometheus-style metrics |
 
 **Providers**
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/admin/providers` | List providers dengan connection counts |
+| `GET /api/admin/providers` | List providers with connection counts |
 | `GET /api/admin/providers/:id` | Provider detail + status breakdown |
 | `POST /api/admin/providers` | Add provider |
 | `PATCH /api/admin/providers/:id` | Update provider |
@@ -246,7 +302,9 @@ routes (except `login` and `health`) require the session cookie.
 | `POST /api/admin/proxy-pools/deno-deploy` | Deploy to Deno |
 | `POST /api/admin/proxy-pools/cloudflare-deploy` | Deploy to Cloudflare |
 
-## Providers
+---
+
+## 🌐 Providers
 
 | Provider | Prefix | Format | Auth |
 |----------|--------|--------|------|
@@ -272,7 +330,9 @@ routes (except `login` and `health`) require the session cookie.
 | Custom OpenAI | `<name>/` | openai | API key |
 | Custom Claude | `<name>/` | claude | API key |
 
-## Translation Pairs
+---
+
+## 🔄 Translation Pairs
 
 ```
 openai ↔ claude
@@ -283,103 +343,102 @@ openai ↔ kiro
 openai ↔ openai_responses (passthrough)
 claude ↔ antigravity
 claude ↔ gemini
-codex  ↔ claude
-codex  ↔ gemini
+codex ↔ claude
+codex ↔ gemini
 antigravity ↔ gemini
 gemini ↔ claude
 openai ↔ openai (passthrough)
 ```
 
-Total: **18 registered pairs** (hub-and-spoke via OpenAI + direct translation for known pairs + passthrough)
+Total: **18 registered pairs** (hub-and-spoke via OpenAI + direct translation for known pairs + passthrough).
 
-## Architecture
+---
+
+## 🏗️ Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│              SINGLE BINARY (port 3777)                    │
-│                                                          │
-│  ┌────────────────────────────────────────────────────┐ │
-│  │                    Gin Router                      │ │
-│  │  /v1/* routes              /api/admin/* routes     │ │
-│  │  ┌──────────────────┐     ┌──────────────────────┐ │ │
-│  │  │ Proxy Handlers   │     │ Admin Handlers       │ │ │
-│  │  │ - chat           │     │ - providers CRUD     │ │ │
-│  │  │ - messages       │     │ - connections CRUD   │ │ │
-│  │  │ - responses      │     │ - combos CRUD        │ │ │
-│  │  │ - models         │     │ - logs (paginated)   │ │ │
-│  │  │ - embeddings     │     │ - settings           │ │ │
-│  │  │ - audio/tts/stt  │     │ - dashboard stats    │ │ │
-│  │  │ - images/video   │     │                      │ │ │
-│  │  │ - unified        │     │ Dashboard UI (Svelte)│ │ │
-│  │  └──────────────────┘     │ via go:embed         │ │ │
-│  │                           └──────────────────────┘ │ │
-│  └────────────────────────────────────────────────────┘ │
-│                                                          │
-│  ┌────────────────────────────────────────────────────┐ │
-│  │              Shared Internal Packages               │ │
-│  │  translator │ auth │ executor │ connstate │ combo   │ │
-│  │  usage │ config │ db                               │ │
-│  └────────────────────────────────────────────────────┘ │
-│                                                          │
-│  ┌────────────────────────────────────────────────────┐ │
-│  │              Background Goroutines                  │ │
-│  │  - Quota scheduler (30 min, configurable)          │ │
-│  │  - Usage log flush (every 5 sec)                   │ │
-│  │  - Circuit breaker cleanup (every 5 min)           │ │
-│  └────────────────────────────────────────────────────┘ │
-│                                                          │
-│  ┌────────────────────────────────────────────────────┐ │
-│  │              SQLite (WAL mode)                      │ │
-│  └────────────────────────────────────────────────────┘ │
+│                    SINGLE BINARY (port 3777)            │
+│                                                           │
+│  ┌────────────────────────────────────────────────────┐   │
+│  │                 Gin Router                         │   │
+│  │        /v1/* routes  /api/admin/* routes           │   │
+│  │  ┌──────────────────┐  ┌──────────────────────┐      │   │
+│  │  │  Proxy Handlers │  │  Admin Handlers     │      │   │
+│  │  │  - chat           │  │  - providers CRUD   │      │   │
+│  │  │  - messages       │  │  - connections CRUD │      │   │
+│  │  │  - responses      │  │  - combos CRUD      │      │   │
+│  │  │  - models         │  │  - logs (paginated) │      │   │
+│  │  │  - embeddings     │  │  - settings          │      │   │
+│  │  │  - audio/tts/stt  │  │                      │      │   │
+│  │  │  - images/video   │  │  Dashboard UI        │      │   │
+│  │  │  - unified        │  │  (Svelte via go:embed)│      │   │
+│  │  └──────────────────┘  └──────────────────────┘      │   │
+│  └────────────────────────────────────────────────────┘   │
+│                                                           │
+│  ┌────────────────────────────────────────────────────┐   │
+│  │            Shared Internal Packages                  │   │
+│  │   translator  auth  executor  connstate  combo     │   │
+│  │   usage       config  db                               │   │
+│  └────────────────────────────────────────────────────┘   │
+│                                                           │
+│  ┌────────────────────────────────────────────────────┐   │
+│  │             Background Goroutines                      │   │
+│  │   - Quota scheduler (30 min, configurable)           │   │
+│  │   - Usage log flush (every 5 sec)                    │   │
+│  │   - Circuit breaker cleanup (every 5 min)            │   │
+│  └────────────────────────────────────────────────────┘   │
+│                                                           │
+│  ┌────────────────────────────────────────────────────┐   │
+│  │              SQLite (WAL mode)                         │   │
+│  └────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────┘
 ```
 
-## Project Structure
+---
+
+## 📁 Project Structure
 
 ```
 AxonRouter-Go/
 ├── cmd/
-│   ├── server/              ← Server entry point
-│   └── cli/                 ← CLI entry point
+│   ├── server/          ← Server entry point
+│   └── cli/             ← CLI entry point
 ├── internal/
 │   ├── api/
 │   │   ├── handlers/
-│   │   │   ├── v1/          ← Proxy handlers (chat, messages, responses, models)
-│   │   │   └── admin/       ← Admin handlers (providers, connections, combos, logs)
-│   │   ├── middleware/       ← Auth, rate limiting, CORS, logging
-│   │   └── router.go        ← Route registration
-│   ├── translator/          ← Format translation (11 pairs)
-│   │   ├── openai/          ← OpenAI → provider translators
-│   │   ├── claude/          ← Claude → OpenAI translator
-│   │   ├── gemini/          ← Gemini → OpenAI translator
-│   │   ├── codex/           ← Codex → OpenAI translator
-│   │   ├── antigravity/     ← Antigravity → OpenAI translator
-│   │   ├── kiro/            ← Kiro → OpenAI translator
-│   │   ├── registry/        ← Translator registry
-│   │   └── types/           ← Format types
-│   ├── auth/                ← OAuth flows (Codex, Antigravity, Kiro)
-│   ├── executor/            ← Provider executors (OpenAI, Claude, Gemini, etc.)
-│   ├── connstate/           ← Connection state, circuit breaker, eligibility
-│   ├── combo/               ← Combo routing, smart combos
-│   ├── usage/               ← Usage tracking
-│   ├── db/                  ← SQLite database, migrations
-│   ├── background/          ← Background goroutines
-│   └── web/                 ← Embedded frontend
-├── web/                     ← Frontend source (SvelteKit)
+│   │   │   ├── v1/      ← Proxy handlers (chat, messages, responses, models)
+│   │   │   └── admin/   ← Admin handlers (providers, connections, combos, logs)
+│   │   ├── middleware/  ← Auth, rate limiting, CORS, logging
+│   │   └── router.go    ← Route registration
+│   ├── version/         ← Single-source version (go:embed VERSION)
+│   ├── translator/      ← Format translation (18 pairs)
+│   ├── auth/            ← OAuth flows
+│   ├── executor/        ← Provider executors
+│   ├── connstate/       ← Connection state, circuit breaker, eligibility
+│   ├── combo/           ← Combo routing, smart combos
+│   ├── usage/           ← Usage tracking
+│   ├── db/              ← SQLite database, migrations
+│   ├── background/      ← Background goroutines
+│   └── web/             ← Embedded frontend
+├── web/                 ← Frontend source (Svelte)
 │   ├── src/
-│   │   ├── routes/          ← SvelteKit pages
-│   │   └── lib/             ← Shared components
-│   ├── build/               ← Static output (embedded)
+│   │   ├── routes/      ← SvelteKit pages
+│   │   └── lib/         ← Shared components
+│   ├── build/           ← Static output (embedded)
 │   └── package.json
 ├── docs/
-│ ├── TDD.md ← Technical Design Document
-│ └── DESIGN.md ← Design System
+│   ├── TDD.md           ← Technical Design Document
+│   └── DESIGN.md        ← Design System
+├── CHANGELOG.md         ← Release notes
 ├── Makefile
 ├── go.mod
 └── README.md
 ```
 
-## Connection State & Error Detection
+---
+
+## ⚠️ Connection State & Error Detection
 
 ### Connection Status
 
@@ -405,18 +464,20 @@ AxonRouter-Go/
 
 ```go
 // OpenAI-style
-"x-ratelimit-remaining-requests"  → RPM remaining
-"x-ratelimit-remaining-tokens"    → TPM remaining
-"retry-after"                     → cooldown seconds
+"x-ratelimit-remaining-requests" → RPM remaining
+"x-ratelimit-remaining-tokens"   → TPM remaining
+"retry-after"                      → cooldown seconds
 
 // Claude-style
 "anthropic-ratelimit-requests-remaining" → RPM remaining
 "anthropic-ratelimit-tokens-remaining"   → TPM remaining
 ```
 
-## Configuration
+---
 
-Configuration stored di SQLite `settings` table:
+## ⚙️ Configuration
+
+Configuration stored in the SQLite `settings` table:
 
 | Key | Default | Description |
 |-----|---------|-------------|
@@ -424,7 +485,9 @@ Configuration stored di SQLite `settings` table:
 | `usage_flush_interval` | 5s | Usage log flush interval |
 | `circuit_breaker_cleanup_interval` | 5m | Circuit breaker cleanup |
 
-## Building
+---
+
+## 🔨 Building
 
 ```bash
 # Full build (frontend + backend)
@@ -440,23 +503,29 @@ make backend
 make clean
 ```
 
-## Makefile Targets
+---
+
+## 🛠️ Makefile Targets
 
 ```bash
-make build          # Build frontend + backend (production binary)
-make frontend       # Build frontend only
-make backend        # Build backend only
-make build-dev      # Build a separate axonrouter-dev binary (never clobbers live)
-make run            # Build and run on port 3777
-make run-dev        # Build + run dev server on port 3788 (isolated data dir)
-make dev            # Start frontend dev server (hot reload, port 5173)
-make install        # Install frontend dependencies
-make clean          # Clean build artifacts (incl. DB/session files)
-make kill-port      # Kill process listening on the live port
-make test           # Run tests
-make lint           # Run linter
+make build        # Build frontend + backend (production binary)
+make frontend     # Build frontend only
+make backend      # Build backend only
+make build-dev    # Build a separate axonrouter-dev binary (never clobbers live)
+make run          # Build and run on port 3777
+make run-dev      # Build + run dev server on port 3788 (isolated data dir)
+make dev          # Start frontend dev server (hot reload, port 5173)
+make install      # Install frontend dependencies
+make clean        # Clean build artifacts (incl. DB/session files)
+make version      # Show current version
+make set-version  # Bump version and sync files (usage: make set-version v=X.Y.Z)
+make release      # Bump + commit + tag + push (usage: make release v=X.Y.Z)
+make test         # Run tests
+make lint         # Run linter
 ```
 
-## License
+---
+
+## 📜 License
 
 MIT License

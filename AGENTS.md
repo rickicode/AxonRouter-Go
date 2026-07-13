@@ -294,7 +294,14 @@ AxonRouter-Go uses a single-file versioning system so that every release is cons
   3. Extracts the changelog section for the release version.
   4. Publishes the release notes and binaries to GitHub Releases.
 
+### 5. README.md Changelog Sync
+- `README.md` contains a `<!-- LATEST_CHANGELOG_START -->` / `<!-- LATEST_CHANGELOG_END -->` marker block.
+- `scripts/update-readme.js` injects the latest release section from `CHANGELOG.md` into that block.
+- `make release` calls `update-readme.js` automatically before committing.
+- CI verifies README is in sync by running `node scripts/update-readme.js --check`; a stale README fails the build.
+
 ### 5. Where Version Is Exposed
+### 6. Where Version Is Exposed
 - **Startup banner**: printed by `cmd/server/main.go` using `internal/version`.
 - **Health endpoint**: `GET /api/admin/health` returns `{ "status": "...", "version": "0.3.1" }`.
 - **Dashboard sidebar**: reads `version` from the health response and links to the GitHub `CHANGELOG.md`.

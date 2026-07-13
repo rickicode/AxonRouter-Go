@@ -1,9 +1,9 @@
 name: Release
 
-# Build cross-platform binaries and attach them to a GitHub Release.
-# Trigger: push a tag matching v* (e.g. v1.2.3). The release is created or
-# updated automatically, with notes extracted from CHANGELOG.md. The
-# `installer.sh` script downloads the asset that matches the runner's OS/arch.
+# Build cross-platform binaries and publish a GitHub Release with changelog notes.
+# Trigger: push a tag matching v* (e.g. v1.2.3).
+# The Makefile and scripts/ folder drive the version bump locally; this workflow
+# validates, builds, and attaches assets to the release.
 
 on:
   push:
@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    name: 🖥️ Build ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -29,56 +29,63 @@ jobs:
             goarch: amd64
           - goos: darwin
             goarch: arm64
+
     steps:
-      - name: Checkout
+      - name: 📥 Checkout
         uses: actions/checkout@v7.0.0
 
-      - name: Validate version matches tag
+      - name: 🔖 Validate version matches tag
         run: |
           VERSION="$(cat internal/version/VERSION)"
           TAG="${GITHUB_REF_NAME}"
           if [ "v${VERSION}" != "${TAG}" ]; then
-            echo "Tag ${TAG} does not match VERSION file (${VERSION})."
+            echo "❌ Tag ${TAG} does not match VERSION file (${VERSION})."
             exit 1
           fi
+          echo "✅ Tag ${TAG} matches VERSION file."
 
-      - name: Set up Go
+      - name: ⚙️ Set up Go
         uses: actions/setup-go@v6.5.0
         with:
           go-version: "1.23"
+          cache: true
 
-      - name: Set up Node.js
+      - name: ⚙️ Set up Node.js
         uses: actions/setup-node@v6.4.0
         with:
           node-version: "18"
           cache: "npm"
           cache-dependency-path: web/package-lock.json
 
-      - name: Install frontend dependencies
+      - name: 🧪 Verify README changelog sync
+        run: node scripts/update-readme.js --check
+
+      - name: 📦 Install frontend dependencies
         working-directory: web
         run: npm install
 
-      - name: Build frontend
+      - name: 🎨 Build frontend
         run: make build-frontend
 
-      - name: Build backend
+      - name: 🔨 Build backend binary
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         run: make release-binary
 
-      - name: Compute binary name
+      - name: 🏷️ Compute binary name
         id: bin
         run: |
           BIN="axonrouter-${{ matrix.goos }}-${{ matrix.goarch }}"
           if [ "${{ matrix.goos }}" = "windows" ]; then BIN="${BIN}.exe"; fi
           echo "name=${BIN}" >> "$GITHUB_OUTPUT"
+          echo "binary=${BIN}" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Extract release notes
+      - name: 📝 Extract release notes
         run: node scripts/extract-changelog.js "$(cat internal/version/VERSION)" > RELEASE_NOTES.md
 
-      - name: Upload release asset
+      - name: 🚀 Publish GitHub Release
         uses: softprops/action-gh-release@v3.0.1
         with:
           files: ${{ steps.bin.outputs.name }}

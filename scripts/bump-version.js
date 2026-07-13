@@ -8,6 +8,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 const version = process.argv[2];
 if (!version) {
@@ -69,3 +70,12 @@ const replacement = `## [Unreleased]\n\n## [${version}] - ${date}\n${unreleasedB
 changelog = changelog.replace(match[0], replacement);
 fs.writeFileSync(changelogPath, changelog);
 console.log(`Updated ${path.relative(root, changelogPath)} -> ${version}`);
+
+// Sync the latest changelog section into README.md.
+const updateReadme = spawnSync('node', [path.join(root, 'scripts/update-readme.js')], {
+	stdio: 'inherit',
+	shell: false,
+});
+if (updateReadme.status !== 0) {
+	process.exit(updateReadme.status ?? 1);
+}
