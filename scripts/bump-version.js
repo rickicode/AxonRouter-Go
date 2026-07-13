@@ -44,7 +44,7 @@ let changelog = fs.existsSync(changelogPath)
 	: '# Changelog\n\n## [Unreleased]\n';
 
 if (!changelog.includes('## [Unreleased]')) {
-	changelog = '# Changelog\n\n## [Unreleased]\n\n' + changelog.replace(/^# Changelog\n?/, '');
+  changelog = '# Changelog\n\n## [Unreleased]\n\n' + changelog.replace(/^# Changelog\n*/, '');
 }
 
 const unreleasedRegex = /^## \[Unreleased\]\n([\s\S]*?)(?=^## \[|$(?![\s\S]))/m;

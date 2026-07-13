@@ -73,29 +73,30 @@ if (!changelog.includes('## [Unreleased]')) {
   process.exit(1);
 }
 
-if (changelog.includes(`## [${version}]`)) {
-  console.log(`CHANGELOG.md already contains ## [${version}]; skipping section move.`);
-} else {
-  const unreleasedRegex = /^## \[Unreleased\]\n([\s\S]*?)(?=^## \[|$(?![\s\S]))/m;
-  const match = changelog.match(unreleasedRegex);
-  if (!match) {
-    console.error('CHANGELOG.md is missing a valid ## [Unreleased] section.');
-    process.exit(1);
+  if (changelog.includes(`## [${version}]`)) {
+    console.log(`CHANGELOG.md already contains ## [${version}]; skipping section move.`);
+  } else {
+    const unreleasedRegex = /^## \[Unreleased\]\n([\s\S]*?)(?=^## \[|$(?![\s\S]))/m;
+    const match = changelog.match(unreleasedRegex);
+    if (!match) {
+      console.error('CHANGELOG.md is missing a valid ## [Unreleased] section.');
+      process.exit(1);
+    }
+
+    const unreleasedBody = match[1];
+    if (!unreleasedBody.trim()) {
+      console.error('CHANGELOG.md ## [Unreleased] is empty. Add release notes before creating a release tag.');
+      process.exit(1);
+    }
+
+    const date = new Date().toISOString().split('T')[0];
+    const replacement = `## [Unreleased]\n\n## [${version}] - ${date}\n${unreleasedBody}`;
+    changelog = changelog.replace(match[0], replacement);
+    fs.writeFileSync(changelogPath, changelog);
+    console.log(`Updated ${path.relative(root, changelogPath)} -> moved ## [Unreleased] to ## [${version}]`);
   }
 
-  const unreleasedBody = match[1];
-  if (!unreleasedBody.trim()) {
-    console.error('CHANGELOG.md ## [Unreleased] is empty. Add release notes before creating a release tag.');
-    process.exit(1);
-  }
-
-  const date = new Date().toISOString().split('T')[0];
-  const replacement = `## [Unreleased]\n\n## [${version}] - ${date}\n${unreleasedBody}`;
-  changelog = changelog.replace(match[0], replacement);
-  fs.writeFileSync(changelogPath, changelog);
-  console.log(`Updated ${path.relative(root, changelogPath)} -> moved ## [Unreleased] to ## [${version}]`);
-
-  // 4. Keep README.md in sync with the new version section.
+  // 4. Keep README.md in sync with the latest version section.
   const updateReadme = spawnSync('node', [path.join(root, 'scripts/update-readme.js')], {
     stdio: 'inherit',
     shell: false,
@@ -103,4 +104,3 @@ if (changelog.includes(`## [${version}]`)) {
   if (updateReadme.status !== 0) {
     process.exit(updateReadme.status ?? 1);
   }
-}
