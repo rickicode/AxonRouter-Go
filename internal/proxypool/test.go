@@ -114,3 +114,11 @@ func TestRelay(relayURL, relayAuth string, timeout time.Duration) TestResult {
 	ip, country, city, org := fetchIPInfo(body)
 	return TestResult{OK: true, StatusCode: resp.StatusCode, IP: ip, Country: country, City: city, Org: org}
 }
+
+// TestProxy dispatches to the appropriate health check for the proxy type.
+func TestProxy(proxyURL, typ, relayAuth string) TestResult {
+	if typ == TypeHTTP || typ == "" {
+		return TestHTTPProxy(proxyURL, 8*time.Second)
+	}
+	return TestRelay(proxyURL, relayAuth, 30*time.Second)
+}
