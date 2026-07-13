@@ -101,7 +101,7 @@ jobs:
           cache: true
 
       - name: 📥 Download frontend build artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: frontend-build
           path: web/build
@@ -161,7 +161,7 @@ jobs:
           echo "- Release notes source: $(grep -oP '(?<=Release notes source: ).*' RELEASE_NOTES.md || echo 'unknown')" >> "$GITHUB_STEP_SUMMARY"
 
       - name: 📥 Download all binary artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           path: build
           pattern: axonrouter-*
