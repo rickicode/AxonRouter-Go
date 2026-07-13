@@ -32,7 +32,7 @@ type Connection struct {
 	Status               string         `json:"status"`
 	CooldownUntil        sql.NullInt64  `json:"cooldown_until,omitempty"`
 	LastError            sql.NullString `json:"last_error,omitempty"`
-	LastErrorCode        sql.NullInt64  `json:"last_error_code,omitempty"`
+	LastErrorCode        sql.NullString `json:"last_error_code,omitempty"`
 	LastSuccessAt        sql.NullInt64  `json:"last_success_at,omitempty"`
 	LastFailureAt        sql.NullInt64  `json:"last_failure_at,omitempty"`
 	FailureCount         int            `json:"failure_count"`

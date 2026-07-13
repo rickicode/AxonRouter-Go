@@ -26,12 +26,12 @@ type modelTester interface {
 
 // ConnectionHandler handles connection CRUD operations.
 type ConnectionHandler struct {
-	db        *sql.DB
-	registry  *executor.Registry
-	store     *connstate.Store
-	elig      *connstate.EligibilityManager
+	db         *sql.DB
+	registry   *executor.Registry
+	store      *connstate.Store
+	elig       *connstate.EligibilityManager
 	exhaustion *quota.ExhaustionCache
-	authMgr   *auth.Manager
+	authMgr    *auth.Manager
 }
 
 // NewConnectionHandler creates a new connection handler.
@@ -73,7 +73,7 @@ func (h *ConnectionHandler) List(c *gin.Context) {
 	// Fetch page
 	offset := (page - 1) * perPage
 	queryArgs := append(args, perPage, offset)
- rows, err := h.db.Query(`
+	rows, err := h.db.Query(`
  SELECT id, provider_type_id, name, auth_type, status,
  COALESCE(priority, 0), cooldown_until, last_error, last_error_code,
  last_success_at, last_failure_at, failure_count,
@@ -84,29 +84,29 @@ func (h *ConnectionHandler) List(c *gin.Context) {
  ORDER BY priority DESC, created_at DESC
  LIMIT ? OFFSET ?
  `, queryArgs...)
- if err != nil {
- c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
- return
- }
- defer rows.Close()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
 
- var conns []gin.H
- for rows.Next() {
- conn := db.Connection{}
- var psd string
- rows.Scan(&conn.ID, &conn.ProviderTypeID, &conn.Name, &conn.AuthType,
- &conn.Status, &conn.Priority, &conn.CooldownUntil, &conn.LastError, &conn.LastErrorCode,
- &conn.LastSuccessAt, &conn.LastFailureAt, &conn.FailureCount,
- &conn.Capabilities, &conn.IsActive, &conn.CreatedAt, &conn.UpdatedAt,
- &conn.OAuthExpiresAt, &psd)
- entry := connToJSON(conn)
- if psd != "" {
- entry["provider_specific_data"] = psd
- } else {
- entry["provider_specific_data"] = nil
- }
- conns = append(conns, entry)
- }
+	var conns []gin.H
+	for rows.Next() {
+		conn := db.Connection{}
+		var psd string
+		rows.Scan(&conn.ID, &conn.ProviderTypeID, &conn.Name, &conn.AuthType,
+			&conn.Status, &conn.Priority, &conn.CooldownUntil, &conn.LastError, &conn.LastErrorCode,
+			&conn.LastSuccessAt, &conn.LastFailureAt, &conn.FailureCount,
+			&conn.Capabilities, &conn.IsActive, &conn.CreatedAt, &conn.UpdatedAt,
+			&conn.OAuthExpiresAt, &psd)
+		entry := connToJSON(conn)
+		if psd != "" {
+			entry["provider_specific_data"] = psd
+		} else {
+			entry["provider_specific_data"] = nil
+		}
+		conns = append(conns, entry)
+	}
 
 	totalPages := total / perPage
 	if total%perPage > 0 {
@@ -236,36 +236,36 @@ func (h *ConnectionHandler) Update(c *gin.Context) {
 
 // Delete soft-deletes a connection.
 func (h *ConnectionHandler) Delete(c *gin.Context) {
- id := c.Param("id")
+	id := c.Param("id")
 
- // Block deletion of the default direct oc connection (OpenCode Free).
- var psd string
- h.db.QueryRow("SELECT COALESCE(provider_specific_data, '') FROM connections WHERE id = ?", id).Scan(&psd)
- if strings.Contains(psd, `"direct":"true"`) {
- c.JSON(http.StatusForbidden, gin.H{"error": "Cannot delete the default direct OpenCode Free connection"})
- return
- }
+	// Block deletion of the default direct oc connection (OpenCode Free).
+	var psd string
+	h.db.QueryRow("SELECT COALESCE(provider_specific_data, '') FROM connections WHERE id = ?", id).Scan(&psd)
+	if strings.Contains(psd, `"direct":"true"`) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot delete the default direct OpenCode Free connection"})
+		return
+	}
 
- result, err := h.db.Exec(`UPDATE connections SET is_active = 0, updated_at = ? WHERE id = ?`, time.Now().Unix(), id)
- if err != nil {
- c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
- return
- }
- rows, _ := result.RowsAffected()
- if rows == 0 {
- c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
- return
- }
+	result, err := h.db.Exec(`UPDATE connections SET is_active = 0, updated_at = ? WHERE id = ?`, time.Now().Unix(), id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
+		return
+	}
 
- // Sync in-memory state
- if h.store != nil {
- h.store.UpdateStatus(id, connstate.StatusDisabled)
- if h.elig != nil {
- h.elig.Update(h.store)
- }
- }
+	// Sync in-memory state
+	if h.store != nil {
+		h.store.UpdateStatus(id, connstate.StatusDisabled)
+		if h.elig != nil {
+			h.elig.Update(h.store)
+		}
+	}
 
- c.JSON(http.StatusOK, gin.H{"ok": true})
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 // TestConnection tests a single connection by sending a minimal streaming request.
@@ -327,7 +327,7 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 	})
 	if err != nil {
 		latency := time.Since(start).Milliseconds()
-		det := connstate.DetectError(context.Background(),0, "", err, conn.ProviderTypeID, "", nil)
+		det := connstate.DetectError(context.Background(), 0, "", err, conn.ProviderTypeID, "", nil)
 		h.recordTestFailure(id, det)
 		c.JSON(http.StatusOK, gin.H{
 			"connection_id": id,
@@ -349,7 +349,7 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 	latency := time.Since(start).Milliseconds()
 
 	if firstErr != nil {
-		det := connstate.DetectError(context.Background(),0, "", firstErr, conn.ProviderTypeID, "", nil)
+		det := connstate.DetectError(context.Background(), 0, "", firstErr, conn.ProviderTypeID, "", nil)
 		h.recordTestFailure(id, det)
 		c.JSON(http.StatusOK, gin.H{
 			"connection_id": id,
@@ -573,7 +573,7 @@ func connToJSON(conn db.Connection) gin.H {
 		"priority":         conn.Priority,
 		"cooldown_until":   nullInt64(conn.CooldownUntil),
 		"last_error":       nullStr(conn.LastError),
-		"last_error_code":  nullInt64(conn.LastErrorCode),
+		"last_error_code":  nullStr(conn.LastErrorCode),
 		"last_success_at":  nullInt64(conn.LastSuccessAt),
 		"last_failure_at":  nullInt64(conn.LastFailureAt),
 		"failure_count":    conn.FailureCount,

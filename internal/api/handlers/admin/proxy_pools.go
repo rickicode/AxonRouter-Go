@@ -3,7 +3,7 @@ package admin
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -174,19 +174,25 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON"})
 		return
 	}
+	// Hard limit to keep a single bulk request (and its per-item response
+	// payload) bounded for very large imports.
+	const maxBulkItems = 1000
+	if len(req.Items) > maxBulkItems {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "too many items: maximum " + strconv.Itoa(maxBulkItems) + " per bulk import"})
+		return
+	}
 	active := true
 	if req.IsActive != nil {
 		active = *req.IsActive
-	}
-	prefix := strings.TrimSpace(req.NamePrefix)
-	if prefix == "" {
-		prefix = "bulk"
 	}
 
 	created := 0
 	skipped := 0
 	errors := 0
 	details := []gin.H{}
+	// Tracks names used within this batch so auto-generated random names stay
+	// unique for the proxies being imported together.
+	usedNames := map[string]bool{}
 
 	for i, raw := range req.Items {
 		var item struct {
@@ -226,8 +232,22 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 		}
 
 		if item.Name == "" {
-			item.Name = fmt.Sprintf("%s-%d", prefix, i+1)
+			// Generate a random name that is free both within this batch and in the
+			// database, so repeated bulk imports never reuse an existing name.
+			item.Name = randomProxyName(func(candidate string) bool {
+				if usedNames[candidate] {
+					return true
+				}
+				var cnt int
+				if err := h.db.QueryRow("SELECT COUNT(*) FROM proxy_pools WHERE name = ?", candidate).Scan(&cnt); err == nil && cnt > 0 {
+					return true
+				}
+				return false
+			})
 		}
+		// Record the resolved name so later random names in this batch never
+		// collide with an explicit or already-generated one.
+		usedNames[item.Name] = true
 		if item.Type == "" {
 			item.Type = req.DefaultType
 		}
@@ -411,6 +431,41 @@ func boolQuery(v string) int {
 		return 1
 	}
 	return 0
+}
+
+// randomProxyName returns a short, pleasant, pronounceable pool name (max 7
+// lowercase letters). It is used when a bulk import line has no explicit name.
+// exists reports whether a candidate name is already taken (within the current
+// batch and/or the database); the generator keeps trying until it finds a free
+// one so names stay unique across imports.
+func randomProxyName(exists func(string) bool) string {
+	for attempt := 0; attempt < 50; attempt++ {
+		name := pronounceableName(5 + rand.Intn(3)) // 5..7 characters
+		if !exists(name) {
+			return name
+		}
+	}
+	// Extremely unlikely fallback (all attempts collided): accept a duplicate.
+	return pronounceableName(5)
+}
+
+// pronounceableName builds a consonant-vowel alternating string of the given
+// length, which reads like a short made-up word (e.g. "bizot", "kavup", "milez").
+func pronounceableName(length int) string {
+	consonants := []rune("bcdfghklmnprstvz")
+	vowels := []rune("aeiou")
+	var b strings.Builder
+	b.Grow(length)
+	consonant := true
+	for i := 0; i < length; i++ {
+		if consonant {
+			b.WriteRune(consonants[rand.Intn(len(consonants))])
+		} else {
+			b.WriteRune(vowels[rand.Intn(len(vowels))])
+		}
+		consonant = !consonant
+	}
+	return b.String()
 }
 
 // cleanPoolReferences removes all references to a proxy pool before deletion.

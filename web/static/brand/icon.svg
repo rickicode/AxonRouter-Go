@@ -1,17 +1,24 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <!-- Icon only: rounded app tile + continuous routing loop + active pulse -->
   <defs>
-    <linearGradient id="tk" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#f472b6"/>
+    <linearGradient id="axTile" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ec4899"/>
       <stop offset="100%" stop-color="#db2777"/>
     </linearGradient>
-    <linearGradient id="lp" x1="14" y1="32" x2="50" y2="32" gradientUnits="userSpaceOnUse">
+    <linearGradient id="axLoop" x1="14" y1="32" x2="50" y2="32" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#ffffff"/>
       <stop offset="100%" stop-color="#fce7f3"/>
     </linearGradient>
+    <filter id="axGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
   </defs>
-  <rect x="6" y="6" width="52" height="52" rx="14" fill="url(#tk)"/>
-  <path d="M22 40 C 22 28 32 28 32 32 C 32 36 42 36 42 24 C 42 14 22 16 22 30 C 22 44 42 46 42 40"
-        stroke="url(#lp)" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.95"/>
-  <circle cx="32" cy="32" r="4.2" fill="#ff0080"/>
+
+  <rect x="6" y="6" width="52" height="52" rx="14" fill="url(#axTile)"/>
+
+  <path d="M14 32 C14 18 28 18 32 32 C36 46 50 46 50 32"
+        stroke="url(#axLoop)" stroke-width="5.5" stroke-linecap="round" fill="none" opacity="0.96"/>
+
+  <circle cx="32" cy="32" r="4.6" fill="#ff0080" filter="url(#axGlow)"/>
+  <circle cx="32" cy="32" r="2.4" fill="#ffffff"/>
 </svg>
