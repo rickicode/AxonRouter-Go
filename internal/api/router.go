@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"database/sql"
-	"github.com/rickicode/AxonRouter-Go/internal/config"
 	"io"
 	"io/fs"
 	"log"
@@ -11,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/rickicode/AxonRouter-Go/internal/config"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/adminapi"
@@ -69,6 +70,8 @@ type Config struct {
 func New(cfg Config) *Router {
 	// Initialize executor registry
 	executor.RegisterDefaults()
+	// Register user-added custom providers so they are routable immediately.
+	executor.RegisterCustomProviders(cfg.DB)
 
 	// Initialize core packages
 	store := connstate.NewStore()

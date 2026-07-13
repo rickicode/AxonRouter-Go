@@ -69,13 +69,13 @@ func parseCodexQuotas(rateLimit map[string]any, data map[string]any) []QuotaItem
 
 	// Primary window (session)
 	if pw := getMapField(rateLimit, "primary_window", "primaryWindow"); len(pw) > 0 {
-		qi := buildWindowQuota(pw, codexWindowName(pw, "Session"), "codex")
+		qi := buildWindowQuota(pw, "Session", "codex")
 		quotas = append(quotas, qi)
 	}
 
 	// Secondary window (weekly)
 	if sw := getMapField(rateLimit, "secondary_window", "secondaryWindow"); len(sw) > 0 {
-		qi := buildWindowQuota(sw, codexWindowName(sw, "Weekly"), "codex")
+		qi := buildWindowQuota(sw, "Weekly", "codex")
 		quotas = append(quotas, qi)
 	}
 
@@ -86,10 +86,10 @@ func parseCodexQuotas(rateLimit map[string]any, data map[string]any) []QuotaItem
 	}
 	if len(reviewRL) > 0 {
 		if pw := getMapField(reviewRL, "primary_window", "primaryWindow"); len(pw) > 0 {
-			quotas = append(quotas, buildWindowQuota(pw, codexWindowName(pw, "Code Review"), "codex"))
+			quotas = append(quotas, buildWindowQuota(pw, "Code Review", "codex"))
 		}
 		if sw := getMapField(reviewRL, "secondary_window", "secondaryWindow"); len(sw) > 0 {
-			quotas = append(quotas, buildWindowQuota(sw, codexWindowName(sw, "Code Review Weekly"), "codex"))
+			quotas = append(quotas, buildWindowQuota(sw, "Code Review Weekly", "codex"))
 		}
 	}
 
@@ -97,10 +97,10 @@ func parseCodexQuotas(rateLimit map[string]any, data map[string]any) []QuotaItem
 	sparkRL := findSparkRateLimit(data)
 	if sparkRL != nil {
 		if pw := getMapField(sparkRL, "primary_window", "primaryWindow"); len(pw) > 0 {
-			quotas = append(quotas, buildWindowQuota(pw, codexWindowName(pw, "Spark Session"), "spark"))
+			quotas = append(quotas, buildWindowQuota(pw, "Spark Session", "spark"))
 		}
 		if sw := getMapField(sparkRL, "secondary_window", "secondaryWindow"); len(sw) > 0 {
-			quotas = append(quotas, buildWindowQuota(sw, codexWindowName(sw, "Spark Weekly"), "spark"))
+			quotas = append(quotas, buildWindowQuota(sw, "Spark Weekly", "spark"))
 		}
 	}
 
@@ -163,34 +163,6 @@ func parseWindowReset(window map[string]any) string {
 		return time.Now().Add(time.Duration(resetAfter) * time.Second).UTC().Format(time.RFC3339)
 	}
 	return ""
-}
-
-// codexWindowName derives a human-readable window name from the upstream
-// `limit_window_seconds`/`reset_after_seconds`. This keeps dashboard labels
-// honest: a Plus primary_window with a 7-day reset shows as "Weekly Window"
-// instead of the generic "Session".
-func codexWindowName(window map[string]any, fallback string) string {
-	seconds := -1.0
-	if v, ok := getNumberFieldOK(window, "limit_window_seconds", "limitWindowSeconds"); ok && v > 0 {
-		seconds = v
-	} else if v, ok := getNumberFieldOK(window, "reset_after_seconds", "resetAfterSeconds"); ok && v > 0 {
-		seconds = v
-	}
-	if seconds <= 0 {
-		return fallback
-	}
-	switch {
-	case seconds <= 18000:
-		return "5h Window"
-	case seconds <= 86400:
-		return "Daily Window"
-	case seconds <= 604800:
-		return "Weekly Window"
-	case seconds <= 2592000:
-		return "Monthly Window"
-	default:
-		return fallback
-	}
 }
 
 // findAdditionalRateLimit scans additional_rate_limits for entries matching the given names.
