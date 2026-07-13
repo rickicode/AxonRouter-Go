@@ -24,6 +24,23 @@ func getMapField(m map[string]any, keys ...string) map[string]any {
 	return nil
 }
 
+// getNumberFieldOK returns the first matching numeric field and reports whether it was present.
+func getNumberFieldOK(m map[string]any, keys ...string) (float64, bool) {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			switch n := v.(type) {
+			case float64:
+				return n, true
+			case int:
+				return float64(n), true
+			case int64:
+				return float64(n), true
+			}
+		}
+	}
+	return 0, false
+}
+
 // getNumberField returns the first matching numeric field from a map (camelCase or snake_case).
 func getNumberField(m map[string]any, keys ...string) float64 {
 	for _, k := range keys {

@@ -20,15 +20,16 @@ import (
 	"github.com/google/uuid"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
+	"github.com/rickicode/AxonRouter-Go/internal/quota"
 )
 
 // oauthSession tracks an in-flight OAuth attempt before any connection exists in the DB.
 type oauthSession struct {
 	provider     string
 	providerName string
-	status       string    // "pending", "connected", "failed"
-	name         string    // email from OAuth
-	connID       string    // created connection ID (only after success)
+	status       string // "pending", "connected", "failed"
+	name         string // email from OAuth
+	connID       string // created connection ID (only after success)
 	err          string
 	doneAt       time.Time // when terminal state was set; zero while pending
 }
@@ -170,6 +171,21 @@ func (h *OAuthHandler) StartOAuth(c *gin.Context) {
 					h.elig.Update(h.store)
 				}
 			}
+
+			// Immediately fetch and cache quota so the new account appears on the
+			// quota tracker page without waiting for the background scheduler.
+			go func(connectionID string) {
+				cq, err := quota.FetchConnectionQuota(h.db, connectionID)
+				if err != nil {
+					log.Printf("OAuth quota refresh failed for %s: %v", connectionID, err)
+					return
+				}
+				quota.SaveQuotaCache(h.db, []quota.ProviderQuota{{
+					ProviderID:   cq.ProviderID,
+					ProviderName: cq.ProviderName,
+					Connections:  []quota.ConnectionQuota{*cq},
+				}})
+			}(connID)
 
 		case <-time.After(5 * time.Minute):
 			session.status = "failed"

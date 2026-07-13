@@ -108,7 +108,6 @@ func parseCodexQuotas(rateLimit map[string]any, data map[string]any) []QuotaItem
 }
 
 func buildWindowQuota(window map[string]any, name string, scope string) QuotaItem {
-	usedPct := getNumberField(window, "used_percent", "usedPercent")
 	resetAt := parseWindowReset(window)
 	qi := QuotaItem{
 		Name:      name,
@@ -116,19 +115,41 @@ func buildWindowQuota(window map[string]any, name string, scope string) QuotaIte
 		Unlimited: false,
 		Scope:     scope,
 	}
-	if usedPct > 0 {
+
+	// Codex reports usage as a percentage of the window budget. If present,
+	// remaining_pct is always 100 - used_percent, even when used_percent is 0.
+	if usedPct, ok := getNumberFieldOK(window, "used_percent", "usedPercent"); ok {
 		qi.Used = usedPct
 		qi.Total = 100
 		qi.RemainingPct = 100 - usedPct
 		return qi
 	}
-	used := getNumberField(window, "used", "consumed")
-	limit := getNumberField(window, "limit", "max", "capacity")
-	if limit > 0 {
+
+	// Some plans expose absolute counts instead of percentages.
+	if used, ok := getNumberFieldOK(window, "used", "consumed"); ok {
+		if limit, ok := getNumberFieldOK(window, "limit", "max", "capacity"); ok && limit > 0 {
+			qi.Used = used
+			qi.Total = limit
+			qi.RemainingPct = (1.0 - used/limit) * 100
+			return qi
+		}
+		// Limit unknown but usage reported: assume healthy (remaining_pct=100).
 		qi.Used = used
-		qi.Total = limit
-		qi.RemainingPct = (1.0 - used/limit) * 100
+		qi.RemainingPct = 100
+		return qi
 	}
+
+	// If the upstream explicitly marks the window as unlimited, treat it as healthy.
+	if v, ok := window["unlimited"]; ok {
+		if b, ok := v.(bool); ok && b {
+			qi.Unlimited = true
+			qi.RemainingPct = 100
+			return qi
+		}
+	}
+
+	// No usable data: default to healthy so a new Plus account is not marked exhausted.
+	qi.RemainingPct = 100
 	return qi
 }
 
@@ -211,8 +232,10 @@ func findSparkRateLimit(data map[string]any) map[string]any {
 // Matches OmniRoute isCodexSparkLimitDescriptor: checks limit_name, metered_feature, etc.
 // for "spark", "bengalfox", or "gpt_5_3_codex_spark".
 func isSparkDescriptor(m map[string]any) bool {
-	descriptorKeys := []string{"limit_name", "limitName", "metered_feature", "meteredFeature",
-		"limit_id", "limitId", "id", "name", "title", "model", "model_id", "modelId"}
+	descriptorKeys := []string{
+		"limit_name", "limitName", "metered_feature", "meteredFeature",
+		"limit_id", "limitId", "id", "name", "title", "model", "model_id", "modelId",
+	}
 	for _, k := range descriptorKeys {
 		if v, ok := m[k]; ok {
 			if s, ok := v.(string); ok {

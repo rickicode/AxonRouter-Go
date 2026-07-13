@@ -19,6 +19,9 @@ func TestTranslateCodexUsageLimitReached(t *testing.T) {
 	if errObj["code"] != "insufficient_quota" {
 		t.Errorf("code=%v, want insufficient_quota", errObj["code"])
 	}
+	if retryAfter, ok := errObj["retry_after"].(float64); !ok || retryAfter <= 0 {
+		t.Errorf("retry_after=%v, want positive number", errObj["retry_after"])
+	}
 }
 
 func TestTranslateCodexModelAtCapacity(t *testing.T) {

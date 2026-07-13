@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
@@ -37,10 +38,17 @@ func TranslateCodex(statusCode int, body []byte) []byte {
 	lowerType := strings.ToLower(errType)
 	lowerMsg := strings.ToLower(msg)
 
+	var retryAfter *int64
 	switch lowerType {
 	case "usage_limit_reached":
 		typ = "rate_limit_error"
 		code = "insufficient_quota"
+		if ra := codexRetryAfter(errObj); !ra.IsZero() {
+			secs := int64(ra.Sub(time.Now()).Seconds())
+			if secs > 0 {
+				retryAfter = &secs
+			}
+		}
 	case "invalid_request_error":
 		typ = "invalid_request_error"
 		code = translator.InferCodeFromMessage(msg, statusCode, "bad_request")
@@ -81,7 +89,15 @@ func TranslateCodex(statusCode int, body []byte) []byte {
 		}
 	}
 
-	return translator.BuildError(msg, typ, code)
+	errResp := translator.OpenAIError{}
+	errResp.Error.Message = msg
+	errResp.Error.Type = typ
+	errResp.Error.Code = code
+	if retryAfter != nil {
+		errResp.Error.RetryAfter = retryAfter
+	}
+	b, _ := json.Marshal(errResp)
+	return b
 }
 
 // codexRetryAfter returns a future time derived from resets_at or

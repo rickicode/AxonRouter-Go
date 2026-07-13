@@ -105,6 +105,64 @@ func TestCodexQuotaCooldown_NoCooldownWhenRemaining(t *testing.T) {
 	}
 }
 
+func TestParseCodexQuotas_ZeroUsedPercentIsHealthy(t *testing.T) {
+	// Regression: a new Plus account reports used_percent: 0 and must not be
+	// marked exhausted (RemainingPct = 100, not 0).
+	rateLimit := map[string]any{
+		"primary_window":   map[string]any{"used_percent": 0.0, "reset_at": 1700000000000.0},
+		"secondary_window": nil,
+	}
+	quotas := parseCodexQuotas(rateLimit, nil)
+	if len(quotas) != 1 {
+		t.Fatalf("got %d quotas, want 1 (secondary_window nil skipped)", len(quotas))
+	}
+	if quotas[0].RemainingPct != 100 {
+		t.Errorf("remaining pct = %f, want 100", quotas[0].RemainingPct)
+	}
+	if quotas[0].Unlimited {
+		t.Error("did not expect unlimited")
+	}
+}
+
+func TestParseCodexQuotas_UnlimitedWindow(t *testing.T) {
+	rateLimit := map[string]any{
+		"primary_window": map[string]any{"unlimited": true},
+	}
+	quotas := parseCodexQuotas(rateLimit, nil)
+	if len(quotas) != 1 || !quotas[0].Unlimited || quotas[0].RemainingPct != 100 {
+		t.Fatalf("expected unlimited healthy quota, got %+v", quotas[0])
+	}
+}
+
+func TestParseCodexQuotas_WindowWithoutDataIsHealthy(t *testing.T) {
+	// Some upstream shapes include a window with only reset_at and no usage.
+	// Default to healthy rather than exhausted (RemainingPct = 0).
+	rateLimit := map[string]any{
+		"primary_window": map[string]any{"reset_at": 1700000000000.0},
+	}
+	quotas := parseCodexQuotas(rateLimit, nil)
+	if len(quotas) != 1 {
+		t.Fatalf("got %d quotas, want 1", len(quotas))
+	}
+	if quotas[0].RemainingPct != 100 {
+		t.Errorf("remaining pct = %f, want 100 for unknown usage", quotas[0].RemainingPct)
+	}
+}
+
+func TestCodexQuotaCooldown_ThresholdIs95Percent(t *testing.T) {
+	// Exactly 5% remaining triggers cooldown (usage >= 95%).
+	reset := time.Now().Add(5 * time.Minute).UTC().Format(time.RFC3339)
+	quotas := []QuotaItem{{Name: "Session", RemainingPct: 5.0, ResetAt: reset, Scope: "codex"}}
+	if active, _, _ := CodexQuotaCooldown(quotas); !active {
+		t.Fatal("expected cooldown at 5% remaining")
+	}
+	// 6% remaining is still healthy.
+	quotas[0].RemainingPct = 6.0
+	if active, _, _ := CodexQuotaCooldown(quotas); active {
+		t.Error("expected no cooldown at 6% remaining")
+	}
+}
+
 func TestCodexQuotaCooldown_DefaultsTo60Seconds(t *testing.T) {
 	quotas := []QuotaItem{{Name: "Session", RemainingPct: 0.0, Scope: "codex"}}
 	active, until, _ := CodexQuotaCooldown(quotas)
@@ -178,11 +236,11 @@ func TestQuotaCache(t *testing.T) {
 func TestQuotaCache_ExpiresAfterTTL(t *testing.T) {
 	ClearQuotaCache("")
 	cq := ConnectionQuota{ConnectionID: "c2"}
-	cached := cachedQuota{cq: cq, fetchedAt: time.Now().Add(-31 * time.Second)}
+	cached := cachedQuota{cq: cq, fetchedAt: time.Now().Add(-61 * time.Second)}
 	quotaCache.Store("c2", cached)
 	_, ok := getCachedQuota("c2")
 	if ok {
-		t.Error("expected expired cache entry to miss")
+		t.Error("expected cache entry older than 60s TTL to miss")
 	}
 }
 

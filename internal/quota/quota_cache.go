@@ -6,7 +6,7 @@ import (
 )
 
 // quotaCacheTTL is how long a cached ConnectionQuota remains fresh.
-const quotaCacheTTL = 30 * time.Second
+const quotaCacheTTL = 60 * time.Second
 
 // cachedQuota holds a ConnectionQuota and the time it was fetched.
 type cachedQuota struct {

@@ -9,10 +9,11 @@ import (
 // OpenAIError represents the standard OpenAI-compatible error envelope.
 type OpenAIError struct {
 	Error struct {
-		Message string  `json:"message"`
-		Type    string  `json:"type"`
-		Param   *string `json:"param,omitempty"`
-		Code    string  `json:"code"`
+		Message    string  `json:"message"`
+		Type       string  `json:"type"`
+		Param      *string `json:"param,omitempty"`
+		Code       string  `json:"code"`
+		RetryAfter *int64  `json:"retry_after,omitempty"`
 	} `json:"error"`
 }
 

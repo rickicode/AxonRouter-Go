@@ -5,20 +5,28 @@ import (
 	"time"
 )
 
+import "strings"
+
 // CodexQuotaCooldown checks whether any quota window is exhausted and returns
 // the cooldown deadline and reason. If no window reports a reset time, the
 // cooldown defaults to 60 seconds from now.
+
+// A window is considered exhausted when usage reaches 95% of its limit, matching
+// OmniRoute dual-window behavior. This prevents over-blocking healthy accounts
+// while still cooling down accounts that are near their limit.
 func CodexQuotaCooldown(quotas []QuotaItem) (active bool, until time.Time, reason string) {
 	now := time.Now()
 	var earliestReset time.Time
 	var exhausted []string
 	for _, q := range quotas {
-		if q.RemainingPct > 0 {
+		// Unlimited or healthy windows do not trigger cooldown.
+		if q.Unlimited || q.RemainingPct > 5 {
 			continue
 		}
 		exhausted = append(exhausted, q.Name)
 		reset := now.Add(60 * time.Second)
 		if q.ResetAt != "" {
+			// Prefer explicit reset time.
 			if t, err := time.Parse(time.RFC3339, q.ResetAt); err == nil {
 				reset = t
 			}
@@ -30,22 +38,5 @@ func CodexQuotaCooldown(quotas []QuotaItem) (active bool, until time.Time, reaso
 	if len(exhausted) == 0 {
 		return false, time.Time{}, ""
 	}
-	return true, earliestReset, fmt.Sprintf("Codex quota exhausted: %s", joinNames(exhausted))
-}
-
-func joinNames(names []string) string {
-	if len(names) == 0 {
-		return ""
-	}
-	if len(names) == 1 {
-		return names[0]
-	}
-	out := ""
-	for i, n := range names[:len(names)-1] {
-		if i > 0 {
-			out += ", "
-		}
-		out += n
-	}
-	return out + " and " + names[len(names)-1]
+	return true, earliestReset, fmt.Sprintf("Codex quota near limit (>=95%%): %s", strings.Join(exhausted, ", "))
 }
