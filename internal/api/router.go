@@ -35,6 +35,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
+	"github.com/rickicode/AxonRouter-Go/internal/version"
 	"github.com/rickicode/AxonRouter-Go/web"
 )
 
@@ -161,7 +162,9 @@ func New(cfg Config) *Router {
 	logH := admin.NewLogHandler(cfg.DB)
 	settingH := settingHandler
 	dashboardH := admin.NewDashboardHandler(cfg.DB, store, tracker)
-	healthH := admin.NewHealthHandler(cfg.DB, store, tracker)
+	versionChecker := version.NewChecker(&http.Client{Timeout: 10 * time.Second})
+	healthH := admin.NewHealthHandler(cfg.DB, store, tracker, versionChecker)
+	upgradeH := admin.NewUpgradeHandler(versionChecker)
 	proxyPoolH := admin.NewProxyPoolHandler(cfg.DB, proxyHealth, proxyResolver)
 	proxyGroupH := admin.NewProxyGroupHandler(cfg.DB, proxyResolver)
 	proxyDeployH := admin.NewProxyDeployHandler(cfg.DB, proxyHealth, proxyResolver)
@@ -300,6 +303,9 @@ func New(cfg Config) *Router {
 
 		// Metrics
 		g.GET("/metrics", healthH.Metrics)
+
+		// Upgrade
+		g.POST("/upgrade", upgradeH.Upgrade)
 
 		// Quota
 		g.GET("/quota", quotaH.List)

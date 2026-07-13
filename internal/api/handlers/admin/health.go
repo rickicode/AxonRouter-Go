@@ -14,17 +14,19 @@ import (
 
 // HealthHandler exposes liveness and operational metrics.
 type HealthHandler struct {
-	db      *sql.DB
-	store   *connstate.Store
+	db *sql.DB
+	store *connstate.Store
 	tracker *usage.Tracker
+	checker *version.Checker
 }
 
 // NewHealthHandler creates a new health/metrics handler.
-func NewHealthHandler(database *sql.DB, store *connstate.Store, tracker *usage.Tracker) *HealthHandler {
+func NewHealthHandler(database *sql.DB, store *connstate.Store, tracker *usage.Tracker, checker *version.Checker) *HealthHandler {
 	return &HealthHandler{
-		db:      database,
-		store:   store,
+		db: database,
+		store: store,
 		tracker: tracker,
+		checker: checker,
 	}
 }
 
@@ -67,10 +69,21 @@ func (h *HealthHandler) Health(c *gin.Context) {
 		status = http.StatusServiceUnavailable
 	}
 
+	latest := ""
+	updateAvailable := false
+	if h.checker != nil {
+		if info, ok := h.checker.LatestVersion(); ok {
+			latest = info.Version
+			updateAvailable = h.checker.UpdateAvailable()
+		}
+	}
+
 	c.JSON(status, gin.H{
-		"status":               dbStatus,
-		"db":                   dbStatus,
-		"version":              version.String(),
+		"status": dbStatus,
+		"db": dbStatus,
+		"version": version.String(),
+		"latest_version": latest,
+		"update_available": updateAvailable,
 		"must_change_password": h.mustChangePassword(),
 	})
 }
