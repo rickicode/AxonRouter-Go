@@ -23,7 +23,7 @@ func NewAPIKeyHandler(db *sql.DB) *APIKeyHandler {
 
 // List returns all API keys (masked).
 func (h *APIKeyHandler) List(c *gin.Context) {
-	rows, err := h.db.Query(`SELECT id, COALESCE(name, ''), rate_limit_per_min, max_tokens, is_active, created_at FROM api_keys ORDER BY created_at DESC`)
+	rows, err := h.db.Query(`SELECT id, COALESCE(name, ''), COALESCE(key_value, ''), rate_limit_per_min, max_tokens, is_active, created_at FROM api_keys ORDER BY created_at DESC`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -33,7 +33,7 @@ func (h *APIKeyHandler) List(c *gin.Context) {
 	type apiKeyView struct {
 		ID              string `json:"id"`
 		Name            string `json:"name"`
-		KeyPreview      string `json:"key_preview"`
+		Key             string `json:"key"`
 		RateLimitPerMin int    `json:"rate_limit_per_min"`
 		MaxTokens       int64  `json:"max_tokens"`
 		IsActive        bool   `json:"is_active"`
@@ -44,13 +44,15 @@ func (h *APIKeyHandler) List(c *gin.Context) {
 	for rows.Next() {
 		var k apiKeyView
 		var isActive int
+		var keyValue string
 		var maxTokens int64
-		if err := rows.Scan(&k.ID, &k.Name, &k.RateLimitPerMin, &maxTokens, &isActive, &k.CreatedAt); err != nil {
+		if err := rows.Scan(&k.ID, &k.Name, &keyValue, &k.RateLimitPerMin, &maxTokens, &isActive, &k.CreatedAt); err != nil {
 			continue
 		}
 		k.IsActive = isActive == 1
+		k.Key = keyValue
 		k.MaxTokens = maxTokens
-		k.KeyPreview = k.ID[:8] + "..."
+		// k.Key already assigned from key_value above
 		keys = append(keys, k)
 	}
 
@@ -72,21 +74,22 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 	}
 
 	// Generate random key
-	raw := make([]byte, 32)
+	raw := make([]byte, 16)
 	if _, err := rand.Read(raw); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate key"})
 		return
 	}
-	keyHex := hex.EncodeToString(raw)
+	hexPart := hex.EncodeToString(raw)
+	id := "ax-" + hexPart[:16]
+	keyValue := "ax-" + hexPart
 
 	// Hash with bcrypt
-	hash, err := bcrypt.GenerateFromPassword([]byte(keyHex), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(keyValue), bcrypt.DefaultCost)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash key"})
 		return
 	}
 
-	id := keyHex[:16] // Use first 16 chars as ID for display
 	now := time.Now().Unix()
 
 	name := sql.NullString{}
@@ -97,7 +100,7 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 	_, err = h.db.Exec(`
 		INSERT INTO api_keys (id, key_hash, key_value, name, rate_limit_per_min, max_tokens, is_active, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, 1, ?)
-	`, id, string(hash), keyHex, name, req.RateLimitPerMin, req.MaxTokens, now)
+	`, id, string(hash), keyValue, name, req.RateLimitPerMin, req.MaxTokens, now)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -105,7 +108,7 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, gin.H{
 		"id":         id,
-		"key":        keyHex, // Only shown once
+		"key":        keyValue, // Only shown once
 		"name":       req.Name,
 		"max_tokens": req.MaxTokens,
 		"message":    "Save this key — it won't be shown again",

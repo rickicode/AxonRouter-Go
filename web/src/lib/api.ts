@@ -350,7 +350,7 @@ export const oauthApi = {
 export interface APIKeyItem {
   id: string;
   name: string;
-  key_preview: string;
+  key: string;
   rate_limit_per_min: number;
   max_tokens: number;
   is_active: boolean;

@@ -77,13 +77,11 @@ import * as Dialog from '$lib/components/ui/dialog';
     }
   }
 
-  async function handleCopy(id: string, preview: string) {
+async function handleCopy(key: string) {
     try {
-      const res = await apiKeysApi.value(id);
-      await copyValue(res.key, 'API key');
-    } catch {
-      // Legacy keys may have no stored value — fall back to copying the preview.
-      await copyValue(preview, 'Key preview');
+		await copyValue(key, 'API key');
+	} catch (err) {
+		toast.error('Failed to copy API key');
     }
   }
 
@@ -170,7 +168,6 @@ function formatMaxTokens(tokens: number): string {
                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Name</th>
                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Key</th>
                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Rate Limit</th>
-                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Max Tokens</th>
                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Status</th>
                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Created</th>
                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-32"></th>
@@ -180,9 +177,8 @@ function formatMaxTokens(tokens: number): string {
               {#each keys as key}
                 <tr class="transition-colors hover:bg-accent/20">
                   <td class="py-3 px-4 text-body-sm font-medium">{key.name || '—'}</td>
-                  <td class="py-3 px-4 font-mono text-xs text-muted-foreground">{key.key_preview}</td>
-                  <td class="py-3 px-4 text-body-sm text-muted-foreground">{key.rate_limit_per_min}/min</td>
-                  <td class="py-3 px-4 text-body-sm text-muted-foreground">{formatMaxTokens(key.max_tokens)}</td>
+                  <td class="py-3 px-4 font-mono text-xs break-all max-w-xs">{key.key || '—'}</td>
+ 		<td class="py-3 px-4 text-body-sm text-muted-foreground">{key.rate_limit_per_min}/min{key.max_tokens > 0 ? ` · ${formatMaxTokens(key.max_tokens)}` : ''}</td>
                   <td class="py-3 px-4">
                     <Badge variant={key.is_active ? 'default' : 'secondary'} class="text-caption-mono rounded-sm">
                       {key.is_active ? 'Active' : 'Disabled'}
@@ -191,7 +187,7 @@ function formatMaxTokens(tokens: number): string {
                   <td class="py-3 px-4 text-body-sm text-muted-foreground">{formatDate(key.created_at)}</td>
                   <td class="py-3 px-4">
                     <div class="flex gap-1">
-								<Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" onclick={() => handleCopy(key.id, key.key_preview)}>
+				<Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" onclick={() => handleCopy(key.key)}>
 									Copy
 								</Button>
 								<Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" onclick={() => handleToggle(key.id, key.is_active)}>
@@ -229,29 +225,30 @@ function formatMaxTokens(tokens: number): string {
           </div>
         {:else}
           <h2 class="text-lg font-semibold mb-4">Create API key</h2>
-          <div class="flex flex-col gap-4">
-            <div class="flex flex-col gap-1.5">
-              <Label class="text-sm font-medium">Name (optional)</Label>
-              <Input bind:value={newName} placeholder="My API key" class="h-9 text-sm" />
-            </div>
-<div class="flex flex-col gap-1.5">
-              <Label class="text-sm font-medium">Rate limit (per minute)</Label>
-              <Input bind:value={newRateLimit} type="number" min="1" class="h-9 text-sm" />
+	<div class="flex flex-col gap-4">
+		<div class="flex flex-col gap-1.5">
+			<Label class="text-sm font-medium">Name (optional)</Label>
+			<Input bind:value={newName} placeholder="My API key" class="h-9 text-sm" />
+		</div>
+		<div class="flex flex-col gap-1.5">
+			<Label class="text-sm font-medium">Rate limit (per minute)</Label>
+			<Input bind:value={newRateLimit} type="number" min="1" class="h-9 text-sm" />
+		</div>
+		<div class="flex flex-col gap-1.5">
+			<Label class="text-sm font-medium">Max tokens (M)</Label>
+			<Input bind:value={newMaxTokensM} type="number" min="1" placeholder="Unlimited" class="h-9 text-sm" />
+			<p class="text-xs text-muted-foreground">Leave empty for unlimited. Min 1M (1 = 1,000,000 tokens).</p>
+		</div>
+	</div>
+	<div class="flex gap-2 mt-6">
+	<Button onclick={handleCreate} disabled={creating} class="flex-1 text-sm">
+		{creating ? 'Creating...' : 'Create'}
+	</Button>
+	<Button variant="outline" onclick={() => { showCreate = false; createdKey = ''; }} class="text-sm">Cancel</Button>
 </div>
-</div>
-              <div class="flex flex-col gap-1.5">
-                            <Label class="text-sm font-medium">Max tokens (M)</Label>
-                            <Input bind:value={newMaxTokensM} type="number" min="1" placeholder="Unlimited" class="h-9 text-sm" />
-                            <p class="text-xs text-muted-foreground">Leave empty for unlimited. Min 1M (1 = 1,000,000 tokens).</p>
-              </div>
-<div class="flex gap-2 mt-6">
-            <Button onclick={handleCreate} disabled={creating} class="flex-1 text-sm">
-              {creating ? 'Creating...' : 'Create'}
-            </Button>
-            <Button variant="outline" onclick={() => { showCreate = false; createdKey = ''; }} class="text-sm">Cancel</Button>
-          </div>
-        {/if}
-  </Dialog.Content>
+
+{/if}
+</Dialog.Content>
 </Dialog.Root>
 
   <AlertDialog bind:open={showDeleteConfirm}>
