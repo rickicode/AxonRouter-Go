@@ -16,6 +16,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+const testAdminPassword = "testpass1234"
+
 func newAuthTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "auth-test.db"))
@@ -58,7 +60,7 @@ func loginRequest(t *testing.T, database *sql.DB, password string) *httptest.Res
 
 func authHeaderToken(t *testing.T, database *sql.DB) string {
 	t.Helper()
-	w := loginRequest(t, database, defaultAdminPassword)
+	w := loginRequest(t, database, testAdminPassword)
 	if w.Code != http.StatusOK {
 		t.Fatalf("login failed: %d %s", w.Code, w.Body.String())
 	}
@@ -72,12 +74,57 @@ func authHeaderToken(t *testing.T, database *sql.DB) string {
 	return resp.Token
 }
 
+func TestSessionAuth_RequiresPasswordChange_FirstLogin(t *testing.T) {
+	database := newAuthTestDB(t)
+	seedAdminPassword(t, database, testAdminPassword)
+	_ = setSetting(database, firstLoginKey, "true")
+	if _, err := database.Exec(`INSERT INTO settings (key, value, updated_at) VALUES ('app_name','x',0) ON CONFLICT(key) DO NOTHING`); err != nil {
+		t.Fatalf("seed setting: %v", err)
+	}
+	token := authHeaderToken(t, database)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/admin/settings/app_name", nil)
+	c.Request.Header.Set("X-Auth-Token", token)
+	SessionAuth(database)(c)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for uninitialised password, got %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "must_change_password") {
+		t.Errorf("expected must_change_password flag, got %s", w.Body.String())
+	}
+}
+
+func TestSessionAuth_AllowsPasswordEndpoints_FirstLogin(t *testing.T) {
+	database := newAuthTestDB(t)
+	seedAdminPassword(t, database, testAdminPassword)
+	_ = setSetting(database, firstLoginKey, "true")
+	token := authHeaderToken(t, database)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body, _ := json.Marshal(map[string]string{
+		"old_password": testAdminPassword,
+		"new_password": "newsecret123",
+		"confirm_password": "newsecret123",
+	})
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/change-password", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("X-Auth-Token", token)
+	SessionAuth(database)(c)
+	if c.IsAborted() {
+		t.Fatal("change-password should be allowed before password change")
+	}
+}
+
 func TestLogin_ReturnsMustChangePassword_WhenFirstLogin(t *testing.T) {
 	database := newAuthTestDB(t)
-	seedAdminPassword(t, database, defaultAdminPassword)
+	seedAdminPassword(t, database, testAdminPassword)
 	_ = setSetting(database, firstLoginKey, "true")
 
-	w := loginRequest(t, database, defaultAdminPassword)
+	w := loginRequest(t, database, testAdminPassword)
 	if w.Code != http.StatusOK {
 		t.Fatalf("login failed: %d %s", w.Code, w.Body.String())
 	}
@@ -88,7 +135,7 @@ func TestLogin_ReturnsMustChangePassword_WhenFirstLogin(t *testing.T) {
 
 func TestLogin_MustChangePasswordFalse_AfterChange(t *testing.T) {
 	database := newAuthTestDB(t)
-	seedAdminPassword(t, database, defaultAdminPassword)
+	seedAdminPassword(t, database, testAdminPassword)
 	_ = setSetting(database, firstLoginKey, "true")
 	token := authHeaderToken(t, database)
 
@@ -96,14 +143,14 @@ func TestLogin_MustChangePasswordFalse_AfterChange(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	body, _ := json.Marshal(map[string]string{
-		"old_password":     defaultAdminPassword,
+		"old_password":     testAdminPassword,
 		"new_password":     "newsecret123",
 		"confirm_password": "newsecret123",
 	})
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/change-password", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Request.Header.Set("X-Auth-Token", token)
-	SessionAuth()(c)
+	SessionAuth(database)(c)
 	if c.IsAborted() {
 		t.Fatal("auth aborted unexpectedly")
 	}
@@ -123,7 +170,7 @@ func TestLogin_MustChangePasswordFalse_AfterChange(t *testing.T) {
 
 func TestChangePassword_RequiresOldPassword(t *testing.T) {
 	database := newAuthTestDB(t)
-	seedAdminPassword(t, database, defaultAdminPassword)
+	seedAdminPassword(t, database, testAdminPassword)
 	_ = setSetting(database, firstLoginKey, "true")
 	token := authHeaderToken(t, database)
 
@@ -137,7 +184,7 @@ func TestChangePassword_RequiresOldPassword(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/change-password", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Request.Header.Set("X-Auth-Token", token)
-	SessionAuth()(c)
+	SessionAuth(database)(c)
 	ChangePasswordHandler(database)(c)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 for wrong old password, got %d %s", w.Code, w.Body.String())
@@ -146,20 +193,20 @@ func TestChangePassword_RequiresOldPassword(t *testing.T) {
 
 func TestChangePassword_RequiresMatchingConfirmation(t *testing.T) {
 	database := newAuthTestDB(t)
-	seedAdminPassword(t, database, defaultAdminPassword)
+	seedAdminPassword(t, database, testAdminPassword)
 	token := authHeaderToken(t, database)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	body, _ := json.Marshal(map[string]string{
-		"old_password":     defaultAdminPassword,
+		"old_password":     testAdminPassword,
 		"new_password":     "newsecret123",
 		"confirm_password": "different",
 	})
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/change-password", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Request.Header.Set("X-Auth-Token", token)
-	SessionAuth()(c)
+	SessionAuth(database)(c)
 	ChangePasswordHandler(database)(c)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for mismatched confirmation, got %d %s", w.Code, w.Body.String())
@@ -168,7 +215,7 @@ func TestChangePassword_RequiresMatchingConfirmation(t *testing.T) {
 
 func TestDeferPasswordChange_AndReappearance(t *testing.T) {
 	database := newAuthTestDB(t)
-	seedAdminPassword(t, database, defaultAdminPassword)
+	seedAdminPassword(t, database, testAdminPassword)
 	_ = setSetting(database, firstLoginKey, "false")
 	token := authHeaderToken(t, database)
 
@@ -177,7 +224,7 @@ func TestDeferPasswordChange_AndReappearance(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/defer-password-change", nil)
 	c.Request.Header.Set("X-Auth-Token", token)
-	SessionAuth()(c)
+	SessionAuth(database)(c)
 	DeferPasswordChangeHandler(database)(c)
 	if w.Code != http.StatusOK {
 		t.Fatalf("defer failed: %d %s", w.Code, w.Body.String())
@@ -195,7 +242,7 @@ func TestDeferPasswordChange_AndReappearance(t *testing.T) {
 		t.Fatalf("due at %d outside expected 24h window", resp.PasswordChangeDueAt)
 	}
 
-	w = loginRequest(t, database, defaultAdminPassword)
+	w = loginRequest(t, database, testAdminPassword)
 	if w.Code != http.StatusOK {
 		t.Fatalf("login after defer failed: %d %s", w.Code, w.Body.String())
 	}

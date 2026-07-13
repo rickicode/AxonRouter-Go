@@ -84,9 +84,14 @@ func TestHealth(t *testing.T) {
 }
 
 // loginForToken obtains a dashboard session JWT from the public login endpoint.
-func loginForToken(t *testing.T, srv *httptest.Server) string {
+func loginForToken(t *testing.T, srv *httptest.Server, r *Router) string {
 	t.Helper()
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/admin/login", strings.NewReader(`{"password":"12345677"}`))
+	var password string
+	if err := r.db.QueryRow(`SELECT value FROM settings WHERE key = 'admin_password_plain'`).Scan(&password); err != nil {
+		t.Fatalf("read initial password: %v", err)
+	}
+	body := `{"password":"` + password + `"}`
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/admin/login", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -106,7 +111,7 @@ func loginForToken(t *testing.T, srv *httptest.Server) string {
 // TestAdminEndpointRequiresJWT proves that /api/admin routes reject
 // unauthenticated requests and accept a valid session JWT.
 func TestAdminEndpointRequiresJWT(t *testing.T) {
-	_, srv := newTestRouter(t)
+	router, srv := newTestRouter(t)
 	defer srv.Close()
 
 	// Unauthenticated → 401.
@@ -119,8 +124,11 @@ func TestAdminEndpointRequiresJWT(t *testing.T) {
 		t.Errorf("unauthenticated status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
 	}
 
+	// Mark password as changed so SessionAuth allows non-password endpoints.
+	_ = setSetting(router.db, firstLoginKey, "false")
+
 	// Valid JWT → 200.
-	tok := loginForToken(t, srv)
+	tok := loginForToken(t, srv, router)
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/admin/metrics", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
 	okResp, err := http.DefaultClient.Do(req)

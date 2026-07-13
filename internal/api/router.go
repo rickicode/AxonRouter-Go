@@ -186,6 +186,7 @@ func New(cfg Config) *Router {
 
 	// Rate limiter
 	limiter := middleware.NewRateLimiter(600)
+	loginLimiter := middleware.NewRateLimiter(10)
 	// Create v1 handler with all dependencies (must exist before wiring routes)
 	v1H := v1.NewHandler(cfg.DB, writeQueue, store, elig, comboHandler, tracker, authManager, proxyResolver, exhaustionCache, compStrategy, exactCache, providerCfg)
 	// ---- /v1 routes (proxy) ----
@@ -225,12 +226,12 @@ func New(cfg Config) *Router {
 	engine.HEAD("/api/admin/health", healthH.Health)
 	engine.GET("/api/admin/health", healthH.Health)
 
-	// Public login endpoint (issues a session JWT).
-	engine.POST("/api/admin/login", LoginHandler(cfg.DB))
+	// Public login endpoint (issues a session JWT). Rate-limited per IP to slow brute force.
+	engine.POST("/api/admin/login", middleware.RateLimit(loginLimiter), LoginHandler(cfg.DB))
 
 	// ---- /api/admin routes (JWT session protected) ----
 	adminGroup := engine.Group("/api/admin")
-	adminGroup.Use(SessionAuth())
+	adminGroup.Use(SessionAuth(cfg.DB))
 
 	registerAdminRoutes := func(g *gin.RouterGroup) {
 		// Auth / security
