@@ -2,8 +2,9 @@ name: Release
 
 # Build cross-platform binaries and publish a GitHub Release with changelog notes.
 # Trigger: push a tag matching v* (e.g. v1.2.3).
-# The Makefile and scripts/ folder drive the version bump locally; this workflow
-# validates, builds, and attaches assets to the release.
+# The Makefile and scripts/ folder can still drive a local release bump; this
+# workflow syncs the version and changelog from the pushed tag, builds, and
+# attaches assets to the release.
 
 on:
   push:
@@ -37,18 +38,17 @@ jobs:
       - name: 📥 Checkout
         uses: actions/checkout@v7.0.0
 
-      - name: 🔖 Validate version matches tag
+      - name: 🔖 Derive version from tag
         id: version
         run: |
-          VERSION="$(cat internal/version/VERSION)"
           TAG="${GITHUB_REF_NAME}"
-          if [ "v${VERSION}" != "${TAG}" ]; then
-            echo "❌ Tag ${TAG} does not match VERSION file (${VERSION})."
-            exit 1
-          fi
-          echo "✅ Tag ${TAG} matches VERSION file."
+          VERSION="${TAG#v}"
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Using version ${VERSION} from tag ${TAG}."
+
+      - name: 📌 Sync version and changelog from tag
+        run: node scripts/sync-release-from-tag.js
 
       - name: ⚙️ Set up Go
         uses: actions/setup-go@v6.5.0
