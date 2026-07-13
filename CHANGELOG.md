@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Proxy pool bulk select with row checkboxes, bulk test/delete toolbar, and "Delete all error/timeout" confirmation.
 - Unified "Add pool" dialog with Single/Bulk tabs; bulk import supports healthy-only filtering and optional <1s response-time filtering.
 - `POST /proxy-pools/bulk-delete` endpoint supporting deletion by `ids` or `test_status`.
+- Cached GitHub latest-release checker in `internal/version/upgrade.go` with a 5-minute in-memory cache and zero-dependency semver comparison.
+- `GET /api/admin/health` now returns `latest_version` and `update_available` via the version checker.
+- `POST /api/admin/upgrade` endpoint downloads the platform-specific release binary, verifies its SHA256 against `checksums.txt`, and writes it to `<DataDir>/bin/<asset>`.
+- About page (`/about`) with project summary, repository link, version card, changelog section, and System sidebar entry.
+- `web/src/lib/about-utils.ts` utilities for version normalization, semver comparison, and changelog parsing, with Vitest coverage.
+- Release workflow now generates and attaches `build/checksums.txt` with SHA256 sums for all binary artifacts.
+- About page polls `/api/admin/health` every 30s for update availability and posts to `/api/admin/upgrade` with toast feedback and a loading spinner.
 
 ### Fixed
 - Provider detail header: provider name and prefix now sit next to the logo on the left instead of being pushed to the right.
@@ -50,6 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Token-bucket refill math fixed for per-minute limits under 60 requests/min, avoiding zero-refill rounding errors.
 - Dashboard login is now rate-limited per IP to slow brute-force attempts.
 - `ReplaceImageUrls` in `internal/compression/lite.go` now correctly replaces inline data-image URLs and preserves real OpenAI vision `image_url` parts; regex compile errors fail open.
+- Version scripts `bump-version.js` and `sync-release-from-tag.js` tolerate existing release sections and always synchronize `README.md`.
 
 ### Changed
 - Optimization dashboard page redesigned: tabs now use pill-style controls matching ProxyPools, and the Cache tab gained a header row with refresh/flush actions, proper stat cards for hits/misses/hit rate/entries, plus a clarification note explaining cache eligibility for non-streaming/tool/cache_control responses.
