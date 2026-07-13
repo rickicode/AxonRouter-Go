@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multi-stage `Dockerfile` and `.dockerignore`.
 - GitHub Actions CI workflow (`ci.yml`) running lint, tests, and frontend build.
 - Frontend unit-test harness with Vitest and smoke tests for auth/password API.
+- Auto-add missing proxy pool connections UI in OpenCode Free AddConnectionModal.
 
 ### Fixed
 - Provider detail header: provider name and prefix now sit next to the logo on the left instead of being pushed to the right.

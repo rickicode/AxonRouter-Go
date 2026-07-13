@@ -8,6 +8,8 @@
 import { connectionsApi, providersApi, oauthApi, proxyPoolsApi } from '$lib/api';
 import { toast } from 'svelte-sonner';
 import { copyToClipboard } from '$lib/utils';
+import { connections } from '$lib/stores';
+import { getProxyPoolId } from '$lib/auto-add-proxy-pools';
 import ProviderIcon from '$lib/components/ProviderIcon.svelte';
  import * as Select from '$lib/components/ui/select';
   import type { ProviderMeta } from '$lib/provider-catalog';
@@ -54,8 +56,18 @@ import ProviderIcon from '$lib/components/ProviderIcon.svelte';
   const isOAuth = $derived(authType === 'oauth');
   const isNoAuth = $derived(authType === 'none');
   const isApiKey = $derived(authType === 'apikey' || authType === 'custom');
-  const supportsBulk = $derived(isApiKey);
-  const isOCProvider = $derived(providerId === 'oc');
+const supportsBulk = $derived(isApiKey);
+const isOCProvider = $derived(providerId === 'oc');
+const existingPoolIds = $derived(
+  new Set(
+    $connections
+      .map(getProxyPoolId)
+      .filter((id): id is string => !!id)
+  )
+);
+const missingPools = $derived(proxyPools.filter((pool) => !existingPoolIds.has(pool.id)));
+const connectedPoolCount = $derived(existingPoolIds.size);
+const missingPoolCount = $derived(missingPools.length);
   function reset() {
     step = 'form';
     mode = 'single';
@@ -303,7 +315,39 @@ async function copyOAuthUrl() {
     }
   }
 
-  async function handleOAuthSubmit() {
+  async function handleAutoAddMissingPools() {
+  if (missingPoolCount === 0) return;
+  errorMsg = '';
+  submitting = true;
+  let created = 0;
+  let failed = 0;
+  for (const pool of missingPools) {
+    try {
+      await connectionsApi.create(providerId, {
+        name: pool.name,
+        auth_type: 'none',
+        provider_specific_data: { proxyPoolId: pool.id, accountLabel: pool.name },
+      });
+      created += 1;
+    } catch (err) {
+      failed += 1;
+      toast.error(`Failed to add ${pool.name}: ${err instanceof Error ? err.message : 'unknown error'}`);
+    }
+  }
+  submitting = false;
+  if (created > 0) {
+    toast.success(`Added ${created} connection${created === 1 ? '' : 's'}`);
+    onCreated?.();
+    step = 'done';
+  }
+  if (failed > 0 && created === 0) {
+    errorMsg = `${failed} pool connection${failed === 1 ? '' : 's'} could not be added`;
+    toast.error(errorMsg);
+    step = 'error';
+  }
+}
+
+async function handleOAuthSubmit() {
     errorMsg = '';
     submitting = true;
     oauthUrl = '';
@@ -576,11 +620,27 @@ async function copyOAuthUrl() {
                     </Select.Item>
                   {/each}
                 </Select.Content>
-              </Select.Root>
-            {/if}
-            <p class="text-xs text-muted-foreground">OpenCode Free connections must use a proxy pool. The default direct connection is always available.</p>
-          </div>
-        {:else if isNoAuth}
+      </Select.Root>
+      {/if}
+      {#if !proxyPoolsLoading && proxyPools.length > 0}
+      <div class="rounded-lg border border-border/50 bg-muted/20 p-3 flex flex-col gap-2">
+        <div class="flex items-center justify-between text-sm">
+          <span class="text-muted-foreground">{connectedPoolCount} connected · {missingPoolCount} missing</span>
+        </div>
+        <Button
+          variant="outline"
+          class="w-full text-sm"
+          disabled={missingPoolCount === 0 || submitting}
+          onclick={handleAutoAddMissingPools}
+          data-testid="auto-add-pools"
+        >
+          {submitting ? 'Adding...' : 'Auto-add missing pools'}
+        </Button>
+      </div>
+      {/if}
+      <p class="text-xs text-muted-foreground">OpenCode Free connections must use a proxy pool. The default direct connection is always available.</p>
+    </div>
+  {:else if isNoAuth}
           <div class="rounded-lg border border-border/50 bg-muted/30 p-3 text-sm text-muted-foreground">
             This provider does not require a credential. Add a named ready connection for routing.
           </div>
