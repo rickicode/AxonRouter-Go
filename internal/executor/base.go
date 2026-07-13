@@ -651,6 +651,15 @@ func JSONSet(data []byte, path string, value any) []byte {
 	return out
 }
 
+// JSONDelete deletes a field from raw JSON.
+func JSONDelete(data []byte, path string) []byte {
+	out, err := sjson.DeleteBytes(data, path)
+	if err != nil {
+		return data
+	}
+	return out
+}
+
 // JSONGet extracts a string field from raw JSON.
 func JSONGet(data []byte, path string) string {
 	return gjson.GetBytes(data, path).String()
