@@ -299,6 +299,53 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 	})
 }
 
+func (h *ProxyPoolHandler) BulkDelete(c *gin.Context) {
+	var req struct {
+		IDs    []string `json:"ids"`
+		Status string   `json:"status"`
+	}
+	if c.ShouldBindJSON(&req) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON"})
+		return
+	}
+
+	ids := map[string]struct{}{}
+	for _, id := range req.IDs {
+		ids[id] = struct{}{}
+	}
+	if req.Status != "" {
+		rows, err := h.db.Query("SELECT id FROM proxy_pools WHERE test_status = ?", req.Status)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var id string
+				if rows.Scan(&id) == nil {
+					ids[id] = struct{}{}
+				}
+			}
+		}
+	}
+
+	deleted := 0
+	skipped := 0
+	for id := range ids {
+		if _, ok := h.get(id); !ok {
+			skipped++
+			continue
+		}
+		h.cleanPoolReferences(id)
+		if _, err := h.db.Exec("DELETE FROM proxy_pools WHERE id = ?", id); err != nil {
+			skipped++
+			continue
+		}
+		deleted++
+	}
+	if h.resolver != nil {
+		h.resolver.Invalidate()
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "deleted": deleted, "skipped": skipped})
+}
+
 func (h *ProxyPoolHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 	if _, ok := h.get(id); !ok {
