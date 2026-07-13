@@ -74,7 +74,7 @@ func authHeaderToken(t *testing.T, database *sql.DB) string {
 	return resp.Token
 }
 
-func TestSessionAuth_RequiresPasswordChange_FirstLogin(t *testing.T) {
+func TestSessionAuth_DoesNotBlockAPIsOnFirstLogin(t *testing.T) {
 	database := newAuthTestDB(t)
 	seedAdminPassword(t, database, testAdminPassword)
 	_ = setSetting(database, firstLoginKey, "true")
@@ -89,11 +89,8 @@ func TestSessionAuth_RequiresPasswordChange_FirstLogin(t *testing.T) {
 	c.Request.Header.Set("X-Auth-Token", token)
 	SessionAuth(database)(c)
 
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 for uninitialised password, got %d %s", w.Code, w.Body.String())
-	}
-	if !strings.Contains(w.Body.String(), "must_change_password") {
-		t.Errorf("expected must_change_password flag, got %s", w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected password-change warning not to block APIs, got %d %s", w.Code, w.Body.String())
 	}
 }
 

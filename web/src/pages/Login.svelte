@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { fetchApi } from '$lib/api';
-  import { setToken, authStore, setMustChangePassword } from '$lib/auth';
+import { fetchApi } from '$lib/api';
+import { setToken, authStore } from '$lib/auth';
   import { toast } from 'svelte-sonner';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
@@ -21,15 +21,14 @@
     loading = true;
     error = '';
     try {
-    const res = await fetchApi<{ token: string; mustChangePassword?: boolean }>('/login', {
-      method: 'POST',
-      body: JSON.stringify({ password }),
-    });
-    if (res.token) {
-      setToken(res.token);
-      setMustChangePassword(res.mustChangePassword ?? false);
-      authStore.set(true);
-    }
+	const res = await fetchApi<{ token: string }>('/login', {
+		method: 'POST',
+		body: JSON.stringify({ password }),
+	});
+	if (res.token) {
+		setToken(res.token);
+		authStore.set(true);
+	}
 
     } catch (e) {
       error = e instanceof Error ? e.message : 'Login failed';
@@ -106,9 +105,7 @@
       <div class="flex items-start gap-2 rounded-lg border border-border bg-background/40 px-3 py-2 text-caption text-muted-foreground">
         <ShieldCheckIcon class="mt-0.5 size-4 shrink-0 text-primary" />
     <span>
-      Password default <code class="text-foreground">12345677</code>. Ubah dengan
-      <code class="text-foreground">axonrouter --setpass &lt;password&gt;</code>.
-      Saat pertama kali login, Anda harus mengubah password atau dapat menundanya selama 24 jam.
+			The initial admin password is randomly generated on first startup. Change it from Settings or via the CLI.
     </span>
       </div>
     </div>

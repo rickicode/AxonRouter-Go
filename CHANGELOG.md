@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `must_change_password` flag returned by `/api/admin/health`; the dashboard warning is driven entirely by this endpoint.
+- Dedicated change-password card on the Settings page with current/new/confirm password fields.
 - Copy icon on each model card in the provider detail page to copy the full model name.
 - `copyToClipboard` utility with `execCommand` fallback so copy buttons work on plain HTTP deployments.
 - `tokens_estimated` column to request logs via database migration, with DB model field and zero-default.
@@ -17,13 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `stream_options.include_usage` injection for OpenAI-compatible streaming requests and automatic stripping in all other cases.
 - Per-chunk token accumulation in streaming response handler via `StreamTokenCounts` replacing final-chunk-only extraction.
 - Fallback token estimation applied in request handlers (chat, messages, responses) when API usage is absent.
-- First-login forced password-change flow with backend endpoints (`POST /api/admin/change-password` and `POST /api/admin/defer-password-change`) and a non-dismissable dashboard modal.
+- Password-change warning driven by `/api/admin/health` only; admin endpoints are no longer blocked when the default password has not been changed.
 - `make test` and `make lint` Makefile targets.
 - Multi-stage `Dockerfile` and `.dockerignore`.
 - GitHub Actions CI workflow (`ci.yml`) running lint, tests, and frontend build.
 - Frontend unit-test harness with Vitest and smoke tests for auth/password API.
 - Auto-add missing proxy pool connections UI in OpenCode Free AddConnectionModal.
 - Searchable, scrollable proxy pool selector in OpenCode Free AddConnectionModal.
+- Settings page now groups runtime settings by category and supports live search.
 
 ### Fixed
 - Provider detail header: provider name and prefix now sit next to the logo on the left instead of being pushed to the right.
@@ -49,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ExtractTokensFromBody` extended to parse Gemini `usageMetadata` and OpenAI Responses API `response.usage`/`usage` shapes.
 - Usage tracker stores `tokens_estimated` flag in log entries for distinguishing estimated vs actual token counts.
 - Documentation now correctly notes that the CLI entry point is planned but not yet shipped.
-- Default admin password is now randomly generated on first startup and stored in `admin_password_plain`; the initial hardcoded password has been removed. Admins must change it before accessing other admin endpoints.
+- Default admin password is now randomly generated on first startup and stored in `admin_password_plain`; the initial hardcoded password has been removed. A warning is shown on the dashboard until the password is changed.
 
 ## [0.3.1] - 2026-07-13
 

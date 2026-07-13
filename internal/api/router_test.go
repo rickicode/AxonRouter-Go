@@ -74,12 +74,15 @@ func TestHealth(t *testing.T) {
 		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	var body map[string]string
+	var body map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
 	if body["status"] != "ok" || body["db"] != "ok" {
 		t.Errorf("unexpected health body: %+v", body)
+	}
+	if _, ok := body["must_change_password"]; !ok {
+		t.Errorf("expected must_change_password in health response")
 	}
 }
 

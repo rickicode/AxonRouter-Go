@@ -1,5 +1,5 @@
 // API Client for AxonRouter-Go Dashboard
-import { getToken, setToken, logout, setMustChangePassword } from "./auth";
+import { getToken, setToken, logout } from "./auth";
 
 const API_BASE = "/api/admin";
 
@@ -174,9 +174,6 @@ export async function fetchApi<T>(
       const err = await response
         .json()
         .catch(() => ({ message: response.statusText }));
-      if (err.must_change_password) {
-        setMustChangePassword(true);
-      }
       throw new Error(err.error || err.message || `HTTP ${response.status}`);
     }
 

@@ -3,6 +3,8 @@ package admin
 import (
 	"database/sql"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
@@ -28,6 +30,21 @@ func NewHealthHandler(database *sql.DB, store *connstate.Store, tracker *usage.T
 
 // Health returns a simple liveness check. It is reachable without admin auth
 // so the dashboard and load balancers can use it for online checks.
+func (h *HealthHandler) mustChangePassword() bool {
+	// true while the default admin password has never been changed, or the
+	// deferred change window has expired.
+	var firstLogin string
+	if err := h.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, "first_login").Scan(&firstLogin); err != nil || firstLogin != "false" {
+		return true
+	}
+	var dueAt string
+	if err := h.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, "password_change_due_at").Scan(&dueAt); err != nil {
+		return false
+	}
+	n, _ := strconv.ParseInt(dueAt, 10, 64)
+	return n > 0 && time.Now().Unix() >= n
+}
+
 func (h *HealthHandler) Health(c *gin.Context) {
 	// Health is a liveness probe. It must NEVER block on DB access — under load
 	// the DB pool can be saturated by request-path reads/writes, and a slow
@@ -51,9 +68,10 @@ func (h *HealthHandler) Health(c *gin.Context) {
 	}
 
 	c.JSON(status, gin.H{
-		"status":  dbStatus,
-		"db":      dbStatus,
-		"version": version.String(),
+		"status":               dbStatus,
+		"db":                   dbStatus,
+		"version":              version.String(),
+		"must_change_password": h.mustChangePassword(),
 	})
 }
 

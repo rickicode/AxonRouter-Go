@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+import { onMount } from 'svelte';
+import { setMustChangePassword } from '$lib/auth';
 
-  let isOnline = $state(true);
-  let latencyMs = $state(1);
-  let version = $state('');
+let isOnline = $state(true);
+let latencyMs = $state(1);
+let version = $state('');
 
   const CHANGELOG_URL = 'https://github.com/rickicode/AxonRouter-Go/blob/main/CHANGELOG.md';
 
@@ -14,10 +15,13 @@
         const response = await fetch('/api/admin/health');
         latencyMs = Math.max(1, Math.round(performance.now() - start));
         isOnline = response.ok;
-        if (response.ok) {
-          const data = await response.json().catch(() => ({}));
-          if (data.version) version = String(data.version);
-        }
+			if (response.ok) {
+				const data = await response.json().catch(() => ({}));
+				if (data.version) version = String(data.version);
+				if (typeof data.must_change_password === 'boolean') {
+					setMustChangePassword(data.must_change_password);
+				}
+			}
       } catch {
         isOnline = false;
         latencyMs = 0;

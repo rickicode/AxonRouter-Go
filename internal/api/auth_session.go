@@ -212,17 +212,8 @@ func DeferPasswordChangeHandler(database *sql.DB) gin.HandlerFunc {
 	}
 }
 
-var allowUnchangedPasswordPaths = map[string]bool{
-	"/api/admin/login":            true,
-	"/api/admin/change-password":  true,
-	"/api/admin/defer-password-change": true,
-}
-
 // SessionAuth enforces a valid admin JWT on /api/admin routes and slides the
 // session: each request re-issues a token with a fresh exp=now+72h.
-// If the admin password has not been changed from the random initial value,
-// it also enforces a mandatory password change (new) before allowing any other
-// admin endpoint.
 func SessionAuth(database *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := c.GetHeader("X-Auth-Token")
@@ -248,13 +239,7 @@ func SessionAuth(database *sql.DB) gin.HandlerFunc {
 			return
 		}
 
-		if !allowUnchangedPasswordPaths[c.Request.URL.Path] && mustChangePassword(database) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "password change required", "must_change_password": true})
-			c.Abort()
-			return
-		}
-
-		if tok, err := issueToken(); err == nil {
+	if tok, err := issueToken(); err == nil {
 			c.Header("X-Auth-Token", tok)
 		}
 		c.Next()
