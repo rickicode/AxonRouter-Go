@@ -169,7 +169,17 @@ import { formatTokens } from '$lib/stores';
           responsive: true,
           maintainAspectRatio: false,
           interaction: { mode: 'index', intersect: false },
-          plugins: { legend: { labels: { color: tick, boxWidth: 12, font: { size: 11 } } } },
+          plugins: {
+        legend: { labels: { color: tick, boxWidth: 12, font: { size: 11 } } },
+        tooltip: {
+          backgroundColor: '#18181b',
+          titleColor: '#fafafa',
+          bodyColor: '#d4d4d8',
+          borderColor: '#27272a',
+          borderWidth: 1,
+          callbacks: { label: (ctx) => `${ctx.dataset.label}: ${Number(ctx.parsed.y).toLocaleString()} tokens` },
+        },
+          },
           scales: {
             x: { stacked: true, grid: { color: grid }, ticks: { color: tick, maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } },
             y: { stacked: true, grid: { color: grid }, ticks: { color: tick, callback: (v) => formatTokens(Number(v)) } },
@@ -199,7 +209,18 @@ import { formatTokens } from '$lib/stores';
         options: {
           responsive: true,
           maintainAspectRatio: false,
-          plugins: { legend: { display: false } },
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#18181b',
+          titleColor: '#fafafa',
+          bodyColor: '#d4d4d8',
+          borderColor: '#27272a',
+          borderWidth: 1,
+          callbacks: { label: (ctx) => `Cost: $${Number(ctx.parsed.y).toFixed(2)}` },
+        },
+          },
           scales: {
             x: { grid: { color: grid }, ticks: { color: tick, maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } },
             y: { grid: { color: grid }, ticks: { color: tick, callback: (v) => '$' + Number(v).toFixed(2) } },
@@ -220,8 +241,18 @@ import { formatTokens } from '$lib/stores';
           responsive: true,
           maintainAspectRatio: false,
           cutout: '62%',
-          plugins: { legend: { position: 'right', labels: { color: tick, boxWidth: 12, font: { size: 11 } } } },
+        plugins: {
+          legend: { position: 'right', labels: { color: tick, boxWidth: 12, font: { size: 11 } } },
+          tooltip: {
+            backgroundColor: '#18181b',
+            titleColor: '#fafafa',
+            bodyColor: '#d4d4d8',
+            borderColor: '#27272a',
+            borderWidth: 1,
+            callbacks: { label: (ctx) => `${ctx.label}: ${Number(ctx.parsed).toLocaleString()} requests` },
         },
+        },
+      },
       });
     }
 
@@ -237,8 +268,18 @@ import { formatTokens } from '$lib/stores';
           responsive: true,
           maintainAspectRatio: false,
           cutout: '62%',
-          plugins: { legend: { position: 'right', labels: { color: tick, boxWidth: 12, font: { size: 11 } } } },
+        plugins: {
+          legend: { position: 'right', labels: { color: tick, boxWidth: 12, font: { size: 11 } } },
+          tooltip: {
+            backgroundColor: '#18181b',
+            titleColor: '#fafafa',
+            bodyColor: '#d4d4d8',
+            borderColor: '#27272a',
+            borderWidth: 1,
+            callbacks: { label: (ctx) => `${ctx.label}: ${Number(ctx.parsed).toLocaleString()} requests` },
         },
+        },
+      },
       });
     }
   }

@@ -140,6 +140,7 @@
 		return {
 			responsive: true,
 			maintainAspectRatio: false,
+interaction: { mode: 'index', intersect: false },
 			plugins: {
 				legend: { labels: { color: '#a1a1aa', font: { size: 11 } } },
 				title: { display: false },
@@ -149,8 +150,17 @@
 					bodyColor: '#d4d4d8',
 					borderColor: '#27272a',
 					borderWidth: 1,
+callbacks: {
+label: (ctx: any) => {
+const raw = ctx.parsed?.y ?? ctx.parsed;
+const v = Number(raw);
+const lbl = ctx.dataset?.label || '';
+if (lbl.toLowerCase().includes('cost')) return `Cost: $${v.toFixed(2)}`;
+return `${lbl}: ${v.toLocaleString()}`;
 				},
 			},
+},
+},
 			scales: {
 				x: {
 					grid: { color: '#27272a' },
