@@ -77,13 +77,14 @@ import * as Dialog from '$lib/components/ui/dialog';
     }
   }
 
+
 async function handleCopy(key: string) {
-    try {
+	try {
 		await copyValue(key, 'API key');
 	} catch (err) {
 		toast.error('Failed to copy API key');
-    }
-  }
+	}
+}
 
   async function handleToggle(id: string, current: boolean) {
     try {
@@ -166,41 +167,42 @@ function formatMaxTokens(tokens: number): string {
             <thead>
               <tr class="border-b border-border bg-muted/30">
                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Name</th>
-                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Key</th>
-                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Rate Limit</th>
+                                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Rate Limit</th>
                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Status</th>
                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Created</th>
                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-32"></th>
               </tr>
             </thead>
-            <tbody class="divide-y divide-border">
-              {#each keys as key}
-                <tr class="transition-colors hover:bg-accent/20">
-                  <td class="py-3 px-4 text-body-sm font-medium">{key.name || '—'}</td>
-                  <td class="py-3 px-4 font-mono text-xs break-all max-w-xs">{key.key || '—'}</td>
- 		<td class="py-3 px-4 text-body-sm text-muted-foreground">{key.rate_limit_per_min}/min{key.max_tokens > 0 ? ` · ${formatMaxTokens(key.max_tokens)}` : ''}</td>
-                  <td class="py-3 px-4">
-                    <Badge variant={key.is_active ? 'default' : 'secondary'} class="text-caption-mono rounded-sm">
-                      {key.is_active ? 'Active' : 'Disabled'}
-                    </Badge>
-                  </td>
-                  <td class="py-3 px-4 text-body-sm text-muted-foreground">{formatDate(key.created_at)}</td>
-                  <td class="py-3 px-4">
-                    <div class="flex gap-1">
-				<Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" onclick={() => handleCopy(key.key)}>
-									Copy
-								</Button>
-								<Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" onclick={() => handleToggle(key.id, key.is_active)}>
-									{key.is_active ? 'Disable' : 'Enable'}
-								</Button>
-								<Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm text-destructive hover:text-destructive" onclick={() => handleDelete(key.id, key.name)}>
-									Del
-								</Button>
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
+	<tbody class="divide-y divide-border">
+		{#each keys as key}
+			<tr class="transition-colors hover:bg-accent/20">
+				<td class="py-3 px-4">
+					<div class="text-body-sm font-medium">{key.name || '—'}</div>
+					<div class="flex items-center gap-2 mt-1">
+						<code class="font-mono text-xs text-muted-foreground break-all">{key.key || '—'}</code>
+						<button class="text-caption-mono text-muted-foreground hover:text-foreground rounded-sm px-1.5 py-0.5 border border-border" onclick={() => handleCopy(key.key)}>Copy</button>
+					</div>
+				</td>
+				<td class="py-3 px-4 text-body-sm text-muted-foreground">{key.rate_limit_per_min}/min · {key.max_tokens > 0 ? formatMaxTokens(key.max_tokens) : 'Unlimited'}</td>
+				<td class="py-3 px-4">
+					<Badge variant={key.is_active ? 'default' : 'secondary'} class="text-caption-mono rounded-sm">
+						{key.is_active ? 'Active' : 'Disabled'}
+					</Badge>
+				</td>
+				<td class="py-3 px-4 text-body-sm text-muted-foreground">{formatDate(key.created_at)}</td>
+				<td class="py-3 px-4">
+					<div class="flex gap-1">
+						<Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" onclick={() => handleToggle(key.id, key.is_active)}>
+							{key.is_active ? 'Disable' : 'Enable'}
+						</Button>
+						<Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm text-destructive hover:text-destructive" onclick={() => handleDelete(key.id, key.name)}>
+							Del
+						</Button>
+					</div>
+				</td>
+			</tr>
+		{/each}
+	</tbody>
           </table>
         </div>
       </CardContent>
