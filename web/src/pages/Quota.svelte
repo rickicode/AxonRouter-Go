@@ -151,13 +151,13 @@
 const ANTIGRAVITY_MAIN_FAMILIES = ['claude', 'gemini 3.1', 'gemini 3.5'];
 
 function isAntigravityMainModel(name: string): boolean {
-  const raw = name.toLowerCase();
-  const display = modelDisplayName(name).toLowerCase();
+  const raw = name.toLowerCase().replace(/-/g, ' ');
+  const display = modelDisplayName(name).toLowerCase().replace(/-/g, ' ');
   return ANTIGRAVITY_MAIN_FAMILIES.some(f => raw.includes(f) || display.includes(f));
   }
 
 function antigravityQuotaGroup(name: string): string {
-  const display = modelDisplayName(name).toLowerCase();
+  const display = modelDisplayName(name).toLowerCase().replace(/-/g, ' ');
   if (display.includes('gemini 3.5 flash')) return 'Gemini 3.5 Flash';
   if (display.includes('gemini 3.1 flash image')) return 'Gemini 3.1 Flash Image';
   if (display.includes('gemini 3.1 flash lite')) return 'Gemini 3.1 Flash Lite';
