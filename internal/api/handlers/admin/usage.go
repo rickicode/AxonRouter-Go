@@ -365,9 +365,11 @@ func (h *UsageHandler) byStatus(ctx context.Context, f usageFilters) ([]usageBre
 
 func (h *UsageHandler) byTime(ctx context.Context, f usageFilters) ([]timeBucket, error) {
 	where, args := baseWhere(f)
-	bucketExpr := `strftime('%Y-%m-%d', rl.timestamp, 'unixepoch')`
+	// rl.timestamp is stored in MILLISECONDS; strftime's 'unixepoch' modifier
+	// expects SECONDS, so divide by 1000 (same fix as aggregator.GetDailyUsage).
+	bucketExpr := `strftime('%Y-%m-%d', rl.timestamp / 1000, 'unixepoch')`
 	if f.Granularity == "month" {
-		bucketExpr = `strftime('%Y-%m', rl.timestamp, 'unixepoch')`
+		bucketExpr = `strftime('%Y-%m', rl.timestamp / 1000, 'unixepoch')`
 	}
 	rows, err := h.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT
@@ -481,8 +483,8 @@ func parseFilters(c *gin.Context) usageFilters {
 	}
 
 	return usageFilters{
-		From:        from.Unix(),
-		To:          to.Unix(),
+		From:        from.UnixMilli(),
+		To:          to.UnixMilli(),
 		Granularity: granularity,
 		APIKeyID:    c.Query("api_key_id"),
 		ModelID:     c.Query("model_id"),
