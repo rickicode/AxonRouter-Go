@@ -199,9 +199,11 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 				LatencyMs:           latency,
 				StatusCode:          resp.StatusCode,
 				TokensEstimated:     tokensEstimated,
-			})
-			h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
-			h.incrementAPIKeyUsage(c.GetString("api_key_id"), tokenCounts.InputTokens+tokenCounts.OutputTokens)
+	})
+	if resp.StatusCode < 300 {
+		h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
+	}
+	h.incrementAPIKeyUsage(c.GetString("api_key_id"), tokenCounts.InputTokens+tokenCounts.OutputTokens)
 			h.writeJSONResponse(c, resp.StatusCode, translatedResp)
 		}
 		return

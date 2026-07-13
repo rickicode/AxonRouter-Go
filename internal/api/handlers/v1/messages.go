@@ -165,7 +165,9 @@ func (h *Handler) Messages(c *gin.Context) {
 				TokensEstimated:     tokensEstimated,
 			})
 	h.incrementAPIKeyUsage(c.GetString("api_key_id"), tokenCounts.InputTokens+tokenCounts.OutputTokens)
-	h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
+	if resp.StatusCode < 300 {
+		h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
+	}
 	h.writeJSONResponse(c, resp.StatusCode, translatedResp)
 		}
 		return
