@@ -302,7 +302,7 @@ var providerCatalogKeys = map[string][]string{
 	"cx":            {"codex-free", "codex-team", "codex-plus", "codex-pro"},
 	"ag":            {"antigravity"},
 	"antigravity":   {"antigravity"},
-	"kiro":          {"kimi"},
+	"kiro": {"kiro"},
 	"aistudio": {"aistudio"},
 	"xai":      {"xai"},
 	"oc":       {"oc"},

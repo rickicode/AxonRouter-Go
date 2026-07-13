@@ -1,0 +1,173 @@
+package kiro
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+func TestNormalizeKiroModel(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"claude-sonnet-4-6", "claude-sonnet-4.6"},
+		{"claude-opus-4-20250514", "claude-opus-4-20250514"},
+		{"claude-haiku-4-5", "claude-haiku-4.5"},
+		{"deepseek-chat", "deepseek-chat"},
+	}
+	for _, c := range cases {
+		got := normalizeKiroModel(c.in)
+		if got != c.want {
+			t.Errorf("normalizeKiroModel(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestResolveKiroEffort(t *testing.T) {
+	cases := []struct {
+		name string
+		req  map[string]any
+		want string
+	}{
+		{"reasoning_effort high", map[string]any{"reasoning_effort": "high"}, "high"},
+		{"thinking enabled budget 40000", map[string]any{"thinking": map[string]any{"type": "enabled", "budget_tokens": float64(40000)}}, "high"},
+		{"thinking adaptive", map[string]any{"thinking": map[string]any{"type": "adaptive"}}, "high"},
+		{"output_config xhigh", map[string]any{"output_config": map[string]any{"effort": "xhigh"}}, "xhigh"},
+		{"no reasoning", map[string]any{}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := resolveKiroEffort(c.req)
+			if got != c.want {
+				t.Errorf("resolveKiroEffort(...) = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestConvertOpenAIRequestToKiro_Basic(t *testing.T) {
+	body := []byte(`{
+		"model": "kiro/claude-sonnet-4-6",
+		"messages": [
+			{"role": "system", "content": "You are helpful."},
+			{"role": "user", "content": "Hi"}
+		],
+		"max_tokens": 4096,
+		"temperature": 0.5,
+		"tools": [
+			{"type": "function", "function": {"name": "get_weather", "description": "weather", "parameters": {"type": "object", "properties": {"city": {"type": "string"}}}}}
+		]
+	}`)
+
+	out := ConvertOpenAIRequestToKiro("kiro/claude-sonnet-4-6", body, true)
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	cs, ok := payload["conversationState"].(map[string]any)
+	if !ok {
+		t.Fatalf("conversationState missing")
+	}
+	current, ok := cs["currentMessage"].(map[string]any)
+	if !ok {
+		t.Fatalf("currentMessage missing")
+	}
+	uim, ok := current["userInputMessage"].(map[string]any)
+	if !ok {
+		t.Fatalf("userInputMessage missing")
+	}
+	content := uim["content"].(string)
+	if !strings.Contains(content, "Hi") {
+		t.Errorf("current content missing user text: %q", content)
+	}
+	if !strings.Contains(content, "[Context: Current time is") {
+		t.Errorf("context timestamp missing")
+	}
+	if uim["modelId"] != "claude-sonnet-4.6" {
+		t.Errorf("modelId = %v, want claude-sonnet-4.6", uim["modelId"])
+	}
+	history, _ := cs["history"].([]any)
+	if len(history) != 0 {
+		t.Errorf("history expected empty when system folds into user current turn, got %d", len(history))
+	}
+	inf, _ := payload["inferenceConfig"].(map[string]any)
+	if inf == nil {
+		t.Fatalf("inferenceConfig missing")
+	}
+	if inf["maxTokens"] != float64(4096) {
+		t.Errorf("maxTokens = %v", inf["maxTokens"])
+	}
+	if inf["temperature"] != 0.5 {
+		t.Errorf("temperature = %v", inf["temperature"])
+	}
+	if !uimHasTools(uim) {
+		t.Errorf("current message missing tools schema")
+	}
+}
+
+func TestConvertOpenAIRequestToKiro_Reasoning(t *testing.T) {
+	body := []byte(`{
+		"model": "claude-opus-4",
+		"messages": [{"role": "user", "content": "Think deeply"}],
+		"reasoning_effort": "high",
+		"max_tokens": 8192
+	}`)
+
+	out := ConvertOpenAIRequestToKiro("claude-opus-4", body, true)
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	fields, ok := payload["additionalModelRequestFields"].(map[string]any)
+	if !ok {
+		t.Fatalf("additionalModelRequestFields missing")
+	}
+	cfg := fields["output_config"].(map[string]any)
+	if cfg["effort"] != "high" {
+		t.Errorf("effort = %v", cfg["effort"])
+	}
+
+	current := payload["conversationState"].(map[string]any)["currentMessage"].(map[string]any)
+	uim := current["userInputMessage"].(map[string]any)
+	content := uim["content"].(string)
+	if !strings.HasPrefix(content, "<thinking_mode>enabled</thinking_mode>") {
+		t.Errorf("thinking directive missing: %s", content)
+	}
+	inf, ok := payload["inferenceConfig"].(map[string]any)
+	if !ok {
+		t.Fatalf("inferenceConfig missing; maxTokens should be preserved")
+	}
+	if _, ok := inf["temperature"]; ok {
+		t.Errorf("temperature should be stripped while thinking")
+	}
+	if _, ok := inf["topP"]; ok {
+		t.Errorf("topP should be stripped while thinking")
+	}
+	if inf["maxTokens"] != float64(8192) {
+		t.Errorf("maxTokens = %v, want 8192", inf["maxTokens"])
+	}
+}
+
+func TestConvertOpenAIRequestToKiro_UnsupportedSuffix(t *testing.T) {
+	body := []byte(`{"messages": [{"role": "user", "content": "hi"}]}`)
+	out := ConvertOpenAIRequestToKiro("claude-opus-4[1m]", body, true)
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	errObj := payload["error"].(map[string]any)
+	if !strings.Contains(errObj["message"].(string), "[1m]") {
+		t.Errorf("expected [1m] rejection error, got %v", errObj)
+	}
+}
+
+func uimHasTools(uim map[string]any) bool {
+	ctx, _ := uim["userInputMessageContext"].(map[string]any)
+	if ctx == nil {
+		return false
+	}
+	tools, _ := ctx["tools"].([]any)
+	return len(tools) > 0
+}
