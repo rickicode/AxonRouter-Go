@@ -38,10 +38,15 @@ func newProxyPoolTestDB(t *testing.T) *sql.DB {
 	return database
 }
 
+func noopTestProxy(_ string, _ string, _ string) proxypool.TestResult {
+	return proxypool.TestResult{OK: true, StatusCode: 200, ElapsedMs: 0}
+}
+
 func TestProxyPoolBulkCreate(t *testing.T) {
 	database := newProxyPoolTestDB(t)
 	gin.SetMode(gin.TestMode)
 	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database))
+	h.testProxy = noopTestProxy
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -51,9 +56,9 @@ func TestProxyPoolBulkCreate(t *testing.T) {
 			"http://proxy2.example:8080",
 			map[string]any{"name": "custom-pool", "proxyUrl": "http://proxy3.example:8080", "type": "http"},
 		},
-		"namePrefix":  "bulk",
+		"namePrefix": "bulk",
 		"defaultType": "http",
-		"isActive":    true,
+		"isActive": true,
 	}))
 	h.BulkCreate(c)
 
@@ -63,7 +68,7 @@ func TestProxyPoolBulkCreate(t *testing.T) {
 	var resp struct {
 		Created int `json:"created"`
 		Skipped int `json:"skipped"`
-		Errors  int `json:"errors"`
+		Errors int `json:"errors"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -79,8 +84,8 @@ func TestProxyPoolBulkCreate(t *testing.T) {
 	w = httptest.NewRecorder()
 	c, _ = gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk", jsonBodyProxyPool(t, map[string]any{
-		"items":       []any{"http://proxy1.example:8080", "http://proxy4.example:8080"},
-		"namePrefix":  "bulk",
+		"items": []any{"http://proxy1.example:8080", "http://proxy4.example:8080"},
+		"namePrefix": "bulk",
 		"defaultType": "http",
 	}))
 	h.BulkCreate(c)
@@ -99,12 +104,13 @@ func TestProxyPoolBulkCreateNamePipe(t *testing.T) {
 	database := newProxyPoolTestDB(t)
 	gin.SetMode(gin.TestMode)
 	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database))
+	h.testProxy = noopTestProxy
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk", jsonBodyProxyPool(t, map[string]any{
-		"items":       []any{"us-proxy|http://proxy-us.example:8080", "http://proxy-eu.example:8080"},
-		"namePrefix":  "bulk",
+		"items": []any{"us-proxy|http://proxy-us.example:8080", "http://proxy-eu.example:8080"},
+		"namePrefix": "bulk",
 		"defaultType": "http",
 	}))
 	h.BulkCreate(c)
@@ -127,12 +133,13 @@ func TestProxyPoolBulkCreateDetectsRelayType(t *testing.T) {
 	database := newProxyPoolTestDB(t)
 	gin.SetMode(gin.TestMode)
 	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database))
+	h.testProxy = noopTestProxy
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk", jsonBodyProxyPool(t, map[string]any{
-		"items":       []any{"https://myrelay.vercel.app"},
-		"namePrefix":  "relay",
+		"items": []any{"https://myrelay.vercel.app"},
+		"namePrefix": "relay",
 		"defaultType": "http",
 	}))
 	h.BulkCreate(c)
@@ -150,5 +157,48 @@ func TestProxyPoolBulkCreateDetectsRelayType(t *testing.T) {
 	}
 	if relayAuth == "" {
 		t.Fatal("expected relay_auth to be generated")
+	}
+}
+
+func TestProxyPoolBulkCreateUsesTestHook(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database))
+	called := false
+	h.testProxy = func(proxyURL, typ, auth string) proxypool.TestResult {
+		called = true
+		if proxyURL == "http://stub.example:8080" {
+			return proxypool.TestResult{OK: true, StatusCode: 200, IP: "1.2.3.4", Country: "US", City: "NYC", Org: "TestOrg", ElapsedMs: 12}
+		}
+		return proxypool.TestResult{OK: false, Error: "unexpected URL"}
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk", jsonBodyProxyPool(t, map[string]any{
+		"items": []any{"http://stub.example:8080"},
+		"namePrefix": "bulk",
+		"defaultType": "http",
+		"isActive": true,
+	}))
+	h.BulkCreate(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("BulkCreate status = %d, body=%s", w.Code, w.Body.String())
+	}
+	if !called {
+		t.Fatal("expected testProxy hook to be called")
+	}
+
+	var status, ip, country, city, org string
+	err := database.QueryRow("SELECT test_status, proxy_ip, proxy_country, proxy_city, proxy_org FROM proxy_pools WHERE proxy_url = ?", "http://stub.example:8080").Scan(&status, &ip, &country, &city, &org)
+	if err != nil {
+		t.Fatalf("find created pool: %v", err)
+	}
+	if status != "active" {
+		t.Fatalf("expected test_status active, got %s", status)
+	}
+	if ip != "1.2.3.4" || country != "US" || city != "NYC" || org != "TestOrg" {
+		t.Fatalf("expected proxy metadata from hook, got ip=%s country=%s city=%s org=%s", ip, country, city, org)
 	}
 }
