@@ -284,15 +284,16 @@ AxonRouter-Go uses a single-file versioning system so that every release is cons
 - Add entries under `## [Unreleased]` as you build features/fixes.
 - Use categories from [Keep a Changelog](https://keepachangelog.com): `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`.
 - During release, the `## [Unreleased]` section is moved into a new `## [X.Y.Z] - YYYY-MM-DD` section.
-- GitHub Releases uses `scripts/extract-changelog.js` to pull the matching section from `CHANGELOG.md` automatically.
-
+- GitHub Releases uses `scripts/prepare-release-notes.js` to pull the matching section from `CHANGELOG.md`, falling back to the latest git commit message when no section exists.
 ### 4. Git Tags and GitHub Actions
 - Release tags must match `v<VERSION>` (e.g. `internal/version/VERSION` = `0.3.1` → tag `v0.3.1`).
 - The `.github/workflows/release.yml` workflow:
   1. Validates that the pushed tag matches `internal/version/VERSION`.
   2. Builds the frontend and backend via Makefile targets.
-  3. Extracts the changelog section for the release version.
-  4. Publishes the release notes and binaries to GitHub Releases.
+  3. Prepares release notes using `scripts/prepare-release-notes.js`:
+     - If a section for the current version exists in `CHANGELOG.md`, it uses that.
+     - If no section exists, it falls back to the latest git commit message.
+  4. Publishes the release notes and binaries to GitHub Releases with a clear `Release vX.Y.Z` title.
 
 ### 5. README.md Changelog Sync
 - `README.md` contains a `<!-- LATEST_CHANGELOG_START -->` / `<!-- LATEST_CHANGELOG_END -->` marker block.

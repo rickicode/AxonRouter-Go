@@ -13,6 +13,9 @@ on:
 permissions:
   contents: write
 
+env:
+  VERSION: ""
+
 jobs:
   build:
     name: 🖥️ Build ${{ matrix.goos }}/${{ matrix.goarch }}
@@ -35,6 +38,7 @@ jobs:
         uses: actions/checkout@v7.0.0
 
       - name: 🔖 Validate version matches tag
+        id: version
         run: |
           VERSION="$(cat internal/version/VERSION)"
           TAG="${GITHUB_REF_NAME}"
@@ -43,6 +47,8 @@ jobs:
             exit 1
           fi
           echo "✅ Tag ${TAG} matches VERSION file."
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: ⚙️ Set up Go
         uses: actions/setup-go@v6.5.0
@@ -80,14 +86,19 @@ jobs:
           BIN="./build/axonrouter-${{ matrix.goos }}-${{ matrix.goarch }}"
           if [ "${{ matrix.goos }}" = "windows" ]; then BIN="${BIN}.exe"; fi
           echo "name=${BIN}" >> "$GITHUB_OUTPUT"
-          echo "binary=${BIN}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Built: ${BIN}" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 📝 Extract release notes
-        run: node scripts/extract-changelog.js "$(cat internal/version/VERSION)" > RELEASE_NOTES.md
+      - name: 📝 Prepare release notes
+        env:
+          GITHUB_ACTIONS: "true"
+        run: |
+          node scripts/prepare-release-notes.js
+          echo "- Release notes source: $(grep -oP '(?<=Release notes source: ).*' RELEASE_NOTES.md || echo 'unknown')" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 🚀 Publish GitHub Release
+      - name: 🚀 Publish GitHub Release v${{ steps.version.outputs.version }}
         uses: softprops/action-gh-release@v3.0.1
         with:
+          name: Release v${{ steps.version.outputs.version }}
           files: ${{ steps.bin.outputs.name }}
           body_path: RELEASE_NOTES.md
           append_body: false
