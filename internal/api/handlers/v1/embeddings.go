@@ -67,19 +67,12 @@ func (h *Handler) Embeddings(c *gin.Context) {
 	if openaiExec, ok := exec.(*executor.OpenAIExecutor); ok {
 		embedExec := &embeddingsAdapter{OpenAIExecutor: openaiExec}
 		resp, _, err := h.executeWithRetry(proxyCtx, embedExec, req, conn, provider, modelName)
-		if err != nil {
-			h.tracker.Log(&usage.LogEntry{
-				ApiKeyID:       c.GetString("api_key_id"),
-				ConnectionID:   conn.ID,
-				ProviderTypeID: provider,
-				ModelID:        modelName,
-				Modality:       "embedding",
-				Stream:         false,
-				LatencyMs:      time.Since(start).Milliseconds(),
-				ErrorMessage:   err.Error()})
-			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "server_error"}})
-			return
+	if err != nil {
+		if !h.writeUpstreamClientError(c, err, conn, provider, modelName, start, false) {
+			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": "internal server error", "type": "server_error"}})
 		}
+		return
+	}
 		h.tracker.Log(&usage.LogEntry{
 			ApiKeyID:       c.GetString("api_key_id"),
 			ConnectionID:   conn.ID,

@@ -383,7 +383,7 @@ func (e *OpenAIExecutor) Embeddings(ctx context.Context, req *Request) (*Respons
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("openai embeddings error %d: %s", resp.StatusCode, string(resp.Body))
+		return nil, &UpstreamError{StatusCode: resp.StatusCode, Body: resp.Body, RawBody: resp.Body, Headers: resp.Headers}
 	}
 
 	return resp, nil
