@@ -45,10 +45,10 @@ func TestLiteReplaceImageUrls(t *testing.T) {
 		"messages": []any{
 			map[string]any{
 				"role": "user",
-				"content": []any{
-					map[string]any{"type": "text", "text": "  hello   " + urlFrag + "  world  "},
-					map[string]any{"type": "image_url", "image_url": map[string]any{"url": "[image]"}},
-				},
+			"content": []any{
+				map[string]any{"type": "text", "text": " hello " + urlFrag + " world "},
+				map[string]any{"type": "image_url", "image_url": map[string]any{"url": urlFrag}},
+			},
 			},
 		},
 	})

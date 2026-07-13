@@ -101,9 +101,7 @@ func ApplyLite(body []byte, cfg LiteConfig) ([]byte, EngineStats, error) {
 				if !ok {
 					continue
 				}
-				if part["type"] != "text" {
-					continue
-				}
+			if part["type"] == "text" {
 				text, _ := part["text"].(string)
 				out := text
 				if cfg.CollapseWhitespace {
@@ -119,6 +117,17 @@ func ApplyLite(body []byte, cfg LiteConfig) ([]byte, EngineStats, error) {
 					}
 				}
 				part["text"] = out
+			} else if cfg.ReplaceImageUrls && part["type"] == "image_url" {
+				if imageURL, ok := part["image_url"].(map[string]any); ok {
+					url, _ := imageURL["url"].(string)
+					if out := replaceImageDataURLs(url); out != url {
+						imageURL["url"] = out
+						if !contains(techniques, "replace_image_urls") {
+							techniques = append(techniques, "replace_image_urls")
+						}
+					}
+				}
+			}
 			}
 		}
 	}
