@@ -30,11 +30,15 @@ type releaseResponse struct {
 
 // CheckLatest fetches the latest release from GitHub and parses it.
 func CheckLatest(client *http.Client) (ReleaseInfo, error) {
+	return checkLatest(client, githubLatestURL)
+}
+
+func checkLatest(client *http.Client, url string) (ReleaseInfo, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
 
-	req, err := http.NewRequest(http.MethodGet, githubLatestURL, nil)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return ReleaseInfo{}, err
 	}
@@ -56,31 +60,38 @@ func CheckLatest(client *http.Client) (ReleaseInfo, error) {
 	}
 
 	info := ReleaseInfo{
-		Version:     strings.TrimPrefix(rr.Tag, "v"),
-		Tag:         rr.Tag,
+		Version: strings.TrimPrefix(rr.Tag, "v"),
+		Tag: rr.Tag,
 		PublishedAt: rr.PublishedAt,
-		HTMLURL:     rr.HTMLURL,
+		HTMLURL: rr.HTMLURL,
 	}
 	return info, nil
 }
 
 // Checker caches the latest release for a fixed TTL.
 type Checker struct {
-	mu      sync.Mutex
-	client  *http.Client
-	cached  ReleaseInfo
+	mu sync.Mutex
+	client *http.Client
+	url string
+	cached ReleaseInfo
 	cachedAt time.Time
-	ttl     time.Duration
+	ttl time.Duration
 }
 
 // NewChecker creates a Checker with the provided HTTP client.
 func NewChecker(client *http.Client) *Checker {
+	return NewCheckerWithURL(client, githubLatestURL)
+}
+
+// NewCheckerWithURL creates a Checker that fetches from a custom URL.
+func NewCheckerWithURL(client *http.Client, url string) *Checker {
 	if client == nil {
 		client = http.DefaultClient
 	}
 	return &Checker{
 		client: client,
-		ttl:    defaultCacheTTL,
+		url: url,
+		ttl: defaultCacheTTL,
 	}
 }
 
@@ -93,7 +104,7 @@ func (c *Checker) LatestVersion() (ReleaseInfo, bool) {
 		return c.cached, true
 	}
 
-	info, err := CheckLatest(c.client)
+	info, err := checkLatest(c.client, c.url)
 	if err != nil {
 		return ReleaseInfo{}, false
 	}
