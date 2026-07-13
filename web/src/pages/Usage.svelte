@@ -257,15 +257,15 @@
 	</div>
 
 	<Card class="shadow-card">
-		<CardContent class="p-4">
-			<div class="flex flex-wrap items-end gap-3">
+		<CardContent class="p-4 space-y-4">
+			<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 items-end">
 				<div class="flex flex-col gap-1.5">
 					<Label class="text-caption-mono text-muted-foreground">From</Label>
-					<Input type="date" bind:value={from} class="h-9 text-sm w-40" />
+					<Input type="date" bind:value={from} class="h-9 text-sm w-full" />
 				</div>
 				<div class="flex flex-col gap-1.5">
 					<Label class="text-caption-mono text-muted-foreground">To</Label>
-					<Input type="date" bind:value={to} class="h-9 text-sm w-40" />
+					<Input type="date" bind:value={to} class="h-9 text-sm w-full" />
 				</div>
 				<div class="flex flex-col gap-1.5">
 					<Label class="text-caption-mono text-muted-foreground">Granularity</Label>
@@ -293,10 +293,10 @@
 				</div>
 			</div>
 
-			<div class="mt-4 pt-4 border-t border-border flex flex-wrap items-end gap-3">
+			<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 items-end pt-4 border-t border-border">
 				<div class="flex flex-col gap-1.5">
 					<Label class="text-caption-mono text-muted-foreground">API Key</Label>
-					<select bind:value={filterKey} class="h-9 text-sm rounded-sm border border-input bg-transparent px-3 py-1 w-48 text-foreground">
+					<select bind:value={filterKey} class="h-9 text-sm rounded-sm border border-input bg-transparent px-3 py-1 w-full text-foreground">
 						<option value="">All keys</option>
 						{#each apiKeys as k}
 							<option value={k.id}>{k.name || k.id}</option>
@@ -305,7 +305,7 @@
 				</div>
 				<div class="flex flex-col gap-1.5">
 					<Label class="text-caption-mono text-muted-foreground">Provider</Label>
-					<select bind:value={filterProvider} class="h-9 text-sm rounded-sm border border-input bg-transparent px-3 py-1 w-48 text-foreground">
+					<select bind:value={filterProvider} class="h-9 text-sm rounded-sm border border-input bg-transparent px-3 py-1 w-full text-foreground">
 						<option value="">All providers</option>
 						{#each providers as p}
 							<option value={p.id}>{p.display_name || p.id}</option>
@@ -314,11 +314,11 @@
 				</div>
 				<div class="flex flex-col gap-1.5">
 					<Label class="text-caption-mono text-muted-foreground">Model</Label>
-					<Input bind:value={filterModel} placeholder="e.g. cx/gpt-5.4" class="h-9 text-sm w-48" />
+					<Input bind:value={filterModel} placeholder="e.g. cx/gpt-5.4" class="h-9 text-sm w-full" />
 				</div>
 				<div class="flex flex-col gap-1.5">
 					<Label class="text-caption-mono text-muted-foreground">Modality</Label>
-					<select bind:value={filterModality} class="h-9 text-sm rounded-sm border border-input bg-transparent px-3 py-1 w-40 text-foreground">
+					<select bind:value={filterModality} class="h-9 text-sm rounded-sm border border-input bg-transparent px-3 py-1 w-full text-foreground">
 						<option value="">All</option>
 						<option value="chat">chat</option>
 						<option value="messages">messages</option>
@@ -332,7 +332,7 @@
 				</div>
 				<div class="flex flex-col gap-1.5">
 					<Label class="text-caption-mono text-muted-foreground">Status</Label>
-					<Input bind:value={filterStatus} type="number" placeholder="e.g. 200" class="h-9 text-sm w-28" />
+					<Input bind:value={filterStatus} type="number" placeholder="e.g. 200" class="h-9 text-sm w-full" />
 				</div>
 				<div class="flex gap-2 ml-auto">
 					<Button variant="outline" size="sm" class="text-body-sm cursor-pointer" onclick={() => void load()}>
