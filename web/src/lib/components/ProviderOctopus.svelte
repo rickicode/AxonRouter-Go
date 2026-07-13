@@ -10,7 +10,7 @@
   interface Props {
     providers: ProviderNode[];
     activeIds?: string[];
-  streamCount?: number;
+    streamCount?: number;
   }
 
   let { providers, activeIds = [], streamCount = 0 }: Props = $props();
@@ -34,14 +34,18 @@
     );
   }
 
-  const cx = 170;
-  const cy = 170;
-  const innerR = 30;
-  const outerR = 132;
   const INACTIVE = '#71717a';
   const INACTIVE_SOFT = '#52525b';
   const ACTIVE = '#22c55e';
   const ACTIVE_SOFT = '#4ade80';
+
+  // Measure the card so the octopus fills it and arms reach the edges.
+  let cardW = $state(480);
+  let cardH = $derived(Math.max(320, Math.min(560, Math.round((cardW || 480) * 0.5))));
+  let cx = $derived(cardW / 2);
+  let cy = $derived(cardH / 2);
+  let outerR = $derived(Math.max(60, Math.min(cardW, cardH) / 2 - 48));
+  let innerR = $derived(Math.max(18, outerR * 0.22));
 
   interface Tentacle {
     index: number;
@@ -86,6 +90,14 @@
     });
   });
 
+  // Adaptive scaling: more providers => more arms, but smaller nodes so it stays an octopus.
+  let nodeR = $derived(Math.max(8, Math.min(18, Math.round(20 - tentacles.length * 0.6))));
+  let iconSize = $derived(Math.max(12, Math.round(nodeR * 1.6)));
+  let showLabels = $derived(tentacles.length <= 24);
+  let labelFont = $derived(showLabels ? (nodeR >= 14 ? 10 : 8) : 0);
+  let labelDy = $derived(nodeR + 14);
+  let countDy = $derived(nodeR + 26);
+
   let activeCount = $derived(tentacles.filter((t) => t.active).length);
 
   function tooltipFor(t: Tentacle): string {
@@ -94,27 +106,22 @@
   }
 </script>
 
-<div class="relative flex items-center justify-center py-12">
-  <!-- Brand-tinted radial backdrop -->
-  <div
-    class="pointer-events-none absolute inset-0 rounded-xl bg-[radial-gradient(circle_at_center,rgba(236,72,153,0.07),transparent_70%)]"
-  ></div>
-
-  <svg viewBox="0 0 340 340" class="relative h-auto w-full max-w-[460px]">
+<div class="w-full" bind:clientWidth={cardW}>
+  <svg width={cardW} height={cardH} viewBox={`0 0 ${cardW} ${cardH}`} class="block">
     <defs>
       <radialGradient id="brainGlow" cx="50%" cy="50%" r="50%">
         <stop offset="0%" stop-color="#27272a" />
         <stop offset="100%" stop-color="#09090b" />
       </radialGradient>
       <radialGradient id="halo" cx="50%" cy="50%" r="50%">
-        <stop offset="0%" stop-color="rgba(236,72,153,0.10)" />
-        <stop offset="100%" stop-color="rgba(236,72,153,0)" />
+        <stop offset="0%" stop-color="rgba(255,255,255,0.05)" />
+        <stop offset="100%" stop-color="rgba(255,255,255,0)" />
       </radialGradient>
     </defs>
 
     <!-- Depth halos -->
-    <circle {cx} {cy} r="150" fill="url(#halo)" />
-    <circle {cx} {cy} r="120" fill="rgba(255,255,255,0.015)" />
+    <circle {cx} {cy} r={outerR + 20} fill="url(#halo)" />
+    <circle {cx} {cy} r={outerR - 8} fill="rgba(255,255,255,0.015)" />
 
     {#each tentacles as t (t.index)}
       <g class="tentacle" class:active={t.active}>
@@ -137,36 +144,53 @@
         <circle
           cx={t.x2}
           cy={t.y2}
-          r="17"
+          r={nodeR}
           fill="#18181b"
           stroke={t.active ? ACTIVE : INACTIVE_SOFT}
           stroke-width="1.5"
           class="endpoint"
         />
         <!-- Provider icon -->
-        <foreignObject x={t.x2 - 17} y={t.y2 - 17} width="34" height="34" class="overflow-visible">
+        <foreignObject
+          x={t.x2 - iconSize / 2}
+          y={t.y2 - iconSize / 2}
+          width={iconSize}
+          height={iconSize}
+          class="overflow-visible"
+        >
           <div
             xmlns="http://www.w3.org/1999/xhtml"
-            class="flex h-[34px] w-[34px] items-center justify-center"
+            class="flex items-center justify-center"
+            style="height:{iconSize}px;width:{iconSize}px"
             title={tooltipFor(t)}
           >
-            <ProviderIcon meta={metaFor(t.id)} size={26} />
+            <ProviderIcon meta={metaFor(t.id)} size={iconSize} />
           </div>
         </foreignObject>
-        <!-- Label + account count -->
-        <text
-          x={t.x2}
-          y={t.y2 + 33}
-          text-anchor="middle"
-          class="node-label"
-          fill={t.active ? ACTIVE : '#a1a1aa'}
-        >
-          {t.label}
-        </text>
-        {#if t.count > 0}
-          <text x={t.x2} y={t.y2 + 47} text-anchor="middle" class="node-count" fill="#71717a">
-            {t.count} acct
+        <!-- Label + account count (hidden when too many arms to stay readable) -->
+        {#if showLabels}
+          <text
+            x={t.x2}
+            y={t.y2 + labelDy}
+            text-anchor="middle"
+            class="node-label"
+            fill={t.active ? ACTIVE : '#a1a1aa'}
+            style="font-size:{labelFont}px"
+          >
+            {t.label}
           </text>
+          {#if t.count > 0}
+            <text
+              x={t.x2}
+              y={t.y2 + countDy}
+              text-anchor="middle"
+              class="node-count"
+              fill="#71717a"
+              style="font-size:{Math.max(7, labelFont - 2)}px"
+            >
+              {t.count} acct
+            </text>
+          {/if}
         {/if}
       </g>
     {/each}
@@ -182,14 +206,15 @@
   </svg>
 
   <!-- Count badge -->
-  <div
-    class="absolute bottom-4 rounded-full px-3 py-1 text-caption-mono font-bold shadow-card {activeCount > 0
-      ? 'bg-foreground text-background'
-      : 'bg-muted text-muted-foreground'}"
-  >
-    {providers.length} providers
-    {#if activeCount > 0}<span class="opacity-80"> · {activeCount} streaming</span>{/if}
-    {#if streamCount > 0}<span class="opacity-80"> · {streamCount} active streams</span>{/if}
+  <div class="mt-3 flex justify-center">
+    <div
+      class="rounded-full px-3 py-1 text-caption-mono font-bold shadow-card {activeCount > 0
+        ? 'bg-foreground text-background'
+        : 'bg-muted text-muted-foreground'}"
+    >
+      {providers.length} providers
+      {#if streamCount > 0}<span class="opacity-80"> · {streamCount} active streams</span>{/if}
+    </div>
   </div>
 </div>
 
@@ -209,21 +234,17 @@
     filter: drop-shadow(0 0 3px #4ade80);
   }
   .node-label {
-    font-size: 10px;
     font-weight: 600;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
   }
   .node-count {
-    font-size: 8px;
     font-weight: 500;
   }
   .brain-pulse {
     animation: brainBreath 3.2s ease-in-out infinite;
-    transform-origin: 170px 170px;
   }
   .brain-pulse-strong {
     animation: brainPulse 1.6s ease-out infinite;
-    transform-origin: 170px 170px;
   }
   @keyframes linePulse {
     0%,
@@ -237,11 +258,9 @@
   @keyframes epPulse {
     0%,
     100% {
-      r: 16;
       opacity: 0.85;
     }
     50% {
-      r: 18;
       opacity: 1;
     }
   }
