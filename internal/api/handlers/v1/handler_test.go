@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
+	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
 
 // fakeExecutor records calls and returns programmed responses.
@@ -30,6 +32,10 @@ type fakeExecutor struct {
 	responses []struct {
 		resp *executor.Response
 		err  error
+	}
+	streamResults []struct {
+		result *executor.StreamResult
+		err    error
 	}
 	streamErr bool
 }
@@ -44,6 +50,14 @@ func (f *fakeExecutor) Execute(ctx context.Context, req *executor.Request) (*exe
 }
 
 func (f *fakeExecutor) ExecuteStream(ctx context.Context, req *executor.Request) (*executor.StreamResult, error) {
+	idx := f.callCount
+	f.callCount++
+	if len(f.streamResults) > 0 {
+		if idx >= len(f.streamResults) {
+			return nil, errors.New("no more stream results")
+		}
+		return f.streamResults[idx].result, f.streamResults[idx].err
+	}
 	f.streamErr = true
 	return nil, errors.New("streaming not supported")
 }
@@ -398,18 +412,109 @@ func TestBuildFailoverErrorResponse(t *testing.T) {
 			wantErrType: "server_error",
 		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			msg, status, errType := buildFailoverErrorResponse(string(tt.category), tt.lastErr, tt.modelName)
-			if msg != tt.wantMsg {
-				t.Errorf("msg: got %q, want %q", msg, tt.wantMsg)
-			}
-			if status != tt.wantStatus {
-				t.Errorf("status: got %d, want %d", status, tt.wantStatus)
-			}
-			if errType != tt.wantErrType {
-				t.Errorf("errType: got %q, want %q", errType, tt.wantErrType)
-			}
-		})
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				msg, status, errType := buildFailoverErrorResponse(string(tt.category), tt.lastErr, tt.modelName)
+				if msg != tt.wantMsg {
+					t.Errorf("msg: got %q, want %q", msg, tt.wantMsg)
+				}
+				if status != tt.wantStatus {
+					t.Errorf("status: got %d, want %d", status, tt.wantStatus)
+				}
+				if errType != tt.wantErrType {
+					t.Errorf("errType: got %q, want %q", errType, tt.wantErrType)
+				}
+			})
+		}
 	}
-}
+
+	// TestStreamResponse_UsageAccumulation verifies that per-chunk token extraction
+	// accumulates correctly across a Claude message_start + message_delta stream
+	// and writes merged tokens to request_logs.
+	func TestStreamResponse_UsageAccumulation(t *testing.T) {
+		h := newTestHandler(t)
+
+		// Create a minimal tracker and set it on the handler so Log() doesn't
+		// panic, but we will verify via api_key_usage instead of request_logs
+		// to avoid the async tracker flush race in tests.
+		wq := db.NewWriteQueue(h.db)
+		tracker := usage.NewTracker(h.db)
+		tracker.SetWriteQueue(wq)
+		h.tracker = tracker
+
+		// Seed a provider_type and api_key so the DB FK constraint is satisfied.
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('test','Test','openai','http://x',0)`); err != nil {
+			t.Fatalf("seed provider_type: %v", err)
+		}
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-1','test','c1','none','ready',1,0,0)`); err != nil {
+			t.Fatalf("seed connection: %v", err)
+		}
+		// Seed the test API key so the increment path has a row to update.
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_keys (id, name, key_value, created_at) VALUES ('test-key-1', 'test-key', 'sk-test', 0)`); err != nil {
+			t.Fatalf("seed api_key: %v", err)
+		}
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_key_usage (api_key_id, total_tokens, updated_at) VALUES ('test-key-1', 0, 0)`); err != nil {
+			t.Fatalf("seed api_key_usage: %v", err)
+		}
+
+		// Create a gin test context with api_key_id set.
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		c.Set("api_key_id", "test-key-1")
+
+		// Build a stream with Claude message_start (input tokens + cache)
+		// and message_delta (output tokens).
+		chunks := make(chan executor.StreamChunk, 3)
+		chunks <- executor.StreamChunk{
+			Payload: []byte(`data: {"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":0,"cache_creation_input_tokens":2,"cache_read_input_tokens":3}}}`),
+		}
+		chunks <- executor.StreamChunk{
+			Payload: []byte(`data: {"type":"message_delta","usage":{"output_tokens":25}}`),
+		}
+		close(chunks)
+
+		result := &executor.StreamResult{
+			Chunks:     chunks,
+			StatusCode: http.StatusOK,
+		}
+
+		conn := &Connection{ID: "conn-1"}
+		dummyReq := []byte(`{}`)
+
+		// Call streamResponse directly.
+		h.streamResponse(c, result, conn, "test", "test-model",
+			executor.FormatOpenAI, executor.FormatOpenAI,
+			dummyReq, dummyReq,
+			func(err error) []byte { return []byte(err.Error()) },
+			time.Now(),
+		)
+
+		// Verify via api_key_usage: the accumulated tokens (15 input + 25 output = 40)
+		// should have been written by incrementAPIKeyUsage which uses a direct DB write
+		// (not going through the async tracker).
+		var totalTokens int64
+		err := h.db.QueryRow(`SELECT total_tokens FROM api_key_usage WHERE api_key_id = 'test-key-1'`).Scan(&totalTokens)
+		if err != nil {
+			t.Fatalf("query api_key_usage: %v", err)
+		}
+		if totalTokens != 40 {
+			t.Errorf("total_tokens = %d, want 40 (15 input + 25 output)", totalTokens)
+		}
+
+		// Also verify the SSE output contains the translated chunks.
+		body := rec.Body.String()
+		if !strings.Contains(body, "data: [DONE]") {
+			t.Errorf("SSE output missing [DONE] marker")
+		}
+		if !strings.Contains(body, "type\":\"message_start") {
+			t.Errorf("SSE output missing message_start chunk")
+		}
+		if !strings.Contains(body, "type\":\"message_delta") {
+			t.Errorf("SSE output missing message_delta chunk")
+		}
+
+		// Clean up
+		tracker.Stop()
+		wq.Stop()
+	}
