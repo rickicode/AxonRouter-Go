@@ -77,7 +77,7 @@ jobs:
       - name: 🏷️ Compute binary name
         id: bin
         run: |
-          BIN="axonrouter-${{ matrix.goos }}-${{ matrix.goarch }}"
+          BIN="./build/axonrouter-${{ matrix.goos }}-${{ matrix.goarch }}"
           if [ "${{ matrix.goos }}" = "windows" ]; then BIN="${BIN}.exe"; fi
           echo "name=${BIN}" >> "$GITHUB_OUTPUT"
           echo "binary=${BIN}" >> "$GITHUB_STEP_SUMMARY"
