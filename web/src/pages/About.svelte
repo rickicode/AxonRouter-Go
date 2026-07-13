@@ -28,21 +28,28 @@ let changelogSections = $state<ChangelogSection[]>([]);
 let loading = $state(true);
 let changelogLoading = $state(true);
 let upgrading = $state(false);
+let upgradeJustCompleted = $state(false);
 let error = $state('');
+let healthErrorShown = $state(false);
 
 async function fetchHealth() {
-	try {
-		const res = await fetch('/api/admin/health');
-		if (!res.ok) throw new Error(`Health returned ${res.status}`);
-		const data = await res.json();
-		currentVersion = typeof data.version === 'string' ? data.version : '';
-		latestVersion = typeof data.latest_version === 'string' ? data.latest_version : '';
-		updateAvailable = data.update_available === true;
-	} catch (err) {
-		const message = err instanceof Error ? err.message : 'Failed to load version';
-		error = message;
-		toast.error('Failed to load version: ' + message);
-	}
+  try {
+    const res = await fetch('/api/admin/health');
+    if (!res.ok) throw new Error(`Health returned ${res.status}`);
+    const data = await res.json();
+    currentVersion = typeof data.version === 'string' ? data.version : '';
+    latestVersion = typeof data.latest_version === 'string' ? data.latest_version : '';
+    updateAvailable = data.update_available === true;
+    healthErrorShown = false;
+    upgradeJustCompleted = false;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to load version';
+    error = message;
+    if (!healthErrorShown) {
+      healthErrorShown = true;
+      toast.error('Failed to load version: ' + message);
+    }
+  }
 }
 
 async function fetchChangelog() {
@@ -81,8 +88,9 @@ async function handleUpgrade() {
 			throw new Error(data.error || `Upgrade returned ${res.status}`);
 		}
 
-		const path = typeof data.path === 'string' ? data.path : '';
-		toast.success(path ? `Upgrade saved to ${path}` : 'Upgrade completed');
+    const path = typeof data.path === 'string' ? data.path : '';
+    upgradeJustCompleted = true;
+    toast.success(path ? `Upgrade saved to ${path}` : 'Upgrade completed');
 	} catch (err) {
 		const message = err instanceof Error ? err.message : 'Upgrade failed';
 		toast.error('Upgrade failed: ' + message);
@@ -196,11 +204,11 @@ onMount(async () => {
 							<Badge variant="outline" class="rounded-full text-caption">Unknown</Badge>
 						{/if}
 
-						<Button
-							onclick={handleUpgrade}
-							class="text-body-sm-strong rounded-sm"
-							disabled={!updateAvailable || upgrading}
-						>
+            <Button
+              onclick={handleUpgrade}
+              class="text-body-sm-strong rounded-sm"
+              disabled={!updateAvailable || upgrading || upgradeJustCompleted}
+            >
 							{#if upgrading}
 								<Loader2Icon class="size-4 animate-spin" />
 								<span>Upgrading…</span>
