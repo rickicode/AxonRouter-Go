@@ -47,6 +47,10 @@ func TestHealth_IncludesVersionInfo(t *testing.T) {
 	defer server.Close()
 
 	checker := version.NewCheckerWithURL(server.Client(), server.URL)
+	defer checker.Stop()
+	if err := checker.Refresh(); err != nil {
+		t.Fatalf("checker.Refresh: %v", err)
+	}
 
 	h := NewHealthHandler(database, store, tracker, checker)
 	w := httptest.NewRecorder()
@@ -86,6 +90,10 @@ func TestHealth_CurrentVersion_NoUpdate(t *testing.T) {
 	defer server.Close()
 
 	checker := version.NewCheckerWithURL(server.Client(), server.URL)
+	defer checker.Stop()
+	if err := checker.Refresh(); err != nil {
+		t.Fatalf("checker.Refresh: %v", err)
+	}
 
 	h := NewHealthHandler(database, store, tracker, checker)
 	w := httptest.NewRecorder()

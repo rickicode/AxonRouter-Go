@@ -80,24 +80,37 @@ func TestCachedChecker_LatestVersion_Caches(t *testing.T) {
 	defer func() { githubLatestURL = oldURL }()
 
 	checker := NewChecker(server.Client())
+	defer checker.Stop()
 	checker.ttl = 5 * time.Minute
+
+	// Wait for the background goroutine to finish its first fetch.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := checker.LatestVersion(); ok {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	info, ok := checker.LatestVersion()
 	if !ok {
-		t.Fatalf("first LatestVersion call returned !ok")
+		t.Fatalf("LatestVersion returned !ok")
 	}
 	if info.Version != "0.3.2" {
 		t.Errorf("Version = %q, want 0.3.2", info.Version)
 	}
 
+	calls = 0
 	_, _ = checker.LatestVersion()
-	if calls != 1 {
-		t.Errorf("server called %d times, want 1", calls)
+	if calls != 0 {
+		t.Errorf("LatestVersion triggered %d server calls, want 0", calls)
 	}
 }
 
-func TestCachedChecker_LatestVersion_Expires(t *testing.T) {
+func TestCachedChecker_LatestVersion_NeverBlocksOnNetwork(t *testing.T) {
+	block := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-block
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(githubJSON("v0.3.2", "2026-07-14T00:00:00Z", "https://example.com/v0.3.2")))
@@ -109,24 +122,25 @@ func TestCachedChecker_LatestVersion_Expires(t *testing.T) {
 	defer func() { githubLatestURL = oldURL }()
 
 	checker := NewChecker(server.Client())
-	checker.ttl = -1 * time.Second
+	checker.ttl = 5 * time.Minute
 
+	start := time.Now()
 	_, ok := checker.LatestVersion()
-	if !ok {
-		t.Fatalf("first LatestVersion call returned !ok")
+	elapsed := time.Since(start)
+	if ok {
+		t.Fatalf("LatestVersion returned ok before first fetch completed")
+	}
+	if elapsed > 100*time.Millisecond {
+		t.Fatalf("LatestVersion blocked for %v", elapsed)
 	}
 
-	_, ok = checker.LatestVersion()
-	if !ok {
-		t.Fatalf("second LatestVersion call returned !ok")
-	}
-	// Because ttl is negative, the second call should have re-fetched.
-	// If the implementation fails to refresh, the test still passes info-wise;
-	// the real verification is that no panic occurs and ok remains true.
+	close(block)
+	checker.Stop()
 }
 
 func TestUpdateAvailable_Newer(t *testing.T) {
 	checker := NewChecker(nil)
+	defer checker.Stop()
 	checker.ttl = 5 * time.Minute
 	checker.cached = ReleaseInfo{Version: "0.3.2"}
 	checker.cachedAt = time.Now()
@@ -139,6 +153,7 @@ func TestUpdateAvailable_Newer(t *testing.T) {
 
 func TestUpdateAvailable_Current(t *testing.T) {
 	checker := NewChecker(nil)
+	defer checker.Stop()
 	checker.ttl = 5 * time.Minute
 	checker.cached = ReleaseInfo{Version: "0.3.1"}
 	checker.cachedAt = time.Now()
@@ -151,6 +166,7 @@ func TestUpdateAvailable_Current(t *testing.T) {
 
 func TestUpdateAvailable_Older(t *testing.T) {
 	checker := NewChecker(nil)
+	defer checker.Stop()
 	checker.ttl = 5 * time.Minute
 	checker.cached = ReleaseInfo{Version: "0.3.0"}
 	checker.cachedAt = time.Now()

@@ -3,6 +3,7 @@ package version
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -10,9 +11,15 @@ import (
 	"time"
 )
 
-const defaultCacheTTL = 5 * time.Minute
+const (
+	defaultCacheTTL  = 5 * time.Minute
+	maxResponseBytes = 1 << 20 // 1 MiB
+)
 
 var githubLatestURL = "https://api.github.com/repos/rickicode/AxonRouter-Go/releases/latest"
+
+// userAgent is sent with all outbound version/GitHub requests.
+var userAgent = "AxonRouter-Go/" + String()
 
 // ReleaseInfo describes the latest GitHub release.
 type ReleaseInfo struct {
@@ -43,6 +50,7 @@ func checkLatest(client *http.Client, url string) (ReleaseInfo, error) {
 		return ReleaseInfo{}, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -55,27 +63,30 @@ func checkLatest(client *http.Client, url string) (ReleaseInfo, error) {
 	}
 
 	var rr releaseResponse
-	if err := json.NewDecoder(resp.Body).Decode(&rr); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&rr); err != nil {
 		return ReleaseInfo{}, err
 	}
 
 	info := ReleaseInfo{
-		Version: strings.TrimPrefix(rr.Tag, "v"),
-		Tag: rr.Tag,
+		Version:     strings.TrimPrefix(rr.Tag, "v"),
+		Tag:         rr.Tag,
 		PublishedAt: rr.PublishedAt,
-		HTMLURL: rr.HTMLURL,
+		HTMLURL:     rr.HTMLURL,
 	}
 	return info, nil
 }
 
-// Checker caches the latest release for a fixed TTL.
+// Checker caches the latest release and refreshes it in the background.
 type Checker struct {
-	mu sync.Mutex
-	client *http.Client
-	url string
-	cached ReleaseInfo
-	cachedAt time.Time
-	ttl time.Duration
+	mu        sync.RWMutex
+	client    *http.Client
+	url       string
+	ttl       time.Duration
+	cached    ReleaseInfo
+	cachedAt  time.Time
+	startOnce sync.Once
+	stop      chan struct{}
+	wg        sync.WaitGroup
 }
 
 // NewChecker creates a Checker with the provided HTTP client.
@@ -90,49 +101,74 @@ func NewCheckerWithURL(client *http.Client, url string) *Checker {
 	}
 	return &Checker{
 		client: client,
-		url: url,
-		ttl: defaultCacheTTL,
+		url:    url,
+		ttl:    defaultCacheTTL,
+		stop:   make(chan struct{}),
 	}
 }
 
-// LatestVersion returns the cached release, refreshing if needed.
-func (c *Checker) LatestVersion() (ReleaseInfo, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (c *Checker) startLoop() {
+	c.wg.Add(1)
+	go c.loop()
+}
 
-	if !c.cachedAt.IsZero() && time.Since(c.cachedAt) <= c.ttl {
-		return c.cached, true
+func (c *Checker) loop() {
+	defer c.wg.Done()
+	c.Refresh()
+	ticker := time.NewTicker(c.ttl)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			c.Refresh()
+		case <-c.stop:
+			return
+		}
 	}
+}
 
+// Refresh fetches the latest release synchronously and updates the cache.
+// HTTP I/O happens outside of the write lock so readers are never blocked.
+func (c *Checker) Refresh() error {
 	info, err := checkLatest(c.client, c.url)
 	if err != nil {
-		return ReleaseInfo{}, false
+		return err
 	}
-
+	c.mu.Lock()
 	c.cached = info
 	c.cachedAt = time.Now()
+	c.mu.Unlock()
+	return nil
+}
+
+// LatestVersion returns the cached release. It never blocks on network I/O.
+func (c *Checker) LatestVersion() (ReleaseInfo, bool) {
+	c.startOnce.Do(c.startLoop)
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.cachedAt.IsZero() {
+		return ReleaseInfo{}, false
+	}
 	return c.cached, true
 }
 
 // UpdateAvailable reports whether the cached latest version is newer than the current binary.
 func (c *Checker) UpdateAvailable() bool {
-	info, ok := c.LatestVersion()
+	c.mu.RLock()
+	info := c.cached
+	ok := !c.cachedAt.IsZero()
+	c.mu.RUnlock()
 	if !ok {
 		return false
 	}
 	return versionGreater(info.Version, String())
 }
 
-var defaultChecker = NewChecker(http.DefaultClient)
-
-// LatestVersion returns the default cached release info.
-func LatestVersion() (ReleaseInfo, bool) {
-	return defaultChecker.LatestVersion()
-}
-
-// UpdateAvailable reports whether the default cached latest version is newer.
-func UpdateAvailable() bool {
-	return defaultChecker.UpdateAvailable()
+// Stop halts the background refresh goroutine.
+func (c *Checker) Stop() {
+	c.startOnce.Do(func() {}) // prevent a future LatestVersion from starting a goroutine
+	close(c.stop)
+	c.wg.Wait()
 }
 
 func versionGreater(latest, current string) bool {

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -16,7 +17,10 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/version"
 )
 
-const upgradeTimeout = 60 * time.Second
+const (
+	upgradeTimeout   = 60 * time.Second
+	maxDownloadBytes = 128 << 20 // 128 MiB
+)
 
 // UpgradeHandler downloads a newer binary release for the current platform.
 type UpgradeHandler struct {
@@ -24,6 +28,7 @@ type UpgradeHandler struct {
 	client  *http.Client
 	baseURL string
 	binDir  string
+	mu      sync.Mutex
 }
 
 // NewUpgradeHandler creates a handler that downloads the latest release.
@@ -39,6 +44,9 @@ func NewUpgradeHandler(checker *version.Checker) *UpgradeHandler {
 // Upgrade downloads the latest binary for the current platform after
 // verifying its SHA256 checksum.
 func (h *UpgradeHandler) Upgrade(c *gin.Context) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	info, ok := h.checker.LatestVersion()
 	if !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to determine latest version"})
@@ -73,13 +81,8 @@ func (h *UpgradeHandler) Upgrade(c *gin.Context) {
 		return
 	}
 
-	if err := os.MkdirAll(h.binDir, 0o755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("create bin dir: %v", err)})
-		return
-	}
-
-	path := filepath.Join(h.binDir, asset)
-	if err := os.WriteFile(path, binary, 0o755); err != nil {
+	path, err := h.writeBinary(asset, binary)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("write binary: %v", err)})
 		return
 	}
@@ -97,6 +100,7 @@ func (h *UpgradeHandler) download(url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("User-Agent", "AxonRouter-Go/"+version.String())
 
 	resp, err := h.client.Do(req)
 	if err != nil {
@@ -108,7 +112,29 @@ func (h *UpgradeHandler) download(url string) ([]byte, error) {
 		return nil, fmt.Errorf("http %d", resp.StatusCode)
 	}
 
-	return io.ReadAll(resp.Body)
+	return io.ReadAll(io.LimitReader(resp.Body, maxDownloadBytes))
+}
+
+func (h *UpgradeHandler) writeBinary(asset string, binary []byte) (string, error) {
+	if err := os.MkdirAll(h.binDir, 0o755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(h.binDir, asset)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, binary, 0o755); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		if runtime.GOOS != "windows" {
+			return "", err
+		}
+		// Windows Rename does not overwrite an existing file.
+		_ = os.Remove(path)
+		if err := os.Rename(tmp, path); err != nil {
+			return "", err
+		}
+	}
+	return path, nil
 }
 
 func assetName() string {
@@ -131,7 +157,7 @@ func findChecksum(data []byte, asset string) (string, error) {
 		}
 		filename = strings.TrimSpace(filename)
 		filename = strings.TrimPrefix(filename, "*")
-		if filename == asset {
+		if filepath.Base(filename) == asset {
 			return strings.TrimSpace(hash), nil
 		}
 	}
