@@ -16,6 +16,7 @@ import * as Dialog from '$lib/components/ui/dialog';
   let showCreate = $state(false);
   let newName = $state('');
   let newRateLimit = $state('600');
+  let newMaxTokensM = $state('');
   let creating = $state(false);
   let createdKey = $state('');
   let createdKeyId = $state('');
@@ -42,7 +43,11 @@ import * as Dialog from '$lib/components/ui/dialog';
   async function handleCreate() {
     creating = true;
     try {
-      const res = await apiKeysApi.create(newName.trim() || undefined, parseInt(newRateLimit) || 600);
+		const m = parseInt(newMaxTokensM) || 0;
+		const maxTokens = m > 0 ? m * 1_000_000 : undefined;
+		const res = await apiKeysApi.create(newName.trim() || undefined, parseInt(newRateLimit) || 600, maxTokens);
+		newName = '';
+		newMaxTokensM = '';
       createdKey = res.key;
       createdKeyId = res.id;
       toast.success('API key created');
@@ -113,9 +118,14 @@ async function copyValue(text: string, label = 'Key') {
 	}
 }
 
-  function formatDate(ts: number): string {
+function formatDate(ts: number): string {
     return new Date(ts * 1000).toLocaleDateString();
-  }
+}
+
+function formatMaxTokens(tokens: number): string {
+    if (!tokens || tokens <= 0) return 'Unlimited';
+    return `${Math.round(tokens / 1_000_000)}M`;
+}
 </script>
 
 <div class="flex flex-1 flex-col gap-6 p-6">
@@ -160,6 +170,7 @@ async function copyValue(text: string, label = 'Key') {
                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Name</th>
                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Key</th>
                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Rate Limit</th>
+                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Max Tokens</th>
                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Status</th>
                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Created</th>
                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-32"></th>
@@ -171,6 +182,7 @@ async function copyValue(text: string, label = 'Key') {
                   <td class="py-3 px-4 text-body-sm font-medium">{key.name || '—'}</td>
                   <td class="py-3 px-4 font-mono text-xs text-muted-foreground">{key.key_preview}</td>
                   <td class="py-3 px-4 text-body-sm text-muted-foreground">{key.rate_limit_per_min}/min</td>
+                  <td class="py-3 px-4 text-body-sm text-muted-foreground">{formatMaxTokens(key.max_tokens)}</td>
                   <td class="py-3 px-4">
                     <Badge variant={key.is_active ? 'default' : 'secondary'} class="text-caption-mono rounded-sm">
                       {key.is_active ? 'Active' : 'Disabled'}
@@ -222,12 +234,17 @@ async function copyValue(text: string, label = 'Key') {
               <Label class="text-sm font-medium">Name (optional)</Label>
               <Input bind:value={newName} placeholder="My API key" class="h-9 text-sm" />
             </div>
-            <div class="flex flex-col gap-1.5">
+<div class="flex flex-col gap-1.5">
               <Label class="text-sm font-medium">Rate limit (per minute)</Label>
               <Input bind:value={newRateLimit} type="number" min="1" class="h-9 text-sm" />
-            </div>
-          </div>
-          <div class="flex gap-2 mt-6">
+</div>
+</div>
+              <div class="flex flex-col gap-1.5">
+                            <Label class="text-sm font-medium">Max tokens (M)</Label>
+                            <Input bind:value={newMaxTokensM} type="number" min="1" placeholder="Unlimited" class="h-9 text-sm" />
+                            <p class="text-xs text-muted-foreground">Leave empty for unlimited. Min 1M (1 = 1,000,000 tokens).</p>
+              </div>
+<div class="flex gap-2 mt-6">
             <Button onclick={handleCreate} disabled={creating} class="flex-1 text-sm">
               {creating ? 'Creating...' : 'Create'}
             </Button>

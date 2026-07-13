@@ -352,6 +352,7 @@ export interface APIKeyItem {
   name: string;
   key_preview: string;
   rate_limit_per_min: number;
+  max_tokens: number;
   is_active: boolean;
   created_at: number;
 }
@@ -360,16 +361,17 @@ export interface APIKeyCreateResponse {
   id: string;
   key: string;
   name: string;
+  max_tokens: number;
   message: string;
 }
 
 export const apiKeysApi = {
   list: () => fetchApi<{ data: APIKeyItem[] }>("/api-keys"),
 
-  create: (name?: string, rateLimit?: number) =>
+  create: (name?: string, rateLimit?: number, maxTokens?: number) =>
     fetchApi<APIKeyCreateResponse>("/api-keys", {
       method: "POST",
-      body: JSON.stringify({ name, rate_limit_per_min: rateLimit }),
+      body: JSON.stringify({ name, rate_limit_per_min: rateLimit, max_tokens: maxTokens }),
     }),
 
   delete: (id: string) =>
