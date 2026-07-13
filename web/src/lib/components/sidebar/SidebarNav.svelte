@@ -12,6 +12,7 @@
   import ZapIcon from '@lucide/svelte/icons/zap';
   import BotIcon from '@lucide/svelte/icons/bot';
   import BadgeDollarSignIcon from '@lucide/svelte/icons/badge-dollar-sign';
+  import BarChartIcon from '@lucide/svelte/icons/bar-chart';
   import CodeIcon from '@lucide/svelte/icons/code';
 
   let { onclose }: { onclose?: () => void } = $props();
@@ -28,10 +29,12 @@ const platformItems = [
   const settingsItem = { href: '/settings', label: 'Settings', icon: SettingsIcon };
   const apiKeysItem = { href: '/api-keys', label: 'API Keys', icon: KeyIcon };
   const developersItem = { href: '/developers', label: 'Developers', icon: CodeIcon };
+  const usageItem = { href: '/usage', label: 'Usage', icon: BarChartIcon };
 
   const systemItems = [
     { href: '/proxy-pools', label: 'Proxy Pools', icon: GlobeIcon },
     apiKeysItem,
+	usageItem,
 	developersItem,
     { href: '/cli-tools', label: 'CLI Tools', icon: BotIcon },
   { href: '/model-pricing', label: 'Model Pricing', icon: BadgeDollarSignIcon },

@@ -30,6 +30,7 @@ import Optimization from './pages/Optimization.svelte';
 import CLITools from './pages/CLITools.svelte';
 	import ModelPricing from './pages/ModelPricing.svelte';
 	import Developers from './pages/Developers.svelte';
+	import Usage from './pages/Usage.svelte';
 	import NotFound from './pages/NotFound.svelte';
 
   let cleanup: (() => void) | undefined;
@@ -101,6 +102,9 @@ const labels: Record<string, string> = {
 
 // /cli-tools → CLI Tools
   if (segments[0] === 'cli-tools' && segments.length === 1) return { component: CLITools, params: {} };
+
+	// /usage → Usage
+	if (segments[0] === 'usage' && segments.length === 1) return { component: Usage, params: {} };
 
   // /model-pricing → ModelPricing
   if (segments[0] === 'model-pricing' && segments.length === 1) return { component: ModelPricing, params: {} };

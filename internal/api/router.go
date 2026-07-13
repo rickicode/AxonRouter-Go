@@ -162,6 +162,7 @@ func New(cfg Config) *Router {
 	// Additional admin handlers (moved here so the JWT /api/admin and master-key
 	// /admin/api/v1 groups can share the same route table).
 	apiKeyH := admin.NewAPIKeyHandler(cfg.DB)
+	usageH := admin.NewUsageHandler(cfg.DB)
 	modelH := admin.NewModelHandler(cfg.DB, executor.GetRegistry(), store, authManager)
 	oauthH := admin.NewOAuthHandler(cfg.DB, authManager, store, elig)
 	quotaH := admin.NewQuotaHandler(cfg.DB)
@@ -320,6 +321,9 @@ func New(cfg Config) *Router {
 		g.DELETE("/api-keys/:id", apiKeyH.Delete)
 		g.PATCH("/api-keys/:id/toggle", apiKeyH.ToggleActive)
 		g.GET("/api-keys/:id/value", apiKeyH.GetValue)
+
+		// Usage
+		g.GET("/usage", usageH.Get)
 
 		// CLI Tools — unified model catalog for dashboard pickers + per-tool config generation
 		g.GET("/models", func(c *gin.Context) {

@@ -365,6 +365,44 @@ export interface APIKeyCreateResponse {
   message: string;
 }
 
+export interface UsageBreakdown {
+  api_key_id?: string;
+  api_key_name?: string;
+  model_id?: string;
+  provider_id?: string;
+  provider_name?: string;
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+}
+
+export interface UsageTimeBucket {
+  bucket: string;
+  requests: number;
+  tokens: number;
+  cost_usd: number;
+}
+
+export interface UsageSummary {
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+}
+
+export interface UsageData {
+  summary: UsageSummary;
+  by_api_key: UsageBreakdown[];
+  by_model: UsageBreakdown[];
+  by_provider: UsageBreakdown[];
+  by_time: UsageTimeBucket[];
+}
+
 export const apiKeysApi = {
   list: () => fetchApi<{ data: APIKeyItem[] }>("/api-keys"),
 
@@ -387,6 +425,19 @@ export const apiKeysApi = {
 
   value: (id: string) =>
     fetchApi<{ id: string; key: string }>(`/api-keys/${id}/value`),
+};
+
+// Usage API
+export const usageApi = {
+  get: (params?: { from?: string; to?: string; granularity?: "day" | "month" }) => {
+    const qs = params
+      ? "?" +
+			  new URLSearchParams(
+          Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== ""))
+			  ).toString()
+      : "";
+    return fetchApi<{ data: UsageData }>(`/usage${qs}`);
+  },
 };
 
 // Combo API
