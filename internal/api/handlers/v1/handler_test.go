@@ -794,3 +794,38 @@ func TestChatCompletions_FallbackUsage(t *testing.T) {
 		t.Fatalf("expected non-zero api_key_usage from fallback estimation")
 	}
 }
+
+func TestBodyTooLarge_TrackActiveRejects(t *testing.T) {
+	h := newTestHandler(t)
+	body := make([]byte, maxBodySize+1024)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.TrackActive()(c)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("expected status 413, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestBodyPreserved_TrackActiveRestores(t *testing.T) {
+	h := newTestHandler(t)
+	body := []byte(`{"model":"test/model","messages":[]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.TrackActive()(c)
+
+	// After TrackActive, the downstream readBody helper must see the full body.
+	got, err := readBody(c)
+	if err != nil {
+		t.Fatalf("readBody after TrackActive: %v", err)
+	}
+	if string(got) != string(body) {
+		t.Errorf("body changed after TrackActive; got %q, want %q", got, body)
+	}
+}
