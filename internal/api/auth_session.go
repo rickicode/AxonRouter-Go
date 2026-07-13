@@ -14,9 +14,8 @@ import (
 )
 
 const (
-	sessionTTL           = 72 * time.Hour
-	defaultAdminPassword = "12345677"
-	minPasswordLength    = 8
+	sessionTTL        = 72 * time.Hour
+	minPasswordLength = 8
 )
 
 const (
@@ -65,15 +64,29 @@ func InitAuth(database *sql.DB) {
 
 	hash := getSetting(database, "admin_password_hash")
 	if hash == "" {
-		h, err := bcrypt.GenerateFromPassword([]byte(defaultAdminPassword), bcrypt.DefaultCost)
+		password := generateRandomPassword(16)
+		h, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if err == nil {
 			_ = setSetting(database, "admin_password_hash", string(h))
+			_ = setSetting(database, "admin_password_plain", password)
 		}
 	}
 
 	if getSetting(database, firstLoginKey) == "" {
 		_ = setSetting(database, firstLoginKey, "true")
 	}
+}
+
+func generateRandomPassword(length int) string {
+	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	b := make([]byte, length)
+	if _, err := rand.Read(b); err != nil {
+		panic("failed to read random bytes: " + err.Error())
+	}
+	for i := range b {
+		b[i] = alphabet[int(b[i])%len(alphabet)]
+	}
+	return string(b)
 }
 
 func settingAsInt64(database *sql.DB, key string) int64 {
@@ -194,9 +207,18 @@ func DeferPasswordChangeHandler(database *sql.DB) gin.HandlerFunc {
 	}
 }
 
+var allowUnchangedPasswordPaths = map[string]bool{
+	"/api/admin/login":            true,
+	"/api/admin/change-password":  true,
+	"/api/admin/defer-password-change": true,
+}
+
 // SessionAuth enforces a valid admin JWT on /api/admin routes and slides the
 // session: each request re-issues a token with a fresh exp=now+72h.
-func SessionAuth() gin.HandlerFunc {
+// If the admin password has not been changed from the random initial value,
+// it also enforces a mandatory password change (new) before allowing any other
+// admin endpoint.
+func SessionAuth(database *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := c.GetHeader("X-Auth-Token")
 		if token == "" {
@@ -217,6 +239,12 @@ func SessionAuth() gin.HandlerFunc {
 		})
 		if err != nil || !parsed.Valid || claims.Subject != "admin" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			c.Abort()
+			return
+		}
+
+		if !allowUnchangedPasswordPaths[c.Request.URL.Path] && mustChangePassword(database) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "password change required", "must_change_password": true})
 			c.Abort()
 			return
 		}
