@@ -911,7 +911,8 @@ func (h *Handler) streamResponse(
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
-	var lastChunk []byte
+	var acc StreamTokenCounts
+	var totalOutputBytes int64
 	lastChunkTime := time.Now()
 	ctx := c.Request.Context()
 	var streamState any
@@ -924,7 +925,19 @@ func (h *Handler) streamResponse(
 				flusher.Flush()
 
 				latency := time.Since(start).Milliseconds()
-				tokenCounts := ExtractTokensFromFinalChunk(lastChunk)
+				tokensEstimated := false
+				if acc.InputTokens+acc.OutputTokens == 0 {
+					estInput := usage.EstimateTokensFromRequest(originalReq)
+					var estOutput int64
+					if totalOutputBytes > 0 {
+						estOutput = totalOutputBytes / 4
+					}
+					if estInput > 0 || estOutput > 0 {
+						acc.InputTokens = estInput
+						acc.OutputTokens = estOutput
+						tokensEstimated = true
+					}
+				}
 				h.tracker.Log(&usage.LogEntry{
 					ApiKeyID:            c.GetString("api_key_id"),
 					ConnectionID:        conn.ID,
@@ -932,15 +945,16 @@ func (h *Handler) streamResponse(
 					ModelID:             model,
 					Modality:            "chat",
 					Stream:              true,
-					InputTokens:         tokenCounts.InputTokens,
-					OutputTokens:        tokenCounts.OutputTokens,
-					ReasoningTokens:     tokenCounts.ReasoningTokens,
-					CachedTokens:        tokenCounts.CachedTokens,
-					CacheCreationTokens: tokenCounts.CacheCreationTokens,
+					InputTokens:         acc.InputTokens,
+					OutputTokens:        acc.OutputTokens,
+					ReasoningTokens:     acc.ReasoningTokens,
+					CachedTokens:        acc.CachedTokens,
+					CacheCreationTokens: acc.CacheCreationTokens,
 					LatencyMs:           latency,
 					StatusCode:          http.StatusOK,
+					TokensEstimated:     tokensEstimated,
 				})
-				h.incrementAPIKeyUsage(c.GetString("api_key_id"), tokenCounts.InputTokens+tokenCounts.OutputTokens)
+				h.incrementAPIKeyUsage(c.GetString("api_key_id"), acc.InputTokens+acc.OutputTokens)
 				return
 			}
 
@@ -971,7 +985,10 @@ func (h *Handler) streamResponse(
 				c.Writer.Write(tc)
 				flusher.Flush()
 			}
-			lastChunk = chunk.Payload
+	if counts, found := ExtractTokensFromSSEChunk(chunk.Payload); found {
+			MergeTokenCounts(&acc, &counts)
+		}
+		totalOutputBytes += int64(len(chunk.Payload))
 
 		case <-ticker.C:
 			if time.Since(lastChunkTime) >= heartbeatInterval {

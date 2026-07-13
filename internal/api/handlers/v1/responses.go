@@ -143,6 +143,16 @@ func (h *Handler) Responses(c *gin.Context) {
 		} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
+			tokensEstimated := false
+			if tokenCounts.InputTokens+tokenCounts.OutputTokens == 0 && resp.StatusCode < 400 {
+				estInput := usage.EstimateTokensFromRequest(body)
+				estOutput := usage.EstimateTokensFromResponse(translatedResp)
+				if estInput > 0 || estOutput > 0 {
+					tokenCounts.InputTokens = estInput
+					tokenCounts.OutputTokens = estOutput
+					tokensEstimated = true
+				}
+			}
 			h.tracker.Log(&usage.LogEntry{
 				ApiKeyID:            c.GetString("api_key_id"),
 				ConnectionID:        conn.ID,
@@ -157,6 +167,7 @@ func (h *Handler) Responses(c *gin.Context) {
 				CacheCreationTokens: tokenCounts.CacheCreationTokens,
 				LatencyMs:           latency,
 				StatusCode:          resp.StatusCode,
+				TokensEstimated:     tokensEstimated,
 			})
 			h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
 			h.writeJSONResponse(c, resp.StatusCode, translatedResp)

@@ -173,6 +173,16 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
+			tokensEstimated := false
+			if tokenCounts.InputTokens+tokenCounts.OutputTokens == 0 && resp.StatusCode < 400 {
+				estInput := usage.EstimateTokensFromRequest(body)
+				estOutput := usage.EstimateTokensFromResponse(translatedResp)
+				if estInput > 0 || estOutput > 0 {
+					tokenCounts.InputTokens = estInput
+					tokenCounts.OutputTokens = estOutput
+					tokensEstimated = true
+				}
+			}
 			h.tracker.Log(&usage.LogEntry{
 				ApiKeyID:            c.GetString("api_key_id"),
 				ConnectionID:        conn.ID,
@@ -187,6 +197,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 				CacheCreationTokens: tokenCounts.CacheCreationTokens,
 				LatencyMs:           latency,
 				StatusCode:          resp.StatusCode,
+				TokensEstimated:     tokensEstimated,
 			})
 			h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
 			h.incrementAPIKeyUsage(c.GetString("api_key_id"), tokenCounts.InputTokens+tokenCounts.OutputTokens)
@@ -329,23 +340,34 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 			if req.Stream {
 				h.handleStreamResponse(c, streamResult, conn, provider, modelName, start, translatedBody, body)
 			} else {
-				translatedResp := registry.ResponseNonStream(comboCtx, string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
-				tokenCounts := ExtractTokensFromBody(translatedResp)
-				h.tracker.Log(&usage.LogEntry{
-					ApiKeyID: c.GetString("api_key_id"),
-					ConnectionID: connID,
-					ProviderTypeID: provider,
-					ModelID: modelName,
-					Modality: "chat",
-					Stream: stream,
-					InputTokens: tokenCounts.InputTokens,
-					OutputTokens: tokenCounts.OutputTokens,
-					ReasoningTokens: tokenCounts.ReasoningTokens,
-					CachedTokens: tokenCounts.CachedTokens,
-					CacheCreationTokens: tokenCounts.CacheCreationTokens,
-					LatencyMs: latency,
-					StatusCode: resp.StatusCode,
-				})
+		translatedResp := registry.ResponseNonStream(comboCtx, string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
+			tokenCounts := ExtractTokensFromBody(translatedResp)
+			tokensEstimated := false
+			if tokenCounts.InputTokens+tokenCounts.OutputTokens == 0 && resp.StatusCode < 400 {
+				estInput := usage.EstimateTokensFromRequest(body)
+				estOutput := usage.EstimateTokensFromResponse(translatedResp)
+				if estInput > 0 || estOutput > 0 {
+					tokenCounts.InputTokens = estInput
+					tokenCounts.OutputTokens = estOutput
+					tokensEstimated = true
+				}
+			}
+			h.tracker.Log(&usage.LogEntry{
+				ApiKeyID:            c.GetString("api_key_id"),
+				ConnectionID:        connID,
+				ProviderTypeID:      provider,
+				ModelID:             modelName,
+				Modality:            "chat",
+				Stream:              stream,
+				InputTokens:         tokenCounts.InputTokens,
+				OutputTokens:        tokenCounts.OutputTokens,
+				ReasoningTokens:     tokenCounts.ReasoningTokens,
+				CachedTokens:        tokenCounts.CachedTokens,
+				CacheCreationTokens: tokenCounts.CacheCreationTokens,
+				LatencyMs:           latency,
+				StatusCode:          resp.StatusCode,
+				TokensEstimated:     tokensEstimated,
+			})
 				c.Header("Content-Type", "application/json")
 				h.incrementAPIKeyUsage(c.GetString("api_key_id"), tokenCounts.InputTokens+tokenCounts.OutputTokens)
 				c.Status(resp.StatusCode)
