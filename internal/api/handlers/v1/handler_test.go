@@ -19,6 +19,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
+	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
@@ -792,6 +793,65 @@ func TestChatCompletions_FallbackUsage(t *testing.T) {
 	}
 	if totalTokens == 0 {
 		t.Fatalf("expected non-zero api_key_usage from fallback estimation")
+	}
+}
+
+func TestCacheOnlySuccess_UpstreamErrorNotCached(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	h.exactCache = cache.NewExactCache(1000)
+	wq := db.NewWriteQueue(h.db)
+	tracker := usage.NewTracker(h.db)
+	tracker.SetWriteQueue(wq)
+	h.tracker = tracker
+
+	// Seed required rows.
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('testcache','TestCache','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('testcacheconn1','testcache','c1','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	hash := mustHashKey(t, "sk-test")
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_keys (id, name, key_hash, created_at) VALUES ('test-key-cache', 'test-key-cache', ?, 0)`, hash); err != nil {
+		t.Fatalf("seed api_key: %v", err)
+	}
+
+	// Return a 429 upstream error.
+	fe := &fakeExecutor{
+		responses: []struct {
+			resp *executor.Response
+			err  error
+		}{
+			{
+				resp: &executor.Response{
+					StatusCode: http.StatusTooManyRequests,
+					Body:       []byte(`{"error":{"message":"rate limited","type":"rate_limit_error"}}`),
+				},
+			},
+		},
+	}
+	executor.GetRegistry().Register("testcache", executor.FormatOpenAI, fe)
+	defer executor.GetRegistry().Unregister("testcache")
+
+	h.store.SeedConnection("testcacheconn1", "testcache", "ready", 0)
+	h.elig.RecomputeAll()
+
+	body := []byte(`{"model":"testcache/model","messages":[{"role":"user","content":"Hello"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("Authorization", "Bearer sk-test")
+	c.Set("api_key_id", "test-key-cache")
+
+	h.ChatCompletions(c)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected status 429, got %d", rec.Code)
+	}
+	if stats := h.exactCache.Stats(); stats.Size != 0 {
+		t.Errorf("expected cache size 0 after upstream error, got %d", stats.Size)
 	}
 }
 
