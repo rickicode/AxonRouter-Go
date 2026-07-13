@@ -19,7 +19,7 @@ type RateLimiter struct {
 }
 
 type tokenBucket struct {
-	tokens    int
+	tokens    float64
 	maxTokens int
 	lastTime  time.Time
 }
@@ -85,7 +85,7 @@ func (rl *RateLimiter) Allow(key string, perKeyLimit int) bool {
 			limit = perKeyLimit
 		}
 		bucket = &tokenBucket{
-			tokens:    limit,
+			tokens:    float64(limit),
 			maxTokens: limit,
 			lastTime:  time.Now(),
 		}
@@ -93,20 +93,20 @@ func (rl *RateLimiter) Allow(key string, perKeyLimit int) bool {
 	} else if perKeyLimit > 0 && bucket.maxTokens != perKeyLimit {
 		// Update maxTokens if perKeyLimit changed (DB rate_limit update)
 		bucket.maxTokens = perKeyLimit
-		if bucket.tokens > perKeyLimit {
-			bucket.tokens = perKeyLimit
+		if bucket.tokens > float64(perKeyLimit) {
+			bucket.tokens = float64(perKeyLimit)
 		}
 	}
 
 	now := time.Now()
 	elapsed := now.Sub(bucket.lastTime)
-	bucket.tokens += int(elapsed.Seconds()) * (bucket.maxTokens / 60)
-	if bucket.tokens > bucket.maxTokens {
-		bucket.tokens = bucket.maxTokens
+	bucket.tokens += elapsed.Seconds() * float64(bucket.maxTokens) / 60.0
+	if bucket.tokens > float64(bucket.maxTokens) {
+		bucket.tokens = float64(bucket.maxTokens)
 	}
 	bucket.lastTime = now
 
-	if bucket.tokens <= 0 {
+	if bucket.tokens < 1 {
 		return false
 	}
 	bucket.tokens--
