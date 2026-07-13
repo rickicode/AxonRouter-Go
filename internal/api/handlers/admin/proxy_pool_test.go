@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
@@ -150,5 +151,80 @@ func TestProxyPoolBulkCreateDetectsRelayType(t *testing.T) {
 	}
 	if relayAuth == "" {
 		t.Fatal("expected relay_auth to be generated")
+	}
+}
+
+func TestProxyPoolBulkDelete(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database))
+
+	now := time.Now().Unix()
+	mustExec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := database.Exec(query, args...); err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+	}
+	insert := func(id, status string) {
+		t.Helper()
+		mustExec(
+			`INSERT INTO proxy_pools (id, name, type, proxy_url, no_proxy, relay_auth, is_active, test_status, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, id, "http", "http://"+id+".example:8080", "", "", 1, status, now, now,
+		)
+	}
+
+	insert("pool-a", "error")
+	insert("pool-b", "error")
+	insert("pool-c", "ok")
+	insert("pool-d", "ok")
+
+	// Delete by test_status filter.
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk-delete", jsonBodyProxyPool(t, map[string]any{"status": "error"}))
+	h.BulkDelete(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("BulkDelete status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var resp1 struct {
+		Ok      bool `json:"ok"`
+		Deleted int  `json:"deleted"`
+		Skipped int  `json:"skipped"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp1); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp1.Ok || resp1.Deleted != 2 || resp1.Skipped != 0 {
+		t.Fatalf("expected ok=true deleted=2 skipped=0, got %+v", resp1)
+	}
+
+	// Delete by explicit IDs, mixing an already-deleted and a remaining pool.
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk-delete", jsonBodyProxyPool(t, map[string]any{"ids": []string{"pool-a", "pool-c"}}))
+	h.BulkDelete(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("BulkDelete status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var resp2 struct {
+		Ok      bool `json:"ok"`
+		Deleted int  `json:"deleted"`
+		Skipped int  `json:"skipped"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp2); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp2.Ok || resp2.Deleted != 1 || resp2.Skipped != 1 {
+		t.Fatalf("expected ok=true deleted=1 skipped=1, got %+v", resp2)
+	}
+
+	var count int
+	if err := database.QueryRow("SELECT COUNT(*) FROM proxy_pools").Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 remaining pool, got %d", count)
 	}
 }
