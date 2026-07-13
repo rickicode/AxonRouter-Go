@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"github.com/rickicode/AxonRouter-Go/internal/config"
 	"io"
 	"io/fs"
 	"log"
@@ -29,6 +30,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/models"
+	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
@@ -124,9 +126,12 @@ func New(cfg Config) *Router {
 	proxyHealth := proxypool.NewHealthChecker(cfg.DB)
 	proxyHealth.Start(ctx)
 
+	// Provider-level settings stored in JSON files under the data directory.
+	providerCfg := providercfg.NewManager(config.Get().DataDir)
+
 	// Create admin handlers
 	connectionH := admin.NewConnectionHandler(cfg.DB, executor.GetRegistry(), store, elig, exhaustionCache, authManager)
-	providerH := admin.NewProviderHandler(cfg.DB, executor.GetRegistry(), store, elig)
+	providerH := admin.NewProviderHandler(cfg.DB, executor.GetRegistry(), store, elig, providerCfg)
 
 	// Auto-migrate raw API keys to bcrypt
 	db.MigrateRawKeysToBcrypt(cfg.DB)
@@ -179,7 +184,7 @@ func New(cfg Config) *Router {
 	// Rate limiter
 	limiter := middleware.NewRateLimiter(600)
 	// Create v1 handler with all dependencies (must exist before wiring routes)
-	v1H := v1.NewHandler(cfg.DB, writeQueue, store, elig, comboHandler, tracker, authManager, proxyResolver, exhaustionCache, compStrategy, exactCache)
+	v1H := v1.NewHandler(cfg.DB, writeQueue, store, elig, comboHandler, tracker, authManager, proxyResolver, exhaustionCache, compStrategy, exactCache, providerCfg)
 	// ---- /v1 routes (proxy) ----
 	v1Group := engine.Group("/v1")
 	v1Group.Use(middleware.Auth(cfg.DB, authCache))
@@ -233,6 +238,8 @@ func New(cfg Config) *Router {
 		g.POST("/providers/:id/connections", providerH.AddConnection)
 		g.POST("/providers/:id/connections/bulk", providerH.BulkAddConnections)
 		g.POST("/providers/validate", providerH.ValidateKey)
+		g.GET("/providers/:id/settings", providerH.GetSettings)
+		g.PATCH("/providers/:id/settings", providerH.UpdateSettings)
 
 		// Connections
 		g.GET("/providers/:id/connections", connectionH.List)

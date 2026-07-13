@@ -1,5 +1,5 @@
 // API Client for AxonRouter-Go Dashboard
-import { getToken, setToken, logout } from './auth';
+import { getToken, setToken, logout } from "./auth";
 
 const API_BASE = "/api/admin";
 
@@ -14,14 +14,14 @@ interface ApiResponse<T> {
 }
 
 export interface Provider {
-	id: string;
-	name?: string;
-	display_name: string;
-	format: string;
-	base_url: string;
-	is_custom: boolean;
-	connection_count: number;
-	status_counts: {
+  id: string;
+  name?: string;
+  display_name: string;
+  format: string;
+  base_url: string;
+  is_custom: boolean;
+  connection_count: number;
+  status_counts: {
     ready: number;
     rate_limited: number;
     quota_exhausted: number;
@@ -31,6 +31,13 @@ export interface Provider {
     disabled: number;
   };
   aliases?: string[];
+}
+
+export type RoutingMode = "first_eligible" | "round_robin" | "random";
+
+export interface ProviderSettings {
+  provider_id: string;
+  routing_mode: RoutingMode;
 }
 
 export interface Connection {
@@ -143,8 +150,11 @@ export async function fetchApi<T>(
   const timeout = setTimeout(() => controller.abort(), 8000);
 
   const token = getToken();
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (token && endpoint !== "/login") headers["Authorization"] = "Bearer " + token;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (token && endpoint !== "/login")
+    headers["Authorization"] = "Bearer " + token;
   if (options.headers) Object.assign(headers, options.headers);
 
   try {
@@ -217,6 +227,15 @@ export const providersApi = {
     fetchApi<{ valid: boolean }>("/providers/validate", {
       method: "POST",
       body: JSON.stringify({ provider, api_key: apiKey }),
+    }),
+
+  getSettings: (id: string) =>
+    fetchApi<ProviderSettings>(`/providers/${id}/settings`),
+
+  updateSettings: (id: string, data: Partial<ProviderSettings>) =>
+    fetchApi<ProviderSettings>(`/providers/${id}/settings`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
     }),
 };
 
@@ -419,7 +438,7 @@ export interface UsageData {
   filters: {
     from: number;
     to: number;
-    granularity: 'day' | 'month';
+    granularity: "day" | "month";
     api_key_id?: string;
     model_id?: string;
     provider_id?: string;
@@ -434,7 +453,11 @@ export const apiKeysApi = {
   create: (name?: string, rateLimit?: number, maxTokens?: number) =>
     fetchApi<APIKeyCreateResponse>("/api-keys", {
       method: "POST",
-      body: JSON.stringify({ name, rate_limit_per_min: rateLimit, max_tokens: maxTokens }),
+      body: JSON.stringify({
+        name,
+        rate_limit_per_min: rateLimit,
+        max_tokens: maxTokens,
+      }),
     }),
 
   delete: (id: string) =>
@@ -454,21 +477,25 @@ export const apiKeysApi = {
 
 // Usage API
 export const usageApi = {
-	get: (params?: {
-		from?: string;
-		to?: string;
-		granularity?: "day" | "month";
-		api_key_id?: string;
-		model_id?: string;
-		provider_id?: string;
-		modality?: string;
-		status_code?: number;
-	}) => {
+  get: (params?: {
+    from?: string;
+    to?: string;
+    granularity?: "day" | "month";
+    api_key_id?: string;
+    model_id?: string;
+    provider_id?: string;
+    modality?: string;
+    status_code?: number;
+  }) => {
     const qs = params
       ? "?" +
-			  new URLSearchParams(
-          Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== ""))
-			  ).toString()
+        new URLSearchParams(
+          Object.fromEntries(
+            Object.entries(params).filter(
+              ([, v]) => v !== undefined && v !== "",
+            ),
+          ),
+        ).toString()
       : "";
     return fetchApi<{ data: UsageData }>(`/usage${qs}`);
   },
@@ -930,7 +957,6 @@ export const cacheApi = {
     fetchApi<{ flushed: boolean }>("/cache/flush", { method: "POST" }),
 };
 
-
 // Global gateway model catalog (same list served by /v1/models, exposed for dashboard pickers)
 export interface GatewayModel {
   id: string;
@@ -1032,7 +1058,6 @@ export interface CLIToolConfig {
   backupPath?: string;
 }
 
-
 export interface CLIToolSavedResponse {
   selection: CLIToolSelection;
   config: CLIToolConfig;
@@ -1040,13 +1065,25 @@ export interface CLIToolSavedResponse {
 
 export const cliToolsApi = {
   list: () => fetchApi<{ data: CLITool[] }>("/cli-tools"),
-  statuses: () => fetchApi<Record<string, CLIToolStatus>>("/cli-tools/statuses"),
+  statuses: () =>
+    fetchApi<Record<string, CLIToolStatus>>("/cli-tools/statuses"),
   get: (toolId: string) => fetchApi<CLIToolState>(`/cli-tools/${toolId}`),
-  save: (toolId: string, data: CLIToolSelection & { apiKeyValue?: string }) => fetchApi<CLIToolSavedResponse>(`/cli-tools/${toolId}`, { method: "POST", body: JSON.stringify(data) }),
-  delete: (toolId: string) => fetchApi<{ success: boolean }>(`/cli-tools/${toolId}`, { method: "DELETE" }),
+  save: (toolId: string, data: CLIToolSelection & { apiKeyValue?: string }) =>
+    fetchApi<CLIToolSavedResponse>(`/cli-tools/${toolId}`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  delete: (toolId: string) =>
+    fetchApi<{ success: boolean }>(`/cli-tools/${toolId}`, {
+      method: "DELETE",
+    }),
 };
 
 export const developersApi = {
-  getMasterKey: () => fetchApi<{ data: MasterKeyInfo }>("/developers/master-key"),
-  regenerateMasterKey: () => fetchApi<{ data: MasterKeyInfo }>("/developers/master-key/regenerate", { method: "POST" }),
+  getMasterKey: () =>
+    fetchApi<{ data: MasterKeyInfo }>("/developers/master-key"),
+  regenerateMasterKey: () =>
+    fetchApi<{ data: MasterKeyInfo }>("/developers/master-key/regenerate", {
+      method: "POST",
+    }),
 };

@@ -20,6 +20,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
+	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 )
 
@@ -93,6 +94,7 @@ func newTestHandler(t *testing.T) *Handler {
 		elig:       connstate.NewEligibilityManager(store),
 		authMgr:    mgr,
 		exhaustion: quota.NewExhaustionCache(),
+		providerCfg: providercfg.NewManager(t.TempDir()),
 	}
 }
 
@@ -351,9 +353,9 @@ func TestBuildFailoverErrorResponse(t *testing.T) {
 		wantErrType string
 	}{
 		{
-			name:      "model not found",
-			category:  connstate.ErrorModelNotFound,
-			modelName: "unknown-model",
+			name:        "model not found",
+			category:    connstate.ErrorModelNotFound,
+			modelName:   "unknown-model",
 			wantMsg:     "model not found: unknown-model",
 			wantStatus:  http.StatusNotFound,
 			wantErrType: "invalid_request_error",
@@ -366,17 +368,17 @@ func TestBuildFailoverErrorResponse(t *testing.T) {
 			wantErrType: "authentication_error",
 		},
 		{
-			name:     "rate limit preserves upstream message",
-			category: connstate.ErrorRateLimit,
-			lastErr:  &executor.UpstreamError{StatusCode: 429, Body: []byte(`{"error":{"message":"rate limiting: inference request per min rate reached"}}`)},
+			name:        "rate limit preserves upstream message",
+			category:    connstate.ErrorRateLimit,
+			lastErr:     &executor.UpstreamError{StatusCode: 429, Body: []byte(`{"error":{"message":"rate limiting: inference request per min rate reached"}}`)},
 			wantMsg:     "rate limiting: inference request per min rate reached",
 			wantStatus:  http.StatusTooManyRequests,
 			wantErrType: "rate_limit_error",
 		},
 		{
-			name:     "quota preserves upstream message",
-			category: connstate.ErrorQuota,
-			lastErr:  &executor.UpstreamError{StatusCode: 429, Body: []byte(`{"error":{"message":"you have used up your daily free allocation of 10,000 neurons"}}`)},
+			name:        "quota preserves upstream message",
+			category:    connstate.ErrorQuota,
+			lastErr:     &executor.UpstreamError{StatusCode: 429, Body: []byte(`{"error":{"message":"you have used up your daily free allocation of 10,000 neurons"}}`)},
 			wantMsg:     "you have used up your daily free allocation of 10,000 neurons",
 			wantStatus:  http.StatusTooManyRequests,
 			wantErrType: "insufficient_quota",

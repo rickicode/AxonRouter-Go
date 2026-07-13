@@ -16,19 +16,21 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/provider"
+	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 )
 
 // ProviderHandler handles provider CRUD operations.
 type ProviderHandler struct {
-	db       *sql.DB
-	registry *executor.Registry
-	store    *connstate.Store
-	elig     *connstate.EligibilityManager
+	db          *sql.DB
+	registry    *executor.Registry
+	store       *connstate.Store
+	elig        *connstate.EligibilityManager
+	providerCfg *providercfg.Manager
 }
 
 // NewProviderHandler creates a new provider handler.
-func NewProviderHandler(database *sql.DB, registry *executor.Registry, store *connstate.Store, elig *connstate.EligibilityManager) *ProviderHandler {
-	return &ProviderHandler{db: database, registry: registry, store: store, elig: elig}
+func NewProviderHandler(database *sql.DB, registry *executor.Registry, store *connstate.Store, elig *connstate.EligibilityManager, providerCfg *providercfg.Manager) *ProviderHandler {
+	return &ProviderHandler{db: database, registry: registry, store: store, elig: elig, providerCfg: providerCfg}
 }
 
 // List returns all providers with connection counts.
@@ -333,7 +335,7 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 				if err != nil {
 					latency := time.Since(start).Milliseconds()
 					if h.store != nil {
-				det := connstate.DetectError(context.Background(),0, "", err, providerID, "", nil)
+						det := connstate.DetectError(context.Background(), 0, "", err, providerID, "", nil)
 						h.store.RecordFailure(in.connID, det)
 					}
 					results[i] = testResult{ConnectionID: in.connID, Status: "failed", Error: err.Error(), LatencyMs: latency}
@@ -352,7 +354,7 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 
 				if firstErr != nil {
 					if h.store != nil {
-				det := connstate.DetectError(context.Background(),0, "", firstErr, providerID, "", nil)
+						det := connstate.DetectError(context.Background(), 0, "", firstErr, providerID, "", nil)
 						h.store.RecordFailure(in.connID, det)
 					}
 					results[i] = testResult{ConnectionID: in.connID, Status: "failed", Error: firstErr.Error(), LatencyMs: latency}
@@ -625,4 +627,50 @@ func (h *ProviderHandler) ValidateKey(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"valid": valid})
+}
+
+// GetSettings returns the persistent JSON-file settings for a provider.
+func (h *ProviderHandler) GetSettings(c *gin.Context) {
+	id := c.Param("id")
+	s, err := h.providerCfg.Get(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"provider_id":  id,
+		"routing_mode": s.RoutingMode,
+	})
+}
+
+// UpdateSettings persists per-provider settings to a JSON file.
+func (h *ProviderHandler) UpdateSettings(c *gin.Context) {
+	id := c.Param("id")
+	var req struct {
+		RoutingMode providercfg.RoutingMode `json:"routing_mode"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	switch req.RoutingMode {
+	case providercfg.FirstEligible, providercfg.RoundRobin, providercfg.Random:
+		// ok
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "routing_mode must be one of: first_eligible, round_robin, random",
+		})
+		return
+	}
+
+	if err := h.providerCfg.Save(id, providercfg.ProviderSettings{RoutingMode: req.RoutingMode}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"provider_id":  id,
+		"routing_mode": req.RoutingMode,
+	})
 }

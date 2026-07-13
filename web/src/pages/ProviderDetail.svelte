@@ -3,6 +3,7 @@
   import { loadProvider, selectedProvider, loadConnections, connections, connectionPagination, connectionFilter, loadProviderModels, providerModels, modelTestResults, testProviderModel, isLoading, error } from '$lib/stores';
   import { unwrapInt, getTokenExpiry } from '$lib/utils';
   import { connectionsApi, providersApi } from '$lib/api';
+import type { RoutingMode } from '$lib/api';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
@@ -12,12 +13,16 @@
   import { getProviderMeta, getStatusDotColor, getStatusVariant, getStatusLabel } from '$lib/provider-catalog';
   import { toast } from 'svelte-sonner';
 import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
+import Settings2Icon from '@lucide/svelte/icons/settings-2';
   import AddConnectionModal from '$lib/components/AddConnectionModal.svelte';
+import ProviderRoutingModal from '$lib/components/ProviderRoutingModal.svelte';
 import Pagination from '$lib/components/Pagination.svelte';
   import * as AlertDialog from '$lib/components/ui/alert-dialog';
 import StatusBadge from '$lib/components/StatusBadge.svelte';
 
   let showAddModal = $state(false);
+let showRoutingModal = $state(false);
+let routingMode = $state<RoutingMode>('round_robin');
 
   let { id = '' }: { id?: string } = $props();
   let providerId = $derived(id);
@@ -43,7 +48,12 @@ import StatusBadge from '$lib/components/StatusBadge.svelte';
     loadProvider(providerId);
     loadConnections(providerId, currentPage, perPage);
     loadProviderModels(providerId);
-  });
+    providersApi.getSettings(providerId).then((s) => {
+        routingMode = s.routing_mode;
+    }).catch(() => {
+        // keep default
+    });
+});
 
   function formatCooldown(raw: unknown): string {
     const cooldownUntil = unwrapInt(raw);
@@ -221,7 +231,11 @@ function handlePerPageChange(p: number) {
           <span class="text-caption-mono text-muted-foreground">{$connectionPagination.total} total</span>
         </div>
         <div class="flex items-center gap-2">
-          <Button onclick={handleTestAll} disabled={testingAll} variant="outline" size="sm" class="text-body-sm rounded-sm">
+          						<Button onclick={() => showRoutingModal = true} variant="outline" size="sm" class="text-body-sm rounded-sm gap-1.5">
+							<Settings2Icon class="size-3.5" />
+							Settings
+						</Button>
+					<Button onclick={handleTestAll} disabled={testingAll} variant="outline" size="sm" class="text-body-sm rounded-sm">
             {testingAll ? 'Testing...' : 'Test all'}
           </Button>
           <Button onclick={() => showAddModal = true} size="sm" class="text-body-sm rounded-sm">
@@ -387,6 +401,8 @@ function handlePerPageChange(p: number) {
 
 
 <AddConnectionModal bind:open={showAddModal} {providerId} {meta} onCreated={() => { loadConnections(providerId, currentPage, perPage); loadProvider(providerId); loadProviderModels(providerId); }} />
+<ProviderRoutingModal bind:open={showRoutingModal} {providerId} currentMode={routingMode} onSaved={(mode) => (routingMode = mode)} />
+
 <AlertDialog.Root bind:open={deleteDialogOpen}>
   <AlertDialog.Content>
     <AlertDialog.Header>

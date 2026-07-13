@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"strconv"
@@ -27,6 +28,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	provideralias "github.com/rickicode/AxonRouter-Go/internal/provider"
+	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
@@ -150,6 +152,7 @@ type Handler struct {
 	conns               sync.Map // connID -> *Connection (write-through credential cache)
 	compressionStrategy compression.Strategy
 	exactCache          cache.CacheStorage
+	providerCfg         *providercfg.Manager
 }
 
 // NewHandler creates a new v1 handler with all dependencies.
@@ -165,6 +168,7 @@ func NewHandler(
 	exhaustionCache *quota.ExhaustionCache,
 	compressionStrategy compression.Strategy,
 	exactCache cache.CacheStorage,
+	providerCfg *providercfg.Manager,
 ) *Handler {
 	return &Handler{
 		db:                  db,
@@ -179,6 +183,7 @@ func NewHandler(
 		exhaustion:          exhaustionCache,
 		compressionStrategy: compressionStrategy,
 		exactCache:          exactCache,
+		providerCfg:         providerCfg,
 	}
 }
 
@@ -195,50 +200,87 @@ func (h *Handler) resolveExecutor(provider, model string) (executor.Executor, ex
 // getConnection returns an active connection for a provider using O(1) eligibility snapshot.
 // Preflight: skips connections marked as exhausted in the quota exhaustion cache.
 func (h *Handler) getConnection(ctx context.Context, provider string, modelID string) (*Connection, error) {
-	// Resolve legacy long-form aliases to the canonical short prefix.
 	provider = provideralias.ResolveAlias(provider)
-	// Get all eligible connections for this provider (sorted by priority)
+
 	connIDs := h.elig.GetByPrefix(provider)
 	logging.Logger.Debug("getConnection", "provider", provider, "eligible", len(connIDs))
 	if len(connIDs) == 0 {
 		return nil, fmt.Errorf("no eligible connection for provider: %s", provider)
 	}
 
-	// Preflight: find first connection not marked exhausted
+	// Build the list of preflight-eligible candidates first. We never consider
+	// connections that are actively cooled down or quota-exhausted.
+	var candidates []string
 	for _, connID := range connIDs {
 		cs := h.store.Get(connID)
 		if cs == nil {
 			continue
 		}
-		// Check connection-level cooldown
 		if cs.IsInCooldown() {
 			continue
 		}
-		// Check model-level cooldown
 		if modelID != "" && cs.IsModelInCooldown(modelID) {
 			continue
 		}
-		// Preflight per-model exhaustion check (oc/ag only).
 		if modelID != "" && h.exhaustion.IsExhaustedScope(connID, connstate.ModelScope(provider, modelID)) {
 			continue
 		}
-
-		// Preflight quota exhaustion check (OmniRoute isAccountQuotaExhausted)
 		if h.exhaustion.IsExhausted(connID) {
 			continue
 		}
-		// Load credentials by ID
+		candidates = append(candidates, connID)
+	}
+
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no available connection for provider: %s (all exhausted or failing)", provider)
+	}
+
+	ordered := h.orderCandidates(provider, candidates)
+
+	for _, connID := range ordered {
 		conn, err := h.getCachedConn(ctx, connID)
 		if err != nil {
 			logging.Logger.Debug("load conn failed", "conn", connID[:8], "err", err)
 			continue
 		}
-		logging.Logger.Info("getConnection selected", "provider", provider, "conn", conn.ID[:8], "name", conn.Name)
+		logging.Logger.Info("getConnection selected", "provider", provider, "conn", conn.ID[:8], "name", conn.Name, "mode", h.providerCfg.RoutingMode(provider))
 		h.bindActiveConn(ctx, conn)
 		return conn, nil
 	}
-	// All eligible connections exhausted or failed to load
+
 	return nil, fmt.Errorf("no available connection for provider: %s (all exhausted or failing)", provider)
+}
+
+// orderCandidates reorders eligible connection IDs according to the provider's
+// configured routing mode.
+//
+//   - first_eligible: use the snapshot order (one account stays first until it
+//     becomes ineligible).
+//   - round_robin: rotate the starting index on every request.
+//   - random: pick a random starting index for each request.
+func (h *Handler) orderCandidates(provider string, candidates []string) []string {
+	if len(candidates) <= 1 {
+		return candidates
+	}
+
+	mode := h.providerCfg.RoutingMode(provider)
+	var start int
+	switch mode {
+	case providercfg.RoundRobin:
+		start = h.providerCfg.NextRoundRobinIndex(provider, len(candidates))
+	case providercfg.Random:
+		start = rand.IntN(len(candidates))
+	default:
+		return candidates
+	}
+
+	if start == 0 {
+		return candidates
+	}
+	out := make([]string, 0, len(candidates))
+	out = append(out, candidates[start:]...)
+	out = append(out, candidates[:start]...)
+	return out
 }
 
 // prepareConnection performs preflight checks and proactive token refresh for a
@@ -884,18 +926,19 @@ func (h *Handler) streamResponse(
 				latency := time.Since(start).Milliseconds()
 				tokenCounts := ExtractTokensFromFinalChunk(lastChunk)
 				h.tracker.Log(&usage.LogEntry{
-					ApiKeyID:        c.GetString("api_key_id"),
-					ConnectionID:    conn.ID,
-					ProviderTypeID:  provider,
-					ModelID:         model,
-					Modality:        "chat",
-					Stream:          true,
-					InputTokens:     tokenCounts.InputTokens,
-					OutputTokens:    tokenCounts.OutputTokens,
-					ReasoningTokens: tokenCounts.ReasoningTokens,
-					CachedTokens:    tokenCounts.CachedTokens,
-					LatencyMs:       latency,
-					StatusCode:      http.StatusOK,
+					ApiKeyID:            c.GetString("api_key_id"),
+					ConnectionID:        conn.ID,
+					ProviderTypeID:      provider,
+					ModelID:             model,
+					Modality:            "chat",
+					Stream:              true,
+					InputTokens:         tokenCounts.InputTokens,
+					OutputTokens:        tokenCounts.OutputTokens,
+					ReasoningTokens:     tokenCounts.ReasoningTokens,
+					CachedTokens:        tokenCounts.CachedTokens,
+					CacheCreationTokens: tokenCounts.CacheCreationTokens,
+					LatencyMs:           latency,
+					StatusCode:          http.StatusOK,
 				})
 				h.incrementAPIKeyUsage(c.GetString("api_key_id"), tokenCounts.InputTokens+tokenCounts.OutputTokens)
 				return

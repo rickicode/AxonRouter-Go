@@ -7,12 +7,13 @@ import (
 )
 
 type Config struct {
-	Port        string
-	DBPath      string
-	PIDFile     string
-	LogDir string
-	Debug bool
-	JWTSecret   string
+	Port      string
+	DBPath    string
+	PIDFile   string
+	LogDir    string
+	DataDir   string
+	Debug     bool
+	JWTSecret string
 }
 
 var (
@@ -23,6 +24,13 @@ var (
 // Init sets the global config. Call once at startup.
 func Init(cfg Config) {
 	once.Do(func() {
+		if cfg.DataDir == "" {
+			if dataDir := os.Getenv("AXON_DATA_DIR"); dataDir != "" {
+				cfg.DataDir = dataDir
+			} else if home, err := os.UserHomeDir(); err == nil {
+				cfg.DataDir = filepath.Join(home, ".axonrouter")
+			}
+		}
 		global = cfg
 	})
 }
@@ -36,13 +44,14 @@ func Get() Config {
 			dataDir = filepath.Join(home, ".axonrouter")
 		}
 		global = Config{
-			Port:          getEnv("AXON_PORT", "3777"),
-			DBPath:        filepath.Join(dataDir, "axonrouter.db"),
-			PIDFile:       filepath.Join(dataDir, "axonrouter.pid"),
-		LogDir: filepath.Join(dataDir, "logs"),
-	}
-		os.MkdirAll(dataDir, 0755)
-		os.MkdirAll(global.LogDir, 0755)
+			Port:    getEnv("AXON_PORT", "3777"),
+			DBPath:  filepath.Join(dataDir, "axonrouter.db"),
+			PIDFile: filepath.Join(dataDir, "axonrouter.pid"),
+			LogDir:  filepath.Join(dataDir, "logs"),
+			DataDir: dataDir,
+		}
+		os.MkdirAll(dataDir, 0o755)
+		os.MkdirAll(global.LogDir, 0o755)
 	})
 	return global
 }
