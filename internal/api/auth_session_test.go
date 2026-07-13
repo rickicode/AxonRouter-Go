@@ -213,6 +213,41 @@ func TestChangePassword_RequiresMatchingConfirmation(t *testing.T) {
 	}
 }
 
+func TestDeferPasswordChange_WorksOnFirstLogin(t *testing.T) {
+	database := newAuthTestDB(t)
+	seedAdminPassword(t, database, testAdminPassword)
+	_ = setSetting(database, firstLoginKey, "true")
+	token := authHeaderToken(t, database)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/defer-password-change", nil)
+	c.Request.Header.Set("X-Auth-Token", token)
+	SessionAuth(database)(c)
+	DeferPasswordChangeHandler(database)(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("defer on first login failed: %d %s", w.Code, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/admin/providers", nil)
+	c.Request.Header.Set("X-Auth-Token", token)
+	SessionAuth(database)(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected protected endpoint to be allowed after defer, got %d %s", w.Code, w.Body.String())
+	}
+
+	w = loginRequest(t, database, testAdminPassword)
+	if w.Code != http.StatusOK {
+		t.Fatalf("login after defer failed: %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"mustChangePassword":false`) {
+		t.Fatalf("expected mustChangePassword=false after defer, got %s", w.Body.String())
+	}
+}
+
 func TestDeferPasswordChange_AndReappearance(t *testing.T) {
 	database := newAuthTestDB(t)
 	seedAdminPassword(t, database, testAdminPassword)

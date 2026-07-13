@@ -195,11 +195,16 @@ func ChangePasswordHandler(database *sql.DB) gin.HandlerFunc {
 }
 
 // DeferPasswordChangeHandler allows an authenticated admin to postpone the
-// forced password change for 24 hours.
+// forced password change for 24 hours. Marking the initial login as done lets
+// the deferred window take effect even on a brand-new install.
 func DeferPasswordChangeHandler(database *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		dueAt := time.Now().Unix() + 24*3600
 		if err := setSetting(database, passwordChangeDueAtKey, strconv.FormatInt(dueAt, 10)); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to defer password change"})
+			return
+		}
+		if err := setSetting(database, firstLoginKey, "false"); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to defer password change"})
 			return
 		}
