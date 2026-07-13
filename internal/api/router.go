@@ -200,6 +200,8 @@ func New(cfg Config) *Router {
 	v1Group.POST("/audio/transcriptions", v1H.STT)
 	v1Group.POST("/images/generations", v1H.Images)
 	v1Group.POST("/video/generations", v1H.Video)
+	v1Group.POST("/embeddings", v1H.Embeddings)
+	v1Group.POST("/responses", v1H.Responses)
 	v1Group.POST("/unified", v1H.Unified)
 	v1Group.POST("/messages/count_tokens", v1H.CountTokens)
 	v1Group.POST("/messages", v1H.Messages)

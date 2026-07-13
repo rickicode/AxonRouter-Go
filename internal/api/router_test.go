@@ -167,6 +167,32 @@ func TestModelsEndpoint(t *testing.T) {
 
 // TestSeedConnectionsFromDB_RestoresCooldown proves that a connection with an
 // active cooldown_until in the DB is not considered eligible right after startup.
+func TestRoutesRegistered_DeadHandlersExist(t *testing.T) {
+	router, srv := newTestRouter(t)
+	defer srv.Close()
+	defer router.Shutdown()
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte("test-key"), bcrypt.DefaultCost)
+	if _, err := router.db.Exec(
+		`INSERT INTO api_keys (id, name, key_hash, is_active, rate_limit_per_min, created_at) VALUES (?, ?, ?, 1, 100, ?)`,
+		"router-key-dead", "test", string(hash), 0,
+	); err != nil {
+		t.Fatalf("insert api key: %v", err)
+	}
+
+	for _, path := range []string{"/v1/embeddings", "/v1/responses"} {
+		req, _ := http.NewRequest(http.MethodPost, "http://localhost"+path, strings.NewReader(`{"model":"openai/test"}`))
+		req.Header.Set("Authorization", "Bearer test-key")
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		router.Engine().ServeHTTP(rr, req)
+
+		if rr.Code == http.StatusNotFound {
+			t.Errorf("%s returned 404; route should be registered", path)
+		}
+	}
+}
+
 func TestSeedConnectionsFromDB_RestoresCooldown(t *testing.T) {
 	database := openTestDB(t)
 	now := time.Now().Unix()
