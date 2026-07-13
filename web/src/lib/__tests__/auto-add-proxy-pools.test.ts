@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getProxyPoolId, getMissingPools } from '$lib/auto-add-proxy-pools';
+import { getProxyPoolId, getMissingPools, filterProxyPools } from '$lib/auto-add-proxy-pools';
 import type { Connection, ProxyPool } from '$lib/api';
 
 function makeConnection(psd: string | null): Connection {
@@ -72,5 +72,32 @@ describe('getMissingPools', () => {
     const pools = [makePool('a')];
     const conns = [makeConnection('not-json')];
     expect(getMissingPools(pools, conns)).toEqual([makePool('a')]);
+  });
+});
+
+describe('filterProxyPools', () => {
+  it('returns all pools when query is empty', () => {
+    const pools = [makePool('a'), makePool('b')];
+    expect(filterProxyPools(pools, '')).toEqual(pools);
+  });
+
+  it('filters by name', () => {
+    const pools = [makePool('alpha'), makePool('beta')];
+    expect(filterProxyPools(pools, 'alp')).toEqual([makePool('alpha')]);
+  });
+
+  it('filters by type', () => {
+    const pools = [{ ...makePool('a'), type: 'socks5' }, makePool('b')];
+    expect(filterProxyPools(pools, 'socks')).toEqual([pools[0]]);
+  });
+
+  it('matches regardless of case', () => {
+    const pools = [makePool('Alpha')];
+    expect(filterProxyPools(pools, 'AL')).toEqual(pools);
+  });
+
+  it('returns empty array when no pools match', () => {
+    const pools = [makePool('a')];
+    expect(filterProxyPools(pools, 'zzz')).toEqual([]);
   });
 });
