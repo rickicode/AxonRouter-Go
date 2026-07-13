@@ -1,7 +1,7 @@
 <script lang="ts">
  import { onMount } from 'svelte';
  import { loadProvider, selectedProvider, loadConnections, connections, connectionPagination, connectionFilter, loadProviderModels, providerModels, modelTestResults, testProviderModel, addProviderModel, deleteProviderModel, isLoading, error } from '$lib/stores';
- import { unwrapInt, getTokenExpiry } from '$lib/utils';
+ import { unwrapInt, getTokenExpiry, copyToClipboard } from '$lib/utils';
  import { connectionsApi, providersApi } from '$lib/api';
 import type { RoutingMode } from '$lib/api';
  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
@@ -15,6 +15,7 @@ import type { RoutingMode } from '$lib/api';
 import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
 import Settings2Icon from '@lucide/svelte/icons/settings-2';
 import PencilIcon from '@lucide/svelte/icons/pencil';
+import CopyIcon from '@lucide/svelte/icons/copy';
  import AddConnectionModal from '$lib/components/AddConnectionModal.svelte';
 import ProviderRoutingModal from '$lib/components/ProviderRoutingModal.svelte';
 import ProviderEditModal from '$lib/components/ProviderEditModal.svelte';
@@ -76,11 +77,20 @@ let newModel = $state('');
  return `${Math.floor(seconds / 3600)}h`;
  }
 
- function formatTimestamp(raw: unknown) {
- const ts = unwrapInt(raw);
- if (!ts) return '—';
- return new Date(ts * 1000).toLocaleDateString();
- }
+function formatTimestamp(raw: unknown) {
+	const ts = unwrapInt(raw);
+	if (!ts) return '—';
+	return new Date(ts * 1000).toLocaleDateString();
+}
+
+async function copyModelName(id: string) {
+	try {
+		await copyToClipboard(id);
+		toast.success('Model name copied');
+	} catch {
+		toast.error('Copy failed');
+	}
+}
 
  function isDefaultDirect(conn: any): boolean {
  if (!conn.provider_specific_data) return false;
@@ -209,34 +219,36 @@ function handlePerPageChange(p: number) {
  </CardContent>
  </Card>
  {:else if $selectedProvider}
- <!-- Provider Header -->
- <div class="flex items-start gap-4 justify-between">
- <div
- class="size-12 rounded-lg flex items-center justify-center shrink-0 overflow-hidden"
- style="background-color: {(meta?.color ?? '#888')}15"
- >
- <ProviderIcon {meta} size={48} />
- </div>
- <div class="space-y-1 min-w-0">
- <div class="flex items-center gap-3 flex-wrap">
- <h1 class="text-display-lg">{$selectedProvider.display_name}.</h1>
- {#if $selectedProvider.is_custom}
- <Badge variant="secondary" class="text-caption-mono rounded-sm">Custom</Badge>
- {/if}
- {#if meta}
- <Badge variant="outline" class="text-caption-mono rounded-sm">{meta.category}</Badge>
- {/if}
- </div>
- <p class="text-caption-mono text-muted-foreground">
- Prefix: {meta?.prefix ?? ($selectedProvider.id + '/')} · Format: {$selectedProvider.format} · ID: {$selectedProvider.id}
- </p>
- </div>
-  {#if $selectedProvider.is_custom}
-  <Button variant="outline" size="sm" class="text-body-sm rounded-sm gap-1.5 shrink-0" onclick={() => (showEditModal = true)}>
-   <PencilIcon class="size-3.5" /> Edit provider
-  </Button>
-  {/if}
- </div>
+<!-- Provider Header -->
+<div class="flex items-start justify-between gap-4">
+	<div class="flex items-start gap-4 min-w-0">
+		<div
+			class="size-12 rounded-lg flex items-center justify-center shrink-0 overflow-hidden"
+			style="background-color: {(meta?.color ?? '#888')}15"
+		>
+			<ProviderIcon {meta} size={48} />
+		</div>
+		<div class="space-y-1 min-w-0">
+			<div class="flex items-center gap-3 flex-wrap">
+				<h1 class="text-display-lg break-words">{$selectedProvider.display_name}.</h1>
+				{#if $selectedProvider.is_custom}
+					<Badge variant="secondary" class="text-caption-mono rounded-sm">Custom</Badge>
+				{/if}
+				{#if meta}
+					<Badge variant="outline" class="text-caption-mono rounded-sm">{meta.category}</Badge>
+				{/if}
+			</div>
+			<p class="text-caption-mono text-muted-foreground">
+				Prefix: {meta?.prefix ?? ($selectedProvider.id + '/')} · Format: {$selectedProvider.format} · ID: {$selectedProvider.id}
+			</p>
+		</div>
+	</div>
+	{#if $selectedProvider.is_custom}
+	<Button variant="outline" size="sm" class="text-body-sm rounded-sm gap-1.5 shrink-0" onclick={() => (showEditModal = true)}>
+		<PencilIcon class="size-3.5" /> Edit provider
+	</Button>
+	{/if}
+</div>
 
  <!-- Connections Section -->
  <div class="space-y-4">
@@ -413,16 +425,25 @@ function handlePerPageChange(p: number) {
  {#each $providerModels as entry (entry.id)}
  {@const result = $modelTestResults[entry.id]}
  <div class="group relative flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 transition-colors hover:border-primary/40">
- <button
- type="button"
- class="flex min-w-0 flex-1 items-center gap-2 text-left cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
- disabled={result?.status === 'testing'}
- onclick={() => testProviderModel(providerId, entry.id)}
- title={entry.id}
- >
- <span class="block min-w-0 text-[12px] font-mono leading-snug break-all text-foreground">{entry.id}</span>
- </button>
- {#if result}
+				<button
+					type="button"
+					class="flex min-w-0 flex-1 items-center gap-2 text-left cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+					disabled={result?.status === 'testing'}
+					onclick={() => testProviderModel(providerId, entry.id)}
+					title={entry.id}
+				>
+					<span class="block min-w-0 text-[12px] font-mono leading-snug break-all text-foreground">{entry.id}</span>
+				</button>
+				<button
+					type="button"
+					class="inline-flex shrink-0 items-center justify-center size-6 rounded-sm border border-border text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary hover:bg-primary/10 cursor-pointer"
+					title="Copy model name"
+					aria-label="Copy model name"
+					onclick={(e) => { e.stopPropagation(); copyModelName(entry.id); }}
+				>
+					<CopyIcon class="size-3" />
+				</button>
+				{#if result}
  <span class="size-1.5 shrink-0 rounded-full {result.status === 'ok' ? 'bg-emerald-500' : result.status === 'testing' ? 'bg-yellow-500 animate-pulse' : 'bg-destructive'}"></span>
  {#if result.latency_ms}
  <span class="shrink-0 text-[10px] font-mono text-muted-foreground">{result.latency_ms}ms</span>
