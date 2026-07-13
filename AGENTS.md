@@ -239,6 +239,22 @@ git diff --cached --stat
 ```
 Make sure you only commit changes you intended. Do not include unrelated changes from other sessions.
 
+## Pull Request Labels (Required)
+
+When creating a pull request (via `gh pr create` or any Hive merge), always attach the label:
+
+```
+PR auto-merge
+```
+
+If the label does not exist in the repository yet, create it first with:
+
+```bash
+gh label create "PR auto-merge" --color 0366D6 --description "Auto-enable PR merge when checks pass"
+```
+
+This applies to every PR in this Hive-managed repository.
+
 ## Local Real Testing (Without Disturbing the Main Gateway)
 
 When you need to run an actual instance for manual or smoke testing after building:
