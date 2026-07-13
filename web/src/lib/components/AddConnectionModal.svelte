@@ -5,9 +5,10 @@
   import { Label } from '$lib/components/ui/label';
   import { Textarea } from '$lib/components/ui/textarea';
   import { Badge } from '$lib/components/ui/badge';
- import { connectionsApi, providersApi, oauthApi, proxyPoolsApi } from '$lib/api';
-  import { toast } from 'svelte-sonner';
-  import ProviderIcon from '$lib/components/ProviderIcon.svelte';
+import { connectionsApi, providersApi, oauthApi, proxyPoolsApi } from '$lib/api';
+import { toast } from 'svelte-sonner';
+import { copyToClipboard } from '$lib/utils';
+import ProviderIcon from '$lib/components/ProviderIcon.svelte';
  import * as Select from '$lib/components/ui/select';
   import type { ProviderMeta } from '$lib/provider-catalog';
 
@@ -137,15 +138,15 @@
       .filter((conn) => conn.api_key.length > 0);
   }
 
-  async function copyOAuthUrl() {
-    if (!oauthUrl) return;
-    try {
-      await navigator.clipboard.writeText(oauthUrl);
-      toast.success('OAuth URL copied');
-    } catch {
-      toast.error('Copy failed — select the URL manually');
-    }
-  }
+async function copyOAuthUrl() {
+	if (!oauthUrl) return;
+	try {
+		await copyToClipboard(oauthUrl);
+		toast.success('OAuth URL copied');
+	} catch {
+		toast.error('Copy failed — select the URL manually');
+	}
+}
 
   async function submitOAuthCallbackUrl() {
     if (!callbackUrl.trim()) {
@@ -640,9 +641,9 @@
             <div class="rounded-lg border border-primary/30 bg-primary/5 p-4 text-center">
               <p class="mb-1 text-xs font-medium text-muted-foreground">Your device code</p>
               <p class="text-2xl font-bold tracking-widest text-foreground select-all">{oauthUserCode}</p>
-              <Button variant="outline" size="sm" class="mt-2 gap-1.5 text-xs" onclick={async () => {
-                try { await navigator.clipboard.writeText(oauthUserCode); toast.success('Code copied'); } catch { toast.error('Copy failed'); }
-              }}>
+<Button variant="outline" size="sm" class="mt-2 gap-1.5 text-xs" onclick={async () => {
+  try { await copyToClipboard(oauthUserCode); toast.success('Code copied'); } catch { toast.error('Copy failed'); }
+}}>
                 <svg class="size-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
                 Copy code
               </Button>

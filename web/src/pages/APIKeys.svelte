@@ -7,9 +7,10 @@
   import { Badge } from '$lib/components/ui/badge';
   import { AlertDialog, AlertDialogContent, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from '$lib/components/ui/alert-dialog';
 import * as Dialog from '$lib/components/ui/dialog';
-  import { toast } from 'svelte-sonner';
-  import { apiKeysApi } from '$lib/api';
-  import type { APIKeyItem } from '$lib/api';
+import { toast } from 'svelte-sonner';
+import { apiKeysApi } from '$lib/api';
+import { copyToClipboard } from '$lib/utils';
+import type { APIKeyItem } from '$lib/api';
 
   let keys = $state<APIKeyItem[]>([]);
   let loading = $state(true);
@@ -98,19 +99,7 @@ async function handleCopy(key: string) {
 
 async function copyValue(text: string, label = 'Key') {
 	try {
-		if (navigator.clipboard && window.isSecureContext) {
-			await navigator.clipboard.writeText(text);
-		} else {
-			// Fallback for HTTP: temporary textarea + execCommand
-			const ta = document.createElement('textarea');
-			ta.value = text;
-			ta.style.position = 'fixed';
-			ta.style.left = '-9999px';
-			document.body.appendChild(ta);
-			ta.select();
-			document.execCommand('copy');
-			document.body.removeChild(ta);
-		}
+		await copyToClipboard(text);
 		toast.success(`${label} copied to clipboard`);
 	} catch {
 		toast.error('Copy failed — select and copy manually');

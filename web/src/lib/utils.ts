@@ -42,6 +42,34 @@ export function unwrapStr(v: unknown): string | null {
 
 export type TokenExpiryInfo = { status: 'expired' | 'expiring' | 'valid'; text: string };
 
+// Centralized copy helper: works on both HTTPS and HTTP deployments.
+// HTTPS/localhost uses the modern Clipboard API; everything else falls back
+// to a temporary textarea + execCommand so the dashboard still works on
+// plain HTTP LAN installs.
+export async function copyToClipboard(text: string): Promise<void> {
+	if (!text) return;
+	if (navigator.clipboard && window.isSecureContext) {
+		await navigator.clipboard.writeText(text);
+		return;
+	}
+	const ta = document.createElement('textarea');
+	ta.value = text;
+	ta.setAttribute('readonly', '');
+	ta.style.position = 'fixed';
+	ta.style.left = '-9999px';
+	ta.style.opacity = '0';
+	document.body.appendChild(ta);
+	ta.select();
+	try {
+		const ok = document.execCommand('copy');
+		document.body.removeChild(ta);
+		if (!ok) throw new Error('execCommand failed');
+	} catch (err) {
+		document.body.removeChild(ta);
+		throw err;
+	}
+}
+
 // Centralized token expiry display. Uses ceil so sub-minute future tokens
 // show "~1m" instead of "~0m". Returns null when not applicable.
 export function getTokenExpiry(oauthExpiresAt: unknown): TokenExpiryInfo | null {
