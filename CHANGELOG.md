@@ -34,13 +34,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bounded routing selection so the hot path samples a constant number of candidates before falling back to a full scan.
 - Missing `database.Close()` on graceful shutdown.
 - Flaky `TestParseFiltersUsesMilliseconds` assertion that depended on time-of-day.
-- `stream_options.include_usage` injection now applies to `/v1/unified` text-mode streaming requests.
-- Mid-stream `chunk.Err` failures now call failover handling only for upstream errors; client cancellations no longer mark connections exhausted.
+- `/v1/*` auth is now fail-closed: missing/invalid API keys always return 401 instead of slipping through.
+- Request bodies larger than 10 MB are rejected with 413 before reaching downstream handlers; the original body is preserved for the normal path.
+- Exact response cache now only stores upstream responses with 2xx status codes; errors are no longer cached.
+- Non-chat handlers (`/v1/images/generations`, `/v1/video/generations`, `/v1/audio/*`, `/v1/embeddings`) now pass through the real upstream HTTP status and body instead of masking them as 502.
+- `/v1/embeddings` and `/v1/responses` routes are now mounted and reachable.
+- Small error-handling paths hardened: read-body errors return consistent 413 payloads, context cancellations return explicit 499/504, and malformed `provider_specific_data` no longer crashes handlers.
+- Removed dead `handleNonStreamResponse` code from `internal/api/handlers/v1/chat.go`.
+- Token-bucket refill math fixed for per-minute limits under 60 requests/min, avoiding zero-refill rounding errors.
+- Dashboard login is now rate-limited per IP to slow brute-force attempts.
 
 ### Changed
 - `ExtractTokensFromBody` extended to parse Gemini `usageMetadata` and OpenAI Responses API `response.usage`/`usage` shapes.
 - Usage tracker stores `tokens_estimated` flag in log entries for distinguishing estimated vs actual token counts.
 - Documentation now correctly notes that the CLI entry point is planned but not yet shipped.
+- Default admin password is now randomly generated on first startup and stored in `admin_password_plain`; the initial hardcoded password has been removed. Admins must change it before accessing other admin endpoints.
 
 ## [0.3.1] - 2026-07-13
 
