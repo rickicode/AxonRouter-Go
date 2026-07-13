@@ -9,8 +9,9 @@
   import { Label } from '$lib/components/ui/label';
   import { Switch } from '$lib/components/ui/switch';
   import * as Select from '$lib/components/ui/select';
-  import * as Dialog from '$lib/components/ui/dialog';
-  import * as Tabs from '$lib/components/ui/tabs';
+import * as Dialog from '$lib/components/ui/dialog';
+import * as AlertDialog from '$lib/components/ui/alert-dialog';
+import * as Tabs from '$lib/components/ui/tabs';
 import Pagination from '$lib/components/Pagination.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import { toast } from 'svelte-sonner';
@@ -28,11 +29,12 @@ let poolTotal = $state(0);
 let poolTotalPages = $state(1);
 
 // Modal state
-let showCreatePool = $state(false);
+let showAddPool = $state(false);
+let addPoolTab = $state<'single' | 'bulk'>('single');
 let showCreateGroup = $state(false);
 let showEditGroup = $state(false);
-let showBulkImport = $state(false);
 let showEditPool = $state(false);
+let showDeleteErrorConfirm = $state(false);
 let editPoolId = $state('');
 let editPoolName = $state('');
 let editPoolUrl = $state('');
@@ -40,19 +42,39 @@ let editPoolType = $state('http');
 let editPoolNoProxy = $state('');
 let editPoolLoading = $state(false);
 
-  // Create pool form
-  let poolName = $state('');
-  let poolUrl = $state('');
-  let poolType = $state('http');
-  let poolNoProxy = $state('');
-  let createPoolLoading = $state(false);
+// Create pool form
+let poolName = $state('');
+let poolUrl = $state('');
+let poolType = $state('http');
+let poolNoProxy = $state('');
+let createPoolLoading = $state(false);
 
 // Bulk import form
 let bulkText = $state('');
 let bulkType = $state('http');
 let bulkNoProxy = $state('');
 let bulkActive = $state(true);
+let bulkHealthy = $state(false);
+let bulkSub1s = $state(false);
 let bulkLoading = $state(false);
+
+// Selection
+let selectedPoolIds = $state<Set<string>>(new Set());
+const selectedCount = $derived(selectedPoolIds.size);
+const allVisibleSelected = $derived(pools.length > 0 && pools.every(p => selectedPoolIds.has(p.id)));
+const parsedBulkItems = $derived(
+	bulkText
+		.split('\n')
+		.map(line => line.trim())
+		.filter(line => line.length > 0 && !line.startsWith('#'))
+		.map(line => {
+			const idx = line.indexOf('|');
+			if (idx > 0) {
+				return { name: line.slice(0, idx).trim(), proxyUrl: line.slice(idx + 1).trim() };
+			}
+			return { proxyUrl: line };
+		})
+);
 
   // Create/Edit group form
   let groupName = $state('');
@@ -143,12 +165,92 @@ async function handleCreatePool() {
 	try {
 		await proxyPoolsApi.create({ name: poolName.trim(), proxyUrl: poolUrl.trim(), type: poolType, noProxy: poolNoProxy.trim() || undefined, isActive: true });
 		toast.success('Proxy pool created');
-		showCreatePool = false;
+		showAddPool = false;
 		poolName = ''; poolUrl = ''; poolNoProxy = '';
 		poolPage = 1;
 		await loadAll(true);
 	} catch (err) { toast.error('Create failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
 	finally { createPoolLoading = false; }
+}
+
+function resetAddPoolModal(tab: 'single' | 'bulk') {
+	addPoolTab = tab;
+	poolName = '';
+	poolUrl = '';
+	poolNoProxy = '';
+	poolType = 'http';
+	bulkText = '';
+	bulkType = 'http';
+	bulkNoProxy = '';
+	bulkActive = true;
+	bulkHealthy = false;
+	bulkSub1s = false;
+}
+
+function toggleSelectPool(id: string) {
+	if (selectedPoolIds.has(id)) {
+		selectedPoolIds.delete(id);
+	} else {
+		selectedPoolIds.add(id);
+	}
+	selectedPoolIds = new Set(selectedPoolIds);
+}
+
+function toggleSelectAll() {
+	if (allVisibleSelected) {
+		for (const p of pools) selectedPoolIds.delete(p.id);
+	} else {
+		for (const p of pools) selectedPoolIds.add(p.id);
+	}
+	selectedPoolIds = new Set(selectedPoolIds);
+}
+
+function selectErrorPools() {
+	for (const p of pools) {
+		if (p.testStatus === 'error') selectedPoolIds.add(p.id);
+	}
+	selectedPoolIds = new Set(selectedPoolIds);
+}
+
+function clearSelection() {
+	selectedPoolIds = new Set();
+}
+
+async function testSelectedPools() {
+	try {
+		await Promise.all([...selectedPoolIds].map(id => proxyPoolsApi.test(id)));
+		toast.success(`Tested ${selectedPoolIds.size} pools`);
+	} catch (err) {
+		toast.error('Test failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+	} finally {
+		selectedPoolIds = new Set();
+		await loadAll(true);
+	}
+}
+
+async function deleteSelectedPools() {
+	try {
+		const res = await proxyPoolsApi.bulkDelete({ ids: [...selectedPoolIds] });
+		toast.success(`Deleted ${res.deleted} pools`);
+	} catch (err) {
+		toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+	} finally {
+		selectedPoolIds = new Set();
+		await loadAll(true);
+	}
+}
+
+async function deleteAllErrorPools() {
+	try {
+		const res = await proxyPoolsApi.bulkDelete({ status: 'error' });
+		toast.success(`Deleted ${res.deleted} error pools`);
+	} catch (err) {
+		toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+	} finally {
+		showDeleteErrorConfirm = false;
+		selectedPoolIds = new Set();
+		await loadAll(true);
+	}
 }
 
 // --- Pool edit (inline from the list) ---
@@ -342,23 +444,25 @@ async function handleBulkImport() {
 			defaultType: bulkType,
 			noProxy: bulkNoProxy.trim() || undefined,
 			isActive: bulkActive,
+			requireHealthy: bulkHealthy,
+			maxResponseTimeMs: bulkHealthy && bulkSub1s ? 1000 : undefined,
 		});
-      const msg = `${res.created} created, ${res.skipped} skipped, ${res.errors} errors`;
-      if (res.errors === 0) {
-        toast.success('Bulk import complete', { description: msg });
-        showBulkImport = false;
-      } else {
-        toast.error('Bulk import finished with errors', { description: msg });
-      }
-      bulkText = '';
-  poolPage = 1;
-  await loadAll(true);
-    } catch (err) {
-      toast.error('Bulk import failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-    } finally {
-      bulkLoading = false;
-    }
-  }
+		const msg = `${res.created} created, ${res.skipped} skipped, ${res.errors} errors`;
+		if (res.errors === 0) {
+			toast.success('Bulk import complete', { description: msg });
+			showAddPool = false;
+		} else {
+			toast.error('Bulk import finished with errors', { description: msg });
+		}
+		bulkText = '';
+		poolPage = 1;
+		await loadAll(true);
+	} catch (err) {
+		toast.error('Bulk import failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+	} finally {
+		bulkLoading = false;
+	}
+}
 </script>
 
 <div class="flex flex-1 flex-col gap-6 p-6">
@@ -404,17 +508,19 @@ async function handleBulkImport() {
           {/if}
         </div>
       </div>
-      <div class="flex gap-2">
-        <Button onclick={runHealthCheck} variant="outline" class="text-body-sm rounded-sm px-4">
-          Health check
-        </Button>
-        {#if tab === 'pools'}
-          <Button onclick={() => (showCreatePool = true)} class="text-button-md rounded-sm px-5">Add pool</Button>
-	<Button onclick={() => { bulkText = ''; bulkType = 'http'; bulkNoProxy = ''; bulkActive = true; showBulkImport = true; }} variant="outline" class="text-button-md rounded-sm px-5">Bulk import</Button>
-        {:else if tab === 'groups'}
-          <Button onclick={() => { groupName = ''; groupMode = 'roundrobin'; groupStickyLimit = 1; groupStrict = false; groupPoolIds = []; showCreateGroup = true; }} class="text-button-md rounded-sm px-5">Add group</Button>
-        {/if}
-      </div>
+<div class="flex gap-2">
+				<Button onclick={runHealthCheck} variant="outline" class="text-body-sm rounded-sm px-4">
+					Health check
+				</Button>
+				{#if tab === 'pools'}
+					<Button onclick={() => { showDeleteErrorConfirm = true; }} variant="outline" size="sm" class="text-body-sm rounded-sm text-destructive px-4">
+						Delete all error
+					</Button>
+					<Button onclick={() => { resetAddPoolModal('single'); showAddPool = true; }} class="text-button-md rounded-sm px-5">Add pool</Button>
+				{:else if tab === 'groups'}
+					<Button onclick={() => { groupName = ''; groupMode = 'roundrobin'; groupStickyLimit = 1; groupStrict = false; groupPoolIds = []; showCreateGroup = true; }} class="text-button-md rounded-sm px-5">Add group</Button>
+				{/if}
+			</div>
     </div>
 
     <Tabs.Root bind:value={tab} class="w-full flex flex-col gap-6">
@@ -425,28 +531,45 @@ async function handleBulkImport() {
         <Tabs.Trigger value="deploy" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Deploy</Tabs.Trigger>
       </Tabs.List>
 
-    <!-- Pool Table -->
-      <Tabs.Content value="pools">
-      {#if pools.length > 0}
-        <Card class="shadow-card overflow-hidden p-0">
+<!-- Pool Table -->
+		<Tabs.Content value="pools">
+			{#if selectedCount > 0}
+				<div class="flex items-center justify-between rounded-xl border border-border bg-card shadow-card p-3">
+					<span class="text-body-sm-strong">{selectedCount} selected</span>
+					<div class="flex gap-2">
+						<Button onclick={testSelectedPools} variant="outline" size="sm" class="text-body-sm rounded-sm px-3">Test selected</Button>
+						<Button onclick={deleteSelectedPools} variant="outline" size="sm" class="text-body-sm rounded-sm px-3">Delete selected</Button>
+						<Button onclick={selectErrorPools} variant="outline" size="sm" class="text-body-sm rounded-sm px-3">Select error</Button>
+						<Button onclick={clearSelection} variant="ghost" size="sm" class="text-body-sm rounded-sm px-3">Clear</Button>
+					</div>
+				</div>
+			{/if}
+			{#if pools.length > 0}
+				<Card class="shadow-card overflow-hidden p-0">
           <table class="w-full text-body-sm">
-            <thead>
-              <tr class="border-b border-border bg-muted/50">
-                <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Name</th>
-                <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Proxy URL</th>
-                <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Type</th>
-                <th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">State</th>
-                <th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Health</th>
-                <th class="text-right text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Latency</th>
-                <th class="text-right text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5"></th>
-              </tr>
-            </thead>
+<thead>
+						<tr class="border-b border-border bg-muted/50">
+							<th class="text-left px-4 py-2.5 w-10">
+								<input type="checkbox" checked={allVisibleSelected} onchange={toggleSelectAll} class="size-4 rounded border-border bg-background text-foreground accent-foreground cursor-pointer" aria-label="Select all pools" />
+							</th>
+							<th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Name</th>
+							<th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Proxy URL</th>
+							<th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Type</th>
+							<th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">State</th>
+							<th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Health</th>
+							<th class="text-right text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Latency</th>
+							<th class="text-right text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5"></th>
+						</tr>
+					</thead>
             <tbody>
-              {#each pools as pool}
-                <tr class="border-b border-border hover:bg-muted/50 transition-colors">
-                  <td class="px-4 py-2.5">
-                    <a href="/proxy-pools/{pool.id}" class="text-body-sm-strong hover:underline truncate block max-w-[160px]">{pool.name}</a>
-                  </td>
+{#each pools as pool}
+						<tr class="border-b border-border hover:bg-muted/50 transition-colors">
+							<td class="px-4 py-2.5">
+								<input type="checkbox" checked={selectedPoolIds.has(pool.id)} onchange={() => toggleSelectPool(pool.id)} class="size-4 rounded border-border bg-background text-foreground accent-foreground cursor-pointer" aria-label="Select {pool.name}" />
+							</td>
+							<td class="px-4 py-2.5">
+								<a href="/proxy-pools/{pool.id}" class="text-body-sm-strong hover:underline truncate block max-w-[160px]">{pool.name}</a>
+							</td>
                   <td class="px-4 py-2.5">
                     <span class="text-caption-mono text-muted-foreground truncate block max-w-[220px]">{pool.proxyUrl}</span>
                     {#if pool.proxyCountry || pool.proxyIp}
@@ -494,9 +617,9 @@ async function handleBulkImport() {
       {:else}
         <Card class="shadow-card">
           <CardContent class="flex flex-col items-center justify-center py-16">
-            <h3 class="text-body-md-strong mb-1">No proxy pools configured.</h3>
-            <p class="text-body-sm text-muted-foreground mb-4">Add an HTTP proxy or relay to route traffic through external endpoints.</p>
-            <Button onclick={() => (showCreatePool = true)} class="text-button-md rounded-sm px-5">Add pool</Button>
+<h3 class="text-body-md-strong mb-1">No proxy pools configured.</h3>
+					<p class="text-body-sm text-muted-foreground mb-4">Add an HTTP proxy or relay to route traffic through external endpoints.</p>
+					<Button onclick={() => { resetAddPoolModal('single'); showAddPool = true; }} class="text-button-md rounded-sm px-5">Add pool</Button>
           </CardContent>
         </Card>
       {/if}
@@ -739,45 +862,125 @@ async function handleBulkImport() {
   {/if}
 </div>
 
-<!-- Create Pool Dialog -->
-<Dialog.Root bind:open={showCreatePool}>
-  <Dialog.Content class="sm:max-w-lg">
-    <Dialog.Header>
-      <Dialog.Title class="text-body-md-strong">Create proxy pool</Dialog.Title>
-      <Dialog.Description class="text-xs">Add an HTTP proxy or hosted relay to route provider traffic.</Dialog.Description>
-    </Dialog.Header>
-    <div class="space-y-4 py-2">
-      <div class="space-y-2">
-        <Label class="text-sm font-medium">Name</Label>
-        <Input bind:value={poolName} placeholder="e.g. us-east-proxy" class="h-10 text-body-sm" />
-      </div>
-      <div class="space-y-2">
-        <Label class="text-sm font-medium">Proxy URL</Label>
-        <Input bind:value={poolUrl} placeholder="http://proxy:8080" class="h-10 text-body-sm font-mono" />
-      </div>
-      <div class="space-y-2">
-        <Label class="text-sm font-medium">Type</Label>
-        <div class="inline-flex w-fit flex-wrap items-center gap-1 rounded-lg bg-muted p-1">
-          {#each typeOptions as opt}
-            <button class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-all {poolType === opt ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (poolType = opt)}>
-              {typeLabel(opt)}
-            </button>
-          {/each}
-        </div>
-      </div>
-      <div class="space-y-2">
-        <Label class="text-sm font-medium">No Proxy (optional)</Label>
-        <Input bind:value={poolNoProxy} placeholder="localhost,127.0.0.1" class="h-10 text-body-sm font-mono" />
-      </div>
-    </div>
-    <Dialog.Footer>
-      <Button variant="ghost" onclick={() => (showCreatePool = false)}>Cancel</Button>
-      <Button onclick={handleCreatePool} disabled={createPoolLoading || !poolName.trim() || !poolUrl.trim()}>
-        {createPoolLoading ? 'Creating...' : 'Create pool'}
-      </Button>
-    </Dialog.Footer>
-  </Dialog.Content>
+<!-- Add Pool Dialog -->
+<Dialog.Root bind:open={showAddPool}>
+	<Dialog.Content class="sm:max-w-2xl">
+		<Dialog.Header>
+			<Dialog.Title class="text-body-md-strong">Add proxy pool</Dialog.Title>
+			<Dialog.Description class="text-xs">Create a single proxy pool or import many at once.</Dialog.Description>
+		</Dialog.Header>
+		<Tabs.Root bind:value={addPoolTab} class="w-full">
+			<Tabs.List class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-1 mb-2">
+				<Tabs.Trigger value="single" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Single</Tabs.Trigger>
+				<Tabs.Trigger value="bulk" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Bulk</Tabs.Trigger>
+			</Tabs.List>
+			<Tabs.Content value="single">
+				<div class="space-y-4 py-2">
+					<div class="space-y-2">
+						<Label class="text-sm font-medium">Name</Label>
+						<Input bind:value={poolName} placeholder="e.g. us-east-proxy" class="h-10 text-body-sm" />
+					</div>
+					<div class="space-y-2">
+						<Label class="text-sm font-medium">Proxy URL</Label>
+						<Input bind:value={poolUrl} placeholder="http://proxy:8080" class="h-10 text-body-sm font-mono" />
+					</div>
+					<div class="space-y-2">
+						<Label class="text-sm font-medium">Type</Label>
+						<div class="inline-flex w-fit flex-wrap items-center gap-1 rounded-lg bg-muted p-1">
+							{#each typeOptions as opt}
+								<button class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-all {poolType === opt ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (poolType = opt)}>
+									{typeLabel(opt)}
+								</button>
+							{/each}
+						</div>
+					</div>
+					<div class="space-y-2">
+						<Label class="text-sm font-medium">No Proxy (optional)</Label>
+						<Input bind:value={poolNoProxy} placeholder="localhost,127.0.0.1" class="h-10 text-body-sm font-mono" />
+					</div>
+				</div>
+				<Dialog.Footer>
+					<Button variant="ghost" onclick={() => (showAddPool = false)}>Cancel</Button>
+					<Button onclick={handleCreatePool} disabled={createPoolLoading || !poolName.trim() || !poolUrl.trim()}>
+						{createPoolLoading ? 'Creating...' : 'Create pool'}
+					</Button>
+				</Dialog.Footer>
+			</Tabs.Content>
+			<Tabs.Content value="bulk">
+				<div class="space-y-4 py-2">
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<div class="space-y-2">
+							<Label class="text-sm font-medium">Proxy URLs</Label>
+							<Textarea bind:value={bulkText} placeholder="http://user:pass@proxy:8080&#10;my-relay|https://relay.vercel.app" rows={10} class="text-body-sm font-mono" />
+						</div>
+						<div class="space-y-4">
+							<div class="space-y-2">
+								<Label class="text-sm font-medium">Default type</Label>
+								<div class="inline-flex w-fit flex-wrap items-center gap-1 rounded-lg bg-muted p-1">
+									{#each typeOptions as opt}
+										<button class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-all {bulkType === opt ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (bulkType = opt)}>{typeLabel(opt)}</button>
+									{/each}
+								</div>
+							</div>
+							<div class="space-y-2">
+								<Label class="text-sm font-medium">No Proxy (optional)</Label>
+								<Input bind:value={bulkNoProxy} placeholder="localhost,127.0.0.1" class="h-10 text-body-sm font-mono" />
+							</div>
+							<div class="flex items-center gap-3">
+								<Switch id="bulk-active" bind:checked={bulkActive} />
+								<Label for="bulk-active" class="text-sm font-medium">Active after import</Label>
+							</div>
+							<div class="flex items-center gap-3">
+								<Switch id="bulk-healthy" bind:checked={bulkHealthy} />
+								<Label for="bulk-healthy" class="text-sm font-medium">Only import healthy proxies</Label>
+							</div>
+							<div class="flex items-center gap-3">
+								<Switch id="bulk-sub1s" bind:checked={bulkSub1s} disabled={!bulkHealthy} />
+								<Label for="bulk-sub1s" class="text-sm font-medium {bulkHealthy ? '' : 'text-muted-foreground'}">&lt;1s response</Label>
+							</div>
+							<div class="rounded-xl border border-border bg-muted/30 p-3 space-y-2">
+								<p class="text-caption-mono text-muted-foreground uppercase font-semibold">Preview</p>
+								<div class="space-y-1 max-h-32 overflow-y-auto">
+									{#each parsedBulkItems.slice(0, 20) as item}
+										<div class="flex gap-2 text-caption-mono">
+											{#if item.name}
+												<span class="truncate max-w-[120px]">{item.name}</span>
+											{/if}
+											<span class="text-muted-foreground truncate">{item.proxyUrl}</span>
+										</div>
+									{/each}
+								</div>
+								<p class="text-caption text-muted-foreground">{parsedBulkItems.length} valid line{parsedBulkItems.length !== 1 ? 's' : ''}</p>
+							</div>
+						</div>
+					</div>
+				</div>
+				<Dialog.Footer>
+					<Button variant="ghost" onclick={() => (showAddPool = false)}>Cancel</Button>
+					<Button onclick={handleBulkImport} disabled={bulkLoading || !bulkText.trim()}>
+						{bulkLoading ? 'Importing...' : 'Import pools'}
+					</Button>
+				</Dialog.Footer>
+			</Tabs.Content>
+		</Tabs.Root>
+	</Dialog.Content>
 </Dialog.Root>
+
+<!-- Delete all error confirmation -->
+<AlertDialog.Root bind:open={showDeleteErrorConfirm}>
+	<AlertDialog.Content>
+		<AlertDialog.Header>
+			<AlertDialog.Title>Delete all error pools?</AlertDialog.Title>
+			<AlertDialog.Description>
+				This will permanently delete every proxy pool with health status "error". This action cannot be undone.
+			</AlertDialog.Description>
+		</AlertDialog.Header>
+		<AlertDialog.Footer>
+			<AlertDialog.Cancel onclick={() => (showDeleteErrorConfirm = false)}>Cancel</AlertDialog.Cancel>
+			<AlertDialog.Action onclick={deleteAllErrorPools} class="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete all</AlertDialog.Action>
+		</AlertDialog.Footer>
+	</AlertDialog.Content>
+</AlertDialog.Root>
 
 <!-- Create Group Dialog -->
 <Dialog.Root bind:open={showCreateGroup}>
@@ -881,47 +1084,7 @@ async function handleBulkImport() {
 </Dialog.Content>
 </Dialog.Root>
 
-<!-- Bulk Import Dialog -->
-<Dialog.Root bind:open={showBulkImport}>
-	<Dialog.Content class="sm:max-w-xl">
-		<Dialog.Header>
-			<Dialog.Title class="text-body-md-strong">Bulk import proxy pools</Dialog.Title>
-		<Dialog.Description class="text-xs">
-			Paste one proxy URL per line. Lines starting with # are ignored. Use <code>name|url</code> to set a name; otherwise a short random name (max 7 chars) is generated automatically.
-		</Dialog.Description>
-		</Dialog.Header>
-		<div class="space-y-4 py-2">
-			<div class="space-y-2">
-				<Label class="text-sm font-medium">Proxy URLs</Label>
-				<Textarea bind:value={bulkText} placeholder="http://user:pass@proxy:8080&#10;my-relay|https://relay.vercel.app" rows={8} class="text-body-sm font-mono" />
-			</div>
-		<div class="space-y-2">
-			<Label class="text-sm font-medium">Default type</Label>
-			<div class="inline-flex w-fit flex-wrap items-center gap-1 rounded-lg bg-muted p-1">
-				{#each typeOptions as opt}
-					<button class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-all {bulkType === opt ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (bulkType = opt)}>{typeLabel(opt)}</button>
-				{/each}
-			</div>
-		</div>
-		<div class="space-y-2">
-				<Label class="text-sm font-medium">No Proxy (optional)</Label>
-				<Input bind:value={bulkNoProxy} placeholder="localhost,127.0.0.1" class="h-10 text-body-sm font-mono" />
-			</div>
-			<div class="flex items-center gap-3">
-				<Switch id="bulk-active" bind:checked={bulkActive} />
-				<Label for="bulk-active" class="text-sm font-medium">Active after import</Label>
-			</div>
-		</div>
-		<Dialog.Footer>
-			<Button variant="ghost" onclick={() => (showBulkImport = false)}>Cancel</Button>
-			<Button onclick={handleBulkImport} disabled={bulkLoading || !bulkText.trim()}>
-				{bulkLoading ? 'Importing...' : 'Import pools'}
-			</Button>
-		</Dialog.Footer>
-		</Dialog.Content>
-	</Dialog.Root>
-
-	<!-- Edit Pool Dialog -->
+<!-- Edit Pool Dialog -->
 	<Dialog.Root bind:open={showEditPool}>
 		<Dialog.Content class="sm:max-w-lg">
 			<Dialog.Header>
