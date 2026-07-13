@@ -39,15 +39,21 @@ import (
 
 const maxBodySize = 10 * 1024 * 1024 // 10MB
 
+var (
+	errBodyTooLarge = errors.New("request body too large")
+	errReadBody     = errors.New("failed to read request body")
+)
+
 // readBody reads the request body with a size limit.
+// Size-limit violations return errBodyTooLarge; other read failures return errReadBody.
 func readBody(c *gin.Context) ([]byte, error) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodySize)
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		if strings.Contains(err.Error(), "http: request body too large") {
-			return nil, fmt.Errorf("request body too large (max %d bytes)", maxBodySize)
+			return nil, fmt.Errorf("%w (max %d bytes)", errBodyTooLarge, maxBodySize)
 		}
-		return nil, fmt.Errorf("read body: %w", err)
+		return nil, errReadBody
 	}
 	return body, nil
 }
@@ -286,7 +292,7 @@ func (h *Handler) tryPickConnection(ctx context.Context, connID, provider, model
 		logging.Logger.Debug("load conn failed", "conn", connID[:8], "err", err)
 		return nil, false
 	}
-	logging.Logger.Info("getConnection selected", "provider", provider, "conn", conn.ID[:8], "name", conn.Name, "mode", h.providerCfg.RoutingMode(provider))
+	logging.Logger.Info("getConnection selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name, "mode", h.providerCfg.RoutingMode(provider))
 	h.bindActiveConn(ctx, conn)
 	return conn, true
 }
@@ -351,7 +357,7 @@ func (h *Handler) prepareConnection(ctx context.Context, connID, provider, model
 
 	// Proactive token refresh (same as regular routing path)
 	h.proactiveRefreshToken(ctx, conn, provider)
-	logging.Logger.Info("combo step selected", "provider", provider, "conn", conn.ID[:8], "name", conn.Name)
+	logging.Logger.Info("combo step selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name)
 	h.bindActiveConn(ctx, conn)
 	return conn, nil
 }
@@ -690,6 +696,37 @@ func isAuthError(err error) bool {
 		strings.Contains(msg, "authentication") || strings.Contains(msg, "access denied")
 }
 
+// shortID returns a safe prefix of id up to n bytes; it never panics on short IDs.
+func shortID(id string, n int) string {
+	if n <= 0 || len(id) <= n {
+		return id
+	}
+	return id[:n]
+}
+
+// writeReadBodyError writes a 413 for oversize bodies and a generic 400 for other read failures.
+func writeReadBodyError(c *gin.Context, err error) {
+	if errors.Is(err, errBodyTooLarge) {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": gin.H{"message": err.Error(), "type": "invalid_request_error"}})
+		return
+	}
+	c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": errReadBody.Error(), "type": "invalid_request_error"}})
+}
+
+// writeContextDone writes an explicit 499 for client cancellations and 504 for timeouts.
+func writeContextDone(c *gin.Context) {
+	err := c.Request.Context().Err()
+	if err == nil {
+		return
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		c.JSON(http.StatusGatewayTimeout, gin.H{"error": gin.H{"message": "request timeout", "type": "timeout_error"}})
+		return
+	}
+	c.Status(499)
+	c.Writer.WriteHeaderNow()
+}
+
 // executeWithRetry runs the executor up to 3 times with linear backoff. On an
 // auth error it refreshes the OAuth token (if configured) and retries once.
 func (h *Handler) executeWithRetry(
@@ -706,7 +743,14 @@ func (h *Handler) executeWithRetry(
 
 	for attempt := range 3 {
 		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * time.Second)
+			delay := time.Duration(attempt) * time.Second
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, nil, ctx.Err()
+			case <-timer.C:
+			}
 		}
 
 		if req.Stream {
@@ -812,29 +856,29 @@ func (h *Handler) handleFailoverError(c *gin.Context, conn *Connection, provider
 	case connstate.ErrorModelNotFound:
 		logging.Logger.Warn(
 			"⊘ model not found — stop failover",
-			"provider", provider, "model", modelName, "conn", conn.ID[:8], "name", conn.Name,
+			"provider", provider, "model", modelName, "conn", shortID(conn.ID, 8), "name", conn.Name,
 		)
 	case connstate.ErrorAuth:
 		logging.Logger.Warn(
 			"⊘ auth failed — stop failover",
-			"provider", provider, "model", modelName, "conn", conn.ID[:8], "name", conn.Name,
+			"provider", provider, "model", modelName, "conn", shortID(conn.ID, 8), "name", conn.Name,
 		)
 	case connstate.ErrorRateLimit:
 		logging.Logger.Warn(
 			"⟳ rate limited — try next",
-			"provider", provider, "model", modelName, "conn", conn.ID[:8], "name", conn.Name,
+			"provider", provider, "model", modelName, "conn", shortID(conn.ID, 8), "name", conn.Name,
 			"cooldown", det.CooldownUntil, "attempt", attempt+1,
 		)
 	case connstate.ErrorQuota:
 		logging.Logger.Warn(
 			"⟳ quota exhausted — try next",
-			"provider", provider, "model", modelName, "conn", conn.ID[:8], "name", conn.Name,
+			"provider", provider, "model", modelName, "conn", shortID(conn.ID, 8), "name", conn.Name,
 			"cooldown", det.CooldownUntil, "attempt", attempt+1,
 		)
 	default:
 		logging.Logger.Error(
 			"⟳ upstream error — try next",
-			"provider", provider, "model", modelName, "conn", conn.ID[:8], "name", conn.Name,
+			"provider", provider, "model", modelName, "conn", shortID(conn.ID, 8), "name", conn.Name,
 			"category", string(det.Category), "attempt", attempt+1, "error", errMsg,
 		)
 	}

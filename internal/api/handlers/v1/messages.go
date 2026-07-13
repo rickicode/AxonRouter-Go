@@ -2,6 +2,7 @@ package v1
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -18,7 +19,11 @@ func (h *Handler) Messages(c *gin.Context) {
 	start := time.Now()
 	body, err := readBody(c)
 	if err != nil {
-		c.JSON(http.StatusRequestEntityTooLarge, claudeError("invalid_request_error", err.Error()))
+		if errors.Is(err, errBodyTooLarge) {
+			c.JSON(http.StatusRequestEntityTooLarge, claudeError("invalid_request_error", err.Error()))
+		} else {
+			c.JSON(http.StatusBadRequest, claudeError("invalid_request_error", errReadBody.Error()))
+		}
 		return
 	}
 
@@ -73,6 +78,7 @@ func (h *Handler) Messages(c *gin.Context) {
 	var lastErrCategory string
 	for attempt := range maxAttempts {
 		if c.Request.Context().Err() != nil {
+			writeContextDone(c)
 			return
 		}
 		conn, err := h.getConnection(c.Request.Context(), provider, modelName)
@@ -84,12 +90,13 @@ func (h *Handler) Messages(c *gin.Context) {
 			break
 		}
 		h.proactiveRefreshToken(c.Request.Context(), conn, provider)
-		psdMap := map[string]string{}
-		if conn.ProviderSpecificData != "" {
-			if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
-				logging.Logger.Error("failed to unmarshal provider_specific_data", "conn", conn.ID[:8], "error", err.Error())
-			}
+	psdMap := map[string]string{}
+	if conn.ProviderSpecificData != "" {
+		if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
+			logging.Logger.Warn("malformed provider_specific_data", "conn", shortID(conn.ID, 8), "error", err.Error())
 		}
+	}
+
 
 		req := &executor.Request{
 			Model:                modelName,
@@ -193,7 +200,11 @@ func (h *Handler) handleClaudeStreamResponse(c *gin.Context, result *executor.St
 func (h *Handler) CountTokens(c *gin.Context) {
 	body, err := readBody(c)
 	if err != nil {
-		c.JSON(http.StatusRequestEntityTooLarge, claudeError("invalid_request_error", err.Error()))
+		if errors.Is(err, errBodyTooLarge) {
+			c.JSON(http.StatusRequestEntityTooLarge, claudeError("invalid_request_error", err.Error()))
+		} else {
+			c.JSON(http.StatusBadRequest, claudeError("invalid_request_error", errReadBody.Error()))
+		}
 		return
 	}
 	model := executor.JSONGet(body, "model")

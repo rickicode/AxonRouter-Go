@@ -22,7 +22,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	start := time.Now()
 	body, err := readBody(c)
 	if err != nil {
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": gin.H{"message": err.Error(), "type": "invalid_request_error"}})
+		writeReadBodyError(c, err)
 		return
 	}
 
@@ -82,6 +82,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	var lastErrCategory string
 	for attempt := range maxAttempts {
 		if c.Request.Context().Err() != nil {
+			writeContextDone(c)
 			return
 		}
 		conn, err := h.getConnection(c.Request.Context(), provider, modelName)
@@ -97,7 +98,9 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 
 		var psdMap map[string]string
 		if conn.ProviderSpecificData != "" {
-			json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap)
+			if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
+				logging.Logger.Warn("malformed provider_specific_data", "conn", shortID(conn.ID, 8), "error", err.Error())
+			}
 		}
 
 		// Resolve proxy config early so we can log it
@@ -115,7 +118,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 			}
 		}
 
-		logArgs := []any{"model", model, "provider", provider, "conn", conn.ID[:8], "name", conn.Name, "attempt", attempt + 1, "proxy", proxyCfg.ProxyLabel()}
+		logArgs := []any{"model", model, "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name, "attempt", attempt + 1, "proxy", proxyCfg.ProxyLabel()}
 		if accountID := psdMap["accountId"]; accountID != "" {
 			logArgs = append(logArgs, "account_id", accountID)
 		}
@@ -274,13 +277,16 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 			}
 			lastConn = conn
 
-			var psdMap map[string]string
-			if conn.ProviderSpecificData != "" {
-				json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap)
-			}
-		translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
-			translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
-		req := &executor.Request{
+	var psdMap map[string]string
+	if conn.ProviderSpecificData != "" {
+		if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
+			logging.Logger.Warn("malformed provider_specific_data", "conn", shortID(conn.ID, 8), "error", err.Error())
+		}
+	}
+	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+	translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
+	req := &executor.Request{
+
 				Model: modelName,
 				Body: translatedBody,
 				Stream: stream,
