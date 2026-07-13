@@ -435,12 +435,17 @@ row.provider_name || providerMeta(row.provider_type_id).displayName,
 													class="text-body-sm-strong hover:underline text-foreground leading-none"
 >{row.provider_name || providerMeta(row.provider_type_id).displayName}</a
 												>
-												<Badge
-													variant={row.stream ? 'default' : 'secondary'}
-													class="text-caption-mono rounded-sm py-0 w-fit mt-1"
-												>
-													{row.stream ? 'stream' : 'json'}
-												</Badge>
+		<Badge
+			variant={row.stream ? 'default' : 'secondary'}
+			class="text-caption-mono rounded-sm py-0 w-fit mt-1"
+		>
+			{row.stream ? 'stream' : 'json'}
+		</Badge>
+		{#if row.tokens_estimated}
+			<Badge variant="outline" class="text-caption-mono rounded-sm py-0 w-fit mt-1 text-muted-foreground">
+				est
+			</Badge>
+		{/if}
 											</div>
 										</div>
 									</td>
