@@ -47,7 +47,7 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 		// No-auth providers use the static/synced catalog. Their chat base URL
 		// is not necessarily the /models URL, so dynamic executor probing can
 		// hit HTML/404 pages (opencode.ai/zen/v1) and spam warnings.
-		c.JSON(http.StatusOK, gin.H{"data": mergeUnique(staticModels(providerID), stored)})
+		c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, staticModels(providerID))})
 		return
 	}
 
@@ -92,7 +92,7 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 							for _, m := range modelsResp.Data {
 								models = append(models, strings.TrimPrefix(m.ID, "@"))
 							}
-							c.JSON(http.StatusOK, gin.H{"data": mergeUnique(models, stored)})
+							c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, models)})
 							return
 						}
 						var flat []string
@@ -101,7 +101,7 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 							for i, m := range flat {
 								stripped[i] = strings.TrimPrefix(m, "@")
 							}
-							c.JSON(http.StatusOK, gin.H{"data": mergeUnique(stripped, stored)})
+							c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, stripped)})
 						}
 					} else {
 						logging.Logger.Debug("dynamic model list failed, using static", "provider", providerID, "err", err)
@@ -112,7 +112,7 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 	}
 
 	// Fallback: return static/synced model list from catalog, merged with stored models.
-	c.JSON(http.StatusOK, gin.H{"data": mergeUnique(staticModels(providerID), stored)})
+	c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, staticModels(providerID))})
 }
 
 // storedModels returns user-added custom models persisted for a provider.
@@ -132,20 +132,42 @@ func (h *ModelHandler) storedModels(providerID string) []string {
 	return out
 }
 
-// mergeUnique merges string slices, dropping empty strings and duplicates.
-func mergeUnique(sets ...[]string) []string {
+// listModelEntries builds the model list response for a provider. Catalog/upstream
+// models are not user-deletable (custom=false); user-added models are custom=true.
+// Every id is prefixed with the provider alias (e.g. "oc/gpt-4o") so it matches the
+// ids served by /v1/models.
+func (h *ModelHandler) listModelEntries(providerID string, stored []string, extra []string) []gin.H {
 	seen := make(map[string]bool)
-	out := []string{}
-	for _, set := range sets {
-		for _, s := range set {
-			if s == "" || seen[s] {
-				continue
-			}
-			seen[s] = true
-			out = append(out, s)
+	var entries []gin.H
+	add := func(raw string, custom bool) {
+		id := prefixedModelID(providerID, raw)
+		if id == "" || seen[id] {
+			return
 		}
+		seen[id] = true
+		entries = append(entries, gin.H{"id": id, "custom": custom})
 	}
-	return out
+	// Custom entries first so any collision with a static id upgrades to custom.
+	for _, m := range stored {
+		add(m, true)
+	}
+	for _, m := range extra {
+		add(m, false)
+	}
+	return entries
+}
+
+// prefixedModelID returns the display model id for a provider, prefixed with the
+// provider alias (e.g. "oc/gpt-4o") so it matches the ids served by /v1/models.
+func prefixedModelID(providerID, raw string) string {
+	raw = strings.TrimPrefix(strings.TrimSpace(raw), "@")
+	if raw == "" {
+		return ""
+	}
+	if !strings.HasPrefix(raw, providerID+"/") {
+		return providerID + "/" + raw
+	}
+	return raw
 }
 
 // CreateModel adds a user-defined model to a custom provider.
@@ -158,7 +180,9 @@ func (h *ModelHandler) CreateModel(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
 	}
-	model := strings.TrimSpace(req.Model)
+	// Strip any provider alias prefix (e.g. "oc/") so the raw model name is stored
+	// consistently regardless of how the client sends it.
+	model := strings.TrimPrefix(strings.TrimSpace(req.Model), providerID+"/")
 	if model == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
@@ -173,7 +197,12 @@ func (h *ModelHandler) CreateModel(c *gin.Context) {
 // DeleteModel removes a user-defined model from a custom provider.
 func (h *ModelHandler) DeleteModel(c *gin.Context) {
 	providerID := c.Param("id")
-	model := c.Param("model")
+	model := c.Query("model")
+	if model == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+	model = strings.TrimPrefix(model, providerID+"/")
 	if _, err := h.db.Exec(`DELETE FROM provider_models WHERE provider_type_id = ? AND model = ?`, providerID, model); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -264,9 +293,9 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 	}
 
 	modelName := req.Model
-	if providerID == "cf" && strings.HasPrefix(modelName, "cf/") {
-		modelName = strings.TrimPrefix(modelName, "cf/")
-	}
+	// Strip the provider alias prefix (e.g. "oc/") so the upstream receives the
+	// real model name. Mirrors how /v1 routing resolves provider/model-id.
+	modelName = strings.TrimPrefix(modelName, providerID+"/")
 
 	bodyBytes := buildTestBody(format, modelName)
 

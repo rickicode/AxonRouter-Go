@@ -182,6 +182,14 @@ export async function fetchApi<T>(
 }
 
 // Provider API
+// A model entry in a provider model list. custom marks user-added models that
+// can be removed; catalog and upstream models are not deletable. id is the alias
+// prefixed model name (e.g. oc/gpt-4o) matching the ids served by /v1/models.
+export interface ProviderModelEntry {
+  id: string;
+  custom: boolean;
+}
+
 export const providersApi = {
   list: () => fetchApi<ApiResponse<Provider[]>>("/providers"),
 
@@ -210,7 +218,7 @@ export const providersApi = {
     }),
 
   models: (id: string) =>
-    fetchApi<{ data: string[] }>(`/providers/${id}/models`),
+    fetchApi<{ data: ProviderModelEntry[] }>(`/providers/${id}/models`),
 
   testModel: (id: string, model: string) =>
     fetchApi<{
@@ -238,12 +246,12 @@ export const providersApi = {
       body: JSON.stringify(data),
     }),
 addModel: (id: string, model: string) =>
- fetchApi<{ data: string[] }>(`/providers/${id}/models`, {
+	fetchApi<{ data: ProviderModelEntry[] }>(`/providers/${id}/models`, {
   method: "POST",
   body: JSON.stringify({ model }),
     }),
 deleteModel: (id: string, model: string) =>
- fetchApi<{ data: string[] }>(`/providers/${id}/models/${encodeURIComponent(model)}`, {
+ fetchApi<{ data: ProviderModelEntry[] }>(`/providers/${id}/models?model=${encodeURIComponent(model)}`, {
   method: "DELETE",
     }),
 };

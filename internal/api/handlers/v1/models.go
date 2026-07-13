@@ -84,7 +84,10 @@ func (h *Handler) ListModels() []gin.H {
 // connection added, plus combos and smart virtual models. Used by the dashboard
 // model picker so users only browse models they can actually route to.
 func (h *Handler) ListActiveModels() []gin.H {
-	rows, err := h.db.Query(`SELECT DISTINCT provider_type_id FROM connections`)
+	// Only providers that have at least one enabled (active) connection are
+	// considered routable, so /v1/models reflects providers the gateway can
+	// actually serve. Combos and smart virtual models are always included.
+	rows, err := h.db.Query(`SELECT DISTINCT provider_type_id FROM connections WHERE is_active = 1`)
 	if err != nil {
 		return h.buildModelList()
 	}
@@ -113,9 +116,6 @@ func (h *Handler) ListActiveModels() []gin.H {
 		}
 	}
 
-	if len(result) == 0 {
-		return all
-	}
 	return result
 }
 
@@ -123,7 +123,7 @@ func (h *Handler) ListActiveModels() []gin.H {
 func (h *Handler) Models(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"object": "list",
-		"data":   h.buildModelList(),
+		"data":   h.ListActiveModels(),
 	})
 }
 

@@ -257,7 +257,7 @@ func New(cfg Config) *Router {
 		// Models
 		g.GET("/providers/:id/models", modelH.ListModels)
 		g.POST("/providers/:id/models", modelH.CreateModel)
-		g.DELETE("/providers/:id/models/:model", modelH.DeleteModel)
+		g.DELETE("/providers/:id/models", modelH.DeleteModel)
 		g.POST("/providers/:id/models/test", modelH.TestModel)
 		g.POST("/models/sync", modelH.SyncModels)
 
