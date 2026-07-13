@@ -13,10 +13,10 @@ const codexUsageURL = "https://chatgpt.com/backend-api/wham/usage"
 
 // fetchCodexQuota fetches quota from the ChatGPT backend API.
 // Returns session/weekly percentage quotas matching the OmniRoute buildCodexUsageQuotas pattern.
-func fetchCodexQuota(accessToken string, psd map[string]any) ([]QuotaItem, string, error) {
+func fetchCodexQuota(accessToken string, psd map[string]any) ([]QuotaItem, string, http.Header, error) {
 	req, err := http.NewRequest("GET", codexUsageURL, nil)
 	if err != nil {
-		return nil, "", fmt.Errorf("create request: %w", err)
+		return nil, "", nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "application/json")
@@ -29,26 +29,26 @@ func fetchCodexQuota(accessToken string, psd map[string]any) ([]QuotaItem, strin
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, "", fmt.Errorf("codex api: %w", err)
+		return nil, "", nil, fmt.Errorf("codex api: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 401 || resp.StatusCode == 403 {
-		return nil, "", fmt.Errorf("codex token expired or access denied (HTTP %d)", resp.StatusCode)
+		return nil, "", resp.Header, fmt.Errorf("codex token expired or access denied (HTTP %d)", resp.StatusCode)
 	}
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, "", fmt.Errorf("codex api error %d: %s", resp.StatusCode, string(body))
+		return nil, "", resp.Header, fmt.Errorf("codex api error %d: %s", resp.StatusCode, string(body))
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, "", fmt.Errorf("read response: %w", err)
+		return nil, "", resp.Header, fmt.Errorf("read response: %w", err)
 	}
 
 	var data map[string]any
 	if err := json.Unmarshal(body, &data); err != nil {
-		return nil, "", fmt.Errorf("parse response: %w", err)
+		return nil, "", resp.Header, fmt.Errorf("parse response: %w", err)
 	}
 
 	plan := getStringField(data, "plan_type", "planType")
@@ -59,7 +59,7 @@ func fetchCodexQuota(accessToken string, psd map[string]any) ([]QuotaItem, strin
 	rateLimit := getMapField(data, "rate_limit", "rateLimit")
 	quotas := parseCodexQuotas(rateLimit, data)
 
-	return quotas, plan, nil
+	return quotas, plan, resp.Header, nil
 }
 
 // parseCodexQuotas builds QuotaItems from the rate_limit block.

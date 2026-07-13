@@ -330,10 +330,11 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 	psd := parseProviderSpecificData(c.ProviderSpecificData)
 
 	type fetchResult struct {
-		quotas []QuotaItem
-		plan   string
-		msg    string
-		err    error
+		quotas  []QuotaItem
+		plan    string
+		headers http.Header
+		msg     string
+		err     error
 	}
 
 	ch := make(chan fetchResult, 1)
@@ -341,7 +342,7 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 		var r fetchResult
 		switch providerID {
 		case "cx":
-			r.quotas, r.plan, r.err = fetchCodexQuota(token, psd)
+			r.quotas, r.plan, r.headers, r.err = fetchCodexQuota(token, psd)
 		case "ag":
 			r.quotas, r.plan, r.err = fetchAntigravityQuota(token, psd)
 		case "kiro":
@@ -360,6 +361,13 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 			cq.Quotas = r.quotas
 			cq.Plan = r.plan
 			cq.Message = r.msg
+
+			// Codex /wham/usage may carry x-codex-5h-* / x-codex-7d-* headers. If so,
+			// merge them into the cached quota so the dashboard can render 5h/7d bars
+			// even before a live Codex chat request happens.
+			if providerID == "cx" && r.headers != nil && (r.headers.Get("x-codex-5h-limit") != "" || r.headers.Get("x-codex-7d-limit") != "") {
+				SaveCodexHeaderQuota(db, c.ID, providerID, c.Name, r.plan, r.headers)
+			}
 		}
 	case <-time.After(15 * time.Second):
 		cq.Error = "Quota fetch timed out (15s)"
