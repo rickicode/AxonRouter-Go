@@ -67,6 +67,7 @@ func (h *Handler) Messages(c *gin.Context) {
 	// Connection failover loop: try up to 5 connections before giving up.
 	clientFormat := executor.FormatClaude
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+	translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
 	maxAttempts := 5
 	var lastErr error
 	var lastErrCategory string
