@@ -1,10 +1,46 @@
 # AxonRouter-Go Deployment Guide
 
+For the project overview and quick start, see [README.md](../README.md).
+For tool-by-tool client settings, see [docs/INTEGRATIONS.md](./INTEGRATIONS.md).
+
+## Recommended install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/master/installer.sh | bash
+```
+
+The installer auto-detects your OS/architecture, picks the matching GitHub release asset, and installs `axonrouter` into the first writable directory on this list:
+
+1. `~/.local/bin`
+2. `/usr/local/bin`
+
+### Common options
+
+| Command | What it does |
+|---|---|
+| `./installer.sh` | Latest release, auto-detected OS/arch. |
+| `./installer.sh --version v0.3.3` | Pin a specific release tag. |
+| `./installer.sh --to /usr/local/bin` | Install to a custom directory. |
+| `curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/master/installer.sh \| sudo bash -s -- --service` | Install binary + create a systemd service (Linux only). |
+
+### Supported targets
+
+Release binaries are built for:
+
+- `linux/amd64`
+- `linux/arm64`
+- `darwin/amd64`
+- `darwin/arm64`
+- `windows/amd64`
+
+> **Requirements:** `curl` must be installed. On Windows, run the installer from Git Bash or WSL.
+
 ## Prerequisites
 
-- Go 1.22+
-- Node.js 18+ (untuk frontend build)
+- Go 1.23+
+- Node.js 18+ (for frontend build)
 - SQLite (embedded, no setup needed)
+- curl (for the one-line installer)
 
 ## Build
 
@@ -44,12 +80,12 @@ make backend
 ./build/axonrouter
 ```
 
-Server starts di port **3777**. Dashboard: http://localhost:3777
+Server starts on port **3777**. Dashboard: http://localhost:3777
 
 ### With Custom Port
 
 ```bash
-PORT=8080 ./build/axonrouter
+AXON_PORT=8080 ./build/axonrouter
 ```
 
 ### Background Run
@@ -58,7 +94,37 @@ PORT=8080 ./build/axonrouter
 nohup ./build/axonrouter > axonrouter.log 2>&1 &
 ```
 
-### Systemd Service
+## Binary CLI
+
+The release binary has a small built-in CLI for help, systemd management, and password changes.
+
+```bash
+# Show all options
+axonrouter --help
+
+# Install and manage the systemd service (Linux only)
+axonrouter --startup install
+axonrouter --startup status
+axonrouter --startup start
+axonrouter --startup stop
+axonrouter --startup restart
+
+# Change the admin dashboard password
+axonrouter --setpass <password>
+```
+
+`--startup install` writes `/etc/systemd/system/axonrouter.service`, runs as the invoking user (or `SUDO_USER` when called via `sudo`), and uses the binary default data directory (`~/axonrouter`).
+
+## Systemd Service
+
+### Recommended: binary-managed service
+
+```bash
+sudo axonrouter --startup install
+systemctl status axonrouter
+```
+
+### Manual service file (fallback)
 
 ```ini
 # /etc/systemd/system/axonrouter.service
@@ -69,8 +135,8 @@ After=network.target
 [Service]
 Type=simple
 User=axonrouter
-WorkingDirectory=/opt/axonrouter
-ExecStart=/opt/axonrouter/build/axonrouter
+WorkingDirectory=/home/axonrouter
+ExecStart=/usr/local/bin/axonrouter
 Restart=always
 RestartSec=5
 
@@ -79,50 +145,70 @@ WantedBy=multi-user.target
 ```
 
 ```bash
+sudo systemctl daemon-reload
 sudo systemctl enable axonrouter
 sudo systemctl start axonrouter
 sudo systemctl status axonrouter
 ```
 
-### Docker
+## Docker
+
+The repository includes a multi-stage `Dockerfile`.
 
 ```dockerfile
 # Dockerfile
-FROM golang:1.22-alpine AS builder
+FROM node:20-alpine AS frontend-builder
+WORKDIR /app/web
+COPY web/package*.json ./
+RUN npm ci --ignore-scripts
+COPY web/ ./
+RUN npm run build
+
+FROM golang:1.23-alpine AS backend-builder
+RUN apk add --no-cache ca-certificates git make
 WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
 COPY . .
-RUN apk add --no-cache nodejs npm
-RUN cd web && npm install && npm run build && cd ..
-RUN go build -o build/axonrouter ./cmd/server
+COPY --from=frontend-builder /app/web/build ./web/build
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o build/axonrouter ./cmd/server
 
 FROM alpine:latest
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
-COPY --from=builder /app/build/axonrouter .
+COPY --from=backend-builder /app/build/axonrouter .
 EXPOSE 3777
-CMD ["./axonrouter"]
+VOLUME ["/app/data"]
+ENTRYPOINT ["./axonrouter"]
 ```
 
 ```bash
 docker build -t axonrouter .
-docker run -p 3777:3777 -v axonrouter-data:/app axonrouter
+docker run -d -p 3777:3777 -e HOME=/app/data -v axonrouter-data:/app/data --name axonrouter axonrouter
 ```
 
-### Docker Compose
+The binary stores data in `$HOME/axonrouter`, so the volume above mounts `/app/data` and points `HOME` there.
+
+## Docker Compose
 
 ```yaml
-version: '3.8'
 services:
   axonrouter:
     build: .
     ports:
       - "3777:3777"
+    environment:
+      - HOME=/app/data
     volumes:
-      - axonrouter-data:/app
+      - axonrouter-data:/app/data
     restart: unless-stopped
 
 volumes:
   axonrouter-data:
+```
+
+```bash
+docker compose up -d
 ```
 
 ## Configuration
@@ -130,27 +216,51 @@ volumes:
 ### Environment Variables
 
 | Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `3777` | Server port |
-| `ADMIN_KEY` | (empty) | Admin API key |
-| `DB_PATH` | `axonrouter.db` | SQLite database path |
+|---|---|---|
+| `AXON_PORT` | `3777` | HTTP server port (read by the binary). |
+| `PORT` | `3777` | Heroku/PaaS-style port name. Use `AXON_PORT` to override the binary port. |
+| `AXON_ADMIN_KEY` | (empty) | Documented admin key name in `ARCHITECTURE.md`. Admin auth currently uses the session JWT; set the password with `axonrouter --setpass`. |
+| `ADMIN_KEY` | (empty) | Legacy alias for the admin key. |
+| `AXON_PUBLIC_IP` | (auto-detected) | Override public IP detection used by the HTTPS/ACME setup. |
+| `DB_PATH` | `~/axonrouter/axonrouter.db` | Database file location. The path is derived from the data directory; this variable itself is informational. |
+| `HOME` | (system) | Determines the default data directory: `$HOME/axonrouter`. Also respected by the systemd service installer. |
 
-### Settings (SQLite)
+Deprecated variables:
 
-Settings stored di `settings` table, manageable via admin API:
+- `AXON_DATA_DIR` — no longer read or documented. Use `HOME` to relocate the data directory.
+
+### Data directory
+
+By default the binary creates and uses `~/axonrouter`:
+
+```
+~/axonrouter/
+├── axonrouter.db
+├── axonrouter.db-shm
+├── axonrouter.db-wal
+├── axonrouter.pid
+├── https.yml
+└── logs/
+```
+
+To place data elsewhere, set `HOME` to the parent directory (the binary always appends `axonrouter`).
+
+### Runtime Settings (SQLite)
+
+Settings are stored in the `settings` table and manageable via the admin dashboard or the admin API:
 
 ```bash
 # List settings
 curl http://localhost:3777/api/admin/settings
 
-# Update setting
+# Update a setting
 curl -X PUT http://localhost:3777/api/admin/settings/quota_check_interval \
   -H "Content-Type: application/json" \
   -d '{"value": "15m"}'
 ```
 
 | Key | Default | Description |
-|-----|---------|-------------|
+|---|---|---|
 | `quota_check_interval` | `30m` | Background quota check interval |
 | `usage_flush_interval` | `5s` | Usage log flush interval |
 | `circuit_breaker_cleanup_interval` | `5m` | Circuit breaker cleanup |
@@ -163,14 +273,9 @@ curl -X PUT http://localhost:3777/api/admin/settings/quota_check_interval \
 ./build/axonrouter
 ```
 
-### 2. Add API Key
+### 2. Create an API Key
 
-```bash
-# Via SQLite
-sqlite3 axonrouter.db "INSERT INTO api_keys (id, key_hash, is_active, created_at, updated_at) VALUES ('key-1', 'your-api-key', 1, strftime('%s','now'), strftime('%s','now'));"
-```
-
-Or via admin dashboard at http://localhost:3777/settings
+Open the dashboard at http://localhost:3777 and create an API key in **Dashboard → Settings** (API Keys card).
 
 ### 3. Add Provider
 
@@ -178,10 +283,10 @@ Or via admin dashboard at http://localhost:3777/settings
 curl -X POST http://localhost:3777/api/admin/providers \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "openai",
-    "format": "openai",
-    "base_url": "https://api.openai.com/v1"
-  }'
+  "name": "openai",
+  "format": "openai",
+  "base_url": "https://api.openai.com/v1"
+}'
 ```
 
 ### 4. Add Connection
@@ -190,10 +295,10 @@ curl -X POST http://localhost:3777/api/admin/providers \
 curl -X POST http://localhost:3777/api/admin/providers/openai/connections \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "my-key-001",
-    "api_key": "sk-xxx",
-    "auth_type": "api_key"
-  }'
+  "name": "my-key-001",
+  "api_key": "sk-xxx",
+  "auth_type": "api_key"
+}'
 ```
 
 ### 5. Test Connection
@@ -209,9 +314,9 @@ curl -X POST http://localhost:3777/v1/chat/completions \
   -H "Authorization: Bearer your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "openai/gpt-4o",
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }'
+  "model": "openai/gpt-4o",
+  "messages": [{"role": "user", "content": "Hello!"}]
+}'
 ```
 
 ## Backup
@@ -220,17 +325,17 @@ curl -X POST http://localhost:3777/v1/chat/completions \
 
 ```bash
 # SQLite backup
-sqlite3 axonrouter.db ".backup backup.db"
+sqlite3 ~/axonrouter/axonrouter.db ".backup backup.db"
 
 # Or just copy the file
-cp axonrouter.db axonrouter.db.backup
+cp ~/axonrouter/axonrouter.db ~/axonrouter/axonrouter.db.backup
 ```
 
 ### Automated Backup
 
 ```bash
 # Cron job (daily at 2am)
-0 2 * * * sqlite3 /opt/axonrouter/axonrouter.db ".backup /backup/axonrouter-$(date +\%Y\%m\%d).db"
+0 2 * * * sqlite3 /home/axonrouter/axonrouter/axonrouter.db ".backup /backup/axonrouter-$(date +\%Y\%m\%d).db"
 ```
 
 ## Monitoring
@@ -259,7 +364,7 @@ Access dashboard at http://localhost:3777
 - **Providers** — Provider list, connection management
 - **Combos** — Combo routing configuration
 - **Logs** — Request history with filters
-- **Settings** — API keys, rate limits
+- **Settings** — API keys, rate limits, password, HTTPS
 
 ## Troubleshooting
 
@@ -277,10 +382,10 @@ tail -f axonrouter.log
 
 ```bash
 # Check for WAL file
-ls -la axonrouter.db*
+ls -la ~/axonrouter/axonrouter.db*
 
 # Recovery
-sqlite3 axonrouter.db "PRAGMA wal_checkpoint(TRUNCATE);"
+sqlite3 ~/axonrouter/axonrouter.db "PRAGMA wal_checkpoint(TRUNCATE);"
 ```
 
 ### High memory usage
@@ -297,11 +402,13 @@ curl -X PUT http://localhost:3777/api/admin/settings/circuit_breaker_cleanup_int
 ### Rate limit issues
 
 ```bash
-# Check rate limit settings
-sqlite3 axonrouter.db "SELECT * FROM api_keys;"
+# Check API key rate limits via the dashboard or admin API
+curl http://localhost:3777/api/admin/api-keys
 
 # Update rate limit
-sqlite3 axonrouter.db "UPDATE api_keys SET rate_limit_per_min = 1000 WHERE id = 'key-1';"
+curl -X PATCH http://localhost:3777/api/admin/settings/rate_limit_per_min \
+  -H "Content-Type: application/json" \
+  -d '{"value": "1000"}'
 ```
 
 ## Upgrading
@@ -311,7 +418,7 @@ sqlite3 axonrouter.db "UPDATE api_keys SET rate_limit_per_min = 1000 WHERE id = 
 sudo systemctl stop axonrouter
 
 # Backup database
-cp axonrouter.db axonrouter.db.backup
+cp ~/axonrouter/axonrouter.db ~/axonrouter/axonrouter.db.backup
 
 # Pull latest code
 git pull
@@ -330,19 +437,22 @@ Database migrations run automatically on startup.
 ### For High Traffic (1000+ connections)
 
 1. Increase file descriptor limit:
+
 ```bash
 ulimit -n 65536
 ```
 
 2. Tune SQLite:
+
 ```sql
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
-PRAGMA cache_size = -64000;  -- 64MB
+PRAGMA cache_size = -64000; -- 64MB
 PRAGMA busy_timeout = 5000;
 ```
 
 3. Monitor memory:
+
 ```bash
 # Check memory usage
 ps aux | grep axonrouter
