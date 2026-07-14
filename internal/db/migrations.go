@@ -146,6 +146,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		`ALTER TABLE request_logs ADD COLUMN api_key_id TEXT`,
 		`ALTER TABLE api_keys ADD COLUMN max_tokens INTEGER DEFAULT 0`,
 		`ALTER TABLE request_logs ADD COLUMN tokens_estimated INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE request_logs ADD COLUMN proxy_pool_id TEXT`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id, timestamp DESC)`,
 		`ALTER TABLE provider_types ADD COLUMN category TEXT DEFAULT 'apikey'`,
 		`ALTER TABLE provider_types ADD COLUMN service_kinds TEXT DEFAULT '["llm"]'`,

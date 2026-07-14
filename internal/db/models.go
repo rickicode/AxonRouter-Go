@@ -94,26 +94,28 @@ type ComboStep struct {
 
 // RequestLog is a single request log entry.
 type RequestLog struct {
-	ID                  string         `json:"id"`
-	Timestamp           int64          `json:"timestamp"`
-	ConnectionID        sql.NullString `json:"connection_id,omitempty"`
-	ConnectionName      sql.NullString `json:"connection_name,omitempty"`
-	ProviderTypeID      sql.NullString `json:"provider_type_id,omitempty"`
-	ModelID             sql.NullString `json:"model_id,omitempty"`
-	ComboID             sql.NullString `json:"combo_id,omitempty"`
-	Modality            string         `json:"modality"`
-	InputTokens         int64          `json:"input_tokens"`
-	OutputTokens        int64          `json:"output_tokens"`
-	ReasoningTokens     int64          `json:"reasoning_tokens"`
-	CachedTokens        int64          `json:"cached_tokens"`
-	CacheCreationTokens int64          `json:"cache_creation_tokens"`
-	Stream bool `json:"stream"`
-	TokensEstimated bool `json:"tokens_estimated"`
-	LatencyMs sql.NullInt64 `json:"latency_ms,omitempty"`
-	StatusCode          sql.NullInt64  `json:"status_code,omitempty"`
-	ErrorMessage        sql.NullString `json:"error_message,omitempty"`
-	CostUsd             float64        `json:"cost_usd"`
-	CreatedAt           int64          `json:"created_at"`
+	ID              string         `json:"id"`
+	Timestamp       int64          `json:"timestamp"`
+	ConnectionID    sql.NullString `json:"connection_id,omitempty"`
+	ConnectionName    sql.NullString `json:"connection_name,omitempty"`
+	ProviderTypeID  sql.NullString `json:"provider_type_id,omitempty"`
+	ModelID         sql.NullString `json:"model_id,omitempty"`
+	ComboID         sql.NullString `json:"combo_id,omitempty"`
+	ProxyPoolID     sql.NullString `json:"proxy_pool_id,omitempty"`
+	ProxyPoolName   sql.NullString `json:"proxy_pool_name,omitempty"`
+	Modality        string         `json:"modality"`
+	InputTokens     int64          `json:"input_tokens"`
+	OutputTokens    int64          `json:"output_tokens"`
+	ReasoningTokens int64          `json:"reasoning_tokens"`
+	CachedTokens    int64          `json:"cached_tokens"`
+	CacheCreationTokens int64      `json:"cache_creation_tokens"`
+	Stream          bool           `json:"stream"`
+	TokensEstimated bool           `json:"tokens_estimated"`
+	LatencyMs       sql.NullInt64  `json:"latency_ms,omitempty"`
+	StatusCode      sql.NullInt64  `json:"status_code,omitempty"`
+	ErrorMessage    sql.NullString `json:"error_message,omitempty"`
+	CostUsd         float64        `json:"cost_usd"`
+	CreatedAt       int64          `json:"created_at"`
 }
 
 // MarshalJSON emits plain strings/numbers instead of database/sql null
@@ -134,48 +136,52 @@ func (r RequestLog) MarshalJSON() ([]byte, error) {
 		return 0
 	}
 	type plain struct {
-		ID                  string  `json:"id"`
-		Timestamp           int64   `json:"timestamp"`
-		ConnectionID        string  `json:"connection_id,omitempty"`
-		ConnectionName      string  `json:"connection_name,omitempty"`
-		ProviderTypeID      string  `json:"provider_type_id,omitempty"`
-		ModelID             string  `json:"model_id,omitempty"`
-		ComboID             string  `json:"combo_id,omitempty"`
-		Modality            string  `json:"modality"`
-		InputTokens         int64   `json:"input_tokens"`
-		OutputTokens        int64   `json:"output_tokens"`
-		ReasoningTokens     int64   `json:"reasoning_tokens"`
-		CachedTokens        int64   `json:"cached_tokens"`
-		CacheCreationTokens int64   `json:"cache_creation_tokens"`
-		Stream bool `json:"stream"`
-		TokensEstimated bool `json:"tokens_estimated"`
-		LatencyMs int64 `json:"latency_ms,omitempty"`
-		StatusCode          int64   `json:"status_code,omitempty"`
-		ErrorMessage        string  `json:"error_message,omitempty"`
-		CostUsd             float64 `json:"cost_usd"`
-		CreatedAt           int64   `json:"created_at"`
+		ID              string `json:"id"`
+		Timestamp       int64  `json:"timestamp"`
+		ConnectionID    string `json:"connection_id,omitempty"`
+		ConnectionName  string `json:"connection_name,omitempty"`
+		ProviderTypeID  string `json:"provider_type_id,omitempty"`
+		ModelID         string `json:"model_id,omitempty"`
+		ComboID         string `json:"combo_id,omitempty"`
+		ProxyPoolID     string `json:"proxy_pool_id,omitempty"`
+		ProxyPoolName   string `json:"proxy_pool_name,omitempty"`
+		Modality        string `json:"modality"`
+		InputTokens     int64  `json:"input_tokens"`
+		OutputTokens    int64  `json:"output_tokens"`
+		ReasoningTokens int64  `json:"reasoning_tokens"`
+		CachedTokens    int64  `json:"cached_tokens"`
+		CacheCreationTokens int64 `json:"cache_creation_tokens"`
+		Stream          bool   `json:"stream"`
+		TokensEstimated bool   `json:"tokens_estimated"`
+		LatencyMs       int64  `json:"latency_ms,omitempty"`
+		StatusCode      int64  `json:"status_code,omitempty"`
+		ErrorMessage    string `json:"error_message,omitempty"`
+		CostUsd         float64 `json:"cost_usd"`
+		CreatedAt       int64  `json:"created_at"`
 	}
 	return json.Marshal(plain{
-		ID:                  r.ID,
-		Timestamp:           r.Timestamp,
-		ConnectionID:        getStr(r.ConnectionID),
-		ConnectionName:      getStr(r.ConnectionName),
-		ProviderTypeID:      getStr(r.ProviderTypeID),
-		ModelID:             getStr(r.ModelID),
-		ComboID:             getStr(r.ComboID),
-		Modality:            r.Modality,
-		InputTokens:         r.InputTokens,
-		OutputTokens:        r.OutputTokens,
-		ReasoningTokens:     r.ReasoningTokens,
-		CachedTokens:        r.CachedTokens,
+		ID:              r.ID,
+		Timestamp:       r.Timestamp,
+		ConnectionID:    getStr(r.ConnectionID),
+		ConnectionName:  getStr(r.ConnectionName),
+		ProviderTypeID:  getStr(r.ProviderTypeID),
+		ModelID:         getStr(r.ModelID),
+		ComboID:         getStr(r.ComboID),
+		ProxyPoolID:     getStr(r.ProxyPoolID),
+		ProxyPoolName:   getStr(r.ProxyPoolName),
+		Modality:        r.Modality,
+		InputTokens:     r.InputTokens,
+		OutputTokens:    r.OutputTokens,
+		ReasoningTokens: r.ReasoningTokens,
+		CachedTokens:    r.CachedTokens,
 		CacheCreationTokens: r.CacheCreationTokens,
-		Stream: r.Stream,
+		Stream:          r.Stream,
 		TokensEstimated: r.TokensEstimated,
-		LatencyMs:           getInt(r.LatencyMs),
-		StatusCode:          getInt(r.StatusCode),
-		ErrorMessage:        getStr(r.ErrorMessage),
-		CostUsd:             r.CostUsd,
-		CreatedAt:           r.CreatedAt,
+		LatencyMs:       getInt(r.LatencyMs),
+		StatusCode:      getInt(r.StatusCode),
+		ErrorMessage:    getStr(r.ErrorMessage),
+		CostUsd:         r.CostUsd,
+		CreatedAt:       r.CreatedAt,
 	})
 }
 

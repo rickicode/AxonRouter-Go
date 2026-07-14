@@ -108,23 +108,25 @@ func (h *Handler) Embeddings(c *gin.Context) {
 	}
 	resp, _, err := h.executeWithRetry(proxyCtx, executor.NewEmbeddingsAdapter(embedExec), req, conn, provider, modelName)
 	if err != nil {
-		if !h.writeUpstreamClientError(c, err, conn, provider, modelName, start, false) {
+		if !h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, false) {
 			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": "internal server error", "type": "server_error"}})
 		}
 		return
 	}
 	h.tracker.Log(&usage.LogEntry{
-		ApiKeyID: c.GetString("api_key_id"),
-		ConnectionID: conn.ID,
-		ProviderTypeID: provider,
-		ModelID: modelName,
-		Modality: "embedding",
-		Stream: false,
-		LatencyMs: time.Since(start).Milliseconds(),
-		StatusCode: resp.StatusCode})
+		ApiKeyID:             c.GetString("api_key_id"),
+		ConnectionID:       conn.ID,
+		ProviderTypeID:     provider,
+		ModelID:              modelName,
+		ProxyPoolID:          executor.ProxyPoolIDFromContext(proxyCtx),
+		Modality:             "embedding",
+		Stream:               false,
+		LatencyMs:            time.Since(start).Milliseconds(),
+		StatusCode:           resp.StatusCode})
 	c.Header("Content-Type", "application/json")
 	c.Status(resp.StatusCode)
 	c.Writer.Write(resp.Body)
+	return
 }
 
 // normalizeEmbeddingModel converts a gateway model id to the canonical upstream
@@ -136,6 +138,6 @@ func normalizeEmbeddingModel(provider, modelName string) string {
 			return "@" + modelName
 		}
 		return "@cf/" + modelName
-	}
+}
 	return modelName
 }

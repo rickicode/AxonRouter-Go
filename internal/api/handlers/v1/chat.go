@@ -153,10 +153,10 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 			if h.isClientCanceled(c, err) {
 				return
 			}
-			if h.writeUpstreamClientError(c, err, conn, provider, modelName, start, stream) {
-				return
-			}
-			retry, cat := h.handleFailoverError(c, conn, provider, modelName, err, attempt, latency, stream)
+		if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
+			return
+		}
+		retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
 			lastErr = err
 			lastErrCategory = cat
 			if !retry {
@@ -173,7 +173,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		h.combo.RecordSuccess(conn.ID)
 
 		if req.Stream {
-			h.handleStreamResponse(c, streamResult, conn, provider, modelName, start, translatedBody, body)
+			h.handleStreamResponse(proxyCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body)
 		} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
@@ -187,22 +187,23 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 					tokensEstimated = true
 				}
 			}
-			h.tracker.Log(&usage.LogEntry{
-				ApiKeyID:            c.GetString("api_key_id"),
-				ConnectionID:        conn.ID,
-				ProviderTypeID:      provider,
-				ModelID:             modelName,
-				Modality:            "chat",
-				Stream:              stream,
-				InputTokens:         tokenCounts.InputTokens,
-				OutputTokens:        tokenCounts.OutputTokens,
-				ReasoningTokens:     tokenCounts.ReasoningTokens,
-				CachedTokens:        tokenCounts.CachedTokens,
-				CacheCreationTokens: tokenCounts.CacheCreationTokens,
-				LatencyMs:           latency,
-				StatusCode:          resp.StatusCode,
-				TokensEstimated:     tokensEstimated,
-	})
+		h.tracker.Log(&usage.LogEntry{
+			ApiKeyID: c.GetString("api_key_id"),
+			ConnectionID: conn.ID,
+			ProviderTypeID: provider,
+			ModelID: modelName,
+			ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
+			Modality: "chat",
+			Stream: stream,
+			InputTokens: tokenCounts.InputTokens,
+			OutputTokens: tokenCounts.OutputTokens,
+			ReasoningTokens: tokenCounts.ReasoningTokens,
+			CachedTokens: tokenCounts.CachedTokens,
+			CacheCreationTokens: tokenCounts.CacheCreationTokens,
+			LatencyMs: latency,
+			StatusCode: resp.StatusCode,
+			TokensEstimated: tokensEstimated,
+		})
 	if resp.StatusCode < 300 {
 		h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
 	}
@@ -306,10 +307,10 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				det := connstate.DetectError(comboCtx, 0, "", err, provider, modelName, nil)
 
 				// Non-retryable client errors must be surfaced, not fail-over'd.
-				if det.Category == connstate.ErrorModelNotFound || det.Category == connstate.ErrorAuth {
-					if h.writeUpstreamClientError(c, err, conn, provider, modelName, start, stream) {
-						return
-					}
+			if det.Category == connstate.ErrorModelNotFound || det.Category == connstate.ErrorAuth {
+				if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
+					return
+				}
 				lastErr = err
 				lastErrCategory = string(det.Category)
 				break
@@ -347,9 +348,9 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				h.codexPersistIfCodex(conn, resp, streamResult)
 			}
 
-			if req.Stream {
-				h.handleStreamResponse(c, streamResult, conn, provider, modelName, start, translatedBody, body)
-			} else {
+	if req.Stream {
+		h.handleStreamResponse(proxyCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body)
+	} else {
 		translatedResp := registry.ResponseNonStream(comboCtx, string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			tokensEstimated := false
@@ -363,20 +364,21 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				}
 			}
 			h.tracker.Log(&usage.LogEntry{
-				ApiKeyID:            c.GetString("api_key_id"),
-				ConnectionID:        connID,
-				ProviderTypeID:      provider,
-				ModelID:             modelName,
-				Modality:            "chat",
-				Stream:              stream,
-				InputTokens:         tokenCounts.InputTokens,
-				OutputTokens:        tokenCounts.OutputTokens,
-				ReasoningTokens:     tokenCounts.ReasoningTokens,
-				CachedTokens:        tokenCounts.CachedTokens,
+				ApiKeyID: c.GetString("api_key_id"),
+				ConnectionID: connID,
+				ProviderTypeID: provider,
+				ModelID: modelName,
+				ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
+				Modality: "chat",
+				Stream: stream,
+				InputTokens: tokenCounts.InputTokens,
+				OutputTokens: tokenCounts.OutputTokens,
+				ReasoningTokens: tokenCounts.ReasoningTokens,
+				CachedTokens: tokenCounts.CachedTokens,
 				CacheCreationTokens: tokenCounts.CacheCreationTokens,
-				LatencyMs:           latency,
-				StatusCode:          resp.StatusCode,
-				TokensEstimated:     tokensEstimated,
+				LatencyMs: latency,
+				StatusCode: resp.StatusCode,
+				TokensEstimated: tokensEstimated,
 			})
 				c.Header("Content-Type", "application/json")
 				h.incrementAPIKeyUsage(c.GetString("api_key_id"), tokenCounts.InputTokens+tokenCounts.OutputTokens)
@@ -401,7 +403,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 }
 
 // handleStreamResponse handles streaming chat completions.
-func (h *Handler) handleStreamResponse(c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte) {
+func (h *Handler) handleStreamResponse(ctx context.Context, c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte) {
 	_, providerFormat, _ := h.registry.Get(provider)
 	errFormatter := func(err error) []byte {
 		var upErr *executor.UpstreamError
@@ -412,5 +414,5 @@ func (h *Handler) handleStreamResponse(c *gin.Context, result *executor.StreamRe
 		b, _ := json.Marshal(gin.H{"error": gin.H{"message": "upstream streaming error"}})
 		return b
 	}
-	h.streamResponse(c, result, conn, provider, model, executor.FormatOpenAI, providerFormat, originalReq, translatedReq, errFormatter, start)
+	h.streamResponse(ctx, c, result, conn, provider, model, executor.FormatOpenAI, providerFormat, originalReq, translatedReq, errFormatter, start)
 }

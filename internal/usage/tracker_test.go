@@ -74,3 +74,26 @@ func TestTracker_Flush(t *testing.T) {
 		t.Errorf("expected 1 log row, got %d", count)
 	}
 }
+
+func TestTracker_PersistProxyPoolID(t *testing.T) {
+	database := openTestDB(t)
+
+	tracker := NewTracker(database)
+	defer tracker.Stop()
+
+	tracker.Log(&LogEntry{
+		ConnectionID: "conn-pool",
+		ProxyPoolID:  "pool-1",
+		Modality:     "chat",
+	})
+
+	time.Sleep(6 * time.Second)
+
+	var poolID string
+	if err := database.QueryRow(`SELECT proxy_pool_id FROM request_logs WHERE connection_id = ?`, "conn-pool").Scan(&poolID); err != nil {
+		t.Fatalf("query proxy_pool_id: %v", err)
+	}
+	if poolID != "pool-1" {
+		t.Errorf("expected proxy_pool_id pool-1, got %q", poolID)
+	}
+}
