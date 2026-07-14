@@ -2,16 +2,25 @@ package api
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
+	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/config"
+
+	"golang.org/x/crypto/acme"
+	"golang.org/x/crypto/acme/autocert"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/adminapi"
@@ -41,19 +50,23 @@ import (
 
 // Router holds all dependencies and mounts all routes.
 type Router struct {
-	engine     *gin.Engine
-	db         *sql.DB
+	engine *gin.Engine
+	db *sql.DB
 	writeQueue *db.WriteQueue // centralized async writer; drained on Shutdown
-	store      *connstate.Store
-	elig       *connstate.EligibilityManager
-	combo      *combo.Handler
-	tracker    *usage.Tracker
-	authMgr    *auth.Manager
+	store *connstate.Store
+	elig *connstate.EligibilityManager
+	combo *combo.Handler
+	tracker *usage.Tracker
+	authMgr *auth.Manager
+
+	// HTTP/HTTPS servers
+	httpServer  *http.Server
+	httpsServer *http.Server
 
 	// Background goroutines
-	quotaScheduler  *background.QuotaSchedulerDB
-	usageFlush      *background.UsageFlush
-	cleanup         *background.Cleanup
+	quotaScheduler *background.QuotaSchedulerDB
+	usageFlush *background.UsageFlush
+	cleanup *background.Cleanup
 	rateLimitProber *background.RateLimitProber
 }
 
@@ -434,13 +447,105 @@ func New(cfg Config) *Router {
 	}
 }
 
-// Run starts the HTTP server.
-func (r *Router) Run(addr string) error {
-	return r.engine.Run(addr)
+// Start starts the HTTP server and optionally an HTTPS server on :443.
+func (r *Router) Start(addr string, httpsCfg config.HTTPSConfig) error {
+	// HTTP listener
+	httpListener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", addr, err)
+	}
+	r.httpServer = &http.Server{
+		Handler:           r.engine,
+		ReadHeaderTimeout: 30 * time.Second,
+	}
+
+	// HTTPS listener (optional)
+	if httpsCfg.Enabled {
+		if valid, msg := httpsCfg.IsValid(); valid {
+			if err := r.startHTTPS(httpsCfg); err != nil {
+				log.Printf("WARN: HTTPS disabled: %v", err)
+			}
+		} else {
+			log.Printf("WARN: HTTPS config invalid: %s", msg)
+		}
+	}
+
+	errCh := make(chan error, 2)
+	go func() {
+		log.Printf("starting HTTP server on %s", httpListener.Addr())
+		if err := r.httpServer.Serve(httpListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+
+	if r.httpsServer != nil {
+		go func() {
+			log.Printf("starting HTTPS server on :443 for domain %s", httpsCfg.Domain)
+			if err := r.httpsServer.ServeTLS(nil, "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errCh <- err
+			}
+		}()
+	}
+
+	return <-errCh
 }
 
-// Shutdown gracefully stops background goroutines.
+func (r *Router) startHTTPS(cfg config.HTTPSConfig) error {
+	cacheDir := filepath.Join(config.Get().DataDir, cfg.CertCache)
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		return fmt.Errorf("create cert cache: %w", err)
+	}
+
+	var directoryURL string
+	if cfg.Staging {
+		directoryURL = "https://acme-staging-v02.api.letsencrypt.org/directory"
+	} else {
+		directoryURL = "https://acme-v02.api.letsencrypt.org/directory"
+	}
+
+	m := &autocert.Manager{
+		Prompt:     autocert.AcceptTOS,
+		HostPolicy: autocert.HostWhitelist(cfg.Domain),
+		Cache:      autocert.DirCache(cacheDir),
+		Email:      cfg.Email,
+		Client: &acme.Client{
+			DirectoryURL: directoryURL,
+		},
+	}
+
+	listener, err := net.Listen("tcp", ":443")
+	if err != nil {
+		return fmt.Errorf("listen :443: %w", err)
+	}
+
+	r.httpsServer = &http.Server{
+		Handler:           r.engine,
+		ReadHeaderTimeout: 30 * time.Second,
+		TLSConfig: &tls.Config{
+			GetCertificate: m.GetCertificate,
+			NextProtos:     []string{"h2", "http/1.1"},
+		},
+	}
+
+	go func() {
+		log.Printf("starting HTTPS server on :443 for domain %s", cfg.Domain)
+		if err := r.httpsServer.ServeTLS(listener, "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("WARN: HTTPS server error: %v", err)
+		}
+	}()
+	return nil
+}
+
+// Shutdown gracefully stops servers and background goroutines.
 func (r *Router) Shutdown() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if r.httpServer != nil {
+		_ = r.httpServer.Shutdown(ctx)
+	}
+	if r.httpsServer != nil {
+		_ = r.httpsServer.Shutdown(ctx)
+	}
 	r.tracker.Stop()
 	r.quotaScheduler.Stop()
 	r.usageFlush.Stop()

@@ -108,6 +108,12 @@ func main() {
 
 	cfg := config.Get()
 
+	// Load HTTPS/TLS configuration (may be empty/disabled)
+	httpsCfg, err := config.LoadHTTPSConfig(cfg.DataDir)
+	if err != nil {
+		log.Fatalf("Failed to load HTTPS config: %v", err)
+	}
+
 	// Open database
 	database, err := db.Open(cfg.DBPath)
 	if err != nil {
@@ -145,7 +151,7 @@ func main() {
 		os.Exit(0)
 	}()
 
-	if err := router.Run(addr); err != nil {
+	if err := router.Start(addr, *httpsCfg); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }
