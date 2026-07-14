@@ -58,13 +58,18 @@
     };
   }
 
-  function providerCategoryId(provider: Provider): string {
-    return providerMeta(provider)?.category ?? 'compatible';
-  }
+  function providerServiceKinds(provider: Provider): string[] {
+   const kinds = provider.service_kinds ?? providerMeta(provider)?.serviceKinds ?? ['llm'];
+   return kinds.length === 1 && kinds[0] === 'llm' ? [] : kinds;
+ }
 
-  function providerColor(provider: Provider): string {
-    return providerMeta(provider)?.color ?? '#f97316';
-  }
+ function providerCategoryId(provider: Provider): string {
+  return provider.category ?? providerMeta(provider)?.category ?? 'compatible';
+}
+
+ function providerColor(provider: Provider): string {
+  return providerMeta(provider)?.color ?? '#f97316';
+}
 
   function providerName(provider: Provider): string {
     return providerMeta(provider)?.displayName ?? provider.display_name ?? provider.id;
@@ -78,10 +83,10 @@
     return providerMeta(provider)?.prefix ?? `${provider.id}/`;
   }
 
-  function providerHasFree(provider: Provider): boolean {
-    const meta = providerMeta(provider);
-    return meta?.hasFree === true || meta?.category === 'no-auth';
-  }
+ function providerHasFree(provider: Provider): boolean {
+  const meta = providerMeta(provider);
+  return meta?.hasFree === true || providerCategoryId(provider) === 'no-auth';
+}
 
 
   function hexToRgba(color: string | undefined, alpha: number): string {
@@ -340,12 +345,13 @@
 
             {#if !isCollapsed}
               <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-                {#each sectionProviders as provider (provider.id)}
-                  {@const meta = providerMeta(provider)}
-                  {@const iconMeta = providerIconMeta(provider)}
-                  {@const color = providerColor(provider)}
-                  {@const category = getCategoryById(providerCategoryId(provider))}
-                  <a
+            {#each sectionProviders as provider (provider.id)}
+              {@const meta = providerMeta(provider)}
+              {@const iconMeta = providerIconMeta(provider)}
+              {@const color = providerColor(provider)}
+              {@const category = getCategoryById(providerCategoryId(provider))}
+              {@const serviceKinds = providerServiceKinds(provider)}
+              <a
                     href="/providers/{provider.id}"
                     class="group flex flex-col rounded-xl bg-card shadow-card transition-all duration-200 hover:-translate-y-0.5 hover:shadow-card-hover"
                   >
@@ -369,10 +375,17 @@
                               <span class="h-2 w-2 rounded-full shrink-0" style="background: {category?.color ?? color};"></span>
                             </span>
                           </div>
-                          <p class="truncate text-[11px] text-muted-foreground">{providerPrefix(provider)}</p>
-                        </div>
-                      </div>
-                      <div class="flex items-center gap-1.5 text-[11px] text-muted-foreground pt-1.5">
+              <p class="truncate text-[11px] text-muted-foreground">{providerPrefix(provider)}</p>
+              {#if serviceKinds.length > 0}
+                <div class="flex flex-wrap gap-1 mt-1">
+                  {#each serviceKinds as kind (kind)}
+                    <Badge variant="outline" class="text-[10px] px-1.5 py-0 rounded-full">{kind}</Badge>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          </div>
+          <div class="flex items-center gap-1.5 text-[11px] text-muted-foreground pt-1.5">
                         {#if readyCount(provider) > 0}
                           <span class="inline-flex items-center gap-0.5 text-emerald-400">
                             <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
