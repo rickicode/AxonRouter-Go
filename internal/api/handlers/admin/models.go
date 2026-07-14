@@ -139,13 +139,21 @@ func (h *ModelHandler) storedModels(providerID string) []string {
 func (h *ModelHandler) listModelEntries(providerID string, stored []string, extra []string) []gin.H {
 	seen := make(map[string]bool)
 	var entries []gin.H
+	keys := providerCatalogKeys[providerID]
 	add := func(raw string, custom bool) {
 		id := prefixedModelID(providerID, raw)
 		if id == "" || seen[id] {
 			return
 		}
 		seen[id] = true
-		entries = append(entries, gin.H{"id": id, "custom": custom})
+		entry := gin.H{"id": id, "custom": custom}
+		for _, key := range keys {
+			if kinds := models.GetModelServiceKinds(key, raw); len(kinds) > 0 {
+				entry["service_kinds"] = kinds
+				break
+			}
+		}
+		entries = append(entries, entry)
 	}
 	// Custom entries first so any collision with a static id upgrades to custom.
 	for _, m := range stored {
