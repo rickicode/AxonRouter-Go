@@ -58,3 +58,17 @@ func TestGetModelServiceKinds_UnknownModel(t *testing.T) {
 		t.Errorf("GetModelServiceKinds(cf, not-a-model) = %v, want empty", kinds)
 	}
 }
+
+func TestServiceKindsForModelID_Found(t *testing.T) {
+	kinds := ServiceKindsForModelID("cf/baai/bge-base-en-v1.5")
+	if len(kinds) != 1 || kinds[0] != "embedding" {
+		t.Errorf("ServiceKindsForModelID(cf/baai/bge-base-en-v1.5) = %v, want [embedding]", kinds)
+	}
+}
+
+func TestServiceKindsForModelID_Unknown(t *testing.T) {
+	kinds := ServiceKindsForModelID("not-a-real-model")
+	if kinds != nil {
+		t.Errorf("ServiceKindsForModelID(not-a-real-model) = %v, want nil", kinds)
+	}
+}
