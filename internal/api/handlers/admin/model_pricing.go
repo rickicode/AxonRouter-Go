@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/models"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
 
@@ -22,6 +23,10 @@ func (h *ModelPricingHandler) List(c *gin.Context) {
 	rows := usage.ListPricing()
 	if rows == nil {
 		rows = []usage.ModelPricingRow{}
+	}
+	// ponytail: attach explicit service kinds from the catalog for UI modality badges.
+	for i := range rows {
+		rows[i].ServiceKinds = models.ServiceKindsForModelID(rows[i].ModelID)
 	}
 	c.JSON(http.StatusOK, gin.H{"data": rows})
 }

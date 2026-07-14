@@ -271,30 +271,36 @@ let totalPages = $derived(Math.max(1, Math.ceil(filtered.length / perPage)));
   {:else}
     <!-- Card grid -->
     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-      {#each paged as m (m.model_id)}
-        {@const color = getModelColor(m.model_id)}
-        {@const family = getModelFamily(m.model_id)}
-        {@const isFree = !m.input_per_1k && !m.output_per_1k}
-        <div class="group relative flex flex-col rounded-xl border border-border bg-card shadow-card hover:shadow-elevated transition-all duration-150">
+{#each paged as m (m.model_id)}
+      {@const color = getModelColor(m.model_id)}
+      {@const family = getModelFamily(m.model_id)}
+      {@const isFree = !m.input_per_1k && !m.output_per_1k}
+      {@const serviceKinds = m.service_kinds?.length === 1 && m.service_kinds[0] === 'llm' ? [] : (m.service_kinds ?? [])}
+      <div class="group relative flex flex-col rounded-xl border border-border bg-card shadow-card hover:shadow-elevated transition-all duration-150">
 
-          <div class="flex flex-1 flex-col p-4">
-            <!-- Header: family badge + model name -->
-            <div class="flex items-start justify-between gap-2 mb-3">
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-2 mb-1">
-                  <span class="text-caption font-medium text-muted-foreground uppercase tracking-wider">{family}</span>
-                </div>
-                <p class="text-body-sm-strong truncate" title={m.display_name || m.model_id}>{m.display_name || m.model_id}</p>
-                {#if m.display_name && m.display_name !== m.model_id}
-                  <p class="text-caption-mono text-muted-foreground truncate mt-0.5" title={m.model_id}>{m.model_id}</p>
+        <div class="flex flex-1 flex-col p-4">
+          <!-- Header: family badge + model name -->
+          <div class="flex items-start justify-between gap-2 mb-3">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2 mb-1 flex-wrap">
+                <span class="text-caption font-medium text-muted-foreground uppercase tracking-wider">{family}</span>
+                {#if serviceKinds.length > 0}
+                  {#each serviceKinds as kind (kind)}
+                    <Badge variant="outline" class="text-[10px] px-1.5 py-0 rounded-full">{kind}</Badge>
+                  {/each}
                 {/if}
               </div>
-              {#if isFree}
-                <Badge variant="outline" class="shrink-0 rounded-full border-emerald-500/30 text-emerald-400 text-caption-mono bg-emerald-500/10">Free</Badge>
-              {:else}
-                <Badge variant="outline" class="shrink-0 rounded-full text-caption-mono">{m.currency || 'USD'}</Badge>
+              <p class="text-body-sm-strong truncate" title={m.display_name || m.model_id}>{m.display_name || m.model_id}</p>
+              {#if m.display_name && m.display_name !== m.model_id}
+                <p class="text-caption-mono text-muted-foreground truncate mt-0.5" title={m.model_id}>{m.model_id}</p>
               {/if}
             </div>
+            {#if isFree}
+              <Badge variant="outline" class="shrink-0 rounded-full border-emerald-500/30 text-emerald-400 text-caption-mono bg-emerald-500/10">Free</Badge>
+            {:else}
+              <Badge variant="outline" class="shrink-0 rounded-full text-caption-mono">{m.currency || 'USD'}</Badge>
+            {/if}
+          </div>
 
             <!-- Pricing -->
             {#if !isFree}

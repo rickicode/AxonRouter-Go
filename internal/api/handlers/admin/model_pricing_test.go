@@ -101,6 +101,52 @@ func TestModelPricingCreateUpdateDeleteEndpoint(t *testing.T) {
 	}
 }
 
+func TestModelPricingList_ServiceKinds(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tmp := filepath.Join(t.TempDir(), "admin-pricing-servicekinds.db")
+	database, err := sql.Open("sqlite", tmp)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := db.RunMigrations(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	usage.InitPricing(database)
+	h := NewModelPricingHandler()
+
+	// Create a pricing row for a CF embedding model that exists in the catalog.
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/model-pricing", jsonBody(t, map[string]any{
+		"model_id": "cf/baai/bge-base-en-v1.5", "display_name": "CF BGE", "input_per_1k": 0.0001, "output_per_1k": 0.0001,
+	}))
+	h.Create(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Create status = %d, body=%s", w.Code, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	h.List(c)
+
+	var resp struct {
+		Data []usage.ModelPricingRow `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var found []string
+	for _, r := range resp.Data {
+		if r.ModelID == "cf/baai/bge-base-en-v1.5" {
+			found = r.ServiceKinds
+		}
+	}
+	if len(found) != 1 || found[0] != "embedding" {
+		t.Fatalf("expected service_kinds [embedding] for cf model, got %v", found)
+	}
+}
+
 func jsonBody(t *testing.T, v any) *bytes.Reader {
 	b, err := json.Marshal(v)
 	if err != nil {

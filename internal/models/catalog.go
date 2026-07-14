@@ -175,6 +175,24 @@ func GetAllModelIDs(keys ...string) []string {
 	return ids
 }
 
+// ServiceKindsForModelID returns the explicit service kinds for a canonical
+// model ID across all provider keys in the catalog. Returns nil if the model
+// has no explicit service kinds.
+func ServiceKindsForModelID(modelID string) []string {
+	mu.RLock()
+	defer mu.RUnlock()
+	for _, entries := range current {
+		for _, e := range entries {
+			if e.ID == modelID && len(e.ServiceKinds) > 0 {
+				out := make([]string, len(e.ServiceKinds))
+				copy(out, e.ServiceKinds)
+				return out
+			}
+		}
+	}
+	return nil
+}
+
 // GetModelDisplayNames returns a map of model ID → display_name for a provider key.
 // Used by quota fetchers to map upstream model IDs to human-readable names.
 func GetModelDisplayNames(providerKey string) map[string]string {

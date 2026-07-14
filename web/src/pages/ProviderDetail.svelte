@@ -432,20 +432,28 @@ function handlePerPageChange(p: number) {
  <p class="text-body-sm text-muted-foreground">No models registered for this provider yet.</p>
  {:else}
  <div class="grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));">
- {#each $providerModels as entry (entry.id)}
- {@const result = $modelTestResults[entry.id]}
- <div class="group relative flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 transition-colors hover:border-primary/40">
-				<button
-					type="button"
-					class="flex min-w-0 flex-1 items-center gap-2 text-left cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-					disabled={result?.status === 'testing'}
-					onclick={() => testProviderModel(providerId, entry.id)}
-					title={entry.id}
-				>
-					<span class="block min-w-0 text-[12px] font-mono leading-snug break-all text-foreground">{entry.id}</span>
-				</button>
-				<button
-					type="button"
+{#each $providerModels as entry (entry.id)}
+    {@const result = $modelTestResults[entry.id]}
+    {@const serviceKinds = entry.service_kinds?.length === 1 && entry.service_kinds[0] === 'llm' ? [] : (entry.service_kinds ?? [])}
+    <div class="group relative flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 transition-colors hover:border-primary/40">
+      <button
+        type="button"
+        class="flex min-w-0 flex-1 items-center gap-2 text-left cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        disabled={result?.status === 'testing'}
+        onclick={() => testProviderModel(providerId, entry.id)}
+        title={entry.id}
+      >
+        <span class="block min-w-0 text-[12px] font-mono leading-snug break-all text-foreground">{entry.id}</span>
+      </button>
+      {#if serviceKinds.length > 0}
+        <div class="flex flex-wrap gap-1">
+          {#each serviceKinds as kind (kind)}
+            <Badge variant="outline" class="text-[10px] px-1.5 py-0 rounded-full">{kind}</Badge>
+          {/each}
+        </div>
+      {/if}
+      <button
+        type="button"
 					class="inline-flex shrink-0 items-center justify-center size-6 rounded-sm border border-border text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary hover:bg-primary/10 cursor-pointer"
 					title="Copy model name"
 					aria-label="Copy model name"
