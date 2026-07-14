@@ -98,9 +98,19 @@ export interface Combo {
   updated_at: number;
 }
 
+export interface ComboStep {
+  id: string;
+  combo_id: string;
+  connection_id: string;
+  model_id: string;
+  priority: number;
+  weight: number;
+  created_at: number;
+}
+
 export interface ComboDetailResponse {
   combo: Combo;
-  steps: unknown[] | null;
+  steps: ComboStep[] | null;
 }
 
 export interface RequestLog {
@@ -556,6 +566,17 @@ export const combosApi = {
 
   delete: (id: string) =>
     fetchApi<void>(`/combos/${id}`, {
+      method: "DELETE",
+    }),
+
+  addStep: (comboId: string, step: Partial<ComboStep>) =>
+    fetchApi<{ id: string; priority: number }>(`/combos/${comboId}/steps`, {
+      method: "POST",
+      body: JSON.stringify(step),
+    }),
+
+  removeStep: (stepId: string) =>
+    fetchApi<void>(`/combos/steps/${stepId}`, {
       method: "DELETE",
     }),
 };
