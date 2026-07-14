@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-07-14
+
 ### Added
 - Native HTTPS on port 443 via Let's Encrypt (`golang.org/x/crypto/acme/autocert`) configured from the dashboard Settings → HTTPS tab.
 - Admin TLS API endpoints (`/api/admin/tls-config`, `/api/admin/tls-config/public-ip`, `/api/admin/tls-config/check-dns`) for HTTPS setup.
