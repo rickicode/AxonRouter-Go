@@ -66,7 +66,7 @@ TARGET="${BIN_NAME}${EXT}"
 # ---- resolve release --------------------------------------------------------
 if [[ -z "$VERSION" ]]; then
   info "Resolving latest release for ${GOOS}/${GOARCH}..."
-  VERSION="$(curl -fsSL "${API}/releases/latest" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
+  VERSION="$(set +o pipefail; curl -fsSL "${API}/releases/latest" | grep '"tag_name":' | head -n1 | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
   [[ -n "$VERSION" ]] || err "could not determine latest release tag"
 else
   info "Using pinned version ${VERSION}"
