@@ -36,12 +36,12 @@ func NewProviderHandler(database *sql.DB, registry *executor.Registry, store *co
 // List returns all providers with connection counts.
 func (h *ProviderHandler) List(c *gin.Context) {
 	rows, err := h.db.Query(`
-		SELECT pt.id, pt.display_name, pt.format, pt.base_url, pt.is_custom, pt.custom_headers, pt.created_at,
-		       COUNT(c.id) as connection_count
-		FROM provider_types pt
-		LEFT JOIN connections c ON c.provider_type_id = pt.id AND c.is_active = 1
-		GROUP BY pt.id
-		ORDER BY pt.display_name
+	SELECT pt.id, pt.display_name, pt.format, pt.base_url, pt.is_custom, pt.custom_headers, pt.category, pt.service_kinds, pt.created_at,
+	COUNT(c.id) as connection_count
+	FROM provider_types pt
+	LEFT JOIN connections c ON c.provider_type_id = pt.id AND c.is_active = 1
+	GROUP BY pt.id
+	ORDER BY pt.display_name
 	`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -52,8 +52,10 @@ func (h *ProviderHandler) List(c *gin.Context) {
 	var providers []db.ProviderWithCounts
 	for rows.Next() {
 		p := db.ProviderWithCounts{}
+		var serviceKindsRaw string
 		rows.Scan(&p.ID, &p.DisplayName, &p.Format, &p.BaseURL,
-			&p.IsCustom, &p.CustomHeaders, &p.CreatedAt, &p.ConnectionCount)
+			&p.IsCustom, &p.CustomHeaders, &p.Category, &serviceKindsRaw, &p.CreatedAt, &p.ConnectionCount)
+		p.ServiceKinds = parseServiceKinds(serviceKindsRaw)
 		providers = append(providers, p)
 	}
 	rows.Close()
@@ -73,11 +75,13 @@ func (h *ProviderHandler) List(c *gin.Context) {
 func (h *ProviderHandler) Get(c *gin.Context) {
 	id := c.Param("id")
 	p := db.ProviderWithCounts{}
+	var serviceKindsRaw string
 	err := h.db.QueryRow(`
-		SELECT id, display_name, format, base_url, is_custom, custom_headers, created_at
-		FROM provider_types WHERE id = ?
+	SELECT id, display_name, format, base_url, is_custom, custom_headers, category, service_kinds, created_at
+	FROM provider_types WHERE id = ?
 	`, id).Scan(&p.ID, &p.DisplayName, &p.Format, &p.BaseURL,
-		&p.IsCustom, &p.CustomHeaders, &p.CreatedAt)
+		&p.IsCustom, &p.CustomHeaders, &p.Category, &serviceKindsRaw, &p.CreatedAt)
+	p.ServiceKinds = parseServiceKinds(serviceKindsRaw)
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "provider not found"})
 		return
@@ -238,6 +242,19 @@ func (h *ProviderHandler) getStatusCounts(providerID string) map[string]int {
 		counts[status] = count
 	}
 	return counts
+}
+
+// parseServiceKinds parses the JSON service_kinds column and falls back to ["llm"]
+// when the value is empty, malformed, or an empty array.
+func parseServiceKinds(raw string) []string {
+	if raw == "" {
+		return []string{"llm"}
+	}
+	var kinds []string
+	if err := json.Unmarshal([]byte(raw), &kinds); err != nil || len(kinds) == 0 {
+		return []string{"llm"}
+	}
+	return kinds
 }
 
 // testAllBatchSize limits how many connections are tested in parallel at once.
