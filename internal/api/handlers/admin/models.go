@@ -1,11 +1,14 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -340,6 +343,46 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 	}
 
 	modelServiceKinds := models.GetModelServiceKinds(providerID, modelName)
+
+	// Cloudflare Workers AI only has OpenAI-compatible endpoints for chat and embeddings.
+	// Image models and some embedding models must use the native /ai/run/{model} endpoint.
+	if providerID == "cf" && (providerpkg.HasServiceKind(modelServiceKinds, providerpkg.ServiceKindImage) || providerpkg.HasServiceKind(modelServiceKinds, providerpkg.ServiceKindEmbedding)) {
+		accountID := providerSpecificData["accountId"]
+		if accountID == "" {
+			accountID = os.Getenv("CLOUDFLARE_ACCOUNT_ID")
+		}
+		if accountID == "" {
+			c.JSON(http.StatusOK, gin.H{"status": "error", "error": "Cloudflare Workers AI requires an Account ID", "latency_ms": time.Since(start).Milliseconds()})
+			return
+		}
+		var body []byte
+		var kind string
+		if providerpkg.HasServiceKind(modelServiceKinds, providerpkg.ServiceKindImage) {
+			body = []byte(`{"prompt":"A simple test image"}`)
+			kind = "image"
+		} else {
+			body = []byte(`{"text":["Hello World"]}`)
+			kind = "embedding"
+		}
+		resp, err := runCloudflareModelTest(accountID, apiKey, modelName, body)
+		latency := time.Since(start).Milliseconds()
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"status": "error", "error": err.Error(), "latency_ms": latency})
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			msg := fmt.Sprintf("CF %s test failed: HTTP %d", kind, resp.StatusCode)
+			if body, readErr := io.ReadAll(resp.Body); readErr == nil && len(body) > 0 {
+				msg = string(body)
+			}
+			c.JSON(http.StatusOK, gin.H{"status": "error", "error": msg, "latency_ms": latency})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "status_code": resp.StatusCode, "latency_ms": latency})
+		return
+	}
+
 	switch {
 	case providerpkg.HasServiceKind(modelServiceKinds, providerpkg.ServiceKindImage):
 		body := map[string]any{"model": modelName, "prompt": "A simple test image", "n": 1}
@@ -543,6 +586,21 @@ func defaultTestModel(providerID string) string {
 	default:
 		return ""
 	}
+}
+
+// runCloudflareModelTest calls the Cloudflare Workers AI /ai/run/{model} endpoint
+// directly. This is needed for modalities that do not have an OpenAI-compatible
+// endpoint (e.g. text-to-image) and for embeddings where the native run endpoint
+// expects a different payload shape than /v1/embeddings.
+func runCloudflareModelTest(accountID, apiKey, modelName string, body []byte) (*http.Response, error) {
+	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/accounts/%s/ai/run/@cf/%s", accountID, modelName)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	return http.DefaultClient.Do(req)
 }
 
 // fetchCloudflareModels queries the official Cloudflare Workers AI model search
