@@ -9,29 +9,48 @@ import { toast } from 'svelte-sonner';
 
   let { open = $bindable(false), onCreated }: { open: boolean; onCreated?: (provider: Provider) => void } = $props();
 
-  let mode = $state<'openai' | 'anthropic'>('openai');
-  let name = $state('');
-  let baseUrl = $state('');
-  let apiKey = $state('');
-  let submitting = $state(false);
-  let error = $state('');
-  let step = $state<'form' | 'done'>('form');
-  let createdProvider = $state<Provider | null>(null);
+let mode = $state<'openai' | 'anthropic'>('openai');
+let name = $state('');
+let baseUrl = $state('');
+let apiKey = $state('');
+let selectedServiceKinds = $state<string[]>(['llm']);
+let submitting = $state(false);
+let error = $state('');
+let step = $state<'form' | 'done'>('form');
+let createdProvider = $state<Provider | null>(null);
 
-  const MODE_DEFAULTS = {
-    openai: { format: 'openai', placeholder: 'https://api.example.com/v1', label: 'OpenAI-compatible' },
-    anthropic: { format: 'anthropic', placeholder: 'https://api.example.com/v1', label: 'Anthropic-compatible' },
-  };
+const MODE_DEFAULTS = {
+	openai: { format: 'openai', placeholder: 'https://api.example.com/v1', label: 'OpenAI-compatible' },
+	anthropic: { format: 'anthropic', placeholder: 'https://api.example.com/v1', label: 'Anthropic-compatible' },
+};
 
-  function reset() {
-    name = '';
-    baseUrl = '';
-    apiKey = '';
-    error = '';
-    step = 'form';
-    createdProvider = null;
-    submitting = false;
-  }
+const SERVICE_KIND_OPTIONS: { id: string; label: string }[] = [
+	{ id: 'llm', label: 'LLM' },
+	{ id: 'embedding', label: 'Embeddings' },
+	{ id: 'image', label: 'Images' },
+];
+
+function reset() {
+	name = '';
+	baseUrl = '';
+	apiKey = '';
+	selectedServiceKinds = ['llm'];
+	error = '';
+	step = 'form';
+	createdProvider = null;
+	submitting = false;
+}
+
+function toggleServiceKind(id: string) {
+	if (selectedServiceKinds.includes(id)) {
+		// Keep at least one kind selected so the backend default does not silently differ.
+		if (selectedServiceKinds.length > 1) {
+			selectedServiceKinds = selectedServiceKinds.filter((k) => k !== id);
+		}
+	} else {
+		selectedServiceKinds = [...selectedServiceKinds, id];
+	}
+}
 
   function handleOpenChange(isOpen: boolean) {
     if (!isOpen) reset();
@@ -65,13 +84,15 @@ import { toast } from 'svelte-sonner';
     submitting = true;
     try {
       const format = MODE_DEFAULTS[mode].format;
-      const result = await providersApi.create({
-        name: id,
-        format,
-        base_url: baseUrl.trim(),
-        display_name: name.trim(),
-        is_custom: true,
-      });
+		const result = await providersApi.create({
+			name: id,
+			format,
+			base_url: baseUrl.trim(),
+			display_name: name.trim(),
+			is_custom: true,
+			category: 'compatible',
+			service_kinds: selectedServiceKinds,
+		});
 		createdProvider = result;
 		step = 'done';
 		toast.success(`Provider "${name}" created`);
@@ -105,7 +126,7 @@ import { toast } from 'svelte-sonner';
                 {mode === m
                   ? 'border-foreground bg-foreground text-background'
                   : 'border-border bg-background text-muted-foreground hover:border-foreground/30 hover:text-foreground'}"
-              onclick={() => { mode = m; error = ''; }}
+              onclick={() => { mode = m; error = ''; if (m === 'anthropic') selectedServiceKinds = ['llm']; }}
             >
               {MODE_DEFAULTS[m].label}
             </button>
@@ -142,18 +163,40 @@ import { toast } from 'svelte-sonner';
           </p>
         </div>
 
-        <!-- API Key (optional) -->
-        <div class="flex flex-col gap-1.5">
-          <Label class="text-sm font-medium">API key <span class="text-muted-foreground font-normal">(optional, can add later)</span></Label>
-          <Input
-            bind:value={apiKey}
-            type="password"
-            placeholder="sk-..."
-            class="h-9 text-sm font-mono"
-          />
-        </div>
+	<!-- API Key (optional) -->
+	<div class="flex flex-col gap-1.5">
+		<Label class="text-sm font-medium">API key <span class="text-muted-foreground font-normal">(optional, can add later)</span></Label>
+		<Input
+			bind:value={apiKey}
+			type="password"
+			placeholder="sk-..."
+			class="h-9 text-sm font-mono"
+		/>
+	</div>
 
-        {#if error}
+	<!-- Service kinds -->
+	{#if mode === 'openai'}
+		<div class="flex flex-col gap-1.5">
+			<Label class="text-sm font-medium">Service kinds</Label>
+			<div class="flex flex-wrap gap-2">
+				{#each SERVICE_KIND_OPTIONS as opt}
+					<button
+						type="button"
+						onclick={() => toggleServiceKind(opt.id)}
+						class="rounded-full border px-2.5 py-1 text-xs font-medium transition-colors
+						{selectedServiceKinds.includes(opt.id)
+							? 'border-foreground bg-foreground text-background'
+							: 'border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground'}"
+					>
+						{opt.label}
+					</button>
+				{/each}
+			</div>
+			<p class="text-[11px] text-muted-foreground">Select which modalities this endpoint supports.</p>
+		</div>
+	{/if}
+
+	{#if error}
           <p class="rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive">{error}</p>
         {/if}
       </div>

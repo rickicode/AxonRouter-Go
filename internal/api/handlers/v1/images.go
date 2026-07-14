@@ -47,14 +47,14 @@ func (h *Handler) Images(c *gin.Context) {
 		kinds = providerpkg.DefaultServiceKinds()
 	}
 	hasImage := providerpkg.HasServiceKind(kinds, providerpkg.ServiceKindImage)
+	if !hasImage {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "provider does not support image generation", "type": "invalid_request_error"}})
+		return
+	}
 
 	var imagesExec executor.Executor
 	if exec, format, err := h.resolveExecutor(provider, modelName); err == nil {
 		if imgGen, ok := exec.(executor.ImageGenerator); ok && format == executor.FormatOpenAI {
-			if !hasImage {
-				c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "provider does not support image generation", "type": "invalid_request_error"}})
-				return
-			}
 			imagesExec = &imageGeneratorAdapter{ImageGenerator: imgGen}
 		}
 	}

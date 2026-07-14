@@ -102,11 +102,13 @@ func (h *ProviderHandler) Get(c *gin.Context) {
 // Create adds a custom provider.
 func (h *ProviderHandler) Create(c *gin.Context) {
 	var req struct {
-		Name          string            `json:"name" binding:"required"`
-		DisplayName   string            `json:"display_name"`
-		Format        string            `json:"format" binding:"required"`
-		BaseURL       string            `json:"base_url" binding:"required"`
+		Name string `json:"name" binding:"required"`
+		DisplayName string `json:"display_name"`
+		Format string `json:"format" binding:"required"`
+		BaseURL string `json:"base_url" binding:"required"`
 		CustomHeaders map[string]string `json:"custom_headers"`
+		Category string `json:"category"`
+		ServiceKinds []string `json:"service_kinds"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -136,10 +138,20 @@ func (h *ProviderHandler) Create(c *gin.Context) {
 	if displayName == "" {
 		displayName = req.Name
 	}
+	category := req.Category
+	if category == "" {
+		category = "compatible"
+	}
+	serviceKinds := req.ServiceKinds
+	if len(serviceKinds) == 0 {
+		serviceKinds = []string{"llm"}
+	}
+	serviceKindsJSON, _ := json.Marshal(serviceKinds)
+
 	_, err := h.db.Exec(`
-		INSERT INTO provider_types (id, display_name, format, base_url, is_custom, custom_headers, created_at)
-		VALUES (?, ?, ?, ?, 1, ?, ?)
-	`, req.Name, displayName, req.Format, req.BaseURL, headersJSON, now)
+		INSERT INTO provider_types (id, display_name, format, base_url, is_custom, custom_headers, category, service_kinds, created_at)
+		VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
+	`, req.Name, displayName, req.Format, req.BaseURL, headersJSON, category, string(serviceKindsJSON), now)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -148,11 +160,13 @@ func (h *ProviderHandler) Create(c *gin.Context) {
 	executor.RegisterCustomProviders(h.db)
 
 	c.JSON(http.StatusCreated, gin.H{
-		"id":           req.Name,
+		"id": req.Name,
 		"display_name": displayName,
-		"format":       req.Format,
-		"base_url":     req.BaseURL,
-		"is_custom":    true,
+		"format": req.Format,
+		"base_url": req.BaseURL,
+		"is_custom": true,
+		"category": category,
+		"service_kinds": serviceKinds,
 	})
 }
 
@@ -160,9 +174,11 @@ func (h *ProviderHandler) Create(c *gin.Context) {
 func (h *ProviderHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		DisplayName   string            `json:"display_name"`
-		BaseURL       string            `json:"base_url"`
+		DisplayName string `json:"display_name"`
+		BaseURL string `json:"base_url"`
 		CustomHeaders map[string]string `json:"custom_headers"`
+		Category string `json:"category"`
+		ServiceKinds []string `json:"service_kinds"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -178,6 +194,15 @@ func (h *ProviderHandler) Update(c *gin.Context) {
 	if req.BaseURL != "" {
 		updates = append(updates, "base_url = ?")
 		args = append(args, req.BaseURL)
+	}
+	if req.Category != "" {
+		updates = append(updates, "category = ?")
+		args = append(args, req.Category)
+	}
+	if len(req.ServiceKinds) > 0 {
+		serviceKindsJSON, _ := json.Marshal(req.ServiceKinds)
+		updates = append(updates, "service_kinds = ?")
+		args = append(args, string(serviceKindsJSON))
 	}
 	if len(updates) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "nothing to update"})

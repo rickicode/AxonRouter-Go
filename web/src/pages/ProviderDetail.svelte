@@ -487,7 +487,15 @@ function handlePerPageChange(p: number) {
 
 <AddConnectionModal bind:open={showAddModal} {providerId} {meta} onCreated={() => { loadConnections(providerId, currentPage, perPage); loadProvider(providerId); loadProviderModels(providerId); }} />
 <ProviderRoutingModal bind:open={showRoutingModal} {providerId} currentMode={routingMode} onSaved={(mode) => (routingMode = mode)} />
-<ProviderEditModal bind:open={showEditModal} {providerId} currentBaseUrl={$selectedProvider?.base_url ?? ''} currentDisplayName={$selectedProvider?.display_name ?? ''} onSaved={() => loadProvider(providerId)} />
+<ProviderEditModal
+	bind:open={showEditModal}
+	{providerId}
+	currentBaseUrl={$selectedProvider?.base_url ?? ''}
+	currentDisplayName={$selectedProvider?.display_name ?? ''}
+	currentServiceKinds={$selectedProvider?.service_kinds ?? []}
+	currentFormat={$selectedProvider?.format ?? 'openai'}
+	onSaved={() => loadProvider(providerId)}
+/>
 
 <AlertDialog.Root bind:open={deleteDialogOpen}>
  <AlertDialog.Content>

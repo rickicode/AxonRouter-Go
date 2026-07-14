@@ -2,6 +2,7 @@ package modalities
 
 import (
 	"encoding/json"
+	"log"
 	"sync"
 )
 
@@ -21,6 +22,7 @@ func loadRegistry() {
 
 	files, err := registryFiles.ReadDir(".")
 	if err != nil {
+		log.Printf("WARN: failed to read modality registry files: %v", err)
 		return
 	}
 
@@ -31,11 +33,13 @@ func loadRegistry() {
 
 		data, err := registryFiles.ReadFile(f.Name())
 		if err != nil {
+			log.Printf("WARN: failed to read modality registry file %s: %v", f.Name(), err)
 			continue
 		}
 
 		var list []registryEntry
 		if err := json.Unmarshal(data, &list); err != nil {
+			log.Printf("WARN: failed to parse modality registry file %s: %v", f.Name(), err)
 			continue
 		}
 

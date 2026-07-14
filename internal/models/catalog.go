@@ -278,14 +278,29 @@ func tryFetch(ctx context.Context) {
 		}
 		stripAtPrefix(c)
 		mergeModalities(c)
-		mu.Lock()
-		// Merge: remote catalog updates existing keys and adds new ones,
-		// but preserves local-only providers (mimocode, opencode, etc.)
-		// that may not exist in the remote catalog yet.
-		for k, v := range c {
-			current[k] = v
+	mu.Lock()
+	// Merge: remote catalog updates existing keys and adds new ones,
+	// but preserves local-only providers (mimocode, opencode, etc.)
+	// that may not exist in the remote catalog yet.
+	for k, v := range c {
+		// Preserve explicit service kinds from the existing catalog when the
+		// remote entry does not include them. Without this, periodic fetches
+		// would strip modality tags from static/registry models.
+		old := current[k]
+		for i := range v {
+			if len(v[i].ServiceKinds) != 0 {
+				continue
+			}
+			for _, e := range old {
+				if e.ID == v[i].ID && len(e.ServiceKinds) > 0 {
+					v[i].ServiceKinds = e.ServiceKinds
+					break
+				}
+			}
 		}
-		mu.Unlock()
+		current[k] = v
+	}
+	mu.Unlock()
 		log.Printf("model catalog updated from %s (%d providers, %d total)", url, len(c), len(current))
 		return
 	}
