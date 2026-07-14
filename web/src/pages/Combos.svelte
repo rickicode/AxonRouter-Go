@@ -1,58 +1,24 @@
 <script lang="ts">
 import { onMount } from 'svelte';
 import { loadCombos, combos, isLoading, error, combosPagination } from '$lib/stores';
-  import { combosApi } from '$lib/api';
-  import { unwrapStr } from '$lib/utils';
-  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
-  import { Button } from '$lib/components/ui/button';
-  import { Badge } from '$lib/components/ui/badge';
-  import { Input } from '$lib/components/ui/input';
-  import { Label } from '$lib/components/ui/label';
-  import { Switch } from '$lib/components/ui/switch';
-  import * as Dialog from '$lib/components/ui/dialog';
+import { combosApi } from '$lib/api';
+import { unwrapStr } from '$lib/utils';
+import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
+import { Button } from '$lib/components/ui/button';
+import { Badge } from '$lib/components/ui/badge';
+import { Switch } from '$lib/components/ui/switch';
 import StatusBadge from '$lib/components/StatusBadge.svelte';
-  import { toast } from 'svelte-sonner';
+import ComboModal from '$lib/components/ComboModal.svelte';
+import { toast } from 'svelte-sonner';
 
-  let showCreate = $state(false);
-  let createLoading = $state(false);
-  let newName = $state('');
-  let newStrategy = $state('priority');
-  let newTimeout = $state(30000);
-  let newStickyLimit = $state(0);
-  let newIsSmart = $state(false);
-  let newSmartGoal = $state('balanced');
+let showCreate = $state(false);
 
-  onMount(() => {
-    document.title = 'Combos — AxonRouter';
-    loadCombos();
-  });
+onMount(() => {
+	document.title = 'Combos — AxonRouter';
+	loadCombos();
+});
 
-  async function handleCreate() {
-    if (!newName.trim()) return;
-    createLoading = true;
-    try {
-      await combosApi.create({
-        name: newName.trim(),
-        strategy: newStrategy,
-        timeout_ms: newTimeout,
-        sticky_limit: newStickyLimit,
-        is_smart: newIsSmart,
-        smart_goal: newIsSmart ? newSmartGoal : null,
-        is_active: true,
-      });
-      toast.success('Combo created');
-      showCreate = false;
-      newName = '';
-      newIsSmart = false;
-      await loadCombos();
-    } catch (err) {
-      toast.error('Create failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-    } finally {
-      createLoading = false;
-    }
-  }
-
-  async function toggleCombo(combo: any) {
+async function toggleCombo(combo: any) {
     try {
       await combosApi.update(combo.id, { is_active: !combo.is_active });
       toast.success(combo.is_active ? 'Combo disabled' : 'Combo enabled');
@@ -71,19 +37,6 @@ import StatusBadge from '$lib/components/StatusBadge.svelte';
       toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
     }
   }
-
-const strategyOptions = ['priority', 'round-robin', 'weighted'];
-function strategyLabel(opt: string) {
-  if (opt === 'priority') return 'Priority';
-  if (opt === 'round-robin') return 'Round Robin';
-  return 'Weighted';
-}
-const smartGoalOptions = [
-  { value: 'auto', label: 'Auto', desc: 'Dynamic selection based on telemetry' },
-  { value: 'economy', label: 'Economy', desc: 'Lowest cost routing' },
-  { value: 'balanced', label: 'Balanced', desc: 'Cost, latency, quality balance' },
-  { value: 'premium', label: 'Premium', desc: 'Highest quality regardless of cost' },
-];
 
 const enabledCount = $derived($combos.filter(c => c.is_active).length);
 const smartCount = $derived($combos.filter(c => c.is_smart).length);
@@ -231,78 +184,4 @@ function goToPage(page: number) {
 {/if}
 </div>
 
-<!-- Create Dialog -->
-<Dialog.Root bind:open={showCreate}>
-  <Dialog.Content class="sm:max-w-lg">
-    <Dialog.Header>
-      <Dialog.Title class="text-body-md-strong">Create combo</Dialog.Title>
-    </Dialog.Header>
-    <div class="space-y-4">
-      <div class="space-y-2">
-        <Label class="text-body-sm-strong">Name</Label>
-        <Input bind:value={newName} placeholder="e.g. fallback, premium-rr" class="h-10 text-body-sm" />
-      </div>
-      <div class="space-y-2">
-        <Label class="text-body-sm-strong">Strategy</Label>
-        <div class="flex gap-2">
-          {#each strategyOptions as opt}
-            <button
-              class="cursor-pointer px-4 py-2 rounded-sm text-body-sm border transition-colors {newStrategy === opt ? 'bg-foreground text-background border-foreground' : 'border-border text-muted-foreground hover:text-foreground'}"
-              onclick={() => newStrategy = opt}
-> 
-{strategyLabel(opt)}
-</button>
-          {/each}
-        </div>
-        <p class="text-caption text-muted-foreground">
-          {newStrategy === 'priority'
-            ? 'Try steps in order. First success wins.'
-            : newStrategy === 'round-robin'
-              ? 'Distribute requests across steps.'
-              : 'Weighted-random order by step weight.'}
-        </p>
-      </div>
-      <div class="grid grid-cols-2 gap-4">
-        <div class="space-y-2">
-          <Label class="text-body-sm-strong">Timeout</Label>
-          <div class="flex items-center gap-1">
-            <Input type="number" bind:value={newTimeout} class="h-10 text-code font-mono" />
-            <span class="text-caption-mono text-muted-foreground whitespace-nowrap">ms</span>
-          </div>
-        </div>
-        <div class="space-y-2">
-          <Label class="text-body-sm-strong">Sticky limit</Label>
-          <Input type="number" bind:value={newStickyLimit} min={0} class="h-10 text-code font-mono" />
-        </div>
-      </div>
-
-<div class="flex items-center gap-3 pt-2 border-t border-border">
-		<Switch id="new-is-smart" checked={newIsSmart} onCheckedChange={(v) => (newIsSmart = v)} />
-		<Label for="new-is-smart" class="text-body-sm-strong cursor-pointer">Smart combo</Label>
-	</div>
-
-      {#if newIsSmart}
-        <div class="space-y-2">
-          <Label class="text-body-sm-strong">Goal</Label>
-          <div class="grid grid-cols-2 gap-2">
-            {#each smartGoalOptions as opt}
-              <button
-                class="cursor-pointer flex flex-col items-start gap-0.5 p-2.5 rounded-md border text-left transition-colors {newSmartGoal === opt.value ? 'border-foreground bg-accent' : 'border-border hover:border-foreground/50'}"
-                onclick={() => newSmartGoal = opt.value}
-              >
-                <span class="text-body-sm-strong">{opt.label}</span>
-                <span class="text-caption text-muted-foreground">{opt.desc}</span>
-              </button>
-            {/each}
-          </div>
-        </div>
-      {/if}
-    </div>
-    <Dialog.Footer>
-      <Button variant="ghost" onclick={() => showCreate = false}>Cancel</Button>
-      <Button onclick={handleCreate} disabled={createLoading || !newName.trim()}>
-        {createLoading ? 'Creating...' : 'Create'}
-      </Button>
-    </Dialog.Footer>
-  </Dialog.Content>
-</Dialog.Root>
+<ComboModal bind:open={showCreate} combo={null} onSave={() => loadCombos()} />

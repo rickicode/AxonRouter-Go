@@ -541,6 +541,17 @@ export const usageApi = {
 };
 
 // Combo API
+export interface ComboStepInput {
+  connection_id?: string;
+  model_id: string;
+  priority?: number;
+  weight?: number;
+}
+
+export interface CreateComboPayload extends Partial<Combo> {
+  steps?: ComboStepInput[];
+}
+
 export const combosApi = {
   list: (params?: { page?: number; per_page?: number }) => {
     const searchParams = new URLSearchParams();
@@ -552,7 +563,7 @@ export const combosApi = {
 
   get: (id: string) => fetchApi<ComboDetailResponse>(`/combos/${id}`),
 
-  create: (data: Partial<Combo>) =>
+  create: (data: CreateComboPayload) =>
     fetchApi<Combo>("/combos", {
       method: "POST",
       body: JSON.stringify(data),
