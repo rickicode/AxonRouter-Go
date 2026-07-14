@@ -103,19 +103,37 @@ The server starts on port **3777**. Dashboard: http://localhost:3777
 
 ### Install via `installer.sh` (Recommended)
 
-```bash
-# One-liner
-curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/main/installer.sh | bash
+One line. No clone, no build, no manual download:
 
-# Or clone and run locally
-./installer.sh                           # latest release, auto OS/arch detection
-./installer.sh --version v1.2.3        # pin a specific tag
-./installer.sh --to /usr/local/bin     # change install directory
+```bash
+curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/main/installer.sh | bash
 ```
 
-Supported targets: `windows/amd64`, `linux/amd64`, `darwin/amd64`, `darwin/arm64`.
+The installer auto-detects your OS and architecture, picks the matching release asset, and installs `axonrouter` into the first writable directory it finds on this list:
 
-> Requires `curl`. On Windows, run from Git Bash / WSL.
+1. `~/.local/bin`
+2. `/usr/local/bin`
+
+#### Common options
+
+| Command | What it does |
+|---|---|
+| `./installer.sh` | Latest release, auto-detected OS/arch. |
+| `./installer.sh --version v0.3.3` | Pin a specific release tag. |
+| `./installer.sh --to /usr/local/bin` | Install to a custom directory. |
+| `curl -fsSL ... | sudo bash -s -- --service` | Install binary + create a systemd service (Linux only). |
+
+#### Supported targets
+
+Release binaries are built for:
+
+- `linux/amd64`
+- `linux/arm64`
+- `darwin/amd64`
+- `darwin/arm64`
+- `windows/amd64`
+
+> **Requirements:** `curl` must be installed. On Windows, run the installer from Git Bash or WSL.
 
 ---
 
