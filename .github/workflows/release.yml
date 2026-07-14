@@ -176,9 +176,9 @@ jobs:
       - name: 🚀 Publish GitHub Release v${{ steps.version.outputs.version }}
         uses: softprops/action-gh-release@v3.0.1
         with:
-          name: Release v${{ steps.version.outputs.version }}
-          files:
-            - build/axonrouter-*
-            - build/checksums.txt
-          body_path: RELEASE_NOTES.md
-          append_body: false
+  name: Release v${{ steps.version.outputs.version }}
+  files:
+    - build/axonrouter-*
+    - build/checksums.txt
+  body_path: RELEASE_NOTES.md
+  append_body: false
