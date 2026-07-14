@@ -1,0 +1,15 @@
+{
+  "sessions": [
+    {
+      "sessionId": "ses_09f9de068fferVYSpRNvRVdk1z",
+      "startedAt": "2026-07-14T11:27:51.223Z",
+      "lastActiveAt": "2026-07-14T11:28:08.208Z",
+      "agent": "scout-researcher",
+      "sessionKind": "subagent",
+      "baseAgent": "scout-researcher",
+      "directivePrompt": "Investigate the `/v1/*` proxy handler system in `/workspaces/AxonRouter-GO`.\n\nFocus areas:\n- Read `internal/api/handlers/v1/handler.go`, `chat.go`, `messages.go`, `responses.go`, `embeddings.go`, `images.go`, `tts.go`, `stt.go`, `video.go`, `unified.go`, `models.go`, `stream.go`, `count_tokens.go`.\n- Trace a single request from `internal/api/router.go` route wiring through handler to upstream executor.\n- Look for bugs: nil pointer dereferences, missing body drains, wrong response status codes, missing error propagation, bad failover behavior, incorrect model routing, mishandled streaming, auth bypasses, concurrency issues.\n- Return: file paths + line numbers + concrete suspected bugs with explanation and evidence code snippets.",
+      "replayDirectivePending": false,
+      "featureName": "v1-proxy-investigation"
+    }
+  ]
+}

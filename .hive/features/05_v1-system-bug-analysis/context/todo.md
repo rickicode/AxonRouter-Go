@@ -1,0 +1,4 @@
+- [x] Inspect responses.go and chat.go error-handling divergence
+- [x] Write failing test for upstream client-error passthrough in responses_test.go
+- [x] Add writeUpstreamClientError call in responses.go
+- [x] Run tests to verify fix

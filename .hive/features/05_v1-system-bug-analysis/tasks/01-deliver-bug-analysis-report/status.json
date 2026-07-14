@@ -1,0 +1,9 @@
+{
+  "status": "done",
+  "origin": "plan",
+  "planTitle": "Deliver bug analysis report",
+  "dependsOn": [],
+  "summary": "Bug analysis report already delivered to user in previous turn.",
+  "schemaVersion": 1,
+  "completedAt": "2026-07-14T11:42:45.208Z"
+}

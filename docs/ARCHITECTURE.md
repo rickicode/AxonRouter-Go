@@ -152,8 +152,8 @@ Optimization pipelines.
 ### `internal/config/`
 Process-wide configuration singleton.
 
-- Reads `AXON_PORT`, `AXON_DATA_DIR`, and `AXON_ADMIN_KEY`.
-- Default data directory is `~/.axonrouter` unless overridden.
+- Reads `AXON_PORT` and `AXON_ADMIN_KEY`.
+- Default data directory is `~/axonrouter`.
 
 ### `internal/active/`, `internal/errorcode/`, `internal/logging/`, `internal/provider/`, `internal/background/`
 - `active` — in-flight request registry for the dashboard live panel.

@@ -130,9 +130,8 @@ After=network.target
 [Service]
 Type=simple
 User=${svc_user}
-WorkingDirectory=${data_dir}
-Environment="AXON_DATA_DIR=${data_dir}"
-ExecStart=${INSTALLED}
+  WorkingDirectory=${data_dir}
+  ExecStart=${INSTALLED}
 Restart=always
 RestartSec=5
 

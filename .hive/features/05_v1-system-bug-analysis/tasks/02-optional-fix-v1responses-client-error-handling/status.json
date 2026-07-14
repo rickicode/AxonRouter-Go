@@ -1,0 +1,14 @@
+{
+  "status": "done",
+  "origin": "plan",
+  "planTitle": "(Optional) Fix `/v1/responses` client-error handling",
+  "dependsOn": [
+    "01-deliver-bug-analysis-report"
+  ],
+  "baseCommit": "3134880867d871f15dd976a63bf65c768d7a34c2",
+  "schemaVersion": 1,
+  "startedAt": "2026-07-14T11:46:25.979Z",
+  "idempotencyKey": "hive-v1-system-bug-analysis-02-optional-fix-v1responses-client-error-handling-1",
+  "summary": "Merged fix for /v1/responses client-error passthrough with regression test.",
+  "completedAt": "2026-07-14T11:52:09.720Z"
+}

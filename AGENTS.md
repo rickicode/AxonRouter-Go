@@ -271,7 +271,7 @@ This builds the binary and starts a **dev server** on the alternate port (`3788`
 
 ### How it works
 - `AXON_PORT` is set to `DEV_PORT` (default `3788`) instead of `3777`.
-- `AXON_DATA_DIR` is set to `/tmp/axon-dev`, so the dev instance uses its own SQLite database and PID file.
+- `HOME` is set to `/tmp/axon-dev`, so the dev instance uses its own SQLite database and PID file under `/tmp/axon-dev/axonrouter`.
 - The `kill-dev-port` target clears the dev port if a previous dev server is still running, but it never touches port 3777.
 
 ## Versioning & Changelog

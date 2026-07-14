@@ -1,0 +1,14 @@
+{
+  "status": "done",
+  "origin": "plan",
+  "planTitle": "(Optional) Add `checkTokenBudget` to non-chat endpoints",
+  "dependsOn": [
+    "01-deliver-bug-analysis-report"
+  ],
+  "baseCommit": "3134880867d871f15dd976a63bf65c768d7a34c2",
+  "schemaVersion": 1,
+  "startedAt": "2026-07-14T11:46:26.041Z",
+  "idempotencyKey": "hive-v1-system-bug-analysis-03-optional-add-checktokenbudget-to-non-chat-endpoints-1",
+  "summary": "Merged checkTokenBudget enforcement to responses, embeddings, images, tts, stt, video, unified with tests.",
+  "completedAt": "2026-07-14T11:55:29.688Z"
+}

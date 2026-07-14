@@ -81,8 +81,8 @@ run-dev: build-dev kill-dev-port
 	@mkdir -p /tmp/axon-dev
 	@echo "Starting dev server on port $(DEV_PORT)..."
 	@echo "Dev binary: $(BUILD_DIR)/$(DEV_BINARY_NAME)"
-	@echo "Data directory: /tmp/axon-dev (main gateway on port $(PORT) is untouched)."
-	AXON_DATA_DIR=/tmp/axon-dev AXON_PORT=$(DEV_PORT) $(BUILD_DIR)/$(DEV_BINARY_NAME)
+	@echo "Data directory: /tmp/axon-dev/axonrouter (main gateway on port $(PORT) is untouched)."
+	HOME=/tmp/axon-dev AXON_PORT=$(DEV_PORT) $(BUILD_DIR)/$(DEV_BINARY_NAME)
 
 # Development mode (frontend only)
 dev:

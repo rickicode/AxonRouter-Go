@@ -25,10 +25,8 @@ var (
 func Init(cfg Config) {
 	once.Do(func() {
 		if cfg.DataDir == "" {
-			if dataDir := os.Getenv("AXON_DATA_DIR"); dataDir != "" {
-				cfg.DataDir = dataDir
-			} else if home, err := os.UserHomeDir(); err == nil {
-				cfg.DataDir = filepath.Join(home, ".axonrouter")
+			if home, err := os.UserHomeDir(); err == nil {
+				cfg.DataDir = filepath.Join(home, "axonrouter")
 			}
 		}
 		global = cfg
@@ -38,11 +36,8 @@ func Init(cfg Config) {
 // Get returns the global config. Initializes with defaults if not explicitly set.
 func Get() Config {
 	once.Do(func() {
-		dataDir := os.Getenv("AXON_DATA_DIR")
-		if dataDir == "" {
-			home, _ := os.UserHomeDir()
-			dataDir = filepath.Join(home, ".axonrouter")
-		}
+		home, _ := os.UserHomeDir()
+		dataDir := filepath.Join(home, "axonrouter")
 		global = Config{
 			Port:    getEnv("AXON_PORT", "3777"),
 			DBPath:  filepath.Join(dataDir, "axonrouter.db"),
