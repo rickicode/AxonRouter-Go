@@ -198,6 +198,16 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		{"mimocode", "MiMoCode", "openai", "https://api.xiaomimimo.com/api/free-ai/openai", "no-auth", []string{"llm"}},
 		{"mimocode-free", "MiMoCode Free Tier", "openai", "https://api.xiaomimimo.com/api/free-ai/openai", "no-auth", []string{"llm"}},
 		{"cf", "Cloudflare Workers AI", "openai", "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/v1/chat/completions", "apikey", []string{"llm", "embedding", "image"}},
+		{"glm", "Zhipu GLM", "openai", "https://api.z.ai/api/paas/v4", "apikey", []string{"llm"}},
+		{"minimax", "MiniMax", "openai", "https://api.minimax.io/v1", "apikey", []string{"llm"}},
+		{"kimi", "Kimi", "openai", "https://api.moonshot.ai/v1", "apikey", []string{"llm"}},
+		{"mistral", "Mistral AI", "openai", "https://api.mistral.ai/v1", "apikey", []string{"llm"}},
+		{"cerebras", "Cerebras", "openai", "https://api.cerebras.ai/v1", "apikey", []string{"llm"}},
+		{"together", "Together AI", "openai", "https://api.together.ai/v1", "apikey", []string{"llm"}},
+		{"fireworks", "Fireworks", "openai", "https://api.fireworks.ai/inference/v1", "apikey", []string{"llm"}},
+		{"novita", "Novita AI", "openai", "https://api.novita.ai/openai", "apikey", []string{"llm"}},
+		{"lambda", "Lambda", "openai", "https://api.lambda.ai/v1", "apikey", []string{"llm"}},
+		{"pollinations", "Pollinations.AI", "openai", "https://gen.pollinations.ai", "apikey", []string{"llm"}},
 	}
 	for _, p := range providers {
 		serviceKindsJSON, _ := json.Marshal(p.ServiceKinds)

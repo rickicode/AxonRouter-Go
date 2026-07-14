@@ -11,6 +11,27 @@ import (
 	"time"
 )
 
+func TestGetModelIDs_NewOpenAICompatibleProviders(t *testing.T) {
+	want := map[string][]string{
+		"glm":     {"glm-4", "glm-5"},
+		"minimax": {"minimax-m2.1", "minimax-m2.5"},
+		"kimi":    {"kimi-k2"},
+		"mistral": {"mistral-large-latest", "codestral-latest"},
+	}
+	for key, ids := range want {
+		got := GetModelIDs(key)
+		if len(got) == 0 {
+			t.Errorf("GetModelIDs(%q) returned empty", key)
+			continue
+		}
+		for _, id := range ids {
+			if !slices.Contains(got, id) {
+				t.Errorf("GetModelIDs(%q) missing %q; got %v", key, id, got)
+			}
+		}
+	}
+}
+
 func TestGetModelIDs_CFIncludesEmbeddingAndImageModels(t *testing.T) {
 	ids := GetModelIDs("cf")
 	if len(ids) == 0 {

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Quota reset countdown and estimated savings tracker: backend computes next per-provider reset from quota cache, estimates savings from request logs × model pricing, exposes `/api/admin/quota/summary`, and dashboard Quota/Usage pages render global countdown and savings badges.
+- OpenAI-compatible providers: added `glm`, `minimax`, `kimi`, `mistral`, `cerebras`, `together`, `fireworks`, `novita`, `lambda`, and `pollinations` prefixes with seeded base URLs, registry routing, catalog keys, and static models for GLM/MiniMax/Kimi/Mistral.
 
 ### Changed
 - Replaced Linux-only systemd service installer with cross-platform service management via `github.com/kardianos/service`. `axonrouter --startup {install|install-root|status|start|stop|restart|uninstall}` now works on Linux, macOS, and Windows.

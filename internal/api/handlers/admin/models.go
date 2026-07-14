@@ -76,14 +76,14 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 				json.Unmarshal([]byte(cfPSD), &psd)
 			}
 			if accountID := psd["accountId"]; accountID != "" {
-			if cfModels, cfKinds, err := models.FetchCloudflareModels(cfAPIKey, accountID); err == nil && len(cfModels) > 0 {
-				// Merge discovered CF entries into the shared catalog so /v1/models reflects them.
-				models.MergeProviderModelIDs("cf", cfModels, cfKinds)
-				c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, cfModels, cfKinds)})
-				return
-			} else if err != nil {
-				logging.Logger.Debug("cloudflare model discovery failed", "provider", providerID, "err", err.Error())
-			}
+				if cfModels, cfKinds, err := models.FetchCloudflareModels(cfAPIKey, accountID); err == nil && len(cfModels) > 0 {
+					// Merge discovered CF entries into the shared catalog so /v1/models reflects them.
+					models.MergeProviderModelIDs("cf", cfModels, cfKinds)
+					c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, cfModels, cfKinds)})
+					return
+				} else if err != nil {
+					logging.Logger.Debug("cloudflare model discovery failed", "provider", providerID, "err", err.Error())
+				}
 			}
 		}
 	}
@@ -546,6 +546,16 @@ var providerCatalogKeys = map[string][]string{
 	"openrouter":    {"openrouter"},
 	"zai":           {"claude"},
 	"cf":            {"cf"},
+	"glm":           {"glm"},
+	"minimax":       {"minimax"},
+	"kimi":          {"kimi"},
+	"mistral":       {"mistral"},
+	"cerebras":      {"cerebras"},
+	"together":      {"together"},
+	"fireworks":     {"fireworks"},
+	"novita":        {"novita"},
+	"lambda":        {"lambda"},
+	"pollinations":  {"pollinations"},
 }
 
 // staticModels returns model IDs from the auto-updating catalog, stripped of leading "@".
@@ -589,6 +599,18 @@ func defaultTestModel(providerID string) string {
 		return "deepseek-v4-flash-free"
 	case "openrouter":
 		return "openai/gpt-4o"
+	case "cerebras":
+		return "gpt-oss-120b"
+	case "together":
+		return "MiniMaxAI/MiniMax-M3"
+	case "fireworks":
+		return "accounts/fireworks/models/llama-v3p1-8b-instruct"
+	case "novita":
+		return "meta-llama/llama-3.1-8b-instruct"
+	case "lambda":
+		return "llama3.1-8b-instruct"
+	case "pollinations":
+		return "openai"
 	default:
 		return ""
 	}
@@ -608,7 +630,6 @@ func runCloudflareModelTest(accountID, apiKey, modelName string, body []byte) (*
 	req.Header.Set("Content-Type", "application/json")
 	return http.DefaultClient.Do(req)
 }
-
 
 // SyncModels triggers an immediate sync of per-provider models from upstream endpoints.
 func (h *ModelHandler) SyncModels(c *gin.Context) {
