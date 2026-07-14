@@ -1,7 +1,9 @@
 package v1
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -32,7 +34,15 @@ func (h *Handler) Images(c *gin.Context) {
 		modelName = model
 	}
 
-	imagesExec := executor.NewImagesExecutor(executor.NewBaseExecutor())
+	var imagesExec executor.Executor
+	if exec, format, err := h.resolveExecutor(provider, modelName); err == nil {
+		if imgGen, ok := exec.(executor.ImageGenerator); ok && format == executor.FormatOpenAI {
+			imagesExec = &imageGeneratorAdapter{ImageGenerator: imgGen}
+		}
+	}
+	if imagesExec == nil {
+		imagesExec = executor.NewImagesExecutor(executor.NewBaseExecutor())
+	}
 
 	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
 	if err != nil {
@@ -87,4 +97,18 @@ func (h *Handler) Images(c *gin.Context) {
 	c.Header("Content-Type", "application/json")
 	c.Status(resp.StatusCode)
 	c.Writer.Write(resp.Body)
+}
+
+// imageGeneratorAdapter exposes an executor.ImageGenerator through the standard
+// executor.Executor interface so executeWithRetry can drive it.
+type imageGeneratorAdapter struct {
+	ImageGenerator executor.ImageGenerator
+}
+
+func (a *imageGeneratorAdapter) Execute(ctx context.Context, req *executor.Request) (*executor.Response, error) {
+	return a.ImageGenerator.Images(ctx, req)
+}
+
+func (a *imageGeneratorAdapter) ExecuteStream(ctx context.Context, req *executor.Request) (*executor.StreamResult, error) {
+	return nil, fmt.Errorf("image generation does not support streaming")
 }
