@@ -16,6 +16,12 @@ type OpenAIExecutor struct {
 	*BaseExecutor
 }
 
+// ImageGenerator is implemented by executors that can generate images
+// through an OpenAI-compatible /images/generations endpoint.
+type ImageGenerator interface {
+	Images(ctx context.Context, req *Request) (*Response, error)
+}
+
 // NewOpenAIExecutor creates a new OpenAI executor.
 func NewOpenAIExecutor(base *BaseExecutor) *OpenAIExecutor {
 	return &OpenAIExecutor{BaseExecutor: base}
@@ -386,6 +392,35 @@ func (e *OpenAIExecutor) Embeddings(ctx context.Context, req *Request) (*Respons
 		return nil, &UpstreamError{StatusCode: resp.StatusCode, Body: resp.Body, RawBody: resp.Body, Headers: resp.Headers}
 	}
 
+	return resp, nil
+}
+
+// Images performs an image generation request.
+func (e *OpenAIExecutor) Images(ctx context.Context, req *Request) (*Response, error) {
+	url, err := openAIEndpoint(req.BaseURL, "images/generations", req.ProviderSpecificData)
+	if err != nil {
+		return nil, err
+	}
+
+	body := req.Body
+	body = JSONSet(body, "stream", false)
+
+	headers := map[string]string{
+		"Content-Type": "application/json",
+	}
+	SetAuthHeader(headers, req.APIKey, req.AccessToken)
+	openRouterHeaders(headers, req.Provider)
+
+	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode >= 400 {
+		upErr := &UpstreamError{StatusCode: resp.StatusCode, Body: resp.Body, RawBody: resp.Body, Headers: resp.Headers}
+		upErr.TranslateErrorBody(req.Provider)
+		return nil, upErr
+	}
 	return resp, nil
 }
 

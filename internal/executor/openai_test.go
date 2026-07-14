@@ -1,7 +1,11 @@
 package executor
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 )
@@ -273,5 +277,34 @@ func TestSplitModel_StripsAtPrefix(t *testing.T) {
 		if name != tt.wantName {
 			t.Errorf("SplitModel(%q) name = %q, want %q", tt.model, name, tt.wantName)
 		}
+	}
+}
+
+func TestOpenAIExecutor_Images(t *testing.T) {
+	var calledPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, `{"created":1,"data":[]}`)
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	openai := NewOpenAIExecutor(base)
+	req := &Request{
+		Model:   "dall-e-3",
+		BaseURL: ts.URL + "/v1/chat/completions",
+		Body:    mustJSON(map[string]any{"model": "dall-e-3", "prompt": "a cat"}),
+	}
+	resp, err := openai.Images(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Images error: %v", err)
+	}
+	if calledPath != "/v1/images/generations" {
+		t.Fatalf("expected path /v1/images/generations, got %s", calledPath)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, resp.StatusCode)
 	}
 }
