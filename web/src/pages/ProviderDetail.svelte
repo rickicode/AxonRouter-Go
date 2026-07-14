@@ -252,27 +252,27 @@ function handlePerPageChange(p: number) {
   </span>
 {/snippet}
 
-{#snippet connectionActions(row: any)}
+{#snippet connectionActions(row: any, btnClass = 'size-7', btnVariant: 'ghost' | 'outline' = 'ghost', iconSize = 'size-4')}
   {@const isDefault = isDefaultDirect(row)}
   {@const isOAuth = row.auth_type === 'oauth'}
   {@const loading = actionLoading === row.id}
-  <Button variant="ghost" size="icon" class="size-7" href={`/providers/${providerId}/${row.id}`} title="Edit connection" aria-label="Edit connection" disabled={loading}>
-    <Icon name="pencil" class="size-4" />
+  <Button variant={btnVariant} size="icon" class={btnClass} href={`/providers/${providerId}/${row.id}`} title="Edit connection" aria-label="Edit connection" disabled={loading}>
+    <Icon name="pencil" class={iconSize} />
   </Button>
-  <Button variant="ghost" size="icon" class="size-7" onclick={() => handleTestConnection(row.id)} title="Test connection" aria-label="Test connection" disabled={loading}>
-    <Icon name={loading ? 'refreshCw' : 'play'} class={loading ? 'size-4 animate-spin' : 'size-4'} />
+  <Button variant={btnVariant} size="icon" class={btnClass} onclick={() => handleTestConnection(row.id)} title="Test connection" aria-label="Test connection" disabled={loading}>
+    <Icon name={loading ? 'refreshCw' : 'play'} class={loading ? `${iconSize} animate-spin` : iconSize} />
   </Button>
   {#if isOAuth}
-    <Button variant="ghost" size="icon" class="size-7 text-amber-400 hover:text-amber-300" onclick={() => handleRefreshToken(row.id)} title="Refresh token" aria-label="Refresh token" disabled={loading}>
-      <Icon name="refreshCw" class={loading ? 'size-4 animate-spin' : 'size-4'} />
+    <Button variant={btnVariant} size="icon" class={`${btnClass} text-amber-400 hover:text-amber-300`} onclick={() => handleRefreshToken(row.id)} title="Refresh token" aria-label="Refresh token" disabled={loading}>
+      <Icon name="refreshCw" class={loading ? `${iconSize} animate-spin` : iconSize} />
     </Button>
   {/if}
-  <Button variant="ghost" size="icon" class="size-7" onclick={() => handleResetConnection(row.id)} title="Reset connection" aria-label="Reset connection" disabled={loading}>
-    <Icon name={loading ? 'refreshCw' : 'rotateCcw'} class={loading ? 'size-4 animate-spin' : 'size-4'} />
+  <Button variant={btnVariant} size="icon" class={btnClass} onclick={() => handleResetConnection(row.id)} title="Reset connection" aria-label="Reset connection" disabled={loading}>
+    <Icon name={loading ? 'refreshCw' : 'rotateCcw'} class={loading ? `${iconSize} animate-spin` : iconSize} />
   </Button>
   {#if !isDefault}
-    <Button variant="ghost" size="icon" class="size-7 text-destructive hover:text-destructive" onclick={() => confirmDeleteConnection(row.id, row.name)} title="Delete connection" aria-label="Delete connection" disabled={loading}>
-      <Icon name="trash2" class="size-4" />
+    <Button variant="destructive" size="icon" class={btnClass} onclick={() => confirmDeleteConnection(row.id, row.name)} title="Delete connection" aria-label="Delete connection" disabled={loading}>
+      <Icon name="trash2" class={iconSize} />
     </Button>
   {/if}
 {/snippet}
@@ -387,7 +387,7 @@ function handlePerPageChange(p: number) {
  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Failures</th>
  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Cooldown</th>
  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Last success</th>
- <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-32 text-right"></th>
+ <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-40 text-right"></th>
  </tr>
  </thead>
 <tbody class="divide-y divide-border">
@@ -481,8 +481,8 @@ function handlePerPageChange(p: number) {
               </a>
               {@render connectionBadges(row)}
             </div>
-            <Button variant="ghost" size="icon" class="size-7 shrink-0" href={`/providers/${providerId}/${row.id}`} title="Open connection" aria-label="Open connection">
-              <Icon name="chevronRight" class="size-5" />
+            <Button variant="ghost" size="icon" class="size-9 shrink-0" href={`/providers/${providerId}/${row.id}`} title="Open connection" aria-label="Open connection">
+              <Icon name="chevronRight" class="size-6" />
             </Button>
           </div>
 
@@ -511,8 +511,8 @@ function handlePerPageChange(p: number) {
             </div>
           </div>
 
-          <div class="flex items-center gap-0.5 pt-2 border-t border-border">
-            {@render connectionActions(row)}
+          <div class="flex items-center gap-2 pt-3 border-t border-border">
+            {@render connectionActions(row, 'size-9', 'outline', 'size-5')}
           </div>
         </div>
         {/each}

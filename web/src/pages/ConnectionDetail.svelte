@@ -410,19 +410,18 @@ async function handleSaveAccountLabel() {
     <Card class="shadow-card">
       <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Actions</CardTitle></CardHeader>
       <CardContent>
-    <div class="flex flex-wrap items-center gap-2">
-      <Button onclick={handleTest} disabled={!!actionLoading} variant="outline" size="icon" title="Test connection" aria-label="Test connection">
-        <Icon name={actionLoading === 'test' ? 'refreshCw' : 'play'} class={actionLoading === 'test' ? 'size-4 animate-spin' : 'size-4'} />
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <Button onclick={handleTest} disabled={!!actionLoading} variant="outline" size="icon" class="size-9" title="Test connection" aria-label="Test connection">
+        <Icon name={actionLoading === 'test' ? 'refreshCw' : 'play'} class={actionLoading === 'test' ? 'size-5 animate-spin' : 'size-5'} />
       </Button>
-      <Button onclick={handleReset} disabled={!!actionLoading} variant="outline" size="icon" title="Reset status" aria-label="Reset status">
-        <Icon name={actionLoading === 'reset' ? 'refreshCw' : 'rotateCcw'} class={actionLoading === 'reset' ? 'size-4 animate-spin' : 'size-4'} />
+      <Button onclick={handleReset} disabled={!!actionLoading} variant="outline" size="icon" class="size-9" title="Reset status" aria-label="Reset status">
+        <Icon name={actionLoading === 'reset' ? 'refreshCw' : 'rotateCcw'} class={actionLoading === 'reset' ? 'size-5 animate-spin' : 'size-5'} />
       </Button>
-      <Button onclick={handleToggle} disabled={!!actionLoading} variant="outline" size="icon" title={$selectedConnection.is_active ? 'Disable connection' : 'Enable connection'} aria-label={$selectedConnection.is_active ? 'Disable connection' : 'Enable connection'}>
-        <Icon name={actionLoading === 'toggle' ? 'refreshCw' : ($selectedConnection.is_active ? 'powerOff' : 'power')} class={actionLoading === 'toggle' ? 'size-4 animate-spin' : 'size-4'} />
+      <Button onclick={handleToggle} disabled={!!actionLoading} variant="outline" size="icon" class="size-9" title={$selectedConnection.is_active ? 'Disable connection' : 'Enable connection'} aria-label={$selectedConnection.is_active ? 'Disable connection' : 'Enable connection'}>
+        <Icon name={actionLoading === 'toggle' ? 'refreshCw' : ($selectedConnection.is_active ? 'powerOff' : 'power')} class={actionLoading === 'toggle' ? 'size-5 animate-spin' : 'size-5'} />
       </Button>
-      <div class="flex-1 min-w-[0.5rem]"></div>
-      <Button onclick={handleDelete} disabled={!!actionLoading} variant="destructive" size="icon" title="Delete connection" aria-label="Delete connection">
-        <Icon name={actionLoading === 'delete' ? 'refreshCw' : 'trash2'} class={actionLoading === 'delete' ? 'size-4 animate-spin' : 'size-4'} />
+      <Button onclick={handleDelete} disabled={!!actionLoading} variant="destructive" size="icon" class="size-9" title="Delete connection" aria-label="Delete connection">
+        <Icon name={actionLoading === 'delete' ? 'refreshCw' : 'trash2'} class={actionLoading === 'delete' ? 'size-5 animate-spin' : 'size-5'} />
       </Button>
     </div>
       </CardContent>
