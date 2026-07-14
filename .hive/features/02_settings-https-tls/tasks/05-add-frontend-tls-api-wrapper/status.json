@@ -1,0 +1,14 @@
+{
+  "status": "done",
+  "origin": "plan",
+  "planTitle": "Add frontend TLS API wrapper",
+  "dependsOn": [
+    "03-add-admin-tls-config-api"
+  ],
+  "baseCommit": "8e3776389d64373f42ada4b6c35a761659c9473b",
+  "schemaVersion": 1,
+  "startedAt": "2026-07-14T09:25:55.459Z",
+  "idempotencyKey": "hive-02_settings-https-tls-05-add-frontend-tls-api-wrapper-1",
+  "summary": "Added tlsApi to web/src/lib/api.ts with get, save, publicIp, and checkDns methods backed by /api/admin/tls-config endpoints; introduced TLSConfig/TLSConfigPayload/TLSCheckDNSResult types matching the backend response shapes. Added unit tests in web/src/lib/__tests__/tls-api.test.ts covering all four methods. Tests pass (4/4). Vite build succeeds with no warnings. `npx tsc --noEmit` currently fails due to pre-existing TypeScript issues in the repo (proxy-pools-api.test.ts missing beforeEach import, usageApi URLSearchParams type, and Svelte component type declarations), not introduced by this change.",
+  "completedAt": "2026-07-14T09:30:52.434Z"
+}

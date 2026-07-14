@@ -1,0 +1,12 @@
+{
+  "status": "done",
+  "origin": "plan",
+  "planTitle": "Add public IP detection helper",
+  "dependsOn": [],
+  "baseCommit": "23f970469f7eaadf7ccb6be09386b4a69ef52c22",
+  "schemaVersion": 1,
+  "startedAt": "2026-07-14T08:57:35.828Z",
+  "idempotencyKey": "hive-02_settings-https-tls-02-add-public-ip-detection-helper-1",
+  "summary": "Created internal/network/publicip.go with PublicIP(client) helper honoring AXON_PUBLIC_IP, falling back from ipv4.icanhazip.com to ifconfig.me/ip with a 10s timeout and 64-byte read limit. Added tests covering env override, primary/fallback services, whitespace trim, max read size, and dual-failure cases. Verified with `go build ./internal/network` and `go test ./internal/network` (7/7 pass).",
+  "completedAt": "2026-07-14T09:00:28.223Z"
+}

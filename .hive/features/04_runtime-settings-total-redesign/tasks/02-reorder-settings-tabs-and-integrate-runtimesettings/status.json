@@ -1,0 +1,11 @@
+{
+  "status": "done",
+  "origin": "plan",
+  "planTitle": "Reorder Settings tabs and integrate RuntimeSettings",
+  "dependsOn": [
+    "01-create-runtimesettings-component"
+  ],
+  "summary": "Moved Runtime tab to first position, made it default, removed old runtime UI from Settings.svelte.",
+  "schemaVersion": 1,
+  "completedAt": "2026-07-14T11:12:59.989Z"
+}

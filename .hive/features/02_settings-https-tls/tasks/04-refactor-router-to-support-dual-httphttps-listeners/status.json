@@ -1,0 +1,14 @@
+{
+  "status": "done",
+  "origin": "plan",
+  "planTitle": "Refactor Router to support dual HTTP/HTTPS listeners",
+  "dependsOn": [
+    "01-add-https-config-model-and-yaml-loader"
+  ],
+  "baseCommit": "d140750cdccc917f921b9815ca6dd1b30ad9767b",
+  "schemaVersion": 1,
+  "startedAt": "2026-07-14T09:02:36.531Z",
+  "idempotencyKey": "hive-02_settings-https-tls-04-refactor-router-to-support-dual-httphttps-listeners-1",
+  "summary": "Added dual HTTP/HTTPS listener. HTTP uses net.Listen + http.Server with Gin engine; HTTPS path uses autocert.Manager with TLS-ALPN-01 on :443 when https.yml enabled/valid. Shutdown now stops both servers with timeout. Updated cmd/server/main.go to load https.yml and call router.Start. Verified go build ./... and go test ./internal/api -v pass.",
+  "completedAt": "2026-07-14T09:17:41.158Z"
+}

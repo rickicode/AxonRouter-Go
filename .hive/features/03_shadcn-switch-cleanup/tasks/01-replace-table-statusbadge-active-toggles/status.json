@@ -1,0 +1,9 @@
+{
+  "status": "done",
+  "origin": "plan",
+  "planTitle": "Replace table StatusBadge active toggles",
+  "dependsOn": [],
+  "summary": "Replaced clickable StatusBadge On/Off toggles with shadcn Switch in ProxyPools pools/groups tables and Combos table.",
+  "schemaVersion": 1,
+  "completedAt": "2026-07-14T11:09:53.426Z"
+}

@@ -1,0 +1,1 @@
+Task to redesign the Settings.svelte page with Tabs (Security, HTTPS, Runtime) and refactor ChangePasswordCard and runtime settings UX. Work in worktree `/workspaces/AxonRouter-GO/.hive/.worktrees/02_settings-https-tls/06-redesign-settingssvelte-with-tabs`. Next: read existing tab patterns, update Settings.svelte, update ChangePasswordCard, verify builds.

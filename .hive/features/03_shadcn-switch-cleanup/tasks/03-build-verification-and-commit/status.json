@@ -1,0 +1,11 @@
+{
+  "status": "done",
+  "origin": "plan",
+  "planTitle": "Build verification and commit",
+  "dependsOn": [
+    "02-replace-configbutton-enabledisable-toggles-with-switch"
+  ],
+  "summary": "go build ./... and web npm run build passed; committed changes.",
+  "schemaVersion": 1,
+  "completedAt": "2026-07-14T11:09:54.598Z"
+}

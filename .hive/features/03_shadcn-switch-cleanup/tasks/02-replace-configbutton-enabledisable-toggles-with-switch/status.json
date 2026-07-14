@@ -1,0 +1,11 @@
+{
+  "status": "done",
+  "origin": "plan",
+  "planTitle": "Replace config/button Enable/Disable toggles with Switch",
+  "dependsOn": [
+    "01-replace-table-statusbadge-active-toggles"
+  ],
+  "summary": "Replaced CLITools auto-discover checkbox and Enable/Disable buttons in APIKeys, ProxyPoolDetail, ComboDetail with shadcn Switch.",
+  "schemaVersion": 1,
+  "completedAt": "2026-07-14T11:10:03.388Z"
+}
