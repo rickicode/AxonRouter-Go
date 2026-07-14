@@ -49,6 +49,17 @@ func ensureLoaded() {
 	loadOnce.Do(loadRegistry)
 }
 
+// Providers returns the provider type IDs present in the registry.
+func Providers() []string {
+	ensureLoaded()
+
+	out := make([]string, 0, len(registry))
+	for k := range registry {
+		out = append(out, k)
+	}
+	return out
+}
+
 // ServiceKinds returns the service kinds registered for a provider type.
 func ServiceKinds(providerTypeID string) []string {
 	ensureLoaded()
