@@ -361,7 +361,7 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 			body = []byte(`{"prompt":"A simple test image"}`)
 			kind = "image"
 		} else {
-			body = []byte(`{"text":["Hello World"]}`)
+			body = []byte(`{"text":"Hello World"}`)
 			kind = "embedding"
 		}
 		resp, err := runCloudflareModelTest(accountID, apiKey, modelName, body)
