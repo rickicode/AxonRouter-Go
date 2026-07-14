@@ -71,6 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Request bodies larger than 10 MB are rejected with 413 before reaching downstream handlers; the original body is preserved for the normal path.
 - Exact response cache now only stores upstream responses with 2xx status codes; errors are no longer cached.
 - Non-chat handlers (`/v1/images/generations`, `/v1/video/generations`, `/v1/audio/*`, `/v1/embeddings`) now pass through the real upstream HTTP status and body instead of masking them as 502.
+- `/v1/responses` now mirrors `/v1/chat/completions` and passes through non-retryable upstream client errors (e.g., 400 context length) instead of failing over to a generic 503.
 - `/v1/embeddings` and `/v1/responses` routes are now mounted and reachable.
 - Small error-handling paths hardened: read-body errors return consistent 413 payloads, context cancellations return explicit 499/504, and malformed `provider_specific_data` no longer crashes handlers.
 - Removed dead `handleNonStreamResponse` code from `internal/api/handlers/v1/chat.go`.

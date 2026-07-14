@@ -118,11 +118,14 @@ func (h *Handler) Responses(c *gin.Context) {
 		if provider == "cx" {
 			h.codexPersistIfCodex(conn, resp, streamResult)
 		}
-		if err != nil {
-			if h.isClientCanceled(c, err) {
-				return
-			}
-			retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
+	if err != nil {
+		if h.isClientCanceled(c, err) {
+			return
+		}
+		if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
+			return
+		}
+		retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
 			lastErr = err
 			lastErrCategory = cat
 			if !retry {
