@@ -1,0 +1,27 @@
+[
+  {
+    "provider_type_id": "cf",
+    "service_kinds": ["llm", "embedding", "image"],
+    "models": {
+      "embedding": [
+        "@cf/baai/bge-base-en-v1.5",
+        "@cf/baai/bge-large-en-v1.5",
+        "@cf/baai/bge-m3",
+        "@cf/baai/bge-small-en-v1.5",
+        "@cf/google/embeddinggemma-300m",
+        "@cf/qwen/qwen3-embedding-0.6b"
+      ],
+      "image": [
+        "@cf/black-forest-labs/flux-1-schnell",
+        "@cf/black-forest-labs/flux-2-dev",
+        "@cf/black-forest-labs/flux-2-klein-4b",
+        "@cf/black-forest-labs/flux-2-klein-9b",
+        "@cf/bytedance/stable-diffusion-xl-lightning",
+        "@cf/lykon/dreamshaper-8-lcm",
+        "@cf/runwayml/stable-diffusion-v1-5-img2img",
+        "@cf/runwayml/stable-diffusion-v1-5-inpainting",
+        "@cf/stabilityai/stable-diffusion-xl-base-1.0"
+      ]
+    }
+  }
+]
