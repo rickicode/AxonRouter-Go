@@ -125,12 +125,24 @@
               <Label class="text-body-sm-strong">Sticky limit</Label>
               <Input type="number" bind:value={editStickyLimit} class="h-10 text-code font-mono" />
             </div>
-          </div>
-          <div class="flex items-center space-x-2">
-            <Switch id="edit-is-active" bind:checked={editIsActive} />
-            <Label for="edit-is-active" class="text-body-sm cursor-pointer">Active</Label>
-          </div>
-        </CardContent>
+</div>
+<div class="space-y-2">
+	<span class="text-body-sm-strong">Status</span>
+	<button
+		type="button"
+		class="flex w-full items-center justify-between gap-4 rounded-xl border border-border bg-card p-3 text-left transition-colors hover:bg-muted/50 cursor-pointer"
+		onclick={() => (editIsActive = !editIsActive)}
+	>
+		<div class="flex flex-col">
+			<span class="text-body-sm-strong">Active</span>
+			<span class="text-caption text-muted-foreground">Enable or disable this combo.</span>
+		</div>
+		<span onclick={(e) => e.stopPropagation()}>
+			<Switch checked={editIsActive} onCheckedChange={(v) => (editIsActive = v)} />
+		</span>
+	</button>
+</div>
+</CardContent>
       </Card>
       <div class="flex gap-3">
         <Button onclick={handleSave} disabled={!!actionLoading} class="text-button-md rounded-sm px-5">
