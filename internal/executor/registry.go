@@ -93,9 +93,22 @@ func SplitModel(model string) (prefix, name string) {
 	return "", model
 }
 
+// sharedBase is the BaseExecutor instance shared by all registered executors.
+// It owns the idle-connection pools that must be flushed when proxy state changes.
+var sharedBase *BaseExecutor
+
+// CloseIdleConnections flushes idle keep-alive connections across the shared
+// base executor (default + all cached proxy clients). Safe to call any time.
+func CloseIdleConnections() {
+	if sharedBase != nil {
+		sharedBase.CloseIdleConnections()
+	}
+}
+
 // RegisterDefaults registers all built-in executors.
 func RegisterDefaults() {
 	base := NewBaseExecutor()
+	sharedBase = base
 
 	// OpenAI-compatible providers
 	openaiExec := NewOpenAIExecutor(base)

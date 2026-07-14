@@ -81,7 +81,9 @@ type BaseExecutor struct {
 	FetchTimeout           time.Duration
 	StreamIdleTimeout      time.Duration
 	StreamReadinessTimeout time.Duration
-	proxyClients           sync.Map // proxyURL -> *http.Client
+	proxyClients           sync.Map // proxyURL -> *http.Client (non-streaming)
+	streamBase             *http.Client
+	streamClients          sync.Map // proxyURL -> *http.Client (streaming, no Timeout)
 }
 
 // NewBaseExecutor creates a base executor with default settings.
@@ -91,17 +93,38 @@ type BaseExecutor struct {
 //	STREAM_READINESS_TIMEOUT_MS=80000 (80s).
 func defaultHTTPTransport() *http.Transport {
 	return &http.Transport{
-		MaxIdleConns:        1000,
-		MaxIdleConnsPerHost: 100,
-		IdleConnTimeout:     90 * time.Second,
-		ForceAttemptHTTP2:   true,
+		MaxIdleConns:          1000,
+		MaxIdleConnsPerHost:   100,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ForceAttemptHTTP2:     true,
+		DialContext:           defaultDialContext(),
+	}
+}
+
+// defaultDialContext adds TCP keep-alive so dead proxy/upstream connections are
+// detected sooner, and wraps dial errors with context for clearer logs.
+func defaultDialContext() func(ctx context.Context, network, addr string) (net.Conn, error) {
+	d := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		conn, err := d.DialContext(ctx, network, addr)
+		if err != nil {
+			return nil, fmt.Errorf("dial %s %s failed: %w", network, addr, err)
+		}
+		return conn, nil
 	}
 }
 
 func NewBaseExecutor() *BaseExecutor {
-	return &BaseExecutor{
+	b := &BaseExecutor{
 		Client: &http.Client{
 			Timeout:   5 * time.Minute,
+			Transport: defaultHTTPTransport(),
+		},
+		// Streaming uses a client with no global Timeout; stream lifecycle is
+		// governed by fetch/idle/readiness context timeouts instead.
+		streamBase: &http.Client{
 			Transport: defaultHTTPTransport(),
 		},
 		Timeout: 5 * time.Minute,
@@ -109,6 +132,16 @@ func NewBaseExecutor() *BaseExecutor {
 		StreamIdleTimeout: time.Duration(getEnvInt("STREAM_IDLE_TIMEOUT_MS", 600000)) * time.Millisecond,
 		StreamReadinessTimeout: time.Duration(getEnvInt("STREAM_READINESS_TIMEOUT_MS", 80000)) * time.Millisecond,
 	}
+	// Periodically drop idle connections so stale proxy/upstream sockets are
+	// not reused after the peer silently closed them (common EOF source).
+	go func() {
+		t := time.NewTicker(60 * time.Second)
+		defer t.Stop()
+		for range t.C {
+			b.CloseIdleConnections()
+		}
+	}()
+	return b
 }
 
 func getEnvInt(key string, fallback int) int {
@@ -251,9 +284,58 @@ func (b *BaseExecutor) proxyClient(proxyURL string) (*http.Client, error) {
 	}
 	transport := defaultHTTPTransport()
 	transport.Proxy = http.ProxyURL(u)
+	// HTTP/2 over an HTTP CONNECT proxy is flaky across providers; keep it off
+	// for proxied traffic to avoid mid-stream EOFs.
+	transport.ForceAttemptHTTP2 = false
 	c := &http.Client{Timeout: b.Timeout, Transport: transport}
 	b.proxyClients.Store(proxyURL, c)
 	return c, nil
+}
+
+// streamClient returns an http.Client for streaming through the given proxy.
+// It has no global Timeout so long-lived SSE streams are not cut at 5 minutes;
+// stream timeouts are enforced via context instead.
+func (b *BaseExecutor) streamClient(proxyURL string) (*http.Client, error) {
+	if proxyURL == "" {
+		return b.streamBase, nil
+	}
+	if v, ok := b.streamClients.Load(proxyURL); ok {
+		return v.(*http.Client), nil
+	}
+	u, err := url.Parse(proxyURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid proxy URL: %w", err)
+	}
+	transport := defaultHTTPTransport()
+	transport.Proxy = http.ProxyURL(u)
+	transport.ForceAttemptHTTP2 = false
+	c := &http.Client{Transport: transport}
+	b.streamClients.Store(proxyURL, c)
+	return c, nil
+}
+
+// CloseIdleConnections drops idle keep-alive connections for the default and
+// all cached proxy clients. Call when proxy pool state changes so stale
+// connections to a removed/disabled proxy are not reused.
+func (b *BaseExecutor) CloseIdleConnections() {
+	if t, ok := b.Client.Transport.(*http.Transport); ok {
+		t.CloseIdleConnections()
+	}
+	if t, ok := b.streamBase.Transport.(*http.Transport); ok {
+		t.CloseIdleConnections()
+	}
+	b.proxyClients.Range(func(_, v any) bool {
+		if t, ok := v.(*http.Client).Transport.(*http.Transport); ok {
+			t.CloseIdleConnections()
+		}
+		return true
+	})
+	b.streamClients.Range(func(_, v any) bool {
+		if t, ok := v.(*http.Client).Transport.(*http.Transport); ok {
+			t.CloseIdleConnections()
+		}
+		return true
+	})
 }
 
 // noProxyMatch checks if a hostname matches any entry in a comma-separated no_proxy list.
@@ -281,6 +363,16 @@ func noProxyMatch(host, noProxy string) bool {
 // clientForContext picks the right http.Client and target URL for a request.
 // Returns error only when StrictProxy is true and proxy is unavailable.
 func (b *BaseExecutor) clientForContext(ctx context.Context, rawURL string, headers map[string]string) (*http.Client, string, error) {
+	return b.selectClient(ctx, rawURL, headers, false)
+}
+
+// clientForContextStream is like clientForContext but uses clients without a
+// global Timeout, suitable for long-lived streaming responses.
+func (b *BaseExecutor) clientForContextStream(ctx context.Context, rawURL string, headers map[string]string) (*http.Client, string, error) {
+	return b.selectClient(ctx, rawURL, headers, true)
+}
+
+func (b *BaseExecutor) selectClient(ctx context.Context, rawURL string, headers map[string]string, stream bool) (*http.Client, string, error) {
 	cfg, _ := ctx.Value(proxyContextKey{}).(ProxyConfig)
 	targetURL, extra := resolveTargetURL(rawURL, cfg)
 	for k, v := range extra {
@@ -289,32 +381,47 @@ func (b *BaseExecutor) clientForContext(ctx context.Context, rawURL string, head
 
 	// Relay: always use default client (URL already rewritten)
 	if cfg.RelayURL != "" {
-		return b.Client, targetURL, nil
+		return b.defaultClient(stream), targetURL, nil
 	}
 
 	// No proxy configured
 	if cfg.ProxyURL == "" {
-		return b.Client, targetURL, nil
+		return b.defaultClient(stream), targetURL, nil
 	}
 
 	// Check noProxy: skip proxy for matching hosts
 	if cfg.NoProxy != "" {
 		u, err := url.Parse(targetURL)
 		if err == nil && noProxyMatch(u.Hostname(), cfg.NoProxy) {
-			return b.Client, targetURL, nil
+			return b.defaultClient(stream), targetURL, nil
 		}
 	}
 
 	// Get proxy client
-	c, err := b.proxyClient(cfg.ProxyURL)
+	var (
+		c   *http.Client
+		err error
+	)
+	if stream {
+		c, err = b.streamClient(cfg.ProxyURL)
+	} else {
+		c, err = b.proxyClient(cfg.ProxyURL)
+	}
 	if err != nil {
 		if cfg.StrictProxy {
 			return nil, targetURL, fmt.Errorf("strict proxy unavailable: %w", err)
 		}
 		// Non-strict: fall back to direct
-		return b.Client, targetURL, nil
+		return b.defaultClient(stream), targetURL, nil
 	}
 	return c, targetURL, nil
+}
+
+func (b *BaseExecutor) defaultClient(stream bool) *http.Client {
+	if stream {
+		return b.streamBase
+	}
+	return b.Client
 }
 
 // DoRequest performs a non-streaming HTTP request.
@@ -323,7 +430,7 @@ func (b *BaseExecutor) DoRequest(ctx context.Context, method, rawURL string, hea
 		return nil, fmt.Errorf("blocked URL: %w", err)
 	}
 
-	client, targetURL, err := b.clientForContext(ctx, rawURL, headers)
+	client, targetURL, err := b.clientForContextStream(ctx, rawURL, headers)
 	if err != nil {
 		return nil, err
 	}

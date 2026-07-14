@@ -137,6 +137,9 @@ func New(cfg Config) *Router {
 	cleanup.Start(ctx)
 	// Proxy pool system
 	proxyResolver := proxypool.NewResolver(cfg.DB)
+	// Flush cached proxy idle connections whenever proxy pool/group/default
+	// state changes, so stale sockets to removed/disabled proxies aren't reused.
+	proxyResolver.SetOnInvalidate(executor.CloseIdleConnections)
 	rateLimitProber := background.NewRateLimitProber(cfg.DB, writeQueue, store, elig, exhaustionCache, executor.GetRegistry(), proxyResolver)
 	rateLimitProber.Start(ctx)
 	models.StartUpdater(ctx)

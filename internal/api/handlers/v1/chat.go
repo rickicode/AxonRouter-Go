@@ -107,15 +107,16 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		var proxyCfg executor.ProxyConfig
 		if h.resolver != nil {
 			resolved := h.resolver.Resolve(conn.ProviderSpecificData, conn.Provider)
-			proxyCfg = executor.ProxyConfig{
-				Enabled:     resolved.Enabled,
-				ProxyURL:    resolved.ProxyURL,
-				NoProxy:     resolved.NoProxy,
-				RelayURL:    resolved.RelayURL,
-				RelayAuth:   resolved.RelayAuth,
-				RelayType:   resolved.RelayType,
-				StrictProxy: resolved.StrictProxy,
-			}
+		proxyCfg = executor.ProxyConfig{
+			Enabled:     resolved.Enabled,
+			ProxyPoolID: resolved.ProxyPoolID,
+			ProxyURL:    resolved.ProxyURL,
+			NoProxy:     resolved.NoProxy,
+			RelayURL:    resolved.RelayURL,
+			RelayAuth:   resolved.RelayAuth,
+			RelayType:   resolved.RelayType,
+			StrictProxy: resolved.StrictProxy,
+		}
 		}
 
 		logArgs := []any{"model", model, "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name, "attempt", attempt + 1, "proxy", proxyCfg.ProxyLabel()}

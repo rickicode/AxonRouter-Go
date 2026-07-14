@@ -126,6 +126,10 @@ type Resolver struct {
 	defaults     *cachedDefaults
 	defaultsHit  bool
 	defaultsWhen time.Time
+
+	// onInvalidate, if set, is called whenever the cache is invalidated so
+	// other subsystems (e.g. executor idle-connection pools) can react.
+	onInvalidate func()
 }
 
 func NewResolver(db *sql.DB) *Resolver {
@@ -146,14 +150,24 @@ func (r *Resolver) SetCacheTTL(d time.Duration) {
 	r.cacheTTL = d
 }
 
+// SetOnInvalidate registers a callback invoked on every Invalidate call.
+func (r *Resolver) SetOnInvalidate(fn func()) {
+	r.cacheMu.Lock()
+	defer r.cacheMu.Unlock()
+	r.onInvalidate = fn
+}
+
 // Invalidate clears all cached pools/groups/defaults so the next lookup reads from DB.
 func (r *Resolver) Invalidate() {
 	r.cacheMu.Lock()
-	defer r.cacheMu.Unlock()
 	r.pools = map[string]cachedPool{}
 	r.groups = map[string]cachedGroup{}
 	r.defaults = nil
 	r.defaultsHit = false
+	r.cacheMu.Unlock()
+	if r.onInvalidate != nil {
+		r.onInvalidate()
+	}
 }
 
 func (r *Resolver) Resolve(providerSpecificData, providerID string) Config {
