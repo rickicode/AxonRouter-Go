@@ -142,12 +142,12 @@ func TestUpdateAvailable_Newer(t *testing.T) {
 	checker := NewChecker(nil)
 	defer checker.Stop()
 	checker.ttl = 5 * time.Minute
-	checker.cached = ReleaseInfo{Version: "0.3.2"}
+	checker.cached = ReleaseInfo{Version: "0.3.4"}
 	checker.cachedAt = time.Now()
 
 	available := checker.UpdateAvailable()
 	if !available {
-		t.Fatalf("expected update available when cached version 0.3.2 > current 0.3.1")
+		t.Fatalf("expected update available when cached version 0.3.4 > current 0.3.3")
 	}
 }
 
@@ -155,7 +155,7 @@ func TestUpdateAvailable_Current(t *testing.T) {
 	checker := NewChecker(nil)
 	defer checker.Stop()
 	checker.ttl = 5 * time.Minute
-	checker.cached = ReleaseInfo{Version: "0.3.1"}
+	checker.cached = ReleaseInfo{Version: "0.3.3"}
 	checker.cachedAt = time.Now()
 
 	available := checker.UpdateAvailable()
