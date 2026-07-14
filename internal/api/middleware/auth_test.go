@@ -1,15 +1,19 @@
 package middleware
 
 import (
+	"bytes"
 	"database/sql"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
+	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	_ "modernc.org/sqlite"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -151,4 +155,51 @@ func TestAuth_EmptyKeyTable_FailsClosed(t *testing.T) {
 			t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 		}
 	})
+}
+
+func TestAuthCache_Validate_StoresResult(t *testing.T) {
+	database := openTestDB(t)
+
+	key := "cached-key"
+	hash, _ := bcrypt.GenerateFromPassword([]byte(key), bcrypt.DefaultCost)
+	if _, err := database.Exec(
+		`INSERT INTO api_keys (id, name, key_hash, is_active, rate_limit_per_min, max_tokens, created_at) VALUES (?, ?, ?, 1, 10, 100, ?)`,
+		"cached-key-id", "test", string(hash), time.Now().Unix(),
+	); err != nil {
+		t.Fatalf("insert key: %v", err)
+	}
+
+	cache := NewAuthCache(30 * time.Second)
+	keyID, rateLimit, maxTokens, ok := cache.Validate(database, key)
+	if !ok {
+		t.Fatalf("Validate returned !ok")
+	}
+	if keyID != "cached-key-id" || rateLimit != 10 || maxTokens != 100 {
+		t.Fatalf("unexpected result: %s, %d, %d", keyID, rateLimit, maxTokens)
+	}
+
+	r := cache.Get(key)
+	if r == nil {
+		t.Fatalf("Validate did not store the result in the cache")
+	}
+	if r.keyID != keyID || r.rateLimit != rateLimit || r.maxTokens != maxTokens {
+		t.Errorf("cached result mismatch: got %s/%d/%d", r.keyID, r.rateLimit, r.maxTokens)
+	}
+}
+
+func TestValidateKey_LogsDBError(t *testing.T) {
+	database := openTestDB(t)
+	database.Close()
+
+	var buf bytes.Buffer
+	old := logging.Logger
+	logging.Logger = slog.New(slog.NewTextHandler(&buf, nil))
+	defer func() { logging.Logger = old }()
+
+	validateKey(database, "any-key")
+
+	log := buf.String()
+	if !strings.Contains(log, "error") && !strings.Contains(log, "ERR") {
+		t.Errorf("expected DB error to be logged, got: %s", log)
+	}
 }

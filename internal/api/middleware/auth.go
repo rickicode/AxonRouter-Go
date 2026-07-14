@@ -49,13 +49,9 @@ func Auth(db *sql.DB, cache *AuthCache) gin.HandlerFunc {
 		return
 	}
 
-
-		if cache != nil {
-			cache.Put(presented, keyID, rateLimit, maxTokens)
-		}
-		c.Set("api_key_id", keyID)
-		c.Set("rate_limit", rateLimit)
-		c.Set("max_tokens", maxTokens)
-		c.Next()
-	}
+	c.Set("api_key_id", keyID)
+	c.Set("rate_limit", rateLimit)
+	c.Set("max_tokens", maxTokens)
+	c.Next()
+}
 }
