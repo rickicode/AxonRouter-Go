@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -12,14 +13,16 @@ import (
 func RunMigrations(db *sql.DB) error {
 	_, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS provider_types (
-    id TEXT PRIMARY KEY,
-    display_name TEXT NOT NULL,
-    format TEXT NOT NULL,
-    base_url TEXT NOT NULL,
-    is_custom INTEGER DEFAULT 0,
-    custom_headers TEXT,
-    created_at INTEGER NOT NULL
-);
+		id TEXT PRIMARY KEY,
+		display_name TEXT NOT NULL,
+		format TEXT NOT NULL,
+		base_url TEXT NOT NULL,
+		is_custom INTEGER DEFAULT 0,
+		custom_headers TEXT,
+		category TEXT DEFAULT 'apikey',
+		service_kinds TEXT DEFAULT '["llm"]',
+		created_at INTEGER NOT NULL
+	);
 
 CREATE TABLE IF NOT EXISTS connections (
     id TEXT PRIMARY KEY,
@@ -144,6 +147,8 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		`ALTER TABLE api_keys ADD COLUMN max_tokens INTEGER DEFAULT 0`,
 		`ALTER TABLE request_logs ADD COLUMN tokens_estimated INTEGER NOT NULL DEFAULT 0`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id, timestamp DESC)`,
+		`ALTER TABLE provider_types ADD COLUMN category TEXT DEFAULT 'apikey'`,
+		`ALTER TABLE provider_types ADD COLUMN service_kinds TEXT DEFAULT '["llm"]'`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			// Ignore "duplicate column name" errors
@@ -174,27 +179,31 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 	// Fix provider_types defaults (idempotent upserts)
 	now := time.Now().Unix()
 	providers := []struct {
-		ID, DisplayName, Format, BaseURL string
+		ID, DisplayName, Format, BaseURL, Category string
+		ServiceKinds                               []string
 	}{
-		{"ag", "Antigravity", "antigravity", "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"},
-		{"cx", "OpenAI Codex", "openai-responses", "https://chatgpt.com/backend-api/codex/responses"},
-		{"kiro", "Kiro AI", "openai", "https://api.kiro.ai/v1"},
-		{"openai", "OpenAI Platform", "openai", "https://api.openai.com/v1"},
-		{"claude", "Anthropic Claude", "anthropic", "https://api.anthropic.com/v1"},
-		{"gemini", "Gemini", "gemini", "https://generativelanguage.googleapis.com/v1beta"},
-		{"deepseek", "DeepSeek", "openai", "https://api.deepseek.com/v1"},
-		{"groq", "Groq Cloud", "openai", "https://api.groq.com/openai/v1"},
-		{"openrouter", "OpenRouter", "openai", "https://openrouter.ai/api/v1"},
-		{"oc", "OpenCode Free", "openai", "https://opencode.ai/zen/v1"},
-		{"oc-zen", "OpenCode Zen", "openai", "https://opencode.ai/zen/v1"},
-		{"oc-go", "OpenCode Go", "openai", "https://opencode.ai/zen/go/v1"},
-		{"mimocode", "MiMoCode", "openai", "https://api.xiaomimimo.com/api/free-ai/openai"},
-		{"mimocode-free", "MiMoCode Free Tier", "openai", "https://api.xiaomimimo.com/api/free-ai/openai"},
-		{"cf", "Cloudflare Workers AI", "openai", "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/v1/chat/completions"},
+		{"ag", "Antigravity", "antigravity", "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse", "oauth", []string{"llm"}},
+		{"cx", "OpenAI Codex", "openai-responses", "https://chatgpt.com/backend-api/codex/responses", "oauth", []string{"llm"}},
+		{"kiro", "Kiro AI", "openai", "https://api.kiro.ai/v1", "oauth", []string{"llm"}},
+		{"openai", "OpenAI Platform", "openai", "https://api.openai.com/v1", "apikey", []string{"llm"}},
+		{"claude", "Anthropic Claude", "anthropic", "https://api.anthropic.com/v1", "apikey", []string{"llm"}},
+		{"gemini", "Gemini", "gemini", "https://generativelanguage.googleapis.com/v1beta", "apikey", []string{"llm"}},
+		{"deepseek", "DeepSeek", "openai", "https://api.deepseek.com/v1", "apikey", []string{"llm"}},
+		{"groq", "Groq Cloud", "openai", "https://api.groq.com/openai/v1", "apikey", []string{"llm"}},
+		{"openrouter", "OpenRouter", "openai", "https://openrouter.ai/api/v1", "apikey", []string{"llm"}},
+		{"oc", "OpenCode Free", "openai", "https://opencode.ai/zen/v1", "no-auth", []string{"llm"}},
+		{"oc-zen", "OpenCode Zen", "openai", "https://opencode.ai/zen/v1", "apikey", []string{"llm"}},
+		{"oc-go", "OpenCode Go", "openai", "https://opencode.ai/zen/go/v1", "apikey", []string{"llm"}},
+		{"mimocode", "MiMoCode", "openai", "https://api.xiaomimimo.com/api/free-ai/openai", "no-auth", []string{"llm"}},
+		{"mimocode-free", "MiMoCode Free Tier", "openai", "https://api.xiaomimimo.com/api/free-ai/openai", "no-auth", []string{"llm"}},
+		{"cf", "Cloudflare Workers AI", "openai", "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/v1/chat/completions", "apikey", []string{"llm", "embedding", "image"}},
 	}
 	for _, p := range providers {
-		db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, is_custom, created_at) VALUES (?, ?, ?, ?, 0, ?)`,
-			p.ID, p.DisplayName, p.Format, p.BaseURL, now)
+		serviceKindsJSON, _ := json.Marshal(p.ServiceKinds)
+		db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, is_custom, category, service_kinds, created_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?)`,
+			p.ID, p.DisplayName, p.Format, p.BaseURL, p.Category, string(serviceKindsJSON), now)
+		db.Exec(`UPDATE provider_types SET category = ?, service_kinds = ? WHERE id = ?`,
+			p.Category, string(serviceKindsJSON), p.ID)
 	}
 
 	// Normalize legacy `opencode` provider type to canonical `oc` alias, keeping
