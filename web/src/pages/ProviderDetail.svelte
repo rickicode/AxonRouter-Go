@@ -3,7 +3,7 @@
  import { loadProvider, selectedProvider, loadConnections, connections, connectionPagination, connectionFilter, loadProviderModels, providerModels, modelTestResults, testProviderModel, addProviderModel, deleteProviderModel, isLoading, error } from '$lib/stores';
  import { unwrapInt, getTokenExpiry, copyToClipboard } from '$lib/utils';
  import { connectionsApi, providersApi } from '$lib/api';
-import type { RoutingMode } from '$lib/api';
+import type { RoutingMode, ProviderModelEntry } from '$lib/api';
  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
  import { Button } from '$lib/components/ui/button';
  import { Badge } from '$lib/components/ui/badge';
@@ -52,16 +52,51 @@ let newModel = $state('');
    return kinds.length === 1 && kinds[0] === 'llm' ? [] : kinds;
  });
 
- const statusOptions = [
- { value: '', label: 'All statuses' },
- { value: 'ready', label: 'Ready' },
- { value: 'rate_limited', label: 'Rate Limited' },
- { value: 'quota_exhausted', label: 'Quota Exhausted' },
- { value: 'auth_failed', label: 'Auth Failed' },
- { value: 'disabled', label: 'Disabled' },
- ];
+const statusOptions = [
+	{ value: '', label: 'All statuses' },
+	{ value: 'ready', label: 'Ready' },
+	{ value: 'rate_limited', label: 'Rate Limited' },
+	{ value: 'quota_exhausted', label: 'Quota Exhausted' },
+	{ value: 'auth_failed', label: 'Auth Failed' },
+	{ value: 'disabled', label: 'Disabled' },
+];
 
- onMount(() => {
+const MODEL_KIND_ORDER: [string, string][] = [
+	['llm', 'Chat / Text'],
+	['image', 'Image'],
+	['embedding', 'Embedding'],
+	['tts', 'Text-to-Speech'],
+	['stt', 'Speech-to-Text'],
+	['imageToText', 'Image-to-Text'],
+	['other', 'Other'],
+];
+
+let groupedProviderModels = $derived.by(() => {
+	const groups = new Map<string, ProviderModelEntry[]>();
+	for (const [kind] of MODEL_KIND_ORDER) {
+		groups.set(kind, []);
+	}
+	for (const entry of $providerModels) {
+		const kinds = entry.service_kinds ?? [];
+		let placed = false;
+		for (const [kind] of MODEL_KIND_ORDER) {
+			if (kind === 'other') continue;
+			if (kinds.includes(kind)) {
+				groups.get(kind)!.push(entry);
+				placed = true;
+			}
+		}
+		if (!placed) {
+			groups.get('other')!.push(entry);
+		}
+	}
+	for (const list of groups.values()) {
+		list.sort((a, b) => a.id.localeCompare(b.id));
+	}
+	return groups;
+});
+
+onMount(() => {
  document.title = `${meta?.displayName ?? 'Provider'} — AxonRouter`;
  loadProvider(providerId);
  loadConnections(providerId, currentPage, perPage);
@@ -416,71 +451,83 @@ function handlePerPageChange(p: number) {
 
  </div>
 
- <!-- Models Section (below connections) -->
- <div class="space-y-4">
- <div class="flex items-center justify-between gap-3 flex-wrap">
- <div class="space-y-1">
- <h2 class="text-display-md">Available Models</h2>
- <p class="text-body-sm text-muted-foreground">Names include the provider alias (e.g. oc/...) and match /v1/models. Click a model to test it.</p>
- </div>
- <div class="flex items-center gap-2">
- <Input bind:value={newModel} placeholder="Add custom model (e.g. my-model)" class="text-body-sm rounded-sm" />
- <Button onclick={async () => { if (!newModel.trim()) return; await addProviderModel(providerId, newModel.trim()); newModel = ''; }} variant="outline" size="sm" class="text-body-sm rounded-sm cursor-pointer" disabled={!newModel.trim()}>Add model</Button>
- </div>
- </div>
- {#if $providerModels.length === 0}
- <p class="text-body-sm text-muted-foreground">No models registered for this provider yet.</p>
- {:else}
- <div class="grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));">
-{#each $providerModels as entry (entry.id)}
-    {@const result = $modelTestResults[entry.id]}
-    {@const serviceKinds = entry.service_kinds?.length === 1 && entry.service_kinds[0] === 'llm' ? [] : (entry.service_kinds ?? [])}
-    <div class="group relative flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 transition-colors hover:border-primary/40">
-      <button
-        type="button"
-        class="flex min-w-0 flex-1 items-center gap-2 text-left cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-        disabled={result?.status === 'testing'}
-        onclick={() => testProviderModel(providerId, entry.id)}
-        title={entry.id}
-      >
-        <span class="block min-w-0 text-[12px] font-mono leading-snug break-all text-foreground">{entry.id}</span>
-      </button>
-      {#if serviceKinds.length > 0}
-        <div class="flex flex-wrap gap-1">
-          {#each serviceKinds as kind (kind)}
-            <Badge variant="outline" class="text-[10px] px-1.5 py-0 rounded-full">{kind}</Badge>
-          {/each}
-        </div>
-      {/if}
-      <button
-        type="button"
-					class="inline-flex shrink-0 items-center justify-center size-6 rounded-sm border border-border text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary hover:bg-primary/10 cursor-pointer"
-					title="Copy model name"
-					aria-label="Copy model name"
-					onclick={(e) => { e.stopPropagation(); copyModelName(entry.id); }}
-				>
-					<CopyIcon class="size-3" />
-				</button>
-				{#if result}
- <span class="size-1.5 shrink-0 rounded-full {result.status === 'ok' ? 'bg-emerald-500' : result.status === 'testing' ? 'bg-yellow-500 animate-pulse' : 'bg-destructive'}"></span>
- {#if result.latency_ms}
- <span class="shrink-0 text-[10px] font-mono text-muted-foreground">{result.latency_ms}ms</span>
- {/if}
- {/if}
- {#if entry.custom}
- <button
- type="button"
- class="ml-1 size-5 inline-flex shrink-0 items-center justify-center rounded-sm border border-border text-muted-foreground transition-colors hover:border-destructive/50 hover:text-destructive hover:bg-destructive/10 cursor-pointer"
- title="Remove custom model"
- aria-label="Remove custom model"
- onclick={() => deleteProviderModel(providerId, entry.id)}
- >×</button>
- {/if}
- </div>
- {/each}
- </div>
- {/if}
- </div>
+	<!-- Models Section (below connections) -->
+	<div class="space-y-5">
+		<div class="flex items-center justify-between gap-3 flex-wrap">
+			<div class="space-y-1">
+				<h2 class="text-display-md">Available Models</h2>
+				<p class="text-body-sm text-muted-foreground">Names include the provider alias (e.g. oc/...) and match /v1/models. Click a model to test it.</p>
+			</div>
+			<div class="flex items-center gap-2">
+				<Input bind:value={newModel} placeholder="Add custom model (e.g. my-model)" class="text-body-sm rounded-sm" />
+				<Button onclick={async () => { if (!newModel.trim()) return; await addProviderModel(providerId, newModel.trim()); newModel = ''; }} variant="outline" size="sm" class="text-body-sm rounded-sm cursor-pointer" disabled={!newModel.trim()}>Add model</Button>
+			</div>
+		</div>
+		{#if $providerModels.length === 0}
+			<p class="text-body-sm text-muted-foreground">No models registered for this provider yet.</p>
+		{:else}
+			{@const grouped = groupedProviderModels}
+			{#each MODEL_KIND_ORDER as [kind, label] (kind)}
+				{@const entries = grouped.get(kind) ?? []}
+				{#if entries.length > 0}
+					<div class="space-y-2">
+						<h3 class="text-body-sm-strong text-foreground flex items-center gap-2">
+							{label}
+							<span class="text-caption-mono text-muted-foreground font-normal">{entries.length}</span>
+						</h3>
+						<div class="grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));">
+							{#each entries as entry (entry.id)}
+								{@const result = $modelTestResults[entry.id]}
+								{@const serviceKinds = entry.service_kinds?.length === 1 && entry.service_kinds[0] === 'llm' ? [] : (entry.service_kinds ?? [])}
+								<div class="group relative flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 transition-colors hover:border-primary/40">
+									<button
+										type="button"
+										class="flex min-w-0 flex-1 items-center gap-2 text-left cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+										disabled={result?.status === 'testing'}
+										onclick={() => testProviderModel(providerId, entry.id)}
+										title={entry.id}
+									>
+										<span class="block min-w-0 text-[12px] font-mono leading-snug break-all text-foreground">{entry.id}</span>
+									</button>
+									{#if serviceKinds.length > 0}
+										<div class="flex flex-wrap gap-1">
+											{#each serviceKinds as k (k)}
+												<Badge variant="outline" class="text-[10px] px-1.5 py-0 rounded-full">{k}</Badge>
+											{/each}
+										</div>
+									{/if}
+									<button
+										type="button"
+										class="inline-flex shrink-0 items-center justify-center size-6 rounded-sm border border-border text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary hover:bg-primary/10 cursor-pointer"
+										title="Copy model name"
+										aria-label="Copy model name"
+										onclick={(e) => { e.stopPropagation(); copyModelName(entry.id); }}
+									>
+										<CopyIcon class="size-3" />
+									</button>
+									{#if result}
+										<span class="size-1.5 shrink-0 rounded-full {result.status === 'ok' ? 'bg-emerald-500' : result.status === 'testing' ? 'bg-yellow-500 animate-pulse' : 'bg-destructive'}"></span>
+										{#if result.latency_ms}
+											<span class="shrink-0 text-[10px] font-mono text-muted-foreground">{result.latency_ms}ms</span>
+										{/if}
+									{/if}
+									{#if entry.custom}
+										<button
+											type="button"
+											class="ml-1 size-5 inline-flex shrink-0 items-center justify-center rounded-sm border border-border text-muted-foreground transition-colors hover:border-destructive/50 hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+											title="Remove custom model"
+											aria-label="Remove custom model"
+											onclick={() => deleteProviderModel(providerId, entry.id)}
+										>×</button>
+									{/if}
+								</div>
+							{/each}
+						</div>
+					</div>
+				{/if}
+			{/each}
+		{/if}
+	</div>
 
  {/if}
  </div>

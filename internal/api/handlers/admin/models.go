@@ -15,6 +15,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/models"
+	providerpkg "github.com/rickicode/AxonRouter-Go/internal/provider"
 )
 
 // ModelHandler handles model-related admin endpoints.
@@ -328,23 +329,73 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 	// real model name. Mirrors how /v1 routing resolves provider/model-id.
 	modelName = strings.TrimPrefix(modelName, providerID+"/")
 
-	bodyBytes := buildTestBody(format, modelName)
-
 	start := time.Now()
-	streamResult, err := exec.ExecuteStream(c.Request.Context(), &executor.Request{
-		APIKey:               apiKey,
-		AccessToken:          accessToken,
-		BaseURL:              baseURL,
-		Body:                 bodyBytes,
-		Provider:             providerID,
-		Model:                modelName,
+	testReq := &executor.Request{
+		APIKey: apiKey,
+		AccessToken: accessToken,
+		BaseURL: baseURL,
+		Provider: providerID,
+		Model: modelName,
 		ProviderSpecificData: providerSpecificData,
-	})
+	}
+
+	modelServiceKinds := models.GetModelServiceKinds(providerID, modelName)
+	switch {
+	case providerpkg.HasServiceKind(modelServiceKinds, providerpkg.ServiceKindImage):
+		body := map[string]any{"model": modelName, "prompt": "A simple test image", "n": 1}
+		bodyBytes, _ := json.Marshal(body)
+		testReq.Body = bodyBytes
+		imgGen, ok := exec.(executor.ImageGenerator)
+		if !ok {
+			c.JSON(http.StatusOK, gin.H{"status": "error", "error": "provider does not support image generation", "latency_ms": time.Since(start).Milliseconds()})
+			return
+		}
+		resp, err := imgGen.Images(c.Request.Context(), testReq)
+		latency := time.Since(start).Milliseconds()
+		if err != nil || resp == nil || resp.StatusCode >= 400 {
+			msg := "image test failed"
+			if err != nil {
+				msg = err.Error()
+			} else if resp != nil {
+				msg = fmt.Sprintf("HTTP %d", resp.StatusCode)
+			}
+			c.JSON(http.StatusOK, gin.H{"status": "error", "error": msg, "latency_ms": latency})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "status_code": resp.StatusCode, "latency_ms": latency})
+		return
+	case providerpkg.HasServiceKind(modelServiceKinds, providerpkg.ServiceKindEmbedding):
+		body := map[string]any{"model": modelName, "input": "Hi"}
+		bodyBytes, _ := json.Marshal(body)
+		testReq.Body = bodyBytes
+		embExec, ok := exec.(executor.EmbeddingsExecutor)
+		if !ok {
+			c.JSON(http.StatusOK, gin.H{"status": "error", "error": "provider does not support embeddings", "latency_ms": time.Since(start).Milliseconds()})
+			return
+		}
+		resp, err := embExec.Embeddings(c.Request.Context(), testReq)
+		latency := time.Since(start).Milliseconds()
+		if err != nil || resp == nil || resp.StatusCode >= 400 {
+			msg := "embedding test failed"
+			if err != nil {
+				msg = err.Error()
+			} else if resp != nil {
+				msg = fmt.Sprintf("HTTP %d", resp.StatusCode)
+			}
+			c.JSON(http.StatusOK, gin.H{"status": "error", "error": msg, "latency_ms": latency})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "status_code": resp.StatusCode, "latency_ms": latency})
+		return
+	}
+
+	testReq.Body = buildTestBody(format, modelName)
+	streamResult, err := exec.ExecuteStream(c.Request.Context(), testReq)
 	if err != nil {
 		latency := time.Since(start).Milliseconds()
 		c.JSON(http.StatusOK, gin.H{
-			"status":     "error",
-			"error":      err.Error(),
+			"status": "error",
+			"error": err.Error(),
 			"latency_ms": latency,
 		})
 		return
@@ -365,17 +416,17 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 
 	if firstErr != nil {
 		c.JSON(http.StatusOK, gin.H{
-			"status":     "error",
-			"error":      firstErr.Error(),
+			"status": "error",
+			"error": firstErr.Error(),
 			"latency_ms": latency,
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"status":      "ok",
+		"status": "ok",
 		"status_code": streamResult.StatusCode,
-		"latency_ms":  latency,
+		"latency_ms": latency,
 	})
 }
 
