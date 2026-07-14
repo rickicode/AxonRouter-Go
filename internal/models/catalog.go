@@ -85,11 +85,11 @@ func DiscoverCloudflareModelsCached(apiKey, accountID string) {
 	if time.Since(cfDiscoveryCache.last) < cfDiscoveryTTL {
 		return
 	}
-	cfDiscoveryCache.last = time.Now()
 	ids, kinds, err := FetchCloudflareModels(apiKey, accountID)
 	if err != nil || len(ids) == 0 {
 		return
 	}
+	cfDiscoveryCache.last = time.Now()
 	MergeProviderModelIDs("cf", ids, kinds)
 }
 

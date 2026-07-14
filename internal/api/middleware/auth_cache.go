@@ -92,22 +92,21 @@ func (c *AuthCache) InvalidateAll() {
 }
 
 // validateKey loads active keys from the DB, compares the presented key with
-// bcrypt, and returns the matched key's id and rate limit. On success the
-// result is cached by the caller.
-func validateKey(db *sql.DB, presentedKey string) (string, int, int64, bool) {
+// bcrypt, and returns the matched key's id and rate limit. The returned error
+// signals a DB failure; callers should treat it as an auth-system outage and
+// fail-closed without falling back to another query.
+func validateKey(db *sql.DB, presentedKey string) (string, int, int64, bool, error) {
 	var count int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM api_keys WHERE is_active = 1`).Scan(&count); err != nil {
-		logging.Logger.Warn("auth cache db query error", "error", err)
-		return "", 0, 0, false
+		return "", 0, 0, false, err
 	}
 	if count == 0 {
-		return "", 0, 0, false
+		return "", 0, 0, false, nil
 	}
 
 	rows, err := db.Query(`SELECT id, key_hash, rate_limit_per_min, COALESCE(max_tokens, 0) FROM api_keys WHERE is_active = 1`)
 	if err != nil {
-		logging.Logger.Warn("auth cache db query error", "error", err)
-		return "", 0, 0, false
+		return "", 0, 0, false, err
 	}
 	defer rows.Close()
 
@@ -117,6 +116,7 @@ func validateKey(db *sql.DB, presentedKey string) (string, int, int64, bool) {
 	for rows.Next() {
 		var id, hash string
 		if err := rows.Scan(&id, &hash, &rateLimit, &maxTokens); err != nil {
+			logging.Logger.Warn("auth cache scan error", "error", err)
 			continue
 		}
 		if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(presentedKey)); err == nil {
@@ -125,29 +125,32 @@ func validateKey(db *sql.DB, presentedKey string) (string, int, int64, bool) {
 		}
 	}
 	if keyID == "" {
-		return "", 0, 0, false
+		return "", 0, 0, false, nil
 	}
-	return keyID, rateLimit, maxTokens, true
+	return keyID, rateLimit, maxTokens, true, nil
 }
 
 // Validate collapses concurrent cache-miss validations for the same presented
 // key into a single DB+bcrypt call via singleflight. This prevents a
 // thundering herd at the 30s TTL boundary (cold start or key rotation) when
 // hundreds of concurrent requests all miss the cache simultaneously.
-func (c *AuthCache) Validate(db *sql.DB, presentedKey string) (string, int, int64, bool) {
+func (c *AuthCache) Validate(db *sql.DB, presentedKey string) (string, int, int64, bool, error) {
 	if c == nil {
 		return validateKey(db, presentedKey)
 	}
 	v, err, _ := c.group.Do(presentedKey, func() (interface{}, error) {
-		keyID, rateLimit, maxTokens, ok := validateKey(db, presentedKey)
+		keyID, rateLimit, maxTokens, ok, dbErr := validateKey(db, presentedKey)
+		if dbErr != nil {
+			return nil, dbErr
+		}
 		if ok {
 			c.Put(presentedKey, keyID, rateLimit, maxTokens)
 		}
 		return []interface{}{keyID, rateLimit, maxTokens, ok}, nil
 	})
 	if err != nil {
-		return "", 0, 0, false
+		return "", 0, 0, false, err
 	}
 	res := v.([]interface{})
-	return res[0].(string), res[1].(int), res[2].(int64), res[3].(bool)
+	return res[0].(string), res[1].(int), res[2].(int64), res[3].(bool), nil
 }

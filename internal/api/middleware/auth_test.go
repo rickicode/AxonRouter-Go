@@ -1,19 +1,15 @@
 package middleware
 
 import (
-	"bytes"
 	"database/sql"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
-	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	_ "modernc.org/sqlite"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -170,7 +166,10 @@ func TestAuthCache_Validate_StoresResult(t *testing.T) {
 	}
 
 	cache := NewAuthCache(30 * time.Second)
-	keyID, rateLimit, maxTokens, ok := cache.Validate(database, key)
+	keyID, rateLimit, maxTokens, ok, dbErr := cache.Validate(database, key)
+	if dbErr != nil {
+		t.Fatalf("Validate returned DB error: %v", dbErr)
+	}
 	if !ok {
 		t.Fatalf("Validate returned !ok")
 	}
@@ -187,19 +186,15 @@ func TestAuthCache_Validate_StoresResult(t *testing.T) {
 	}
 }
 
-func TestValidateKey_LogsDBError(t *testing.T) {
+func TestValidateKey_ReturnsDBError(t *testing.T) {
 	database := openTestDB(t)
 	database.Close()
 
-	var buf bytes.Buffer
-	old := logging.Logger
-	logging.Logger = slog.New(slog.NewTextHandler(&buf, nil))
-	defer func() { logging.Logger = old }()
-
-	validateKey(database, "any-key")
-
-	log := buf.String()
-	if !strings.Contains(log, "error") && !strings.Contains(log, "ERR") {
-		t.Errorf("expected DB error to be logged, got: %s", log)
+	_, _, _, ok, dbErr := validateKey(database, "any-key")
+	if dbErr == nil {
+		t.Fatalf("expected DB error from validateKey on closed DB")
+	}
+	if ok {
+		t.Fatalf("expected ok=false when DB errors")
 	}
 }

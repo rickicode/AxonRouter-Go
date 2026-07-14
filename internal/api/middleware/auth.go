@@ -30,9 +30,15 @@ func Auth(db *sql.DB, cache *AuthCache) gin.HandlerFunc {
 			}
 		}
 
-		// Cache miss (or no cache): validate with singleflight to collapse
-		// concurrent misses for the same key into one DB+bcrypt call.
-		keyID, rateLimit, maxTokens, ok := cache.Validate(db, presented)
+	// Cache miss (or no cache): validate with singleflight to collapse
+	// concurrent misses for the same key into one DB+bcrypt call.
+	keyID, rateLimit, maxTokens, ok, dbErr := cache.Validate(db, presented)
+	if dbErr != nil {
+		logging.Logger.Warn("auth system error querying api_keys", "error", dbErr)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "auth system error"})
+		c.Abort()
+		return
+	}
 	if !ok {
 		var count int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM api_keys WHERE is_active = 1`).Scan(&count); err != nil {
