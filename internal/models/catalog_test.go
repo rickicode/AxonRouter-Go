@@ -1,8 +1,14 @@
 package models
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestGetModelIDs_CFIncludesEmbeddingAndImageModels(t *testing.T) {
@@ -71,4 +77,76 @@ func TestServiceKindsForModelID_Unknown(t *testing.T) {
 	if kinds != nil {
 		t.Errorf("ServiceKindsForModelID(not-a-real-model) = %v, want nil", kinds)
 	}
+}
+
+func TestDiscoverCloudflareModelsCached_HitsUpstreamOnceWithinTTL(t *testing.T) {
+	var calls int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"result": []map[string]any{{
+				"name": "@cf/test/cached-model",
+				"task": map[string]any{"name": "Text Generation"},
+			}},
+		})
+	}))
+	defer ts.Close()
+
+	u, _ := url.Parse(ts.URL)
+	rt := &cfTestTransport{host: u.Host}
+	old := http.DefaultClient.Transport
+	http.DefaultClient.Transport = rt
+	defer func() { http.DefaultClient.Transport = old }()
+
+	resetCloudflareDiscoveryCache()
+
+	DiscoverCloudflareModelsCached("key", "account")
+	DiscoverCloudflareModelsCached("key", "account")
+
+	if calls != 1 {
+		t.Errorf("Cloudflare API called %d times, want 1", calls)
+	}
+}
+
+func TestDiscoverCloudflareModelsCached_ExpiresAfterTTL(t *testing.T) {
+	var calls int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"result": []map[string]any{{
+				"name": "@cf/test/cached-model",
+				"task": map[string]any{"name": "Text Generation"},
+			}},
+		})
+	}))
+	defer ts.Close()
+
+	u, _ := url.Parse(ts.URL)
+	rt := &cfTestTransport{host: u.Host}
+	old := http.DefaultClient.Transport
+	http.DefaultClient.Transport = rt
+	defer func() { http.DefaultClient.Transport = old }()
+
+	resetCloudflareDiscoveryCache()
+	cfDiscoveryCache.last = time.Now().Add(-cfDiscoveryTTL - time.Second)
+
+	DiscoverCloudflareModelsCached("key", "account")
+
+	if calls != 1 {
+		t.Errorf("Cloudflare API called %d times, want 1", calls)
+	}
+}
+
+type cfTestTransport struct {
+	host string
+}
+
+func (t *cfTestTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if strings.HasSuffix(req.URL.Host, ".cloudflare.com") {
+		req.URL.Scheme = "http"
+		req.URL.Host = t.host
+	}
+	return http.DefaultTransport.RoundTrip(req)
 }

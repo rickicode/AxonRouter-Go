@@ -19,9 +19,10 @@ import (
 var embeddedModelsJSON []byte
 
 const (
-	refreshInterval      = 3 * time.Hour
+	refreshInterval = 3 * time.Hour
 	providerSyncInterval = 24 * time.Hour
-	fetchTimeout         = 15 * time.Second
+	fetchTimeout = 15 * time.Second
+	cfDiscoveryTTL = 5 * time.Minute
 )
 
 var remoteURLs = []string{
@@ -55,12 +56,42 @@ type modelEntry struct {
 // catalog is the full models.json structure: provider → []modelEntry.
 type catalog map[string][]modelEntry
 
+type cfDiscoveryCacheState struct {
+	mu   sync.Mutex
+	last time.Time
+}
+
 var (
-	mu        sync.RWMutex
-	current   catalog
-	once      sync.Once
+	mu sync.RWMutex
+	current catalog
+	once sync.Once
 	startTime time.Time
+
+	cfDiscoveryCache cfDiscoveryCacheState
 )
+
+func resetCloudflareDiscoveryCache() {
+	cfDiscoveryCache.mu.Lock()
+	cfDiscoveryCache.last = time.Time{}
+	cfDiscoveryCache.mu.Unlock()
+}
+
+// DiscoverCloudflareModelsCached fetches Cloudflare Workers AI models and merges
+// them into the shared catalog, but only if the cached entry has expired. This
+// prevents every /v1/models request from hitting Cloudflare's API.
+func DiscoverCloudflareModelsCached(apiKey, accountID string) {
+	cfDiscoveryCache.mu.Lock()
+	defer cfDiscoveryCache.mu.Unlock()
+	if time.Since(cfDiscoveryCache.last) < cfDiscoveryTTL {
+		return
+	}
+	cfDiscoveryCache.last = time.Now()
+	ids, kinds, err := FetchCloudflareModels(apiKey, accountID)
+	if err != nil || len(ids) == 0 {
+		return
+	}
+	MergeProviderModelIDs("cf", ids, kinds)
+}
 
 func init() {
 	loadEmbedded()

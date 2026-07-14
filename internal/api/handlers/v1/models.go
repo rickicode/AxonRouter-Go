@@ -186,7 +186,9 @@ func (h *Handler) getProviderModels(prefix string) []gin.H {
 }
 
 // discoverCloudflareModels fetches the live Workers AI model list from a ready CF
-// connection and merges it (with service kinds) into the shared catalog.
+// connection and merges it (with service kinds) into the shared catalog. Results
+// are cached for cfDiscoveryTTL so /v1/models does not hit Cloudflare on every
+// request.
 func (h *Handler) discoverCloudflareModels() {
 	var apiKey, psdJSON string
 	err := h.db.QueryRow(`SELECT COALESCE(api_key,''), COALESCE(provider_specific_data,'') FROM connections WHERE provider_type_id = 'cf' AND status IN ('ready','degraded') AND is_active = 1 LIMIT 1`).Scan(&apiKey, &psdJSON)
@@ -201,11 +203,7 @@ func (h *Handler) discoverCloudflareModels() {
 	if accountID == "" {
 		return
 	}
-	cfModels, cfKinds, err := models.FetchCloudflareModels(apiKey, accountID)
-	if err != nil || len(cfModels) == 0 {
-		return
-	}
-	models.MergeProviderModelIDs("cf", cfModels, cfKinds)
+	models.DiscoverCloudflareModelsCached(apiKey, accountID)
 }
 
 // customModels returns user-added models stored for a provider prefix (custom providers).
