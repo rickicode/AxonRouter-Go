@@ -255,6 +255,66 @@ func TestPickStickyHonoursLimit(t *testing.T) {
 	}
 }
 
+func TestPickRandomPicksFromActivePools(t *testing.T) {
+	database := newTestDB(t)
+	insertPool(t, database, "rand1", "rand1", "http", "http://rand1.example:8080", "", "", true, "active")
+	insertPool(t, database, "rand2", "rand2", "http", "http://rand2.example:8080", "", "", true, "active")
+	insertPool(t, database, "rand3", "rand3", "http", "http://rand3.example:8080", "", "", true, "active")
+	insertGroup(t, database, "random-group", "random", 1, false, true, []string{"rand1", "rand2", "rand3"})
+
+	r := NewResolver(database)
+	seq := make([]string, 0, 90)
+	seen := map[string]int{}
+	for range 90 {
+		cfg := r.Resolve(`{"proxyGroupId":"random-group"}`, "")
+		seq = append(seq, cfg.ProxyURL)
+		seen[cfg.ProxyURL]++
+	}
+	if len(seen) != 3 {
+		t.Fatalf("expected all 3 random pools to be selected, got: %v", seen)
+	}
+	hasAdjacentRepeat := false
+	for i := 1; i < len(seq); i++ {
+		if seq[i] == seq[i-1] {
+			hasAdjacentRepeat = true
+			break
+		}
+	}
+	if !hasAdjacentRepeat {
+		t.Fatalf("expected random sequence to contain adjacent repeats, got: %v", seq)
+	}
+}
+
+func TestResolveGroupRandomSkipsErrorAndStrictFallback(t *testing.T) {
+	database := newTestDB(t)
+	insertPool(t, database, "rand-err", "rand-err", "http", "http://rand-err.example:8080", "", "", true, "error")
+	insertPool(t, database, "rand-ok", "rand-ok", "http", "http://rand-ok.example:8080", "", "", true, "active")
+	insertGroup(t, database, "random-error-group", "random", 1, false, true, []string{"rand-err", "rand-ok"})
+
+	r := NewResolver(database)
+	for range 20 {
+		cfg := r.Resolve(`{"proxyGroupId":"random-error-group"}`, "")
+		if cfg.ProxyURL != "http://rand-ok.example:8080" {
+			t.Fatalf("expected only healthy pool, got: %+v", cfg)
+		}
+	}
+
+	// All-error non-strict group should fall back to direct connection.
+	insertPool(t, database, "rand-err2", "rand-err2", "http", "http://rand-err2.example:8080", "", "", true, "error")
+	insertGroup(t, database, "random-all-error-group", "random", 1, false, true, []string{"rand-err2"})
+	cfg := r.Resolve(`{"proxyGroupId":"random-all-error-group"}`, "")
+	if cfg.Source != "connection-group" || cfg.ProxyURL != "" || cfg.Enabled {
+		t.Fatalf("expected direct fallback for all-error non-strict random group, got: %+v", cfg)
+	}
+
+	// All-error strict group should return no config.
+	insertGroup(t, database, "random-all-error-strict-group", "random", 1, true, true, []string{"rand-err2"})
+	cfg = r.Resolve(`{"proxyGroupId":"random-all-error-strict-group"}`, "")
+	if cfg.Source != "none" || cfg.Enabled {
+		t.Fatalf("expected no config for all-error strict random group, got: %+v", cfg)
+	}
+}
+
 func TestRelayTypeRewritten(t *testing.T) {
 	database := newTestDB(t)
 	insertPool(t, database, "relay1", "relay1", "vercel", "https://relay1.vercel.app", "", "rauth123", true, "active")

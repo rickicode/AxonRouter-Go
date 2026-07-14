@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	mrand "math/rand"
 	"net/url"
 	"strings"
 	"sync"
@@ -256,31 +257,35 @@ func (r *Resolver) activePools(ids []string) ([]string, bool) {
 func (r *Resolver) pick(groupID, mode string, limit int, ids []string) string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if mode != "sticky" {
+	switch mode {
+	case "sticky":
+		if limit < 1 {
+			limit = 1
+		}
+		st := r.sticky[groupID]
+		if st.PoolID != "" && st.Count < limit && containsID(ids, st.PoolID) {
+			st.Count++
+			r.sticky[groupID] = st
+			return st.PoolID
+		}
+		next := ids[0]
+		if st.PoolID != "" {
+			for i, id := range ids {
+				if id == st.PoolID {
+					next = ids[(i+1)%len(ids)]
+					break
+				}
+			}
+		}
+		r.sticky[groupID] = stickyState{PoolID: next, Count: 1}
+		return next
+	case "random":
+		return ids[mrand.Intn(len(ids))]
+	default:
 		i := r.rr[groupID] % uint64(len(ids))
 		r.rr[groupID]++
 		return ids[i]
 	}
-	if limit < 1 {
-		limit = 1
-	}
-	st := r.sticky[groupID]
-	if st.PoolID != "" && st.Count < limit && containsID(ids, st.PoolID) {
-		st.Count++
-		r.sticky[groupID] = st
-		return st.PoolID
-	}
-	next := ids[0]
-	if st.PoolID != "" {
-		for i, id := range ids {
-			if id == st.PoolID {
-				next = ids[(i+1)%len(ids)]
-				break
-			}
-		}
-	}
-	r.sticky[groupID] = stickyState{PoolID: next, Count: 1}
-	return next
 }
 
 // getPool returns a pool from cache or DB.

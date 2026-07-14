@@ -87,8 +87,8 @@ func (h *ProxyGroupHandler) Create(c *gin.Context) {
 	if mode == "" {
 		mode = "roundrobin"
 	}
-	if mode != "roundrobin" && mode != "sticky" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be roundrobin or sticky"})
+	if mode != "roundrobin" && mode != "sticky" && mode != "random" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be roundrobin, sticky or random"})
 		return
 	}
 	ids, err := h.poolIDs(req["proxyPoolIds"])
@@ -142,8 +142,8 @@ func (h *ProxyGroupHandler) Update(c *gin.Context) {
 	}
 	if _, ok := req["mode"]; ok {
 		mode := asString(req["mode"])
-		if mode != "roundrobin" && mode != "sticky" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be roundrobin or sticky"})
+		if mode != "roundrobin" && mode != "sticky" && mode != "random" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be roundrobin, sticky or random"})
 			return
 		}
 		add("mode", mode)
