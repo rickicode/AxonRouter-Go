@@ -87,6 +87,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Settings page redesigned into Runtime, Security, and HTTPS tabs with Runtime as the default tab.
+- Default data directory moved from `~/.axonrouter` to `~/axonrouter`; the `AXON_DATA_DIR` environment variable is no longer read or documented.
+- Systemd service installed by the binary (`axonrouter --startup install`) and by `installer.sh --service` no longer sets `AXON_DATA_DIR`; it relies on the binary default relative to the service user's home directory.
+- Binary CLI now supports `--help`, `--startup {install|status|start|stop|restart}` for systemd management, and `--setpass <password>`.
+- Installer automatically appends the install directory to `~/.bashrc`/`~/.zshrc` when it is not already on `PATH`.
 - Runtime settings fully redesigned as a clean list/table with category filter pills, search, and inline edit; non-runtime keys (CLI Tools, API Key, etc.) are no longer shown in the Runtime tab.
 - Optimization dashboard page redesigned: tabs now use pill-style controls matching ProxyPools, and the Cache tab gained a header row with refresh/flush actions, proper stat cards for hits/misses/hit rate/entries, plus a clarification note explaining cache eligibility for non-streaming/tool/cache_control responses.
 - `ExtractTokensFromBody` extended to parse Gemini `usageMetadata` and OpenAI Responses API `response.usage`/`usage` shapes.
