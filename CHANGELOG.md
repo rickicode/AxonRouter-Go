@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `/v1/responses`, `/v1/embeddings`, `/v1/images/generations`, `/v1/audio/speech`, `/v1/audio/transcriptions`, `/v1/video/generations`, and `/v1/unified` now enforce the API key lifetime token budget (`max_tokens`) before routing upstream.
+- Cloudflare Workers AI model discovery for `/v1/models` is now cached for 5 minutes, preventing an upstream HTTP request on every model-list call.
+- Auth cache hardening: `AuthCache.Validate` now stores its own successful result inside the singleflight path; DB query errors are logged instead of swallowed; expired entry deletion rechecks under the write lock to close the TOCTOU window.
+
 ## [0.3.3] - 2026-07-14
 
 ### Added
