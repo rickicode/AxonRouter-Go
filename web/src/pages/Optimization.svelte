@@ -94,11 +94,12 @@ import InfoIcon from '@lucide/svelte/icons/info';
     }
   }
 
-  const modes = [
-    { value: 'off', label: 'Off' },
-    { value: 'lite', label: 'Lite' },
-    { value: 'standard', label: 'Standard' },
-  ];
+const modes = [
+  { value: 'off', label: 'Off' },
+  { value: 'lite', label: 'Lite' },
+  { value: 'standard', label: 'Standard' },
+  { value: 'rtk', label: 'RTK' },
+];
 </script>
 
 <div class="flex flex-1 flex-col gap-6 p-6">
@@ -119,9 +120,9 @@ import InfoIcon from '@lucide/svelte/icons/info';
       <Card class="shadow-card">
         <CardHeader class="pb-3">
           <CardTitle class="text-base">Compression Mode</CardTitle>
-          <CardDescription class="text-xs">
-            Lite strips whitespace and image data URLs. Standard adds Caveman rule-based prose condensation.
-          </CardDescription>
+<CardDescription class="text-xs">
+              Lite strips whitespace and image data URLs. Standard adds Caveman rule-based prose condensation. RTK targets OpenAI, Claude and Responses tool outputs.
+            </CardDescription>
         </CardHeader>
         <CardContent class="space-y-4">
           <div class="grid gap-2">

@@ -5,6 +5,7 @@ type Strategy struct {
 	Mode    CompressionMode
 	Lite    LiteConfig
 	Caveman EngineConfig
+	Rtk     EngineConfig
 }
 
 // Apply runs the compression pipeline for the configured mode.
@@ -22,7 +23,15 @@ func Apply(cfg Strategy, body []byte) ([]byte, EngineStats, error) {
 	switch cfg.Mode {
 	case ModeLite:
 		// Lite-only
-	case ModeStandard, ModeAggressive, ModeUltra:
+	case ModeStandard:
+		if e, ok := Get("caveman"); ok {
+			liteBody, engineStats, _ = e.Apply(liteBody, cfg.Caveman)
+		}
+	case ModeRtk:
+		if e, ok := Get("rtk"); ok {
+			liteBody, engineStats, _ = e.Apply(liteBody, cfg.Rtk)
+		}
+	case ModeAggressive, ModeUltra:
 		// Phase 1: aggressive/ultra fall back to standard (caveman).
 		if e, ok := Get("caveman"); ok {
 			liteBody, engineStats, _ = e.Apply(liteBody, cfg.Caveman)
