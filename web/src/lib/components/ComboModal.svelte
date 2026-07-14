@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/car
 import ModelPickerDialog from '$lib/components/ModelPickerDialog.svelte';
 import { combosApi, modelsApi } from '$lib/api';
 import type { Combo, ComboStep, GatewayModel } from '$lib/api';
+import { unwrapStr } from '$lib/utils';
 import { planStepSync, type StepDraft } from './combo-modal-helpers';
 import { toast } from 'svelte-sonner';
 
@@ -60,9 +61,9 @@ function resetState() {
 		strategy = combo.strategy;
 		timeout = combo.timeout_ms;
 		stickyLimit = combo.sticky_limit;
-		isSmart = combo.is_smart;
-		smartGoal = combo.smart_goal ?? 'balanced';
-		loadSteps(combo.id);
+    isSmart = combo.is_smart;
+    smartGoal = unwrapStr(combo.smart_goal) ?? 'balanced';
+    loadSteps(combo.id);
 	} else {
 		name = '';
 		strategy = 'priority';

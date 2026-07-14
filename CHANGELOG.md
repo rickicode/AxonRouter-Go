@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Proxy Pools bulk import now auto-prefixes bare proxy URLs with `http://` when the default type is HTTP and removes the live preview to keep the modal clean.
 - Bulk import timeouts for proxy pools and provider connections are extended to 120 seconds to prevent "signal is aborted" errors on large imports.
 - Proxy Pools header and tab counters now reflect the total pool count across all pages (via `listAll`) instead of only the current page.
+- ComboModal now unwraps the API's `smart_goal` NullString object when editing a smart combo, so subsequent PATCH updates no longer fail with a 400 JSON unmarshal error.
 
 ## [0.3.3] - 2026-07-14
 
