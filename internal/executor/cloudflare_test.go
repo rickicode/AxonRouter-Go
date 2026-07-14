@@ -133,6 +133,36 @@ func TestCloudflareExecutor_RoutesEmbeddingsAwayFromChatURL(t *testing.T) {
 	}
 }
 
+func TestCloudflareExecutor_RoutesImagesAwayFromChatURL(t *testing.T) {
+	var calledPath string
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, `{"created":1,"data":[]}`)
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	cf := NewCloudflareExecutor(NewOpenAIExecutor(base))
+
+	req := &Request{
+		Model:   "@cf/black-forest-labs/flux-1-schnell",
+		BaseURL: ts.URL + "/v1/chat/completions",
+		Body:    mustJSON(map[string]any{"model": "@cf/black-forest-labs/flux-1-schnell", "prompt": "a cat"}),
+	}
+
+	_, err := cf.Images(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Images error: %v", err)
+	}
+
+	if calledPath != "/v1/images/generations" {
+		t.Fatalf("expected path /v1/images/generations, got %s", calledPath)
+	}
+}
+
 func TestCloudflareExecutor_SanitizesReasoningEffort(t *testing.T) {
 	tests := []struct {
 		name     string

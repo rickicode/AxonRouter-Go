@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
+	providerpkg "github.com/rickicode/AxonRouter-Go/internal/provider"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
 
@@ -34,9 +35,26 @@ func (h *Handler) Images(c *gin.Context) {
 		modelName = model
 	}
 
+	// Look up provider capabilities before selecting an execution path.
+	var serviceKinds string
+	err = h.db.QueryRow(`SELECT COALESCE(service_kinds, '[]') FROM provider_types WHERE id = ?`, provider).Scan(&serviceKinds)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "provider not configured for image generation", "type": "invalid_request_error"}})
+		return
+	}
+	var kinds []string
+	if err := json.Unmarshal([]byte(serviceKinds), &kinds); err != nil {
+		kinds = providerpkg.DefaultServiceKinds()
+	}
+	hasImage := providerpkg.HasServiceKind(kinds, providerpkg.ServiceKindImage)
+
 	var imagesExec executor.Executor
 	if exec, format, err := h.resolveExecutor(provider, modelName); err == nil {
 		if imgGen, ok := exec.(executor.ImageGenerator); ok && format == executor.FormatOpenAI {
+			if !hasImage {
+				c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "provider does not support image generation", "type": "invalid_request_error"}})
+				return
+			}
 			imagesExec = &imageGeneratorAdapter{ImageGenerator: imgGen}
 		}
 	}
