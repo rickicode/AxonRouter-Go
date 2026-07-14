@@ -66,7 +66,7 @@ func TestProgram_StopReturnsShutdownError(t *testing.T) {
 }
 
 func TestServiceConfigHasRequiredFields(t *testing.T) {
-	cfg, err := service.ServiceConfig()
+	cfg, err := service.ServiceConfig(false)
 	if err != nil {
 		t.Fatalf("ServiceConfig returned error: %v", err)
 	}

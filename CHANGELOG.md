@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Quota reset countdown and estimated savings tracker: backend computes next per-provider reset from quota cache, estimates savings from request logs × model pricing, exposes `/api/admin/quota/summary`, and dashboard Quota/Usage pages render global countdown and savings badges.
 
 ### Changed
-- Replaced Linux-only systemd service installer with cross-platform service management via `github.com/kardianos/service`. `axonrouter --startup {install|status|start|stop|restart|uninstall}` now works on Linux, macOS, and Windows.
+- Replaced Linux-only systemd service installer with cross-platform service management via `github.com/kardianos/service`. `axonrouter --startup {install|install-root|status|start|stop|restart|uninstall}` now works on Linux, macOS, and Windows.
+- Service installs preserve the original user's data directory when run under `sudo`; `install-root` installs as root/system instead.
 
 ### Fixed
 - Default admin password is now the fixed value `12345677` again, and the password-change warning is based on whether the current password still matches the default. Changing the password via `axonrouter --setpass` or Settings clears the warning.

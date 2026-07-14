@@ -47,8 +47,9 @@ func (p *Program) Stop(s kardianos.Service) error {
 // ServiceConfig returns a service configuration for the current binary.
 // It resolves the executable path and chooses the invoking user so installed
 // services run with the same privileges and data directory as an interactive
-// start.
-func ServiceConfig() (*kardianos.Config, error) {
+// start. When root is true the service is configured to run as the root/system
+// account instead of the invoking user.
+func ServiceConfig(root bool) (*kardianos.Config, error) {
 	execPath, err := os.Executable()
 	if err != nil {
 		return nil, fmt.Errorf("locate executable: %w", err)
@@ -58,17 +59,20 @@ func ServiceConfig() (*kardianos.Config, error) {
 		return nil, fmt.Errorf("resolve executable: %w", err)
 	}
 
-	svcUser := os.Getenv("SUDO_USER")
-	if svcUser == "" {
-		svcUser = os.Getenv("DOAS_USER")
-	}
-	if svcUser == "" {
-		if u, err := user.Current(); err == nil {
-			svcUser = u.Username
+	svcUser := "root"
+	if !root {
+		svcUser = os.Getenv("SUDO_USER")
+		if svcUser == "" {
+			svcUser = os.Getenv("DOAS_USER")
 		}
-	}
-	if svcUser == "" {
-		svcUser = "root"
+		if svcUser == "" {
+			if u, err := user.Current(); err == nil {
+				svcUser = u.Username
+			}
+		}
+		if svcUser == "" {
+			svcUser = "root"
+		}
 	}
 
 	cfg := &kardianos.Config{
@@ -99,6 +103,12 @@ func ServiceConfig() (*kardianos.Config, error) {
 		homeDir = "/"
 	}
 	cfg.WorkingDirectory = homeDir
+	// Ensure HOME resolves to the target user so the data directory stays in
+	// the original user's home under sudo, but uses root's home for install-root.
+	if cfg.EnvVars == nil {
+		cfg.EnvVars = make(map[string]string)
+	}
+	cfg.EnvVars["HOME"] = homeDir
 
 	return cfg, nil
 }

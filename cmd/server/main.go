@@ -81,7 +81,12 @@ func printStartupBannerPlain(port string, database *sql.DB) {
 }
 
 func handleStartupAction(action string) {
-	svcCfg, err := service.ServiceConfig()
+	root := action == "install-root"
+	if root {
+		action = "install"
+	}
+
+	svcCfg, err := service.ServiceConfig(root)
 	if err != nil {
 		log.Fatalf("Failed to build service config: %v", err)
 	}
@@ -114,7 +119,7 @@ func handleStartupAction(action string) {
 		act, err := service.ControlAction(action)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
-			fmt.Fprintln(os.Stderr, "Usage: axonrouter --startup {install|status|start|stop|restart|uninstall}")
+			fmt.Fprintln(os.Stderr, "Usage: axonrouter --startup {install|install-root|status|start|stop|restart|uninstall}")
 			os.Exit(1)
 		}
 		if err := kardianos.Control(svc, act); err != nil {
@@ -160,23 +165,24 @@ func main() {
 	if len(os.Args) == 2 && (os.Args[1] == "--help" || os.Args[1] == "-h") {
 		fmt.Println("AxonRouter-Go - Universal API proxy for coding agents.")
 		fmt.Println()
-		fmt.Println("Usage:")
-		fmt.Println(" axonrouter Start the server")
-		fmt.Println(" axonrouter --startup install Install system service (Linux/macOS/Windows)")
-		fmt.Println(" axonrouter --startup {status|start|stop|restart|uninstall}")
-		fmt.Println(" Manage system service")
-		fmt.Println(" axonrouter --setpass <password> Set admin dashboard password")
-		fmt.Println(" axonrouter --help Show this help")
-		fmt.Println()
-		fmt.Println("Environment:")
-		fmt.Println(" AXON_PORT Server port (default: 3777)")
-		os.Exit(0)
-	}
+	fmt.Println("Usage:")
+	fmt.Println(" axonrouter Start the server")
+	fmt.Println(" axonrouter --startup install Install system service as the current user")
+	fmt.Println(" axonrouter --startup install-root Install system service as root/system")
+	fmt.Println(" axonrouter --startup {status|start|stop|restart|uninstall}")
+	fmt.Println(" Manage system service")
+	fmt.Println(" axonrouter --setpass <password> Set admin dashboard password")
+	fmt.Println(" axonrouter --help Show this help")
+	fmt.Println()
+	fmt.Println("Environment:")
+	fmt.Println(" AXON_PORT Server port (default: 3777)")
+	os.Exit(0)
+}
 
-	if len(os.Args) == 2 && os.Args[1] == "--startup" {
-		fmt.Fprintln(os.Stderr, "Usage: axonrouter --startup {install|status|start|stop|restart|uninstall}")
-		os.Exit(1)
-	}
+if len(os.Args) == 2 && os.Args[1] == "--startup" {
+	fmt.Fprintln(os.Stderr, "Usage: axonrouter --startup {install|install-root|status|start|stop|restart|uninstall}")
+	os.Exit(1)
+}
 	if len(os.Args) >= 3 && os.Args[1] == "--startup" {
 		handleStartupAction(os.Args[2])
 	}
@@ -216,7 +222,7 @@ func main() {
 	log.Printf("starting server on %s", addr)
 	log.Printf("dashboard available at http://localhost:%s", cfg.Port)
 
-	svcCfg, err := service.ServiceConfig()
+	svcCfg, err := service.ServiceConfig(false)
 	if err != nil {
 		log.Fatalf("Failed to build service config: %v", err)
 	}
