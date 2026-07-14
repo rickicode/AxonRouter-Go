@@ -106,6 +106,58 @@ func evaluateCacheStatus(quotas []QuotaItem, connError string) string {
 	return "ok"
 }
 
+// NextProviderResets returns the earliest future reset_at per provider from
+// cached quota data. Reset times are returned as RFC3339 strings. Providers
+// with no future reset are omitted.
+func NextProviderResets(db *sql.DB) (map[string]string, error) {
+	rows, err := db.Query(`SELECT provider_type_id, quotas FROM quota_cache`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	now := time.Now()
+	best := make(map[string]time.Time)
+	for rows.Next() {
+		var providerID, quotasJSON string
+		if err := rows.Scan(&providerID, &quotasJSON); err != nil {
+			continue
+		}
+		var quotas []QuotaItem
+		if err := json.Unmarshal([]byte(quotasJSON), &quotas); err != nil {
+			continue
+		}
+		for _, q := range quotas {
+			t, err := parseResetAt(q.ResetAt)
+			if err != nil || !t.After(now) {
+				continue
+			}
+			if cur, ok := best[providerID]; !ok || t.Before(cur) {
+				best[providerID] = t
+			}
+		}
+	}
+
+	out := make(map[string]string, len(best))
+	for providerID, t := range best {
+		out[providerID] = t.Format(time.RFC3339)
+	}
+	return out, rows.Err()
+}
+
+func parseResetAt(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, fmt.Errorf("empty reset_at")
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t, nil
+	}
+	return time.Parse("2006-01-02T15:04:05", s)
+}
+
 // QuotaCacheEntry is a single row from quota_cache for the API response.
 type QuotaCacheEntry struct {
 	ID             string      `json:"id"`

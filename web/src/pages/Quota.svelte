@@ -1,17 +1,20 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import {
-    quotaItems,
-    quotaTotal,
-    quotaPage,
-    quotaTotalPages,
-    quotaLoading,
-    quotaError,
-    quotaSummary,
-    loadQuota,
-    loadQuotaSummary,
-    refreshConnectionQuota,
-  } from '$lib/stores';
+  quotaItems,
+  quotaTotal,
+  quotaPage,
+  quotaTotalPages,
+  quotaLoading,
+  quotaError,
+  quotaSummary,
+  quotaSavings,
+  quotaNextReset,
+  loadQuota,
+  loadQuotaSummary,
+  refreshConnectionQuota,
+  formatCost,
+} from '$lib/stores';
   import type { QuotaCacheEntry, QuotaItem } from '$lib/api';
   import { getTokenExpiry } from '$lib/utils';
   import { Card, CardContent } from '$lib/components/ui/card';
@@ -20,8 +23,10 @@
   import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
   import GaugeIcon from '@lucide/svelte/icons/gauge';
   import AlertCircleIcon from '@lucide/svelte/icons/alert-circle';
-  import ClockIcon from '@lucide/svelte/icons/clock';
-  import SearchIcon from '@lucide/svelte/icons/search';
+import ClockIcon from '@lucide/svelte/icons/clock';
+import TimerIcon from '@lucide/svelte/icons/timer';
+import DollarSignIcon from '@lucide/svelte/icons/dollar-sign';
+import SearchIcon from '@lucide/svelte/icons/search';
   import XIcon from '@lucide/svelte/icons/x';
   import AlertTriangleIcon from '@lucide/svelte/icons/alert-triangle';
   import CheckCircle2Icon from '@lucide/svelte/icons/check-circle-2';
@@ -259,11 +264,34 @@ function visibleQuotas(item: QuotaCacheEntry): QuotaItem[] {
       >
         <RefreshCwIcon class="size-3.5" /> Refresh Page
       </Button>
-    </div>
   </div>
+</div>
 
+<!-- Summary -->
+{#if $quotaSummary.length > 0}
+<section class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+  <Card class="shadow-card">
+    <CardContent class="p-4 flex items-center gap-3">
+      <DollarSignIcon class="size-5 text-emerald-400" />
+      <div>
+        <p class="text-caption text-muted-foreground uppercase">Saved this month</p>
+        <p class="text-display-md">{formatCost($quotaSavings)}</p>
+      </div>
+    </CardContent>
+  </Card>
+  <Card class="shadow-card">
+    <CardContent class="p-4 flex items-center gap-3">
+      <TimerIcon class="size-5 text-amber-400" />
+      <div>
+        <p class="text-caption text-muted-foreground uppercase">Next quota reset</p>
+        <p class="text-display-md">{$quotaNextReset ? formatResetTime($quotaNextReset) : '—'}</p>
+      </div>
+    </CardContent>
+  </Card>
+</section>
+{/if}
 
-  <!-- Filters -->
+<!-- Filters -->
   <section class="rounded-xl bg-card p-4 shadow-card md:p-5">
     <div class="flex flex-col gap-4">
       <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
