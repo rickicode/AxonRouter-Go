@@ -1092,32 +1092,42 @@ async function handleBulkImport() {
       <Dialog.Description class="text-xs">{editGroupId ? 'Update routing mode, strict proxy, and pool membership.' : 'Combine multiple pools with round-robin, sticky, or random routing.'}</Dialog.Description>
     </Dialog.Header>
     <div class="space-y-4 overflow-y-auto pr-1">
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div class="space-y-2">
-          <Label class="text-sm font-medium">Name</Label>
-          <Input bind:value={groupName} placeholder="e.g. us-proxies" class="h-10 text-body-sm" />
-        </div>
-        <div class="space-y-2">
-          <Label class="text-sm font-medium">Mode</Label>
-          <div class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-1">
-            <button class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-all {groupMode === 'roundrobin' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'roundrobin')}>Round Robin</button>
-            <button class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-all {groupMode === 'sticky' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'sticky')}>Sticky</button>
-            <button class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-all {groupMode === 'random' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'random')}>Random</button>
-          </div>
-        </div>
-        <div class="flex items-end gap-4">
-          {#if groupMode === 'sticky'}
-          <div class="space-y-2">
-            <Label class="text-sm font-medium">Sticky Limit</Label>
-            <Input type="number" bind:value={groupStickyLimit} min={1} class="h-10 text-code font-mono" />
-          </div>
-          {/if}
-          <div class="flex items-center space-x-2 mb-2">
-            <Switch id="group-strict" bind:checked={groupStrict} />
-            <Label for="group-strict" class="text-sm font-medium cursor-pointer">Strict proxy</Label>
-          </div>
-        </div>
-      </div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+				<div class="space-y-2">
+					<Label class="text-sm font-medium">Name</Label>
+					<Input bind:value={groupName} placeholder="e.g. us-proxies" class="h-10 text-body-sm" />
+				</div>
+				<div class="space-y-2">
+					<Label class="text-sm font-medium">Mode</Label>
+					<div class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-1">
+						<button class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-all {groupMode === 'roundrobin' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'roundrobin')}>Round Robin</button>
+						<button class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-all {groupMode === 'sticky' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'sticky')}>Sticky</button>
+						<button class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-all {groupMode === 'random' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'random')}>Random</button>
+					</div>
+				</div>
+			</div>
+			{#if groupMode === 'sticky'}
+				<div class="space-y-2 max-w-[140px]">
+					<Label class="text-sm font-medium">Sticky Limit</Label>
+					<Input type="number" bind:value={groupStickyLimit} min={1} class="h-10 text-code font-mono" />
+				</div>
+			{/if}
+			<div class="space-y-2">
+				<Label class="text-sm font-medium">Options</Label>
+				<button
+					type="button"
+					class="flex w-full items-center justify-between gap-4 rounded-xl border border-border bg-card p-3 text-left transition-colors hover:bg-muted/50 md:max-w-md cursor-pointer"
+					onclick={() => (groupStrict = !groupStrict)}
+				>
+					<div class="flex flex-col">
+						<span class="text-body-sm-strong">Strict proxy</span>
+						<span class="text-caption text-muted-foreground">Fail requests when no healthy pool is available.</span>
+					</div>
+					<span onclick={(e) => e.stopPropagation()}>
+						<Switch checked={groupStrict} onCheckedChange={(v) => (groupStrict = v)} />
+					</span>
+				</button>
+			</div>
       <div class="space-y-2">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <Label class="text-sm font-medium">Pools ({groupModalSelectedCount} selected)</Label>
