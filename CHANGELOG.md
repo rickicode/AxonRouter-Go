@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Public IP detection helper `internal/network/publicip.go` with `AXON_PUBLIC_IP` override and fallback lookup.
 - `category` and `service_kinds` columns on `provider_types`, exposed in admin provider List/Get responses.
 - `internal/provider/servicekind.go` constants (`llm`, `embedding`, `image`, etc.) and helpers `HasServiceKind`/`DefaultServiceKinds`.
 - Static per-modality registry (`internal/modalities`) using embedded JSON, with a Cloudflare pilot covering canonical embedding and image model IDs.
