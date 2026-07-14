@@ -948,22 +948,42 @@ func (h *Handler) writeUpstreamClientError(
 	return true
 }
 
-// proxyContext resolves proxy config for a connection and returns a context with it attached.
+// proxyCandidates resolves the ordered proxy configs to try for a connection.
+// The first entry is the primary; the executor retries across the rest on
+// transient proxy/network failures.
+func (h *Handler) proxyCandidates(conn *Connection) []executor.ProxyConfig {
+	if h.resolver == nil {
+		return nil
+	}
+	cfgs := h.resolver.ResolveCandidates(conn.ProviderSpecificData, conn.Provider)
+	out := make([]executor.ProxyConfig, 0, len(cfgs))
+	for _, c := range cfgs {
+		out = append(out, executor.ProxyConfig{
+			Enabled:     c.Enabled,
+			ProxyPoolID: c.ProxyPoolID,
+			ProxyURL:    c.ProxyURL,
+			NoProxy:     c.NoProxy,
+			RelayURL:    c.RelayURL,
+			RelayAuth:   c.RelayAuth,
+			RelayType:   c.RelayType,
+			StrictProxy: c.StrictProxy,
+		})
+	}
+	return out
+}
+
+// proxyContext resolves proxy config for a connection and returns a context with
+// the primary proxy and the retry candidates attached.
 func (h *Handler) proxyContext(ctx context.Context, conn *Connection) context.Context {
 	if h.resolver == nil {
 		return ctx
 	}
-	cfg := h.resolver.Resolve(conn.ProviderSpecificData, conn.Provider)
-	return executor.ContextWithProxy(ctx, executor.ProxyConfig{
-		Enabled:     cfg.Enabled,
-		ProxyPoolID: cfg.ProxyPoolID,
-		ProxyURL:    cfg.ProxyURL,
-		NoProxy:     cfg.NoProxy,
-		RelayURL:    cfg.RelayURL,
-		RelayAuth:   cfg.RelayAuth,
-		RelayType:   cfg.RelayType,
-		StrictProxy: cfg.StrictProxy,
-	})
+	cands := h.proxyCandidates(conn)
+	if len(cands) == 0 {
+		return ctx
+	}
+	ctx = executor.ContextWithProxy(ctx, cands[0])
+	return executor.ContextWithProxyCandidates(ctx, cands)
 }
 
 // estimateOutputFromTranslatedChunk tries to extract actual output text from a

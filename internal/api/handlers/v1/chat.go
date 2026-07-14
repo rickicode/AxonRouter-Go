@@ -103,20 +103,14 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 			}
 		}
 
-		// Resolve proxy config early so we can log it
+		// Resolve proxy config (+ retry candidates) early so we can log it
 		var proxyCfg executor.ProxyConfig
+		var proxyCands []executor.ProxyConfig
 		if h.resolver != nil {
-			resolved := h.resolver.Resolve(conn.ProviderSpecificData, conn.Provider)
-		proxyCfg = executor.ProxyConfig{
-			Enabled:     resolved.Enabled,
-			ProxyPoolID: resolved.ProxyPoolID,
-			ProxyURL:    resolved.ProxyURL,
-			NoProxy:     resolved.NoProxy,
-			RelayURL:    resolved.RelayURL,
-			RelayAuth:   resolved.RelayAuth,
-			RelayType:   resolved.RelayType,
-			StrictProxy: resolved.StrictProxy,
-		}
+			proxyCands = h.proxyCandidates(conn)
+			if len(proxyCands) > 0 {
+				proxyCfg = proxyCands[0]
+			}
 		}
 
 		logArgs := []any{"model", model, "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name, "attempt", attempt + 1, "proxy", proxyCfg.ProxyLabel()}
@@ -139,6 +133,9 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		}
 
 		proxyCtx := executor.ContextWithProxy(c.Request.Context(), proxyCfg)
+		if len(proxyCands) > 0 {
+			proxyCtx = executor.ContextWithProxyCandidates(proxyCtx, proxyCands)
+		}
 		resp, streamResult, err := h.executeDirect(proxyCtx, exec, req)
 		latency := time.Since(start).Milliseconds()
 		if resp != nil {

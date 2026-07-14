@@ -214,10 +214,67 @@ func ProxyPoolIDFromContext(ctx context.Context) string {
 }
 
 func ContextWithProxy(ctx context.Context, cfg ProxyConfig) context.Context {
-	if !cfg.Enabled && cfg.RelayURL == "" {
-		return ctx
-	}
 	return context.WithValue(ctx, proxyContextKey{}, cfg)
+}
+
+type proxyCandidatesKey struct{}
+
+// ContextWithProxyCandidates attaches the ordered list of proxy configs to try.
+// The executor retries across them on transient proxy/network failures. The
+// first entry is the primary (already attached via ContextWithProxy).
+func ContextWithProxyCandidates(ctx context.Context, cands []ProxyConfig) context.Context {
+	return context.WithValue(ctx, proxyCandidatesKey{}, cands)
+}
+
+// ProxyCandidatesFromContext returns the retry candidate list, if any.
+func ProxyCandidatesFromContext(ctx context.Context) []ProxyConfig {
+	cands, _ := ctx.Value(proxyCandidatesKey{}).([]ProxyConfig)
+	return cands
+}
+
+// isRetryableProxyErr reports whether err is a transient proxy/network failure
+// worth retrying against another proxy. Upstream errors (4xx/5xx from the
+// provider) and explicit cancellations are NOT retryable.
+func isRetryableProxyErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ue *UpstreamError
+	if errors.As(err, &ue) {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		// Deadline exceeded here is a stream idle/readiness timeout, not a proxy
+		// connect failure; do not retry across proxies for it.
+		return false
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	msg := err.Error()
+	for _, s := range []string{
+		"unexpected EOF",
+		"connection reset by peer",
+		"broken pipe",
+		"connection refused",
+		"no route to host",
+		"dial ",
+		"proxy dial",
+		"proxy CONNECT",
+		"proxy handshake",
+		"TLS handshake",
+		"tls",
+		"i/o timeout",
+	} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // validateURL checks for SSRF-safe URLs. Blocks private IPs and localhost.
@@ -424,12 +481,35 @@ func (b *BaseExecutor) defaultClient(stream bool) *http.Client {
 	return b.Client
 }
 
-// DoRequest performs a non-streaming HTTP request.
+// DoRequest performs a non-streaming HTTP request, retrying across proxy
+// candidates on transient proxy/network failures.
 func (b *BaseExecutor) DoRequest(ctx context.Context, method, rawURL string, headers map[string]string, body []byte) (*Response, error) {
 	if err := validateURL(rawURL); err != nil {
 		return nil, fmt.Errorf("blocked URL: %w", err)
 	}
+	cands := ProxyCandidatesFromContext(ctx)
+	if len(cands) <= 1 {
+		return b.doRequestOnce(ctx, method, rawURL, headers, body)
+	}
+	var lastErr error
+	for i, cand := range cands {
+		attemptCtx := ContextWithProxy(ctx, cand)
+		resp, err := b.doRequestOnce(attemptCtx, method, rawURL, headers, body)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !isRetryableProxyErr(err) {
+			return nil, err
+		}
+		logging.Logger.Warn("proxy attempt failed, retrying with next candidate", "attempt", i+1, "proxy", cand.ProxyLabel(), "error", err)
+	}
+	return nil, lastErr
+}
 
+// doRequestOnce performs a single non-streaming attempt using the proxy already
+// attached to ctx.
+func (b *BaseExecutor) doRequestOnce(ctx context.Context, method, rawURL string, headers map[string]string, body []byte) (*Response, error) {
 	client, targetURL, err := b.clientForContextStream(ctx, rawURL, headers)
 	if err != nil {
 		return nil, err
@@ -506,12 +586,36 @@ func (b *BaseExecutor) DoStreamRequest(ctx context.Context, method, rawURL strin
 	return b.DoStreamRequestWithConfig(ctx, method, rawURL, headers, body, nil)
 }
 
-// DoStreamRequestWithConfig performs a streaming HTTP request with per-request timeout overrides.
+// DoStreamRequestWithConfig performs a streaming HTTP request with per-request
+// timeout overrides, retrying across proxy candidates on transient
+// proxy/network connect failures.
 func (b *BaseExecutor) DoStreamRequestWithConfig(ctx context.Context, method, rawURL string, headers map[string]string, body []byte, cfg *StreamConfig) (*StreamResult, error) {
 	if err := validateURL(rawURL); err != nil {
 		return nil, fmt.Errorf("blocked URL: %w", err)
 	}
+	cands := ProxyCandidatesFromContext(ctx)
+	if len(cands) <= 1 {
+		return b.doStreamConnect(ctx, method, rawURL, headers, body, cfg)
+	}
+	var lastErr error
+	for i, cand := range cands {
+		attemptCtx := ContextWithProxy(ctx, cand)
+		result, err := b.doStreamConnect(attemptCtx, method, rawURL, headers, body, cfg)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		if !isRetryableProxyErr(err) {
+			return nil, err
+		}
+		logging.Logger.Warn("proxy stream attempt failed, retrying with next candidate", "attempt", i+1, "proxy", cand.ProxyLabel(), "error", err)
+	}
+	return nil, lastErr
+}
 
+// doStreamConnect opens a single streaming attempt using the proxy attached to
+// ctx. It returns once the connection is established (or a connect error).
+func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL string, headers map[string]string, body []byte, cfg *StreamConfig) (*StreamResult, error) {
 	client, targetURL, err := b.clientForContext(ctx, rawURL, headers)
 	if err != nil {
 		return nil, err

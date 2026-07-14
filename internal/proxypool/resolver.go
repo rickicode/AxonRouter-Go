@@ -195,6 +195,47 @@ func (r *Resolver) Resolve(providerSpecificData, providerID string) Config {
 	return Config{Source: "none", ProxyPoolID: cleanID(psd["proxyPoolId"])}
 }
 
+// ResolveCandidates returns an ordered list of proxy configurations to try for
+// a request: the primary resolution first, then alternative pools (when the
+// connection uses a proxy group), and finally a direct fallback (unless a
+// strict proxy was selected). The executor retries across these on transient
+// proxy/network failures.
+func (r *Resolver) ResolveCandidates(providerSpecificData, providerID string) []Config {
+	var psd map[string]any
+	_ = json.Unmarshal([]byte(providerSpecificData), &psd)
+
+	var cands []Config
+	if id := cleanID(psd["proxyGroupId"]); id != "" {
+		if g, ok := r.getGroup(id); ok && g.isActive {
+			active, _ := r.activePools(g.poolIDs)
+			for _, pid := range active {
+				if cfg, ok := r.resolvePool(pid, "connection-group", g.strict); ok {
+					cands = append(cands, cfg)
+				}
+			}
+		}
+	}
+	if len(cands) == 0 {
+		if id := cleanID(psd["proxyPoolId"]); id != "" {
+			if cfg, ok := r.resolvePool(id, "connection-pool", false); ok {
+				cands = append(cands, cfg)
+			}
+		}
+	}
+	if len(cands) == 0 && providerID != "" {
+		if cfg, ok := r.providerDefault(providerID); ok {
+			cands = append(cands, cfg)
+		}
+	}
+
+	// Direct fallback unless the selected proxy is strict.
+	strict := len(cands) > 0 && cands[0].StrictProxy
+	if !strict {
+		cands = append(cands, Config{Source: "direct-fallback"})
+	}
+	return cands
+}
+
 func (r *Resolver) providerDefault(providerID string) (Config, bool) {
 	defaults, ok := r.getDefaults()
 	if !ok {
