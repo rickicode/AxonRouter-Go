@@ -43,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `web/src/lib/about-utils.ts` utilities for version normalization, semver comparison, and changelog parsing, with Vitest coverage.
 - Release workflow now generates and attaches `build/checksums.txt` with SHA256 sums for all binary artifacts.
 - About page polls `/api/admin/health` every 30s for update availability and posts to `/api/admin/upgrade` with toast feedback and a loading spinner.
+- `random` mode for proxy groups; resolver selects a uniform random active pool per request.
+- Bulk pool selector in the Proxy Pools → Groups create/edit modal: large scrollable table, select-all/clear, test selected/test all, select lowest latency, and select healthy.
+- `proxyPoolsApi.listAll()` frontend helper that fetches all proxy pools across paginated pages.
+- `proxy_pool_id` column on `request_logs` with migration; every v1 request handler records the resolved proxy pool ID.
+- Request-log queries join `proxy_pools` and return `proxy_pool_name` so the dashboard can show direct vs proxy routing.
+- Logs page latency column now shows `direct` or the proxy pool name for each request.
 
 ### Fixed
 - `/v1/embeddings` and `/v1/images/generations` now validate the provider's service kind and, for Cloudflare, require a registered per-modality model before routing.
