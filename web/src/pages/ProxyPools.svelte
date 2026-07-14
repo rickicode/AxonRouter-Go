@@ -31,8 +31,7 @@ let poolTotalPages = $state(1);
 // Modal state
 let showAddPool = $state(false);
 let addPoolTab = $state<'single' | 'bulk'>('single');
-let showCreateGroup = $state(false);
-let showEditGroup = $state(false);
+let showGroupModal = $state(false);
 let showEditPool = $state(false);
 let showDeleteErrorConfirm = $state(false);
 let editPoolId = $state('');
@@ -76,15 +75,19 @@ const parsedBulkItems = $derived(
 		})
 );
 
-  // Create/Edit group form
-  let groupName = $state('');
-  let groupMode = $state('roundrobin');
-  let groupStickyLimit = $state(1);
-  let groupStrict = $state(false);
-  let groupPoolIds = $state<string[]>([]);
-  let createGroupLoading = $state(false);
-  let editGroupId = $state('');
-  let editGroupLoading = $state(false);
+// Create/Edit group form
+let groupName = $state('');
+let groupMode = $state('roundrobin');
+let groupStickyLimit = $state(1);
+let groupStrict = $state(false);
+let editGroupId = $state('');
+let groupModalSaving = $state(false);
+let groupModalTesting = $state(false);
+let groupModalPools = $state<ProxyPool[]>([]);
+let groupModalSelectedIds = $state<Set<string>>(new Set());
+let groupModalLoading = $state(false);
+const groupModalSelectedCount = $derived(groupModalSelectedIds.size);
+const allGroupModalSelected = $derived(groupModalPools.length > 0 && groupModalPools.every(p => groupModalSelectedIds.has(p.id)));
 
   // Assignments state
   let proxyDefaults = $state<Record<string, Record<string, string>>>({});
@@ -308,55 +311,154 @@ async function togglePoolActive(pool: ProxyPool) {
  catch (err) { toast.error('Update failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
 }
 
-  // --- Group CRUD ---
-  async function handleCreateGroup() {
-    if (!groupName.trim()) return;
-    createGroupLoading = true;
-    try {
-      await proxyGroupsApi.create({ name: groupName.trim(), mode: groupMode, stickyLimit: groupStickyLimit, strictProxy: groupStrict, proxyPoolIds: groupPoolIds, isActive: true });
+// --- Group CRUD ---
+function resetGroupForm() {
+  groupName = '';
+  groupMode = 'roundrobin';
+  groupStickyLimit = 1;
+  groupStrict = false;
+  editGroupId = '';
+  groupModalSelectedIds = new Set();
+}
+
+async function loadGroupModalPools() {
+  groupModalLoading = true;
+  try {
+    groupModalPools = await proxyPoolsApi.listAll();
+  } catch (err) {
+    toast.error('Failed to load pools: ' + (err instanceof Error ? err.message : 'Unknown'));
+    groupModalPools = [];
+  } finally {
+    groupModalLoading = false;
+  }
+}
+
+function openCreateGroup() {
+  resetGroupForm();
+  showGroupModal = true;
+  loadGroupModalPools();
+}
+
+function openEditGroup(group: ProxyGroup) {
+  resetGroupForm();
+  editGroupId = group.id;
+  groupName = group.name;
+  groupMode = group.mode;
+  groupStickyLimit = group.stickyLimit ?? 1;
+  groupStrict = group.strictProxy ?? false;
+  groupModalSelectedIds = new Set(group.proxyPoolIds ?? []);
+  showGroupModal = true;
+  loadGroupModalPools();
+}
+
+async function handleSaveGroup() {
+  if (!groupName.trim()) return;
+  groupModalSaving = true;
+  try {
+    const payload = {
+      name: groupName.trim(),
+      mode: groupMode,
+      stickyLimit: groupStickyLimit,
+      strictProxy: groupStrict,
+      proxyPoolIds: [...groupModalSelectedIds],
+    };
+    if (!editGroupId) {
+      await proxyGroupsApi.create({ ...payload, isActive: true });
       toast.success('Proxy group created');
-      showCreateGroup = false;
-      groupName = ''; groupPoolIds = [];
- await loadAll(true);
-    } catch (err) { toast.error('Create failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
-    finally { createGroupLoading = false; }
-  }
-
-  function openEditGroup(group: ProxyGroup) {
-    editGroupId = group.id;
-    groupName = group.name;
-    groupMode = group.mode;
-    groupStickyLimit = group.stickyLimit ?? 1;
-    groupStrict = group.strictProxy ?? false;
-    groupPoolIds = group.proxyPoolIds ? [...group.proxyPoolIds] : [];
-    showEditGroup = true;
-  }
-
-  async function handleEditGroup() {
-    if (!editGroupId || !groupName.trim()) return;
-    editGroupLoading = true;
-    try {
-      await proxyGroupsApi.update(editGroupId, {
-        name: groupName.trim(),
-        mode: groupMode,
-        stickyLimit: groupStickyLimit,
-        strictProxy: groupStrict,
-        proxyPoolIds: groupPoolIds,
-      });
-      toast.success('Group updated');
-      showEditGroup = false;
- await loadAll(true);
-    } catch (err) { toast.error('Update failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
-    finally { editGroupLoading = false; }
-  }
-
-  function toggleGroupPool(poolId: string) {
-    if (groupPoolIds.includes(poolId)) {
-      groupPoolIds = groupPoolIds.filter(id => id !== poolId);
     } else {
-      groupPoolIds = [...groupPoolIds, poolId];
+      await proxyGroupsApi.update(editGroupId, payload);
+      toast.success('Group updated');
     }
+    showGroupModal = false;
+    resetGroupForm();
+    await loadAll(true);
+  } catch (err) {
+    toast.error((editGroupId ? 'Update' : 'Create') + ' failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+  } finally {
+    groupModalSaving = false;
   }
+}
+
+function toggleGroupModalPool(poolId: string) {
+  const s = new Set(groupModalSelectedIds);
+  if (s.has(poolId)) s.delete(poolId);
+  else s.add(poolId);
+  groupModalSelectedIds = s;
+}
+
+function toggleGroupModalSelectAll() {
+  const s = new Set(groupModalSelectedIds);
+  if (allGroupModalSelected) {
+    for (const p of groupModalPools) s.delete(p.id);
+  } else {
+    for (const p of groupModalPools) s.add(p.id);
+  }
+  groupModalSelectedIds = s;
+}
+
+function clearGroupModalSelection() {
+  groupModalSelectedIds = new Set();
+}
+
+function selectHealthyGroupModalPools() {
+  const s = new Set(groupModalSelectedIds);
+  for (const p of groupModalPools) {
+    if (p.testStatus === 'active') s.add(p.id);
+  }
+  groupModalSelectedIds = s;
+  const count = groupModalPools.filter(p => p.testStatus === 'active').length;
+  toast.success(`Selected ${count} healthy pool${count === 1 ? '' : 's'}`);
+}
+
+function selectLowestLatencyGroupModalPool() {
+  let best: ProxyPool | null = null;
+  for (const p of groupModalPools) {
+    if (p.responseTimeMs == null) continue;
+    if (!best || p.responseTimeMs < best.responseTimeMs) best = p;
+  }
+  if (best) {
+    groupModalSelectedIds = new Set([best.id]);
+    toast.success(`Selected ${best.name} (${best.responseTimeMs}ms)`);
+  } else {
+    toast.info('No pools with latency data');
+  }
+}
+
+async function testGroupModalSelectedPools() {
+  if (groupModalSelectedIds.size === 0) return;
+  groupModalTesting = true;
+  try {
+    let ok = 0;
+    let failed = 0;
+    await Promise.all([...groupModalSelectedIds].map(async (id) => {
+      try {
+        const res = await proxyPoolsApi.test(id);
+        if (res.ok) ok++;
+        else failed++;
+      } catch {
+        failed++;
+      }
+    }));
+    await loadGroupModalPools();
+    await loadAll(true);
+    toast.success(`Tested ${ok + failed} pool${ok + failed === 1 ? '' : 's'} (${ok} OK, ${failed} failed)`);
+  } catch (err) {
+    toast.error('Test failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+  } finally {
+    groupModalTesting = false;
+  }
+}
+
+async function runGroupModalHealthCheck() {
+  try {
+    const res = await proxyPoolsApi.healthRun();
+    toast.success(`Health check done (${res.results?.length ?? 0} pools)`);
+    await loadGroupModalPools();
+    await loadAll(true);
+  } catch (err) {
+    toast.error('Health check failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+  }
+}
 
 async function deleteGroup(id: string) {
  try { await proxyGroupsApi.delete(id); toast.success('Proxy group deleted'); await loadAll(true); }
@@ -518,7 +620,7 @@ async function handleBulkImport() {
 					</Button>
 					<Button onclick={() => { resetAddPoolModal('single'); showAddPool = true; }} class="text-button-md rounded-sm px-5">Add pool</Button>
 				{:else if tab === 'groups'}
-					<Button onclick={() => { groupName = ''; groupMode = 'roundrobin'; groupStickyLimit = 1; groupStrict = false; groupPoolIds = []; showCreateGroup = true; }} class="text-button-md rounded-sm px-5">Add group</Button>
+<Button onclick={openCreateGroup} class="text-button-md rounded-sm px-5">Add group</Button>
 				{/if}
 			</div>
     </div>
@@ -681,11 +783,11 @@ async function handleBulkImport() {
           <CardContent class="flex flex-col items-center justify-center py-16">
             <h3 class="text-body-md-strong mb-1">No proxy groups configured.</h3>
             <p class="text-body-sm text-muted-foreground mb-4">Group pools together with round-robin or sticky routing.</p>
-            <Button onclick={() => { groupName = ''; groupMode = 'roundrobin'; groupStickyLimit = 1; groupStrict = false; groupPoolIds = []; showCreateGroup = true; }} class="text-button-md rounded-sm px-5">Add group</Button>
-          </CardContent>
-        </Card>
-      {/if}
-      </Tabs.Content>
+<Button onclick={openCreateGroup} class="text-button-md rounded-sm px-5">Add group</Button>
+      </CardContent>
+    </Card>
+    {/if}
+  </Tabs.Content>
 
       <Tabs.Content value="assignments">
 {#if providers.some(p => p.id !== 'oc') && pools.length > 0}
@@ -982,107 +1084,134 @@ async function handleBulkImport() {
 	</AlertDialog.Content>
 </AlertDialog.Root>
 
-<!-- Create Group Dialog -->
-<Dialog.Root bind:open={showCreateGroup}>
-  <Dialog.Content class="sm:max-w-lg">
+<!-- Group Dialog -->
+<Dialog.Root bind:open={showGroupModal}>
+  <Dialog.Content class="sm:max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
     <Dialog.Header>
-      <Dialog.Title class="text-body-md-strong">Create proxy group</Dialog.Title>
-      <Dialog.Description class="text-xs">Combine multiple pools with round-robin or sticky routing.</Dialog.Description>
+      <Dialog.Title class="text-body-md-strong">{editGroupId ? 'Edit proxy group' : 'Create proxy group'}</Dialog.Title>
+      <Dialog.Description class="text-xs">{editGroupId ? 'Update routing mode, strict proxy, and pool membership.' : 'Combine multiple pools with round-robin, sticky, or random routing.'}</Dialog.Description>
     </Dialog.Header>
-    <div class="space-y-4">
-      <div class="space-y-2">
-        <Label class="text-sm font-medium">Name</Label>
-        <Input bind:value={groupName} placeholder="e.g. us-proxies" class="h-10 text-body-sm" />
-      </div>
-      <div class="space-y-2">
-        <Label class="text-sm font-medium">Mode</Label>
-				<div class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-1">
-					<button class="cursor-pointer rounded-md px-4 py-1.5 text-sm font-medium transition-all {groupMode === 'roundrobin' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'roundrobin')}>Round Robin</button>
-					<button class="cursor-pointer rounded-md px-4 py-1.5 text-sm font-medium transition-all {groupMode === 'sticky' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'sticky')}>Sticky</button>
-				</div>
-			</div>
-      {#if groupMode === 'sticky'}
+    <div class="space-y-4 overflow-y-auto pr-1">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div class="space-y-2">
-          <Label class="text-sm font-medium">Sticky Limit</Label>
-          <Input type="number" bind:value={groupStickyLimit} min={1} class="h-10 text-code font-mono" />
+          <Label class="text-sm font-medium">Name</Label>
+          <Input bind:value={groupName} placeholder="e.g. us-proxies" class="h-10 text-body-sm" />
         </div>
-      {/if}
-      <div class="flex items-center space-x-2">
-        <Switch id="group-strict" bind:checked={groupStrict} />
-        <Label for="group-strict" class="text-sm font-medium cursor-pointer">Strict proxy</Label>
-      </div>
-      {#if pools.length > 0}
         <div class="space-y-2">
-          <Label class="text-sm font-medium">Pools</Label>
-          <div class="flex flex-wrap gap-1.5">
-            {#each pools as pool}
-              <button class="cursor-pointer px-2.5 py-1 rounded-md text-caption-mono border transition-colors {groupPoolIds.includes(pool.id) ? 'bg-foreground text-background border-foreground' : 'border-border text-muted-foreground hover:text-foreground'}" onclick={() => toggleGroupPool(pool.id)}>
-                {pool.name}
-              </button>
-            {/each}
+          <Label class="text-sm font-medium">Mode</Label>
+          <div class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-1">
+            <button class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-all {groupMode === 'roundrobin' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'roundrobin')}>Round Robin</button>
+            <button class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-all {groupMode === 'sticky' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'sticky')}>Sticky</button>
+            <button class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-all {groupMode === 'random' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'random')}>Random</button>
           </div>
         </div>
-      {/if}
+        <div class="flex items-end gap-4">
+          {#if groupMode === 'sticky'}
+          <div class="space-y-2">
+            <Label class="text-sm font-medium">Sticky Limit</Label>
+            <Input type="number" bind:value={groupStickyLimit} min={1} class="h-10 text-code font-mono" />
+          </div>
+          {/if}
+          <div class="flex items-center space-x-2 mb-2">
+            <Switch id="group-strict" bind:checked={groupStrict} />
+            <Label for="group-strict" class="text-sm font-medium cursor-pointer">Strict proxy</Label>
+          </div>
+        </div>
+      </div>
+      <div class="space-y-2">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <Label class="text-sm font-medium">Pools ({groupModalSelectedCount} selected)</Label>
+          <div class="flex flex-wrap gap-2">
+            <Button onclick={toggleGroupModalSelectAll} variant="outline" size="sm" class="text-body-sm rounded-sm px-3">{allGroupModalSelected ? 'Deselect all' : 'Select all'}</Button>
+            <Button onclick={clearGroupModalSelection} variant="outline" size="sm" class="text-body-sm rounded-sm px-3">Clear</Button>
+            <Button onclick={testGroupModalSelectedPools} disabled={groupModalTesting || groupModalSelectedCount === 0} variant="outline" size="sm" class="text-body-sm rounded-sm px-3">{groupModalTesting ? 'Testing...' : 'Test selected'}</Button>
+            <Button onclick={runGroupModalHealthCheck} variant="outline" size="sm" class="text-body-sm rounded-sm px-3">Test all</Button>
+            <Button onclick={selectLowestLatencyGroupModalPool} variant="outline" size="sm" class="text-body-sm rounded-sm px-3">Select lowest latency</Button>
+            <Button onclick={selectHealthyGroupModalPools} variant="outline" size="sm" class="text-body-sm rounded-sm px-3">Select healthy</Button>
+          </div>
+        </div>
+        {#if groupModalLoading}
+        <div class="h-32 bg-muted animate-pulse rounded-xl"></div>
+        {:else if groupModalPools.length > 0}
+        <Card class="shadow-card overflow-hidden p-0">
+          <div class="max-h-[360px] overflow-y-auto">
+            <table class="w-full text-body-sm">
+              <thead class="sticky top-0 z-10">
+                <tr class="border-b border-border bg-muted/50">
+                  <th class="text-left px-4 py-2.5 w-10">
+                    <input type="checkbox" checked={allGroupModalSelected} onchange={toggleGroupModalSelectAll} class="size-4 rounded border-border bg-background text-foreground accent-foreground cursor-pointer" aria-label="Select all pools" />
+                  </th>
+                  <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Name</th>
+                  <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Proxy URL</th>
+                  <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Type</th>
+                  <th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Health</th>
+                  <th class="text-right text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Latency</th>
+                  <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Location / ISP</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each groupModalPools as pool}
+                <tr class="border-b border-border hover:bg-muted/50 transition-colors">
+                  <td class="px-4 py-2.5">
+                    <input type="checkbox" checked={groupModalSelectedIds.has(pool.id)} onchange={() => toggleGroupModalPool(pool.id)} class="size-4 rounded border-border bg-background text-foreground accent-foreground cursor-pointer" aria-label="Select {pool.name}" />
+                  </td>
+                  <td class="px-4 py-2.5">
+                    <span class="text-body-sm-strong truncate block max-w-[160px]">{pool.name}</span>
+                  </td>
+                  <td class="px-4 py-2.5">
+                    <span class="text-caption-mono text-muted-foreground truncate block max-w-[260px]">{pool.proxyUrl}</span>
+                  </td>
+                  <td class="px-4 py-2.5">
+                    <span class="text-caption-mono text-muted-foreground">{typeLabel(pool.type)}</span>
+                  </td>
+                  <td class="px-4 py-2.5 text-center">
+                    {#if pool.testStatus === 'active'}
+                    <StatusBadge status="healthy">Online</StatusBadge>
+                    {:else if pool.testStatus === 'error'}
+                    <StatusBadge status="error" title={pool.lastError || ''}>Error</StatusBadge>
+                    {:else}
+                    <StatusBadge status="idle">—</StatusBadge>
+                    {/if}
+                  </td>
+                  <td class="px-4 py-2.5 text-right">
+                    <span class="text-caption-mono {pool.responseTimeMs != null && pool.responseTimeMs < 500 ? 'text-emerald-400' : pool.responseTimeMs != null && pool.responseTimeMs < 2000 ? 'text-yellow-400' : 'text-muted-foreground'}">
+                      {pool.responseTimeMs != null ? pool.responseTimeMs + 'ms' : '—'}
+                    </span>
+                  </td>
+                  <td class="px-4 py-2.5">
+                    {#if pool.proxyCountry || pool.proxyIp}
+                    <span class="text-[10px] text-muted-foreground/60 truncate block max-w-[220px]" title={pool.proxyIp || ''}>
+                      {pool.proxyCountry || '—'}{pool.proxyCity ? ', ' + pool.proxyCity : ''}{pool.proxyOrg ? ' • ' + pool.proxyOrg.replace(/^AS\d+\s*/, '') : ''}
+                    </span>
+                    {:else}
+                    <span class="text-muted-foreground text-[10px]">—</span>
+                    {/if}
+                  </td>
+                </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+        {:else}
+        <Card class="shadow-card">
+          <CardContent class="flex flex-col items-center justify-center py-12">
+            <p class="text-body-sm text-muted-foreground">No proxy pools available.</p>
+          </CardContent>
+        </Card>
+        {/if}
+      </div>
     </div>
     <Dialog.Footer>
-      <Button variant="ghost" onclick={() => (showCreateGroup = false)}>Cancel</Button>
-      <Button onclick={handleCreateGroup} disabled={createGroupLoading || !groupName.trim()}>
-        {createGroupLoading ? 'Creating...' : 'Create'}
+      <Button variant="ghost" onclick={() => (showGroupModal = false)}>Cancel</Button>
+      <Button onclick={handleSaveGroup} disabled={groupModalSaving || !groupName.trim()}>
+        {groupModalSaving ? 'Saving...' : (editGroupId ? 'Save' : 'Create')}
       </Button>
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>
 
-<!-- Edit Group Dialog -->
-<Dialog.Root bind:open={showEditGroup}>
-  <Dialog.Content class="sm:max-w-lg">
-    <Dialog.Header>
-      <Dialog.Title class="text-body-md-strong">Edit proxy group</Dialog.Title>
-      <Dialog.Description class="text-xs">Update routing mode, strict proxy, and pool membership.</Dialog.Description>
-    </Dialog.Header>
-    <div class="space-y-4">
-      <div class="space-y-2">
-        <Label class="text-sm font-medium">Name</Label>
-        <Input bind:value={groupName} class="h-10 text-body-sm" />
-      </div>
-      <div class="space-y-2">
-        <Label class="text-sm font-medium">Mode</Label>
-				<div class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-1">
-					<button class="cursor-pointer rounded-md px-4 py-1.5 text-sm font-medium transition-all {groupMode === 'roundrobin' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'roundrobin')}>Round Robin</button>
-					<button class="cursor-pointer rounded-md px-4 py-1.5 text-sm font-medium transition-all {groupMode === 'sticky' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'sticky')}>Sticky</button>
-				</div>
-			</div>
-      {#if groupMode === 'sticky'}
-        <div class="space-y-2">
-          <Label class="text-sm font-medium">Sticky Limit</Label>
-          <Input type="number" bind:value={groupStickyLimit} min={1} class="h-10 text-code font-mono" />
-        </div>
-      {/if}
-      <div class="flex items-center space-x-2">
-        <Switch id="group-strict" bind:checked={groupStrict} />
-        <Label for="group-strict" class="text-sm font-medium cursor-pointer">Strict proxy</Label>
-      </div>
-      {#if pools.length > 0}
-        <div class="space-y-2">
-          <Label class="text-sm font-medium">Pools</Label>
-          <div class="flex flex-wrap gap-1.5">
-            {#each pools as pool}
-              <button class="cursor-pointer px-2.5 py-1 rounded-md text-caption-mono border transition-colors {groupPoolIds.includes(pool.id) ? 'bg-foreground text-background border-foreground' : 'border-border text-muted-foreground hover:text-foreground'}" onclick={() => toggleGroupPool(pool.id)}>
-                {pool.name}
-              </button>
-            {/each}
-          </div>
-        </div>
-      {/if}
-    </div>
-    <Dialog.Footer>
-      <Button variant="ghost" onclick={() => (showEditGroup = false)}>Cancel</Button>
-	<Button onclick={handleEditGroup} disabled={editGroupLoading || !groupName.trim()}>
-		{editGroupLoading ? 'Saving...' : 'Save'}
-	</Button>
-</Dialog.Footer>
-</Dialog.Content>
-</Dialog.Root>
+
 
 <!-- Edit Pool Dialog -->
 	<Dialog.Root bind:open={showEditPool}>
