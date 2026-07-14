@@ -23,6 +23,14 @@ AxonRouter-Go is a single Go binary with an embedded Svelte dashboard and SQLite
 
 ---
 
+## 📸 Dashboard
+
+| Login | Dashboard |
+|-------|-----------|
+| ![Login](./images/login.png) | ![Dashboard](./images/dashboard.png) |
+
+---
+
 ## ✨ Features
 
 - **Universal Proxy** — Translate between OpenAI, Claude, Gemini, Codex, Antigravity, Kiro formats.
