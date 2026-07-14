@@ -1158,3 +1158,48 @@ export const passwordApi = {
       body: JSON.stringify({}),
     }),
 };
+
+// TLS / HTTPS config (autocert setup wizard)
+export interface TLSConfig {
+  enabled: boolean;
+  domain: string;
+  email: string;
+  acceptTOS: boolean;
+  staging: boolean;
+  certCache: string;
+  valid?: boolean;
+  certDir?: string;
+}
+
+export interface TLSConfigPayload {
+  enabled: boolean;
+  domain: string;
+  email: string;
+  acceptTOS: boolean;
+  staging?: boolean;
+  certCache?: string;
+}
+
+export interface TLSCheckDNSResult {
+  domain: string;
+  publicIP: string;
+  resolvedIP: string;
+  matches: boolean;
+}
+
+export const tlsApi = {
+  get: () => fetchApi<{ data: TLSConfig }>("/tls-config"),
+
+  save: (payload: Partial<TLSConfigPayload>) =>
+    fetchApi<{ ok: boolean }>("/tls-config", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
+  publicIp: () => fetchApi<{ data: { ip: string } }>("/tls-config/public-ip"),
+
+  checkDns: (domain: string) =>
+    fetchApi<{ data: TLSCheckDNSResult }>(
+      `/tls-config/check-dns?domain=${encodeURIComponent(domain)}`,
+    ),
+};
