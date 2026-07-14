@@ -42,7 +42,7 @@ func TestHealth_IncludesVersionInfo(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"tag_name":"v0.3.2","published_at":"2026-07-14T00:00:00Z","html_url":"https://github.com/rickicode/AxonRouter-Go/releases/tag/v0.3.2"}`))
+		w.Write([]byte(`{"tag_name":"v0.3.4","published_at":"2026-07-14T00:00:00Z","html_url":"https://github.com/rickicode/AxonRouter-Go/releases/tag/v0.3.4"}`))
 	}))
 	defer server.Close()
 
@@ -66,8 +66,8 @@ func TestHealth_IncludesVersionInfo(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp["latest_version"] != "0.3.2" {
-		t.Errorf("latest_version = %v, want 0.3.2", resp["latest_version"])
+	if resp["latest_version"] != "0.3.4" {
+		t.Errorf("latest_version = %v, want 0.3.4", resp["latest_version"])
 	}
 	if resp["update_available"] != true {
 		t.Errorf("update_available = %v, want true", resp["update_available"])
@@ -85,7 +85,7 @@ func TestHealth_CurrentVersion_NoUpdate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"tag_name":"v0.3.1","published_at":"2026-07-14T00:00:00Z","html_url":"https://github.com/rickicode/AxonRouter-Go/releases/tag/v0.3.1"}`))
+		w.Write([]byte(`{"tag_name":"v0.3.3","published_at":"2026-07-14T00:00:00Z","html_url":"https://github.com/rickicode/AxonRouter-Go/releases/tag/v0.3.3"}`))
 	}))
 	defer server.Close()
 
@@ -109,8 +109,8 @@ func TestHealth_CurrentVersion_NoUpdate(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp["latest_version"] != "0.3.1" {
-		t.Errorf("latest_version = %v, want 0.3.1", resp["latest_version"])
+	if resp["latest_version"] != "0.3.3" {
+		t.Errorf("latest_version = %v, want 0.3.3", resp["latest_version"])
 	}
 	if resp["update_available"] != false {
 		t.Errorf("update_available = %v, want false", resp["update_available"])

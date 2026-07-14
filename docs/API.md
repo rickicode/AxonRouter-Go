@@ -1,16 +1,37 @@
 # AxonRouter-Go API Documentation
 
+AxonRouter exposes an OpenAI-compatible proxy on `/v1/*` and an admin dashboard API on `/api/admin/*`.
+
+- **User-facing overview:** [README.md](../README.md)
+- **Deployment guide:** [DEPLOYMENT.md](./DEPLOYMENT.md)
+- **Architecture:** [ARCHITECTURE.md](./ARCHITECTURE.md)
+
+---
+
 ## Authentication
 
-Semua request ke `/v1/*` endpoints memerlukan API key:
+### Client API keys (`/v1/*`)
+
+All requests to `/v1/*` proxy endpoints require a Bearer API key:
 
 ```bash
 curl -H "Authorization: Bearer YOUR_API_KEY" \
-     -X POST http://localhost:3777/v1/chat/completions \
-     -d '{"model":"openai/gpt-4o","messages":[{"role":"user","content":"Hello"}]}'
+  -X POST http://localhost:3777/v1/chat/completions \
+  -d '{"model":"openai/gpt-4o","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
-API keys dikelola melalui admin dashboard atau admin API.
+API keys are managed in Dashboard → Settings or via the admin API.
+
+### Admin session (`/api/admin/*`)
+
+Admin endpoints require a JWT session:
+
+1. `POST /api/admin/login` with `{"password": "..."}`.
+2. The default password is randomly generated on first boot; change it with `axonrouter --setpass <password>`.
+3. The response returns `{"token": "..."}` and sets `X-Auth-Token`.
+4. Send the token as `Authorization: Bearer <token>` (or `X-Auth-Token`) on every `/api/admin/*` request.
+5. Tokens are sliding: idle for 72 hours = logout.
+6. `GET /api/admin/health` is public and returns version/health info.
 
 ---
 
@@ -96,7 +117,7 @@ Anthropic Claude Messages format.
 
 ### POST /v1/responses
 
-OpenAI Responses format (Codex).
+OpenAI Responses format (Codex). Mounted and reachable at `/v1/responses`; Codex-style requests can also be sent through `/v1/chat/completions`.
 
 **Request:**
 ```json
@@ -205,6 +226,20 @@ Image generation.
 
 ---
 
+### POST /v1/video/generations
+
+Video generation.
+
+**Request:**
+```json
+{
+  "model": "openai/gpt-5.4-video",
+  "prompt": "A futuristic cityscape at sunset"
+}
+```
+
+---
+
 ### POST /v1/unified
 
 Unified multi-modality gateway.
@@ -223,15 +258,20 @@ Modes: `text`, `image`, `audio`, `video`
 ---
 
 ## Admin API
-#### POST /api/admin/login
 
-Login dengan password admin (default `12345677`, diubah via `axonrouter --setpass <password>`). Mengembalikan JWT di header `X-Auth-Token` dan body `{"token": "..."}`.
+### POST /api/admin/login
+
+Issue a session JWT.
 
 **Request:** `{"password": "string"}`
 
 **Response (200):** `{"token": "eyJ..."}`
 
-Admin API memerlukan sesi JWT. Login via `POST /api/admin/login` dengan body `{"password": "..."}`; respons mengembalikan token di header `X-Auth-Token` dan field `token`. Kirim token lewat header `Authorization: Bearer <token>` (atau `X-Auth-Token`) pada setiap request `/api/admin/*`. Token di-slide (exp diperbarui tiap request) sehingga idle 72 jam = logout. `POST /api/admin/health` tetap publik.
+See the [Authentication](#authentication) section above for how to use the token.
+
+### GET /api/admin/health
+
+Public health check. Returns status, version, `latest_version`, `update_available`, and `must_change_password`.
 
 ### Providers
 
@@ -472,6 +512,88 @@ Provider summary.
 #### GET /api/admin/dashboard/recent-logs
 
 Recent logs.
+
+---
+
+### Models
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/admin/providers/:id/models` | List models for a provider. |
+| `POST /api/admin/providers/:id/models/test` | Test a model via this provider. |
+| `POST /api/admin/models/sync` | Sync the model catalog. |
+
+---
+
+### OAuth
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/admin/oauth/start` | Start an OAuth flow (PKCE / device code / Google / AWS). |
+| `GET /api/admin/oauth/:sessionId/poll` | Poll OAuth status. |
+| `POST /api/admin/oauth/callback` | Submit OAuth callback code/state. |
+
+---
+
+### Quota
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/admin/quota` | List quota cache entries. |
+| `GET /api/admin/quota/summary` | Quota summary. |
+| `POST /api/admin/quota/:connId/refresh` | Refresh a connection's quota. |
+
+---
+
+### Model Pricing
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/admin/model-pricing` | List per-model cost rates. |
+| `POST /api/admin/model-pricing` | Create pricing entry. |
+| `PATCH /api/admin/model-pricing/:id` | Update pricing entry. |
+| `DELETE /api/admin/model-pricing/:id` | Delete pricing entry. |
+
+---
+
+### Proxy Pools
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/admin/proxy-pools` | List proxy pools. |
+| `POST /api/admin/proxy-pools` | Create proxy pool. |
+| `POST /api/admin/proxy-pools/bulk` | Bulk create proxy pools. |
+| `GET /api/admin/proxy-pools/:id` | Proxy pool detail. |
+| `PATCH /api/admin/proxy-pools/:id` | Update proxy pool. |
+| `DELETE /api/admin/proxy-pools/:id` | Delete proxy pool. |
+| `POST /api/admin/proxy-pools/:id/test` | Test proxy pool. |
+| `POST /api/admin/proxy-pools/bulk-delete` | Bulk delete by ids or test_status. |
+| `GET /api/admin/proxy-pools/health-check` | Get health-check status. |
+| `POST /api/admin/proxy-pools/health-check` | Run health check. |
+| `GET /api/admin/proxy-pools/generate-source` | Generate deploy source. |
+| `POST /api/admin/proxy-pools/vercel-deploy` | Deploy to Vercel. |
+| `POST /api/admin/proxy-pools/deno-deploy` | Deploy to Deno. |
+| `POST /api/admin/proxy-pools/cloudflare-deploy` | Deploy to Cloudflare. |
+
+---
+
+### TLS Config
+
+Native HTTPS on port 443 via Let's Encrypt. Configured from Dashboard → Settings → HTTPS.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/admin/tls-config` | Get current TLS configuration. |
+| `GET /api/admin/tls-config/public-ip` | Detect public IP with `AXON_PUBLIC_IP` override. |
+| `GET /api/admin/tls-config/check-dns` | Check DNS readiness for the configured domain. |
+
+---
+
+### Upgrade
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/admin/upgrade` | Download the latest release binary for the current platform, verify SHA256 against `checksums.txt`, and write it to `<DataDir>/bin/<asset>`. |
 
 ---
 
