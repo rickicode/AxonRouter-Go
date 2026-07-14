@@ -92,34 +92,38 @@
 	}
 
 	function handleExport() {
-		const headers = [
-			'Time',
-			'Provider',
-			'Account',
-			'Model',
-    'Status',
-    'Latency',
-    'Proxy',
-    'Input',
-    'Output',
-    'Cached',
-			'Cost',
-			'Error',
-		];
-		const rows = $logs.map((row) => [
-			formatLogTime(row.timestamp),
-row.provider_name || providerMeta(row.provider_type_id).displayName,
-			row.connection_name || row.connection_id || '',
-			row.model_id,
-      row.status_code?.toString() || '',
-      `${row.latency_ms}ms`,
-      row.proxy_pool_id ? row.proxy_pool_name || row.proxy_pool_id : 'direct',
-      row.input_tokens.toString(),
-			row.output_tokens.toString(),
-			row.cached_tokens.toString(),
-			`$${row.cost_usd.toFixed(4)}`,
-			row.error_message || '',
-		]);
+const headers = [
+		'Time',
+		'Provider Name',
+		'API Key',
+		'Account',
+		'Model',
+		'Status',
+		'Stream',
+		'Latency',
+		'Proxy',
+		'Input',
+		'Output',
+		'Cached',
+		'Cost',
+		'Error',
+	];
+	const rows = $logs.map((row) => [
+		formatLogTime(row.timestamp),
+		row.provider_name || providerMeta(row.provider_type_id).displayName,
+		row.api_key || '',
+		row.connection_name || row.connection_id || '',
+		row.model_id,
+		row.status_code?.toString() || '',
+		row.stream ? 'stream' : 'json',
+		`${row.latency_ms}ms`,
+		row.proxy_pool_id ? row.proxy_pool_name || row.proxy_pool_id : 'direct',
+		row.input_tokens.toString(),
+		row.output_tokens.toString(),
+		row.cached_tokens.toString(),
+		`$${row.cost_usd.toFixed(4)}`,
+		row.error_message || '',
+	]);
 		const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
 		const blob = new Blob([csv], { type: 'text/csv' });
 		const url = URL.createObjectURL(blob);
@@ -208,17 +212,18 @@ row.provider_name || providerMeta(row.provider_type_id).displayName,
 		{ code: 500, label: 'Error' },
 	];
 
-	const columns = [
-		{ key: 'timestamp', label: 'Time' },
-		{ key: 'provider_name', label: 'Provider' },
-		{ key: 'connection_name', label: 'Account' },
-		{ key: 'model_id', label: 'Model' },
-  { key: 'status_code', label: 'Status' },
-  { key: 'latency_ms', label: 'Latency / Proxy' },
-  { key: 'tokens', label: 'Tokens' },
-		{ key: 'cost_usd', label: 'Cost' },
-		{ key: 'error_message', label: 'Error' },
-	];
+type ColumnDef = { key: string; label: string; subLabel?: string };
+
+const columns: ColumnDef[] = [
+	{ key: 'timestamp', label: 'Time' },
+	{ key: 'provider_name', label: 'Provider Name', subLabel: 'API Key' },
+	{ key: 'connection_name', label: 'Account', subLabel: 'Model' },
+	{ key: 'status_code', label: 'Status Code', subLabel: 'Stream / JSON' },
+	{ key: 'latency_ms', label: 'Latency', subLabel: 'Proxy' },
+	{ key: 'tokens', label: 'Tokens' },
+	{ key: 'cost_usd', label: 'Cost' },
+	{ key: 'error_message', label: 'Error' },
+];
 </script>
 
 <div class="flex flex-1 flex-col gap-6 p-6 w-full">
@@ -405,22 +410,27 @@ row.provider_name || providerMeta(row.provider_type_id).displayName,
 					<table class="w-full text-left border-collapse">
 						<thead>
 							<tr class="border-b border-border bg-muted/30">
-								{#each columns as column}
-									<th
-										class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 {column.key === 'timestamp'
-											? 'min-w-[180px]'
-											: ''} {column.key === 'provider_name' ? 'min-w-[140px]' : ''} {column.key === 'connection_name'
-											? 'min-w-[120px]'
-              : ''} {column.key === 'model_id' ? 'min-w-[180px]' : ''} {column.key === 'tokens'
-              ? 'text-right min-w-[120px]'
-              : ''} {column.key === 'cost_usd' ? 'text-right min-w-[80px]' : ''} {column.key ===
-										'error_message'
-											? 'min-w-[160px]'
-											: ''}"
-									>
-										{column.label}
-									</th>
-								{/each}
+{#each columns as column}
+						<th
+							class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 align-bottom {column.key === 'timestamp'
+							? 'min-w-[180px]'
+							: ''} {column.key === 'provider_name' ? 'min-w-[180px]' : ''} {column.key === 'connection_name'
+							? 'min-w-[220px]'
+							: ''} {column.key === 'status_code' ? 'min-w-[140px]' : ''} {column.key === 'tokens'
+							? 'text-right min-w-[120px]'
+							: ''} {column.key === 'cost_usd' ? 'text-right min-w-[80px]' : ''} {column.key ===
+							'error_message'
+							? 'min-w-[160px]'
+							: ''}"
+						>
+						<div class="flex flex-col leading-none">
+							<span>{column.label}</span>
+							{#if column.subLabel}
+								<span class="text-[10px] normal-case text-muted-foreground/70">{column.subLabel}</span>
+							{/if}
+						</div>
+						</th>
+					{/each}
 							</tr>
 						</thead>
 						<tbody class="divide-y divide-border/60">
@@ -428,52 +438,54 @@ row.provider_name || providerMeta(row.provider_type_id).displayName,
 								{@const statusProps = getStatusBadgeProps(row.status_code, row.error_message, row.error_category)}
 								<tr class="transition-colors hover:bg-accent/20">
 									<td class="py-3 px-4 font-mono text-caption text-muted-foreground whitespace-nowrap">{formatLogTime(row.timestamp)}</td>
-									<td class="py-3 px-4">
-										<div class="flex items-center gap-2.5">
-											<ProviderIcon meta={providerMeta(row.provider_type_id)} size={24} />
-											<div class="flex flex-col">
-												<a
-													href="/providers/{row.provider_type_id}"
-													class="text-body-sm-strong hover:underline text-foreground leading-none"
->{row.provider_name || providerMeta(row.provider_type_id).displayName}</a
-												>
-		<Badge
-			variant={row.stream ? 'default' : 'secondary'}
-			class="text-caption-mono rounded-sm py-0 w-fit mt-1"
-		>
-			{row.stream ? 'stream' : 'json'}
-		</Badge>
-		{#if row.tokens_estimated}
-			<Badge variant="outline" class="text-caption-mono rounded-sm py-0 w-fit mt-1 text-muted-foreground">
-				est
-			</Badge>
-		{/if}
-											</div>
-										</div>
-									</td>
-									<td class="py-3 px-4 text-body-sm text-foreground">{row.connection_name || row.connection_id || '—'}</td>
-									<td class="py-3 px-4 text-code text-foreground truncate max-w-[220px]" title={row.model_id}>{row.model_id}</td>
-									<td class="py-3 px-4">
-										<div class="flex flex-col gap-1">
-											<Badge variant={statusProps.variant} class="text-caption-mono rounded-sm py-0.5 w-fit">{statusProps.label}</Badge>
-											{#if row.cooldown_until && formatCooldown(row.cooldown_until)}
-												<span class="text-caption-mono text-amber-500">cooldown {formatCooldown(row.cooldown_until)}</span>
-											{/if}
-										</div>
-									</td>
+<td class="py-3 px-4">
+							<div class="flex items-center gap-2.5">
+								<ProviderIcon meta={providerMeta(row.provider_type_id)} size={24} />
+								<div class="flex flex-col min-w-0">
+									<a
+										href="/providers/{row.provider_type_id}"
+										class="text-body-sm-strong hover:underline text-foreground leading-none truncate"
+									>{row.provider_name || providerMeta(row.provider_type_id).displayName}</a
+									>
+									<span class="text-caption-mono text-muted-foreground truncate" title={row.api_key || ''}>{row.api_key || '—'}</span>
+								</div>
+							</div>
+						</td>
+<td class="py-3 px-4">
+							<div class="flex flex-col">
+								<span class="text-body-sm text-foreground truncate" title={row.connection_name || row.connection_id || ''}>{row.connection_name || row.connection_id || '—'}</span>
+								<span class="text-code text-muted-foreground truncate max-w-[220px]" title={row.model_id}>{row.model_id}</span>
+							</div>
+						</td>
+<td class="py-3 px-4">
+							<div class="flex flex-col gap-1">
+								<Badge variant={statusProps.variant} class="text-caption-mono rounded-sm py-0.5 w-fit">{statusProps.label}</Badge>
+								{#if row.cooldown_until && formatCooldown(row.cooldown_until)}
+									<span class="text-caption-mono text-amber-500">cooldown {formatCooldown(row.cooldown_until)}</span>
+								{/if}
+								<Badge variant={row.stream ? 'default' : 'secondary'} class="text-caption-mono rounded-sm py-0 w-fit">{row.stream ? 'stream' : 'json'}</Badge>
+							</div>
+						</td>
           <td class="py-3 px-4">
             <div class="flex flex-col">
               <span class="text-code text-muted-foreground">{formatLatency(row.latency_ms)}</span>
               <span class="text-caption-mono text-muted-foreground">{row.proxy_pool_id ? row.proxy_pool_name || row.proxy_pool_id : 'direct'}</span>
             </div>
           </td>
-          <td class="py-3 px-4 text-code text-right whitespace-nowrap">
-										<span class="text-muted-foreground">{formatTokens(row.input_tokens)}</span>
-										<span class="text-muted-foreground/60">/</span>
-										<span class="text-foreground">{formatTokens(row.output_tokens)}</span>
-										<span class="text-muted-foreground/60">/</span>
-										<span class="text-muted-foreground">{formatTokens(row.cached_tokens)}</span>
-									</td>
+<td class="py-3 px-4 text-code text-right whitespace-nowrap">
+							<div class="flex flex-col items-end gap-1">
+								<div>
+									<span class="text-muted-foreground">{formatTokens(row.input_tokens)}</span>
+									<span class="text-muted-foreground/60">/</span>
+									<span class="text-foreground">{formatTokens(row.output_tokens)}</span>
+									<span class="text-muted-foreground/60">/</span>
+									<span class="text-muted-foreground">{formatTokens(row.cached_tokens)}</span>
+								</div>
+								{#if row.tokens_estimated}
+									<Badge variant="outline" class="text-caption-mono rounded-sm py-0 w-fit text-muted-foreground">est</Badge>
+								{/if}
+							</div>
+						</td>
 									<td class="py-3 px-4 text-code text-foreground font-medium text-right">{formatCost(row.cost_usd)}</td>
 									<td class="py-3 px-4 text-caption">
 										{#if row.error_message && row.error_message !== ''}
