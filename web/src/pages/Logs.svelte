@@ -463,7 +463,7 @@ const columns: ColumnDef[] = [
 								{#if row.cooldown_until && formatCooldown(row.cooldown_until)}
 									<span class="text-caption-mono text-amber-500">cooldown {formatCooldown(row.cooldown_until)}</span>
 								{/if}
-								<Badge variant={row.stream ? 'default' : 'secondary'} class="text-caption-mono rounded-sm py-0 w-fit">{row.stream ? 'stream' : 'json'}</Badge>
+								<Badge variant="outline" class="text-caption-mono rounded-sm py-0 w-fit border-border text-muted-foreground">{row.stream ? 'stream' : 'json'}</Badge>
 							</div>
 						</td>
           <td class="py-3 px-4">

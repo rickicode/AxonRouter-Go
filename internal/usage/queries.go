@@ -38,19 +38,21 @@ func QueryLogs(database *sql.DB, page, perPage int, filter LogFilter) (*db.Pagin
 	database.QueryRow(countQuery, args...).Scan(&total)
 
 	offset := (page - 1) * perPage
-	dataQuery := fmt.Sprintf(`
-	SELECT r.id, r.timestamp, r.connection_id, c.name AS connection_name, r.provider_type_id, r.model_id, r.combo_id,
-		r.proxy_pool_id, p.name AS proxy_pool_name,
-		r.modality, r.input_tokens, r.output_tokens, r.reasoning_tokens, r.cached_tokens, r.cache_creation_tokens,
-		r.stream, r.tokens_estimated,
-		r.latency_ms, r.status_code, r.error_message, r.cost_usd, r.created_at
-	FROM request_logs r
-	LEFT JOIN connections c ON r.connection_id = c.id
-	LEFT JOIN proxy_pools p ON r.proxy_pool_id = p.id
-	WHERE %s
-	ORDER BY r.timestamp DESC
-	LIMIT ? OFFSET ?
-	`, where)
+dataQuery := fmt.Sprintf(`
+SELECT r.id, r.timestamp, r.connection_id, c.name AS connection_name, r.provider_type_id, r.model_id, r.combo_id,
+r.proxy_pool_id, p.name AS proxy_pool_name,
+COALESCE(NULLIF(k.name,''), NULLIF(k.key_value,''), r.api_key_id) AS api_key,
+r.modality, r.input_tokens, r.output_tokens, r.reasoning_tokens, r.cached_tokens, r.cache_creation_tokens,
+r.stream, r.tokens_estimated,
+r.latency_ms, r.status_code, r.error_message, r.cost_usd, r.created_at
+FROM request_logs r
+LEFT JOIN connections c ON r.connection_id = c.id
+LEFT JOIN proxy_pools p ON r.proxy_pool_id = p.id
+LEFT JOIN api_keys k ON r.api_key_id = k.id
+WHERE %s
+ORDER BY r.timestamp DESC
+LIMIT ? OFFSET ?
+`, where)
 	args = append(args, perPage, offset)
 
 	rows, err := database.Query(dataQuery, args...)
@@ -62,12 +64,12 @@ func QueryLogs(database *sql.DB, page, perPage int, filter LogFilter) (*db.Pagin
 	var logs []db.RequestLog
 	for rows.Next() {
 		l := db.RequestLog{}
-		rows.Scan(&l.ID, &l.Timestamp, &l.ConnectionID, &l.ConnectionName, &l.ProviderTypeID,
-			&l.ModelID, &l.ComboID, &l.ProxyPoolID, &l.ProxyPoolName, &l.Modality,
-			&l.InputTokens, &l.OutputTokens, &l.ReasoningTokens, &l.CachedTokens, &l.CacheCreationTokens,
-			&l.Stream, &l.TokensEstimated,
-			&l.LatencyMs, &l.StatusCode, &l.ErrorMessage,
-			&l.CostUsd, &l.CreatedAt)
+rows.Scan(&l.ID, &l.Timestamp, &l.ConnectionID, &l.ConnectionName, &l.ProviderTypeID,
+		&l.ModelID, &l.ComboID, &l.ProxyPoolID, &l.ProxyPoolName, &l.ApiKey, &l.Modality,
+		&l.InputTokens, &l.OutputTokens, &l.ReasoningTokens, &l.CachedTokens, &l.CacheCreationTokens,
+		&l.Stream, &l.TokensEstimated,
+		&l.LatencyMs, &l.StatusCode, &l.ErrorMessage,
+		&l.CostUsd, &l.CreatedAt)
 		logs = append(logs, l)
 	}
 
