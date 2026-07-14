@@ -7,9 +7,10 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/main/installer.sh | bash
-#   ./installer.sh                 # latest release, auto OS/arch detection
-#   ./installer.sh --version v1.2.3 # specific tag
-#   ./installer.sh --to /usr/local/bin
+# ./installer.sh # latest release, auto OS/arch detection
+# ./installer.sh --version v1.2.3 # specific tag
+# ./installer.sh --to /usr/local/bin
+# ./installer.sh --service # install a systemd service (Linux only)
 #
 # The release workflow (.github/workflows/release.yml) builds and uploads assets
 # named "axonrouter-<os>-<arch>[.exe]" for windows/linux and darwin (amd64+arm64).
@@ -18,8 +19,9 @@ set -euo pipefail
 
 REPO="rickicode/AxonRouter-Go"
 API="https://api.github.com/repos/${REPO}"
-VERSION=""            # empty => latest
-INSTALL_DIR=""       # empty => pick a writable dir on PATH
+VERSION="" # empty => latest
+INSTALL_DIR="" # empty => pick a writable dir on PATH
+INSTALL_SERVICE=false
 BIN_NAME="axonrouter"
 
 err()  { echo "error: $*" >&2; exit 1; }
@@ -29,7 +31,8 @@ info() { echo "==> $*"; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version) VERSION="$2"; shift 2 ;;
-    --to)      INSTALL_DIR="$2"; shift 2 ;;
+    --to) INSTALL_DIR="$2"; shift 2 ;;
+    --service) INSTALL_SERVICE=true; shift ;;
     -h|--help)
       grep '^#' "$0" | sed 's/^#\{1,2\} //'; exit 0 ;;
     *) err "unknown argument: $1" ;;
@@ -78,6 +81,14 @@ if ! curl -fsSL "$URL" -o "$DOWNLOAD_TO"; then
   err "download failed. The release ${VERSION} may not include an asset for ${GOOS}/${GOARCH}."
 fi
 
+# ---- service mode defaults --------------------------------------------------
+if [[ "$INSTALL_SERVICE" == true ]]; then
+  [[ "$GOOS" == "linux" ]] || err "--service is only supported on Linux"
+  [[ "$EUID" -eq 0 ]] || err "--service must be run as root (e.g. sudo bash installer.sh --service)"
+  command -v systemctl >/dev/null 2>&1 || err "systemctl not found; cannot install systemd service"
+  INSTALL_DIR="/opt/axonrouter"
+fi
+
 # ---- choose install directory ----------------------------------------------
 if [[ -z "$INSTALL_DIR" ]]; then
   for d in "${HOME}/.local/bin" /usr/local/bin; do
@@ -100,9 +111,51 @@ fi
 info "Installed to ${INSTALLED}"
 
 # ---- verify on PATH ---------------------------------------------------------
+install_systemd() {
+  local svc_user="axonrouter"
+  local data_dir="/var/lib/axonrouter"
+
+  if ! id -u "$svc_user" >/dev/null 2>&1; then
+    useradd --system --home "$data_dir" --create-home "$svc_user" || err "failed to create ${svc_user} user"
+  fi
+
+  mkdir -p "$data_dir"
+  chown -R "${svc_user}:${svc_user}" "$data_dir"
+
+  cat > /etc/systemd/system/axonrouter.service <<EOF
+[Unit]
+Description=AxonRouter-Go API Proxy
+After=network.target
+
+[Service]
+Type=simple
+User=${svc_user}
+WorkingDirectory=${data_dir}
+Environment="AXON_DATA_DIR=${data_dir}"
+ExecStart=${INSTALLED}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  systemctl daemon-reload
+  systemctl enable axonrouter
+  info "Created /etc/systemd/system/axonrouter.service"
+  info "Start the service with: systemctl start axonrouter"
+}
+
+# ---- install systemd service on Linux ---------------------------------------
+if [[ "$INSTALL_SERVICE" == true ]]; then
+  install_systemd
+  exit 0
+fi
+
+# ---- verify on PATH ---------------------------------------------------------
 if command -v "$TARGET" >/dev/null 2>&1 || [[ ":$PATH:" == *":${INSTALL_DIR}:"* ]]; then
   info "Done. Run it with: ${TARGET}"
 else
   echo "note: ${INSTALL_DIR} is not on your PATH. Add it with:"
-  echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
+  echo " export PATH=\"${INSTALL_DIR}:\$PATH\""
 fi
