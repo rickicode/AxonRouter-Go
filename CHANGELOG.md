@@ -78,7 +78,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Version scripts `bump-version.js` and `sync-release-from-tag.js` tolerate existing release sections and always synchronize `README.md`.
 
 ### Changed
-- Settings page redesigned into Security, HTTPS, and Runtime tabs; runtime settings are now grouped into category cards with inline edit controls.
+- Settings page redesigned into Runtime, Security, and HTTPS tabs with Runtime as the default tab.
+- Runtime settings fully redesigned as a clean list/table with category filter pills, search, and inline edit; non-runtime keys (CLI Tools, API Key, etc.) are no longer shown in the Runtime tab.
 - Optimization dashboard page redesigned: tabs now use pill-style controls matching ProxyPools, and the Cache tab gained a header row with refresh/flush actions, proper stat cards for hits/misses/hit rate/entries, plus a clarification note explaining cache eligibility for non-streaming/tool/cache_control responses.
 - `ExtractTokensFromBody` extended to parse Gemini `usageMetadata` and OpenAI Responses API `response.usage`/`usage` shapes.
 - Usage tracker stores `tokens_estimated` flag in log entries for distinguishing estimated vs actual token counts.
