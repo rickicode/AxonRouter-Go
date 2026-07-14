@@ -4,6 +4,7 @@
   import type { ProxyPool, ProxyGroup, DeployResult, Provider } from '$lib/api';
   import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
+import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
   import { Textarea } from '$lib/components/ui/textarea';
   import { Label } from '$lib/components/ui/label';
@@ -16,9 +17,10 @@ import Pagination from '$lib/components/Pagination.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import { toast } from 'svelte-sonner';
 
-  let tab = $state<'pools' | 'groups' | 'assignments' | 'deploy'>('pools');
-  let pools = $state<ProxyPool[]>([]);
-  let groups = $state<ProxyGroup[]>([]);
+let tab = $state<'pools' | 'groups' | 'assignments' | 'deploy'>('pools');
+let pools = $state<ProxyPool[]>([]);
+let allPools = $state<ProxyPool[]>([]);
+let groups = $state<ProxyGroup[]>([]);
   let providers = $state<Provider[]>([]);
   let loading = $state(true);
   let error = $state('');
@@ -61,19 +63,26 @@ let bulkLoading = $state(false);
 let selectedPoolIds = $state<Set<string>>(new Set());
 const selectedCount = $derived(selectedPoolIds.size);
 const allVisibleSelected = $derived(pools.length > 0 && pools.every(p => selectedPoolIds.has(p.id)));
-const parsedBulkItems = $derived(
-	bulkText
-		.split('\n')
-		.map(line => line.trim())
-		.filter(line => line.length > 0 && !line.startsWith('#'))
-		.map(line => {
-			const idx = line.indexOf('|');
-			if (idx > 0) {
-				return { name: line.slice(0, idx).trim(), proxyUrl: line.slice(idx + 1).trim() };
-			}
-			return { proxyUrl: line };
-		})
-);
+function hasScheme(url: string): boolean {
+  return /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(url);
+}
+
+function normalizeBulkLine(line: string): string {
+  const idx = line.indexOf('|');
+  if (idx > 0) {
+    const name = line.slice(0, idx).trim();
+    let proxyUrl = line.slice(idx + 1).trim();
+    if (bulkType === 'http' && proxyUrl && !hasScheme(proxyUrl)) {
+      proxyUrl = 'http://' + proxyUrl;
+    }
+    return `${name}|${proxyUrl}`;
+  }
+  if (bulkType === 'http' && line && !hasScheme(line)) {
+    return 'http://' + line;
+  }
+  return line;
+}
+
 
 // Create/Edit group form
 let groupName = $state('');
@@ -103,10 +112,10 @@ const allGroupModalSelected = $derived(groupModalPools.length > 0 && groupModalP
   let deployResult = $state<DeployResult | null>(null);
   const typeOptions = ['http', 'vercel', 'deno', 'cloudflare'];
 
-  // Derived stats
-  const enabledCount = $derived(pools.filter(p => p.isActive).length);
-  const onlineCount = $derived(pools.filter(p => p.testStatus === 'active').length);
-  const errorCount = $derived(pools.filter(p => p.testStatus === 'error').length);
+// Derived stats
+const enabledCount = $derived(allPools.filter(p => p.isActive).length);
+const onlineCount = $derived(allPools.filter(p => p.testStatus === 'active').length);
+const errorCount = $derived(allPools.filter(p => p.testStatus === 'error').length);
 
   onMount(() => {
     document.title = 'Proxy Pools — AxonRouter';
@@ -154,6 +163,7 @@ async function loadAll(silent = false) {
     const raw = settings?.['provider_proxy_defaults'];
     if (raw) { try { proxyDefaults = JSON.parse(raw); } catch { proxyDefaults = {}; } delete proxyDefaults['oc']; }
     await loadPools();
+    allPools = await proxyPoolsApi.listAll();
   } catch (err) {
     error = err instanceof Error ? err.message : 'Failed to load';
   } finally {
@@ -412,13 +422,17 @@ function selectHealthyGroupModalPools() {
 
 function selectLowestLatencyGroupModalPool() {
   let best: ProxyPool | null = null;
+  let bestMs: number | null = null;
   for (const p of groupModalPools) {
     if (p.responseTimeMs == null) continue;
-    if (!best || p.responseTimeMs < best.responseTimeMs) best = p;
+    if (bestMs == null || p.responseTimeMs < bestMs) {
+      best = p;
+      bestMs = p.responseTimeMs;
+    }
   }
-  if (best) {
+  if (best && bestMs != null) {
     groupModalSelectedIds = new Set([best.id]);
-    toast.success(`Selected ${best.name} (${best.responseTimeMs}ms)`);
+    toast.success(`Selected ${best.name} (${bestMs}ms)`);
   } else {
     toast.info('No pools with latency data');
   }
@@ -537,18 +551,19 @@ async function handleBulkImport() {
 	if (!raw) return;
 	bulkLoading = true;
 	try {
-		const items = raw
-			.split('\n')
-			.map(line => line.trim())
-			.filter(line => line.length > 0 && !line.startsWith('#'));
-		const res = await proxyPoolsApi.bulkCreate({
-			items,
-			defaultType: bulkType,
-			noProxy: bulkNoProxy.trim() || undefined,
-			isActive: bulkActive,
-			requireHealthy: bulkHealthy,
-			maxResponseTimeMs: bulkHealthy && bulkSub1s ? 1000 : undefined,
-		});
+  const items = raw
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length > 0 && !line.startsWith('#'))
+    .map(normalizeBulkLine);
+  const res = await proxyPoolsApi.bulkCreate({
+    items,
+    defaultType: bulkType,
+    noProxy: bulkNoProxy.trim() || undefined,
+    isActive: bulkActive,
+    requireHealthy: bulkHealthy,
+    maxResponseTimeMs: bulkHealthy && bulkSub1s ? 1000 : undefined,
+  });
 		const msg = `${res.created} created, ${res.skipped} skipped, ${res.errors} errors`;
 		if (res.errors === 0) {
 			toast.success('Bulk import complete', { description: msg });
@@ -580,7 +595,7 @@ async function handleBulkImport() {
     <Card class="shadow-card">
       <CardContent class="flex flex-col items-center justify-center py-12">
         <p class="text-body-sm text-muted-foreground mb-4">{error}</p>
-        <Button onclick={loadAll} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
+        <Button onclick={() => loadAll()} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
       </CardContent>
     </Card>
   {/if}
@@ -590,7 +605,7 @@ async function handleBulkImport() {
       <div class="space-y-1">
         <h1 class="text-display-lg">Proxy Pools.</h1>
         <div class="flex items-center gap-3 text-body-sm text-muted-foreground">
-          <span>{pools.length} pools</span>
+          <span>{poolTotal} pools</span>
           <span class="text-border">·</span>
           <span class="inline-flex items-center gap-1">
             <span class="size-1.5 rounded-full bg-emerald-400"></span>
@@ -627,7 +642,7 @@ async function handleBulkImport() {
 
     <Tabs.Root bind:value={tab} class="w-full flex flex-col gap-6">
       <Tabs.List class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-1">
-        <Tabs.Trigger value="pools" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Pools ({pools.length})</Tabs.Trigger>
+        <Tabs.Trigger value="pools" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Pools ({poolTotal})</Tabs.Trigger>
         <Tabs.Trigger value="groups" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Groups ({groups.length})</Tabs.Trigger>
         <Tabs.Trigger value="assignments" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Assignments</Tabs.Trigger>
         <Tabs.Trigger value="deploy" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Deploy</Tabs.Trigger>
@@ -690,11 +705,11 @@ async function handleBulkImport() {
             </td>
                   <td class="px-4 py-2.5 text-center">
                     {#if pool.testStatus === 'active'}
-                        <StatusBadge status="healthy">Online</StatusBadge>
+                        <StatusBadge status="healthy" label="Online" />
                       {:else if pool.testStatus === 'error'}
-                        <StatusBadge status="error" title={pool.lastError || ''}>Error</StatusBadge>
+                        <StatusBadge status="error" title={pool.lastError || ''} label="Error" />
                       {:else}
-                        <StatusBadge status="idle">—</StatusBadge>
+                        <StatusBadge status="idle" label="—" />
                       {/if}
                   </td>
                   <td class="px-4 py-2.5 text-right">
@@ -1012,62 +1027,46 @@ async function handleBulkImport() {
 					</Button>
 				</Dialog.Footer>
 			</Tabs.Content>
-			<Tabs.Content value="bulk">
-				<div class="space-y-4 py-2">
-					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-						<div class="space-y-2">
-							<Label class="text-sm font-medium">Proxy URLs</Label>
-							<Textarea bind:value={bulkText} placeholder="http://user:pass@proxy:8080&#10;my-relay|https://relay.vercel.app" rows={10} class="text-body-sm font-mono" />
-						</div>
-						<div class="space-y-4">
-							<div class="space-y-2">
-								<Label class="text-sm font-medium">Default type</Label>
-								<div class="inline-flex w-fit flex-wrap items-center gap-1 rounded-lg bg-muted p-1">
-									{#each typeOptions as opt}
-										<button class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-all {bulkType === opt ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (bulkType = opt)}>{typeLabel(opt)}</button>
-									{/each}
-								</div>
-							</div>
-							<div class="space-y-2">
-								<Label class="text-sm font-medium">No Proxy (optional)</Label>
-								<Input bind:value={bulkNoProxy} placeholder="localhost,127.0.0.1" class="h-10 text-body-sm font-mono" />
-							</div>
-<div class="flex items-center gap-3">
-			<Switch id="bulk-active" checked={bulkActive} onCheckedChange={(v) => (bulkActive = v)} />
-			<Label for="bulk-active" class="text-sm font-medium cursor-pointer">Active after import</Label>
-		</div>
-		<div class="flex items-center gap-3">
-			<Switch id="bulk-healthy" checked={bulkHealthy} onCheckedChange={(v) => (bulkHealthy = v)} />
-			<Label for="bulk-healthy" class="text-sm font-medium cursor-pointer">Only import healthy proxies</Label>
-		</div>
-		<div class="flex items-center gap-3">
-			<Switch id="bulk-sub1s" checked={bulkSub1s} onCheckedChange={(v) => (bulkSub1s = v)} disabled={!bulkHealthy} />
-			<Label for="bulk-sub1s" class="text-sm font-medium cursor-pointer {bulkHealthy ? '' : 'text-muted-foreground'}">&lt;1s response</Label>
-		</div>
-							<div class="rounded-xl border border-border bg-muted/30 p-3 space-y-2">
-								<p class="text-caption-mono text-muted-foreground uppercase font-semibold">Preview</p>
-								<div class="space-y-1 max-h-32 overflow-y-auto">
-									{#each parsedBulkItems.slice(0, 20) as item}
-										<div class="flex gap-2 text-caption-mono">
-											{#if item.name}
-												<span class="truncate max-w-[120px]">{item.name}</span>
-											{/if}
-											<span class="text-muted-foreground truncate">{item.proxyUrl}</span>
-										</div>
-									{/each}
-								</div>
-								<p class="text-caption text-muted-foreground">{parsedBulkItems.length} valid line{parsedBulkItems.length !== 1 ? 's' : ''}</p>
-							</div>
-						</div>
-					</div>
-				</div>
-				<Dialog.Footer>
-					<Button variant="ghost" onclick={() => (showAddPool = false)}>Cancel</Button>
-					<Button onclick={handleBulkImport} disabled={bulkLoading || !bulkText.trim()}>
-						{bulkLoading ? 'Importing...' : 'Import pools'}
-					</Button>
-				</Dialog.Footer>
-			</Tabs.Content>
+  <Tabs.Content value="bulk">
+    <div class="space-y-4 py-2">
+      <div class="space-y-2">
+        <Label class="text-sm font-medium">Proxy URLs</Label>
+        <Textarea bind:value={bulkText} placeholder="http://user:pass@proxy:8080 or my-relay|https://relay.vercel.app" rows={10} class="text-body-sm font-mono w-full" />
+      </div>
+      <div class="space-y-4">
+        <div class="space-y-2">
+          <Label class="text-sm font-medium">Default type</Label>
+          <div class="inline-flex w-fit flex-wrap items-center gap-1 rounded-lg bg-muted p-1">
+            {#each typeOptions as opt}
+            <button class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-all {bulkType === opt ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (bulkType = opt)}>{typeLabel(opt)}</button>
+            {/each}
+          </div>
+        </div>
+        <div class="space-y-2">
+          <Label class="text-sm font-medium">No Proxy (optional)</Label>
+          <Input bind:value={bulkNoProxy} placeholder="localhost,127.0.0.1" class="h-10 text-body-sm font-mono w-full" />
+        </div>
+        <div class="flex items-center gap-3">
+          <Switch id="bulk-active" checked={bulkActive} onCheckedChange={(v) => (bulkActive = v)} />
+          <Label for="bulk-active" class="text-sm font-medium cursor-pointer">Active after import</Label>
+        </div>
+        <div class="flex items-center gap-3">
+          <Switch id="bulk-healthy" checked={bulkHealthy} onCheckedChange={(v) => (bulkHealthy = v)} />
+          <Label for="bulk-healthy" class="text-sm font-medium cursor-pointer">Only import healthy proxies</Label>
+        </div>
+        <div class="flex items-center gap-3">
+          <Switch id="bulk-sub1s" checked={bulkSub1s} onCheckedChange={(v) => (bulkSub1s = v)} disabled={!bulkHealthy} />
+          <Label for="bulk-sub1s" class="text-sm font-medium cursor-pointer {bulkHealthy ? '' : 'text-muted-foreground'}">&lt;1s response</Label>
+        </div>
+      </div>
+    </div>
+    <Dialog.Footer>
+      <Button variant="ghost" onclick={() => (showAddPool = false)}>Cancel</Button>
+      <Button onclick={handleBulkImport} disabled={bulkLoading || !bulkText.trim()}>
+        {bulkLoading ? 'Importing...' : 'Import pools'}
+      </Button>
+    </Dialog.Footer>
+  </Tabs.Content>
 		</Tabs.Root>
 	</Dialog.Content>
 </Dialog.Root>
@@ -1168,11 +1167,11 @@ async function handleBulkImport() {
                   </td>
                   <td class="px-4 py-2.5 text-center">
                     {#if pool.testStatus === 'active'}
-                    <StatusBadge status="healthy">Online</StatusBadge>
+                    <StatusBadge status="healthy" label="Online" />
                     {:else if pool.testStatus === 'error'}
-                    <StatusBadge status="error" title={pool.lastError || ''}>Error</StatusBadge>
+                    <StatusBadge status="error" title={pool.lastError || ''} label="Error" />
                     {:else}
-                    <StatusBadge status="idle">—</StatusBadge>
+                    <StatusBadge status="idle" label="—" />
                     {/if}
                   </td>
                   <td class="px-4 py-2.5 text-right">

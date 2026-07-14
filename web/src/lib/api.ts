@@ -146,15 +146,18 @@ interface Settings {
   [key: string]: string;
 }
 
+type FetchOptions = RequestInit & { timeout_ms?: number };
+
 // Generic fetch wrapper with timeout
 export async function fetchApi<T>(
   endpoint: string,
-  options: RequestInit = {},
+  options: FetchOptions = {},
 ): Promise<T> {
   const url = `${API_BASE}${endpoint}`;
+  const timeoutMs = options.timeout_ms ?? 8000;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   const token = getToken();
   const headers: Record<string, string> = {
@@ -316,14 +319,15 @@ export const connectionsApi = {
         provider_specific_data?: Record<string, string>;
       }[];
     },
-  ) =>
-    fetchApi<BulkCreateConnectionResponse>(
-      `/providers/${providerId}/connections/bulk`,
-      {
-        method: "POST",
-        body: JSON.stringify(data),
-      },
-    ),
+) =>
+  fetchApi<BulkCreateConnectionResponse>(
+    `/providers/${providerId}/connections/bulk`,
+    {
+      method: "POST",
+      body: JSON.stringify(data),
+      timeout_ms: 120000,
+    },
+  ),
 
   update: (id: string, data: Partial<Connection>) =>
     fetchApi<Connection>(`/connections/${id}`, {
@@ -822,19 +826,19 @@ export const proxyPoolsApi = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  bulkCreate: (data: Record<string, unknown>) =>
-    fetchApi<{
-      created: number;
-      skipped: number;
-      errors: number;
-      details: {
-        index: number;
-        url?: string;
-        id?: string;
-        status: string;
-        reason?: string;
-      }[];
-    }>(`/proxy-pools/bulk`, { method: "POST", body: JSON.stringify(data) }),
+bulkCreate: (data: Record<string, unknown>) =>
+  fetchApi<{
+    created: number;
+    skipped: number;
+    errors: number;
+    details: {
+      index: number;
+      url?: string;
+      id?: string;
+      status: string;
+      reason?: string;
+    }[];
+  }>(`/proxy-pools/bulk`, { method: "POST", body: JSON.stringify(data), timeout_ms: 120000 }),
   update: (id: string, data: Record<string, unknown>) =>
     fetchApi<{ data: ProxyPool }>(`/proxy-pools/${id}`, {
       method: "PATCH",
