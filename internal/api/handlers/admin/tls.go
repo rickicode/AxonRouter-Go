@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"log"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -13,8 +14,9 @@ import (
 // TLSHandler exposes the HTTPS/TLS configuration endpoints used by the
 // dashboard setup wizard.
 type TLSHandler struct {
-	dataDir string
-	client  *http.Client
+	dataDir      string
+	client       *http.Client
+	httpsActive  func() bool
 }
 
 // NewTLSHandler creates a handler backed by dataDir. The HTTP client is used
@@ -24,9 +26,16 @@ func NewTLSHandler(dataDir string, client *http.Client) *TLSHandler {
 		client = http.DefaultClient
 	}
 	return &TLSHandler{
-		dataDir: dataDir,
-		client:  client,
+		dataDir:     dataDir,
+		client:      client,
+		httpsActive: func() bool { return false },
 	}
+}
+
+// SetHTTPSActiveChecker registers a callback that reports whether the HTTPS
+// server is currently listening. The dashboard uses it to show the live status.
+func (h *TLSHandler) SetHTTPSActiveChecker(checker func() bool) {
+	h.httpsActive = checker
 }
 
 // Get returns the current TLS configuration augmented with a validity flag
@@ -50,6 +59,7 @@ func (h *TLSHandler) Get(c *gin.Context) {
 		"certCache": cfg.CertCache,
 		"valid":     valid,
 		"certDir":   certDir,
+		"active":    h.httpsActive(),
 	}})
 }
 
@@ -66,6 +76,10 @@ func (h *TLSHandler) Put(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	if req.CertCache == "" {
+		req.CertCache = "certs"
 	}
 
 	cfg := &config.HTTPSConfig{
@@ -85,6 +99,13 @@ func (h *TLSHandler) Put(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	if req.Enabled {
+		log.Printf("HTTPS config saved and enabled: domain=%s email=%s staging=%t certCache=%s (restart to activate on :443)", req.Domain, req.Email, req.Staging, req.CertCache)
+	} else {
+		log.Printf("HTTPS config saved and disabled: domain=%s email=%s staging=%t certCache=%s", req.Domain, req.Email, req.Staging, req.CertCache)
+	}
+
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 

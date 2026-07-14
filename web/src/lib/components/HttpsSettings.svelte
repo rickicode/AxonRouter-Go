@@ -128,12 +128,22 @@ async function handleSave() {
         {/each}
       </div>
     {:else}
-      {#if config.enabled}
-        <div class="flex items-start gap-3 rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3 text-body-sm text-yellow-700 dark:text-yellow-400">
-          <AlertTriangleIcon class="size-5 shrink-0" />
-          <p>Restart AxonRouter to activate HTTPS on port 443.</p>
+    {#if config.active}
+      <div class="flex items-start gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-body-sm text-emerald-700 dark:text-emerald-400">
+        <CheckCircleIcon class="size-5 shrink-0" />
+        <div>
+          <p class="font-medium">HTTPS is active on port 443.</p>
+          {#if config.certDir}
+            <p class="text-caption text-muted-foreground">Certificates are cached in <span class="font-mono">{config.certDir}</span>.</p>
+          {/if}
         </div>
-      {/if}
+      </div>
+    {:else if config.enabled}
+      <div class="flex items-start gap-3 rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3 text-body-sm text-yellow-700 dark:text-yellow-400">
+        <AlertTriangleIcon class="size-5 shrink-0" />
+        <p>Restart AxonRouter to activate HTTPS on port 443.</p>
+      </div>
+    {/if}
 
       {#if publicIP}
         <div class="space-y-2">

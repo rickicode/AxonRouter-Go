@@ -1169,6 +1169,7 @@ export interface TLSConfig {
   certCache: string;
   valid?: boolean;
   certDir?: string;
+  active?: boolean;
 }
 
 export interface TLSConfigPayload {

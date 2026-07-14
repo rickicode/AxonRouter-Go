@@ -431,20 +431,25 @@ func New(cfg Config) *Router {
 		http.ServeContent(c.Writer, c.Request, stat.Name(), stat.ModTime(), indexFile.(io.ReadSeeker))
 	})
 
-	return &Router{
-		engine:          engine,
-		db:              cfg.DB,
-		writeQueue:      writeQueue,
-		store:           store,
-		elig:            elig,
-		combo:           comboHandler,
-		tracker:         tracker,
-		authMgr:         authManager,
-		quotaScheduler:  quotaScheduler,
-		usageFlush:      usageFlush,
-		cleanup:         cleanup,
+	r := &Router{
+		engine: engine,
+		db: cfg.DB,
+		writeQueue: writeQueue,
+		store: store,
+		elig: elig,
+		combo: comboHandler,
+		tracker: tracker,
+		authMgr: authManager,
+		quotaScheduler: quotaScheduler,
+		usageFlush: usageFlush,
+		cleanup: cleanup,
 		rateLimitProber: rateLimitProber,
 	}
+
+	// Let the TLS handler report whether HTTPS is actually listening.
+	tlsH.SetHTTPSActiveChecker(r.IsHTTPSActive)
+
+	return r
 }
 
 // Start starts the HTTP server and optionally an HTTPS server on :443.
@@ -534,6 +539,11 @@ func (r *Router) startHTTPS(cfg config.HTTPSConfig) error {
 		}
 	}()
 	return nil
+}
+
+// IsHTTPSActive reports whether the HTTPS server is currently running.
+func (r *Router) IsHTTPSActive() bool {
+	return r.httpsServer != nil
 }
 
 // Shutdown gracefully stops servers and background goroutines.
