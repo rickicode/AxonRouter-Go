@@ -10,7 +10,7 @@ import type { RoutingMode } from '$lib/api';
  import { Input } from '$lib/components/ui/input';
  import * as Select from '$lib/components/ui/select';
  import ProviderIcon from '$lib/components/ProviderIcon.svelte';
- import { getProviderMeta, getStatusDotColor, getStatusVariant, getStatusLabel } from '$lib/provider-catalog';
+ import { getProviderMeta, getCategoryById, getStatusDotColor, getStatusVariant, getStatusLabel } from '$lib/provider-catalog';
  import { toast } from 'svelte-sonner';
 import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
 import Settings2Icon from '@lucide/svelte/icons/settings-2';
@@ -44,6 +44,13 @@ let newModel = $state('');
  let actionLoading = $state('');
  let deleteTarget = $state<{ id: string; name: string } | null>(null);
  let deleteDialogOpen = $state(false);
+
+ let providerCategoryId = $derived($selectedProvider?.category ?? meta?.category ?? 'compatible');
+ let providerCategoryLabel = $derived(getCategoryById(providerCategoryId)?.label ?? providerCategoryId);
+ let providerServiceKinds = $derived.by(() => {
+   const kinds = $selectedProvider?.service_kinds ?? meta?.serviceKinds ?? ['llm'];
+   return kinds.length === 1 && kinds[0] === 'llm' ? [] : kinds;
+ });
 
  const statusOptions = [
  { value: '', label: 'All statuses' },
@@ -234,8 +241,11 @@ function handlePerPageChange(p: number) {
 				{#if $selectedProvider.is_custom}
 					<Badge variant="secondary" class="text-caption-mono rounded-sm">Custom</Badge>
 				{/if}
-				{#if meta}
-					<Badge variant="outline" class="text-caption-mono rounded-sm">{meta.category}</Badge>
+				<Badge variant="outline" class="text-caption-mono rounded-sm">{providerCategoryLabel}</Badge>
+				{#if providerServiceKinds.length > 0}
+					{#each providerServiceKinds as kind (kind)}
+						<Badge variant="secondary" class="text-caption-mono rounded-sm">{kind}</Badge>
+					{/each}
 				{/if}
 			</div>
 			<p class="text-caption-mono text-muted-foreground">

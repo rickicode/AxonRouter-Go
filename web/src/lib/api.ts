@@ -31,6 +31,8 @@ export interface Provider {
     disabled: number;
   };
   aliases?: string[];
+  category: string;
+  service_kinds: string[];
 }
 
 export type RoutingMode = "first_eligible" | "round_robin" | "random";
