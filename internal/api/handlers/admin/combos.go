@@ -90,14 +90,17 @@ func (h *ComboHandler) Get(c *gin.Context) {
 // Create creates a new combo with steps.
 func (h *ComboHandler) Create(c *gin.Context) {
 	var req struct {
-		Name      string `json:"name" binding:"required"`
-		Strategy  string `json:"strategy"`
-		TimeoutMs int    `json:"timeout_ms"`
-		Steps     []struct {
+		Name string `json:"name" binding:"required"`
+		Strategy string `json:"strategy"`
+		TimeoutMs int `json:"timeout_ms"`
+		StickyLimit int `json:"sticky_limit"`
+		IsSmart bool `json:"is_smart"`
+		SmartGoal string `json:"smart_goal"`
+		Steps []struct {
 			ConnectionID string `json:"connection_id"`
-			ModelID      string `json:"model_id" binding:"required"`
-			Priority     int    `json:"priority"`
-			Weight       int    `json:"weight"`
+			ModelID string `json:"model_id" binding:"required"`
+			Priority int `json:"priority"`
+			Weight int `json:"weight"`
 		} `json:"steps"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -109,6 +112,9 @@ func (h *ComboHandler) Create(c *gin.Context) {
 	}
 	if req.TimeoutMs == 0 {
 		req.TimeoutMs = 30000
+	}
+	if req.StickyLimit == 0 {
+		req.StickyLimit = 1
 	}
 
 	var steps []combo.CreateStepInput
@@ -129,7 +135,7 @@ func (h *ComboHandler) Create(c *gin.Context) {
 		})
 	}
 
-	result, err := h.handler.CreateCombo(req.Name, req.Strategy, req.TimeoutMs, steps)
+	result, err := h.handler.CreateCombo(req.Name, req.Strategy, req.TimeoutMs, req.StickyLimit, req.IsSmart, req.SmartGoal, steps)
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
@@ -141,10 +147,13 @@ func (h *ComboHandler) Create(c *gin.Context) {
 func (h *ComboHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		Name     string `json:"name"`
+		Name string `json:"name"`
 		Strategy string `json:"strategy"`
-		TimeoutMs int   `json:"timeout_ms"`
-		IsActive *bool  `json:"is_active"`
+		TimeoutMs int `json:"timeout_ms"`
+		StickyLimit *int `json:"sticky_limit"`
+		IsSmart *bool `json:"is_smart"`
+		SmartGoal *string `json:"smart_goal"`
+		IsActive *bool `json:"is_active"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -164,6 +173,18 @@ func (h *ComboHandler) Update(c *gin.Context) {
 	if req.TimeoutMs > 0 {
 		sets = append(sets, "timeout_ms = ?")
 		args = append(args, req.TimeoutMs)
+	}
+	if req.StickyLimit != nil && *req.StickyLimit > 0 {
+		sets = append(sets, "sticky_limit = ?")
+		args = append(args, *req.StickyLimit)
+	}
+	if req.IsSmart != nil {
+		sets = append(sets, "is_smart = ?")
+		args = append(args, boolToInt(*req.IsSmart))
+	}
+	if req.SmartGoal != nil {
+		sets = append(sets, "smart_goal = ?")
+		args = append(args, *req.SmartGoal)
 	}
 	if req.IsActive != nil {
 		sets = append(sets, "is_active = ?")
