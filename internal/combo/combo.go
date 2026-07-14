@@ -218,39 +218,50 @@ func (h *Handler) RecordFailure(connID string, det connstate.ErrorDetection) {
 }
 
 // CreateCombo creates a new combo.
-func (h *Handler) CreateCombo(name, strategy string, timeoutMs int, steps []CreateStepInput) (*db.Combo, error) {
+func (h *Handler) CreateCombo(name, strategy string, timeoutMs, stickyLimit int, isSmart bool, smartGoal string, steps []CreateStepInput) (*db.Combo, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	comboID := uuid.New().String()
 	now := db.UnixNow()
 
+	sg := sql.NullString{}
+	if smartGoal != "" {
+		sg = sql.NullString{String: smartGoal, Valid: true}
+	}
+
 	_, err := h.db.Exec(`
-		INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, is_smart, is_active, created_at, updated_at)
-		VALUES (?, ?, ?, 1, ?, 0, 1, ?, ?)
-	`, comboID, name, strategy, timeoutMs, now, now)
+	INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal, is_active, created_at, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+	`, comboID, name, strategy, stickyLimit, timeoutMs, boolToInt(isSmart), sg, now, now)
 	if err != nil {
 		return nil, fmt.Errorf("create combo: %w", err)
 	}
 
 	for _, s := range steps {
 		h.db.Exec(`
-			INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		`, uuid.New().String(), comboID, s.ConnectionID, s.ModelID, s.Priority, s.Weight, now)
 	}
 
 	combo := &db.Combo{
-		ID:        comboID,
-		Name:      name,
-		Strategy:  strategy,
-		TimeoutMs: timeoutMs,
-		IsActive:  true,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          comboID,
+		Name:        name,
+		Strategy:    strategy,
+		StickyLimit: stickyLimit,
+		TimeoutMs:   timeoutMs,
+		IsSmart:     isSmart,
+		SmartGoal:   sg,
+		IsActive:    true,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	h.combos[comboID] = combo
 	h.byName[combo.Name] = combo
+	if isSmart {
+		h.smartCombos[comboID] = combo
+	}
 	h.loadSteps(comboID)
 	return combo, nil
 }
