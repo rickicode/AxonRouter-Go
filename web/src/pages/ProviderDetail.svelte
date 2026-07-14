@@ -38,7 +38,7 @@ let newModel = $state('');
  let currentPage = $state(1);
  let perPage = $state(50);
  let testingAll = $state(false);
- let actionLoading = $state('');
+ let actionLoading = $state<{ connectionId: string; action: 'test' | 'reset' | 'refresh' | 'delete' } | null>(null);
  let deleteTarget = $state<{ id: string; name: string } | null>(null);
  let deleteDialogOpen = $state(false);
 
@@ -178,9 +178,9 @@ function handlePerPageChange(p: number) {
  } finally { testingAll = false; }
  }
 
- async function handleTestConnection(connId: string) {
- actionLoading = connId;
- try {
+async function handleTestConnection(connId: string) {
+  actionLoading = { connectionId: connId, action: 'test' };
+  try {
  const res = (await connectionsApi.test(connId)) as any;
  if (res?.success || res?.status === 'ok') {
  toast.success(`Connection OK (${res.latency_ms ?? 0}ms)`);
@@ -190,30 +190,31 @@ function handlePerPageChange(p: number) {
  await loadConnections(providerId, currentPage, perPage);
  } catch (err) {
  toast.error('Test failed: ' + (err instanceof Error ? err.message : 'Unknown'));
- } finally { actionLoading = ''; }
- }
+  } finally { actionLoading = null; }
+}
 
- async function handleResetConnection(connId: string) {
- actionLoading = connId;
- try {
+async function handleResetConnection(connId: string) {
+  actionLoading = { connectionId: connId, action: 'reset' };
+  try {
  await connectionsApi.reset(connId);
  toast.success('Connection reset to ready');
  await loadConnections(providerId, currentPage, perPage);
  } catch (err) {
  toast.error('Reset failed: ' + (err instanceof Error ? err.message : 'Unknown'));
- } finally { actionLoading = ''; }
- }
- async function handleRefreshToken(connId: string) {
- actionLoading = connId;
- try {
+  } finally { actionLoading = null; }
+}
+
+async function handleRefreshToken(connId: string) {
+  actionLoading = { connectionId: connId, action: 'refresh' };
+  try {
  const res = await connectionsApi.refreshToken(connId);
  toast.success(`Token refreshed, expires ${new Date(res.expires_at * 1000).toLocaleTimeString()}`);
  await loadConnections(providerId, currentPage, perPage);
  } catch (err) {
  toast.error('Refresh failed: ' + (err instanceof Error ? err.message : 'Unknown'));
- } finally { actionLoading = ''; }
- }
- function confirmDeleteConnection(connId: string, name: string) {
+  } finally { actionLoading = null; }
+}
+function confirmDeleteConnection(connId: string, name: string) {
  deleteTarget = { id: connId, name };
  deleteDialogOpen = true;
  }
@@ -223,15 +224,15 @@ function handlePerPageChange(p: number) {
  const { id: connId, name } = deleteTarget;
  deleteTarget = null;
  deleteDialogOpen = false;
- actionLoading = connId;
- try {
- await connectionsApi.delete(connId);
+  actionLoading = { connectionId: connId, action: 'delete' };
+  try {
+    await connectionsApi.delete(connId);
  toast.success(`Deleted "${name}"`);
  await loadConnections(providerId, currentPage, perPage);
  } catch (err) {
  toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
- } finally { actionLoading = ''; }
- }
+  } finally { actionLoading = null; }
+}
 
 </script>
 
@@ -255,24 +256,25 @@ function handlePerPageChange(p: number) {
 {#snippet connectionActions(row: any, btnClass = 'size-7', btnVariant: 'ghost' | 'outline' = 'ghost', iconSize = 'size-4')}
   {@const isDefault = isDefaultDirect(row)}
   {@const isOAuth = row.auth_type === 'oauth'}
-  {@const loading = actionLoading === row.id}
-  <Button variant={btnVariant} size="icon" class={btnClass} href={`/providers/${providerId}/${row.id}`} title="Edit connection" aria-label="Edit connection" disabled={loading}>
+  {@const busy = !!actionLoading && actionLoading.connectionId === row.id}
+  {@const active = (a: 'test' | 'reset' | 'refresh' | 'delete') => busy && actionLoading?.action === a}
+  <Button variant={btnVariant} size="icon" class={btnClass} href={`/providers/${providerId}/${row.id}`} title="Edit connection" aria-label="Edit connection" disabled={busy}>
     <Icon name="pencil" class={iconSize} />
   </Button>
-  <Button variant={btnVariant} size="icon" class={btnClass} onclick={() => handleTestConnection(row.id)} title="Test connection" aria-label="Test connection" disabled={loading}>
-    <Icon name={loading ? 'refreshCw' : 'play'} class={loading ? `${iconSize} animate-spin` : iconSize} />
+  <Button variant={btnVariant} size="icon" class={btnClass} onclick={() => handleTestConnection(row.id)} title="Test connection" aria-label="Test connection" disabled={busy}>
+    <Icon name={active('test') ? 'refreshCw' : 'play'} class={active('test') ? `${iconSize} animate-spin` : iconSize} />
   </Button>
   {#if isOAuth}
-    <Button variant={btnVariant} size="icon" class={`${btnClass} text-amber-400 hover:text-amber-300`} onclick={() => handleRefreshToken(row.id)} title="Refresh token" aria-label="Refresh token" disabled={loading}>
-      <Icon name="refreshCw" class={loading ? `${iconSize} animate-spin` : iconSize} />
+    <Button variant={btnVariant} size="icon" class={`${btnClass} text-amber-400 hover:text-amber-300`} onclick={() => handleRefreshToken(row.id)} title="Refresh token" aria-label="Refresh token" disabled={busy}>
+      <Icon name="refreshCw" class={active('refresh') ? `${iconSize} animate-spin` : iconSize} />
     </Button>
   {/if}
-  <Button variant={btnVariant} size="icon" class={btnClass} onclick={() => handleResetConnection(row.id)} title="Reset connection" aria-label="Reset connection" disabled={loading}>
-    <Icon name={loading ? 'refreshCw' : 'rotateCcw'} class={loading ? `${iconSize} animate-spin` : iconSize} />
+  <Button variant={btnVariant} size="icon" class={btnClass} onclick={() => handleResetConnection(row.id)} title="Reset connection" aria-label="Reset connection" disabled={busy}>
+    <Icon name={active('reset') ? 'refreshCw' : 'rotateCcw'} class={active('reset') ? `${iconSize} animate-spin` : iconSize} />
   </Button>
   {#if !isDefault}
-    <Button variant="destructive" size="icon" class={btnClass} onclick={() => confirmDeleteConnection(row.id, row.name)} title="Delete connection" aria-label="Delete connection" disabled={loading}>
-      <Icon name="trash2" class={iconSize} />
+    <Button variant="destructive" size="icon" class={btnClass} onclick={() => confirmDeleteConnection(row.id, row.name)} title="Delete connection" aria-label="Delete connection" disabled={busy}>
+      <Icon name={active('delete') ? 'refreshCw' : 'trash2'} class={active('delete') ? `${iconSize} animate-spin` : iconSize} />
     </Button>
   {/if}
 {/snippet}

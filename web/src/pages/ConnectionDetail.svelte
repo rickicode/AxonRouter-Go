@@ -19,7 +19,7 @@ import Icon from '$lib/components/Icon.svelte';
 let { id = '', connId = '' }: { id?: string; connId?: string } = $props();
   let providerId = $derived(id);
   let connectionId = $derived(connId);
-  let actionLoading = $state('');
+  let actionLoading = $state<{ action: 'test' | 'reset' | 'toggle' | 'delete' } | null>(null);
   let editingName = $state(false);
   let pools = $state<ProxyPool[]>([]);
   let groups = $state<ProxyGroup[]>([]);
@@ -92,7 +92,7 @@ let { id = '', connId = '' }: { id?: string; connId?: string } = $props();
   }
 
 async function handleTest() {
-  actionLoading = 'test';
+  actionLoading = { action: 'test' };
   try {
     await connectionsApi.test(connectionId);
     await loadConnection(connectionId);
@@ -100,44 +100,44 @@ async function handleTest() {
   } catch (err) {
     toast.error('Test failed: ' + (err instanceof Error ? err.message : 'Unknown'));
   } finally {
-    actionLoading = '';
+    actionLoading = null;
   }
 }
 
-  async function handleReset() {
-    actionLoading = 'reset';
-    try { await connectionsApi.reset(connectionId); await loadConnection(connectionId); toast.success('Connection reset'); }
-    catch (err) { toast.error('Reset failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
-    finally { actionLoading = ''; }
-  }
+async function handleReset() {
+  actionLoading = { action: 'reset' };
+  try { await connectionsApi.reset(connectionId); await loadConnection(connectionId); toast.success('Connection reset'); }
+  catch (err) { toast.error('Reset failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+  finally { actionLoading = null; }
+}
 
-  async function handleToggle() {
-    if (!$selectedConnection) return;
-    const willBeActive = !$selectedConnection.is_active;
-    actionLoading = 'toggle';
-    try { await connectionsApi.update(connectionId, { is_active: willBeActive }); await loadConnection(connectionId); toast.success(willBeActive ? 'Connection enabled' : 'Connection disabled'); }
-    catch (err) { toast.error('Toggle failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
-    finally { actionLoading = ''; }
-  }
+async function handleToggle() {
+  if (!$selectedConnection) return;
+  const willBeActive = !$selectedConnection.is_active;
+  actionLoading = { action: 'toggle' };
+  try { await connectionsApi.update(connectionId, { is_active: willBeActive }); await loadConnection(connectionId); toast.success(willBeActive ? 'Connection enabled' : 'Connection disabled'); }
+  catch (err) { toast.error('Toggle failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+  finally { actionLoading = null; }
+}
 
-  function handleDelete() {
- showDeleteConfirm = true;
+function handleDelete() {
+  showDeleteConfirm = true;
 }
 
 async function confirmDelete() {
- actionLoading = 'delete';
- try {
- await connectionsApi.delete(connectionId);
- showDeleteConfirm = false;
- toast.success('Connection deleted');
- router.navigate(`/providers/${providerId}`);
- }
- catch (err) {
- toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
- }
- finally {
- actionLoading = '';
- }
+  actionLoading = { action: 'delete' };
+  try {
+    await connectionsApi.delete(connectionId);
+    showDeleteConfirm = false;
+    toast.success('Connection deleted');
+    router.navigate(`/providers/${providerId}`);
+  }
+  catch (err) {
+    toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+  }
+  finally {
+    actionLoading = null;
+  }
 }
 
 async function handleSaveName() {
@@ -412,16 +412,16 @@ async function handleSaveAccountLabel() {
       <CardContent>
     <div class="flex flex-wrap items-center justify-between gap-3">
       <Button onclick={handleTest} disabled={!!actionLoading} variant="outline" size="icon" class="size-9" title="Test connection" aria-label="Test connection">
-        <Icon name={actionLoading === 'test' ? 'refreshCw' : 'play'} class={actionLoading === 'test' ? 'size-5 animate-spin' : 'size-5'} />
+        <Icon name={actionLoading?.action === 'test' ? 'refreshCw' : 'play'} class={actionLoading?.action === 'test' ? 'size-5 animate-spin' : 'size-5'} />
       </Button>
       <Button onclick={handleReset} disabled={!!actionLoading} variant="outline" size="icon" class="size-9" title="Reset status" aria-label="Reset status">
-        <Icon name={actionLoading === 'reset' ? 'refreshCw' : 'rotateCcw'} class={actionLoading === 'reset' ? 'size-5 animate-spin' : 'size-5'} />
+        <Icon name={actionLoading?.action === 'reset' ? 'refreshCw' : 'rotateCcw'} class={actionLoading?.action === 'reset' ? 'size-5 animate-spin' : 'size-5'} />
       </Button>
       <Button onclick={handleToggle} disabled={!!actionLoading} variant="outline" size="icon" class="size-9" title={$selectedConnection.is_active ? 'Disable connection' : 'Enable connection'} aria-label={$selectedConnection.is_active ? 'Disable connection' : 'Enable connection'}>
-        <Icon name={actionLoading === 'toggle' ? 'refreshCw' : ($selectedConnection.is_active ? 'powerOff' : 'power')} class={actionLoading === 'toggle' ? 'size-5 animate-spin' : 'size-5'} />
+        <Icon name={actionLoading?.action === 'toggle' ? 'refreshCw' : ($selectedConnection.is_active ? 'powerOff' : 'power')} class={actionLoading?.action === 'toggle' ? 'size-5 animate-spin' : 'size-5'} />
       </Button>
       <Button onclick={handleDelete} disabled={!!actionLoading} variant="destructive" size="icon" class="size-9" title="Delete connection" aria-label="Delete connection">
-        <Icon name={actionLoading === 'delete' ? 'refreshCw' : 'trash2'} class={actionLoading === 'delete' ? 'size-5 animate-spin' : 'size-5'} />
+        <Icon name={actionLoading?.action === 'delete' ? 'refreshCw' : 'trash2'} class={actionLoading?.action === 'delete' ? 'size-5 animate-spin' : 'size-5'} />
       </Button>
     </div>
       </CardContent>
@@ -438,7 +438,7 @@ async function handleSaveAccountLabel() {
       <AlertDialog.Footer>
         <AlertDialog.Cancel onclick={() => (showDeleteConfirm = false)}>Cancel</AlertDialog.Cancel>
         <AlertDialog.Action variant="destructive" onclick={confirmDelete}>
-          {actionLoading === 'delete' ? 'Deleting...' : 'Delete'}
+          {actionLoading?.action === 'delete' ? 'Deleting...' : 'Delete'}
         </AlertDialog.Action>
       </AlertDialog.Footer>
     </AlertDialog.Content>
