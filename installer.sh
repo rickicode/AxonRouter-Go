@@ -116,7 +116,12 @@ install_systemd() {
   local data_dir="/var/lib/axonrouter"
 
   if ! id -u "$svc_user" >/dev/null 2>&1; then
-    useradd --system --home "$data_dir" --create-home "$svc_user" || err "failed to create ${svc_user} user"
+    local useradd_cmd=""
+    for c in useradd /usr/sbin/useradd /sbin/useradd /usr/local/sbin/useradd; do
+      if command -v "$c" >/dev/null 2>&1; then useradd_cmd="$c"; break; fi
+    done
+    [[ -n "$useradd_cmd" ]] || err "useradd not found (looked in PATH, /usr/sbin, /sbin, /usr/local/sbin)"
+    "$useradd_cmd" --system --home "$data_dir" --create-home "$svc_user" || err "failed to create ${svc_user} user"
   fi
 
   mkdir -p "$data_dir"
@@ -180,8 +185,17 @@ update_shell_path() {
   echo "Or open a new shell."
 }
 
-if command -v "$TARGET" >/dev/null 2>&1 || [[ ":$PATH:" == *":${INSTALL_DIR}:"* ]]; then
-  info "Done. Run it with: ${TARGET}"
-else
+echo
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo " AxonRouter ${VERSION} installed"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  Binary:    ${INSTALLED}"
+echo "  OS/Arch:   ${GOOS}/${GOARCH}"
+echo "  Run:       ${TARGET}"
+echo "  Help:      ${TARGET} --help"
+echo "  Service:   sudo ${TARGET} --startup install"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+if ! command -v "$TARGET" >/dev/null 2>&1 && [[ ":$PATH:" != *":${INSTALL_DIR}:"* ]]; then
   update_shell_path "$INSTALL_DIR"
 fi

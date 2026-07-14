@@ -93,6 +93,15 @@ func runSystemctl(args ...string) error {
 	return cmd.Run()
 }
 
+func findUseradd() string {
+	for _, p := range []string{"useradd", "/usr/sbin/useradd", "/sbin/useradd", "/usr/local/sbin/useradd"} {
+		if _, err := exec.LookPath(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
 func installSystemdService() {
 	if runtime.GOOS != "linux" {
 		log.Fatalf("--startup install is only supported on Linux")
@@ -121,7 +130,11 @@ func installSystemdService() {
 		if len(out) == 0 || !strings.Contains(string(out), "no such user") {
 			dropErr(out, err)
 		}
-		if out, err = exec.Command("useradd", "--system", "--home", dataDir, "--create-home", svcUser).CombinedOutput(); err != nil {
+		useraddPath := findUseradd()
+		if useraddPath == "" {
+			log.Fatalf("Failed to install service: useradd not found (looked in PATH, /usr/sbin, /sbin, /usr/local/sbin)")
+		}
+		if out, err = exec.Command(useraddPath, "--system", "--home", dataDir, "--create-home", svcUser).CombinedOutput(); err != nil {
 			dropErr(out, err)
 		}
 	}
