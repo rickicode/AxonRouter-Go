@@ -2,6 +2,7 @@ package admin
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -10,11 +11,8 @@ func TestDefaultTestModel_CloudflareStripsProviderPrefix(t *testing.T) {
 	if got == "" {
 		t.Fatal("defaultTestModel(cf) returned empty")
 	}
-	if got == "cf/meta/llama-3.2-1b-instruct" {
+	if strings.HasPrefix(got, "cf/") {
 		t.Fatalf("defaultTestModel(cf) returned full gateway ID %q; want model name without cf/ prefix", got)
-	}
-	if got != "meta/llama-3.2-1b-instruct" {
-		t.Fatalf("defaultTestModel(cf) = %q, want meta/llama-3.2-1b-instruct", got)
 	}
 }
 

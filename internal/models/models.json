@@ -2799,61 +2799,532 @@
     }
   ],
   "cf": [
-    {
-      "id": "cf/meta/llama-3.2-1b-instruct",
-      "service_kinds": ["llm"]
-    },
-    {
-      "id": "cf/meta/llama-3.2-3b-instruct",
-      "service_kinds": ["llm"]
-    },
-    {
-      "id": "cf/meta/llama-3.1-8b-instruct-fp8-fast",
-      "service_kinds": ["llm"]
-    },
-    {
-      "id": "cf/meta/llama-3.1-70b-instruct-fp8-fast",
-      "service_kinds": ["llm"]
-    },
-    {
-      "id": "cf/meta/llama-3.3-70b-instruct-fp8-fast",
-      "service_kinds": ["llm"]
-    },
-    {
-      "id": "cf/mistralai/mistral-small-3.1-24b-instruct",
-      "service_kinds": ["llm"]
-    },
-    {
-      "id": "cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
-      "service_kinds": ["llm"]
-    },
-    {
-      "id": "cf/moonshotai/kimi-k2.5",
-      "service_kinds": ["llm"]
-    },
-    {
-      "id": "cf/moonshotai/kimi-k2.6",
-      "service_kinds": ["llm"]
-    },
-    {
-      "id": "cf/moonshotai/kimi-k2.7-code",
-      "service_kinds": ["llm"]
-    },
-    {
-      "id": "cf/zai-org/glm-5.2",
-      "service_kinds": ["llm"]
-    },
-    {
-      "id": "cf/zai-org/glm-4.7-flash",
-      "service_kinds": ["llm"]
-    },
-    {
-      "id": "cf/qwen/qwq-32b",
-      "service_kinds": ["llm"]
-    },
-    {
-      "id": "cf/qwen/qwen2.5-coder-32b-instruct",
-      "service_kinds": ["llm"]
-    }
-  ]
+  {
+    "id": "cf/ai4bharat/indictrans2-en-indic-1B",
+    "display_name": "indictrans2-en-indic-1B",
+    "service_kinds": []
+  },
+  {
+    "id": "cf/aisingapore/gemma-sea-lion-v4-27b-it",
+    "display_name": "gemma-sea-lion-v4-27b-it",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/baai/bge-base-en-v1.5",
+    "display_name": "bge-base-en-v1.5",
+    "service_kinds": [
+      "embedding"
+    ]
+  },
+  {
+    "id": "cf/baai/bge-large-en-v1.5",
+    "display_name": "bge-large-en-v1.5",
+    "service_kinds": [
+      "embedding"
+    ]
+  },
+  {
+    "id": "cf/baai/bge-m3",
+    "display_name": "bge-m3",
+    "service_kinds": [
+      "embedding"
+    ]
+  },
+  {
+    "id": "cf/baai/bge-reranker-base",
+    "display_name": "bge-reranker-base",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/baai/bge-small-en-v1.5",
+    "display_name": "bge-small-en-v1.5",
+    "service_kinds": [
+      "embedding"
+    ]
+  },
+  {
+    "id": "cf/black-forest-labs/flux-1-schnell",
+    "display_name": "flux-1-schnell",
+    "service_kinds": [
+      "image"
+    ]
+  },
+  {
+    "id": "cf/black-forest-labs/flux-2-dev",
+    "display_name": "flux-2-dev",
+    "service_kinds": [
+      "image"
+    ]
+  },
+  {
+    "id": "cf/black-forest-labs/flux-2-klein-4b",
+    "display_name": "flux-2-klein-4b",
+    "service_kinds": [
+      "image"
+    ]
+  },
+  {
+    "id": "cf/black-forest-labs/flux-2-klein-9b",
+    "display_name": "flux-2-klein-9b",
+    "service_kinds": [
+      "image"
+    ]
+  },
+  {
+    "id": "cf/bytedance/stable-diffusion-xl-lightning",
+    "display_name": "stable-diffusion-xl-lightning",
+    "service_kinds": [
+      "image"
+    ]
+  },
+  {
+    "id": "cf/deepgram/aura-1",
+    "display_name": "aura-1",
+    "service_kinds": [
+      "tts"
+    ]
+  },
+  {
+    "id": "cf/deepgram/aura-2-en",
+    "display_name": "aura-2-en",
+    "service_kinds": [
+      "tts"
+    ]
+  },
+  {
+    "id": "cf/deepgram/aura-2-es",
+    "display_name": "aura-2-es",
+    "service_kinds": [
+      "tts"
+    ]
+  },
+  {
+    "id": "cf/deepgram/flux",
+    "display_name": "flux",
+    "service_kinds": [
+      "stt"
+    ]
+  },
+  {
+    "id": "cf/deepgram/nova-3",
+    "display_name": "nova-3",
+    "service_kinds": [
+      "stt"
+    ]
+  },
+  {
+    "id": "cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
+    "display_name": "deepseek-r1-distill-qwen-32b",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/defog/sqlcoder-7b-2",
+    "display_name": "sqlcoder-7b-2",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/facebook/bart-large-cnn",
+    "display_name": "bart-large-cnn",
+    "service_kinds": []
+  },
+  {
+    "id": "cf/facebook/detr-resnet-50",
+    "display_name": "detr-resnet-50",
+    "service_kinds": []
+  },
+  {
+    "id": "cf/google/embeddinggemma-300m",
+    "display_name": "embeddinggemma-300m",
+    "service_kinds": [
+      "embedding"
+    ]
+  },
+  {
+    "id": "cf/google/gemma-2b-it-lora",
+    "display_name": "gemma-2b-it-lora",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/google/gemma-3-12b-it",
+    "display_name": "gemma-3-12b-it",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/google/gemma-4-26b-a4b-it",
+    "display_name": "gemma-4-26b-a4b-it",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/google/gemma-7b-it-lora",
+    "display_name": "gemma-7b-it-lora",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/huggingface/distilbert-sst-2-int8",
+    "display_name": "distilbert-sst-2-int8",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/ibm-granite/granite-4.0-h-micro",
+    "display_name": "granite-4.0-h-micro",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/leonardo/lucid-origin",
+    "display_name": "lucid-origin",
+    "service_kinds": [
+      "image"
+    ]
+  },
+  {
+    "id": "cf/leonardo/phoenix-1.0",
+    "display_name": "phoenix-1.0",
+    "service_kinds": [
+      "image"
+    ]
+  },
+  {
+    "id": "cf/llava-hf/llava-1.5-7b-hf",
+    "display_name": "llava-1.5-7b-hf",
+    "service_kinds": [
+      "imageToText"
+    ]
+  },
+  {
+    "id": "cf/lykon/dreamshaper-8-lcm",
+    "display_name": "dreamshaper-8-lcm",
+    "service_kinds": [
+      "image"
+    ]
+  },
+  {
+    "id": "cf/meta-llama/llama-2-7b-chat-hf-lora",
+    "display_name": "llama-2-7b-chat-hf-lora",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/meta/llama-2-7b-chat-fp16",
+    "display_name": "llama-2-7b-chat-fp16",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/meta/llama-2-7b-chat-int8",
+    "display_name": "llama-2-7b-chat-int8",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/meta/llama-3-8b-instruct",
+    "display_name": "llama-3-8b-instruct",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/meta/llama-3-8b-instruct-awq",
+    "display_name": "llama-3-8b-instruct-awq",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/meta/llama-3.1-70b-instruct",
+    "display_name": "llama-3.1-70b-instruct",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/meta/llama-3.1-8b-instruct",
+    "display_name": "llama-3.1-8b-instruct",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/meta/llama-3.1-8b-instruct-awq",
+    "display_name": "llama-3.1-8b-instruct-awq",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/meta/llama-3.1-8b-instruct-fast",
+    "display_name": "llama-3.1-8b-instruct-fast",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/meta/llama-3.1-8b-instruct-fp8",
+    "display_name": "llama-3.1-8b-instruct-fp8",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/meta/llama-3.2-11b-vision-instruct",
+    "display_name": "llama-3.2-11b-vision-instruct",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/meta/llama-3.2-1b-instruct",
+    "display_name": "llama-3.2-1b-instruct",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/meta/llama-3.2-3b-instruct",
+    "display_name": "llama-3.2-3b-instruct",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    "display_name": "llama-3.3-70b-instruct-fp8-fast",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/meta/llama-4-scout-17b-16e-instruct",
+    "display_name": "llama-4-scout-17b-16e-instruct",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/meta/llama-guard-3-8b",
+    "display_name": "llama-guard-3-8b",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/meta/m2m100-1.2b",
+    "display_name": "m2m100-1.2b",
+    "service_kinds": []
+  },
+  {
+    "id": "cf/microsoft/phi-2",
+    "display_name": "phi-2",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/microsoft/resnet-50",
+    "display_name": "resnet-50",
+    "service_kinds": []
+  },
+  {
+    "id": "cf/mistral/mistral-7b-instruct-v0.1",
+    "display_name": "mistral-7b-instruct-v0.1",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/mistral/mistral-7b-instruct-v0.2-lora",
+    "display_name": "mistral-7b-instruct-v0.2-lora",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/mistralai/mistral-small-3.1-24b-instruct",
+    "display_name": "mistral-small-3.1-24b-instruct",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/moondream/moondream3.1-9B-A2B",
+    "display_name": "moondream3.1-9B-A2B",
+    "service_kinds": [
+      "imageToText"
+    ]
+  },
+  {
+    "id": "cf/moonshotai/kimi-k2.5",
+    "display_name": "kimi-k2.5",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/moonshotai/kimi-k2.6",
+    "display_name": "kimi-k2.6",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/moonshotai/kimi-k2.7-code",
+    "display_name": "kimi-k2.7-code",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/myshell-ai/melotts",
+    "display_name": "melotts",
+    "service_kinds": [
+      "tts"
+    ]
+  },
+  {
+    "id": "cf/nvidia/nemotron-3-120b-a12b",
+    "display_name": "nemotron-3-120b-a12b",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/openai/gpt-oss-120b",
+    "display_name": "gpt-oss-120b",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/openai/gpt-oss-20b",
+    "display_name": "gpt-oss-20b",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/openai/whisper",
+    "display_name": "whisper",
+    "service_kinds": [
+      "stt"
+    ]
+  },
+  {
+    "id": "cf/openai/whisper-large-v3-turbo",
+    "display_name": "whisper-large-v3-turbo",
+    "service_kinds": [
+      "stt"
+    ]
+  },
+  {
+    "id": "cf/openai/whisper-tiny-en",
+    "display_name": "whisper-tiny-en",
+    "service_kinds": [
+      "stt"
+    ]
+  },
+  {
+    "id": "cf/pfnet/plamo-embedding-1b",
+    "display_name": "plamo-embedding-1b",
+    "service_kinds": [
+      "embedding"
+    ]
+  },
+  {
+    "id": "cf/pipecat-ai/smart-turn-v2",
+    "display_name": "smart-turn-v2",
+    "service_kinds": []
+  },
+  {
+    "id": "cf/qwen/qwen2.5-coder-32b-instruct",
+    "display_name": "qwen2.5-coder-32b-instruct",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/qwen/qwen3-30b-a3b-fp8",
+    "display_name": "qwen3-30b-a3b-fp8",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/qwen/qwen3-embedding-0.6b",
+    "display_name": "qwen3-embedding-0.6b",
+    "service_kinds": [
+      "embedding"
+    ]
+  },
+  {
+    "id": "cf/qwen/qwq-32b",
+    "display_name": "qwq-32b",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/runwayml/stable-diffusion-v1-5-img2img",
+    "display_name": "stable-diffusion-v1-5-img2img",
+    "service_kinds": [
+      "image"
+    ]
+  },
+  {
+    "id": "cf/runwayml/stable-diffusion-v1-5-inpainting",
+    "display_name": "stable-diffusion-v1-5-inpainting",
+    "service_kinds": [
+      "image"
+    ]
+  },
+  {
+    "id": "cf/stabilityai/stable-diffusion-xl-base-1.0",
+    "display_name": "stable-diffusion-xl-base-1.0",
+    "service_kinds": [
+      "image"
+    ]
+  },
+  {
+    "id": "cf/unum/uform-gen2-qwen-500m",
+    "display_name": "uform-gen2-qwen-500m",
+    "service_kinds": [
+      "imageToText"
+    ]
+  },
+  {
+    "id": "cf/zai-org/glm-4.7-flash",
+    "display_name": "glm-4.7-flash",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "cf/zai-org/glm-5.2",
+    "display_name": "glm-5.2",
+    "service_kinds": [
+      "llm"
+    ]
+  }
+]
 }

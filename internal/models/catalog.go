@@ -229,6 +229,17 @@ func GetModelServiceKinds(providerKey, modelID string) []string {
 	return nil
 }
 
+// HasServiceKind reports whether the given model ID under a provider key is
+// tagged with the requested service kind.
+func HasServiceKind(providerKey, modelID, kind string) bool {
+	for _, k := range GetModelServiceKinds(providerKey, modelID) {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}
+
 // StartUpdater starts a background goroutine that refreshes the model catalog
 // from remote URLs every 3 hours, and syncs per-provider models every 24 hours.
 // Safe to call multiple times; only one runs.
@@ -279,32 +290,41 @@ func tryFetch(ctx context.Context) {
 		stripAtPrefix(c)
 		mergeModalities(c)
 	mu.Lock()
-	// Merge: remote catalog updates existing keys and adds new ones,
-	// but preserves local-only providers (mimocode, opencode, etc.)
-	// that may not exist in the remote catalog yet.
+	// Merge: overlay remote entries on top of the existing catalog per provider.
+	// Local-only providers and local-only models are preserved, while remote
+	// updates still refresh display names and add new models. Service kinds are
+	// preserved when the remote entry does not include them.
 	for k, v := range c {
-		// Preserve explicit service kinds from the existing catalog when the
-		// remote entry does not include them. Without this, periodic fetches
-		// would strip modality tags from static/registry models.
-		old := current[k]
-		for i := range v {
-			if len(v[i].ServiceKinds) != 0 {
-				continue
-			}
-			for _, e := range old {
-				if e.ID == v[i].ID && len(e.ServiceKinds) > 0 {
-					v[i].ServiceKinds = e.ServiceKinds
-					break
-				}
-			}
-		}
-		current[k] = v
+		current[k] = mergeProviderEntries(current[k], v)
 	}
 	mu.Unlock()
 		log.Printf("model catalog updated from %s (%d providers, %d total)", url, len(c), len(current))
 		return
 	}
 	log.Printf("WARN: all model catalog remote URLs failed, using embedded fallback")
+}
+
+// mergeProviderEntries overlays fetched entries on top of existing ones by ID.
+// Existing entries not present in the fetched list are kept. Service kinds are
+// copied from the existing entry when the fetched entry omits them.
+func mergeProviderEntries(existing, fetched []modelEntry) []modelEntry {
+	merged := make(map[string]modelEntry, len(existing))
+	for _, e := range existing {
+		merged[e.ID] = e
+	}
+	for _, e := range fetched {
+		if len(e.ServiceKinds) == 0 {
+			if old, ok := merged[e.ID]; ok && len(old.ServiceKinds) > 0 {
+				e.ServiceKinds = old.ServiceKinds
+			}
+		}
+		merged[e.ID] = e
+	}
+	out := make([]modelEntry, 0, len(merged))
+	for _, e := range merged {
+		out = append(out, e)
+	}
+	return out
 }
 
 // tryFetchProviders fetches models from per-provider upstream endpoints

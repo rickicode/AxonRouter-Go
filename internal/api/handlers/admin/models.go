@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -58,6 +59,28 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 		BaseURL string
 	}
 	dbErr := h.db.QueryRow(`SELECT id, format, base_url FROM provider_types WHERE id = ?`, providerID).Scan(&provider.ID, &provider.Format, &provider.BaseURL)
+
+	// Cloudflare-specific discovery: the OpenAI-flavored /v1/models endpoint is not
+	// supported by Workers AI; the canonical list lives at
+	// /accounts/{accountId}/ai/models/search. Match OmniRoute's behavior.
+	if providerID == "cf" && dbErr == nil {
+		var cfAPIKey, cfPSD string
+		err := h.db.QueryRow(`SELECT COALESCE(api_key,''), provider_specific_data FROM connections WHERE provider_type_id = ? AND status = 'ready' AND is_active = 1 LIMIT 1`, providerID).Scan(&cfAPIKey, &cfPSD)
+		if err == nil && cfAPIKey != "" {
+			psd := make(map[string]string)
+			if cfPSD != "" {
+				json.Unmarshal([]byte(cfPSD), &psd)
+			}
+			if accountID := psd["accountId"]; accountID != "" {
+				if models, err := fetchCloudflareModels(cfAPIKey, accountID); err == nil && len(models) > 0 {
+					c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, models)})
+					return
+				} else if err != nil {
+					logging.Logger.Debug("cloudflare model discovery failed", "provider", providerID, "err", err.Error())
+				}
+			}
+		}
+	}
 
 	// Try dynamic model listing via executor (only if provider exists in DB)
 	if dbErr == nil {
@@ -442,11 +465,19 @@ func staticModels(providerID string) []string {
 // defaultTestModel returns the first available model for a provider from the catalog.
 // For Cloudflare, the catalog stores gateway IDs like cf/author/model; the test
 // body should contain only the upstream model name (author/model) so the CF
-// sanitizer can prepend @cf/ exactly once.
+// sanitizer can prepend @cf/ exactly once. Prefer an LLM model for CF so the
+// default test body is appropriate for chat completions.
 func defaultTestModel(providerID string) string {
-	if ids := staticModels(providerID); len(ids) > 0 {
+	ids := staticModels(providerID)
+	if len(ids) > 0 {
 		id := ids[0]
-		if providerID == "cf" && strings.HasPrefix(id, "cf/") {
+		if providerID == "cf" {
+			for _, candidate := range ids {
+				if strings.HasPrefix(candidate, "cf/") && models.HasServiceKind("cf", strings.TrimPrefix(candidate, "cf/"), "llm") {
+					id = candidate
+					break
+				}
+			}
 			id = strings.TrimPrefix(id, "cf/")
 		}
 		return id
@@ -467,6 +498,71 @@ func defaultTestModel(providerID string) string {
 	default:
 		return ""
 	}
+}
+
+// fetchCloudflareModels queries the official Cloudflare Workers AI model search
+// API and returns the callable model slugs (e.g. "cf/meta/llama-3.3-70b-instruct").
+// This mirrors OmniRoute's cloudflare-ai model discovery behavior.
+func fetchCloudflareModels(apiKey, accountID string) ([]string, error) {
+	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/accounts/%s/ai/models/search?per_page=1000", accountID)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("cloudflare models search returned HTTP %d", resp.StatusCode)
+	}
+
+	var envelope struct {
+		Success bool `json:"success"`
+		Errors  []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+		Result []struct {
+			Name string `json:"name"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return nil, err
+	}
+	if !envelope.Success {
+		var msgs []string
+		for _, e := range envelope.Errors {
+			msgs = append(msgs, e.Message)
+		}
+		return nil, fmt.Errorf("cloudflare models search failed: %s", strings.Join(msgs, "; "))
+	}
+
+	seen := make(map[string]struct{})
+	var out []string
+	for _, m := range envelope.Result {
+		slug := strings.TrimPrefix(strings.TrimSpace(m.Name), "@")
+		if slug == "" {
+			continue
+		}
+		// Normalize to gateway id: Cloudflare returns "@cf/author/model", we store "cf/author/model".
+		if !strings.HasPrefix(slug, "cf/") {
+			slug = "cf/" + slug
+		}
+		if _, ok := seen[slug]; ok {
+			continue
+		}
+		seen[slug] = struct{}{}
+		out = append(out, slug)
+	}
+	return out, nil
 }
 
 // SyncModels triggers an immediate sync of per-provider models from upstream endpoints.
