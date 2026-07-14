@@ -25,6 +25,9 @@ func (h *Handler) TTS(c *gin.Context) {
 	if model == "" {
 		model = "tts-1"
 	}
+	if h.checkTokenBudget(c, body) != nil {
+		return
+	}
 
 	provider, modelName := executor.SplitModel(model)
 	if provider == "" {

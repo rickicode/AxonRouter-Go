@@ -26,6 +26,9 @@ func (h *Handler) Video(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "model is required", "type": "invalid_request_error"}})
 		return
 	}
+	if h.checkTokenBudget(c, body) != nil {
+		return
+	}
 
 	provider, modelName := executor.SplitModel(model)
 	if provider == "" {

@@ -57,6 +57,9 @@ func (h *Handler) STT(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "failed to read file", "type": "invalid_request_error"}})
 		return
 	}
+	if h.checkTokenBudget(c, nil) != nil {
+		return
+	}
 
 	// Build multipart body
 	filename := header.Filename

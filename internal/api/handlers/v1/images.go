@@ -28,6 +28,9 @@ func (h *Handler) Images(c *gin.Context) {
 	if model == "" {
 		model = "dall-e-3"
 	}
+	if h.checkTokenBudget(c, body) != nil {
+		return
+	}
 
 	provider, modelName := executor.SplitModel(model)
 	if provider == "" {
