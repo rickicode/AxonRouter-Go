@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -124,7 +125,7 @@ func (h *Handler) Messages(c *gin.Context) {
 			if h.isClientCanceled(c, err) {
 				return
 			}
-			retry, cat := h.handleFailoverError(c, conn, provider, modelName, err, attempt, latency, stream)
+			retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
 			lastErr = err
 			lastErrCategory = cat
 			if !retry {
@@ -140,9 +141,9 @@ func (h *Handler) Messages(c *gin.Context) {
 		h.persistSuccess(conn.ID)
 		h.combo.RecordSuccess(conn.ID)
 
-		if req.Stream {
-			h.handleClaudeStreamResponse(c, streamResult, conn, provider, modelName, start, translatedBody, body)
-		} else {
+	if req.Stream {
+		h.handleClaudeStreamResponse(proxyCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body)
+	} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(clientFormat), string(providerFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			tokensEstimated := false
@@ -155,22 +156,23 @@ func (h *Handler) Messages(c *gin.Context) {
 					tokensEstimated = true
 				}
 			}
-			h.tracker.Log(&usage.LogEntry{
-				ApiKeyID:            c.GetString("api_key_id"),
-				ConnectionID:        conn.ID,
-				ProviderTypeID:      provider,
-				ModelID:             modelName,
-				Modality:            "chat",
-				Stream:              stream,
-				InputTokens:         tokenCounts.InputTokens,
-				OutputTokens:        tokenCounts.OutputTokens,
-				ReasoningTokens:     tokenCounts.ReasoningTokens,
-				CachedTokens:        tokenCounts.CachedTokens,
-				CacheCreationTokens: tokenCounts.CacheCreationTokens,
-				LatencyMs:           latency,
-				StatusCode:          resp.StatusCode,
-				TokensEstimated:     tokensEstimated,
-			})
+	h.tracker.Log(&usage.LogEntry{
+		ApiKeyID: c.GetString("api_key_id"),
+		ConnectionID: conn.ID,
+		ProviderTypeID: provider,
+		ModelID: modelName,
+		ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
+		Modality: "chat",
+		Stream: stream,
+		InputTokens: tokenCounts.InputTokens,
+		OutputTokens: tokenCounts.OutputTokens,
+		ReasoningTokens: tokenCounts.ReasoningTokens,
+		CachedTokens: tokenCounts.CachedTokens,
+		CacheCreationTokens: tokenCounts.CacheCreationTokens,
+		LatencyMs: latency,
+		StatusCode: resp.StatusCode,
+		TokensEstimated: tokensEstimated,
+	})
 	h.incrementAPIKeyUsage(c.GetString("api_key_id"), tokenCounts.InputTokens+tokenCounts.OutputTokens)
 	if resp.StatusCode < 300 {
 		h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
@@ -186,14 +188,14 @@ func (h *Handler) Messages(c *gin.Context) {
 }
 
 // handleClaudeStreamResponse handles streaming Claude responses.
-func (h *Handler) handleClaudeStreamResponse(c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte) {
+func (h *Handler) handleClaudeStreamResponse(ctx context.Context, c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte) {
 	_, providerFormat, _ := h.registry.Get(provider)
 	errFormatter := func(err error) []byte {
 		logging.Logger.Error("upstream streaming error", "provider", provider, "model", model, "error", err)
 		b, _ := json.Marshal(claudeError("api_error", "upstream streaming error"))
 		return b
 	}
-	h.streamResponse(c, result, conn, provider, model, executor.FormatClaude, providerFormat, originalReq, translatedReq, errFormatter, start)
+	h.streamResponse(ctx, c, result, conn, provider, model, executor.FormatClaude, providerFormat, originalReq, translatedReq, errFormatter, start)
 }
 
 // CountTokens handles POST /v1/messages/count_tokens

@@ -122,7 +122,7 @@ func (h *Handler) Responses(c *gin.Context) {
 			if h.isClientCanceled(c, err) {
 				return
 			}
-			retry, cat := h.handleFailoverError(c, conn, provider, modelName, err, attempt, latency, stream)
+			retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
 			lastErr = err
 			lastErrCategory = cat
 			if !retry {
@@ -144,7 +144,7 @@ func (h *Handler) Responses(c *gin.Context) {
 				b, _ := json.Marshal(gin.H{"error": gin.H{"message": "upstream streaming error", "type": "server_error"}})
 				return b
 			}
-			h.streamResponse(c, streamResult, conn, provider, modelName, executor.FormatOpenAIResponses, providerFmt, body, translatedBody, errFormatter, start)
+			h.streamResponse(proxyCtx, c, streamResult, conn, provider, modelName, executor.FormatOpenAIResponses, providerFmt, body, translatedBody, errFormatter, start)
 		} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
@@ -158,17 +158,18 @@ func (h *Handler) Responses(c *gin.Context) {
 					tokensEstimated = true
 				}
 			}
-			h.tracker.Log(&usage.LogEntry{
-				ApiKeyID:            c.GetString("api_key_id"),
-				ConnectionID:        conn.ID,
-				ProviderTypeID:      provider,
-				ModelID:             modelName,
-				Modality:            "chat",
-				Stream:              stream,
-				InputTokens:         tokenCounts.InputTokens,
-				OutputTokens:        tokenCounts.OutputTokens,
-				ReasoningTokens:     tokenCounts.ReasoningTokens,
-				CachedTokens:        tokenCounts.CachedTokens,
+		h.tracker.Log(&usage.LogEntry{
+			ApiKeyID: c.GetString("api_key_id"),
+			ConnectionID: conn.ID,
+			ProviderTypeID: provider,
+			ModelID: modelName,
+			ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
+			Modality: "chat",
+			Stream: stream,
+			InputTokens: tokenCounts.InputTokens,
+			OutputTokens: tokenCounts.OutputTokens,
+			ReasoningTokens: tokenCounts.ReasoningTokens,
+			CachedTokens: tokenCounts.CachedTokens,
 			CacheCreationTokens: tokenCounts.CacheCreationTokens,
 			LatencyMs: latency,
 			StatusCode: resp.StatusCode,

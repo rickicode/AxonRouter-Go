@@ -27,6 +27,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
+	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
@@ -148,6 +149,26 @@ func newTestHandler(t *testing.T) *Handler {
 		providerCfg: providercfg.NewManager(t.TempDir()),
 		combo:       combo.NewHandler(database, store, elig),
 		registry:    executor.GetRegistry(),
+	}
+}
+
+func TestProxyContext_PoolID(t *testing.T) {
+	h := newTestHandler(t)
+	now := db.UnixNow()
+	if _, err := h.db.Exec(`INSERT INTO proxy_pools (id, name, type, proxy_url, is_active, created_at, updated_at)
+		VALUES ('pool-abc', 'Test Pool', 'http', 'http://10.0.0.1:8080', 1, ?, ?)`, now, now); err != nil {
+		t.Fatalf("insert proxy pool: %v", err)
+	}
+	h.resolver = proxypool.NewResolver(h.db)
+
+	conn := &Connection{
+		ID:                   "conn-pool",
+		Provider:             "openai",
+		ProviderSpecificData: `{"proxyPoolId":"pool-abc"}`,
+	}
+	proxyCtx := h.proxyContext(context.Background(), conn)
+	if got := executor.ProxyPoolIDFromContext(proxyCtx); got != "pool-abc" {
+		t.Errorf("ProxyPoolIDFromContext = %q, want pool-abc", got)
 	}
 }
 
@@ -285,7 +306,7 @@ func TestWriteUpstreamClientError_WritesTranslatedError(t *testing.T) {
 	body := []byte(`{"error":{"message":"context too long","type":"invalid_request_error","code":"context_length_exceeded"}}`)
 	upErr := &executor.UpstreamError{StatusCode: http.StatusBadRequest, Body: body}
 
-	if !h.writeUpstreamClientError(c, upErr, nil, "cf", "@cf/meta/llama-3.3-70b", time.Now(), false) {
+	if !h.writeUpstreamClientError(context.Background(), c, upErr, nil, "cf", "@cf/meta/llama-3.3-70b", time.Now(), false) {
 		t.Fatal("expected writeUpstreamClientError to return true")
 	}
 	if rec.Code != http.StatusBadRequest {
@@ -310,7 +331,7 @@ func TestWriteUpstreamClientError_SkipsRateLimit(t *testing.T) {
 		Body:       []byte(`{"error":{"message":"rate limited","type":"rate_limit_error","code":"rate_limit_exceeded"}}`),
 	}
 
-	if h.writeUpstreamClientError(c, upErr, nil, "cf", "model", time.Now(), false) {
+	if h.writeUpstreamClientError(context.Background(), c, upErr, nil, "cf", "model", time.Now(), false) {
 		t.Fatal("expected writeUpstreamClientError to return false for 429")
 	}
 	if rec.Code != http.StatusOK {
@@ -700,7 +721,7 @@ func TestBuildFailoverErrorResponse(t *testing.T) {
 		dummyReq := []byte(`{}`)
 
 		// Call streamResponse directly.
-		h.streamResponse(c, result, conn, "test", "test-model",
+		h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
 			executor.FormatOpenAI, executor.FormatOpenAI,
 			dummyReq, dummyReq,
 			func(err error) []byte { return []byte(err.Error()) },
@@ -761,7 +782,7 @@ func TestStreamResponse_UpstreamChunkErrMarksExhausted(t *testing.T) {
 	result := &executor.StreamResult{Chunks: chunks, StatusCode: http.StatusOK}
 
 	conn := &Connection{ID: "conn-err"}
-	h.streamResponse(c, result, conn, "test", "test-model",
+	h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
 		executor.FormatOpenAI, executor.FormatOpenAI,
 		[]byte(`{}`), []byte(`{}`),
 		func(err error) []byte { return []byte(`{"error":"upstream"}`) },
@@ -804,7 +825,7 @@ func TestStreamResponse_ClientCanceledChunkErrDoesNotMarkExhausted(t *testing.T)
 	result := &executor.StreamResult{Chunks: chunks, StatusCode: http.StatusOK}
 
 	conn := &Connection{ID: "conn-cancel"}
-	h.streamResponse(c, result, conn, "test", "test-model",
+	h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
 		executor.FormatOpenAI, executor.FormatOpenAI,
 		[]byte(`{}`), []byte(`{}`),
 		func(err error) []byte { return []byte(`{"error":"canceled"}`) },
@@ -915,7 +936,7 @@ func TestFallbackUsage(t *testing.T) {
 		originalReq := []byte(`{"model":"test/model","messages":[{"role":"user","content":"Hello"}]}`)
 		translatedReq := []byte(`{"model":"test-model","messages":[{"role":"user","content":"Hello"}]}`)
 
-		h.streamResponse(c, result, conn, "test", "test-model",
+		h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
 			executor.FormatOpenAI, executor.FormatOpenAI,
 			originalReq, translatedReq,
 			func(err error) []byte { return []byte(err.Error()) },
@@ -981,7 +1002,7 @@ func TestFallbackUsage(t *testing.T) {
 		conn := &Connection{ID: "conn-1"}
 		dummyReq := []byte(`{}`)
 
-		h.streamResponse(c, result, conn, "test", "test-model",
+		h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
 			executor.FormatOpenAI, executor.FormatOpenAI,
 			dummyReq, dummyReq,
 			func(err error) []byte { return []byte(err.Error()) },
@@ -1089,7 +1110,7 @@ func TestWriteUpstreamClientError_PassesStatusAndBody(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
 	c.Set("api_key_id", "test-key")
 
-	if !h.writeUpstreamClientError(c, upErr, conn, "testimage", "dall-e-3", time.Now(), false) {
+	if !h.writeUpstreamClientError(context.Background(), c, upErr, conn, "testimage", "dall-e-3", time.Now(), false) {
 		t.Fatal("writeUpstreamClientError returned false for UpstreamError")
 	}
 

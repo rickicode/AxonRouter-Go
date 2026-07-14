@@ -818,7 +818,7 @@ func (h *Handler) executeDirect(ctx context.Context, exec executor.Executor, req
 // exhausted/cooled-down when appropriate, refreshes eligibility, and logs it.
 // Returns (shouldRetry, category): shouldRetry=false for non-retryable errors
 // (model_not_found, auth_failed), category for the caller to build better error messages.
-func (h *Handler) handleFailoverError(c *gin.Context, conn *Connection, provider, modelName string, err error, attempt int, latency int64, stream bool) (bool, string) {
+func (h *Handler) handleFailoverError(ctx context.Context, c *gin.Context, conn *Connection, provider, modelName string, err error, attempt int, latency int64, stream bool) (bool, string) {
 	det := connstate.DetectError(c.Request.Context(), 0, "", err, provider, modelName, nil)
 	if connstate.HasPerModelQuota(provider) && det.ModelID != "" &&
 		(det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
@@ -884,14 +884,15 @@ func (h *Handler) handleFailoverError(c *gin.Context, conn *Connection, provider
 	}
 
 	h.tracker.Log(&usage.LogEntry{
-		ApiKeyID:       c.GetString("api_key_id"),
-		ConnectionID:   conn.ID,
+		ApiKeyID: c.GetString("api_key_id"),
+		ConnectionID: conn.ID,
 		ProviderTypeID: provider,
-		ModelID:        modelName,
-		Modality:       "chat",
-		Stream:         stream,
-		LatencyMs:      latency,
-		ErrorMessage:   err.Error(),
+		ModelID: modelName,
+		ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
+		Modality: "chat",
+		Stream: stream,
+		LatencyMs: latency,
+		ErrorMessage: err.Error(),
 	})
 
 	// Non-retryable errors: model doesn't exist or auth failed —
@@ -908,6 +909,7 @@ func (h *Handler) handleFailoverError(c *gin.Context, conn *Connection, provider
 // 429 is intentionally excluded so the failover loop can cooldown/mark exhausted
 // and try the next connection.
 func (h *Handler) writeUpstreamClientError(
+	ctx context.Context,
 	c *gin.Context,
 	err error,
 	conn *Connection,
@@ -931,15 +933,16 @@ func (h *Handler) writeUpstreamClientError(
 			errBody = upErr.Body
 		}
 		h.tracker.Log(&usage.LogEntry{
-			ApiKeyID:       c.GetString("api_key_id"),
-			ConnectionID:   conn.ID,
+			ApiKeyID: c.GetString("api_key_id"),
+			ConnectionID: conn.ID,
 			ProviderTypeID: provider,
-			ModelID:        modelName,
-			Modality:       "chat",
-			Stream:         stream,
-			LatencyMs:      time.Since(start).Milliseconds(),
-			StatusCode:     upErr.StatusCode,
-			ErrorMessage:   string(errBody),
+			ModelID: modelName,
+			ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
+			Modality: "chat",
+			Stream: stream,
+			LatencyMs: time.Since(start).Milliseconds(),
+			StatusCode: upErr.StatusCode,
+			ErrorMessage: string(errBody),
 		})
 	}
 	return true
@@ -953,6 +956,7 @@ func (h *Handler) proxyContext(ctx context.Context, conn *Connection) context.Co
 	cfg := h.resolver.Resolve(conn.ProviderSpecificData, conn.Provider)
 	return executor.ContextWithProxy(ctx, executor.ProxyConfig{
 		Enabled:     cfg.Enabled,
+		ProxyPoolID: cfg.ProxyPoolID,
 		ProxyURL:    cfg.ProxyURL,
 		NoProxy:     cfg.NoProxy,
 		RelayURL:    cfg.RelayURL,
@@ -995,6 +999,7 @@ func estimateOutputFromTranslatedChunk(tc []byte) int64 {
 // client-disconnect detection. Each translated chunk already includes the SSE
 // frame (data: ...\n\n), so the helper writes the bytes as-is and flushes.
 func (h *Handler) streamResponse(
+	ctx context.Context,
 	c *gin.Context,
 	result *executor.StreamResult,
 	conn *Connection,
@@ -1024,10 +1029,9 @@ func (h *Handler) streamResponse(
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
-var acc StreamTokenCounts
-var totalOutputBytes int64
-lastChunkTime := time.Now()
-	ctx := c.Request.Context()
+	var acc StreamTokenCounts
+	var totalOutputBytes int64
+	lastChunkTime := time.Now()
 	var streamState any
 
 	for {
@@ -1056,6 +1060,7 @@ latency := time.Since(start).Milliseconds()
 				ConnectionID: conn.ID,
 				ProviderTypeID: provider,
 				ModelID: model,
+				ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
 				Modality: "chat",
 				Stream: true,
 				InputTokens: acc.InputTokens,
@@ -1068,8 +1073,8 @@ latency := time.Since(start).Milliseconds()
 				TokensEstimated: tokensEstimated,
 			})
 			h.incrementAPIKeyUsage(c.GetString("api_key_id"), acc.InputTokens+acc.OutputTokens)
-				return
-			}
+			return
+		}
 
 		if chunk.Err != nil {
 			// Keep errors inside OpenAI-compatible `data:` events so standard
@@ -1078,23 +1083,24 @@ latency := time.Since(start).Milliseconds()
 			// cancellations (e.g. disconnects) must not penalize connections.
 			if !h.isClientCanceled(c, chunk.Err) {
 				latency := time.Since(start).Milliseconds()
-				h.handleFailoverError(c, conn, provider, model, chunk.Err, 0, latency, true)
+				h.handleFailoverError(ctx, c, conn, provider, model, chunk.Err, 0, latency, true)
 			}
 			c.Writer.Write([]byte("data: "))
-				c.Writer.Write(errFormatter(chunk.Err))
-				c.Writer.Write([]byte("\n\n"))
-				c.Writer.Write([]byte("data: [DONE]\n\n"))
-				flusher.Flush()
-				h.tracker.Log(&usage.LogEntry{
-					ApiKeyID:       c.GetString("api_key_id"),
-					ConnectionID:   conn.ID,
-					ProviderTypeID: provider,
-					ModelID:        model,
-					Modality:       "chat",
-					Stream:         true,
-					LatencyMs:      time.Since(start).Milliseconds(),
-					ErrorMessage:   chunk.Err.Error(),
-				})
+			c.Writer.Write(errFormatter(chunk.Err))
+			c.Writer.Write([]byte("\n\n"))
+			c.Writer.Write([]byte("data: [DONE]\n\n"))
+			flusher.Flush()
+			h.tracker.Log(&usage.LogEntry{
+				ApiKeyID: c.GetString("api_key_id"),
+				ConnectionID: conn.ID,
+				ProviderTypeID: provider,
+				ModelID: model,
+				ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
+				Modality: "chat",
+				Stream: true,
+				LatencyMs: time.Since(start).Milliseconds(),
+				ErrorMessage: chunk.Err.Error(),
+			})
 				return
 			}
 

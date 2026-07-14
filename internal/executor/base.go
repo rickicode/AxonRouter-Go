@@ -140,6 +140,7 @@ func RequestIDFromContext(ctx context.Context) string {
 // ProxyConfig is attached to request contexts by v1 handlers.
 type ProxyConfig struct {
 	Enabled     bool
+	ProxyPoolID string
 	ProxyURL    string
 	NoProxy     string
 	RelayURL    string
@@ -169,6 +170,14 @@ func proxyLabelFromCtx(ctx context.Context) string {
 		return cfg.ProxyLabel()
 	}
 	return "direct"
+}
+
+// ProxyPoolIDFromContext extracts the proxy pool ID from context for logging.
+func ProxyPoolIDFromContext(ctx context.Context) string {
+	if cfg, ok := ctx.Value(proxyContextKey{}).(ProxyConfig); ok {
+		return cfg.ProxyPoolID
+	}
+	return ""
 }
 
 func ContextWithProxy(ctx context.Context, cfg ProxyConfig) context.Context {
