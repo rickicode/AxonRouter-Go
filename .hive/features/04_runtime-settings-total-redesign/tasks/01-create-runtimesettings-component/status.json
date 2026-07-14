@@ -1,9 +1,0 @@
-{
-  "status": "done",
-  "origin": "plan",
-  "planTitle": "Create RuntimeSettings component",
-  "dependsOn": [],
-  "summary": "Created RuntimeSettings.svelte with clean list/table layout, category filter pills, search, and inline edit.",
-  "schemaVersion": 1,
-  "completedAt": "2026-07-14T11:12:59.010Z"
-}
