@@ -1,13 +1,16 @@
 package v1
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
+	providerpkg "github.com/rickicode/AxonRouter-Go/internal/provider"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
 
@@ -32,7 +35,32 @@ func (h *Handler) Images(c *gin.Context) {
 		modelName = model
 	}
 
-	imagesExec := executor.NewImagesExecutor(executor.NewBaseExecutor())
+	// Look up provider capabilities before selecting an execution path.
+	var serviceKinds string
+	err = h.db.QueryRow(`SELECT COALESCE(service_kinds, '[]') FROM provider_types WHERE id = ?`, provider).Scan(&serviceKinds)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "provider not configured for image generation", "type": "invalid_request_error"}})
+		return
+	}
+	var kinds []string
+	if err := json.Unmarshal([]byte(serviceKinds), &kinds); err != nil {
+		kinds = providerpkg.DefaultServiceKinds()
+	}
+	hasImage := providerpkg.HasServiceKind(kinds, providerpkg.ServiceKindImage)
+
+	var imagesExec executor.Executor
+	if exec, format, err := h.resolveExecutor(provider, modelName); err == nil {
+		if imgGen, ok := exec.(executor.ImageGenerator); ok && format == executor.FormatOpenAI {
+			if !hasImage {
+				c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "provider does not support image generation", "type": "invalid_request_error"}})
+				return
+			}
+			imagesExec = &imageGeneratorAdapter{ImageGenerator: imgGen}
+		}
+	}
+	if imagesExec == nil {
+		imagesExec = executor.NewImagesExecutor(executor.NewBaseExecutor())
+	}
 
 	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
 	if err != nil {
@@ -87,4 +115,18 @@ func (h *Handler) Images(c *gin.Context) {
 	c.Header("Content-Type", "application/json")
 	c.Status(resp.StatusCode)
 	c.Writer.Write(resp.Body)
+}
+
+// imageGeneratorAdapter exposes an executor.ImageGenerator through the standard
+// executor.Executor interface so executeWithRetry can drive it.
+type imageGeneratorAdapter struct {
+	ImageGenerator executor.ImageGenerator
+}
+
+func (a *imageGeneratorAdapter) Execute(ctx context.Context, req *executor.Request) (*executor.Response, error) {
+	return a.ImageGenerator.Images(ctx, req)
+}
+
+func (a *imageGeneratorAdapter) ExecuteStream(ctx context.Context, req *executor.Request) (*executor.StreamResult, error) {
+	return nil, fmt.Errorf("image generation does not support streaming")
 }

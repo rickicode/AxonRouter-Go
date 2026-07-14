@@ -31,6 +31,8 @@ export interface Provider {
     disabled: number;
   };
   aliases?: string[];
+  category: string;
+  service_kinds: string[];
 }
 
 export type RoutingMode = "first_eligible" | "round_robin" | "random";
@@ -190,6 +192,7 @@ export async function fetchApi<T>(
 export interface ProviderModelEntry {
   id: string;
   custom: boolean;
+  service_kinds?: string[];
 }
 
 export const providersApi = {
@@ -562,6 +565,7 @@ export interface ModelPricing {
   audio_per_min: number;
   currency: string;
   updated_at: number;
+  service_kinds?: string[];
 }
 
 export const modelPricingApi = {
@@ -993,6 +997,7 @@ export interface GatewayModel {
   object: string;
   created: number;
   owned_by: string;
+  service_kinds?: string[];
 }
 
 export const modelsApi = {

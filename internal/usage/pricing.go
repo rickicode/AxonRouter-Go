@@ -22,17 +22,19 @@ type Pricing struct {
 var defaultPricing = Pricing{InputPer1K: 0.001, OutputPer1K: 0.002}
 
 type ModelPricingRow struct {
-	ModelID          string  `json:"model_id"`
-	DisplayName      string  `json:"display_name"`
-	InputPer1K       float64 `json:"input_per_1k"`
-	OutputPer1K      float64 `json:"output_per_1k"`
-	ReasonPer1K      float64 `json:"reason_per_1k"`
-	CachedReadPer1K  float64 `json:"cached_read_per_1k"`
+	ModelID string `json:"model_id"`
+	DisplayName string `json:"display_name"`
+	InputPer1K float64 `json:"input_per_1k"`
+	OutputPer1K float64 `json:"output_per_1k"`
+	ReasonPer1K float64 `json:"reason_per_1k"`
+	CachedReadPer1K float64 `json:"cached_read_per_1k"`
 	CachedWritePer1K float64 `json:"cached_write_per_1k"`
-	ImagePerUnit     float64 `json:"image_per_unit"`
-	AudioPerMin      float64 `json:"audio_per_min"`
-	Currency         string  `json:"currency"`
-	UpdatedAt        int64   `json:"updated_at"`
+	ImagePerUnit float64 `json:"image_per_unit"`
+	AudioPerMin float64 `json:"audio_per_min"`
+	Currency string `json:"currency"`
+	UpdatedAt int64 `json:"updated_at"`
+	// ServiceKinds is populated from the model catalog for display; not persisted.
+	ServiceKinds []string `json:"service_kinds,omitempty"`
 }
 
 var (

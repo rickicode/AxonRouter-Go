@@ -10,7 +10,7 @@ import type { RoutingMode } from '$lib/api';
  import { Input } from '$lib/components/ui/input';
  import * as Select from '$lib/components/ui/select';
  import ProviderIcon from '$lib/components/ProviderIcon.svelte';
- import { getProviderMeta, getStatusDotColor, getStatusVariant, getStatusLabel } from '$lib/provider-catalog';
+ import { getProviderMeta, getCategoryById, getStatusDotColor, getStatusVariant, getStatusLabel } from '$lib/provider-catalog';
  import { toast } from 'svelte-sonner';
 import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
 import Settings2Icon from '@lucide/svelte/icons/settings-2';
@@ -44,6 +44,13 @@ let newModel = $state('');
  let actionLoading = $state('');
  let deleteTarget = $state<{ id: string; name: string } | null>(null);
  let deleteDialogOpen = $state(false);
+
+ let providerCategoryId = $derived($selectedProvider?.category ?? meta?.category ?? 'compatible');
+ let providerCategoryLabel = $derived(getCategoryById(providerCategoryId)?.label ?? providerCategoryId);
+ let providerServiceKinds = $derived.by(() => {
+   const kinds = $selectedProvider?.service_kinds ?? meta?.serviceKinds ?? ['llm'];
+   return kinds.length === 1 && kinds[0] === 'llm' ? [] : kinds;
+ });
 
  const statusOptions = [
  { value: '', label: 'All statuses' },
@@ -234,8 +241,11 @@ function handlePerPageChange(p: number) {
 				{#if $selectedProvider.is_custom}
 					<Badge variant="secondary" class="text-caption-mono rounded-sm">Custom</Badge>
 				{/if}
-				{#if meta}
-					<Badge variant="outline" class="text-caption-mono rounded-sm">{meta.category}</Badge>
+				<Badge variant="outline" class="text-caption-mono rounded-sm">{providerCategoryLabel}</Badge>
+				{#if providerServiceKinds.length > 0}
+					{#each providerServiceKinds as kind (kind)}
+						<Badge variant="secondary" class="text-caption-mono rounded-sm">{kind}</Badge>
+					{/each}
 				{/if}
 			</div>
 			<p class="text-caption-mono text-muted-foreground">
@@ -422,20 +432,28 @@ function handlePerPageChange(p: number) {
  <p class="text-body-sm text-muted-foreground">No models registered for this provider yet.</p>
  {:else}
  <div class="grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));">
- {#each $providerModels as entry (entry.id)}
- {@const result = $modelTestResults[entry.id]}
- <div class="group relative flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 transition-colors hover:border-primary/40">
-				<button
-					type="button"
-					class="flex min-w-0 flex-1 items-center gap-2 text-left cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-					disabled={result?.status === 'testing'}
-					onclick={() => testProviderModel(providerId, entry.id)}
-					title={entry.id}
-				>
-					<span class="block min-w-0 text-[12px] font-mono leading-snug break-all text-foreground">{entry.id}</span>
-				</button>
-				<button
-					type="button"
+{#each $providerModels as entry (entry.id)}
+    {@const result = $modelTestResults[entry.id]}
+    {@const serviceKinds = entry.service_kinds?.length === 1 && entry.service_kinds[0] === 'llm' ? [] : (entry.service_kinds ?? [])}
+    <div class="group relative flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 transition-colors hover:border-primary/40">
+      <button
+        type="button"
+        class="flex min-w-0 flex-1 items-center gap-2 text-left cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        disabled={result?.status === 'testing'}
+        onclick={() => testProviderModel(providerId, entry.id)}
+        title={entry.id}
+      >
+        <span class="block min-w-0 text-[12px] font-mono leading-snug break-all text-foreground">{entry.id}</span>
+      </button>
+      {#if serviceKinds.length > 0}
+        <div class="flex flex-wrap gap-1">
+          {#each serviceKinds as kind (kind)}
+            <Badge variant="outline" class="text-[10px] px-1.5 py-0 rounded-full">{kind}</Badge>
+          {/each}
+        </div>
+      {/if}
+      <button
+        type="button"
 					class="inline-flex shrink-0 items-center justify-center size-6 rounded-sm border border-border text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary hover:bg-primary/10 cursor-pointer"
 					title="Copy model name"
 					aria-label="Copy model name"

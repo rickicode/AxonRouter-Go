@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/rickicode/AxonRouter-Go/internal/modalities"
 )
 
 //go:embed models.json
@@ -45,8 +47,9 @@ var providerFreeOnly = map[string]bool{
 
 // modelEntry is a single model definition from models.json.
 type modelEntry struct {
-	ID          string `json:"id"`
-	DisplayName string `json:"display_name"`
+	ID           string   `json:"id"`
+	DisplayName  string   `json:"display_name"`
+	ServiceKinds []string `json:"service_kinds"`
 }
 
 // catalog is the full models.json structure: provider → []modelEntry.
@@ -70,9 +73,45 @@ func loadEmbedded() {
 		return
 	}
 	stripAtPrefix(c)
+	mergeModalities(c)
 	mu.Lock()
 	current = c
 	mu.Unlock()
+}
+
+// mergeModalities folds per-modality registry models into the catalog so they
+// appear alongside static entries. Each model is tagged with its modality as a
+// service kind (e.g. "embedding", "image").
+func mergeModalities(c catalog) {
+	for _, providerTypeID := range modalities.Providers() {
+		kinds := modalities.ServiceKinds(providerTypeID)
+		for _, kind := range kinds {
+			for _, model := range modalities.Models(providerTypeID, kind) {
+				id := strings.TrimPrefix(model, "@")
+				idx := -1
+				for i, e := range c[providerTypeID] {
+					if e.ID == id {
+						idx = i
+						break
+					}
+				}
+				if idx >= 0 {
+					c[providerTypeID][idx].ServiceKinds = appendUnique(c[providerTypeID][idx].ServiceKinds, kind)
+					continue
+				}
+				c[providerTypeID] = append(c[providerTypeID], modelEntry{ID: id, ServiceKinds: []string{kind}})
+			}
+		}
+	}
+}
+
+func appendUnique(existing []string, value string) []string {
+	for _, v := range existing {
+		if v == value {
+			return existing
+		}
+	}
+	return append(existing, value)
 }
 
 // stripAtPrefix removes leading "@" from all model IDs in the catalog.
@@ -136,6 +175,24 @@ func GetAllModelIDs(keys ...string) []string {
 	return ids
 }
 
+// ServiceKindsForModelID returns the explicit service kinds for a canonical
+// model ID across all provider keys in the catalog. Returns nil if the model
+// has no explicit service kinds.
+func ServiceKindsForModelID(modelID string) []string {
+	mu.RLock()
+	defer mu.RUnlock()
+	for _, entries := range current {
+		for _, e := range entries {
+			if e.ID == modelID && len(e.ServiceKinds) > 0 {
+				out := make([]string, len(e.ServiceKinds))
+				copy(out, e.ServiceKinds)
+				return out
+			}
+		}
+	}
+	return nil
+}
+
 // GetModelDisplayNames returns a map of model ID → display_name for a provider key.
 // Used by quota fetchers to map upstream model IDs to human-readable names.
 func GetModelDisplayNames(providerKey string) map[string]string {
@@ -152,6 +209,24 @@ func GetModelDisplayNames(providerKey string) map[string]string {
 		}
 	}
 	return names
+}
+
+// GetModelServiceKinds returns the service kinds for a model ID under a provider key.
+func GetModelServiceKinds(providerKey, modelID string) []string {
+	mu.RLock()
+	defer mu.RUnlock()
+	entries, ok := current[providerKey]
+	if !ok {
+		return nil
+	}
+	for _, e := range entries {
+		if e.ID == modelID {
+			out := make([]string, len(e.ServiceKinds))
+			copy(out, e.ServiceKinds)
+			return out
+		}
+	}
+	return nil
 }
 
 // StartUpdater starts a background goroutine that refreshes the model catalog
@@ -202,6 +277,7 @@ func tryFetch(ctx context.Context) {
 			continue
 		}
 		stripAtPrefix(c)
+		mergeModalities(c)
 		mu.Lock()
 		// Merge: remote catalog updates existing keys and adds new ones,
 		// but preserves local-only providers (mimocode, opencode, etc.)

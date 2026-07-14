@@ -8,13 +8,15 @@ import (
 
 // ProviderType represents a provider type (e.g., "openai", "claude", "gemini").
 type ProviderType struct {
-	ID            string         `json:"id"`
-	DisplayName   string         `json:"display_name"`
-	Format        string         `json:"format"`
-	BaseURL       string         `json:"base_url"`
-	IsCustom      bool           `json:"is_custom"`
+	ID           string         `json:"id"`
+	DisplayName  string         `json:"display_name"`
+	Format       string         `json:"format"`
+	BaseURL      string         `json:"base_url"`
+	IsCustom     bool           `json:"is_custom"`
 	CustomHeaders sql.NullString `json:"custom_headers,omitempty"`
-	CreatedAt     int64          `json:"created_at"`
+	Category     string         `json:"category"`
+	ServiceKinds []string       `json:"service_kinds"`
+	CreatedAt    int64          `json:"created_at"`
 }
 
 // Connection represents a single API key/token instance for a provider.

@@ -3,7 +3,7 @@
 import { writable, derived, get } from 'svelte/store';
 import { providersApi, connectionsApi, combosApi, logsApi, dashboardApi, quotaApi, fetchApi } from './api';
 import type { Provider, Connection, Combo, RequestLog, ActiveRequest, QuotaCacheEntry, QuotaCacheResponse, QuotaProviderSummary, ConnectionQuota, ProviderModelEntry } from './api';
-import { loadProviderAliases } from './provider-catalog';
+import { loadProviderAliases, getProviderMeta } from './provider-catalog';
 import { toast } from 'svelte-sonner';
 function friendlyError(err: unknown, fallback: string): string {
   const msg = err instanceof Error ? err.message : fallback;
@@ -170,14 +170,27 @@ export async function loadDashboardStats() {
   }
 }
 
+function enrichProvider(provider: Provider): Provider {
+  const meta = getProviderMeta(provider.id);
+  return {
+    ...provider,
+    category: provider.category || meta?.category || 'compatible',
+    service_kinds:
+      provider.service_kinds?.length
+        ? provider.service_kinds
+        : (meta?.serviceKinds ?? ['llm']),
+  };
+}
+
 export async function loadProviders() {
   isLoading.set(true);
   error.set(null);
-  
+
   try {
-		const response = await providersApi.list();
-		providers.set(response.data || []);
-		loadProviderAliases(response.data || []);
+    const response = await providersApi.list();
+    const enriched = (response.data || []).map(enrichProvider);
+    providers.set(enriched);
+    loadProviderAliases(enriched);
   } catch (err) {
     error.set(friendlyError(err, 'Failed to load providers'));
   } finally {
@@ -188,12 +201,12 @@ export async function loadProviders() {
 export async function loadProvider(id: string) {
   isLoading.set(true);
   error.set(null);
-  
+
   try {
-		const provider = await providersApi.get(id);
-		selectedProvider.set(provider);
-		loadProviderAliases([provider]);
-		return provider;
+    const provider = enrichProvider(await providersApi.get(id));
+    selectedProvider.set(provider);
+    loadProviderAliases([provider]);
+    return provider;
   } catch (err) {
     error.set(friendlyError(err, 'Failed to load provider'));
     return null;
