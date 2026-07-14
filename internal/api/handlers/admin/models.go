@@ -52,7 +52,7 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 		// No-auth providers use the static/synced catalog. Their chat base URL
 		// is not necessarily the /models URL, so dynamic executor probing can
 		// hit HTML/404 pages (opencode.ai/zen/v1) and spam warnings.
-		c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, staticModels(providerID))})
+		c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, staticModels(providerID), nil)})
 		return
 	}
 
@@ -69,19 +69,21 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 	// /accounts/{accountId}/ai/models/search. Match OmniRoute's behavior.
 	if providerID == "cf" && dbErr == nil {
 		var cfAPIKey, cfPSD string
-		err := h.db.QueryRow(`SELECT COALESCE(api_key,''), provider_specific_data FROM connections WHERE provider_type_id = ? AND status = 'ready' AND is_active = 1 LIMIT 1`, providerID).Scan(&cfAPIKey, &cfPSD)
+		err := h.db.QueryRow(`SELECT COALESCE(api_key,''), provider_specific_data FROM connections WHERE provider_type_id = ? AND status IN ('ready','degraded') AND is_active = 1 LIMIT 1`, providerID).Scan(&cfAPIKey, &cfPSD)
 		if err == nil && cfAPIKey != "" {
 			psd := make(map[string]string)
 			if cfPSD != "" {
 				json.Unmarshal([]byte(cfPSD), &psd)
 			}
 			if accountID := psd["accountId"]; accountID != "" {
-				if models, err := fetchCloudflareModels(cfAPIKey, accountID); err == nil && len(models) > 0 {
-					c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, models)})
-					return
-				} else if err != nil {
-					logging.Logger.Debug("cloudflare model discovery failed", "provider", providerID, "err", err.Error())
-				}
+			if cfModels, cfKinds, err := models.FetchCloudflareModels(cfAPIKey, accountID); err == nil && len(cfModels) > 0 {
+				// Merge discovered CF entries into the shared catalog so /v1/models reflects them.
+				models.MergeProviderModelIDs("cf", cfModels, cfKinds)
+				c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, cfModels, cfKinds)})
+				return
+			} else if err != nil {
+				logging.Logger.Debug("cloudflare model discovery failed", "provider", providerID, "err", err.Error())
+			}
 			}
 		}
 	}
@@ -119,7 +121,7 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 							for _, m := range modelsResp.Data {
 								models = append(models, strings.TrimPrefix(m.ID, "@"))
 							}
-							c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, models)})
+							c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, models, nil)})
 							return
 						}
 						var flat []string
@@ -128,7 +130,7 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 							for i, m := range flat {
 								stripped[i] = strings.TrimPrefix(m, "@")
 							}
-							c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, stripped)})
+							c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, stripped, nil)})
 						}
 					} else {
 						logging.Logger.Debug("dynamic model list failed, using static", "provider", providerID, "err", err)
@@ -139,7 +141,7 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 	}
 
 	// Fallback: return static/synced model list from catalog, merged with stored models.
-	c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, staticModels(providerID))})
+	c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, staticModels(providerID), nil)})
 }
 
 // storedModels returns user-added custom models persisted for a provider.
@@ -163,31 +165,35 @@ func (h *ModelHandler) storedModels(providerID string) []string {
 // models are not user-deletable (custom=false); user-added models are custom=true.
 // Every id is prefixed with the provider alias (e.g. "oc/gpt-4o") so it matches the
 // ids served by /v1/models.
-func (h *ModelHandler) listModelEntries(providerID string, stored []string, extra []string) []gin.H {
+func (h *ModelHandler) listModelEntries(providerID string, stored []string, extra []string, extraKinds map[string][]string) []gin.H {
 	seen := make(map[string]bool)
 	var entries []gin.H
 	keys := providerCatalogKeys[providerID]
-	add := func(raw string, custom bool) {
+	add := func(raw string, custom bool, kindsOverride []string) {
 		id := prefixedModelID(providerID, raw)
 		if id == "" || seen[id] {
 			return
 		}
 		seen[id] = true
 		entry := gin.H{"id": id, "custom": custom}
-		for _, key := range keys {
-			if kinds := models.GetModelServiceKinds(key, raw); len(kinds) > 0 {
-				entry["service_kinds"] = kinds
-				break
+		if len(kindsOverride) > 0 {
+			entry["service_kinds"] = kindsOverride
+		} else {
+			for _, key := range keys {
+				if kinds := models.GetModelServiceKinds(key, raw); len(kinds) > 0 {
+					entry["service_kinds"] = kinds
+					break
+				}
 			}
 		}
 		entries = append(entries, entry)
 	}
 	// Custom entries first so any collision with a static id upgrades to custom.
 	for _, m := range stored {
-		add(m, true)
+		add(m, true, nil)
 	}
 	for _, m := range extra {
-		add(m, false)
+		add(m, false, extraKinds[m])
 	}
 	return entries
 }
@@ -334,11 +340,11 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 
 	start := time.Now()
 	testReq := &executor.Request{
-		APIKey: apiKey,
-		AccessToken: accessToken,
-		BaseURL: baseURL,
-		Provider: providerID,
-		Model: modelName,
+		APIKey:               apiKey,
+		AccessToken:          accessToken,
+		BaseURL:              baseURL,
+		Provider:             providerID,
+		Model:                modelName,
 		ProviderSpecificData: providerSpecificData,
 	}
 
@@ -437,8 +443,8 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 	if err != nil {
 		latency := time.Since(start).Milliseconds()
 		c.JSON(http.StatusOK, gin.H{
-			"status": "error",
-			"error": err.Error(),
+			"status":     "error",
+			"error":      err.Error(),
 			"latency_ms": latency,
 		})
 		return
@@ -459,17 +465,17 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 
 	if firstErr != nil {
 		c.JSON(http.StatusOK, gin.H{
-			"status": "error",
-			"error": firstErr.Error(),
+			"status":     "error",
+			"error":      firstErr.Error(),
 			"latency_ms": latency,
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"status": "ok",
+		"status":      "ok",
 		"status_code": streamResult.StatusCode,
-		"latency_ms": latency,
+		"latency_ms":  latency,
 	})
 }
 
@@ -562,14 +568,14 @@ func staticModels(providerID string) []string {
 // sanitizer can prepend @cf/ exactly once. Prefer an LLM model for CF so the
 // default test body is appropriate for chat completions.
 func defaultTestModel(providerID string) string {
-  ids := staticModels(providerID)
-  if len(ids) > 0 {
-    if providerID == "cf" {
-      // Test only an LLM model; CF image/embedding endpoints need different payloads.
-      return "qwen/qwq-32b"
-    }
-    return ids[0]
-  }
+	ids := staticModels(providerID)
+	if len(ids) > 0 {
+		if providerID == "cf" {
+			// Test only an LLM model; CF image/embedding endpoints need different payloads.
+			return "qwen/qwq-32b"
+		}
+		return ids[0]
+	}
 	switch providerID {
 	case "openai":
 		return "gpt-4o"
@@ -603,70 +609,6 @@ func runCloudflareModelTest(accountID, apiKey, modelName string, body []byte) (*
 	return http.DefaultClient.Do(req)
 }
 
-// fetchCloudflareModels queries the official Cloudflare Workers AI model search
-// API and returns the callable model slugs (e.g. "cf/meta/llama-3.3-70b-instruct").
-// This mirrors OmniRoute's cloudflare-ai model discovery behavior.
-func fetchCloudflareModels(apiKey, accountID string) ([]string, error) {
-	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/accounts/%s/ai/models/search?per_page=1000", accountID)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("cloudflare models search returned HTTP %d", resp.StatusCode)
-	}
-
-	var envelope struct {
-		Success bool `json:"success"`
-		Errors  []struct {
-			Message string `json:"message"`
-		} `json:"errors"`
-		Result []struct {
-			Name string `json:"name"`
-		} `json:"result"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
-		return nil, err
-	}
-	if !envelope.Success {
-		var msgs []string
-		for _, e := range envelope.Errors {
-			msgs = append(msgs, e.Message)
-		}
-		return nil, fmt.Errorf("cloudflare models search failed: %s", strings.Join(msgs, "; "))
-	}
-
-	seen := make(map[string]struct{})
-	var out []string
-	for _, m := range envelope.Result {
-		slug := strings.TrimPrefix(strings.TrimSpace(m.Name), "@")
-		if slug == "" {
-			continue
-		}
-		// Normalize to gateway id: Cloudflare returns "@cf/author/model", we store "cf/author/model".
-		if !strings.HasPrefix(slug, "cf/") {
-			slug = "cf/" + slug
-		}
-		if _, ok := seen[slug]; ok {
-			continue
-		}
-		seen[slug] = struct{}{}
-		out = append(out, slug)
-	}
-	return out, nil
-}
 
 // SyncModels triggers an immediate sync of per-provider models from upstream endpoints.
 func (h *ModelHandler) SyncModels(c *gin.Context) {

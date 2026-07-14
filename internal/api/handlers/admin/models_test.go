@@ -18,7 +18,7 @@ func TestDefaultTestModel_CloudflareStripsProviderPrefix(t *testing.T) {
 
 func TestListModelEntries_CFIncludesServiceKinds(t *testing.T) {
 	h := &ModelHandler{}
-	entries := h.listModelEntries("cf", nil, staticModels("cf"))
+	entries := h.listModelEntries("cf", nil, staticModels("cf"), nil)
 	if len(entries) == 0 {
 		t.Fatal("expected CF model entries")
 	}

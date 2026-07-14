@@ -304,6 +304,105 @@ func tryFetch(ctx context.Context) {
 	log.Printf("WARN: all model catalog remote URLs failed, using embedded fallback")
 }
 
+// MergeProviderModelIDs overlays discovered model IDs into the in-memory catalog
+// under the given provider key. kindMap maps model ID -> service kinds. Existing
+// entries not present in the IDs are kept; service kinds are preserved when the
+// discovered entry omits them.
+func MergeProviderModelIDs(providerKey string, ids []string, kindMap map[string][]string) {
+	mu.Lock()
+	defer mu.Unlock()
+	fetched := make([]modelEntry, 0, len(ids))
+	for _, id := range ids {
+		fetched = append(fetched, modelEntry{ID: id, ServiceKinds: kindMap[id]})
+	}
+	current[providerKey] = mergeProviderEntries(current[providerKey], fetched)
+}
+
+// cfTaskServiceKinds maps Cloudflare Workers AI task names to our service kind tags.
+var CFTaskServiceKinds = map[string][]string{
+	"Text Generation":             {"llm"},
+	"Text Embeddings":             {"embedding"},
+	"Text-to-Image":               {"image"},
+	"Image-to-Text":               {"imageToText"},
+	"Image Classification":        {"imageToText"},
+	"Speech-to-Text":              {"stt"},
+	"Automatic Speech Recognition": {"stt"},
+	"Text-to-Speech":              {"tts"},
+	"Translation":                 {"llm"},
+	"Text Classification":         {"llm"},
+}
+
+// FetchCloudflareModels queries the official Cloudflare Workers AI model search
+// API and returns the callable gateway model slugs (e.g. "cf/meta/llama-3.3-70b-instruct")
+// plus a map of slug -> service kinds inferred from the upstream task metadata.
+func FetchCloudflareModels(apiKey, accountID string) ([]string, map[string][]string, error) {
+	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/accounts/%s/ai/models/search?per_page=1000", accountID)
+	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil, fmt.Errorf("cloudflare models search returned HTTP %d", resp.StatusCode)
+	}
+
+	var envelope struct {
+		Success bool `json:"success"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+		Result []struct {
+			Name string `json:"name"`
+			Task struct {
+				Name string `json:"name"`
+			} `json:"task"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return nil, nil, err
+	}
+	if !envelope.Success {
+		var msgs []string
+		for _, e := range envelope.Errors {
+			msgs = append(msgs, e.Message)
+		}
+		return nil, nil, fmt.Errorf("cloudflare models search failed: %s", strings.Join(msgs, "; "))
+	}
+
+	seen := make(map[string]struct{})
+	var out []string
+	kinds := make(map[string][]string)
+	for _, m := range envelope.Result {
+		slug := strings.TrimPrefix(strings.TrimSpace(m.Name), "@")
+		if slug == "" {
+			continue
+		}
+		if !strings.HasPrefix(slug, "cf/") {
+			slug = "cf/" + slug
+		}
+		if _, ok := seen[slug]; ok {
+			continue
+		}
+		seen[slug] = struct{}{}
+		out = append(out, slug)
+		if k := CFTaskServiceKinds[m.Task.Name]; len(k) > 0 {
+			kinds[slug] = k
+		}
+	}
+	return out, kinds, nil
+}
+
 // mergeProviderEntries overlays fetched entries on top of existing ones by ID.
 // Existing entries not present in the fetched list are kept. Service kinds are
 // copied from the existing entry when the fetched entry omits them.

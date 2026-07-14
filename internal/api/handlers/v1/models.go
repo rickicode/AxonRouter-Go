@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -139,6 +140,12 @@ func (h *Handler) getProviderModels(prefix string) []gin.H {
 		// Not a catalog-backed provider: serve user-added custom models.
 		return h.customModels(prefix)
 	}
+	// For Cloudflare, enrich the shared catalog from the official Workers AI model
+	// search endpoint using a live ready connection. This is idempotent and cached
+	// in-memory so subsequent /v1/models calls reflect the same list.
+	if prefix == "cf" {
+		h.discoverCloudflareModels()
+	}
 	ids := models.GetAllModelIDs(cfg.keys...)
 	if len(ids) == 0 {
 		return nil
@@ -152,25 +159,53 @@ func (h *Handler) getProviderModels(prefix string) []gin.H {
 		if !strings.HasPrefix(cleanID, prefix+"/") {
 			modelID = prefix + "/" + cleanID
 		}
-		var serviceKinds []string
-		for _, key := range cfg.keys {
-			if kinds := models.GetModelServiceKinds(key, id); len(kinds) > 0 {
-				serviceKinds = kinds
-				break
-			}
+	var serviceKinds []string
+	for _, key := range cfg.keys {
+		if kinds := models.GetModelServiceKinds(key, id); len(kinds) > 0 {
+			serviceKinds = kinds
+			break
 		}
-		entry := gin.H{
-			"id":       modelID,
-			"object":   "model",
-			"created":  1700000000,
-			"owned_by": cfg.ownedBy,
-		}
-		if len(serviceKinds) > 0 {
-			entry["service_kinds"] = serviceKinds
-		}
+	}
+	// Non-CF providers in this catalog are OpenAI-compatible text providers, so
+	// default any model without explicit tags to LLM.
+	if len(serviceKinds) == 0 && prefix != "cf" {
+		serviceKinds = []string{"llm"}
+	}
+	entry := gin.H{
+		"id": modelID,
+		"object": "model",
+		"created": 1700000000,
+		"owned_by": cfg.ownedBy,
+	}
+	if len(serviceKinds) > 0 {
+		entry["service_kinds"] = serviceKinds
+	}
 		entries = append(entries, entry)
 	}
 	return entries
+}
+
+// discoverCloudflareModels fetches the live Workers AI model list from a ready CF
+// connection and merges it (with service kinds) into the shared catalog.
+func (h *Handler) discoverCloudflareModels() {
+	var apiKey, psdJSON string
+	err := h.db.QueryRow(`SELECT COALESCE(api_key,''), COALESCE(provider_specific_data,'') FROM connections WHERE provider_type_id = 'cf' AND status IN ('ready','degraded') AND is_active = 1 LIMIT 1`).Scan(&apiKey, &psdJSON)
+	if err != nil || apiKey == "" {
+		return
+	}
+	psd := make(map[string]string)
+	if psdJSON != "" {
+		_ = json.Unmarshal([]byte(psdJSON), &psd)
+	}
+	accountID := psd["accountId"]
+	if accountID == "" {
+		return
+	}
+	cfModels, cfKinds, err := models.FetchCloudflareModels(apiKey, accountID)
+	if err != nil || len(cfModels) == 0 {
+		return
+	}
+	models.MergeProviderModelIDs("cf", cfModels, cfKinds)
 }
 
 // customModels returns user-added models stored for a provider prefix (custom providers).
