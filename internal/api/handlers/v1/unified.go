@@ -15,6 +15,9 @@ func (h *Handler) Unified(c *gin.Context) {
 		writeReadBodyError(c, err)
 		return
 	}
+	if h.checkTokenBudget(c, body) != nil {
+		return
+	}
 
 	mode := executor.JSONGet(body, "mode")
 	if mode == "" {
