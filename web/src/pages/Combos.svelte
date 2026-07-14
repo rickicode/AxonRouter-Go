@@ -3,40 +3,58 @@ import { onMount } from 'svelte';
 import { loadCombos, combos, isLoading, error, combosPagination } from '$lib/stores';
 import { combosApi } from '$lib/api';
 import { unwrapStr } from '$lib/utils';
-import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
+import { Card, CardContent } from '$lib/components/ui/card';
 import { Button } from '$lib/components/ui/button';
-import { Badge } from '$lib/components/ui/badge';
 import { Switch } from '$lib/components/ui/switch';
+import * as AlertDialog from '$lib/components/ui/alert-dialog';
 import StatusBadge from '$lib/components/StatusBadge.svelte';
 import ComboModal from '$lib/components/ComboModal.svelte';
 import { toast } from 'svelte-sonner';
+import PencilIcon from '@lucide/svelte/icons/pencil';
+import Trash2Icon from '@lucide/svelte/icons/trash-2';
+import type { Combo } from '$lib/api';
 
 let showCreate = $state(false);
+let showEdit = $state(false);
+let editingCombo = $state<Combo | null>(null);
+let showDelete = $state(false);
+let deleteTarget = $state<Combo | null>(null);
+let deleteLoading = $state(false);
 
 onMount(() => {
-	document.title = 'Combos — AxonRouter';
-	loadCombos();
+  document.title = 'Combos — AxonRouter';
+  loadCombos();
 });
 
-async function toggleCombo(combo: any) {
-    try {
-      await combosApi.update(combo.id, { is_active: !combo.is_active });
-      toast.success(combo.is_active ? 'Combo disabled' : 'Combo enabled');
-      await loadCombos();
-    } catch (err) {
-      toast.error('Update failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-    }
+async function toggleCombo(combo: Combo) {
+  try {
+    await combosApi.update(combo.id, { is_active: !combo.is_active });
+    toast.success(combo.is_active ? 'Combo disabled' : 'Combo enabled');
+    await loadCombos();
+  } catch (err) {
+    toast.error('Update failed: ' + (err instanceof Error ? err.message : 'Unknown'));
   }
+}
 
-  async function deleteCombo(id: string) {
-    try {
-      await combosApi.delete(id);
-      toast.success('Combo deleted');
-      await loadCombos();
-    } catch (err) {
-      toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-    }
+function confirmDelete(combo: Combo) {
+  deleteTarget = combo;
+  showDelete = true;
+}
+
+async function handleDelete() {
+  if (!deleteTarget) return;
+  deleteLoading = true;
+  try {
+    await combosApi.delete(deleteTarget.id);
+    toast.success('Combo deleted');
+    showDelete = false;
+    await loadCombos();
+  } catch (err) {
+    toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+  } finally {
+    deleteLoading = false;
   }
+}
 
 const enabledCount = $derived($combos.filter(c => c.is_active).length);
 const smartCount = $derived($combos.filter(c => c.is_smart).length);
@@ -45,6 +63,23 @@ const totalCombos = $derived($combosPagination.total || $combos.length);
 function goToPage(page: number) {
   loadCombos(page, $combosPagination.per_page);
 }
+
+function openEdit(combo: Combo) {
+  editingCombo = combo;
+  showEdit = true;
+}
+
+function handleSave() {
+  loadCombos();
+}
+
+$effect(() => {
+  if (!showEdit) editingCombo = null;
+});
+
+$effect(() => {
+  if (!showDelete) deleteTarget = null;
+});
 </script>
 
 <div class="flex flex-1 flex-col gap-6 p-6">
@@ -60,7 +95,7 @@ function goToPage(page: number) {
     <Card class="shadow-card">
       <CardContent class="flex flex-col items-center justify-center py-12">
         <p class="text-body-sm text-muted-foreground mb-4">{$error}</p>
-        <Button onclick={loadCombos} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
+        <Button onclick={() => loadCombos()} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
       </CardContent>
     </Card>
   {:else}
@@ -107,7 +142,12 @@ function goToPage(page: number) {
             {#each $combos as combo}
               <tr class="border-b border-border hover:bg-muted/50 transition-colors">
                 <td class="px-4 py-2.5">
-                  <a href="/combos/{combo.id}" class="text-body-sm-strong hover:underline truncate block ">{combo.name}</a>
+                  <button
+                    onclick={() => openEdit(combo)}
+                    class="text-body-sm-strong hover:underline truncate block text-left cursor-pointer"
+                  >
+                    {combo.name}
+                  </button>
                 </td>
                 <td class="px-4 py-2.5">
                   <span class="inline-flex items-center gap-1 text-caption-mono text-muted-foreground">
@@ -125,15 +165,33 @@ function goToPage(page: number) {
                 <td class="px-4 py-2.5 text-center">
                   <StatusBadge status="smart" label={unwrapStr(combo.smart_goal) || 'on'} />
                 </td>
-<td class="px-4 py-2.5 text-center">
-                <div class="flex justify-center">
-                  <Switch checked={combo.is_active} onCheckedChange={() => toggleCombo(combo)} aria-label={combo.is_active ? 'Disable combo' : 'Enable combo'} />
-                </div>
-              </td>
+                <td class="px-4 py-2.5 text-center">
+                  <div class="flex justify-center">
+                    <Switch checked={combo.is_active} onCheckedChange={() => toggleCombo(combo)} aria-label={combo.is_active ? 'Disable combo' : 'Enable combo'} />
+                  </div>
+                </td>
                 <td class="px-4 py-2.5 text-right">
                   <div class="flex gap-1 justify-end">
-                    <Button href="/combos/{combo.id}" variant="ghost" size="sm" class="text-caption-mono h-6 px-2 rounded-sm">Edit</Button>
-                    <Button onclick={() => deleteCombo(combo.id)} variant="ghost" size="sm" class="text-caption-mono text-destructive h-6 px-2 rounded-sm">Del</Button>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      class="size-7 rounded-sm"
+                      onclick={() => openEdit(combo)}
+                      title="Edit combo"
+                      aria-label="Edit combo"
+                    >
+                      <PencilIcon class="size-3.5" />
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      size="icon"
+                      class="size-7 rounded-sm"
+                      onclick={() => confirmDelete(combo)}
+                      title="Delete combo"
+                      aria-label="Delete combo"
+                    >
+                      <Trash2Icon class="size-3.5" />
+                    </Button>
                   </div>
                 </td>
               </tr>
@@ -155,33 +213,55 @@ function goToPage(page: number) {
           </p>
           <Button onclick={() => showCreate = true} class="text-button-md rounded-sm px-5">Add combo</Button>
         </CardContent>
-</Card>
-{/if}
+      </Card>
+    {/if}
 
-{#if $combosPagination.total_pages > 1}
-<div class="flex items-center justify-between">
-  <span class="text-caption text-muted-foreground">
-    Page {$combosPagination.page} of {$combosPagination.total_pages}
-  </span>
-  <div class="flex gap-2">
-    <Button
-      variant="outline"
-      size="sm"
-      class="text-caption-mono rounded-sm"
-      disabled={$combosPagination.page <= 1}
-      onclick={() => goToPage($combosPagination.page - 1)}
-    >Prev</Button>
-    <Button
-      variant="outline"
-      size="sm"
-      class="text-caption-mono rounded-sm"
-      disabled={$combosPagination.page >= $combosPagination.total_pages}
-      onclick={() => goToPage($combosPagination.page + 1)}
-    >Next</Button>
-  </div>
-</div>
-{/if}
-{/if}
+    {#if $combosPagination.total_pages > 1}
+      <div class="flex items-center justify-between">
+        <span class="text-caption text-muted-foreground">
+          Page {$combosPagination.page} of {$combosPagination.total_pages}
+        </span>
+        <div class="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            class="text-caption-mono rounded-sm"
+            disabled={$combosPagination.page <= 1}
+            onclick={() => goToPage($combosPagination.page - 1)}
+          >Prev</Button>
+          <Button
+            variant="outline"
+            size="sm"
+            class="text-caption-mono rounded-sm"
+            disabled={$combosPagination.page >= $combosPagination.total_pages}
+            onclick={() => goToPage($combosPagination.page + 1)}
+          >Next</Button>
+        </div>
+      </div>
+    {/if}
+  {/if}
 </div>
 
-<ComboModal bind:open={showCreate} combo={null} onSave={() => loadCombos()} />
+<ComboModal bind:open={showCreate} combo={null} onSave={handleSave} />
+<ComboModal bind:open={showEdit} combo={editingCombo} onSave={handleSave} />
+
+<AlertDialog.Root bind:open={showDelete}>
+  <AlertDialog.Content class="sm:max-w-md">
+    <AlertDialog.Header>
+      <AlertDialog.Title class="text-body-md-strong">Delete combo?</AlertDialog.Title>
+      <AlertDialog.Description class="text-body-sm text-muted-foreground">
+        This will permanently delete <span class="font-medium text-foreground">{deleteTarget?.name}</span> and all its routing steps. This action cannot be undone.
+      </AlertDialog.Description>
+    </AlertDialog.Header>
+    <AlertDialog.Footer>
+      <AlertDialog.Cancel onclick={() => showDelete = false} class="rounded-sm">Cancel</AlertDialog.Cancel>
+      <AlertDialog.Action
+        onclick={handleDelete}
+        disabled={deleteLoading}
+        class="bg-destructive text-destructive-foreground hover:bg-destructive/90 rounded-sm"
+      >
+        {deleteLoading ? 'Deleting...' : 'Delete'}
+      </AlertDialog.Action>
+    </AlertDialog.Footer>
+  </AlertDialog.Content>
+</AlertDialog.Root>
