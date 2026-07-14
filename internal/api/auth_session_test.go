@@ -103,8 +103,8 @@ func TestSessionAuth_AllowsPasswordEndpoints_FirstLogin(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	body, _ := json.Marshal(map[string]string{
-		"old_password": testAdminPassword,
-		"new_password": "newsecret123",
+		"old_password":     testAdminPassword,
+		"new_password":     "newsecret123",
 		"confirm_password": "newsecret123",
 	})
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/change-password", bytes.NewReader(body))
@@ -116,12 +116,12 @@ func TestSessionAuth_AllowsPasswordEndpoints_FirstLogin(t *testing.T) {
 	}
 }
 
-func TestLogin_ReturnsMustChangePassword_WhenFirstLogin(t *testing.T) {
+func TestLogin_ReturnsMustChangePassword_WhenDefaultPassword(t *testing.T) {
 	database := newAuthTestDB(t)
-	seedAdminPassword(t, database, testAdminPassword)
+	seedAdminPassword(t, database, defaultAdminPassword)
 	_ = setSetting(database, firstLoginKey, "true")
 
-	w := loginRequest(t, database, testAdminPassword)
+	w := loginRequest(t, database, defaultAdminPassword)
 	if w.Code != http.StatusOK {
 		t.Fatalf("login failed: %d %s", w.Code, w.Body.String())
 	}

@@ -20,7 +20,6 @@ import (
 	"strings"
 )
 
-
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	tmp := filepath.Join(t.TempDir(), "router-test.db")
@@ -51,7 +50,7 @@ func newTestRouter(t *testing.T) (*Router, *httptest.Server) {
 
 	router := New(Config{
 		DB:               database,
-		Port: "0",
+		Port:             "0",
 		QuotaIntervalMin: 1,
 		LogRetentionDays: 30,
 		WebFS:            web.GetBuildFS(),
@@ -89,11 +88,7 @@ func TestHealth(t *testing.T) {
 // loginForToken obtains a dashboard session JWT from the public login endpoint.
 func loginForToken(t *testing.T, srv *httptest.Server, r *Router) string {
 	t.Helper()
-	var password string
-	if err := r.db.QueryRow(`SELECT value FROM settings WHERE key = 'admin_password_plain'`).Scan(&password); err != nil {
-		t.Fatalf("read initial password: %v", err)
-	}
-	body := `{"password":"` + password + `"}`
+	body := `{"password":"` + defaultAdminPassword + `"}`
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/admin/login", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)

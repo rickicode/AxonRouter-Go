@@ -105,7 +105,7 @@ import { setToken, authStore } from '$lib/auth';
       <div class="flex items-start gap-2 rounded-lg border border-border bg-background/40 px-3 py-2 text-caption text-muted-foreground">
         <ShieldCheckIcon class="mt-0.5 size-4 shrink-0 text-primary" />
     <span>
-			The initial admin password is randomly generated on first startup. Change it from Settings or via the CLI.
+      The initial admin password is 12345677. Change it from Settings or via the CLI (axonrouter --setpass &lt;password&gt;).
     </span>
       </div>
     </div>

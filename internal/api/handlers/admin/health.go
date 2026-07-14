@@ -3,19 +3,18 @@ package admin
 import (
 	"database/sql"
 	"net/http"
-	"strconv"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 	"github.com/rickicode/AxonRouter-Go/internal/version"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // HealthHandler exposes liveness and operational metrics.
 type HealthHandler struct {
-	db *sql.DB
-	store *connstate.Store
+	db      *sql.DB
+	store   *connstate.Store
 	tracker *usage.Tracker
 	checker *version.Checker
 }
@@ -23,8 +22,8 @@ type HealthHandler struct {
 // NewHealthHandler creates a new health/metrics handler.
 func NewHealthHandler(database *sql.DB, store *connstate.Store, tracker *usage.Tracker, checker *version.Checker) *HealthHandler {
 	return &HealthHandler{
-		db: database,
-		store: store,
+		db:      database,
+		store:   store,
 		tracker: tracker,
 		checker: checker,
 	}
@@ -33,18 +32,12 @@ func NewHealthHandler(database *sql.DB, store *connstate.Store, tracker *usage.T
 // Health returns a simple liveness check. It is reachable without admin auth
 // so the dashboard and load balancers can use it for online checks.
 func (h *HealthHandler) mustChangePassword() bool {
-	// true while the default admin password has never been changed, or the
-	// deferred change window has expired.
-	var firstLogin string
-	if err := h.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, "first_login").Scan(&firstLogin); err != nil || firstLogin != "false" {
-		return true
-	}
-	var dueAt string
-	if err := h.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, "password_change_due_at").Scan(&dueAt); err != nil {
+	const defaultAdminPassword = "12345677"
+	var hash string
+	if err := h.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, "admin_password_hash").Scan(&hash); err != nil || hash == "" {
 		return false
 	}
-	n, _ := strconv.ParseInt(dueAt, 10, 64)
-	return n > 0 && time.Now().Unix() >= n
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(defaultAdminPassword)) == nil
 }
 
 func (h *HealthHandler) Health(c *gin.Context) {
@@ -79,11 +72,11 @@ func (h *HealthHandler) Health(c *gin.Context) {
 	}
 
 	c.JSON(status, gin.H{
-		"status": dbStatus,
-		"db": dbStatus,
-		"version": version.String(),
-		"latest_version": latest,
-		"update_available": updateAvailable,
+		"status":               dbStatus,
+		"db":                   dbStatus,
+		"version":              version.String(),
+		"latest_version":       latest,
+		"update_available":     updateAvailable,
 		"must_change_password": h.mustChangePassword(),
 	})
 }

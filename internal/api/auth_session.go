@@ -18,9 +18,11 @@ const (
 	minPasswordLength = 8
 )
 
+const defaultAdminPassword = "12345677"
+
 const (
-	firstLoginKey         = "first_login"
-	passwordChangedKey    = "admin_password_changed"
+	firstLoginKey          = "first_login"
+	passwordChangedKey     = "admin_password_changed"
 	passwordChangeDueAtKey = "password_change_due_at"
 )
 
@@ -64,29 +66,15 @@ func InitAuth(database *sql.DB) {
 
 	hash := getSetting(database, "admin_password_hash")
 	if hash == "" {
-		password := generateRandomPassword(16)
-		h, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		h, err := bcrypt.GenerateFromPassword([]byte(defaultAdminPassword), bcrypt.DefaultCost)
 		if err == nil {
 			_ = setSetting(database, "admin_password_hash", string(h))
-			_ = setSetting(database, "admin_password_plain", password)
 		}
 	}
 
 	if getSetting(database, firstLoginKey) == "" {
 		_ = setSetting(database, firstLoginKey, "true")
 	}
-}
-
-func generateRandomPassword(length int) string {
-	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	b := make([]byte, length)
-	if _, err := rand.Read(b); err != nil {
-		panic("failed to read random bytes: " + err.Error())
-	}
-	for i := range b {
-		b[i] = alphabet[int(b[i])%len(alphabet)]
-	}
-	return string(b)
 }
 
 func settingAsInt64(database *sql.DB, key string) int64 {
@@ -99,11 +87,11 @@ func settingAsInt64(database *sql.DB, key string) int64 {
 }
 
 func mustChangePassword(database *sql.DB) bool {
-	if getSetting(database, firstLoginKey) != "false" {
-		return true
+	hash := getSetting(database, "admin_password_hash")
+	if hash == "" {
+		return false
 	}
-	dueAt := settingAsInt64(database, passwordChangeDueAtKey)
-	return dueAt > 0 && time.Now().Unix() >= dueAt
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(defaultAdminPassword)) == nil
 }
 
 // issueToken mints a fresh HS256 JWT with sub=admin and exp=now+sessionTTL.
@@ -141,11 +129,11 @@ func LoginHandler(database *sql.DB) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to issue token"})
 			return
 		}
-	c.Header("X-Auth-Token", tok)
-	c.JSON(http.StatusOK, gin.H{
-		"token":               tok,
-		"mustChangePassword": mustChangePassword(database),
-	})
+		c.Header("X-Auth-Token", tok)
+		c.JSON(http.StatusOK, gin.H{
+			"token":              tok,
+			"mustChangePassword": mustChangePassword(database),
+		})
 	}
 }
 
@@ -239,7 +227,7 @@ func SessionAuth(database *sql.DB) gin.HandlerFunc {
 			return
 		}
 
-	if tok, err := issueToken(); err == nil {
+		if tok, err := issueToken(); err == nil {
 			c.Header("X-Auth-Token", tok)
 		}
 		c.Next()
