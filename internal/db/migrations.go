@@ -185,7 +185,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		{"ag", "Antigravity", "antigravity", "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse", "oauth", []string{"llm"}},
 		{"cx", "OpenAI Codex", "openai-responses", "https://chatgpt.com/backend-api/codex/responses", "oauth", []string{"llm"}},
 		{"kiro", "Kiro AI", "openai", "https://api.kiro.ai/v1", "oauth", []string{"llm"}},
-		{"openai", "OpenAI Platform", "openai", "https://api.openai.com/v1", "apikey", []string{"llm"}},
+		{"openai", "OpenAI Platform", "openai", "https://api.openai.com/v1", "apikey", []string{"llm", "embedding"}},
 		{"claude", "Anthropic Claude", "anthropic", "https://api.anthropic.com/v1", "apikey", []string{"llm"}},
 		{"gemini", "Gemini", "gemini", "https://generativelanguage.googleapis.com/v1beta", "apikey", []string{"llm"}},
 		{"deepseek", "DeepSeek", "openai", "https://api.deepseek.com/v1", "apikey", []string{"llm"}},
