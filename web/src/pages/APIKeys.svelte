@@ -2,10 +2,10 @@
   import { onMount } from 'svelte';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
-  import { Input } from '$lib/components/ui/input';
-  import { Label } from '$lib/components/ui/label';
-  import { Badge } from '$lib/components/ui/badge';
-  import { AlertDialog, AlertDialogContent, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from '$lib/components/ui/alert-dialog';
+import { Input } from '$lib/components/ui/input';
+import { Label } from '$lib/components/ui/label';
+import { Switch } from '$lib/components/ui/switch';
+import { AlertDialog, AlertDialogContent, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from '$lib/components/ui/alert-dialog';
 import * as Dialog from '$lib/components/ui/dialog';
 import { toast } from 'svelte-sonner';
 import { apiKeysApi } from '$lib/api';
@@ -175,22 +175,17 @@ function formatMaxTokens(tokens: number): string {
 					</div>
 				</td>
 				<td class="py-3 px-4 text-body-sm text-muted-foreground">{key.rate_limit_per_min}/min · {key.max_tokens > 0 ? formatMaxTokens(key.max_tokens) : 'Unlimited'}</td>
-				<td class="py-3 px-4">
-					<Badge variant={key.is_active ? 'default' : 'secondary'} class="text-caption-mono rounded-sm">
-						{key.is_active ? 'Active' : 'Disabled'}
-					</Badge>
-				</td>
-				<td class="py-3 px-4 text-body-sm text-muted-foreground">{formatDate(key.created_at)}</td>
-				<td class="py-3 px-4">
-					<div class="flex gap-1">
-						<Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" onclick={() => handleToggle(key.id, key.is_active)}>
-							{key.is_active ? 'Disable' : 'Enable'}
-						</Button>
-						<Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm text-destructive hover:text-destructive" onclick={() => handleDelete(key.id, key.name)}>
-							Del
-						</Button>
-					</div>
-				</td>
+<td class="py-3 px-4">
+              <div class="flex justify-center">
+                <Switch checked={key.is_active} onCheckedChange={() => handleToggle(key.id, key.is_active)} aria-label={key.is_active ? 'Disable key' : 'Enable key'} />
+              </div>
+            </td>
+            <td class="py-3 px-4 text-body-sm text-muted-foreground">{formatDate(key.created_at)}</td>
+            <td class="py-3 px-4">
+              <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm text-destructive hover:text-destructive" onclick={() => handleDelete(key.id, key.name)}>
+                Del
+              </Button>
+            </td>
 			</tr>
 		{/each}
 	</tbody>

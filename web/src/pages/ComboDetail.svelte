@@ -6,10 +6,10 @@
   import { combosApi } from '$lib/api';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
-  import { Input } from '$lib/components/ui/input';
-  import { Label } from '$lib/components/ui/label';
-  import { Switch } from '$lib/components/ui/switch';
-  import { toast } from 'svelte-sonner';
+import { Input } from '$lib/components/ui/input';
+import { Label } from '$lib/components/ui/label';
+import { Switch } from '$lib/components/ui/switch';
+import { toast } from 'svelte-sonner';
 
   let { id = '' }: { id?: string } = $props();
   let comboId = $derived(id);
@@ -161,9 +161,7 @@
         </div>
         <div class="flex gap-2">
           <Button onclick={startEdit} variant="outline" class="text-body-sm rounded-sm">Edit</Button>
-          <Button onclick={handleToggle} disabled={!!actionLoading} variant="outline" class="text-body-sm rounded-sm">
-            {$selectedCombo.is_active ? 'Disable' : 'Enable'}
-          </Button>
+<Switch checked={$selectedCombo.is_active} onCheckedChange={handleToggle} disabled={!!actionLoading} aria-label={$selectedCombo.is_active ? 'Disable combo' : 'Enable combo'} />
           <Button onclick={handleDelete} disabled={!!actionLoading} variant="destructive" class="text-body-sm rounded-sm">
             {actionLoading === 'delete' ? 'Deleting...' : 'Delete'}
           </Button>

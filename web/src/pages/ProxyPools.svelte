@@ -683,9 +683,11 @@ async function handleBulkImport() {
                   <td class="px-4 py-2.5">
                     <span class="text-caption-mono text-muted-foreground">{typeLabel(pool.type)}</span>
                   </td>
-                  <td class="px-4 py-2.5 text-center">
-                    <StatusBadge status={pool.isActive ? 'active' : 'inactive'} onclick={() => togglePoolActive(pool)}>{pool.isActive ? 'On' : 'Off'}</StatusBadge>
-                  </td>
+<td class="px-4 py-2.5 text-center">
+              <div class="flex justify-center">
+                <Switch checked={pool.isActive} onCheckedChange={() => togglePoolActive(pool)} aria-label={pool.isActive ? 'Disable pool' : 'Enable pool'} />
+              </div>
+            </td>
                   <td class="px-4 py-2.5 text-center">
                     {#if pool.testStatus === 'active'}
                         <StatusBadge status="healthy">Online</StatusBadge>
@@ -757,9 +759,11 @@ async function handleBulkImport() {
                   <td class="px-4 py-2.5 text-center">
                     <span class="text-caption-mono">{group.proxyPoolIds?.length ?? 0}</span>
                   </td>
-                  <td class="px-4 py-2.5 text-center">
-                    <StatusBadge status={group.isActive ? 'active' : 'inactive'} onclick={() => toggleGroupActive(group)}>{group.isActive ? 'On' : 'Off'}</StatusBadge>
-                  </td>
+<td class="px-4 py-2.5 text-center">
+              <div class="flex justify-center">
+                <Switch checked={group.isActive} onCheckedChange={() => toggleGroupActive(group)} aria-label={group.isActive ? 'Disable group' : 'Enable group'} />
+              </div>
+            </td>
                   <td class="px-4 py-2.5 text-center">
                     {#if group.strictProxy}
                       <span class="text-[10px] uppercase tracking-wide text-yellow-400/80">Strict</span>

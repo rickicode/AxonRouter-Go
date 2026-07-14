@@ -172,9 +172,11 @@ function goToPage(page: number) {
                 <td class="px-4 py-2.5 text-center">
                   <StatusBadge status="smart" label={unwrapStr(combo.smart_goal) || 'on'} />
                 </td>
-                <td class="px-4 py-2.5 text-center">
-                  <StatusBadge status={combo.is_active ? 'active' : 'disabled'} label={combo.is_active ? 'On' : 'Off'} onclick={() => toggleCombo(combo)} />
-                </td>
+<td class="px-4 py-2.5 text-center">
+                <div class="flex justify-center">
+                  <Switch checked={combo.is_active} onCheckedChange={() => toggleCombo(combo)} aria-label={combo.is_active ? 'Disable combo' : 'Enable combo'} />
+                </div>
+              </td>
                 <td class="px-4 py-2.5 text-right">
                   <div class="flex gap-1 justify-end">
                     <Button href="/combos/{combo.id}" variant="ghost" size="sm" class="text-caption-mono h-6 px-2 rounded-sm">Edit</Button>

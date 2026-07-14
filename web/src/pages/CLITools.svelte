@@ -7,8 +7,9 @@
   import { Textarea } from '$lib/components/ui/textarea';
   import { Badge } from '$lib/components/ui/badge';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
-  import { Skeleton } from '$lib/components/ui/skeleton';
-  import * as Select from '$lib/components/ui/select';
+import { Skeleton } from '$lib/components/ui/skeleton';
+import { Switch } from '$lib/components/ui/switch';
+import * as Select from '$lib/components/ui/select';
 import { toast } from 'svelte-sonner';
 import { copyToClipboard } from '$lib/utils';
 import Copy from '@lucide/svelte/icons/copy';
@@ -502,16 +503,12 @@ async function copyText(text: string, field: string) {
                   {/if}
                   {#if step.type === 'modelSelector'}
                     <div class="space-y-3">
-                      {#if selectedTool?.supportsDiscovery}
-                        <label class="flex cursor-pointer items-center gap-2">
-                          <input
-                            type="checkbox"
-                            bind:checked={sel.useDiscovery}
-                            class="rounded border-border"
-                          />
-                          <span class="text-body-sm">Auto-discover models from gateway</span>
-                        </label>
-                      {/if}
+{#if selectedTool?.supportsDiscovery}
+                    <div class="flex items-center gap-2">
+                      <Switch id="auto-discovery" bind:checked={sel.useDiscovery} />
+                      <Label for="auto-discovery" class="text-body-sm cursor-pointer">Auto-discover models from gateway</Label>
+                    </div>
+                  {/if}
                       {#if !sel.useDiscovery || !selectedTool?.supportsDiscovery}
                         <div class="flex flex-wrap gap-2">
                           {#each sel.models || [] as m, i (m)}

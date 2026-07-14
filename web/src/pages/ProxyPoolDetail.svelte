@@ -5,8 +5,9 @@
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Badge, type BadgeVariant } from '$lib/components/ui/badge';
-  import { Input } from '$lib/components/ui/input';
-  import { Label } from '$lib/components/ui/label';
+import { Input } from '$lib/components/ui/input';
+import { Label } from '$lib/components/ui/label';
+import { Switch } from '$lib/components/ui/switch';
   import { toast } from 'svelte-sonner';
 import * as AlertDialog from '$lib/components/ui/alert-dialog';
   import { router } from '$lib/router';
@@ -256,9 +257,7 @@ function formatTimestamp(ts: string | null): string {
           <Button onclick={handleTest} disabled={!!actionLoading} variant="outline" class="text-body-sm rounded-sm">
             {actionLoading === 'test' ? 'Testing...' : 'Test proxy'}
           </Button>
-          <Button onclick={handleToggle} disabled={!!actionLoading} variant="outline" class="text-body-sm rounded-sm">
-            {actionLoading === 'toggle' ? 'Updating...' : (pool.isActive ? 'Disable' : 'Enable')}
-          </Button>
+<Switch checked={pool.isActive} onCheckedChange={handleToggle} disabled={!!actionLoading} aria-label={pool.isActive ? 'Disable pool' : 'Enable pool'} />
           <Button onclick={handleDelete} disabled={!!actionLoading} variant="destructive" class="text-body-sm rounded-sm ml-auto">
             {actionLoading === 'delete' ? 'Deleting...' : 'Delete pool'}
           </Button>
