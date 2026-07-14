@@ -145,22 +145,22 @@ import InfoIcon from '@lucide/svelte/icons/info';
           <CardTitle class="text-base">Lite Options</CardTitle>
         </CardHeader>
         <CardContent class="space-y-4">
-          <div class="flex items-center justify-between">
-            <Label for="collapse" class="cursor-pointer">Collapse whitespace</Label>
-            <Switch id="collapse" bind:checked={liteCollapse} />
-          </div>
-          <div class="flex items-center justify-between">
-            <Label for="image-urls" class="cursor-pointer">Replace image data URLs</Label>
-            <Switch id="image-urls" bind:checked={liteImageUrls} />
-          </div>
-          <div class="flex items-center justify-between">
-            <Label for="redundant" class="cursor-pointer">Remove redundant content</Label>
-            <Switch id="redundant" bind:checked={liteRedundant} />
-          </div>
-          <div class="flex items-center justify-between">
-            <Label for="dedup" class="cursor-pointer">Deduplicate system prompts</Label>
-            <Switch id="dedup" bind:checked={liteDedup} />
-          </div>
+<div class="flex items-center justify-between">
+			<Label for="collapse" class="cursor-pointer">Collapse whitespace</Label>
+			<Switch id="collapse" checked={liteCollapse} onCheckedChange={(v) => (liteCollapse = v)} />
+		</div>
+		<div class="flex items-center justify-between">
+			<Label for="image-urls" class="cursor-pointer">Replace image data URLs</Label>
+			<Switch id="image-urls" checked={liteImageUrls} onCheckedChange={(v) => (liteImageUrls = v)} />
+		</div>
+		<div class="flex items-center justify-between">
+			<Label for="redundant" class="cursor-pointer">Remove redundant content</Label>
+			<Switch id="redundant" checked={liteRedundant} onCheckedChange={(v) => (liteRedundant = v)} />
+		</div>
+		<div class="flex items-center justify-between">
+			<Label for="dedup" class="cursor-pointer">Deduplicate system prompts</Label>
+			<Switch id="dedup" checked={liteDedup} onCheckedChange={(v) => (liteDedup = v)} />
+		</div>
           <div class="pt-2">
             <Button onclick={saveCompression} disabled={saving}>
               {saving ? 'Saving...' : 'Save Settings'}

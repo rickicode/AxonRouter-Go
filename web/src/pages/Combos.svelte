@@ -274,21 +274,9 @@ function goToPage(page: number) {
         </div>
       </div>
 
-<div class="space-y-2 pt-2 border-t border-border">
-		<span class="text-body-sm-strong">Smart combo</span>
-		<button
-			type="button"
-			class="flex w-full items-center justify-between gap-4 rounded-xl border border-border bg-card p-3 text-left transition-colors hover:bg-muted/50 cursor-pointer"
-			onclick={() => (newIsSmart = !newIsSmart)}
-		>
-			<div class="flex flex-col">
-				<span class="text-body-sm-strong">Enable smart combo</span>
-				<span class="text-caption text-muted-foreground">Let the combo pick the best step based on a goal.</span>
-			</div>
-			<span onclick={(e) => e.stopPropagation()}>
-				<Switch checked={newIsSmart} onCheckedChange={(v) => (newIsSmart = v)} />
-			</span>
-		</button>
+<div class="flex items-center gap-3 pt-2 border-t border-border">
+		<Switch id="new-is-smart" checked={newIsSmart} onCheckedChange={(v) => (newIsSmart = v)} />
+		<Label for="new-is-smart" class="text-body-sm-strong cursor-pointer">Smart combo</Label>
 	</div>
 
       {#if newIsSmart}

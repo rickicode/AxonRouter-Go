@@ -1028,18 +1028,18 @@ async function handleBulkImport() {
 								<Label class="text-sm font-medium">No Proxy (optional)</Label>
 								<Input bind:value={bulkNoProxy} placeholder="localhost,127.0.0.1" class="h-10 text-body-sm font-mono" />
 							</div>
-							<div class="flex items-center gap-3">
-								<Switch id="bulk-active" bind:checked={bulkActive} />
-								<Label for="bulk-active" class="text-sm font-medium">Active after import</Label>
-							</div>
-							<div class="flex items-center gap-3">
-								<Switch id="bulk-healthy" bind:checked={bulkHealthy} />
-								<Label for="bulk-healthy" class="text-sm font-medium">Only import healthy proxies</Label>
-							</div>
-							<div class="flex items-center gap-3">
-								<Switch id="bulk-sub1s" bind:checked={bulkSub1s} disabled={!bulkHealthy} />
-								<Label for="bulk-sub1s" class="text-sm font-medium {bulkHealthy ? '' : 'text-muted-foreground'}">&lt;1s response</Label>
-							</div>
+<div class="flex items-center gap-3">
+			<Switch id="bulk-active" checked={bulkActive} onCheckedChange={(v) => (bulkActive = v)} />
+			<Label for="bulk-active" class="text-sm font-medium cursor-pointer">Active after import</Label>
+		</div>
+		<div class="flex items-center gap-3">
+			<Switch id="bulk-healthy" checked={bulkHealthy} onCheckedChange={(v) => (bulkHealthy = v)} />
+			<Label for="bulk-healthy" class="text-sm font-medium cursor-pointer">Only import healthy proxies</Label>
+		</div>
+		<div class="flex items-center gap-3">
+			<Switch id="bulk-sub1s" checked={bulkSub1s} onCheckedChange={(v) => (bulkSub1s = v)} disabled={!bulkHealthy} />
+			<Label for="bulk-sub1s" class="text-sm font-medium cursor-pointer {bulkHealthy ? '' : 'text-muted-foreground'}">&lt;1s response</Label>
+		</div>
 							<div class="rounded-xl border border-border bg-muted/30 p-3 space-y-2">
 								<p class="text-caption-mono text-muted-foreground uppercase font-semibold">Preview</p>
 								<div class="space-y-1 max-h-32 overflow-y-auto">
@@ -1112,22 +1112,10 @@ async function handleBulkImport() {
 					<Input type="number" bind:value={groupStickyLimit} min={1} class="h-10 text-code font-mono" />
 				</div>
 			{/if}
-			<div class="space-y-2">
-				<Label class="text-sm font-medium">Options</Label>
-				<button
-					type="button"
-					class="flex w-full items-center justify-between gap-4 rounded-xl border border-border bg-card p-3 text-left transition-colors hover:bg-muted/50 md:max-w-md cursor-pointer"
-					onclick={() => (groupStrict = !groupStrict)}
-				>
-					<div class="flex flex-col">
-						<span class="text-body-sm-strong">Strict proxy</span>
-						<span class="text-caption text-muted-foreground">Fail requests when no healthy pool is available.</span>
-					</div>
-					<span onclick={(e) => e.stopPropagation()}>
-						<Switch checked={groupStrict} onCheckedChange={(v) => (groupStrict = v)} />
-					</span>
-				</button>
-			</div>
+<div class="flex items-center gap-3">
+			<Switch id="group-strict" checked={groupStrict} onCheckedChange={(v) => (groupStrict = v)} />
+			<Label for="group-strict" class="text-sm font-medium cursor-pointer">Strict proxy</Label>
+		</div>
       <div class="space-y-2">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <Label class="text-sm font-medium">Pools ({groupModalSelectedCount} selected)</Label>
