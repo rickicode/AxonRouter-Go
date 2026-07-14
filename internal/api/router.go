@@ -36,6 +36,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/compression"
 	_ "github.com/rickicode/AxonRouter-Go/internal/compression/engines/caveman"
+	_ "github.com/rickicode/AxonRouter-Go/internal/compression/engines/rtk"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
@@ -50,23 +51,23 @@ import (
 
 // Router holds all dependencies and mounts all routes.
 type Router struct {
-	engine *gin.Engine
-	db *sql.DB
+	engine     *gin.Engine
+	db         *sql.DB
 	writeQueue *db.WriteQueue // centralized async writer; drained on Shutdown
-	store *connstate.Store
-	elig *connstate.EligibilityManager
-	combo *combo.Handler
-	tracker *usage.Tracker
-	authMgr *auth.Manager
+	store      *connstate.Store
+	elig       *connstate.EligibilityManager
+	combo      *combo.Handler
+	tracker    *usage.Tracker
+	authMgr    *auth.Manager
 
 	// HTTP/HTTPS servers
 	httpServer  *http.Server
 	httpsServer *http.Server
 
 	// Background goroutines
-	quotaScheduler *background.QuotaSchedulerDB
-	usageFlush *background.UsageFlush
-	cleanup *background.Cleanup
+	quotaScheduler  *background.QuotaSchedulerDB
+	usageFlush      *background.UsageFlush
+	cleanup         *background.Cleanup
 	rateLimitProber *background.RateLimitProber
 }
 
@@ -345,10 +346,10 @@ func New(cfg Config) *Router {
 		g.POST("/proxy-pools/vercel-deploy", proxyDeployH.DeployVercel)
 		g.POST("/proxy-pools/deno-deploy", proxyDeployH.DeployDeno)
 		g.POST("/proxy-pools/cloudflare-deploy", proxyDeployH.DeployCloudflare)
-	g.POST("/proxy-pools", proxyPoolH.Create)
-	g.POST("/proxy-pools/bulk", proxyPoolH.BulkCreate)
-	g.POST("/proxy-pools/bulk-delete", proxyPoolH.BulkDelete)
-	g.GET("/proxy-pools/:id", proxyPoolH.Get)
+		g.POST("/proxy-pools", proxyPoolH.Create)
+		g.POST("/proxy-pools/bulk", proxyPoolH.BulkCreate)
+		g.POST("/proxy-pools/bulk-delete", proxyPoolH.BulkDelete)
+		g.GET("/proxy-pools/:id", proxyPoolH.Get)
 		g.PATCH("/proxy-pools/:id", proxyPoolH.Update)
 		g.DELETE("/proxy-pools/:id", proxyPoolH.Delete)
 		g.POST("/proxy-pools/:id/test", proxyPoolH.Test)
@@ -432,17 +433,17 @@ func New(cfg Config) *Router {
 	})
 
 	r := &Router{
-		engine: engine,
-		db: cfg.DB,
-		writeQueue: writeQueue,
-		store: store,
-		elig: elig,
-		combo: comboHandler,
-		tracker: tracker,
-		authMgr: authManager,
-		quotaScheduler: quotaScheduler,
-		usageFlush: usageFlush,
-		cleanup: cleanup,
+		engine:          engine,
+		db:              cfg.DB,
+		writeQueue:      writeQueue,
+		store:           store,
+		elig:            elig,
+		combo:           comboHandler,
+		tracker:         tracker,
+		authMgr:         authManager,
+		quotaScheduler:  quotaScheduler,
+		usageFlush:      usageFlush,
+		cleanup:         cleanup,
 		rateLimitProber: rateLimitProber,
 	}
 

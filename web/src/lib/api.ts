@@ -960,7 +960,7 @@ export const proxyDeployApi = {
 
 // Compression & Cache types
 export interface CompressionSettings {
-  mode: "off" | "lite" | "standard" | "aggressive" | "ultra";
+  mode: "off" | "lite" | "standard" | "rtk" | "aggressive" | "ultra";
   lite?: {
     collapse_whitespace: boolean;
     replace_image_urls: boolean;

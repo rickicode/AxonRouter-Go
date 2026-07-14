@@ -7,6 +7,7 @@ const (
 	ModeOff        CompressionMode = "off"
 	ModeLite       CompressionMode = "lite"
 	ModeStandard   CompressionMode = "standard"
+	ModeRtk        CompressionMode = "rtk"
 	ModeAggressive CompressionMode = "aggressive"
 	ModeUltra      CompressionMode = "ultra"
 )
