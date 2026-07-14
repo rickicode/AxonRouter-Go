@@ -13,9 +13,10 @@ import * as AlertDialog from '$lib/components/ui/alert-dialog';
   import { Input } from '$lib/components/ui/input';
   import { router } from '$lib/router';
   import { getProviderMeta, getStatusDotColor, getStatusVariant, getStatusLabel } from '$lib/provider-catalog';
-  import { toast } from 'svelte-sonner';
+import { toast } from 'svelte-sonner';
+import Icon from '$lib/components/Icon.svelte';
 
-  let { id = '', connId = '' }: { id?: string; connId?: string } = $props();
+let { id = '', connId = '' }: { id?: string; connId?: string } = $props();
   let providerId = $derived(id);
   let connectionId = $derived(connId);
   let actionLoading = $state('');
@@ -90,11 +91,18 @@ import * as AlertDialog from '$lib/components/ui/alert-dialog';
     return new Date(timestamp * 1000).toLocaleString();
   }
 
-  async function handleTest() {
-    try { await connectionsApi.test(connectionId); await loadConnection(connectionId); toast.success('Connection test passed'); }
-    catch (err) { toast.error('Test failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
-    finally { actionLoading = ''; }
+async function handleTest() {
+  actionLoading = 'test';
+  try {
+    await connectionsApi.test(connectionId);
+    await loadConnection(connectionId);
+    toast.success('Connection test passed');
+  } catch (err) {
+    toast.error('Test failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+  } finally {
+    actionLoading = '';
   }
+}
 
   async function handleReset() {
     actionLoading = 'reset';
@@ -402,20 +410,21 @@ async function handleSaveAccountLabel() {
     <Card class="shadow-card">
       <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Actions</CardTitle></CardHeader>
       <CardContent>
-        <div class="flex flex-wrap gap-2">
-          <Button onclick={handleTest} disabled={!!actionLoading} variant="outline" class="text-body-sm rounded-sm">
-            {actionLoading === 'test' ? 'Testing...' : 'Test connection'}
-          </Button>
-          <Button onclick={handleReset} disabled={!!actionLoading} variant="outline" class="text-body-sm rounded-sm">
-            {actionLoading === 'reset' ? 'Resetting...' : 'Reset status'}
-          </Button>
-          <Button onclick={handleToggle} disabled={!!actionLoading} variant="outline" class="text-body-sm rounded-sm">
-            {actionLoading === 'toggle' ? 'Updating...' : ($selectedConnection.is_active ? 'Disable' : 'Enable')}
-          </Button>
-          <Button onclick={handleDelete} disabled={!!actionLoading} variant="destructive" class="text-body-sm rounded-sm ml-auto">
-            {actionLoading === 'delete' ? 'Deleting...' : 'Delete connection'}
-          </Button>
-        </div>
+    <div class="flex flex-wrap items-center gap-2">
+      <Button onclick={handleTest} disabled={!!actionLoading} variant="outline" size="icon" title="Test connection" aria-label="Test connection">
+        <Icon name={actionLoading === 'test' ? 'refreshCw' : 'play'} class={actionLoading === 'test' ? 'size-4 animate-spin' : 'size-4'} />
+      </Button>
+      <Button onclick={handleReset} disabled={!!actionLoading} variant="outline" size="icon" title="Reset status" aria-label="Reset status">
+        <Icon name={actionLoading === 'reset' ? 'refreshCw' : 'rotateCcw'} class={actionLoading === 'reset' ? 'size-4 animate-spin' : 'size-4'} />
+      </Button>
+      <Button onclick={handleToggle} disabled={!!actionLoading} variant="outline" size="icon" title={$selectedConnection.is_active ? 'Disable connection' : 'Enable connection'} aria-label={$selectedConnection.is_active ? 'Disable connection' : 'Enable connection'}>
+        <Icon name={actionLoading === 'toggle' ? 'refreshCw' : ($selectedConnection.is_active ? 'powerOff' : 'power')} class={actionLoading === 'toggle' ? 'size-4 animate-spin' : 'size-4'} />
+      </Button>
+      <div class="flex-1 min-w-[0.5rem]"></div>
+      <Button onclick={handleDelete} disabled={!!actionLoading} variant="destructive" size="icon" title="Delete connection" aria-label="Delete connection">
+        <Icon name={actionLoading === 'delete' ? 'refreshCw' : 'trash2'} class={actionLoading === 'delete' ? 'size-4 animate-spin' : 'size-4'} />
+      </Button>
+    </div>
       </CardContent>
     </Card>
 

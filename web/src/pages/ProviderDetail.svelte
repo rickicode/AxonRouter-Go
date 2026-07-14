@@ -12,10 +12,7 @@ import type { RoutingMode, ProviderModelEntry } from '$lib/api';
  import ProviderIcon from '$lib/components/ProviderIcon.svelte';
  import { getProviderMeta, getCategoryById, getStatusDotColor, getStatusVariant, getStatusLabel } from '$lib/provider-catalog';
  import { toast } from 'svelte-sonner';
-import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
-import Settings2Icon from '@lucide/svelte/icons/settings-2';
-import PencilIcon from '@lucide/svelte/icons/pencil';
-import CopyIcon from '@lucide/svelte/icons/copy';
+import Icon from '$lib/components/Icon.svelte';
  import AddConnectionModal from '$lib/components/AddConnectionModal.svelte';
 import ProviderRoutingModal from '$lib/components/ProviderRoutingModal.svelte';
 import ProviderEditModal from '$lib/components/ProviderEditModal.svelte';
@@ -238,9 +235,51 @@ function handlePerPageChange(p: number) {
 
 </script>
 
+{#snippet connectionBadges(row: any)}
+  {@const isDefault = isDefaultDirect(row)}
+  {@const isOAuth = row.auth_type === 'oauth'}
+  {@const expiry = isOAuth ? getTokenExpiry(row.oauth_expires_at) : null}
+  <span class="inline-flex flex-wrap items-center gap-1">
+    {#if isDefault}
+      <StatusBadge status="default" label="Default" />
+    {/if}
+    {#if !isDefault && getAccountLabel(row)}
+      <StatusBadge status="smart" label={getAccountLabel(row)} />
+    {/if}
+    {#if expiry}
+      <StatusBadge status={expiry.status === 'expired' ? 'error' : expiry.status === 'expiring' ? 'testing' : 'active'} label={expiry.text} />
+    {/if}
+  </span>
+{/snippet}
+
+{#snippet connectionActions(row: any)}
+  {@const isDefault = isDefaultDirect(row)}
+  {@const isOAuth = row.auth_type === 'oauth'}
+  {@const loading = actionLoading === row.id}
+  <Button variant="ghost" size="icon" class="size-7" href={`/providers/${providerId}/${row.id}`} title="Edit connection" aria-label="Edit connection" disabled={loading}>
+    <Icon name="pencil" class="size-4" />
+  </Button>
+  <Button variant="ghost" size="icon" class="size-7" onclick={() => handleTestConnection(row.id)} title="Test connection" aria-label="Test connection" disabled={loading}>
+    <Icon name={loading ? 'refreshCw' : 'play'} class={loading ? 'size-4 animate-spin' : 'size-4'} />
+  </Button>
+  {#if isOAuth}
+    <Button variant="ghost" size="icon" class="size-7 text-amber-400 hover:text-amber-300" onclick={() => handleRefreshToken(row.id)} title="Refresh token" aria-label="Refresh token" disabled={loading}>
+      <Icon name="refreshCw" class={loading ? 'size-4 animate-spin' : 'size-4'} />
+    </Button>
+  {/if}
+  <Button variant="ghost" size="icon" class="size-7" onclick={() => handleResetConnection(row.id)} title="Reset connection" aria-label="Reset connection" disabled={loading}>
+    <Icon name={loading ? 'refreshCw' : 'rotateCcw'} class={loading ? 'size-4 animate-spin' : 'size-4'} />
+  </Button>
+  {#if !isDefault}
+    <Button variant="ghost" size="icon" class="size-7 text-destructive hover:text-destructive" onclick={() => confirmDeleteConnection(row.id, row.name)} title="Delete connection" aria-label="Delete connection" disabled={loading}>
+      <Icon name="trash2" class="size-4" />
+    </Button>
+  {/if}
+{/snippet}
+
 <div class="flex flex-1 flex-col gap-6 p-6">
  <a href="/providers" class="inline-flex items-center gap-1.5 text-body-sm text-muted-foreground hover:text-foreground transition-colors w-fit">
- <ArrowLeftIcon class="size-3.5" />
+ <Icon name="arrowLeft" class="size-3.5" />
  Back to providers
  </a>
  {#if $isLoading && !$selectedProvider}
@@ -261,39 +300,39 @@ function handlePerPageChange(p: number) {
  </CardContent>
  </Card>
  {:else if $selectedProvider}
-<!-- Provider Header -->
-<div class="flex items-start justify-between gap-4">
-	<div class="flex items-start gap-4 min-w-0">
-		<div
-			class="size-12 rounded-lg flex items-center justify-center shrink-0 overflow-hidden"
-			style="background-color: {(meta?.color ?? '#888')}15"
-		>
-			<ProviderIcon {meta} size={48} />
-		</div>
-		<div class="space-y-1 min-w-0">
-			<div class="flex items-center gap-3 flex-wrap">
-				<h1 class="text-display-lg break-words">{$selectedProvider.display_name}.</h1>
-				{#if $selectedProvider.is_custom}
-					<Badge variant="secondary" class="text-caption-mono rounded-sm">Custom</Badge>
-				{/if}
-				<Badge variant="outline" class="text-caption-mono rounded-sm">{providerCategoryLabel}</Badge>
-				{#if providerServiceKinds.length > 0}
-					{#each providerServiceKinds as kind (kind)}
-						<Badge variant="secondary" class="text-caption-mono rounded-sm">{kind}</Badge>
-					{/each}
-				{/if}
+	<!-- Provider Header -->
+	<div class="flex flex-col sm:flex-row items-start justify-between gap-4">
+		<div class="flex items-start gap-4 min-w-0">
+			<div
+				class="size-12 rounded-lg flex items-center justify-center shrink-0 overflow-hidden"
+				style="background-color: {(meta?.color ?? '#888')}15"
+			>
+				<ProviderIcon {meta} size={48} />
 			</div>
-			<p class="text-caption-mono text-muted-foreground">
-				Prefix: {meta?.prefix ?? ($selectedProvider.id + '/')} · Format: {$selectedProvider.format} · ID: {$selectedProvider.id}
-			</p>
+			<div class="space-y-1 min-w-0">
+				<div class="flex items-center gap-2 flex-wrap">
+					<h1 class="text-display-lg break-words">{$selectedProvider.display_name}.</h1>
+					{#if $selectedProvider.is_custom}
+						<Badge variant="secondary" class="text-caption-mono rounded-sm">Custom</Badge>
+					{/if}
+					<Badge variant="outline" class="text-caption-mono rounded-sm">{providerCategoryLabel}</Badge>
+					{#if providerServiceKinds.length > 0}
+						{#each providerServiceKinds as kind (kind)}
+							<Badge variant="secondary" class="text-caption-mono rounded-sm">{kind}</Badge>
+						{/each}
+					{/if}
+				</div>
+				<p class="text-caption-mono text-muted-foreground">
+					Prefix: {meta?.prefix ?? ($selectedProvider.id + '/')} · Format: {$selectedProvider.format} · ID: {$selectedProvider.id}
+				</p>
+			</div>
 		</div>
+		{#if $selectedProvider.is_custom}
+			<Button variant="outline" size="sm" class="text-body-sm rounded-sm gap-1.5 shrink-0" onclick={() => (showEditModal = true)}>
+				<Icon name="pencil" class="size-3.5" /> Edit provider
+			</Button>
+		{/if}
 	</div>
-	{#if $selectedProvider.is_custom}
-	<Button variant="outline" size="sm" class="text-body-sm rounded-sm gap-1.5 shrink-0" onclick={() => (showEditModal = true)}>
-		<PencilIcon class="size-3.5" /> Edit provider
-	</Button>
-	{/if}
-</div>
 
  <!-- Connections Section -->
  <div class="space-y-4">
@@ -305,7 +344,7 @@ function handlePerPageChange(p: number) {
  <div class="flex items-center gap-2">
  <Badge variant="outline" class="text-caption-mono rounded-sm">{routingModeLabels[routingMode] ?? routingMode}</Badge>
  <Button onclick={() => showRoutingModal = true} variant="outline" size="sm" class="text-body-sm rounded-sm gap-1.5">
- <Settings2Icon class="size-3.5" />
+ <Icon name="settings2" class="size-3.5" />
  Settings
  </Button>
  <Button onclick={handleTestAll} disabled={testingAll} variant="outline" size="sm" class="text-body-sm rounded-sm">
@@ -332,13 +371,14 @@ function handlePerPageChange(p: number) {
  {/each}
  </Select.Content>
  </Select.Root>
- <Input type="text" class="w-64 h-9 text-body-sm" placeholder="Search connections..." bind:value={$connectionFilter.search} oninput={() => { currentPage = 1; loadConnections(providerId, currentPage, perPage); }} />
+ <Input type="text" class="w-full sm:w-64 h-9 text-body-sm" placeholder="Search connections..." bind:value={$connectionFilter.search} oninput={() => { currentPage = 1; loadConnections(providerId, currentPage, perPage); }} />
  </div>
 
  <Card class="shadow-card overflow-hidden">
  <CardContent class="p-0">
- <div class="overflow-x-auto">
- <table class="w-full text-left border-collapse">
+    <!-- Desktop table -->
+    <div class="hidden sm:block overflow-x-auto">
+      <table class="w-full text-left border-collapse">
  <thead>
  <tr class="border-b border-border bg-muted/30">
  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Name</th>
@@ -347,97 +387,139 @@ function handlePerPageChange(p: number) {
  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Failures</th>
  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Cooldown</th>
  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Last success</th>
- <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-44"></th>
+ <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-32 text-right"></th>
  </tr>
  </thead>
- <tbody class="divide-y divide-border">
- {#if $connections.length === 0}
- <tr><td colspan="7" class="p-0">
- <div class="flex flex-col items-center justify-center py-12 gap-3">
- <div class="size-12 rounded-full bg-muted/50 flex items-center justify-center">
- <svg class="size-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
- {#if meta?.authType === 'oauth'}
- <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
- {:else}
- <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
- {/if}
- </svg>
- </div>
- <div class="text-center">
- <p class="text-sm font-medium text-muted-foreground">No connections yet</p>
- <p class="text-xs text-muted-foreground/70 mt-0.5">Add your first connection to get started</p>
- </div>
- <Button onclick={() => showAddModal = true} size="sm" class="text-body-sm rounded-sm mt-1">
- Add connection
- </Button>
- </div>
- </td></tr>
- {:else}
- {#each $connections as row}
- {@const isDefault = isDefaultDirect(row)}
- {@const isOAuth = row.auth_type === 'oauth'}
- {@const expiry = isOAuth ? getTokenExpiry(row.oauth_expires_at) : null}
- <tr class="transition-colors hover:bg-accent/20 group">
- <td class="py-3 px-4">
- <a href="/providers/{providerId}/{row.id}" class="text-body-sm-strong hover:underline flex items-center gap-2">
- <span class="size-2 rounded-full shrink-0" style="background-color: {getStatusDotColor(row.status)}"></span>
- {row.name}
- </a>
- {#if isDefault}
- <StatusBadge status="default" label="Default" class="ml-1" />
- {/if}
- {#if !isDefault && getAccountLabel(row)}
- <StatusBadge status="smart" label={getAccountLabel(row)} class="ml-1" />
- {/if}
- {#if expiry}
- <StatusBadge status={expiry.status === 'expired' ? 'error' : expiry.status === 'expiring' ? 'testing' : 'active'} label={expiry.text} class="ml-1" />
- {/if}
+<tbody class="divide-y divide-border">
+          {#if $connections.length === 0}
+          <tr><td colspan="7" class="p-0">
+            <div class="flex flex-col items-center justify-center py-12 gap-3">
+              <div class="size-12 rounded-full bg-muted/50 flex items-center justify-center">
+                <svg class="size-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  {#if meta?.authType === 'oauth'}
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  {:else}
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                  {/if}
+                </svg>
+              </div>
+              <div class="text-center">
+                <p class="text-sm font-medium text-muted-foreground">No connections yet</p>
+                <p class="text-xs text-muted-foreground/70 mt-0.5">Add your first connection to get started</p>
+              </div>
+              <Button onclick={() => showAddModal = true} size="sm" class="text-body-sm rounded-sm mt-1">
+                Add connection
+              </Button>
+            </div>
+          </td></tr>
+          {:else}
+          {#each $connections as row}
+          <tr class="transition-colors hover:bg-accent/20 group">
+            <td class="py-3 px-4">
+              <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <a href="/providers/{providerId}/{row.id}" class="inline-flex items-center gap-1.5 text-body-sm-strong hover:underline">
+                  <span class="size-2 rounded-full shrink-0" style="background-color: {getStatusDotColor(row.status)}"></span>
+                  {row.name}
+                </a>
+                {@render connectionBadges(row)}
+              </div>
+            </td>
+            <td class="py-3 px-4">
+              <Badge variant={getStatusVariant(row.status)} class="text-caption-mono rounded-sm py-0.5">
+                {getStatusLabel(row.status)}
+              </Badge>
+            </td>
+            <td class="py-3 px-4 text-code font-mono text-muted-foreground">{row.auth_type}</td>
+            <td class="py-3 px-4">
+              <span class="text-code font-mono {row.failure_count > 0 ? 'text-destructive font-semibold' : 'text-muted-foreground'}">{row.failure_count}</span>
+            </td>
+            <td class="py-3 px-4 text-code font-mono text-muted-foreground">
+              {formatCooldown(row.cooldown_until)}
+            </td>
+            <td class="py-3 px-4 text-body-sm text-muted-foreground">{formatTimestamp(row.last_success_at)}</td>
+            <td class="py-3 px-4">
+              <div class="flex items-center justify-end gap-0.5">
+                {@render connectionActions(row)}
+              </div>
+            </td>
+          </tr>
+          {/each}
+          {/if}
+        </tbody>
+    </table>
+    </div>
 
- </td>
- <td class="py-3 px-4">
- <Badge variant={getStatusVariant(row.status)} class="text-caption-mono rounded-sm py-0.5">
- {getStatusLabel(row.status)}
- </Badge>
- </td>
- <td class="py-3 px-4 text-code font-mono text-muted-foreground">{row.auth_type}</td>
- <td class="py-3 px-4">
- <span class="text-code font-mono {row.failure_count > 0 ? 'text-destructive font-semibold' : 'text-muted-foreground'}">{row.failure_count}</span>
- </td>
- <td class="py-3 px-4 text-code font-mono text-muted-foreground">
- {formatCooldown(row.cooldown_until)}
- </td>
- <td class="py-3 px-4 text-body-sm text-muted-foreground">{formatTimestamp(row.last_success_at)}</td>
- <td class="py-3 px-4">
- <div class="flex gap-1">
-  <a href="/providers/{providerId}/{row.id}" class="inline-flex" title="Edit connection">
-   <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm">Edit</Button>
-  </a>
- <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" disabled={actionLoading === row.id} onclick={() => handleTestConnection(row.id)}>
- {actionLoading === row.id ? '...' : 'Test'}
- </Button>
- {#if isOAuth}
- <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm text-amber-400 hover:text-amber-300" disabled={actionLoading === row.id} onclick={() => handleRefreshToken(row.id)}>
- Refresh
- </Button>
- {/if}
- <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" disabled={actionLoading === row.id} onclick={() => handleResetConnection(row.id)}>
- Reset
- </Button>
- {#if !isDefault}
- <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm text-destructive hover:text-destructive" disabled={actionLoading === row.id} onclick={() => confirmDeleteConnection(row.id, row.name)}>
- Del
- </Button>
- {/if}
- </div>
- </td>
- </tr>
- {/each}
- {/if}
- </tbody>
- </table>
- </div>
- </CardContent>
- </Card>
+    <!-- Mobile card list -->
+    <div class="sm:hidden divide-y divide-border">
+      {#if $connections.length === 0}
+        <div class="flex flex-col items-center justify-center py-12 gap-3">
+          <div class="size-12 rounded-full bg-muted/50 flex items-center justify-center">
+            <svg class="size-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              {#if meta?.authType === 'oauth'}
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              {:else}
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+              {/if}
+            </svg>
+          </div>
+          <div class="text-center">
+            <p class="text-sm font-medium text-muted-foreground">No connections yet</p>
+            <p class="text-xs text-muted-foreground/70 mt-0.5">Add your first connection to get started</p>
+          </div>
+          <Button onclick={() => showAddModal = true} size="sm" class="text-body-sm rounded-sm mt-1">
+            Add connection
+          </Button>
+        </div>
+      {:else}
+        {#each $connections as row}
+        <div class="p-4 space-y-3">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 space-y-1">
+              <a href="/providers/{providerId}/{row.id}" class="inline-flex items-center gap-1.5 text-body-sm-strong hover:underline break-words">
+                <span class="size-2 rounded-full shrink-0" style="background-color: {getStatusDotColor(row.status)}"></span>
+                <span class="break-words">{row.name}</span>
+              </a>
+              {@render connectionBadges(row)}
+            </div>
+            <Button variant="ghost" size="icon" class="size-7 shrink-0" href={`/providers/${providerId}/${row.id}`} title="Open connection" aria-label="Open connection">
+              <Icon name="chevronRight" class="size-5" />
+            </Button>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3 text-caption-mono text-muted-foreground">
+            <div>
+              <p class="uppercase font-semibold text-[10px]">Status</p>
+              <Badge variant={getStatusVariant(row.status)} class="mt-1 text-caption-mono rounded-sm py-0.5">
+                {getStatusLabel(row.status)}
+              </Badge>
+            </div>
+            <div>
+              <p class="uppercase font-semibold text-[10px]">Auth</p>
+              <p class="mt-1 text-body-sm font-mono text-foreground">{row.auth_type}</p>
+            </div>
+            <div>
+              <p class="uppercase font-semibold text-[10px]">Failures</p>
+              <p class="mt-1 text-body-sm font-mono {row.failure_count > 0 ? 'text-destructive font-semibold' : 'text-foreground'}">{row.failure_count}</p>
+            </div>
+            <div>
+              <p class="uppercase font-semibold text-[10px]">Cooldown</p>
+              <p class="mt-1 text-body-sm font-mono text-foreground">{formatCooldown(row.cooldown_until)}</p>
+            </div>
+            <div class="col-span-2">
+              <p class="uppercase font-semibold text-[10px]">Last success</p>
+              <p class="mt-1 text-body-sm font-mono text-foreground">{formatTimestamp(row.last_success_at)}</p>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-0.5 pt-2 border-t border-border">
+            {@render connectionActions(row)}
+          </div>
+        </div>
+        {/each}
+      {/if}
+    </div>
+  </CardContent>
+</Card>
 
 <Pagination
  page={currentPage}
@@ -503,7 +585,7 @@ function handlePerPageChange(p: number) {
 										aria-label="Copy model name"
 										onclick={(e) => { e.stopPropagation(); copyModelName(entry.id); }}
 									>
-										<CopyIcon class="size-3" />
+										<Icon name="copy" class="size-3" />
 									</button>
 									{#if result}
 										<span class="size-1.5 shrink-0 rounded-full {result.status === 'ok' ? 'bg-emerald-500' : result.status === 'testing' ? 'bg-yellow-500 animate-pulse' : 'bg-destructive'}"></span>
