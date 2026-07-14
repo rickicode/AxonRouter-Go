@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `category` and `service_kinds` columns on `provider_types`, exposed in admin provider List/Get responses.
+- `internal/provider/servicekind.go` constants (`llm`, `embedding`, `image`, etc.) and helpers `HasServiceKind`/`DefaultServiceKinds`.
+- Static per-modality registry (`internal/modalities`) using embedded JSON, with a Cloudflare pilot covering canonical embedding and image model IDs.
+- `service_kinds` field on model catalog entries, included in `/v1/models`, admin models, admin provider model list, and admin model-pricing responses.
+- Cloudflare Workers AI routing for `/v1/embeddings` and `/v1/images/generations` through executor adapters and per-modality model gating.
+- Dashboard provider category/service-kind chips and modality badges in the model picker, model pricing, and provider detail pages (LLM-only badges hidden).
 - `must_change_password` flag returned by `/api/admin/health`; the dashboard warning is driven entirely by this endpoint.
 - Dedicated change-password card on the Settings page with current/new/confirm password fields.
 - Copy icon on each model card in the provider detail page to copy the full model name.
@@ -39,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - About page polls `/api/admin/health` every 30s for update availability and posts to `/api/admin/upgrade` with toast feedback and a loading spinner.
 
 ### Fixed
+- `/v1/embeddings` and `/v1/images/generations` now validate the provider's service kind and, for Cloudflare, require a registered per-modality model before routing.
+- Migration ensures the built-in `openai` provider type keeps `embedding` and `image` service kinds so existing OpenAI embeddings and DALL-E routing continue to work.
 - Provider detail header: provider name and prefix now sit next to the logo on the left instead of being pushed to the right.
 - Responses API `input_tokens`/`output_tokens` no longer zeroed out by the old `TotalTokens` check in `ExtractTokensFromBody`.
 - `go test ./...` failure caused by stale `NewProviderHandler` call in `providers_test.go`.
