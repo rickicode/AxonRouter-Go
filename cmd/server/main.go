@@ -5,19 +5,15 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
-	"os/signal"
-	"path/filepath"
-	"runtime"
-	"strings"
-	"syscall"
 
 	"github.com/gin-gonic/gin"
+	kardianos "github.com/kardianos/service"
 	"github.com/rickicode/AxonRouter-Go/internal/api"
 	"github.com/rickicode/AxonRouter-Go/internal/config"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/models"
+	"github.com/rickicode/AxonRouter-Go/internal/service"
 	"github.com/rickicode/AxonRouter-Go/internal/version"
 	// Trigger registration of all request/response format translators.
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator"
@@ -84,108 +80,57 @@ func printStartupBannerPlain(port string, database *sql.DB) {
 	fmt.Println()
 }
 
-const serviceUnit = "axonrouter.service"
-
-func runSystemctl(args ...string) error {
-	cmd := exec.Command("systemctl", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-func installSystemdService() {
-	if runtime.GOOS != "linux" {
-		log.Fatalf("--startup install is only supported on Linux")
-	}
-
-	execPath, err := os.Executable()
-	if err != nil {
-		log.Fatalf("Failed to locate executable: %v", err)
-	}
-	execPath, err = filepath.EvalSymlinks(execPath)
-	if err != nil {
-		log.Fatalf("Failed to resolve executable path: %v", err)
-	}
-
-	// Run the service as the user who invoked the command. When called via sudo,
-	// prefer the original user so data stays in their home directory.
-	svcUser := os.Getenv("SUDO_USER")
-	if svcUser == "" {
-		svcUser = os.Getenv("DOAS_USER")
-	}
-	if svcUser == "" {
-		svcUser = os.Getenv("USER")
-	}
-	if svcUser == "" {
-		svcUser = "root"
-	}
-
-	// Resolve the target user's home directory; systemd service needs it as WorkingDirectory.
-	homeDir := ""
-	if out, err := exec.Command("getent", "passwd", svcUser).Output(); err == nil {
-		parts := strings.Split(strings.TrimSpace(string(out)), ":")
-		if len(parts) >= 6 {
-			homeDir = parts[5]
-		}
-	}
-	if homeDir == "" {
-		homeDir = "/root"
-	}
-
-	unit := fmt.Sprintf(`[Unit]
-Description=AxonRouter-Go API Proxy
-After=network.target
-
-[Service]
-Type=simple
-User=%s
-WorkingDirectory=%s
-ExecStart=%s
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-`, svcUser, homeDir, execPath)
-
-	if err := os.WriteFile("/etc/systemd/system/"+serviceUnit, []byte(unit), 0644); err != nil {
-		log.Fatalf("Failed to write service unit: %v", err)
-	}
-
-	dropErr := func(out []byte, err error) {
-		if err != nil {
-			fmt.Fprint(os.Stderr, string(out))
-			log.Fatalf("Failed to install service: %v", err)
-		}
-	}
-
-	dropErr(exec.Command("systemctl", "daemon-reload").CombinedOutput())
-	dropErr(exec.Command("systemctl", "enable", "--now", "axonrouter").CombinedOutput())
-
-	fmt.Printf("Service installed and started as user '%s'.\n", svcUser)
-	fmt.Printf("Data directory: %s/axonrouter\n", homeDir)
-	fmt.Println("Check status: axonrouter --startup status")
-}
-
 func handleStartupAction(action string) {
-	if runtime.GOOS != "linux" {
-		// Allow status/start/stop/restart on macOS via launchctl? Not implemented.
-		if action != "status" {
-			log.Fatalf("--startup %s is only supported on Linux", action)
-		}
+	svcCfg, err := service.ServiceConfig()
+	if err != nil {
+		log.Fatalf("Failed to build service config: %v", err)
+	}
+
+	prg := &service.Program{
+		Run:      func() error { return nil },
+		Shutdown: func() error { return nil },
+	}
+	svc, err := kardianos.New(prg, svcCfg)
+	if err != nil {
+		log.Fatalf("Failed to create service: %v", err)
 	}
 
 	switch action {
-	case "install":
-		installSystemdService()
-	case "status", "start", "stop", "restart":
-		if err := runSystemctl(action, "axonrouter"); err != nil {
+	case "status":
+		st, err := svc.Status()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Service status unavailable: %v\n", err)
 			os.Exit(1)
 		}
+		switch st {
+		case kardianos.StatusRunning:
+			fmt.Println("Service is running")
+		case kardianos.StatusStopped:
+			fmt.Println("Service is installed but stopped")
+		default:
+			fmt.Println("Service status unknown")
+		}
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown startup action: %s\n", action)
-		fmt.Fprintln(os.Stderr, "Usage: axonrouter --startup {install|status|start|stop|restart}")
-		os.Exit(1)
+		act, err := service.ControlAction(action)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, "Usage: axonrouter --startup {install|status|start|stop|restart|uninstall}")
+			os.Exit(1)
+		}
+		if err := kardianos.Control(svc, act); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if action == "install" {
+			fmt.Printf("Service '%s' installed as user '%s'.\n", service.Name, svcCfg.UserName)
+			fmt.Printf("Data directory: %s/axonrouter\n", svcCfg.WorkingDirectory)
+			if err := kardianos.Control(svc, "start"); err != nil {
+				fmt.Fprintf(os.Stderr, "Service installed but could not be started: %v\n", err)
+			} else {
+				fmt.Println("Service started.")
+			}
+			fmt.Println("Check status: axonrouter --startup status")
+		}
 	}
 	os.Exit(0)
 }
@@ -216,20 +161,20 @@ func main() {
 		fmt.Println("AxonRouter-Go - Universal API proxy for coding agents.")
 		fmt.Println()
 		fmt.Println("Usage:")
-		fmt.Println("  axonrouter                                  Start the server")
-		fmt.Println("  axonrouter --startup install                Install systemd service (Linux)")
-		fmt.Println("  axonrouter --startup {status|start|stop|restart}")
-		fmt.Println("                                              Manage systemd service (Linux)")
-		fmt.Println("  axonrouter --setpass <password>             Set admin dashboard password")
-		fmt.Println("  axonrouter --help                           Show this help")
-	fmt.Println()
-	fmt.Println("Environment:")
-	fmt.Println("  AXON_PORT        Server port (default: 3777)")
-	os.Exit(0)
+		fmt.Println(" axonrouter Start the server")
+		fmt.Println(" axonrouter --startup install Install system service (Linux/macOS/Windows)")
+		fmt.Println(" axonrouter --startup {status|start|stop|restart|uninstall}")
+		fmt.Println(" Manage system service")
+		fmt.Println(" axonrouter --setpass <password> Set admin dashboard password")
+		fmt.Println(" axonrouter --help Show this help")
+		fmt.Println()
+		fmt.Println("Environment:")
+		fmt.Println(" AXON_PORT Server port (default: 3777)")
+		os.Exit(0)
 	}
 
 	if len(os.Args) == 2 && os.Args[1] == "--startup" {
-		fmt.Fprintln(os.Stderr, "Usage: axonrouter --startup {install|status|start|stop|restart}")
+		fmt.Fprintln(os.Stderr, "Usage: axonrouter --startup {install|status|start|stop|restart|uninstall}")
 		os.Exit(1)
 	}
 	if len(os.Args) >= 3 && os.Args[1] == "--startup" {
@@ -259,8 +204,8 @@ func main() {
 
 	// Create router with all routes and background goroutines
 	router := api.New(api.Config{
-		DB:               database,
-		Port:             cfg.Port,
+		DB: database,
+		Port: cfg.Port,
 		QuotaIntervalMin: 1,
 		LogRetentionDays: 30,
 	})
@@ -271,21 +216,29 @@ func main() {
 	log.Printf("starting server on %s", addr)
 	log.Printf("dashboard available at http://localhost:%s", cfg.Port)
 
-	// Graceful shutdown
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	svcCfg, err := service.ServiceConfig()
+	if err != nil {
+		log.Fatalf("Failed to build service config: %v", err)
+	}
 
-	go func() {
-		<-sigCh
-		log.Println("Shutting down...")
-		router.Shutdown()
-		if err := database.Close(); err != nil {
-			log.Printf("WARN: failed to close database: %v", err)
-		}
-		os.Exit(0)
-	}()
+	prg := &service.Program{
+		Run: func() error { return router.Start(addr, *httpsCfg) },
+		Shutdown: func() error {
+			log.Println("Shutting down...")
+			router.Shutdown()
+			if err := database.Close(); err != nil {
+				log.Printf("WARN: failed to close database: %v", err)
+			}
+			return nil
+		},
+	}
 
-	if err := router.Start(addr, *httpsCfg); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+	svc, err := kardianos.New(prg, svcCfg)
+	if err != nil {
+		log.Fatalf("Failed to create service: %v", err)
+	}
+
+	if err := svc.Run(); err != nil {
+		log.Fatalf("Failed to run service: %v", err)
 	}
 }

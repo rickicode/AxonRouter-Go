@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Replaced Linux-only systemd service installer with cross-platform service management via `github.com/kardianos/service`. `axonrouter --startup {install|status|start|stop|restart|uninstall}` now works on Linux, macOS, and Windows.
+
 ### Fixed
 - Default admin password is now the fixed value `12345677` again, and the password-change warning is based on whether the current password still matches the default. Changing the password via `axonrouter --setpass` or Settings clears the warning.
 - `/v1/responses`, `/v1/embeddings`, `/v1/images/generations`, `/v1/audio/speech`, `/v1/audio/transcriptions`, `/v1/video/generations`, and `/v1/unified` now enforce the API key lifetime token budget (`max_tokens`) before routing upstream.
