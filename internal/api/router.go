@@ -169,6 +169,7 @@ func New(cfg Config) *Router {
 	proxyGroupH := admin.NewProxyGroupHandler(cfg.DB, proxyResolver)
 	proxyDeployH := admin.NewProxyDeployHandler(cfg.DB, proxyHealth, proxyResolver)
 	optimizationH := admin.NewOptimizationHandler(cfg.DB, exactCache)
+	tlsH := admin.NewTLSHandler(config.Get().DataDir, http.DefaultClient)
 
 	// Additional admin handlers (moved here so the JWT /api/admin and master-key
 	// /admin/api/v1 groups can share the same route table).
@@ -295,6 +296,12 @@ func New(cfg Config) *Router {
 		g.GET("/settings/:key", settingH.Get)
 		g.PUT("/settings/:key", settingH.Set)
 		g.DELETE("/settings/:key", settingH.Delete)
+
+		// TLS config
+		g.GET("/tls-config", tlsH.Get)
+		g.PUT("/tls-config", tlsH.Put)
+		g.GET("/tls-config/public-ip", tlsH.PublicIP)
+		g.GET("/tls-config/check-dns", tlsH.CheckDNS)
 
 		// Dashboard
 		g.GET("/dashboard/stats", dashboardH.Stats)
