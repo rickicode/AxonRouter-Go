@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/sync/singleflight"
 )
@@ -50,13 +51,18 @@ func (c *AuthCache) Get(key string) *authResult {
 	if !ok {
 		return nil
 	}
-	if time.Since(r.cachedAt) > c.ttl {
-		c.mu.Lock()
-		delete(c.entries, key)
-		c.mu.Unlock()
-		return nil
+	if time.Since(r.cachedAt) <= c.ttl {
+		return r
 	}
-	return r
+	// Recheck expiry under the write lock to avoid deleting an entry that was
+	// refreshed between the RUnlock and Lock (TOCTOU).
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if r, ok := c.entries[key]; ok && time.Since(r.cachedAt) <= c.ttl {
+		return r
+	}
+	delete(c.entries, key)
+	return nil
 }
 
 // Put stores a validation result.
@@ -91,6 +97,7 @@ func (c *AuthCache) InvalidateAll() {
 func validateKey(db *sql.DB, presentedKey string) (string, int, int64, bool) {
 	var count int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM api_keys WHERE is_active = 1`).Scan(&count); err != nil {
+		logging.Logger.Warn("auth cache db query error", "error", err)
 		return "", 0, 0, false
 	}
 	if count == 0 {
@@ -99,6 +106,7 @@ func validateKey(db *sql.DB, presentedKey string) (string, int, int64, bool) {
 
 	rows, err := db.Query(`SELECT id, key_hash, rate_limit_per_min, COALESCE(max_tokens, 0) FROM api_keys WHERE is_active = 1`)
 	if err != nil {
+		logging.Logger.Warn("auth cache db query error", "error", err)
 		return "", 0, 0, false
 	}
 	defer rows.Close()
@@ -132,6 +140,9 @@ func (c *AuthCache) Validate(db *sql.DB, presentedKey string) (string, int, int6
 	}
 	v, err, _ := c.group.Do(presentedKey, func() (interface{}, error) {
 		keyID, rateLimit, maxTokens, ok := validateKey(db, presentedKey)
+		if ok {
+			c.Put(presentedKey, keyID, rateLimit, maxTokens)
+		}
 		return []interface{}{keyID, rateLimit, maxTokens, ok}, nil
 	})
 	if err != nil {
