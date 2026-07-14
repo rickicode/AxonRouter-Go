@@ -152,12 +152,23 @@ func (h *Handler) getProviderModels(prefix string) []gin.H {
 		if !strings.HasPrefix(cleanID, prefix+"/") {
 			modelID = prefix + "/" + cleanID
 		}
-		entries = append(entries, gin.H{
+		var serviceKinds []string
+		for _, key := range cfg.keys {
+			if kinds := models.GetModelServiceKinds(key, id); len(kinds) > 0 {
+				serviceKinds = kinds
+				break
+			}
+		}
+		entry := gin.H{
 			"id":       modelID,
 			"object":   "model",
 			"created":  1700000000,
 			"owned_by": cfg.ownedBy,
-		})
+		}
+		if len(serviceKinds) > 0 {
+			entry["service_kinds"] = serviceKinds
+		}
+		entries = append(entries, entry)
 	}
 	return entries
 }
