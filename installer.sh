@@ -141,9 +141,9 @@ WantedBy=multi-user.target
 EOF
 
   systemctl daemon-reload
-  systemctl enable axonrouter
+  systemctl enable --now axonrouter
   info "Created /etc/systemd/system/axonrouter.service"
-  info "Start the service with: systemctl start axonrouter"
+  info "Service is running. Check status with: systemctl status axonrouter"
 }
 
 # ---- install systemd service on Linux ---------------------------------------
@@ -152,10 +152,37 @@ if [[ "$INSTALL_SERVICE" == true ]]; then
   exit 0
 fi
 
-# ---- verify on PATH ---------------------------------------------------------
+# ---- manage PATH ------------------------------------------------------------
+update_shell_path() {
+  local dir="$1"
+  local rc=""
+
+  case "$(basename "${SHELL:-}")" in
+    bash) rc="${HOME}/.bashrc" ;;
+    zsh)  rc="${HOME}/.zshrc" ;;
+  esac
+
+  if [[ -z "$rc" ]]; then
+    echo "note: ${dir} is not on your PATH. Add it manually:"
+    echo " export PATH=\"${dir}:\$PATH\""
+    return
+  fi
+
+  mkdir -p "$(dirname "$rc")"
+  if [[ -f "$rc" ]] && grep -qF "export PATH=\"${dir}:\$PATH\"" "$rc" 2>/dev/null; then
+    info "PATH entry for ${dir} already exists in ${rc}"
+  else
+    printf '\n# Added by AxonRouter installer\nexport PATH="%s:$PATH"\n' "$dir" >> "$rc"
+    info "Added ${dir} to PATH in ${rc}"
+  fi
+
+  echo "To use it in this terminal, run:"
+  echo "  source ${rc}"
+  echo "Or open a new shell."
+}
+
 if command -v "$TARGET" >/dev/null 2>&1 || [[ ":$PATH:" == *":${INSTALL_DIR}:"* ]]; then
   info "Done. Run it with: ${TARGET}"
 else
-  echo "note: ${INSTALL_DIR} is not on your PATH. Add it with:"
-  echo " export PATH=\"${INSTALL_DIR}:\$PATH\""
+  update_shell_path "$INSTALL_DIR"
 fi
