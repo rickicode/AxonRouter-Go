@@ -119,7 +119,9 @@ export interface RequestLog {
   reasoning_tokens: number;
 	cached_tokens: number;
 	tokens_estimated?: boolean;
-	latency_ms: number;
+  latency_ms: number;
+  proxy_pool_id?: string;
+  proxy_pool_name?: string;
   status_code: number;
   error_message: string;
   error_category?: string;
