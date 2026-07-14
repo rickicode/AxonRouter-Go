@@ -10,12 +10,12 @@ import (
 const defaultCertCache = "certs"
 
 type HTTPSConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	Domain    string `yaml:"domain"`
-	Email     string `yaml:"email"`
-	AcceptTOS bool   `yaml:"acceptTOS"`
-	Staging   bool   `yaml:"staging"`
-	CertCache string `yaml:"certCache"`
+	Enabled   bool   `yaml:"enabled" json:"enabled"`
+	Domain    string `yaml:"domain" json:"domain"`
+	Email     string `yaml:"email" json:"email"`
+	AcceptTOS bool   `yaml:"acceptTOS" json:"accept_tos"`
+	Staging   bool   `yaml:"staging" json:"staging"`
+	CertCache string `yaml:"certCache" json:"cert_cache"`
 }
 
 func (c HTTPSConfig) IsValid() (bool, string) {
@@ -35,7 +35,7 @@ func (c HTTPSConfig) IsValid() (bool, string) {
 }
 
 func LoadHTTPSConfig(dataDir string) (*HTTPSConfig, error) {
-	path := filepath.Join(dataDir, "https.yaml")
+	path := filepath.Join(dataDir, "https.yml")
 	cfg := &HTTPSConfig{CertCache: defaultCertCache}
 
 	data, err := os.ReadFile(path)
@@ -60,7 +60,7 @@ func SaveHTTPSConfig(dataDir string, cfg *HTTPSConfig) error {
 		return err
 	}
 
-	path := filepath.Join(dataDir, "https.yaml")
+	path := filepath.Join(dataDir, "https.yml")
 	save := *cfg
 	if save.CertCache == "" {
 		save.CertCache = defaultCertCache

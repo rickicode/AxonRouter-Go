@@ -104,8 +104,8 @@ func TestTLS_Put_SaveAndRoundTrip(t *testing.T) {
 		t.Errorf("certDir = %v, want %v", data["certDir"], wantCertDir)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, "https.yaml")); err != nil {
-		t.Errorf("expected https.yaml to exist: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, "https.yml")); err != nil {
+		t.Errorf("expected https.yml to exist: %v", err)
 	}
 }
 

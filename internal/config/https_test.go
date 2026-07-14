@@ -85,7 +85,7 @@ func TestSaveAndLoadHTTPSConfig(t *testing.T) {
 		t.Fatalf("loaded config does not match saved config: got %+v, want %+v", loaded, cfg)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, "https.yaml")); err != nil {
-		t.Fatalf("expected https.yaml to exist: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, "https.yml")); err != nil {
+		t.Fatalf("expected https.yml to exist: %v", err)
 	}
 }
