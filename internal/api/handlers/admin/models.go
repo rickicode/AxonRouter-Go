@@ -519,20 +519,14 @@ func staticModels(providerID string) []string {
 // sanitizer can prepend @cf/ exactly once. Prefer an LLM model for CF so the
 // default test body is appropriate for chat completions.
 func defaultTestModel(providerID string) string {
-	ids := staticModels(providerID)
-	if len(ids) > 0 {
-		id := ids[0]
-		if providerID == "cf" {
-			for _, candidate := range ids {
-				if strings.HasPrefix(candidate, "cf/") && models.HasServiceKind("cf", strings.TrimPrefix(candidate, "cf/"), "llm") {
-					id = candidate
-					break
-				}
-			}
-			id = strings.TrimPrefix(id, "cf/")
-		}
-		return id
-	}
+  ids := staticModels(providerID)
+  if len(ids) > 0 {
+    if providerID == "cf" {
+      // Test only an LLM model; CF image/embedding endpoints need different payloads.
+      return "qwen/qwq-32b"
+    }
+    return ids[0]
+  }
 	switch providerID {
 	case "openai":
 		return "gpt-4o"
