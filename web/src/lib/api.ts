@@ -785,7 +785,7 @@ export interface ProxyPool {
 export interface ProxyGroup {
   id: string;
   name: string;
-  mode: string; // roundrobin, sticky
+  mode: 'roundrobin' | 'sticky' | 'random';
   stickyLimit: number;
   strictProxy: boolean;
   proxyPoolIds: string[];
@@ -863,6 +863,21 @@ export const proxyPoolsApi = {
       results: unknown[];
       skipped: boolean;
     }>("/proxy-pools/health-check", { method: "POST" }),
+  listAll: async (perPage = 100) => {
+    const out: ProxyPool[] = [];
+    let page = 1;
+    let totalPages = 1;
+    do {
+      const res = await proxyPoolsApi.list({
+        page: String(page),
+        per_page: String(perPage),
+      });
+      out.push(...(res.data ?? []));
+      totalPages = res.pagination?.total_pages ?? 1;
+      page++;
+    } while (page <= totalPages);
+    return out;
+  },
 };
 
 // Proxy Group API
