@@ -112,20 +112,12 @@ info "Installed to ${INSTALLED}"
 
 # ---- verify on PATH ---------------------------------------------------------
 install_systemd() {
-  local svc_user="axonrouter"
-  local data_dir="/var/lib/axonrouter"
-
-  if ! id -u "$svc_user" >/dev/null 2>&1; then
-    local useradd_cmd=""
-    for c in useradd /usr/sbin/useradd /sbin/useradd /usr/local/sbin/useradd; do
-      if command -v "$c" >/dev/null 2>&1; then useradd_cmd="$c"; break; fi
-    done
-    [[ -n "$useradd_cmd" ]] || err "useradd not found (looked in PATH, /usr/sbin, /sbin, /usr/local/sbin)"
-    "$useradd_cmd" --system --home "$data_dir" --create-home "$svc_user" || err "failed to create ${svc_user} user"
-  fi
-
-  mkdir -p "$data_dir"
-  chown -R "${svc_user}:${svc_user}" "$data_dir"
+  # Run the service as the user who invoked this script. When called via sudo,
+  # prefer the original user so data stays in their home directory.
+  local svc_user="${SUDO_USER:-${DOAS_USER:-${USER:-root}}}"
+  local home_dir
+  home_dir="$(getent passwd "$svc_user" | cut -d: -f6)"
+  [[ -n "$home_dir" ]] || home_dir="/root"
 
   cat > /etc/systemd/system/axonrouter.service <<EOF
 [Unit]
@@ -135,8 +127,8 @@ After=network.target
 [Service]
 Type=simple
 User=${svc_user}
-  WorkingDirectory=${data_dir}
-  ExecStart=${INSTALLED}
+WorkingDirectory=${home_dir}
+ExecStart=${INSTALLED}
 Restart=always
 RestartSec=5
 
@@ -147,7 +139,8 @@ EOF
   systemctl daemon-reload
   systemctl enable --now axonrouter
   info "Created /etc/systemd/system/axonrouter.service"
-  info "Service is running. Check status with: systemctl status axonrouter"
+  info "Service is running as user '${svc_user}'"
+  info "Check status with: systemctl status axonrouter"
 }
 
 # ---- install systemd service on Linux ---------------------------------------

@@ -93,15 +93,6 @@ func runSystemctl(args ...string) error {
 	return cmd.Run()
 }
 
-func findUseradd() string {
-	for _, p := range []string{"useradd", "/usr/sbin/useradd", "/sbin/useradd", "/usr/local/sbin/useradd"} {
-		if _, err := exec.LookPath(p); err == nil {
-			return p
-		}
-	}
-	return ""
-}
-
 func installSystemdService() {
 	if runtime.GOOS != "linux" {
 		log.Fatalf("--startup install is only supported on Linux")
@@ -116,34 +107,29 @@ func installSystemdService() {
 		log.Fatalf("Failed to resolve executable path: %v", err)
 	}
 
-	const svcUser = "axonrouter"
-	const dataDir = "/var/lib/axonrouter"
-
-	dropErr := func(out []byte, err error) {
-		if err != nil {
-			fmt.Fprint(os.Stderr, string(out))
-			log.Fatalf("Failed to install service: %v", err)
-		}
+	// Run the service as the user who invoked the command. When called via sudo,
+	// prefer the original user so data stays in their home directory.
+	svcUser := os.Getenv("SUDO_USER")
+	if svcUser == "" {
+		svcUser = os.Getenv("DOAS_USER")
+	}
+	if svcUser == "" {
+		svcUser = os.Getenv("USER")
+	}
+	if svcUser == "" {
+		svcUser = "root"
 	}
 
-	if out, err := exec.Command("id", "-u", svcUser).CombinedOutput(); err != nil {
-		if len(out) == 0 || !strings.Contains(string(out), "no such user") {
-			dropErr(out, err)
-		}
-		useraddPath := findUseradd()
-		if useraddPath == "" {
-			log.Fatalf("Failed to install service: useradd not found (looked in PATH, /usr/sbin, /sbin, /usr/local/sbin)")
-		}
-		if out, err = exec.Command(useraddPath, "--system", "--home", dataDir, "--create-home", svcUser).CombinedOutput(); err != nil {
-			dropErr(out, err)
+	// Resolve the target user's home directory; systemd service needs it as WorkingDirectory.
+	homeDir := ""
+	if out, err := exec.Command("getent", "passwd", svcUser).Output(); err == nil {
+		parts := strings.Split(strings.TrimSpace(string(out)), ":")
+		if len(parts) >= 6 {
+			homeDir = parts[5]
 		}
 	}
-
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		log.Fatalf("Failed to create data dir: %v", err)
-	}
-	if out, err := exec.Command("chown", "-R", fmt.Sprintf("%s:%s", svcUser, svcUser), dataDir).CombinedOutput(); err != nil {
-		dropErr(out, err)
+	if homeDir == "" {
+		homeDir = "/root"
 	}
 
 	unit := fmt.Sprintf(`[Unit]
@@ -160,16 +146,24 @@ RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-`, svcUser, dataDir, execPath)
+`, svcUser, homeDir, execPath)
 
 	if err := os.WriteFile("/etc/systemd/system/"+serviceUnit, []byte(unit), 0644); err != nil {
 		log.Fatalf("Failed to write service unit: %v", err)
 	}
 
+	dropErr := func(out []byte, err error) {
+		if err != nil {
+			fmt.Fprint(os.Stderr, string(out))
+			log.Fatalf("Failed to install service: %v", err)
+		}
+	}
+
 	dropErr(exec.Command("systemctl", "daemon-reload").CombinedOutput())
 	dropErr(exec.Command("systemctl", "enable", "--now", "axonrouter").CombinedOutput())
 
-	fmt.Println("Service installed and started.")
+	fmt.Printf("Service installed and started as user '%s'.\n", svcUser)
+	fmt.Printf("Data directory: %s/axonrouter\n", homeDir)
 	fmt.Println("Check status: axonrouter --startup status")
 }
 
