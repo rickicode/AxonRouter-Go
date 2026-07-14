@@ -97,11 +97,12 @@
 			'Provider',
 			'Account',
 			'Model',
-			'Status',
-			'Latency',
-			'Input',
-			'Output',
-			'Cached',
+    'Status',
+    'Latency',
+    'Proxy',
+    'Input',
+    'Output',
+    'Cached',
 			'Cost',
 			'Error',
 		];
@@ -110,9 +111,10 @@
 row.provider_name || providerMeta(row.provider_type_id).displayName,
 			row.connection_name || row.connection_id || '',
 			row.model_id,
-			row.status_code?.toString() || '',
-			`${row.latency_ms}ms`,
-			row.input_tokens.toString(),
+      row.status_code?.toString() || '',
+      `${row.latency_ms}ms`,
+      row.proxy_pool_id ? row.proxy_pool_name || row.proxy_pool_id : 'direct',
+      row.input_tokens.toString(),
 			row.output_tokens.toString(),
 			row.cached_tokens.toString(),
 			`$${row.cost_usd.toFixed(4)}`,
@@ -211,9 +213,9 @@ row.provider_name || providerMeta(row.provider_type_id).displayName,
 		{ key: 'provider_name', label: 'Provider' },
 		{ key: 'connection_name', label: 'Account' },
 		{ key: 'model_id', label: 'Model' },
-		{ key: 'status_code', label: 'Status' },
-		{ key: 'latency_ms', label: 'Latency' },
-		{ key: 'tokens', label: 'Tokens' },
+  { key: 'status_code', label: 'Status' },
+  { key: 'latency_ms', label: 'Latency / Proxy' },
+  { key: 'tokens', label: 'Tokens' },
 		{ key: 'cost_usd', label: 'Cost' },
 		{ key: 'error_message', label: 'Error' },
 	];
@@ -409,9 +411,9 @@ row.provider_name || providerMeta(row.provider_type_id).displayName,
 											? 'min-w-[180px]'
 											: ''} {column.key === 'provider_name' ? 'min-w-[140px]' : ''} {column.key === 'connection_name'
 											? 'min-w-[120px]'
-											: ''} {column.key === 'model_id' ? 'min-w-[180px]' : ''} {column.key === 'tokens'
-											? 'text-right min-w-[120px]'
-											: ''} {column.key === 'cost_usd' ? 'text-right min-w-[80px]' : ''} {column.key ===
+              : ''} {column.key === 'model_id' ? 'min-w-[180px]' : ''} {column.key === 'tokens'
+              ? 'text-right min-w-[120px]'
+              : ''} {column.key === 'cost_usd' ? 'text-right min-w-[80px]' : ''} {column.key ===
 										'error_message'
 											? 'min-w-[160px]'
 											: ''}"
@@ -459,8 +461,13 @@ row.provider_name || providerMeta(row.provider_type_id).displayName,
 											{/if}
 										</div>
 									</td>
-									<td class="py-3 px-4 text-code text-muted-foreground">{formatLatency(row.latency_ms)}</td>
-									<td class="py-3 px-4 text-code text-right whitespace-nowrap">
+          <td class="py-3 px-4">
+            <div class="flex flex-col">
+              <span class="text-code text-muted-foreground">{formatLatency(row.latency_ms)}</span>
+              <span class="text-caption-mono text-muted-foreground">{row.proxy_pool_id ? row.proxy_pool_name || row.proxy_pool_id : 'direct'}</span>
+            </div>
+          </td>
+          <td class="py-3 px-4 text-code text-right whitespace-nowrap">
 										<span class="text-muted-foreground">{formatTokens(row.input_tokens)}</span>
 										<span class="text-muted-foreground/60">/</span>
 										<span class="text-foreground">{formatTokens(row.output_tokens)}</span>
