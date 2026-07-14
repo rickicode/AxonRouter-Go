@@ -106,7 +106,7 @@ The server starts on port **3777**. Dashboard: http://localhost:3777
 One line. No clone, no build, no manual download:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/main/installer.sh | bash
+curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/master/installer.sh | bash
 ```
 
 The installer auto-detects your OS and architecture, picks the matching release asset, and installs `axonrouter` into the first writable directory it finds on this list:
@@ -121,7 +121,7 @@ The installer auto-detects your OS and architecture, picks the matching release 
 | `./installer.sh` | Latest release, auto-detected OS/arch. |
 | `./installer.sh --version v0.3.3` | Pin a specific release tag. |
 | `./installer.sh --to /usr/local/bin` | Install to a custom directory. |
-| `curl -fsSL ... | sudo bash -s -- --service` | Install binary + create a systemd service (Linux only). |
+| `curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/master/installer.sh | sudo bash -s -- --service` | Install binary + create a systemd service (Linux only). |
 
 #### Supported targets
 

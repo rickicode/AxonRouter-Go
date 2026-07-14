@@ -6,7 +6,7 @@
 # into a directory on your PATH.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/main/installer.sh | bash
+# curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/master/installer.sh | bash
 # ./installer.sh # latest release, auto OS/arch detection
 # ./installer.sh --version v1.2.3 # specific tag
 # ./installer.sh --to /usr/local/bin
