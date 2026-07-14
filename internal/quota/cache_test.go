@@ -2,7 +2,9 @@ package quota
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	_ "modernc.org/sqlite"
@@ -59,6 +61,38 @@ func TestUpdateConnectionQuotaStatus_DisablesOnAuthError(t *testing.T) {
 	}
 	if store.Get(connID).GetStatus() != connstate.Status("disabled") {
 		t.Errorf("expected connstate disabled, got %s", store.Get(connID).GetStatus())
+	}
+}
+
+func TestNextProviderResets(t *testing.T) {
+	db := newCacheTestDB(t)
+	defer db.Close()
+
+	// cx has two reset windows; the earliest future one should win.
+	cxQuotas := `[{"name":"5h","used":1,"total":10,"remaining_pct":90,"reset_at":"2026-07-15T00:00:00Z"},{"name":"7d","used":1,"total":100,"remaining_pct":99,"reset_at":"2026-07-21T00:00:00Z"}]`
+	// ag only has a past reset.
+	agQuotas := `[{"name":"daily","used":5,"total":10,"remaining_pct":50,"reset_at":"2026-07-01T00:00:00Z"}]`
+
+	now := time.Now().Unix()
+	db.Exec(`INSERT INTO quota_cache (id, connection_id, provider_type_id, connection_name, plan, quotas, status, fetched_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"cx-1", "conn-cx", "cx", "Codex 1", "plus", cxQuotas, "ok", now, now)
+	db.Exec(`INSERT INTO quota_cache (id, connection_id, provider_type_id, connection_name, plan, quotas, status, fetched_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"ag-1", "conn-ag", "ag", "AG 1", "pro", agQuotas, "ok", now, now)
+
+	resets, err := NextProviderResets(db)
+	if err != nil {
+		t.Fatalf("NextProviderResets: %v", err)
+	}
+
+	if _, ok := resets["ag"]; ok {
+		t.Errorf("expected no future reset for ag, got %v", resets["ag"])
+	}
+	cxReset, ok := resets["cx"]
+	if !ok {
+		t.Fatalf("expected future reset for cx")
+	}
+	if !strings.Contains(cxReset, "2026-07-15T00:00:00") {
+		t.Errorf("expected earliest future reset, got %s", cxReset)
 	}
 }
 

@@ -2,7 +2,7 @@
 
 import { writable, derived, get } from 'svelte/store';
 import { providersApi, connectionsApi, combosApi, logsApi, dashboardApi, quotaApi, fetchApi } from './api';
-import type { Provider, Connection, Combo, RequestLog, ActiveRequest, QuotaCacheEntry, QuotaCacheResponse, QuotaProviderSummary, ConnectionQuota, ProviderModelEntry } from './api';
+import type { Provider, Connection, Combo, RequestLog, ActiveRequest, QuotaCacheEntry, QuotaCacheResponse, QuotaProviderSummary, QuotaSummaryResponse, ConnectionQuota, ProviderModelEntry } from './api';
 import { loadProviderAliases, getProviderMeta } from './provider-catalog';
 import { toast } from 'svelte-sonner';
 function friendlyError(err: unknown, fallback: string): string {
@@ -441,6 +441,8 @@ export const quotaTotalPages = writable(1);
 export const quotaLoading = writable(false);
 export const quotaError = writable<string | null>(null);
 export const quotaSummary = writable<QuotaProviderSummary[]>([]);
+export const quotaSavings = writable<number>(0);
+export const quotaNextReset = writable<string | null>(null);
 
 export async function loadQuota(params?: { provider?: string; search?: string; status?: string; page?: number; per_page?: number }) {
   quotaLoading.set(true);
@@ -461,8 +463,10 @@ export async function loadQuota(params?: { provider?: string; search?: string; s
 
 export async function loadQuotaSummary() {
   try {
-    const data = await quotaApi.summary();
+    const data: QuotaSummaryResponse = await quotaApi.summary();
     quotaSummary.set(data.providers || []);
+    quotaSavings.set(data.savings_usd || 0);
+    quotaNextReset.set(data.next_reset || null);
   } catch {
     // silent — summary is optional enhancement
   }

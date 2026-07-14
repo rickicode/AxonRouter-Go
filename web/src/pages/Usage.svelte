@@ -7,7 +7,7 @@
 	import { Badge } from '$lib/components/ui/badge';
 	import ProviderOctopus from '$lib/components/ProviderOctopus.svelte';
 	import { usageApi, apiKeysApi, providersApi, type UsageData, type UsageBreakdown, type UsageTimeBucket, type APIKeyItem, type Provider } from '$lib/api';
-	import { formatTokens, formatCost, formatCount, activeRequests, loadActiveRequests } from '$lib/stores';
+	import { formatTokens, formatCost, formatCount, activeRequests, loadActiveRequests, quotaSavings, quotaNextReset, loadQuotaSummary } from '$lib/stores';
 	import { toast } from 'svelte-sonner';
 
 	import { logout } from '$lib/auth';
@@ -84,10 +84,21 @@ let totalStreams = $derived(($activeRequests || []).length);
 		return new Date(ts * 1000).toLocaleString('en-GB', { hour12: false });
 	}
 
-	function fmtDate(ts?: string): string {
-		if (!ts) return '—';
-		return new Date(ts + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
-	}
+function fmtDate(ts?: string): string {
+  if (!ts) return '—';
+  return new Date(ts + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+}
+
+function fmtReset(iso?: string): string {
+  if (!iso) return '—';
+  const diffMs = new Date(iso).getTime() - Date.now();
+  if (diffMs <= 0) return 'soon';
+  const h = Math.floor(diffMs / 3_600_000);
+  const m = Math.floor((diffMs % 3_600_000) / 60_000);
+  if (h > 24) return `${Math.floor(h / 24)}d`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
 
 	async function load(silent = false) {
 		if (!from || !to) return;
@@ -152,11 +163,12 @@ function toggleRealtime() {
 }
 
 async function initPage() {
-		await Promise.all([
-			apiKeysApi.list().then((r) => { apiKeys = r.data; }).catch(() => {}),
-			providersApi.list().then((r) => { providers = r.data; }).catch(() => {}),
-		]);
-		setPreset('day');
+  await Promise.all([
+    apiKeysApi.list().then((r) => { apiKeys = r.data; }).catch(() => {}),
+    providersApi.list().then((r) => { providers = r.data; }).catch(() => {}),
+    loadQuotaSummary(),
+  ]);
+  setPreset('day');
 }
 
 onMount(() => {
@@ -435,13 +447,34 @@ return `${lbl}: ${v.toLocaleString()}`;
 					</p>
 				</CardContent>
 			</Card>
-		</div>
+  </div>
 
-		<Card class="shadow-card">
- <CardHeader class="pb-3 border-b border-border flex flex-row items-center justify-between space-y-0">
- <div class="flex items-center gap-2">
- <ActivityIcon class="size-4 text-muted-foreground" />
- <CardTitle class="text-body-md-strong">Provider Network</CardTitle>
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+    <Card class="shadow-card">
+      <CardContent class="p-3 flex items-center gap-3">
+        <DollarSignIcon class="size-5 text-emerald-400" />
+        <div>
+          <p class="text-caption text-muted-foreground uppercase">Saved this month</p>
+          <p class="text-display-md">{formatCost($quotaSavings)}</p>
+        </div>
+      </CardContent>
+    </Card>
+    <Card class="shadow-card">
+      <CardContent class="p-3 flex items-center gap-3">
+        <TimerIcon class="size-5 text-amber-400" />
+        <div>
+          <p class="text-caption text-muted-foreground uppercase">Next quota reset</p>
+          <p class="text-display-md">{fmtReset($quotaNextReset ?? undefined)}</p>
+        </div>
+      </CardContent>
+    </Card>
+  </div>
+
+  <Card class="shadow-card">
+    <CardHeader class="pb-3 border-b border-border flex flex-row items-center justify-between space-y-0">
+      <div class="flex items-center gap-2">
+        <ActivityIcon class="size-4 text-muted-foreground" />
+        <CardTitle class="text-body-md-strong">Provider Network</CardTitle>
  </div>
  <span class="text-caption-mono text-muted-foreground">Real-time stream status</span>
  </CardHeader>

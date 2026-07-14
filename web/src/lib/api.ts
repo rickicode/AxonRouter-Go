@@ -754,6 +754,14 @@ export interface QuotaProviderSummary {
   display_name: string;
   total: number;
   statuses: Record<string, number>;
+  next_reset?: string;
+  savings_usd?: number;
+}
+
+export interface QuotaSummaryResponse {
+  providers: QuotaProviderSummary[];
+  savings_usd: number;
+  next_reset?: string;
 }
 
 // Legacy type for backward compat
@@ -784,8 +792,7 @@ export const quotaApi = {
     const q = qs.toString();
     return fetchApi<QuotaCacheResponse>(`/quota${q ? "?" + q : ""}`);
   },
-  summary: () =>
-    fetchApi<{ providers: QuotaProviderSummary[] }>("/quota/summary"),
+  summary: () => fetchApi<QuotaSummaryResponse>("/quota/summary"),
   refresh: (connId: string) =>
     fetchApi<ConnectionQuota>(`/quota/${connId}/refresh`, { method: "POST" }),
 };

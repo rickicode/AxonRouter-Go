@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'url';
 
 export default defineConfig({
+  logLevel: 'error',
   plugins: [tailwindcss(), svelte()],
   publicDir: 'static',
   resolve: {

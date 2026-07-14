@@ -4,9 +4,11 @@ import (
 	"database/sql"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
+	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
 
 // QuotaHandler handles quota-related API endpoints.
@@ -51,11 +53,16 @@ func (h *QuotaHandler) Summary(c *gin.Context) {
 	defer rows.Close()
 
 	type providerSummary struct {
-		ProviderID  string         `json:"provider_id"`
-		DisplayName string         `json:"display_name"`
-		Total       int            `json:"total"`
-		Statuses    map[string]int `json:"statuses"`
+		ProviderID string `json:"provider_id"`
+		DisplayName string `json:"display_name"`
+		Total int `json:"total"`
+		Statuses map[string]int `json:"statuses"`
+		NextReset string `json:"next_reset,omitempty"`
+		SavingsUSD float64 `json:"savings_usd"`
 	}
+
+	resets, _ := quota.NextProviderResets(h.db)
+	savingsByProvider, totalSavings, _ := usage.SavingsThisMonth(h.db)
 
 	providerMap := make(map[string]*providerSummary)
 	for rows.Next() {
@@ -81,10 +88,32 @@ func (h *QuotaHandler) Summary(c *gin.Context) {
 
 	var summaries []providerSummary
 	for _, s := range providerMap {
+		s.NextReset = resets[s.ProviderID]
+		s.SavingsUSD = savingsByProvider[s.ProviderID]
 		summaries = append(summaries, *s)
 	}
 
-	c.JSON(http.StatusOK, gin.H{"providers": summaries})
+	c.JSON(http.StatusOK, gin.H{
+		"providers":    summaries,
+		"savings_usd":  totalSavings,
+		"next_reset":   earliestReset(resets),
+	})
+}
+
+func earliestReset(resets map[string]string) string {
+	var earliest time.Time
+	var earliestStr string
+	for _, s := range resets {
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			continue
+		}
+		if earliestStr == "" || t.Before(earliest) {
+			earliest = t
+			earliestStr = s
+		}
+	}
+	return earliestStr
 }
 
 // Refresh fetches fresh quota for a single connection and saves to cache.
