@@ -377,13 +377,20 @@ func (e *OpenAIExecutor) Embeddings(ctx context.Context, req *Request) (*Respons
 		return nil, err
 	}
 
+	body := req.Body
+	// Cloudflare Workers AI's /v1/embeddings requires the full @cf/ model path.
+	if req.Provider == "cf" {
+		model := normalizeCFModelName(gjson.GetBytes(body, "model").String())
+		body = JSONSet(body, "model", model)
+	}
+
 	headers := map[string]string{
 		"Content-Type": "application/json",
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
 	openRouterHeaders(headers, req.Provider)
 
-	resp, err := e.DoRequest(ctx, "POST", url, headers, req.Body)
+	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
 	if err != nil {
 		return nil, err
 	}

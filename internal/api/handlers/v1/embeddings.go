@@ -2,6 +2,7 @@ package v1
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -109,6 +110,16 @@ func (h *Handler) Embeddings(c *gin.Context) {
 	resp, _, err := h.executeWithRetry(proxyCtx, executor.NewEmbeddingsAdapter(embedExec), req, conn, provider, modelName)
 	if err != nil {
 		if !h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, false) {
+			// writeUpstreamClientError returns false for rate-limit (429) so the chat
+			// path can failover; embeddings has no failover, so surface the upstream
+			// body directly for a clearer client error.
+			var upErr *executor.UpstreamError
+			if errors.As(err, &upErr) && len(upErr.Body) > 0 {
+				c.Header("Content-Type", "application/json")
+				c.Status(upErr.StatusCode)
+				c.Writer.Write(upErr.Body)
+				return
+			}
 			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": "internal server error", "type": "server_error"}})
 		}
 		return
