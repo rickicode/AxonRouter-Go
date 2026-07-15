@@ -48,12 +48,14 @@ func getCopilotToken(psd map[string]any) (string, int64) {
 
 // refreshCopilotTokenIfNeeded returns a valid Copilot token, refreshing it via
 // GitHub's internal endpoint when the cached token is missing or near expiry.
-// If a refresh happens, the DB provider_specific_data is updated so the
-// dashboard token timer and the executor stay in sync.
+// It keeps both provider_specific_data and oauth_expires_at in sync so the
+// dashboard token timer never looks expired while the connection is usable.
 func refreshCopilotTokenIfNeeded(db *sql.DB, connectionID, accessToken string, psd map[string]any) (map[string]any, string, error) {
 	tok, exp := getCopilotToken(psd)
 	now := time.Now().Unix()
 	if tok != "" && exp > now+300 {
+		// Cached token is still valid; make sure oauth_expires_at reflects it.
+		persistCopilotTokenExpiry(db, connectionID, exp)
 		return psd, tok, nil
 	}
 
@@ -82,9 +84,26 @@ func refreshCopilotTokenIfNeeded(db *sql.DB, connectionID, accessToken string, p
 				log.Printf("quota: failed to persist refreshed Copilot token for %s: %v", connectionID, err)
 			}
 		}
+		persistCopilotTokenExpiry(db, connectionID, newExp)
 	}
 
 	return psd, newTok, nil
+}
+
+// persistCopilotTokenExpiry updates oauth_expires_at to the Copilot token expiry.
+// This makes the dashboard token timer accurate even though GitHub device-code
+// OAuth itself does not return an expiry for the access token.
+func persistCopilotTokenExpiry(db *sql.DB, connectionID string, exp int64) {
+	if db == nil || connectionID == "" || exp == 0 {
+		return
+	}
+	if _, err := db.Exec(`
+		UPDATE connections
+		SET oauth_expires_at = ?, updated_at = ?
+		WHERE id = ?
+	`, exp, time.Now().Unix(), connectionID); err != nil {
+		log.Printf("quota: failed to update Copilot token expiry for %s: %v", connectionID, err)
+	}
 }
 
 // fetchGitHubCopilotToken exchanges a GitHub OAuth access token for a short-lived Copilot token.
@@ -157,24 +176,15 @@ func fetchGitHubCopilotToken(accessToken string) (string, int64, string, error) 
 	return r.Token, r.ExpiresAt, r.Endpoints.API, nil
 }
 
-// isCopilotAuthError reports whether an upstream error indicates the cached
-// Copilot token is invalid and should be refreshed.
-func isCopilotAuthError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "401") || strings.Contains(msg, "bad credentials") || strings.Contains(msg, "unauthorized")
-}
-
 // fetchCopilotQuota fetches Copilot usage from GitHub's internal /user endpoint.
-// It expects a valid Copilot token (obtained via refreshCopilotTokenIfNeeded).
-func fetchCopilotQuota(copilotToken string) ([]QuotaItem, string, error) {
+// It uses the GitHub OAuth access token, not the short-lived Copilot token.
+// Matches OmniRoute open-sse/services/usage.ts:643.
+func fetchCopilotQuota(accessToken string) ([]QuotaItem, string, error) {
 	req, err := http.NewRequest(http.MethodGet, githubCopilotUserURL, nil)
 	if err != nil {
 		return nil, "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+copilotToken)
+	req.Header.Set("Authorization", "token "+accessToken)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-GitHub-Api-Version", githubCopilotAPIVersion)
 	req.Header.Set("User-Agent", githubCopilotUserAgent)
@@ -257,11 +267,13 @@ func parseCopilotQuotas(data map[string]any) ([]QuotaItem, string, error) {
 			case int64:
 				total = float64(n)
 			}
-			used := 0.0
-			if limited != nil {
-				used = getNumberField(limited, name)
-			}
-			remaining := total - used
+		// limited_user_quotas[name] is the *remaining* count, not the used count.
+		// Matches OmniRoute open-sse/services/usage.ts:698-705.
+		remaining := 0.0
+		if limited != nil {
+			remaining = getNumberField(limited, name)
+		}
+		used := total - remaining
 			remainingPct := 0.0
 			if total > 0 {
 				remainingPct = (remaining / total) * 100

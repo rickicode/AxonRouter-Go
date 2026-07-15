@@ -349,24 +349,13 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 		case "kiro":
 			r.quotas, r.plan, r.err = fetchKiroQuota(token, psd)
 		case "copilot":
-			var copilotToken string
-			psd, copilotToken, r.err = refreshCopilotTokenIfNeeded(db, c.ID, token, psd)
-			if r.err == nil {
-				r.quotas, r.plan, r.err = fetchCopilotQuota(copilotToken)
-				// A cached Copilot token can be invalid before its expiry (e.g. token
-				// was revoked or belongs to a different session). Force a fresh token
-				// exchange via the GitHub OAuth token and retry once.
-				if r.err != nil && isCopilotAuthError(r.err) {
-					if psd == nil {
-						psd = map[string]any{}
-					}
-					psd["copilotToken"] = ""
-					psd["copilotTokenExpiresAt"] = "0"
-					psd, copilotToken, r.err = refreshCopilotTokenIfNeeded(db, c.ID, token, psd)
-					if r.err == nil {
-						r.quotas, r.plan, r.err = fetchCopilotQuota(copilotToken)
-					}
-				}
+			// The /user endpoint requires the GitHub OAuth access token, not the
+			// short-lived Copilot token. See OmniRoute open-sse/services/usage.ts:643.
+			r.quotas, r.plan, r.err = fetchCopilotQuota(token)
+			// Refresh the short-lived Copilot token in the background so the
+			// executor and dashboard expiry timer stay current.
+			if _, _, syncErr := refreshCopilotTokenIfNeeded(db, c.ID, token, psd); syncErr != nil {
+				log.Printf("quota: failed to sync Copilot token expiry for %s: %v", c.ID, syncErr)
 			}
 		default:
 			if _, known := knownProviders[providerID]; known {

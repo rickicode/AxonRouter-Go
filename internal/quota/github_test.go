@@ -109,11 +109,13 @@ func TestParseCopilotQuotas_FreeLimited(t *testing.T) {
 		return nil
 	}
 
+	// limited_user_quotas holds *remaining* counts; used = total - remaining.
+	// 100 total - 25 remaining = 75 used, 25% remaining.
 	chat := find("chat")
 	if chat == nil {
 		t.Fatal("missing chat quota")
 	}
-	if chat.Used != 25 || chat.Total != 100 || chat.RemainingPct != 75 {
-		t.Errorf("chat = %+v, want used=25 total=100 remainingPct=75", chat)
+	if chat.Used != 75 || chat.Total != 100 || chat.RemainingPct != 25 {
+		t.Errorf("chat = %+v, want used=75 total=100 remainingPct=25", chat)
 	}
 }

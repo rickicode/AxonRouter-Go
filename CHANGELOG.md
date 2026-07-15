@@ -17,7 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Provider detail model list now inherits `service_kinds` from the provider when a model has no per-model kind metadata. Fallback is restricted to single-kind providers so multi-modal providers (e.g., Cloudflare) are not blanket-tagged with every capability.
 - Provider cards on the /providers page now display their category badge (e.g., "OAuth", "API Key", "No Auth", "Service Account") so every provider has visible category metadata, matching the category badge shown on Provider Detail.
 - Quota scheduler now prunes stale `quota_cache` rows when a connection is no longer an active OAuth connection, so deleted/disabled Copilot attempts stop appearing as duplicate error cards.
-- Copilot quota fetcher now retries once and refreshes the short-lived Copilot token when GitHub returns `401 Bad credentials`, fixing cases where a cached token becomes invalid before its expiry.
+- Fixed GitHub Copilot quota fetch to call `/copilot_internal/user` with the GitHub OAuth access token (`Authorization: token …`), not the short-lived Copilot token — this was the root cause of `401 Bad credentials` and now matches OmniRoute.
+- Fixed free/limited Copilot quota parsing: `limited_user_quotas[name]` is the *remaining* count, not the used count (previously usage percentages were inverted).
 - Proactive OAuth token refresh now refreshes Copilot tokens even though GitHub device-code flow doesn't return a refresh token; the manual admin refresh endpoint also supports Copilot and persists the refreshed Copilot token to `provider_specific_data`.
 
 ### Added
