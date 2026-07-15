@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Vertex AI provider (`vertex/` prefix) using Google service-account JSON keys; signs a JWT locally, exchanges it for a Google access token, resolves `{projectId}`/`{location}` base_url placeholders, and proxies OpenAI-compatible `/chat/completions` to Vertex AI's OpenAI endpoint.
 - Quota reset countdown and estimated savings tracker: backend computes next per-provider reset from quota cache, estimates savings from request logs × model pricing, exposes `/api/admin/quota/summary`, and dashboard Quota/Usage pages render global countdown and savings badges.
 - OpenAI-compatible providers: added `glm`, `minimax`, `kimi`, `mistral`, `cerebras`, `together`, `fireworks`, `novita`, `lambda`, and `pollinations` prefixes with seeded base URLs, registry routing, catalog keys, and static models for GLM/MiniMax/Kimi/Mistral.
 
