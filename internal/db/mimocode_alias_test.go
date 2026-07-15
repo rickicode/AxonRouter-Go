@@ -2,6 +2,8 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	_ "modernc.org/sqlite"
 	"path/filepath"
 	"testing"
@@ -22,7 +24,7 @@ func TestMimocodeCanonicalMigration(t *testing.T) {
 	if _, err := d.Exec(`CREATE TABLE IF NOT EXISTS provider_types (id TEXT PRIMARY KEY, display_name TEXT NOT NULL, format TEXT NOT NULL, base_url TEXT NOT NULL, is_custom INTEGER DEFAULT 0, custom_headers TEXT, created_at INTEGER NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.Exec(`CREATE TABLE IF NOT EXISTS connections (id TEXT PRIMARY KEY, provider_type_id TEXT NOT NULL REFERENCES provider_types(id), name TEXT NOT NULL, auth_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'ready', is_active INTEGER DEFAULT 1, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`); err != nil {
+	if _, err := d.Exec(`CREATE TABLE IF NOT EXISTS connections (id TEXT PRIMARY KEY, provider_type_id TEXT NOT NULL REFERENCES provider_types(id), name TEXT NOT NULL, auth_type TEXT NOT NULL, provider_specific_data TEXT, status TEXT NOT NULL DEFAULT 'ready', is_active INTEGER DEFAULT 1, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.Exec(`INSERT INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('mimocode-free','MiMoCode Free Tier','openai','https://api.xiaomimimo.com/api/free-ai/openai',0)`); err != nil {
@@ -68,5 +70,26 @@ func TestMimocodeCanonicalMigration(t *testing.T) {
 	}
 	if pt != "mimocode" {
 		t.Errorf("conn-legacy provider_type_id = %q, want mimocode", pt)
+	}
+
+	var psdStr string
+	if err := d.QueryRow("SELECT provider_specific_data FROM connections WHERE id='mimocode-direct-default'").Scan(&psdStr); err != nil {
+		t.Fatalf("mimocode-direct-default missing after migration: %v", err)
+	}
+	var psd map[string]interface{}
+	if err := json.Unmarshal([]byte(psdStr), &psd); err != nil {
+		t.Fatalf("mimocode-direct-default provider_specific_data is invalid JSON: %v", err)
+	}
+	if psd["direct"] != "true" {
+		t.Errorf("provider_specific_data.direct = %v, want 'true'", psd["direct"])
+	}
+	if psd["accountId"] != "mimocode-default" {
+		t.Errorf("provider_specific_data.accountId = %v, want 'mimocode-default'", psd["accountId"])
+	}
+	if lbl, ok := psd["accountLabel"].(string); !ok || lbl == "" {
+		t.Errorf("provider_specific_data.accountLabel invalid: %v", psd["accountLabel"])
+	}
+	if fp, ok := psd["fingerprint"].(string); !ok || len(fp) != 64 {
+		t.Errorf("provider_specific_data.fingerprint length = %d, want 64", len(fmt.Sprint(psd["fingerprint"])))
 	}
 }
