@@ -21,9 +21,10 @@ import (
 func Run(port string, router *api.Router, database *sql.DB, httpsCfg *config.HTTPSConfig) error {
 	addr := fmt.Sprintf(":%s", port)
 	running := &atomic.Bool{}
+	stopped := &atomic.Bool{}
 
 	startServer := func() {
-		if running.Load() {
+		if stopped.Load() || running.Load() {
 			return
 		}
 		running.Store(true)
@@ -36,6 +37,7 @@ func Run(port string, router *api.Router, database *sql.DB, httpsCfg *config.HTT
 	}
 
 	stopServer := func() {
+		stopped.Store(true)
 		if !running.Load() {
 			return
 		}

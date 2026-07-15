@@ -28,14 +28,14 @@ func generateTestServiceAccount(t *testing.T, tokenURI string) string {
 	privateKeyPEM := string(pem.EncodeToMemory(block))
 
 	sa := map[string]any{
-		"type":          "service_account",
-		"project_id":    "test-project",
+		"type":           "service_account",
+		"project_id":     "test-project",
 		"private_key_id": "key-id",
-		"private_key":   privateKeyPEM,
-		"client_email":  "test@example.iam.gserviceaccount.com",
-		"client_id":     "123",
-		"auth_uri":      "https://accounts.google.com/o/oauth2/auth",
-		"token_uri":     tokenURI,
+		"private_key":    privateKeyPEM,
+		"client_email":   "test@example.iam.gserviceaccount.com",
+		"client_id":      "123",
+		"auth_uri":       "https://accounts.google.com/o/oauth2/auth",
+		"token_uri":      tokenURI,
 	}
 	b, _ := json.Marshal(sa)
 	return string(b)
@@ -210,6 +210,42 @@ func TestVertexExecutor_ErrorsWithoutServiceAccount(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error without service account")
+	}
+}
+
+func TestVertexExecutor_DefaultsExpiresInToOneHour(t *testing.T) {
+	auth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "test-access-token",
+			"expires_in":   0,
+			"token_type":   "Bearer",
+		})
+	}))
+	defer auth.Close()
+
+	authURL, _ := url.Parse(auth.URL)
+	rt := &vertexTestTransport{tokenHost: authURL.Host, apiHost: authURL.Host}
+	old := http.DefaultClient.Transport
+	http.DefaultClient.Transport = rt
+	defer func() { http.DefaultClient.Transport = old }()
+
+	exec := NewVertexExecutor(NewBaseExecutor())
+	exec.Client.Transport = rt
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwt, err := buildVertexJWT(key, "test@example.com", "https://oauth2.googleapis.com/token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, expiresIn, err := exchangeVertexJWT(context.Background(), "https://oauth2.googleapis.com/token", jwt)
+	if err != nil {
+		t.Fatalf("exchangeVertexJWT failed: %v", err)
+	}
+	if expiresIn != 3600 {
+		t.Errorf("expiresIn = %d, want 3600", expiresIn)
 	}
 }
 
