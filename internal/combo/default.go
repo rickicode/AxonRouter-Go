@@ -2,10 +2,31 @@ package combo
 
 import (
 	"database/sql"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 )
+
+// resolveDefaultConnection finds an active connection whose provider matches the
+// model prefix (e.g. "openai/gpt-4o" -> "openai"). Falls back to empty string so
+// the step is skipped if no matching connection is configured yet.
+func resolveDefaultConnection(database *sql.DB, modelID string) string {
+	idx := strings.IndexByte(modelID, '/')
+	if idx <= 0 {
+		return ""
+	}
+	prefix := modelID[:idx]
+	var connID string
+	database.QueryRow(`
+		SELECT c.id FROM connections c
+		JOIN provider_types pt ON c.provider_type_id = pt.id
+		WHERE pt.id = ? AND c.is_active = 1
+		ORDER BY c.created_at ASC
+		LIMIT 1
+	`, prefix).Scan(&connID)
+	return connID
+}
 
 // DefaultCombos returns the built-in combos that should exist on first run.
 func DefaultCombos() []DefaultComboDef {
@@ -128,12 +149,13 @@ func SeedDefaultCombos(database *sql.DB) error {
 		if err != nil {
 			continue
 		}
-		for _, step := range def.Steps {
-			database.Exec(`
-				INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at)
-				VALUES (?, ?, '', ?, ?, ?, ?)
-			`, uuid.New().String(), comboID, step.ModelID, step.Priority, step.Weight, now)
-		}
+	for _, step := range def.Steps {
+		connectionID := resolveDefaultConnection(database, step.ModelID)
+		database.Exec(`
+		INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, uuid.New().String(), comboID, connectionID, step.ModelID, step.Priority, step.Weight, now)
+	}
 	}
 	return nil
 }
