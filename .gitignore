@@ -36,6 +36,7 @@ Thumbs.db
 *.db-shm
 
 # AI tools
+.claude/
 .rpiv/
 .serena/
 .playwright-mcp/
