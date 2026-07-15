@@ -40,8 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed Vertex AI static model IDs to use the `google/gemini-...` format required by the OpenAI-compatible Vertex endpoint.
 - Fixed Amazon Bedrock Mantle static model IDs by stripping the regional `us.` prefix; Bedrock Mantle expects bare model IDs like `anthropic.claude-3-5-sonnet-...`.
 - Added static model catalog sections for `cerebras`, `together`, `fireworks`, `novita`, `lambda`, and `pollinations` so they appear in `/v1/models` without requiring a live connection.
-- Added missing dashboard catalog entries (name, color, and Material Symbols icon) for all new providers: `glm`, `minimax`, `kimi`, `mistral`, `cerebras`, `together`, `fireworks`, `novita`, `lambda`, `pollinations`, `copilot`, `vertex`, and `bedrock`.
-- Updated `ProviderIcon` to render the Material Symbols icon from provider metadata when no image file is available.
+- Added missing dashboard catalog entries (name, color, and icon) for all new providers: `glm`, `minimax`, `kimi`, `mistral`, `cerebras`, `together`, `fireworks`, `novita`, `lambda`, `pollinations`, `copilot`, `vertex`, and `bedrock`.
+- Added real brand logo files for new providers: copied existing logos from `9router/public/providers` (`cerebras`, `fireworks`, `kimi`, `minimax`, `mistral`, `together`, `vertex`, `copilot`, `glm`) and downloaded `novita`, `pollinations`, `lambda`, and `bedrock` SVGs.
+- Updated `ProviderIcon` to prefer `iconFile` images and fall back to Material Symbols when no image file is available.
 
 ## [0.3.3] - 2026-07-14
 
