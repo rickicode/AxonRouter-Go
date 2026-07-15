@@ -355,7 +355,13 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 				r.quotas, r.plan, r.err = fetchCopilotQuota(copilotToken)
 			}
 		default:
-			r.msg = "Quota fetching not supported for this provider"
+			if _, known := knownProviders[providerID]; known {
+				// A provider in knownProviders must have a fetcher; fail loudly so it
+				// shows up in the dashboard instead of silently showing "No quota data".
+				r.err = fmt.Errorf("no quota fetcher implemented for provider: %s", providerID)
+			} else {
+				r.msg = "Quota fetching not supported for this provider"
+			}
 		}
 		ch <- r
 	}()

@@ -331,6 +331,102 @@ func TestDeviceFlow_TokenExchangeErrorPropagated(t *testing.T) {
 	}
 }
 
+func TestDeviceFlow_CopilotAccessDeniedFailsWithClearMessage(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login/device/code":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"device_code":"dc","user_code":"UC","verification_uri":"https://verify","expires_in":900,"interval":1}`)
+		case "/login/oauth/access_token":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"access_token":"gh-access"}`)
+		case "/copilot_internal/v2/token":
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `{"message":"Resource not accessible by integration","error_details":{"title":"Contact Support","message":"You are currently logged in as rickicode."}}`)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+
+	svc := NewOAuthService(ts.Client())
+	svc.deviceCodeURL = ts.URL + "/login/device/code"
+	svc.tokenURL = ts.URL + "/login/oauth/access_token"
+	svc.copilotTokenURL = ts.URL + "/copilot_internal/v2/token"
+	svc.defaultPollTimeout = 5 * time.Second
+	svc.postExchangeDelay = 0
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, resultChan, err := svc.StartLocalServer(ctx, "st")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case creds := <-resultChan:
+		if creds == nil {
+			t.Fatal("expected error sentinel")
+		}
+		if !strings.Contains(creds.ProviderSpecific["__oauth_error__"], "this GitHub account does not have GitHub Copilot access") {
+			t.Errorf("expected clear access-denied message, got %q", creds.ProviderSpecific["__oauth_error__"])
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for error sentinel")
+	}
+}
+
+func TestDeviceFlow_EmailFallbackToLogin(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login/device/code":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"device_code":"dc","user_code":"UC","verification_uri":"https://verify","expires_in":900,"interval":1}`)
+		case "/login/oauth/access_token":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"access_token":"gh-access"}`)
+		case "/copilot_internal/v2/token":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"token":"cptok","expires_at":1234567890}`)
+		case "/user":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"id":1,"login":"rickicode","name":"Ricki Code","email":""}`)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+
+	svc := NewOAuthService(ts.Client())
+	svc.deviceCodeURL = ts.URL + "/login/device/code"
+	svc.tokenURL = ts.URL + "/login/oauth/access_token"
+	svc.copilotTokenURL = ts.URL + "/copilot_internal/v2/token"
+	svc.userInfoURL = ts.URL + "/user"
+	svc.defaultPollTimeout = 5 * time.Second
+	svc.postExchangeDelay = 0
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, resultChan, err := svc.StartLocalServer(ctx, "st")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case creds := <-resultChan:
+		if creds == nil {
+			t.Fatal("expected credentials")
+		}
+		if creds.Email != "rickicode" {
+			t.Errorf("email = %q, want rickicode", creds.Email)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for credentials")
+	}
+}
+
 func TestRefreshToken_RefreshesCopilotToken(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/copilot_internal/v2/token" {

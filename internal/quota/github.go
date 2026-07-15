@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -87,6 +88,31 @@ func refreshCopilotTokenIfNeeded(db *sql.DB, connectionID, accessToken string, p
 }
 
 // fetchGitHubCopilotToken exchanges a GitHub OAuth access token for a short-lived Copilot token.
+// parseGitHubForbiddenMessage converts a GitHub 403 JSON body into a short,
+// user-facing reason. It recognizes Copilot access-denied responses.
+func parseGitHubForbiddenMessage(body []byte) string {
+	var details struct {
+		Message      string `json:"message"`
+		ErrorDetails struct {
+			Message string `json:"message"`
+			Title   string `json:"title"`
+		} `json:"error_details"`
+	}
+	if err := json.Unmarshal(body, &details); err != nil {
+		return ""
+	}
+	if strings.Contains(details.Message, "Resource not accessible by integration") {
+		return "this GitHub account does not have GitHub Copilot access"
+	}
+	if details.ErrorDetails.Message != "" {
+		return strings.ToLower(details.ErrorDetails.Title + ": " + details.ErrorDetails.Message)
+	}
+	if strings.Contains(details.Message, "Terms of Service") {
+		return "GitHub Copilot access is blocked for this account"
+	}
+	return ""
+}
+
 func fetchGitHubCopilotToken(accessToken string) (string, int64, string, error) {
 	req, err := http.NewRequest(http.MethodGet, githubCopilotTokenURL, nil)
 	if err != nil {
@@ -110,6 +136,11 @@ func fetchGitHubCopilotToken(accessToken string) (string, int64, string, error) 
 		return "", 0, "", err
 	}
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusForbidden {
+			if msg := parseGitHubForbiddenMessage(body); msg != "" {
+				return "", 0, "", fmt.Errorf("access denied: %s", msg)
+			}
+		}
 		return "", 0, "", fmt.Errorf("copilot token endpoint returned HTTP %d: %s", resp.StatusCode, string(body))
 	}
 

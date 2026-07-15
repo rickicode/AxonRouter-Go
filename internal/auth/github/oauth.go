@@ -343,11 +343,21 @@ func (s *OAuthService) exchangeDeviceCode(ctx context.Context, deviceCode string
 func (s *OAuthService) fetchCopilotAndUser(ctx context.Context, token *tokenResponse) (*auth.Credentials, error) {
 	copilot, err := s.fetchCopilotToken(ctx, token.AccessToken)
 	if err != nil {
+		if strings.Contains(err.Error(), "this GitHub account does not have GitHub Copilot access") {
+			return nil, err
+		}
 		log.Printf("WARN: failed to prefetch Copilot token during OAuth: %v", err)
 	}
 	user, _ := s.fetchUserInfo(ctx, token.AccessToken)
 	if user == nil {
 		user = &userResponse{}
+	}
+	email := user.Email
+	if email == "" && user.Login != "" {
+		email = user.Login
+	}
+	if email == "" && user.Name != "" {
+		email = user.Name
 	}
 
 	psd := map[string]string{
@@ -366,7 +376,7 @@ func (s *OAuthService) fetchCopilotAndUser(ctx context.Context, token *tokenResp
 	creds := &auth.Credentials{
 		AccessToken:      token.AccessToken,
 		RefreshToken:     token.RefreshToken,
-		Email:            user.Email,
+		Email:            email,
 		ProviderSpecific: psd,
 	}
 	if copilot != nil && copilot.ExpiresAt > 0 {
@@ -403,6 +413,12 @@ func (s *OAuthService) fetchCopilotToken(ctx context.Context, accessToken string
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusForbidden {
+			msg := s.parseCopilotForbiddenMessage(body)
+			if msg != "" {
+				return nil, fmt.Errorf("access denied: %s", msg)
+			}
+		}
 		return nil, fmt.Errorf("copilot token request failed %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -411,6 +427,31 @@ func (s *OAuthService) fetchCopilotToken(ctx context.Context, accessToken string
 		return nil, err
 	}
 	return &result, nil
+}
+
+// parseCopilotForbiddenMessage turns GitHub's 403 Copilot response into a
+// user-facing message (e.g. the account does not have Copilot access).
+func (s *OAuthService) parseCopilotForbiddenMessage(body []byte) string {
+	var details struct {
+		Message      string `json:"message"`
+		ErrorDetails struct {
+			Message string `json:"message"`
+			Title   string `json:"title"`
+		} `json:"error_details"`
+	}
+	if err := json.Unmarshal(body, &details); err != nil {
+		return ""
+	}
+	if strings.Contains(details.Message, "Resource not accessible by integration") {
+		return "this GitHub account does not have GitHub Copilot access"
+	}
+	if details.ErrorDetails.Message != "" {
+		return strings.ToLower(details.ErrorDetails.Title+": "+details.ErrorDetails.Message)
+	}
+	if strings.Contains(details.Message, "Terms of Service") {
+		return "GitHub Copilot access is blocked for this account"
+	}
+	return ""
 }
 
 func (s *OAuthService) fetchUserInfo(ctx context.Context, accessToken string) (*userResponse, error) {
