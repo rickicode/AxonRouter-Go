@@ -200,6 +200,11 @@ func (c *Checker) LatestVersion() (ReleaseInfo, bool) {
 
 // UpdateAvailable reports whether the cached latest version is newer than the current binary.
 func (c *Checker) UpdateAvailable() bool {
+	return c.updateAvailableFor(String())
+}
+
+// updateAvailableFor is the testable internal implementation of UpdateAvailable.
+func (c *Checker) updateAvailableFor(current string) bool {
 	c.mu.RLock()
 	info := c.cached
 	ok := !c.cachedAt.IsZero()
@@ -207,7 +212,7 @@ func (c *Checker) UpdateAvailable() bool {
 	if !ok {
 		return false
 	}
-	return versionGreater(info.Version, String())
+	return versionGreater(info.Version, current)
 }
 
 // Stop halts the background refresh goroutine.

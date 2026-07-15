@@ -34,6 +34,9 @@ func newHealthTestDB(t *testing.T) *sql.DB {
 func TestHealth_IncludesVersionInfo(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
+	version.SetTestVersion("0.3.3")
+	defer version.ClearTestVersion()
+
 	database := newHealthTestDB(t)
 	store := connstate.NewStore()
 	tracker := usage.NewTracker(database)
@@ -76,6 +79,9 @@ func TestHealth_IncludesVersionInfo(t *testing.T) {
 
 func TestHealth_CurrentVersion_NoUpdate(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+
+	version.SetTestVersion("0.3.3")
+	defer version.ClearTestVersion()
 
 	database := newHealthTestDB(t)
 	store := connstate.NewStore()
