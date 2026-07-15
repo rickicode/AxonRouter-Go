@@ -48,21 +48,30 @@ var noAuthBaseURLs = map[string]string{
 func (h *ModelHandler) ListModels(c *gin.Context) {
 	providerID := c.Param("id")
 	stored := h.storedModels(providerID)
+
+	// Try to get provider from DB (may not exist on fresh install)
+	var provider struct {
+		ID           string
+		Format       string
+		BaseURL      string
+		ServiceKinds []string
+	}
+	var providerServiceKindsJSON sql.NullString
+	dbErr := h.db.QueryRow(`SELECT id, format, base_url, service_kinds FROM provider_types WHERE id = ?`, providerID).Scan(&provider.ID, &provider.Format, &provider.BaseURL, &providerServiceKindsJSON)
+	if dbErr == nil && providerServiceKindsJSON.Valid && providerServiceKindsJSON.String != "" {
+		json.Unmarshal([]byte(providerServiceKindsJSON.String), &provider.ServiceKinds)
+	}
+
 	if _, ok := noAuthBaseURLs[providerID]; ok {
 		// No-auth providers use the static/synced catalog. Their chat base URL
 		// is not necessarily the /models URL, so dynamic executor probing can
 		// hit HTML/404 pages (opencode.ai/zen/v1) and spam warnings.
-		c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, staticModels(providerID), nil)})
+		c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, provider.ServiceKinds, stored, staticModels(providerID), nil)})
+
 		return
 	}
 
-	// Try to get provider from DB (may not exist on fresh install)
-	var provider struct {
-		ID      string
-		Format  string
-		BaseURL string
-	}
-	dbErr := h.db.QueryRow(`SELECT id, format, base_url FROM provider_types WHERE id = ?`, providerID).Scan(&provider.ID, &provider.Format, &provider.BaseURL)
+
 
 	// Cloudflare-specific discovery: the OpenAI-flavored /v1/models endpoint is not
 	// supported by Workers AI; the canonical list lives at
@@ -79,7 +88,7 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 				if cfModels, cfKinds, err := models.FetchCloudflareModels(cfAPIKey, accountID); err == nil && len(cfModels) > 0 {
 					// Merge discovered CF entries into the shared catalog so /v1/models reflects them.
 					models.MergeProviderModelIDs("cf", cfModels, cfKinds)
-					c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, cfModels, cfKinds)})
+					c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, provider.ServiceKinds, stored, cfModels, cfKinds)})
 					return
 				} else if err != nil {
 					logging.Logger.Debug("cloudflare model discovery failed", "provider", providerID, "err", err.Error())
@@ -121,7 +130,7 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 							for _, m := range modelsResp.Data {
 								models = append(models, strings.TrimPrefix(m.ID, "@"))
 							}
-							c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, models, nil)})
+							c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, provider.ServiceKinds, stored, models, nil)})
 							return
 						}
 						var flat []string
@@ -130,7 +139,7 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 							for i, m := range flat {
 								stripped[i] = strings.TrimPrefix(m, "@")
 							}
-							c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, stripped, nil)})
+							c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, provider.ServiceKinds, stored, stripped, nil)})
 						}
 					} else {
 						logging.Logger.Debug("dynamic model list failed, using static", "provider", providerID, "err", err)
@@ -141,7 +150,7 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 	}
 
 	// Fallback: return static/synced model list from catalog, merged with stored models.
-	c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, stored, staticModels(providerID), nil)})
+	c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, provider.ServiceKinds, stored, staticModels(providerID), nil)})
 }
 
 // storedModels returns user-added custom models persisted for a provider.
@@ -165,7 +174,7 @@ func (h *ModelHandler) storedModels(providerID string) []string {
 // models are not user-deletable (custom=false); user-added models are custom=true.
 // Every id is prefixed with the provider alias (e.g. "oc/gpt-4o") so it matches the
 // ids served by /v1/models.
-func (h *ModelHandler) listModelEntries(providerID string, stored []string, extra []string, extraKinds map[string][]string) []gin.H {
+func (h *ModelHandler) listModelEntries(providerID string, providerServiceKinds []string, stored []string, extra []string, extraKinds map[string][]string) []gin.H {
 	seen := make(map[string]bool)
 	var entries []gin.H
 	keys := providerCatalogKeys[providerID]
@@ -184,6 +193,9 @@ func (h *ModelHandler) listModelEntries(providerID string, stored []string, extr
 					entry["service_kinds"] = kinds
 					break
 				}
+			}
+			if _, ok := entry["service_kinds"]; !ok && len(providerServiceKinds) > 0 {
+				entry["service_kinds"] = providerServiceKinds
 			}
 		}
 		entries = append(entries, entry)

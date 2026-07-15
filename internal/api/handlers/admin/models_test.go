@@ -18,7 +18,7 @@ func TestDefaultTestModel_CloudflareStripsProviderPrefix(t *testing.T) {
 
 func TestListModelEntries_CFIncludesServiceKinds(t *testing.T) {
 	h := &ModelHandler{}
-	entries := h.listModelEntries("cf", nil, staticModels("cf"), nil)
+	entries := h.listModelEntries("cf", nil, nil, staticModels("cf"), nil)
 	if len(entries) == 0 {
 		t.Fatal("expected CF model entries")
 	}
@@ -38,6 +38,19 @@ func TestListModelEntries_CFIncludesServiceKinds(t *testing.T) {
 	}
 	if img := find("cf/black-forest-labs/flux-1-schnell"); img == nil || !slices.Contains(kindsOf(img), "image") {
 		t.Errorf("CF image entry missing service_kinds image: %#v", img)
+	}
+}
+
+func TestListModelEntries_FallsBackToProviderServiceKinds(t *testing.T) {
+	h := &ModelHandler{}
+	entries := h.listModelEntries("claude", []string{"llm"}, nil, staticModels("claude"), nil)
+	if len(entries) == 0 {
+		t.Fatal("expected claude model entries")
+	}
+	for _, e := range entries {
+		if !slices.Contains(kindsOf(e), "llm") {
+			t.Errorf("expected entry %v to inherit provider service_kinds [llm], got %v", e["id"], e["service_kinds"])
+		}
 	}
 }
 
