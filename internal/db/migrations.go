@@ -149,9 +149,16 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		`ALTER TABLE api_keys ADD COLUMN max_tokens INTEGER DEFAULT 0`,
 		`ALTER TABLE request_logs ADD COLUMN tokens_estimated INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE request_logs ADD COLUMN proxy_pool_id TEXT`,
-		`CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id, timestamp DESC)`,
-		`ALTER TABLE provider_types ADD COLUMN category TEXT DEFAULT 'apikey'`,
-		`ALTER TABLE provider_types ADD COLUMN service_kinds TEXT DEFAULT '["llm"]'`,
+`CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id, timestamp DESC)`,
+`ALTER TABLE provider_types ADD COLUMN category TEXT DEFAULT 'apikey'`,
+`ALTER TABLE provider_types ADD COLUMN service_kinds TEXT DEFAULT '["llm"]'`,
+`CREATE TABLE IF NOT EXISTS compression_metrics (
+    mode TEXT PRIMARY KEY,
+    requests INTEGER NOT NULL DEFAULT 0,
+    original_tokens INTEGER NOT NULL DEFAULT 0,
+    compressed_tokens INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL DEFAULT 0
+)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			// Ignore "duplicate column name" errors

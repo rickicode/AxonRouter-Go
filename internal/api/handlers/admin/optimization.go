@@ -96,6 +96,66 @@ func (h *OptimizationHandler) FlushCache(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"flushed": true})
 }
 
+// CompressionMetrics returns aggregate compression statistics per mode and totals.
+func (h *OptimizationHandler) GetCompressionMetrics(c *gin.Context) {
+	rows, err := h.db.Query(`SELECT mode, requests, original_tokens, compressed_tokens, updated_at FROM compression_metrics`)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	type modeStats struct {
+		Mode             string  `json:"mode"`
+		Requests         int64   `json:"requests"`
+		OriginalTokens   int64   `json:"original_tokens"`
+		CompressedTokens int64   `json:"compressed_tokens"`
+		TokensSaved      int64   `json:"tokens_saved"`
+		SavingsPercent   float64 `json:"savings_percent"`
+		UpdatedAt        int64   `json:"updated_at"`
+	}
+
+	var modes []modeStats
+	var totalRequests, totalOriginal, totalCompressed int64
+	for rows.Next() {
+		var m modeStats
+		var saved int64
+		if err := rows.Scan(&m.Mode, &m.Requests, &m.OriginalTokens, &m.CompressedTokens, &m.UpdatedAt); err != nil {
+			continue
+		}
+		saved = m.OriginalTokens - m.CompressedTokens
+		if saved < 0 {
+			saved = 0
+		}
+		m.TokensSaved = saved
+		if m.OriginalTokens > 0 {
+			m.SavingsPercent = (1.0 - float64(m.CompressedTokens)/float64(m.OriginalTokens)) * 100
+		}
+		modes = append(modes, m)
+		totalRequests += m.Requests
+		totalOriginal += m.OriginalTokens
+		totalCompressed += m.CompressedTokens
+	}
+
+	totalSaved := totalOriginal - totalCompressed
+	if totalSaved < 0 {
+		totalSaved = 0
+	}
+	totalSavings := 0.0
+	if totalOriginal > 0 {
+		totalSavings = (1.0 - float64(totalCompressed)/float64(totalOriginal)) * 100
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"total_requests":       totalRequests,
+		"original_tokens":      totalOriginal,
+		"compressed_tokens":    totalCompressed,
+		"tokens_saved":         totalSaved,
+		"savings_percent":      totalSavings,
+		"modes":                modes,
+	})
+}
+
 // PreviewCompression runs compression on a sample body and returns stats.
 func (h *OptimizationHandler) PreviewCompression(c *gin.Context) {
 	var req struct {

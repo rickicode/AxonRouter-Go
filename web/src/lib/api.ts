@@ -1034,6 +1034,25 @@ export interface CompressionPreviewResult {
   techniques_used: string[];
 }
 
+export interface CompressionModeMetric {
+  mode: string;
+  requests: number;
+  original_tokens: number;
+  compressed_tokens: number;
+  tokens_saved: number;
+  savings_percent: number;
+  updated_at: number;
+}
+
+export interface CompressionMetrics {
+  total_requests: number;
+  original_tokens: number;
+  compressed_tokens: number;
+  tokens_saved: number;
+  savings_percent: number;
+  modes: CompressionModeMetric[];
+}
+
 export const compressionApi = {
   getSettings: () => fetchApi<CompressionSettings>("/settings/compression"),
   updateSettings: (data: Partial<CompressionSettings>) =>
@@ -1046,6 +1065,7 @@ export const compressionApi = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  metrics: () => fetchApi<CompressionMetrics>("/compression/metrics"),
 };
 
 export const cacheApi = {

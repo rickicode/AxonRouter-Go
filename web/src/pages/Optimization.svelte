@@ -9,29 +9,37 @@
 import * as Tabs from '$lib/components/ui/tabs';
   import { Badge } from '$lib/components/ui/badge';
 import { compressionApi, cacheApi } from '$lib/api';
-import type { CompressionSettings, CacheStats, CompressionPreviewResult } from '$lib/api';
+import type { CompressionSettings, CacheStats, CompressionPreviewResult, CompressionMetrics } from '$lib/api';
 import { toast } from 'svelte-sonner';
 import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
 import InfoIcon from '@lucide/svelte/icons/info';
 import CheckIcon from '@lucide/svelte/icons/check';
 import XIcon from '@lucide/svelte/icons/x';
 
-  let compression = $state<CompressionSettings>({ mode: 'off' });
-  let cacheStats = $state<CacheStats>({ hits: 0, misses: 0, size: 0, hit_rate: 0 });
-  let previewBody = $state('');
-  let previewResult = $state<CompressionPreviewResult | null>(null);
-    let loading = $state(false);
-  let saving = $state(false);
+let compression = $state<CompressionSettings>({ mode: 'off' });
+let cacheStats = $state<CacheStats>({ hits: 0, misses: 0, size: 0, hit_rate: 0 });
+let metrics = $state<CompressionMetrics>({
+  total_requests: 0,
+  original_tokens: 0,
+  compressed_tokens: 0,
+  tokens_saved: 0,
+  savings_percent: 0,
+  modes: [],
+});
+let previewBody = $state('');
+let previewResult = $state<CompressionPreviewResult | null>(null);
+let loading = $state(false);
+let saving = $state(false);
 
   let liteCollapse = $state(true);
   let liteImageUrls = $state(true);
   let liteRedundant = $state(false);
   let liteDedup = $state(false);
 
-  onMount(async () => {
-    document.title = 'Optimization — AxonRouter';
-    await Promise.all([loadCompression(), loadCacheStats()]);
-  });
+onMount(async () => {
+	document.title = 'Optimization — AxonRouter';
+	await Promise.all([loadCompression(), loadCacheStats(), loadMetrics()]);
+});
 
   async function loadCompression() {
     try {
@@ -45,13 +53,19 @@ import XIcon from '@lucide/svelte/icons/x';
     } catch { /* keep defaults */ }
   }
 
-  async function loadCacheStats() {
-    try {
-      cacheStats = await cacheApi.stats();
-    } catch { /* keep defaults */ }
-  }
+async function loadCacheStats() {
+	try {
+		cacheStats = await cacheApi.stats();
+	} catch { /* keep defaults */ }
+}
 
-  async function saveCompression() {
+async function loadMetrics() {
+	try {
+		metrics = await compressionApi.metrics();
+	} catch { /* keep defaults */ }
+}
+
+async function saveCompression() {
     saving = true;
     try {
       compression = await compressionApi.updateSettings({
@@ -234,6 +248,66 @@ const modes = [
 <p class="text-xs text-muted-foreground">Select a mode to see what it does.</p>
 {/if}
 </div>
+</CardContent>
+</Card>
+
+<!-- Compression metrics -->
+<Card class="shadow-card">
+<CardHeader class="pb-3">
+<CardTitle class="text-base">Compression Metrics</CardTitle>
+<CardDescription class="text-xs">Aggregated stats from real compressed requests.</CardDescription>
+</CardHeader>
+<CardContent class="space-y-4">
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+<div class="bg-card rounded-xl shadow-card p-4">
+<p class="text-caption-mono text-muted-foreground uppercase">Requests</p>
+<p class="text-display-md font-semibold mt-1">{metrics.total_requests.toLocaleString()}</p>
+</div>
+<div class="bg-card rounded-xl shadow-card p-4">
+<p class="text-caption-mono text-muted-foreground uppercase">Original tokens</p>
+<p class="text-display-md font-semibold mt-1">{metrics.original_tokens.toLocaleString()}</p>
+</div>
+<div class="bg-card rounded-xl shadow-card p-4">
+<p class="text-caption-mono text-muted-foreground uppercase">Compressed tokens</p>
+<p class="text-display-md font-semibold mt-1">{metrics.compressed_tokens.toLocaleString()}</p>
+</div>
+<div class="bg-card rounded-xl shadow-card p-4">
+<p class="text-caption-mono text-muted-foreground uppercase">Tokens saved</p>
+<p class="text-display-md font-semibold mt-1">{metrics.tokens_saved.toLocaleString()}</p>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<Badge variant={metrics.savings_percent > 0 ? 'default' : 'secondary'}>
+{metrics.savings_percent.toFixed(1)}% saved
+</Badge>
+</div>
+{#if metrics.modes.length > 0}
+<div class="space-y-2">
+<h3 class="text-body-sm-strong">By mode</h3>
+<div class="rounded-lg border border-border overflow-hidden">
+<table class="w-full text-left text-xs">
+<thead class="bg-muted text-muted-foreground">
+<tr>
+<th class="px-3 py-2 font-medium">Mode</th>
+<th class="px-3 py-2 font-medium text-right">Requests</th>
+<th class="px-3 py-2 font-medium text-right">Saved tokens</th>
+<th class="px-3 py-2 font-medium text-right">Savings</th>
+</tr>
+</thead>
+<tbody>
+{#each metrics.modes as mode}
+<tr class="border-t border-border">
+<td class="px-3 py-2 capitalize">{mode.mode}</td>
+<td class="px-3 py-2 text-right">{mode.requests.toLocaleString()}</td>
+<td class="px-3 py-2 text-right">{mode.tokens_saved.toLocaleString()}</td>
+<td class="px-3 py-2 text-right">{mode.savings_percent.toFixed(1)}%</td>
+</tr>
+{/each}
+</tbody>
+</table>
+</div>
+</div>
+{/if}
 </CardContent>
 </Card>
 

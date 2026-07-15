@@ -391,12 +391,13 @@ func New(cfg Config) *Router {
 		g.DELETE("/cli-tools/:toolId", cliToolsH.DeleteConfig)
 		g.GET("/cli-tools", cliToolsH.ListTools)
 
-		// Compression & Cache
-		g.GET("/settings/compression", optimizationH.GetCompressionSettings)
-		g.PUT("/settings/compression", optimizationH.UpdateCompressionSettings)
-		g.GET("/cache/stats", optimizationH.GetCacheStats)
-		g.POST("/cache/flush", optimizationH.FlushCache)
-		g.POST("/optimization/preview", optimizationH.PreviewCompression)
+// Compression & Cache
+g.GET("/settings/compression", optimizationH.GetCompressionSettings)
+g.PUT("/settings/compression", optimizationH.UpdateCompressionSettings)
+g.GET("/compression/metrics", optimizationH.GetCompressionMetrics)
+g.GET("/cache/stats", optimizationH.GetCacheStats)
+g.POST("/cache/flush", optimizationH.FlushCache)
+g.POST("/optimization/preview", optimizationH.PreviewCompression)
 
 		// Developers
 		g.GET("/developers/master-key", developersH.GetMasterKey)
