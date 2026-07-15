@@ -88,8 +88,9 @@ type Checker struct {
 	changelog string
 	changelogAt time.Time
 	startOnce sync.Once
-	stop chan struct{}
-	wg sync.WaitGroup
+	stopOnce  sync.Once
+	stop      chan struct{}
+	wg        sync.WaitGroup
 }
 
 // NewChecker creates a Checker with the provided HTTP client.
@@ -210,10 +211,12 @@ func (c *Checker) UpdateAvailable() bool {
 	return versionGreater(info.Version, String())
 }
 
-// Stop halts the background refresh goroutine.
+// Stop halts the background refresh goroutine. It is safe to call more than once.
 func (c *Checker) Stop() {
 	c.startOnce.Do(func() {}) // prevent a future LatestVersion from starting a goroutine
-	close(c.stop)
+	c.stopOnce.Do(func() {
+		close(c.stop)
+	})
 	c.wg.Wait()
 }
 
