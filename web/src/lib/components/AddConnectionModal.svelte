@@ -162,13 +162,13 @@ async function fetchProxyPools() {
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean)
-      .map((line, index) => {
-        const match = line.match(/^([^,:\t]+)[,:\t](.+)$/);
-        if (!match) return { name: defaultName(index + 1), api_key: line };
-        const name = match[1].trim() || defaultName(index + 1);
-        const key = match[2].trim();
-        return { name, api_key: key };
-      })
+.map((line, index) => {
+      const match = line.match(/^([^,:\t|]+)[,:\t|](.+)$/);
+      if (!match) return { name: defaultName(index + 1), api_key: line };
+      const name = match[1].trim() || defaultName(index + 1);
+      const key = match[2].trim();
+      return { name, api_key: key };
+    })
       .filter((conn) => conn.api_key.length > 0);
   }
 
@@ -592,7 +592,7 @@ async function handleOAuthSubmit() {
             <Textarea
               bind:value={bulkText}
               class="min-h-36 font-mono text-xs"
-              placeholder={meta?.inputFormat === 'pipe' ? 'user@example.com|accountId|apiToken\n...' : `sk-...\nmain: sk-...\nbackup, sk-...`}
+              placeholder={meta?.inputFormat === 'pipe' ? 'user@example.com|accountId|apiToken\n...' : `sk-...\nmain: sk-...\nbackup, sk-...\nbackup| sk-...`}
               spellcheck={false}
             />
             {#if bulkText.trim()}
@@ -604,7 +604,7 @@ async function handleOAuthSubmit() {
               {#if meta?.inputFormat === 'pipe'}
                 Format: <span class="font-mono">email|accountId|apiToken</span> (one per line)
               {:else}
-                One key per line. Optional format: <span class="font-mono">name: key</span> or <span class="font-mono">name, key</span>.
+                One key per line, or <span class="font-mono">name|key</span>, <span class="font-mono">name: key</span>, <span class="font-mono">name, key</span>.
               {/if}
             </p>
           </div>
