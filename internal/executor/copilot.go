@@ -183,7 +183,11 @@ func (e *CopilotExecutor) ensureToken(req *Request) (*copilotToken, error) {
 	if psdTok := req.ProviderSpecificData["copilotToken"]; psdTok != "" {
 		if expStr := req.ProviderSpecificData["copilotTokenExpiresAt"]; expStr != "" {
 			if expiresAt, err := strconv.ParseInt(expStr, 10, 64); err == nil && expiresAt > now+skew {
-				return &copilotToken{Token: psdTok, ExpiresAt: expiresAt}, nil
+				tok := &copilotToken{Token: psdTok, ExpiresAt: expiresAt}
+				if api := req.ProviderSpecificData["copilotEndpointAPI"]; api != "" {
+					tok.Endpoints.API = api
+				}
+				return tok, nil
 			}
 		}
 	}

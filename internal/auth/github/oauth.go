@@ -19,14 +19,18 @@ import (
 const githubCopilotClientID = "Iv1.b507a08c87ecfe98"
 
 const (
-	defaultDeviceCodeURL     = "https://github.com/login/device/code"
-	defaultTokenURL          = "https://github.com/login/oauth/access_token"
-	defaultCopilotTokenURL   = "https://api.github.com/copilot_internal/v2/token"
-	defaultUserInfoURL       = "https://api.github.com/user"
-	defaultScope             = "read:user"
-	defaultPollTimeout       = 5 * time.Minute
-	defaultPollInterval      = 5 * time.Second
+	defaultDeviceCodeURL = "https://github.com/login/device/code"
+	defaultTokenURL = "https://github.com/login/oauth/access_token"
+	defaultCopilotTokenURL = "https://api.github.com/copilot_internal/v2/token"
+	defaultUserInfoURL = "https://api.github.com/user"
+	defaultScope = "read:user"
+	defaultPollTimeout = 5 * time.Minute
+	defaultPollInterval = 5 * time.Second
 	defaultPostExchangeDelay = 0
+
+	copilotRefreshUserAgent   = "GithubCopilot/1.0"
+	copilotRefreshPluginVer   = "copilot/1.388.0"
+	copilotEditorVersion      = "vscode/1.126.0"
 )
 
 // deviceCodeResponse is returned by GitHub's device-code endpoint.
@@ -51,6 +55,9 @@ type tokenResponse struct {
 type copilotTokenResponse struct {
 	Token     string `json:"token"`
 	ExpiresAt int64  `json:"expires_at"`
+	Endpoints struct {
+		API string `json:"api"`
+	} `json:"endpoints"`
 }
 
 // userResponse is returned by the GitHub user endpoint.
@@ -195,6 +202,9 @@ func (s *OAuthService) RefreshToken(ctx context.Context, creds *auth.Credentials
 	}
 	newCreds.ProviderSpecific["copilotToken"] = copilot.Token
 	newCreds.ProviderSpecific["copilotTokenExpiresAt"] = strconv.FormatInt(copilot.ExpiresAt, 10)
+	if copilot.Endpoints.API != "" {
+		newCreds.ProviderSpecific["copilotEndpointAPI"] = copilot.Endpoints.API
+	}
 	if copilot.ExpiresAt > 0 {
 		newCreds.ExpiresAt = time.Unix(copilot.ExpiresAt, 0)
 	} else {
@@ -324,18 +334,22 @@ func (s *OAuthService) fetchCopilotAndUser(ctx context.Context, token *tokenResp
 		user = &userResponse{}
 	}
 
+	psd := map[string]string{
+		"copilotToken":          copilot.Token,
+		"copilotTokenExpiresAt": strconv.FormatInt(copilot.ExpiresAt, 10),
+		"githubUserId":          fmt.Sprintf("%d", user.ID),
+		"githubLogin":           user.Login,
+		"githubName":            user.Name,
+		"githubEmail":           user.Email,
+	}
+	if copilot.Endpoints.API != "" {
+		psd["copilotEndpointAPI"] = copilot.Endpoints.API
+	}
 	creds := &auth.Credentials{
-		AccessToken: token.AccessToken,
+		AccessToken:  token.AccessToken,
 		RefreshToken: token.RefreshToken,
-		Email: user.Email,
-		ProviderSpecific: map[string]string{
-			"copilotToken":          copilot.Token,
-			"copilotTokenExpiresAt": strconv.FormatInt(copilot.ExpiresAt, 10),
-			"githubUserId":          fmt.Sprintf("%d", user.ID),
-			"githubLogin":           user.Login,
-			"githubName":            user.Name,
-			"githubEmail":           user.Email,
-		},
+		Email:        user.Email,
+		ProviderSpecific: psd,
 	}
 	if copilot.ExpiresAt > 0 {
 		creds.ExpiresAt = time.Unix(copilot.ExpiresAt, 0)
@@ -356,6 +370,9 @@ func (s *OAuthService) fetchCopilotToken(ctx context.Context, accessToken string
 	// not the Bearer form used by api.github.com/user.
 	req.Header.Set("Authorization", "token "+accessToken)
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", copilotRefreshUserAgent)
+	req.Header.Set("Editor-Version", copilotEditorVersion)
+	req.Header.Set("Editor-Plugin-Version", copilotRefreshPluginVer)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
