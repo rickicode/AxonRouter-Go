@@ -12,7 +12,7 @@ import { authStore, logout, mustChangePasswordStore } from '$lib/auth';
 import Login from './pages/Login.svelte';
 import ChangePasswordModal from '$lib/components/ChangePasswordModal.svelte';
 import LogOutIcon from '@lucide/svelte/icons/log-out';
-import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
+import HeartIcon from '@lucide/svelte/icons/heart';
 import { Button } from '$lib/components/ui/button';
 
   // Page components
@@ -154,7 +154,7 @@ function handleLogout() {
       <h1 class="text-body-md-strong text-foreground">{pageLabel}</h1>
 <div class="ml-auto flex items-center gap-2">
   <a href="https://saweria.co/HIJILABS" target="_blank" rel="noopener noreferrer" class="flex items-center gap-1.5 text-caption-mono text-muted-foreground hover:text-foreground transition-colors">
-    <ExternalLinkIcon class="size-4" />
+    <HeartIcon class="size-4" />
     <span class="hidden sm:inline">Support us</span>
   </a>
   <Button variant="ghost" size="sm" class="gap-1.5" onclick={handleLogout}>
