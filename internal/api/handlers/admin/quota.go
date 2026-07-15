@@ -53,12 +53,14 @@ func (h *QuotaHandler) Summary(c *gin.Context) {
 	defer rows.Close()
 
 	type providerSummary struct {
-		ProviderID string `json:"provider_id"`
-		DisplayName string `json:"display_name"`
-		Total int `json:"total"`
-		Statuses map[string]int `json:"statuses"`
-		NextReset string `json:"next_reset,omitempty"`
-		SavingsUSD float64 `json:"savings_usd"`
+		ProviderID  string            `json:"provider_id"`
+		DisplayName string            `json:"display_name"`
+		Color       string            `json:"color"`
+		IconFile    string            `json:"icon_file"`
+		Total       int               `json:"total"`
+		Statuses    map[string]int    `json:"statuses"`
+		NextReset   string            `json:"next_reset,omitempty"`
+		SavingsUSD  float64           `json:"savings_usd"`
 	}
 
 	resets, _ := quota.NextProviderResets(h.db)
@@ -73,12 +75,18 @@ func (h *QuotaHandler) Summary(c *gin.Context) {
 		}
 		if _, ok := providerMap[providerID]; !ok {
 			name := providerID
+			color := "#888888"
+			iconFile := ""
 			if meta, ok := quota.ProviderMeta(providerID); ok {
 				name = meta.DisplayName
+				color = meta.Color
+				iconFile = meta.IconFile
 			}
 			providerMap[providerID] = &providerSummary{
 				ProviderID:  providerID,
 				DisplayName: name,
+				Color:       color,
+				IconFile:    iconFile,
 				Statuses:    make(map[string]int),
 			}
 		}

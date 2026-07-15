@@ -601,7 +601,9 @@ func (h *ConnectionHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 
-	if refreshToken == "" {
+	// GitHub device-code OAuth does not return a refresh token, but the
+	// Copilot bearer token can still be refreshed from the stored access token.
+	if refreshToken == "" && providerTypeID != "copilot" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no refresh token available"})
 		return
 	}
@@ -625,9 +627,16 @@ func (h *ConnectionHandler) RefreshToken(c *gin.Context) {
 	}
 
 	now := time.Now().Unix()
-	_, err = h.db.Exec(`
-		UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?
-	`, newCreds.AccessToken, newCreds.RefreshToken, newCreds.ExpiresAt.Unix(), now, connID)
+	if len(newCreds.ProviderSpecific) > 0 {
+		psdJSON, _ := json.Marshal(newCreds.ProviderSpecific)
+		_, err = h.db.Exec(`
+			UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?
+		`, newCreds.AccessToken, newCreds.RefreshToken, newCreds.ExpiresAt.Unix(), psdJSON, now, connID)
+	} else {
+		_, err = h.db.Exec(`
+			UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?
+		`, newCreds.AccessToken, newCreds.RefreshToken, newCreds.ExpiresAt.Unix(), now, connID)
+	}
 	if err != nil {
 		log.Printf("Failed to persist refreshed token for %s: %v", connID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to persist token"})

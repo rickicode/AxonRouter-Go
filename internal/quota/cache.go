@@ -15,6 +15,14 @@ import (
 // Called by the background scheduler after each fetch cycle.
 // Skips saving failed fetches if there's already valid cached data (preserves last good state).
 func SaveQuotaCache(db *sql.DB, results []ProviderQuota) {
+	saveQuotaCacheResults(db, results)
+	if err := PruneQuotaCache(db); err != nil {
+		log.Printf("quota cache: prune failed: %v", err)
+	}
+}
+
+// saveQuotaCacheResults writes the fetched results to quota_cache.
+func saveQuotaCacheResults(db *sql.DB, results []ProviderQuota) {
 	now := time.Now().Unix()
 	for _, provider := range results {
 		for _, conn := range provider.Connections {
@@ -50,6 +58,19 @@ func SaveQuotaCache(db *sql.DB, results []ProviderQuota) {
 			}
 		}
 	}
+}
+
+// PruneQuotaCache removes quota_cache rows for connections that are no longer
+// active OAuth connections. This prevents stale/incomplete OAuth attempts or
+// deleted connections from appearing in the Quota dashboard.
+func PruneQuotaCache(db *sql.DB) error {
+	_, err := db.Exec(`
+		DELETE FROM quota_cache
+		WHERE connection_id NOT IN (
+			SELECT id FROM connections WHERE auth_type = 'oauth' AND is_active = 1
+		)
+	`)
+	return err
 }
 
 // saveQuotaCacheEntry persists a single quota cache entry to the DB.

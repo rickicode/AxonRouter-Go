@@ -15,9 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a guard in the quota fetcher so any provider added to `knownProviders` without a matching fetcher case returns a clear error instead of silently showing "No quota data".
 - Provider detail model list now inherits `service_kinds` from the provider when a model has no per-model kind metadata. Fallback is restricted to single-kind providers so multi-modal providers (e.g., Cloudflare) are not blanket-tagged with every capability.
 - Provider cards on the /providers page now display their category badge (e.g., "OAuth", "API Key", "No Auth", "Service Account") so every provider has visible category metadata, matching the category badge shown on Provider Detail.
+- Quota scheduler now prunes stale `quota_cache` rows when a connection is no longer an active OAuth connection, so deleted/disabled Copilot attempts stop appearing as duplicate error cards.
+- Copilot quota fetcher now retries once and refreshes the short-lived Copilot token when GitHub returns `401 Bad credentials`, fixing cases where a cached token becomes invalid before its expiry.
+- Proactive OAuth token refresh now refreshes Copilot tokens even though GitHub device-code flow doesn't return a refresh token; the manual admin refresh endpoint also supports Copilot and persists the refreshed Copilot token to `provider_specific_data`.
 
 ### Added
 - Updated static GitHub Copilot model catalog in `internal/models/models.json` to include newer generally-available models: `claude-opus-4.6`, `gpt-5.4-nano`, `gpt-5.6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gemini-2.5-pro`, and `gemini-3-flash-preview`.
+- Quota dashboard provider summary now returns per-provider color/icon metadata and the provider filter pills use those colors, so Copilot and other providers render with their brand color instead of default gray.
 
 ## [0.3.4] - 2026-07-15
 

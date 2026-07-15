@@ -354,7 +354,7 @@ function visibleQuotas(item: QuotaCacheEntry): QuotaItem[] {
                   : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'}"
               onclick={() => onProviderChange(filterProvider === ps.provider_id ? '' : ps.provider_id)}
             >
-              <span class="size-2 rounded-full shrink-0" style="background-color: {ps.provider_id === 'ag' ? '#4285f4' : ps.provider_id === 'cx' ? '#10a37f' : '#888'}"></span>
+              <span class="size-2 rounded-full shrink-0" style="background-color: {ps.color || '#888'}"></span>
               {ps.display_name}
               <span class="font-mono opacity-75">{ps.total}</span>
             </button>

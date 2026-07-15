@@ -761,12 +761,14 @@ export interface QuotaCacheResponse {
 }
 
 export interface QuotaProviderSummary {
-  provider_id: string;
-  display_name: string;
-  total: number;
-  statuses: Record<string, number>;
-  next_reset?: string;
-  savings_usd?: number;
+ provider_id: string;
+ display_name: string;
+ color?: string;
+ icon_file?: string;
+ total: number;
+ statuses: Record<string, number>;
+ next_reset?: string;
+ savings_usd?: number;
 }
 
 export interface QuotaSummaryResponse {

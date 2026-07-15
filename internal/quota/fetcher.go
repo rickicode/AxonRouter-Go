@@ -73,7 +73,7 @@ var knownProviders = map[string]providerMeta{
 	"cx":      {DisplayName: "Codex", Color: "#10a37f", IconFile: "codex.svg"},
 	"ag":      {DisplayName: "Antigravity", Color: "#4285f4", IconFile: "antigravity.svg"},
 	"kiro":    {DisplayName: "Kiro", Color: "#ff9900", IconFile: "kiro.svg"},
-	"copilot": {DisplayName: "GitHub Copilot", Color: "#000000", IconFile: "copilot.png"},
+	"copilot": {DisplayName: "GitHub Copilot", Color: "#24292E", IconFile: "copilot.png"},
 }
 
 // ProviderMeta returns display metadata for a provider type, if known.
@@ -353,6 +353,20 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 			psd, copilotToken, r.err = refreshCopilotTokenIfNeeded(db, c.ID, token, psd)
 			if r.err == nil {
 				r.quotas, r.plan, r.err = fetchCopilotQuota(copilotToken)
+				// A cached Copilot token can be invalid before its expiry (e.g. token
+				// was revoked or belongs to a different session). Force a fresh token
+				// exchange via the GitHub OAuth token and retry once.
+				if r.err != nil && isCopilotAuthError(r.err) {
+					if psd == nil {
+						psd = map[string]any{}
+					}
+					psd["copilotToken"] = ""
+					psd["copilotTokenExpiresAt"] = "0"
+					psd, copilotToken, r.err = refreshCopilotTokenIfNeeded(db, c.ID, token, psd)
+					if r.err == nil {
+						r.quotas, r.plan, r.err = fetchCopilotQuota(copilotToken)
+					}
+				}
 			}
 		default:
 			if _, known := knownProviders[providerID]; known {

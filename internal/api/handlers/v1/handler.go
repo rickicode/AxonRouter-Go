@@ -444,7 +444,13 @@ const defaultRefreshLeadMs = 5 * time.Minute
 // proactiveRefreshToken checks if a token should be refreshed proactively
 // based on per-provider lead times. Matches OmniRoute checkAndRefreshToken.
 func (h *Handler) proactiveRefreshToken(ctx context.Context, conn *Connection, provider string) bool {
-	if h.authMgr == nil || conn.RefreshToken == "" || conn.OAuthExpiresAt.IsZero() {
+	if h.authMgr == nil || conn.OAuthExpiresAt.IsZero() {
+		return false
+	}
+	// GitHub device-code OAuth does not return a refresh token, but the
+	// short-lived Copilot bearer token can still be refreshed from the access
+	// token. For every other provider a refresh token is required.
+	if conn.RefreshToken == "" && provider != "copilot" {
 		return false
 	}
 	lead := defaultRefreshLeadMs

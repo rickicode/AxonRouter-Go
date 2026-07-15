@@ -157,6 +157,16 @@ func fetchGitHubCopilotToken(accessToken string) (string, int64, string, error) 
 	return r.Token, r.ExpiresAt, r.Endpoints.API, nil
 }
 
+// isCopilotAuthError reports whether an upstream error indicates the cached
+// Copilot token is invalid and should be refreshed.
+func isCopilotAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "401") || strings.Contains(msg, "bad credentials") || strings.Contains(msg, "unauthorized")
+}
+
 // fetchCopilotQuota fetches Copilot usage from GitHub's internal /user endpoint.
 // It expects a valid Copilot token (obtained via refreshCopilotTokenIfNeeded).
 func fetchCopilotQuota(copilotToken string) ([]QuotaItem, string, error) {
