@@ -1,0 +1,41 @@
+{
+  "name": "axonrouter-go",
+  "version": "0.3.5",
+  "description": "Auto-installer for AxonRouter-Go CLI binary",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "axonrouter": "cli.js",
+    "axonrouter-go": "cli.js"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "files": [
+    "index.js",
+    "cli.js",
+    "install.js",
+    "README.md",
+    "bin/.gitkeep"
+  ],
+  "keywords": [
+    "axonrouter",
+    "api-proxy",
+    "router",
+    "cli"
+  ],
+  "author": "rickicode",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rickicode/AxonRouter-Go.git",
+    "directory": "npm/axonrouter-go"
+  },
+  "homepage": "https://github.com/rickicode/AxonRouter-Go#readme",
+  "bugs": {
+    "url": "https://github.com/rickicode/AxonRouter-Go/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
