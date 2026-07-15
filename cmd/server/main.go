@@ -292,6 +292,7 @@ func main() {
 	fmt.Println()
 	fmt.Println("Environment:")
 	fmt.Println(" AXON_PORT Server port (default: 3777)")
+	fmt.Println(" AXONROUTER_DIR Data directory (default: ~/axonrouter)")
 	os.Exit(0)
 }
 

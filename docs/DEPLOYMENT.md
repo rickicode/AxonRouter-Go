@@ -222,12 +222,13 @@ docker compose up -d
 | `AXON_ADMIN_KEY` | (empty) | Documented admin key name in `ARCHITECTURE.md`. Admin auth currently uses the session JWT; set the password with `axonrouter --setpass`. |
 | `ADMIN_KEY` | (empty) | Legacy alias for the admin key. |
 | `AXON_PUBLIC_IP` | (auto-detected) | Override public IP detection used by the HTTPS/ACME setup. |
+| `AXONROUTER_DIR` | `~/axonrouter` | Override the data directory used for the database, logs, and PID file. Takes precedence over `HOME`. Relative paths are resolved against `$HOME`. |
 | `DB_PATH` | `~/axonrouter/axonrouter.db` | Database file location. The path is derived from the data directory; this variable itself is informational. |
-| `HOME` | (system) | Determines the default data directory: `$HOME/axonrouter`. Also respected by the systemd service installer. |
+| `HOME` | (system) | Determines the default data directory: `$HOME/axonrouter` when `AXONROUTER_DIR` is unset. |
 
 Deprecated variables:
 
-- `AXON_DATA_DIR` — no longer read or documented. Use `HOME` to relocate the data directory.
+- `AXON_DATA_DIR` — no longer read. Use `AXONROUTER_DIR` to override the data directory or `HOME` to relocate it.
 
 ### Data directory
 

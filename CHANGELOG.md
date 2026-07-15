@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `AXONROUTER_DIR` environment variable overrides the data directory (default remains `~/axonrouter`). Relative paths resolve against `$HOME`.
+
+### Changed
+- `installer.sh` now installs the binary into `~/.local/bin` by default and prints clear `sudo`/`--to` instructions when that directory is not writable.
+- `npm/axonrouter-go` postinstall now copies the verified binary to `~/.local/bin/axonrouter` on Linux/macOS when possible, falling back to the package-local binary with instructions.
+
 ## [0.3.5] - 2026-07-15
 
 ### Fixed
