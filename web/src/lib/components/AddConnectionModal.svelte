@@ -776,22 +776,24 @@ async function handleOAuthSubmit() {
             </Button>
           </div>
 
-          <!-- Callback fallback -->
-          <div class="rounded-lg border border-dashed border-border/50 p-3">
-            <p class="mb-2 text-xs font-medium text-muted-foreground">Remote fallback: paste callback URL</p>
-            <div class="flex gap-2">
-              <Input
-                bind:value={callbackUrl}
-                class="h-8 min-w-0 flex-1 font-mono text-xs"
-                placeholder="http://localhost:1455/auth/callback?code=...&state=..."
-                autocomplete="off"
-                spellcheck={false}
-              />
-              <Button variant="secondary" class="h-8 gap-1.5 text-xs" disabled={submittingCallback} onclick={submitOAuthCallbackUrl}>
-                {submittingCallback ? '...' : 'Submit'}
-              </Button>
-            </div>
-          </div>
+<!-- Callback fallback: only for authorization-code flows (no user code) -->
+			{#if !oauthUserCode}
+			<div class="rounded-lg border border-dashed border-border/50 p-3">
+				<p class="mb-2 text-xs font-medium text-muted-foreground">Remote fallback: paste callback URL</p>
+				<div class="flex gap-2">
+					<Input
+						bind:value={callbackUrl}
+						class="h-8 min-w-0 flex-1 font-mono text-xs"
+						placeholder="http://localhost:1455/auth/callback?code=...&state=..."
+						autocomplete="off"
+						spellcheck={false}
+					/>
+					<Button variant="secondary" class="h-8 gap-1.5 text-xs" disabled={submittingCallback} onclick={submitOAuthCallbackUrl}>
+						{submittingCallback ? '...' : 'Submit'}
+					</Button>
+				</div>
+			</div>
+			{/if}
         {/if}
       </div>
 

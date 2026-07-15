@@ -157,9 +157,28 @@ func (s *OAuthService) ExchangeCode(_ context.Context, _ string) (*auth.Credenti
 	return nil, fmt.Errorf("GitHub uses device-code flow; authorization code exchange is not used")
 }
 
-// RefreshToken is not supported for GitHub device-code tokens.
-func (s *OAuthService) RefreshToken(_ context.Context, _ *auth.Credentials) (*auth.Credentials, error) {
-	return nil, fmt.Errorf("GitHub device-code tokens do not support refresh")
+// RefreshToken re-fetches the short-lived Copilot token using the stored GitHub
+// access token. GitHub's device-code access token itself does not expire, but
+// the Copilot token does; this keeps the connection eligible without disabling
+// it every time the Copilot token nears expiry.
+func (s *OAuthService) RefreshToken(ctx context.Context, creds *auth.Credentials) (*auth.Credentials, error) {
+	if creds.AccessToken == "" {
+		return nil, fmt.Errorf("no access token available")
+	}
+	copilot, err := s.fetchCopilotToken(ctx, creds.AccessToken)
+	if err != nil {
+		return nil, fmt.Errorf("refresh copilot token: %w", err)
+	}
+	newCreds := *creds
+	if newCreds.ProviderSpecific == nil {
+		newCreds.ProviderSpecific = map[string]string{}
+	}
+	newCreds.ProviderSpecific["copilotToken"] = copilot.Token
+	newCreds.ProviderSpecific["copilotTokenExpiresAt"] = strconv.FormatInt(copilot.ExpiresAt, 10)
+	if copilot.ExpiresAt > 0 {
+		newCreds.ExpiresAt = time.Unix(copilot.ExpiresAt, 0)
+	}
+	return &newCreds, nil
 }
 
 func (s *OAuthService) requestDeviceCode(ctx context.Context) (*deviceCodeResponse, error) {
@@ -274,19 +293,22 @@ func (s *OAuthService) exchangeDeviceCode(ctx context.Context, deviceCode string
 }
 
 func (s *OAuthService) fetchCopilotAndUser(ctx context.Context, token *tokenResponse) (*auth.Credentials, error) {
-	copilot, _ := s.fetchCopilotToken(ctx, token.AccessToken)
+	copilot, err := s.fetchCopilotToken(ctx, token.AccessToken)
+	if err != nil {
+		return nil, fmt.Errorf("fetch copilot token: %w", err)
+	}
 	user, _ := s.fetchUserInfo(ctx, token.AccessToken)
 
 	creds := &auth.Credentials{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
+		AccessToken:    token.AccessToken,
+		RefreshToken:   token.RefreshToken,
 		ProviderSpecific: map[string]string{
-			"copilot_token":            copilot.Token,
-			"copilot_token_expires_at": strconv.FormatInt(copilot.ExpiresAt, 10),
-			"github_user_id":           fmt.Sprintf("%d", user.ID),
-			"github_login":             user.Login,
-			"github_name":              user.Name,
-			"github_email":             user.Email,
+			"copilotToken":          copilot.Token,
+			"copilotTokenExpiresAt": strconv.FormatInt(copilot.ExpiresAt, 10),
+			"githubUserId":          fmt.Sprintf("%d", user.ID),
+			"githubLogin":           user.Login,
+			"githubName":            user.Name,
+			"githubEmail":           user.Email,
 		},
 	}
 	if copilot.ExpiresAt > 0 {
@@ -303,7 +325,9 @@ func (s *OAuthService) fetchCopilotToken(ctx context.Context, accessToken string
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
+	// GitHub's copilot_internal endpoints expect the OAuth token in "token" form,
+	// not the Bearer form used by api.github.com/user.
+	req.Header.Set("Authorization", "token "+accessToken)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := s.httpClient.Do(req)

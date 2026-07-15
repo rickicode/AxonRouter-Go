@@ -80,15 +80,15 @@ func TestDeviceFlow_Success(t *testing.T) {
 		if creds.AccessToken != "gh-access" {
 			t.Errorf("access token = %q, want gh-access", creds.AccessToken)
 		}
-		if creds.ProviderSpecific["copilot_token"] != "cp-token" {
-			t.Errorf("copilot_token = %q, want cp-token", creds.ProviderSpecific["copilot_token"])
-		}
-		if creds.ProviderSpecific["github_login"] != "octocat" {
-			t.Errorf("github_login = %q, want octocat", creds.ProviderSpecific["github_login"])
-		}
-		if creds.ProviderSpecific["github_email"] != "octo@example.com" {
-			t.Errorf("github_email = %q", creds.ProviderSpecific["github_email"])
-		}
+	if creds.ProviderSpecific["copilotToken"] != "cp-token" {
+		t.Errorf("copilotToken = %q, want cp-token", creds.ProviderSpecific["copilotToken"])
+	}
+	if creds.ProviderSpecific["githubLogin"] != "octocat" {
+		t.Errorf("githubLogin = %q, want octocat", creds.ProviderSpecific["githubLogin"])
+	}
+	if creds.ProviderSpecific["githubEmail"] != "octo@example.com" {
+		t.Errorf("githubEmail = %q", creds.ProviderSpecific["githubEmail"])
+	}
 	case <-ctx.Done():
 		t.Fatal("timed out waiting for credentials")
 	}
@@ -158,10 +158,39 @@ func TestDeviceFlow_PendingThenSuccess(t *testing.T) {
 	}
 }
 
-func TestRefreshToken_Unsupported(t *testing.T) {
-	svc := NewOAuthService(nil)
-	_, err := svc.RefreshToken(context.Background(), &auth.Credentials{})
-	if err == nil || !strings.Contains(err.Error(), "refresh") {
-		t.Fatalf("expected refresh unsupported error, got %v", err)
+func TestRefreshToken_RefreshesCopilotToken(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/copilot_internal/v2/token" {
+			auth := r.Header.Get("Authorization")
+			if auth != "token gh-access" {
+				t.Errorf("Authorization = %q, want token gh-access", auth)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"token":"refreshed-cp-token","expires_at":9999999999}`)
+			return
+		}
+		t.Fatalf("unexpected path %s", r.URL.Path)
+	}))
+	defer ts.Close()
+
+	svc := NewOAuthService(ts.Client())
+	svc.copilotTokenURL = ts.URL + "/copilot_internal/v2/token"
+
+	creds := &auth.Credentials{
+		AccessToken: "gh-access",
+		ProviderSpecific: map[string]string{
+			"copilotToken":          "old-token",
+			"copilotTokenExpiresAt": "1",
+		},
+	}
+	refreshed, err := svc.RefreshToken(context.Background(), creds)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if refreshed.ProviderSpecific["copilotToken"] != "refreshed-cp-token" {
+		t.Errorf("copilotToken = %q, want refreshed-cp-token", refreshed.ProviderSpecific["copilotToken"])
+	}
+	if refreshed.ProviderSpecific["copilotTokenExpiresAt"] != "9999999999" {
+		t.Errorf("copilotTokenExpiresAt = %q, want 9999999999", refreshed.ProviderSpecific["copilotTokenExpiresAt"])
 	}
 }
