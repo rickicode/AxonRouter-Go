@@ -31,8 +31,9 @@ var v1ProviderCatalog = map[string]struct {
 	"openai":        {keys: []string{"openai"}, ownedBy: "openai"},
 	"groq":          {keys: []string{"groq"}, ownedBy: "groq"},
 	"deepseek":      {keys: []string{"deepseek"}, ownedBy: "deepseek"},
-	"openrouter":    {keys: []string{"openrouter"}, ownedBy: "openrouter"},
-	"zai":           {keys: []string{"claude"}, ownedBy: "zai"},
+	"openrouter": {keys: []string{"openrouter"}, ownedBy: "openrouter"},
+	"copilot": {keys: []string{"copilot"}, ownedBy: "github"},
+	"zai": {keys: []string{"claude"}, ownedBy: "zai"},
 	"cf":            {keys: []string{"cf"}, ownedBy: "cloudflare"},
 }
 
