@@ -13,6 +13,8 @@ import type { CompressionSettings, CacheStats, CompressionPreviewResult } from '
 import { toast } from 'svelte-sonner';
 import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
 import InfoIcon from '@lucide/svelte/icons/info';
+import CheckIcon from '@lucide/svelte/icons/check';
+import XIcon from '@lucide/svelte/icons/x';
 
   let compression = $state<CompressionSettings>({ mode: 'off' });
   let cacheStats = $state<CacheStats>({ hits: 0, misses: 0, size: 0, hit_rate: 0 });
@@ -115,11 +117,70 @@ const modes = [
     <Tabs.Trigger value="compression" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Compression</Tabs.Trigger>
     <Tabs.Trigger value="cache" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Cache</Tabs.Trigger>
   </Tabs.List>
-  <Tabs.Content value="compression">
-    <div class="space-y-4">
-      <Card class="shadow-card">
-        <CardHeader class="pb-3">
-          <CardTitle class="text-base">Compression Mode</CardTitle>
+<Tabs.Content value="compression">
+<div class="space-y-4">
+<!-- Active compression summary -->
+<Card class="shadow-card">
+<CardContent class="p-4">
+<div class="flex flex-col gap-4">
+<div class="flex items-center justify-between">
+<div>
+<h2 class="text-display-md">Active compression</h2>
+<p class="text-body-sm text-muted-foreground">Current live settings.</p>
+</div>
+<Badge variant={compression.mode === 'off' ? 'secondary' : 'default'}>
+{modes.find((m) => m.value === compression.mode)?.label ?? 'Unknown'}
+</Badge>
+</div>
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-body-sm">
+<div class="flex items-center gap-2">
+{#if liteCollapse}
+<CheckIcon class="size-4 text-emerald-500" />
+<span>Collapse whitespace</span>
+{:else}
+<XIcon class="size-4 text-muted-foreground" />
+<span class="text-muted-foreground">Collapse whitespace</span>
+{/if}
+</div>
+<div class="flex items-center gap-2">
+{#if liteImageUrls}
+<CheckIcon class="size-4 text-emerald-500" />
+<span>Replace image URLs</span>
+{:else}
+<XIcon class="size-4 text-muted-foreground" />
+<span class="text-muted-foreground">Replace image URLs</span>
+{/if}
+</div>
+<div class="flex items-center gap-2">
+{#if liteRedundant}
+<CheckIcon class="size-4 text-emerald-500" />
+<span>Remove redundant content</span>
+{:else}
+<XIcon class="size-4 text-muted-foreground" />
+<span class="text-muted-foreground">Remove redundant content</span>
+{/if}
+</div>
+<div class="flex items-center gap-2">
+{#if liteDedup}
+<CheckIcon class="size-4 text-emerald-500" />
+<span>Deduplicate system prompts</span>
+{:else}
+<XIcon class="size-4 text-muted-foreground" />
+<span class="text-muted-foreground">Deduplicate system prompts</span>
+{/if}
+</div>
+</div>
+<div class="flex items-start gap-2 rounded-lg bg-muted p-3 text-body-sm text-muted-foreground">
+<InfoIcon class="size-4 mt-0.5 shrink-0" />
+<span>Changing the compression mode requires a server restart to affect API traffic.</span>
+</div>
+</div>
+</CardContent>
+</Card>
+
+<Card class="shadow-card">
+<CardHeader class="pb-3">
+<CardTitle class="text-base">Compression Mode</CardTitle>
 <CardDescription class="text-xs">
               Lite strips whitespace and image data URLs. Standard adds Caveman rule-based prose condensation. RTK targets OpenAI, Claude and Responses tool outputs.
             </CardDescription>
