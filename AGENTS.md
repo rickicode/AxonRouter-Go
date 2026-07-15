@@ -282,6 +282,25 @@ This builds the binary and starts a **dev server** on the alternate port (`3788`
 - `HOME` is set to `/tmp/axon-dev`, so the dev instance uses its own SQLite database and PID file under `/tmp/axon-dev/axonrouter`.
 - The `kill-dev-port` target clears the dev port if a previous dev server is still running, but it never touches port 3777.
 
+## Hive Worktree Cleanup Rule (CRITICAL)
+
+When using Hive-managed feature worktrees, **do not let merged worktrees accumulate indefinitely**. If there are **10 or more Hive worktrees whose branches have already been merged into `master`**, those worktrees **must be deleted** to keep the workspace clean and avoid disk/branch pollution.
+
+### How to check
+```bash
+git branch -a | grep 'hive/' | wc -l
+```
+
+### How to delete a merged worktree
+```bash
+git worktree remove <path-to-worktree>
+git branch -D <branch-name>
+```
+
+The `git worktree remove` path is typically `.hive/.worktrees/<feature>/<task-folder>`.
+
+---
+
 ## Versioning & Changelog
 
 AxonRouter-Go uses a single-file versioning system so that every release is consistent across binary, dashboard, GitHub Releases, and `CHANGELOG.md`.
