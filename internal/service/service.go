@@ -79,15 +79,23 @@ func ServiceConfig(root bool) (*kardianos.Config, error) {
 		Name:        Name,
 		DisplayName: DisplayName,
 		Description: Description,
-		UserName:    svcUser,
 		Executable:  execPath,
 	}
 
 	if runtime.GOOS == "windows" {
 		// On Windows the working directory defaults to the service root;
 		// leave it empty so the data directory is resolved relative to the
-		// service profile.
+		// service profile. When root/system mode is requested leave the
+		// username blank so kardianos/service installs as LocalSystem.
+		if !root {
+			cfg.UserName = svcUser
+		}
 		return cfg, nil
+	}
+
+	cfg.UserName = svcUser
+	if svcUser == "" {
+		return nil, fmt.Errorf("could not determine service user")
 	}
 
 	homeDir := ""
