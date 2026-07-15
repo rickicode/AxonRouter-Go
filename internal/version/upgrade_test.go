@@ -139,6 +139,9 @@ func TestCachedChecker_LatestVersion_NeverBlocksOnNetwork(t *testing.T) {
 }
 
 func TestUpdateAvailable_Newer(t *testing.T) {
+	SetTestVersion("0.3.3")
+	defer ClearTestVersion()
+
 	checker := NewChecker(nil)
 	defer checker.Stop()
 	checker.ttl = 5 * time.Minute
@@ -152,6 +155,9 @@ func TestUpdateAvailable_Newer(t *testing.T) {
 }
 
 func TestUpdateAvailable_Current(t *testing.T) {
+	SetTestVersion("0.3.3")
+	defer ClearTestVersion()
+
 	checker := NewChecker(nil)
 	defer checker.Stop()
 	checker.ttl = 5 * time.Minute
@@ -165,6 +171,9 @@ func TestUpdateAvailable_Current(t *testing.T) {
 }
 
 func TestUpdateAvailable_Older(t *testing.T) {
+	SetTestVersion("0.3.3")
+	defer ClearTestVersion()
+
 	checker := NewChecker(nil)
 	defer checker.Stop()
 	checker.ttl = 5 * time.Minute
