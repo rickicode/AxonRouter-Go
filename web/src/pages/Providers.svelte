@@ -13,8 +13,9 @@
     getStatusLabel,
     type ProviderMeta,
   } from '$lib/provider-catalog';
-  import ProviderIcon from '$lib/components/ProviderIcon.svelte';
-  import type { Provider } from '$lib/api';
+import ProviderIcon from '$lib/components/ProviderIcon.svelte';
+import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
+import type { Provider } from '$lib/api';
   import AddProviderModal from '$lib/components/AddProviderModal.svelte';
   let showAddModal = $state(false);
 
@@ -344,69 +345,69 @@
             </div>
 
             {#if !isCollapsed}
-              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+              <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
             {#each sectionProviders as provider (provider.id)}
               {@const meta = providerMeta(provider)}
               {@const iconMeta = providerIconMeta(provider)}
               {@const color = providerColor(provider)}
               {@const category = getCategoryById(providerCategoryId(provider))}
               {@const serviceKinds = providerServiceKinds(provider)}
-              <a
-                    href="/providers/{provider.id}"
-                    class="group flex flex-col rounded-xl bg-card shadow-card transition-all duration-200 hover:-translate-y-0.5 hover:shadow-card-hover"
-                  >
-                    <div class="flex flex-col gap-2 p-3">
-                      <div class="flex items-start gap-2.5">
-                        <div
-                          class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md"
-                          style="background: {hexToRgba(color, 0.10)};"
-                        >
-                          <ProviderIcon meta={iconMeta} size={22} />
-                        </div>
-                        <div class="min-w-0 flex-1">
-                          <div class="flex min-w-0 items-center gap-1.5">
-                            <h3 class="min-w-0 flex-1 truncate text-[13px] font-semibold leading-tight text-foreground" title={providerName(provider)}>
-                              {providerName(provider)}
-                            </h3>
-                            <span
-                              class="inline-flex items-center gap-0.5 shrink-0"
-                              title={category?.label ?? 'Compatible'}
-                            >
-                              <span class="h-2 w-2 rounded-full shrink-0" style="background: {category?.color ?? color};"></span>
-                            </span>
-                          </div>
-              <p class="truncate text-[11px] text-muted-foreground">{providerPrefix(provider)}</p>
-              {#if serviceKinds.length > 0}
-                <div class="flex flex-wrap gap-1 mt-1">
-                  {#each serviceKinds as kind (kind)}
-                    <Badge variant="outline" class="text-[10px] px-1.5 py-0 rounded-full">{kind}</Badge>
-                  {/each}
+<a
+            href="/providers/{provider.id}"
+            class="group relative flex flex-col rounded-xl bg-card shadow-card border border-border/40 transition-all duration-200 hover:-translate-y-1 hover:shadow-elevated hover:border-primary/20 overflow-hidden"
+          >
+            <div class="absolute inset-x-0 top-0 h-1" style="background: {color};"></div>
+            <div class="flex flex-1 flex-col gap-4 p-4">
+              <div class="flex items-start gap-3">
+                <div
+                  class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg"
+                  style="background: {hexToRgba(color, 0.14)};"
+                >
+                  <ProviderIcon meta={iconMeta} size={28} />
                 </div>
-              {/if}
-            </div>
-          </div>
-          <div class="flex items-center gap-1.5 text-[11px] text-muted-foreground pt-1.5">
-                        {#if readyCount(provider) > 0}
-                          <span class="inline-flex items-center gap-0.5 text-emerald-400">
-                            <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
-                            {readyCount(provider)} ready
-                          </span>
-                        {/if}
-                        {#if issueCount(provider) > 0}
-                          <span class="inline-flex items-center gap-0.5 text-amber-400">
-                            <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
-                            {issueCount(provider)} issues
-                          </span>
-                        {/if}
-                        {#if readyCount(provider) === 0 && issueCount(provider) === 0}
-                          <span class="text-muted-foreground">{provider.connection_count} conn</span>
-                        {/if}
-                        <span class="ml-auto text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
-                        </span>
-                      </div>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center gap-2">
+                    <h3 class="min-w-0 flex-1 truncate text-body-sm-strong text-foreground" title={providerName(provider)}>
+                      {providerName(provider)}
+                    </h3>
+                    {#if providerHasFree(provider)}
+                      <Badge variant="outline" class="shrink-0 rounded-full text-[10px] px-1.5 py-0 h-auto border-emerald-500/30 text-emerald-400">Free</Badge>
+                    {/if}
+                  </div>
+                  <p class="mt-0.5 truncate text-caption-mono text-muted-foreground">{providerPrefix(provider)}</p>
+                  {#if serviceKinds.length > 0}
+                    <div class="flex flex-wrap gap-1 mt-1.5">
+                      {#each serviceKinds as kind (kind)}
+                        <Badge variant="outline" class="text-[10px] px-1.5 py-0 rounded-full">{kind}</Badge>
+                      {/each}
                     </div>
-                  </a>
+                  {/if}
+                </div>
+              </div>
+              <div class="mt-auto flex items-center justify-between border-t border-border/50 pt-3">
+                <div class="flex flex-wrap items-center gap-1.5">
+                  {#if readyCount(provider) > 0}
+                    <Badge variant="outline" class="rounded-full text-[10px] px-1.5 py-0 h-auto gap-1 border-emerald-500/30 text-emerald-400">
+                      <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                      {readyCount(provider)} ready
+                    </Badge>
+                  {/if}
+                  {#if issueCount(provider) > 0}
+                    <Badge variant="outline" class="rounded-full text-[10px] px-1.5 py-0 h-auto gap-1 border-amber-500/30 text-amber-400">
+                      <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+                      {issueCount(provider)} issues
+                    </Badge>
+                  {/if}
+                  {#if readyCount(provider) === 0 && issueCount(provider) === 0}
+                    <span class="text-caption text-muted-foreground">{provider.connection_count || 0} connections</span>
+                  {/if}
+                </div>
+                <span class="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
+                  <ChevronRightIcon class="size-4" />
+                </span>
+              </div>
+            </div>
+          </a>
                 {/each}
               </div>
             {/if}
