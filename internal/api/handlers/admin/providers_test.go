@@ -18,6 +18,85 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 )
 
+// TestAddConnectionMimocode validates MiMoCode connection creation rules:
+// additional connections require a proxy pool, get forced to no-auth, and
+// receive auto-generated account/fingerprint fields.
+func TestAddConnectionMimocode(t *testing.T) {
+	database := newConnectionHandlerTestDB(t)
+	h := newProviderHandlerTestDeps(t, database)
+
+	now := time.Now().Unix()
+	// Seed an active proxy pool to use for the valid creation path.
+	if _, err := database.Exec(`INSERT INTO proxy_pools (id, name, type, is_active, created_at, updated_at) VALUES ('pool-1','Pool One','http',1,?,?)`, now, now); err != nil {
+		t.Fatalf("seed proxy pool: %v", err)
+	}
+
+	gin.SetMode(gin.TestMode)
+
+	// 1. Missing proxy pool must return 400.
+	w1 := httptest.NewRecorder()
+	c1, _ := gin.CreateTestContext(w1)
+	body1 := `{"name":"MiMoCode No Proxy","provider_specific_data":{}}`
+	c1.Request = httptest.NewRequest(http.MethodPost, "/api/admin/providers/mimocode/connections", strings.NewReader(body1))
+	c1.Request.Header.Set("Content-Type", "application/json")
+	c1.Params = []gin.Param{{Key: "id", Value: "mimocode"}}
+	h.AddConnection(c1)
+	if w1.Code != http.StatusBadRequest {
+		t.Fatalf("missing proxy pool: status = %d, want 400; body=%s", w1.Code, w1.Body.String())
+	}
+
+	// 2. With proxy pool must return 201 and store no-auth settings.
+	w2 := httptest.NewRecorder()
+	c2, _ := gin.CreateTestContext(w2)
+	body2 := `{"name":"MiMoCode With Proxy","provider_specific_data":{"proxyPoolId":"pool-1"}}`
+	c2.Request = httptest.NewRequest(http.MethodPost, "/api/admin/providers/mimocode/connections", strings.NewReader(body2))
+	c2.Request.Header.Set("Content-Type", "application/json")
+	c2.Params = []gin.Param{{Key: "id", Value: "mimocode"}}
+	h.AddConnection(c2)
+	if w2.Code != http.StatusCreated {
+		t.Fatalf("with proxy pool: status = %d, want 201; body=%s", w2.Code, w2.Body.String())
+	}
+	var resp struct {
+		ID     string `json:"id"`
+		Name   string `json:"name"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(w2.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Name != "MiMoCode With Proxy" {
+		t.Errorf("name = %q, want MiMoCode With Proxy", resp.Name)
+	}
+
+	var authType, apiKey, psdRaw string
+	err := database.QueryRow(`SELECT auth_type, COALESCE(api_key,''), COALESCE(provider_specific_data,'') FROM connections WHERE id = ?`, resp.ID).Scan(&authType, &apiKey, &psdRaw)
+	if err != nil {
+		t.Fatalf("fetch created connection: %v", err)
+	}
+	if authType != "none" {
+		t.Errorf("auth_type = %q, want none", authType)
+	}
+	if apiKey != "" {
+		t.Errorf("api_key = %q, want empty", apiKey)
+	}
+	var psd map[string]string
+	if err := json.Unmarshal([]byte(psdRaw), &psd); err != nil {
+		t.Fatalf("psd unmarshal: %v", err)
+	}
+	if psd["proxyPoolId"] != "pool-1" {
+		t.Errorf("proxyPoolId = %q, want pool-1", psd["proxyPoolId"])
+	}
+	if psd["accountId"] == "" {
+		t.Errorf("accountId not generated")
+	}
+	if psd["accountLabel"] != "MiMoCode With Proxy" {
+		t.Errorf("accountLabel = %q, want MiMoCode With Proxy", psd["accountLabel"])
+	}
+	if len(psd["fingerprint"]) != 64 {
+		t.Errorf("fingerprint length = %d, want 64", len(psd["fingerprint"]))
+	}
+}
+
 // countingMockExecutor counts the maximum number of concurrent ExecuteStream calls.
 type countingMockExecutor struct {
 	mu        sync.Mutex
