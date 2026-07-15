@@ -4,19 +4,18 @@
  * Verifies the SHA256 checksum against the release's checksums.txt.
  */
 
-import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { createHash } from 'crypto';
 import https from 'https';
-import http from 'http';
-import { execSync } from 'child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8'));
 
 const REPO = 'rickicode/AxonRouter-Go';
 const VERSION = process.env.AXONROUTER_VERSION || pkg.version;
+const MAX_REDIRECTS = 5;
 
 function info(msg) {
   console.log(`[axonrouter-go] ${msg}`);
@@ -31,9 +30,8 @@ function platformToGoos(platform) {
     case 'win32': return 'windows';
     case 'darwin': return 'darwin';
     case 'linux': return 'linux';
-    case 'freebsd': return 'freebsd';
     default:
-      throw new Error(`unsupported platform: ${platform}`);
+      throw new Error(`unsupported platform: ${platform}. Supported: linux, darwin, win32`);
   }
 }
 
@@ -41,10 +39,8 @@ function archToGoarch(arch) {
   switch (arch) {
     case 'x64': return 'amd64';
     case 'arm64': return 'arm64';
-    case 'ia32': return '386';
-    case 'arm': return 'arm';
     default:
-      throw new Error(`unsupported architecture: ${arch}`);
+      throw new Error(`unsupported architecture: ${arch}. Supported: x64, arm64`);
   }
 }
 
@@ -59,12 +55,18 @@ function getBinaryName() {
   return process.platform === 'win32' ? 'axonrouter.exe' : 'axonrouter';
 }
 
-function download(url) {
+function download(url, redirects = 0) {
   return new Promise((resolve, reject) => {
-    const client = url.startsWith('https:') ? https : http;
-    const req = client.get(url, { headers: { 'User-Agent': `axonrouter-go-npm/${VERSION}` } }, (res) => {
+    if (!url.startsWith('https:')) {
+      return reject(new Error(`refusing to download from non-HTTPS URL: ${url}`));
+    }
+    if (redirects > MAX_REDIRECTS) {
+      return reject(new Error(`too many redirects`));
+    }
+
+    const req = https.get(url, { headers: { 'User-Agent': `axonrouter-go-npm/${VERSION}` } }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return download(new URL(res.headers.location, url).toString()).then(resolve, reject);
+        return download(new URL(res.headers.location, url).toString(), redirects + 1).then(resolve, reject);
       }
       if (res.statusCode !== 200) {
         return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
@@ -114,10 +116,8 @@ async function main() {
   }
 
   writeFileSync(binPath, binary);
-  try {
-    execSync(`chmod +x "${binPath}"`, { stdio: 'ignore' });
-  } catch {
-    // chmod may fail on Windows; binary is still usable via extension.
+  if (process.platform !== 'win32') {
+    chmodSync(binPath, 0o755);
   }
 
   info(`Installed ${binPath}`);
