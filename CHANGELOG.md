@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Removed duplicate MiMoCode Free provider from the dashboard: `mimocode-free` is now normalized to the canonical `mimocode` alias on startup (connections, quota cache, and custom models are migrated; the legacy provider_type row is deleted).
 - GitHub Copilot OAuth account creation no longer fails with "Connection not ready nil credentials" / "empty access token". GitHub's device-code endpoint returns HTTP 200 with `error: authorization_pending`; that response is now recognized so polling continues. Copilot token prefetch failures are non-fatal (matching OmniRoute), and real terminal errors are propagated to the UI instead of showing the generic "nil credentials" message.
 - GitHub Copilot quota tracking is now implemented. The quota scheduler fetches usage from `https://api.github.com/copilot_internal/user`, parses both paid (`quota_snapshots`) and free/limited (`monthly_quotas` + `limited_user_quotas`) response formats, and auto-refreshes the short-lived Copilot token before each fetch so the dashboard no longer shows "No quota data".
 - GitHub accounts without Copilot access now fail add-account with a clear message: "this GitHub account does not have GitHub Copilot access", instead of a raw 403 JSON blob. The same message is used by the quota scheduler to disable the connection.

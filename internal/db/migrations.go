@@ -195,9 +195,8 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		{"oc", "OpenCode Free", "openai", "https://opencode.ai/zen/v1", "no-auth", []string{"llm"}},
 		{"oc-zen", "OpenCode Zen", "openai", "https://opencode.ai/zen/v1", "apikey", []string{"llm"}},
 		{"oc-go", "OpenCode Go", "openai", "https://opencode.ai/zen/go/v1", "apikey", []string{"llm"}},
-		{"mimocode", "MiMoCode", "openai", "https://api.xiaomimimo.com/api/free-ai/openai", "no-auth", []string{"llm"}},
-		{"mimocode-free", "MiMoCode Free Tier", "openai", "https://api.xiaomimimo.com/api/free-ai/openai", "no-auth", []string{"llm"}},
-		{"cf", "Cloudflare Workers AI", "openai", "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/v1/chat/completions", "apikey", []string{"llm", "embedding", "image"}},
+	{"mimocode", "MiMoCode", "openai", "https://api.xiaomimimo.com/api/free-ai/openai", "no-auth", []string{"llm"}},
+	{"cf", "Cloudflare Workers AI", "openai", "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/v1/chat/completions", "apikey", []string{"llm", "embedding", "image"}},
 		{"glm", "Zhipu GLM", "openai", "https://api.z.ai/api/paas/v4", "apikey", []string{"llm"}},
 		{"minimax", "MiniMax", "openai", "https://api.minimax.io/v1", "apikey", []string{"llm"}},
 		{"kimi", "Kimi", "openai", "https://api.moonshot.ai/v1", "apikey", []string{"llm"}},
@@ -224,12 +223,20 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 			p.Category, string(serviceKindsJSON), p.ID)
 	}
 
-	// Normalize legacy `opencode` provider type to canonical `oc` alias, keeping
-	// connections and quota cache consistent. Must run after seeding `oc` above.
-	db.Exec(`UPDATE connections SET provider_type_id = 'oc' WHERE provider_type_id = 'opencode'`)
-	db.Exec(`UPDATE quota_cache SET provider_type_id = 'oc' WHERE provider_type_id = 'opencode'`)
-	db.Exec(`DELETE FROM provider_types WHERE id = 'opencode'`)
-	// Seed a default direct connection for OpenCode Free (oc). This connection
+// Normalize legacy `opencode` provider type to canonical `oc` alias, keeping
+// connections and quota cache consistent. Must run after seeding `oc` above.
+db.Exec(`UPDATE connections SET provider_type_id = 'oc' WHERE provider_type_id = 'opencode'`)
+db.Exec(`UPDATE quota_cache SET provider_type_id = 'oc' WHERE provider_type_id = 'opencode'`)
+db.Exec(`DELETE FROM provider_types WHERE id = 'opencode'`)
+
+// Normalize legacy `mimocode-free` provider type to canonical `mimocode` alias.
+db.Exec(`UPDATE connections SET provider_type_id = 'mimocode' WHERE provider_type_id = 'mimocode-free'`)
+db.Exec(`UPDATE quota_cache SET provider_type_id = 'mimocode' WHERE provider_type_id = 'mimocode-free'`)
+db.Exec(`INSERT OR IGNORE INTO provider_models (provider_type_id, model, created_at) SELECT 'mimocode', model, created_at FROM provider_models WHERE provider_type_id = 'mimocode-free'`)
+db.Exec(`DELETE FROM provider_models WHERE provider_type_id = 'mimocode-free'`)
+db.Exec(`DELETE FROM provider_types WHERE id = 'mimocode-free'`)
+
+// Seed a default direct connection for OpenCode Free (oc). This connection
 	// is always-on, cannot be deleted, and serves as the direct route. Additional
 	// oc connections must use a proxy pool (provider_specific_data.proxyPoolId).
 	var ocDirectCount int

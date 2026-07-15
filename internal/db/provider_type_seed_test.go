@@ -59,7 +59,7 @@ func TestProviderTypeCategoryAndServiceKinds(t *testing.T) {
 		serviceKinds string
 	}
 	got := map[string]row{}
-	r, err := d.Query("SELECT id, category, service_kinds FROM provider_types WHERE id IN ('cf','cx','oc','claude','mimocode-free','glm','minimax','kimi','mistral','cerebras','together','fireworks','novita','lambda','pollinations')")
+	r, err := d.Query("SELECT id, category, service_kinds FROM provider_types WHERE id IN ('cf','cx','oc','claude','mimocode','glm','minimax','kimi','mistral','cerebras','together','fireworks','novita','lambda','pollinations')")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,9 +83,9 @@ func TestProviderTypeCategoryAndServiceKinds(t *testing.T) {
 		{"cf", "apikey", []string{"llm", "embedding", "image"}},
 		{"cx", "oauth", []string{"llm"}},
 		{"oc", "no-auth", []string{"llm"}},
-		{"claude", "apikey", []string{"llm"}},
-		{"mimocode-free", "no-auth", []string{"llm"}},
-		{"glm", "apikey", []string{"llm"}},
+	{"claude", "apikey", []string{"llm"}},
+	{"mimocode", "no-auth", []string{"llm"}},
+	{"glm", "apikey", []string{"llm"}},
 		{"minimax", "apikey", []string{"llm"}},
 		{"kimi", "apikey", []string{"llm"}},
 		{"mistral", "apikey", []string{"llm"}},
