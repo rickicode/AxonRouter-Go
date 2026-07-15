@@ -122,9 +122,23 @@ func (h *OAuthHandler) StartOAuth(c *gin.Context) {
 		case creds := <-resultChan:
 			if creds == nil {
 				session.status = "failed"
-				session.err = "nil credentials"
+				session.err = "OAuth session ended without credentials"
 				session.doneAt = time.Now()
-				log.Printf("OAuth nil credentials for session %s", sessionID)
+				log.Printf("OAuth failed for session %s: %s", sessionID, session.err)
+				return
+			}
+			if creds.ProviderSpecific["__oauth_error__"] != "" {
+				session.status = "failed"
+				session.err = creds.ProviderSpecific["__oauth_error__"]
+				session.doneAt = time.Now()
+				log.Printf("OAuth failed for session %s: %s", sessionID, session.err)
+				return
+			}
+			if creds.AccessToken == "" {
+				session.status = "failed"
+				session.err = "OAuth succeeded but access token is empty"
+				session.doneAt = time.Now()
+				log.Printf("OAuth failed for session %s: %s", sessionID, session.err)
 				return
 			}
 

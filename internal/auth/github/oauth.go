@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -43,12 +44,16 @@ type deviceCodeResponse struct {
 }
 
 // tokenResponse is returned by GitHub's access-token endpoint.
+// When the device-code grant is still pending, GitHub returns HTTP 200 with
+// error/error_description fields instead of access_token.
 type tokenResponse struct {
-	AccessToken  string `json:"access_token"`
-	TokenType    string `json:"token_type"`
-	Scope        string `json:"scope"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int    `json:"expires_in"`
+	AccessToken      string `json:"access_token"`
+	TokenType        string `json:"token_type"`
+	Scope            string `json:"scope"`
+	RefreshToken     string `json:"refresh_token"`
+	ExpiresIn        int    `json:"expires_in"`
+	Error            string `json:"error"`
+	ErrorDescription string `json:"error_description"`
 }
 
 // copilotTokenResponse is returned by the Copilot token endpoint.
@@ -132,6 +137,10 @@ func (s *OAuthService) StartLocalServer(ctx context.Context, state string) (int,
 		time.Sleep(s.postExchangeDelay)
 		creds, err := s.pollForToken(ctx, deviceCode.DeviceCode, deviceCode.Interval)
 		if err != nil {
+			log.Printf("GitHub Copilot OAuth poll failed: %v", err)
+			resultChan <- &auth.Credentials{
+				ProviderSpecific: map[string]string{"__oauth_error__": err.Error()},
+			}
 			return
 		}
 		if creds != nil {
@@ -319,6 +328,13 @@ func (s *OAuthService) exchangeDeviceCode(ctx context.Context, deviceCode string
 		return nil, fmt.Errorf("parse token response: %w", err)
 	}
 	if result.AccessToken == "" {
+		if result.Error != "" {
+			msg := result.Error
+			if result.ErrorDescription != "" {
+				msg += ": " + result.ErrorDescription
+			}
+			return nil, fmt.Errorf("%s", msg)
+		}
 		return nil, fmt.Errorf("empty access token")
 	}
 	return &result, nil
@@ -327,7 +343,7 @@ func (s *OAuthService) exchangeDeviceCode(ctx context.Context, deviceCode string
 func (s *OAuthService) fetchCopilotAndUser(ctx context.Context, token *tokenResponse) (*auth.Credentials, error) {
 	copilot, err := s.fetchCopilotToken(ctx, token.AccessToken)
 	if err != nil {
-		return nil, fmt.Errorf("fetch copilot token: %w", err)
+		log.Printf("WARN: failed to prefetch Copilot token during OAuth: %v", err)
 	}
 	user, _ := s.fetchUserInfo(ctx, token.AccessToken)
 	if user == nil {
@@ -335,23 +351,25 @@ func (s *OAuthService) fetchCopilotAndUser(ctx context.Context, token *tokenResp
 	}
 
 	psd := map[string]string{
-		"copilotToken":          copilot.Token,
-		"copilotTokenExpiresAt": strconv.FormatInt(copilot.ExpiresAt, 10),
-		"githubUserId":          fmt.Sprintf("%d", user.ID),
-		"githubLogin":           user.Login,
-		"githubName":            user.Name,
-		"githubEmail":           user.Email,
+		"githubUserId": fmt.Sprintf("%d", user.ID),
+		"githubLogin":  user.Login,
+		"githubName":   user.Name,
+		"githubEmail":  user.Email,
 	}
-	if copilot.Endpoints.API != "" {
-		psd["copilotEndpointAPI"] = copilot.Endpoints.API
+	if copilot != nil {
+		psd["copilotToken"] = copilot.Token
+		psd["copilotTokenExpiresAt"] = strconv.FormatInt(copilot.ExpiresAt, 10)
+		if copilot.Endpoints.API != "" {
+			psd["copilotEndpointAPI"] = copilot.Endpoints.API
+		}
 	}
 	creds := &auth.Credentials{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		Email:        user.Email,
+		AccessToken:      token.AccessToken,
+		RefreshToken:     token.RefreshToken,
+		Email:            user.Email,
 		ProviderSpecific: psd,
 	}
-	if copilot.ExpiresAt > 0 {
+	if copilot != nil && copilot.ExpiresAt > 0 {
 		creds.ExpiresAt = time.Unix(copilot.ExpiresAt, 0)
 	} else if token.ExpiresIn > 0 {
 		creds.ExpiresAt = time.Now().Add(time.Duration(token.ExpiresIn) * time.Second)
