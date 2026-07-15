@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rickicode/AxonRouter-Go/internal/models"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -329,10 +330,11 @@ func (e *CopilotExecutor) buildURL(tok *copilotToken, psd map[string]string, bod
 
 // shouldUseResponsesEndpoint decides whether the model should hit Copilot's
 // /responses endpoint. It mirrors OmniRoute's logic: target_format=responses
-// or a codex name, but never Claude or Gemini variants. When the catalog
-// helper is unavailable, model-name heuristics cover the curated Copilot
-// responses models.
+// (from models.json) or a codex name, but never Claude or Gemini variants.
 func shouldUseResponsesEndpoint(model string, psd map[string]string) bool {
+	if models.GetModelTargetFormat("copilot", model) == "openai-responses" {
+		return true
+	}
 	m := strings.ToLower(model)
 	if strings.Contains(m, "gemini") || strings.Contains(m, "claude") {
 		return false

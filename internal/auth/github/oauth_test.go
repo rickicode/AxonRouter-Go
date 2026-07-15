@@ -158,6 +158,19 @@ func TestDeviceFlow_PendingThenSuccess(t *testing.T) {
 	}
 }
 
+func TestGetUserCode(t *testing.T) {
+	svc := NewOAuthService(nil)
+	svc.pending["state-abc"] = &pendingDeviceCode{VerificationURI: "https://github.com/login/device", UserCode: "UC-1234"}
+
+	if got := svc.GetUserCode("state-abc:0"); got != "UC-1234" {
+		t.Errorf("GetUserCode = %q, want UC-1234", got)
+	}
+
+	if _, ok := svc.pending["state-abc"]; ok {
+		t.Error("pending entry should be deleted after GetUserCode")
+	}
+}
+
 func TestRefreshToken_RefreshesCopilotToken(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/copilot_internal/v2/token" {

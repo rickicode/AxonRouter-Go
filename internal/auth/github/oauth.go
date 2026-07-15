@@ -26,7 +26,7 @@ const (
 	defaultScope             = "read:user"
 	defaultPollTimeout       = 5 * time.Minute
 	defaultPollInterval      = 5 * time.Second
-	defaultPostExchangeDelay = 5 * time.Second
+	defaultPostExchangeDelay = 0
 )
 
 // deviceCodeResponse is returned by GitHub's device-code endpoint.
@@ -150,6 +150,26 @@ func (s *OAuthService) GenerateAuthURL(_ context.Context, state string) (string,
 		return "", fmt.Errorf("no pending device code for state")
 	}
 	return pending.VerificationURI, nil
+}
+
+// GetUserCode returns the device code for the frontend to display. It is keyed
+// by the same bare state used by GenerateAuthURL, matching the userCoder
+// interface expected by the admin OAuth handler.
+func (s *OAuthService) GetUserCode(state string) string {
+	bareState := state
+	if idx := strings.LastIndex(state, ":"); idx > 0 {
+		bareState = state[:idx]
+	}
+
+	s.mu.Lock()
+	pending := s.pending[bareState]
+	delete(s.pending, bareState)
+	s.mu.Unlock()
+
+	if pending == nil {
+		return ""
+	}
+	return pending.UserCode
 }
 
 // ExchangeCode is not used by GitHub's device-code flow.
