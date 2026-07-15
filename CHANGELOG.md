@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Proactive OAuth token refresh now refreshes Copilot tokens even though GitHub device-code flow doesn't return a refresh token; the manual admin refresh endpoint also supports Copilot and persists the refreshed Copilot token to `provider_specific_data`.
 
 ### Added
+- MiMoCode Free provider (`mimocode/` prefix) with dedicated `MimocodeExecutor`: per-device-fingerprint JWT bootstrap, anti-abuse system marker, required `x-mimo-*` headers, one-time 401/403 retry, and proxy-pool selection for non-default connections. Includes a seeded `mimocode-direct-default` connection and backend validation/rules mirroring OpenCode Free.
 - Updated static GitHub Copilot model catalog in `internal/models/models.json` to include newer generally-available models: `claude-opus-4.6`, `gpt-5.4-nano`, `gpt-5.6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gemini-2.5-pro`, and `gemini-3-flash-preview`.
 - Quota dashboard provider summary now returns per-provider color/icon metadata and the provider filter pills use those colors, so Copilot and other providers render with their brand color instead of default gray.
 
