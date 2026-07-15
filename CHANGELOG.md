@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-07-15
+
 ### Added
 - Vertex AI provider (`vertex/` prefix) using Google service-account JSON keys; signs a JWT locally, exchanges it for a Google access token, resolves `{projectId}`/`{location}` base_url placeholders, and proxies OpenAI-compatible `/chat/completions` to Vertex AI's OpenAI endpoint.
 - GitHub Copilot provider (`copilot/` prefix) with OAuth-token → Copilot-token exchange, token caching, and the Copilot-specific request headers needed for its OpenAI-compatible `/chat/completions` endpoint.
