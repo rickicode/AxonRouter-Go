@@ -9,7 +9,7 @@ import ModelPickerDialog from '$lib/components/ModelPickerDialog.svelte';
 import { combosApi, modelsApi } from '$lib/api';
 import type { Combo, ComboStep, GatewayModel } from '$lib/api';
 import { unwrapStr } from '$lib/utils';
-import { planStepSync, type StepDraft } from './combo-modal-helpers';
+import { planStepSync, type StepDraft, type ExistingStep } from './combo-modal-helpers';
 import { toast } from 'svelte-sonner';
 
 let {
@@ -25,11 +25,11 @@ let {
 let name = $state('');
 let strategy = $state('priority');
 let timeout = $state(30000);
-let stickyLimit = $state(0);
+let stickyLimit = $state(1);
 let isSmart = $state(false);
 let smartGoal = $state('balanced');
 let steps = $state<StepDraft[]>([]);
-let existingSteps = $state<StepDraft[]>([]);
+let existingSteps = $state<ExistingStep[]>([]);
 let models = $state<GatewayModel[]>([]);
 let pickerOpen = $state(false);
 let loading = $state(false);
@@ -211,7 +211,7 @@ async function handleSave() {
 				</div>
 				<div class="space-y-2">
 					<Label class="text-body-sm-strong">Sticky limit</Label>
-					<Input type="number" bind:value={stickyLimit} min={0} class="h-10 text-code font-mono" />
+					<Input type="number" bind:value={stickyLimit} min={1} class="h-10 text-code font-mono" />
 				</div>
 			</div>
 

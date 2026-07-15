@@ -103,6 +103,7 @@ $effect(() => {
     <div class="flex items-center justify-between">
       <div class="space-y-1">
         <h1 class="text-display-lg">Combos.</h1>
+        <p class="text-body-sm text-muted-foreground">Build routing combos with ordered model steps, strategies, and smart goals.</p>
         <div class="flex items-center gap-3 text-body-sm text-muted-foreground">
           <span>{totalCombos} combos</span>
           <span class="text-border">·</span>
@@ -163,7 +164,11 @@ $effect(() => {
                   <span class="text-caption-mono text-muted-foreground">{combo.timeout_ms >= 1000 ? (combo.timeout_ms / 1000) + 's' : combo.timeout_ms + 'ms'}</span>
                 </td>
                 <td class="px-4 py-2.5 text-center">
-                  <StatusBadge status="smart" label={unwrapStr(combo.smart_goal) || 'on'} />
+                  {#if combo.is_smart}
+                    <StatusBadge status="smart" label={unwrapStr(combo.smart_goal) || 'on'} />
+                  {:else}
+                    <span class="text-caption-mono text-muted-foreground">—</span>
+                  {/if}
                 </td>
                 <td class="px-4 py-2.5 text-center">
                   <div class="flex justify-center">
