@@ -2581,10 +2581,33 @@
       "id": "mistralai/mistral-large-latest"
     },
     {
-      "id": "qwen/qwen-2.5-72b-instruct"
-    }
-  ],
-  "oc-go": [
+	"id": "qwen/qwen-2.5-72b-instruct"
+	}
+],
+"copilot": [
+	{
+	"id": "gpt-4o"
+	},
+	{
+	"id": "gpt-4"
+	},
+	{
+	"id": "o1"
+	},
+	{
+	"id": "o3-mini"
+	},
+	{
+	"id": "claude-3.5-sonnet"
+	},
+	{
+	"id": "claude-3.7-sonnet"
+	},
+	{
+	"id": "gemini-2.0-flash"
+	}
+],
+"oc-go": [
     {
       "id": "deepseek-v4-flash"
     },

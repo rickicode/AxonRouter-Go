@@ -207,8 +207,9 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		{"fireworks", "Fireworks", "openai", "https://api.fireworks.ai/inference/v1", "apikey", []string{"llm"}},
 		{"novita", "Novita AI", "openai", "https://api.novita.ai/openai", "apikey", []string{"llm"}},
 		{"lambda", "Lambda", "openai", "https://api.lambda.ai/v1", "apikey", []string{"llm"}},
-		{"pollinations", "Pollinations.AI", "openai", "https://gen.pollinations.ai", "apikey", []string{"llm"}},
-	}
+	{"pollinations", "Pollinations.AI", "openai", "https://gen.pollinations.ai", "apikey", []string{"llm"}},
+	{"copilot", "GitHub Copilot", "openai", "https://api.githubcopilot.com", "oauth", []string{"llm"}},
+}
 	for _, p := range providers {
 		serviceKindsJSON, _ := json.Marshal(p.ServiceKinds)
 		db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, is_custom, category, service_kinds, created_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?)`,

@@ -116,6 +116,7 @@ func RegisterDefaults() {
 		GetRegistry().Register(p, FormatOpenAI, openaiExec)
 	}
 	GetRegistry().Register("openrouter", FormatOpenAI, NewOpenRouterExecutor(base))
+	GetRegistry().Register("copilot", FormatOpenAI, NewCopilotExecutor(base))
 
 	// Cloudflare Workers AI uses dedicated executor for sanitization.
 	cfExec := NewCloudflareExecutor(openaiExec)
