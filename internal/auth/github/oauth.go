@@ -197,6 +197,8 @@ func (s *OAuthService) RefreshToken(ctx context.Context, creds *auth.Credentials
 	newCreds.ProviderSpecific["copilotTokenExpiresAt"] = strconv.FormatInt(copilot.ExpiresAt, 10)
 	if copilot.ExpiresAt > 0 {
 		newCreds.ExpiresAt = time.Unix(copilot.ExpiresAt, 0)
+	} else {
+		newCreds.ExpiresAt = time.Now().Add(time.Hour)
 	}
 	return &newCreds, nil
 }
@@ -318,10 +320,14 @@ func (s *OAuthService) fetchCopilotAndUser(ctx context.Context, token *tokenResp
 		return nil, fmt.Errorf("fetch copilot token: %w", err)
 	}
 	user, _ := s.fetchUserInfo(ctx, token.AccessToken)
+	if user == nil {
+		user = &userResponse{}
+	}
 
 	creds := &auth.Credentials{
-		AccessToken:    token.AccessToken,
-		RefreshToken:   token.RefreshToken,
+		AccessToken: token.AccessToken,
+		RefreshToken: token.RefreshToken,
+		Email: user.Email,
 		ProviderSpecific: map[string]string{
 			"copilotToken":          copilot.Token,
 			"copilotTokenExpiresAt": strconv.FormatInt(copilot.ExpiresAt, 10),
@@ -333,9 +339,10 @@ func (s *OAuthService) fetchCopilotAndUser(ctx context.Context, token *tokenResp
 	}
 	if copilot.ExpiresAt > 0 {
 		creds.ExpiresAt = time.Unix(copilot.ExpiresAt, 0)
-	}
-	if token.ExpiresIn > 0 {
+	} else if token.ExpiresIn > 0 {
 		creds.ExpiresAt = time.Now().Add(time.Duration(token.ExpiresIn) * time.Second)
+	} else {
+		creds.ExpiresAt = time.Now().Add(time.Hour)
 	}
 	return creds, nil
 }

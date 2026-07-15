@@ -492,9 +492,9 @@ func TestCopilotExecutor_DropsTrailingAssistantPrefill(t *testing.T) {
 	defer cleanup()
 
 	_, err := exec.Execute(context.Background(), &Request{
-		Provider:    "copilot",
+		Provider: "copilot",
 		AccessToken: "tok",
-		Body:        []byte(`{"model":"copilot/gpt-4o","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"prefill"}]}`),
+		Body: []byte(`{"model":"copilot/gpt-4o","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"prefill"}]}`),
 	})
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
@@ -502,5 +502,90 @@ func TestCopilotExecutor_DropsTrailingAssistantPrefill(t *testing.T) {
 	count := len(gjson.GetBytes(lastCopilotReq.body, "messages").Array())
 	if count != 1 {
 		t.Errorf("messages count = %d, want 1", count)
+	}
+}
+
+func TestCopilotExecutor_StripsThinkingForClaude(t *testing.T) {
+	_, _, exec, cleanup := execWithCopilotTransport(t)
+	defer cleanup()
+
+	for _, model := range []string{"copilot/claude-opus-4.5", "copilot/claude-sonnet-4.5"} {
+		_, err := exec.Execute(context.Background(), &Request{
+			Provider: "copilot",
+			AccessToken: "tok",
+			Body: []byte(`{"model":"` + model + `","messages":[{"role":"user"}],"thinking":{"type":"adaptive"},"reasoning_effort":"high"}`),
+		})
+		if err != nil {
+			t.Fatalf("execute failed for %s: %v", model, err)
+		}
+		if gjson.GetBytes(lastCopilotReq.body, "thinking").Exists() {
+			t.Errorf("thinking should be stripped for %s", model)
+		}
+		if gjson.GetBytes(lastCopilotReq.body, "reasoning_effort").Exists() {
+			t.Errorf("reasoning_effort should be stripped for %s", model)
+		}
+	}
+}
+
+func TestCopilotExecutor_KeepsThinkingForClaude46(t *testing.T) {
+	_, _, exec, cleanup := execWithCopilotTransport(t)
+	defer cleanup()
+
+	_, err := exec.Execute(context.Background(), &Request{
+		Provider: "copilot",
+		AccessToken: "tok",
+		Body: []byte(`{"model":"copilot/claude-sonnet-4.6","messages":[{"role":"user"}],"thinking":{"type":"adaptive"},"reasoning_effort":"high"}`),
+	})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if !gjson.GetBytes(lastCopilotReq.body, "thinking").Exists() {
+		t.Errorf("thinking should be kept for claude-sonnet-4.6")
+	}
+	if !gjson.GetBytes(lastCopilotReq.body, "reasoning_effort").Exists() {
+		t.Errorf("reasoning_effort should be kept for claude-sonnet-4.6")
+	}
+}
+
+func TestCopilotExecutor_StripsTemperatureForClaudeOpus4(t *testing.T) {
+	_, _, exec, cleanup := execWithCopilotTransport(t)
+	defer cleanup()
+
+	_, err := exec.Execute(context.Background(), &Request{
+		Provider: "copilot",
+		AccessToken: "tok",
+		Body: []byte(`{"model":"copilot/claude-opus-4.5","messages":[{"role":"user"}],"temperature":0.7}`),
+	})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if gjson.GetBytes(lastCopilotReq.body, "temperature").Exists() {
+		t.Errorf("temperature should be stripped for claude-opus-4")
+	}
+}
+
+func TestCopilotExecutor_InjectsResponseFormatForClaude(t *testing.T) {
+	_, _, exec, cleanup := execWithCopilotTransport(t)
+	defer cleanup()
+
+	body, _ := json.Marshal(map[string]any{
+		"model": "copilot/claude-sonnet-4.5",
+		"messages": []map[string]any{{"role": "user", "content": "hi"}},
+		"response_format": map[string]any{"type": "json_object"},
+	})
+	_, err := exec.Execute(context.Background(), &Request{
+		Provider: "copilot",
+		AccessToken: "tok",
+		Body: body,
+	})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if gjson.GetBytes(lastCopilotReq.body, "response_format").Exists() {
+		t.Errorf("response_format should be removed for Claude on Copilot")
+	}
+	content := gjson.GetBytes(lastCopilotReq.body, "messages.0.content").String()
+	if !strings.Contains(content, "Respond only with valid JSON") {
+		t.Errorf("system instruction not injected, got %q", content)
 	}
 }

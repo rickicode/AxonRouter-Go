@@ -373,11 +373,13 @@ func stripCopilotModelPrefix(body []byte) []byte {
 }
 
 // sanitizeCopilotBody applies Copilot-specific request cleanups:
-//   - drop reasoning fields from assistant messages
-//   - strip temperature for gpt-5.4 models
-//   - cap tools to 128
-//   - serialize unknown content part types as text and drop empty parts
-//   - drop trailing assistant prefill(s)
+// - drop reasoning fields from assistant messages
+// - inject response_format instructions for Claude models (Copilot rejects the param)
+// - strip temperature for gpt-5.4 models and claude-opus-4 models
+// - drop thinking/reasoning_effort for Copilot Claude models (except opus/sonnet 4.6)
+// - cap tools to 128
+// - serialize unknown content part types as text and drop empty parts
+// - drop trailing assistant prefill(s)
 func sanitizeCopilotBody(body []byte) []byte {
 	if len(body) == 0 {
 		return body
@@ -412,6 +414,15 @@ func sanitizeCopilotBody(body []byte) []byte {
 	if isGpt54Model(model) {
 		delete(req, "temperature")
 	}
+	if isClaudeOpus4(model) {
+		delete(req, "temperature")
+	}
+	if isCopilotClaudeNoReasoning(model) {
+		delete(req, "thinking")
+		delete(req, "reasoning_effort")
+	}
+
+	injectCopilotResponseFormat(req, model)
 
 	if tools, ok := req["tools"].([]any); ok && len(tools) > 128 {
 		req["tools"] = tools[:128]
@@ -427,6 +438,102 @@ func sanitizeCopilotBody(body []byte) []byte {
 func isGpt54Model(model string) bool {
 	m := strings.ToLower(ExtractModel(model))
 	return strings.Contains(m, "gpt-5.4")
+}
+
+func isClaudeOpus4(model string) bool {
+	m := strings.ToLower(ExtractModel(model))
+	return strings.Contains(m, "claude-opus-4")
+}
+
+// isCopilotClaudeNoReasoning matches Copilot-hosted Claude models that reject
+// thinking/reasoning_effort, matching OmniRoute's stripUnsupportedParams rule:
+// claude variants EXCEPT opus/sonnet 4.6.
+func isCopilotClaudeNoReasoning(model string) bool {
+	m := strings.ToLower(ExtractModel(model))
+	if !strings.Contains(m, "claude") {
+		return false
+	}
+	if strings.Contains(m, "4.6") && (strings.Contains(m, "opus") || strings.Contains(m, "sonnet")) {
+		return false
+	}
+	return true
+}
+
+func injectCopilotResponseFormat(req map[string]any, model string) {
+	if !strings.Contains(strings.ToLower(model), "claude") {
+		return
+	}
+	raw, ok := req["response_format"]
+	if !ok || raw == nil {
+		return
+	}
+	format, ok := raw.(map[string]any)
+	if !ok {
+		delete(req, "response_format")
+		return
+	}
+	typ, _ := format["type"].(string)
+	var instruction string
+	switch typ {
+	case "json_object":
+		instruction = "Respond only with valid JSON. Do not include any text before or after the JSON object."
+	case "json_schema":
+		var schema string
+		if js, ok := format["json_schema"].(map[string]any); ok {
+			if s, ok := js["schema"]; ok {
+				b, _ := json.Marshal(s)
+				schema = string(b)
+			}
+		}
+		if schema != "" {
+			instruction = fmt.Sprintf("Respond only with valid JSON matching this schema:\n%s\nDo not include any text before or after the JSON.", schema)
+		} else {
+			instruction = "Respond only with valid JSON. Do not include any text before or after the JSON object."
+		}
+	default:
+		delete(req, "response_format")
+		return
+	}
+
+	msgs, ok := req["messages"].([]any)
+	if !ok {
+		delete(req, "response_format")
+		return
+	}
+
+	systemIdx := -1
+	for i, raw := range msgs {
+		msg, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		role, _ := msg["role"].(string)
+		if strings.EqualFold(role, "system") {
+			systemIdx = i
+			break
+		}
+	}
+
+	if systemIdx >= 0 {
+		msg := msgs[systemIdx].(map[string]any)
+		appendTextToMessage(msg, instruction)
+		msgs[systemIdx] = msg
+	} else {
+		msgs = append([]any{map[string]any{"role": "system", "content": instruction}}, msgs...)
+	}
+	req["messages"] = msgs
+	delete(req, "response_format")
+}
+
+func appendTextToMessage(msg map[string]any, text string) {
+	switch content := msg["content"].(type) {
+	case string:
+		msg["content"] = content + "\n\n" + text
+	case []any:
+		msg["content"] = append(content, map[string]any{"type": "text", "text": text})
+	default:
+		msg["content"] = text
+	}
 }
 
 func sanitizeCopilotContentParts(parts []any) any {
