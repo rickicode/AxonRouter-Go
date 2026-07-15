@@ -11,6 +11,27 @@ import (
 	"time"
 )
 
+func TestGetModelTargetFormat_Found(t *testing.T) {
+	format := GetModelTargetFormat("copilot", "gpt-5.4")
+	if format != "openai-responses" {
+		t.Errorf("GetModelTargetFormat(copilot, gpt-5.4) = %q, want openai-responses", format)
+	}
+}
+
+func TestGetModelTargetFormat_Missing(t *testing.T) {
+	format := GetModelTargetFormat("copilot", "claude-sonnet-4.6")
+	if format != "" {
+		t.Errorf("GetModelTargetFormat(copilot, claude-sonnet-4.6) = %q, want empty", format)
+	}
+}
+
+func TestGetModelTargetFormat_UnknownProvider(t *testing.T) {
+	format := GetModelTargetFormat("not-a-provider", "gpt-5.4")
+	if format != "" {
+		t.Errorf("GetModelTargetFormat(not-a-provider, gpt-5.4) = %q, want empty", format)
+	}
+}
+
 func TestGetModelIDs_NewOpenAICompatibleProviders(t *testing.T) {
 	want := map[string][]string{
 		"glm":     {"glm-4", "glm-5"},

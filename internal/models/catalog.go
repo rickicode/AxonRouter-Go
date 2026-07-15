@@ -58,6 +58,7 @@ type modelEntry struct {
 	ID           string   `json:"id"`
 	DisplayName  string   `json:"display_name"`
 	ServiceKinds []string `json:"service_kinds"`
+	TargetFormat string   `json:"target_format"`
 }
 
 // catalog is the full models.json structure: provider → []modelEntry.
@@ -388,6 +389,23 @@ func GetModelDisplayNames(providerKey string) map[string]string {
 		}
 	}
 	return names
+}
+
+// GetModelTargetFormat returns the target_format for a model ID under a provider key.
+// Returns an empty string when no target format is configured.
+func GetModelTargetFormat(providerKey, modelID string) string {
+	mu.RLock()
+	defer mu.RUnlock()
+	entries, ok := current[providerKey]
+	if !ok {
+		return ""
+	}
+	for _, e := range entries {
+		if e.ID == modelID {
+			return e.TargetFormat
+		}
+	}
+	return ""
 }
 
 // GetModelServiceKinds returns the service kinds for a model ID under a provider key.

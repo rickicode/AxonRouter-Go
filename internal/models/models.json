@@ -2586,25 +2586,231 @@
   ],
   "copilot": [
     {
-      "id": "gpt-4o"
+      "id": "claude-fable-5",
+      "object": "model",
+      "created": 1781049600,
+      "owned_by": "github",
+      "type": "openai",
+      "display_name": "Claude Fable 5",
+      "context_length": 1000000,
+      "max_completion_tokens": 64000
     },
     {
-      "id": "gpt-4"
+      "id": "claude-opus-4.8-fast",
+      "object": "model",
+      "created": 1779984000,
+      "owned_by": "github",
+      "type": "openai",
+      "display_name": "Claude Opus 4.8 (fast mode)",
+      "context_length": 1000000,
+      "max_completion_tokens": 64000
     },
     {
-      "id": "o1"
+      "id": "claude-opus-4.8",
+      "object": "model",
+      "created": 1779984000,
+      "owned_by": "github",
+      "type": "openai",
+      "display_name": "Claude Opus 4.8",
+      "context_length": 1000000,
+      "max_completion_tokens": 64000
     },
     {
-      "id": "o3-mini"
+      "id": "claude-opus-4.7",
+      "object": "model",
+      "created": 1776297600,
+      "owned_by": "github",
+      "type": "openai",
+      "display_name": "Claude Opus 4.7",
+      "context_length": 1000000,
+      "max_completion_tokens": 64000
     },
     {
-      "id": "claude-3.5-sonnet"
+      "id": "claude-sonnet-4.6",
+      "object": "model",
+      "created": 1771372800,
+      "owned_by": "github",
+      "type": "openai",
+      "display_name": "Claude Sonnet 4.6",
+      "context_length": 1000000,
+      "max_completion_tokens": 64000
     },
     {
-      "id": "claude-3.7-sonnet"
+      "id": "claude-opus-4.5",
+      "object": "model",
+      "created": 1761955200,
+      "owned_by": "github",
+      "type": "openai",
+      "display_name": "Claude Opus 4.5",
+      "context_length": 200000,
+      "max_completion_tokens": 32000
     },
     {
-      "id": "gemini-2.0-flash"
+      "id": "claude-sonnet-5",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "github",
+      "type": "openai",
+      "display_name": "Claude Sonnet 5",
+      "context_length": 1000000,
+      "max_completion_tokens": 64000
+    },
+    {
+      "id": "claude-sonnet-4.5",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "github",
+      "type": "openai",
+      "display_name": "Claude Sonnet 4.5",
+      "context_length": 200000,
+      "max_completion_tokens": 32000
+    },
+    {
+      "id": "claude-haiku-4.5",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "github",
+      "type": "openai",
+      "display_name": "Claude Haiku 4.5",
+      "context_length": 200000,
+      "max_completion_tokens": 32000
+    },
+    {
+      "id": "gemini-3.1-pro-preview",
+      "object": "model",
+      "created": 1771459200,
+      "owned_by": "github",
+      "type": "openai",
+      "display_name": "Gemini 3.1 Pro",
+      "context_length": 1000000,
+      "max_completion_tokens": 64000
+    },
+    {
+      "id": "gemini-3.5-flash",
+      "object": "model",
+      "created": 1779235200,
+      "owned_by": "github",
+      "type": "openai",
+      "display_name": "Gemini 3.5 Flash",
+      "context_length": 1000000,
+      "max_completion_tokens": 64000
+    },
+    {
+      "id": "gpt-5.5",
+      "object": "model",
+      "created": 1776902400,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 5.5",
+      "context_length": 1050000,
+      "max_completion_tokens": 128000,
+      "target_format": "openai-responses"
+    },
+    {
+      "id": "gpt-5.4",
+      "object": "model",
+      "created": 1772668800,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 5.4",
+      "context_length": 1050000,
+      "max_completion_tokens": 128000,
+      "target_format": "openai-responses"
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "object": "model",
+      "created": 1773705600,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 5.4 Mini",
+      "context_length": 400000,
+      "max_completion_tokens": 128000,
+      "target_format": "openai-responses"
+    },
+    {
+      "id": "gpt-5.3-codex",
+      "object": "model",
+      "created": 1770912000,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 5.3-Codex",
+      "context_length": 400000,
+      "max_completion_tokens": 128000,
+      "target_format": "openai-responses"
+    },
+    {
+      "id": "gpt-5-mini",
+      "object": "model",
+      "created": 1776902400,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 5 mini",
+      "context_length": 264000,
+      "max_completion_tokens": 64000,
+      "target_format": "openai-responses"
+    },
+    {
+      "id": "gpt-4o-2024-11-20",
+      "object": "model",
+      "created": 1732060800,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT-4o",
+      "context_length": 128000,
+      "max_completion_tokens": 16384
+    },
+    {
+      "id": "gpt-4o-mini",
+      "object": "model",
+      "created": 1721347200,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT-4o mini",
+      "context_length": 128000,
+      "max_completion_tokens": 4096
+    },
+    {
+      "id": "gpt-4-0125-preview",
+      "object": "model",
+      "created": 1705276800,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 4 Turbo",
+      "context_length": 128000,
+      "max_completion_tokens": 4096
+    },
+    {
+      "id": "kimi-k2.7-code",
+      "object": "model",
+      "created": 1780396800,
+      "owned_by": "moonshot",
+      "type": "openai",
+      "display_name": "Kimi K2.7 Code",
+      "context_length": 256000,
+      "max_completion_tokens": 32000
+    },
+    {
+      "id": "mai-code-1-flash",
+      "object": "model",
+      "created": 1776902400,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "MAI-Code-1-Flash",
+      "context_length": 256000,
+      "max_completion_tokens": 128000,
+      "target_format": "openai-responses"
+    },
+    {
+      "id": "oswe-vscode-prime",
+      "object": "model",
+      "created": 1776902400,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "Raptor mini",
+      "context_length": 264000,
+      "max_completion_tokens": 64000,
+      "target_format": "openai-responses"
     }
   ],
   "oc-go": [
