@@ -120,8 +120,9 @@ lint:
 # Show help
 help:
 	@echo "Available targets:"
-	@echo " version           - Show current version from $(VERSION_FILE)"
-	@echo " set-version       - Bump version and sync derived files (usage: make set-version v=0.3.1)"
+	@echo " version - Show current version from $(VERSION_FILE)"
+	@echo " set-version - Bump version and sync derived files (usage: make set-version v=0.3.1)"
+	@echo " sync-npm-version - Sync npm/axonrouter-go/package.json version from $(VERSION_FILE)"
 	@echo " extract-changelog - Extract changelog notes for the current VERSION"
 	@echo " release           - Bump version, commit, tag, and push (usage: make release v=0.3.1)"
 	@echo " release-binary    - Cross-compile a release binary for GOOS/GOARCH"
@@ -152,6 +153,11 @@ set-version:
 		exit 1; \
 	fi
 	@node scripts/bump-version.js $(v)
+	@$(MAKE) sync-npm-version
+
+# Sync npm package version from internal/version/VERSION.
+sync-npm-version:
+	@node scripts/sync-npm-version.js
 
 # Extract changelog notes for the current VERSION. Redirect to a file as needed.
 extract-changelog:
