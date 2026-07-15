@@ -68,7 +68,7 @@ function resetState() {
 		name = '';
 		strategy = 'priority';
 		timeout = 30000;
-		stickyLimit = 0;
+		stickyLimit = 1;
 		isSmart = false;
 		smartGoal = 'balanced';
 		steps = [];
