@@ -93,10 +93,8 @@ http://localhost:3777/v1
 curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/master/installer.sh | bash
 ```
 
-The installer detects your OS/arch and installs `axonrouter` into the first writable directory it finds:
-
-1. `~/.local/bin`
-2. `/usr/local/bin`
+The installer detects your OS/arch and installs `axonrouter` into `~/.local/bin` by default.
+Use `sudo` or `--to /usr/local/bin` for a system-wide install.
 
 Then run it:
 
