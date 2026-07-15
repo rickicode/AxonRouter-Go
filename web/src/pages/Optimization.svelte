@@ -197,14 +197,49 @@ const modes = [
                   <Select.Item value={mode.value}>{mode.label}</Select.Item>
                 {/each}
               </Select.Content>
-            </Select.Root>
-          </div>
-        </CardContent>
-      </Card>
+</Select.Root>
+</div>
 
-      <Card class="shadow-card">
-        <CardHeader class="pb-3">
-          <CardTitle class="text-base">Lite Options</CardTitle>
+<!-- Mode details -->
+<div class="rounded-lg bg-muted p-3 space-y-2">
+<h3 class="text-body-sm-strong text-foreground">How this mode works</h3>
+{#if compression.mode === 'off'}
+<ul class="list-disc pl-4 text-xs text-muted-foreground space-y-1">
+<li>No request compression is applied.</li>
+<li>Request bodies are forwarded to upstream unchanged.</li>
+<li>Exact response caching is still active when a cached match exists.</li>
+</ul>
+{:else if compression.mode === 'lite'}
+<ul class="list-disc pl-4 text-xs text-muted-foreground space-y-1">
+<li>Collapses extra whitespace in message text and text parts.</li>
+<li>Replaces <code class="bg-background px-1 py-0.5 rounded text-caption-mono">data:image/...</code> base64 URLs with <code class="bg-background px-1 py-0.5 rounded text-caption-mono">[image]</code> in text and <code class="bg-background px-1 py-0.5 rounded text-caption-mono">image_url.url</code> fields.</li>
+<li>Optionally deduplicates repeated system prompts and removes back-to-back identical assistant messages.</li>
+<li>Fail-open: if the body cannot be parsed, the original is forwarded unchanged.</li>
+</ul>
+{:else if compression.mode === 'standard'}
+<ul class="list-disc pl-4 text-xs text-muted-foreground space-y-1">
+<li>Runs all Lite steps first (whitespace, image URLs, dedup).</li>
+<li>Then applies the Caveman rule-based prose compressor (~80 English rules).</li>
+<li>Removes filler adverbs, pleasantries, hedging, redundant phrases, and verbose instructions.</li>
+<li>Best for general user/assistant chat prose with lots of natural language.</li>
+</ul>
+{:else if compression.mode === 'rtk'}
+<ul class="list-disc pl-4 text-xs text-muted-foreground space-y-1">
+<li>Runs all Lite steps first (whitespace, image URLs, dedup).</li>
+<li>Then applies the RTK compressor for tool and function-call outputs.</li>
+<li>Targets <code class="bg-background px-1 py-0.5 rounded text-caption-mono">tool</code> role messages, <code class="bg-background px-1 py-0.5 rounded text-caption-mono">function_call_output</code> items, <code class="bg-background px-1 py-0.5 rounded text-caption-mono">tool_result</code> parts, and Responses API <code class="bg-background px-1 py-0.5 rounded text-caption-mono">input</code> entries.</li>
+<li>Leaves normal user/assistant prose untouched.</li>
+</ul>
+{:else}
+<p class="text-xs text-muted-foreground">Select a mode to see what it does.</p>
+{/if}
+</div>
+</CardContent>
+</Card>
+
+<Card class="shadow-card">
+<CardHeader class="pb-3">
+<CardTitle class="text-base">Lite Options</CardTitle>
         </CardHeader>
         <CardContent class="space-y-4">
 <div class="flex items-center justify-between">
