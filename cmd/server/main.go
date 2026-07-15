@@ -81,15 +81,77 @@ func printStartupBannerPlain(port string, database *sql.DB) {
 	fmt.Println()
 }
 
+func isTerminal(fd uintptr) bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	if os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	stat, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return (stat.Mode() & os.ModeCharDevice) != 0
+}
+
+func colorize(enable bool, code, text string) string {
+	if !enable {
+		return text
+	}
+	return fmt.Sprintf("\033[%sm%s\033[0m", code, text)
+}
+
+func printStartupBox(title string, lines []string) {
+	enableColor := isTerminal(os.Stdout.Fd())
+	sep := colorize(enableColor, "36", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	fmt.Println()
+	fmt.Println(sep)
+	if title != "" {
+		fmt.Println(" " + colorize(enableColor, "1;36", title))
+	}
+	for _, line := range lines {
+		fmt.Println(" " + line)
+	}
+	fmt.Println(sep)
+	fmt.Println()
+}
+
+func isRoot() bool {
+	return os.Geteuid() == 0
+}
+
 func handleStartupAction(action string) {
 	root := action == "install-root"
 	if root {
 		action = "install"
 	}
 
+	enableColor := isTerminal(os.Stdout.Fd())
+
+	red := func(s string) string { return colorize(enableColor, "31", s) }
+	yellow := func(s string) string { return colorize(enableColor, "33", s) }
+	green := func(s string) string { return colorize(enableColor, "32", s) }
+	cyan := func(s string) string { return colorize(enableColor, "36", s) }
+
+	if root && !isRoot() {
+		printStartupBox("Root required", []string{
+			red("--startup install-root must be run as root."),
+			"",
+			"Re-run with sudo:",
+			cyan("  sudo axonrouter --startup install-root"),
+		})
+		os.Exit(1)
+	}
+
+	if action == "install" && !root && isRoot() {
+		fmt.Fprintln(os.Stderr, yellow("warning: running as root. Use --startup install-root to install a system service."))
+	}
+
 	svcCfg, err := service.ServiceConfig(root)
 	if err != nil {
-		log.Fatalf("Failed to build service config: %v", err)
+		fmt.Fprintf(os.Stderr, red("Failed to build service config: %v\n"), err)
+		os.Exit(1)
 	}
 
 	prg := &service.Program{
@@ -98,45 +160,96 @@ func handleStartupAction(action string) {
 	}
 	svc, err := kardianos.New(prg, svcCfg)
 	if err != nil {
-		log.Fatalf("Failed to create service: %v", err)
+		fmt.Fprintf(os.Stderr, red("Failed to create service: %v\n"), err)
+		os.Exit(1)
 	}
 
 	switch action {
 	case "status":
 		st, err := svc.Status()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Service status unavailable: %v\n", err)
+			printStartupBox("Service status unavailable", []string{
+				red(err.Error()),
+				"",
+				"The service may not be installed yet.",
+				cyan("Install: axonrouter --startup install-root"),
+			})
 			os.Exit(1)
 		}
 		switch st {
 		case kardianos.StatusRunning:
-			fmt.Println("Service is running")
+			printStartupBox("Service running", []string{
+				green("axonrouter is running as user '" + svcCfg.UserName + "'."),
+				"",
+				"Stop:    axonrouter --startup stop",
+				"Restart: axonrouter --startup restart",
+				"Uninstall: axonrouter --startup uninstall",
+			})
 		case kardianos.StatusStopped:
-			fmt.Println("Service is installed but stopped")
+			printStartupBox("Service stopped", []string{
+				yellow("axonrouter is installed but stopped."),
+				"User: " + svcCfg.UserName,
+				"",
+				"Start: axonrouter --startup start",
+			})
 		default:
-			fmt.Println("Service status unknown")
+			printStartupBox("Service status unknown", []string{
+				"Run 'systemctl status axonrouter' (Linux) or",
+				"'launchctl list | grep axonrouter' (macOS) for details.",
+			})
 		}
-	default:
-		act, err := service.ControlAction(action)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			fmt.Fprintln(os.Stderr, "Usage: axonrouter --startup {install|install-root|status|start|stop|restart|uninstall}")
-			os.Exit(1)
+		os.Exit(0)
+	}
+
+	act, err := service.ControlAction(action)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, red(err.Error()))
+		fmt.Fprintln(os.Stderr, "Usage: axonrouter --startup {install|install-root|status|start|stop|restart|uninstall}")
+		os.Exit(1)
+	}
+	if err := kardianos.Control(svc, act); err != nil {
+		fmt.Fprintf(os.Stderr, red("Failed to %s service: %v\n"), action, err)
+		os.Exit(1)
+	}
+
+	switch action {
+	case "install":
+		installLines := []string{
+			green("Service 'axonrouter' installed as user '" + svcCfg.UserName + "'."),
+			"Binary: " + svcCfg.Executable,
+			"Data directory: " + svcCfg.WorkingDirectory + "/axonrouter",
 		}
-		if err := kardianos.Control(svc, act); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+		if err := kardianos.Control(svc, "start"); err != nil {
+			installLines = append(installLines, "", yellow("Service installed but could not be started:")+" "+err.Error())
+		} else {
+			installLines = append(installLines, "", green("Service started."))
 		}
-		if action == "install" {
-			fmt.Printf("Service '%s' installed as user '%s'.\n", service.Name, svcCfg.UserName)
-			fmt.Printf("Data directory: %s/axonrouter\n", svcCfg.WorkingDirectory)
-			if err := kardianos.Control(svc, "start"); err != nil {
-				fmt.Fprintf(os.Stderr, "Service installed but could not be started: %v\n", err)
-			} else {
-				fmt.Println("Service started.")
-			}
-			fmt.Println("Check status: axonrouter --startup status")
-		}
+		installLines = append(installLines, "", "Check status: axonrouter --startup status")
+		printStartupBox("Service installed", installLines)
+	case "start":
+		printStartupBox("Service started", []string{
+			green("axonrouter is starting as user '" + svcCfg.UserName + "'."),
+			"",
+			"Check status: axonrouter --startup status",
+		})
+	case "stop":
+		printStartupBox("Service stopped", []string{
+			green("axonrouter has been stopped."),
+			"",
+			"Start again: axonrouter --startup start",
+		})
+	case "restart":
+		printStartupBox("Service restarted", []string{
+			green("axonrouter is restarting as user '" + svcCfg.UserName + "'."),
+			"",
+			"Check status: axonrouter --startup status",
+		})
+	case "uninstall":
+		printStartupBox("Service uninstalled", []string{
+			green("axonrouter has been removed from the service manager."),
+			"",
+			"Re-install: axonrouter --startup install-root",
+		})
 	}
 	os.Exit(0)
 }

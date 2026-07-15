@@ -87,12 +87,30 @@ func (h *UpgradeHandler) Upgrade(c *gin.Context) {
 		return
 	}
 
+	restartCmd, restartHint := restartInstructions()
+
 	c.JSON(http.StatusOK, gin.H{
-		"ok": true,
-		"path": path,
-		"version": info.Version,
-		"asset": asset,
+		"ok":              true,
+		"path":            path,
+		"version":         info.Version,
+		"asset":           asset,
+		"restart_command": restartCmd,
+		"restart_hint":    restartHint,
 	})
+}
+
+func restartInstructions() (command, hint string) {
+	hint = "Run this command to restart the service and start using the new binary."
+	switch runtime.GOOS {
+	case "linux":
+		return "systemctl restart axonrouter", hint
+	case "darwin":
+		return "launchctl unload ~/Library/LaunchAgents/axonrouter.plist && launchctl load ~/Library/LaunchAgents/axonrouter.plist", hint
+	case "windows":
+		return "sc stop axonrouter && sc start axonrouter", hint
+	default:
+		return "restart the 'axonrouter' service", "Restart the 'axonrouter' service to start using the new binary."
+	}
 }
 
 func (h *UpgradeHandler) download(url string) ([]byte, error) {

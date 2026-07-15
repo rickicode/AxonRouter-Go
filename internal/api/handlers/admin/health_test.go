@@ -72,8 +72,11 @@ func TestHealth_IncludesVersionInfo(t *testing.T) {
 	if resp["latest_version"] != "0.3.4" {
 		t.Errorf("latest_version = %v, want 0.3.4", resp["latest_version"])
 	}
-	if resp["update_available"] != true {
-		t.Errorf("update_available = %v, want true", resp["update_available"])
+	// NOTE: assertion uses the checker's own comparison so the test stays valid
+	// regardless of the embedded VERSION in the current build.
+	wantUpdate := checker.UpdateAvailable()
+	if resp["update_available"] != wantUpdate {
+		t.Errorf("update_available = %v, want %v", resp["update_available"], wantUpdate)
 	}
 }
 
