@@ -82,6 +82,28 @@ func (h *HealthHandler) Health(c *gin.Context) {
 }
 
 // Metrics returns operational counters for observability.
+// CheckUpdate forces a fresh fetch of the latest GitHub release and returns the
+// current version, latest version, and whether an update is available.
+func (h *HealthHandler) CheckUpdate(c *gin.Context) {
+	if h.checker == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "version checker unavailable"})
+		return
+	}
+	if err := h.checker.Refresh(); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	latest := ""
+	if info, ok := h.checker.LatestVersion(); ok {
+		latest = info.Version
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"version": version.String(),
+		"latest_version": latest,
+		"update_available": h.checker.UpdateAvailable(),
+	})
+}
+
 // Changelog returns the project's CHANGELOG markdown via the version checker.
 // The dashboard uses this instead of fetching raw.githubusercontent.com directly,
 // avoiding CORS and ad-blocker issues in the browser.

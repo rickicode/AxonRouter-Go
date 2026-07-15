@@ -121,8 +121,22 @@ async function checkForUpdates() {
   if (checking) return;
   checking = true;
   try {
-    await fetchHealth();
+    const headers: Record<string, string> = {};
+    const token = getToken();
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+
+    const res = await fetch('/api/admin/upgrade/check', { headers });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `Check update returned ${res.status}`);
+    }
+    const data = await res.json();
+    currentVersion = typeof data.version === 'string' ? data.version : currentVersion;
+    latestVersion = typeof data.latest_version === 'string' ? data.latest_version : '';
+    updateAvailable = data.update_available === true;
+
     await fetchChangelog();
+
     if (updateAvailable) {
       toast.info(`Update available: v${normalizedLatest}`, { description: 'Click Upgrade now to install the latest release.' });
     } else if (currentVersion && latestVersion) {
@@ -130,6 +144,9 @@ async function checkForUpdates() {
     } else {
       toast.error('Unable to check for updates');
     }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Check update failed';
+    toast.error('Check update failed: ' + message);
   } finally {
     checking = false;
   }
@@ -140,7 +157,11 @@ onMount(() => {
   void (async () => {
     await fetchHealth();
     loading = false;
-    await fetchChangelog();
+    if (!latestVersion) {
+      await checkForUpdates();
+    } else {
+      await fetchChangelog();
+    }
   })();
 
   healthInterval = setInterval(fetchHealth, HEALTH_POLL_INTERVAL_MS);

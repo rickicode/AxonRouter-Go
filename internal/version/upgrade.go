@@ -17,7 +17,7 @@ const (
 )
 
 var githubLatestURL = "https://api.github.com/repos/rickicode/AxonRouter-Go/releases/latest"
-var rawChangelogURL = "https://raw.githubusercontent.com/rickicode/AxonRouter-Go/main/CHANGELOG.md"
+var rawChangelogURL = "https://raw.githubusercontent.com/rickicode/AxonRouter-Go/master/CHANGELOG.md"
 
 // userAgent is sent with all outbound version/GitHub requests.
 var userAgent = "AxonRouter-Go/" + String()

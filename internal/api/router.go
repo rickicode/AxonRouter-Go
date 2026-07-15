@@ -333,7 +333,8 @@ func New(cfg Config) *Router {
 	g.GET("/changelog", healthH.Changelog)
 
 // Upgrade
-		g.POST("/upgrade", upgradeH.Upgrade)
+	g.GET("/upgrade/check", healthH.CheckUpdate)
+	g.POST("/upgrade", upgradeH.Upgrade)
 
 		// Quota
 		g.GET("/quota", quotaH.List)
