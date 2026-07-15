@@ -128,6 +128,9 @@ type DefaultStepDef struct {
 }
 
 // SeedDefaultCombos inserts default combos if none exist.
+// Steps that have no matching active connection are skipped, and combos that
+// would end up with zero usable steps are not seeded at all. This prevents
+// the dashboard from showing combos whose models cannot actually be routed.
 func SeedDefaultCombos(database *sql.DB) error {
 	var count int
 	database.QueryRow(`SELECT COUNT(*) FROM combos`).Scan(&count)
@@ -143,19 +146,32 @@ func SeedDefaultCombos(database *sql.DB) error {
 			smartGoal = sql.NullString{String: def.SmartGoal, Valid: true}
 		}
 		_, err := database.Exec(`
-			INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal, is_active, created_at, updated_at)
-			VALUES (?, ?, ?, 1, 30000, ?, ?, 1, ?, ?)
+		INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal, is_active, created_at, updated_at)
+		VALUES (?, ?, ?, 1, 30000, ?, ?, 1, ?, ?)
 		`, comboID, def.Name, def.Strategy, boolToInt(def.IsSmart), smartGoal, now, now)
 		if err != nil {
 			continue
 		}
-	for _, step := range def.Steps {
-		connectionID := resolveDefaultConnection(database, step.ModelID)
-		database.Exec(`
-		INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, uuid.New().String(), comboID, connectionID, step.ModelID, step.Priority, step.Weight, now)
-	}
+		insertedSteps := 0
+		for _, step := range def.Steps {
+			connectionID := resolveDefaultConnection(database, step.ModelID)
+			if connectionID == "" {
+				// No active connection for this model yet; skip the step.
+				continue
+			}
+			_, err := database.Exec(`
+			INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+			`, uuid.New().String(), comboID, connectionID, step.ModelID, step.Priority, step.Weight, now)
+			if err == nil {
+				insertedSteps++
+			}
+		}
+		if insertedSteps == 0 {
+			// Remove the combo if none of its steps could be anchored to a connection.
+			database.Exec(`DELETE FROM combo_steps WHERE combo_id = ?`, comboID)
+			database.Exec(`DELETE FROM combos WHERE id = ?`, comboID)
+		}
 	}
 	return nil
 }

@@ -151,10 +151,10 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 			if h.isClientCanceled(c, err) {
 				return
 			}
-		if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
-			return
-		}
-		retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
+			if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
+				return
+			}
+			retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
 			lastErr = err
 			lastErrCategory = cat
 			if !retry {
@@ -185,27 +185,27 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 					tokensEstimated = true
 				}
 			}
-		h.tracker.Log(&usage.LogEntry{
-			ApiKeyID: c.GetString("api_key_id"),
-			ConnectionID: conn.ID,
-			ProviderTypeID: provider,
-			ModelID: modelName,
-			ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
-			Modality: "chat",
-			Stream: stream,
-			InputTokens: tokenCounts.InputTokens,
-			OutputTokens: tokenCounts.OutputTokens,
-			ReasoningTokens: tokenCounts.ReasoningTokens,
-			CachedTokens: tokenCounts.CachedTokens,
-			CacheCreationTokens: tokenCounts.CacheCreationTokens,
-			LatencyMs: latency,
-			StatusCode: resp.StatusCode,
-			TokensEstimated: tokensEstimated,
-		})
-	if resp.StatusCode < 300 {
-		h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
-	}
-	h.incrementAPIKeyUsage(c.GetString("api_key_id"), tokenCounts.InputTokens+tokenCounts.OutputTokens)
+			h.tracker.Log(&usage.LogEntry{
+				ApiKeyID:            c.GetString("api_key_id"),
+				ConnectionID:        conn.ID,
+				ProviderTypeID:      provider,
+				ModelID:             modelName,
+				ProxyPoolID:         executor.ProxyPoolIDFromContext(proxyCtx),
+				Modality:            "chat",
+				Stream:              stream,
+				InputTokens:         tokenCounts.InputTokens,
+				OutputTokens:        tokenCounts.OutputTokens,
+				ReasoningTokens:     tokenCounts.ReasoningTokens,
+				CachedTokens:        tokenCounts.CachedTokens,
+				CacheCreationTokens: tokenCounts.CacheCreationTokens,
+				LatencyMs:           latency,
+				StatusCode:          resp.StatusCode,
+				TokensEstimated:     tokensEstimated,
+			})
+			if resp.StatusCode < 300 {
+				h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
+			}
+			h.incrementAPIKeyUsage(c.GetString("api_key_id"), tokenCounts.InputTokens+tokenCounts.OutputTokens)
 			h.writeJSONResponse(c, resp.StatusCode, translatedResp)
 		}
 		return
@@ -250,6 +250,10 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 		provider, modelName := executor.SplitModel(step.ModelID)
 		lastModelName = modelName
 
+		// Replace the model in the request body with this step's unprefixed model so
+		// upstream providers receive the correct model ID (mirrors the direct path).
+		body = executor.JSONSet(body, "model", modelName)
+
 		exec, providerFormat, err := h.resolveExecutor(provider, modelName)
 		if err != nil {
 			// Cannot even build an executor for this model — record and try next step.
@@ -276,23 +280,23 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 			}
 			lastConn = conn
 
-	var psdMap map[string]string
-	if conn.ProviderSpecificData != "" {
-		if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
-			logging.Logger.Warn("malformed provider_specific_data", "conn", shortID(conn.ID, 8), "error", err.Error())
-		}
-	}
-	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
-	translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
-	req := &executor.Request{
+			var psdMap map[string]string
+			if conn.ProviderSpecificData != "" {
+				if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
+					logging.Logger.Warn("malformed provider_specific_data", "conn", shortID(conn.ID, 8), "error", err.Error())
+				}
+			}
+			translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+			translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
+			req := &executor.Request{
 
-				Model: modelName,
-				Body: translatedBody,
-				Stream: stream,
-				APIKey: conn.APIKey,
-				AccessToken: conn.AccessToken,
-				BaseURL: conn.BaseURL,
-				Provider: provider,
+				Model:                modelName,
+				Body:                 translatedBody,
+				Stream:               stream,
+				APIKey:               conn.APIKey,
+				AccessToken:          conn.AccessToken,
+				BaseURL:              conn.BaseURL,
+				Provider:             provider,
 				ProviderSpecificData: psdMap,
 			}
 			proxyCtx := h.proxyContext(comboCtx, conn)
@@ -305,14 +309,14 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				det := connstate.DetectError(comboCtx, 0, "", err, provider, modelName, nil)
 
 				// Non-retryable client errors must be surfaced, not fail-over'd.
-			if det.Category == connstate.ErrorModelNotFound || det.Category == connstate.ErrorAuth {
-				if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
-					return
+				if det.Category == connstate.ErrorModelNotFound || det.Category == connstate.ErrorAuth {
+					if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
+						return
+					}
+					lastErr = err
+					lastErrCategory = string(det.Category)
+					break
 				}
-				lastErr = err
-				lastErrCategory = string(det.Category)
-				break
-			}
 
 				// Retryable: apply the same failover marking as the direct path.
 				if connstate.HasPerModelQuota(provider) && det.ModelID != "" &&
@@ -346,38 +350,38 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				h.codexPersistIfCodex(conn, resp, streamResult)
 			}
 
-	if req.Stream {
-		h.handleStreamResponse(proxyCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body)
-	} else {
-		translatedResp := registry.ResponseNonStream(comboCtx, string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
-			tokenCounts := ExtractTokensFromBody(translatedResp)
-			tokensEstimated := false
-			if tokenCounts.InputTokens+tokenCounts.OutputTokens == 0 && resp.StatusCode < 400 {
-				estInput := usage.EstimateTokensFromRequest(body)
-				estOutput := usage.EstimateTokensFromResponse(translatedResp)
-				if estInput > 0 || estOutput > 0 {
-					tokenCounts.InputTokens = estInput
-					tokenCounts.OutputTokens = estOutput
-					tokensEstimated = true
+			if req.Stream {
+				h.handleStreamResponse(proxyCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body)
+			} else {
+				translatedResp := registry.ResponseNonStream(comboCtx, string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
+				tokenCounts := ExtractTokensFromBody(translatedResp)
+				tokensEstimated := false
+				if tokenCounts.InputTokens+tokenCounts.OutputTokens == 0 && resp.StatusCode < 400 {
+					estInput := usage.EstimateTokensFromRequest(body)
+					estOutput := usage.EstimateTokensFromResponse(translatedResp)
+					if estInput > 0 || estOutput > 0 {
+						tokenCounts.InputTokens = estInput
+						tokenCounts.OutputTokens = estOutput
+						tokensEstimated = true
+					}
 				}
-			}
-			h.tracker.Log(&usage.LogEntry{
-				ApiKeyID: c.GetString("api_key_id"),
-				ConnectionID: connID,
-				ProviderTypeID: provider,
-				ModelID: modelName,
-				ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
-				Modality: "chat",
-				Stream: stream,
-				InputTokens: tokenCounts.InputTokens,
-				OutputTokens: tokenCounts.OutputTokens,
-				ReasoningTokens: tokenCounts.ReasoningTokens,
-				CachedTokens: tokenCounts.CachedTokens,
-				CacheCreationTokens: tokenCounts.CacheCreationTokens,
-				LatencyMs: latency,
-				StatusCode: resp.StatusCode,
-				TokensEstimated: tokensEstimated,
-			})
+				h.tracker.Log(&usage.LogEntry{
+					ApiKeyID:            c.GetString("api_key_id"),
+					ConnectionID:        connID,
+					ProviderTypeID:      provider,
+					ModelID:             modelName,
+					ProxyPoolID:         executor.ProxyPoolIDFromContext(proxyCtx),
+					Modality:            "chat",
+					Stream:              stream,
+					InputTokens:         tokenCounts.InputTokens,
+					OutputTokens:        tokenCounts.OutputTokens,
+					ReasoningTokens:     tokenCounts.ReasoningTokens,
+					CachedTokens:        tokenCounts.CachedTokens,
+					CacheCreationTokens: tokenCounts.CacheCreationTokens,
+					LatencyMs:           latency,
+					StatusCode:          resp.StatusCode,
+					TokensEstimated:     tokensEstimated,
+				})
 				c.Header("Content-Type", "application/json")
 				h.incrementAPIKeyUsage(c.GetString("api_key_id"), tokenCounts.InputTokens+tokenCounts.OutputTokens)
 				c.Status(resp.StatusCode)
