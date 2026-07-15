@@ -97,6 +97,10 @@ func persistCopilotTokenExpiry(db *sql.DB, connectionID string, exp int64) {
 	if db == nil || connectionID == "" || exp == 0 {
 		return
 	}
+	var current int64
+	if err := db.QueryRow(`SELECT COALESCE(oauth_expires_at, 0) FROM connections WHERE id = ?`, connectionID).Scan(&current); err == nil && current == exp {
+		return
+	}
 	if _, err := db.Exec(`
 		UPDATE connections
 		SET oauth_expires_at = ?, updated_at = ?
@@ -272,6 +276,12 @@ func parseCopilotQuotas(data map[string]any) ([]QuotaItem, string, error) {
 		remaining := 0.0
 		if limited != nil {
 			remaining = getNumberField(limited, name)
+		}
+		if remaining < 0 {
+			remaining = 0
+		}
+		if remaining > total {
+			remaining = total
 		}
 		used := total - remaining
 			remainingPct := 0.0
