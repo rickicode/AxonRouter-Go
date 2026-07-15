@@ -138,6 +138,14 @@ When CLIProxyAPI, AxonRouter, and OmniRoute implement the same subsystem:
 - Codex ≠ OpenAI: `cx/gpt-5.4` is not `openai/gpt-5.4`.
 - Custom provider: user-given name becomes the prefix (e.g., `9router/gpt-4o`).
 
+## Model Pricing Seed Rule
+
+- `model_pricing` is keyed by the **model ID after the provider prefix** (`internal/usage/pricing.go` strips everything before the first `/`). There is **no per-provider pricing**.
+- Seed only **canonical/main models** with representative (average) public rates. Do not try to seed every alias returned by every provider.
+- Every seeded row must have a non-zero input+output price; `validateSeedPricing` rejects `$0` rows.
+- Free/subscription providers without a per-token rate (e.g., Pollinations, Copilot, OpenCode Free) are intentionally left out of the seed; operators can add custom rows through the admin **Model Pricing** UI.
+- When adding a new provider, look up the public price for its flagship models and seed **only the model part** that `GetPricing` will actually look up.
+
 ## Scale Assumptions
 
 - 100–1000+ connections per provider.
