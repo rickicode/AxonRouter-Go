@@ -105,7 +105,8 @@ const availableProxyPools = $derived(noAuthMode === 'http' ? httpProxyPools : re
     }
   }
 
-  const filterCategories = CATEGORIES.filter(c => ['oauth', 'apikey', 'free', 'free_tier', 'compatible'].includes(c.id));
+	const filterCategories = CATEGORIES.filter(c => ['oauth', 'apikey', 'service-account', 'free', 'free_tier', 'compatible'].includes(c.id));
+
 </script>
 
 <div class="flex flex-1 flex-col gap-6 p-6">

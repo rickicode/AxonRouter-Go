@@ -41,6 +41,19 @@
     style="width: {size}px; height: {size}px;"
     onerror={() => (imgError = true)}
   />
+{:else if meta?.icon}
+  <div
+    class="flex items-center justify-center rounded-md {className}"
+    style="width: {size}px; height: {size}px; color: {meta?.color ?? '#e4e4e7'}; background: {hexToRgba(meta?.color, 0.12)};"
+    aria-label={meta?.displayName ?? 'Provider'}
+  >
+    <span
+      class="material-symbols-outlined"
+      style="font-size: {Math.max(14, Math.round(size * 0.55))}px;"
+    >
+      {meta.icon}
+    </span>
+  </div>
 {:else}
   <div
     class="flex items-center justify-center rounded-md font-mono font-semibold tracking-[-0.04em] {className}"

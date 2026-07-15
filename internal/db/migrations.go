@@ -205,9 +205,10 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		{"cerebras", "Cerebras", "openai", "https://api.cerebras.ai/v1", "apikey", []string{"llm"}},
 		{"together", "Together AI", "openai", "https://api.together.ai/v1", "apikey", []string{"llm"}},
 		{"fireworks", "Fireworks", "openai", "https://api.fireworks.ai/inference/v1", "apikey", []string{"llm"}},
-		{"novita", "Novita AI", "openai", "https://api.novita.ai/openai", "apikey", []string{"llm"}},
+		{"novita", "Novita AI", "openai", "https://api.novita.ai/openai/v1", "apikey", []string{"llm"}},
 		{"lambda", "Lambda", "openai", "https://api.lambda.ai/v1", "apikey", []string{"llm"}},
-	{"pollinations", "Pollinations.AI", "openai", "https://gen.pollinations.ai", "apikey", []string{"llm"}},
+		{"pollinations", "Pollinations.AI", "openai", "https://gen.pollinations.ai/v1", "apikey", []string{"llm"}},
+
 	{"copilot", "GitHub Copilot", "openai", "https://api.githubcopilot.com", "oauth", []string{"llm"}},
 		{"vertex", "Google Vertex AI", "openai", "https://aiplatform.googleapis.com/v1/projects/{projectId}/locations/{location}/endpoints/openapi", "service-account", []string{"llm"}},
 		{"bedrock", "Amazon Bedrock Mantle", "openai", "https://bedrock-mantle.{region}.api.aws/v1", "apikey", []string{"llm"}},
