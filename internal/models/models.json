@@ -3620,152 +3620,334 @@
     }
   ],
   "bedrock": [
-    {
-      "id": "anthropic.claude-3-7-sonnet-20250219-v1:0",
-      "display_name": "Claude 3.7 Sonnet",
-      "service_kinds": [
-        "llm"
-      ]
-    },
-    {
-      "id": "anthropic.claude-3-5-sonnet-20241022-v2:0",
-      "display_name": "Claude 3.5 Sonnet v2",
-      "service_kinds": [
-        "llm"
-      ]
-    },
-    {
-      "id": "anthropic.claude-3-5-haiku-20241022-v1:0",
-      "display_name": "Claude 3.5 Haiku",
-      "service_kinds": [
-        "llm"
-      ]
-    },
-    {
-      "id": "anthropic.claude-3-opus-20240229-v1:0",
-      "display_name": "Claude 3 Opus",
-      "service_kinds": [
-        "llm"
-      ]
-    },
-    {
-      "id": "amazon.nova-premier-v1:0",
-      "display_name": "Amazon Nova Premier",
-      "service_kinds": [
-        "llm"
-      ]
-    },
-    {
-      "id": "amazon.nova-pro-v1:0",
-      "display_name": "Amazon Nova Pro",
-      "service_kinds": [
-        "llm"
-      ]
-    },
-    {
-      "id": "amazon.nova-lite-v1:0",
-      "display_name": "Amazon Nova Lite",
-      "service_kinds": [
-        "llm"
-      ]
-    },
-    {
-      "id": "amazon.nova-micro-v1:0",
-      "display_name": "Amazon Nova Micro",
-      "service_kinds": [
-        "llm"
-      ]
-    },
-    {
-      "id": "amazon.nova-2-lite-v1:0",
-      "display_name": "Amazon Nova 2 Lite",
-      "service_kinds": [
-        "llm"
-      ]
-    },
-    {
-      "id": "amazon.nova-2-sonic-v1:0",
-      "display_name": "Amazon Nova 2 Sonic",
-      "service_kinds": [
-        "llm"
-      ]
-    },
-    {
-      "id": "amazon.nova-sonic-v1:0",
-      "display_name": "Amazon Nova Sonic",
-      "service_kinds": [
-        "llm"
-      ]
-    },
-    {
-      "id": "amazon.titan-embed-text-v1",
-      "display_name": "Amazon Titan Embeddings G1 - Text",
-      "service_kinds": [
-        "embedding"
-      ]
-    },
-    {
-      "id": "amazon.titan-embed-text-v2:0",
-      "display_name": "Amazon Titan Text Embeddings V2",
-      "service_kinds": [
-        "embedding"
-      ]
-    },
-    {
-      "id": "amazon.titan-embed-image-v1:0",
-      "display_name": "Amazon Titan Multimodal Embeddings G1",
-      "service_kinds": [
-        "embedding"
-      ]
-    },
-    {
-      "id": "amazon.nova-2-multimodal-embeddings-v1:0",
-      "display_name": "Amazon Nova 2 Multimodal Embeddings",
-      "service_kinds": [
-        "embedding"
-      ]
-    },
-    {
-      "id": "amazon.nova-canvas-v1:0",
-      "display_name": "Amazon Nova Canvas",
-      "service_kinds": [
-        "image"
-      ]
-    },
-    {
-      "id": "amazon.nova-reel-v1:0",
-      "display_name": "Amazon Nova Reel",
-      "service_kinds": [
-        "image"
-      ]
-    },
-    {
-      "id": "amazon.rerank-v1:0",
-      "display_name": "Amazon Rerank 1.0",
-      "service_kinds": [
-        "llm"
-      ]
-    },
-    {
-      "id": "meta.llama3-3-70b-instruct-v1:0",
-      "display_name": "Llama 3.3 70B Instruct",
-      "service_kinds": [
-        "llm"
-      ]
-    },
-    {
-      "id": "deepseek.r1-v1:0",
-      "display_name": "DeepSeek R1",
-      "service_kinds": [
-        "llm"
-      ]
-    },
-    {
-      "id": "mistral.mistral-large-2407-v1:0",
-      "display_name": "Mistral Large 2",
-      "service_kinds": [
-        "llm"
-      ]
+  {
+    "id": "google.gemma-4-e2b",
+    "display_name": "google.gemma-4-e2b",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "writer.palmyra-vision-7b",
+    "display_name": "writer.palmyra-vision-7b",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "qwen.qwen3-coder-30b-a3b-instruct",
+    "display_name": "qwen.qwen3-coder-30b-a3b-instruct",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "zai.glm-4.7",
+    "display_name": "zai.glm-4.7",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "nvidia.nemotron-nano-12b-v2",
+    "display_name": "nvidia.nemotron-nano-12b-v2",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "google.gemma-3-27b-it",
+    "display_name": "google.gemma-3-27b-it",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "openai.gpt-5.6-terra",
+    "display_name": "openai.gpt-5.6-terra",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "nvidia.nemotron-super-3-120b",
+    "display_name": "nvidia.nemotron-super-3-120b",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "deepseek.v3.2",
+    "display_name": "deepseek.v3.2",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "minimax.minimax-m2.5",
+    "display_name": "minimax.minimax-m2.5",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "moonshotai.kimi-k2.5",
+    "display_name": "moonshotai.kimi-k2.5",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "google.gemma-3-4b-it",
+    "display_name": "google.gemma-3-4b-it",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "nvidia.nemotron-nano-3-30b",
+    "display_name": "nvidia.nemotron-nano-3-30b",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "qwen.qwen3-coder-next",
+    "display_name": "qwen.qwen3-coder-next",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "google.gemma-4-26b-a4b",
+    "display_name": "google.gemma-4-26b-a4b",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "minimax.minimax-m2",
+    "display_name": "minimax.minimax-m2",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "qwen.qwen3-vl-235b-a22b-instruct",
+    "display_name": "qwen.qwen3-vl-235b-a22b-instruct",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "openai.gpt-oss-safeguard-120b",
+    "display_name": "openai.gpt-oss-safeguard-120b",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "mistral.mistral-large-3-675b-instruct",
+    "display_name": "mistral.mistral-large-3-675b-instruct",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "qwen.qwen3-32b",
+    "display_name": "qwen.qwen3-32b",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "minimax.minimax-m2.1",
+    "display_name": "minimax.minimax-m2.1",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "anthropic.claude-haiku-4-5",
+    "display_name": "anthropic.claude-haiku-4-5",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "mistral.voxtral-small-24b-2507",
+    "display_name": "mistral.voxtral-small-24b-2507",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "mistral.devstral-2-123b",
+    "display_name": "mistral.devstral-2-123b",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "qwen.qwen3-next-80b-a3b-instruct",
+    "display_name": "qwen.qwen3-next-80b-a3b-instruct",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "openai.gpt-oss-120b",
+    "display_name": "openai.gpt-oss-120b",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "mistral.ministral-3-14b-instruct",
+    "display_name": "mistral.ministral-3-14b-instruct",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "mistral.magistral-small-2509",
+    "display_name": "mistral.magistral-small-2509",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "openai.gpt-5.4-2026-03-05",
+    "display_name": "openai.gpt-5.4-2026-03-05",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "openai.gpt-5.6-luna",
+    "display_name": "openai.gpt-5.6-luna",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "mistral.voxtral-mini-3b-2507",
+    "display_name": "mistral.voxtral-mini-3b-2507",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "deepseek.v3.1",
+    "display_name": "deepseek.v3.1",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "zai.glm-4.7-flash",
+    "display_name": "zai.glm-4.7-flash",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "google.gemma-3-12b-it",
+    "display_name": "google.gemma-3-12b-it",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "openai.gpt-oss-safeguard-20b",
+    "display_name": "openai.gpt-oss-safeguard-20b",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "mistral.ministral-3-3b-instruct",
+    "display_name": "mistral.ministral-3-3b-instruct",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "openai.gpt-oss-20b",
+    "display_name": "openai.gpt-oss-20b",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "nvidia.nemotron-nano-9b-v2",
+    "display_name": "nvidia.nemotron-nano-9b-v2",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "google.gemma-4-31b",
+    "display_name": "google.gemma-4-31b",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "qwen.qwen3-coder-480b-a35b-instruct",
+    "display_name": "qwen.qwen3-coder-480b-a35b-instruct",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "qwen.qwen3-235b-a22b-2507",
+    "display_name": "qwen.qwen3-235b-a22b-2507",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "moonshotai.kimi-k2-thinking",
+    "display_name": "moonshotai.kimi-k2-thinking",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "zai.glm-5",
+    "display_name": "zai.glm-5",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "xai.grok-4.3",
+    "display_name": "xai.grok-4.3",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "mistral.ministral-3-8b-instruct",
+    "display_name": "mistral.ministral-3-8b-instruct",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "openai.gpt-5.4",
+    "display_name": "openai.gpt-5.4",
+    "service_kinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "zai.glm-4.6",
+    "display_name": "zai.glm-4.6",
+    "service_kinds": [
+      "llm"
+    ]
     }
   ],
   "cerebras": [
