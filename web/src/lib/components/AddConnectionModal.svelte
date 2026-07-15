@@ -64,6 +64,8 @@ let poolDropdownRef: HTMLDivElement | undefined = $state();
   const isApiKey = $derived(authType === 'apikey' || authType === 'custom');
 const supportsBulk = $derived(isApiKey);
 const isOCProvider = $derived(providerId === 'oc');
+const isMimocodeProvider = $derived(providerId === 'mimocode');
+const needsProxyPool = $derived(isOCProvider || isMimocodeProvider);
 const existingPoolIds = $derived(
   new Set(
     $connections
@@ -133,8 +135,8 @@ $effect(() => {
 });
 
 async function fetchProxyPools() {
-    if (!isOCProvider) return;
-    proxyPoolsLoading = true;
+  if (!needsProxyPool) return;
+  proxyPoolsLoading = true;
     try {
       const res = await proxyPoolsApi.list({ is_active: 'true' });
       proxyPools = res.data ?? [];
@@ -330,11 +332,11 @@ async function handleValidate() {
         auth_type: 'none',
       };
       // OpenCode Free: require proxy pool selection, attach accountLabel
-      if (isOCProvider && selectedPoolId) {
-        const psd: Record<string, string> = { proxyPoolId: selectedPoolId };
-        if (connectionName.trim()) psd.accountLabel = connectionName.trim();
-        payload.provider_specific_data = psd;
-      }
+  if (needsProxyPool && selectedPoolId) {
+    const psd: Record<string, string> = { proxyPoolId: selectedPoolId };
+    if (connectionName.trim()) psd.accountLabel = connectionName.trim();
+    payload.provider_specific_data = psd;
+  }
       await connectionsApi.create(providerId, payload as any);
       toast.success(`Connection added: ${name}`);
       step = 'done';
@@ -460,12 +462,12 @@ async function handleOAuthSubmit() {
       setTimeout(() => handleOAuthSubmit(), 50);
     }
   });
-  // Fetch proxy pools when modal opens for OpenCode Free
-  $effect(() => {
-    if (open && isOCProvider && step === 'form') {
-      fetchProxyPools();
-    }
-  });
+// Fetch proxy pools when modal opens for OpenCode Free or MiMoCode
+$effect(() => {
+  if (open && needsProxyPool && step === 'form') {
+    fetchProxyPools();
+  }
+});
 
 </script>
 
@@ -646,7 +648,7 @@ async function handleOAuthSubmit() {
           </div>
         {/if}
 
-        {#if isNoAuth && isOCProvider}
+        {#if isNoAuth && needsProxyPool}
           <div class="flex flex-col gap-1.5">
             <Label>Account Label</Label>
             <Input bind:value={connectionName} placeholder="e.g. us-east-1, pool-A account" class="h-9 text-body-sm" />
@@ -722,7 +724,7 @@ async function handleOAuthSubmit() {
         </Button>
       </div>
       {/if}
-      <p class="text-xs text-muted-foreground">OpenCode Free connections must use a proxy pool. The default direct connection is always available.</p>
+      <p class="text-xs text-muted-foreground">{meta?.displayName ?? providerId} connections must use a proxy pool. The default direct connection is always available.</p>
     </div>
   {:else if isNoAuth}
           <div class="rounded-lg border border-border/50 bg-muted/30 p-3 text-sm text-muted-foreground">
@@ -743,7 +745,7 @@ async function handleOAuthSubmit() {
 
       <Dialog.Footer>
         <Button variant="outline" onclick={() => handleOpenChange(false)} class="text-sm">Cancel</Button>
-        <Button onclick={handleSubmit} disabled={submitting || (isNoAuth && isOCProvider && !selectedPoolId)} class="text-sm">
+        <Button onclick={handleSubmit} disabled={submitting || (isNoAuth && needsProxyPool && !selectedPoolId)} class="text-sm">
           {#if submitting}
             {isOAuth ? 'Starting OAuth...' : mode === 'bulk' ? 'Importing...' : 'Adding...'}
           {:else if isOAuth}
