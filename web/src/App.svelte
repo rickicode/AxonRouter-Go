@@ -12,6 +12,7 @@ import { authStore, logout, mustChangePasswordStore } from '$lib/auth';
 import Login from './pages/Login.svelte';
 import ChangePasswordModal from '$lib/components/ChangePasswordModal.svelte';
 import LogOutIcon from '@lucide/svelte/icons/log-out';
+import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
 import { Button } from '$lib/components/ui/button';
 
   // Page components
@@ -152,10 +153,10 @@ function handleLogout() {
       <Sidebar.Trigger class="md:hidden text-muted-foreground hover:text-foreground transition-colors cursor-pointer" />
       <h1 class="text-body-md-strong text-foreground">{pageLabel}</h1>
 <div class="ml-auto flex items-center gap-2">
-  <span class="flex items-center gap-1.5 text-caption-mono text-muted-foreground">
-    <span class="size-1.5 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
-    <span class="hidden sm:inline">Live</span>
-  </span>
+  <a href="https://saweria.co/HIJILABS" target="_blank" rel="noopener noreferrer" class="flex items-center gap-1.5 text-caption-mono text-muted-foreground hover:text-foreground transition-colors">
+    <ExternalLinkIcon class="size-4" />
+    <span class="hidden sm:inline">Open new tab</span>
+  </a>
   <Button variant="ghost" size="sm" class="gap-1.5" onclick={handleLogout}>
     <LogOutIcon class="size-4" />
     <span class="hidden sm:inline">Logout</span>
