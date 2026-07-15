@@ -484,7 +484,61 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 		{"minimax-m2.7", "MiniMax M2.7", 0.0008, 0.0016, 0, 0, 0},
 		{"minimax-m3", "MiniMax M3", 0.001, 0.002, 0, 0, 0},
 
-		// ── Free-tier (real model price, offered free by some providers) ──
+  // ── Mistral (per 1K tokens) — via Mistral AI / API ──
+  {"mistral-large-latest", "Mistral Large Latest", 0.002, 0.006, 0, 0, 0},
+  {"mistral-small-latest", "Mistral Small Latest", 0.0001, 0.0003, 0, 0, 0},
+  {"pixtral-large-latest", "Pixtral Large Latest", 0.002, 0.006, 0, 0, 0},
+  {"codestral-latest", "Codestral Latest", 0.0003, 0.0009, 0, 0, 0},
+  {"ministral-3b-latest", "Ministral 3B Latest", 0.00004, 0.00004, 0, 0, 0},
+  {"ministral-8b-latest", "Ministral 8B Latest", 0.0001, 0.0001, 0, 0, 0},
+
+  // ── MiniMax ──
+  {"minimax-m2.1", "MiniMax M2.1", 0.0003, 0.0012, 0, 0, 0},
+
+  // ── GLM older variants (approximate legacy Zhipu pricing) ──
+  {"glm-4", "GLM 4", 0.001, 0.002, 0, 0, 0},
+  {"glm-4-plus", "GLM 4 Plus", 0.001, 0.002, 0, 0, 0},
+  {"glm-4-flash", "GLM 4 Flash", 0.0001, 0.0002, 0, 0, 0},
+  {"glm-4v", "GLM 4V", 0.001, 0.002, 0, 0, 0},
+  {"glm-4-9b", "GLM 4 9B", 0.0001, 0.0001, 0, 0, 0},
+  {"glm-3-turbo", "GLM 3 Turbo", 0.0005, 0.001, 0, 0, 0},
+
+  // ── Moonshot Kimi ──
+  {"kimi-k2-thinking", "Kimi K2 Thinking", 0.0006, 0.0025, 0, 0, 0},
+
+  // ── Amazon Bedrock (bare AWS model IDs; per 1K tokens) ──
+  {"anthropic.claude-3-7-sonnet-20250219-v1:0", "Claude 3.7 Sonnet (Bedrock)", 0.003, 0.015, 0, 0, 0},
+  {"anthropic.claude-3-5-sonnet-20241022-v2:0", "Claude 3.5 Sonnet v2 (Bedrock)", 0.003, 0.015, 0, 0, 0},
+  {"anthropic.claude-3-5-haiku-20241022-v1:0", "Claude 3.5 Haiku (Bedrock)", 0.0008, 0.004, 0, 0, 0},
+  {"anthropic.claude-3-opus-20240229-v1:0", "Claude 3 Opus (Bedrock)", 0.015, 0.075, 0, 0, 0},
+  {"amazon.nova-pro-v1:0", "Amazon Nova Pro (Bedrock)", 0.0008, 0.0032, 0, 0, 0},
+  {"amazon.nova-lite-v1:0", "Amazon Nova Lite (Bedrock)", 0.00006, 0.00024, 0, 0, 0},
+  {"meta.llama3-3-70b-instruct-v1:0", "Llama 3.3 70B Instruct (Bedrock)", 0.00265, 0.00265, 0, 0, 0},
+  {"deepseek.r1-v1:0", "DeepSeek R1 (Bedrock)", 0.0007, 0.0025, 0, 0, 0},
+  {"mistral.mistral-large-2407-v1:0", "Mistral Large 2 (Bedrock)", 0.0005, 0.0015, 0, 0, 0},
+
+  // ── Cerebras (per 1M token rates from public docs) ──
+  {"llama-3.1-8b", "Llama 3.1 8B (Cerebras)", 0.0001, 0.0001, 0, 0, 0},
+  {"llama-3.1-70b", "Llama 3.1 70B (Cerebras)", 0.0006, 0.0006, 0, 0, 0},
+  {"llama-3.3-70b", "Llama 3.3 70B (Cerebras)", 0.0006, 0.0006, 0, 0, 0},
+
+  // ── Together AI (model part after provider prefix) ──
+  {"Llama-3.3-70B-Instruct-Turbo", "Llama 3.3 70B Instruct Turbo", 0.00088, 0.00088, 0, 0, 0},
+  {"Llama-3.1-8B-Instruct-Turbo", "Llama 3.1 8B Instruct Turbo", 0.00018, 0.00018, 0, 0, 0},
+  {"Qwen2.5-72B-Instruct", "Qwen2.5 72B Instruct", 0.0012, 0.0012, 0, 0, 0},
+  {"DeepSeek-V3", "DeepSeek V3", 0.00125, 0.00125, 0, 0, 0},
+
+  // ── Fireworks AI (model part after "accounts/") ──
+  {"fireworks/models/llama-v3p1-8b-instruct", "Llama 3.1 8B Instruct", 0.0002, 0.0002, 0, 0, 0},
+  {"fireworks/models/llama-v3p1-70b-instruct", "Llama 3.1 70B Instruct", 0.0009, 0.0009, 0, 0, 0},
+
+  // ── Novita / Lambda (model part after provider prefix) ──
+  {"llama-3.1-8b-instruct", "Llama 3.1 8B Instruct", 0.00002, 0.00005, 0, 0, 0},
+  {"llama3.1-8b-instruct", "Llama 3.1 8B Instruct", 0.00002, 0.00003, 0, 0, 0},
+  {"llama3.1-70b-instruct", "Llama 3.1 70B Instruct", 0.00012, 0.0003, 0, 0, 0},
+
+  // ── Free-tier (real model price, offered free by some providers) ──
+
 		{"hy3-preview", "HY3 Preview", 0.0005, 0.001, 0, 0, 0},
 		{"hy3-free", "HY3 Free", 0.0003, 0.0006, 0, 0, 0},
 		{"deepseek-v4-flash-free", "DeepSeek v4 Flash Free", 0.0001, 0.0004, 0, 0, 0},
