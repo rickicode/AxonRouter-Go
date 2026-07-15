@@ -146,6 +146,11 @@ func (h *Handler) getProviderModels(prefix string) []gin.H {
 	if prefix == "cf" {
 		h.discoverCloudflareModels()
 	}
+	// OpenRouter exposes a public /models endpoint with per-model pricing; keep the
+	// local free-model list fresh without requiring a stored connection.
+	if prefix == "openrouter" {
+		models.DiscoverOpenRouterModelsCached()
+	}
 	ids := models.GetAllModelIDs(cfg.keys...)
 	if len(ids) == 0 {
 		return nil
