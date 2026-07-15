@@ -198,9 +198,10 @@ function aggregateQuotas(quotas: QuotaItem[]): QuotaItem[] {
 }
 
 function visibleQuotas(item: QuotaCacheEntry): QuotaItem[] {
-  if (item.provider_id !== 'ag') return item.quotas;
-  const filtered = item.quotas.filter(q => isAntigravityMainModel(q.name));
-  return aggregateQuotas(filtered);
+	const quotas = item.quotas ?? [];
+	if (item.provider_id !== 'ag') return quotas;
+	const filtered = quotas.filter(q => isAntigravityMainModel(q.name));
+	return aggregateQuotas(filtered);
 }
 
   function formatResetTime(iso?: string): string {
