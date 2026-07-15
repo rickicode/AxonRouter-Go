@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed the dead `FallbackRate` threshold in smart `auto` combo selection (the field was never populated).
 - Combo routing now replaces the request body's `model` field with each step's actual model before sending upstream, preventing providers from receiving the raw combo name/smart goal.
 - Default combo seeding now skips steps that have no matching active connection and discards combos that would end up with zero usable steps, so seeded combos never reference models that cannot be routed.
+- Default combo model lists updated to only include providers available out of the box: OC (`oc/hy3-free`), Codex (`cx/gpt-5.4`/`gpt-5.4-mini`/`gpt-5.5`), Cloudflare (`cf/moonshotai/kimi-k2.5`/`kimi-k2.6`/`kimi-k2.7-code`), and Antigravity (`ag/claude-sonnet-4-6`/`ag/claude-opus-4-6-thinking`).
 - Fixed base URLs for `novita` (`https://api.novita.ai/openai/v1`) and `pollinations` (`https://gen.pollinations.ai/v1`) so `/v1/chat/completions` resolves to the correct upstream path.
 - Fixed Vertex AI static model IDs to use the `google/gemini-...` format required by the OpenAI-compatible Vertex endpoint.
 - Fixed Amazon Bedrock Mantle static model IDs by stripping the regional `us.` prefix; Bedrock Mantle expects bare model IDs like `anthropic.claude-3-5-sonnet-...`.

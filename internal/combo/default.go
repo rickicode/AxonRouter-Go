@@ -29,42 +29,53 @@ func resolveDefaultConnection(database *sql.DB, modelID string) string {
 }
 
 // DefaultCombos returns the built-in combos that should exist on first run.
+// Steps are intentionally limited to providers that are seeded by default or
+// commonly configured out of the box: OC (OpenCode Free), CX (Codex), CF
+// (Cloudflare), and AG (Antigravity). Steps without a matching active
+// connection are skipped during seeding so combos never reference unroutable
+// models.
 func DefaultCombos() []DefaultComboDef {
 	return []DefaultComboDef{
 		{
 			Name:     "balanced",
 			Strategy: "priority",
 			Steps: []DefaultStepDef{
-				{ModelID: "mimo/mimo-v2-pro", Priority: 1, Weight: 100},
-				{ModelID: "openai/gpt-4o", Priority: 2, Weight: 80},
-				{ModelID: "deepseek/deepseek-chat", Priority: 3, Weight: 60},
+				{ModelID: "oc/hy3-free", Priority: 1, Weight: 100},
+				{ModelID: "cf/moonshotai/kimi-k2.6", Priority: 2, Weight: 90},
+				{ModelID: "cf/moonshotai/kimi-k2.7-code", Priority: 3, Weight: 85},
+				{ModelID: "ag/claude-sonnet-4-6", Priority: 4, Weight: 80},
+				{ModelID: "cx/gpt-5.4", Priority: 5, Weight: 75},
 			},
 		},
 		{
 			Name:     "economy",
 			Strategy: "priority",
 			Steps: []DefaultStepDef{
-				{ModelID: "mimo/mimo-v2-flash", Priority: 1, Weight: 100},
-				{ModelID: "deepseek/deepseek-chat", Priority: 2, Weight: 80},
-				{ModelID: "groq/llama-3.3-70b", Priority: 3, Weight: 60},
+				{ModelID: "oc/hy3-free", Priority: 1, Weight: 100},
+				{ModelID: "cf/moonshotai/kimi-k2.6", Priority: 2, Weight: 95},
+				{ModelID: "cf/moonshotai/kimi-k2.5", Priority: 3, Weight: 90},
+				{ModelID: "cx/gpt-5.4-mini", Priority: 4, Weight: 80},
 			},
 		},
 		{
 			Name:     "premium",
 			Strategy: "priority",
 			Steps: []DefaultStepDef{
-				{ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
-				{ModelID: "claude/claude-sonnet-4", Priority: 2, Weight: 90},
-				{ModelID: "gemini/gemini-2.5-pro", Priority: 3, Weight: 80},
+				{ModelID: "ag/claude-opus-4-6-thinking", Priority: 1, Weight: 100},
+				{ModelID: "cx/gpt-5.5", Priority: 2, Weight: 95},
+				{ModelID: "cf/moonshotai/kimi-k2.7-code", Priority: 3, Weight: 90},
+				{ModelID: "oc/hy3-free", Priority: 4, Weight: 80},
 			},
 		},
 		{
 			Name:     "round-robin",
 			Strategy: "round-robin",
 			Steps: []DefaultStepDef{
-				{ModelID: "mimo/mimo-v2-pro", Priority: 1, Weight: 100},
-				{ModelID: "deepseek/deepseek-chat", Priority: 2, Weight: 100},
-				{ModelID: "openai/gpt-4o", Priority: 3, Weight: 100},
+				{ModelID: "oc/hy3-free", Priority: 1, Weight: 100},
+				{ModelID: "cf/moonshotai/kimi-k2.6", Priority: 2, Weight: 100},
+				{ModelID: "cf/moonshotai/kimi-k2.7-code", Priority: 3, Weight: 100},
+				{ModelID: "ag/claude-sonnet-4-6", Priority: 4, Weight: 100},
+				{ModelID: "cx/gpt-5.4", Priority: 5, Weight: 100},
 			},
 		},
 		{
@@ -73,8 +84,9 @@ func DefaultCombos() []DefaultComboDef {
 			IsSmart:   true,
 			SmartGoal: "balanced",
 			Steps: []DefaultStepDef{
-				{ModelID: "mimo/mimo-v2-pro", Priority: 1, Weight: 100},
-				{ModelID: "openai/gpt-4o", Priority: 2, Weight: 80},
+				{ModelID: "oc/hy3-free", Priority: 1, Weight: 100},
+				{ModelID: "cf/moonshotai/kimi-k2.6", Priority: 2, Weight: 90},
+				{ModelID: "ag/claude-sonnet-4-6", Priority: 3, Weight: 85},
 			},
 		},
 		{
@@ -83,8 +95,9 @@ func DefaultCombos() []DefaultComboDef {
 			IsSmart:   true,
 			SmartGoal: "economy",
 			Steps: []DefaultStepDef{
-				{ModelID: "mimo/mimo-v2-flash", Priority: 1, Weight: 100},
-				{ModelID: "deepseek/deepseek-chat", Priority: 2, Weight: 80},
+				{ModelID: "oc/hy3-free", Priority: 1, Weight: 100},
+				{ModelID: "cf/moonshotai/kimi-k2.6", Priority: 2, Weight: 95},
+				{ModelID: "cf/moonshotai/kimi-k2.5", Priority: 3, Weight: 90},
 			},
 		},
 		{
@@ -93,8 +106,9 @@ func DefaultCombos() []DefaultComboDef {
 			IsSmart:   true,
 			SmartGoal: "premium",
 			Steps: []DefaultStepDef{
-				{ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
-				{ModelID: "claude/claude-sonnet-4", Priority: 2, Weight: 90},
+				{ModelID: "ag/claude-opus-4-6-thinking", Priority: 1, Weight: 100},
+				{ModelID: "cx/gpt-5.5", Priority: 2, Weight: 95},
+				{ModelID: "cf/moonshotai/kimi-k2.7-code", Priority: 3, Weight: 90},
 			},
 		},
 		{
@@ -103,9 +117,11 @@ func DefaultCombos() []DefaultComboDef {
 			IsSmart:   true,
 			SmartGoal: "auto",
 			Steps: []DefaultStepDef{
-				{ModelID: "mimo/mimo-v2-pro", Priority: 1, Weight: 100},
-				{ModelID: "openai/gpt-4o", Priority: 2, Weight: 90},
-				{ModelID: "deepseek/deepseek-chat", Priority: 3, Weight: 70},
+				{ModelID: "oc/hy3-free", Priority: 1, Weight: 100},
+				{ModelID: "cf/moonshotai/kimi-k2.6", Priority: 2, Weight: 90},
+				{ModelID: "cf/moonshotai/kimi-k2.7-code", Priority: 3, Weight: 85},
+				{ModelID: "ag/claude-sonnet-4-6", Priority: 4, Weight: 80},
+				{ModelID: "cx/gpt-5.4", Priority: 5, Weight: 75},
 			},
 		},
 	}
