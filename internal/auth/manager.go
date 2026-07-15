@@ -20,6 +20,7 @@ const (
 	ProviderCodex       ProviderType = "cx"
 	ProviderAntigravity ProviderType = "ag"
 	ProviderKiro        ProviderType = "kiro"
+	ProviderGitHub      ProviderType = "github"
 )
 
 // Credentials holds authentication tokens for a connection.
