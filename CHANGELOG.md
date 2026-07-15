@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Quota reset countdown and estimated savings tracker: backend computes next per-provider reset from quota cache, estimates savings from request logs × model pricing, exposes `/api/admin/quota/summary`, and dashboard Quota/Usage pages render global countdown and savings badges.
 - OpenAI-compatible providers: added `glm`, `minimax`, `kimi`, `mistral`, `cerebras`, `together`, `fireworks`, `novita`, `lambda`, and `pollinations` prefixes with seeded base URLs, registry routing, catalog keys, and static models for GLM/MiniMax/Kimi/Mistral.
 - OpenRouter custom/free model support: dedicated executor wraps OpenAI-compatible requests and preserves configurable `HTTP-Referer`/`X-Title` headers; a cached, no-auth fetch of `https://openrouter.ai/api/v1/models` filters free models by zero prompt/completion pricing and merges them into `/v1/models` so the dashboard always lists current free options; unknown custom model IDs pass through unchanged.
+- Amazon Bedrock Mantle provider (`bedrock/` prefix) using the OpenAI-compatible endpoint `https://bedrock-mantle.<region>.api.aws/v1`. The default region is `us-west-2`, overridable via per-connection provider-specific data. Bearer-token auth and bulk connection import are supported.
 
 ### Changed
 - Replaced Linux-only systemd service installer with cross-platform service management via `github.com/kardianos/service`. `axonrouter --startup {install|install-root|status|start|stop|restart|uninstall}` now works on Linux, macOS, and Windows.
@@ -28,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bulk import timeouts for proxy pools and provider connections are extended to 120 seconds to prevent "signal is aborted" errors on large imports.
 - Proxy Pools header and tab counters now reflect the total pool count across all pages (via `listAll`) instead of only the current page.
 - ComboModal now unwraps the API's `smart_goal` NullString object when editing a smart combo, so subsequent PATCH updates no longer fail with a 400 JSON unmarshal error.
+- GitHub Copilot executor now caches the local hosts/apps.json fallback token instead of re-reading from disk on every empty-key request, defaults a missing token `expires_at` to one hour, rejects unsupported endpoints (embeddings/images/responses) with a clear error, and handles Windows config-directory fallback when `LOCALAPPDATA` is unset.
+- Google Vertex AI executor now propagates the caller context into the JWT token exchange, enforces a 20-second timeout on the exchange request, and defaults a missing `expires_in` value to 3600 seconds.
+- System tray build no longer allows restarting the server after it has been stopped or exited, preventing a panic from reusing a shut down router from the tray menu.
 
 ## [0.3.3] - 2026-07-14
 
