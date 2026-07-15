@@ -3649,6 +3649,13 @@
       ]
     },
     {
+      "id": "amazon.nova-premier-v1:0",
+      "display_name": "Amazon Nova Premier",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
       "id": "amazon.nova-pro-v1:0",
       "display_name": "Amazon Nova Pro",
       "service_kinds": [
@@ -3658,6 +3665,83 @@
     {
       "id": "amazon.nova-lite-v1:0",
       "display_name": "Amazon Nova Lite",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "amazon.nova-micro-v1:0",
+      "display_name": "Amazon Nova Micro",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "amazon.nova-2-lite-v1:0",
+      "display_name": "Amazon Nova 2 Lite",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "amazon.nova-2-sonic-v1:0",
+      "display_name": "Amazon Nova 2 Sonic",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "amazon.nova-sonic-v1:0",
+      "display_name": "Amazon Nova Sonic",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "amazon.titan-embed-text-v1",
+      "display_name": "Amazon Titan Embeddings G1 - Text",
+      "service_kinds": [
+        "embedding"
+      ]
+    },
+    {
+      "id": "amazon.titan-embed-text-v2:0",
+      "display_name": "Amazon Titan Text Embeddings V2",
+      "service_kinds": [
+        "embedding"
+      ]
+    },
+    {
+      "id": "amazon.titan-embed-image-v1:0",
+      "display_name": "Amazon Titan Multimodal Embeddings G1",
+      "service_kinds": [
+        "embedding"
+      ]
+    },
+    {
+      "id": "amazon.nova-2-multimodal-embeddings-v1:0",
+      "display_name": "Amazon Nova 2 Multimodal Embeddings",
+      "service_kinds": [
+        "embedding"
+      ]
+    },
+    {
+      "id": "amazon.nova-canvas-v1:0",
+      "display_name": "Amazon Nova Canvas",
+      "service_kinds": [
+        "image"
+      ]
+    },
+    {
+      "id": "amazon.nova-reel-v1:0",
+      "display_name": "Amazon Nova Reel",
+      "service_kinds": [
+        "image"
+      ]
+    },
+    {
+      "id": "amazon.rerank-v1:0",
+      "display_name": "Amazon Rerank 1.0",
       "service_kinds": [
         "llm"
       ]
