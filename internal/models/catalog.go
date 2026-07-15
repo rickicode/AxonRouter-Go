@@ -8,6 +8,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +25,9 @@ const (
 	providerSyncInterval = 24 * time.Hour
 	fetchTimeout = 15 * time.Second
 	cfDiscoveryTTL = 5 * time.Minute
+	openRouterDiscoveryTTL = 5 * time.Minute
+
+	openRouterModelsURL = "https://openrouter.ai/api/v1/models"
 )
 
 var remoteURLs = []string{
@@ -68,6 +73,11 @@ var (
 	startTime time.Time
 
 	cfDiscoveryCache cfDiscoveryCacheState
+
+	openRouterDiscoveryCache struct {
+		mu  sync.Mutex
+		last time.Time
+	}
 )
 
 func resetCloudflareDiscoveryCache() {
@@ -91,6 +101,142 @@ func DiscoverCloudflareModelsCached(apiKey, accountID string) {
 	}
 	cfDiscoveryCache.last = time.Now()
 	MergeProviderModelIDs("cf", ids, kinds)
+}
+
+func resetOpenRouterDiscoveryCache() {
+	openRouterDiscoveryCache.mu.Lock()
+	openRouterDiscoveryCache.last = time.Time{}
+	openRouterDiscoveryCache.mu.Unlock()
+}
+
+// DiscoverOpenRouterModelsCached fetches OpenRouter's public model list and
+// merges free models (prompt + completion pricing == 0) into the shared
+// catalog under the "openrouter" key. Results are cached for five minutes so
+// /v1/models stays fast and does not hammer the upstream endpoint.
+func DiscoverOpenRouterModelsCached() {
+	openRouterDiscoveryCache.mu.Lock()
+	defer openRouterDiscoveryCache.mu.Unlock()
+	if time.Since(openRouterDiscoveryCache.last) < openRouterDiscoveryTTL {
+		return
+	}
+	ids, err := fetchOpenRouterFreeModels()
+	if err != nil || len(ids) == 0 {
+		return
+	}
+	openRouterDiscoveryCache.last = time.Now()
+
+	entries := make([]modelEntry, 0, len(ids))
+	for _, id := range ids {
+		entries = append(entries, modelEntry{ID: strings.TrimPrefix(id, "@"), ServiceKinds: []string{"llm"}})
+	}
+	mu.Lock()
+	current["openrouter"] = mergeProviderEntries(current["openrouter"], entries)
+	mu.Unlock()
+}
+
+func fetchOpenRouterFreeModels() ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, openRouterModelsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	setOpenRouterHeaders(req.Header)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("openrouter models returned HTTP %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var envelope struct {
+		Data []struct {
+			ID      string `json:"id"`
+			Pricing struct {
+				Prompt     string `json:"prompt"`
+				Completion string `json:"completion"`
+				Image      string `json:"image"`
+			} `json:"pricing"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]struct{})
+	var ids []string
+	for _, m := range envelope.Data {
+		if m.ID == "" {
+			continue
+		}
+		if !isOpenRouterFree(m.Pricing.Prompt, m.Pricing.Completion, m.Pricing.Image) {
+			continue
+		}
+		id := strings.TrimPrefix(m.ID, "@")
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+func isOpenRouterFree(prompt, completion, image string) bool {
+	prompt = strings.TrimSpace(prompt)
+	completion = strings.TrimSpace(completion)
+	image = strings.TrimSpace(image)
+
+	// Treat empty/missing pricing as non-free to be safe.
+	if prompt == "" || completion == "" {
+		return false
+	}
+	if prompt == "0" && completion == "0" {
+		return true
+	}
+	pp, err := strconv.ParseFloat(prompt, 64)
+	if err != nil {
+		return false
+	}
+	cp, err := strconv.ParseFloat(completion, 64)
+	if err != nil {
+		return false
+	}
+	if pp != 0 || cp != 0 {
+		return false
+	}
+	if image == "" || image == "0" {
+		return true
+	}
+	ip, err := strconv.ParseFloat(image, 64)
+	if err != nil {
+		return false
+	}
+	return ip == 0
+}
+
+func setOpenRouterHeaders(h http.Header) {
+	referer := os.Getenv("OPENROUTER_HTTP_REFERER")
+	title := os.Getenv("OPENROUTER_X_TITLE")
+	if referer == "" {
+		referer = "https://endpoint-proxy.local"
+	}
+	if title == "" {
+		title = "Endpoint Proxy"
+	}
+	h.Set("HTTP-Referer", referer)
+	h.Set("X-Title", title)
 }
 
 func init() {

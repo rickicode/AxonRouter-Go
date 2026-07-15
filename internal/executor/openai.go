@@ -27,16 +27,6 @@ func NewOpenAIExecutor(base *BaseExecutor) *OpenAIExecutor {
 	return &OpenAIExecutor{BaseExecutor: base}
 }
 
-// openRouterHeaders adds OpenRouter attribution headers to the headers map
-// if the provider is "openrouter". OpenRouter uses HTTP-Referer and X-Title
-// for app attribution and rate-limit tracking.
-func openRouterHeaders(headers map[string]string, provider string) {
-	if provider == "openrouter" {
-		headers["HTTP-Referer"] = "https://endpoint-proxy.local"
-		headers["X-Title"] = "Endpoint Proxy"
-	}
-}
-
 // IsReasoningModel detects reasoning models generically (not CF-specific).
 // It checks catalog strip flags when available, otherwise falls back to
 // naming heuristics matching OmniRoute stripList behaviour.
@@ -327,7 +317,7 @@ func (e *OpenAIExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 		"Content-Type": "application/json",
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
-	openRouterHeaders(headers, req.Provider)
+	openRouterHeaders(headers, req.Provider, req.ProviderSpecificData)
 
 	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
 	if err != nil {
@@ -365,7 +355,7 @@ func (e *OpenAIExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 		"Cache-Control": "no-cache",
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
-	openRouterHeaders(headers, req.Provider)
+	openRouterHeaders(headers, req.Provider, req.ProviderSpecificData)
 
 	return e.DoStreamRequestWithConfig(ctx, "POST", url, headers, body, req.StreamConfig)
 }
@@ -388,7 +378,7 @@ func (e *OpenAIExecutor) Embeddings(ctx context.Context, req *Request) (*Respons
 		"Content-Type": "application/json",
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
-	openRouterHeaders(headers, req.Provider)
+	openRouterHeaders(headers, req.Provider, req.ProviderSpecificData)
 
 	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
 	if err != nil {
@@ -416,7 +406,7 @@ func (e *OpenAIExecutor) Images(ctx context.Context, req *Request) (*Response, e
 		"Content-Type": "application/json",
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
-	openRouterHeaders(headers, req.Provider)
+	openRouterHeaders(headers, req.Provider, req.ProviderSpecificData)
 
 	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
 	if err != nil {
@@ -442,7 +432,7 @@ func (e *OpenAIExecutor) Models(ctx context.Context, req *Request) (*Response, e
 		"Content-Type": "application/json",
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
-	openRouterHeaders(headers, req.Provider)
+	openRouterHeaders(headers, req.Provider, req.ProviderSpecificData)
 
 	resp, err := e.DoRequest(ctx, "GET", url, headers, nil)
 	if err != nil {
@@ -470,7 +460,7 @@ func (e *OpenAIExecutor) Responses(ctx context.Context, req *Request) (*Response
 		"Content-Type": "application/json",
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
-	openRouterHeaders(headers, req.Provider)
+	openRouterHeaders(headers, req.Provider, req.ProviderSpecificData)
 
 	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
 	if err != nil {
@@ -500,7 +490,7 @@ func (e *OpenAIExecutor) ResponsesStream(ctx context.Context, req *Request) (*St
 		"Cache-Control": "no-cache",
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
-	openRouterHeaders(headers, req.Provider)
+	openRouterHeaders(headers, req.Provider, req.ProviderSpecificData)
 
 	return e.DoStreamRequestWithConfig(ctx, "POST", url, headers, body, req.StreamConfig)
 }
