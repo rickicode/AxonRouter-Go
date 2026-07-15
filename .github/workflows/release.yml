@@ -108,6 +108,14 @@ jobs:
           name: frontend-build
           path: web/build
 
+      - name: 📦 Download Go modules (with retry)
+        run: |
+          for i in 1 2 3; do
+            go mod download && break
+            echo "go mod download failed, retrying ($i/3)..."
+            sleep 10
+          done
+
       - name: 🔨 Build backend binary
         env:
           GOOS: ${{ matrix.goos }}
