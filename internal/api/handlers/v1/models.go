@@ -35,7 +35,8 @@ var v1ProviderCatalog = map[string]struct {
 	"copilot": {keys: []string{"copilot"}, ownedBy: "github"},
 	"vertex": {keys: []string{"vertex"}, ownedBy: "google"},
 	"zai": {keys: []string{"claude"}, ownedBy: "zai"},
-	"cf":            {keys: []string{"cf"}, ownedBy: "cloudflare"},
+	"cf":      {keys: []string{"cf"}, ownedBy: "cloudflare"},
+	"bedrock": {keys: []string{"bedrock"}, ownedBy: "amazon"},
 }
 
 // buildModelList returns the unified gateway model catalog: registered providers,

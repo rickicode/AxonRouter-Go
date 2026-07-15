@@ -3367,12 +3367,23 @@
     {"id": "minimax-m2.7"},
     {"id": "minimax-m3"}
   ],
-  "mistral": [
-    {"id": "mistral-large-latest"},
-    {"id": "mistral-small-latest"},
-    {"id": "pixtral-large-latest"},
-    {"id": "codestral-latest"},
-    {"id": "ministral-3b-latest"},
-    {"id": "ministral-8b-latest"}
-  ]
+"mistral": [
+{"id": "mistral-large-latest"},
+{"id": "mistral-small-latest"},
+{"id": "pixtral-large-latest"},
+{"id": "codestral-latest"},
+{"id": "ministral-3b-latest"},
+{"id": "ministral-8b-latest"}
+],
+"bedrock": [
+{"id": "us.anthropic.claude-3-7-sonnet-20250219-v1:0", "display_name": "Claude 3.7 Sonnet", "service_kinds": ["llm"]},
+{"id": "us.anthropic.claude-3-5-sonnet-20241022-v2:0", "display_name": "Claude 3.5 Sonnet v2", "service_kinds": ["llm"]},
+{"id": "us.anthropic.claude-3-5-haiku-20241022-v1:0", "display_name": "Claude 3.5 Haiku", "service_kinds": ["llm"]},
+{"id": "us.anthropic.claude-3-opus-20240229-v1:0", "display_name": "Claude 3 Opus", "service_kinds": ["llm"]},
+{"id": "us.amazon.nova-pro-v1:0", "display_name": "Amazon Nova Pro", "service_kinds": ["llm"]},
+{"id": "us.amazon.nova-lite-v1:0", "display_name": "Amazon Nova Lite", "service_kinds": ["llm"]},
+{"id": "us.meta.llama3-3-70b-instruct-v1:0", "display_name": "Llama 3.3 70B Instruct", "service_kinds": ["llm"]},
+{"id": "us.deepseek.r1-v1:0", "display_name": "DeepSeek R1", "service_kinds": ["llm"]},
+{"id": "us.mistral.mistral-large-2407-v1:0", "display_name": "Mistral Large 2", "service_kinds": ["llm"]}
+]
 }
