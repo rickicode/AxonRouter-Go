@@ -347,22 +347,16 @@ import type { Provider } from '$lib/api';
             {#if !isCollapsed}
               <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
             {#each sectionProviders as provider (provider.id)}
-              {@const meta = providerMeta(provider)}
-              {@const iconMeta = providerIconMeta(provider)}
-              {@const color = providerColor(provider)}
-              {@const category = getCategoryById(providerCategoryId(provider))}
-              {@const serviceKinds = providerServiceKinds(provider)}
+{@const meta = providerMeta(provider)}
+            {@const iconMeta = providerIconMeta(provider)}
+            {@const serviceKinds = providerServiceKinds(provider)}
 <a
             href="/providers/{provider.id}"
-            class="group relative flex flex-col rounded-xl bg-card shadow-card border border-border/40 transition-all duration-200 hover:-translate-y-1 hover:shadow-elevated hover:border-primary/20 overflow-hidden"
+            class="group relative flex flex-col rounded-xl bg-card shadow-card border border-border/40 transition-all duration-200 hover:-translate-y-1 hover:shadow-elevated hover:border-border/80 overflow-hidden"
           >
-            <div class="absolute inset-x-0 top-0 h-1" style="background: {color};"></div>
             <div class="flex flex-1 flex-col gap-4 p-4">
               <div class="flex items-start gap-3">
-                <div
-                  class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg"
-                  style="background: {hexToRgba(color, 0.14)};"
-                >
+                <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-muted">
                   <ProviderIcon meta={iconMeta} size={28} />
                 </div>
                 <div class="min-w-0 flex-1">
@@ -371,14 +365,14 @@ import type { Provider } from '$lib/api';
                       {providerName(provider)}
                     </h3>
                     {#if providerHasFree(provider)}
-                      <Badge variant="outline" class="shrink-0 rounded-full text-[10px] px-1.5 py-0 h-auto border-emerald-500/30 text-emerald-400">Free</Badge>
+                      <Badge variant="secondary" class="shrink-0 rounded-full text-[10px] px-1.5 py-0 h-auto text-muted-foreground">Free</Badge>
                     {/if}
                   </div>
                   <p class="mt-0.5 truncate text-caption-mono text-muted-foreground">{providerPrefix(provider)}</p>
                   {#if serviceKinds.length > 0}
                     <div class="flex flex-wrap gap-1 mt-1.5">
                       {#each serviceKinds as kind (kind)}
-                        <Badge variant="outline" class="text-[10px] px-1.5 py-0 rounded-full">{kind}</Badge>
+                        <Badge variant="outline" class="text-[10px] px-1.5 py-0 rounded-full text-muted-foreground">{kind}</Badge>
                       {/each}
                     </div>
                   {/if}
@@ -387,13 +381,13 @@ import type { Provider } from '$lib/api';
               <div class="mt-auto flex items-center justify-between border-t border-border/50 pt-3">
                 <div class="flex flex-wrap items-center gap-1.5">
                   {#if readyCount(provider) > 0}
-                    <Badge variant="outline" class="rounded-full text-[10px] px-1.5 py-0 h-auto gap-1 border-emerald-500/30 text-emerald-400">
+                    <Badge variant="secondary" class="rounded-full text-[10px] px-1.5 py-0 h-auto gap-1 text-muted-foreground">
                       <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
                       {readyCount(provider)} ready
                     </Badge>
                   {/if}
                   {#if issueCount(provider) > 0}
-                    <Badge variant="outline" class="rounded-full text-[10px] px-1.5 py-0 h-auto gap-1 border-amber-500/30 text-amber-400">
+                    <Badge variant="secondary" class="rounded-full text-[10px] px-1.5 py-0 h-auto gap-1 text-muted-foreground">
                       <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
                       {issueCount(provider)} issues
                     </Badge>
