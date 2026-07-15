@@ -21,14 +21,39 @@ var (
 	once   sync.Once
 )
 
+// resolveDataDir picks the data directory: explicit value, then AXONROUTER_DIR,
+// then the default ~/axonrouter. Relative paths are resolved against $HOME.
+func resolveDataDir(explicit string) string {
+	if explicit != "" {
+		if filepath.IsAbs(explicit) {
+			return explicit
+		}
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, explicit)
+		}
+		return explicit
+	}
+
+	if env := os.Getenv("AXONROUTER_DIR"); env != "" {
+		if filepath.IsAbs(env) {
+			return env
+		}
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, env)
+		}
+		return env
+	}
+
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, "axonrouter")
+	}
+	return "axonrouter"
+}
+
 // Init sets the global config. Call once at startup.
 func Init(cfg Config) {
 	once.Do(func() {
-		if cfg.DataDir == "" {
-			if home, err := os.UserHomeDir(); err == nil {
-				cfg.DataDir = filepath.Join(home, "axonrouter")
-			}
-		}
+		cfg.DataDir = resolveDataDir(cfg.DataDir)
 		global = cfg
 	})
 }
@@ -36,8 +61,7 @@ func Init(cfg Config) {
 // Get returns the global config. Initializes with defaults if not explicitly set.
 func Get() Config {
 	once.Do(func() {
-		home, _ := os.UserHomeDir()
-		dataDir := filepath.Join(home, "axonrouter")
+		dataDir := resolveDataDir("")
 		global = Config{
 			Port:    getEnv("AXON_PORT", "3777"),
 			DBPath:  filepath.Join(dataDir, "axonrouter.db"),
