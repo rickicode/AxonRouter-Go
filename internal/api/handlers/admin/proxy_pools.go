@@ -415,8 +415,7 @@ func (h *ProxyPoolHandler) BulkDelete(c *gin.Context) {
 			skipped++
 			continue
 		}
-		h.cleanPoolReferences(id)
-		if _, err := h.db.Exec("DELETE FROM proxy_pools WHERE id = ?", id); err != nil {
+		if err := h.deletePoolCascade(id); err != nil {
 			skipped++
 			continue
 		}
@@ -487,9 +486,8 @@ func (h *ProxyPoolHandler) Delete(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "proxy pool not found"})
 		return
 	}
-	// Cascade: clean references before delete
-	h.cleanPoolReferences(id)
-	if _, err := h.db.Exec("DELETE FROM proxy_pools WHERE id = ?", id); err != nil {
+	// Cascade: soft-delete referencing connections, detach settings, then delete.
+	if err := h.deletePoolCascade(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -607,12 +605,43 @@ func pronounceableName(length int) string {
 	return b.String()
 }
 
-// cleanPoolReferences removes all references to a proxy pool before deletion.
-func (h *ProxyPoolHandler) cleanPoolReferences(poolID string) {
-	// 1. Clean connections' provider_specific_data
-	rows, err := h.db.Query("SELECT id, provider_specific_data FROM connections WHERE provider_specific_data LIKE ?", "%"+poolID+"%")
-	if err == nil {
-		defer rows.Close()
+// likeEscape escapes SQL LIKE wildcard characters so an ID containing '%' or
+// '_' is matched literally rather than as a pattern. Used with ESCAPE '\'.
+func likeEscape(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r == '\\' || r == '%' || r == '_' {
+			b.WriteRune('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// deletePoolCascade removes a proxy pool and cascades the deletion: any
+// connection (any provider) that references the pool directly via proxyPoolId,
+// or via a proxy group that contains the pool, is soft-deleted (is_active = 0).
+// Group references in settings are detached, and groups left empty by the
+// removal are deleted. All steps run in a single transaction so a failure
+// cannot leave dangling references behind.
+func (h *ProxyPoolHandler) deletePoolCascade(poolID string) error {
+	tx, err := h.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	now := time.Now().Unix()
+	connIDs := map[string]struct{}{}
+
+	// 1a. Direct references: connections with proxyPoolId == poolID.
+	rows, qerr := tx.Query("SELECT id, provider_specific_data FROM connections WHERE provider_specific_data LIKE ? ESCAPE '\\'", "%"+likeEscape(poolID)+"%")
+	if qerr == nil {
 		for rows.Next() {
 			var id, raw string
 			if rows.Scan(&id, &raw) != nil || raw == "" {
@@ -622,22 +651,75 @@ func (h *ProxyPoolHandler) cleanPoolReferences(poolID string) {
 			if json.Unmarshal([]byte(raw), &psd) != nil {
 				continue
 			}
-			changed := false
 			if psd["proxyPoolId"] == poolID {
-				delete(psd, "proxyPoolId")
-				changed = true
+				connIDs[id] = struct{}{}
 			}
-			if changed {
-				if out, err := json.Marshal(psd); err == nil {
-					h.db.Exec("UPDATE connections SET provider_specific_data = ?, updated_at = ? WHERE id = ?", string(out), time.Now().Unix(), id)
+		}
+		rows.Close()
+	}
+
+	// 1b. Group references: groups containing poolID, then connections using them.
+	groupRows, gerr := tx.Query("SELECT id, proxy_pool_ids FROM proxy_groups WHERE proxy_pool_ids LIKE ? ESCAPE '\\'", "%"+likeEscape(poolID)+"%")
+	groupIDs := []string{}
+	if gerr == nil {
+		for groupRows.Next() {
+			var gid, rawIDs string
+			if groupRows.Scan(&gid, &rawIDs) != nil || rawIDs == "" {
+				continue
+			}
+			var ids []string
+			if json.Unmarshal([]byte(rawIDs), &ids) != nil {
+				continue
+			}
+			has := false
+			for _, pid := range ids {
+				if pid == poolID {
+					has = true
+					break
 				}
 			}
+			if !has {
+				continue
+			}
+			groupIDs = append(groupIDs, gid)
+			crows, cerr := tx.Query("SELECT id, provider_specific_data FROM connections WHERE provider_specific_data LIKE ? ESCAPE '\\'", "%"+likeEscape(gid)+"%")
+			if cerr == nil {
+				for crows.Next() {
+					var id, raw string
+					if crows.Scan(&id, &raw) != nil || raw == "" {
+						continue
+					}
+					var psd map[string]any
+					if json.Unmarshal([]byte(raw), &psd) != nil {
+						continue
+					}
+					if psd["proxyGroupId"] == gid {
+						connIDs[id] = struct{}{}
+					}
+				}
+				crows.Close()
+			}
+		}
+		groupRows.Close()
+	}
+
+	// 2. Soft-delete the collected connections (skip the default direct oc connection).
+	for id := range connIDs {
+		var psd string
+		if tx.QueryRow("SELECT COALESCE(provider_specific_data,'') FROM connections WHERE id = ?", id).Scan(&psd) == nil {
+			if strings.Contains(psd, `"direct":"true"`) {
+				continue
+			}
+		}
+		if _, e := tx.Exec("UPDATE connections SET is_active = 0, updated_at = ? WHERE id = ?", now, id); e != nil {
+			err = e
+			return err
 		}
 	}
 
-	// 2. Clean provider_proxy_defaults in settings
+	// 3. Detach pool from provider_proxy_defaults in settings.
 	var raw string
-	if h.db.QueryRow("SELECT value FROM settings WHERE key = 'provider_proxy_defaults'").Scan(&raw) == nil && raw != "" {
+	if tx.QueryRow("SELECT value FROM settings WHERE key = 'provider_proxy_defaults'").Scan(&raw) == nil && raw != "" {
 		var defaults map[string]map[string]any
 		if json.Unmarshal([]byte(raw), &defaults) == nil {
 			changed := false
@@ -648,37 +730,53 @@ func (h *ProxyPoolHandler) cleanPoolReferences(poolID string) {
 				}
 			}
 			if changed {
-				if out, err := json.Marshal(defaults); err == nil {
-					h.db.Exec("UPDATE settings SET value = ?, updated_at = ? WHERE key = 'provider_proxy_defaults'", string(out), time.Now().Unix())
+				if out, merr := json.Marshal(defaults); merr == nil {
+					if _, e := tx.Exec("UPDATE settings SET value = ?, updated_at = ? WHERE key = 'provider_proxy_defaults'", string(out), now); e != nil {
+						err = e
+						return err
+					}
 				}
 			}
 		}
 	}
 
-	// 3. Remove pool ID from proxy groups' proxy_pool_ids
-	grows, err := h.db.Query("SELECT id, proxy_pool_ids FROM proxy_groups WHERE proxy_pool_ids LIKE ?", "%"+poolID+"%")
-	if err == nil {
-		defer grows.Close()
-		for grows.Next() {
-			var id, rawIDs string
-			if grows.Scan(&id, &rawIDs) != nil || rawIDs == "" {
-				continue
+	// 4. Remove pool from groups; delete groups left empty.
+	for _, gid := range groupIDs {
+		var rawIDs string
+		if tx.QueryRow("SELECT proxy_pool_ids FROM proxy_groups WHERE id = ?", gid).Scan(&rawIDs) != nil {
+			continue
+		}
+		var ids []string
+		if json.Unmarshal([]byte(rawIDs), &ids) != nil {
+			continue
+		}
+		newIDs := make([]string, 0, len(ids))
+		for _, pid := range ids {
+			if pid != poolID {
+				newIDs = append(newIDs, pid)
 			}
-			var ids []string
-			if json.Unmarshal([]byte(rawIDs), &ids) != nil {
-				continue
+		}
+		if len(newIDs) == 0 {
+			if _, e := tx.Exec("DELETE FROM proxy_groups WHERE id = ?", gid); e != nil {
+				err = e
+				return err
 			}
-			newIDs := make([]string, 0, len(ids))
-			for _, pid := range ids {
-				if pid != poolID {
-					newIDs = append(newIDs, pid)
-				}
-			}
-			if len(newIDs) != len(ids) {
-				if out, err := json.Marshal(newIDs); err == nil {
-					h.db.Exec("UPDATE proxy_groups SET proxy_pool_ids = ?, updated_at = ? WHERE id = ?", string(out), time.Now().Unix(), id)
-				}
+		} else if out, merr := json.Marshal(newIDs); merr == nil {
+			if _, e := tx.Exec("UPDATE proxy_groups SET proxy_pool_ids = ?, updated_at = ? WHERE id = ?", string(out), now, gid); e != nil {
+				err = e
+				return err
 			}
 		}
 	}
+
+	// 5. Delete the pool itself.
+	if _, e := tx.Exec("DELETE FROM proxy_pools WHERE id = ?", poolID); e != nil {
+		err = e
+		return err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	return nil
 }

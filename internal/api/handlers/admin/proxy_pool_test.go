@@ -374,3 +374,106 @@ func TestProxyPoolBulkDelete(t *testing.T) {
 		t.Fatalf("expected 1 remaining pool, got %d", count)
 	}
 }
+
+func TestProxyPoolDeleteCascadesDirectConnections(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database))
+	now := time.Now().Unix()
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := database.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+	}
+	mustExec(`INSERT INTO proxy_pools (id,name,type,proxy_url,is_active,test_status,created_at,updated_at) VALUES ('pool-x','x','http','http://x:1',1,'ok',?,?)`, now, now)
+	mustExec(`INSERT INTO connections (id,provider_type_id,name,auth_type,status,is_active,provider_specific_data,created_at,updated_at) VALUES ('conn-pool','oc','c-pool','none','ready',1,'{"proxyPoolId":"pool-x"}',?,?)`, now, now)
+	mustExec(`INSERT INTO connections (id,provider_type_id,name,auth_type,status,is_active,provider_specific_data,created_at,updated_at) VALUES ('conn-other','oc','c-other','none','ready',1,'{"proxyPoolId":"pool-y"}',?,?)`, now, now)
+
+	if err := h.deletePoolCascade("pool-x"); err != nil {
+		t.Fatalf("deletePoolCascade: %v", err)
+	}
+
+	var active1, active2 int
+	if err := database.QueryRow("SELECT is_active FROM connections WHERE id='conn-pool'").Scan(&active1); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if err := database.QueryRow("SELECT is_active FROM connections WHERE id='conn-other'").Scan(&active2); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if active1 != 0 {
+		t.Errorf("conn-pool should be soft-deleted (is_active=0), got %d", active1)
+	}
+	if active2 != 1 {
+		t.Errorf("conn-other should survive, got %d", active2)
+	}
+	var pc int
+	if err := database.QueryRow("SELECT COUNT(*) FROM proxy_pools WHERE id='pool-x'").Scan(&pc); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if pc != 0 {
+		t.Errorf("pool-x should be deleted")
+	}
+}
+
+func TestProxyPoolDeleteCascadesViaGroup(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database))
+	now := time.Now().Unix()
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := database.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+	}
+	mustExec(`INSERT INTO proxy_pools (id,name,type,proxy_url,is_active,test_status,created_at,updated_at) VALUES ('pool-g','g','http','http://g:1',1,'ok',?,?)`, now, now)
+	mustExec(`INSERT INTO proxy_groups (id,name,mode,sticky_limit,strict_proxy,proxy_pool_ids,is_active,created_at,updated_at) VALUES ('grp-1','grp','round_robin',0,0,'["pool-g"]',1,?,?)`, now, now)
+	mustExec(`INSERT INTO connections (id,provider_type_id,name,auth_type,status,is_active,provider_specific_data,created_at,updated_at) VALUES ('conn-g','oc','c-g','none','ready',1,'{"proxyGroupId":"grp-1"}',?,?)`, now, now)
+
+	if err := h.deletePoolCascade("pool-g"); err != nil {
+		t.Fatalf("deletePoolCascade: %v", err)
+	}
+
+	var active int
+	if err := database.QueryRow("SELECT is_active FROM connections WHERE id='conn-g'").Scan(&active); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if active != 0 {
+		t.Errorf("conn-g should be soft-deleted via group, got %d", active)
+	}
+	var gc int
+	if err := database.QueryRow("SELECT COUNT(*) FROM proxy_groups WHERE id='grp-1'").Scan(&gc); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if gc != 0 {
+		t.Errorf("empty group grp-1 should be deleted, got %d", gc)
+	}
+}
+
+func TestProxyPoolDeleteKeepsDefaultDirectConnection(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database))
+	now := time.Now().Unix()
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := database.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+	}
+	mustExec(`INSERT INTO proxy_pools (id,name,type,proxy_url,is_active,test_status,created_at,updated_at) VALUES ('pool-d','d','http','http://d:1',1,'ok',?,?)`, now, now)
+	// Default direct oc connection references no pool; must survive.
+	mustExec(`INSERT INTO connections (id,provider_type_id,name,auth_type,status,is_active,provider_specific_data,created_at,updated_at) VALUES ('conn-direct','oc','c-direct','none','ready',1,'{"direct":"true"}',?,?)`, now, now)
+
+	if err := h.deletePoolCascade("pool-d"); err != nil {
+		t.Fatalf("deletePoolCascade: %v", err)
+	}
+	var active int
+	if err := database.QueryRow("SELECT is_active FROM connections WHERE id='conn-direct'").Scan(&active); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if active != 1 {
+		t.Errorf("default direct oc connection must survive, got %d", active)
+	}
+}
