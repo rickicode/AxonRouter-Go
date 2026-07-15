@@ -38,10 +38,13 @@ func TestSummary_IncludesResetAndSavings(t *testing.T) {
 	now := time.Now().UTC()
 	nowSec := now.Unix()
 
-	// Seed one cached quota with a future reset.
+	// Seed one cached quota with a future reset (relative to now so the test
+	// stays robust regardless of the current date).
+	futureReset := now.Add(48 * time.Hour).Format(time.RFC3339)
+	quotasJSON := `[{"name":"5h","used":1,"total":10,"remaining_pct":90,"reset_at":"` + futureReset + `"}]`
 	db.Exec(`INSERT INTO quota_cache (id, connection_id, provider_type_id, connection_name, plan, quotas, status, fetched_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		"cx-1", "conn-cx", "cx", "Codex 1", "plus",
-		`[{"name":"5h","used":1,"total":10,"remaining_pct":90,"reset_at":"2026-07-15T00:00:00Z"}]`,
+		quotasJSON,
 		"ok", nowSec, nowSec)
 
 	// Seed a request log with cache savings this month.
