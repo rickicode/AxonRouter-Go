@@ -433,9 +433,10 @@ func (h *Handler) loadConnectionByID(ctx context.Context, connID string) (*Conne
 // refreshLeadMs defines per-provider proactive refresh lead times (ms).
 // Matches OmniRoute REFRESH_LEAD_MS at open-sse/services/tokenRefresh.ts:32-49.
 var refreshLeadMs = map[string]time.Duration{
-	"cx":   5 * time.Minute,  // Codex: Auth0 rotating refresh tokens
-	"ag":   15 * time.Minute, // Antigravity: Google non-rotating refresh tokens
-	"kiro": 5 * time.Minute,  // Kiro: AWS SSO OIDC one-time-use refresh tokens
+	"cx":      5 * time.Minute,  // Codex: Auth0 rotating refresh tokens
+	"ag":      15 * time.Minute, // Antigravity: Google non-rotating refresh tokens
+	"kiro":    5 * time.Minute,  // Kiro: AWS SSO OIDC one-time-use refresh tokens
+	"copilot": 5 * time.Minute,  // Copilot: GitHub device-code tokens refresh early due to Copilot token skew
 }
 
 const defaultRefreshLeadMs = 5 * time.Minute

@@ -233,6 +233,45 @@ func TestExecuteWithRetry_AuthRefreshThenSuccess(t *testing.T) {
 	}
 }
 
+func TestProactiveRefreshToken_CopilotLead(t *testing.T) {
+	h := newTestHandler(t)
+	refreshed := false
+	h.authMgr.RegisterService(auth.ProviderGitHub, &fakeOAuthService{
+		refreshFunc: func(ctx context.Context, creds *auth.Credentials) (*auth.Credentials, error) {
+			refreshed = true
+			return &auth.Credentials{
+				AccessToken:  "fresh-token",
+				RefreshToken: creds.RefreshToken,
+				ExpiresAt:    time.Now().Add(time.Hour),
+			}, nil
+		},
+	})
+
+	conn := &Connection{
+		ID:             "conn-1",
+		RefreshToken:   "old-refresh",
+		OAuthExpiresAt: time.Now().Add(4 * time.Minute),
+	}
+
+	// Within the 5-minute lead for copilot should refresh.
+	if !h.proactiveRefreshToken(context.Background(), conn, "copilot") {
+		t.Fatal("expected proactive refresh for copilot within lead")
+	}
+	if !refreshed {
+		t.Fatal("expected refresh to be called")
+	}
+
+	// Outside the lead should not refresh.
+	refreshed = false
+	conn.OAuthExpiresAt = time.Now().Add(6 * time.Minute)
+	if h.proactiveRefreshToken(context.Background(), conn, "copilot") {
+		t.Fatal("expected no proactive refresh for copilot outside lead")
+	}
+	if refreshed {
+		t.Fatal("expected refresh not to be called outside lead")
+	}
+}
+
 func TestExecuteWithRetry_GivesUpAfter3(t *testing.T) {
 	h := newTestHandler(t)
 
