@@ -15,7 +15,7 @@ const packageJsonFile = path.join(root, 'npm', 'axonrouter-go', 'package.json');
 
 function main() {
   const version = fs.readFileSync(versionFile, 'utf8').trim();
-  if (!/^\d+\.\d+\.\d+/.test(version)) {
+  if (!/^\d+\.\d+\.\d+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$/.test(version)) {
     console.error(`error: invalid version in ${versionFile}: ${version}`);
     process.exit(1);
   }
