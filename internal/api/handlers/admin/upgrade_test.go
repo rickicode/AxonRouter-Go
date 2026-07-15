@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 
@@ -89,6 +90,39 @@ func TestUpgrade_DownloadsAndVerifiesBinary(t *testing.T) {
 	}
 	if string(got) != string(binary) {
 		t.Errorf("downloaded binary = %q, want %q", got, binary)
+	}
+
+	wantCmd, wantHint := restartInstructions()
+	if resp["restart_command"] != wantCmd {
+		t.Errorf("restart_command = %v, want %s", resp["restart_command"], wantCmd)
+	}
+	if resp["restart_hint"] != wantHint {
+		t.Errorf("restart_hint = %v, want %s", resp["restart_hint"], wantHint)
+	}
+}
+
+func TestRestartInstructions(t *testing.T) {
+	command, hint := restartInstructions()
+	if command == "" {
+		t.Error("restart command is empty")
+	}
+	if hint == "" {
+		t.Error("restart hint is empty")
+	}
+
+	switch runtime.GOOS {
+	case "linux":
+		if command != "systemctl restart axonrouter" {
+			t.Errorf("linux command = %q, want systemctl restart axonrouter", command)
+		}
+	case "darwin":
+		if !strings.Contains(command, "launchctl") {
+			t.Errorf("darwin command = %q, want launchctl", command)
+		}
+	case "windows":
+		if command != "sc stop axonrouter && sc start axonrouter" {
+			t.Errorf("windows command = %q, want sc stop/start", command)
+		}
 	}
 }
 

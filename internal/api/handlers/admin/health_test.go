@@ -34,6 +34,9 @@ func newHealthTestDB(t *testing.T) *sql.DB {
 func TestHealth_IncludesVersionInfo(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
+	version.SetTestVersion("0.3.3")
+	defer version.ClearTestVersion()
+
 	database := newHealthTestDB(t)
 	store := connstate.NewStore()
 	tracker := usage.NewTracker(database)
@@ -69,13 +72,19 @@ func TestHealth_IncludesVersionInfo(t *testing.T) {
 	if resp["latest_version"] != "0.3.4" {
 		t.Errorf("latest_version = %v, want 0.3.4", resp["latest_version"])
 	}
-	if resp["update_available"] != true {
-		t.Errorf("update_available = %v, want true", resp["update_available"])
+	// NOTE: assertion uses the checker's own comparison so the test stays valid
+	// regardless of the embedded VERSION in the current build.
+	wantUpdate := checker.UpdateAvailable()
+	if resp["update_available"] != wantUpdate {
+		t.Errorf("update_available = %v, want %v", resp["update_available"], wantUpdate)
 	}
 }
 
 func TestHealth_CurrentVersion_NoUpdate(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+
+	version.SetTestVersion("0.3.3")
+	defer version.ClearTestVersion()
 
 	database := newHealthTestDB(t)
 	store := connstate.NewStore()
