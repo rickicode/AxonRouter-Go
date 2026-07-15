@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-07-15
+
 ### Fixed
 - Removed duplicate MiMoCode Free provider from the dashboard: `mimocode-free` is now normalized to the canonical `mimocode` alias on startup (connections, quota cache, and custom models are migrated; the legacy provider_type row is deleted).
 - GitHub Copilot OAuth account creation no longer fails with "Connection not ready nil credentials" / "empty access token". GitHub's device-code endpoint returns HTTP 200 with `error: authorization_pending`; that response is now recognized so polling continues. Copilot token prefetch failures are non-fatal (matching OmniRoute), and real terminal errors are propagated to the UI instead of showing the generic "nil credentials" message.

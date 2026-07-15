@@ -388,47 +388,27 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.4
-
-### Added
-- Vertex AI provider (`vertex/` prefix) using Google service-account JSON keys; signs a JWT locally, exchanges it for a Google access token, resolves `{projectId}`/`{location}` base_url placeholders, and proxies OpenAI-compatible `/chat/completions` to Vertex AI's OpenAI endpoint.
-- GitHub Copilot provider (`copilot/` prefix) with OAuth-token → Copilot-token exchange, token caching, and the Copilot-specific request headers needed for its OpenAI-compatible `/chat/completions` endpoint.
-- System tray mode behind the `tray` build tag. When built with `-tags tray`, `axonrouter --tray` shows a tray icon with menu items to open the dashboard, start/stop the server, and exit. Makefile gains a `build-tray` target; the default build remains headless with no GUI dependencies.
-- Quota reset countdown and estimated savings tracker: backend computes next per-provider reset from quota cache, estimates savings from request logs × model pricing, exposes `/api/admin/quota/summary`, and dashboard Quota/Usage pages render global countdown and savings badges.
-- OpenAI-compatible providers: added `glm`, `minimax`, `kimi`, `mistral`, `cerebras`, `together`, `fireworks`, `novita`, `lambda`, and `pollinations` prefixes with seeded base URLs, registry routing, catalog keys, and static models for GLM/MiniMax/Kimi/Mistral.
-- OpenRouter custom/free model support: dedicated executor wraps OpenAI-compatible requests and preserves configurable `HTTP-Referer`/`X-Title` headers; a cached, no-auth fetch of `https://openrouter.ai/api/v1/models` filters free models by zero prompt/completion pricing and merges them into `/v1/models` so the dashboard always lists current free options; unknown custom model IDs pass through unchanged.
-- Amazon Bedrock Mantle provider (`bedrock/` prefix) using the OpenAI-compatible endpoint `https://bedrock-mantle.<region>.api.aws/v1`. The default region is `us-west-2`, overridable via per-connection provider-specific data. Bearer-token auth and bulk connection import are supported.
-
-### Changed
-- Replaced Linux-only systemd service installer with cross-platform service management via `github.com/kardianos/service`. `axonrouter --startup {install|install-root|status|start|stop|restart|uninstall}` now works on Linux, macOS, and Windows.
-- Service installs preserve the original user's data directory when run under `sudo`; `install-root` installs as root/system instead.
+### What's New in v0.3.5
 
 ### Fixed
-- Default admin password is now the fixed value `12345677` again, and the password-change warning is based on whether the current password still matches the default. Changing the password via `axonrouter --setpass` or Settings clears the warning.
-- `/v1/responses`, `/v1/embeddings`, `/v1/images/generations`, `/v1/audio/speech`, `/v1/audio/transcriptions`, `/v1/video/generations`, and `/v1/unified` now enforce the API key lifetime token budget (`max_tokens`) before routing upstream.
-- Cloudflare Workers AI model discovery for `/v1/models` is now cached for 5 minutes, preventing an upstream HTTP request on every model-list call.
-- Auth cache hardening: `AuthCache.Validate` now stores its own successful result inside the singleflight path; DB query errors are logged instead of swallowed; expired entry deletion rechecks under the write lock to close the TOCTOU window.
-- Proxy Pools bulk import now auto-prefixes bare proxy URLs with `http://` when the default type is HTTP and removes the live preview to keep the modal clean.
-- Bulk import timeouts for proxy pools and provider connections are extended to 120 seconds to prevent "signal is aborted" errors on large imports.
-- Proxy Pools header and tab counters now reflect the total pool count across all pages (via `listAll`) instead of only the current page.
-- ComboModal now unwraps the API's `smart_goal` NullString object when editing a smart combo, so subsequent PATCH updates no longer fail with a 400 JSON unmarshal error.
-- GitHub Copilot executor now caches the local hosts/apps.json fallback token instead of re-reading from disk on every empty-key request, defaults a missing token `expires_at` to one hour, rejects unsupported endpoints (embeddings/images/responses) with a clear error, and handles Windows config-directory fallback when `LOCALAPPDATA` is unset.
-- Google Vertex AI executor now propagates the caller context into the JWT token exchange, enforces a 20-second timeout on the exchange request, and defaults a missing `expires_in` value to 3600 seconds.
-- System tray build no longer allows restarting the server after it has been stopped or exited, preventing a panic from reusing a shut down router from the tray menu.
-- Combo round-robin strategy no longer panics when `sticky_limit` is 0; it silently clamps to 1.
-- Default combo names (`balanced`, `economy`, `premium`) are no longer shadowed by smart goal keywords; regular combos are resolved first.
-- Smart combo selection is now deterministic when multiple smart combos share the same goal (sorted by combo name).
-- Removed the dead `FallbackRate` threshold in smart `auto` combo selection (the field was never populated).
-- Combo routing now replaces the request body's `model` field with each step's actual model before sending upstream, preventing providers from receiving the raw combo name/smart goal.
-- Default combo seeding now skips steps that have no matching active connection and discards combos that would end up with zero usable steps, so seeded combos never reference models that cannot be routed.
-- Default combo model lists updated to only include providers available out of the box: OC (`oc/hy3-free`), Codex (`cx/gpt-5.4`/`gpt-5.4-mini`/`gpt-5.5`), Cloudflare (`cf/moonshotai/kimi-k2.5`/`kimi-k2.6`/`kimi-k2.7-code`), and Antigravity (`ag/claude-sonnet-4-6`/`ag/claude-opus-4-6-thinking`).
-- Fixed base URLs for `novita` (`https://api.novita.ai/openai/v1`) and `pollinations` (`https://gen.pollinations.ai/v1`) so `/v1/chat/completions` resolves to the correct upstream path.
-- Fixed Vertex AI static model IDs to use the `google/gemini-...` format required by the OpenAI-compatible Vertex endpoint.
-- Fixed Amazon Bedrock Mantle static model IDs by stripping the regional `us.` prefix; Bedrock Mantle expects bare model IDs like `anthropic.claude-3-5-sonnet-...`.
-- Added static model catalog sections for `cerebras`, `together`, `fireworks`, `novita`, `lambda`, and `pollinations` so they appear in `/v1/models` without requiring a live connection.
-- Added missing dashboard catalog entries (name, color, and icon) for all new providers: `glm`, `minimax`, `kimi`, `mistral`, `cerebras`, `together`, `fireworks`, `novita`, `lambda`, `pollinations`, `copilot`, `vertex`, and `bedrock`.
-- Added real brand logo files for new providers: copied existing logos from `9router/public/providers` (`cerebras`, `fireworks`, `kimi`, `minimax`, `mistral`, `together`, `vertex`, `copilot`, `glm`) and downloaded `novita`, `pollinations`, `lambda`, and `bedrock` SVGs.
-- Updated `ProviderIcon` to prefer `iconFile` images and fall back to Material Symbols when no image file is available.
+- Removed duplicate MiMoCode Free provider from the dashboard: `mimocode-free` is now normalized to the canonical `mimocode` alias on startup (connections, quota cache, and custom models are migrated; the legacy provider_type row is deleted).
+- GitHub Copilot OAuth account creation no longer fails with "Connection not ready nil credentials" / "empty access token". GitHub's device-code endpoint returns HTTP 200 with `error: authorization_pending`; that response is now recognized so polling continues. Copilot token prefetch failures are non-fatal (matching OmniRoute), and real terminal errors are propagated to the UI instead of showing the generic "nil credentials" message.
+- GitHub Copilot quota tracking is now implemented. The quota scheduler fetches usage from `https://api.github.com/copilot_internal/user`, parses both paid (`quota_snapshots`) and free/limited (`monthly_quotas` + `limited_user_quotas`) response formats, and auto-refreshes the short-lived Copilot token before each fetch so the dashboard no longer shows "No quota data".
+- GitHub accounts without Copilot access now fail add-account with a clear message: "this GitHub account does not have GitHub Copilot access", instead of a raw 403 JSON blob. The same message is used by the quota scheduler to disable the connection.
+- GitHub Copilot OAuth now falls back to the GitHub login/name when the `/user` response does not include an email, so the dashboard connection label shows the actual account instead of "OAuth GitHub Copilot".
+- Added a guard in the quota fetcher so any provider added to `knownProviders` without a matching fetcher case returns a clear error instead of silently showing "No quota data".
+- Provider detail model list now inherits `service_kinds` from the provider when a model has no per-model kind metadata. Fallback is restricted to single-kind providers so multi-modal providers (e.g., Cloudflare) are not blanket-tagged with every capability.
+- Provider cards on the /providers page now display their category badge (e.g., "OAuth", "API Key", "No Auth", "Service Account") so every provider has visible category metadata, matching the category badge shown on Provider Detail.
+- Quota scheduler now prunes stale `quota_cache` rows when a connection is no longer an active OAuth connection, so deleted/disabled Copilot attempts stop appearing as duplicate error cards.
+- Fixed GitHub Copilot quota fetch to call `/copilot_internal/user` with the GitHub OAuth access token (`Authorization: token …`), not the short-lived Copilot token — this was the root cause of `401 Bad credentials` and now matches OmniRoute.
+- Fixed free/limited Copilot quota parsing: `limited_user_quotas[name]` is the *remaining* count, not the used count (previously usage percentages were inverted).
+- Proactive OAuth token refresh now refreshes Copilot tokens even though GitHub device-code flow doesn't return a refresh token; the manual admin refresh endpoint also supports Copilot and persists the refreshed Copilot token to `provider_specific_data`.
+
+### Added
+- MiMoCode Free provider (`mimocode/` prefix) with dedicated `MimocodeExecutor`: per-device-fingerprint JWT bootstrap, anti-abuse system marker, required `x-mimo-*` headers, one-time 401/403 retry, and proxy-pool selection for non-default connections. Includes a seeded `mimocode-direct-default` connection and backend validation/rules mirroring OpenCode Free.
+- Updated static GitHub Copilot model catalog in `internal/models/models.json` to include newer generally-available models: `claude-opus-4.6`, `gpt-5.4-nano`, `gpt-5.6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gemini-2.5-pro`, and `gemini-3-flash-preview`.
+- Quota dashboard provider summary now returns per-provider color/icon metadata and the provider filter pills use those colors, so Copilot and other providers render with their brand color instead of default gray.
+- Track and display real compression metrics: per-mode counters (`requests`, `original_tokens`, `compressed_tokens`) are recorded from live `/v1/*` requests via the write queue, exposed via `GET /api/admin/compression/metrics`, and rendered in a new "Compression Metrics" card on the Optimization page.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
