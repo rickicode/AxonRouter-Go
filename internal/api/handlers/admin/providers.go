@@ -629,10 +629,10 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 	// happens-before edge, so this is race-free — do NOT mutate handler
 	// locals from inside the closure).
 	type batchResult struct {
-		ids []string
+		seeded  []struct{ id string; priority int }
 		created int
-		fails []string
-		err error
+		fails   []string
+		err     error
 	}
 
 	runBatch := func(d *sql.DB, conns []struct {
@@ -661,8 +661,8 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 				res.fails = append(res.fails, fmt.Sprintf("connection %q: %s", conn.Name, err.Error()))
 				continue
 			}
-			res.created++
-			res.ids = append(res.ids, connID)
+		res.created++
+		res.seeded = append(res.seeded, struct{ id string; priority int }{id: connID, priority: conn.Priority})
 		}
 		if err := tx.Commit(); err != nil {
 			res.err = err
@@ -695,17 +695,10 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 			}
 			continue
 		}
-		created += br.created
-		failed += len(br.fails)
-		errors = append(errors, br.fails...)
-		for i, id := range br.ids {
-			// br.ids parallels batch order; recover priority from the source.
-			_ = i
-			seeded = append(seeded, struct {
-				id string
-				priority int
-			}{id: id, priority: batch[i].Priority})
-		}
+	created += br.created
+	failed += len(br.fails)
+	errors = append(errors, br.fails...)
+	seeded = append(seeded, br.seeded...)
 	}
 
 	// Seed in-memory store ONLY for committed rows, then recompute eligibility once.
