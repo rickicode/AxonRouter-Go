@@ -207,7 +207,9 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		{"fireworks", "Fireworks", "openai", "https://api.fireworks.ai/inference/v1", "apikey", []string{"llm"}},
 		{"novita", "Novita AI", "openai", "https://api.novita.ai/openai/v1", "apikey", []string{"llm"}},
 		{"lambda", "Lambda", "openai", "https://api.lambda.ai/v1", "apikey", []string{"llm"}},
-		{"pollinations", "Pollinations.AI", "openai", "https://gen.pollinations.ai/v1", "apikey", []string{"llm"}},
+  {"pollinations", "Pollinations.AI", "openai", "https://gen.pollinations.ai/v1", "apikey", []string{"llm"}},
+  {"zenmux", "ZenMux", "openai", "https://zenmux.ai/api/v1", "apikey", []string{"llm"}},
+
 
 	{"copilot", "GitHub Copilot", "openai", "https://api.githubcopilot.com", "oauth", []string{"llm"}},
 		{"vertex", "Google Vertex AI", "openai", "https://aiplatform.googleapis.com/v1/projects/{projectId}/locations/{location}/endpoints/openapi", "service-account", []string{"llm"}},
@@ -545,8 +547,15 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 		{"nemotron-3-ultra-free", "Nemotron 3 Ultra Free", 0.0003, 0.0006, 0, 0, 0},
 		{"north-mini-code-free", "North Mini Code Free", 0.0002, 0.0004, 0, 0, 0},
 
-		// ── Misc ──
-		{"big-pickle", "Big Pickle", 0.0005, 0.001, 0, 0, 0},
+  // ── ZenMux (average canonical model rates; lookup strips the zenmux/ prefix) ──
+  {"z-ai/glm-5.2", "GLM 5.2", 0.0014, 0.0044, 0, 0, 0},
+  {"deepseek-v3.2", "DeepSeek V3.2", 0.00062, 0.00185, 0, 0, 0},
+  {"grok-4.1-fast", "Grok 4.1 Fast", 0.0002, 0.0005, 0, 0, 0},
+  {"mistral-large", "Mistral Large", 0.002, 0.006, 0, 0, 0},
+
+  // ── Misc ──
+  {"big-pickle", "Big Pickle", 0.0005, 0.001, 0, 0, 0},
+
 		{"grok-build-0.1", "Grok Build", 0.0003, 0.0005, 0, 0, 0},
 	}
 	// Guard: seed must never contain duplicate model IDs or $0 (free-tier) rows.

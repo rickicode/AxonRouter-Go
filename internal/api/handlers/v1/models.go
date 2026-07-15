@@ -43,8 +43,10 @@ var v1ProviderCatalog = map[string]struct {
 	"fireworks": {keys: []string{"fireworks"}, ownedBy: "fireworks"},
 	"novita": {keys: []string{"novita"}, ownedBy: "novita"},
 	"lambda": {keys: []string{"lambda"}, ownedBy: "lambda"},
-	"pollinations": {keys: []string{"pollinations"}, ownedBy: "pollinations"},
-	"bedrock": {keys: []string{"bedrock"}, ownedBy: "amazon"},
+  "pollinations": {keys: []string{"pollinations"}, ownedBy: "pollinations"},
+  "zenmux": {keys: []string{"zenmux"}, ownedBy: "zenmux"},
+  "bedrock": {keys: []string{"bedrock"}, ownedBy: "amazon"},
+
 	"zai": {keys: []string{"claude"}, ownedBy: "zai"},
 	"cf": {keys: []string{"cf"}, ownedBy: "cloudflare"},
 }

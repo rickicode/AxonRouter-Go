@@ -43,6 +43,8 @@ var remoteURLs = []string{
 var providerEndpoints = map[string]string{
 	// OpenCode Free: filter to -free suffix models only.
 	"oc": "https://opencode.ai/zen/v1/models",
+	// ZenMux publishes an unauthenticated /v1/models endpoint; sync the full catalog daily.
+	"zenmux": "https://zenmux.ai/api/v1/models",
 }
 
 // providerFreeOnly filters models to only include those with "-free" suffix.
