@@ -10,6 +10,8 @@ import RocketIcon from '@lucide/svelte/icons/rocket';
 import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
 import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
 import Loader2Icon from '@lucide/svelte/icons/loader-2';
+import CopyIcon from '@lucide/svelte/icons/copy';
+import CheckIcon from '@lucide/svelte/icons/check';
 import { getToken } from '$lib/auth';
 import {
   normalizeVersion,
@@ -30,6 +32,9 @@ let changelogLoading = $state(true);
 let changelogError = $state('');
 let upgrading = $state(false);
 let upgradeJustCompleted = $state(false);
+let restartCommand = $state('');
+let restartHint = $state('');
+let copiedCommand = $state(false);
 let error = $state('');
 let healthErrorShown = $state(false);
 
@@ -102,16 +107,30 @@ async function handleUpgrade() {
       throw new Error(data.error || `Upgrade returned ${res.status}`);
     }
 
-    const path = typeof data.path === 'string' ? data.path : '';
-    upgradeJustCompleted = true;
-    toast.success(path ? `Upgrade saved to ${path}` : 'Upgrade completed');
-  } catch (err) {
+		const path = typeof data.path === 'string' ? data.path : '';
+		restartCommand = typeof data.restart_command === 'string' ? data.restart_command : '';
+		restartHint = typeof data.restart_hint === 'string' ? data.restart_hint : '';
+		upgradeJustCompleted = true;
+		toast.success(path ? `Upgrade saved to ${path}` : 'Upgrade completed');
+	} catch (err) {
     const message = err instanceof Error ? err.message : 'Upgrade failed';
     toast.error('Upgrade failed: ' + message);
-  } finally {
-    clearTimeout(timeout);
-    upgrading = false;
-  }
+	} finally {
+		clearTimeout(timeout);
+		upgrading = false;
+	}
+}
+
+async function copyRestartCommand() {
+	if (!restartCommand) return;
+	try {
+		await navigator.clipboard.writeText(restartCommand);
+		copiedCommand = true;
+		toast.success('Restart command copied');
+		setTimeout(() => { copiedCommand = false; }, 2000);
+	} catch {
+		toast.error('Copy failed');
+	}
 }
 
 let checking = $state(false);
@@ -227,10 +246,42 @@ onMount(() => {
           </div>
         </div>
       {/if}
-    </Card.Content>
-  </Card.Root>
+	</Card.Content>
+</Card.Root>
 
-  {#if !loading}
+{#if upgradeJustCompleted && restartCommand}
+	<Card.Root class="shadow-card border-emerald-500/20">
+		<Card.Content class="p-4 space-y-3">
+			<div class="flex items-center gap-2">
+				<RocketIcon class="size-4 text-emerald-400" />
+				<h3 class="text-body-sm-strong">Upgrade complete</h3>
+			</div>
+			<div class="flex items-center gap-2 p-3 rounded-lg bg-muted border border-border overflow-x-auto">
+				<code class="text-body-sm font-mono whitespace-nowrap flex-1">{restartCommand}</code>
+				<Button
+					variant="outline"
+					size="sm"
+					class="rounded-sm cursor-pointer gap-1.5 flex-shrink-0"
+					onclick={copyRestartCommand}
+					disabled={copiedCommand}
+				>
+					{#if copiedCommand}
+						<CheckIcon class="size-3.5" />
+						<span class="text-body-sm">Copied</span>
+					{:else}
+						<CopyIcon class="size-3.5" />
+						<span class="text-body-sm">Copy</span>
+					{/if}
+				</Button>
+			</div>
+			{#if restartHint}
+				<p class="text-caption text-muted-foreground">{restartHint}</p>
+			{/if}
+		</Card.Content>
+	</Card.Root>
+{/if}
+
+{#if !loading}
     <!-- Version facts -->
     <section class="grid grid-cols-1 md:grid-cols-3 gap-4">
       <Card.Root class="shadow-card">
