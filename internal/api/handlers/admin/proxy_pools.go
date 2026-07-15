@@ -52,6 +52,11 @@ func (h *ProxyPoolHandler) List(c *gin.Context) {
 		where += " AND type = ?"
 		args = append(args, v)
 	}
+	if v := c.Query("q"); v != "" {
+		term := likeEscape(v)
+		where += " AND (name LIKE ? ESCAPE '\\' OR proxy_url LIKE ? ESCAPE '\\')"
+		args = append(args, "%"+term+"%", "%"+term+"%")
+	}
 
 	var total int
 	_ = h.db.QueryRow("SELECT COUNT(*) FROM proxy_pools WHERE "+where, args...).Scan(&total)

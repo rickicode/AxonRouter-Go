@@ -16,6 +16,8 @@ import * as Tabs from '$lib/components/ui/tabs';
 import Pagination from '$lib/components/Pagination.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import { toast } from 'svelte-sonner';
+import SearchIcon from '@lucide/svelte/icons/search';
+import XIcon from '@lucide/svelte/icons/x';
 
 let tab = $state<'pools' | 'groups' | 'assignments' | 'deploy'>('pools');
 let pools = $state<ProxyPool[]>([]);
@@ -29,6 +31,13 @@ let poolPage = $state(1);
 let poolPerPage = $state(10);
 let poolTotal = $state(0);
 let poolTotalPages = $state(1);
+
+// Pools filtering
+let poolSearch = $state('');
+let poolTypeFilter = $state('');
+let searchTimeout: ReturnType<typeof setTimeout> | undefined;
+
+const hasPoolFilters = $derived(poolSearch.trim() !== '' || poolTypeFilter !== '');
 
 // Modal state
 let showAddPool = $state(false);
@@ -124,13 +133,38 @@ const errorCount = $derived(allPools.filter(p => p.testStatus === 'error').lengt
 
 async function loadPools() {
   try {
-    const res = await proxyPoolsApi.list({ page: String(poolPage), per_page: String(poolPerPage) });
+    const params: Record<string, string> = { page: String(poolPage), per_page: String(poolPerPage) };
+    if (poolTypeFilter) params.type = poolTypeFilter;
+    if (poolSearch.trim()) params.q = poolSearch.trim();
+    const res = await proxyPoolsApi.list(params);
     pools = res.data ?? [];
     poolTotal = res.pagination?.total ?? 0;
     poolTotalPages = res.pagination?.total_pages ?? 1;
   } catch (err) {
     toast.error('Failed to load pools: ' + (err instanceof Error ? err.message : 'Unknown'));
   }
+}
+
+function applyPoolFilters(page = 1) {
+  poolPage = page;
+  selectedPoolIds = new Set();
+  void loadPools();
+}
+
+function onPoolSearchInput() {
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(() => applyPoolFilters(1), 300);
+}
+
+function onPoolTypeChange(val: string) {
+  poolTypeFilter = val;
+  applyPoolFilters(1);
+}
+
+function clearPoolFilters() {
+  poolSearch = '';
+  poolTypeFilter = '';
+  applyPoolFilters(1);
 }
 
 async function onPoolPageChange(p: number) {
@@ -649,8 +683,47 @@ async function handleBulkImport() {
       </Tabs.List>
 
 <!-- Pool Table -->
-		<Tabs.Content value="pools">
-			{#if selectedCount > 0}
+  <Tabs.Content value="pools">
+  <section class="rounded-xl bg-card p-4 shadow-card md:p-5">
+  <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+    <div class="relative w-full md:max-w-md">
+      <SearchIcon class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+      <Input
+        type="text"
+        bind:value={poolSearch}
+        oninput={onPoolSearchInput}
+        placeholder="Search pools…"
+        class="h-10 pl-9 text-body-sm"
+      />
+      {#if poolSearch}
+        <button
+          type="button"
+          class="absolute inset-y-0 right-2 text-caption text-muted-foreground hover:text-foreground cursor-pointer"
+          onclick={() => { poolSearch = ''; applyPoolFilters(1); }}
+        >Clear</button>
+      {/if}
+    </div>
+    <div class="flex items-center gap-2">
+      {#if hasPoolFilters}
+        <Button variant="outline" size="sm" onclick={clearPoolFilters} class="gap-1 text-body-sm rounded-sm cursor-pointer">
+          <XIcon class="size-3.5" /> Clear
+        </Button>
+      {/if}
+      <Select.Root type="single" value={poolTypeFilter} onValueChange={onPoolTypeChange}>
+        <Select.Trigger class="h-10 w-[150px] text-body-sm rounded-sm cursor-pointer">
+          {poolTypeFilter ? typeLabel(poolTypeFilter) : 'All types'}
+        </Select.Trigger>
+        <Select.Content>
+          <Select.Item value="" class="text-body-sm">All types</Select.Item>
+          {#each typeOptions as opt}
+            <Select.Item value={opt} class="text-body-sm">{typeLabel(opt)}</Select.Item>
+          {/each}
+        </Select.Content>
+      </Select.Root>
+    </div>
+  </div>
+</section>
+{#if selectedCount > 0}
 				<div class="flex items-center justify-between rounded-xl border border-border bg-card shadow-card p-3">
 					<span class="text-body-sm-strong">{selectedCount} selected</span>
 					<div class="flex gap-2">
