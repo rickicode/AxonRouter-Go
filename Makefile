@@ -1,4 +1,4 @@
-.PHONY: all build build-frontend build-backend build-dev build-backend-dev clean run run-dev kill-port kill-dev-port dev install frontend backend test lint help version set-version release release-binary extract-changelog
+.PHONY: all build build-frontend build-backend build-dev build-backend-dev build-tray clean run run-dev kill-port kill-dev-port dev install frontend backend test lint help version set-version release release-binary extract-changelog
 
 # Variables
 BINARY_NAME=axonrouter
@@ -41,6 +41,12 @@ build-backend-dev:
 
 # Build everything for dev (frontend + separate dev binary)
 build-dev: build-frontend build-backend-dev
+
+# Build tray-enabled binary (requires CGO + platform systray libs)
+build-tray: build-frontend
+	@echo "Building tray-enabled backend..."
+	$(GO) build $(GO_BUILD_FLAGS) -tags tray -o $(BUILD_DIR)/$(BINARY_NAME)-tray ./cmd/server
+	@echo "Tray backend built successfully!"
 
 # Clean build artifacts
 clean:
@@ -122,8 +128,9 @@ help:
 	@echo " all - Build everything (default)"
 	@echo "  build         - Build frontend and backend"
 	@echo "  build-frontend - Build frontend only"
-	@echo "  build-backend - Build backend only"
-	@echo "  clean         - Clean build artifacts"
+	@echo " build-backend - Build backend only"
+	@echo " build-tray - Build tray-enabled binary (requires -tags tray libs)"
+	@echo " clean - Clean build artifacts"
 	@echo " run-dev - Run dev server (separate $(DEV_BINARY_NAME) binary) on port $(DEV_PORT) (main port $(PORT) untouched)"
 	@echo "  kill-port     - Kill process on port $(PORT)"
 	@echo "  dev           - Start frontend development server"

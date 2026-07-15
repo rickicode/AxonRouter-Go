@@ -14,6 +14,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/models"
 	"github.com/rickicode/AxonRouter-Go/internal/service"
+	"github.com/rickicode/AxonRouter-Go/internal/tray"
 	"github.com/rickicode/AxonRouter-Go/internal/version"
 	// Trigger registration of all request/response format translators.
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator"
@@ -167,6 +168,8 @@ func main() {
 		fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println(" axonrouter Start the server")
+	fmt.Println(" axonrouter --tray Start the server with a system tray icon")
+	fmt.Println(" (requires build tag: tray)")
 	fmt.Println(" axonrouter --startup install Install system service as the current user")
 	fmt.Println(" axonrouter --startup install-root Install system service as root/system")
 	fmt.Println(" axonrouter --startup {status|start|stop|restart|uninstall}")
@@ -189,6 +192,13 @@ if len(os.Args) == 2 && os.Args[1] == "--startup" {
 
 	if len(os.Args) >= 3 && os.Args[1] == "--setpass" {
 		setAdminPassword(os.Args[2])
+	}
+
+	trayMode := len(os.Args) >= 2 && os.Args[1] == "--tray"
+	if trayMode && len(os.Args) >= 3 && os.Args[2] == "--help" {
+		fmt.Println("--tray          Start the server with a system tray icon")
+		fmt.Println("                (requires building with -tags tray)")
+		os.Exit(0)
 	}
 
 	cfg := config.Get()
@@ -221,6 +231,13 @@ if len(os.Args) == 2 && os.Args[1] == "--startup" {
 
 	log.Printf("starting server on %s", addr)
 	log.Printf("dashboard available at http://localhost:%s", cfg.Port)
+
+	if trayMode {
+		if err := tray.Run(cfg.Port, router, database, httpsCfg); err != nil {
+			log.Fatalf("Failed to run tray: %v", err)
+		}
+		return
+	}
 
 	svcCfg, err := service.ServiceConfig(false)
 	if err != nil {
