@@ -492,6 +492,37 @@ func (h *ProviderHandler) AddConnection(c *gin.Context) {
 		}
 	}
 
+	// MiMoCode: additional connections must use a proxy pool.
+	// The default direct connection is auto-seeded by migration and cannot be added via API.
+	if providerID == "mimocode" {
+		proxyPoolID := req.ProviderSpecificData["proxyPoolId"]
+		if proxyPoolID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "MiMoCode connections require a proxy pool. Select one from the proxy pools list."})
+			return
+		}
+		// Verify the proxy pool exists and is active
+		var poolExists bool
+		h.db.QueryRow("SELECT COUNT(*) > 0 FROM proxy_pools WHERE id = ? AND is_active = 1", proxyPoolID).Scan(&poolExists)
+		if !poolExists {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Selected proxy pool not found or inactive"})
+			return
+		}
+		// mimocode is no-auth; force auth_type to none
+		req.AuthType = "none"
+		req.APIKey = ""
+		// Each additional mimocode connection is treated as a distinct logical account.
+		// Assign a stable account id, label, and random fingerprint so it can be tracked/exhausted independently.
+		if req.ProviderSpecificData["accountId"] == "" {
+			req.ProviderSpecificData["accountId"] = "mimocode-" + uuid.New().String()[:8]
+		}
+		if req.ProviderSpecificData["accountLabel"] == "" {
+			req.ProviderSpecificData["accountLabel"] = req.Name
+		}
+		if req.ProviderSpecificData["fingerprint"] == "" {
+			req.ProviderSpecificData["fingerprint"] = generateFingerprint()
+		}
+	}
+
 	connID := uuid.New().String()
 	now := time.Now().Unix()
 	if req.AuthType == "" {

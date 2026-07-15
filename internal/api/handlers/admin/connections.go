@@ -238,11 +238,11 @@ func (h *ConnectionHandler) Update(c *gin.Context) {
 func (h *ConnectionHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
 
-	// Block deletion of the default direct oc connection (OpenCode Free).
+	// Block deletion of any default direct connection (OpenCode Free, MiMoCode, etc.).
 	var psd string
 	h.db.QueryRow("SELECT COALESCE(provider_specific_data, '') FROM connections WHERE id = ?", id).Scan(&psd)
 	if strings.Contains(psd, `"direct":"true"`) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot delete the default direct OpenCode Free connection"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot delete the default direct connection"})
 		return
 	}
 
