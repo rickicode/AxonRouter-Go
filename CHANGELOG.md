@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Copilot executor now caches the local hosts/apps.json fallback token instead of re-reading from disk on every empty-key request, defaults a missing token `expires_at` to one hour, rejects unsupported endpoints (embeddings/images/responses) with a clear error, and handles Windows config-directory fallback when `LOCALAPPDATA` is unset.
 - Google Vertex AI executor now propagates the caller context into the JWT token exchange, enforces a 20-second timeout on the exchange request, and defaults a missing `expires_in` value to 3600 seconds.
 - System tray build no longer allows restarting the server after it has been stopped or exited, preventing a panic from reusing a shut down router from the tray menu.
+- Combo round-robin strategy no longer panics when `sticky_limit` is 0; it silently clamps to 1.
+- Default combo names (`balanced`, `economy`, `premium`) are no longer shadowed by smart goal keywords; regular combos are resolved first.
+- Smart combo selection is now deterministic when multiple smart combos share the same goal (sorted by combo name).
+- Removed the dead `FallbackRate` threshold in smart `auto` combo selection (the field was never populated).
 
 ## [0.3.3] - 2026-07-14
 

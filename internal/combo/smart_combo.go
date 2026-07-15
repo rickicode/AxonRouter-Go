@@ -20,11 +20,10 @@ const (
 
 // Telemetry holds recent performance data for smart combo decisions.
 type Telemetry struct {
-	ErrorRate    float64
-	FallbackRate float64
-	TotalCost    float64
-	AvgLatency   float64
-	WindowMin    int
+	ErrorRate  float64
+	TotalCost  float64
+	AvgLatency float64
+	WindowMin  int
 }
 
 // SmartCombo resolves which combo to use based on a goal.
@@ -78,7 +77,7 @@ func (sc *SmartCombo) resolveAuto(combos []*db.Combo, telemetry *Telemetry) *db.
 	costPerMinute := telemetry.TotalCost / float64(telemetry.WindowMin)
 
 	// High error rate → escalate to premium
-	if telemetry.ErrorRate >= 0.15 || telemetry.FallbackRate >= 0.2 {
+	if telemetry.ErrorRate >= 0.15 {
 		if c := sc.findByGoal(combos, "premium"); c != nil {
 			return c
 		}

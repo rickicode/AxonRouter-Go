@@ -3,6 +3,7 @@ package combo
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -28,10 +29,10 @@ type Handler struct {
 	elig     *connstate.EligibilityManager
 
 	// In-memory combo cache
-	combos map[string]*db.Combo
-	byName map[string]*db.Combo // combo name → combo (O(1) resolve by name)
-	steps map[string][]db.ComboStep // comboID → steps
-	smartCombos map[string]*db.Combo // comboID → smart combo
+	combos      map[string]*db.Combo
+	byName      map[string]*db.Combo      // combo name → combo (O(1) resolve by name)
+	steps       map[string][]db.ComboStep // comboID → steps
+	smartCombos map[string]*db.Combo      // comboID → smart combo
 }
 
 // NewHandler creates a new combo handler.
@@ -41,15 +42,15 @@ func NewHandler(
 	elig *connstate.EligibilityManager,
 ) *Handler {
 	h := &Handler{
-		db: database,
-		rotation: NewRotationManager(database),
-		smart: NewSmartCombo(database),
-		fallback: NewFallbackManager(),
-		store: store,
-		elig: elig,
-		combos: make(map[string]*db.Combo),
-		byName: make(map[string]*db.Combo),
-		steps: make(map[string][]db.ComboStep),
+		db:          database,
+		rotation:    NewRotationManager(database),
+		smart:       NewSmartCombo(database),
+		fallback:    NewFallbackManager(),
+		store:       store,
+		elig:        elig,
+		combos:      make(map[string]*db.Combo),
+		byName:      make(map[string]*db.Combo),
+		steps:       make(map[string][]db.ComboStep),
 		smartCombos: make(map[string]*db.Combo),
 	}
 	h.loadFromDB()
@@ -110,26 +111,26 @@ func (h *Handler) loadSteps(comboID string) {
 // Resolve resolves a model string to combo steps.
 // Returns (combo, steps, true) if it's a combo, or (nil, nil, false) if it's a single model.
 func (h *Handler) Resolve(modelStr string) (*ComboResult, bool) {
-	// Check smart combos first
+	// Check regular combos first so names like "balanced" / "economy" / "premium"
+	// resolve to the combo the user created, not to a smart goal keyword.
+	h.mu.RLock()
+	c, ok := h.byName[modelStr]
+	if ok {
+		steps := h.steps[c.ID]
+		h.mu.RUnlock()
+		if len(steps) == 0 {
+			return nil, false
+		}
+		rotated := h.rotation.GetRotatedSteps(c.ID, c.Strategy, c.StickyLimit, steps)
+		return &ComboResult{Combo: c, Steps: rotated}, true
+	}
+	h.mu.RUnlock()
+
+	// No regular combo matched; check smart combo goals.
 	if goal, ok := isSmartCombo(modelStr); ok {
 		return h.resolveSmart(goal)
 	}
-
-	// Check regular combos (O(1) by name)
-	h.mu.RLock()
-	c, ok := h.byName[modelStr]
-	if !ok {
-		h.mu.RUnlock()
-		return nil, false
-	}
-	steps := h.steps[c.ID]
-	h.mu.RUnlock()
-	if len(steps) == 0 {
-		return nil, false
-	}
-	// Apply rotation / strategy ordering
-	rotated := h.rotation.GetRotatedSteps(c.ID, c.Strategy, c.StickyLimit, steps)
-	return &ComboResult{Combo: c, Steps: rotated}, true
+	return nil, false
 }
 
 // resolveSmart resolves a smart combo goal to actual combo steps.
@@ -140,6 +141,8 @@ func (h *Handler) resolveSmart(goal SmartGoal) (*ComboResult, bool) {
 		combos = append(combos, c)
 	}
 	h.mu.RUnlock()
+
+	sort.Slice(combos, func(i, j int) bool { return combos[i].Name < combos[j].Name })
 
 	combo, err := h.smart.Resolve(goal, combos)
 	if err != nil || combo == nil {
@@ -359,6 +362,11 @@ func splitModel(modelStr string) (string, string) {
 		}
 	}
 	return "", modelStr
+}
+
+// ResetRotationCounter clears the rotation counter for a combo in memory and DB.
+func (h *Handler) ResetRotationCounter(comboID string) {
+	h.rotation.ResetCounter(comboID)
 }
 
 // CleanupBreakers removes circuit breakers for inactive connections.

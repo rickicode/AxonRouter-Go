@@ -90,17 +90,17 @@ func (h *ComboHandler) Get(c *gin.Context) {
 // Create creates a new combo with steps.
 func (h *ComboHandler) Create(c *gin.Context) {
 	var req struct {
-		Name string `json:"name" binding:"required"`
-		Strategy string `json:"strategy"`
-		TimeoutMs int `json:"timeout_ms"`
-		StickyLimit int `json:"sticky_limit"`
-		IsSmart bool `json:"is_smart"`
-		SmartGoal string `json:"smart_goal"`
-		Steps []struct {
+		Name        string `json:"name" binding:"required"`
+		Strategy    string `json:"strategy"`
+		TimeoutMs   int    `json:"timeout_ms"`
+		StickyLimit int    `json:"sticky_limit"`
+		IsSmart     bool   `json:"is_smart"`
+		SmartGoal   string `json:"smart_goal"`
+		Steps       []struct {
 			ConnectionID string `json:"connection_id"`
-			ModelID string `json:"model_id" binding:"required"`
-			Priority int `json:"priority"`
-			Weight int `json:"weight"`
+			ModelID      string `json:"model_id" binding:"required"`
+			Priority     int    `json:"priority"`
+			Weight       int    `json:"weight"`
 		} `json:"steps"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -147,13 +147,13 @@ func (h *ComboHandler) Create(c *gin.Context) {
 func (h *ComboHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		Name string `json:"name"`
-		Strategy string `json:"strategy"`
-		TimeoutMs int `json:"timeout_ms"`
-		StickyLimit *int `json:"sticky_limit"`
-		IsSmart *bool `json:"is_smart"`
-		SmartGoal *string `json:"smart_goal"`
-		IsActive *bool `json:"is_active"`
+		Name        string  `json:"name"`
+		Strategy    string  `json:"strategy"`
+		TimeoutMs   int     `json:"timeout_ms"`
+		StickyLimit *int    `json:"sticky_limit"`
+		IsSmart     *bool   `json:"is_smart"`
+		SmartGoal   *string `json:"smart_goal"`
+		IsActive    *bool   `json:"is_active"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -207,6 +207,10 @@ func (h *ComboHandler) Update(c *gin.Context) {
 	if rows == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "combo not found"})
 		return
+	}
+
+	if req.Strategy != "" {
+		h.handler.ResetRotationCounter(id)
 	}
 
 	h.handler.RefreshFromDB()

@@ -19,8 +19,8 @@ const rotationFlushInterval = 250 * time.Millisecond
 // Counters are kept in memory so combo resolution never blocks on SQLite I/O.
 // Best-effort async writes flush state to the DB for continuity across restarts.
 type RotationManager struct {
-	mu sync.RWMutex
-	db *sql.DB
+	mu       sync.RWMutex
+	db       *sql.DB
 	counters map[string]int
 	// pending holds the latest in-memory counter per combo awaiting a DB flush.
 	pending map[string]int
@@ -31,9 +31,9 @@ type RotationManager struct {
 // NewRotationManager creates a new rotation manager.
 func NewRotationManager(database *sql.DB) *RotationManager {
 	return &RotationManager{
-		db: database,
+		db:       database,
 		counters: make(map[string]int),
-		pending: make(map[string]int),
+		pending:  make(map[string]int),
 	}
 }
 
@@ -49,8 +49,12 @@ func (rm *RotationManager) GetRotatedSteps(comboID string, strategy string, stic
 
 	switch strategy {
 	case "round-robin":
+		limit := stickyLimit
+		if limit <= 0 {
+			limit = 1
+		}
 		counter := rm.nextCounter(comboID)
-		effectiveIndex := (counter / stickyLimit) % len(steps)
+		effectiveIndex := (counter / limit) % len(steps)
 		rotated := make([]db.ComboStep, len(steps))
 		for i := range steps {
 			rotated[i] = steps[(effectiveIndex+i)%len(steps)]
@@ -70,7 +74,6 @@ func weightedShuffle(steps []db.ComboStep) []db.ComboStep {
 	pool := make([]db.ComboStep, len(steps))
 	copy(pool, steps)
 	out := make([]db.ComboStep, 0, len(steps))
-	r := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0))
 	for len(pool) > 0 {
 		total := 0
 		for _, s := range pool {
@@ -80,7 +83,7 @@ func weightedShuffle(steps []db.ComboStep) []db.ComboStep {
 			}
 			total += w
 		}
-		pick := r.IntN(total) + 1
+		pick := rand.IntN(total) + 1
 		acc := 0
 		idx := 0
 		for i, s := range pool {
