@@ -84,7 +84,15 @@ fi
 # ---- service mode defaults --------------------------------------------------
 if [[ "$INSTALL_SERVICE" == true ]]; then
   [[ "$GOOS" == "linux" ]] || err "--service is only supported on Linux"
-  [[ "$EUID" -eq 0 ]] || err "--service must be run as root (e.g. sudo bash installer.sh --service)"
+  if [[ "$EUID" -ne 0 ]]; then
+    echo "error: --service must be run as root."
+    echo
+    echo "Re-run the installer through sudo, for example:"
+    echo "  curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/master/installer.sh | sudo bash -s -- --service"
+    echo "or, if you already downloaded this script:"
+    echo "  sudo ./installer.sh --service"
+    exit 1
+  fi
   command -v systemctl >/dev/null 2>&1 || err "systemctl not found; cannot install systemd service"
   INSTALL_DIR="/opt/axonrouter"
 fi
@@ -110,42 +118,21 @@ else
 fi
 info "Installed to ${INSTALLED}"
 
-# ---- verify on PATH ---------------------------------------------------------
-install_systemd() {
-  # Run the service as the user who invoked this script. When called via sudo,
-  # prefer the original user so data stays in their home directory.
-  local svc_user="${SUDO_USER:-${DOAS_USER:-${USER:-root}}}"
-  local home_dir
-  home_dir="$(getent passwd "$svc_user" | cut -d: -f6)"
-  [[ -n "$home_dir" ]] || home_dir="/root"
-
-  cat > /etc/systemd/system/axonrouter.service <<EOF
-[Unit]
-Description=AxonRouter-Go API Proxy
-After=network.target
-
-[Service]
-Type=simple
-User=${svc_user}
-WorkingDirectory=${home_dir}
-ExecStart=${INSTALLED}
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-  systemctl daemon-reload
-  systemctl enable --now axonrouter
-  info "Created /etc/systemd/system/axonrouter.service"
-  info "Service is running as user '${svc_user}'"
-  info "Check status with: systemctl status axonrouter"
-}
-
-# ---- install systemd service on Linux ---------------------------------------
+# ---- install systemd service on Linux using the binary's --startup install-root
 if [[ "$INSTALL_SERVICE" == true ]]; then
-  install_systemd
+  info "Installing systemd service via ${INSTALLED} --startup install-root"
+  if ! "${INSTALLED}" --startup install-root; then
+    err "service installation failed"
+  fi
+
+  echo
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo " AxonRouter ${VERSION} service installed"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo " Binary:    ${INSTALLED}"
+  echo " Status:    systemctl status axonrouter"
+  echo " Uninstall: ${INSTALLED} --startup uninstall"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   exit 0
 fi
 
