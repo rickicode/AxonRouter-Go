@@ -1,17 +1,31 @@
 package admin
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	_ "modernc.org/sqlite"
 
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 )
+
+func jsonBodyConn(t *testing.T, v any) *bytes.Buffer {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return bytes.NewBuffer(b)
+}
 
 func newConnectionHandlerTestDB(t *testing.T) *sql.DB {
 	t.Helper()
@@ -167,5 +181,50 @@ func TestRecordTestFailure_Auth(t *testing.T) {
 	}
 	if h.exhaustion.IsExhausted("conn-1") {
 		t.Fatal("auth failure should not mark connection exhausted")
+	}
+}
+
+// TestBulkUpdate_ThroughWriteQueue verifies BulkUpdate routes its write through
+// db.WriteQueue and that both the DB row and the in-memory store reflect the
+// change after the queued write commits.
+func TestBulkUpdate_ThroughWriteQueue(t *testing.T) {
+	database := newConnectionHandlerTestDB(t)
+	wq := db.NewWriteQueue(database)
+	defer wq.Stop()
+
+	store := connstate.NewStore()
+	elig := connstate.NewEligibilityManager(store)
+	h := &ConnectionHandler{
+		db:         database,
+		store:      store,
+		elig:       elig,
+		exhaustion: quota.NewExhaustionCache(),
+		writeQueue: wq,
+	}
+	seedConnection(t, database, "conn-1")
+	h.store.UpdateStatus("conn-1", connstate.StatusReady)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/connections/bulk-update", jsonBodyConn(t, map[string]any{
+		"ids":    []any{"conn-1"},
+		"action": "disable",
+	}))
+	h.BulkUpdate(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("BulkUpdate status = %d, body=%s", w.Code, w.Body.String())
+	}
+
+	var isActive string
+	row := database.QueryRow(`SELECT is_active FROM connections WHERE id='conn-1'`)
+	if err := row.Scan(&isActive); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if isActive != "0" {
+		t.Fatalf("is_active = %q, want 0 after disable", isActive)
+	}
+	if cs := h.store.Get("conn-1"); cs == nil || cs.Status != connstate.StatusDisabled {
+		t.Fatalf("in-memory status should be disabled, got %v", cs)
 	}
 }

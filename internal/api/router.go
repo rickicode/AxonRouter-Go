@@ -154,7 +154,7 @@ func New(cfg Config) *Router {
 	providerCfg := providercfg.NewManager(config.Get().DataDir)
 
 	// Create admin handlers
-	connectionH := admin.NewConnectionHandler(cfg.DB, executor.GetRegistry(), store, elig, exhaustionCache, authManager)
+	connectionH := admin.NewConnectionHandler(cfg.DB, executor.GetRegistry(), store, elig, exhaustionCache, authManager, writeQueue)
 	providerH := admin.NewProviderHandler(cfg.DB, executor.GetRegistry(), store, elig, providerCfg, writeQueue)
 
 	// Auto-migrate raw API keys to bcrypt
@@ -185,7 +185,7 @@ func New(cfg Config) *Router {
 	versionChecker := version.NewChecker(&http.Client{Timeout: 10 * time.Second})
 	healthH := admin.NewHealthHandler(cfg.DB, store, tracker, versionChecker)
 	upgradeH := admin.NewUpgradeHandler(versionChecker)
-	proxyPoolH := admin.NewProxyPoolHandler(cfg.DB, proxyHealth, proxyResolver)
+	proxyPoolH := admin.NewProxyPoolHandler(cfg.DB, proxyHealth, proxyResolver, writeQueue)
 	proxyGroupH := admin.NewProxyGroupHandler(cfg.DB, proxyResolver)
 	proxyDeployH := admin.NewProxyDeployHandler(cfg.DB, proxyHealth, proxyResolver)
 	optimizationH := admin.NewOptimizationHandler(cfg.DB, exactCache)

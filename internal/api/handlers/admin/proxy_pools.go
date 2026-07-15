@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"math/rand"
@@ -22,10 +23,11 @@ type ProxyPoolHandler struct {
 	health *proxypool.HealthChecker
 	resolver *proxypool.Resolver
 	testProxy func(proxyURL, typ, auth string) proxypool.TestResult
+	writeQueue *db.WriteQueue
 }
 
-func NewProxyPoolHandler(database *sql.DB, health *proxypool.HealthChecker, resolver *proxypool.Resolver) *ProxyPoolHandler {
-	return &ProxyPoolHandler{db: database, health: health, resolver: resolver, testProxy: proxypool.TestProxy}
+func NewProxyPoolHandler(database *sql.DB, health *proxypool.HealthChecker, resolver *proxypool.Resolver, writeQueue *db.WriteQueue) *ProxyPoolHandler {
+	return &ProxyPoolHandler{db: database, health: health, resolver: resolver, testProxy: proxypool.TestProxy, writeQueue: writeQueue}
 }
 
 func (h *ProxyPoolHandler) List(c *gin.Context) {
@@ -135,7 +137,7 @@ func (h *ProxyPoolHandler) Create(c *gin.Context) {
 
 // insertPoolRow creates a single proxy pool row. It skips duplicates when
 // allowDuplicate is false and returns the new pool id, relay auth, or an error reason.
-func (h *ProxyPoolHandler) insertPoolRow(name, proxyURL, typ, noProxy, relayAuth string, active bool, allowDuplicate bool) (string, string, string) {
+func (h *ProxyPoolHandler) insertPoolRow(tx *sql.Tx, name, proxyURL, typ, noProxy, relayAuth string, active bool, allowDuplicate bool) (string, string, string) {
 	proxyURL = strings.TrimSpace(proxyURL)
 	if proxyURL == "" {
 		return "", "", "proxyUrl is required"
@@ -153,13 +155,13 @@ func (h *ProxyPoolHandler) insertPoolRow(name, proxyURL, typ, noProxy, relayAuth
 	}
 	if !allowDuplicate {
 		var existingCount int
-		if err := h.db.QueryRow(`SELECT COUNT(*) FROM proxy_pools WHERE proxy_url = ?`, proxyURL).Scan(&existingCount); err == nil && existingCount > 0 {
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM proxy_pools WHERE proxy_url = ?`, proxyURL).Scan(&existingCount); err == nil && existingCount > 0 {
 			return "", "", "duplicate"
 		}
 	}
 	now := time.Now().Unix()
 	id := uuid.New().String()
-	_, err := h.db.Exec(
+	_, err := tx.Exec(
 		`INSERT INTO proxy_pools (id, name, type, proxy_url, no_proxy, relay_auth, is_active, test_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'untested', ?, ?)`,
 		id, name, typ, proxyURL, noProxy, relayAuth, boolToInt(active), now, now,
 	)
@@ -330,7 +332,9 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 		wg.Wait()
 	}
 
-	// Phase 3: insert passing items and update their test metadata.
+	// Phase 3: insert passing items and update their test metadata. Each write
+	// goes through WriteQueue so bulk imports never contend on the SQLite
+	// writer (the root cause of intermittent "database is locked" failures).
 	for i, it := range normalized {
 		if it.dup {
 			skipped++
@@ -352,26 +356,55 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 			}
 		}
 
-		id, _, reason := h.insertPoolRow(it.name, it.proxyURL, it.typ, it.noProxy, it.relayAuth, active, false)
-		if reason != "" {
-			errors++
-			details = append(details, gin.H{"index": it.index, "url": it.proxyURL, "status": "error", "reason": reason})
-			continue
-		}
-
-		created++
-		details = append(details, gin.H{"index": it.index, "url": it.proxyURL, "id": id, "status": "created"})
-
-		if req.RequireHealthy {
-			res := testResults[i]
-			status := "active"
-			var lastErr any = nil
-			if !res.OK {
-				status = "error"
-				lastErr = res.Error
+		// Capture loop vars for the closure (Do blocks until the worker
+		// finishes, so mutating captured counters here is race-free).
+		idx := i
+		item := it
+		run := func(d *sql.DB) error {
+			tx, e := d.Begin()
+			if e != nil {
+				return e
 			}
-			testedAt := time.Now().Format(time.RFC3339)
-			_, _ = h.db.Exec("UPDATE proxy_pools SET test_status = ?, last_tested_at = ?, last_error = ?, response_time_ms = ?, proxy_ip = ?, proxy_country = ?, proxy_city = ?, proxy_org = ?, updated_at = ? WHERE id = ?", status, testedAt, lastErr, res.ElapsedMs, res.IP, res.Country, res.City, res.Org, time.Now().Unix(), id)
+			defer func() {
+				if e != nil {
+					_ = tx.Rollback()
+				}
+			}()
+			id, _, reason := h.insertPoolRow(tx, item.name, item.proxyURL, item.typ, item.noProxy, item.relayAuth, active, false)
+			if reason != "" {
+				// Per-item failure: record and let the batch continue.
+				errors++
+				details = append(details, gin.H{"index": item.index, "url": item.proxyURL, "status": "error", "reason": reason})
+				return nil
+			}
+			created++
+			details = append(details, gin.H{"index": item.index, "url": item.proxyURL, "id": id, "status": "created"})
+			if req.RequireHealthy {
+				res := testResults[idx]
+				status := "active"
+				var lastErr any = nil
+				if !res.OK {
+					status = "error"
+					lastErr = res.Error
+				}
+				testedAt := time.Now().Format(time.RFC3339)
+				if _, e = tx.Exec("UPDATE proxy_pools SET test_status = ?, last_tested_at = ?, last_error = ?, response_time_ms = ?, proxy_ip = ?, proxy_country = ?, proxy_city = ?, proxy_org = ?, updated_at = ? WHERE id = ?", status, testedAt, lastErr, res.ElapsedMs, res.IP, res.Country, res.City, res.Org, time.Now().Unix(), id); e != nil {
+					return e
+				}
+			}
+			return tx.Commit()
+		}
+		var doErr error
+		if h.writeQueue == nil {
+			doErr = run(h.db)
+		} else {
+			doErr = h.writeQueue.Do(c.Request.Context(), "bulk-create-proxy", run)
+		}
+		if doErr != nil {
+			errors++
+			details = append(details, gin.H{"index": item.index, "url": item.proxyURL, "status": "error", "reason": doErr.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": doErr.Error(), "created": created, "skipped": skipped, "errors": errors, "details": details})
+			return
 		}
 	}
 
@@ -630,17 +663,8 @@ func likeEscape(s string) string {
 // Group references in settings are detached, and groups left empty by the
 // removal are deleted. All steps run in a single transaction so a failure
 // cannot leave dangling references behind.
-func (h *ProxyPoolHandler) deletePoolCascade(poolID string) error {
-	tx, err := h.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-
+// deletePoolCascadeTx performs the cascade delete within an existing tx.
+func (h *ProxyPoolHandler) deletePoolCascadeTx(tx *sql.Tx, poolID string) error {
 	now := time.Now().Unix()
 	connIDs := map[string]struct{}{}
 
@@ -717,8 +741,7 @@ func (h *ProxyPoolHandler) deletePoolCascade(poolID string) error {
 			}
 		}
 		if _, e := tx.Exec("UPDATE connections SET is_active = 0, updated_at = ? WHERE id = ?", now, id); e != nil {
-			err = e
-			return err
+			return e
 		}
 	}
 
@@ -737,8 +760,7 @@ func (h *ProxyPoolHandler) deletePoolCascade(poolID string) error {
 			if changed {
 				if out, merr := json.Marshal(defaults); merr == nil {
 					if _, e := tx.Exec("UPDATE settings SET value = ?, updated_at = ? WHERE key = 'provider_proxy_defaults'", string(out), now); e != nil {
-						err = e
-						return err
+						return e
 					}
 				}
 			}
@@ -763,25 +785,43 @@ func (h *ProxyPoolHandler) deletePoolCascade(poolID string) error {
 		}
 		if len(newIDs) == 0 {
 			if _, e := tx.Exec("DELETE FROM proxy_groups WHERE id = ?", gid); e != nil {
-				err = e
-				return err
+				return e
 			}
 		} else if out, merr := json.Marshal(newIDs); merr == nil {
 			if _, e := tx.Exec("UPDATE proxy_groups SET proxy_pool_ids = ?, updated_at = ? WHERE id = ?", string(out), now, gid); e != nil {
-				err = e
-				return err
+				return e
 			}
 		}
 	}
 
 	// 5. Delete the pool itself.
 	if _, e := tx.Exec("DELETE FROM proxy_pools WHERE id = ?", poolID); e != nil {
-		err = e
-		return err
-	}
-
-	if err = tx.Commit(); err != nil {
-		return err
+		return e
 	}
 	return nil
+}
+
+// deletePoolCascade removes a proxy pool and cascades the deletion. It routes
+// the write through WriteQueue when available so bulk deletes never contend on
+// the SQLite writer; when writeQueue is nil it falls back to a direct tx.
+func (h *ProxyPoolHandler) deletePoolCascade(poolID string) error {
+	run := func(d *sql.DB) error {
+		tx, err := d.Begin()
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err != nil {
+				_ = tx.Rollback()
+			}
+		}()
+		if err = h.deletePoolCascadeTx(tx, poolID); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	if h.writeQueue == nil {
+		return run(h.db)
+	}
+	return h.writeQueue.Do(context.Background(), "delete-pool-cascade", run)
 }

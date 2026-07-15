@@ -32,11 +32,12 @@ type ConnectionHandler struct {
 	elig       *connstate.EligibilityManager
 	exhaustion *quota.ExhaustionCache
 	authMgr    *auth.Manager
+	writeQueue *db.WriteQueue
 }
 
 // NewConnectionHandler creates a new connection handler.
-func NewConnectionHandler(database *sql.DB, registry *executor.Registry, store *connstate.Store, elig *connstate.EligibilityManager, exhaustion *quota.ExhaustionCache, authMgr *auth.Manager) *ConnectionHandler {
-	return &ConnectionHandler{db: database, registry: registry, store: store, elig: elig, exhaustion: exhaustion, authMgr: authMgr}
+func NewConnectionHandler(database *sql.DB, registry *executor.Registry, store *connstate.Store, elig *connstate.EligibilityManager, exhaustion *quota.ExhaustionCache, authMgr *auth.Manager, writeQueue *db.WriteQueue) *ConnectionHandler {
+	return &ConnectionHandler{db: database, registry: registry, store: store, elig: elig, exhaustion: exhaustion, authMgr: authMgr, writeQueue: writeQueue}
 }
 
 // List returns paginated connections for a provider.
@@ -497,42 +498,64 @@ func (h *ConnectionHandler) BulkUpdate(c *gin.Context) {
 	}
 	inClause := strings.Join(placeholders, ",")
 
+	var query string
+	var status connstate.Status
 	switch req.Action {
 	case "disable":
+		query = "UPDATE connections SET is_active = ?, updated_at = ? WHERE id IN (" + inClause + ")"
 		args = append([]interface{}{false, now}, args...)
-		h.db.Exec("UPDATE connections SET is_active = ?, updated_at = ? WHERE id IN ("+inClause+")", args...)
-		if h.store != nil {
-			for _, id := range req.IDs {
-				h.store.UpdateStatus(id, connstate.StatusDisabled)
-			}
-		}
+		status = connstate.StatusDisabled
 	case "enable":
+		query = "UPDATE connections SET is_active = ?, updated_at = ? WHERE id IN (" + inClause + ")"
 		args = append([]interface{}{true, now}, args...)
-		h.db.Exec("UPDATE connections SET is_active = ?, updated_at = ? WHERE id IN ("+inClause+")", args...)
-		if h.store != nil {
-			for _, id := range req.IDs {
-				h.store.UpdateStatus(id, connstate.StatusReady)
-			}
-		}
+		status = connstate.StatusReady
 	case "reset":
+		query = "UPDATE connections SET status = 'ready', failure_count = 0, updated_at = ? WHERE id IN (" + inClause + ")"
 		args = append([]interface{}{now}, args...)
-		h.db.Exec("UPDATE connections SET status = 'ready', failure_count = 0, updated_at = ? WHERE id IN ("+inClause+")", args...)
-		if h.store != nil {
-			for _, id := range req.IDs {
-				h.store.UpdateStatus(id, connstate.StatusReady)
-			}
-		}
+		status = connstate.StatusReady
 	case "delete":
+		query = "UPDATE connections SET is_active = ?, updated_at = ? WHERE id IN (" + inClause + ")"
 		args = append([]interface{}{false, now}, args...)
-		h.db.Exec("UPDATE connections SET is_active = ?, updated_at = ? WHERE id IN ("+inClause+")", args...)
-		if h.store != nil {
-			for _, id := range req.IDs {
-				h.store.UpdateStatus(id, connstate.StatusDisabled)
-			}
-		}
+		status = connstate.StatusDisabled
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown action: " + req.Action})
+		return
 	}
-	if h.store != nil && h.elig != nil {
-		h.elig.Update(h.store)
+
+	run := func(d *sql.DB) error {
+		tx, e := d.Begin()
+		if e != nil {
+			return e
+		}
+		defer func() {
+			if e != nil {
+				_ = tx.Rollback()
+			}
+		}()
+		if _, e = tx.Exec(query, args...); e != nil {
+			return e
+		}
+		return tx.Commit()
+	}
+	var doErr error
+	if h.writeQueue == nil {
+		doErr = run(h.db)
+	} else {
+		doErr = h.writeQueue.Do(c.Request.Context(), "bulk-update-connections", run)
+	}
+	if doErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": doErr.Error()})
+		return
+	}
+
+	// Only mutate in-memory state after the DB write committed successfully.
+	if h.store != nil {
+		for _, id := range req.IDs {
+			h.store.UpdateStatus(id, status)
+		}
+		if h.elig != nil {
+			h.elig.Update(h.store)
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "affected": len(req.IDs)})

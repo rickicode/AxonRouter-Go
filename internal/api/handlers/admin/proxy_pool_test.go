@@ -46,7 +46,7 @@ func noopTestProxy(_ string, _ string, _ string) proxypool.TestResult {
 func TestProxyPoolBulkCreate(t *testing.T) {
 	database := newProxyPoolTestDB(t)
 	gin.SetMode(gin.TestMode)
-	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database))
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
 	h.testProxy = noopTestProxy
 
 	w := httptest.NewRecorder()
@@ -104,7 +104,7 @@ func TestProxyPoolBulkCreate(t *testing.T) {
 func TestProxyPoolBulkCreateNamePipe(t *testing.T) {
 	database := newProxyPoolTestDB(t)
 	gin.SetMode(gin.TestMode)
-	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database))
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
 	h.testProxy = noopTestProxy
 
 	w := httptest.NewRecorder()
@@ -133,7 +133,7 @@ func TestProxyPoolBulkCreateNamePipe(t *testing.T) {
 func TestProxyPoolBulkCreateDetectsRelayType(t *testing.T) {
 	database := newProxyPoolTestDB(t)
 	gin.SetMode(gin.TestMode)
-	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database))
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
 	h.testProxy = noopTestProxy
 
 	w := httptest.NewRecorder()
@@ -164,7 +164,7 @@ func TestProxyPoolBulkCreateDetectsRelayType(t *testing.T) {
 func TestProxyPoolBulkCreateUsesTestHook(t *testing.T) {
 	database := newProxyPoolTestDB(t)
 	gin.SetMode(gin.TestMode)
-	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database))
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
 	called := false
 	h.testProxy = func(proxyURL, typ, auth string) proxypool.TestResult {
 		called = true
@@ -208,7 +208,7 @@ func TestProxyPoolBulkCreateUsesTestHook(t *testing.T) {
 func TestProxyPoolBulkCreateSkipsUnhealthy(t *testing.T) {
 	database := newProxyPoolTestDB(t)
 	gin.SetMode(gin.TestMode)
-	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database))
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
 	h.testProxy = func(proxyURL, typ, auth string) proxypool.TestResult {
 		if proxyURL == "http://good.example:8080" {
 			return proxypool.TestResult{OK: true, StatusCode: 200, IP: "1.2.3.4", ElapsedMs: 100}
@@ -255,7 +255,7 @@ func TestProxyPoolBulkCreateSkipsUnhealthy(t *testing.T) {
 func TestProxyPoolBulkCreateSkipsSlow(t *testing.T) {
 	database := newProxyPoolTestDB(t)
 	gin.SetMode(gin.TestMode)
-	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database))
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
 	h.testProxy = func(proxyURL, typ, auth string) proxypool.TestResult {
 		if proxyURL == "http://fast.example:8080" {
 			return proxypool.TestResult{OK: true, StatusCode: 200, ElapsedMs: 500}
@@ -303,7 +303,7 @@ func TestProxyPoolBulkCreateSkipsSlow(t *testing.T) {
 func TestProxyPoolBulkDelete(t *testing.T) {
 	database := newProxyPoolTestDB(t)
 	gin.SetMode(gin.TestMode)
-	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database))
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
 
 	now := time.Now().Unix()
 	mustExec := func(query string, args ...any) {
@@ -378,7 +378,7 @@ func TestProxyPoolBulkDelete(t *testing.T) {
 func TestProxyPoolDeleteCascadesDirectConnections(t *testing.T) {
 	database := newProxyPoolTestDB(t)
 	gin.SetMode(gin.TestMode)
-	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database))
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
 	now := time.Now().Unix()
 	mustExec := func(q string, args ...any) {
 		t.Helper()
@@ -419,7 +419,7 @@ func TestProxyPoolDeleteCascadesDirectConnections(t *testing.T) {
 func TestProxyPoolDeleteCascadesViaGroup(t *testing.T) {
 	database := newProxyPoolTestDB(t)
 	gin.SetMode(gin.TestMode)
-	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database))
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
 	now := time.Now().Unix()
 	mustExec := func(q string, args ...any) {
 		t.Helper()
@@ -454,7 +454,7 @@ func TestProxyPoolDeleteCascadesViaGroup(t *testing.T) {
 func TestProxyPoolDeleteKeepsDefaultDirectConnection(t *testing.T) {
 	database := newProxyPoolTestDB(t)
 	gin.SetMode(gin.TestMode)
-	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database))
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
 	now := time.Now().Unix()
 	mustExec := func(q string, args ...any) {
 		t.Helper()
@@ -475,5 +475,99 @@ func TestProxyPoolDeleteKeepsDefaultDirectConnection(t *testing.T) {
 	}
 	if active != 1 {
 		t.Errorf("default direct oc connection must survive, got %d", active)
+	}
+}
+
+// TestProxyPoolBulkCreateThroughWriteQueue exercises the real db.WriteQueue
+// path (not the nil fallback) to confirm bulk inserts are serialized through
+// the single writer and committed.
+func TestProxyPoolBulkCreateThroughWriteQueue(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	wq := db.NewWriteQueue(database)
+	defer wq.Stop()
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), wq)
+	h.testProxy = noopTestProxy
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk", jsonBodyProxyPool(t, map[string]any{
+		"items":       []any{"http://wq1.example:8080", "http://wq2.example:8080", "http://wq3.example:8080"},
+		"defaultType": "http",
+		"isActive":    true,
+	}))
+	h.BulkCreate(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("BulkCreate status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Created int `json:"created"`
+		Errors  int `json:"errors"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Created != 3 || resp.Errors != 0 {
+		t.Fatalf("expected 3 created, 0 errors via write queue, got %+v", resp)
+	}
+}
+
+// TestProxyPoolBulkDeleteThroughWriteQueue exercises the real db.WriteQueue
+// path for bulk delete (cascade runs inside the queued tx).
+func TestProxyPoolBulkDeleteThroughWriteQueue(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	wq := db.NewWriteQueue(database)
+	defer wq.Stop()
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), wq)
+	h.testProxy = noopTestProxy
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk", jsonBodyProxyPool(t, map[string]any{
+		"items":       []any{"http://del1.example:8080", "http://del2.example:8080"},
+		"defaultType": "http",
+	}))
+	h.BulkCreate(c)
+	var createResp struct {
+		Created int `json:"created"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+	if createResp.Created != 2 {
+		t.Fatalf("setup: expected 2 created, got %+v", createResp)
+	}
+
+	rows, err := database.Query("SELECT id FROM proxy_pools")
+	if err != nil {
+		t.Fatalf("query ids: %v", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk-delete", jsonBodyProxyPool(t, map[string]any{"ids": ids}))
+	h.BulkDelete(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("BulkDelete status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var delResp struct {
+		Deleted int `json:"deleted"`
+		Skipped int `json:"skipped"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &delResp); err != nil {
+		t.Fatalf("decode delete: %v", err)
+	}
+	if delResp.Deleted != 2 || delResp.Skipped != 0 {
+		t.Fatalf("expected 2 deleted via write queue, got %+v", delResp)
 	}
 }
