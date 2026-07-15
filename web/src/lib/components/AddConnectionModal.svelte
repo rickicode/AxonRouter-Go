@@ -1,10 +1,11 @@
 <script lang="ts">
-  import * as Dialog from '$lib/components/ui/dialog';
-  import { Button } from '$lib/components/ui/button';
-  import { Input } from '$lib/components/ui/input';
-  import { Label } from '$lib/components/ui/label';
-  import { Textarea } from '$lib/components/ui/textarea';
-  import { Badge } from '$lib/components/ui/badge';
+import * as Dialog from '$lib/components/ui/dialog';
+import * as Select from '$lib/components/ui/select';
+import { Button } from '$lib/components/ui/button';
+import { Input } from '$lib/components/ui/input';
+import { Label } from '$lib/components/ui/label';
+import { Textarea } from '$lib/components/ui/textarea';
+import { Badge } from '$lib/components/ui/badge';
 import { connectionsApi, providersApi, oauthApi, proxyPoolsApi } from '$lib/api';
 import { toast } from 'svelte-sonner';
 import { copyToClipboard } from '$lib/copy';
@@ -36,9 +37,10 @@ import type { ProviderMeta } from '$lib/provider-catalog';
   let showKey = $state(false);
   let bulkText = $state('');
   let connectionPriority = $state('1');
-  let customFields = $state<Record<string, string>>({});
-  let submitting = $state(false);
-  let errorMsg = $state('');
+let customFields = $state<Record<string, string>>({});
+let selectedRegion = $state('');
+let submitting = $state(false);
+let errorMsg = $state('');
   let oauthPolling = $state(false);
   let oauthSessionId = $state('');
 let oauthUrl = $state('');
@@ -79,9 +81,10 @@ const filteredPools = $derived(filterProxyPools(proxyPools, poolSearch));
     connectionName = '';
     apiKey = '';
     bulkText = '';
-    customFields = {};
-    connectionPriority = '1';
-    errorMsg = '';
+  customFields = {};
+  selectedRegion = meta?.defaultRegion ?? '';
+  connectionPriority = '1';
+  errorMsg = '';
     validating = false;
     validationResult = null;
     submitting = false;
@@ -121,6 +124,12 @@ $effect(() => {
   }
   window.addEventListener('pointerdown', onPointerDown, true);
   return () => window.removeEventListener('pointerdown', onPointerDown, true);
+});
+
+$effect(() => {
+  if (open && step === 'form' && meta?.regionOptions?.length && selectedRegion === '') {
+    selectedRegion = meta.defaultRegion ?? meta.regionOptions[0] ?? '';
+  }
 });
 
 async function fetchProxyPools() {
@@ -221,19 +230,23 @@ async function copyOAuthUrl() {
     }
   }
 
-  async function handleValidate() {
-    if (!apiKey.trim()) return;
-    validating = true;
-    validationResult = null;
-    try {
-      const res = await providersApi.validateKey(providerId, apiKey.trim());
-      validationResult = res.valid ? 'success' : 'failed';
-    } catch {
-      validationResult = 'failed';
-    } finally {
-      validating = false;
-    }
+function regionSpecificData(): Record<string, string> | undefined {
+  return selectedRegion ? { region: selectedRegion } : undefined;
+}
+
+async function handleValidate() {
+  if (!apiKey.trim()) return;
+  validating = true;
+  validationResult = null;
+  try {
+    const res = await providersApi.validateKey(providerId, apiKey.trim(), regionSpecificData());
+    validationResult = res.valid ? 'success' : 'failed';
+  } catch {
+    validationResult = 'failed';
+  } finally {
+    validating = false;
   }
+}
 
   async function handleApiKeySubmit() {
     errorMsg = '';
@@ -285,14 +298,16 @@ async function copyOAuthUrl() {
         }
       }
 
-      const name = connectionName.trim() || defaultName();
-      const data = {
-        name,
-        auth_type: 'api_key' as const,
-        priority: parseInt(connectionPriority) || 1,
-        ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
-      };
-      await connectionsApi.create(providerId, data);
+    const name = connectionName.trim() || defaultName();
+    const regionPSD = regionSpecificData();
+    const data = {
+      name,
+      auth_type: 'api_key' as const,
+      priority: parseInt(connectionPriority) || 1,
+      ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
+      ...(regionPSD ? { provider_specific_data: regionPSD } : {}),
+    };
+    await connectionsApi.create(providerId, data);
       toast.success(`Connection added: ${name}`);
       step = 'done';
       onCreated?.();
@@ -573,16 +588,35 @@ async function handleOAuthSubmit() {
                 {validating ? 'Checking...' : 'Check'}
               </Button>
             </div>
-            {#if validationResult}
-              <Badge variant={validationResult === 'success' ? 'default' : 'destructive'} class="w-fit text-caption-mono">
-                {validationResult === 'success' ? 'Valid' : 'Invalid'}
-              </Badge>
-            {/if}
-            <p class="text-[11px] text-muted-foreground">
-              {meta?.apiHint ?? 'Stored as one AxonRouter connection and used for routing.'}
-            </p>
-          </div>
-        {:else if isApiKey && mode === 'bulk'}
+  {#if validationResult}
+    <Badge variant={validationResult === 'success' ? 'default' : 'destructive'} class="w-fit text-caption-mono">
+      {validationResult === 'success' ? 'Valid' : 'Invalid'}
+    </Badge>
+  {/if}
+
+  {#if meta?.regionOptions?.length && mode === 'single'}
+    <div class="flex flex-col gap-1.5">
+      <Label class="text-sm font-medium">Region</Label>
+      <Select.Root type="single" value={selectedRegion} onValueChange={(v: string) => (selectedRegion = v)}>
+        <Select.Trigger class="h-9 w-full text-sm">
+          {selectedRegion || 'Select a region…'}
+        </Select.Trigger>
+        <Select.Content>
+          <Select.Item value="">Select a region…</Select.Item>
+          {#each meta.regionOptions as region}
+            <Select.Item value={region}>{region}</Select.Item>
+          {/each}
+        </Select.Content>
+      </Select.Root>
+      <p class="text-[11px] text-muted-foreground">Bedrock API keys are region-specific. Pick the AWS region where the key was created.</p>
+    </div>
+  {/if}
+
+  <p class="text-[11px] text-muted-foreground">
+    {meta?.apiHint ?? 'Stored as one AxonRouter connection and used for routing.'}
+  </p>
+</div>
+{:else if isApiKey && mode === 'bulk'}
           <div class="flex flex-col gap-1.5">
             <Label class="text-sm font-medium">{meta?.inputFormat === 'pipe' ? 'Connections' : 'API keys'}</Label>
             <Textarea
@@ -818,8 +852,8 @@ async function handleOAuthSubmit() {
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
           </svg>
         </div>
-        <p class="text-sm text-muted-foreground">{oauthStatusText || 'Connection is ready to use.'}</p>
-      </div>
+    <p class="text-sm text-muted-foreground">{isOAuth ? oauthStatusText : 'Connection is ready to use.'}</p>
+  </div>
 
       <Dialog.Footer>
         <Button onclick={() => { reset(); handleOpenChange(false); }} class="text-sm">Done</Button>

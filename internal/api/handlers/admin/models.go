@@ -586,6 +586,10 @@ func defaultTestModel(providerID string) string {
 			// Test only an LLM model; CF image/embedding endpoints need different payloads.
 			return "qwen/qwq-32b"
 		}
+		if providerID == "bedrock" {
+			// Bedrock Mantle's OpenAI-compatible chat endpoint reliably supports this model.
+			return "openai.gpt-oss-120b"
+		}
 		return ids[0]
 	}
 	switch providerID {
@@ -613,6 +617,9 @@ func defaultTestModel(providerID string) string {
 		return "llama3.1-8b-instruct"
 	case "pollinations":
 		return "openai"
+	case "bedrock":
+		// Bedrock Mantle's OpenAI-compatible chat endpoint reliably supports this model.
+		return "openai.gpt-oss-120b"
 	default:
 		return ""
 	}

@@ -252,11 +252,11 @@ export const providersApi = {
       body: JSON.stringify({ model }),
     }),
 
-  validateKey: (provider: string, apiKey: string) =>
-    fetchApi<{ valid: boolean }>("/providers/validate", {
-      method: "POST",
-      body: JSON.stringify({ provider, api_key: apiKey }),
-    }),
+validateKey: (provider: string, apiKey: string, providerSpecificData?: Record<string, string>) =>
+  fetchApi<{ valid: boolean }>("/providers/validate", {
+    method: "POST",
+    body: JSON.stringify({ provider, api_key: apiKey, ...(providerSpecificData ? { provider_specific_data: providerSpecificData } : {}) }),
+  }),
 
   getSettings: (id: string) =>
     fetchApi<ProviderSettings>(`/providers/${id}/settings`),

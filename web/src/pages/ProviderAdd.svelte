@@ -17,10 +17,11 @@ import { toast } from 'svelte-sonner';
   let searchQuery = $state('');
   let activeCategory = $state('');
 
-  let connectionName = $state('');
-  let apiKey = $state('');
-  let noAuthMode = $state<'direct' | 'http' | 'relay'>('direct');
-  let selectedProxyPoolId = $state('');
+let connectionName = $state('');
+let apiKey = $state('');
+let selectedRegion = $state('');
+let noAuthMode = $state<'direct' | 'http' | 'relay'>('direct');
+let selectedProxyPoolId = $state('');
   let proxyPools = $state<ProxyPool[]>([]);
   let loadingPools = $state(false);
   let loading = $state(false);
@@ -48,23 +49,25 @@ import { toast } from 'svelte-sonner';
   onMount(() => { document.title = 'Add Provider — AxonRouter'; });
 
 function selectProvider(id: string) {
-	selectedProvider = id;
-	connectionName = '';
-	apiKey = '';
-	noAuthMode = 'direct';
-	selectedProxyPoolId = '';
-	resultMsg = '';
-	step = 'configure';
-	if (getProviderMeta(id)?.authType === 'none') {
-		loadProxyPools();
-	}
+  selectedProvider = id;
+  connectionName = '';
+  apiKey = '';
+  const meta = getProviderMeta(id);
+  selectedRegion = meta?.defaultRegion ?? '';
+  noAuthMode = 'direct';
+  selectedProxyPoolId = '';
+  resultMsg = '';
+  step = 'configure';
+  if (meta?.authType === 'none') {
+    loadProxyPools();
+  }
 }
 
 async function loadProxyPools() {
 	loadingPools = true;
 	try {
-		const res = await proxyPoolsApi.list({ is_active: '1', per_page: '200' });
-		proxyPools = res.data?.data ?? [];
+    const res = await proxyPoolsApi.list({ is_active: '1', per_page: '200' });
+    proxyPools = res.data ?? [];
 	} catch {
 		proxyPools = [];
 	} finally {
@@ -81,17 +84,20 @@ const availableProxyPools = $derived(noAuthMode === 'http' ? httpProxyPools : re
     loading = true;
     resultMsg = '';
     try {
-      const name = connectionName.trim() || `${selectedProvider}-key-001`;
-		const data: CreateConnectionPayload = { name };
-		if (meta?.authType === 'none') {
-			data.auth_type = 'none';
-			if (noAuthMode !== 'direct' && selectedProxyPoolId) {
-				data.provider_specific_data = { proxyPoolId: selectedProxyPoolId };
-			}
-		} else if (meta?.authType === 'apikey' && apiKey.trim()) {
-			data.api_key = apiKey.trim();
-		}
-		await connectionsApi.create(selectedProvider, data);
+    const name = connectionName.trim() || `${selectedProvider}-key-001`;
+    const data: CreateConnectionPayload = { name };
+    if (meta?.authType === 'none') {
+      data.auth_type = 'none';
+      if (noAuthMode !== 'direct' && selectedProxyPoolId) {
+        data.provider_specific_data = { proxyPoolId: selectedProxyPoolId };
+      }
+    } else if (meta?.authType === 'apikey' && apiKey.trim()) {
+      data.api_key = apiKey.trim();
+      if (selectedRegion) {
+        data.provider_specific_data = { ...(data.provider_specific_data ?? {}), region: selectedRegion };
+      }
+    }
+    await connectionsApi.create(selectedProvider, data);
 			resultOk = true;
 			resultMsg = `Connection "${name}" added successfully!`;
 			step = 'done';
@@ -221,13 +227,31 @@ const availableProxyPools = $derived(noAuthMode === 'http' ? httpProxyPools : re
           <p class="text-caption text-muted-foreground">A friendly name to identify this connection.</p>
         </div>
 
-        {#if meta.authType === 'apikey'}
-          <div class="space-y-2">
-            <Label class="text-body-sm-strong">API key</Label>
-            <Input bind:value={apiKey} type="password" placeholder="sk-..." class="h-10 text-code font-mono" />
-            <p class="text-caption text-muted-foreground">Your {meta.displayName} API key. Stored encrypted in SQLite.</p>
-          </div>
-        {:else if meta.authType === 'oauth'}
+  {#if meta.authType === 'apikey'}
+  <div class="space-y-2">
+    <Label class="text-body-sm-strong">API key</Label>
+    <Input bind:value={apiKey} type="password" placeholder="sk-..." class="h-10 text-code font-mono" />
+    <p class="text-caption text-muted-foreground">Your {meta.displayName} API key. Stored encrypted in SQLite.</p>
+  </div>
+
+  {#if meta.regionOptions?.length}
+  <div class="space-y-2">
+    <Label class="text-body-sm-strong">Region</Label>
+    <Select.Root type="single" value={selectedRegion} onValueChange={(v: string) => (selectedRegion = v)}>
+      <Select.Trigger class="h-10 w-full text-body-sm">
+        {selectedRegion || 'Select a region…'}
+      </Select.Trigger>
+      <Select.Content>
+        <Select.Item value="">Select a region…</Select.Item>
+        {#each meta.regionOptions as region}
+          <Select.Item value={region}>{region}</Select.Item>
+        {/each}
+      </Select.Content>
+    </Select.Root>
+    <p class="text-caption text-muted-foreground">Bedrock API keys are region-specific. Pick the AWS region where the key was created.</p>
+  </div>
+  {/if}
+  {:else if meta.authType === 'oauth'}
           <div class="p-4 rounded-md bg-accent/50">
             <p class="text-body-sm text-muted-foreground">
               This provider uses OAuth authentication. After creating the connection, you'll be redirected to authorize access.
@@ -257,7 +281,7 @@ Relay
 								<Select.Content>
 									<Select.Item value="">Select a proxy pool…</Select.Item>
 									{#each availableProxyPools as pool}
-										<Select.Item value={pool.id}>{pool.name} · {pool.proxy_url}</Select.Item>
+        <Select.Item value={pool.id}>{pool.name} · {pool.proxyUrl}</Select.Item>
 									{:else}
 										<Select.Item value="" disabled>No active {noAuthMode} proxy pools</Select.Item>
 									{/each}
