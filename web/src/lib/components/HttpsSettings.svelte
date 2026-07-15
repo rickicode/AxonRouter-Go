@@ -10,6 +10,7 @@ import { toast } from 'svelte-sonner';
 import GlobeLockIcon from '@lucide/svelte/icons/globe-lock';
 import AlertTriangleIcon from '@lucide/svelte/icons/alert-triangle';
 import CopyIcon from '@lucide/svelte/icons/copy';
+import { copyToClipboard } from '$lib/copy';
 import CheckCircleIcon from '@lucide/svelte/icons/check-circle';
 import XCircleIcon from '@lucide/svelte/icons/x-circle';
 import GlobeIcon from '@lucide/svelte/icons/globe';
@@ -55,9 +56,9 @@ async function loadIP() {
   }
 }
 
-function copyIP() {
-  if (!publicIP) return;
-  navigator.clipboard.writeText(publicIP).then(() => toast.success('Public IP copied'));
+async function copyIP() {
+	if (!publicIP) return;
+	await copyToClipboard(publicIP, 'Public IP');
 }
 
 async function handleCheckDns() {

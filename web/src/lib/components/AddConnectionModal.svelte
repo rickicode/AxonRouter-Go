@@ -7,7 +7,7 @@
   import { Badge } from '$lib/components/ui/badge';
 import { connectionsApi, providersApi, oauthApi, proxyPoolsApi } from '$lib/api';
 import { toast } from 'svelte-sonner';
-import { copyToClipboard } from '$lib/utils';
+import { copyToClipboard } from '$lib/copy';
 import { connections } from '$lib/stores';
 import { getProxyPoolId, filterProxyPools } from '$lib/auto-add-proxy-pools';
 import ProviderIcon from '$lib/components/ProviderIcon.svelte';
@@ -175,12 +175,7 @@ async function fetchProxyPools() {
 
 async function copyOAuthUrl() {
 	if (!oauthUrl) return;
-	try {
-		await copyToClipboard(oauthUrl);
-		toast.success('OAuth URL copied');
-	} catch {
-		toast.error('Copy failed — select the URL manually');
-	}
+	await copyToClipboard(oauthUrl, 'OAuth URL');
 }
 
   async function submitOAuthCallbackUrl() {

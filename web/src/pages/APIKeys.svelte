@@ -9,7 +9,7 @@ import { AlertDialog, AlertDialogContent, AlertDialogTitle, AlertDialogDescripti
 import * as Dialog from '$lib/components/ui/dialog';
 import { toast } from 'svelte-sonner';
 import { apiKeysApi } from '$lib/api';
-import { copyToClipboard } from '$lib/utils';
+import { copyToClipboard } from '$lib/copy';
 import type { APIKeyItem } from '$lib/api';
 
   let keys = $state<APIKeyItem[]>([]);
@@ -80,11 +80,7 @@ import type { APIKeyItem } from '$lib/api';
 
 
 async function handleCopy(key: string) {
-	try {
-		await copyValue(key, 'API key');
-	} catch (err) {
-		toast.error('Failed to copy API key');
-	}
+	await copyValue(key, 'API key');
 }
 
   async function handleToggle(id: string, current: boolean) {
@@ -98,12 +94,7 @@ async function handleCopy(key: string) {
   }
 
 async function copyValue(text: string, label = 'Key') {
-	try {
-		await copyToClipboard(text);
-		toast.success(`${label} copied to clipboard`);
-	} catch {
-		toast.error('Copy failed — select and copy manually');
-	}
+	await copyToClipboard(text, label);
 }
 
 function formatDate(ts: number): string {

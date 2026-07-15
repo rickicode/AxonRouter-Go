@@ -11,7 +11,7 @@ import { Skeleton } from '$lib/components/ui/skeleton';
 import { Switch } from '$lib/components/ui/switch';
 import * as Select from '$lib/components/ui/select';
 import { toast } from 'svelte-sonner';
-import { copyToClipboard } from '$lib/utils';
+import { copyToClipboard } from '$lib/copy';
 import Copy from '@lucide/svelte/icons/copy';
   import Check from '@lucide/svelte/icons/check';
   import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
@@ -218,13 +218,11 @@ import Copy from '@lucide/svelte/icons/copy';
 
 async function copyText(text: string, field: string) {
 	if (!text) return;
-	try {
-		await copyToClipboard(text);
+	const label = field === 'env' ? 'Environment variables' : 'Config file';
+	const ok = await copyToClipboard(text, label);
+	if (ok) {
 		copiedField = field;
-		toast.success('Copied to clipboard');
 		setTimeout(() => (copiedField = null), 2000);
-	} catch {
-		toast.error('Failed to copy');
 	}
 }
 

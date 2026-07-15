@@ -5,7 +5,7 @@ import { Button } from '$lib/components/ui/button';
 import { Input } from '$lib/components/ui/input';
 import * as Card from '$lib/components/ui/card';
 import { developersApi } from '$lib/api';
-import { copyToClipboard } from '$lib/utils';
+import { copyToClipboard } from '$lib/copy';
 import CopyIcon from '@lucide/svelte/icons/copy';
   import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
   import CodeIcon from '@lucide/svelte/icons/code';
@@ -46,12 +46,7 @@ import CopyIcon from '@lucide/svelte/icons/copy';
   }
 
 async function copy(text: string, label: string) {
-	try {
-		await copyToClipboard(text);
-		toast.success(`${label} copied to clipboard`);
-	} catch {
-		toast.error('Copy failed');
-	}
+	await copyToClipboard(text, label);
 }
 
   const endpoints = [

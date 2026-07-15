@@ -1,7 +1,8 @@
 <script lang="ts">
  import { onMount } from 'svelte';
  import { loadProvider, selectedProvider, loadConnections, connections, connectionPagination, connectionFilter, loadProviderModels, providerModels, modelTestResults, testProviderModel, addProviderModel, deleteProviderModel, isLoading, error } from '$lib/stores';
- import { unwrapInt, getTokenExpiry, copyToClipboard } from '$lib/utils';
+ import { unwrapInt, getTokenExpiry } from '$lib/utils';
+import { copyToClipboard } from '$lib/copy';
  import { connectionsApi, providersApi } from '$lib/api';
 import type { RoutingMode, ProviderModelEntry } from '$lib/api';
  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
@@ -123,12 +124,7 @@ function formatTimestamp(raw: unknown) {
 }
 
 async function copyModelName(id: string) {
-	try {
-		await copyToClipboard(id);
-		toast.success('Model name copied');
-	} catch {
-		toast.error('Copy failed');
-	}
+	await copyToClipboard(id, 'Model name');
 }
 
  function isDefaultDirect(conn: any): boolean {
