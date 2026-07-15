@@ -155,7 +155,7 @@ function handleLogout() {
 <div class="ml-auto flex items-center gap-2">
   <a href="https://saweria.co/HIJILABS" target="_blank" rel="noopener noreferrer" class="flex items-center gap-1.5 text-caption-mono text-muted-foreground hover:text-foreground transition-colors">
     <ExternalLinkIcon class="size-4" />
-    <span class="hidden sm:inline">Open new tab</span>
+    <span class="hidden sm:inline">Support us</span>
   </a>
   <Button variant="ghost" size="sm" class="gap-1.5" onclick={handleLogout}>
     <LogOutIcon class="size-4" />
