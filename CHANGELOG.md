@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub accounts without Copilot access now fail add-account with a clear message: "this GitHub account does not have GitHub Copilot access", instead of a raw 403 JSON blob. The same message is used by the quota scheduler to disable the connection.
 - GitHub Copilot OAuth now falls back to the GitHub login/name when the `/user` response does not include an email, so the dashboard connection label shows the actual account instead of "OAuth GitHub Copilot".
 - Added a guard in the quota fetcher so any provider added to `knownProviders` without a matching fetcher case returns a clear error instead of silently showing "No quota data".
-- Provider detail model list now inherits `service_kinds` from the provider when a model has no per-model kind metadata. Previously only OpenAI and Cloudflare models left the "Other" group; all built-in providers now categorize their models consistently.
+- Provider detail model list now inherits `service_kinds` from the provider when a model has no per-model kind metadata. Fallback is restricted to single-kind providers so multi-modal providers (e.g., Cloudflare) are not blanket-tagged with every capability.
 - Provider cards on the /providers page now display their category badge (e.g., "OAuth", "API Key", "No Auth", "Service Account") so every provider has visible category metadata, matching the category badge shown on Provider Detail.
 
 ## [0.3.4] - 2026-07-15

@@ -41,8 +41,9 @@ func TestListModelEntries_CFIncludesServiceKinds(t *testing.T) {
 	}
 }
 
-func TestListModelEntries_FallsBackToProviderServiceKinds(t *testing.T) {
+func TestListModelEntries_FallsBackToSingleProviderServiceKind(t *testing.T) {
 	h := &ModelHandler{}
+	// Single-kind providers should inherit so their models don't land in "Other".
 	entries := h.listModelEntries("claude", []string{"llm"}, nil, staticModels("claude"), nil)
 	if len(entries) == 0 {
 		t.Fatal("expected claude model entries")
@@ -51,6 +52,19 @@ func TestListModelEntries_FallsBackToProviderServiceKinds(t *testing.T) {
 		if !slices.Contains(kindsOf(e), "llm") {
 			t.Errorf("expected entry %v to inherit provider service_kinds [llm], got %v", e["id"], e["service_kinds"])
 		}
+	}
+}
+
+func TestListModelEntries_MultiKindProviderDoesNotFallback(t *testing.T) {
+	h := &ModelHandler{}
+	// Multi-kind providers (like cf) should not blanket-tag unknown models with every kind.
+	// Use an unknown provider with a static model and multi-kind service kinds.
+	entries := h.listModelEntries("unknown-provider", []string{"llm", "embedding", "image"}, nil, []string{"fake-model"}, nil)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if _, ok := entries[0]["service_kinds"]; ok {
+		t.Errorf("expected no service_kinds fallback for multi-kind provider, got %v", entries[0]["service_kinds"])
 	}
 }
 

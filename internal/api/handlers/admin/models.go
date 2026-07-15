@@ -194,7 +194,10 @@ func (h *ModelHandler) listModelEntries(providerID string, providerServiceKinds 
 					break
 				}
 			}
-			if _, ok := entry["service_kinds"]; !ok && len(providerServiceKinds) > 0 {
+			// Only inherit provider-level service kinds when the provider has a single
+			// capability. For multi-modal providers (e.g., cf with llm+embedding+image),
+			// a blanket fallback would wrongly tag every model with every kind.
+			if _, ok := entry["service_kinds"]; !ok && len(providerServiceKinds) == 1 {
 				entry["service_kinds"] = providerServiceKinds
 			}
 		}
