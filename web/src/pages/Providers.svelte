@@ -64,11 +64,16 @@ import type { Provider } from '$lib/api';
    return kinds.length === 1 && kinds[0] === 'llm' ? [] : kinds;
  }
 
- function providerCategoryId(provider: Provider): string {
-  return provider.category ?? providerMeta(provider)?.category ?? 'compatible';
+function providerCategoryId(provider: Provider): string {
+	return provider.category ?? providerMeta(provider)?.category ?? 'compatible';
 }
 
- function providerColor(provider: Provider): string {
+function providerCategory(provider: Provider) {
+	return getCategoryById(providerCategoryId(provider));
+}
+
+function providerColor(provider: Provider): string {
+
   return providerMeta(provider)?.color ?? '#f97316';
 }
 
@@ -348,8 +353,10 @@ import type { Provider } from '$lib/api';
               <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
             {#each sectionProviders as provider (provider.id)}
 {@const meta = providerMeta(provider)}
-            {@const iconMeta = providerIconMeta(provider)}
-            {@const serviceKinds = providerServiceKinds(provider)}
+{@const iconMeta = providerIconMeta(provider)}
+{@const serviceKinds = providerServiceKinds(provider)}
+{@const category = providerCategory(provider)}
+
 <a
             href="/providers/{provider.id}"
             class="group relative flex flex-col rounded-xl bg-card shadow-card border border-border/40 transition-all duration-200 hover:-translate-y-1 hover:shadow-elevated hover:border-border/80 overflow-hidden"
@@ -361,12 +368,19 @@ import type { Provider } from '$lib/api';
                 </div>
                 <div class="min-w-0 flex-1">
                   <div class="flex items-center gap-2">
-                    <h3 class="min-w-0 flex-1 truncate text-body-sm-strong text-foreground" title={providerName(provider)}>
-                      {providerName(provider)}
-                    </h3>
-                    {#if providerHasFree(provider)}
-                      <Badge variant="secondary" class="shrink-0 rounded-full text-[10px] px-1.5 py-0 h-auto text-muted-foreground">Free</Badge>
-                    {/if}
+									<h3 class="min-w-0 flex-1 truncate text-body-sm-strong text-foreground" title={providerName(provider)}>
+										{providerName(provider)}
+									</h3>
+									{#if category}
+										<Badge variant="secondary" class="shrink-0 rounded-full text-[10px] px-1.5 py-0 h-auto gap-1 text-muted-foreground">
+											<span class="h-1.5 w-1.5 rounded-full" style="background-color: {category.color};"></span>
+											{category.label}
+										</Badge>
+									{/if}
+									{#if providerHasFree(provider)}
+										<Badge variant="secondary" class="shrink-0 rounded-full text-[10px] px-1.5 py-0 h-auto text-muted-foreground">Free</Badge>
+									{/if}
+
                   </div>
                   <p class="mt-0.5 truncate text-caption-mono text-muted-foreground">{providerPrefix(provider)}</p>
                   {#if serviceKinds.length > 0}
