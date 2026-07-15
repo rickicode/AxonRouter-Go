@@ -75,6 +75,36 @@ func (wq *WriteQueue) EnqueueOrBlock(ctx context.Context, label string, fn func(
 	}
 }
 
+// Do submits a write operation and BLOCKS until the single-writer goroutine
+// executes it, returning the operation's error. Unlike Enqueue/EnqueueOrBlock
+// (which only block until the op is buffered), Do waits for the result so
+// callers can read written state and know whether the write succeeded.
+func (wq *WriteQueue) Do(ctx context.Context, label string, fn func(*sql.DB) error) error {
+	if wq == nil || wq.db == nil {
+		return nil // no write queue configured — caller falls back to a direct tx
+	}
+	doneCh := make(chan error, 1)
+	op := WriteOp{
+		fn: func(d *sql.DB) error {
+			err := fn(d)
+			doneCh <- err
+			return err
+		},
+		label: label,
+	}
+	select {
+	case wq.ch <- op:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-doneCh:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // loop runs in a goroutine, draining the write channel.
 func (wq *WriteQueue) loop() {
 	defer close(wq.done)
