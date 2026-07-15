@@ -97,6 +97,10 @@ func New(cfg Config) *Router {
 	elig := connstate.NewEligibilityManager(store)
 	elig.RecomputeAll()
 
+	// Seed defaults before loading the in-memory combo cache so first-run combos
+	// are immediately routable and visible to the detail/update handlers.
+	combo.SeedDefaultCombos(cfg.DB)
+
 	comboHandler := combo.NewHandler(cfg.DB, store, elig)
 	// Centralized async write queue: all non-critical DB writes (cooldowns, ban
 	// counts, OAuth token persistence) funnel through this single writer goroutine.
@@ -119,9 +123,6 @@ func New(cfg Config) *Router {
 	authManager.RegisterService(auth.ProviderCodex, codex.NewOAuthService(http.DefaultClient))
 	authManager.RegisterService(auth.ProviderAntigravity, antigravity.NewOAuthService(http.DefaultClient))
 	authManager.RegisterService(auth.ProviderKiro, kiro.NewOAuthService(http.DefaultClient))
-
-	// Seed defaults
-	combo.SeedDefaultCombos(cfg.DB)
 	settingHandler := admin.NewSettingHandler(cfg.DB)
 	settingHandler.SeedDefaults()
 	// Bootstrap dashboard login auth (JWT secret + default admin password)
