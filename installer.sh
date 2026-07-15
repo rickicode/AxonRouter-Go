@@ -9,7 +9,7 @@
 # curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/master/installer.sh | bash
 # ./installer.sh # latest release, auto OS/arch detection
 # ./installer.sh --version v1.2.3 # specific tag
-# ./installer.sh --to /usr/local/bin
+# ./installer.sh --to ~/.local/bin
 # ./installer.sh --service # install a systemd service (Linux only)
 #
 # The release workflow (.github/workflows/release.yml) builds and uploads assets
@@ -98,16 +98,28 @@ if ! curl -fsSL "$URL" -o "$DOWNLOAD_TO"; then
 fi
 
 # ---- choose install directory ----------------------------------------------
+LOCAL_BIN="${HOME}/.local/bin"
 if [[ -z "$INSTALL_DIR" ]]; then
-  for d in "${HOME}/.local/bin" /usr/local/bin; do
-    if [[ -d "$d" ]] && [[ -w "$d" ]]; then INSTALL_DIR="$d"; break; fi
-  done
-  if [[ -z "$INSTALL_DIR" ]]; then
-    INSTALL_DIR="${HOME}/.local/bin"
-    mkdir -p "$INSTALL_DIR"
-  fi
+  INSTALL_DIR="$LOCAL_BIN"
 fi
-mkdir -p "$INSTALL_DIR"
+
+if ! mkdir -p "$INSTALL_DIR" 2>/dev/null; then
+  err "could not create ${INSTALL_DIR}. Re-run with sudo or use --to <writable-dir>."
+fi
+
+if [[ ! -w "$INSTALL_DIR" ]]; then
+  echo "error: ${INSTALL_DIR} is not writable." >&2
+  echo >&2
+  echo "To install system-wide, re-run with sudo:" >&2
+  if [[ "$INSTALL_DIR" == "$LOCAL_BIN" ]]; then
+    echo "  sudo ./installer.sh --to /usr/local/bin" >&2
+  else
+    echo "  sudo ./installer.sh --to ${INSTALL_DIR}" >&2
+  fi
+  echo "Or install to your user directory without sudo:" >&2
+  echo "  ./installer.sh --to ${LOCAL_BIN}" >&2
+  exit 1
+fi
 
 # ---- install ----------------------------------------------------------------
 INSTALLED="${INSTALL_DIR}/${TARGET}"
@@ -173,7 +185,7 @@ echo "  Binary:    ${INSTALLED}"
 echo "  OS/Arch:   ${GOOS}/${GOARCH}"
 echo "  Run:       ${TARGET}"
 echo "  Help:      ${TARGET} --help"
-echo "  Service:   sudo ${TARGET} --startup install"
+echo " Service: ${TARGET} --startup install"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 if ! command -v "$TARGET" >/dev/null 2>&1 && [[ ":$PATH:" != *":${INSTALL_DIR}:"* ]]; then
