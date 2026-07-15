@@ -70,9 +70,10 @@ type providerMeta struct {
 // knownProviders maps provider_type_id to display metadata (colors, icons).
 // Display names are loaded from the DB provider_types table at runtime.
 var knownProviders = map[string]providerMeta{
-	"cx":   {DisplayName: "Codex", Color: "#10a37f", IconFile: "codex.svg"},
-	"ag":   {DisplayName: "Antigravity", Color: "#4285f4", IconFile: "antigravity.svg"},
-	"kiro": {DisplayName: "Kiro", Color: "#ff9900", IconFile: "kiro.svg"},
+	"cx":      {DisplayName: "Codex", Color: "#10a37f", IconFile: "codex.svg"},
+	"ag":      {DisplayName: "Antigravity", Color: "#4285f4", IconFile: "antigravity.svg"},
+	"kiro":    {DisplayName: "Kiro", Color: "#ff9900", IconFile: "kiro.svg"},
+	"copilot": {DisplayName: "GitHub Copilot", Color: "#000000", IconFile: "copilot.png"},
 }
 
 // ProviderMeta returns display metadata for a provider type, if known.
@@ -347,6 +348,12 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 			r.quotas, r.plan, r.err = fetchAntigravityQuota(token, psd)
 		case "kiro":
 			r.quotas, r.plan, r.err = fetchKiroQuota(token, psd)
+		case "copilot":
+			var copilotToken string
+			psd, copilotToken, r.err = refreshCopilotTokenIfNeeded(db, c.ID, token, psd)
+			if r.err == nil {
+				r.quotas, r.plan, r.err = fetchCopilotQuota(copilotToken)
+			}
 		default:
 			r.msg = "Quota fetching not supported for this provider"
 		}
