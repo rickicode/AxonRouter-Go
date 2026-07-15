@@ -192,3 +192,35 @@ jobs:
             build/checksums.txt
           body_path: RELEASE_NOTES.md
           append_body: false
+
+  publish-npm:
+    name: 📦 Publish npm package
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v7.0.0
+
+      - name: 🔖 Derive version from tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "Using version ${VERSION} from tag ${TAG}."
+
+      - name: 📌 Sync npm package version
+        run: node scripts/sync-npm-version.js
+
+      - name: ⚙️ Set up Node.js
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version: "20.19"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: 📦 Publish to npm
+        working-directory: npm/axonrouter-go
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
