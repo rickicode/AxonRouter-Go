@@ -1,12 +1,14 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -14,7 +16,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
+	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 )
 
@@ -309,4 +313,190 @@ func slicesEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func seedProviderType(t *testing.T, database *sql.DB, id string) {
+	t.Helper()
+	now := time.Now().Unix()
+	if _, err := database.Exec(
+		`INSERT INTO provider_types (id, display_name, format, base_url, created_at) VALUES (?,?,?,?,?)`,
+		id, id, "openai", "http://x", now,
+	); err != nil {
+		t.Fatalf("seed provider_type %s: %v", id, err)
+	}
+}
+
+func bulkHandlerWithQueue(t *testing.T, database *sql.DB) *ProviderHandler {
+	t.Helper()
+	wq := db.NewWriteQueue(database)
+	t.Cleanup(wq.Stop)
+	store := connstate.NewStore()
+	elig := connstate.NewEligibilityManager(store)
+	return &ProviderHandler{db: database, store: store, elig: elig, writeQueue: wq}
+}
+
+func TestBulkAddConnections_LargeImport(t *testing.T) {
+	database := newConnectionHandlerTestDB(t)
+	seedProviderType(t, database, "bulktest")
+	h := bulkHandlerWithQueue(t, database)
+
+	gin.SetMode(gin.TestMode)
+	const n = 1000
+	conns := make([]map[string]any, 0, n)
+	for i := 0; i < n; i++ {
+		conns = append(conns, map[string]any{
+			"name":    "conn-" + strconv.Itoa(i),
+			"api_key": "sk-" + strconv.Itoa(i),
+			"priority": 1,
+		})
+	}
+	body, err := json.Marshal(map[string]any{"connections": conns})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/providers/bulktest/connections/bulk", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = []gin.Param{{Key: "id", Value: "bulktest"}}
+	h.BulkAddConnections(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status=%d, body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Created int      `json:"created"`
+		Total   int      `json:"total"`
+		Failed  int      `json:"failed"`
+		Errors  []string `json:"errors"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Created != n || resp.Total != n || resp.Failed != 0 {
+		t.Fatalf("created=%d total=%d failed=%d, want %d/%d/0 (errors=%v)", resp.Created, resp.Total, resp.Failed, n, n, resp.Errors)
+	}
+	var cnt int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM connections WHERE provider_type_id = 'bulktest'`).Scan(&cnt); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if cnt != n {
+		t.Fatalf("db rows=%d, want %d", cnt, n)
+	}
+}
+
+func TestBulkAddConnections_PartialFailure(t *testing.T) {
+	database := newConnectionHandlerTestDB(t)
+	seedProviderType(t, database, "bulktest")
+	h := bulkHandlerWithQueue(t, database)
+
+	gin.SetMode(gin.TestMode)
+	// Force a real per-row failure: a test-only unique index on name means the
+	// second "dup" row collides while the others commit (no all-or-nothing loss).
+	if _, err := database.Exec(`DELETE FROM connections`); err != nil {
+		t.Fatalf("clear seeded connections: %v", err)
+	}
+	if _, err := database.Exec(`CREATE UNIQUE INDEX test_uniq_name ON connections(name)`); err != nil {
+		t.Fatalf("create unique index: %v", err)
+	}
+	conns := []map[string]any{
+		{"name": "ok-1", "api_key": "sk-1"},
+		{"name": "dup", "api_key": "sk-dup"},
+		{"name": "dup", "api_key": "sk-dup2"},
+		{"name": "ok-2", "api_key": "sk-2"},
+	}
+	body, _ := json.Marshal(map[string]any{"connections": conns})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/providers/bulktest/connections/bulk", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = []gin.Param{{Key: "id", Value: "bulktest"}}
+	h.BulkAddConnections(c)
+
+	var resp struct {
+		Created int      `json:"created"`
+		Total   int      `json:"total"`
+		Failed  int      `json:"failed"`
+		Errors  []string `json:"errors"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Created != 3 || resp.Failed != 1 {
+		t.Fatalf("created=%d failed=%d, want 3/1 (errors=%v)", resp.Created, resp.Failed, resp.Errors)
+	}
+	var cnt int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM connections WHERE provider_type_id = 'bulktest'`).Scan(&cnt); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if cnt != 3 {
+		t.Fatalf("db rows=%d, want 3", cnt)
+	}
+}
+
+// TestBulkAddConnections_NoContentionUnderLoad proves the fix: while a
+// background goroutine hammers the SAME WriteQueue with writes, a 1000-row
+// bulk import routed through the queue completes with zero failures (the
+// single-writer queue serializes them, so no "database is locked").
+func TestBulkAddConnections_NoContentionUnderLoad(t *testing.T) {
+	logging.Init("text") // queue logs via logging.Logger, which is nil until Init
+	database := newConnectionHandlerTestDB(t)
+	seedProviderType(t, database, "bulktest")
+	h := bulkHandlerWithQueue(t, database)
+
+	gin.SetMode(gin.TestMode)
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		i := 0
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				// Hammer the SAME single-writer queue with blocking writes; the
+				// queue serializes them with the bulk import, so no lock errors.
+				_ = h.writeQueue.Do(context.Background(), "contention:write", func(d *sql.DB) error {
+					_, err := d.Exec("UPDATE provider_types SET display_name = ? WHERE id = 'bulktest'", "x"+strconv.Itoa(i))
+					i++
+					return err
+				})
+			}
+		}
+	}()
+
+	const n = 1000
+	conns := make([]map[string]any, 0, n)
+	for i := 0; i < n; i++ {
+		conns = append(conns, map[string]any{
+			"name":    "conn-" + strconv.Itoa(i),
+			"api_key": "sk-" + strconv.Itoa(i),
+			"priority": 1,
+		})
+	}
+	body, _ := json.Marshal(map[string]any{"connections": conns})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/providers/bulktest/connections/bulk", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = []gin.Param{{Key: "id", Value: "bulktest"}}
+	h.BulkAddConnections(c)
+
+	close(stop)
+	wg.Wait()
+
+	var resp struct {
+		Created int      `json:"created"`
+		Failed  int      `json:"failed"`
+		Errors  []string `json:"errors"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Failed != 0 {
+		t.Fatalf("failed=%d under load (errors=%v)", resp.Failed, resp.Errors)
+	}
 }
