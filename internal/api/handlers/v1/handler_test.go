@@ -1284,3 +1284,130 @@ func TestBodyPreserved_TrackActiveRestores(t *testing.T) {
 		t.Errorf("body changed after TrackActive; got %q, want %q", got, body)
 	}
 }
+
+// TestRefreshOAuthToken_PersistsProviderSpecific verifies that a successful
+// OAuth refresh which returns provider-specific data marshals it to
+// connections.provider_specific_data and updates the in-memory cache.
+func TestRefreshOAuthToken_PersistsProviderSpecific(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	wq := db.NewWriteQueue(h.db)
+	h.writeQueue = wq
+
+	if _, err := h.db.Exec(`INSERT INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('psdtest','PsdTest','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, provider_specific_data, created_at, updated_at) VALUES ('psdtest-conn','psdtest','c1','oauth','ready',1,'',0,0)`); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+
+	wantPSD := map[string]string{"copilot_token": "ct-123", "github_user_id": "42", "login": "octocat", "name": "Octo Cat", "email": "octo@example.com"}
+	h.authMgr.RegisterService(auth.ProviderType("psdtest"), &fakeOAuthService{
+		refreshFunc: func(ctx context.Context, creds *auth.Credentials) (*auth.Credentials, error) {
+			return &auth.Credentials{
+				AccessToken:      "new-access",
+				RefreshToken:     "new-refresh",
+				ExpiresAt:        time.Now().Add(time.Hour),
+				ProviderSpecific: wantPSD,
+			}, nil
+		},
+	})
+
+	conn := &Connection{
+		ID:             "psdtest-conn",
+		AccessToken:    "old-access",
+		RefreshToken:   "old-refresh",
+		OAuthExpiresAt: time.Now().Add(-time.Minute),
+	}
+	if err := h.refreshOAuthToken(context.Background(), conn, "psdtest"); err != nil {
+		t.Fatalf("refreshOAuthToken: %v", err)
+	}
+
+	// In-memory cache should be updated immediately.
+	cc, ok := h.conns.Load(conn.ID)
+	if !ok {
+		t.Fatal("connection not cached after refresh")
+	}
+	cached := cc.(cachedConn).conn
+	var gotCached map[string]string
+	if err := json.Unmarshal([]byte(cached.ProviderSpecificData), &gotCached); err != nil {
+		t.Fatalf("cached provider_specific_data is not valid JSON: %v", err)
+	}
+	for k, want := range wantPSD {
+		if gotCached[k] != want {
+			t.Errorf("cached PSD %q = %q, want %q", k, gotCached[k], want)
+		}
+	}
+
+	// DB should be updated after the async write queue flushes.
+	wq.Stop()
+	var psd string
+	if err := h.db.QueryRow(`SELECT provider_specific_data FROM connections WHERE id = ?`, conn.ID).Scan(&psd); err != nil {
+		t.Fatalf("query provider_specific_data: %v", err)
+	}
+	var gotDB map[string]string
+	if err := json.Unmarshal([]byte(psd), &gotDB); err != nil {
+		t.Fatalf("persisted provider_specific_data is not valid JSON: %v", err)
+	}
+	for k, want := range wantPSD {
+		if gotDB[k] != want {
+			t.Errorf("persisted PSD %q = %q, want %q", k, gotDB[k], want)
+		}
+	}
+}
+
+// TestRefreshOAuthToken_KeepsProviderSpecificWhenEmpty verifies that providers
+// which do not return provider-specific data do not wipe the existing value.
+func TestRefreshOAuthToken_KeepsProviderSpecificWhenEmpty(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	wq := db.NewWriteQueue(h.db)
+	h.writeQueue = wq
+
+	if _, err := h.db.Exec(`INSERT INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('psdempty','PsdEmpty','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	existing := `{"proxyPoolId":"pool-abc"}`
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, provider_specific_data, created_at, updated_at) VALUES ('psdempty-conn','psdempty','c1','oauth','ready',1,?,0,0)`, existing); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+
+	h.authMgr.RegisterService(auth.ProviderType("psdempty"), &fakeOAuthService{
+		refreshFunc: func(ctx context.Context, creds *auth.Credentials) (*auth.Credentials, error) {
+			return &auth.Credentials{
+				AccessToken:  "new-access",
+				RefreshToken: "new-refresh",
+				ExpiresAt:    time.Now().Add(time.Hour),
+			}, nil
+		},
+	})
+
+	conn := &Connection{
+		ID:                   "psdempty-conn",
+		AccessToken:          "old-access",
+		RefreshToken:         "old-refresh",
+		OAuthExpiresAt:       time.Now().Add(-time.Minute),
+		ProviderSpecificData: existing,
+	}
+	if err := h.refreshOAuthToken(context.Background(), conn, "psdempty"); err != nil {
+		t.Fatalf("refreshOAuthToken: %v", err)
+	}
+
+	cc, ok := h.conns.Load(conn.ID)
+	if !ok {
+		t.Fatal("connection not cached after refresh")
+	}
+	cached := cc.(cachedConn).conn
+	if cached.ProviderSpecificData != existing {
+		t.Errorf("cached PSD changed: got %q, want %q", cached.ProviderSpecificData, existing)
+	}
+
+	wq.Stop()
+	var psd string
+	if err := h.db.QueryRow(`SELECT provider_specific_data FROM connections WHERE id = ?`, conn.ID).Scan(&psd); err != nil {
+		t.Fatalf("query provider_specific_data: %v", err)
+	}
+	if psd != existing {
+		t.Errorf("persisted PSD changed: got %q, want %q", psd, existing)
+	}
+}

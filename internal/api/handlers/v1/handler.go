@@ -498,6 +498,11 @@ func (h *Handler) refreshOAuthToken(ctx context.Context, conn *Connection, provi
 	// Update connection in memory
 	conn.AccessToken = newCreds.AccessToken
 	conn.OAuthExpiresAt = newCreds.ExpiresAt
+	if len(newCreds.ProviderSpecific) > 0 {
+		if psdBytes, err := json.Marshal(newCreds.ProviderSpecific); err == nil {
+			conn.ProviderSpecificData = string(psdBytes)
+		}
+	}
 	// Update the credential cache so subsequent requests see the new token immediately.
 	h.conns.Store(conn.ID, cachedConn{conn: conn, cachedAt: time.Now()})
 	// Persist to DB (async — does not block the request path).
@@ -505,9 +510,10 @@ func (h *Handler) refreshOAuthToken(ctx context.Context, conn *Connection, provi
 	accessToken := conn.AccessToken
 	refreshToken := conn.RefreshToken
 	expiresAt := conn.OAuthExpiresAt.Unix()
+	providerSpecificData := conn.ProviderSpecificData
 	h.writeQueue.EnqueueOrBlock(ctx, "refreshOAuth:persist", func(d *sql.DB) error {
-		_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
-			accessToken, refreshToken, expiresAt, time.Now().Unix(), connID)
+		_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?`,
+			accessToken, refreshToken, expiresAt, providerSpecificData, time.Now().Unix(), connID)
 		if err != nil {
 			log.Printf("WARN: failed to persist OAuth token for connection %s: %v", connID, err)
 		}
