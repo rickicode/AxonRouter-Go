@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -21,16 +22,17 @@ import (
 
 // ProviderHandler handles provider CRUD operations.
 type ProviderHandler struct {
-	db          *sql.DB
-	registry    *executor.Registry
-	store       *connstate.Store
-	elig        *connstate.EligibilityManager
+	db *sql.DB
+	registry *executor.Registry
+	store *connstate.Store
+	elig *connstate.EligibilityManager
 	providerCfg *providercfg.Manager
+	writeQueue *db.WriteQueue
 }
 
 // NewProviderHandler creates a new provider handler.
-func NewProviderHandler(database *sql.DB, registry *executor.Registry, store *connstate.Store, elig *connstate.EligibilityManager, providerCfg *providercfg.Manager) *ProviderHandler {
-	return &ProviderHandler{db: database, registry: registry, store: store, elig: elig, providerCfg: providerCfg}
+func NewProviderHandler(database *sql.DB, registry *executor.Registry, store *connstate.Store, elig *connstate.EligibilityManager, providerCfg *providercfg.Manager, writeQueue *db.WriteQueue) *ProviderHandler {
+	return &ProviderHandler{db: database, registry: registry, store: store, elig: elig, providerCfg: providerCfg, writeQueue: writeQueue}
 }
 
 // List returns all providers with connection counts.
@@ -567,14 +569,18 @@ func (h *ProviderHandler) AddConnection(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"id": connID, "name": req.Name, "status": initialStatus})
 }
 
-// BulkAddConnections adds multiple connections at once.
+// BulkAddConnections adds multiple connections at once, processing them in
+// batches. Each batch is written as a single transaction. When a WriteQueue is
+// wired it runs through the queue (the app's only SQLite writer), so a large
+// import never contends with the live gateway for the write lock. Per-row
+// failures are reported instead of being silently dropped.
 func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 	providerID := c.Param("id")
 	var req struct {
 		Connections []struct {
-			Name                 string            `json:"name"`
-			APIKey               string            `json:"api_key"`
-			Priority             int               `json:"priority"`
+			Name string `json:"name"`
+			APIKey string `json:"api_key"`
+			Priority int `json:"priority"`
 			ProviderSpecificData map[string]string `json:"provider_specific_data,omitempty"`
 		} `json:"connections"`
 	}
@@ -589,7 +595,7 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 		return
 	}
 
-	// Validate CF connections require Account ID (fail fast before any inserts)
+	// Validate CF connections require Account ID (fail fast before any inserts).
 	if providerID == "cf" {
 		for i, conn := range req.Connections {
 			accountID := conn.ProviderSpecificData["accountId"]
@@ -603,35 +609,116 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 		}
 	}
 
+	const maxBulkConnections = 5000
+	if len(req.Connections) > maxBulkConnections {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "too many connections: maximum " + strconv.Itoa(maxBulkConnections) + " per bulk import"})
+		return
+	}
+
+	const batchSize = 200
 	now := time.Now().Unix()
-	var created int
-	for _, conn := range req.Connections {
-		connID := uuid.New().String()
-		apiKey := sql.NullString{String: conn.APIKey, Valid: conn.APIKey != ""}
-		var psdJSON sql.NullString
-		if len(conn.ProviderSpecificData) > 0 {
-			if b, err := json.Marshal(conn.ProviderSpecificData); err == nil {
-				psdJSON = sql.NullString{String: string(b), Valid: true}
-			}
+	var created, failed int
+	var errors []string
+	var seeded []struct {
+		id string
+		priority int
+	}
+
+	// batchResult is returned from the batch closure; the handler reads it
+	// only AFTER WriteQueue.Do returns (the queue's done-channel establishes a
+	// happens-before edge, so this is race-free — do NOT mutate handler
+	// locals from inside the closure).
+	type batchResult struct {
+		ids []string
+		created int
+		fails []string
+		err error
+	}
+
+	runBatch := func(d *sql.DB, conns []struct {
+		Name string `json:"name"`
+		APIKey string `json:"api_key"`
+		Priority int `json:"priority"`
+		ProviderSpecificData map[string]string `json:"provider_specific_data,omitempty"`
+	}) batchResult {
+		res := batchResult{}
+		tx, err := d.Begin()
+		if err != nil {
+			res.err = err
+			return res
 		}
-		_, err := h.db.Exec(`
-			INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, priority, provider_specific_data, status, is_active, created_at, updated_at)
-			VALUES (?, ?, ?, 'api_key', ?, ?, ?, 'ready', 1, ?, ?)
-		`, connID, providerID, conn.Name, apiKey, conn.Priority, psdJSON, now, now)
-		if err == nil {
-			created++
-			if h.store != nil {
-				h.store.SeedConnection(connID, providerID, "ready", conn.Priority)
+		for _, conn := range conns {
+			connID := uuid.New().String()
+			apiKey := sql.NullString{String: conn.APIKey, Valid: conn.APIKey != ""}
+			var psdJSON sql.NullString
+			if len(conn.ProviderSpecificData) > 0 {
+				if b, err := json.Marshal(conn.ProviderSpecificData); err == nil {
+					psdJSON = sql.NullString{String: string(b), Valid: true}
+				}
 			}
+			if _, err := tx.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, priority, provider_specific_data, status, is_active, created_at, updated_at) VALUES (?, ?, ?, 'api_key', ?, ?, ?, 'ready', 1, ?, ?)`,
+				connID, providerID, conn.Name, apiKey, conn.Priority, psdJSON, now, now); err != nil {
+				res.fails = append(res.fails, fmt.Sprintf("connection %q: %s", conn.Name, err.Error()))
+				continue
+			}
+			res.created++
+			res.ids = append(res.ids, connID)
+		}
+		if err := tx.Commit(); err != nil {
+			res.err = err
+			return res
+		}
+		return res
+	}
+
+	for start := 0; start < len(req.Connections); start += batchSize {
+		end := start + batchSize
+		if end > len(req.Connections) {
+			end = len(req.Connections)
+		}
+		batch := req.Connections[start:end]
+		var br batchResult
+		var batchErr error
+		if h.writeQueue != nil {
+			batchErr = h.writeQueue.Do(c.Request.Context(), "bulkAddConnections:batch", func(d *sql.DB) error {
+				br = runBatch(d, batch)
+				return br.err
+			})
+		} else {
+			br = runBatch(h.db, batch)
+		}
+		if batchErr != nil {
+			// Whole-batch failure: nothing in this batch was persisted.
+			for _, conn := range batch {
+				failed++
+				errors = append(errors, fmt.Sprintf("connection %q: %s", conn.Name, batchErr.Error()))
+			}
+			continue
+		}
+		created += br.created
+		failed += len(br.fails)
+		errors = append(errors, br.fails...)
+		for i, id := range br.ids {
+			// br.ids parallels batch order; recover priority from the source.
+			_ = i
+			seeded = append(seeded, struct {
+				id string
+				priority int
+			}{id: id, priority: batch[i].Priority})
 		}
 	}
 
-	// Recompute eligibility once after all seeds
-	if h.store != nil && h.elig != nil {
-		h.elig.Update(h.store)
+	// Seed in-memory store ONLY for committed rows, then recompute eligibility once.
+	if h.store != nil {
+		for _, s := range seeded {
+			h.store.SeedConnection(s.id, providerID, "ready", s.priority)
+		}
+		if h.elig != nil {
+			h.elig.Update(h.store)
+		}
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"created": created, "total": len(req.Connections)})
+	c.JSON(http.StatusCreated, gin.H{"created": created, "total": len(req.Connections), "failed": failed, "errors": errors})
 }
 
 // ValidateKey checks if an API key is valid for a provider by attempting a lightweight model list request.

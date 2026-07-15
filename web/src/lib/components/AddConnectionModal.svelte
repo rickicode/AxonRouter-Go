@@ -257,8 +257,12 @@ async function handleValidate() {
       if (mode === 'bulk') {
         const connections = parseBulkConnections();
         if (connections.length === 0) throw new Error('Paste at least one API key');
-        const result = await connectionsApi.bulkCreate(providerId, { connections });
-        toast.success(`Added ${result.created}/${result.total} connections`);
+			const result = await connectionsApi.bulkCreate(providerId, { connections });
+			if (result.failed && result.failed > 0) {
+				toast.error(`Added ${result.created}/${result.total} connections, ${result.failed} failed`);
+			} else {
+				toast.success(`Added ${result.created}/${result.total} connections`);
+			}
         step = 'done';
         onCreated?.();
         return;
