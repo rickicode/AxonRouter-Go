@@ -63,6 +63,22 @@ if [[ "$GOOS" == "windows" ]]; then EXT=".exe"; fi
 ASSET="axonrouter-${GOOS}-${GOARCH}${EXT}"
 TARGET="${BIN_NAME}${EXT}"
 
+# ---- service mode guard (fail fast before any download) --------------------------------------------------
+if [[ "$INSTALL_SERVICE" == true ]]; then
+  [[ "$GOOS" == "linux" ]] || err "--service is only supported on Linux"
+  if [[ "$EUID" -ne 0 ]]; then
+    echo "error: --service must be run as root." >&2
+    echo >&2
+    echo "Re-run the installer through sudo, for example:" >&2
+    echo " curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/master/installer.sh | sudo bash -s -- --service" >&2
+    echo "or, if you already downloaded this script:" >&2
+    echo " sudo ./installer.sh --service" >&2
+    exit 1
+  fi
+  command -v systemctl >/dev/null 2>&1 || err "systemctl not found; cannot install systemd service"
+  INSTALL_DIR="/opt/axonrouter"
+fi
+
 # ---- resolve release --------------------------------------------------------
 if [[ -z "$VERSION" ]]; then
   info "Resolving latest release for ${GOOS}/${GOARCH}..."
@@ -79,22 +95,6 @@ DOWNLOAD_TO="$(mktemp -d)/${ASSET}"
 info "Downloading ${URL}"
 if ! curl -fsSL "$URL" -o "$DOWNLOAD_TO"; then
   err "download failed. The release ${VERSION} may not include an asset for ${GOOS}/${GOARCH}."
-fi
-
-# ---- service mode defaults --------------------------------------------------
-if [[ "$INSTALL_SERVICE" == true ]]; then
-  [[ "$GOOS" == "linux" ]] || err "--service is only supported on Linux"
-  if [[ "$EUID" -ne 0 ]]; then
-    echo "error: --service must be run as root."
-    echo
-    echo "Re-run the installer through sudo, for example:"
-    echo "  curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/master/installer.sh | sudo bash -s -- --service"
-    echo "or, if you already downloaded this script:"
-    echo "  sudo ./installer.sh --service"
-    exit 1
-  fi
-  command -v systemctl >/dev/null 2>&1 || err "systemctl not found; cannot install systemd service"
-  INSTALL_DIR="/opt/axonrouter"
 fi
 
 # ---- choose install directory ----------------------------------------------
