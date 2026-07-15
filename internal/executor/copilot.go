@@ -23,14 +23,29 @@ const (
 	copilotDefaultAuthURL = "https://api.github.com/copilot_internal/v2/token"
 	copilotDefaultAPIBase = "https://api.githubcopilot.com"
 
-	copilotUserAgent       = "GitHubCopilotChat/0.26.7"
-	copilotEditorVersion   = "vscode/1.105.1"
-	copilotPluginVersion   = "copilot-chat/0.26.7"
-	copilotIntegrationID   = "vscode-chat"
-	copilotOpenAIIntent    = "conversation-edits"
+	copilotUserAgent     = "GitHubCopilotChat/0.26.7"
+	copilotEditorVersion = "vscode/1.105.1"
+	copilotPluginVersion = "copilot-chat/0.26.7"
+	copilotIntegrationID = "vscode-chat"
+	copilotOpenAIIntent  = "conversation-edits"
 
 	copilotTokenSkew = 2 * time.Minute
 )
+
+// package-level cache for the local Copilot OAuth token read from disk, so
+// fallback file reads don't happen on every request with an empty API key.
+var copilotOAuthCache = struct {
+	mu     sync.RWMutex
+	token  string
+	loaded bool
+}{}
+
+func resetCopilotOAuthTokenCache() {
+	copilotOAuthCache.mu.Lock()
+	copilotOAuthCache.loaded = false
+	copilotOAuthCache.token = ""
+	copilotOAuthCache.mu.Unlock()
+}
 
 // copilotToken is the short-lived bearer token returned by GitHub's Copilot
 // token exchange endpoint.
@@ -104,6 +119,26 @@ func (e *CopilotExecutor) ExecuteStream(ctx context.Context, req *Request) (*Str
 
 	headers := e.copilotHeaders(token.Token, body)
 	return e.DoStreamRequestWithConfig(ctx, "POST", url, headers, body, req.StreamConfig)
+}
+
+// Embeddings is not supported by GitHub Copilot.
+func (e *CopilotExecutor) Embeddings(ctx context.Context, req *Request) (*Response, error) {
+	return nil, errors.New("github copilot: embeddings endpoint not supported")
+}
+
+// Images is not supported by GitHub Copilot.
+func (e *CopilotExecutor) Images(ctx context.Context, req *Request) (*Response, error) {
+	return nil, errors.New("github copilot: images endpoint not supported")
+}
+
+// Responses is not supported by GitHub Copilot.
+func (e *CopilotExecutor) Responses(ctx context.Context, req *Request) (*Response, error) {
+	return nil, errors.New("github copilot: responses endpoint not supported")
+}
+
+// ResponsesStream is not supported by GitHub Copilot.
+func (e *CopilotExecutor) ResponsesStream(ctx context.Context, req *Request) (*StreamResult, error) {
+	return nil, errors.New("github copilot: responses endpoint not supported")
 }
 
 // Models fetches the available Copilot models from the active endpoint.
@@ -187,6 +222,9 @@ func (e *CopilotExecutor) fetchToken(oauthToken string) (*copilotToken, error) {
 	if err := json.Unmarshal(body, &tok); err != nil {
 		return nil, fmt.Errorf("copilot token exchange parse error: %w", err)
 	}
+	if tok.ExpiresAt == 0 {
+		tok.ExpiresAt = time.Now().Unix() + 3600
+	}
 
 	e.mu.Lock()
 	e.tokens[oauthToken] = &tok
@@ -213,13 +251,13 @@ func (e *CopilotExecutor) copilotHeaders(token string, body []byte) map[string]s
 
 	return map[string]string{
 		"Content-Type":           "application/json",
-		"Authorization":            "Bearer " + token,
-		"User-Agent":               copilotUserAgent,
-		"Editor-Version":           copilotEditorVersion,
-		"Editor-Plugin-Version":    copilotPluginVersion,
-		"Copilot-Integration-Id":   copilotIntegrationID,
-		"Openai-Intent":            copilotOpenAIIntent,
-		"X-Initiator":              initiator,
+		"Authorization":          "Bearer " + token,
+		"User-Agent":             copilotUserAgent,
+		"Editor-Version":         copilotEditorVersion,
+		"Editor-Plugin-Version":  copilotPluginVersion,
+		"Copilot-Integration-Id": copilotIntegrationID,
+		"Openai-Intent":          copilotOpenAIIntent,
+		"X-Initiator":            initiator,
 	}
 }
 
@@ -257,16 +295,30 @@ func stripCopilotModelPrefix(body []byte) []byte {
 // loadCopilotOAuthToken tries to read the locally stored GitHub OAuth token
 // from the files written by the official Copilot editor extensions.
 func loadCopilotOAuthToken() string {
+	copilotOAuthCache.mu.RLock()
+	if copilotOAuthCache.loaded {
+		tok := copilotOAuthCache.token
+		copilotOAuthCache.mu.RUnlock()
+		return tok
+	}
+	copilotOAuthCache.mu.RUnlock()
+
 	configDir := os.Getenv("XDG_CONFIG_HOME")
 	if configDir == "" {
 		home, _ := os.UserHomeDir()
 		if runtime.GOOS == "windows" {
-			configDir = filepath.Join(os.Getenv("LOCALAPPDATA"))
+			localAppData := os.Getenv("LOCALAPPDATA")
+			if localAppData == "" {
+				configDir = filepath.Join(home, ".config")
+			} else {
+				configDir = localAppData
+			}
 		} else {
 			configDir = filepath.Join(home, ".config")
 		}
 	}
 
+	tok := ""
 	dir := filepath.Join(configDir, "github-copilot")
 	for _, name := range []string{"hosts.json", "apps.json"} {
 		path := filepath.Join(dir, name)
@@ -274,27 +326,27 @@ func loadCopilotOAuthToken() string {
 		if err != nil {
 			continue
 		}
-		tok := extractGitHubOAuthToken(data)
+		tok = extractGitHubOAuthToken(data)
 		if tok != "" {
-			return tok
+			break
 		}
 	}
-	return ""
+
+	copilotOAuthCache.mu.Lock()
+	copilotOAuthCache.token = tok
+	copilotOAuthCache.loaded = true
+	copilotOAuthCache.mu.Unlock()
+	return tok
 }
 
 // extractGitHubOAuthToken walks the "github.com" entry in hosts.json or
 // apps.json and returns the oauth_token value.
 func extractGitHubOAuthToken(data []byte) string {
-	for _, key := range []string{"github.com", "github.localhost"} {
+	for _, key := range []string{`github\.com`, `github\.localhost`} {
 		oauth := gjson.GetBytes(data, key+".oauth_token")
 		if oauth.Exists() && oauth.String() != "" {
 			return oauth.String()
 		}
-	}
-	// apps.json nests tokens differently: { "github.com": { "oauth_token": "..." } }
-	val := gjson.GetBytes(data, "github.com.oauth_token")
-	if val.Exists() && val.String() != "" {
-		return val.String()
 	}
 	return ""
 }

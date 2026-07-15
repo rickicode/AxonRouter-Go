@@ -7,8 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tidwall/gjson"
 )
@@ -169,6 +172,90 @@ func TestCopilotExecutor_ModelsRequiresAuth(t *testing.T) {
 	id := gjson.GetBytes(resp.Body, "data.0.id").String()
 	if id != "gpt-4o" {
 		t.Errorf("models response id = %q, want gpt-4o", id)
+	}
+}
+
+func TestCopilotExecutor_UnsupportedMethods(t *testing.T) {
+	exec := NewCopilotExecutor(NewBaseExecutor())
+	req := &Request{Provider: "copilot", APIKey: "tok"}
+
+	if _, err := exec.Embeddings(context.Background(), req); err == nil || !strings.Contains(err.Error(), "embeddings endpoint not supported") {
+		t.Errorf("Embeddings error = %v, want unsupported embeddings", err)
+	}
+	if _, err := exec.Images(context.Background(), req); err == nil || !strings.Contains(err.Error(), "images endpoint not supported") {
+		t.Errorf("Images error = %v, want unsupported images", err)
+	}
+	if _, err := exec.Responses(context.Background(), req); err == nil || !strings.Contains(err.Error(), "responses endpoint not supported") {
+		t.Errorf("Responses error = %v, want unsupported responses", err)
+	}
+	if _, err := exec.ResponsesStream(context.Background(), req); err == nil || !strings.Contains(err.Error(), "responses endpoint not supported") {
+		t.Errorf("ResponsesStream error = %v, want unsupported responses", err)
+	}
+}
+
+func TestCopilotExecutor_DefaultsExpiresAtToOneHour(t *testing.T) {
+	auth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"token":      "test-copilot-token",
+			"expires_at": 0,
+			"endpoints":  map[string]any{"api": "https://api.githubcopilot.com"},
+		})
+	}))
+	defer auth.Close()
+
+	authURL, _ := url.Parse(auth.URL)
+	rt := &copilotTestTransport{authHost: authURL.Host, apiHost: authURL.Host}
+	old := http.DefaultClient.Transport
+	http.DefaultClient.Transport = rt
+	defer func() { http.DefaultClient.Transport = old }()
+
+	exec := NewCopilotExecutor(NewBaseExecutor())
+	exec.Client.Transport = rt
+
+	tok, err := exec.fetchToken("test-oauth")
+	if err != nil {
+		t.Fatalf("fetchToken failed: %v", err)
+	}
+	if tok.ExpiresAt <= time.Now().Unix() || tok.ExpiresAt > time.Now().Unix()+7200 {
+		t.Errorf("ExpiresAt = %d, expected roughly now+3600", tok.ExpiresAt)
+	}
+}
+
+func TestCopilotOAuthToken_CachesResult(t *testing.T) {
+	resetCopilotOAuthTokenCache()
+	defer resetCopilotOAuthTokenCache()
+
+	tmp := t.TempDir()
+	oldXDG := os.Getenv("XDG_CONFIG_HOME")
+	os.Setenv("XDG_CONFIG_HOME", tmp)
+	defer os.Setenv("XDG_CONFIG_HOME", oldXDG)
+
+	configDir := filepath.Join(tmp, "github-copilot")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(configDir, "hosts.json")
+	if err := os.WriteFile(path, []byte(`{"github.com":{"oauth_token":"cached-token"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	first := loadCopilotOAuthToken()
+	if first != "cached-token" {
+		t.Fatalf("first load = %q, want cached-token", first)
+	}
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	second := loadCopilotOAuthToken()
+	if second != "cached-token" {
+		t.Fatalf("second load after deleting file = %q, want cached-token (cache miss)", second)
+	}
+
+	resetCopilotOAuthTokenCache()
+	third := loadCopilotOAuthToken()
+	if third != "" {
+		t.Fatalf("after reset = %q, want empty", third)
 	}
 }
 

@@ -24,10 +24,10 @@ import (
 )
 
 const (
-	vertexDefaultBaseURL  = "https://aiplatform.googleapis.com/v1/projects/{projectId}/locations/{location}/endpoints/openapi"
-	vertexTokenScope      = "https://www.googleapis.com/auth/cloud-platform"
-	vertexTokenGrantType  = "urn:ietf:params:oauth:grant-type:jwt-bearer"
-	vertexTokenSkew       = 2 * time.Minute
+	vertexDefaultBaseURL = "https://aiplatform.googleapis.com/v1/projects/{projectId}/locations/{location}/endpoints/openapi"
+	vertexTokenScope     = "https://www.googleapis.com/auth/cloud-platform"
+	vertexTokenGrantType = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+	vertexTokenSkew      = 2 * time.Minute
 )
 
 // vertexServiceAccount is the subset of a GCP service-account JSON key we need.
@@ -63,7 +63,7 @@ func NewVertexExecutor(base *BaseExecutor) *VertexExecutor {
 
 // Execute performs a non-streaming chat completion through Vertex AI.
 func (e *VertexExecutor) Execute(ctx context.Context, req *Request) (*Response, error) {
-	modified, err := e.prepareRequest(req)
+	modified, err := e.prepareRequest(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func (e *VertexExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 
 // ExecuteStream performs a streaming chat completion through Vertex AI.
 func (e *VertexExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
-	modified, err := e.prepareRequest(req)
+	modified, err := e.prepareRequest(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +90,7 @@ func (e *VertexExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 
 // Models returns the available Vertex AI models from the configured endpoint.
 func (e *VertexExecutor) Models(ctx context.Context, req *Request) (*Response, error) {
-	modified, err := e.prepareRequest(req)
+	modified, err := e.prepareRequest(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +99,7 @@ func (e *VertexExecutor) Models(ctx context.Context, req *Request) (*Response, e
 
 // prepareRequest builds a request with a fresh access token, resolved base URL,
 // and the provider prefix stripped from the model id.
-func (e *VertexExecutor) prepareRequest(req *Request) (*Request, error) {
+func (e *VertexExecutor) prepareRequest(ctx context.Context, req *Request) (*Request, error) {
 	saJSON := req.APIKey
 	if saJSON == "" {
 		return nil, errors.New("vertex ai: missing service account JSON; paste the contents of the service-account key file into the API key / credential field")
@@ -113,7 +113,7 @@ func (e *VertexExecutor) prepareRequest(req *Request) (*Request, error) {
 		return nil, errors.New("vertex ai: service account JSON must contain client_email, private_key, and token_uri")
 	}
 
-	tok, err := e.accessToken(saJSON, sa)
+	tok, err := e.accessToken(ctx, saJSON, sa)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +137,7 @@ func (e *VertexExecutor) prepareRequest(req *Request) (*Request, error) {
 }
 
 // accessToken returns a cached Google access token, refreshing it when expired.
-func (e *VertexExecutor) accessToken(saJSON string, sa vertexServiceAccount) (*vertexAccessToken, error) {
+func (e *VertexExecutor) accessToken(ctx context.Context, saJSON string, sa vertexServiceAccount) (*vertexAccessToken, error) {
 	e.mu.RLock()
 	cached := e.tokens[saJSON]
 	e.mu.RUnlock()
@@ -156,7 +156,7 @@ func (e *VertexExecutor) accessToken(saJSON string, sa vertexServiceAccount) (*v
 		return nil, fmt.Errorf("vertex ai: failed to build JWT: %w", err)
 	}
 
-	token, expiresIn, err := exchangeVertexJWT(ctxOrBackground(), sa.TokenURI, jwt)
+	token, expiresIn, err := exchangeVertexJWT(ctx, sa.TokenURI, jwt)
 	if err != nil {
 		return nil, fmt.Errorf("vertex ai: token exchange failed: %w", err)
 	}
@@ -167,10 +167,6 @@ func (e *VertexExecutor) accessToken(saJSON string, sa vertexServiceAccount) (*v
 	e.tokens[saJSON] = ee
 	e.mu.Unlock()
 	return ee, nil
-}
-
-func ctxOrBackground() context.Context {
-	return context.Background()
 }
 
 // parseVertexPrivateKey parses a service-account PEM private key (PKCS#1 or PKCS#8).
@@ -231,6 +227,9 @@ func buildVertexJWT(key *rsa.PrivateKey, clientEmail, tokenURI string) (string, 
 
 // exchangeVertexJWT trades a signed JWT for an access token.
 func exchangeVertexJWT(ctx context.Context, tokenURI, jwt string) (token string, expiresIn int, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
 	body := "grant_type=" + vertexTokenGrantType + "&assertion=" + jwt
 	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURI, strings.NewReader(body))
 	if err != nil {
@@ -262,6 +261,9 @@ func exchangeVertexJWT(ctx context.Context, tokenURI, jwt string) (token string,
 	}
 	if envelope.AccessToken == "" {
 		return "", 0, errors.New("empty access_token in response")
+	}
+	if envelope.ExpiresIn == 0 {
+		envelope.ExpiresIn = 3600
 	}
 	return envelope.AccessToken, envelope.ExpiresIn, nil
 }
