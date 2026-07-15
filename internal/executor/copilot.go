@@ -8,9 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
-	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,29 +21,18 @@ const (
 	copilotDefaultAuthURL = "https://api.github.com/copilot_internal/v2/token"
 	copilotDefaultAPIBase = "https://api.githubcopilot.com"
 
-	copilotUserAgent     = "GitHubCopilotChat/0.26.7"
-	copilotEditorVersion = "vscode/1.105.1"
-	copilotPluginVersion = "copilot-chat/0.26.7"
-	copilotIntegrationID = "vscode-chat"
-	copilotOpenAIIntent  = "conversation-edits"
+	copilotAPIVersion              = "2026-06-01"
+	copilotEditorVersion           = "vscode/1.126.0"
+	copilotChatPluginVersion       = "copilot-chat/0.54.0"
+	copilotChatUserAgent           = "GitHubCopilotChat/0.54.0"
+	copilotRefreshUserAgent        = "GithubCopilot/1.0"
+	copilotRefreshPluginVersion    = "copilot/1.388.0"
+	copilotIntegrationID           = "vscode-chat"
+	copilotOpenAIIntent            = "conversation-panel"
+	copilotUserAgentLibraryVersion = "electron-fetch"
 
-	copilotTokenSkew = 2 * time.Minute
+	copilotTokenSkew = 5 * time.Minute
 )
-
-// package-level cache for the local Copilot OAuth token read from disk, so
-// fallback file reads don't happen on every request with an empty API key.
-var copilotOAuthCache = struct {
-	mu     sync.RWMutex
-	token  string
-	loaded bool
-}{}
-
-func resetCopilotOAuthTokenCache() {
-	copilotOAuthCache.mu.Lock()
-	copilotOAuthCache.loaded = false
-	copilotOAuthCache.token = ""
-	copilotOAuthCache.mu.Unlock()
-}
 
 // copilotToken is the short-lived bearer token returned by GitHub's Copilot
 // token exchange endpoint.
@@ -81,15 +68,13 @@ func (e *CopilotExecutor) Execute(ctx context.Context, req *Request) (*Response,
 		return nil, err
 	}
 
-	body := JSONSet(req.Body, "stream", false)
-	body = stripCopilotModelPrefix(body)
-
-	url, err := openAIEndpoint(copilotAPIBase(token), "chat/completions", req.ProviderSpecificData)
+	body := e.prepareBody(req.Body, false)
+	url, err := e.buildURL(token, req.ProviderSpecificData, body)
 	if err != nil {
 		return nil, err
 	}
 
-	headers := e.copilotHeaders(token.Token, body)
+	headers := e.copilotHeaders(token.Token, body, req.Headers, false)
 	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
 	if err != nil {
 		return nil, err
@@ -109,16 +94,23 @@ func (e *CopilotExecutor) ExecuteStream(ctx context.Context, req *Request) (*Str
 		return nil, err
 	}
 
-	body := JSONSet(req.Body, "stream", true)
-	body = stripCopilotModelPrefix(body)
-
-	url, err := openAIEndpoint(copilotAPIBase(token), "chat/completions", req.ProviderSpecificData)
+	body := e.prepareBody(req.Body, true)
+	url, err := e.buildURL(token, req.ProviderSpecificData, body)
 	if err != nil {
 		return nil, err
 	}
 
-	headers := e.copilotHeaders(token.Token, body)
+	headers := e.copilotHeaders(token.Token, body, req.Headers, true)
 	return e.DoStreamRequestWithConfig(ctx, "POST", url, headers, body, req.StreamConfig)
+}
+
+// prepareBody applies stream flag, strips provider prefix, and sanitizes the
+// request for GitHub Copilot's OpenAI-compatible endpoints.
+func (e *CopilotExecutor) prepareBody(body []byte, stream bool) []byte {
+	body = JSONSet(body, "stream", stream)
+	body = stripCopilotModelPrefix(body)
+	body = sanitizeCopilotBody(body)
+	return body
 }
 
 // Embeddings is not supported by GitHub Copilot.
@@ -153,7 +145,7 @@ func (e *CopilotExecutor) Models(ctx context.Context, req *Request) (*Response, 
 		return nil, err
 	}
 
-	headers := e.copilotHeaders(token.Token, nil)
+	headers := e.copilotHeaders(token.Token, nil, req.Headers, false)
 	resp, err := e.DoRequest(ctx, "GET", url, headers, nil)
 	if err != nil {
 		return nil, err
@@ -165,24 +157,34 @@ func (e *CopilotExecutor) Models(ctx context.Context, req *Request) (*Response, 
 }
 
 // ensureToken returns a cached Copilot token or fetches a new one using the
-// request's API key (treated as a GitHub OAuth token). If no API key is
-// supplied, it falls back to reading the local Copilot hosts/apps.json file.
+// request's access token (preferred) or API key (migration fallback).
 func (e *CopilotExecutor) ensureToken(req *Request) (*copilotToken, error) {
-	oauth := req.APIKey
+	oauth := req.AccessToken
 	if oauth == "" {
-		oauth = loadCopilotOAuthToken()
+		oauth = req.APIKey // migration fallback for connections stored before OAuth
 	}
 	if oauth == "" {
-		return nil, errors.New("github copilot: missing OAuth token; add it as the connection API key or sign in via a Copilot-enabled editor first")
+		return nil, errors.New("github copilot: missing OAuth token; add it as the connection access token")
 	}
+
+	now := time.Now().Unix()
+	skew := int64(copilotTokenSkew.Seconds())
 
 	e.mu.RLock()
 	tok := e.tokens[oauth]
 	e.mu.RUnlock()
-
-	now := time.Now().Unix()
-	if tok != nil && tok.ExpiresAt > now+int64(copilotTokenSkew.Seconds()) {
+	if tok != nil && tok.ExpiresAt > now+skew {
 		return tok, nil
+	}
+
+	// Prefer a Copilot token persisted in provider-specific data if it is not
+	// near expiry; otherwise refresh via GitHub's internal token endpoint.
+	if psdTok := req.ProviderSpecificData["copilotToken"]; psdTok != "" {
+		if expStr := req.ProviderSpecificData["copilotTokenExpiresAt"]; expStr != "" {
+			if expiresAt, err := strconv.ParseInt(expStr, 10, 64); err == nil && expiresAt > now+skew {
+				return &copilotToken{Token: psdTok, ExpiresAt: expiresAt}, nil
+			}
+		}
 	}
 
 	return e.fetchToken(oauth)
@@ -199,6 +201,9 @@ func (e *CopilotExecutor) fetchToken(oauthToken string) (*copilotToken, error) {
 	}
 	hreq.Header.Set("Authorization", "token "+oauthToken)
 	hreq.Header.Set("Accept", "application/json")
+	hreq.Header.Set("User-Agent", copilotRefreshUserAgent)
+	hreq.Header.Set("Editor-Version", copilotEditorVersion)
+	hreq.Header.Set("Editor-Plugin-Version", copilotRefreshPluginVersion)
 
 	client := http.DefaultClient
 	if e.Client != nil {
@@ -234,31 +239,60 @@ func (e *CopilotExecutor) fetchToken(oauthToken string) (*copilotToken, error) {
 }
 
 // copilotHeaders builds the request headers Copilot's OpenAI-compatible proxy
-// expects.
-func (e *CopilotExecutor) copilotHeaders(token string, body []byte) map[string]string {
-	initiator := "user"
+// expects. stream selects the Accept header; reqHeaders may supply x-initiator.
+func (e *CopilotExecutor) copilotHeaders(token string, body []byte, reqHeaders map[string]string, stream bool) map[string]string {
+	initiator := copilotInitiator(body, reqHeaders)
+
+	accept := "application/json"
+	if stream {
+		accept = "text/event-stream"
+	}
+
+	return map[string]string{
+		"Accept":                              accept,
+		"Content-Type":                        "application/json",
+		"Authorization":                       "Bearer " + token,
+		"User-Agent":                          copilotChatUserAgent,
+		"Editor-Version":                      copilotEditorVersion,
+		"Editor-Plugin-Version":               copilotChatPluginVersion,
+		"Copilot-Integration-Id":              copilotIntegrationID,
+		"Openai-Intent":                       copilotOpenAIIntent,
+		"X-GitHub-Api-Version":                copilotAPIVersion,
+		"X-VSCode-User-Agent-Library-Version": copilotUserAgentLibraryVersion,
+		"X-Initiator":                         initiator,
+	}
+}
+
+// copilotInitiator returns "agent" when the trailing message role is assistant
+// or when the client explicitly sends x-initiator: agent. Otherwise it returns
+// "user".
+func copilotInitiator(body []byte, reqHeaders map[string]string) string {
+	if v := getHeader(reqHeaders, "x-initiator"); v == "agent" || v == "user" {
+		return v
+	}
 	if len(body) > 0 {
 		msgs := gjson.GetBytes(body, "messages")
 		if msgs.IsArray() {
 			arr := msgs.Array()
 			if len(arr) > 0 {
 				if r := arr[len(arr)-1].Get("role").String(); r == "assistant" {
-					initiator = "agent"
+					return "agent"
 				}
 			}
 		}
 	}
+	return "user"
+}
 
-	return map[string]string{
-		"Content-Type":           "application/json",
-		"Authorization":          "Bearer " + token,
-		"User-Agent":             copilotUserAgent,
-		"Editor-Version":         copilotEditorVersion,
-		"Editor-Plugin-Version":  copilotPluginVersion,
-		"Copilot-Integration-Id": copilotIntegrationID,
-		"Openai-Intent":          copilotOpenAIIntent,
-		"X-Initiator":            initiator,
+// getHeader performs a case-insensitive lookup in a header map.
+func getHeader(headers map[string]string, key string) string {
+	lower := strings.ToLower(key)
+	for k, v := range headers {
+		if strings.ToLower(k) == lower {
+			return v
+		}
 	}
+	return ""
 }
 
 // copilotAPIBase returns the upstream API host from the token, or the public
@@ -268,6 +302,50 @@ func copilotAPIBase(tok *copilotToken) string {
 		return tok.Endpoints.API
 	}
 	return copilotDefaultAPIBase
+}
+
+// buildURL picks the upstream endpoint. Codex and other models tagged for the
+// Responses API are routed to /responses, unless they are Claude/Gemini
+// variants which Copilot does not support on that endpoint.
+func (e *CopilotExecutor) buildURL(tok *copilotToken, psd map[string]string, body []byte) (string, error) {
+	base := copilotAPIBase(tok)
+	model := ExtractModel(gjson.GetBytes(body, "model").String())
+
+	if psd == nil {
+		psd = map[string]string{}
+	}
+
+	if shouldUseResponsesEndpoint(model, psd) {
+		if respBase := psd["responsesBaseUrl"]; respBase != "" {
+			respBase = strings.TrimRight(respBase, "/")
+			return respBase, nil
+		}
+		u := strings.TrimRight(base, "/")
+		u = strings.TrimSuffix(u, "/chat/completions")
+		return openAIEndpoint(u, "responses", psd)
+	}
+	return openAIEndpoint(base, "chat/completions", psd)
+}
+
+// shouldUseResponsesEndpoint decides whether the model should hit Copilot's
+// /responses endpoint. It mirrors OmniRoute's logic: target_format=responses
+// or a codex name, but never Claude or Gemini variants. When the catalog
+// helper is unavailable, model-name heuristics cover the curated Copilot
+// responses models.
+func shouldUseResponsesEndpoint(model string, psd map[string]string) bool {
+	m := strings.ToLower(model)
+	if strings.Contains(m, "gemini") || strings.Contains(m, "claude") {
+		return false
+	}
+	if strings.Contains(m, "codex") {
+		return true
+	}
+	switch m {
+	case "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5-mini",
+		"mai-code-1-flash", "oswe-vscode-prime":
+		return true
+	}
+	return false
 }
 
 // stripCopilotModelPrefix removes the "copilot/" prefix from model IDs so the
@@ -292,61 +370,121 @@ func stripCopilotModelPrefix(body []byte) []byte {
 	return out
 }
 
-// loadCopilotOAuthToken tries to read the locally stored GitHub OAuth token
-// from the files written by the official Copilot editor extensions.
-func loadCopilotOAuthToken() string {
-	copilotOAuthCache.mu.RLock()
-	if copilotOAuthCache.loaded {
-		tok := copilotOAuthCache.token
-		copilotOAuthCache.mu.RUnlock()
-		return tok
+// sanitizeCopilotBody applies Copilot-specific request cleanups:
+//   - drop reasoning fields from assistant messages
+//   - strip temperature for gpt-5.4 models
+//   - cap tools to 128
+//   - serialize unknown content part types as text and drop empty parts
+//   - drop trailing assistant prefill(s)
+func sanitizeCopilotBody(body []byte) []byte {
+	if len(body) == 0 {
+		return body
 	}
-	copilotOAuthCache.mu.RUnlock()
 
-	configDir := os.Getenv("XDG_CONFIG_HOME")
-	if configDir == "" {
-		home, _ := os.UserHomeDir()
-		if runtime.GOOS == "windows" {
-			localAppData := os.Getenv("LOCALAPPDATA")
-			if localAppData == "" {
-				configDir = filepath.Join(home, ".config")
-			} else {
-				configDir = localAppData
+	var req map[string]any
+	if err := json.Unmarshal(body, &req); err != nil {
+		return body
+	}
+
+	model, _ := req["model"].(string)
+
+	if msgs, ok := req["messages"].([]any); ok {
+		for i, raw := range msgs {
+			msg, ok := raw.(map[string]any)
+			if !ok {
+				continue
 			}
-		} else {
-			configDir = filepath.Join(home, ".config")
+			role, _ := msg["role"].(string)
+			if strings.EqualFold(role, "assistant") {
+				delete(msg, "reasoning_text")
+				delete(msg, "reasoning_content")
+			}
+			if content, ok := msg["content"].([]any); ok {
+				msg["content"] = sanitizeCopilotContentParts(content)
+			}
+			msgs[i] = msg
 		}
+		req["messages"] = dropTrailingAssistantPrefill(msgs)
 	}
 
-	tok := ""
-	dir := filepath.Join(configDir, "github-copilot")
-	for _, name := range []string{"hosts.json", "apps.json"} {
-		path := filepath.Join(dir, name)
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		tok = extractGitHubOAuthToken(data)
-		if tok != "" {
-			break
-		}
+	if isGpt54Model(model) {
+		delete(req, "temperature")
 	}
 
-	copilotOAuthCache.mu.Lock()
-	copilotOAuthCache.token = tok
-	copilotOAuthCache.loaded = true
-	copilotOAuthCache.mu.Unlock()
-	return tok
+	if tools, ok := req["tools"].([]any); ok && len(tools) > 128 {
+		req["tools"] = tools[:128]
+	}
+
+	out, err := json.Marshal(req)
+	if err != nil {
+		return body
+	}
+	return out
 }
 
-// extractGitHubOAuthToken walks the "github.com" entry in hosts.json or
-// apps.json and returns the oauth_token value.
-func extractGitHubOAuthToken(data []byte) string {
-	for _, key := range []string{`github\.com`, `github\.localhost`} {
-		oauth := gjson.GetBytes(data, key+".oauth_token")
-		if oauth.Exists() && oauth.String() != "" {
-			return oauth.String()
+func isGpt54Model(model string) bool {
+	m := strings.ToLower(ExtractModel(model))
+	return strings.Contains(m, "gpt-5.4")
+}
+
+func sanitizeCopilotContentParts(parts []any) any {
+	var clean []any
+	for _, raw := range parts {
+		part, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		typ, _ := part["type"].(string)
+		switch typ {
+		case "text", "image_url":
+			clean = append(clean, part)
+		default:
+			var text string
+			switch v := part["text"].(type) {
+			case string:
+				text = v
+			case nil:
+			default:
+				if v != nil {
+					b, _ := json.Marshal(v)
+					text = string(b)
+				}
+			}
+			if text == "" {
+				if v, ok := part["thinking"].(string); ok {
+					text = v
+				}
+			}
+			if text == "" {
+				b, _ := json.Marshal(part)
+				text = string(b)
+			}
+			if text != "" {
+				clean = append(clean, map[string]any{"type": "text", "text": text})
+			}
 		}
 	}
-	return ""
+	if len(clean) == 0 {
+		return nil
+	}
+	return clean
+}
+
+// dropTrailingAssistantPrefill removes trailing assistant messages so the
+// conversation ends with a non-assistant message, which Copilot's
+// /chat/completions endpoint requires. It never empties the array.
+func dropTrailingAssistantPrefill(messages []any) []any {
+	end := len(messages)
+	for end > 1 {
+		msg, ok := messages[end-1].(map[string]any)
+		if !ok {
+			break
+		}
+		role, _ := msg["role"].(string)
+		if !strings.EqualFold(role, "assistant") {
+			break
+		}
+		end--
+	}
+	return messages[:end]
 }

@@ -7,13 +7,24 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/tidwall/gjson"
+)
+
+type capturedRequest struct {
+	path   string
+	header http.Header
+	body   []byte
+}
+
+var (
+	copilotAuthCalls atomic.Int32
+	lastCopilotReq   capturedRequest
 )
 
 type copilotTestTransport struct {
@@ -36,15 +47,16 @@ func (rt *copilotTestTransport) RoundTrip(req *http.Request) (*http.Response, er
 func execWithCopilotTransport(t *testing.T) (*httptest.Server, *httptest.Server, *CopilotExecutor, func()) {
 	t.Helper()
 
-	callCount := make(map[string]int)
+	copilotAuthCalls.Store(0)
+	lastCopilotReq = capturedRequest{}
 
 	auth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount["auth"]++
+		copilotAuthCalls.Add(1)
 		if r.URL.Path != "/copilot_internal/v2/token" {
 			http.NotFound(w, r)
 			return
 		}
-		if r.Header.Get("Authorization") != "token test-oauth" {
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "token ") {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -56,15 +68,15 @@ func execWithCopilotTransport(t *testing.T) (*httptest.Server, *httptest.Server,
 	}))
 
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		lastCopilotReq.path = r.URL.Path
+		lastCopilotReq.header = r.Header.Clone()
+		lastCopilotReq.body = body
+
+		model := gjson.GetBytes(body, "model").String()
+		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/chat/completions":
-			if r.Header.Get("Authorization") != "Bearer test-copilot-token" {
-				http.Error(w, "missing token", http.StatusUnauthorized)
-				return
-			}
-			body, _ := io.ReadAll(r.Body)
-			model := gjson.GetBytes(body, "model").String()
-			w.Header().Set("Content-Type", "application/json")
+		case "/chat/completions", "/responses", "/v1/responses":
 			json.NewEncoder(w).Encode(map[string]any{
 				"object": "chat.completion",
 				"model":  model,
@@ -74,10 +86,6 @@ func execWithCopilotTransport(t *testing.T) (*httptest.Server, *httptest.Server,
 				}}},
 			})
 		case "/models":
-			if r.Header.Get("Authorization") != "Bearer test-copilot-token" {
-				http.Error(w, "missing token", http.StatusUnauthorized)
-				return
-			}
 			json.NewEncoder(w).Encode(map[string]any{
 				"object": "list",
 				"data":   []map[string]any{{"id": "gpt-4o"}},
@@ -119,6 +127,44 @@ func TestCopilotExecutor_ExchangesTokenAndStripsModelPrefix(t *testing.T) {
 	model := gjson.GetBytes(resp.Body, "model").String()
 	if model != "gpt-4o" {
 		t.Errorf("upstream model = %q, want gpt-4o", model)
+	}
+}
+
+func TestCopilotExecutor_PrefersAccessToken(t *testing.T) {
+	_, _, exec, cleanup := execWithCopilotTransport(t)
+	defer cleanup()
+
+	_, err := exec.Execute(context.Background(), &Request{
+		Provider:    "copilot",
+		AccessToken: "oauth-token",
+		APIKey:      "old-api-key",
+		Body:        []byte(`{"model":"copilot/gpt-4o","messages":[{"role":"user","content":"hi"}]}`),
+	})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if copilotAuthCalls.Load() != 1 {
+		t.Fatalf("auth calls = %d, want 1", copilotAuthCalls.Load())
+	}
+	if lastCopilotReq.header.Get("Authorization") != "Bearer test-copilot-token" {
+		t.Fatalf("authorization = %q, want Bearer test-copilot-token", lastCopilotReq.header.Get("Authorization"))
+	}
+}
+
+func TestCopilotExecutor_APIKeyFallbackForMigration(t *testing.T) {
+	_, _, exec, cleanup := execWithCopilotTransport(t)
+	defer cleanup()
+
+	_, err := exec.Execute(context.Background(), &Request{
+		Provider: "copilot",
+		APIKey:   "legacy-token",
+		Body:     []byte(`{"model":"copilot/gpt-4o","messages":[]}`),
+	})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if copilotAuthCalls.Load() != 1 {
+		t.Fatalf("auth calls = %d, want 1", copilotAuthCalls.Load())
 	}
 }
 
@@ -221,53 +267,240 @@ func TestCopilotExecutor_DefaultsExpiresAtToOneHour(t *testing.T) {
 	}
 }
 
-func TestCopilotOAuthToken_CachesResult(t *testing.T) {
-	resetCopilotOAuthTokenCache()
-	defer resetCopilotOAuthTokenCache()
+func TestCopilotExecutor_UsesPSDCopilotTokenWhenNotNearExpiry(t *testing.T) {
+	_, _, exec, cleanup := execWithCopilotTransport(t)
+	defer cleanup()
 
-	tmp := t.TempDir()
-	oldXDG := os.Getenv("XDG_CONFIG_HOME")
-	os.Setenv("XDG_CONFIG_HOME", tmp)
-	defer os.Setenv("XDG_CONFIG_HOME", oldXDG)
+	_, err := exec.Execute(context.Background(), &Request{
+		Provider: "copilot",
+		APIKey:   "any",
+		ProviderSpecificData: map[string]string{
+			"copilotToken":          "cached-copilot-token",
+			"copilotTokenExpiresAt": strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10),
+		},
+		Body: []byte(`{"model":"copilot/gpt-4o","messages":[]}`),
+	})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if copilotAuthCalls.Load() != 0 {
+		t.Fatalf("auth calls = %d, want 0", copilotAuthCalls.Load())
+	}
+	if lastCopilotReq.header.Get("Authorization") != "Bearer cached-copilot-token" {
+		t.Fatalf("authorization = %q, want Bearer cached-copilot-token", lastCopilotReq.header.Get("Authorization"))
+	}
+}
 
-	configDir := filepath.Join(tmp, "github-copilot")
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(configDir, "hosts.json")
-	if err := os.WriteFile(path, []byte(`{"github.com":{"oauth_token":"cached-token"}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+func TestCopilotExecutor_RefreshesPSDCopilotTokenNearExpiry(t *testing.T) {
+	_, _, exec, cleanup := execWithCopilotTransport(t)
+	defer cleanup()
 
-	first := loadCopilotOAuthToken()
-	if first != "cached-token" {
-		t.Fatalf("first load = %q, want cached-token", first)
+	_, err := exec.Execute(context.Background(), &Request{
+		Provider: "copilot",
+		APIKey:   "any",
+		ProviderSpecificData: map[string]string{
+			"copilotToken":          "cached-copilot-token",
+			"copilotTokenExpiresAt": strconv.FormatInt(time.Now().Add(30*time.Second).Unix(), 10),
+		},
+		Body: []byte(`{"model":"copilot/gpt-4o","messages":[]}`),
+	})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
 	}
+	if copilotAuthCalls.Load() != 1 {
+		t.Fatalf("auth calls = %d, want 1", copilotAuthCalls.Load())
+	}
+	if lastCopilotReq.header.Get("Authorization") != "Bearer test-copilot-token" {
+		t.Fatalf("authorization = %q, want Bearer test-copilot-token", lastCopilotReq.header.Get("Authorization"))
+	}
+}
 
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	second := loadCopilotOAuthToken()
-	if second != "cached-token" {
-		t.Fatalf("second load after deleting file = %q, want cached-token (cache miss)", second)
-	}
+func TestCopilotExecutor_HeadersUseOmniRouteConstants(t *testing.T) {
+	_, _, exec, cleanup := execWithCopilotTransport(t)
+	defer cleanup()
 
-	resetCopilotOAuthTokenCache()
-	third := loadCopilotOAuthToken()
-	if third != "" {
-		t.Fatalf("after reset = %q, want empty", third)
+	_, err := exec.Execute(context.Background(), &Request{
+		Provider:    "copilot",
+		AccessToken: "tok",
+		Body:        []byte(`{"model":"copilot/gpt-4o","messages":[]}`),
+	})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	want := map[string]string{
+		"Editor-Version":                      "vscode/1.126.0",
+		"Editor-Plugin-Version":               "copilot-chat/0.54.0",
+		"User-Agent":                          "GitHubCopilotChat/0.54.0",
+		"Copilot-Integration-Id":              "vscode-chat",
+		"Openai-Intent":                       "conversation-panel",
+		"X-Github-Api-Version":                "2026-06-01",
+		"X-Vscode-User-Agent-Library-Version": "electron-fetch",
+	}
+	for k, v := range want {
+		if got := lastCopilotReq.header.Get(k); got != v {
+			t.Errorf("%s = %q, want %q", k, got, v)
+		}
+	}
+}
+
+func TestCopilotExecutor_ForwardsXInitiator(t *testing.T) {
+	_, _, exec, cleanup := execWithCopilotTransport(t)
+	defer cleanup()
+
+	for _, tc := range []struct {
+		header string
+		want   string
+	}{
+		{"agent", "agent"},
+		{"user", "user"},
+		{"other", "user"},
+	} {
+		_, err := exec.Execute(context.Background(), &Request{
+			Provider:    "copilot",
+			AccessToken: "tok",
+			Headers:     map[string]string{"x-initiator": tc.header},
+			Body:        []byte(`{"model":"copilot/gpt-4o","messages":[{"role":"user"}]}`),
+		})
+		if err != nil {
+			t.Fatalf("execute failed: %v", err)
+		}
+		if got := lastCopilotReq.header.Get("X-Initiator"); got != tc.want {
+			t.Errorf("x-initiator=%q => X-Initiator = %q, want %q", tc.header, got, tc.want)
+		}
 	}
 }
 
 func TestCopilotHeaders_DetectsInitiator(t *testing.T) {
 	exec := NewCopilotExecutor(NewBaseExecutor())
-	h := exec.copilotHeaders("tok", []byte(`{"messages":[{"role":"user"},{"role":"assistant"}]}`))
+	h := exec.copilotHeaders("tok", []byte(`{"messages":[{"role":"user"},{"role":"assistant"}]}`), nil, false)
 	if h["X-Initiator"] != "agent" {
 		t.Errorf("X-Initiator = %q, want agent", h["X-Initiator"])
 	}
 
-	h = exec.copilotHeaders("tok", []byte(`{"messages":[{"role":"user"}]}`))
+	h = exec.copilotHeaders("tok", []byte(`{"messages":[{"role":"user"}]}`), nil, false)
 	if h["X-Initiator"] != "user" {
 		t.Errorf("X-Initiator = %q, want user", h["X-Initiator"])
+	}
+}
+
+func TestCopilotExecutor_RoutesCodexToResponses(t *testing.T) {
+	_, _, exec, cleanup := execWithCopilotTransport(t)
+	defer cleanup()
+
+	for _, model := range []string{"copilot/gpt-5.3-codex", "copilot/copilot-codex-latest"} {
+		_, err := exec.Execute(context.Background(), &Request{
+			Provider:    "copilot",
+			AccessToken: "tok",
+			Body:        []byte(`{"model":"` + model + `","messages":[{"role":"user"}]}`),
+		})
+		if err != nil {
+			t.Fatalf("execute failed for %s: %v", model, err)
+		}
+		if !strings.HasSuffix(lastCopilotReq.path, "/responses") {
+			t.Errorf("model %s routed to %q, want /responses", model, lastCopilotReq.path)
+		}
+	}
+}
+
+func TestCopilotExecutor_NeverRoutesClaudeOrGeminiToResponses(t *testing.T) {
+	_, _, exec, cleanup := execWithCopilotTransport(t)
+	defer cleanup()
+
+	for _, model := range []string{"copilot/claude-3.5-sonnet", "copilot/gemini-2.0-flash"} {
+		_, err := exec.Execute(context.Background(), &Request{
+			Provider:    "copilot",
+			AccessToken: "tok",
+			Body:        []byte(`{"model":"` + model + `","messages":[{"role":"user"}]}`),
+		})
+		if err != nil {
+			t.Fatalf("execute failed for %s: %v", model, err)
+		}
+		if lastCopilotReq.path != "/chat/completions" {
+			t.Errorf("model %s routed to %q, want /chat/completions", model, lastCopilotReq.path)
+		}
+	}
+}
+
+func TestCopilotExecutor_StripTemperatureOnGpt54(t *testing.T) {
+	_, _, exec, cleanup := execWithCopilotTransport(t)
+	defer cleanup()
+
+	_, err := exec.Execute(context.Background(), &Request{
+		Provider:    "copilot",
+		AccessToken: "tok",
+		Body:        []byte(`{"model":"copilot/gpt-5.4","messages":[{"role":"user"}],"temperature":0.7}`),
+	})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if gjson.GetBytes(lastCopilotReq.body, "temperature").Exists() {
+		t.Errorf("temperature should be stripped for gpt-5.4")
+	}
+}
+
+func TestCopilotExecutor_CapsToolsTo128(t *testing.T) {
+	_, _, exec, cleanup := execWithCopilotTransport(t)
+	defer cleanup()
+
+	tools := make([]map[string]any, 150)
+	for i := 0; i < 150; i++ {
+		tools[i] = map[string]any{"type": "function", "function": map[string]any{"name": strconv.Itoa(i)}}
+	}
+	body, _ := json.Marshal(map[string]any{
+		"model":    "copilot/gpt-4o",
+		"messages": []map[string]any{{"role": "user"}},
+		"tools":    tools,
+	})
+	_, err := exec.Execute(context.Background(), &Request{
+		Provider:    "copilot",
+		AccessToken: "tok",
+		Body:        body,
+	})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if got := int64(len(gjson.GetBytes(lastCopilotReq.body, "tools").Array())); got != 128 {
+		t.Errorf("tools count = %d, want 128", got)
+	}
+}
+
+func TestCopilotExecutor_SanitizesMessageContentParts(t *testing.T) {
+	_, _, exec, cleanup := execWithCopilotTransport(t)
+	defer cleanup()
+
+	_, err := exec.Execute(context.Background(), &Request{
+		Provider:    "copilot",
+		AccessToken: "tok",
+		Body:        []byte(`{"model":"copilot/gpt-4o","messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"hidden"},{"type":"tool_use","name":"x"},{"type":"text","text":"visible"}]},{"role":"user","content":[{"type":"text","text":"hi"}]}]}`),
+	})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	parts := gjson.GetBytes(lastCopilotReq.body, "messages.0.content").Array()
+	for _, p := range parts {
+		if p.Get("type").String() != "text" {
+			t.Errorf("unexpected part type %q", p.Get("type").String())
+		}
+	}
+	if len(parts) != 3 {
+		t.Errorf("content parts = %d, want 3", len(parts))
+	}
+}
+
+func TestCopilotExecutor_DropsTrailingAssistantPrefill(t *testing.T) {
+	_, _, exec, cleanup := execWithCopilotTransport(t)
+	defer cleanup()
+
+	_, err := exec.Execute(context.Background(), &Request{
+		Provider:    "copilot",
+		AccessToken: "tok",
+		Body:        []byte(`{"model":"copilot/gpt-4o","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"prefill"}]}`),
+	})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	count := len(gjson.GetBytes(lastCopilotReq.body, "messages").Array())
+	if count != 1 {
+		t.Errorf("messages count = %d, want 1", count)
 	}
 }
