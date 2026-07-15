@@ -684,7 +684,7 @@ async function handleBulkImport() {
 
 <!-- Pool Table -->
   <Tabs.Content value="pools">
-  <section class="rounded-xl bg-card p-4 shadow-card md:p-5">
+  <section class="rounded-xl bg-card p-4 shadow-card md:p-5 mb-4">
   <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
     <div class="relative w-full md:max-w-md">
       <SearchIcon class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
@@ -724,7 +724,7 @@ async function handleBulkImport() {
   </div>
 </section>
 {#if selectedCount > 0}
-				<div class="flex items-center justify-between rounded-xl border border-border bg-card shadow-card p-3">
+				<div class="flex items-center justify-between rounded-xl border border-border bg-card shadow-card p-3 mb-4">
 					<span class="text-body-sm-strong">{selectedCount} selected</span>
 					<div class="flex gap-2">
 						<Button onclick={testSelectedPools} variant="outline" size="sm" class="text-body-sm rounded-sm px-3">Test selected</Button>

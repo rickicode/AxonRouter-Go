@@ -326,10 +326,13 @@ func New(cfg Config) *Router {
 		g.GET("/dashboard/providers", dashboardH.ProviderSummary)
 		g.GET("/dashboard/recent-logs", dashboardH.RecentLogs)
 
-		// Metrics
-		g.GET("/metrics", healthH.Metrics)
+// Metrics
+	g.GET("/metrics", healthH.Metrics)
 
-		// Upgrade
+// Changelog (proxied through the server to avoid CORS issues)
+	g.GET("/changelog", healthH.Changelog)
+
+// Upgrade
 		g.POST("/upgrade", upgradeH.Upgrade)
 
 		// Quota

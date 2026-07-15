@@ -82,6 +82,22 @@ func (h *HealthHandler) Health(c *gin.Context) {
 }
 
 // Metrics returns operational counters for observability.
+// Changelog returns the project's CHANGELOG markdown via the version checker.
+// The dashboard uses this instead of fetching raw.githubusercontent.com directly,
+// avoiding CORS and ad-blocker issues in the browser.
+func (h *HealthHandler) Changelog(c *gin.Context) {
+	if h.checker == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "version checker unavailable"})
+		return
+	}
+	md, err := h.checker.Changelog()
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"markdown": md})
+}
+
 func (h *HealthHandler) Metrics(c *gin.Context) {
 	var rateLimited, quotaExhausted int
 	h.db.QueryRow(`

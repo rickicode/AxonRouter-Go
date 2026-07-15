@@ -17,6 +17,7 @@ const (
 )
 
 var githubLatestURL = "https://api.github.com/repos/rickicode/AxonRouter-Go/releases/latest"
+var rawChangelogURL = "https://raw.githubusercontent.com/rickicode/AxonRouter-Go/main/CHANGELOG.md"
 
 // userAgent is sent with all outbound version/GitHub requests.
 var userAgent = "AxonRouter-Go/" + String()
@@ -78,15 +79,17 @@ func checkLatest(client *http.Client, url string) (ReleaseInfo, error) {
 
 // Checker caches the latest release and refreshes it in the background.
 type Checker struct {
-	mu        sync.RWMutex
-	client    *http.Client
-	url       string
-	ttl       time.Duration
-	cached    ReleaseInfo
-	cachedAt  time.Time
+	mu sync.RWMutex
+	client *http.Client
+	url string
+	ttl time.Duration
+	cached ReleaseInfo
+	cachedAt time.Time
+	changelog string
+	changelogAt time.Time
 	startOnce sync.Once
-	stop      chan struct{}
-	wg        sync.WaitGroup
+	stop chan struct{}
+	wg sync.WaitGroup
 }
 
 // NewChecker creates a Checker with the provided HTTP client.
@@ -101,9 +104,9 @@ func NewCheckerWithURL(client *http.Client, url string) *Checker {
 	}
 	return &Checker{
 		client: client,
-		url:    url,
-		ttl:    defaultCacheTTL,
-		stop:   make(chan struct{}),
+		url: url,
+		ttl: defaultCacheTTL,
+		stop: make(chan struct{}),
 	}
 }
 
@@ -139,6 +142,49 @@ func (c *Checker) Refresh() error {
 	c.cachedAt = time.Now()
 	c.mu.Unlock()
 	return nil
+}
+
+// Changelog returns the project's CHANGELOG markdown, fetched from GitHub and
+// cached for the configured TTL. Callers get previously cached content even if
+// a background refresh fails, so UI pages never block on transient network issues.
+func (c *Checker) Changelog() (string, error) {
+	c.mu.RLock()
+	if c.changelog != "" && time.Since(c.changelogAt) < c.ttl {
+		md := c.changelog
+		c.mu.RUnlock()
+		return md, nil
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.changelog != "" && time.Since(c.changelogAt) < c.ttl {
+		return c.changelog, nil
+	}
+
+	req, err := http.NewRequest(http.MethodGet, rawChangelogURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("changelog returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	if err != nil {
+		return "", err
+	}
+	c.changelog = string(body)
+	c.changelogAt = time.Now()
+	return c.changelog, nil
 }
 
 // LatestVersion returns the cached release. It never blocks on network I/O.

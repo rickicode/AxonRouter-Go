@@ -4,20 +4,20 @@ import { toast } from 'svelte-sonner';
 import { Button } from '$lib/components/ui/button';
 import { Badge } from '$lib/components/ui/badge';
 import * as Card from '$lib/components/ui/card';
-import InfoIcon from '@lucide/svelte/icons/info';
 import CodeIcon from '@lucide/svelte/icons/code';
+import BookOpenIcon from '@lucide/svelte/icons/book-open';
+import RocketIcon from '@lucide/svelte/icons/rocket';
+import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
 import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
-import ArrowUpCircleIcon from '@lucide/svelte/icons/arrow-up-circle';
 import Loader2Icon from '@lucide/svelte/icons/loader-2';
 import { getToken } from '$lib/auth';
 import {
-	normalizeVersion,
-	parseChangelogForVersion,
-	type ChangelogSection,
+  normalizeVersion,
+  parseChangelogForVersion,
+  type ChangelogSection,
 } from '$lib/about-utils';
 
 const REPO_URL = 'https://github.com/rickicode/AxonRouter-Go';
-const RAW_CHANGELOG_URL = 'https://raw.githubusercontent.com/rickicode/AxonRouter-Go/main/CHANGELOG.md';
 const HEALTH_POLL_INTERVAL_MS = 30000;
 const UPGRADE_TIMEOUT_MS = 70000;
 
@@ -27,10 +27,14 @@ let updateAvailable = $state(false);
 let changelogSections = $state<ChangelogSection[]>([]);
 let loading = $state(true);
 let changelogLoading = $state(true);
+let changelogError = $state('');
 let upgrading = $state(false);
 let upgradeJustCompleted = $state(false);
 let error = $state('');
 let healthErrorShown = $state(false);
+
+const normalizedCurrent = $derived(currentVersion ? normalizeVersion(currentVersion) : '');
+const normalizedLatest = $derived(latestVersion ? normalizeVersion(latestVersion) : '');
 
 async function fetchHealth() {
   try {
@@ -53,211 +57,275 @@ async function fetchHealth() {
 }
 
 async function fetchChangelog() {
-	try {
-		const res = await fetch(RAW_CHANGELOG_URL);
-		if (!res.ok) throw new Error(`Changelog returned ${res.status}`);
-		const markdown = await res.text();
-		changelogSections = parseChangelogForVersion(markdown, currentVersion || '0.0.0');
-	} catch {
-		changelogSections = [];
-	} finally {
-		changelogLoading = false;
-	}
+  changelogError = '';
+  try {
+    const headers: Record<string, string> = {};
+    const token = getToken();
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+
+    const res = await fetch('/api/admin/changelog', { headers });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `Changelog returned ${res.status}`);
+    }
+    const data = await res.json();
+    const markdown = typeof data.markdown === 'string' ? data.markdown : '';
+    changelogSections = parseChangelogForVersion(markdown, currentVersion || '0.0.0');
+  } catch (err) {
+    changelogSections = [];
+    changelogError = err instanceof Error ? err.message : 'Failed to load release notes';
+  } finally {
+    changelogLoading = false;
+  }
 }
 
 async function handleUpgrade() {
-	if (upgrading) return;
-	upgrading = true;
+  if (upgrading) return;
+  upgrading = true;
 
-	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), UPGRADE_TIMEOUT_MS);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), UPGRADE_TIMEOUT_MS);
 
-	try {
-		const headers: Record<string, string> = {};
-		const token = getToken();
-		if (token) headers['Authorization'] = 'Bearer ' + token;
+  try {
+    const headers: Record<string, string> = {};
+    const token = getToken();
+    if (token) headers['Authorization'] = 'Bearer ' + token;
 
-		const res = await fetch('/api/admin/upgrade', {
-			method: 'POST',
-			headers,
-			signal: controller.signal,
-		});
-		const data = await res.json().catch(() => ({}));
+    const res = await fetch('/api/admin/upgrade', {
+      method: 'POST',
+      headers,
+      signal: controller.signal,
+    });
+    const data = await res.json().catch(() => ({}));
 
-		if (!res.ok) {
-			throw new Error(data.error || `Upgrade returned ${res.status}`);
-		}
+    if (!res.ok) {
+      throw new Error(data.error || `Upgrade returned ${res.status}`);
+    }
 
     const path = typeof data.path === 'string' ? data.path : '';
     upgradeJustCompleted = true;
     toast.success(path ? `Upgrade saved to ${path}` : 'Upgrade completed');
-	} catch (err) {
-		const message = err instanceof Error ? err.message : 'Upgrade failed';
-		toast.error('Upgrade failed: ' + message);
-	} finally {
-		clearTimeout(timeout);
-		upgrading = false;
-	}
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Upgrade failed';
+    toast.error('Upgrade failed: ' + message);
+  } finally {
+    clearTimeout(timeout);
+    upgrading = false;
+  }
 }
 
-onMount(async () => {
-	document.title = 'About — AxonRouter';
-	await fetchHealth();
-	loading = false;
-	await fetchChangelog();
+let checking = $state(false);
+let healthInterval: ReturnType<typeof setInterval> | undefined;
 
-	const interval = setInterval(fetchHealth, HEALTH_POLL_INTERVAL_MS);
-	return () => clearInterval(interval);
+async function checkForUpdates() {
+  if (checking) return;
+  checking = true;
+  try {
+    await fetchHealth();
+    await fetchChangelog();
+    if (updateAvailable) {
+      toast.info(`Update available: v${normalizedLatest}`, { description: 'Click Upgrade now to install the latest release.' });
+    } else if (currentVersion && latestVersion) {
+      toast.success('Up to date', { description: `v${normalizedCurrent} is the latest release.` });
+    } else {
+      toast.error('Unable to check for updates');
+    }
+  } finally {
+    checking = false;
+  }
+}
+
+onMount(() => {
+  document.title = 'About — AxonRouter';
+  void (async () => {
+    await fetchHealth();
+    loading = false;
+    await fetchChangelog();
+  })();
+
+  healthInterval = setInterval(fetchHealth, HEALTH_POLL_INTERVAL_MS);
+  return () => {
+    if (healthInterval) clearInterval(healthInterval);
+  };
 });
 </script>
 
 <div class="flex flex-1 flex-col gap-6 p-6">
-	<div class="space-y-1">
-		<h1 class="text-display-lg">About.</h1>
-		<p class="text-body-sm text-muted-foreground">
-			AxonRouter-Go version information, repository links, and release notes.
-		</p>
-	</div>
+  <!-- Header -->
+  <div class="space-y-1">
+    <h1 class="text-display-lg">About.</h1>
+    <p class="text-body-sm text-muted-foreground">Version, release notes, and project links.</p>
+  </div>
 
-	<Card.Root class="shadow-card">
-		<Card.Header>
-			<Card.Title class="text-display-md flex items-center gap-2">
-				<InfoIcon class="size-5" />
-				Project
-			</Card.Title>
-		</Card.Header>
-		<Card.Content class="space-y-4">
-			<p class="text-body-sm text-muted-foreground">
-				AxonRouter-Go is a universal API proxy built for coding agents. It normalizes provider
-				formats, routes requests across providers and combos, tracks usage and quota, and exposes a
-				single OpenAI-compatible endpoint for your agent tooling.
-			</p>
-		</Card.Content>
-	</Card.Root>
-
-	<Card.Root class="shadow-card">
-		<Card.Header>
-			<Card.Title class="text-display-md flex items-center gap-2">
-				<CodeIcon class="size-5" />
-				Repository
-			</Card.Title>
-			<Card.Description>Source code, issues, and releases.</Card.Description>
-		</Card.Header>
-		<Card.Content>
-			<a
-				href={REPO_URL}
-				target="_blank"
-				rel="noopener noreferrer"
-				class="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-4 py-3 text-body-sm-strong transition-colors hover:bg-muted"
-			>
-				<span class="font-mono text-body-sm text-muted-foreground">{REPO_URL}</span>
-				<ExternalLinkIcon class="size-4 text-muted-foreground" />
-			</a>
-		</Card.Content>
-	</Card.Root>
-
-	<Card.Root class="shadow-card">
-		<Card.Header>
-			<Card.Title class="text-display-md flex items-center gap-2">
-				<ArrowUpCircleIcon class="size-5" />
-				Version
-			</Card.Title>
-			<Card.Description>Current running version and latest upstream release.</Card.Description>
-		</Card.Header>
-		<Card.Content>
-			{#if loading}
-				<div class="flex flex-col gap-3">
-					<div class="h-6 w-32 animate-pulse rounded-md bg-muted"></div>
-					<div class="h-4 w-48 animate-pulse rounded-md bg-muted/60"></div>
-				</div>
-			{:else if error}
-				<p class="text-body-sm text-destructive">{error}</p>
-			{:else}
-				<div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-					<div class="space-y-1">
-						<div class="flex items-center gap-3">
-							<span class="text-body-sm-strong">Current</span>
-							<span class="rounded-md bg-muted px-2 py-0.5 font-mono text-body-sm">
-								v{normalizeVersion(currentVersion)}
-							</span>
-						</div>
-						<div class="flex items-center gap-3">
-							<span class="text-body-sm-strong">Latest</span>
-							{#if latestVersion}
-								<span class="rounded-md bg-muted px-2 py-0.5 font-mono text-body-sm">
-									v{latestVersion}
-								</span>
-							{:else}
-								<span class="text-body-sm text-muted-foreground">Unavailable</span>
-							{/if}
-						</div>
-					</div>
-
-					<div class="flex items-center gap-3">
-						{#if updateAvailable}
-							<Badge variant="destructive" class="rounded-full text-caption">
-								Update available
-							</Badge>
-						{:else if currentVersion && latestVersion}
-							<Badge variant="secondary" class="rounded-full text-caption">Up to date</Badge>
-						{:else}
-							<Badge variant="outline" class="rounded-full text-caption">Unknown</Badge>
-						{/if}
-
+  <!-- Hero -->
+  <Card.Root class="relative overflow-hidden shadow-elevated border-border/40">
+    <div class="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-violet/10 pointer-events-none"></div>
+    <Card.Content class="relative p-6 md:p-8">
+      {#if loading}
+        <div class="flex flex-col gap-4 max-w-2xl">
+          <div class="h-6 w-40 animate-pulse rounded-md bg-muted"></div>
+          <div class="h-10 w-72 animate-pulse rounded-md bg-muted"></div>
+          <div class="h-4 w-full max-w-lg animate-pulse rounded-md bg-muted/60"></div>
+        </div>
+      {:else}
+        <div class="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+          <div class="space-y-4 max-w-2xl">
+            <div class="flex flex-wrap items-center gap-2">
+              <Badge variant="secondary" class="rounded-sm text-caption-mono">AxonRouter-Go</Badge>
+              {#if updateAvailable}
+                <Badge variant="destructive" class="rounded-sm text-caption">Update available</Badge>
+              {:else if currentVersion && latestVersion}
+                <Badge variant="outline" class="rounded-sm text-caption text-emerald-400 border-emerald-400/30">Up to date</Badge>
+              {/if}
+            </div>
+            <h2 class="text-display-md text-balance">Universal API proxy built for coding agents.</h2>
+            <p class="text-body-sm text-muted-foreground text-balance max-w-xl">
+              Normalizes provider formats, routes requests across providers and combos, tracks usage and quota, and exposes a single OpenAI-compatible endpoint for your agent tooling.
+            </p>
+          </div>
+          <div class="flex flex-col gap-3 md:min-w-[180px]">
             <Button
+              variant="outline"
+              class="gap-2 rounded-sm cursor-pointer"
+              onclick={() => window.open(REPO_URL, '_blank', 'noopener,noreferrer')}
+            >
+              <CodeIcon class="size-4" /> Source code
+            </Button>
+            <Button
+              class="gap-2 rounded-sm cursor-pointer"
               onclick={handleUpgrade}
-              class="text-body-sm-strong rounded-sm"
               disabled={!updateAvailable || upgrading || upgradeJustCompleted}
             >
-							{#if upgrading}
-								<Loader2Icon class="size-4 animate-spin" />
-								<span>Upgrading…</span>
-							{:else}
-								<span>Upgrade</span>
-							{/if}
-						</Button>
-					</div>
-				</div>
-			{/if}
-		</Card.Content>
-	</Card.Root>
+              {#if upgrading}
+                <Loader2Icon class="size-4 animate-spin" />
+              {:else}
+                <RocketIcon class="size-4" />
+              {/if}
+              <span>{upgrading ? 'Upgrading…' : updateAvailable ? 'Upgrade now' : 'Up to date'}</span>
+            </Button>
+          </div>
+        </div>
+      {/if}
+    </Card.Content>
+  </Card.Root>
 
-	<Card.Root class="shadow-card">
-		<Card.Header>
-			<Card.Title class="text-display-md">Changelog</Card.Title>
-			<Card.Description>
-				{#if currentVersion}
-					Release notes for v{normalizeVersion(currentVersion)}.
-				{:else}
-					Release notes for the running version.
-				{/if}
-			</Card.Description>
-		</Card.Header>
-		<Card.Content>
-			{#if changelogLoading}
-				<div class="flex flex-col gap-3">
-					<div class="h-5 w-40 animate-pulse rounded-md bg-muted"></div>
-					<div class="h-4 w-full max-w-md animate-pulse rounded-md bg-muted/60"></div>
-					<div class="h-4 w-full max-w-sm animate-pulse rounded-md bg-muted/60"></div>
-				</div>
-			{:else if changelogSections.length === 0}
-				<p class="text-body-sm text-muted-foreground">
-					No release notes found for the current version.
-				</p>
-			{:else}
-				<div class="space-y-5">
-					{#each changelogSections as section}
-						<div>
-							<h3 class="text-body-sm-strong mb-2">{section.heading}</h3>
-							<ul class="list-disc space-y-1 pl-5 text-body-sm text-muted-foreground">
-								{#each section.items as item}
-									<li>{item}</li>
-								{/each}
-							</ul>
-						</div>
-					{/each}
-				</div>
-			{/if}
-		</Card.Content>
-	</Card.Root>
+  {#if !loading}
+    <!-- Version facts -->
+    <section class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <Card.Root class="shadow-card">
+        <Card.Content class="p-4">
+          <p class="text-caption text-muted-foreground uppercase">Current version</p>
+          <p class="text-body-md-strong font-mono mt-1">{normalizedCurrent ? 'v' + normalizedCurrent : '—'}</p>
+        </Card.Content>
+      </Card.Root>
+      <Card.Root class="shadow-card">
+        <Card.Content class="p-4">
+          <p class="text-caption text-muted-foreground uppercase">Latest release</p>
+          <p class="text-body-md-strong font-mono mt-1">{normalizedLatest ? 'v' + normalizedLatest : '—'}</p>
+        </Card.Content>
+      </Card.Root>
+      <Card.Root class="shadow-card">
+        <Card.Content class="p-4">
+          <p class="text-caption text-muted-foreground uppercase">Repository</p>
+          <a
+            href={REPO_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center gap-1 text-primary hover:text-primary/80 text-body-sm-strong mt-1"
+          >
+            rickicode/AxonRouter-Go <ExternalLinkIcon class="size-3" />
+          </a>
+        </Card.Content>
+      </Card.Root>
+    </section>
+  {/if}
+
+  <!-- Release notes -->
+  <Card.Root class="shadow-card">
+    <Card.Header>
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div class="space-y-1">
+          <Card.Title class="text-display-md flex items-center gap-2">
+            <BookOpenIcon class="size-5" /> Release notes
+          </Card.Title>
+          <Card.Description>
+            {currentVersion ? `Changelog for v${normalizedCurrent}.` : 'Release notes for the running version.'}
+          </Card.Description>
+        </div>
+        <div class="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            class="rounded-sm cursor-pointer w-fit gap-1.5"
+            onclick={checkForUpdates}
+            disabled={checking}
+          >
+            {#if checking}
+              <Loader2Icon class="size-3.5 animate-spin" />
+            {:else}
+              <RefreshCwIcon class="size-3.5" />
+            {/if}
+            Check for updates
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            class="rounded-sm cursor-pointer w-fit"
+            onclick={() => window.open(`${REPO_URL}/releases`, '_blank', 'noopener,noreferrer')}
+          >
+            View releases <ExternalLinkIcon class="size-3 ml-1" />
+          </Button>
+        </div>
+      </div>
+    </Card.Header>
+    <Card.Content>
+      {#if changelogLoading}
+        <div class="flex flex-col gap-3">
+          <div class="h-5 w-40 animate-pulse rounded-md bg-muted"></div>
+          <div class="h-4 w-full max-w-md animate-pulse rounded-md bg-muted/60"></div>
+          <div class="h-4 w-full max-w-sm animate-pulse rounded-md bg-muted/60"></div>
+        </div>
+      {:else if changelogError}
+        <div class="rounded-lg bg-muted/30 p-4 border border-border/50 space-y-2">
+          <p class="text-body-sm text-destructive">{changelogError}</p>
+          <a
+            href={`${REPO_URL}/releases`}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center gap-1 text-primary hover:text-primary/80 text-body-sm"
+          >
+            Open on GitHub <ExternalLinkIcon class="size-3" />
+          </a>
+        </div>
+      {:else if changelogSections.length === 0}
+        <div class="rounded-lg bg-muted/30 p-4 border border-border/50 space-y-2">
+          <p class="text-body-sm text-muted-foreground">No release notes found for the current version.</p>
+          <a
+            href={`${REPO_URL}/releases`}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center gap-1 text-primary hover:text-primary/80 text-body-sm"
+          >
+            Open on GitHub <ExternalLinkIcon class="size-3" />
+          </a>
+        </div>
+      {:else}
+        <div class="space-y-6">
+          {#each changelogSections as section}
+            <div>
+              <Badge variant="secondary" class="rounded-sm text-caption mb-2">{section.heading}</Badge>
+              <ul class="space-y-2">
+                {#each section.items as item}
+                  <li class="flex gap-3 text-body-sm text-muted-foreground">
+                    <span class="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary"></span>
+                    <span class="text-balance">{item}</span>
+                  </li>
+                {/each}
+              </ul>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </Card.Content>
+  </Card.Root>
 </div>
