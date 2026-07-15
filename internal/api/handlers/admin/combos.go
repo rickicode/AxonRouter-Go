@@ -246,11 +246,22 @@ func (h *ComboHandler) AddStep(c *gin.Context) {
 		req.Priority = maxPriority + 1
 	}
 
+	connectionID := req.ConnectionID
+	if connectionID == "" {
+		if picked, ok := h.handler.PickConnection(db.ComboStep{ModelID: req.ModelID}); ok {
+			connectionID = picked
+		}
+	}
+	if connectionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no eligible connection for model " + req.ModelID})
+		return
+	}
+
 	stepID := uuid.New().String()
 	_, err := h.db.Exec(`
-		INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, stepID, comboID, req.ConnectionID, req.ModelID, req.Priority, req.Weight, time.Now().Unix())
+	INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, stepID, comboID, connectionID, req.ModelID, req.Priority, req.Weight, time.Now().Unix())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

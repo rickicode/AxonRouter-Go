@@ -239,10 +239,19 @@ func (h *Handler) CreateCombo(name, strategy string, timeoutMs, stickyLimit int,
 	}
 
 	for _, s := range steps {
+		connID := s.ConnectionID
+		if connID == "" {
+			if picked, ok := h.PickConnection(db.ComboStep{ModelID: s.ModelID}); ok {
+				connID = picked
+			}
+		}
+		if connID == "" {
+			return nil, fmt.Errorf("no eligible connection for model %s", s.ModelID)
+		}
 		h.db.Exec(`
 		INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, uuid.New().String(), comboID, s.ConnectionID, s.ModelID, s.Priority, s.Weight, now)
+		`, uuid.New().String(), comboID, connID, s.ModelID, s.Priority, s.Weight, now)
 	}
 
 	combo := &db.Combo{

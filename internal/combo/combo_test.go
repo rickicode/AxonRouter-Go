@@ -37,6 +37,38 @@ func seedConnectionForCombo(t *testing.T, database *sql.DB, id string) {
 	}
 }
 
+func TestCreateCombo_AutoPicksConnection(t *testing.T) {
+	database := newComboTestDB(t)
+	seedConnectionForCombo(t, database, "conn-1")
+
+	store := connstate.NewStore()
+	cs := &connstate.ConnectionState{
+		ID:     "conn-1",
+		Prefix: "openai",
+		Status: connstate.StatusReady,
+	}
+	store.Set("conn-1", cs)
+	elig := connstate.NewEligibilityManager(store)
+	elig.RecomputeAll()
+	h := NewHandler(database, store, elig)
+
+	combo, err := h.CreateCombo("auto-conn", "priority", 30000, 1, false, "", []CreateStepInput{
+		{ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
+	})
+	if err != nil {
+		t.Fatalf("CreateCombo failed: %v", err)
+	}
+
+	var connectionID string
+	row := database.QueryRow(`SELECT connection_id FROM combo_steps WHERE combo_id = ?`, combo.ID)
+	if err := row.Scan(&connectionID); err != nil {
+		t.Fatalf("scan step: %v", err)
+	}
+	if connectionID != "conn-1" {
+		t.Fatalf("connection_id = %q, want conn-1", connectionID)
+	}
+}
+
 func TestCreateCombo_PersistsSmartAndStickyFields(t *testing.T) {
 	database := newComboTestDB(t)
 	seedConnectionForCombo(t, database, "conn-1")
