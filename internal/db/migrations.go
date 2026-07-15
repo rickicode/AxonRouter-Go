@@ -1,7 +1,9 @@
 package db
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -246,6 +248,21 @@ db.Exec(`DELETE FROM provider_types WHERE id = 'mimocode-free'`)
 	}
 	// Deactivate stale oc connections that have incorrect auth_type (should be 'none').
 	db.Exec(`UPDATE connections SET is_active = 0 WHERE provider_type_id = 'oc' AND auth_type != 'none'`)
+
+	// Seed a default direct connection for MiMoCode. This connection is always-on,
+	// cannot be deleted, and serves as the direct route. Additional mimocode
+	// connections must use a proxy pool (provider_specific_data.proxyPoolId).
+	var mimocodeDirectCount int
+	db.QueryRow(`SELECT COUNT(*) FROM connections WHERE provider_type_id = 'mimocode' AND is_active = 1 AND provider_specific_data LIKE '%"direct":"true"%'`).Scan(&mimocodeDirectCount)
+	if mimocodeDirectCount == 0 {
+		mimocodePSD, _ := json.Marshal(map[string]string{
+			"direct":       "true",
+			"accountId":    "mimocode-default",
+			"accountLabel": "Default",
+			"fingerprint":  generateFingerprint(),
+		})
+		db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, provider_specific_data, status, is_active, created_at, updated_at) VALUES ('mimocode-direct-default', 'mimocode', 'Direct (Default)', 'none', ?, 'ready', 1, ?, ?)`, string(mimocodePSD), now, now)
+	}
 
 	// Quota cache table (stores upstream quota data from background scheduler)
 	if _, err := db.Exec(`
@@ -679,4 +696,15 @@ func validateSeedPricing(seed []struct {
 		}
 	}
 	return nil
+}
+
+// generateFingerprint returns a 64-character lowercase hex string suitable for
+// use as a MiMoCode device fingerprint. It panics only if the OS random
+// source fails catastrophically.
+func generateFingerprint() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return hex.EncodeToString(b)
 }
