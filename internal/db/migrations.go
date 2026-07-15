@@ -211,7 +211,8 @@ CREATE TABLE IF NOT EXISTS rotation_state (
   {"zenmux", "ZenMux", "openai", "https://zenmux.ai/api/v1", "apikey", []string{"llm"}},
 
 
-	{"copilot", "GitHub Copilot", "openai", "https://api.githubcopilot.com", "oauth", []string{"llm"}},
+  {"copilot", "GitHub Copilot", "openai", "https://api.githubcopilot.com", "apikey", []string{"llm"}},
+
 		{"vertex", "Google Vertex AI", "openai", "https://aiplatform.googleapis.com/v1/projects/{projectId}/locations/{location}/endpoints/openapi", "service-account", []string{"llm"}},
 		{"bedrock", "Amazon Bedrock Mantle", "openai", "https://bedrock-mantle.{region}.api.aws/v1", "apikey", []string{"llm"}},
 	}
