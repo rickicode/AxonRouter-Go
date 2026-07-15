@@ -21,6 +21,7 @@ axonrouter --startup install-root
 
 - `postinstall` downloads `axonrouter-<os>-<arch>` (with `.exe` on Windows) from the matching GitHub Release.
 - The binary is written to `node_modules/axonrouter-go/bin/`.
+- On Linux/macOS, the script also tries to copy it to `~/.local/bin/axonrouter` so it is available on PATH.
 - `axonrouter` / `axonrouter-go` CLI entries forward arguments to the downloaded binary.
 
 ## Environment variables

@@ -4,11 +4,12 @@
  * Verifies the SHA256 checksum against the release's checksums.txt.
  */
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { createHash } from 'crypto';
 import https from 'https';
+import os from 'os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8'));
@@ -121,6 +122,39 @@ async function main() {
   }
 
   info(`Installed ${binPath}`);
+  installToLocalBin(binPath);
+}
+
+function installToLocalBin(binPath) {
+  if (process.platform === 'win32') {
+    // Windows: rely on npm's global bin symlink; copying to ~/.local/bin is not idiomatic.
+    return;
+  }
+
+  const home = os.homedir();
+  if (!home) return;
+
+  const localBin = join(home, '.local', 'bin');
+  const target = join(localBin, 'axonrouter');
+
+  try {
+    mkdirSync(localBin, { recursive: true });
+  } catch (err) {
+    info(`Skipped ~/.local/bin install: ${err.message}`);
+    return;
+  }
+
+  try {
+    copyFileSync(binPath, target);
+    chmodSync(target, 0o755);
+    info(`Installed system-wide binary at ${target}`);
+  } catch (err) {
+    info(`Binary remains at ${binPath}`);
+    info(`To install system-wide, run: mkdir -p ~/.local/bin && cp ${binPath} ~/.local/bin/axonrouter`);
+    if (err.code === 'EACCES' || err.code === 'EPERM') {
+      info(`Or with sudo: sudo cp ${binPath} /usr/local/bin/axonrouter`);
+    }
+  }
 }
 
 function findChecksum(content, assetName) {
