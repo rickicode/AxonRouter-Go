@@ -1009,7 +1009,7 @@ func (h *Handler) writeUpstreamClientError(
 	if !errors.As(err, &upErr) {
 		return false
 	}
-	if upErr.StatusCode == http.StatusTooManyRequests {
+	if upErr.StatusCode == http.StatusTooManyRequests || upErr.StatusCode == http.StatusPaymentRequired {
 		return false
 	}
 	c.Header("Content-Type", "application/json")

@@ -378,6 +378,24 @@ func TestWriteUpstreamClientError_SkipsRateLimit(t *testing.T) {
 	}
 }
 
+func TestWriteUpstreamClientError_SkipsPaymentRequired(t *testing.T) {
+	h := newTestHandler(t)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	upErr := &executor.UpstreamError{
+		StatusCode: http.StatusPaymentRequired,
+		Body:       []byte(`{"error":{"message":"Insufficient Balance"}}`),
+	}
+
+	if h.writeUpstreamClientError(context.Background(), c, upErr, nil, "mimo", "mimo/payg", time.Now(), false) {
+		t.Fatal("expected writeUpstreamClientError to return false for 402")
+	}
+	if rec.Code != http.StatusOK {
+		t.Errorf("response should not be written for 402, got status=%d", rec.Code)
+	}
+}
+
 // TestPersistCooldown_WritesRealColumns proves the cooldown/error UPDATE lands in
 // the DB using real schema columns (regression for the phantom consecutive_error_count
 // column that made the whole UPDATE fail silently in the write queue).
