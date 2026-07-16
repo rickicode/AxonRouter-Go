@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 	"github.com/tidwall/gjson"
 )
 
@@ -50,9 +51,9 @@ func TestBedrockResolveBaseURL(t *testing.T) {
 
 func TestBedrockStripModelPrefix(t *testing.T) {
 	tests := []struct {
-		name  string
+		name string
 		model string
-		want  string
+		want string
 	}{
 		{"with prefix", "bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0", "us.anthropic.claude-3-7-sonnet-20250219-v1:0"},
 		{"without prefix", "us.anthropic.claude-3-7-sonnet-20250219-v1:0", "us.anthropic.claude-3-7-sonnet-20250219-v1:0"},
@@ -62,10 +63,11 @@ func TestBedrockStripModelPrefix(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			body, _ := json.Marshal(map[string]any{"model": tt.model})
-			out := stripBedrockModelPrefix(body)
+			c := providercfg.CompatibilityFor("bedrock")
+			out := sanitizeRequestWithCompatibility(body, c)
 			got := gjson.GetBytes(out, "model").String()
 			if got != tt.want {
-				t.Fatalf("stripBedrockModelPrefix(%q) model = %q, want %q", tt.model, got, tt.want)
+				t.Fatalf("sanitizeRequestWithCompatibility(%q) model = %q, want %q", tt.model, got, tt.want)
 			}
 		})
 	}

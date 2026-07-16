@@ -3,16 +3,14 @@ package executor
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
+	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 )
 
 const (
 	bedrockDefaultRegion = "us-west-2"
-	bedrockBaseTemplate  = "https://bedrock-mantle.{region}.api.aws/v1"
+	bedrockBaseTemplate = "https://bedrock-mantle.{region}.api.aws/v1"
 )
 
 // BedrockExecutor routes OpenAI-compatible requests to Amazon Bedrock Mantle.
@@ -72,16 +70,23 @@ func (e *BedrockExecutor) Images(ctx context.Context, req *Request) (*Response, 
 	return e.OpenAIExecutor.Images(ctx, modified)
 }
 
-// prepareRequest resolves the region-aware base URL and strips the provider prefix.
+// prepareRequest resolves the region-aware base URL and applies the provider's
+// compatibility config (notably the model prefix strip).
 func (e *BedrockExecutor) prepareRequest(req *Request) (*Request, error) {
 	baseURL := bedrockBaseURL(req.BaseURL, req.ProviderSpecificData)
 	if strings.Contains(baseURL, "{") {
 		return nil, fmt.Errorf("bedrock: unresolved base_url placeholders in %q; set region in provider-specific data", baseURL)
 	}
 
-	body := stripBedrockModelPrefix(req.Body)
+	provider := req.Provider
+	if provider == "" {
+		provider = "bedrock"
+	}
+	c := providercfg.CompatibilityFor(provider)
+	body := sanitizeRequestWithCompatibility(req.Body, c)
 
 	modified := *req
+	modified.Provider = provider
 	modified.BaseURL = baseURL
 	modified.Body = body
 	return &modified, nil
@@ -102,26 +107,4 @@ func bedrockBaseURL(baseURL string, psd map[string]string) string {
 		baseURL = strings.ReplaceAll(baseURL, "{region}", region)
 	}
 	return strings.TrimRight(baseURL, "/")
-}
-
-// stripBedrockModelPrefix removes the "bedrock/" prefix from model IDs so the
-// upstream Bedrock Mantle endpoint receives bare model names.
-func stripBedrockModelPrefix(body []byte) []byte {
-	if len(body) == 0 {
-		return body
-	}
-	model := gjson.GetBytes(body, "model").String()
-	if model == "" {
-		return body
-	}
-	clean := strings.TrimPrefix(model, "bedrock/")
-	if clean == model {
-		return body
-	}
-	out, err := sjson.SetBytes(body, "model", clean)
-	if err != nil {
-		log.Printf("WARN: failed to rewrite bedrock model id: %v", err)
-		return body
-	}
-	return out
 }

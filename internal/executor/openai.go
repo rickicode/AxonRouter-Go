@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 	"github.com/rickicode/AxonRouter-Go/internal/tokenizer"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/tidwall/gjson"
@@ -50,43 +51,50 @@ func IsReasoningModel(model string) bool {
 	return false
 }
 
-// sanitizeCFRequest enforces Cloudflare Workers AI constraints:
-// - max_tokens cap: 4096 for reasoning models, 8192 otherwise.
-// - message content arrays are flattened to a plain string (CF rejects part arrays).
-// - tool_result blocks are converted into role:tool messages.
-//
-// This matches AMRouter chatCore.js san behaviour for the cloudflare-ai provider.
+// sanitizeCFRequest is retained for callers that historically embedded the
+// Cloudflare-specific rules. It now delegates to the config-driven sanitizer
+// using the seeded "cf" defaults so behaviour is unchanged.
 func sanitizeCFRequest(body []byte) []byte {
-	// Fast path: if no message has an array content, we only need to adjust
-	// top-level fields (model prefix, reasoning_effort, max_tokens). That lets
-	// us skip the expensive full map[string]any round-trip and the message
-	// allocation churn for the common string-content case.
+	return sanitizeRequestWithCompatibility(body, providercfg.CompatibilityFor("cf"))
+}
+
+// sanitizeRequestWithCompatibility applies provider-specific OpenAI-compatible
+// request normalisation based on a Compatibility config. It replaces the
+// previously hard-coded Cloudflare and Bedrock quirks with values that can be
+// overridden per provider outside the binary.
+func sanitizeRequestWithCompatibility(body []byte, c providercfg.Compatibility) []byte {
+	// Fast path: if no message has array content and the provider does not
+	// require flattening, avoid the expensive map[string]any round-trip.
 	messages := gjson.GetBytes(body, "messages")
-	if messages.Exists() && messages.IsArray() && !cfMessagesNeedSanitize(messages.Array()) {
+	needFlatten := c.FlattenContentArrays && messages.Exists() && messages.IsArray() && messagesNeedSanitize(messages.Array())
+	if !needFlatten {
 		modelNode := gjson.GetBytes(body, "model")
-		model := normalizeCFModelName(modelNode.String())
+		model := normalizeModelName(modelNode.String(), c)
 		if model != modelNode.String() {
 			body, _ = sjson.SetBytes(body, "model", model)
 		}
 
 		if reNode := gjson.GetBytes(body, "reasoning_effort"); reNode.Type == gjson.String {
 			re := strings.ToLower(strings.TrimSpace(reNode.String()))
-			switch re {
-			case "none", "low", "medium", "high", "max":
-				if re != reNode.String() {
-					body, _ = sjson.SetBytes(body, "reasoning_effort", re)
+			if len(c.ReasoningLevels) > 0 {
+				if c.HasReasoning(re) {
+					if re != reNode.String() {
+						body, _ = sjson.SetBytes(body, "reasoning_effort", re)
+					}
+				} else {
+					body, _ = sjson.DeleteBytes(body, "reasoning_effort")
 				}
-			default:
-				body, _ = sjson.DeleteBytes(body, "reasoning_effort")
 			}
 		}
 
-		maxCap := 8192
-		if IsReasoningModel(model) {
-			maxCap = 4096
-		}
-		if mt := gjson.GetBytes(body, "max_tokens"); !mt.Exists() || mt.Int() <= 0 || mt.Int() > int64(maxCap) {
-			body, _ = sjson.SetBytes(body, "max_tokens", maxCap)
+		if c.MaxTokensCap > 0 {
+			maxCap := c.MaxTokensCap
+			if c.ReasoningMaxTokensCap > 0 && IsReasoningModel(model) {
+				maxCap = c.ReasoningMaxTokensCap
+			}
+			if mt := gjson.GetBytes(body, "max_tokens"); !mt.Exists() || mt.Int() <= 0 || mt.Int() > int64(maxCap) {
+				body, _ = sjson.SetBytes(body, "max_tokens", maxCap)
+			}
 		}
 		return body
 	}
@@ -97,47 +105,34 @@ func sanitizeCFRequest(body []byte) []byte {
 	}
 
 	model, _ := req["model"].(string)
-	// CF Workers AI requires @cf/ prefix on model names. The caller may pass
-	// the gateway model ID (cf/author/model) or just the upstream name
-	// (author/model). Normalize so the upstream always sees exactly
-	// @cf/author/model — never @cf/cf/... or double prefixes.
+	model = normalizeModelName(model, c)
 	if model != "" {
-		switch {
-		case strings.HasPrefix(model, "@cf/"):
-			// already normalized
-		case strings.HasPrefix(model, "cf/"):
-			// gateway full ID like cf/author/model
-			model = "@" + model
-		default:
-			// model name only like author/model
-			model = "@cf/" + model
-		}
 		req["model"] = model
 	}
 
-	// CF Workers AI may route to backends (e.g. SGLang) that only accept
-	// reasoning_effort values: none, low, medium, high, max. Reject unknown
-	// values by dropping the field instead of letting upstream return 400.
 	if re, ok := req["reasoning_effort"].(string); ok {
 		re = strings.ToLower(strings.TrimSpace(re))
-		switch re {
-		case "none", "low", "medium", "high", "max":
-			req["reasoning_effort"] = re
-		default:
-			delete(req, "reasoning_effort")
+		if len(c.ReasoningLevels) > 0 {
+			if c.HasReasoning(re) {
+				req["reasoning_effort"] = re
+			} else {
+				delete(req, "reasoning_effort")
+			}
 		}
 	}
 
-	maxCap := 8192
-	if IsReasoningModel(model) {
-		maxCap = 4096
-	}
-	if current, ok := req["max_tokens"].(float64); !ok || current <= 0 || current > float64(maxCap) {
-		req["max_tokens"] = maxCap
+	if c.MaxTokensCap > 0 {
+		maxCap := c.MaxTokensCap
+		if c.ReasoningMaxTokensCap > 0 && IsReasoningModel(model) {
+			maxCap = c.ReasoningMaxTokensCap
+		}
+		if current, ok := req["max_tokens"].(float64); !ok || current <= 0 || current > float64(maxCap) {
+			req["max_tokens"] = maxCap
+		}
 	}
 
-	if messages, ok := req["messages"].([]any); ok {
-		req["messages"] = sanitizeCFMessages(messages)
+	if messages, ok := req["messages"].([]any); ok && c.FlattenContentArrays {
+		req["messages"] = sanitizeMessages(messages)
 	}
 
 	out, err := json.Marshal(req)
@@ -147,23 +142,31 @@ func sanitizeCFRequest(body []byte) []byte {
 	return out
 }
 
-func normalizeCFModelName(model string) string {
+// normalizeModelName applies the provider-specific model prefix and strips any
+// configured provider prefix from the model ID.
+func normalizeModelName(model string, c providercfg.Compatibility) string {
 	if model == "" {
 		return ""
 	}
-	switch {
-	case strings.HasPrefix(model, "@cf/"):
-		return model
-	case strings.HasPrefix(model, "cf/"):
-		return "@" + model
-	default:
-		return "@cf/" + model
+	if c.StripProviderPrefix != "" {
+		model = strings.TrimPrefix(model, c.StripProviderPrefix)
 	}
+	if c.ModelPrefix == "" {
+		return model
+	}
+	if strings.HasPrefix(model, c.ModelPrefix) {
+		return model
+	}
+	// Support gateway IDs like "cf/author/model" for a "@cf/" prefix.
+	if len(c.ModelPrefix) > 1 && strings.HasPrefix(model, c.ModelPrefix[1:]) {
+		return "@" + model
+	}
+	return c.ModelPrefix + model
 }
 
-// cfMessagesNeedSanitize reports whether any message contains an array
-// content that may need flattening or tool_result conversion.
-func cfMessagesNeedSanitize(messages []gjson.Result) bool {
+// messagesNeedSanitize reports whether any message contains an array content
+// that may need flattening or tool_result conversion.
+func messagesNeedSanitize(messages []gjson.Result) bool {
 	for _, msg := range messages {
 		if msg.Get("content").IsArray() {
 			return true
@@ -172,7 +175,7 @@ func cfMessagesNeedSanitize(messages []gjson.Result) bool {
 	return false
 }
 
-func sanitizeCFMessages(messages []any) []any {
+func sanitizeMessages(messages []any) []any {
 	var sanitized []any
 	for _, raw := range messages {
 		msg, ok := raw.(map[string]any)
@@ -241,9 +244,7 @@ func sanitizeCFMessages(messages []any) []any {
 			continue
 		}
 
-		// Flatten content to a plain string for CF Workers AI.
-		// OmniRoute #2539: Workers AI /ai/v1/chat/completions rejects
-		// content-part arrays like [{type:"text",text}] with HTTP 400.
+		// Flatten content to a plain string for providers that reject arrays.
 		var textParts []string
 		for _, b := range otherBlocks {
 			typ, _ := b["type"].(string)
@@ -252,8 +253,7 @@ func sanitizeCFMessages(messages []any) []any {
 					textParts = append(textParts, s)
 				}
 			}
-			// image_url and other non-text blocks are dropped: CF chat
-			// completions endpoint does not accept array content.
+			// image_url and other non-text blocks are dropped.
 		}
 
 		newMsg := make(map[string]any, len(msg))
@@ -265,7 +265,6 @@ func sanitizeCFMessages(messages []any) []any {
 	}
 	return sanitized
 }
-
 // openAIEndpoint resolves the full upstream URL for an OpenAI-compatible provider.
 // When the base URL contains {accountId}, the placeholder is resolved from psd
 // (provider_specific_data), then from the CLOUDFLARE_ACCOUNT_ID env var.
@@ -399,9 +398,11 @@ func (e *OpenAIExecutor) Embeddings(ctx context.Context, req *Request) (*Respons
 	}
 
 	body := req.Body
-	// Cloudflare Workers AI's /v1/embeddings requires the full @cf/ model path.
-	if req.Provider == "cf" {
-		model := normalizeCFModelName(gjson.GetBytes(body, "model").String())
+	// Providers with a model prefix (e.g. Cloudflare Workers AI) need the full
+	// upstream model path for /v1/embeddings.
+	if req.Provider != "" {
+		c := providercfg.CompatibilityFor(req.Provider)
+		model := normalizeModelName(gjson.GetBytes(body, "model").String(), c)
 		body = JSONSet(body, "model", model)
 	}
 
