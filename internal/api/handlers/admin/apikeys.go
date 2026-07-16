@@ -23,7 +23,7 @@ func NewAPIKeyHandler(db *sql.DB) *APIKeyHandler {
 
 // List returns all API keys (masked).
 func (h *APIKeyHandler) List(c *gin.Context) {
-	rows, err := h.db.Query(`SELECT id, COALESCE(name, ''), COALESCE(key_value, ''), rate_limit_per_min, max_tokens, is_active, created_at FROM api_keys ORDER BY created_at DESC`)
+	rows, err := h.db.Query(`SELECT id, COALESCE(name, ''), COALESCE(key_value, ''), rate_limit_per_min, max_tokens, is_active, created_at, COALESCE(expires_at, 0) FROM api_keys ORDER BY created_at DESC`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -38,6 +38,7 @@ func (h *APIKeyHandler) List(c *gin.Context) {
 		MaxTokens       int64  `json:"max_tokens"`
 		IsActive        bool   `json:"is_active"`
 		CreatedAt       int64  `json:"created_at"`
+		ExpiresAt       int64  `json:"expires_at"`
 	}
 
 	keys := make([]apiKeyView, 0)
@@ -46,7 +47,7 @@ func (h *APIKeyHandler) List(c *gin.Context) {
 		var isActive int
 		var keyValue string
 		var maxTokens int64
-		if err := rows.Scan(&k.ID, &k.Name, &keyValue, &k.RateLimitPerMin, &maxTokens, &isActive, &k.CreatedAt); err != nil {
+		if err := rows.Scan(&k.ID, &k.Name, &keyValue, &k.RateLimitPerMin, &maxTokens, &isActive, &k.CreatedAt, &k.ExpiresAt); err != nil {
 			continue
 		}
 		k.IsActive = isActive == 1
@@ -62,9 +63,10 @@ func (h *APIKeyHandler) List(c *gin.Context) {
 // Create generates a new API key.
 func (h *APIKeyHandler) Create(c *gin.Context) {
 	var req struct {
-		Name            string `json:"name"`
-		RateLimitPerMin int    `json:"rate_limit_per_min"`
-		MaxTokens       int64  `json:"max_tokens"`
+		Name            string  `json:"name"`
+		RateLimitPerMin int     `json:"rate_limit_per_min"`
+		MaxTokens       int64   `json:"max_tokens"`
+		ExpiresAt       *int64  `json:"expires_at"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		// Defaults are fine
@@ -97,21 +99,32 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 		name = sql.NullString{String: req.Name, Valid: true}
 	}
 
+	expiresAt := sql.NullInt64{}
+	if req.ExpiresAt != nil {
+		expiresAt = sql.NullInt64{Int64: *req.ExpiresAt, Valid: true}
+	}
+
 	_, err = h.db.Exec(`
-		INSERT INTO api_keys (id, key_hash, key_value, name, rate_limit_per_min, max_tokens, is_active, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, 1, ?)
-	`, id, string(hash), keyValue, name, req.RateLimitPerMin, req.MaxTokens, now)
+	INSERT INTO api_keys (id, key_hash, key_value, name, rate_limit_per_min, max_tokens, is_active, created_at, expires_at)
+	VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+	`, id, string(hash), keyValue, name, req.RateLimitPerMin, req.MaxTokens, now, expiresAt)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
+	expiresAtResponse := int64(0)
+	if req.ExpiresAt != nil {
+		expiresAtResponse = *req.ExpiresAt
+	}
+
 	c.JSON(http.StatusCreated, gin.H{
-		"id":         id,
-		"key":        keyValue, // Only shown once
-		"name":       req.Name,
-		"max_tokens": req.MaxTokens,
-		"message":    "Save this key — it won't be shown again",
+		"id":          id,
+		"key":         keyValue, // Only shown once
+		"name":        req.Name,
+		"max_tokens":  req.MaxTokens,
+		"expires_at":  expiresAtResponse,
+		"message":     "Save this key — it won't be shown again",
 	})
 }
 
@@ -150,8 +163,9 @@ func (h *APIKeyHandler) Delete(c *gin.Context) {
 func (h *APIKeyHandler) ToggleActive(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		IsActive  bool  `json:"is_active"`
-		MaxTokens int64 `json:"max_tokens"`
+		IsActive  bool   `json:"is_active"`
+		MaxTokens int64  `json:"max_tokens"`
+		ExpiresAt *int64 `json:"expires_at"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -165,10 +179,18 @@ func (h *APIKeyHandler) ToggleActive(c *gin.Context) {
 	if maxTokens == 0 {
 		_ = h.db.QueryRow(`SELECT COALESCE(max_tokens, 0) FROM api_keys WHERE id = ?`, id).Scan(&maxTokens)
 	}
-	_, err := h.db.Exec(`UPDATE api_keys SET is_active = ?, max_tokens = ? WHERE id = ?`, active, maxTokens, id)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	if req.ExpiresAt != nil {
+		_, err := h.db.Exec(`UPDATE api_keys SET is_active = ?, max_tokens = ?, expires_at = ? WHERE id = ?`, active, maxTokens, *req.ExpiresAt, id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	} else {
+		_, err := h.db.Exec(`UPDATE api_keys SET is_active = ?, max_tokens = ? WHERE id = ?`, active, maxTokens, id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
