@@ -171,7 +171,10 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		h.combo.RecordSuccess(conn.ID)
 
 		if req.Stream {
-			h.handleStreamResponse(proxyCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body)
+			// Use the client's request context (no timeout) for streaming.
+			// The comboCtx timeout is only for orchestration, not for live streams.
+			// Stream lifecycle is governed by StreamIdleTimeout/StreamReadinessTimeout.
+			h.handleStreamResponse(c.Request.Context(), c, streamResult, conn, provider, modelName, start, translatedBody, body, "")
 		} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
@@ -350,27 +353,31 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				h.codexPersistIfCodex(conn, resp, streamResult)
 			}
 
-			if req.Stream {
-				h.handleStreamResponse(proxyCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body)
-			} else {
-				translatedResp := registry.ResponseNonStream(comboCtx, string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
-				tokenCounts := ExtractTokensFromBody(translatedResp)
-				tokensEstimated := false
-				if tokenCounts.InputTokens+tokenCounts.OutputTokens == 0 && resp.StatusCode < 400 {
-					estInput := usage.EstimateTokensFromRequest(body)
-					estOutput := usage.EstimateTokensFromResponse(translatedResp)
-					if estInput > 0 || estOutput > 0 {
-						tokenCounts.InputTokens = estInput
-						tokenCounts.OutputTokens = estOutput
-						tokensEstimated = true
-					}
+		if req.Stream {
+			// Use the client's request context (no timeout) for streaming.
+			// The comboCtx timeout is only for orchestration, not for live streams.
+			// Stream lifecycle is governed by StreamIdleTimeout/StreamReadinessTimeout.
+			h.handleStreamResponse(c.Request.Context(), c, streamResult, conn, provider, modelName, start, translatedBody, body, comboResult.Combo.Name)
+		} else {
+			translatedResp := registry.ResponseNonStream(comboCtx, string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
+			tokenCounts := ExtractTokensFromBody(translatedResp)
+			tokensEstimated := false
+			if tokenCounts.InputTokens+tokenCounts.OutputTokens == 0 && resp.StatusCode < 400 {
+				estInput := usage.EstimateTokensFromRequest(body)
+				estOutput := usage.EstimateTokensFromResponse(translatedResp)
+				if estInput > 0 || estOutput > 0 {
+					tokenCounts.InputTokens = estInput
+					tokenCounts.OutputTokens = estOutput
+					tokensEstimated = true
 				}
-				h.tracker.Log(&usage.LogEntry{
-					ApiKeyID:            c.GetString("api_key_id"),
-					ConnectionID:        connID,
-					ProviderTypeID:      provider,
-					ModelID:             modelName,
-					ProxyPoolID:         executor.ProxyPoolIDFromContext(proxyCtx),
+			}
+			h.tracker.Log(&usage.LogEntry{
+				ApiKeyID: c.GetString("api_key_id"),
+				ConnectionID: connID,
+				ProviderTypeID: provider,
+				ModelID: modelName,
+				ComboID: comboResult.Combo.Name,
+				ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
 					Modality:            "chat",
 					Stream:              stream,
 					InputTokens:         tokenCounts.InputTokens,
@@ -405,7 +412,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 }
 
 // handleStreamResponse handles streaming chat completions.
-func (h *Handler) handleStreamResponse(ctx context.Context, c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte) {
+func (h *Handler) handleStreamResponse(ctx context.Context, c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte, comboID string) {
 	_, providerFormat, _ := h.registry.Get(provider)
 	errFormatter := func(err error) []byte {
 		var upErr *executor.UpstreamError
@@ -416,5 +423,5 @@ func (h *Handler) handleStreamResponse(ctx context.Context, c *gin.Context, resu
 		b, _ := json.Marshal(gin.H{"error": gin.H{"message": "upstream streaming error"}})
 		return b
 	}
-	h.streamResponse(ctx, c, result, conn, provider, model, executor.FormatOpenAI, providerFormat, originalReq, translatedReq, errFormatter, start)
+	h.streamResponse(ctx, c, result, conn, provider, model, executor.FormatOpenAI, providerFormat, originalReq, translatedReq, errFormatter, start, comboID)
 }

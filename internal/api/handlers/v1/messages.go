@@ -142,7 +142,7 @@ func (h *Handler) Messages(c *gin.Context) {
 		h.combo.RecordSuccess(conn.ID)
 
 	if req.Stream {
-		h.handleClaudeStreamResponse(proxyCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body)
+		h.handleClaudeStreamResponse(proxyCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, "")
 	} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(clientFormat), string(providerFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
@@ -188,14 +188,14 @@ func (h *Handler) Messages(c *gin.Context) {
 }
 
 // handleClaudeStreamResponse handles streaming Claude responses.
-func (h *Handler) handleClaudeStreamResponse(ctx context.Context, c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte) {
+func (h *Handler) handleClaudeStreamResponse(ctx context.Context, c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte, comboID string) {
 	_, providerFormat, _ := h.registry.Get(provider)
 	errFormatter := func(err error) []byte {
 		logging.Logger.Error("upstream streaming error", "provider", provider, "model", model, "error", err)
 		b, _ := json.Marshal(claudeError("api_error", "upstream streaming error"))
 		return b
 	}
-	h.streamResponse(ctx, c, result, conn, provider, model, executor.FormatClaude, providerFormat, originalReq, translatedReq, errFormatter, start)
+	h.streamResponse(ctx, c, result, conn, provider, model, executor.FormatClaude, providerFormat, originalReq, translatedReq, errFormatter, start, comboID)
 }
 
 // CountTokens handles POST /v1/messages/count_tokens

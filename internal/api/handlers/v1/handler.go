@@ -1041,6 +1041,7 @@ func (h *Handler) streamResponse(
 	originalReq, translatedReq []byte,
 	errFormatter func(error) []byte,
 	start time.Time,
+	comboID string,
 ) {
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
@@ -1093,6 +1094,7 @@ latency := time.Since(start).Milliseconds()
 				ConnectionID: conn.ID,
 				ProviderTypeID: provider,
 				ModelID: model,
+				ComboID: comboID,
 				ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
 				Modality: "chat",
 				Stream: true,
@@ -1114,10 +1116,13 @@ latency := time.Since(start).Milliseconds()
 			// clients can surface them; avoid non-standard `event: error`.
 			// Only record upstream failures as exhaustion/cooldown; client
 			// cancellations (e.g. disconnects) must not penalize connections.
-			if !h.isClientCanceled(c, chunk.Err) {
-				latency := time.Since(start).Milliseconds()
-				h.handleFailoverError(ctx, c, conn, provider, model, chunk.Err, 0, latency, true)
+			if h.isClientCanceled(c, chunk.Err) {
+				// Client disconnected — log for debugging but don't penalize connection.
+				logging.Logger.Info("stream ended: client disconnected", "provider", provider, "model", model)
+				return
 			}
+			latency := time.Since(start).Milliseconds()
+			h.handleFailoverError(ctx, c, conn, provider, model, chunk.Err, 0, latency, true)
 			c.Writer.Write([]byte("data: "))
 			c.Writer.Write(errFormatter(chunk.Err))
 			c.Writer.Write([]byte("\n\n"))
@@ -1128,6 +1133,7 @@ latency := time.Since(start).Milliseconds()
 				ConnectionID: conn.ID,
 				ProviderTypeID: provider,
 				ModelID: model,
+				ComboID: comboID,
 				ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
 				Modality: "chat",
 				Stream: true,
@@ -1154,6 +1160,9 @@ latency := time.Since(start).Milliseconds()
 			}
 
 		case <-ctx.Done():
+			// Log the context cancellation reason for debugging silent stream stops.
+			// This helps distinguish between client disconnects, combo timeouts, and other cancellations.
+			logging.Logger.Warn("stream context cancelled", "provider", provider, "model", model, "error", ctx.Err())
 			return
 		}
 	}

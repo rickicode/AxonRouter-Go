@@ -616,7 +616,9 @@ func (b *BaseExecutor) DoStreamRequestWithConfig(ctx context.Context, method, ra
 // doStreamConnect opens a single streaming attempt using the proxy attached to
 // ctx. It returns once the connection is established (or a connect error).
 func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL string, headers map[string]string, body []byte, cfg *StreamConfig) (*StreamResult, error) {
-	client, targetURL, err := b.clientForContext(ctx, rawURL, headers)
+	// Use stream client (no global Timeout) for long-lived streaming responses.
+	// Stream lifecycle is governed by fetch/idle/readiness context timeouts instead.
+	client, targetURL, err := b.clientForContextStream(ctx, rawURL, headers)
 	if err != nil {
 		return nil, err
 	}
