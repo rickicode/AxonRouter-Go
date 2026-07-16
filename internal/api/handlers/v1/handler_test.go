@@ -756,16 +756,16 @@ func TestBuildFailoverErrorResponse(t *testing.T) {
 			StatusCode: http.StatusOK,
 		}
 
-		conn := &Connection{ID: "conn-1"}
-		dummyReq := []byte(`{}`)
+	conn := &Connection{ID: "conn-1"}
+	dummyReq := []byte(`{}`)
 
-		// Call streamResponse directly.
-		h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
-			executor.FormatOpenAI, executor.FormatOpenAI,
-			dummyReq, dummyReq,
-			func(err error) []byte { return []byte(err.Error()) },
-			time.Now(),
-		)
+	// Call streamResponse directly.
+	h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
+		executor.FormatOpenAI, executor.FormatOpenAI,
+		dummyReq, dummyReq,
+		func(err error) []byte { return []byte(err.Error()) },
+		time.Now(), "",
+	)
 
 		// Verify via api_key_usage: the accumulated tokens (15 input + 25 output = 40)
 		// should have been written by incrementAPIKeyUsage which uses a direct DB write
@@ -825,7 +825,7 @@ func TestStreamResponse_UpstreamChunkErrMarksExhausted(t *testing.T) {
 		executor.FormatOpenAI, executor.FormatOpenAI,
 		[]byte(`{}`), []byte(`{}`),
 		func(err error) []byte { return []byte(`{"error":"upstream"}`) },
-		time.Now(),
+		time.Now(), "",
 	)
 
 	if !h.exhaustion.IsExhausted("conn-err") {
@@ -868,7 +868,7 @@ func TestStreamResponse_ClientCanceledChunkErrDoesNotMarkExhausted(t *testing.T)
 		executor.FormatOpenAI, executor.FormatOpenAI,
 		[]byte(`{}`), []byte(`{}`),
 		func(err error) []byte { return []byte(`{"error":"canceled"}`) },
-		time.Now(),
+		time.Now(), "",
 	)
 
 	if h.exhaustion.IsExhausted("conn-cancel") {
@@ -973,14 +973,14 @@ func TestFallbackUsage(t *testing.T) {
 
 		conn := &Connection{ID: "conn-1"}
 		originalReq := []byte(`{"model":"test/model","messages":[{"role":"user","content":"Hello"}]}`)
-		translatedReq := []byte(`{"model":"test-model","messages":[{"role":"user","content":"Hello"}]}`)
+	translatedReq := []byte(`{"model":"test-model","messages":[{"role":"user","content":"Hello"}]}`)
 
-		h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
-			executor.FormatOpenAI, executor.FormatOpenAI,
-			originalReq, translatedReq,
-			func(err error) []byte { return []byte(err.Error()) },
-			time.Now(),
-		)
+	h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
+		executor.FormatOpenAI, executor.FormatOpenAI,
+		originalReq, translatedReq,
+		func(err error) []byte { return []byte(err.Error()) },
+		time.Now(), "",
+	)
 
 		// Verify api_key_usage got non-zero estimated tokens (fallback).
 		var totalTokens int64
@@ -1038,15 +1038,15 @@ func TestFallbackUsage(t *testing.T) {
 			StatusCode: http.StatusOK,
 		}
 
-		conn := &Connection{ID: "conn-1"}
-		dummyReq := []byte(`{}`)
+	conn := &Connection{ID: "conn-1"}
+	dummyReq := []byte(`{}`)
 
-		h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
-			executor.FormatOpenAI, executor.FormatOpenAI,
-			dummyReq, dummyReq,
-			func(err error) []byte { return []byte(err.Error()) },
-			time.Now(),
-		)
+	h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
+		executor.FormatOpenAI, executor.FormatOpenAI,
+		dummyReq, dummyReq,
+		func(err error) []byte { return []byte(err.Error()) },
+		time.Now(), "",
+	)
 
 		var totalTokens int64
 		err := h.db.QueryRow(`SELECT total_tokens FROM api_key_usage WHERE api_key_id = 'test-key-2'`).Scan(&totalTokens)
