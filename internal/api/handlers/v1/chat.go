@@ -293,17 +293,23 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 			translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
 			req := &executor.Request{
 
-				Model:                modelName,
-				Body:                 translatedBody,
-				Stream:               stream,
-				APIKey:               conn.APIKey,
-				AccessToken:          conn.AccessToken,
-				BaseURL:              conn.BaseURL,
-				Provider:             provider,
-				ProviderSpecificData: psdMap,
-			}
-			proxyCtx := h.proxyContext(comboCtx, conn)
-			resp, streamResult, err := h.executeDirect(proxyCtx, exec, req)
+		Model:         modelName,
+		Body:          translatedBody,
+		Stream:        stream,
+		APIKey:        conn.APIKey,
+		AccessToken:   conn.AccessToken,
+		BaseURL:       conn.BaseURL,
+		Provider:      provider,
+		ProviderSpecificData: psdMap,
+	}
+	// Use client's request context for execution to avoid 30s combo timeout
+	// cutting off long-lived streaming responses. comboCtx is only for loop control.
+	execCtx := comboCtx
+	if stream {
+		execCtx = c.Request.Context()
+	}
+	proxyCtx := h.proxyContext(execCtx, conn)
+	resp, streamResult, err := h.executeDirect(proxyCtx, exec, req)
 			latency := time.Since(start).Milliseconds()
 			if err != nil {
 				if h.isClientCanceled(c, err) {
