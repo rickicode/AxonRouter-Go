@@ -81,3 +81,21 @@ func TestStreamNoUsageWhenAbsent(t *testing.T) {
 		t.Error("cache_read_input_tokens should be absent when cached_tokens is 0")
 	}
 }
+
+var benchChunks = [][]byte{
+	[]byte(`data: {"id":"chatcmpl-1","model":"gpt-4o-mini","choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}`),
+	[]byte(`data: {"id":"chatcmpl-1","model":"gpt-4o-mini","choices":[{"index":0,"delta":{"content":"Hello"}}]}`),
+	[]byte(`data: {"id":"chatcmpl-1","model":"gpt-4o-mini","choices":[{"index":0,"delta":{"content":" world"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":3,"prompt_tokens_details":{"cached_tokens":4}}}`),
+	[]byte(`data: [DONE]`),
+}
+
+func BenchmarkClaudeStream(b *testing.B) {
+	ctx := context.Background()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		var param any
+		for _, c := range benchChunks {
+			_ = ConvertOpenAIResponseToClaudeStream(ctx, "", nil, nil, c, &param)
+		}
+	}
+}
