@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	_ "modernc.org/sqlite"
 
+	"github.com/rickicode/AxonRouter-Go/internal/api/middleware"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 )
 
@@ -42,7 +43,7 @@ func jsonBodyAPIKey(t *testing.T, v any) *bytes.Buffer {
 func TestAPIKeyHandler_Create_IncludesExpiresAt(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	database := newAPIKeyHandlerTestDB(t)
-	h := NewAPIKeyHandler(database)
+	h := NewAPIKeyHandler(database, middleware.NewAuthCache(30*time.Second))
 
 	exp := int64(1893456000)
 	w := httptest.NewRecorder()
@@ -78,7 +79,7 @@ func TestAPIKeyHandler_Create_IncludesExpiresAt(t *testing.T) {
 func TestAPIKeyHandler_Create_NoExpiresAt(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	database := newAPIKeyHandlerTestDB(t)
-	h := NewAPIKeyHandler(database)
+	h := NewAPIKeyHandler(database, middleware.NewAuthCache(30*time.Second))
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -116,7 +117,7 @@ func TestAPIKeyHandler_Create_NoExpiresAt(t *testing.T) {
 func TestAPIKeyHandler_List_IncludesExpiresAt(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	database := newAPIKeyHandlerTestDB(t)
-	h := NewAPIKeyHandler(database)
+	h := NewAPIKeyHandler(database, middleware.NewAuthCache(30*time.Second))
 
 	exp := int64(1893456000)
 	_, err := database.Exec(`INSERT INTO api_keys (id, key_hash, key_value, name, rate_limit_per_min, max_tokens, is_active, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -150,7 +151,7 @@ func TestAPIKeyHandler_List_IncludesExpiresAt(t *testing.T) {
 func TestAPIKeyHandler_Create_PastExpiresAt(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	database := newAPIKeyHandlerTestDB(t)
-	h := NewAPIKeyHandler(database)
+	h := NewAPIKeyHandler(database, middleware.NewAuthCache(30*time.Second))
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -169,7 +170,7 @@ func TestAPIKeyHandler_Create_PastExpiresAt(t *testing.T) {
 func TestAPIKeyHandler_ToggleActive_KeepsExpiresAt_WhenOmitted(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	database := newAPIKeyHandlerTestDB(t)
-	h := NewAPIKeyHandler(database)
+	h := NewAPIKeyHandler(database, middleware.NewAuthCache(30*time.Second))
 
 	existingExp := int64(1900000000)
 	_, err := database.Exec(`INSERT INTO api_keys (id, key_hash, key_value, name, rate_limit_per_min, max_tokens, is_active, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -197,5 +198,46 @@ func TestAPIKeyHandler_ToggleActive_KeepsExpiresAt_WhenOmitted(t *testing.T) {
 	}
 	if stored != existingExp {
 		t.Errorf("expires_at = %d, want %d (should be unchanged)", stored, existingExp)
+	}
+}
+
+func TestAPIKeyHandler_Delete_WithUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	database := newAPIKeyHandlerTestDB(t)
+	h := NewAPIKeyHandler(database, middleware.NewAuthCache(30*time.Second))
+
+	_, err := database.Exec(`INSERT INTO api_keys (id, key_hash, key_value, name, rate_limit_per_min, max_tokens, is_active, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"key-usage", "hash", "raw-usage", "usage-key", 60, 1000, 1, 1000, 0)
+	if err != nil {
+		t.Fatalf("seed api key: %v", err)
+	}
+	_, err = database.Exec(`INSERT INTO api_key_usage (api_key_id, total_tokens, updated_at) VALUES (?, ?, ?)`,
+		"key-usage", 500, 1000)
+	if err != nil {
+		t.Fatalf("seed api key usage: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodDelete, "/api/admin/api-keys/key-usage", nil)
+	c.Params = gin.Params{{Key: "id", Value: "key-usage"}}
+	h.Delete(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var count int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM api_keys WHERE id = ?`, "key-usage").Scan(&count); err != nil {
+		t.Fatalf("query api_keys: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("api_keys count = %d, want 0", count)
+	}
+	if err := database.QueryRow(`SELECT COUNT(*) FROM api_key_usage WHERE api_key_id = ?`, "key-usage").Scan(&count); err != nil {
+		t.Fatalf("query api_key_usage: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("api_key_usage count = %d, want 0", count)
 	}
 }

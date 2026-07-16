@@ -8,17 +8,19 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/api/middleware"
 	"golang.org/x/crypto/bcrypt"
 )
 
 // APIKeyHandler manages proxy API keys.
 type APIKeyHandler struct {
-	db *sql.DB
+	db    *sql.DB
+	cache *middleware.AuthCache
 }
 
 // NewAPIKeyHandler creates a new API key handler.
-func NewAPIKeyHandler(db *sql.DB) *APIKeyHandler {
-	return &APIKeyHandler{db: db}
+func NewAPIKeyHandler(db *sql.DB, cache *middleware.AuthCache) *APIKeyHandler {
+	return &APIKeyHandler{db: db, cache: cache}
 }
 
 // List returns all API keys (masked).
@@ -147,19 +149,50 @@ func (h *APIKeyHandler) GetValue(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"id": id, "key": raw})
 }
 
-// Delete removes an API key.
+// Delete removes an API key and clears its usage and cache entry.
 func (h *APIKeyHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
-	result, err := h.db.Exec(`DELETE FROM api_keys WHERE id = ?`, id)
+
+	tx, err := h.db.Begin()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	affected, _ := result.RowsAffected()
-	if affected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "key not found"})
+	defer tx.Rollback()
+
+	var keyValue string
+	if err := tx.QueryRow(`SELECT COALESCE(key_value, '') FROM api_keys WHERE id = ?`, id).Scan(&keyValue); err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "key not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	if _, err := tx.Exec(`DELETE FROM api_key_usage WHERE api_key_id = ?`, id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if _, err := tx.Exec(`DELETE FROM api_keys WHERE id = ?`, id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if h.cache != nil {
+		if keyValue != "" {
+			h.cache.Invalidate(keyValue)
+		} else {
+			h.cache.InvalidateAll()
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -187,5 +220,17 @@ func (h *APIKeyHandler) ToggleActive(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	if h.cache != nil {
+		var keyValue string
+		if err := h.db.QueryRow(`SELECT COALESCE(key_value, '') FROM api_keys WHERE id = ?`, id).Scan(&keyValue); err == nil {
+			if keyValue != "" {
+				h.cache.Invalidate(keyValue)
+			} else {
+				h.cache.InvalidateAll()
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
