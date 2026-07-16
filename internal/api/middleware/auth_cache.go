@@ -98,25 +98,18 @@ func (c *AuthCache) InvalidateAll() {
 // error signals a DB failure; callers should treat it as an auth-system outage.
 // expired is true when the presented key matches but is past its expires_at.
 func validateKey(db *sql.DB, presentedKey string) (string, int, int64, int64, bool, bool, error) {
-	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM api_keys WHERE is_active = 1`).Scan(&count); err != nil {
-		return "", 0, 0, 0, false, false, err
-	}
-	if count == 0 {
-		return "", 0, 0, 0, false, false, nil
-	}
-
+	now := time.Now().Unix()
 	rows, err := db.Query(`SELECT id, key_hash, rate_limit_per_min, COALESCE(max_tokens, 0), COALESCE(expires_at, 0) FROM api_keys WHERE is_active = 1`)
 	if err != nil {
 		return "", 0, 0, 0, false, false, err
 	}
 	defer rows.Close()
 
-	now := time.Now().Unix()
 	var keyID string
 	var rateLimit int
 	var maxTokens int64
 	var expiresAt int64
+	var matchedExpired bool
 	for rows.Next() {
 		var id, hash string
 		var rowExpires int64
@@ -126,17 +119,21 @@ func validateKey(db *sql.DB, presentedKey string) (string, int, int64, int64, bo
 		}
 		if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(presentedKey)); err == nil {
 			if rowExpires > 0 && now >= rowExpires {
-				return "", 0, 0, 0, false, true, nil
+				matchedExpired = true
+				continue
 			}
 			keyID = id
 			expiresAt = rowExpires
 			break
 		}
 	}
-	if keyID == "" {
-		return "", 0, 0, 0, false, false, nil
+	if keyID != "" {
+		return keyID, rateLimit, maxTokens, expiresAt, true, false, nil
 	}
-	return keyID, rateLimit, maxTokens, expiresAt, true, false, nil
+	if matchedExpired {
+		return "", 0, 0, 0, false, true, nil
+	}
+	return "", 0, 0, 0, false, false, nil
 }
 
 // Validate collapses concurrent cache-miss validations for the same presented
