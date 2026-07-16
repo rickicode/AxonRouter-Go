@@ -64,17 +64,22 @@ let bulkText = $state('');
 let bulkType = $state('http');
 let bulkNoProxy = $state('');
 let bulkActive = $state(true);
-let bulkHealthy = $state(false);
-let bulkSub1s = $state(false);
 let bulkLoading = $state(false);
 // .txt upload + chunked send (keeps RAM bounded, mirrors provider bulk import).
-const POOL_BULK_CHUNK = 1000;
+const CHECK_CHUNK_SIZE = 50;
 const POOL_BULK_CONCURRENCY = 3;
 let uploadedPoolFile = $state('');
 let parsedPoolItems = $state<string[]>([]);
 let poolParseWarnings = $state<string[]>([]);
-let poolImportProgress = $state(0); // 0..1
-let poolImportSummary = $state<{ created: number; skipped: number; errors: number } | null>(null);
+
+// Bulk health-check progress modal
+let showBulkCheckModal = $state(false);
+let bulkCheckTotal = $state(0);
+let bulkCheckProcessed = $state(0);
+let bulkCheckSuccess = $state(0);
+let bulkCheckFailed = $state(0);
+let bulkCheckErrors = $state<{ index: number; url: string; reason: string }[]>([]);
+let bulkImportAborted = $state(false);
 
 function parsePoolLines(text: string): { items: string[]; warnings: string[] } {
   const lines = text.split('\n').map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith('#'));
@@ -96,7 +101,6 @@ function handlePoolFileUpload(event: Event) {
   const file = input.files?.[0];
   if (!file) return;
   uploadedPoolFile = file.name;
-  poolImportSummary = null;
   const reader = new FileReader();
   reader.onload = () => {
     const text = typeof reader.result === 'string' ? reader.result : '';
@@ -118,21 +122,26 @@ async function handleBulkImportChunked() {
     toast.error('Paste or upload at least one proxy URL');
     return;
   }
+  showAddPool = false;
+  showBulkCheckModal = true;
   bulkLoading = true;
-  poolImportProgress = 0;
-  poolImportSummary = { created: 0, skipped: 0, errors: 0 };
+  bulkImportAborted = false;
+  bulkCheckTotal = items.length;
+  bulkCheckProcessed = 0;
+  bulkCheckSuccess = 0;
+  bulkCheckFailed = 0;
+  bulkCheckErrors = [];
 
-  // Build the batch queue (each batch <= backend maxBulkItems=1000).
+  // Small chunks so each health-check request stays within timeout.
   const queue: string[][] = [];
-  for (let start = 0; start < items.length; start += POOL_BULK_CHUNK) {
-    queue.push(items.slice(start, start + POOL_BULK_CHUNK));
+  for (let start = 0; start < items.length; start += CHECK_CHUNK_SIZE) {
+    queue.push(items.slice(start, start + CHECK_CHUNK_SIZE));
   }
 
   let next = 0;
   let done = 0;
-  let aborted = false;
   const worker = async () => {
-    while (!aborted) {
+    while (!bulkImportAborted) {
       const i = next++;
       if (i >= queue.length) break;
       try {
@@ -141,36 +150,47 @@ async function handleBulkImportChunked() {
           defaultType: bulkType,
           noProxy: bulkNoProxy.trim() || undefined,
           isActive: bulkActive,
-          requireHealthy: bulkHealthy,
-          maxResponseTimeMs: bulkHealthy && bulkSub1s ? 1000 : undefined,
+          maxResponseTimeMs: 8000,
         });
-        poolImportSummary!.created += res.created ?? 0;
-        poolImportSummary!.skipped += res.skipped ?? 0;
-        poolImportSummary!.errors += res.errors ?? 0;
+        for (const d of res.details ?? []) {
+          if (d.status === 'created') {
+            bulkCheckSuccess++;
+          } else if (d.status === 'error') {
+            bulkCheckFailed++;
+            bulkCheckErrors.push({ index: d.index, url: d.url ?? '', reason: d.reason ?? '' });
+          }
+          bulkCheckProcessed++;
+        }
       } catch (err) {
-        aborted = true;
+        bulkImportAborted = true;
         throw err;
       } finally {
         done++;
-        poolImportProgress = done / queue.length;
       }
     }
   };
 
   try {
     await Promise.all(Array.from({ length: Math.min(POOL_BULK_CONCURRENCY, queue.length) }, () => worker()));
-    const s = poolImportSummary;
-    const msg = `${s.created} created, ${s.skipped} skipped, ${s.errors} errors`;
-    if (s.errors === 0) toast.success('Bulk import complete', { description: msg });
-    else toast.error('Bulk import finished with errors', { description: msg });
-    bulkText = '';
-    parsedPoolItems = [];
-    uploadedPoolFile = '';
-    poolParseWarnings = [];
-    poolPage = 1;
-    await loadAll(true);
+    if (bulkImportAborted) {
+      toast.info('Import cancelled', { description: `${bulkCheckSuccess} added, ${bulkCheckFailed} failed, ${bulkCheckProcessed} processed` });
+    } else {
+      bulkText = '';
+      parsedPoolItems = [];
+      uploadedPoolFile = '';
+      poolParseWarnings = [];
+      poolPage = 1;
+      await loadAll(true);
+      if (bulkCheckFailed > 0) {
+        toast.error('Import finished with failures', { description: `${bulkCheckSuccess} added, ${bulkCheckFailed} failed, ${bulkCheckProcessed} processed` });
+      } else {
+        toast.success(`Imported ${bulkCheckSuccess} proxies`, { description: `${bulkCheckProcessed} processed` });
+      }
+    }
+    showBulkCheckModal = false;
   } catch (err) {
     toast.error('Bulk import failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+    showBulkCheckModal = false;
   } finally {
     bulkLoading = false;
   }
@@ -329,17 +349,15 @@ async function handleCreatePool() {
 }
 
 function resetAddPoolModal(tab: 'single' | 'bulk') {
-	addPoolTab = tab;
-	poolName = '';
-	poolUrl = '';
-	poolNoProxy = '';
-	poolType = 'http';
-	bulkText = '';
-	bulkType = 'http';
-	bulkNoProxy = '';
-	bulkActive = true;
-	bulkHealthy = false;
-	bulkSub1s = false;
+  addPoolTab = tab;
+  poolName = '';
+  poolUrl = '';
+  poolNoProxy = '';
+  poolType = 'http';
+  bulkText = '';
+  bulkType = 'http';
+  bulkNoProxy = '';
+  bulkActive = true;
 }
 
 function toggleSelectPool(id: string) {
@@ -1211,7 +1229,7 @@ async function handleBulkImport() {
             <button
               type="button"
               class="text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
-              onclick={() => { uploadedPoolFile = ''; parsedPoolItems = []; poolParseWarnings = []; poolImportSummary = null; }}
+              onclick={() => { uploadedPoolFile = ''; parsedPoolItems = []; poolParseWarnings = []; }}
             >
               Clear
             </button>
@@ -1239,46 +1257,72 @@ async function handleBulkImport() {
           <Label class="text-sm font-medium">No Proxy (optional)</Label>
           <Input bind:value={bulkNoProxy} placeholder="localhost,127.0.0.1" class="h-10 text-body-sm font-mono w-full" />
         </div>
-        <div class="flex items-center gap-3">
-          <Switch id="bulk-active" checked={bulkActive} onCheckedChange={(v) => (bulkActive = v)} />
-          <Label for="bulk-active" class="text-sm font-medium cursor-pointer">Active after import</Label>
-        </div>
-        <div class="flex items-center gap-3">
-          <Switch id="bulk-healthy" checked={bulkHealthy} onCheckedChange={(v) => (bulkHealthy = v)} />
-          <Label for="bulk-healthy" class="text-sm font-medium cursor-pointer">Only import healthy proxies</Label>
-        </div>
-        <div class="flex items-center gap-3">
-          <Switch id="bulk-sub1s" checked={bulkSub1s} onCheckedChange={(v) => (bulkSub1s = v)} disabled={!bulkHealthy} />
-          <Label for="bulk-sub1s" class="text-sm font-medium cursor-pointer {bulkHealthy ? '' : 'text-muted-foreground'}">&lt;1s response</Label>
-        </div>
-      </div>
-
-      {#if bulkLoading}
-        <div class="flex flex-col gap-1.5">
-          <div class="h-2 w-full overflow-hidden rounded-full bg-muted">
-            <div
-              class="h-full rounded-full bg-primary transition-all duration-300"
-              style="width: {Math.round(poolImportProgress * 100)}%"
-            ></div>
+<div class="flex items-center gap-3">
+              <Switch id="bulk-active" checked={bulkActive} onCheckedChange={(v) => (bulkActive = v)} />
+              <Label for="bulk-active" class="text-sm font-medium cursor-pointer">Active after import</Label>
+            </div>
+            <p class="text-[11px] text-muted-foreground">Each proxy will be health-checked before it is imported.</p>
           </div>
-          <p class="text-[11px] text-muted-foreground">
-            Importing… {Math.round(poolImportProgress * 100)}%
-            {#if poolImportSummary}
-              ({poolImportSummary.created + poolImportSummary.skipped + poolImportSummary.errors})
-            {/if}
-          </p>
         </div>
-      {/if}
-    </div>
-    <Dialog.Footer>
-      <Button variant="ghost" onclick={() => (showAddPool = false)}>Cancel</Button>
-      <Button onclick={handleBulkImport} disabled={bulkLoading || (!bulkText.trim() && parsedPoolItems.length === 0)}>
-        {bulkLoading ? `Importing… ${Math.round(poolImportProgress * 100)}%` : 'Import pools'}
-      </Button>
-    </Dialog.Footer>
+        <Dialog.Footer>
+          <Button variant="ghost" onclick={() => (showAddPool = false)}>Cancel</Button>
+          <Button onclick={handleBulkImport} disabled={bulkLoading || (!bulkText.trim() && parsedPoolItems.length === 0)}>
+            {bulkLoading ? 'Importing…' : 'Import pools'}
+          </Button>
+        </Dialog.Footer>
   </Tabs.Content>
 		</Tabs.Root>
 	</Dialog.Content>
+</Dialog.Root>
+
+<!-- Bulk import health-check progress -->
+<Dialog.Root bind:open={showBulkCheckModal}>
+  <Dialog.Content class="sm:max-w-lg">
+    <Dialog.Header>
+      <Dialog.Title class="text-body-md-strong">Checking proxies…</Dialog.Title>
+      <Dialog.Description class="text-xs">{bulkCheckProcessed} of {bulkCheckTotal} processed</Dialog.Description>
+    </Dialog.Header>
+    <div class="space-y-4 py-2">
+      <div class="h-2 w-full overflow-hidden rounded-full bg-muted">
+        <div
+          class="h-full rounded-full bg-primary transition-all duration-300"
+          style="width: {bulkCheckTotal > 0 ? Math.round((bulkCheckProcessed / bulkCheckTotal) * 100) : 0}%"
+        ></div>
+      </div>
+      <div class="grid grid-cols-3 gap-2 text-center">
+        <div class="rounded-lg bg-card p-2">
+          <div class="text-body-sm-strong">{bulkCheckProcessed}</div>
+          <div class="text-caption text-muted-foreground">processed</div>
+        </div>
+        <div class="rounded-lg bg-card p-2">
+          <div class="text-body-sm-strong text-emerald-500">{bulkCheckSuccess}</div>
+          <div class="text-caption text-muted-foreground">success</div>
+        </div>
+        <div class="rounded-lg bg-card p-2">
+          <div class="text-body-sm-strong text-destructive">{bulkCheckFailed}</div>
+          <div class="text-caption text-muted-foreground">failed</div>
+        </div>
+      </div>
+      {#if bulkCheckErrors.length > 0}
+      <div class="space-y-2">
+        <div class="text-body-sm-strong">Failed rows</div>
+        <div class="max-h-48 overflow-y-auto rounded-lg border border-border bg-card p-2 space-y-2">
+          {#each bulkCheckErrors as e}
+          <div class="flex flex-col gap-0.5">
+            <div class="text-body-sm font-mono break-all">{e.url}</div>
+            <div class="text-caption text-destructive">{e.reason}</div>
+          </div>
+          {/each}
+        </div>
+      </div>
+      {/if}
+    </div>
+    <Dialog.Footer>
+      <Button variant="outline" onclick={() => (bulkImportAborted = true)} disabled={bulkCheckProcessed >= bulkCheckTotal || bulkImportAborted}>
+        {bulkImportAborted ? 'Cancelling…' : 'Cancel'}
+      </Button>
+    </Dialog.Footer>
+  </Dialog.Content>
 </Dialog.Root>
 
 <!-- Delete all error confirmation -->
