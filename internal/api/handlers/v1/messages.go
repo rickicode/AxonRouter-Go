@@ -242,9 +242,9 @@ func (h *Handler) CountTokens(c *gin.Context) {
 		Provider:    provider,
 	}
 
-	if claudeExec, ok := exec.(*executor.ClaudeExecutor); ok {
+	if tc, ok := exec.(executor.TokenCounter); ok {
 		proxyCtx := h.proxyContext(c.Request.Context(), conn)
-		resp, err := claudeExec.CountTokens(proxyCtx, req)
+		resp, err := tc.CountTokens(proxyCtx, req)
 		if err != nil {
 			c.JSON(http.StatusBadGateway, claudeError("server_error", err.Error()))
 			return
