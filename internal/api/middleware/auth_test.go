@@ -167,9 +167,12 @@ func TestAuthCache_Validate_StoresResult(t *testing.T) {
 	}
 
 	cache := NewAuthCache(30 * time.Second)
-	keyID, rateLimit, maxTokens, ok, dbErr := cache.Validate(database, key)
+	keyID, rateLimit, maxTokens, ok, expired, dbErr := cache.Validate(database, key)
 	if dbErr != nil {
 		t.Fatalf("Validate returned DB error: %v", dbErr)
+	}
+	if expired {
+		t.Fatalf("Validate returned expired for a non-expiring key")
 	}
 	if !ok {
 		t.Fatalf("Validate returned !ok")
@@ -246,7 +249,7 @@ func TestValidateKey_ReturnsDBError(t *testing.T) {
 	database := openTestDB(t)
 	database.Close()
 
-	_, _, _, _, ok, dbErr := validateKey(database, "any-key")
+	_, _, _, _, _, ok, dbErr := validateKey(database, "any-key")
 	if dbErr == nil {
 		t.Fatalf("expected DB error from validateKey on closed DB")
 	}

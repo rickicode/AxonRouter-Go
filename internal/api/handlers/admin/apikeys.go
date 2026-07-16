@@ -75,6 +75,12 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 		req.RateLimitPerMin = 600
 	}
 
+	now := time.Now().Unix()
+	if req.ExpiresAt != nil && *req.ExpiresAt <= now {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "expires_at must be in the future"})
+		return
+	}
+
 	// Generate random key
 	raw := make([]byte, 16)
 	if _, err := rand.Read(raw); err != nil {
@@ -91,8 +97,6 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash key"})
 		return
 	}
-
-	now := time.Now().Unix()
 
 	name := sql.NullString{}
 	if req.Name != "" {
@@ -163,9 +167,8 @@ func (h *APIKeyHandler) Delete(c *gin.Context) {
 func (h *APIKeyHandler) ToggleActive(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		IsActive  bool   `json:"is_active"`
-		MaxTokens int64  `json:"max_tokens"`
-		ExpiresAt *int64 `json:"expires_at"`
+		IsActive  bool  `json:"is_active"`
+		MaxTokens int64 `json:"max_tokens"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -179,18 +182,10 @@ func (h *APIKeyHandler) ToggleActive(c *gin.Context) {
 	if maxTokens == 0 {
 		_ = h.db.QueryRow(`SELECT COALESCE(max_tokens, 0) FROM api_keys WHERE id = ?`, id).Scan(&maxTokens)
 	}
-	if req.ExpiresAt != nil {
-		_, err := h.db.Exec(`UPDATE api_keys SET is_active = ?, max_tokens = ?, expires_at = ? WHERE id = ?`, active, maxTokens, *req.ExpiresAt, id)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-	} else {
-		_, err := h.db.Exec(`UPDATE api_keys SET is_active = ?, max_tokens = ? WHERE id = ?`, active, maxTokens, id)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
+	_, err := h.db.Exec(`UPDATE api_keys SET is_active = ?, max_tokens = ? WHERE id = ?`, active, maxTokens, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

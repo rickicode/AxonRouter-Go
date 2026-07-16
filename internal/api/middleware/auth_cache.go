@@ -94,21 +94,21 @@ func (c *AuthCache) InvalidateAll() {
 }
 
 // validateKey loads active keys from the DB, compares the presented key with
-// bcrypt, and returns the matched key's id and rate limit. The returned error
-// signals a DB failure; callers should treat it as an auth-system outage and
-// fail-closed without falling back to another query.
-func validateKey(db *sql.DB, presentedKey string) (string, int, int64, int64, bool, error) {
+// bcrypt, and returns the matched key's id, rate limit, and expiry. The returned
+// error signals a DB failure; callers should treat it as an auth-system outage.
+// expired is true when the presented key matches but is past its expires_at.
+func validateKey(db *sql.DB, presentedKey string) (string, int, int64, int64, bool, bool, error) {
 	var count int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM api_keys WHERE is_active = 1`).Scan(&count); err != nil {
-		return "", 0, 0, 0, false, err
+		return "", 0, 0, 0, false, false, err
 	}
 	if count == 0 {
-		return "", 0, 0, 0, false, nil
+		return "", 0, 0, 0, false, false, nil
 	}
 
 	rows, err := db.Query(`SELECT id, key_hash, rate_limit_per_min, COALESCE(max_tokens, 0), COALESCE(expires_at, 0) FROM api_keys WHERE is_active = 1`)
 	if err != nil {
-		return "", 0, 0, 0, false, err
+		return "", 0, 0, 0, false, false, err
 	}
 	defer rows.Close()
 
@@ -126,7 +126,7 @@ func validateKey(db *sql.DB, presentedKey string) (string, int, int64, int64, bo
 		}
 		if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(presentedKey)); err == nil {
 			if rowExpires > 0 && now >= rowExpires {
-				continue
+				return "", 0, 0, 0, false, true, nil
 			}
 			keyID = id
 			expiresAt = rowExpires
@@ -134,33 +134,33 @@ func validateKey(db *sql.DB, presentedKey string) (string, int, int64, int64, bo
 		}
 	}
 	if keyID == "" {
-		return "", 0, 0, 0, false, nil
+		return "", 0, 0, 0, false, false, nil
 	}
-	return keyID, rateLimit, maxTokens, expiresAt, true, nil
+	return keyID, rateLimit, maxTokens, expiresAt, true, false, nil
 }
 
 // Validate collapses concurrent cache-miss validations for the same presented
 // key into a single DB+bcrypt call via singleflight. This prevents a
 // thundering herd at the 30s TTL boundary (cold start or key rotation) when
 // hundreds of concurrent requests all miss the cache simultaneously.
-func (c *AuthCache) Validate(db *sql.DB, presentedKey string) (string, int, int64, bool, error) {
+func (c *AuthCache) Validate(db *sql.DB, presentedKey string) (string, int, int64, bool, bool, error) {
 	if c == nil {
-		keyID, rateLimit, maxTokens, _, ok, dbErr := validateKey(db, presentedKey)
-		return keyID, rateLimit, maxTokens, ok, dbErr
+		keyID, rateLimit, maxTokens, _, ok, expired, dbErr := validateKey(db, presentedKey)
+		return keyID, rateLimit, maxTokens, ok, expired, dbErr
 	}
 	v, err, _ := c.group.Do(presentedKey, func() (interface{}, error) {
-		keyID, rateLimit, maxTokens, expiresAt, ok, dbErr := validateKey(db, presentedKey)
+		keyID, rateLimit, maxTokens, expiresAt, ok, expired, dbErr := validateKey(db, presentedKey)
 		if dbErr != nil {
 			return nil, dbErr
 		}
 		if ok {
 			c.Put(presentedKey, keyID, rateLimit, maxTokens, expiresAt)
 		}
-		return []interface{}{keyID, rateLimit, maxTokens, ok}, nil
+		return []interface{}{keyID, rateLimit, maxTokens, ok, expired}, nil
 	})
 	if err != nil {
-		return "", 0, 0, false, err
+		return "", 0, 0, false, false, err
 	}
 	res := v.([]interface{})
-	return res[0].(string), res[1].(int), res[2].(int64), res[3].(bool), nil
+	return res[0].(string), res[1].(int), res[2].(int64), res[3].(bool), res[4].(bool), nil
 }

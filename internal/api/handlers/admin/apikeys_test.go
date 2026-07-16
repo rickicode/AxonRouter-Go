@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	_ "modernc.org/sqlite"
@@ -146,52 +147,24 @@ func TestAPIKeyHandler_List_IncludesExpiresAt(t *testing.T) {
 		t.Errorf("list expires_at = %v, want %v", listResp.Data[0]["expires_at"], exp)
 	}
 }
-
-func TestAPIKeyHandler_ToggleActive_UpdatesExpiresAt(t *testing.T) {
+func TestAPIKeyHandler_Create_PastExpiresAt(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	database := newAPIKeyHandlerTestDB(t)
 	h := NewAPIKeyHandler(database)
 
-	_, err := database.Exec(`INSERT INTO api_keys (id, key_hash, key_value, name, rate_limit_per_min, max_tokens, is_active, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		"key-tog", "hash", "raw", "toggle", 60, 1000, 1, 1000, 0)
-	if err != nil {
-		t.Fatalf("seed api key: %v", err)
-	}
-
-	newExp := int64(2000000000)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/api-keys/key-tog/toggle", jsonBodyAPIKey(t, map[string]any{
-		"is_active":  false,
-		"max_tokens": 2000,
-		"expires_at": newExp,
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/api-keys", jsonBodyAPIKey(t, map[string]any{
+		"name":       "past-key",
+		"expires_at": time.Now().Unix() - 10,
 	}))
-	c.Params = gin.Params{{Key: "id", Value: "key-tog"}}
-	h.ToggleActive(c)
+	h.Create(c)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
-	}
-
-	var stored struct {
-		IsActive  int   `json:"is_active"`
-		MaxTokens int64 `json:"max_tokens"`
-		ExpiresAt int64 `json:"expires_at"`
-	}
-	row := database.QueryRow(`SELECT is_active, max_tokens, COALESCE(expires_at, 0) FROM api_keys WHERE id = ?`, "key-tog")
-	if err := row.Scan(&stored.IsActive, &stored.MaxTokens, &stored.ExpiresAt); err != nil {
-		t.Fatalf("scan updated row: %v", err)
-	}
-	if stored.IsActive != 0 {
-		t.Errorf("is_active = %d, want 0", stored.IsActive)
-	}
-	if stored.MaxTokens != 2000 {
-		t.Errorf("max_tokens = %d, want 2000", stored.MaxTokens)
-	}
-	if stored.ExpiresAt != newExp {
-		t.Errorf("expires_at = %d, want %d", stored.ExpiresAt, newExp)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }
+
 
 func TestAPIKeyHandler_ToggleActive_KeepsExpiresAt_WhenOmitted(t *testing.T) {
 	gin.SetMode(gin.TestMode)
