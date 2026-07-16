@@ -75,6 +75,33 @@ func TestStreamOptions_HandlesPathSuffix(t *testing.T) {
 	}
 }
 
+func TestStreamOptions_InjectsForClaudeClientOpenAIProvider(t *testing.T) {
+	body := []byte(`{"model":"gpt-4o","stream":true}`)
+	result := sanitizeStreamOptions(body, true, executor.FormatClaude, executor.FormatOpenAI, "/v1/messages")
+	if !gjson.GetBytes(result, "stream_options.include_usage").Bool() {
+		t.Error("expected stream_options.include_usage to be true for Claude client -> OpenAI provider")
+	}
+	if gjson.GetBytes(result, "model").String() != "gpt-4o" {
+		t.Error("expected model to remain unchanged")
+	}
+}
+
+func TestStreamOptions_StripsForClaudeClientClaudeProvider(t *testing.T) {
+	body := []byte(`{"model":"claude-sonnet-4","stream":true,"stream_options":{"include_usage":true}}`)
+	result := sanitizeStreamOptions(body, true, executor.FormatClaude, executor.FormatClaude, "/v1/messages")
+	if gjson.GetBytes(result, "stream_options").Exists() {
+		t.Error("expected stream_options to be stripped for Claude provider")
+	}
+}
+
+func TestStreamOptions_StripsForClaudeClientNonStreaming(t *testing.T) {
+	body := []byte(`{"model":"gpt-4o","stream":false,"stream_options":{"include_usage":true}}`)
+	result := sanitizeStreamOptions(body, false, executor.FormatClaude, executor.FormatOpenAI, "/v1/messages")
+	if gjson.GetBytes(result, "stream_options").Exists() {
+		t.Error("expected stream_options to be removed for non-streaming Claude request")
+	}
+}
+
 func TestStreamOptions_ResponsesAPINoStreamOptions(t *testing.T) {
 	body := []byte(`{"model":"gpt-4","stream":true,"stream_options":{"include_usage":true}}`)
 	result := sanitizeStreamOptions(body, true, executor.FormatOpenAIResponses, executor.FormatOpenAIResponses, "/v1/responses")
