@@ -11,6 +11,8 @@ import type { Combo, ComboStep, GatewayModel } from '$lib/api';
 import { unwrapStr } from '$lib/utils';
 import { planStepSync, type StepDraft, type ExistingStep } from './combo-modal-helpers';
 import { toast } from 'svelte-sonner';
+import ChevronUpIcon from '@lucide/svelte/icons/chevron-up';
+import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 
 let {
 	open = $bindable(false),
@@ -113,17 +115,36 @@ $effect(() => {
 });
 
 function addModel(modelId: string) {
-	if (steps.some((s) => s.model_id === modelId)) {
-		toast.info('Model already added');
-		return;
-	}
-	const nextPriority = steps.length > 0 ? Math.max(...steps.map((s) => s.priority)) + 1 : 1;
-	steps = [...steps, { model_id: modelId, priority: nextPriority, weight: 100 }];
+  if (steps.some((s) => s.model_id === modelId)) {
+    toast.info('Model already added');
+    return;
+  }
+  commitSteps([...steps, { model_id: modelId, priority: steps.length + 1, weight: 100 }]);
+}
+
+
+function commitSteps(next: StepDraft[]) {
+  steps = next.map((s, i) => ({ ...s, priority: i + 1 }));
 }
 
 function removeStep(index: number) {
-	steps = steps.filter((_, i) => i !== index);
+  commitSteps(steps.filter((_, i) => i !== index));
 }
+
+function moveStepUp(index: number) {
+  if (index <= 0) return;
+  const next = [...steps];
+  [next[index - 1], next[index]] = [next[index], next[index - 1]];
+  commitSteps(next);
+}
+
+function moveStepDown(index: number) {
+  if (index >= steps.length - 1) return;
+  const next = [...steps];
+  [next[index], next[index + 1]] = [next[index + 1], next[index]];
+  commitSteps(next);
+}
+
 
 function handleClose() {
 	open = false;
@@ -175,12 +196,14 @@ async function handleSave() {
 </script>
 
 <Dialog.Root bind:open>
-	<Dialog.Content class="sm:max-w-2xl">
-		<Dialog.Header>
-			<Dialog.Title class="text-body-md-strong">{combo ? 'Edit combo' : 'Create combo'}</Dialog.Title>
-		</Dialog.Header>
+  <Dialog.Content class="sm:max-w-2xl max-h-[85vh] flex flex-col">
+    <Dialog.Header>
+    <Dialog.Title class="text-body-md-strong">{combo ? 'Edit combo' : 'Create combo'}</Dialog.Title>
+  </Dialog.Header>
 
-		<div class="space-y-4 py-2">
+  <div class="flex-1 overflow-y-auto min-h-0">
+    <div class="space-y-4 py-2">
+
 			<div class="space-y-2">
 				<Label class="text-body-sm-strong">Name</Label>
 				<Input bind:value={name} placeholder="e.g. fallback, premium-rr" class="h-10 text-body-sm" />
@@ -255,32 +278,59 @@ async function handleSave() {
 							<p class="text-caption text-muted-foreground">Add models to define routing order.</p>
 						</div>
 					{:else}
-						<div class="space-y-2">
-							{#each steps as step, i (step.id ?? `${step.model_id}-${i}`)}
-								<div class="flex items-center gap-3 p-2.5 border border-border rounded-md bg-card/50">
-									<span class="flex-1 min-w-0 text-body-sm font-mono truncate">{step.model_id}</span>
-									<div class="flex items-center gap-2">
-										<div class="space-y-1">
-											<Label class="text-caption text-muted-foreground">Priority</Label>
-											<Input type="number" bind:value={step.priority} class="h-8 w-20 text-code font-mono" />
-										</div>
-										<div class="space-y-1">
-											<Label class="text-caption text-muted-foreground">Weight</Label>
-											<Input type="number" bind:value={step.weight} class="h-8 w-20 text-code font-mono" />
-										</div>
-									</div>
-									<Button variant="ghost" size="sm" onclick={() => removeStep(i)} class="text-caption-mono text-destructive h-8 px-2 rounded-sm">
-										Remove
-									</Button>
-								</div>
-							{/each}
-						</div>
+            <div class="space-y-2">
+              {#each steps as step, i (step.id ?? `${step.model_id}-${i}`)}
+                <div class="flex items-center gap-3 p-2.5 border border-border rounded-md bg-card/50">
+                  <div class="flex flex-col gap-0.5">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      class="size-7 rounded-sm"
+                      disabled={i === 0}
+                      onclick={() => moveStepUp(i)}
+                      aria-label="Move up"
+                      title="Move up"
+                    >
+                      <ChevronUpIcon class="size-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      class="size-7 rounded-sm"
+                      disabled={i === steps.length - 1}
+                      onclick={() => moveStepDown(i)}
+                      aria-label="Move down"
+                      title="Move down"
+                    >
+                      <ChevronDownIcon class="size-4" />
+                    </Button>
+                  </div>
+                  <span class="flex-1 min-w-0 text-body-sm font-mono truncate">{step.model_id}</span>
+                  <div class="flex items-center gap-2">
+                    <div class="space-y-1">
+                      <Label class="text-caption text-muted-foreground">Order</Label>
+                      <span class="flex h-8 w-16 items-center justify-center rounded-md border border-border bg-muted/30 text-code font-mono">{i + 1}</span>
+                    </div>
+                    <div class="space-y-1">
+                      <Label class="text-caption text-muted-foreground">Weight</Label>
+                      <Input type="number" bind:value={step.weight} class="h-8 w-20 text-code font-mono" />
+                    </div>
+                  </div>
+                  <Button variant="ghost" size="sm" onclick={() => removeStep(i)} class="text-caption-mono text-destructive h-8 px-2 rounded-sm">
+                    Remove
+                  </Button>
+                </div>
+              {/each}
+            </div>
+
 					{/if}
 				</CardContent>
-			</Card>
-		</div>
+    </Card>
+    </div>
+  </div>
 
-		<Dialog.Footer>
+  <Dialog.Footer>
+
 			<Button variant="ghost" onclick={handleClose}>Cancel</Button>
 			<Button onclick={handleSave} disabled={loading || !name.trim()}>
 				{loading ? 'Saving...' : 'Save'}
