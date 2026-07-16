@@ -1,6 +1,7 @@
 package quota
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/rickicode/AxonRouter-Go/internal/auth"
 )
 
 // QuotaItem represents a single quota window.
@@ -80,6 +83,15 @@ var knownProviders = map[string]providerMeta{
 func ProviderMeta(providerID string) (providerMeta, bool) {
 	m, ok := knownProviders[providerID]
 	return m, ok
+}
+
+// authMgr is the package-level auth manager used to refresh OAuth tokens.
+// Injected via SetAuthManager so public quota fetch signatures stay stable.
+var authMgr *auth.Manager
+
+// SetAuthManager injects the auth manager used for OAuth token refresh.
+func SetAuthManager(m *auth.Manager) {
+	authMgr = m
 }
 
 // FetchAllQuota fetches quota for all OAuth connections across all providers.
@@ -213,6 +225,18 @@ func parseProviderSpecificData(raw sql.NullString) map[string]any {
 	return m
 }
 
+// mapStringToAny converts a string-string map to the map[string]any used by fetchers.
+func mapStringToAny(in map[string]string) map[string]any {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
 // refreshOAuthToken refreshes an expired OAuth token using the provider's refresh token.
 // Returns new access token, new refresh token (may be same as input if not rotated), and expiry unix timestamp.
 func refreshOAuthToken(providerID, refreshToken string) (string, string, int64, error) {
@@ -301,9 +325,9 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 	}
 
 	token := c.OAuthToken.String
+	psd := parseProviderSpecificData(c.ProviderSpecificData)
 
 	// Proactive refresh with per-provider lead times (matches handler.go refreshLeadMs).
-	// Skip proactive refresh for Codex (cx) — Auth0 rotating tokens, handler uses singleflight+rotation-group.
 	refreshLead := int64(300) // default 5 minutes
 	switch providerID {
 	case "ag":
@@ -311,24 +335,73 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 	case "kiro":
 		refreshLead = 300 // 5 minutes for Kiro
 	}
-	if providerID != "cx" && c.OAuthExpiresAt > 0 && time.Now().Unix() > c.OAuthExpiresAt-refreshLead {
-		if c.OAuthRefreshToken.Valid && c.OAuthRefreshToken.String != "" {
-			newToken, newRefreshToken, newExpiry, err := refreshOAuthToken(providerID, c.OAuthRefreshToken.String)
+
+	if c.OAuthExpiresAt > 0 && c.OAuthRefreshToken.Valid && c.OAuthRefreshToken.String != "" &&
+		time.Now().Unix() > c.OAuthExpiresAt-refreshLead {
+		var (
+			newToken            string
+			newRefreshToken     string
+			newExpiry           int64
+			newProviderSpecific map[string]string
+			refreshed           bool
+		)
+
+		// Prefer auth manager for all OAuth providers (includes Codex singleflight + rotation groups).
+		if authMgr != nil {
+			providerType := auth.ProviderType(providerID)
+			if _, ok := authMgr.GetService(providerType); ok {
+				creds := &auth.Credentials{
+					AccessToken: token,
+					RefreshToken: c.OAuthRefreshToken.String,
+					ExpiresAt:    time.Unix(c.OAuthExpiresAt, 0),
+				}
+				newCreds, err := authMgr.RefreshToken(context.Background(), providerType, creds)
+				if err == nil {
+					newToken = newCreds.AccessToken
+					newRefreshToken = newCreds.RefreshToken
+					if !newCreds.ExpiresAt.IsZero() {
+						newExpiry = newCreds.ExpiresAt.Unix()
+					}
+					newProviderSpecific = newCreds.ProviderSpecific
+					refreshed = true
+				} else {
+					log.Printf("quota: auth manager token refresh failed for %s (%s): %v", c.ID, c.Name, err)
+				}
+			}
+		}
+
+		// Raw fallback for Antigravity and Kiro when auth manager is unavailable/failed.
+		if !refreshed && (providerID == "ag" || providerID == "kiro") {
+			var err error
+			newToken, newRefreshToken, newExpiry, err = refreshOAuthToken(providerID, c.OAuthRefreshToken.String)
 			if err != nil {
-				log.Printf("quota: token refresh failed for %s (%s): %v", c.ID, c.Name, err)
+				log.Printf("quota: raw token refresh failed for %s (%s): %v", c.ID, c.Name, err)
 				cq.Error = fmt.Sprintf("token refresh failed: %v", err)
 				return cq
 			}
+			refreshed = true
+		}
+
+		if refreshed {
 			token = newToken
-			// Persist refreshed token (and rotated refresh_token) to DB
+			var psdJSON []byte
+			if len(newProviderSpecific) > 0 {
+				psdJSON, _ = json.Marshal(newProviderSpecific)
+				psd = mapStringToAny(newProviderSpecific)
+				c.ProviderSpecificData = sql.NullString{Valid: true, String: string(psdJSON)}
+			}
 			if db != nil {
-				db.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
-					newToken, newRefreshToken, newExpiry, time.Now().Unix(), c.ID)
+				now := time.Now().Unix()
+				if psdJSON != nil {
+					db.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?`,
+						newToken, newRefreshToken, newExpiry, psdJSON, now, c.ID)
+				} else {
+					db.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
+						newToken, newRefreshToken, newExpiry, now, c.ID)
+				}
 			}
 		}
 	}
-
-	psd := parseProviderSpecificData(c.ProviderSpecificData)
 
 	type fetchResult struct {
 		quotas  []QuotaItem
