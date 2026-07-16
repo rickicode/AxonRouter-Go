@@ -111,12 +111,13 @@ func (h *Handler) Images(c *gin.Context) {
 		ProviderTypeID: provider,
 		ModelID: modelName,
 		ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
-		ApiType:     apiTypeFromPath(c.Request.URL.Path),
+		ApiType: apiTypeFromPath(c.Request.URL.Path),
 		Modality: "image",
 		Stream: false,
 		LatencyMs: time.Since(start).Milliseconds(),
 		StatusCode: resp.StatusCode})
 
+	h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, resp.Body, false)
 	c.Header("Content-Type", "application/json")
 	c.Status(resp.StatusCode)
 	c.Writer.Write(resp.Body)

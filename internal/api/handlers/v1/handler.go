@@ -1420,3 +1420,22 @@ func (h *Handler) incrementAPIKeyUsage(apiKeyID string, tokens int64) {
 		logging.Logger.Warn("incrementAPIKeyUsage: failed to update usage", "error", err.Error())
 	}
 }
+
+// accumulateAPIKeyUsage centralizes token extraction and budget updates for all
+// /v1/* endpoints. If the response body includes explicit usage, those counts are
+// used; otherwise it falls back to usage.EstimateTokensFromRequest. The
+// estimateOutput flag controls whether output tokens are estimated from the
+// response body — enabled only for chat/text endpoints so binary image/audio
+// bytes are never counted as tokens.
+func (h *Handler) accumulateAPIKeyUsage(apiKeyID string, reqBody, respBody []byte, estimateOutput bool) {
+	var total int64
+	if counts := ExtractTokensFromBody(respBody); counts.InputTokens > 0 || counts.OutputTokens > 0 {
+		total = counts.InputTokens + counts.OutputTokens
+	} else {
+		total = usage.EstimateTokensFromRequest(reqBody)
+		if estimateOutput {
+			total += usage.EstimateTokensFromResponse(respBody)
+		}
+	}
+	h.incrementAPIKeyUsage(apiKeyID, total)
+}

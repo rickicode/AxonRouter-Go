@@ -209,7 +209,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 			if resp.StatusCode < 300 {
 				h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
 			}
-			h.incrementAPIKeyUsage(c.GetString("api_key_id"), tokenCounts.InputTokens+tokenCounts.OutputTokens)
+			h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
 			h.writeJSONResponse(c, resp.StatusCode, translatedResp)
 		}
 		return
@@ -397,10 +397,10 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				StatusCode:          resp.StatusCode,
 				TokensEstimated:     tokensEstimated,
 				})
-				c.Header("Content-Type", "application/json")
-				h.incrementAPIKeyUsage(c.GetString("api_key_id"), tokenCounts.InputTokens+tokenCounts.OutputTokens)
-				c.Status(resp.StatusCode)
-				c.Writer.Write(translatedResp)
+		c.Header("Content-Type", "application/json")
+		h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
+		c.Status(resp.StatusCode)
+		c.Writer.Write(translatedResp)
 			}
 			return
 		}

@@ -84,12 +84,13 @@ func (h *Handler) TTS(c *gin.Context) {
 		ProviderTypeID: provider,
 		ModelID: modelName,
 		ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
-		ApiType:     apiTypeFromPath(c.Request.URL.Path),
+		ApiType: apiTypeFromPath(c.Request.URL.Path),
 		Modality: "audio",
 		Stream: false,
 		LatencyMs: time.Since(start).Milliseconds(),
 		StatusCode: resp.StatusCode})
 
+	h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, nil, false)
 	// Return audio bytes
 	c.Header("Content-Type", "audio/mpeg")
 	if ct := resp.Headers.Get("Content-Type"); ct != "" {

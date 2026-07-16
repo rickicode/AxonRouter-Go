@@ -127,12 +127,13 @@ func (h *Handler) STT(c *gin.Context) {
 		ProviderTypeID: provider,
 		ModelID: model,
 		ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
-		ApiType:     apiTypeFromPath(c.Request.URL.Path),
+		ApiType: apiTypeFromPath(c.Request.URL.Path),
 		Modality: "audio",
 		Stream: false,
 		LatencyMs: time.Since(start).Milliseconds(),
 		StatusCode: resp.StatusCode})
 
+	h.accumulateAPIKeyUsage(c.GetString("api_key_id"), nil, resp.Body, false)
 	c.Header("Content-Type", "application/json")
 	c.Status(resp.StatusCode)
 	c.Writer.Write(resp.Body)
