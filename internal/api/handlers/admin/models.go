@@ -615,7 +615,7 @@ func defaultTestModel(providerID string) string {
 	case "mimocode", "mimocode-free":
 		return "mimo-auto"
 	case "mimo", "mimo-tp", "mimo-token":
-		return "mimo-v2.5"
+		return "mimo-v2.5-pro"
 	case "oc", "oc-zen", "oc-go":
 		return "deepseek-v4-flash-free"
 	case "openrouter":
