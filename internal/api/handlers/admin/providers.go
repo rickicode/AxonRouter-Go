@@ -650,17 +650,12 @@ func (h *ProviderHandler) AddConnection(c *gin.Context) {
 		// mimocode is no-auth; force auth_type to none
 		req.AuthType = "none"
 		req.APIKey = ""
-		// Each additional mimocode connection is treated as a distinct logical account.
-		// Assign a stable account id, label, and random fingerprint so it can be tracked/exhausted independently.
-		if req.ProviderSpecificData["accountId"] == "" {
-			req.ProviderSpecificData["accountId"] = "mimocode-" + uuid.New().String()[:8]
-		}
-		if req.ProviderSpecificData["accountLabel"] == "" {
-			req.ProviderSpecificData["accountLabel"] = req.Name
-		}
-		if req.ProviderSpecificData["fingerprint"] == "" {
-			req.ProviderSpecificData["fingerprint"] = generateFingerprint()
-		}
+	// Each additional mimocode connection must behave as a brand-new logical account.
+	// Always generate a fresh account id, label, and fingerprint so no two connections
+	// share the same device identity, which is required to avoid MiMoCode anti-abuse flags.
+	req.ProviderSpecificData["accountId"] = "mimocode-" + uuid.New().String()[:8]
+	req.ProviderSpecificData["accountLabel"] = req.Name
+	req.ProviderSpecificData["fingerprint"] = generateFingerprint()
 	}
 
 	connID := uuid.New().String()

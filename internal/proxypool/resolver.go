@@ -229,8 +229,11 @@ func (r *Resolver) ResolveCandidates(providerSpecificData, providerID string) []
 	}
 
 	// Direct fallback unless the selected proxy is strict.
+	// MiMoCode aggressively rate-limits/bans the server's direct IP; if a proxy
+	// is configured for a MiMoCode connection, never fall back to direct.
 	strict := len(cands) > 0 && cands[0].StrictProxy
-	if !strict {
+	noDirect := providerID == "mimocode" && len(cands) > 0
+	if !strict && !noDirect {
 		cands = append(cands, Config{Source: "direct-fallback"})
 	}
 	return cands

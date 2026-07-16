@@ -1,7 +1,6 @@
 package executor
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -9,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -201,27 +199,20 @@ func (e *MimocodeExecutor) bootstrap(ctx context.Context, baseURL, fingerprint s
 	ctx, cancel := context.WithTimeout(ctx, mimocodeBootstrapTimeout)
 	defer cancel()
 
-	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return "", time.Time{}, fmt.Errorf("mimocode bootstrap: create request: %w", err)
-	}
-	hreq.Header.Set("Content-Type", "application/json")
-
-	resp, err := e.Client.Do(hreq)
+	headers := map[string]string{"Content-Type": "application/json"}
+	resp, err := e.DoRequest(ctx, http.MethodPost, url, headers, body)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("mimocode bootstrap: %w", err)
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return "", time.Time{}, fmt.Errorf("mimocode bootstrap failed: %d %s", resp.StatusCode, string(b))
+		return "", time.Time{}, fmt.Errorf("mimocode bootstrap failed: %d %s", resp.StatusCode, string(resp.Body))
 	}
 
 	var env struct {
 		JWT string `json:"jwt"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil || env.JWT == "" {
+	if err := json.Unmarshal(resp.Body, &env); err != nil || env.JWT == "" {
 		return "", time.Time{}, fmt.Errorf("mimocode bootstrap response missing jwt")
 	}
 	return env.JWT, mimocodeJWTExpiresAt(env.JWT), nil

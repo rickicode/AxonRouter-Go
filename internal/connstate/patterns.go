@@ -19,7 +19,8 @@ var RateLimitPatterns = []string{
 	"throttled",
 	"throttling",
 	"capacity temporarily exceeded", // CF Workers AI capacity overload (code 3040)
-	"3040",                           // CF Workers AI capacity error code
+	"3040", // CF Workers AI capacity error code
+	"high-frequency non-compliant requests", // MiMoCode anti-abuse IP/account flag
 }
 
 var QuotaPatterns = []string{
