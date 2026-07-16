@@ -1,12 +1,13 @@
 package logging
 
 import (
-	"context"
-	"fmt"
-	"io"
-	"log/slog"
-	"os"
-	"strings"
+  "context"
+  "fmt"
+  "io"
+  "log/slog"
+  "os"
+  "strings"
+  "time"
 )
 
 const (
@@ -41,7 +42,7 @@ func colorEnabled() bool {
 }
 
 func (h *CompactHandler) Handle(_ context.Context, r slog.Record) error {
-	ts := r.Time.Format("15:04:05")
+  ts := r.Time.In(time.Local).Format("2006-01-02 15:04:05")
 	level := r.Level.String()
 	if level == "WARNING" {
 		level = "WARN"

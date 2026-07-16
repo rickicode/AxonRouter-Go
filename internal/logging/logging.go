@@ -1,11 +1,12 @@
 package logging
 
 import (
-	"context"
-	"log"
-	"log/slog"
-	"os"
-	"strings"
+  "context"
+  "log"
+  "log/slog"
+  "os"
+  "strings"
+  "time"
 )
 
 // Logger is the application-wide structured logger.
@@ -16,8 +17,16 @@ func Init(format string) {
 	switch format {
 	case "json":
 		Logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	case "text":
-		Logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
+  case "text":
+    textOpts := &slog.HandlerOptions{
+      ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+        if a.Key == slog.TimeKey {
+          return slog.String(slog.TimeKey, a.Value.Time().In(time.Local).Format("2006-01-02 15:04:05"))
+        }
+        return a
+      },
+    }
+    Logger = slog.New(slog.NewTextHandler(os.Stdout, textOpts))
 	default:
 		h := NewCompactHandler(os.Stdout)
 		Logger = slog.New(&levelHandler{inner: h, level: slog.LevelDebug})
