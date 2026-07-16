@@ -1,28 +1,45 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
-  import { Button } from '$lib/components/ui/button';
+import { onMount } from 'svelte';
+import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
+import { Button } from '$lib/components/ui/button';
 import { Input } from '$lib/components/ui/input';
 import { Label } from '$lib/components/ui/label';
 import { Switch } from '$lib/components/ui/switch';
 import { AlertDialog, AlertDialogContent, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from '$lib/components/ui/alert-dialog';
 import * as Dialog from '$lib/components/ui/dialog';
+import * as Select from '$lib/components/ui/select';
 import { toast } from 'svelte-sonner';
 import { apiKeysApi } from '$lib/api';
 import { copyToClipboard } from '$lib/copy';
+import { buildExpiryTimestamp, formatExpiry, type ExpirationPreset } from '$lib/api-key-utils';
 import type { APIKeyItem } from '$lib/api';
 
-  let keys = $state<APIKeyItem[]>([]);
-  let loading = $state(true);
-  let showCreate = $state(false);
-  let newName = $state('');
-  let newRateLimit = $state('600');
-  let newMaxTokensM = $state('');
-  let creating = $state(false);
-  let createdKey = $state('');
-  let createdKeyId = $state('');
-  let deleteConfirm = $state<{ id: string; name: string } | null>(null);
-  let showDeleteConfirm = $state(false);
+let keys = $state<APIKeyItem[]>([]);
+let loading = $state(true);
+let showCreate = $state(false);
+let newName = $state('');
+let newRateLimit = $state('600');
+let newMaxTokensM = $state('');
+let expirationPreset = $state<ExpirationPreset>('never');
+let customDate = $state('');
+let creating = $state(false);
+let createdKey = $state('');
+let createdKeyId = $state('');
+let deleteConfirm = $state<{ id: string; name: string } | null>(null);
+let showDeleteConfirm = $state(false);
+
+const expirationLabels: Record<ExpirationPreset, string> = {
+  never: 'Never',
+  '1d': '1 day',
+  '7d': '7 days',
+  '30d': '30 days',
+  '90d': '90 days',
+  custom: 'Custom date',
+};
+
+function setExpirationPreset(v: string) {
+  expirationPreset = v as ExpirationPreset;
+}
 
   onMount(() => {
     document.title = 'API Keys — AxonRouter';
@@ -44,12 +61,15 @@ import type { APIKeyItem } from '$lib/api';
   async function handleCreate() {
     creating = true;
     try {
-		const m = parseInt(newMaxTokensM) || 0;
-		const maxTokens = m > 0 ? m * 1_000_000 : undefined;
-		const res = await apiKeysApi.create(newName.trim() || undefined, parseInt(newRateLimit) || 600, maxTokens);
-		newName = '';
-		newMaxTokensM = '';
-      createdKey = res.key;
+  const m = parseInt(newMaxTokensM) || 0;
+  const maxTokens = m > 0 ? m * 1_000_000 : undefined;
+  const expiresAt = buildExpiryTimestamp(expirationPreset, customDate);
+  const res = await apiKeysApi.create(newName.trim() || undefined, parseInt(newRateLimit) || 600, maxTokens, expiresAt);
+  newName = '';
+  newMaxTokensM = '';
+  expirationPreset = 'never';
+  customDate = '';
+  createdKey = res.key;
       createdKeyId = res.id;
       toast.success('API key created');
       await loadKeys();
@@ -149,8 +169,9 @@ function formatMaxTokens(tokens: number): string {
                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Name</th>
                                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Rate Limit</th>
                 <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Status</th>
-                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Created</th>
-                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-32"></th>
+              <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Created</th>
+              <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Expires</th>
+              <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-32"></th>
               </tr>
             </thead>
 	<tbody class="divide-y divide-border">
@@ -171,8 +192,9 @@ function formatMaxTokens(tokens: number): string {
                 <Switch checked={key.is_active} onCheckedChange={() => handleToggle(key.id, key.is_active)} aria-label={key.is_active ? 'Disable key' : 'Enable key'} />
               </div>
             </td>
-            <td class="py-3 px-4 text-body-sm text-muted-foreground">{formatDate(key.created_at)}</td>
-            <td class="py-3 px-4">
+              <td class="py-3 px-4 text-body-sm text-muted-foreground">{formatDate(key.created_at)}</td>
+              <td class="py-3 px-4 text-body-sm text-muted-foreground">{formatExpiry(key.expires_at)}</td>
+              <td class="py-3 px-4">
               <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm text-destructive hover:text-destructive" onclick={() => handleDelete(key.id, key.name)}>
                 Del
               </Button>
@@ -213,12 +235,29 @@ function formatMaxTokens(tokens: number): string {
 			<Label class="text-sm font-medium">Rate limit (per minute)</Label>
 			<Input bind:value={newRateLimit} type="number" min="1" class="h-9 text-sm" />
 		</div>
-		<div class="flex flex-col gap-1.5">
-			<Label class="text-sm font-medium">Max tokens (M)</Label>
-			<Input bind:value={newMaxTokensM} type="number" min="1" placeholder="Unlimited" class="h-9 text-sm" />
-			<p class="text-xs text-muted-foreground">Leave empty for unlimited. Min 1M (1 = 1,000,000 tokens).</p>
-		</div>
-	</div>
+            <div class="flex flex-col gap-1.5">
+              <Label class="text-sm font-medium">Max tokens (M)</Label>
+              <Input bind:value={newMaxTokensM} type="number" min="1" placeholder="Unlimited" class="h-9 text-sm" />
+              <p class="text-xs text-muted-foreground">Leave empty for unlimited. Min 1M (1 = 1,000,000 tokens).</p>
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <Label class="text-sm font-medium">Expires</Label>
+              <Select.Root type="single" value={expirationPreset} onValueChange={setExpirationPreset}>
+                <Select.Trigger class="h-9 text-sm rounded-sm">{expirationLabels[expirationPreset]}</Select.Trigger>
+                <Select.Content>
+                  <Select.Item value="never" class="text-body-sm">Never</Select.Item>
+                  <Select.Item value="1d" class="text-body-sm">1 day</Select.Item>
+                  <Select.Item value="7d" class="text-body-sm">7 days</Select.Item>
+                  <Select.Item value="30d" class="text-body-sm">30 days</Select.Item>
+                  <Select.Item value="90d" class="text-body-sm">90 days</Select.Item>
+                  <Select.Item value="custom" class="text-body-sm">Custom date</Select.Item>
+                </Select.Content>
+              </Select.Root>
+              {#if expirationPreset === 'custom'}
+                <Input type="date" bind:value={customDate} class="h-9 text-sm" />
+              {/if}
+            </div>
+          </div>
 	<div class="flex gap-2 mt-6">
 	<Button onclick={handleCreate} disabled={creating} class="flex-1 text-sm">
 		{creating ? 'Creating...' : 'Create'}
