@@ -125,6 +125,7 @@ func New(cfg Config) *Router {
 	authManager.RegisterService(auth.ProviderAntigravity, antigravity.NewOAuthService(http.DefaultClient))
 	authManager.RegisterService(auth.ProviderKiro, kiro.NewOAuthService(http.DefaultClient))
 	authManager.RegisterService(auth.ProviderGitHub, github.NewOAuthService(http.DefaultClient))
+	quota.SetAuthManager(authManager)
 	settingHandler := admin.NewSettingHandler(cfg.DB)
 	settingHandler.SeedDefaults()
 	// Bootstrap dashboard login auth (JWT secret + default admin password)
@@ -132,6 +133,7 @@ func New(cfg Config) *Router {
 
 	// Background goroutines
 	ctx := context.Background()
+	quota.SetAuthManager(authManager)
 	exhaustionCache := quota.NewExhaustionCache()
 	quotaScheduler := background.NewQuotaSchedulerDB(cfg.DB, writeQueue, store, elig, cfg.QuotaIntervalMin, exhaustionCache)
 	usageFlush := background.NewUsageFlush(tracker)
