@@ -22,12 +22,12 @@ import (
 
 // ProviderHandler handles provider CRUD operations.
 type ProviderHandler struct {
-	db *sql.DB
-	registry *executor.Registry
-	store *connstate.Store
-	elig *connstate.EligibilityManager
+	db          *sql.DB
+	registry    *executor.Registry
+	store       *connstate.Store
+	elig        *connstate.EligibilityManager
 	providerCfg *providercfg.Manager
-	writeQueue *db.WriteQueue
+	writeQueue  *db.WriteQueue
 }
 
 // NewProviderHandler creates a new provider handler.
@@ -104,13 +104,13 @@ func (h *ProviderHandler) Get(c *gin.Context) {
 // Create adds a custom provider.
 func (h *ProviderHandler) Create(c *gin.Context) {
 	var req struct {
-		Name string `json:"name" binding:"required"`
-		DisplayName string `json:"display_name"`
-		Format string `json:"format" binding:"required"`
-		BaseURL string `json:"base_url" binding:"required"`
+		Name          string            `json:"name" binding:"required"`
+		DisplayName   string            `json:"display_name"`
+		Format        string            `json:"format" binding:"required"`
+		BaseURL       string            `json:"base_url" binding:"required"`
 		CustomHeaders map[string]string `json:"custom_headers"`
-		Category string `json:"category"`
-		ServiceKinds []string `json:"service_kinds"`
+		Category      string            `json:"category"`
+		ServiceKinds  []string          `json:"service_kinds"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -162,12 +162,12 @@ func (h *ProviderHandler) Create(c *gin.Context) {
 	executor.RegisterCustomProviders(h.db)
 
 	c.JSON(http.StatusCreated, gin.H{
-		"id": req.Name,
-		"display_name": displayName,
-		"format": req.Format,
-		"base_url": req.BaseURL,
-		"is_custom": true,
-		"category": category,
+		"id":            req.Name,
+		"display_name":  displayName,
+		"format":        req.Format,
+		"base_url":      req.BaseURL,
+		"is_custom":     true,
+		"category":      category,
 		"service_kinds": serviceKinds,
 	})
 }
@@ -176,11 +176,11 @@ func (h *ProviderHandler) Create(c *gin.Context) {
 func (h *ProviderHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		DisplayName string `json:"display_name"`
-		BaseURL string `json:"base_url"`
+		DisplayName   string            `json:"display_name"`
+		BaseURL       string            `json:"base_url"`
 		CustomHeaders map[string]string `json:"custom_headers"`
-		Category string `json:"category"`
-		ServiceKinds []string `json:"service_kinds"`
+		Category      string            `json:"category"`
+		ServiceKinds  []string          `json:"service_kinds"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -285,10 +285,14 @@ func parseServiceKinds(raw string) []string {
 }
 
 // testAllBatchSize limits how many connections are tested in parallel at once.
-// Connections are processed in fixed batches (not a sliding semaphore) so a
-// provider with hundreds or thousands of connections never creates more than
-// 10 in-flight goroutines/streams.
+// A weighted semaphore caps in-flight streams so a provider with hundreds or
+// thousands of connections never creates more than testAllBatchSize in-flight
+// goroutines/streams at a time.
 const testAllBatchSize = 10
+
+// testConnTimeout bounds each individual connection test so a slow backend
+// cannot consume a worker slot indefinitely.
+const testConnTimeout = 30 * time.Second
 
 // TestAll tests all connections for a provider using streaming.
 func (h *ProviderHandler) TestAll(c *gin.Context) {
@@ -356,66 +360,64 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 
 	results := make([]testResult, len(inputs))
 
-	// Process in fixed batches to cap peak concurrency.
-	for batchStart := 0; batchStart < len(inputs); batchStart += testAllBatchSize {
-		batchEnd := batchStart + testAllBatchSize
-		if batchEnd > len(inputs) {
-			batchEnd = len(inputs)
-		}
+	semaphore := make(chan struct{}, testAllBatchSize)
+	var wg sync.WaitGroup
+	for i, in := range inputs {
+		i, in := i, in
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
 
-		var wg sync.WaitGroup
-		for i := batchStart; i < batchEnd; i++ {
-			i, in := i, inputs[i]
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			start := time.Now()
+			ctx, cancel := context.WithTimeout(ctx, testConnTimeout)
+			defer cancel()
 
-				start := time.Now()
-				streamResult, err := exec.ExecuteStream(ctx, &executor.Request{
-					APIKey:               in.apiKey,
-					AccessToken:          in.access,
-					BaseURL:              in.baseURL,
-					Body:                 bodyBytes,
-					Provider:             providerID,
-					ProviderSpecificData: in.psdMap,
-				})
-				if err != nil {
-					latency := time.Since(start).Milliseconds()
-					if h.store != nil {
-						det := connstate.DetectError(ctx, 0, "", err, providerID, "", nil)
-						h.store.RecordFailure(in.connID, det)
-					}
-					results[i] = testResult{ConnectionID: in.connID, Status: "failed", Error: err.Error(), LatencyMs: latency}
-					return
-				}
-
-				// Drain stream
-				var firstErr error
-				for chunk := range streamResult.Chunks {
-					if chunk.Err != nil {
-						firstErr = chunk.Err
-						break
-					}
-				}
+			streamResult, err := exec.ExecuteStream(ctx, &executor.Request{
+				APIKey:               in.apiKey,
+				AccessToken:          in.access,
+				BaseURL:              in.baseURL,
+				Body:                 bodyBytes,
+				Provider:             providerID,
+				ProviderSpecificData: in.psdMap,
+			})
+			if err != nil {
 				latency := time.Since(start).Milliseconds()
-
-				if firstErr != nil {
-					if h.store != nil {
-						det := connstate.DetectError(ctx, 0, "", firstErr, providerID, "", nil)
-						h.store.RecordFailure(in.connID, det)
-					}
-					results[i] = testResult{ConnectionID: in.connID, Status: "failed", Error: firstErr.Error(), LatencyMs: latency}
-				} else {
-					if h.store != nil {
-						h.store.RecordSuccess(in.connID)
-					}
-					results[i] = testResult{ConnectionID: in.connID, Status: "ok", LatencyMs: latency}
+				if h.store != nil {
+					det := connstate.DetectError(ctx, 0, "", err, providerID, "", nil)
+					h.store.RecordFailure(in.connID, det)
 				}
-			}()
-		}
+				results[i] = testResult{ConnectionID: in.connID, Status: "failed", Error: err.Error(), LatencyMs: latency}
+				return
+			}
 
-		wg.Wait()
+			// Drain stream
+			var firstErr error
+			for chunk := range streamResult.Chunks {
+				if chunk.Err != nil {
+					firstErr = chunk.Err
+					break
+				}
+			}
+			latency := time.Since(start).Milliseconds()
+
+			if firstErr != nil {
+				if h.store != nil {
+					det := connstate.DetectError(ctx, 0, "", firstErr, providerID, "", nil)
+					h.store.RecordFailure(in.connID, det)
+				}
+				results[i] = testResult{ConnectionID: in.connID, Status: "failed", Error: firstErr.Error(), LatencyMs: latency}
+			} else {
+				if h.store != nil {
+					h.store.RecordSuccess(in.connID)
+				}
+				results[i] = testResult{ConnectionID: in.connID, Status: "ok", LatencyMs: latency}
+			}
+		}()
 	}
+
+	wg.Wait()
 
 	c.JSON(http.StatusOK, gin.H{"provider_id": providerID, "results": results})
 }
@@ -578,9 +580,9 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 	providerID := c.Param("id")
 	var req struct {
 		Connections []struct {
-			Name string `json:"name"`
-			APIKey string `json:"api_key"`
-			Priority int `json:"priority"`
+			Name                 string            `json:"name"`
+			APIKey               string            `json:"api_key"`
+			Priority             int               `json:"priority"`
 			ProviderSpecificData map[string]string `json:"provider_specific_data,omitempty"`
 		} `json:"connections"`
 	}
@@ -620,7 +622,7 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 	var created, failed int
 	var errors []string
 	var seeded []struct {
-		id string
+		id       string
 		priority int
 	}
 
@@ -629,16 +631,19 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 	// happens-before edge, so this is race-free — do NOT mutate handler
 	// locals from inside the closure).
 	type batchResult struct {
-		seeded  []struct{ id string; priority int }
+		seeded []struct {
+			id       string
+			priority int
+		}
 		created int
 		fails   []string
 		err     error
 	}
 
 	runBatch := func(d *sql.DB, conns []struct {
-		Name string `json:"name"`
-		APIKey string `json:"api_key"`
-		Priority int `json:"priority"`
+		Name                 string            `json:"name"`
+		APIKey               string            `json:"api_key"`
+		Priority             int               `json:"priority"`
 		ProviderSpecificData map[string]string `json:"provider_specific_data,omitempty"`
 	}) batchResult {
 		res := batchResult{}
@@ -661,8 +666,11 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 				res.fails = append(res.fails, fmt.Sprintf("connection %q: %s", conn.Name, err.Error()))
 				continue
 			}
-		res.created++
-		res.seeded = append(res.seeded, struct{ id string; priority int }{id: connID, priority: conn.Priority})
+			res.created++
+			res.seeded = append(res.seeded, struct {
+				id       string
+				priority int
+			}{id: connID, priority: conn.Priority})
 		}
 		if err := tx.Commit(); err != nil {
 			res.err = err
@@ -695,10 +703,10 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 			}
 			continue
 		}
-	created += br.created
-	failed += len(br.fails)
-	errors = append(errors, br.fails...)
-	seeded = append(seeded, br.seeded...)
+		created += br.created
+		failed += len(br.fails)
+		errors = append(errors, br.fails...)
+		seeded = append(seeded, br.seeded...)
 	}
 
 	// Seed in-memory store ONLY for committed rows, then recompute eligibility once.
