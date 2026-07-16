@@ -118,16 +118,16 @@ async function handleBulkImportChunked() {
     toast.error('Paste or upload at least one proxy URL');
     return;
   }
-  if (items.length > POOL_BULK_MAX) {
-    toast.error(`Maximum ${POOL_BULK_MAX} proxies per bulk import. Split your file.`);
-    return;
-  }
   bulkLoading = true;
   poolImportProgress = 0;
   poolImportSummary = { created: 0, skipped: 0, errors: 0 };
   try {
     for (let start = 0; start < items.length; start += POOL_BULK_CHUNK) {
       const chunk = items.slice(start, start + POOL_BULK_CHUNK);
+      if (chunk.length > POOL_BULK_MAX) {
+        toast.error(`Chunk too large (${chunk.length} > ${POOL_BULK_MAX}); reduce POOL_BULK_CHUNK.`);
+        break;
+      }
       const res = await proxyPoolsApi.bulkCreate({
         items: chunk,
         defaultType: bulkType,

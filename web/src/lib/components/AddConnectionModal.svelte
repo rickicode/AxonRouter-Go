@@ -129,16 +129,16 @@ async function submitBulkChunked() {
     toast.error('No connections to import');
     return;
   }
-  if (all.length > BULK_MAX) {
-    toast.error(`Maximum ${BULK_MAX} connections per import. Split your file.`);
-    return;
-  }
   importing = true;
   importProgress = 0;
   importSummary = { created: 0, failed: 0, total: all.length };
   try {
     for (let start = 0; start < all.length; start += BULK_CHUNK) {
       const chunk = all.slice(start, start + BULK_CHUNK);
+      if (chunk.length > BULK_MAX) {
+        toast.error(`Chunk too large (${chunk.length} > ${BULK_MAX}); reduce BULK_CHUNK.`);
+        break;
+      }
       const result = await connectionsApi.bulkCreate(providerId, { connections: chunk });
       importSummary.created += result.created ?? 0;
       importSummary.failed += result.failed ?? 0;
