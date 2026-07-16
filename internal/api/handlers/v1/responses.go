@@ -67,7 +67,8 @@ func (h *Handler) Responses(c *gin.Context) {
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
 	translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
 
-	maxAttempts := 5
+	// NOTE: configurable via failover_max_attempts setting.
+	maxAttempts := h.failoverAttempts()
 	var lastConn *Connection
 	var lastErr error
 	var lastErrCategory string
@@ -125,20 +126,24 @@ func (h *Handler) Responses(c *gin.Context) {
 		if h.isClientCanceled(c, err) {
 			return
 		}
-		if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
-			return
-		}
-		retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
-			lastErr = err
-			lastErrCategory = cat
-			if !retry {
-				break
-			}
-			if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+		// NOTE: auth and balance failures rotate to sibling connections before surfacing.
+		det := connstate.DetectError(proxyCtx, 0, "", err, provider, modelName, nil)
+		if !isFailoverEligible(det.Category) {
+			if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
 				return
 			}
-			continue
 		}
+		retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
+		lastErr = err
+		lastErrCategory = cat
+		if !retry {
+			break
+		}
+		if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+			return
+		}
+		continue
+	}
 		h.resetBanCount(conn.ID)
 		h.persistSuccess(conn.ID)
 		h.combo.RecordSuccess(conn.ID)

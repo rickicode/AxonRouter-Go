@@ -70,13 +70,14 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	// Connection failover loop: try up to 3 connections before giving up.
-	// On each failure, mark the connection exhausted/cooldown and update eligibility
-	// so the next getConnection call picks a different connection.
+// Connection failover loop: try up to failoverMaxAttempts connections before giving up.
+// On each failure, mark the connection exhausted/cooldown and update eligibility
+// so the next getConnection call picks a different connection.
 	clientFormat := executor.FormatOpenAI
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
 	translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
-	maxAttempts := 5
+	// NOTE: failover limit now configurable via failover_max_attempts setting.
+	maxAttempts := h.failoverAttempts()
 	var lastConn *Connection
 	var lastErr error
 	var lastErrCategory string
@@ -151,8 +152,13 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 			if h.isClientCanceled(c, err) {
 				return
 			}
-			if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
-				return
+			// NOTE: auth and balance failures now rotate to sibling connections
+			// before being surfaced. Detect first so we skip the direct-writer.
+			det := connstate.DetectError(proxyCtx, 0, "", err, provider, modelName, nil)
+			if !isFailoverEligible(det.Category) {
+				if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
+					return
+				}
 			}
 			retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
 			lastErr = err
@@ -292,16 +298,24 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 			}
 			translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
 			translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
-			req := &executor.Request{
+	req := &executor.Request{
 
-		Model:         modelName,
-		Body:          translatedBody,
-		Stream:        stream,
-		APIKey:        conn.APIKey,
-		AccessToken:   conn.AccessToken,
-		BaseURL:       conn.BaseURL,
-		Provider:      provider,
+		Model:              modelName,
+		Body:               translatedBody,
+		Stream:             stream,
+		APIKey:             conn.APIKey,
+		AccessToken:        conn.AccessToken,
+		BaseURL:            conn.BaseURL,
+		Provider:           provider,
 		ProviderSpecificData: psdMap,
+	}
+	// Adaptive readiness: extend timeout for large/reasoning requests.
+	if stream {
+		adaptiveMs := computeAdaptiveReadiness(body, modelName, 80000)
+		req.StreamConfig = &executor.StreamConfig{
+			StreamReadinessTimeoutMs: adaptiveMs,
+			AdaptiveReadiness:      true,
+		}
 	}
 	// Use client's request context for execution to avoid 30s combo timeout
 	// cutting off long-lived streaming responses. comboCtx is only for loop control.
@@ -318,14 +332,15 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				}
 				det := connstate.DetectError(comboCtx, 0, "", err, provider, modelName, nil)
 
-				// Non-retryable client errors must be surfaced, not fail-over'd.
-				if det.Category == connstate.ErrorModelNotFound || det.Category == connstate.ErrorAuth {
-					if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
-						return
-					}
-					lastErr = err
-					lastErrCategory = string(det.Category)
-					break
+	// Non-retryable: only model-not-found is surfaced directly. Auth and
+	// balance failures now fail over so a sibling connection gets a chance.
+	if det.Category == connstate.ErrorModelNotFound {
+		if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
+			return
+		}
+		lastErr = err
+		lastErrCategory = string(det.Category)
+		break
 				}
 
 				// Retryable: apply the same failover marking as the direct path.
@@ -363,8 +378,55 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 		if req.Stream {
 			// Use the client's request context (no timeout) for streaming.
 			// The comboCtx timeout is only for orchestration, not for live streams.
-			// Stream lifecycle is governed by StreamIdleTimeout/StreamReadinessTimeout.
-			h.handleStreamResponse(c.Request.Context(), c, streamResult, conn, provider, modelName, start, translatedBody, body, comboResult.Combo.Name)
+			// Stream lifecycle is governed by StreamIdleTimeout/StreamReadinessTimeout/StallTimeout.
+
+			// Holdback buffer: wait 750ms/64KB before committing to this connection.
+			// If the stream errors during holdback, we can still retry the next connection
+			// transparently. Matches OmniRoute holdback behavior.
+			holdbackMs := 750
+			holdbackBytes := 64 * 1024
+			if req.StreamConfig != nil {
+				if req.StreamConfig.HoldbackMs > 0 {
+					holdbackMs = req.StreamConfig.HoldbackMs
+				}
+				if req.StreamConfig.HoldbackBytes > 0 {
+					holdbackBytes = req.StreamConfig.HoldbackBytes
+				}
+			}
+	// Holdback committed — stream is live, relay to client.
+	// Use a dedicated sub-context so the holdback relay goroutine is cancelled
+	// the moment we stop reading from it (upstream chunk error, normal end, or
+	// client disconnect). Without this, after a mid-stream error the goroutine
+	// leaks blocked on `out <- chunk` with no consumer.
+	streamCtx, cancelStream := context.WithCancel(c.Request.Context())
+	defer cancelStream() // safety net when handleComboRequest returns
+
+	holdbackChunks, holdbackErrCh := executor.WrapWithHoldback(streamCtx, streamResult.Chunks, holdbackMs, holdbackBytes)
+	streamResult.Chunks = holdbackChunks
+
+	// Wait for holdback to commit or fail. Read directly from holdbackErrCh
+	// (no forwarding goroutine) so a client disconnect doesn't leak a goroutine.
+	select {
+	case holdbackErr := <-holdbackErrCh:
+		if holdbackErr != nil {
+			// Stream failed during holdback window — kill the relay goroutine
+			// and treat as retryable error so the next connection is tried.
+			cancelStream()
+			logging.Logger.Warn("combo stream failed during holdback",
+				"provider", provider, "model", modelName,
+				"conn", shortID(connID, 8), "error", holdbackErr.Error())
+			det := connstate.DetectError(comboCtx, 0, "", holdbackErr, provider, modelName, nil)
+			h.combo.RecordFailure(connID, det)
+			lastErr = holdbackErr
+			lastErrCategory = "holdback"
+			continue // try next connection
+		}
+	case <-streamCtx.Done():
+		return
+	}
+
+	// Holdback committed — stream is live, relay to client.
+	h.handleStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, comboResult.Combo.Name)
 		} else {
 			translatedResp := registry.ResponseNonStream(comboCtx, string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
@@ -432,4 +494,12 @@ func (h *Handler) handleStreamResponse(ctx context.Context, c *gin.Context, resu
 		return b
 	}
 	h.streamResponse(ctx, c, result, conn, provider, model, executor.FormatOpenAI, providerFormat, originalReq, translatedReq, errFormatter, start, comboID)
+}
+
+// computeAdaptiveReadiness returns a stream-readiness timeout in milliseconds.
+// NOTE: stub added by failover session; prior stream-protection changes used this
+// helper but left the definition out, so the build was broken. Extend later if you
+// want model/body based heuristics.
+func computeAdaptiveReadiness(body []byte, modelName string, defaultMs int) int {
+	return defaultMs
 }

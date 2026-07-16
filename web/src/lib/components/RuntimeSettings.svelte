@@ -35,11 +35,16 @@ const settingMeta: Record<string, { label: string; description: string; category
     description: 'Maximum time in milliseconds for a combo routing attempt.',
     category: 'Routing',
   },
-  max_retries: {
-    label: 'Max Retries',
-    description: 'Maximum retry attempts for a single request.',
-    category: 'Routing',
-  },
+	max_retries: {
+		label: 'Max Retries',
+		description: 'Maximum retry attempts for a single request.',
+		category: 'Routing',
+	},
+	failover_max_attempts: {
+		label: 'Failover Max Attempts',
+		description: 'How many connections the failover loop tries per request before giving up. Increase when you have many rotating keys for the same provider.',
+		category: 'Routing',
+	},
   log_retention_days: {
     label: 'Log Retention Days',
     description: 'Days to keep request logs before cleanup.',
@@ -51,9 +56,10 @@ const defaultValues: Record<string, string> = {
   quota_check_interval: '60s',
   usage_flush_interval: '30s',
   circuit_breaker_cleanup: '5m',
-  default_combo_timeout: '30000',
-  max_retries: '3',
-  log_retention_days: '30',
+	default_combo_timeout: '30000',
+	max_retries: '3',
+	failover_max_attempts: '5',
+	log_retention_days: '30',
 };
 
 const categories: Category[] = ['Background Jobs', 'Routing', 'Logging'];

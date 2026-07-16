@@ -70,11 +70,12 @@ func (h *Handler) Messages(c *gin.Context) {
 	}
 	body = executor.JSONSet(body, "model", modelName)
 
-	// Connection failover loop: try up to 5 connections before giving up.
+	// Connection failover loop: try up to failoverMaxAttempts connections before giving up.
 	clientFormat := executor.FormatClaude
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
 	translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
-	maxAttempts := 5
+	// NOTE: configurable via failover_max_attempts setting.
+	maxAttempts := h.failoverAttempts()
 	var lastErr error
 	var lastErrCategory string
 	for attempt := range maxAttempts {

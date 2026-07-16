@@ -233,6 +233,10 @@ type Handler struct {
 	exactCache cache.CacheStorage
 	providerCfg *providercfg.Manager
 
+	// failoverMaxAttempts caps how many connections the failover loop tries
+	// before giving up. Loaded once from the failover_max_attempts setting (default 5).
+	failoverMaxAttempts int
+
 	// usageAccumulator is a test-only hook for asserting accumulateAPIKeyUsage
 	// arguments. It is nil in production and does not alter request behavior.
 	usageAccumulator func(apiKeyID string, reqBody []byte, respBody []byte, estimateOutput bool)
@@ -274,7 +278,33 @@ func NewHandler(
 		compressionStrategy: compressionStrategy,
 		exactCache:          exactCache,
 		providerCfg:         providerCfg,
+		failoverMaxAttempts: loadFailoverMaxAttempts(db),
 	}
+}
+
+// loadFailoverMaxAttempts reads the failover_max_attempts setting (default 5).
+// A zero/negative value is clamped to the minimum of 1 so the loop always runs at least once.
+func loadFailoverMaxAttempts(database *sql.DB) int {
+	const def = 5
+	var value string
+	if err := database.QueryRow(`SELECT value FROM settings WHERE key = ?`, "failover_max_attempts").Scan(&value); err != nil || value == "" {
+		return def
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 1 {
+		return def
+	}
+	return n
+}
+
+// failoverAttempts returns the configured failover max attempts, falling back to
+// the hard-coded default when the field is unset so manually constructed
+// handlers or stale tests still work.
+func (h *Handler) failoverAttempts() int {
+	if h.failoverMaxAttempts <= 0 {
+		return 5
+	}
+	return h.failoverMaxAttempts
 }
 
 // resolveExecutor finds the executor for a provider/model.
@@ -983,13 +1013,14 @@ func (h *Handler) handleFailoverError(ctx context.Context, c *gin.Context, conn 
 		ErrorMessage: err.Error(),
 	})
 
-	// Non-retryable errors: model doesn't exist or auth failed —
-	// retrying with another connection won't help.
-	switch det.Category {
-	case connstate.ErrorModelNotFound, connstate.ErrorAuth:
-		return false, string(det.Category)
-	}
-	return true, string(det.Category)
+// Non-retryable errors: only model-not-found is a hard stop. Auth failures
+// now fail over too (a sibling connection may hold a valid key), so they are
+// retryable here.
+switch det.Category {
+case connstate.ErrorModelNotFound:
+	return false, string(det.Category)
+}
+return true, string(det.Category)
 }
 
 // writeUpstreamClientError writes an OpenAI-compatible upstream error directly
@@ -1035,6 +1066,18 @@ func (h *Handler) writeUpstreamClientError(
 		})
 	}
 	return true
+}
+
+// isFailoverEligible returns true for errors where trying another connection
+// (different credentials/quota/state) might succeed. The chat/responses/messages
+// failover loops use this to skip writeUpstreamClientError for auth/balance/etc
+// and route through handleFailoverError instead.
+func isFailoverEligible(cat connstate.ErrorCategory) bool {
+	switch cat {
+	case connstate.ErrorAuth, connstate.ErrorRateLimit, connstate.ErrorQuota, connstate.ErrorBalanceEmpty, connstate.ErrorTimeout, connstate.ErrorNetwork, connstate.ErrorServer:
+		return true
+	}
+	return false
 }
 
 // proxyCandidates resolves the ordered proxy configs to try for a connection.

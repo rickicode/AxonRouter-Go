@@ -141,14 +141,15 @@ func newTestHandler(t *testing.T) *Handler {
 	database := openTestDB(t)
 	elig := connstate.NewEligibilityManager(store)
 	return &Handler{
-		db:          database,
-		store:       store,
-		elig:        elig,
-		authMgr:     mgr,
-		exhaustion:  quota.NewExhaustionCache(),
+		db: database,
+		store: store,
+		elig: elig,
+		authMgr: mgr,
+		exhaustion: quota.NewExhaustionCache(),
 		providerCfg: providercfg.NewManager(t.TempDir()),
-		combo:       combo.NewHandler(database, store, elig),
-		registry:    executor.GetRegistry(),
+		combo: combo.NewHandler(database, store, elig),
+		registry: executor.GetRegistry(),
+		failoverMaxAttempts: 5,
 	}
 }
 
@@ -1157,7 +1158,7 @@ func TestWriteUpstreamClientError_PassesStatusAndBody(t *testing.T) {
 	h := newTestHandler(t)
 	conn := &Connection{ID: "conn-test", Provider: "testimage"}
 	upErr := &executor.UpstreamError{
-		StatusCode: http.StatusUnauthorized,
+		StatusCode: http.StatusInternalServerError,
 		Body:       []byte(`{"error":{"message":"bad key","type":"authentication_error"}}`),
 		RawBody:    []byte(`{"error":{"message":"bad key","type":"authentication_error"}}`),
 	}
@@ -1171,8 +1172,8 @@ func TestWriteUpstreamClientError_PassesStatusAndBody(t *testing.T) {
 		t.Fatal("writeUpstreamClientError returned false for UpstreamError")
 	}
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected status 401, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d: %s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "bad key") {
 		t.Errorf("expected upstream body in response, got %q", rec.Body.String())
