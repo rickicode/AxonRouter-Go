@@ -5,6 +5,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -20,6 +21,16 @@ func seedBudgetExhausted(t *testing.T, h *Handler) {
 		t.Fatalf("seed api key: %v", err)
 	}
 	if _, err := h.db.Exec(`INSERT INTO api_key_usage (api_key_id, total_tokens, updated_at) VALUES ('key-budget', 100, 0) ON CONFLICT(api_key_id) DO UPDATE SET total_tokens = excluded.total_tokens`); err != nil {
+		t.Fatalf("seed usage: %v", err)
+	}
+}
+
+func seedBudgetAvailable(t *testing.T, h *Handler) {
+	t.Helper()
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_keys (id, key_hash, key_value, name, rate_limit_per_min, max_tokens, is_active, created_at) VALUES ('key-budget', 'hash', 'secret', 'Budget Key', 0, 100, 1, 0)`); err != nil {
+		t.Fatalf("seed api key: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO api_key_usage (api_key_id, total_tokens, updated_at) VALUES ('key-budget', 0, 0) ON CONFLICT(api_key_id) DO UPDATE SET total_tokens = excluded.total_tokens`); err != nil {
 		t.Fatalf("seed usage: %v", err)
 	}
 }
@@ -194,6 +205,24 @@ func TestUnified_TokenBudgetExhausted(t *testing.T) {
 
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("expected status 429, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUnified_TokenBudgetRequestedMaxCompletionTokens(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	seedBudgetAvailable(t, h)
+
+	body := []byte(`{"max_completion_tokens":150}`)
+	c, rec := budgetContext(t, http.MethodPost, "/v1/unified", body)
+
+	h.Unified(c)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "request_exceeds_api_key_token_budget") {
+		t.Fatalf("expected request_exceeds_api_key_token_budget, got %s", rec.Body.String())
 	}
 }
 

@@ -1402,12 +1402,30 @@ func (h *Handler) checkTokenBudget(c *gin.Context, body []byte) error {
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": gin.H{"message": "API key token budget exhausted", "code": "api_key_token_budget_exhausted"}})
 		return errors.New("api key token budget exhausted")
 	}
-	requested := gjson.GetBytes(body, "max_tokens").Int()
+	requested := requestedTokenBudget(body)
 	if requested > 0 && total+requested > maxTokens {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "requested tokens exceed API key budget", "code": "request_exceeds_api_key_token_budget"}})
 		return errors.New("request exceeds api key token budget")
 	}
 	return nil
+}
+
+// requestedTokenBudget returns the largest requested token budget from the
+// request body without mutating it. It reads max_tokens, max_completion_tokens,
+// and max_output_tokens so the pre-flight budget check covers all common
+// OpenAI-compatible limit fields.
+func requestedTokenBudget(body []byte) int64 {
+	mt := gjson.GetBytes(body, "max_tokens").Int()
+	mct := gjson.GetBytes(body, "max_completion_tokens").Int()
+	mot := gjson.GetBytes(body, "max_output_tokens").Int()
+	requested := mt
+	if mct > requested {
+		requested = mct
+	}
+	if mot > requested {
+		requested = mot
+	}
+	return requested
 }
 
 // incrementAPIKeyUsage adds consumed tokens to the API key's cumulative lifetime total.
