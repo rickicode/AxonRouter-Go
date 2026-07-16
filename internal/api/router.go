@@ -193,7 +193,7 @@ func New(cfg Config) *Router {
 
 	// Additional admin handlers (moved here so the JWT /api/admin and master-key
 	// /admin/api/v1 groups can share the same route table).
-	apiKeyH := admin.NewAPIKeyHandler(cfg.DB)
+	apiKeyH := admin.NewAPIKeyHandler(cfg.DB, authCache)
 	usageH := admin.NewUsageHandler(cfg.DB)
 	modelH := admin.NewModelHandler(cfg.DB, executor.GetRegistry(), store, authManager)
 	oauthH := admin.NewOAuthHandler(cfg.DB, authManager, store, elig)
