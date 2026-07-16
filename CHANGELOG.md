@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-07-16
+
 ### Added
 - Request logs now record the client-facing API type (`api_type`) so the `/logs` dashboard shows whether a request came through the OpenAI-compatible surface (`/v1/chat/completions`), Claude surface (`/v1/messages`), responses, embeddings, images, audio, video, or other endpoints.
 - API key expiration with 1/7/30/90 days, custom date, and no expiration options.
