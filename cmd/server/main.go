@@ -262,10 +262,14 @@ func handleStartupAction(action string) {
 			"Check status: axonrouter --startup status",
 		})
 	case "uninstall":
+		reinstall := "Re-install: axonrouter --startup install"
+		if root {
+			reinstall = "Re-install: axonrouter --startup install-root"
+		}
 		printStartupBox("Service uninstalled", []string{
 			green("axonrouter has been removed from the service manager."),
 			"",
-			"Re-install: axonrouter --startup install-root",
+			reinstall,
 		})
 	}
 	os.Exit(0)
