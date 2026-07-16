@@ -348,3 +348,57 @@ AxonRouter-Go uses a single-file versioning system so that every release is cons
 - **Startup banner**: printed by `cmd/server/main.go` using `internal/version`.
 - **Health endpoint**: `GET /api/admin/health` returns `{ "status": "...", "version": "0.3.1" }`.
 - **Dashboard sidebar**: reads `version` from the health response and links to the GitHub `CHANGELOG.md`.
+
+### 7. Release Procedure — Agent Must Follow
+When the user asks to "release", "buat release", "update release", or any equivalent, do not just run the Makefile blindly. Follow this checklist.
+
+#### 7.1 Do not release a dirty working tree
+- If `git status --short` shows any `M`/`A`/`D` files, stage and commit them first with an accurate message.
+- If you see files you did **not** modify in this session, ask the user before committing them.
+
+#### 7.2 Verify before release
+Run these and do not proceed until they pass:
+```bash
+go build ./...
+go test ./...
+cd web && npm run build   # zero warnings
+cd web && npm run test
+```
+
+#### 7.3 Confirm the changelog
+- `CHANGELOG.md` must have entries under `## [Unreleased]`.
+- If `## [Unreleased]` is empty, ask the user what changed instead of fabricating entries.
+
+#### 7.4 Create the release
+Use the exact version the user asked for. If no version was specified, ask.
+```bash
+make release v=X.Y.Z
+```
+
+#### 7.5 Work around the Makefile push bug
+`make release` tries to push branch `main`, but this repo uses `master`. When you see:
+```
+error: src refspec main does not match any
+```
+finish the push manually:
+```bash
+git push origin master
+git push origin vX.Y.Z
+```
+
+#### 7.6 Verify the release artifacts
+- Local tag: `git tag --list 'vX.Y.Z'`
+- Remote tag: `git ls-remote --tags origin vX.Y.Z`
+- GitHub Actions release workflow is triggered by the tag.
+
+#### 7.7 If recreating an existing release
+Sometimes the user deletes a release and wants the same version again. Do this first:
+1. Delete remote tag: `git push --delete origin vX.Y.Z`
+2. Delete local tag: `git tag -d vX.Y.Z`
+3. Delete GitHub release: `gh release delete vX.Y.Z --yes`
+4. If the release commit is already on `master`, revert it and push:
+   ```bash
+   git revert <release-commit-sha>
+   git push origin master
+   ```
+5. Then follow 7.1–7.6.
