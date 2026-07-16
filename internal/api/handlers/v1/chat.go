@@ -176,14 +176,80 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		h.persistSuccess(conn.ID)
 		h.combo.RecordSuccess(conn.ID)
 
-	if req.Stream {
-		// Use the client's request context (no timeout) for streaming.
-		// The comboCtx timeout is only for orchestration, not for live streams.
-		// Stream lifecycle is governed by StreamIdleTimeout/StreamReadinessTimeout/StallTimeout.
-		if err := h.handleStreamResponse(c.Request.Context(), c, streamResult, conn, provider, modelName, start, translatedBody, body, ""); err != nil {
-			logging.Logger.Error("direct streaming error", "provider", provider, "model", modelName, "error", err)
-		}
-	} else {
+		if req.Stream {
+			// Use the client's request context (no timeout) for streaming.
+			// Stream lifecycle is governed by StreamIdleTimeout/StreamReadinessTimeout/StallTimeout.
+			//
+			// Also use a holdback buffer and retry mid-stream failures across
+			// connections, just like the combo path, so direct-mode streams
+			// don't stop when one upstream connection dies.
+			streamCtx, cancelStream := context.WithCancel(c.Request.Context())
+			defer cancelStream()
+
+			holdbackMs := 750
+			holdbackBytes := 64 * 1024
+			if req.StreamConfig != nil {
+				if req.StreamConfig.HoldbackMs > 0 {
+					holdbackMs = req.StreamConfig.HoldbackMs
+				}
+				if req.StreamConfig.HoldbackBytes > 0 {
+					holdbackBytes = req.StreamConfig.HoldbackBytes
+				}
+			}
+			holdbackChunks, holdbackErrCh := executor.WrapWithHoldback(streamCtx, streamResult.Chunks, holdbackMs, holdbackBytes)
+			streamResult.Chunks = holdbackChunks
+
+			select {
+			case holdbackErr := <-holdbackErrCh:
+				if holdbackErr != nil {
+					cancelStream()
+					logging.Logger.Warn("direct stream failed during holdback", "provider", provider, "model", modelName, "conn", shortID(conn.ID, 8), "error", holdbackErr.Error())
+					det := connstate.DetectError(proxyCtx, 0, "", holdbackErr, provider, modelName, nil)
+					if !isFailoverEligible(det.Category) {
+						if h.writeUpstreamClientError(proxyCtx, c, holdbackErr, conn, provider, modelName, start, stream) {
+							return
+						}
+					}
+					retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, holdbackErr, attempt, time.Since(start).Milliseconds(), stream)
+					lastErr = holdbackErr
+					lastErrCategory = cat
+					if !retry {
+						break
+					}
+					if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+						return
+					}
+					continue
+				}
+			case <-streamCtx.Done():
+				return
+			}
+
+			if streamErr := h.handleStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, "", true); streamErr != nil {
+				if h.isClientCanceled(c, streamErr) {
+					return
+				}
+				cancelStream()
+				logging.Logger.Warn("direct mid-stream failure, failing over", "provider", provider, "model", modelName, "conn", shortID(conn.ID, 8), "error", streamErr.Error())
+				det := connstate.DetectError(proxyCtx, 0, "", streamErr, provider, modelName, nil)
+				if !isFailoverEligible(det.Category) {
+					if h.writeUpstreamClientError(proxyCtx, c, streamErr, conn, provider, modelName, start, stream) {
+						return
+					}
+				}
+				retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, streamErr, attempt, time.Since(start).Milliseconds(), stream)
+				lastErr = streamErr
+				lastErrCategory = cat
+				if !retry {
+					break
+				}
+				if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+					return
+				}
+				continue
+			}
+			return
+		} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			tokensEstimated := false
@@ -428,7 +494,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 	}
 
 	// Holdback committed — stream is live, relay to client.
-	if streamErr := h.handleStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, comboResult.Combo.Name); streamErr != nil {
+			if streamErr := h.handleStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, comboResult.Combo.Name, true); streamErr != nil {
 			// Mid-stream failure — failover to next connection/model instead of
 			// stopping the stream. handleStreamResponse already skipped writing
 			// error/DONE to the client when in combo mode.
@@ -535,7 +601,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 }
 
 // handleStreamResponse handles streaming chat completions.
-func (h *Handler) handleStreamResponse(ctx context.Context, c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte, comboID string) error {
+func (h *Handler) handleStreamResponse(ctx context.Context, c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte, comboID string, silent bool) error {
 	_, providerFormat, _ := h.registry.Get(provider)
 	errFormatter := func(err error) []byte {
 		var upErr *executor.UpstreamError
@@ -546,6 +612,6 @@ func (h *Handler) handleStreamResponse(ctx context.Context, c *gin.Context, resu
 		b, _ := json.Marshal(gin.H{"error": gin.H{"message": "upstream streaming error"}})
 		return b
 	}
-	return h.streamResponse(ctx, c, result, conn, provider, model, executor.FormatOpenAI, providerFormat, originalReq, translatedReq, errFormatter, start, comboID)
+	return h.streamResponse(ctx, c, result, conn, provider, model, executor.FormatOpenAI, providerFormat, originalReq, translatedReq, errFormatter, start, comboID, silent)
 }
 

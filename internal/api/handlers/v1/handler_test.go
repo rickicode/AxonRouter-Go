@@ -783,7 +783,7 @@ func TestBuildFailoverErrorResponse(t *testing.T) {
 		executor.FormatOpenAI, executor.FormatOpenAI,
 		dummyReq, dummyReq,
 		func(err error) []byte { return []byte(err.Error()) },
-		time.Now(), "",
+		time.Now(), "", false,
 	)
 
 		// Verify via api_key_usage: the accumulated tokens (15 input + 25 output = 40)
@@ -844,7 +844,7 @@ func TestStreamResponse_UpstreamChunkErrMarksExhausted(t *testing.T) {
 		executor.FormatOpenAI, executor.FormatOpenAI,
 		[]byte(`{}`), []byte(`{}`),
 		func(err error) []byte { return []byte(`{"error":"upstream"}`) },
-		time.Now(), "",
+		time.Now(), "", false,
 	)
 
 	if !h.exhaustion.IsExhausted("conn-err") {
@@ -887,7 +887,7 @@ func TestStreamResponse_ClientCanceledChunkErrDoesNotMarkExhausted(t *testing.T)
 		executor.FormatOpenAI, executor.FormatOpenAI,
 		[]byte(`{}`), []byte(`{}`),
 		func(err error) []byte { return []byte(`{"error":"canceled"}`) },
-		time.Now(), "",
+		time.Now(), "", false,
 	)
 
 	if h.exhaustion.IsExhausted("conn-cancel") {
@@ -998,7 +998,7 @@ func TestFallbackUsage(t *testing.T) {
 		executor.FormatOpenAI, executor.FormatOpenAI,
 		originalReq, translatedReq,
 		func(err error) []byte { return []byte(err.Error()) },
-		time.Now(), "",
+		time.Now(), "", false,
 	)
 
 		// Verify api_key_usage got non-zero estimated tokens (fallback).
@@ -1064,7 +1064,7 @@ func TestFallbackUsage(t *testing.T) {
 		executor.FormatOpenAI, executor.FormatOpenAI,
 		dummyReq, dummyReq,
 		func(err error) []byte { return []byte(err.Error()) },
-		time.Now(), "",
+		time.Now(), "", false,
 	)
 
 		var totalTokens int64

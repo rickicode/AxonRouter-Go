@@ -1224,6 +1224,7 @@ func (h *Handler) streamResponse(
 	errFormatter func(error) []byte,
 	start time.Time,
 	comboID string,
+	silent bool,
 ) error {
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
@@ -1309,11 +1310,11 @@ func (h *Handler) streamResponse(
 				}
 				latency := time.Since(start).Milliseconds()
 				h.handleFailoverError(ctx, c, conn, provider, model, chunk.Err, 0, latency, true)
-				// If this is a combo stream, don't write error/DONE yet. Return
-				// the error so the combo can failover to the next connection/model
-				// and keep the whole stream alive.
-				if isCombo {
-					errMsg := chunk.Err.Error()
+			// If this is a combo stream or the caller asked for silent failure,
+			// don't write error/DONE yet. Return the error so the caller can
+			// failover to the next connection/model and keep the stream alive.
+			if isCombo || silent {
+				errMsg := chunk.Err.Error()
 					logging.Logger.Warn("mid-stream failure in combo, failing over",
 						"provider", provider, "model", model, "combo", comboID,
 						"error", errMsg)

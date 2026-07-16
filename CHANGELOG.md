@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Stream protection parity with OmniRoute** for combo and direct paths: raw-byte stall detection, adaptive readiness timeout (80s–180s), 750ms/64KB holdback buffer for transparent early retry, and stream-quality peek logging.
 - **Combo mid-stream failover**: if an upstream stream fails after the holdback window commits, the combo now falls back to the next eligible connection/model instead of terminating the stream. Only when all candidates fail does the client receive the final SSE `error` + `[DONE]`.
+- **Direct-mode mid-stream failover**: `/v1/chat/completions` and `/v1/messages` streaming now also use the 750ms/64KB holdback buffer and retry the next connection if the stream fails after commit.
 - `StreamConfig` extended with `StallTimeoutMs`, `HoldbackMs`, `HoldbackBytes`, and `AdaptiveReadiness`.
 
 ### Fixed

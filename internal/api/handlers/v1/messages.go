@@ -142,9 +142,63 @@ func (h *Handler) Messages(c *gin.Context) {
 		h.persistSuccess(conn.ID)
 		h.combo.RecordSuccess(conn.ID)
 
-	if req.Stream {
-		h.handleClaudeStreamResponse(proxyCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, "")
-	} else {
+		if req.Stream {
+			// Retry mid-stream failures across connections, like the combo path.
+			streamCtx, cancelStream := context.WithCancel(proxyCtx)
+			defer cancelStream()
+
+			holdbackMs := 750
+			holdbackBytes := 64 * 1024
+			if req.StreamConfig != nil {
+				if req.StreamConfig.HoldbackMs > 0 {
+					holdbackMs = req.StreamConfig.HoldbackMs
+				}
+				if req.StreamConfig.HoldbackBytes > 0 {
+					holdbackBytes = req.StreamConfig.HoldbackBytes
+				}
+			}
+			holdbackChunks, holdbackErrCh := executor.WrapWithHoldback(streamCtx, streamResult.Chunks, holdbackMs, holdbackBytes)
+			streamResult.Chunks = holdbackChunks
+
+			select {
+			case holdbackErr := <-holdbackErrCh:
+				if holdbackErr != nil {
+					cancelStream()
+					logging.Logger.Warn("direct claude stream failed during holdback", "provider", provider, "model", modelName, "conn", shortID(conn.ID, 8), "error", holdbackErr.Error())
+					retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, holdbackErr, attempt, time.Since(start).Milliseconds(), stream)
+					lastErr = holdbackErr
+					lastErrCategory = cat
+					if !retry {
+						break
+					}
+					if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+						return
+					}
+					continue
+				}
+			case <-streamCtx.Done():
+				return
+			}
+
+			if streamErr := h.handleClaudeStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, "", true); streamErr != nil {
+				if h.isClientCanceled(c, streamErr) {
+					return
+				}
+				cancelStream()
+				logging.Logger.Warn("direct claude mid-stream failure, failing over", "provider", provider, "model", modelName, "conn", shortID(conn.ID, 8), "error", streamErr.Error())
+				retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, streamErr, attempt, time.Since(start).Milliseconds(), stream)
+				lastErr = streamErr
+				lastErrCategory = cat
+				if !retry {
+					break
+				}
+				if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+					return
+				}
+				continue
+			}
+			return
+		} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(clientFormat), string(providerFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			tokensEstimated := false
@@ -186,18 +240,29 @@ func (h *Handler) Messages(c *gin.Context) {
 
 	msg, statusCode, errType := buildFailoverErrorResponse(lastErrCategory, lastErr, modelName)
 	logging.Logger.Error(msg, "provider", provider, "model", modelName, "category", lastErrCategory)
+	if stream {
+		// Streaming clients expect an SSE error event and [DONE].
+		errBytes, _ := json.Marshal(claudeError(errType, msg))
+		c.Writer.Write([]byte("data: "))
+		c.Writer.Write(errBytes)
+		c.Writer.Write([]byte("\n\ndata: [DONE]\n\n"))
+		if flusher, ok := c.Writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		return
+	}
 	c.JSON(statusCode, claudeError(errType, msg))
 }
 
 // handleClaudeStreamResponse handles streaming Claude responses.
-func (h *Handler) handleClaudeStreamResponse(ctx context.Context, c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte, comboID string) error {
+func (h *Handler) handleClaudeStreamResponse(ctx context.Context, c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte, comboID string, silent bool) error {
 	_, providerFormat, _ := h.registry.Get(provider)
 	errFormatter := func(err error) []byte {
 		logging.Logger.Error("upstream streaming error", "provider", provider, "model", model, "error", err)
 		b, _ := json.Marshal(claudeError("api_error", "upstream streaming error"))
 		return b
 	}
-	return h.streamResponse(ctx, c, result, conn, provider, model, executor.FormatClaude, providerFormat, originalReq, translatedReq, errFormatter, start, comboID)
+	return h.streamResponse(ctx, c, result, conn, provider, model, executor.FormatClaude, providerFormat, originalReq, translatedReq, errFormatter, start, comboID, silent)
 }
 
 // CountTokens handles POST /v1/messages/count_tokens
