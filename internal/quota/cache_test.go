@@ -2,6 +2,7 @@ package quota
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -69,15 +70,19 @@ func TestNextProviderResets(t *testing.T) {
 	defer db.Close()
 
 	// cx has two reset windows; the earliest future one should win.
-	cxQuotas := `[{"name":"5h","used":1,"total":10,"remaining_pct":90,"reset_at":"2026-07-15T00:00:00Z"},{"name":"7d","used":1,"total":100,"remaining_pct":99,"reset_at":"2026-07-21T00:00:00Z"}]`
+	now := time.Now()
+	earliestReset := now.Add(24 * time.Hour).Format(time.RFC3339)
+	cxQuotas := fmt.Sprintf(`[{"name":"5h","used":1,"total":10,"remaining_pct":90,"reset_at":%q},{"name":"7d","used":1,"total":100,"remaining_pct":99,"reset_at":%q}]`,
+		earliestReset, now.Add(7*24*time.Hour).Format(time.RFC3339))
 	// ag only has a past reset.
-	agQuotas := `[{"name":"daily","used":5,"total":10,"remaining_pct":50,"reset_at":"2026-07-01T00:00:00Z"}]`
+	agQuotas := fmt.Sprintf(`[{"name":"daily","used":5,"total":10,"remaining_pct":50,"reset_at":%q}]`,
+		now.Add(-24*time.Hour).Format(time.RFC3339))
 
-	now := time.Now().Unix()
+	nowUnix := now.Unix()
 	db.Exec(`INSERT INTO quota_cache (id, connection_id, provider_type_id, connection_name, plan, quotas, status, fetched_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		"cx-1", "conn-cx", "cx", "Codex 1", "plus", cxQuotas, "ok", now, now)
+		"cx-1", "conn-cx", "cx", "Codex 1", "plus", cxQuotas, "ok", nowUnix, nowUnix)
 	db.Exec(`INSERT INTO quota_cache (id, connection_id, provider_type_id, connection_name, plan, quotas, status, fetched_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		"ag-1", "conn-ag", "ag", "AG 1", "pro", agQuotas, "ok", now, now)
+		"ag-1", "conn-ag", "ag", "AG 1", "pro", agQuotas, "ok", nowUnix, nowUnix)
 
 	resets, err := NextProviderResets(db)
 	if err != nil {
@@ -91,7 +96,7 @@ func TestNextProviderResets(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected future reset for cx")
 	}
-	if !strings.Contains(cxReset, "2026-07-15T00:00:00") {
+	if !strings.Contains(cxReset, earliestReset) {
 		t.Errorf("expected earliest future reset, got %s", cxReset)
 	}
 }
