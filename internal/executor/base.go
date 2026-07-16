@@ -75,6 +75,11 @@ type Executor interface {
 	ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error)
 }
 
+// TokenCounter is implemented by executors that can count tokens locally.
+type TokenCounter interface {
+	CountTokens(ctx context.Context, req *Request) (*Response, error)
+}
+
 // BaseExecutor provides shared HTTP logic for all executors.
 type BaseExecutor struct {
 	Client                 *http.Client

@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
+	"github.com/rickicode/AxonRouter-Go/internal/tokenizer"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -336,6 +339,34 @@ func (e *OpenAIExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 	}
 
 	return resp, nil
+}
+
+// CountTokens counts input tokens for an OpenAI-compatible provider after
+// translating an Anthropic /v1/messages/count_tokens request to OpenAI Chat
+// Completions format. It returns an Anthropic-style {"input_tokens": N} body.
+func (e *OpenAIExecutor) CountTokens(ctx context.Context, req *Request) (*Response, error) {
+	modelName := req.Model
+	if modelName == "" {
+		modelName = JSONGet(req.Body, "model")
+	}
+
+	translated := registry.Request(string(FormatClaude), string(FormatOpenAI), modelName, req.Body, false)
+
+	enc, err := tokenizer.CodecForModel(modelName)
+	if err != nil {
+		return nil, fmt.Errorf("tokenizer init failed: %w", err)
+	}
+
+	count, err := tokenizer.CountOpenAIChatTokens(enc, translated)
+	if err != nil {
+		return nil, fmt.Errorf("token counting failed: %w", err)
+	}
+
+	body := fmt.Sprintf(`{"input_tokens":%d}`, count)
+	return &Response{
+		StatusCode: http.StatusOK,
+		Body:       []byte(body),
+	}, nil
 }
 
 // ExecuteStream performs a streaming chat completion.
