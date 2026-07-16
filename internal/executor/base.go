@@ -38,9 +38,28 @@ type StreamResult struct {
 
 // StreamConfig holds per-request streaming tunables.
 type StreamConfig struct {
-	FetchTimeoutMs           int // timeout for response headers, e.g. 90000
-	StreamIdleTimeoutMs      int // timeout between chunks, e.g. 60000
+	FetchTimeoutMs         int // timeout for response headers, e.g. 90000
+	StreamIdleTimeoutMs    int // timeout between chunks, e.g. 60000
 	StreamReadinessTimeoutMs int // timeout for first chunk, e.g. 300000
+	StallTimeoutMs         int // raw-byte stall timeout (0 = use idle timeout)
+	HoldbackMs             int // holdback buffer window in ms (default 750)
+	HoldbackBytes          int // holdback buffer max bytes (default 65536)
+	AdaptiveReadiness      bool // enable adaptive readiness extension
+}
+
+// StallTapReader wraps an io.Reader and calls onBytes on every successful Read.
+// ponytail: thin wrapper, no alloc per Read — the byte-count callback is a closure.
+type StallTapReader struct {
+	r       io.Reader
+	onBytes func(n int)
+}
+
+func (s *StallTapReader) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	if n > 0 && s.onBytes != nil {
+		s.onBytes(n)
+	}
+	return n, err
 }
 
 // Response is a non-streaming response.
@@ -653,6 +672,7 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 	fetchTimeout := b.FetchTimeout
 	idleTimeout := b.StreamIdleTimeout
 	readinessTimeout := b.StreamReadinessTimeout
+	stallTimeout := b.StreamIdleTimeout // default: same as idle
 	if cfg != nil {
 		if cfg.FetchTimeoutMs > 0 {
 			fetchTimeout = time.Duration(cfg.FetchTimeoutMs) * time.Millisecond
@@ -662,6 +682,9 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 		}
 		if cfg.StreamReadinessTimeoutMs > 0 {
 			readinessTimeout = time.Duration(cfg.StreamReadinessTimeoutMs) * time.Millisecond
+		}
+		if cfg.StallTimeoutMs > 0 {
+			stallTimeout = time.Duration(cfg.StallTimeoutMs) * time.Millisecond
 		}
 	}
 
@@ -757,13 +780,23 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 		defer close(chunks)
 		defer fetchCancel()
 		resp.Body = wrapMaybeGzipReader(resp.Body, resp.Header.Get("Content-Encoding"))
+
+		// Raw-byte stall detection: wrap body so every byte read resets the stall timer.
+		// ponytail: StallTapReader is a thin io.Reader wrapper, no per-Read alloc.
+		stallBytes := make(chan int, 64)
+		tappedBody := &StallTapReader{r: resp.Body, onBytes: func(n int) {
+			select {
+			case stallBytes <- n:
+			default: // non-blocking; channel is just a signal
+			}
+		}}
 		defer resp.Body.Close()
 
-		scanner := bufio.NewScanner(resp.Body)
+		scanner := bufio.NewScanner(tappedBody)
 		// ponytail: 64KB max line size, good enough for SSE
 		scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
 
-		// Run scanner in its own goroutine so we can select on idle timeout
+		// Run scanner in its own goroutine so select on idle timeout
 		scanCh := make(chan []byte, 1)
 		scanErrCh := make(chan error, 1)
 		go func() {
@@ -790,6 +823,9 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 
 		idleTimer := time.NewTimer(idleTimeout)
 		idleTimer.Stop()
+
+		stallTimer := time.NewTimer(stallTimeout)
+		stallTimer.Stop()
 		var sawFirst bool
 
 		for {
@@ -813,6 +849,7 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 						}
 					}
 					idleTimer.Reset(idleTimeout)
+					stallTimer.Reset(stallTimeout)
 				} else {
 					if !idleTimer.Stop() {
 						select {
@@ -821,6 +858,8 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 						}
 					}
 					idleTimer.Reset(idleTimeout)
+					// Note: stall timer resets on raw bytes, not SSE lines.
+					// It is reset in the stallBytes case below.
 				}
 				select {
 				case chunks <- StreamChunk{Payload: line}:
@@ -829,12 +868,36 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 					return
 				}
 
+		case <-stallBytes:
+			// Raw bytes arrived from upstream - reset stall timer.
+			// This fires independently of SSE line boundaries so reasoning
+			// models that send partial frames or keepalive pings do not
+			// false-positive as stalled.
+			// Skip before first chunk: the readiness timer governs that
+			// window. Arming the stall timer early with a custom
+			// StallTimeoutMs < StreamReadinessTimeoutMs would false-positive.
+			if !sawFirst {
+				continue
+			}
+			if !stallTimer.Stop() {
+				select {
+				case <-stallTimer.C:
+				default:
+				}
+			}
+			stallTimer.Reset(stallTimeout)
+
 			case <-readinessTimer.C:
 				chunks <- StreamChunk{Err: fmt.Errorf("stream readiness timeout after %v: %w", readinessTimeout, context.DeadlineExceeded)}
 				return
 
 			case <-idleTimer.C:
 				chunks <- StreamChunk{Err: fmt.Errorf("stream idle timeout after %v: %w", idleTimeout, context.DeadlineExceeded)}
+				return
+
+			case <-stallTimer.C:
+				// No raw bytes from upstream for stallTimeout - upstream is hung.
+				chunks <- StreamChunk{Err: fmt.Errorf("stream stall timeout after %v: %w", stallTimeout, context.DeadlineExceeded)}
 				return
 
 			case <-ctx.Done():
@@ -845,6 +908,110 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 	}()
 
 	return result, nil
+}
+
+// WrapWithHoldback buffers initial stream chunks for a short window so the
+// caller can retry transparently if an error arrives before any useful data
+// reaches the client. Matches OmniRoute holdback buffer (750ms / 64KB).
+//
+// ctx controls goroutine lifetime: when ctx is cancelled the holdback is
+// aborted cleanly (no goroutine leak on client disconnect).
+//
+// Returns:
+//   - out: relay channel (buffered chunks + live relay)
+//   - holdbackErr: receives a non-nil error if the stream failed during the
+//     holdback window (caller should retry). Nil means holdback committed.
+//
+// ponytail: single goroutine, no extra alloc after the buffer slice.
+func WrapWithHoldback(ctx context.Context, chunks chan StreamChunk, holdbackMs int, holdbackBytes int) (out chan StreamChunk, holdbackErr chan error) {
+	out = make(chan StreamChunk, 64)
+	errCh := make(chan error, 1)
+
+	if holdbackMs <= 0 {
+		holdbackMs = 750
+	}
+	if holdbackBytes <= 0 {
+		holdbackBytes = 64 * 1024
+	}
+
+	go func() {
+		defer close(out)
+
+		var buf []StreamChunk
+		bufBytes := 0
+		holdbackTimer := time.NewTimer(time.Duration(holdbackMs) * time.Millisecond)
+		defer holdbackTimer.Stop()
+
+	// Phase 1: collect into buffer until timer fires or buffer is full.
+	for {
+		select {
+		case chunk, ok := <-chunks:
+			if !ok {
+				// Stream ended during holdback — signal nil then flush buffer.
+				// IMPORTANT: send to errCh FIRST so the caller unblocks and
+				// starts reading out. Sending to out before errCh would
+				// deadlock when buf exceeds out's channel buffer (64).
+				errCh <- nil
+				for _, c := range buf {
+					out <- c
+				}
+				return
+			}
+			if chunk.Err != nil {
+				// Error during holdback — signal caller to retry.
+				errCh <- chunk.Err
+				return
+			}
+			buf = append(buf, chunk)
+			bufBytes += len(chunk.Payload)
+			if bufBytes >= holdbackBytes {
+				// Buffer full — commit immediately.
+				goto commit
+			}
+
+		case <-holdbackTimer.C:
+			goto commit
+
+		case <-ctx.Done():
+			// Client disconnect during holdback — abort cleanly.
+			// The caller has already returned; closing out lets any
+			// late reader see end-of-stream.
+			select {
+			case errCh <- nil: // best-effort signal in case caller still listening
+			default:
+			}
+			return
+		}
+	}
+
+commit:
+	// Phase 2: flush buffer, then relay live chunks.
+	errCh <- nil // holdback committed successfully
+	for _, c := range buf {
+		select {
+		case out <- c:
+		case <-ctx.Done():
+			return
+		}
+	}
+	for {
+		select {
+		case chunk, ok := <-chunks:
+			if !ok {
+				return
+			}
+			select {
+			case out <- chunk:
+			case <-ctx.Done():
+				return
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+	}()
+
+	return out, errCh
 }
 
 // WriteSSE writes an SSE event to the response writer.

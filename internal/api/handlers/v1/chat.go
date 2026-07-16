@@ -176,12 +176,14 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		h.persistSuccess(conn.ID)
 		h.combo.RecordSuccess(conn.ID)
 
-		if req.Stream {
-			// Use the client's request context (no timeout) for streaming.
-			// The comboCtx timeout is only for orchestration, not for live streams.
-			// Stream lifecycle is governed by StreamIdleTimeout/StreamReadinessTimeout.
-			h.handleStreamResponse(c.Request.Context(), c, streamResult, conn, provider, modelName, start, translatedBody, body, "")
-		} else {
+	if req.Stream {
+		// Use the client's request context (no timeout) for streaming.
+		// The comboCtx timeout is only for orchestration, not for live streams.
+		// Stream lifecycle is governed by StreamIdleTimeout/StreamReadinessTimeout/StallTimeout.
+		if err := h.handleStreamResponse(c.Request.Context(), c, streamResult, conn, provider, modelName, start, translatedBody, body, ""); err != nil {
+			logging.Logger.Error("direct streaming error", "provider", provider, "model", modelName, "error", err)
+		}
+	} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			tokensEstimated := false
@@ -426,7 +428,43 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 	}
 
 	// Holdback committed — stream is live, relay to client.
-	h.handleStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, comboResult.Combo.Name)
+	if streamErr := h.handleStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, comboResult.Combo.Name); streamErr != nil {
+			// Mid-stream failure — failover to next connection/model instead of
+			// stopping the stream. handleStreamResponse already skipped writing
+			// error/DONE to the client when in combo mode.
+			if h.isClientCanceled(c, streamErr) {
+				return
+			}
+			cancelStream()
+			det := connstate.DetectError(comboCtx, 0, "", streamErr, provider, modelName, nil)
+			if det.Category == connstate.ErrorModelNotFound {
+				lastErr = streamErr
+				lastErrCategory = string(det.Category)
+				break
+			}
+			if connstate.HasPerModelQuota(provider) && det.ModelID != "" &&
+				(det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
+				scope := connstate.ModelScope(provider, det.ModelID)
+				h.exhaustion.MarkExhausted(quota.ExhaustKey(connID, scope), quota.TTLFromCooldown(det.CooldownUntil, 5*time.Minute))
+			} else if det.Category == connstate.ErrorRateLimit {
+				h.exhaustion.MarkExhausted(connID, quota.TTLFromCooldown(det.CooldownUntil, quota.DefaultExhaustionTTL))
+			} else if det.Category == connstate.ErrorQuota {
+				ttl := 24 * time.Hour
+				if det.CooldownUntil != nil {
+					ttl = time.Until(*det.CooldownUntil)
+				}
+				h.exhaustion.MarkExhausted(connID, ttl)
+			}
+			h.combo.RecordFailure(connID, det)
+			h.persistCooldownScoped(connID, det)
+			if det.Status != connstate.StatusReady {
+				h.elig.ScheduleUpdate()
+			}
+			lastErr = streamErr
+			lastErrCategory = "stream-" + string(det.Category)
+			continue
+		}
+		return
 		} else {
 			translatedResp := registry.ResponseNonStream(comboCtx, string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
@@ -478,11 +516,26 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 		detail["name"] = lastConn.Name
 	}
 	logging.Logger.Error(msg, "combo", model, "category", lastErrCategory)
+
+	if stream {
+		// Streaming clients expect an SSE error event and [DONE]. If the
+		// stream already started, the HTTP status is already committed; keep
+		// writing SSE frames. If it never started, send the same SSE error so
+		// the client gets a consistent failure format.
+		errBytes, _ := json.Marshal(gin.H{"error": gin.H{"message": msg, "type": errType, "detail": detail}})
+		c.Writer.Write([]byte("data: "))
+		c.Writer.Write(errBytes)
+		c.Writer.Write([]byte("\n\ndata: [DONE]\n\n"))
+		if flusher, ok := c.Writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		return
+	}
 	c.JSON(statusCode, gin.H{"error": gin.H{"message": msg, "type": errType, "detail": detail}})
 }
 
 // handleStreamResponse handles streaming chat completions.
-func (h *Handler) handleStreamResponse(ctx context.Context, c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte, comboID string) {
+func (h *Handler) handleStreamResponse(ctx context.Context, c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte, comboID string) error {
 	_, providerFormat, _ := h.registry.Get(provider)
 	errFormatter := func(err error) []byte {
 		var upErr *executor.UpstreamError
@@ -493,13 +546,6 @@ func (h *Handler) handleStreamResponse(ctx context.Context, c *gin.Context, resu
 		b, _ := json.Marshal(gin.H{"error": gin.H{"message": "upstream streaming error"}})
 		return b
 	}
-	h.streamResponse(ctx, c, result, conn, provider, model, executor.FormatOpenAI, providerFormat, originalReq, translatedReq, errFormatter, start, comboID)
+	return h.streamResponse(ctx, c, result, conn, provider, model, executor.FormatOpenAI, providerFormat, originalReq, translatedReq, errFormatter, start, comboID)
 }
 
-// computeAdaptiveReadiness returns a stream-readiness timeout in milliseconds.
-// NOTE: stub added by failover session; prior stream-protection changes used this
-// helper but left the definition out, so the build was broken. Extend later if you
-// want model/body based heuristics.
-func computeAdaptiveReadiness(body []byte, modelName string, defaultMs int) int {
-	return defaultMs
-}

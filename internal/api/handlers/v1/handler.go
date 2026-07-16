@@ -1147,9 +1147,72 @@ func estimateOutputFromTranslatedChunk(tc []byte) int64 {
 	return n
 }
 
+// computeAdaptiveReadiness extends the base readiness timeout based on request
+// characteristics. Matches OmniRoute streamReadinessPolicy.ts.
+//
+// Large prompts, many messages, tool-heavy requests, and reasoning models need
+// more time before the first SSE chunk arrives. Without adaptation, these
+// requests false-positive as "readiness timeout" and kill viable streams.
+//
+// ponytail: simple arithmetic on body size and JSON fields, no heavy parsing.
+func computeAdaptiveReadiness(body []byte, model string, baseMs int) int {
+	if baseMs <= 0 {
+		baseMs = 80000
+	}
+	extra := 0
+	bodyLen := len(body)
+
+	// Estimate message count by counting "role" occurrences (cheap heuristic).
+	msgCount := bytes.Count(body, []byte(`"role"`))
+	if msgCount > 150 {
+		extra += 20000
+	}
+	if msgCount > 400 {
+		extra += 25000 // total +45s for very large histories
+	}
+
+	// Tool count: count "function" or "tool" occurrences in tools array area.
+	toolCount := bytes.Count(body, []byte(`"function"`))
+	if toolCount > 15 {
+		extra += 15000
+	}
+
+	// Payload size.
+	if bodyLen > 250_000 {
+		extra += 20000
+	}
+	if bodyLen > 750_000 {
+		extra += 25000 // total +45s for very large payloads
+	}
+
+	// Reasoning models need more time for first chunk.
+	modelLower := strings.ToLower(model)
+	if strings.Contains(modelLower, "o1") ||
+		strings.Contains(modelLower, "o3") ||
+		strings.Contains(modelLower, "o4-mini") ||
+		strings.Contains(modelLower, "gpt-5") ||
+		strings.Contains(modelLower, "deepseek-r1") ||
+		strings.Contains(modelLower, "thinking") {
+		extra += 30000
+	}
+
+	total := baseMs + extra
+	const cap = 180000 // 180s max, matches OmniRoute STREAM_READINESS_MAX_TIMEOUT_MS
+	if total > cap {
+		total = cap
+	}
+	return total
+}
+
 // streamResponse writes a translated SSE stream to the client with heartbeat and
 // client-disconnect detection. Each translated chunk already includes the SSE
 // frame (data: ...\n\n), so the helper writes the bytes as-is and flushes.
+//
+// It returns nil on a normal stream end or a client disconnect. A non-nil error
+// indicates a mid-stream upstream failure. In combo mode (comboID != "") that
+// error is returned to the caller instead of being written to the response,
+// so the combo can failover to another connection/model without stopping the
+// stream.
 func (h *Handler) streamResponse(
 	ctx context.Context,
 	c *gin.Context,
@@ -1161,11 +1224,11 @@ func (h *Handler) streamResponse(
 	errFormatter func(error) []byte,
 	start time.Time,
 	comboID string,
-) {
+) error {
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"message": "streaming not supported", "type": "server_error"}})
-		return
+		return nil
 	}
 
 	c.Header("Content-Type", "text/event-stream")
@@ -1186,6 +1249,9 @@ func (h *Handler) streamResponse(
 	var totalOutputBytes int64
 	lastChunkTime := time.Now()
 	var streamState any
+	var sawContent bool
+	streamStart := time.Now()
+	isCombo := comboID != ""
 
 	for {
 		select {
@@ -1194,88 +1260,140 @@ func (h *Handler) streamResponse(
 				c.Writer.Write([]byte("data: [DONE]\n\n"))
 				flusher.Flush()
 
-latency := time.Since(start).Milliseconds()
-			tokensEstimated := false
-			if acc.InputTokens+acc.OutputTokens == 0 {
-				estInput := usage.EstimateTokensFromRequest(originalReq)
-				var estOutput int64
-				if totalOutputBytes > 0 {
-					estOutput = totalOutputBytes / 4
+				latency := time.Since(start).Milliseconds()
+				tokensEstimated := false
+				if acc.InputTokens+acc.OutputTokens == 0 {
+					estInput := usage.EstimateTokensFromRequest(originalReq)
+					var estOutput int64
+					if totalOutputBytes > 0 {
+						estOutput = totalOutputBytes / 4
+					}
+					if estInput > 0 || estOutput > 0 {
+						acc.InputTokens = estInput
+						acc.OutputTokens = estOutput
+						tokensEstimated = true
+					}
 				}
-				if estInput > 0 || estOutput > 0 {
-					acc.InputTokens = estInput
-					acc.OutputTokens = estOutput
-					tokensEstimated = true
-				}
+				h.logRequest(c, &usage.LogEntry{
+					ApiKeyID: c.GetString("api_key_id"),
+					ConnectionID: conn.ID,
+					ProviderTypeID: provider,
+					ModelID: model,
+					ComboID: comboID,
+					ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
+					ApiType: apiTypeFromPath(c.Request.URL.Path),
+					Modality: "chat",
+					Stream: true,
+					InputTokens: acc.InputTokens,
+					OutputTokens: acc.OutputTokens,
+					ReasoningTokens: acc.ReasoningTokens,
+					CachedTokens: acc.CachedTokens,
+					CacheCreationTokens: acc.CacheCreationTokens,
+					LatencyMs: latency,
+					StatusCode: http.StatusOK,
+					TokensEstimated: tokensEstimated,
+				})
+				h.incrementAPIKeyUsage(c.GetString("api_key_id"), acc.InputTokens+acc.OutputTokens)
+				return nil
 			}
-			h.logRequest(c, &usage.LogEntry{
-				ApiKeyID: c.GetString("api_key_id"),
-				ConnectionID: conn.ID,
-				ProviderTypeID: provider,
-				ModelID: model,
-				ComboID: comboID,
-				ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
-				ApiType: apiTypeFromPath(c.Request.URL.Path),
-				Modality: "chat",
-				Stream: true,
-				InputTokens: acc.InputTokens,
-				OutputTokens: acc.OutputTokens,
-				ReasoningTokens: acc.ReasoningTokens,
-				CachedTokens: acc.CachedTokens,
-				CacheCreationTokens: acc.CacheCreationTokens,
-				LatencyMs: latency,
-				StatusCode: http.StatusOK,
-				TokensEstimated: tokensEstimated,
-			})
-			h.incrementAPIKeyUsage(c.GetString("api_key_id"), acc.InputTokens+acc.OutputTokens)
-			return
-		}
 
-		if chunk.Err != nil {
-			// Keep errors inside OpenAI-compatible `data:` events so standard
-			// clients can surface them; avoid non-standard `event: error`.
-			// Only record upstream failures as exhaustion/cooldown; client
-			// cancellations (e.g. disconnects) must not penalize connections.
-			if h.isClientCanceled(c, chunk.Err) {
-				// Client disconnected — log for debugging but don't penalize connection.
-				logging.Logger.Info("stream ended: client disconnected", "provider", provider, "model", model)
-				return
-			}
-			latency := time.Since(start).Milliseconds()
-			h.handleFailoverError(ctx, c, conn, provider, model, chunk.Err, 0, latency, true)
-			c.Writer.Write([]byte("data: "))
-			c.Writer.Write(errFormatter(chunk.Err))
-			c.Writer.Write([]byte("\n\n"))
-			c.Writer.Write([]byte("data: [DONE]\n\n"))
-			flusher.Flush()
-			h.logRequest(c, &usage.LogEntry{
-				ApiKeyID: c.GetString("api_key_id"),
-				ConnectionID: conn.ID,
-				ProviderTypeID: provider,
-				ModelID: model,
-				ComboID: comboID,
-				ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
-				ApiType: apiTypeFromPath(c.Request.URL.Path),
-				Modality: "chat",
-				Stream: true,
-				LatencyMs: time.Since(start).Milliseconds(),
-				ErrorMessage: chunk.Err.Error(),
-			})
-				return
+			if chunk.Err != nil {
+				// Keep errors inside OpenAI-compatible `data:` events so standard
+				// clients can surface them; avoid non-standard `event: error`.
+				// Only record upstream failures as exhaustion/cooldown; client
+				// cancellations (e.g. disconnects) must not penalize connections.
+				if h.isClientCanceled(c, chunk.Err) {
+					// Client disconnected — log for debugging but don't penalize connection.
+					logging.Logger.Info("stream ended: client disconnected", "provider", provider, "model", model)
+					return nil
+				}
+				latency := time.Since(start).Milliseconds()
+				h.handleFailoverError(ctx, c, conn, provider, model, chunk.Err, 0, latency, true)
+				// If this is a combo stream, don't write error/DONE yet. Return
+				// the error so the combo can failover to the next connection/model
+				// and keep the whole stream alive.
+				if isCombo {
+					errMsg := chunk.Err.Error()
+					logging.Logger.Warn("mid-stream failure in combo, failing over",
+						"provider", provider, "model", model, "combo", comboID,
+						"error", errMsg)
+					h.logRequest(c, &usage.LogEntry{
+						ApiKeyID: c.GetString("api_key_id"),
+						ConnectionID: conn.ID,
+						ProviderTypeID: provider,
+						ModelID: model,
+						ComboID: comboID,
+						ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
+						ApiType: apiTypeFromPath(c.Request.URL.Path),
+						Modality: "chat",
+						Stream: true,
+						LatencyMs: latency,
+						StatusCode: http.StatusBadGateway,
+						ErrorMessage: errMsg,
+					})
+					return chunk.Err
+				}
+				c.Writer.Write([]byte("data: "))
+				c.Writer.Write(errFormatter(chunk.Err))
+				c.Writer.Write([]byte("\n\n"))
+				c.Writer.Write([]byte("data: [DONE]\n\n"))
+				flusher.Flush()
+				h.logRequest(c, &usage.LogEntry{
+					ApiKeyID: c.GetString("api_key_id"),
+					ConnectionID: conn.ID,
+					ProviderTypeID: provider,
+					ModelID: model,
+					ComboID: comboID,
+					ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
+					ApiType: apiTypeFromPath(c.Request.URL.Path),
+					Modality: "chat",
+					Stream: true,
+					LatencyMs: latency,
+					ErrorMessage: chunk.Err.Error(),
+				})
+				return chunk.Err
 			}
 
 			lastChunkTime = time.Now()
-		translatedChunks := registry.Response(ctx, string(clientFormat), string(providerFormat), model, originalReq, translatedReq, chunk.Payload, &streamState)
-		for _, tc := range translatedChunks {
-			c.Writer.Write(tc)
-			flusher.Flush()
-			totalOutputBytes += estimateOutputFromTranslatedChunk(tc)
-		}
-		if counts, found := ExtractTokensFromSSEChunk(chunk.Payload); found {
-			MergeTokenCounts(&acc, &counts)
-		}
+			translatedChunks := registry.Response(ctx, string(clientFormat), string(providerFormat), model, originalReq, translatedReq, chunk.Payload, &streamState)
+			for _, tc := range translatedChunks {
+				c.Writer.Write(tc)
+				flusher.Flush()
+				totalOutputBytes += estimateOutputFromTranslatedChunk(tc)
+			}
 
-	case <-ticker.C:
+			// Stream quality peek: log time-to-first-content and validate
+			// the stream is not a zombie (200 OK but empty content).
+			// ponytail: fail-open on ambiguous, log-only, no rejection.
+			if !sawContent && len(chunk.Payload) > 0 {
+				// Skip SSE comments/keepalive pings (lines starting with `:`).
+				if len(chunk.Payload) > 0 && chunk.Payload[0] != ':' {
+					sawContent = true
+					ttfc := time.Since(streamStart).Milliseconds()
+					payload := chunk.Payload
+					hasContent := bytes.Contains(payload, []byte(`"choices"`)) ||
+						bytes.Contains(payload, []byte(`"delta"`)) ||
+						bytes.Contains(payload, []byte(`content_block`)) ||
+						bytes.Contains(payload, []byte(`"text"`)) ||
+						bytes.Contains(payload, []byte(`"candidates"`))
+					if !hasContent {
+						logging.Logger.Warn("stream quality: first chunk has no recognized content markers",
+							"provider", provider, "model", model,
+							"ttfc_ms", ttfc, "payload_len", len(payload),
+							"combo", comboID)
+					} else {
+						logging.Logger.Debug("stream quality: first content",
+							"provider", provider, "model", model,
+							"ttfc_ms", ttfc, "payload_len", len(payload))
+					}
+				}
+			}
+
+			if counts, found := ExtractTokensFromSSEChunk(chunk.Payload); found {
+				MergeTokenCounts(&acc, &counts)
+			}
+
+		case <-ticker.C:
 			if time.Since(lastChunkTime) >= heartbeatInterval {
 				executor.WriteSSEHeartbeat(c.Writer, flusher)
 			}
@@ -1284,14 +1402,26 @@ latency := time.Since(start).Milliseconds()
 			// Log the context cancellation reason for debugging silent stream stops.
 			// This helps distinguish between client disconnects, combo timeouts, and other cancellations.
 			logging.Logger.Warn("stream context cancelled", "provider", provider, "model", model, "error", ctx.Err())
-			return
+
+			// Send in-band error event + [DONE] so the client knows the stream
+			// ended. Without this, clients hang waiting for data that will never come.
+			// Matches OmniRoute buildStreamErrorChunks / 9router streamHandler behavior.
+			if !h.isClientCanceled(c, ctx.Err()) {
+				errMsg := ctx.Err().Error()
+				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					errMsg = "stream deadline exceeded"
+				}
+				errBytes, _ := json.Marshal(gin.H{"error": gin.H{"message": errMsg, "type": "server_error"}})
+				c.Writer.Write([]byte("data: "))
+				c.Writer.Write(errBytes)
+				c.Writer.Write([]byte("\n\n"))
+			}
+			c.Writer.Write([]byte("data: [DONE]\n\n"))
+			flusher.Flush()
+			return ctx.Err()
 		}
 	}
 }
-
-// checkAutoDisable checks if a connection should be auto-disabled due to repeated ban signals.
-// Matches OmniRoute autoDisableBannedAccounts: permanently disable after threshold consecutive bans.
-// Persists ban count to DB so it survives restarts.
 func (h *Handler) checkAutoDisable(connID, provider string) {
 	cs := h.store.Get(connID)
 	if cs == nil {

@@ -155,7 +155,9 @@ func (h *Handler) Responses(c *gin.Context) {
 			b, _ := json.Marshal(gin.H{"error": gin.H{"message": "upstream streaming error", "type": "server_error"}})
 			return b
 		}
-		h.streamResponse(proxyCtx, c, streamResult, conn, provider, modelName, executor.FormatOpenAIResponses, providerFmt, body, translatedBody, errFormatter, start, "")
+			if err := h.streamResponse(proxyCtx, c, streamResult, conn, provider, modelName, executor.FormatOpenAIResponses, providerFmt, body, translatedBody, errFormatter, start, ""); err != nil {
+				logging.Logger.Error("responses streaming error", "provider", provider, "model", modelName, "error", err)
+			}
 	} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)

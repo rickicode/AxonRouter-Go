@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Stream protection parity with OmniRoute** for combo and direct paths: raw-byte stall detection, adaptive readiness timeout (80s–180s), 750ms/64KB holdback buffer for transparent early retry, and stream-quality peek logging.
+- **Combo mid-stream failover**: if an upstream stream fails after the holdback window commits, the combo now falls back to the next eligible connection/model instead of terminating the stream. Only when all candidates fail does the client receive the final SSE `error` + `[DONE]`.
+- `StreamConfig` extended with `StallTimeoutMs`, `HoldbackMs`, `HoldbackBytes`, and `AdaptiveReadiness`.
+
+### Fixed
+- Streaming context cancellation now emits an in-band SSE `error` event followed by `[DONE]`, preventing clients from hanging when a stream is cancelled.
+
+### Changed
+- `streamResponse`, `handleStreamResponse`, and `handleClaudeStreamResponse` now return an `error` so callers can implement retry/failover logic.
+
 - **Admin "Test all" now refreshes expired/near-expiry OAuth tokens automatically.** For OAuth providers (`cx`, `ag`, `kiro`, `copilot`), each connection's token is refreshed via `auth.Manager` before testing if it is expired or within the provider's lead time. Test results are recorded with the fresh token, and unrecoverable refresh errors disable the connection as `auth_failed`.
 - Docker image now defaults `HOME=/app/data` so the `/app/data` volume is used without manual environment overrides; added GitHub Actions workflow to build and push the container to GHCR on pushes to `master` and version tags.
 

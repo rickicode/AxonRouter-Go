@@ -190,14 +190,14 @@ func (h *Handler) Messages(c *gin.Context) {
 }
 
 // handleClaudeStreamResponse handles streaming Claude responses.
-func (h *Handler) handleClaudeStreamResponse(ctx context.Context, c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte, comboID string) {
+func (h *Handler) handleClaudeStreamResponse(ctx context.Context, c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte, comboID string) error {
 	_, providerFormat, _ := h.registry.Get(provider)
 	errFormatter := func(err error) []byte {
 		logging.Logger.Error("upstream streaming error", "provider", provider, "model", model, "error", err)
 		b, _ := json.Marshal(claudeError("api_error", "upstream streaming error"))
 		return b
 	}
-	h.streamResponse(ctx, c, result, conn, provider, model, executor.FormatClaude, providerFormat, originalReq, translatedReq, errFormatter, start, comboID)
+	return h.streamResponse(ctx, c, result, conn, provider, model, executor.FormatClaude, providerFormat, originalReq, translatedReq, errFormatter, start, comboID)
 }
 
 // CountTokens handles POST /v1/messages/count_tokens
