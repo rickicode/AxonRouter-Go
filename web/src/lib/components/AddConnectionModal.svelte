@@ -59,8 +59,7 @@ let poolDropdownOpen = $state(false);
 let poolDropdownRef: HTMLDivElement | undefined = $state();
 
 // Bulk import via .txt upload + chunked send (keeps RAM bounded on both sides).
-const BULK_CHUNK = 1000;
-const BULK_MAX = 5000;
+const BULK_CHUNK = 5000;
 let uploadedFileName = $state('');
 let parsedConnections = $state<{ name: string; api_key: string; priority?: number; provider_specific_data?: Record<string, string> }[]>([]);
 let parseWarnings = $state<string[]>([]);
@@ -123,6 +122,11 @@ function handleFileUpload(event: Event) {
   input.value = '';
 }
 
+// Frontend batch+queue: split into BULK_CHUNK batches, run through a
+// concurrency-limited worker pool so RAM stays bounded and the server is
+// not hammered with all requests at once.
+const BULK_CONCURRENCY = 3;
+
 async function submitBulkChunked() {
   const all = parsedConnections.length > 0 ? parsedConnections : parseBulkConnections();
   if (all.length === 0) {
@@ -132,18 +136,36 @@ async function submitBulkChunked() {
   importing = true;
   importProgress = 0;
   importSummary = { created: 0, failed: 0, total: all.length };
-  try {
-    for (let start = 0; start < all.length; start += BULK_CHUNK) {
-      const chunk = all.slice(start, start + BULK_CHUNK);
-      if (chunk.length > BULK_MAX) {
-        toast.error(`Chunk too large (${chunk.length} > ${BULK_MAX}); reduce BULK_CHUNK.`);
-        break;
+
+  // Build the batch queue.
+  const queue: { connections: typeof all }[] = [];
+  for (let start = 0; start < all.length; start += BULK_CHUNK) {
+    queue.push({ connections: all.slice(start, start + BULK_CHUNK) });
+  }
+
+  let next = 0;
+  let done = 0;
+  let aborted = false;
+  const worker = async () => {
+    while (!aborted) {
+      const i = next++;
+      if (i >= queue.length) break;
+      try {
+        const result = await connectionsApi.bulkCreate(providerId, { connections: queue[i].connections });
+        importSummary!.created += result.created ?? 0;
+        importSummary!.failed += result.failed ?? 0;
+      } catch (err) {
+        aborted = true;
+        throw err;
+      } finally {
+        done++;
+        importProgress = done / queue.length;
       }
-      const result = await connectionsApi.bulkCreate(providerId, { connections: chunk });
-      importSummary.created += result.created ?? 0;
-      importSummary.failed += result.failed ?? 0;
-      importProgress = (start + chunk.length) / all.length;
     }
+  };
+
+  try {
+    await Promise.all(Array.from({ length: Math.min(BULK_CONCURRENCY, queue.length) }, () => worker()));
     if (importSummary.failed > 0) {
       toast.error(`Imported ${importSummary.created}/${importSummary.total}, ${importSummary.failed} failed`);
     } else {

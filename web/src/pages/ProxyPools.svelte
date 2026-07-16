@@ -69,7 +69,7 @@ let bulkSub1s = $state(false);
 let bulkLoading = $state(false);
 // .txt upload + chunked send (keeps RAM bounded, mirrors provider bulk import).
 const POOL_BULK_CHUNK = 1000;
-const POOL_BULK_MAX = 1000;
+const POOL_BULK_CONCURRENCY = 3;
 let uploadedPoolFile = $state('');
 let parsedPoolItems = $state<string[]>([]);
 let poolParseWarnings = $state<string[]>([]);
@@ -121,26 +121,44 @@ async function handleBulkImportChunked() {
   bulkLoading = true;
   poolImportProgress = 0;
   poolImportSummary = { created: 0, skipped: 0, errors: 0 };
-  try {
-    for (let start = 0; start < items.length; start += POOL_BULK_CHUNK) {
-      const chunk = items.slice(start, start + POOL_BULK_CHUNK);
-      if (chunk.length > POOL_BULK_MAX) {
-        toast.error(`Chunk too large (${chunk.length} > ${POOL_BULK_MAX}); reduce POOL_BULK_CHUNK.`);
-        break;
+
+  // Build the batch queue (each batch <= backend maxBulkItems=1000).
+  const queue: string[][] = [];
+  for (let start = 0; start < items.length; start += POOL_BULK_CHUNK) {
+    queue.push(items.slice(start, start + POOL_BULK_CHUNK));
+  }
+
+  let next = 0;
+  let done = 0;
+  let aborted = false;
+  const worker = async () => {
+    while (!aborted) {
+      const i = next++;
+      if (i >= queue.length) break;
+      try {
+        const res = await proxyPoolsApi.bulkCreate({
+          items: queue[i],
+          defaultType: bulkType,
+          noProxy: bulkNoProxy.trim() || undefined,
+          isActive: bulkActive,
+          requireHealthy: bulkHealthy,
+          maxResponseTimeMs: bulkHealthy && bulkSub1s ? 1000 : undefined,
+        });
+        poolImportSummary!.created += res.created ?? 0;
+        poolImportSummary!.skipped += res.skipped ?? 0;
+        poolImportSummary!.errors += res.errors ?? 0;
+      } catch (err) {
+        aborted = true;
+        throw err;
+      } finally {
+        done++;
+        poolImportProgress = done / queue.length;
       }
-      const res = await proxyPoolsApi.bulkCreate({
-        items: chunk,
-        defaultType: bulkType,
-        noProxy: bulkNoProxy.trim() || undefined,
-        isActive: bulkActive,
-        requireHealthy: bulkHealthy,
-        maxResponseTimeMs: bulkHealthy && bulkSub1s ? 1000 : undefined,
-      });
-      poolImportSummary.created += res.created ?? 0;
-      poolImportSummary.skipped += res.skipped ?? 0;
-      poolImportSummary.errors += res.errors ?? 0;
-      poolImportProgress = (start + chunk.length) / items.length;
     }
+  };
+
+  try {
+    await Promise.all(Array.from({ length: Math.min(POOL_BULK_CONCURRENCY, queue.length) }, () => worker()));
     const s = poolImportSummary;
     const msg = `${s.created} created, ${s.skipped} skipped, ${s.errors} errors`;
     if (s.errors === 0) toast.success('Bulk import complete', { description: msg });
