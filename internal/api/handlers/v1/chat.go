@@ -56,7 +56,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	cacheKey := h.exactCacheKey(body, model, stream)
 	if cacheKey != "" {
 		if entry, ok := h.exactCache.Get(cacheKey); ok {
-			h.serveCacheHit(c, entry)
+			h.serveCacheHit(c, body, entry)
 			return
 		}
 	}

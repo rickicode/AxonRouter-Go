@@ -1220,6 +1220,91 @@ func TestCacheOnlySuccess_UpstreamErrorNotCached(t *testing.T) {
 	}
 }
 
+func TestChatCompletions_CacheHitAccumulatesUsage(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	h.exactCache = cache.NewExactCache(1000)
+	wq := db.NewWriteQueue(h.db)
+	tracker := usage.NewTracker(h.db)
+	tracker.SetWriteQueue(wq)
+	h.tracker = tracker
+
+	// Seed required rows.
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('testcache','TestCache','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('testcacheconn1','testcache','c1','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	hash := mustHashKey(t, "sk-test")
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_keys (id, name, key_hash, created_at) VALUES ('test-key-cache', 'test-key-cache', ?, 0)`, hash); err != nil {
+		t.Fatalf("seed api_key: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_key_usage (api_key_id, total_tokens, updated_at) VALUES ('test-key-cache', 0, 0)`); err != nil {
+		t.Fatalf("seed api_key_usage: %v", err)
+	}
+
+	fe := &fakeExecutor{
+		responses: []struct {
+			resp *executor.Response
+			err  error
+		}{
+			{
+				resp: &executor.Response{
+					StatusCode: http.StatusOK,
+					Body:       []byte(`{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"World"}}]}`),
+				},
+			},
+		},
+	}
+	executor.GetRegistry().Register("testcache", executor.FormatOpenAI, fe)
+	defer executor.GetRegistry().Unregister("testcache")
+
+	h.store.SeedConnection("testcacheconn1", "testcache", "ready", 0)
+	h.elig.RecomputeAll()
+
+	body := []byte(`{"model":"testcache/model","messages":[{"role":"user","content":"Hello"}]}`)
+
+	// First request populates the cache.
+	rec1 := httptest.NewRecorder()
+	c1, _ := gin.CreateTestContext(rec1)
+	c1.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c1.Request.Header.Set("Content-Type", "application/json")
+	c1.Request.Header.Set("Authorization", "Bearer sk-test")
+	c1.Set("api_key_id", "test-key-cache")
+	h.ChatCompletions(c1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("first request expected 200, got %d: %s", rec1.Code, rec1.Body.String())
+	}
+
+	// Second identical request should hit the exact cache.
+	rec2 := httptest.NewRecorder()
+	c2, _ := gin.CreateTestContext(rec2)
+	c2.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c2.Request.Header.Set("Content-Type", "application/json")
+	c2.Request.Header.Set("Authorization", "Bearer sk-test")
+	c2.Set("api_key_id", "test-key-cache")
+	h.ChatCompletions(c2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("second request expected 200, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	if rec2.Header().Get("X-Cache-Status") != "HIT" {
+		t.Fatalf("expected cache hit, got status %q", rec2.Header().Get("X-Cache-Status"))
+	}
+
+	var totalTokens int64
+	if err := h.db.QueryRow(`SELECT COALESCE(total_tokens, 0) FROM api_key_usage WHERE api_key_id = 'test-key-cache'`).Scan(&totalTokens); err != nil {
+		t.Fatalf("query api_key_usage: %v", err)
+	}
+
+	// First request: input "Hello" (5 chars -> 1 token) + output "World" (5 chars -> 1 token) = 2 tokens.
+	// Second cache hit: input "Hello" -> 1 token.
+	const want = 3
+	if totalTokens != want {
+		t.Errorf("total_tokens = %d, want %d (cache miss %d + cache hit %d)", totalTokens, want, 2, 1)
+	}
+}
+
 func TestReadBody_OtherError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)

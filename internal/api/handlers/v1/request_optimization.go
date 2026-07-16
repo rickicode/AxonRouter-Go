@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/compression"
+	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
 
 // compressRequestBody applies compression when enabled and safe. It is always
@@ -65,8 +66,10 @@ func (h *Handler) exactCacheKey(body []byte, model string, stream bool) string {
 	return cache.ComputeKey(body, model)
 }
 
-// serveCacheHit writes a cached response to the client and returns true.
-func (h *Handler) serveCacheHit(c *gin.Context, entry cache.CacheEntry) bool {
+// serveCacheHit writes a cached response to the client and accounts for the
+// request tokens against the API key budget before returning.
+func (h *Handler) serveCacheHit(c *gin.Context, body []byte, entry cache.CacheEntry) bool {
+	h.incrementAPIKeyUsage(c.GetString("api_key_id"), usage.EstimateTokensFromRequest(body))
 	c.Header("Content-Type", entry.ContentType)
 	c.Header("X-Cache-Status", "HIT")
 	c.Status(entry.StatusCode)
