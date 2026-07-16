@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Improved `Test all` concurrency for providers with thousands of connections: replaced fixed-batch waiting with a semaphore worker pool capped at 10 concurrent streams, plus a 30-second per-connection timeout, so a single slow connection no longer stalls the entire batch.
+- **Quota refresh and scheduler now refresh expired OAuth tokens automatically**, including Codex (`cx`) through `auth.Manager`. Previously Codex was skipped, causing quota fetches to fail once the access token expired.
 
 ### Fixed
 - MiMoCode additional connections now always generate a fresh `accountId`, `accountLabel`, and `fingerprint`, ensuring each connection behaves as a distinct logical account and does not reuse a device identity that could trigger MiMoCode anti-abuse controls.
