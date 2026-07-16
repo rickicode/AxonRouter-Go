@@ -3,6 +3,7 @@ package executor
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -543,6 +544,9 @@ func (b *BaseExecutor) doRequestOnce(ctx context.Context, method, rawURL string,
 	if req.Header.Get("Content-Type") == "" && body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	if req.Header.Get("Accept-Encoding") == "" {
+		req.Header.Set("Accept-Encoding", "gzip")
+	}
 
 	if id := RequestIDFromContext(ctx); id != "" {
 		req.Header.Set("X-Request-ID", id)
@@ -570,7 +574,7 @@ func (b *BaseExecutor) doRequestOnce(ctx context.Context, method, rawURL string,
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := readResponseBody(resp.Body, resp.Header)
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
@@ -671,6 +675,9 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 	if req.Header.Get("Content-Type") == "" && body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	if req.Header.Get("Accept-Encoding") == "" {
+		req.Header.Set("Accept-Encoding", "gzip")
+	}
 
 	if id := RequestIDFromContext(ctx); id != "" {
 		req.Header.Set("X-Request-ID", id)
@@ -712,6 +719,7 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
 		defer fetchCancel()
+		resp.Body = wrapMaybeGzipReader(resp.Body, resp.Header.Get("Content-Encoding"))
 		errBody, _ := io.ReadAll(resp.Body)
 		logging.Logger.Error(
 			"upstream error response",
@@ -742,8 +750,9 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 
 	go func() {
 		defer close(chunks)
-		defer resp.Body.Close()
 		defer fetchCancel()
+		resp.Body = wrapMaybeGzipReader(resp.Body, resp.Header.Get("Content-Encoding"))
+		defer resp.Body.Close()
 
 		scanner := bufio.NewScanner(resp.Body)
 		// ponytail: 64KB max line size, good enough for SSE
@@ -923,3 +932,90 @@ func IsStreamRequest(body []byte) bool {
 func JSONToReader(data []byte) io.Reader {
 	return bytes.NewReader(data)
 }
+
+// gzipMagic is the first two bytes of a gzip-encoded stream.
+var gzipMagic = []byte{0x1f, 0x8b}
+
+// readResponseBody reads the entire upstream body and transparently decompresses
+// it if the response indicates gzip encoding or the body starts with the gzip
+// magic bytes. This matches CLIProxyAPI's handling of upstreams that send gzip
+// even when not explicitly requested.
+func readResponseBody(r io.Reader, h http.Header) ([]byte, error) {
+	if h.Get("Content-Encoding") == "gzip" {
+		gr, err := gzip.NewReader(r)
+		if err != nil {
+			return nil, err
+		}
+		defer gr.Close()
+		return io.ReadAll(gr)
+	}
+	body, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) >= 2 && body[0] == gzipMagic[0] && body[1] == gzipMagic[1] {
+		gr, err := gzip.NewReader(bytes.NewReader(body))
+		if err != nil {
+			// Not a valid gzip stream after all; return the raw bytes.
+			return body, nil
+		}
+		defer gr.Close()
+		decompressed, err := io.ReadAll(gr)
+		if err != nil {
+			return body, nil
+		}
+		return decompressed, nil
+	}
+	return body, nil
+}
+
+// maybeGzipReadCloser wraps an io.ReadCloser and decompresses gzip streams when
+// either the Content-Encoding header says gzip or the body starts with gzip magic.
+type maybeGzipReadCloser struct {
+	br         *bufio.Reader
+	gr         *gzip.Reader
+	underlying io.ReadCloser
+}
+
+func (m *maybeGzipReadCloser) Read(p []byte) (int, error) {
+	if m.gr != nil {
+		return m.gr.Read(p)
+	}
+	return m.br.Read(p)
+}
+
+func (m *maybeGzipReadCloser) Close() error {
+	if m.gr != nil {
+		m.gr.Close()
+	}
+	return m.underlying.Close()
+}
+
+// wrapMaybeGzipReader returns a reader that decompresses gzip if needed.
+func wrapMaybeGzipReader(r io.ReadCloser, encoding string) io.ReadCloser {
+	br := bufio.NewReader(r)
+	if encoding == "gzip" {
+		gr, err := gzip.NewReader(br)
+		if err != nil {
+			return &gzipErrorReader{err: err, underlying: r}
+		}
+		return &maybeGzipReadCloser{br: br, gr: gr, underlying: r}
+	}
+	head, err := br.Peek(2)
+	if err == nil && len(head) >= 2 && head[0] == gzipMagic[0] && head[1] == gzipMagic[1] {
+		gr, err := gzip.NewReader(br)
+		if err != nil {
+			return &gzipErrorReader{err: err, underlying: r}
+		}
+		return &maybeGzipReadCloser{br: br, gr: gr, underlying: r}
+	}
+	return &maybeGzipReadCloser{br: br, underlying: r}
+}
+
+type gzipErrorReader struct {
+	err        error
+	underlying io.ReadCloser
+}
+
+func (g *gzipErrorReader) Read([]byte) (int, error) { return 0, g.err }
+func (g *gzipErrorReader) Close() error               { return g.underlying.Close() }
