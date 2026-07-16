@@ -78,6 +78,7 @@ func (h *Handler) Messages(c *gin.Context) {
 	maxAttempts := h.failoverAttempts()
 	var lastErr error
 	var lastErrCategory string
+attemptLoop:
 	for attempt := range maxAttempts {
 		if c.Request.Context().Err() != nil {
 			writeContextDone(c)
@@ -126,23 +127,23 @@ func (h *Handler) Messages(c *gin.Context) {
 			if h.isClientCanceled(c, err) {
 				return
 			}
-			retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
-			lastErr = err
-			lastErrCategory = cat
-			if !retry {
-				break
-			}
-			if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
-				return
-			}
-			continue
+		retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
+		lastErr = err
+		lastErrCategory = cat
+		if !retry {
+			break attemptLoop
 		}
+		if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+			return
+		}
+		continue
+	}
 
-		h.resetBanCount(conn.ID)
-		h.persistSuccess(conn.ID)
-		h.combo.RecordSuccess(conn.ID)
+	h.resetBanCount(conn.ID)
+	h.persistSuccess(conn.ID)
+	h.combo.RecordSuccess(conn.ID)
 
-		if req.Stream {
+	if req.Stream {
 			// Retry mid-stream failures across connections, like the combo path.
 			streamCtx, cancelStream := context.WithCancel(proxyCtx)
 			defer cancelStream()
@@ -168,19 +169,19 @@ func (h *Handler) Messages(c *gin.Context) {
 					retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, holdbackErr, attempt, time.Since(start).Milliseconds(), stream)
 					lastErr = holdbackErr
 					lastErrCategory = cat
-					if !retry {
-						break
-					}
-					if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
-						return
-					}
-					continue
-				}
-			case <-streamCtx.Done():
+			if !retry {
+				break attemptLoop
+			}
+			if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
 				return
 			}
+			continue
+		}
+	case <-streamCtx.Done():
+		return
+	}
 
-			if streamErr := h.handleClaudeStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, "", true); streamErr != nil {
+	if streamErr := h.handleClaudeStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, "", true); streamErr != nil {
 				if h.isClientCanceled(c, streamErr) {
 					return
 				}
@@ -189,16 +190,16 @@ func (h *Handler) Messages(c *gin.Context) {
 				retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, streamErr, attempt, time.Since(start).Milliseconds(), stream)
 				lastErr = streamErr
 				lastErrCategory = cat
-				if !retry {
-					break
-				}
-				if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
-					return
-				}
-				continue
+			if !retry {
+				break attemptLoop
 			}
-			return
-		} else {
+			if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+				return
+			}
+			continue
+		}
+		return
+	} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(clientFormat), string(providerFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			tokensEstimated := false

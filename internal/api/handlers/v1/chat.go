@@ -81,6 +81,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	var lastConn *Connection
 	var lastErr error
 	var lastErrCategory string
+attemptLoop:
 	for attempt := range maxAttempts {
 		if c.Request.Context().Err() != nil {
 			writeContextDone(c)
@@ -164,7 +165,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 			lastErr = err
 			lastErrCategory = cat
 			if !retry {
-				break // non-retryable error, stop failover
+				break attemptLoop // non-retryable error, stop failover
 			}
 			if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
 				return
@@ -213,19 +214,19 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 					retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, holdbackErr, attempt, time.Since(start).Milliseconds(), stream)
 					lastErr = holdbackErr
 					lastErrCategory = cat
-					if !retry {
-						break
-					}
-					if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
-						return
-					}
-					continue
+				if !retry {
+					break attemptLoop
 				}
-			case <-streamCtx.Done():
-				return
+				if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+					return
+				}
+				continue
 			}
+		case <-streamCtx.Done():
+			return
+		}
 
-			if streamErr := h.handleStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, "", true); streamErr != nil {
+		if streamErr := h.handleStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, "", true); streamErr != nil {
 				if h.isClientCanceled(c, streamErr) {
 					return
 				}
