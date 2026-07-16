@@ -10,19 +10,23 @@ This package downloads the correct pre-built AxonRouter-Go binary for your platf
 npm install -g axonrouter-go
 ```
 
-After installation you can run:
+Or try it once without installing (requires the package to be published):
 
 ```bash
-axonrouter --help
-axonrouter --startup install-root
+npx axonrouter-go --help
+npx axonrouter-go
 ```
 
 ## How it works
 
 - `postinstall` downloads `axonrouter-<os>-<arch>` (with `.exe` on Windows) from the matching GitHub Release.
 - The binary is written to `node_modules/axonrouter-go/bin/`.
-- On Linux/macOS, the script also tries to copy it to `~/.local/bin/axonrouter` so it is available on PATH.
+- On Linux/macOS, the script also tries to copy it to `~/.local/bin/axonrouter` so it is available on PATH after installation.
 - `axonrouter` / `axonrouter-go` CLI entries forward arguments to the downloaded binary.
+
+## Notes
+
+- `npx` is great for one-off commands. For installing a systemd service, use `npm install -g axonrouter-go` or the shell installer so the binary path stays stable.
 
 ## Environment variables
 

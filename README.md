@@ -104,6 +104,17 @@ axonrouter
 
 Open http://localhost:3777, log in, add your first connection, and start routing.
 
+### Run once with npx (no install)
+
+If the package is published to npm, you can download and run it once:
+
+```bash
+npx axonrouter-go --help
+npx axonrouter-go
+```
+
+For repeated use or to install a systemd service, use the installer or `npm install -g axonrouter-go` instead.
+
 ### Build from source
 
 ```bash
