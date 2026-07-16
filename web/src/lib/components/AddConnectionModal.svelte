@@ -58,6 +58,106 @@ let poolSearch = $state('');
 let poolDropdownOpen = $state(false);
 let poolDropdownRef: HTMLDivElement | undefined = $state();
 
+// Bulk import via .txt upload + chunked send (keeps RAM bounded on both sides).
+const BULK_CHUNK = 1000;
+const BULK_MAX = 5000;
+let uploadedFileName = $state('');
+let parsedConnections = $state<{ name: string; api_key: string; priority?: number; provider_specific_data?: Record<string, string> }[]>([]);
+let parseWarnings = $state<string[]>([]);
+let importing = $state(false);
+let importProgress = $state(0); // 0..1
+let importSummary = $state<{ created: number; failed: number; total: number } | null>(null);
+
+function parseConnectionLines(text: string) {
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  const conns: { name: string; api_key: string; priority?: number; provider_specific_data?: Record<string, string> }[] = [];
+  const warnings: string[] = [];
+  lines.forEach((line, index) => {
+    let conn: { name: string; api_key: string; priority?: number; provider_specific_data?: Record<string, string> } | null = null;
+    if (meta?.inputFormat === 'pipe') {
+      const parts = line.split('|').map((p) => p.trim());
+      if (parts.length < 3) {
+        warnings.push(`Line ${index + 1}: expected email|accountId|apiToken, got "${line}"`);
+      } else {
+        const [email, accountId, apiToken] = parts;
+        conn = { name: email || `Connection ${index + 1}`, api_key: apiToken, provider_specific_data: { accountId } };
+      }
+    } else {
+      const match = line.match(/^([^,:\t|]+)[,:\t|](.+)$/);
+      if (!match) {
+        conn = { name: `Connection ${index + 1}`, api_key: line };
+      } else {
+        const name = match[1].trim() || `Connection ${index + 1}`;
+        const key = match[2].trim();
+        conn = { name, api_key: key };
+      }
+    }
+    if (conn && conn.api_key.length > 0) conns.push(conn);
+    else if (!conn) { /* already warned */ } else warnings.push(`Line ${index + 1}: empty API key`);
+  });
+  return { conns, warnings };
+}
+
+function handleFileUpload(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  uploadedFileName = file.name;
+  importSummary = null;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const text = typeof reader.result === 'string' ? reader.result : '';
+    const { conns, warnings } = parseConnectionLines(text);
+    parsedConnections = conns;
+    parseWarnings = warnings;
+    if (conns.length === 0) {
+      toast.error('No valid connections found in file');
+    } else if (warnings.length > 0) {
+      toast.info(`${conns.length} valid, ${warnings.length} invalid line(s) skipped`);
+    } else {
+      toast.success(`Parsed ${conns.length} connection(s)`);
+    }
+  };
+  reader.onerror = () => toast.error('Failed to read file');
+  reader.readAsText(file);
+  input.value = '';
+}
+
+async function submitBulkChunked() {
+  const all = parsedConnections.length > 0 ? parsedConnections : parseBulkConnections();
+  if (all.length === 0) {
+    toast.error('No connections to import');
+    return;
+  }
+  if (all.length > BULK_MAX) {
+    toast.error(`Maximum ${BULK_MAX} connections per import. Split your file.`);
+    return;
+  }
+  importing = true;
+  importProgress = 0;
+  importSummary = { created: 0, failed: 0, total: all.length };
+  try {
+    for (let start = 0; start < all.length; start += BULK_CHUNK) {
+      const chunk = all.slice(start, start + BULK_CHUNK);
+      const result = await connectionsApi.bulkCreate(providerId, { connections: chunk });
+      importSummary.created += result.created ?? 0;
+      importSummary.failed += result.failed ?? 0;
+      importProgress = (start + chunk.length) / all.length;
+    }
+    if (importSummary.failed > 0) {
+      toast.error(`Imported ${importSummary.created}/${importSummary.total}, ${importSummary.failed} failed`);
+    } else {
+      toast.success(`Imported ${importSummary.created}/${importSummary.total} connections`);
+    }
+    step = 'done';
+    onCreated?.();
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : 'Bulk import failed');
+  } finally {
+    importing = false;
+  }
+}
+
   const authType = $derived(meta?.authType ?? 'apikey');
   const isOAuth = $derived(authType === 'oauth');
   const isNoAuth = $derived(authType === 'none');
@@ -102,6 +202,12 @@ const filteredPools = $derived(filterProxyPools(proxyPools, poolSearch));
   selectedPoolId = '';
   poolSearch = '';
   poolDropdownOpen = false;
+  uploadedFileName = '';
+  parsedConnections = [];
+  parseWarnings = [];
+  importing = false;
+  importProgress = 0;
+  importSummary = null;
 }
 
 function handleOpenChange(isOpen: boolean) {
@@ -255,16 +361,7 @@ async function handleValidate() {
     submitting = true;
     try {
       if (mode === 'bulk') {
-        const connections = parseBulkConnections();
-        if (connections.length === 0) throw new Error('Paste at least one API key');
-			const result = await connectionsApi.bulkCreate(providerId, { connections });
-			if (result.failed && result.failed > 0) {
-				toast.error(`Added ${result.created}/${result.total} connections, ${result.failed} failed`);
-			} else {
-				toast.success(`Added ${result.created}/${result.total} connections`);
-			}
-        step = 'done';
-        onCreated?.();
+        await submitBulkChunked();
         return;
       }
 
@@ -623,26 +720,87 @@ $effect(() => {
   </p>
 </div>
 {:else if isApiKey && mode === 'bulk'}
-          <div class="flex flex-col gap-1.5">
-            <Label class="text-sm font-medium">{meta?.inputFormat === 'pipe' ? 'Connections' : 'API keys'}</Label>
-            <Textarea
-              bind:value={bulkText}
-              class="min-h-36 font-mono text-xs"
-              placeholder={meta?.inputFormat === 'pipe' ? 'user@example.com|accountId|apiToken\n...' : `sk-...\nmain: sk-...\nbackup, sk-...\nbackup| sk-...`}
-              spellcheck={false}
-            />
-            {#if bulkText.trim()}
-              <p class="text-[11px] text-emerald-400">
-                {parseBulkConnections().length} connection{parseBulkConnections().length !== 1 ? 's' : ''} detected
-              </p>
-            {/if}
-            <p class="text-[11px] text-muted-foreground">
-              {#if meta?.inputFormat === 'pipe'}
-                Format: <span class="font-mono">email|accountId|apiToken</span> (one per line)
-              {:else}
-                One key per line, or <span class="font-mono">name|key</span>, <span class="font-mono">name: key</span>, <span class="font-mono">name, key</span>.
+          <div class="flex flex-col gap-3">
+            <div class="flex flex-col gap-1.5">
+              <Label class="text-sm font-medium">{meta?.inputFormat === 'pipe' ? 'Connections' : 'API keys'}</Label>
+              <Textarea
+                bind:value={bulkText}
+                class="min-h-36 font-mono text-xs"
+                placeholder={meta?.inputFormat === 'pipe' ? 'user@example.com|accountId|apiToken\n...' : `sk-...\nmain: sk-...\nbackup, sk-...\nbackup| sk-...`}
+                spellcheck={false}
+              />
+              {#if bulkText.trim()}
+                <p class="text-[11px] text-emerald-400">
+                  {parseBulkConnections().length} connection{parseBulkConnections().length !== 1 ? 's' : ''} detected
+                </p>
               {/if}
-            </p>
+              <p class="text-[11px] text-muted-foreground">
+                {#if meta?.inputFormat === 'pipe'}
+                  Format: <span class="font-mono">email|accountId|apiToken</span> (one per line)
+                {:else}
+                  One key per line, or <span class="font-mono">name|key</span>, <span class="font-mono">name: key</span>, <span class="font-mono">name, key</span>.
+                {/if}
+              </p>
+            </div>
+
+            <div class="flex items-center gap-3">
+              <div class="h-px flex-1 bg-border"></div>
+              <span class="text-[11px] uppercase tracking-wide text-muted-foreground">or upload</span>
+              <div class="h-px flex-1 bg-border"></div>
+            </div>
+
+            <div class="flex flex-col gap-2">
+              <label
+                class="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-muted/30 px-4 py-3 text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+                class:opacity-50={importing}
+              >
+                <svg class="size-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 15V3m0 0L8 7m4-4l4 4" /></svg>
+                <span>{uploadedFileName ? uploadedFileName : 'Upload .txt file'}</span>
+                <input
+                  type="file"
+                  accept=".txt,text/plain"
+                  class="hidden"
+                  disabled={importing}
+                  onchange={handleFileUpload}
+                />
+              </label>
+              {#if uploadedFileName}
+                <div class="flex items-center justify-between rounded-md bg-card px-3 py-2 text-xs">
+                  <span class="text-foreground">{parsedConnections.length} connection(s) parsed</span>
+                  <button
+                    type="button"
+                    class="text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
+                    onclick={() => { uploadedFileName = ''; parsedConnections = []; parseWarnings = []; importSummary = null; }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              {/if}
+              {#if parseWarnings.length > 0}
+                <div class="max-h-24 overflow-y-auto rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-400">
+                  {#each parseWarnings as w}
+                    <div>{w}</div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+
+            {#if importing}
+              <div class="flex flex-col gap-1.5">
+                <div class="h-2 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    class="h-full rounded-full bg-primary transition-all duration-300"
+                    style="width: {Math.round(importProgress * 100)}%"
+                  ></div>
+                </div>
+                <p class="text-[11px] text-muted-foreground">
+                  Importing… {Math.round(importProgress * 100)}%
+                  {#if importSummary}
+                    ({importSummary.created + importSummary.failed}/{importSummary.total})
+                  {/if}
+                </p>
+              </div>
+            {/if}
           </div>
         {/if}
 
@@ -749,8 +907,10 @@ $effect(() => {
 
       <Dialog.Footer>
         <Button variant="outline" onclick={() => handleOpenChange(false)} class="text-sm">Cancel</Button>
-        <Button onclick={handleSubmit} disabled={submitting || (isNoAuth && needsProxyPool && !selectedPoolId)} class="text-sm">
-          {#if submitting}
+        <Button onclick={handleSubmit} disabled={submitting || importing || (isNoAuth && needsProxyPool && !selectedPoolId)} class="text-sm">
+          {#if importing}
+            Importing… {Math.round(importProgress * 100)}%
+          {:else if submitting}
             {isOAuth ? 'Starting OAuth...' : mode === 'bulk' ? 'Importing...' : 'Adding...'}
           {:else if isOAuth}
             Connect
