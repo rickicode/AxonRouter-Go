@@ -213,6 +213,13 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 	if req.IsActive != nil {
 		active = *req.IsActive
 	}
+	// Health checks are mandatory for bulk imports. Default response-time ceiling
+	// matches the single-add check.
+	if req.MaxResponseTimeMs == 0 {
+		req.MaxResponseTimeMs = 8000
+	}
+	// RequireHealthy is deprecated; it now behaves as always true.
+	req.RequireHealthy = true
 
 	created := 0
 	skipped := 0
@@ -230,7 +237,9 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 		noProxy   string
 		relayAuth string
 		dup       bool
+		needsName bool
 	}
+
 
 	normalized := make([]normalizedItem, 0, len(req.Items))
 
@@ -273,80 +282,92 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 			details = append(details, gin.H{"index": i, "status": "error", "reason": "unsupported item type"})
 			continue
 		}
-
-		if item.Name == "" {
-			// Generate a random name that is free both within this batch and in the
-			// database, so repeated bulk imports never reuse an existing name.
-			item.Name = randomProxyName(func(candidate string) bool {
-				if usedNames[candidate] {
-					return true
-				}
-				var cnt int
-				if err := h.db.QueryRow("SELECT COUNT(*) FROM proxy_pools WHERE name = ?", candidate).Scan(&cnt); err == nil && cnt > 0 {
-					return true
-				}
-				return false
-			})
-		}
-		// Record the resolved name so later random names in this batch never
-		// collide with an explicit or already-generated one.
+	needsName := false
+	if item.Name == "" {
+		// Defer random geo name generation until after the health check so the
+		// suffix can use country and ISP from the test result.
+		needsName = true
+	} else {
+		// Reserve explicit names now so generated names never collide with them.
 		usedNames[item.Name] = true
-		if item.Type == "" {
-			item.Type = req.DefaultType
+	}
+	if item.Type == "" {
+		item.Type = req.DefaultType
+	}
+	// If type is still http, try auto-detecting relay hosts (vercel/deno/cloudflare)
+	// so bulk imports of relay URLs get the correct type by default.
+	if item.Type == "" || item.Type == proxypool.TypeHTTP {
+		if detected := proxypool.DetectRelayType(item.ProxyURL); detected != "" {
+			item.Type = detected
+		} else if item.Type == "" {
+			item.Type = proxypool.TypeHTTP
 		}
-		// If type is still http, try auto-detecting relay hosts (vercel/deno/cloudflare)
-		// so bulk imports of relay URLs get the correct type by default.
-		if item.Type == "" || item.Type == proxypool.TypeHTTP {
-			if detected := proxypool.DetectRelayType(item.ProxyURL); detected != "" {
-				item.Type = detected
-			} else if item.Type == "" {
-				item.Type = proxypool.TypeHTTP
-			}
-		}
-		noProxy := item.NoProxy
-		if noProxy == "" {
-			noProxy = req.NoProxy
-		}
-		// Generate relay auth before testing so relay health checks and the
-		// eventual insert use the exact same credentials.
-		relayAuth := ""
-		if proxypool.IsRelayType(item.Type) {
-			relayAuth = proxypool.GenerateRelayAuth()
-		}
-
-		var existingCount int
-		dup := h.db.QueryRow("SELECT COUNT(*) FROM proxy_pools WHERE proxy_url = ?", item.ProxyURL).Scan(&existingCount) == nil && existingCount > 0
-
-		normalized = append(normalized, normalizedItem{
-			index:     i,
-			name:      item.Name,
-			proxyURL:  item.ProxyURL,
-			typ:       item.Type,
-			noProxy:   noProxy,
-			relayAuth: relayAuth,
-			dup:       dup,
-		})
+	}
+	noProxy := item.NoProxy
+	if noProxy == "" {
+		noProxy = req.NoProxy
+	}
+	// Generate relay auth before testing so relay health checks and the
+	// eventual insert use the exact same credentials.
+	relayAuth := ""
+	if proxypool.IsRelayType(item.Type) {
+		relayAuth = proxypool.GenerateRelayAuth()
 	}
 
-	// Phase 2: when healthy import is requested, test non-duplicate items
-	// concurrently with a bounded worker pool.
+	var existingCount int
+	dup := h.db.QueryRow("SELECT COUNT(*) FROM proxy_pools WHERE proxy_url = ?", item.ProxyURL).Scan(&existingCount) == nil && existingCount > 0
+
+	normalized = append(normalized, normalizedItem{
+		index:     i,
+		name:      item.Name,
+		proxyURL:  item.ProxyURL,
+		typ:       item.Type,
+		noProxy:   noProxy,
+		relayAuth: relayAuth,
+		dup:       dup,
+		needsName: needsName,
+	})
+}
+
+
+	// Phase 2: test non-duplicate items concurrently with a bounded worker pool.
 	testResults := make([]proxypool.TestResult, len(normalized))
-	if req.RequireHealthy {
-		sem := make(chan struct{}, 8)
-		var wg sync.WaitGroup
-		for i, it := range normalized {
-			if it.dup {
-				continue
-			}
-			wg.Add(1)
-			sem <- struct{}{}
-			go func(idx int, it normalizedItem) {
-				defer wg.Done()
-				defer func() { <-sem }()
-				testResults[idx] = h.testProxy(it.proxyURL, it.typ, it.relayAuth)
-			}(i, it)
+	sem := make(chan struct{}, 8)
+	var wg sync.WaitGroup
+	for i, it := range normalized {
+		if it.dup {
+			continue
 		}
-		wg.Wait()
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int, it normalizedItem) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			testResults[idx] = h.testProxy(it.proxyURL, it.typ, it.relayAuth)
+		}(i, it)
+	}
+	wg.Wait()
+
+	// Phase 2b: build final names for items that need auto-generated geo names.
+	for i := range normalized {
+		if normalized[i].dup {
+			continue
+		}
+		if !normalized[i].needsName {
+			continue
+		}
+		res := testResults[i]
+		normalized[i].name = randomGeoProxyName(res.Country, res.Org, func(candidate string) bool {
+			if usedNames[candidate] {
+				return true
+			}
+			var cnt int
+			if err := h.db.QueryRow("SELECT COUNT(*) FROM proxy_pools WHERE name = ?", candidate).Scan(&cnt); err == nil && cnt > 0 {
+				return true
+			}
+			return false
+		})
+		usedNames[normalized[i].name] = true
 	}
 
 	// Phase 3: insert passing items and update their test metadata. Each write
@@ -359,19 +380,16 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 			continue
 		}
 
-		if req.RequireHealthy {
-			res := testResults[i]
-			if !res.OK {
-				skipped++
-				details = append(details, gin.H{"index": it.index, "url": it.proxyURL, "status": "skipped", "reason": "unhealthy"})
-				continue
-			}
-			if req.MaxResponseTimeMs > 0 && res.ElapsedMs > req.MaxResponseTimeMs {
-				skipped++
-				details = append(details, gin.H{"index": it.index, "url": it.proxyURL, "status": "skipped", "reason": "slow"})
-				continue
-			}
+	res := testResults[i]
+	if !proxypool.Healthy(res, req.MaxResponseTimeMs) {
+		reason := res.Error
+		if reason == "" {
+			reason = "proxy too slow"
 		}
+		skipped++
+		details = append(details, gin.H{"index": it.index, "url": it.proxyURL, "status": "skipped", "reason": reason})
+		continue
+	}
 
 		// Capture loop vars for the closure (Do blocks until the worker
 		// finishes, so mutating captured counters here is race-free).
@@ -394,22 +412,20 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 				details = append(details, gin.H{"index": item.index, "url": item.proxyURL, "status": "error", "reason": reason})
 				return nil
 			}
-			created++
-			details = append(details, gin.H{"index": item.index, "url": item.proxyURL, "id": id, "status": "created"})
-			if req.RequireHealthy {
-				res := testResults[idx]
-				status := "active"
-				var lastErr any = nil
-				if !res.OK {
-					status = "error"
-					lastErr = res.Error
-				}
-				testedAt := time.Now().Format(time.RFC3339)
-				if _, e = tx.Exec("UPDATE proxy_pools SET test_status = ?, last_tested_at = ?, last_error = ?, response_time_ms = ?, proxy_ip = ?, proxy_country = ?, proxy_city = ?, proxy_org = ?, updated_at = ? WHERE id = ?", status, testedAt, lastErr, res.ElapsedMs, res.IP, res.Country, res.City, res.Org, time.Now().Unix(), id); e != nil {
-					return e
-				}
-			}
-			return tx.Commit()
+		created++
+		details = append(details, gin.H{"index": item.index, "url": item.proxyURL, "id": id, "status": "created"})
+		res := testResults[idx]
+		status := "active"
+		var lastErr any = nil
+		if !res.OK {
+			status = "error"
+			lastErr = res.Error
+		}
+		testedAt := time.Now().Format(time.RFC3339)
+		if _, e = tx.Exec("UPDATE proxy_pools SET test_status = ?, last_tested_at = ?, last_error = ?, response_time_ms = ?, proxy_ip = ?, proxy_country = ?, proxy_city = ?, proxy_org = ?, updated_at = ? WHERE id = ?", status, testedAt, lastErr, res.ElapsedMs, res.IP, res.Country, res.City, res.Org, time.Now().Unix(), id); e != nil {
+			return e
+		}
+		return tx.Commit()
 		}
 		var doErr error
 		if h.writeQueue == nil {
@@ -625,20 +641,63 @@ func boolQuery(v string) int {
 	return 0
 }
 
-// randomProxyName returns a short, pleasant, pronounceable pool name (max 7
-// lowercase letters). It is used when a bulk import line has no explicit name.
-// exists reports whether a candidate name is already taken (within the current
-// batch and/or the database); the generator keeps trying until it finds a free
-// one so names stay unique across imports.
-func randomProxyName(exists func(string) bool) string {
+// randomGeoProxyName generates a pronounceable base name and appends a geo/ISP
+// suffix. The final name is collision-checked against the current batch and DB.
+func randomGeoProxyName(country, org string, exists func(string) bool) string {
 	for attempt := 0; attempt < 50; attempt++ {
-		name := pronounceableName(5 + rand.Intn(3)) // 5..7 characters
+		base := pronounceableName(5 + rand.Intn(3)) // 5..7 characters
+		name := geoProxyName(base, country, org)
 		if !exists(name) {
 			return name
 		}
 	}
-	// Extremely unlikely fallback (all attempts collided): accept a duplicate.
-	return pronounceableName(5)
+	// Fallback: extremely unlikely collision storm.
+	return geoProxyName(pronounceableName(5), country, org)
+}
+
+// geoProxyName builds a proxy name from the base and geo metadata.
+// Precedence: base-isp-country, base-country, base-unknown.
+func geoProxyName(base, country, org string) string {
+	isp := sanitizeISP(org)
+	cc := sanitizeISP(country)
+	if cc == "" {
+		cc = "unknown"
+	}
+	if isp != "" {
+		return base + "-" + isp + "-" + cc
+	}
+	return base + "-" + cc
+}
+
+// sanitizeISP lowercases a raw ISP/org/country string and strips it down to
+// alphanumeric segments separated by single dashes. Empty input returns empty.
+func sanitizeISP(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	lastDash := true
+	written := 0
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastDash = false
+			written++
+			if written >= 20 {
+				break
+			}
+		} else if !lastDash {
+			b.WriteRune('-')
+			lastDash = true
+		}
+	}
+	out := b.String()
+	out = strings.TrimSuffix(out, "-")
+	if out == "" {
+		return ""
+	}
+	return out
 }
 
 // pronounceableName builds a consonant-vowel alternating string of the given

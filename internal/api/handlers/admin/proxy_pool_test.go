@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,7 +42,7 @@ func newProxyPoolTestDB(t *testing.T) *sql.DB {
 }
 
 func noopTestProxy(_ string, _ string, _ string) proxypool.TestResult {
-	return proxypool.TestResult{OK: true, StatusCode: 200, ElapsedMs: 0}
+	return proxypool.TestResult{OK: true, StatusCode: 200, Country: "US", Org: "TestOrg", ElapsedMs: 0}
 }
 
 func TestProxyPoolCreateRejectsUnhealthy(t *testing.T) {
@@ -645,5 +646,99 @@ func TestProxyPoolBulkDeleteThroughWriteQueue(t *testing.T) {
 	}
 	if delResp.Deleted != 2 || delResp.Skipped != 0 {
 		t.Fatalf("expected 2 deleted via write queue, got %+v", delResp)
+	}
+}
+
+func TestProxyPoolBulkCreateGeoNames(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
+	h.testProxy = noopTestProxy
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk", jsonBodyProxyPool(t, map[string]any{
+		"items":         []any{"http://geo1.example:8080"},
+		"defaultType":   "http",
+		"isActive":      true,
+		"requireHealthy": true,
+	}))
+	h.BulkCreate(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("BulkCreate status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Created int `json:"created"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Created != 1 {
+		t.Fatalf("expected 1 created, got %+v", resp)
+	}
+
+	var name string
+	if err := database.QueryRow("SELECT name FROM proxy_pools WHERE proxy_url = ?", "http://geo1.example:8080").Scan(&name); err != nil {
+		t.Fatalf("find created pool: %v", err)
+	}
+	if !strings.HasSuffix(name, "-testorg-us") {
+		t.Fatalf("expected generated name to end with -testorg-us, got %s", name)
+	}
+	if strings.Contains(name, " ") || strings.Contains(name, "_") || strings.Contains(name, "TestOrg") {
+		t.Fatalf("expected lowercase sanitized name, got %s", name)
+	}
+}
+
+func TestProxyPoolBulkCreateGeoNameFallbacks(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
+	h.testProxy = func(proxyURL, typ, auth string) proxypool.TestResult {
+		if proxyURL == "http://country-only.example:8080" {
+			return proxypool.TestResult{OK: true, StatusCode: 200, Country: "CA", ElapsedMs: 100}
+		}
+		return proxypool.TestResult{OK: true, StatusCode: 200, ElapsedMs: 100}
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk", jsonBodyProxyPool(t, map[string]any{
+		"items": []any{
+			"http://country-only.example:8080",
+			"http://no-geo.example:8080",
+		},
+		"defaultType": "http",
+	}))
+	h.BulkCreate(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("BulkCreate status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Created int `json:"created"`
+		Skipped int `json:"skipped"`
+		Errors  int `json:"errors"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Created != 2 || resp.Skipped != 0 || resp.Errors != 0 {
+		t.Fatalf("expected 2 created, got %+v", resp)
+	}
+
+	var name string
+	if err := database.QueryRow("SELECT name FROM proxy_pools WHERE proxy_url = ?", "http://country-only.example:8080").Scan(&name); err != nil {
+		t.Fatalf("find country-only pool: %v", err)
+	}
+	if !strings.HasSuffix(name, "-ca") || strings.Contains(name, "-") && strings.Count(name, "-") != 1 {
+		t.Fatalf("expected name like <base>-ca, got %s", name)
+	}
+
+	if err := database.QueryRow("SELECT name FROM proxy_pools WHERE proxy_url = ?", "http://no-geo.example:8080").Scan(&name); err != nil {
+		t.Fatalf("find no-geo pool: %v", err)
+	}
+	if !strings.HasSuffix(name, "-unknown") {
+		t.Fatalf("expected name like <base>-unknown, got %s", name)
 	}
 }
