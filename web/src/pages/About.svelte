@@ -290,10 +290,18 @@ onMount(() => {
           <p class="text-body-md-strong font-mono mt-1">{normalizedCurrent ? 'v' + normalizedCurrent : '—'}</p>
         </Card.Content>
       </Card.Root>
-      <Card.Root class="shadow-card">
+      <Card.Root class={updateAvailable ? 'shadow-card border-emerald-500/50 bg-emerald-500/5' : 'shadow-card'}>
         <Card.Content class="p-4">
-          <p class="text-caption text-muted-foreground uppercase">Latest release</p>
+          <div class="flex items-center justify-between">
+            <p class="text-caption text-muted-foreground uppercase">Latest release</p>
+            {#if updateAvailable}
+              <Badge variant="outline" class="rounded-sm text-caption text-emerald-400 border-emerald-400/30">Newer</Badge>
+            {/if}
+          </div>
           <p class="text-body-md-strong font-mono mt-1">{normalizedLatest ? 'v' + normalizedLatest : '—'}</p>
+          {#if updateAvailable}
+            <p class="text-caption text-emerald-400 mt-1">An upgrade is available.</p>
+          {/if}
         </Card.Content>
       </Card.Root>
       <Card.Root class="shadow-card">

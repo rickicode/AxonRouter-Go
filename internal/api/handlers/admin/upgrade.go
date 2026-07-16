@@ -137,7 +137,13 @@ func (h *UpgradeHandler) writeBinary(asset string, binary []byte) (string, error
 	if err := os.MkdirAll(h.binDir, 0o755); err != nil {
 		return "", err
 	}
-	path := filepath.Join(h.binDir, asset)
+	// Always install as the canonical service binary name so the upgrade
+	// replaces the executable the service manager already points to.
+	targetName := "axonrouter"
+	if runtime.GOOS == "windows" {
+		targetName += ".exe"
+	}
+	path := filepath.Join(h.binDir, targetName)
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, binary, 0o755); err != nil {
 		return "", err
