@@ -76,6 +76,18 @@ const listKeysResponse = `{
 const toggleKeyResponse = `{\n  "data": { "ok": true }\n}`;
 const deleteKeyResponse = `{\n  "data": { "ok": true }\n}`;
 
+const proxyUsageRequest = `curl -s -X POST http://localhost:3777/v1/chat/completions \\\n` +
+  `  -H "Authorization: Bearer <proxy-key>" \\\n` +
+  `  -H "Content-Type: application/json" \\\n` +
+  `  -d '{"model":"openai/gpt-4o","messages":[{"role":"user","content":"Hello"}]}'`;
+
+const proxyUsageResponse = `{
+  "id": "chatcmpl-...",
+  "object": "chat.completion",
+  "model": "openai/gpt-4o",
+  "choices": [{"message": {"role": "assistant", "content": "Hi!"}}]
+}`;
+
   const endpoints = [
     { method: 'GET', path: '/admin/api/v1/providers' },
     { method: 'GET', path: '/admin/api/v1/api-keys' },
@@ -235,6 +247,15 @@ const deleteKeyResponse = `{\n  "data": { "ok": true }\n}`;
   -H "Authorization: Bearer <master-key>"`}</code></pre>
         <p class="text-body-sm text-muted-foreground">Response <code>200 OK</code>:</p>
         <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{deleteKeyResponse}</code></pre>
+      </div>
+
+      <div class="space-y-2">
+        <p class="text-body-sm font-medium">5. Use the proxy API key</p>
+        <p class="text-body-sm text-muted-foreground">POST <code>/v1/chat/completions</code></p>
+        <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{proxyUsageRequest}</code></pre>
+        <p class="text-body-sm text-muted-foreground">Response <code>200 OK</code> (OpenAI-compatible):</p>
+        <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{proxyUsageResponse}</code></pre>
+        <p class="text-caption text-muted-foreground">Model ID harus menyertakan prefix provider, misalnya <code>openai/gpt-4o</code>, <code>claude/claude-sonnet-4</code>, atau <code>cx/gpt-5.4</code>.</p>
       </div>
     </Card.Content>
   </Card.Root>
