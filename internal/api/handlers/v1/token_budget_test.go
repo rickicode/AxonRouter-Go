@@ -271,6 +271,23 @@ func TestChatCompletions_TokenBudgetRequestedMaxOutputTokens(t *testing.T) {
 	}
 }
 
+func TestCheckTokenBudget_AbortsContext(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	seedBudgetExhausted(t, h)
+
+	c, rec := budgetContext(t, http.MethodPost, "/v1/unified", []byte(`{}`))
+	if err := h.checkTokenBudget(c, nil); err == nil {
+		t.Fatal("expected checkTokenBudget to return error")
+	}
+	if !c.IsAborted() {
+		t.Errorf("expected context to be aborted")
+	}
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("expected status 429, got %d", rec.Code)
+	}
+}
+
 func TestSTT_TokenBudgetExhausted(t *testing.T) {
 	logging.Init("text")
 	h := newTestHandler(t)

@@ -1392,6 +1392,12 @@ func (h *Handler) codexPersistIfCodex(conn *Connection, resp *executor.Response,
 }
 
 // checkTokenBudget returns an error if the API key's lifetime token budget would be exceeded.
+//
+// Budget enforcement is best-effort: concurrent requests may race between the
+// pre-flight check here and the post-response increment in incrementAPIKeyUsage.
+// In practice the small window means a key can slightly exceed its limit under
+// concurrency, but the guard still prevents unbounded overuse. When the budget
+// is exhausted the handler chain is aborted so no downstream handler runs.
 func (h *Handler) checkTokenBudget(c *gin.Context, body []byte) error {
 	apiKeyID := c.GetString("api_key_id")
 	if apiKeyID == "" {
@@ -1410,12 +1416,12 @@ func (h *Handler) checkTokenBudget(c *gin.Context, body []byte) error {
 		logging.Logger.Warn("checkTokenBudget: failed to read usage", "error", err.Error())
 	}
 	if total >= maxTokens {
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": gin.H{"message": "API key token budget exhausted", "code": "api_key_token_budget_exhausted"}})
+		c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": gin.H{"message": "API key token budget exhausted", "code": "api_key_token_budget_exhausted"}})
 		return errors.New("api key token budget exhausted")
 	}
 	requested := requestedTokenBudget(body)
 	if requested > 0 && total+requested > maxTokens {
-		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "requested tokens exceed API key budget", "code": "request_exceeds_api_key_token_budget"}})
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "requested tokens exceed API key budget", "code": "request_exceeds_api_key_token_budget"}})
 		return errors.New("request exceeds api key token budget")
 	}
 	return nil

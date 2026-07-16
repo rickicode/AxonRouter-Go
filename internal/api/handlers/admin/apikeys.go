@@ -196,7 +196,10 @@ func (h *APIKeyHandler) Delete(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// ToggleActive enables or disables an API key.
+// ToggleActive enables or disables an API key and applies the supplied max_tokens
+// value. A max_tokens of 0 means the key has no token budget limit. Because the
+// JSON binding cannot distinguish an omitted field from an explicit 0, callers
+// that want to keep the existing limit must read it first and send it back.
 func (h *APIKeyHandler) ToggleActive(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
@@ -211,11 +214,7 @@ func (h *APIKeyHandler) ToggleActive(c *gin.Context) {
 	if req.IsActive {
 		active = 1
 	}
-	maxTokens := req.MaxTokens
-	if maxTokens == 0 {
-		_ = h.db.QueryRow(`SELECT COALESCE(max_tokens, 0) FROM api_keys WHERE id = ?`, id).Scan(&maxTokens)
-	}
-	_, err := h.db.Exec(`UPDATE api_keys SET is_active = ?, max_tokens = ? WHERE id = ?`, active, maxTokens, id)
+	_, err := h.db.Exec(`UPDATE api_keys SET is_active = ?, max_tokens = ? WHERE id = ?`, active, req.MaxTokens, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
