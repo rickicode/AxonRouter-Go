@@ -108,13 +108,13 @@ func (h *ProviderHandler) Get(c *gin.Context) {
 // Create adds a custom provider.
 func (h *ProviderHandler) Create(c *gin.Context) {
 	var req struct {
-		Name string `json:"name" binding:"required"`
-		DisplayName string `json:"display_name"`
-		Format string `json:"format" binding:"required"`
-		BaseURL string `json:"base_url" binding:"required"`
+		Name          string            `json:"name" binding:"required"`
+		DisplayName   string            `json:"display_name"`
+		Format        string            `json:"format" binding:"required"`
+		BaseURL       string            `json:"base_url" binding:"required"`
 		CustomHeaders map[string]string `json:"custom_headers"`
-		Category string `json:"category"`
-		ServiceKinds []string `json:"service_kinds"`
+		Category      string            `json:"category"`
+		ServiceKinds  []string          `json:"service_kinds"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -166,12 +166,12 @@ func (h *ProviderHandler) Create(c *gin.Context) {
 	executor.RegisterCustomProviders(h.db)
 
 	c.JSON(http.StatusCreated, gin.H{
-		"id": req.Name,
-		"display_name": displayName,
-		"format": req.Format,
-		"base_url": req.BaseURL,
-		"is_custom": true,
-		"category": category,
+		"id":            req.Name,
+		"display_name":  displayName,
+		"format":        req.Format,
+		"base_url":      req.BaseURL,
+		"is_custom":     true,
+		"category":      category,
 		"service_kinds": serviceKinds,
 	})
 }
@@ -180,11 +180,11 @@ func (h *ProviderHandler) Create(c *gin.Context) {
 func (h *ProviderHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		DisplayName string `json:"display_name"`
-		BaseURL string `json:"base_url"`
+		DisplayName   string            `json:"display_name"`
+		BaseURL       string            `json:"base_url"`
 		CustomHeaders map[string]string `json:"custom_headers"`
-		Category string `json:"category"`
-		ServiceKinds []string `json:"service_kinds"`
+		Category      string            `json:"category"`
+		ServiceKinds  []string          `json:"service_kinds"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -289,18 +289,20 @@ func parseServiceKinds(raw string) []string {
 }
 
 // testAllBatchSize limits how many connections are tested in parallel at once.
-// Connections are processed in fixed batches (not a sliding semaphore) so a
-// provider with hundreds or thousands of connections never creates more than
-// 10 in-flight goroutines/streams.
+// A weighted semaphore uses this as the maximum number of in-flight goroutines.
 const testAllBatchSize = 10
+
+// testConnTimeout is the per-connection hard ceiling for the upstream test
+// stream and any auxiliary network calls made during the test.
+const testConnTimeout = 30 * time.Second
 
 // testAllRefreshLead defines per-provider proactive refresh lead times.
 // Matches OmniRoute REFRESH_LEAD_MS at open-sse/services/tokenRefresh.ts:32-49.
 var testAllRefreshLead = map[string]time.Duration{
-	"cx":      5 * time.Minute, // Codex: Auth0 rotating refresh tokens
+	"cx":      5 * time.Minute,  // Codex: Auth0 rotating refresh tokens
 	"ag":      15 * time.Minute, // Antigravity: Google non-rotating refresh tokens
-	"kiro":    5 * time.Minute, // Kiro: AWS SSO OIDC one-time-use refresh tokens
-	"copilot": 5 * time.Minute, // Copilot: GitHub device-code tokens refresh early
+	"kiro":    5 * time.Minute,  // Kiro: AWS SSO OIDC one-time-use refresh tokens
+	"copilot": 5 * time.Minute,  // Copilot: GitHub device-code tokens refresh early
 }
 
 const testAllDefaultRefreshLead = 5 * time.Minute
@@ -375,19 +377,21 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 
 	results := make([]testResult, len(inputs))
 
-	// Process in fixed batches to cap peak concurrency.
-	for batchStart := 0; batchStart < len(inputs); batchStart += testAllBatchSize {
-		batchEnd := batchStart + testAllBatchSize
-		if batchEnd > len(inputs) {
-			batchEnd = len(inputs)
-		}
+	// Cap peak concurrency with a semaphore; all goroutines share one WaitGroup.
+	sem := make(chan struct{}, testAllBatchSize)
+	var wg sync.WaitGroup
+	requestCtx := ctx
+	for i, in := range inputs {
+		i, in := i, in
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
 
-		var wg sync.WaitGroup
-		for i := batchStart; i < batchEnd; i++ {
-			i, in := i, inputs[i]
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			// Per-connection timeout so a single stalled stream never blocks the whole batch.
+			ctx, cancel := context.WithTimeout(requestCtx, testConnTimeout)
+			defer cancel()
 
 			start := time.Now()
 
@@ -403,14 +407,17 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 				newCreds, err := h.authMgr.RefreshToken(ctx, auth.ProviderType(providerID), creds)
 				if err != nil {
 					latency := time.Since(start).Milliseconds()
-			if isUnrecoverableRefreshError(err) {
-				log.Printf("Unrecoverable refresh error for %s/%s: %v — blocking connection", providerID, in.connID, err)
-				connID := in.connID
-				_, _ = h.db.Exec(`UPDATE connections SET is_active = 0, status = 'auth_failed', updated_at = ? WHERE id = ?`, time.Now().Unix(), connID)
-				if h.store != nil {
-					h.store.UpdateStatus(connID, connstate.StatusAuthFailed)
-				}
-			}
+					if isUnrecoverableRefreshError(err) {
+						log.Printf("Unrecoverable refresh error for %s/%s: %v — blocking connection", providerID, in.connID, err)
+						connID := in.connID
+						h.execWrite(requestCtx, "testall:auth_failed:"+connID, func(d *sql.DB) error {
+							_, err := d.Exec(`UPDATE connections SET is_active = 0, status = 'auth_failed', updated_at = ? WHERE id = ?`, time.Now().Unix(), connID)
+							return err
+						})
+						if h.store != nil {
+							h.store.UpdateStatus(connID, connstate.StatusAuthFailed)
+						}
+					}
 					results[i] = testResult{ConnectionID: in.connID, Status: "failed", Error: err.Error(), LatencyMs: latency}
 					return
 				}
@@ -427,59 +434,73 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 				}
 				if len(psd) > 0 {
 					psdJSON, _ := json.Marshal(psd)
-					_, _ = h.db.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?`, accessToken, refreshToken, expiresAt, psdJSON, time.Now().Unix(), connID)
-			} else {
-				_, _ = h.db.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`, accessToken, refreshToken, expiresAt, time.Now().Unix(), connID)
+					h.execWrite(requestCtx, "testall:refresh:"+connID, func(d *sql.DB) error {
+						_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?`, accessToken, refreshToken, expiresAt, psdJSON, time.Now().Unix(), connID)
+						return err
+					})
+				} else {
+					h.execWrite(requestCtx, "testall:refresh:"+connID, func(d *sql.DB) error {
+						_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`, accessToken, refreshToken, expiresAt, time.Now().Unix(), connID)
+						return err
+					})
+				}
 			}
-		}
 
-		streamResult, err := exec.ExecuteStream(ctx, &executor.Request{
-				APIKey:      in.apiKey,
-				AccessToken: accessToken,
-				BaseURL:     in.baseURL,
-				Body:        bodyBytes,
-				Provider:    providerID,
+			streamResult, err := exec.ExecuteStream(ctx, &executor.Request{
+				APIKey:               in.apiKey,
+				AccessToken:          accessToken,
+				BaseURL:              in.baseURL,
+				Body:                 bodyBytes,
+				Provider:             providerID,
 				ProviderSpecificData: in.psdMap,
 			})
-				if err != nil {
-					latency := time.Since(start).Milliseconds()
-					if h.store != nil {
-						det := connstate.DetectError(ctx, 0, "", err, providerID, "", nil)
-						h.store.RecordFailure(in.connID, det)
-					}
-					results[i] = testResult{ConnectionID: in.connID, Status: "failed", Error: err.Error(), LatencyMs: latency}
-					return
-				}
-
-				// Drain stream
-				var firstErr error
-				for chunk := range streamResult.Chunks {
-					if chunk.Err != nil {
-						firstErr = chunk.Err
-						break
-					}
-				}
+			if err != nil {
 				latency := time.Since(start).Milliseconds()
-
-				if firstErr != nil {
-					if h.store != nil {
-						det := connstate.DetectError(ctx, 0, "", firstErr, providerID, "", nil)
-						h.store.RecordFailure(in.connID, det)
-					}
-					results[i] = testResult{ConnectionID: in.connID, Status: "failed", Error: firstErr.Error(), LatencyMs: latency}
-				} else {
-					if h.store != nil {
-						h.store.RecordSuccess(in.connID)
-					}
-					results[i] = testResult{ConnectionID: in.connID, Status: "ok", LatencyMs: latency}
+				if h.store != nil {
+					det := connstate.DetectError(ctx, 0, "", err, providerID, "", nil)
+					h.store.RecordFailure(in.connID, det)
 				}
-			}()
-		}
+				results[i] = testResult{ConnectionID: in.connID, Status: "failed", Error: err.Error(), LatencyMs: latency}
+				return
+			}
 
-		wg.Wait()
+			// Drain stream
+			var firstErr error
+			for chunk := range streamResult.Chunks {
+				if chunk.Err != nil {
+					firstErr = chunk.Err
+					break
+				}
+			}
+			latency := time.Since(start).Milliseconds()
+
+			if firstErr != nil {
+				if h.store != nil {
+					det := connstate.DetectError(ctx, 0, "", firstErr, providerID, "", nil)
+					h.store.RecordFailure(in.connID, det)
+				}
+				results[i] = testResult{ConnectionID: in.connID, Status: "failed", Error: firstErr.Error(), LatencyMs: latency}
+			} else {
+				if h.store != nil {
+					h.store.RecordSuccess(in.connID)
+				}
+				results[i] = testResult{ConnectionID: in.connID, Status: "ok", LatencyMs: latency}
+			}
+		}()
 	}
 
+	wg.Wait()
+
 	c.JSON(http.StatusOK, gin.H{"provider_id": providerID, "results": results})
+}
+
+// execWrite runs a DB write through the single-writer queue when available,
+// falling back to a direct exec so callers can run with or without a queue.
+func (h *ProviderHandler) execWrite(ctx context.Context, label string, fn func(*sql.DB) error) error {
+	if h.writeQueue != nil {
+		return h.writeQueue.Do(ctx, label, fn)
+	}
+	return fn(h.db)
 }
 
 // shouldRefreshTestToken reports whether an OAuth token should be refreshed
@@ -515,15 +536,15 @@ func isUnrecoverableRefreshError(err error) bool {
 // unrecoverableCodes are OAuth error codes that mean the refresh token is permanently dead.
 // Matches OmniRoute UNRECOVERABLE_OAUTH_ERROR_CODES at tokenRefresh.ts:204-212.
 var unrecoverableCodes = map[string]bool{
-	"invalid_grant":             true,
-	"invalid_request":           true,
-	"refresh_token_reused":      true,
-	"refresh_token_invalidated": true,
-	"invalid_token":             true,
-	"token_expired":             true,
-	"expired_token":             true,
-	"unauthorized_client":       true,
-	"access_denied":             true,
+	"invalid_grant":               true,
+	"invalid_request":             true,
+	"refresh_token_reused":        true,
+	"refresh_token_invalidated":   true,
+	"invalid_token":               true,
+	"token_expired":               true,
+	"expired_token":               true,
+	"unauthorized_client":         true,
+	"access_denied":               true,
 	"unrecoverable_refresh_error": true,
 }
 
@@ -650,12 +671,12 @@ func (h *ProviderHandler) AddConnection(c *gin.Context) {
 		// mimocode is no-auth; force auth_type to none
 		req.AuthType = "none"
 		req.APIKey = ""
-	// Each additional mimocode connection must behave as a brand-new logical account.
-	// Always generate a fresh account id, label, and fingerprint so no two connections
-	// share the same device identity, which is required to avoid MiMoCode anti-abuse flags.
-	req.ProviderSpecificData["accountId"] = "mimocode-" + uuid.New().String()[:8]
-	req.ProviderSpecificData["accountLabel"] = req.Name
-	req.ProviderSpecificData["fingerprint"] = generateFingerprint()
+		// Each additional mimocode connection must behave as a brand-new logical account.
+		// Always generate a fresh account id, label, and fingerprint so no two connections
+		// share the same device identity, which is required to avoid MiMoCode anti-abuse flags.
+		req.ProviderSpecificData["accountId"] = "mimocode-" + uuid.New().String()[:8]
+		req.ProviderSpecificData["accountLabel"] = req.Name
+		req.ProviderSpecificData["fingerprint"] = generateFingerprint()
 	}
 
 	connID := uuid.New().String()
@@ -711,9 +732,9 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 	providerID := c.Param("id")
 	var req struct {
 		Connections []struct {
-			Name string `json:"name"`
-			APIKey string `json:"api_key"`
-			Priority int `json:"priority"`
+			Name                 string            `json:"name"`
+			APIKey               string            `json:"api_key"`
+			Priority             int               `json:"priority"`
 			ProviderSpecificData map[string]string `json:"provider_specific_data,omitempty"`
 		} `json:"connections"`
 	}
@@ -753,7 +774,7 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 	var created, failed int
 	var errors []string
 	var seeded []struct {
-		id string
+		id       string
 		priority int
 	}
 
@@ -762,16 +783,19 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 	// happens-before edge, so this is race-free — do NOT mutate handler
 	// locals from inside the closure).
 	type batchResult struct {
-		seeded  []struct{ id string; priority int }
+		seeded []struct {
+			id       string
+			priority int
+		}
 		created int
 		fails   []string
 		err     error
 	}
 
 	runBatch := func(d *sql.DB, conns []struct {
-		Name string `json:"name"`
-		APIKey string `json:"api_key"`
-		Priority int `json:"priority"`
+		Name                 string            `json:"name"`
+		APIKey               string            `json:"api_key"`
+		Priority             int               `json:"priority"`
 		ProviderSpecificData map[string]string `json:"provider_specific_data,omitempty"`
 	}) batchResult {
 		res := batchResult{}
@@ -794,8 +818,11 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 				res.fails = append(res.fails, fmt.Sprintf("connection %q: %s", conn.Name, err.Error()))
 				continue
 			}
-		res.created++
-		res.seeded = append(res.seeded, struct{ id string; priority int }{id: connID, priority: conn.Priority})
+			res.created++
+			res.seeded = append(res.seeded, struct {
+				id       string
+				priority int
+			}{id: connID, priority: conn.Priority})
 		}
 		if err := tx.Commit(); err != nil {
 			res.err = err
@@ -828,10 +855,10 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 			}
 			continue
 		}
-	created += br.created
-	failed += len(br.fails)
-	errors = append(errors, br.fails...)
-	seeded = append(seeded, br.seeded...)
+		created += br.created
+		failed += len(br.fails)
+		errors = append(errors, br.fails...)
+		seeded = append(seeded, br.seeded...)
 	}
 
 	// Seed in-memory store ONLY for committed rows, then recompute eligibility once.
