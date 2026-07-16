@@ -23,30 +23,45 @@ func TranslateCloudflare(statusCode int, raw []byte) []byte {
 	if msg == "" {
 		return nil
 	}
-	start := strings.Index(msg, "{")
-	end := strings.LastIndex(msg, "}")
-	if start == -1 || end <= start {
-		return nil
-	}
-	nested := []byte(msg[start : end+1])
 
-	var cf struct {
-		Message string  `json:"message"`
-		Type    string  `json:"type"`
-		Param   *string `json:"param"`
-		Code    int     `json:"code"`
-	}
-	if err := json.Unmarshal(nested, &cf); err != nil {
-		return nil
+	var (
+		cfMsg   = msg
+		cfType  string
+		cfParam *string
+	)
+
+	// Some Cloudflare error messages embed a nested JSON object; others are
+	// plain text (e.g. "AiError: Ai: ... exceeded this model context window
+	// limit ..."). Extract the JSON when present, otherwise use the message
+	// directly.
+	if start := strings.Index(msg, "{"); start != -1 {
+		if end := strings.LastIndex(msg, "}"); end > start {
+			nested := []byte(msg[start : end+1])
+			var cf struct {
+				Message string  `json:"message"`
+				Type    string  `json:"type"`
+				Param   *string `json:"param"`
+				Code    int     `json:"code"`
+			}
+			if err := json.Unmarshal(nested, &cf); err == nil {
+				cfMsg = cf.Message
+				cfType = cf.Type
+				cfParam = cf.Param
+			}
+		}
 	}
 
-	typ := cf.Type
-	if typ == "" && statusCode >= 400 {
-		typ = "BadRequestError"
+	typ := cfType
+	if typ == "" {
+		if statusCode >= 500 {
+			typ = "server_error"
+		} else {
+			typ = "invalid_request_error"
+		}
 	}
 
 	oai := map[string]any{
-		"message": cf.Message,
+		"message": cfMsg,
 	}
 
 	switch typ {
@@ -60,19 +75,17 @@ func TranslateCloudflare(statusCode int, raw []byte) []byte {
 		oai["type"] = "not_found_error"
 	case "RateLimitError":
 		oai["type"] = "rate_limit_error"
+	case "server_error":
+		oai["type"] = "server_error"
 	default:
-		if statusCode >= 500 {
-			oai["type"] = "server_error"
-		} else {
-			oai["type"] = "invalid_request_error"
-		}
+		oai["type"] = "invalid_request_error"
 	}
 
-	if cf.Param != nil {
-		oai["param"] = *cf.Param
+	if cfParam != nil {
+		oai["param"] = *cfParam
 	}
 
-	oai["code"] = inferCloudflareOpenAICode(statusCode, cf.Message, oai["type"].(string))
+	oai["code"] = inferCloudflareOpenAICode(statusCode, cfMsg, oai["type"].(string))
 
 	out := map[string]any{"error": oai}
 	b, _ := json.Marshal(out)

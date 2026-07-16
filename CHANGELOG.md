@@ -9,8 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - OpenAI-format provider errors are now normalized to canonical OpenAI error codes (`context_length_exceeded`, `rate_limit_exceeded`, etc.) via a default translator. This fixes Bedrock `validation_error` and other provider-specific synonyms so CLI tools like Claude Code and OpenCode correctly trigger auto-compact.
+- Cloudflare Workers AI plain-text context-window errors (e.g. "exceeded this model context window limit") are now correctly translated to `context_length_exceeded`.
 - Streaming upstream errors (`OpenAIExecutor`, `CopilotExecutor`, `MimocodeExecutor`, `AntigravityExecutor`, `GeminiExecutor`) are now translated using the provider prefix, matching non-streaming behavior.
 - Claude `model_context_window_exceeded` stop reason is now mapped to OpenAI-compatible `finish_reason: "length"` so clients can detect context-window truncation.
+- Fixed Claude → OpenAI non-streaming response translation: `finish_reason` is now placed at the choice level (matching the OpenAI spec) instead of inside `message`.
 
 ### Changed
 - Strengthened `InferCodeFromMessage` phrase detection for context-length errors (`input_tokens`, `reduce the length`, `prompt contains`, `context window`, `context exceeds`, etc.) and shared it across all provider translators.

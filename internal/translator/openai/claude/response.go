@@ -129,18 +129,21 @@ func convertClaudeResponseToOpenAINonStream(_ context.Context, _ string, _, _ []
 	}
 
 	stopReason := root.Get("stop_reason").String()
+	finishReason := "stop"
 	switch stopReason {
 	case "end_turn":
-		msg["finish_reason"] = "stop"
+		finishReason = "stop"
 	case "tool_use":
-		msg["finish_reason"] = "tool_calls"
+		finishReason = "tool_calls"
 	case "max_tokens", "model_context_window_exceeded":
-		msg["finish_reason"] = "length"
-	default:
-		msg["finish_reason"] = "stop"
+		finishReason = "length"
 	}
 
-	out["choices"] = []map[string]interface{}{{"index": 0, "message": msg}}
+	out["choices"] = []map[string]interface{}{{
+		"index":         0,
+		"message":       msg,
+		"finish_reason": finishReason,
+	}}
 
 	if usage := root.Get("usage"); usage.Exists() {
 		in := usage.Get("input_tokens").Int()
