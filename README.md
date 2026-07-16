@@ -397,17 +397,27 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.6
+### What's New in v0.3.5
+
+### Fixed
+- Removed duplicate MiMoCode Free provider from the dashboard: `mimocode-free` is now normalized to the canonical `mimocode` alias on startup (connections, quota cache, and custom models are migrated; the legacy provider_type row is deleted).
+- GitHub Copilot OAuth account creation no longer fails with "Connection not ready nil credentials" / "empty access token". GitHub's device-code endpoint returns HTTP 200 with `error: authorization_pending`; that response is now recognized so polling continues. Copilot token prefetch failures are non-fatal (matching OmniRoute), and real terminal errors are propagated to the UI instead of showing the generic "nil credentials" message.
+- GitHub Copilot quota tracking is now implemented. The quota scheduler fetches usage from `https://api.github.com/copilot_internal/user`, parses both paid (`quota_snapshots`) and free/limited (`monthly_quotas` + `limited_user_quotas`) response formats, and auto-refreshes the short-lived Copilot token before each fetch so the dashboard no longer shows "No quota data".
+- GitHub accounts without Copilot access now fail add-account with a clear message: "this GitHub account does not have GitHub Copilot access", instead of a raw 403 JSON blob. The same message is used by the quota scheduler to disable the connection.
+- GitHub Copilot OAuth now falls back to the GitHub login/name when the `/user` response does not include an email, so the dashboard connection label shows the actual account instead of "OAuth GitHub Copilot".
+- Added a guard in the quota fetcher so any provider added to `knownProviders` without a matching fetcher case returns a clear error instead of silently showing "No quota data".
+- Provider detail model list now inherits `service_kinds` from the provider when a model has no per-model kind metadata. Fallback is restricted to single-kind providers so multi-modal providers (e.g., Cloudflare) are not blanket-tagged with every capability.
+- Provider cards on the /providers page now display their category badge (e.g., "OAuth", "API Key", "No Auth", "Service Account") so every provider has visible category metadata, matching the category badge shown on Provider Detail.
+- Quota scheduler now prunes stale `quota_cache` rows when a connection is no longer an active OAuth connection, so deleted/disabled Copilot attempts stop appearing as duplicate error cards.
+- Fixed GitHub Copilot quota fetch to call `/copilot_internal/user` with the GitHub OAuth access token (`Authorization: token …`), not the short-lived Copilot token — this was the root cause of `401 Bad credentials` and now matches OmniRoute.
+- Fixed free/limited Copilot quota parsing: `limited_user_quotas[name]` is the *remaining* count, not the used count (previously usage percentages were inverted).
+- Proactive OAuth token refresh now refreshes Copilot tokens even though GitHub device-code flow doesn't return a refresh token; the manual admin refresh endpoint also supports Copilot and persists the refreshed Copilot token to `provider_specific_data`.
 
 ### Added
-- API key expiration with 1/7/30/90 days, custom date, and no expiration options.
-- `AXONROUTER_DIR` environment variable overrides the data directory (default remains `~/axonrouter`). Relative paths resolve against `$HOME`.
-
-### Changed
-- `installer.sh` now installs the binary into `~/.local/bin` by default and prints clear `sudo`/`--to` instructions when that directory is not writable.
-- `npm/axonrouter-go` postinstall now copies the verified binary to `~/.local/bin/axonrouter` on Linux/macOS when possible, falling back to the package-local binary with instructions.
-- `axonrouter --startup install` now creates a systemd **user** service (`~/.config/systemd/user/axonrouter.service`) and no longer requires root. Running it as root is blocked; use `axonrouter --startup install-root` for a system-wide service.
-- Docs now mention `npx axonrouter-go` as a one-off, no-install way to run the binary once the package is published.
+- MiMoCode Free provider (`mimocode/` prefix) with dedicated `MimocodeExecutor`: per-device-fingerprint JWT bootstrap, anti-abuse system marker, required `x-mimo-*` headers, one-time 401/403 retry, and proxy-pool selection for non-default connections. Includes a seeded `mimocode-direct-default` connection and backend validation/rules mirroring OpenCode Free.
+- Updated static GitHub Copilot model catalog in `internal/models/models.json` to include newer generally-available models: `claude-opus-4.6`, `gpt-5.4-nano`, `gpt-5.6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gemini-2.5-pro`, and `gemini-3-flash-preview`.
+- Quota dashboard provider summary now returns per-provider color/icon metadata and the provider filter pills use those colors, so Copilot and other providers render with their brand color instead of default gray.
+- Track and display real compression metrics: per-mode counters (`requests`, `original_tokens`, `compressed_tokens`) are recorded from live `/v1/*` requests via the write queue, exposed via `GET /api/admin/compression/metrics`, and rendered in a new "Compression Metrics" card on the Optimization page.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
