@@ -79,7 +79,7 @@ func TestUpgrade_DownloadsAndVerifiesBinary(t *testing.T) {
 		t.Errorf("asset = %v, want %s", resp["asset"], asset)
 	}
 
-	wantPath := filepath.Join(h.binDir, asset)
+	wantPath := filepath.Join(h.binDir, installedName())
 	if resp["path"] != wantPath {
 		t.Errorf("path = %v, want %s", resp["path"], wantPath)
 	}
@@ -197,7 +197,7 @@ func TestUpgrade_ConcurrentCallsAreSerialized(t *testing.T) {
 	}
 	wg.Wait()
 
-	got, err := os.ReadFile(filepath.Join(h.binDir, asset))
+	got, err := os.ReadFile(filepath.Join(h.binDir, installedName()))
 	if err != nil {
 		t.Fatalf("read downloaded binary: %v", err)
 	}
@@ -251,4 +251,12 @@ func TestUpgrade_ChecksumMismatch(t *testing.T) {
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
 	}
+}
+
+func installedName() string {
+	name := "axonrouter"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return name
 }
