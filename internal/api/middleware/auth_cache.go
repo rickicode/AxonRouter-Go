@@ -12,10 +12,11 @@ import (
 
 // authResult holds a cached API key validation outcome.
 type authResult struct {
-	keyID     string
+	keyID string
 	rateLimit int
 	maxTokens int64
-	cachedAt  time.Time
+	expiresAt int64
+	cachedAt time.Time
 }
 
 // AuthCache caches validated API keys in memory so the hot path avoids:
@@ -66,13 +67,14 @@ func (c *AuthCache) Get(key string) *authResult {
 }
 
 // Put stores a validation result.
-func (c *AuthCache) Put(key, keyID string, rateLimit int, maxTokens int64) {
+func (c *AuthCache) Put(key, keyID string, rateLimit int, maxTokens int64, expiresAt int64) {
 	c.mu.Lock()
 	c.entries[key] = &authResult{
-		keyID:     keyID,
+		keyID: keyID,
 		rateLimit: rateLimit,
 		maxTokens: maxTokens,
-		cachedAt:  time.Now(),
+		expiresAt: expiresAt,
+		cachedAt: time.Now(),
 	}
 	c.mu.Unlock()
 }
@@ -95,39 +97,46 @@ func (c *AuthCache) InvalidateAll() {
 // bcrypt, and returns the matched key's id and rate limit. The returned error
 // signals a DB failure; callers should treat it as an auth-system outage and
 // fail-closed without falling back to another query.
-func validateKey(db *sql.DB, presentedKey string) (string, int, int64, bool, error) {
+func validateKey(db *sql.DB, presentedKey string) (string, int, int64, int64, bool, error) {
 	var count int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM api_keys WHERE is_active = 1`).Scan(&count); err != nil {
-		return "", 0, 0, false, err
+		return "", 0, 0, 0, false, err
 	}
 	if count == 0 {
-		return "", 0, 0, false, nil
+		return "", 0, 0, 0, false, nil
 	}
 
-	rows, err := db.Query(`SELECT id, key_hash, rate_limit_per_min, COALESCE(max_tokens, 0) FROM api_keys WHERE is_active = 1`)
+	rows, err := db.Query(`SELECT id, key_hash, rate_limit_per_min, COALESCE(max_tokens, 0), COALESCE(expires_at, 0) FROM api_keys WHERE is_active = 1`)
 	if err != nil {
-		return "", 0, 0, false, err
+		return "", 0, 0, 0, false, err
 	}
 	defer rows.Close()
 
+	now := time.Now().Unix()
 	var keyID string
 	var rateLimit int
 	var maxTokens int64
+	var expiresAt int64
 	for rows.Next() {
 		var id, hash string
-		if err := rows.Scan(&id, &hash, &rateLimit, &maxTokens); err != nil {
+		var rowExpires int64
+		if err := rows.Scan(&id, &hash, &rateLimit, &maxTokens, &rowExpires); err != nil {
 			logging.Logger.Warn("auth cache scan error", "error", err)
 			continue
 		}
 		if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(presentedKey)); err == nil {
+			if rowExpires > 0 && now >= rowExpires {
+				continue
+			}
 			keyID = id
+			expiresAt = rowExpires
 			break
 		}
 	}
 	if keyID == "" {
-		return "", 0, 0, false, nil
+		return "", 0, 0, 0, false, nil
 	}
-	return keyID, rateLimit, maxTokens, true, nil
+	return keyID, rateLimit, maxTokens, expiresAt, true, nil
 }
 
 // Validate collapses concurrent cache-miss validations for the same presented
@@ -136,15 +145,16 @@ func validateKey(db *sql.DB, presentedKey string) (string, int, int64, bool, err
 // hundreds of concurrent requests all miss the cache simultaneously.
 func (c *AuthCache) Validate(db *sql.DB, presentedKey string) (string, int, int64, bool, error) {
 	if c == nil {
-		return validateKey(db, presentedKey)
+		keyID, rateLimit, maxTokens, _, ok, dbErr := validateKey(db, presentedKey)
+		return keyID, rateLimit, maxTokens, ok, dbErr
 	}
 	v, err, _ := c.group.Do(presentedKey, func() (interface{}, error) {
-		keyID, rateLimit, maxTokens, ok, dbErr := validateKey(db, presentedKey)
+		keyID, rateLimit, maxTokens, expiresAt, ok, dbErr := validateKey(db, presentedKey)
 		if dbErr != nil {
 			return nil, dbErr
 		}
 		if ok {
-			c.Put(presentedKey, keyID, rateLimit, maxTokens)
+			c.Put(presentedKey, keyID, rateLimit, maxTokens, expiresAt)
 		}
 		return []interface{}{keyID, rateLimit, maxTokens, ok}, nil
 	})

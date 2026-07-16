@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -186,11 +187,66 @@ func TestAuthCache_Validate_StoresResult(t *testing.T) {
 	}
 }
 
+func TestAuth_ExpiredKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	database := openTestDB(t)
+
+	key := "expired-key"
+	hash, _ := bcrypt.GenerateFromPassword([]byte(key), bcrypt.DefaultCost)
+	now := time.Now().Unix()
+	expiresAt := now + 1
+	if _, err := database.Exec(
+		`INSERT INTO api_keys (id, name, key_hash, is_active, rate_limit_per_min, created_at, expires_at) VALUES (?, ?, ?, 1, 10, ?, ?)`,
+		"expired-key-id", "test", string(hash), now, expiresAt,
+	); err != nil {
+		t.Fatalf("insert expiring key: %v", err)
+	}
+
+	cache := NewAuthCache(30 * time.Second)
+	router := gin.New()
+	router.Use(Auth(database, cache))
+	router.GET("/test", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	// First request: key is valid, should be cached.
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+key)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("first request status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	// Wait for the key to expire, then hit the cache.
+	time.Sleep(1100 * time.Millisecond)
+
+	req = httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+key)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "api key expired") {
+		t.Errorf("body = %q, want to contain 'api key expired'", body)
+	}
+
+	// is_active must remain unchanged (do not deactivate on expiration check).
+	var isActive int
+	if err := database.QueryRow(`SELECT is_active FROM api_keys WHERE id = ?`, "expired-key-id").Scan(&isActive); err != nil {
+		t.Fatalf("select is_active: %v", err)
+	}
+	if isActive != 1 {
+		t.Errorf("is_active = %d, want 1 (must not be changed on expiration)", isActive)
+	}
+}
+
 func TestValidateKey_ReturnsDBError(t *testing.T) {
 	database := openTestDB(t)
 	database.Close()
 
-	_, _, _, ok, dbErr := validateKey(database, "any-key")
+	_, _, _, _, ok, dbErr := validateKey(database, "any-key")
 	if dbErr == nil {
 		t.Fatalf("expected DB error from validateKey on closed DB")
 	}
