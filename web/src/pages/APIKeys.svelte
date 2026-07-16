@@ -121,10 +121,14 @@ function formatDate(ts: number): string {
     return new Date(ts * 1000).toLocaleDateString();
 }
 
-function formatMaxTokens(tokens: number): string {
+  function formatMaxTokens(tokens: number): string {
     if (!tokens || tokens <= 0) return 'Unlimited';
     return `${Math.round(tokens / 1_000_000)}M`;
-}
+  }
+
+  function isExpired(ts?: number): boolean {
+    return !!ts && ts <= Date.now() / 1000;
+  }
 </script>
 
 <div class="flex flex-1 flex-col gap-6 p-6">
@@ -193,7 +197,16 @@ function formatMaxTokens(tokens: number): string {
               </div>
             </td>
               <td class="py-3 px-4 text-body-sm text-muted-foreground">{formatDate(key.created_at)}</td>
-              <td class="py-3 px-4 text-body-sm text-muted-foreground">{formatExpiry(key.expires_at)}</td>
+              <td class="py-3 px-4">
+                {#if key.expires_at}
+                  {@const expired = isExpired(key.expires_at)}
+                  <span class="text-body-sm {expired ? 'text-destructive font-medium' : 'text-muted-foreground'}" title={new Date(key.expires_at * 1000).toLocaleString()}>
+                    {formatExpiry(key.expires_at)}
+                  </span>
+                {:else}
+                  <span class="text-body-sm text-muted-foreground">Never</span>
+                {/if}
+              </td>
               <td class="py-3 px-4">
               <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm text-destructive hover:text-destructive" onclick={() => handleDelete(key.id, key.name)}>
                 Del
@@ -253,7 +266,7 @@ function formatMaxTokens(tokens: number): string {
                 </Select.Content>
               </Select.Root>
               {#if expirationPreset === 'custom'}
-                <Input type="date" bind:value={customDate} class="h-9 text-sm" />
+                <Input type="date" bind:value={customDate} min={new Date().toISOString().split('T')[0]} class="h-9 text-sm" />
                 <p class="text-xs text-muted-foreground">Expires at 23:59:59 UTC on the selected date.</p>
               {/if}
             </div>
