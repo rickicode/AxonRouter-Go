@@ -75,8 +75,13 @@ func (h *Handler) STT(c *gin.Context) {
 		return
 	}
 
-	// Get STT executor
-	sttExec := executor.NewSTTExecutor(executor.NewBaseExecutor())
+	// Get STT executor (test hook overrides the real one).
+	var sttExec executor.Executor
+	if h.sttExecutorFactory != nil {
+		sttExec = h.sttExecutorFactory()
+	} else {
+		sttExec = executor.NewSTTExecutor(executor.NewBaseExecutor())
+	}
 
 	conn, err := h.getConnection(c.Request.Context(), provider, model)
 	if err != nil {

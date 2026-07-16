@@ -201,6 +201,45 @@ func TestAPIKeyHandler_ToggleActive_KeepsExpiresAt_WhenOmitted(t *testing.T) {
 	}
 }
 
+func TestAPIKeyHandler_ToggleInvalidatesCache(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	database := newAPIKeyHandlerTestDB(t)
+	cache := middleware.NewAuthCache(30 * time.Second)
+	h := NewAPIKeyHandler(database, cache)
+
+	// Seed an active key. key_value is what clients present and what the cache keys by.
+	_, err := database.Exec(`INSERT INTO api_keys (id, key_hash, key_value, name, rate_limit_per_min, max_tokens, is_active, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"key-toggle", "hash", "raw-toggle", "toggle-key", 60, 1000, 1, 1000, 0)
+	if err != nil {
+		t.Fatalf("seed api key: %v", err)
+	}
+
+	// Populate the cache entry as if a recent request validated the key.
+	cache.Put("raw-toggle", "key-toggle", 60, 1000, 0)
+	if r := cache.Get("raw-toggle"); r == nil {
+		t.Fatal("expected cached entry before toggle")
+	}
+
+	// Toggle the key inactive.
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/api-keys/key-toggle/toggle", jsonBodyAPIKey(t, map[string]any{
+		"is_active": false,
+	}))
+	c.Params = gin.Params{{Key: "id", Value: "key-toggle"}}
+	h.ToggleActive(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("toggle status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	// The cache entry must be invalidated immediately, so a request within the
+	// 30s TTL would now hit the DB and see is_active=0.
+	if r := cache.Get("raw-toggle"); r != nil {
+		t.Errorf("expected cache entry to be invalidated after toggle, got %+v", r)
+	}
+}
+
 func TestAPIKeyHandler_Delete_WithUsage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	database := newAPIKeyHandlerTestDB(t)

@@ -20,10 +20,22 @@ func EstimateTokensFromRequest(body []byte) int64 {
 
 	var totalChars int64
 
-	// Collect system field if present at top level
+	// Collect system and input fields if present at top level.
 	if sys, ok := doc["system"]; ok {
 		if s, ok := sys.(string); ok {
 			totalChars += int64(len(s))
+		}
+	}
+	if in, ok := doc["input"]; ok {
+		switch v := in.(type) {
+		case string:
+			totalChars += int64(len(v))
+		case []interface{}:
+			for _, item := range v {
+				if s, ok := item.(string); ok {
+					totalChars += int64(len(s))
+				}
+			}
 		}
 	}
 

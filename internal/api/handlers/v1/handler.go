@@ -209,10 +209,21 @@ type Handler struct {
 	authMgr             *auth.Manager
 	resolver            *proxypool.Resolver
 	exhaustion          *quota.ExhaustionCache
-	conns               sync.Map // connID -> *Connection (write-through credential cache)
+	conns sync.Map // connID -> *Connection (write-through credential cache)
 	compressionStrategy compression.Strategy
-	exactCache          cache.CacheStorage
-	providerCfg         *providercfg.Manager
+	exactCache cache.CacheStorage
+	providerCfg *providercfg.Manager
+
+	// usageAccumulator is a test-only hook for asserting accumulateAPIKeyUsage
+	// arguments. It is nil in production and does not alter request behavior.
+	usageAccumulator func(apiKeyID string, reqBody []byte, respBody []byte, estimateOutput bool)
+
+	// test-only executor factories so TTS/STT/Video endpoint tests can bypass
+	// real network calls. Nil in production; handlers fall back to the real
+	// executor constructors when these are unset.
+	ttsExecutorFactory  func() executor.Executor
+	sttExecutorFactory  func() executor.Executor
+	videoExecutorFactory func() executor.Executor
 }
 
 // NewHandler creates a new v1 handler with all dependencies.
@@ -1446,6 +1457,10 @@ func (h *Handler) incrementAPIKeyUsage(apiKeyID string, tokens int64) {
 // response body — enabled only for chat/text endpoints so binary image/audio
 // bytes are never counted as tokens.
 func (h *Handler) accumulateAPIKeyUsage(apiKeyID string, reqBody, respBody []byte, estimateOutput bool) {
+	if h.usageAccumulator != nil {
+		h.usageAccumulator(apiKeyID, reqBody, respBody, estimateOutput)
+		return
+	}
 	var total int64
 	if counts := ExtractTokensFromBody(respBody); counts.InputTokens > 0 || counts.OutputTokens > 0 {
 		total = counts.InputTokens + counts.OutputTokens

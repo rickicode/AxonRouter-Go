@@ -19,6 +19,7 @@ import (
 type fakeImageGenerator struct {
 	*executor.BaseExecutor
 	called bool
+	body   []byte
 }
 
 func (f *fakeImageGenerator) Execute(ctx context.Context, req *executor.Request) (*executor.Response, error) {
@@ -31,7 +32,11 @@ func (f *fakeImageGenerator) ExecuteStream(ctx context.Context, req *executor.Re
 
 func (f *fakeImageGenerator) Images(ctx context.Context, req *executor.Request) (*executor.Response, error) {
 	f.called = true
-	return &executor.Response{StatusCode: http.StatusOK, Body: []byte(`{"created":1,"data":[]}`)}, nil
+	body := f.body
+	if body == nil {
+		body = []byte(`{"created":1,"data":[]}`)
+	}
+	return &executor.Response{StatusCode: http.StatusOK, Body: body}, nil
 }
 
 func TestImages_CloudflareModelRoutes(t *testing.T) {
@@ -65,6 +70,59 @@ func TestImages_CloudflareModelRoutes(t *testing.T) {
 	}
 	if !fg.called {
 		t.Fatal("expected Images to be called on the executor")
+	}
+}
+
+func TestImages_UsageAccumulatesOnSuccess(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	wq := db.NewWriteQueue(h.db)
+	tracker := usage.NewTracker(h.db)
+	tracker.SetWriteQueue(wq)
+	h.tracker = tracker
+	defer func() {
+		tracker.Stop()
+		wq.Stop()
+	}()
+
+	fg := &fakeImageGenerator{
+		BaseExecutor: executor.NewBaseExecutor(),
+		body:         []byte(`{"created":1,"data":[],"usage":{"prompt_tokens":12,"total_tokens":12}}`),
+	}
+	executor.GetRegistry().Register("openai", executor.FormatOpenAI, fg)
+	defer executor.GetRegistry().Unregister("openai")
+
+	seedProviderAndConnection(t, h, "openai", `["llm","image"]`, "openai-img-conn-usage", "http://unused")
+
+	hash := mustHashKey(t, "sk-image")
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_keys (id, name, key_hash, created_at) VALUES ('key-image', 'test', ?, 0)`, hash); err != nil {
+		t.Fatalf("seed api_key: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_key_usage (api_key_id, total_tokens, updated_at) VALUES ('key-image', 0, 0)`); err != nil {
+		t.Fatalf("seed api_key_usage: %v", err)
+	}
+
+	body := []byte(`{"model":"openai/dall-e-3","prompt":"a cat"}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("api_key_id", "key-image")
+
+	h.Images(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !fg.called {
+		t.Fatal("expected Images to be called")
+	}
+	var total int64
+	if err := h.db.QueryRow(`SELECT total_tokens FROM api_key_usage WHERE api_key_id = 'key-image'`).Scan(&total); err != nil {
+		t.Fatalf("query api_key_usage: %v", err)
+	}
+	if total != 12 {
+		t.Errorf("total_tokens = %d, want 12", total)
 	}
 }
 
