@@ -155,7 +155,7 @@ func New(cfg Config) *Router {
 
 	// Create admin handlers
 	connectionH := admin.NewConnectionHandler(cfg.DB, executor.GetRegistry(), store, elig, exhaustionCache, authManager, writeQueue)
-	providerH := admin.NewProviderHandler(cfg.DB, executor.GetRegistry(), store, elig, providerCfg, writeQueue)
+	providerH := admin.NewProviderHandler(cfg.DB, executor.GetRegistry(), store, elig, providerCfg, writeQueue, authManager)
 
 	// Auto-migrate raw API keys to bcrypt
 	db.MigrateRawKeysToBcrypt(cfg.DB)
