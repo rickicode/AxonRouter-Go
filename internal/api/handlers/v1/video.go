@@ -36,7 +36,13 @@ func (h *Handler) Video(c *gin.Context) {
 		return
 	}
 
-	videoExec := executor.NewVideoExecutor(executor.NewBaseExecutor())
+	// Get video executor (test hook overrides the real one).
+	var videoExec executor.Executor
+	if h.videoExecutorFactory != nil {
+		videoExec = h.videoExecutorFactory()
+	} else {
+		videoExec = executor.NewVideoExecutor(executor.NewBaseExecutor())
+	}
 
 	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
 	if err != nil {

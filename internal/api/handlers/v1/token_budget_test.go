@@ -226,6 +226,51 @@ func TestUnified_TokenBudgetRequestedMaxCompletionTokens(t *testing.T) {
 	}
 }
 
+func TestUnified_TokenBudgetRequestedMaxOutputTokens(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	seedBudgetAvailable(t, h)
+
+	body := []byte(`{"max_output_tokens":150}`)
+	c, rec := budgetContext(t, http.MethodPost, "/v1/unified", body)
+
+	h.Unified(c)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "request_exceeds_api_key_token_budget") {
+		t.Fatalf("expected request_exceeds_api_key_token_budget, got %s", rec.Body.String())
+	}
+}
+
+func TestChatCompletions_TokenBudgetRequestedMaxOutputTokens(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	seedBudgetAvailable(t, h)
+
+	fe := &fakeExecutor{}
+	executor.GetRegistry().Register("bgtok", executor.FormatOpenAI, fe)
+	defer executor.GetRegistry().Unregister("bgtok")
+
+	seedProviderAndConnection(t, h, "bgtok", `["llm"]`, "bgtok-conn", "http://unused")
+
+	body := []byte(`{"model":"bgtok/model","messages":[{"role":"user","content":"hi"}],"max_output_tokens":150}`)
+	c, rec := budgetContext(t, http.MethodPost, "/v1/chat/completions", body)
+
+	h.ChatCompletions(c)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "request_exceeds_api_key_token_budget") {
+		t.Fatalf("expected request_exceeds_api_key_token_budget, got %s", rec.Body.String())
+	}
+	if fe.callCount != 0 {
+		t.Fatalf("expected upstream not to be called when pre-check rejects, got %d calls", fe.callCount)
+	}
+}
+
 func TestSTT_TokenBudgetExhausted(t *testing.T) {
 	logging.Init("text")
 	h := newTestHandler(t)

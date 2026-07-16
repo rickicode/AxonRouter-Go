@@ -35,8 +35,13 @@ func (h *Handler) TTS(c *gin.Context) {
 		modelName = model
 	}
 
-	// Get TTS executor (always use the global TTS executor)
-	ttsExec := executor.NewTTSExecutor(executor.NewBaseExecutor())
+	// Get TTS executor (test hook overrides the real one).
+	var ttsExec executor.Executor
+	if h.ttsExecutorFactory != nil {
+		ttsExec = h.ttsExecutorFactory()
+	} else {
+		ttsExec = executor.NewTTSExecutor(executor.NewBaseExecutor())
+	}
 
 	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
 	if err != nil {
