@@ -6,7 +6,7 @@ RUN npm ci --ignore-scripts
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.23-alpine AS backend-builder
+FROM golang:1.26-alpine AS backend-builder
 
 RUN apk add --no-cache ca-certificates git make
 
@@ -25,7 +25,8 @@ RUN apk add --no-cache ca-certificates
 
 WORKDIR /app
 COPY --from=backend-builder /app/build/axonrouter .
-
+ENV HOME=/app/data
+RUN mkdir -p /app/data
 EXPOSE 3777
 
 VOLUME ["/app/data"]

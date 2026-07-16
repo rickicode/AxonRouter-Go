@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Admin "Test all" now refreshes expired/near-expiry OAuth tokens automatically.** For OAuth providers (`cx`, `ag`, `kiro`, `copilot`), each connection's token is refreshed via `auth.Manager` before testing if it is expired or within the provider's lead time. Test results are recorded with the fresh token, and unrecoverable refresh errors disable the connection as `auth_failed`.
+- Docker image now defaults `HOME=/app/data` so the `/app/data` volume is used without manual environment overrides; added GitHub Actions workflow to build and push the container to GHCR on pushes to `master` and version tags.
 
 ### Changed
 - Improved `Test all` concurrency for providers with thousands of connections: replaced fixed-batch waiting with a semaphore worker pool capped at 10 concurrent streams, plus a 30-second per-connection timeout, so a single slow connection no longer stalls the entire batch.
