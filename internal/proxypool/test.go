@@ -122,3 +122,15 @@ func TestProxy(proxyURL, typ, relayAuth string) TestResult {
 	}
 	return TestRelay(proxyURL, relayAuth, 30*time.Second)
 }
+
+// Healthy reports whether a test result is good enough to persist.
+// A result must have succeeded and must not exceed maxMs when maxMs > 0.
+func Healthy(res TestResult, maxMs int64) bool {
+	if !res.OK {
+		return false
+	}
+	if maxMs > 0 && res.ElapsedMs > maxMs {
+		return false
+	}
+	return true
+}

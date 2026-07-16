@@ -117,13 +117,30 @@ func (h *ProxyPoolHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "proxy URL already exists", "existing_count": existingCount})
 		return
 	}
+
+	// Mandatory health check before insert.
+	res := h.testProxy(proxyURL, typ, relayAuth)
+	const defaultMaxResponseTimeMs = 8000
+	if !proxypool.Healthy(res, defaultMaxResponseTimeMs) {
+		reason := res.Error
+		if reason == "" {
+			reason = "proxy check failed"
+		}
+		if res.OK && res.ElapsedMs > defaultMaxResponseTimeMs {
+			reason = "proxy too slow"
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": reason, "elapsedMs": res.ElapsedMs})
+		return
+	}
+
 	active := true
 	if v, ok := req["isActive"]; ok {
 		active = asBool(v)
 	}
 	now := time.Now().Unix()
 	id := uuid.New().String()
-	_, err := h.db.Exec(`INSERT INTO proxy_pools (id, name, type, proxy_url, no_proxy, relay_auth, is_active, test_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'untested', ?, ?)`, id, name, typ, proxyURL, noProxy, relayAuth, boolToInt(active), now, now)
+	testedAt := time.Now().Format(time.RFC3339)
+	_, err := h.db.Exec(`INSERT INTO proxy_pools (id, name, type, proxy_url, no_proxy, relay_auth, is_active, test_status, last_tested_at, last_error, response_time_ms, proxy_ip, proxy_country, proxy_city, proxy_org, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, name, typ, proxyURL, noProxy, relayAuth, boolToInt(active), testedAt, nil, res.ElapsedMs, res.IP, res.Country, res.City, res.Org, now, now)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

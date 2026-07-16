@@ -44,6 +44,81 @@ func noopTestProxy(_ string, _ string, _ string) proxypool.TestResult {
 	return proxypool.TestResult{OK: true, StatusCode: 200, ElapsedMs: 0}
 }
 
+func TestProxyPoolCreateRejectsUnhealthy(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
+	h.testProxy = func(_, _, _ string) proxypool.TestResult {
+		return proxypool.TestResult{OK: false, Error: "connection refused"}
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools", jsonBodyProxyPool(t, map[string]any{
+		"name": "bad-proxy", "proxyUrl": "http://bad.example:8080", "type": "http",
+	}))
+	h.Create(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Create status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var count int
+	if err := database.QueryRow("SELECT COUNT(*) FROM proxy_pools WHERE proxy_url = ?", "http://bad.example:8080").Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected unhealthy proxy not to be inserted, got %d", count)
+	}
+}
+
+func TestProxyPoolCreateRejectsSlow(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
+	h.testProxy = func(_, _, _ string) proxypool.TestResult {
+		return proxypool.TestResult{OK: true, StatusCode: 200, ElapsedMs: 9000}
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools", jsonBodyProxyPool(t, map[string]any{
+		"name": "slow-proxy", "proxyUrl": "http://slow.example:8080", "type": "http",
+	}))
+	h.Create(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Create status = %d, body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestProxyPoolCreateSavesHealthMetadata(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
+	h.testProxy = func(_, _, _ string) proxypool.TestResult {
+		return proxypool.TestResult{OK: true, StatusCode: 200, IP: "1.2.3.4", Country: "US", City: "NYC", Org: "TestOrg", ElapsedMs: 120}
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools", jsonBodyProxyPool(t, map[string]any{
+		"name": "good-proxy", "proxyUrl": "http://good.example:8080", "type": "http",
+	}))
+	h.Create(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("Create status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var status, ip, country, org string
+	err := database.QueryRow("SELECT test_status, proxy_ip, proxy_country, proxy_org FROM proxy_pools WHERE proxy_url = ?", "http://good.example:8080").Scan(&status, &ip, &country, &org)
+	if err != nil {
+		t.Fatalf("find created pool: %v", err)
+	}
+	if status != "active" || ip != "1.2.3.4" || country != "US" || org != "TestOrg" {
+		t.Fatalf("unexpected metadata: status=%s ip=%s country=%s org=%s", status, ip, country, org)
+	}
+}
+
 func TestProxyPoolBulkCreate(t *testing.T) {
 	database := newProxyPoolTestDB(t)
 	gin.SetMode(gin.TestMode)
