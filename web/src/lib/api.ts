@@ -143,14 +143,15 @@ export interface RequestLog {
 }
 
 export interface ActiveRequest {
-  id: string;
-  started_at: number;
-  provider_type_id: string;
-  connection_id: string;
-  connection_name: string;
-  model_id: string;
-  modality: string;
-  stream: boolean;
+	id: string;
+	started_at: number;
+	provider_type_id: string;
+	connection_id: string;
+	connection_name: string;
+	target_provider_type_id?: string;
+	model_id: string;
+	modality: string;
+	stream: boolean;
 }
 
 interface Settings {
