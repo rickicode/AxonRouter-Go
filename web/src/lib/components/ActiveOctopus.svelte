@@ -1,9 +1,10 @@
 <script lang="ts">
 	import type { ActiveRequest } from './api';
-	import ProviderIcon from './ProviderIcon.svelte';
-	import { getProviderMeta } from '../provider-catalog';
+import ProviderIcon from './ProviderIcon.svelte';
+import { getProviderMeta, getComboMeta } from '../provider-catalog';
+import { combos } from '$lib/stores';
 
-	interface Props {
+interface Props {
 		requests: ActiveRequest[];
 	}
 
@@ -18,24 +19,35 @@
 		req: ActiveRequest;
 	}
 
-	function metaFor(id: string) {
-		return (
-			getProviderMeta(id) ?? {
-				id,
-				displayName: id,
-				icon: 'network',
-				textIcon: id.slice(0, 2).toUpperCase(),
-				color: '#a1a1aa',
-				iconFile: undefined,
-				category: 'compatible',
-				description: '',
-				format: 'openai',
-				authType: 'apikey',
-				prefix: `${id}/`,
-				isBuiltIn: false,
-			}
-		);
-	}
+let comboById = $derived(
+	($combos || []).reduce<Record<string, { id: string; name: string }>>(
+		(map, combo) => {
+			map[combo.id] = combo;
+			return map;
+		},
+		{}
+	)
+);
+
+function metaFor(id: string) {
+	return (
+		getProviderMeta(id) ??
+		(comboById[id] ? getComboMeta(id, comboById[id].name) : {
+			id,
+			displayName: id,
+			icon: 'network',
+			textIcon: id.slice(0, 2).toUpperCase(),
+			color: '#a1a1aa',
+			iconFile: undefined,
+			category: 'compatible',
+			description: '',
+			format: 'openai',
+			authType: 'apikey',
+			prefix: `${id}/`,
+			isBuiltIn: false,
+		})
+	);
+}
 
 	function buildItems(active: ActiveRequest[]): DisplayItem[] {
 		if (active.length <= INDIVIDUAL_LIMIT) {

@@ -646,8 +646,26 @@ export function getCategoryById(id: string): ProviderCategory | undefined {
 }
 
 export function getProviderMeta(id: string): ProviderMeta | undefined {
-  const catalogId = resolveProviderCatalogId(id);
-  return PROVIDER_CATALOG.find((provider) => provider.id === catalogId);
+	const catalogId = resolveProviderCatalogId(id);
+	return PROVIDER_CATALOG.find((provider) => provider.id === catalogId);
+}
+
+export function getComboMeta(id: string, name?: string): ProviderMeta {
+	const display = name || id;
+	return {
+		id,
+		displayName: display,
+		icon: 'layers',
+		textIcon: display.slice(0, 2).toUpperCase(),
+		iconFile: '/providers/combo.svg',
+		category: 'compatible',
+		description: '',
+		format: 'openai',
+		authType: 'apikey',
+		prefix: `${id}/`,
+		isBuiltIn: false,
+		color: '#f59e0b',
+	};
 }
 
 export function getProviderIconSrc(id: string): string | null {

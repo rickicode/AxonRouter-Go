@@ -9,6 +9,8 @@
 		loadActiveRequests,
 		refreshLogs,
 		isLoading,
+		combos,
+		loadCombos,
 		error,
 		formatLatency,
 		formatTokens,
@@ -34,17 +36,18 @@
 	let perPage = $state(100);
 	let selectedErrorLog = $state<RequestLog | null>(null);
 
-	onMount(() => {
-		document.title = 'Logs — AxonRouter';
-		loadLogs(currentPage, perPage);
-		loadActiveRequests();
-		const activeInterval = setInterval(loadActiveRequests, 3000);
-		const logsInterval = setInterval(() => refreshLogs(currentPage, perPage), 3000);
-		return () => {
-			clearInterval(activeInterval);
-			clearInterval(logsInterval);
-		};
-	});
+onMount(() => {
+	document.title = 'Logs — AxonRouter';
+	loadLogs(currentPage, perPage);
+	loadActiveRequests();
+	loadCombos(1, 200);
+	const activeInterval = setInterval(loadActiveRequests, 3000);
+	const logsInterval = setInterval(() => refreshLogs(currentPage, perPage), 3000);
+	return () => {
+		clearInterval(activeInterval);
+		clearInterval(logsInterval);
+	};
+});
 
 	function handlePageChange(page: number) {
 		currentPage = page;
@@ -195,14 +198,31 @@ const headers = [
 		return `${mins}m`;
 	}
 
-	let hasActiveFilters = $derived(
-		$logFilter.provider_id ||
-			$logFilter.connection_id ||
-			$logFilter.model_id ||
-			$logFilter.status_code ||
-			$logFilter.start_date ||
-			$logFilter.end_date
-	);
+let hasActiveFilters = $derived(
+	$logFilter.provider_id ||
+	$logFilter.connection_id ||
+	$logFilter.model_id ||
+	$logFilter.status_code ||
+	$logFilter.start_date ||
+	$logFilter.end_date
+);
+
+let comboById = $derived(
+	($combos || []).reduce<Record<string, { id: string; name: string }>>(
+		(map, combo) => {
+			map[combo.id] = combo;
+			return map;
+		},
+		{}
+	)
+);
+
+function inflightProviderName(ar: ActiveRequest): string {
+	if (ar.target_provider_type_id) {
+		return providerMeta(ar.target_provider_type_id).displayName;
+	}
+	return comboById[ar.provider_type_id]?.name || providerMeta(ar.provider_type_id).displayName;
+}
 
 	const statusPills = [
 		{ code: 0, label: 'All' },
@@ -365,7 +385,7 @@ const columns: ColumnDef[] = [
 							{#each $activeRequests as ar}
 								<tr class="transition-colors hover:bg-accent/20">
 									<td class="py-2 px-4 text-body-sm text-muted-foreground">{formatDurationMs(ar.started_at)}</td>
-<td class="py-2 px-4 text-body-sm-strong">{providerMeta(ar.provider_type_id).displayName}</td>
+<td class="py-2 px-4 text-body-sm-strong">{inflightProviderName(ar)}</td>
 									<td class="py-2 px-4 text-body-sm text-foreground">{ar.connection_name || ar.connection_id || '-'}</td>
 									<td class="py-2 px-4 text-code text-foreground truncate max-w-[220px]" title={ar.model_id}>{ar.model_id}</td>
 									<td class="py-2 px-4">
