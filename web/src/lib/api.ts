@@ -413,6 +413,7 @@ export interface APIKeyItem {
   max_tokens: number;
   is_active: boolean;
   created_at: number;
+  expires_at?: number;
 }
 
 export interface APIKeyCreateResponse {
@@ -421,6 +422,7 @@ export interface APIKeyCreateResponse {
   name: string;
   max_tokens: number;
   message: string;
+  expires_at?: number;
 }
 
 export interface UsageBreakdown {
@@ -489,13 +491,14 @@ export interface UsageData {
 export const apiKeysApi = {
   list: () => fetchApi<{ data: APIKeyItem[] }>("/api-keys"),
 
-  create: (name?: string, rateLimit?: number, maxTokens?: number) =>
+  create: (name?: string, rateLimit?: number, maxTokens?: number, expiresAt?: number) =>
     fetchApi<APIKeyCreateResponse>("/api-keys", {
       method: "POST",
       body: JSON.stringify({
         name,
         rate_limit_per_min: rateLimit,
         max_tokens: maxTokens,
+        expires_at: expiresAt,
       }),
     }),
 
