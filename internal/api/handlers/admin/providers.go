@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
@@ -22,17 +23,18 @@ import (
 
 // ProviderHandler handles provider CRUD operations.
 type ProviderHandler struct {
-	db *sql.DB
-	registry *executor.Registry
-	store *connstate.Store
-	elig *connstate.EligibilityManager
+	db          *sql.DB
+	registry    *executor.Registry
+	store       *connstate.Store
+	elig        *connstate.EligibilityManager
 	providerCfg *providercfg.Manager
-	writeQueue *db.WriteQueue
+	writeQueue  *db.WriteQueue
+	authMgr     *auth.Manager
 }
 
 // NewProviderHandler creates a new provider handler.
-func NewProviderHandler(database *sql.DB, registry *executor.Registry, store *connstate.Store, elig *connstate.EligibilityManager, providerCfg *providercfg.Manager, writeQueue *db.WriteQueue) *ProviderHandler {
-	return &ProviderHandler{db: database, registry: registry, store: store, elig: elig, providerCfg: providerCfg, writeQueue: writeQueue}
+func NewProviderHandler(database *sql.DB, registry *executor.Registry, store *connstate.Store, elig *connstate.EligibilityManager, providerCfg *providercfg.Manager, writeQueue *db.WriteQueue, authMgr *auth.Manager) *ProviderHandler {
+	return &ProviderHandler{db: database, registry: registry, store: store, elig: elig, providerCfg: providerCfg, writeQueue: writeQueue, authMgr: authMgr}
 }
 
 // List returns all providers with connection counts.

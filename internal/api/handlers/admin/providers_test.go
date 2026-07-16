@@ -146,7 +146,7 @@ func newProviderHandlerTestDeps(t *testing.T, database *sql.DB) *ProviderHandler
 	store := connstate.NewStore()
 	elig := connstate.NewEligibilityManager(store)
 	providerCfg := providercfg.NewManager("")
-	return NewProviderHandler(database, executor.GetRegistry(), store, elig, providerCfg, nil)
+	return NewProviderHandler(database, executor.GetRegistry(), store, elig, providerCfg, nil, nil)
 }
 
 // TestAll_BatchesToMaxTen proves that TestAll never runs more than 10 connection
@@ -177,7 +177,7 @@ func TestAll_BatchesToMaxTen(t *testing.T) {
 	store := connstate.NewStore()
 	elig := connstate.NewEligibilityManager(store)
 	providerCfg := providercfg.NewManager("")
-	h := NewProviderHandler(database, registry, store, elig, providerCfg, nil)
+	h := NewProviderHandler(database, registry, store, elig, providerCfg, nil, nil)
 
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
