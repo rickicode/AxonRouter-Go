@@ -151,10 +151,10 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		`ALTER TABLE request_logs ADD COLUMN tokens_estimated INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE request_logs ADD COLUMN proxy_pool_id TEXT`,
 		`ALTER TABLE request_logs ADD COLUMN api_type TEXT`,
-`CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id, timestamp DESC)`,
-`ALTER TABLE provider_types ADD COLUMN category TEXT DEFAULT 'apikey'`,
-`ALTER TABLE provider_types ADD COLUMN service_kinds TEXT DEFAULT '["llm"]'`,
-`CREATE TABLE IF NOT EXISTS compression_metrics (
+		`CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id, timestamp DESC)`,
+		`ALTER TABLE provider_types ADD COLUMN category TEXT DEFAULT 'apikey'`,
+		`ALTER TABLE provider_types ADD COLUMN service_kinds TEXT DEFAULT '["llm"]'`,
+		`CREATE TABLE IF NOT EXISTS compression_metrics (
     mode TEXT PRIMARY KEY,
     requests INTEGER NOT NULL DEFAULT 0,
     original_tokens INTEGER NOT NULL DEFAULT 0,
@@ -206,8 +206,10 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		{"oc", "OpenCode Free", "openai", "https://opencode.ai/zen/v1", "no-auth", []string{"llm"}},
 		{"oc-zen", "OpenCode Zen", "openai", "https://opencode.ai/zen/v1", "apikey", []string{"llm"}},
 		{"oc-go", "OpenCode Go", "openai", "https://opencode.ai/zen/go/v1", "apikey", []string{"llm"}},
-	{"mimocode", "MiMoCode", "openai", "https://api.xiaomimimo.com/api/free-ai/openai", "no-auth", []string{"llm"}},
-	{"cf", "Cloudflare Workers AI", "openai", "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/v1/chat/completions", "apikey", []string{"llm", "embedding", "image"}},
+		{"mimocode", "MiMoCode Free", "openai", "https://api.xiaomimimo.com/api/free-ai/openai", "no-auth", []string{"llm"}},
+		{"mimo", "Xiaomi MiMo PAYG", "openai", "https://api.xiaomimimo.com/v1", "apikey", []string{"llm"}},
+		{"mimo-tp", "MiMo Token Plan", "openai", "https://api.xiaomimimo.com/v1", "apikey", []string{"llm"}},
+		{"cf", "Cloudflare Workers AI", "openai", "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/v1/chat/completions", "apikey", []string{"llm", "embedding", "image"}},
 		{"glm", "Zhipu GLM", "openai", "https://api.z.ai/api/paas/v4", "apikey", []string{"llm"}},
 		{"minimax", "MiniMax", "openai", "https://api.minimax.io/v1", "apikey", []string{"llm"}},
 		{"kimi", "Kimi", "openai", "https://api.moonshot.ai/v1", "apikey", []string{"llm"}},
@@ -217,11 +219,10 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		{"fireworks", "Fireworks", "openai", "https://api.fireworks.ai/inference/v1", "apikey", []string{"llm"}},
 		{"novita", "Novita AI", "openai", "https://api.novita.ai/openai/v1", "apikey", []string{"llm"}},
 		{"lambda", "Lambda", "openai", "https://api.lambda.ai/v1", "apikey", []string{"llm"}},
-  {"pollinations", "Pollinations.AI", "openai", "https://gen.pollinations.ai/v1", "apikey", []string{"llm"}},
-  {"zenmux", "ZenMux", "openai", "https://zenmux.ai/api/v1", "apikey", []string{"llm"}},
+		{"pollinations", "Pollinations.AI", "openai", "https://gen.pollinations.ai/v1", "apikey", []string{"llm"}},
+		{"zenmux", "ZenMux", "openai", "https://zenmux.ai/api/v1", "apikey", []string{"llm"}},
 
-
-  {"copilot", "GitHub Copilot", "openai", "https://api.githubcopilot.com", "oauth", []string{"llm"}},
+		{"copilot", "GitHub Copilot", "openai", "https://api.githubcopilot.com", "oauth", []string{"llm"}},
 
 		{"vertex", "Google Vertex AI", "openai", "https://aiplatform.googleapis.com/v1/projects/{projectId}/locations/{location}/endpoints/openapi", "service-account", []string{"llm"}},
 		{"bedrock", "Amazon Bedrock Mantle", "openai", "https://bedrock-mantle.{region}.api.aws/v1", "apikey", []string{"llm"}},
@@ -234,20 +235,20 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 			p.Category, string(serviceKindsJSON), p.ID)
 	}
 
-// Normalize legacy `opencode` provider type to canonical `oc` alias, keeping
-// connections and quota cache consistent. Must run after seeding `oc` above.
-db.Exec(`UPDATE connections SET provider_type_id = 'oc' WHERE provider_type_id = 'opencode'`)
-db.Exec(`UPDATE quota_cache SET provider_type_id = 'oc' WHERE provider_type_id = 'opencode'`)
-db.Exec(`DELETE FROM provider_types WHERE id = 'opencode'`)
+	// Normalize legacy `opencode` provider type to canonical `oc` alias, keeping
+	// connections and quota cache consistent. Must run after seeding `oc` above.
+	db.Exec(`UPDATE connections SET provider_type_id = 'oc' WHERE provider_type_id = 'opencode'`)
+	db.Exec(`UPDATE quota_cache SET provider_type_id = 'oc' WHERE provider_type_id = 'opencode'`)
+	db.Exec(`DELETE FROM provider_types WHERE id = 'opencode'`)
 
-// Normalize legacy `mimocode-free` provider type to canonical `mimocode` alias.
-db.Exec(`UPDATE connections SET provider_type_id = 'mimocode' WHERE provider_type_id = 'mimocode-free'`)
-db.Exec(`UPDATE quota_cache SET provider_type_id = 'mimocode' WHERE provider_type_id = 'mimocode-free'`)
-db.Exec(`INSERT OR IGNORE INTO provider_models (provider_type_id, model, created_at) SELECT 'mimocode', model, created_at FROM provider_models WHERE provider_type_id = 'mimocode-free'`)
-db.Exec(`DELETE FROM provider_models WHERE provider_type_id = 'mimocode-free'`)
-db.Exec(`DELETE FROM provider_types WHERE id = 'mimocode-free'`)
+	// Normalize legacy `mimocode-free` provider type to canonical `mimocode` alias.
+	db.Exec(`UPDATE connections SET provider_type_id = 'mimocode' WHERE provider_type_id = 'mimocode-free'`)
+	db.Exec(`UPDATE quota_cache SET provider_type_id = 'mimocode' WHERE provider_type_id = 'mimocode-free'`)
+	db.Exec(`INSERT OR IGNORE INTO provider_models (provider_type_id, model, created_at) SELECT 'mimocode', model, created_at FROM provider_models WHERE provider_type_id = 'mimocode-free'`)
+	db.Exec(`DELETE FROM provider_models WHERE provider_type_id = 'mimocode-free'`)
+	db.Exec(`DELETE FROM provider_types WHERE id = 'mimocode-free'`)
 
-// Seed a default direct connection for OpenCode Free (oc). This connection
+	// Seed a default direct connection for OpenCode Free (oc). This connection
 	// is always-on, cannot be deleted, and serves as the direct route. Additional
 	// oc connections must use a proxy pool (provider_specific_data.proxyPoolId).
 	var ocDirectCount int
@@ -520,60 +521,60 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 		{"minimax-m2.7", "MiniMax M2.7", 0.0008, 0.0016, 0, 0, 0},
 		{"minimax-m3", "MiniMax M3", 0.001, 0.002, 0, 0, 0},
 
-  // ── Mistral (per 1K tokens) — via Mistral AI / API ──
-  {"mistral-large-latest", "Mistral Large Latest", 0.002, 0.006, 0, 0, 0},
-  {"mistral-small-latest", "Mistral Small Latest", 0.0001, 0.0003, 0, 0, 0},
-  {"pixtral-large-latest", "Pixtral Large Latest", 0.002, 0.006, 0, 0, 0},
-  {"codestral-latest", "Codestral Latest", 0.0003, 0.0009, 0, 0, 0},
-  {"ministral-3b-latest", "Ministral 3B Latest", 0.00004, 0.00004, 0, 0, 0},
-  {"ministral-8b-latest", "Ministral 8B Latest", 0.0001, 0.0001, 0, 0, 0},
+		// ── Mistral (per 1K tokens) — via Mistral AI / API ──
+		{"mistral-large-latest", "Mistral Large Latest", 0.002, 0.006, 0, 0, 0},
+		{"mistral-small-latest", "Mistral Small Latest", 0.0001, 0.0003, 0, 0, 0},
+		{"pixtral-large-latest", "Pixtral Large Latest", 0.002, 0.006, 0, 0, 0},
+		{"codestral-latest", "Codestral Latest", 0.0003, 0.0009, 0, 0, 0},
+		{"ministral-3b-latest", "Ministral 3B Latest", 0.00004, 0.00004, 0, 0, 0},
+		{"ministral-8b-latest", "Ministral 8B Latest", 0.0001, 0.0001, 0, 0, 0},
 
-  // ── MiniMax ──
-  {"minimax-m2.1", "MiniMax M2.1", 0.0003, 0.0012, 0, 0, 0},
+		// ── MiniMax ──
+		{"minimax-m2.1", "MiniMax M2.1", 0.0003, 0.0012, 0, 0, 0},
 
-  // ── GLM older variants (approximate legacy Zhipu pricing) ──
-  {"glm-4", "GLM 4", 0.001, 0.002, 0, 0, 0},
-  {"glm-4-plus", "GLM 4 Plus", 0.001, 0.002, 0, 0, 0},
-  {"glm-4-flash", "GLM 4 Flash", 0.0001, 0.0002, 0, 0, 0},
-  {"glm-4v", "GLM 4V", 0.001, 0.002, 0, 0, 0},
-  {"glm-4-9b", "GLM 4 9B", 0.0001, 0.0001, 0, 0, 0},
-  {"glm-3-turbo", "GLM 3 Turbo", 0.0005, 0.001, 0, 0, 0},
+		// ── GLM older variants (approximate legacy Zhipu pricing) ──
+		{"glm-4", "GLM 4", 0.001, 0.002, 0, 0, 0},
+		{"glm-4-plus", "GLM 4 Plus", 0.001, 0.002, 0, 0, 0},
+		{"glm-4-flash", "GLM 4 Flash", 0.0001, 0.0002, 0, 0, 0},
+		{"glm-4v", "GLM 4V", 0.001, 0.002, 0, 0, 0},
+		{"glm-4-9b", "GLM 4 9B", 0.0001, 0.0001, 0, 0, 0},
+		{"glm-3-turbo", "GLM 3 Turbo", 0.0005, 0.001, 0, 0, 0},
 
-  // ── Moonshot Kimi ──
-  {"kimi-k2-thinking", "Kimi K2 Thinking", 0.0006, 0.0025, 0, 0, 0},
+		// ── Moonshot Kimi ──
+		{"kimi-k2-thinking", "Kimi K2 Thinking", 0.0006, 0.0025, 0, 0, 0},
 
-  // ── Amazon Bedrock (bare AWS model IDs; per 1K tokens) ──
-  {"anthropic.claude-3-7-sonnet-20250219-v1:0", "Claude 3.7 Sonnet (Bedrock)", 0.003, 0.015, 0, 0, 0},
-  {"anthropic.claude-3-5-sonnet-20241022-v2:0", "Claude 3.5 Sonnet v2 (Bedrock)", 0.003, 0.015, 0, 0, 0},
-  {"anthropic.claude-3-5-haiku-20241022-v1:0", "Claude 3.5 Haiku (Bedrock)", 0.0008, 0.004, 0, 0, 0},
-  {"anthropic.claude-3-opus-20240229-v1:0", "Claude 3 Opus (Bedrock)", 0.015, 0.075, 0, 0, 0},
-  {"amazon.nova-pro-v1:0", "Amazon Nova Pro (Bedrock)", 0.0008, 0.0032, 0, 0, 0},
-  {"amazon.nova-lite-v1:0", "Amazon Nova Lite (Bedrock)", 0.00006, 0.00024, 0, 0, 0},
-  {"meta.llama3-3-70b-instruct-v1:0", "Llama 3.3 70B Instruct (Bedrock)", 0.00265, 0.00265, 0, 0, 0},
-  {"deepseek.r1-v1:0", "DeepSeek R1 (Bedrock)", 0.0007, 0.0025, 0, 0, 0},
-  {"mistral.mistral-large-2407-v1:0", "Mistral Large 2 (Bedrock)", 0.0005, 0.0015, 0, 0, 0},
+		// ── Amazon Bedrock (bare AWS model IDs; per 1K tokens) ──
+		{"anthropic.claude-3-7-sonnet-20250219-v1:0", "Claude 3.7 Sonnet (Bedrock)", 0.003, 0.015, 0, 0, 0},
+		{"anthropic.claude-3-5-sonnet-20241022-v2:0", "Claude 3.5 Sonnet v2 (Bedrock)", 0.003, 0.015, 0, 0, 0},
+		{"anthropic.claude-3-5-haiku-20241022-v1:0", "Claude 3.5 Haiku (Bedrock)", 0.0008, 0.004, 0, 0, 0},
+		{"anthropic.claude-3-opus-20240229-v1:0", "Claude 3 Opus (Bedrock)", 0.015, 0.075, 0, 0, 0},
+		{"amazon.nova-pro-v1:0", "Amazon Nova Pro (Bedrock)", 0.0008, 0.0032, 0, 0, 0},
+		{"amazon.nova-lite-v1:0", "Amazon Nova Lite (Bedrock)", 0.00006, 0.00024, 0, 0, 0},
+		{"meta.llama3-3-70b-instruct-v1:0", "Llama 3.3 70B Instruct (Bedrock)", 0.00265, 0.00265, 0, 0, 0},
+		{"deepseek.r1-v1:0", "DeepSeek R1 (Bedrock)", 0.0007, 0.0025, 0, 0, 0},
+		{"mistral.mistral-large-2407-v1:0", "Mistral Large 2 (Bedrock)", 0.0005, 0.0015, 0, 0, 0},
 
-  // ── Cerebras (per 1M token rates from public docs) ──
-  {"llama-3.1-8b", "Llama 3.1 8B (Cerebras)", 0.0001, 0.0001, 0, 0, 0},
-  {"llama-3.1-70b", "Llama 3.1 70B (Cerebras)", 0.0006, 0.0006, 0, 0, 0},
-  {"llama-3.3-70b", "Llama 3.3 70B (Cerebras)", 0.0006, 0.0006, 0, 0, 0},
+		// ── Cerebras (per 1M token rates from public docs) ──
+		{"llama-3.1-8b", "Llama 3.1 8B (Cerebras)", 0.0001, 0.0001, 0, 0, 0},
+		{"llama-3.1-70b", "Llama 3.1 70B (Cerebras)", 0.0006, 0.0006, 0, 0, 0},
+		{"llama-3.3-70b", "Llama 3.3 70B (Cerebras)", 0.0006, 0.0006, 0, 0, 0},
 
-  // ── Together AI (model part after provider prefix) ──
-  {"Llama-3.3-70B-Instruct-Turbo", "Llama 3.3 70B Instruct Turbo", 0.00088, 0.00088, 0, 0, 0},
-  {"Llama-3.1-8B-Instruct-Turbo", "Llama 3.1 8B Instruct Turbo", 0.00018, 0.00018, 0, 0, 0},
-  {"Qwen2.5-72B-Instruct", "Qwen2.5 72B Instruct", 0.0012, 0.0012, 0, 0, 0},
-  {"DeepSeek-V3", "DeepSeek V3", 0.00125, 0.00125, 0, 0, 0},
+		// ── Together AI (model part after provider prefix) ──
+		{"Llama-3.3-70B-Instruct-Turbo", "Llama 3.3 70B Instruct Turbo", 0.00088, 0.00088, 0, 0, 0},
+		{"Llama-3.1-8B-Instruct-Turbo", "Llama 3.1 8B Instruct Turbo", 0.00018, 0.00018, 0, 0, 0},
+		{"Qwen2.5-72B-Instruct", "Qwen2.5 72B Instruct", 0.0012, 0.0012, 0, 0, 0},
+		{"DeepSeek-V3", "DeepSeek V3", 0.00125, 0.00125, 0, 0, 0},
 
-  // ── Fireworks AI (model part after "accounts/") ──
-  {"fireworks/models/llama-v3p1-8b-instruct", "Llama 3.1 8B Instruct", 0.0002, 0.0002, 0, 0, 0},
-  {"fireworks/models/llama-v3p1-70b-instruct", "Llama 3.1 70B Instruct", 0.0009, 0.0009, 0, 0, 0},
+		// ── Fireworks AI (model part after "accounts/") ──
+		{"fireworks/models/llama-v3p1-8b-instruct", "Llama 3.1 8B Instruct", 0.0002, 0.0002, 0, 0, 0},
+		{"fireworks/models/llama-v3p1-70b-instruct", "Llama 3.1 70B Instruct", 0.0009, 0.0009, 0, 0, 0},
 
-  // ── Novita / Lambda (model part after provider prefix) ──
-  {"llama-3.1-8b-instruct", "Llama 3.1 8B Instruct", 0.00002, 0.00005, 0, 0, 0},
-  {"llama3.1-8b-instruct", "Llama 3.1 8B Instruct", 0.00002, 0.00003, 0, 0, 0},
-  {"llama3.1-70b-instruct", "Llama 3.1 70B Instruct", 0.00012, 0.0003, 0, 0, 0},
+		// ── Novita / Lambda (model part after provider prefix) ──
+		{"llama-3.1-8b-instruct", "Llama 3.1 8B Instruct", 0.00002, 0.00005, 0, 0, 0},
+		{"llama3.1-8b-instruct", "Llama 3.1 8B Instruct", 0.00002, 0.00003, 0, 0, 0},
+		{"llama3.1-70b-instruct", "Llama 3.1 70B Instruct", 0.00012, 0.0003, 0, 0, 0},
 
-  // ── Free-tier (real model price, offered free by some providers) ──
+		// ── Free-tier (real model price, offered free by some providers) ──
 
 		{"hy3-preview", "HY3 Preview", 0.0005, 0.001, 0, 0, 0},
 		{"hy3-free", "HY3 Free", 0.0003, 0.0006, 0, 0, 0},
@@ -581,14 +582,14 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 		{"nemotron-3-ultra-free", "Nemotron 3 Ultra Free", 0.0003, 0.0006, 0, 0, 0},
 		{"north-mini-code-free", "North Mini Code Free", 0.0002, 0.0004, 0, 0, 0},
 
-  // ── ZenMux (average canonical model rates; lookup strips the zenmux/ prefix) ──
-  {"z-ai/glm-5.2", "GLM 5.2", 0.0014, 0.0044, 0, 0, 0},
-  {"deepseek-v3.2", "DeepSeek V3.2", 0.00062, 0.00185, 0, 0, 0},
-  {"grok-4.1-fast", "Grok 4.1 Fast", 0.0002, 0.0005, 0, 0, 0},
-  {"mistral-large", "Mistral Large", 0.002, 0.006, 0, 0, 0},
+		// ── ZenMux (average canonical model rates; lookup strips the zenmux/ prefix) ──
+		{"z-ai/glm-5.2", "GLM 5.2", 0.0014, 0.0044, 0, 0, 0},
+		{"deepseek-v3.2", "DeepSeek V3.2", 0.00062, 0.00185, 0, 0, 0},
+		{"grok-4.1-fast", "Grok 4.1 Fast", 0.0002, 0.0005, 0, 0, 0},
+		{"mistral-large", "Mistral Large", 0.002, 0.006, 0, 0, 0},
 
-  // ── Misc ──
-  {"big-pickle", "Big Pickle", 0.0005, 0.001, 0, 0, 0},
+		// ── Misc ──
+		{"big-pickle", "Big Pickle", 0.0005, 0.001, 0, 0, 0},
 
 		{"grok-build-0.1", "Grok Build", 0.0003, 0.0005, 0, 0, 0},
 	}

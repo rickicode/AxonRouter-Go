@@ -112,7 +112,7 @@ func RegisterDefaults() {
 
 	// OpenAI-compatible providers
 	openaiExec := NewOpenAIExecutor(base)
-	for _, p := range []string{"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo-tp", "elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras", "together", "fireworks", "novita", "lambda", "pollinations", "zenmux"} {
+	for _, p := range []string{"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp", "elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras", "together", "fireworks", "novita", "lambda", "pollinations", "zenmux"} {
 		GetRegistry().Register(p, FormatOpenAI, openaiExec)
 	}
 	GetRegistry().Register("mimocode", FormatOpenAI, NewMimocodeExecutor(base))
@@ -137,7 +137,7 @@ func RegisterDefaults() {
 	// (Bedrock, OpenAI, OpenCode Free, Groq, DeepSeek, etc.). Catches native
 	// OpenAI codes and provider-specific synonyms like Bedrock's validation_error.
 	for _, p := range []string{
-		"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo-tp",
+		"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp",
 		"elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras",
 		"together", "fireworks", "novita", "lambda", "pollinations", "zenmux",
 		"mimocode", "openrouter", "copilot", "vertex", "bedrock",

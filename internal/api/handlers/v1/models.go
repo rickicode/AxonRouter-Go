@@ -25,30 +25,30 @@ var v1ProviderCatalog = map[string]struct {
 	"oc-go":         {keys: []string{"oc-go"}, ownedBy: "opencode"},
 	"mimocode":      {keys: []string{"mimocode"}, ownedBy: "xiaomi"},
 	"mimocode-free": {keys: []string{"mimocode"}, ownedBy: "xiaomi"},
-	"mimo":          {keys: []string{"mimocode"}, ownedBy: "xiaomi"},
-	"mimo-tp":       {keys: []string{"mimocode"}, ownedBy: "xiaomi"},
-	"mimo-token":    {keys: []string{"mimocode"}, ownedBy: "xiaomi"},
+	"mimo":          {keys: []string{"mimo"}, ownedBy: "xiaomi"},
+	"mimo-tp":       {keys: []string{"mimo-tp"}, ownedBy: "xiaomi"},
+	"mimo-token":    {keys: []string{"mimo-tp"}, ownedBy: "xiaomi"},
 	"openai":        {keys: []string{"openai"}, ownedBy: "openai"},
 	"groq":          {keys: []string{"groq"}, ownedBy: "groq"},
 	"deepseek":      {keys: []string{"deepseek"}, ownedBy: "deepseek"},
-	"openrouter": {keys: []string{"openrouter"}, ownedBy: "openrouter"},
-	"copilot": {keys: []string{"copilot"}, ownedBy: "github"},
-	"vertex": {keys: []string{"vertex"}, ownedBy: "google"},
-	"glm": {keys: []string{"glm"}, ownedBy: "zhipu"},
-	"minimax": {keys: []string{"minimax"}, ownedBy: "minimax"},
-	"kimi": {keys: []string{"kimi"}, ownedBy: "moonshot"},
-	"mistral": {keys: []string{"mistral"}, ownedBy: "mistral"},
-	"cerebras": {keys: []string{"cerebras"}, ownedBy: "cerebras"},
-	"together": {keys: []string{"together"}, ownedBy: "together"},
-	"fireworks": {keys: []string{"fireworks"}, ownedBy: "fireworks"},
-	"novita": {keys: []string{"novita"}, ownedBy: "novita"},
-	"lambda": {keys: []string{"lambda"}, ownedBy: "lambda"},
-  "pollinations": {keys: []string{"pollinations"}, ownedBy: "pollinations"},
-  "zenmux": {keys: []string{"zenmux"}, ownedBy: "zenmux"},
-  "bedrock": {keys: []string{"bedrock"}, ownedBy: "amazon"},
+	"openrouter":    {keys: []string{"openrouter"}, ownedBy: "openrouter"},
+	"copilot":       {keys: []string{"copilot"}, ownedBy: "github"},
+	"vertex":        {keys: []string{"vertex"}, ownedBy: "google"},
+	"glm":           {keys: []string{"glm"}, ownedBy: "zhipu"},
+	"minimax":       {keys: []string{"minimax"}, ownedBy: "minimax"},
+	"kimi":          {keys: []string{"kimi"}, ownedBy: "moonshot"},
+	"mistral":       {keys: []string{"mistral"}, ownedBy: "mistral"},
+	"cerebras":      {keys: []string{"cerebras"}, ownedBy: "cerebras"},
+	"together":      {keys: []string{"together"}, ownedBy: "together"},
+	"fireworks":     {keys: []string{"fireworks"}, ownedBy: "fireworks"},
+	"novita":        {keys: []string{"novita"}, ownedBy: "novita"},
+	"lambda":        {keys: []string{"lambda"}, ownedBy: "lambda"},
+	"pollinations":  {keys: []string{"pollinations"}, ownedBy: "pollinations"},
+	"zenmux":        {keys: []string{"zenmux"}, ownedBy: "zenmux"},
+	"bedrock":       {keys: []string{"bedrock"}, ownedBy: "amazon"},
 
 	"zai": {keys: []string{"claude"}, ownedBy: "zai"},
-	"cf": {keys: []string{"cf"}, ownedBy: "cloudflare"},
+	"cf":  {keys: []string{"cf"}, ownedBy: "cloudflare"},
 }
 
 // buildModelList returns the unified gateway model catalog: registered providers,
@@ -179,27 +179,27 @@ func (h *Handler) getProviderModels(prefix string) []gin.H {
 		if !strings.HasPrefix(cleanID, prefix+"/") {
 			modelID = prefix + "/" + cleanID
 		}
-	var serviceKinds []string
-	for _, key := range cfg.keys {
-		if kinds := models.GetModelServiceKinds(key, id); len(kinds) > 0 {
-			serviceKinds = kinds
-			break
+		var serviceKinds []string
+		for _, key := range cfg.keys {
+			if kinds := models.GetModelServiceKinds(key, id); len(kinds) > 0 {
+				serviceKinds = kinds
+				break
+			}
 		}
-	}
-	// Non-CF providers in this catalog are OpenAI-compatible text providers, so
-	// default any model without explicit tags to LLM.
-	if len(serviceKinds) == 0 && prefix != "cf" {
-		serviceKinds = []string{"llm"}
-	}
-	entry := gin.H{
-		"id": modelID,
-		"object": "model",
-		"created": 1700000000,
-		"owned_by": cfg.ownedBy,
-	}
-	if len(serviceKinds) > 0 {
-		entry["service_kinds"] = serviceKinds
-	}
+		// Non-CF providers in this catalog are OpenAI-compatible text providers, so
+		// default any model without explicit tags to LLM.
+		if len(serviceKinds) == 0 && prefix != "cf" {
+			serviceKinds = []string{"llm"}
+		}
+		entry := gin.H{
+			"id":       modelID,
+			"object":   "model",
+			"created":  1700000000,
+			"owned_by": cfg.ownedBy,
+		}
+		if len(serviceKinds) > 0 {
+			entry["service_kinds"] = serviceKinds
+		}
 		entries = append(entries, entry)
 	}
 	return entries

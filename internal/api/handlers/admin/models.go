@@ -71,8 +71,6 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 		return
 	}
 
-
-
 	// Cloudflare-specific discovery: the OpenAI-flavored /v1/models endpoint is not
 	// supported by Workers AI; the canonical list lives at
 	// /accounts/{accountId}/ai/models/search. Match OmniRoute's behavior.
@@ -552,9 +550,9 @@ var providerCatalogKeys = map[string][]string{
 	"oc-go":         {"oc-go"},
 	"mimocode":      {"mimocode"},
 	"mimocode-free": {"mimocode"},
-	"mimo":          {"mimocode"},
-	"mimo-tp":       {"mimocode"},
-	"mimo-token":    {"mimocode"},
+	"mimo":          {"mimo"},
+	"mimo-tp":       {"mimo-tp"},
+	"mimo-token":    {"mimo-tp"},
 	"openai":        {"openai"},
 	"groq":          {"groq"},
 	"deepseek":      {"deepseek"},
@@ -569,10 +567,10 @@ var providerCatalogKeys = map[string][]string{
 	"together":      {"together"},
 	"fireworks":     {"fireworks"},
 	"novita":        {"novita"},
-	"lambda": {"lambda"},
-	"pollinations": {"pollinations"},
-	"copilot":     {"copilot"},
-	"bedrock":     {"bedrock"},
+	"lambda":        {"lambda"},
+	"pollinations":  {"pollinations"},
+	"copilot":       {"copilot"},
+	"bedrock":       {"bedrock"},
 }
 
 // staticModels returns model IDs from the auto-updating catalog, stripped of leading "@".
@@ -614,8 +612,10 @@ func defaultTestModel(providerID string) string {
 		return "llama-3.3-70b-versatile"
 	case "deepseek":
 		return "deepseek-chat"
-	case "mimo", "mimocode", "mimocode-free", "mimo-tp", "mimo-token":
+	case "mimocode", "mimocode-free":
 		return "mimo-auto"
+	case "mimo", "mimo-tp", "mimo-token":
+		return "mimo-v2.5"
 	case "oc", "oc-zen", "oc-go":
 		return "deepseek-v4-flash-free"
 	case "openrouter":
