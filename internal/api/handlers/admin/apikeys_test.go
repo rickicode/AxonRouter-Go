@@ -240,6 +240,39 @@ func TestAPIKeyHandler_ToggleInvalidatesCache(t *testing.T) {
 	}
 }
 
+func TestAPIKeyHandler_ToggleActive_MaxTokensZero_SetsUnlimited(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	database := newAPIKeyHandlerTestDB(t)
+	h := NewAPIKeyHandler(database, middleware.NewAuthCache(30*time.Second))
+
+	_, err := database.Exec(`INSERT INTO api_keys (id, key_hash, key_value, name, rate_limit_per_min, max_tokens, is_active, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"key-unlim", "hash", "raw-unlim", "unlimited-key", 60, 1000, 1, 1000, 0)
+	if err != nil {
+		t.Fatalf("seed api key: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/api-keys/key-unlim/toggle", jsonBodyAPIKey(t, map[string]any{
+		"is_active":  false,
+		"max_tokens": 0,
+	}))
+	c.Params = gin.Params{{Key: "id", Value: "key-unlim"}}
+	h.ToggleActive(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("toggle status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var storedMax sql.NullInt64
+	if err := database.QueryRow(`SELECT max_tokens FROM api_keys WHERE id = ?`, "key-unlim").Scan(&storedMax); err != nil {
+		t.Fatalf("query max_tokens: %v", err)
+	}
+	if storedMax.Valid && storedMax.Int64 != 0 {
+		t.Errorf("max_tokens = %d, want 0 (unlimited)", storedMax.Int64)
+	}
+}
+
 func TestAPIKeyHandler_Delete_WithUsage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	database := newAPIKeyHandlerTestDB(t)
