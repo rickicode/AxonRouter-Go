@@ -40,7 +40,9 @@ func printStartupBanner(port string, database *sql.DB) {
 	)
 
 	var activeConns int
-	_ = database.QueryRow("SELECT COUNT(*) FROM connections WHERE is_active = 1").Scan(&activeConns)
+	if err := database.QueryRow("SELECT COUNT(*) FROM connections WHERE is_active = 1").Scan(&activeConns); err != nil {
+		logging.Logger.Warn("failed to read active connection count for startup banner", "error", err)
+	}
 
 	providers := models.ProviderCount()
 	modelCount := models.ModelCount()
@@ -64,7 +66,9 @@ func printStartupBanner(port string, database *sql.DB) {
 
 func printStartupBannerPlain(port string, database *sql.DB) {
 	var activeConns int
-	_ = database.QueryRow("SELECT COUNT(*) FROM connections WHERE is_active = 1").Scan(&activeConns)
+	if err := database.QueryRow("SELECT COUNT(*) FROM connections WHERE is_active = 1").Scan(&activeConns); err != nil {
+		logging.Logger.Warn("failed to read active connection count for startup banner", "error", err)
+	}
 	providers := models.ProviderCount()
 	modelCount := models.ModelCount()
 	ver := version.String()
