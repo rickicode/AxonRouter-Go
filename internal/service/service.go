@@ -47,9 +47,11 @@ func (p *Program) Stop(s kardianos.Service) error {
 // ServiceConfig returns a service configuration for the current binary.
 // It resolves the executable path and chooses the invoking user so installed
 // services run with the same privileges and data directory as an interactive
-// start. When root is true the service is configured to run as the root/system
-// account instead of the invoking user.
-func ServiceConfig(root bool) (*kardianos.Config, error) {
+// start.
+//   - root true: configure the service to run as the root/system account.
+//   - user true: install/control a user-level service (e.g. systemd --user).
+//     user is ignored when root is true.
+func ServiceConfig(root, userMode bool) (*kardianos.Config, error) {
 	execPath, err := os.Executable()
 	if err != nil {
 		return nil, fmt.Errorf("locate executable: %w", err)
@@ -80,6 +82,13 @@ func ServiceConfig(root bool) (*kardianos.Config, error) {
 		DisplayName: DisplayName,
 		Description: Description,
 		Executable:  execPath,
+	}
+	if cfg.Option == nil {
+		cfg.Option = make(kardianos.KeyValue)
+	}
+	// Install as a user service when explicitly requested and not root/system.
+	if userMode && !root {
+		cfg.Option["UserService"] = true
 	}
 
 	if runtime.GOOS == "windows" {

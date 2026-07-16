@@ -117,14 +117,23 @@ axonrouter --setpass <password>
 
 ## Systemd Service
 
-### Recommended: binary-managed service
+### User service (no root)
 
 ```bash
-sudo axonrouter --startup install
-systemctl status axonrouter
+axonrouter --startup install
+systemctl --user status axonrouter
 ```
 
-### Manual service file (fallback)
+The unit is written to `~/.config/systemd/user/axonrouter.service` and runs as the current user.
+
+### System-wide service (root)
+
+```bash
+sudo axonrouter --startup install-root
+sudo systemctl status axonrouter
+```
+
+### Manual service file (fallback, root)
 
 ```ini
 # /etc/systemd/system/axonrouter.service

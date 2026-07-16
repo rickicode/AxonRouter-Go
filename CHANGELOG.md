@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `installer.sh` now installs the binary into `~/.local/bin` by default and prints clear `sudo`/`--to` instructions when that directory is not writable.
 - `npm/axonrouter-go` postinstall now copies the verified binary to `~/.local/bin/axonrouter` on Linux/macOS when possible, falling back to the package-local binary with instructions.
+- `axonrouter --startup install` now creates a systemd **user** service (`~/.config/systemd/user/axonrouter.service`) and no longer requires root. Running it as root is blocked; use `axonrouter --startup install-root` for a system-wide service.
+- Docs now mention `npx axonrouter-go` as a one-off, no-install way to run the binary once the package is published.
 
 ## [0.3.5] - 2026-07-15
 
