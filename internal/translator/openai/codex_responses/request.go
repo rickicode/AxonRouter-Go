@@ -9,15 +9,13 @@ import (
 )
 
 func init() {
-	// openai → codex-responses (reverse: register request transform)
+	// openai → codex-responses: register only the request transform here.
+	// The response transform lives in internal/translator/codex/responses.
 	registry.Register(
 		types.FormatOpenAI,
 		types.FormatCodexResponses,
 		openaiToCodexRequest,
-		types.ResponseTransform{
-			Stream:    passthroughStream,
-			NonStream: passthroughNonStream,
-		},
+		types.ResponseTransform{},
 	)
 }
 

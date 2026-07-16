@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Streaming context cancellation now emits an in-band SSE `error` event followed by `[DONE]`, preventing clients from hanging when a stream is cancelled.
+- Codex (`cx`) connections no longer stay excluded from routing after a DB cooldown recovery: setting a connection back to `ready` now clears any stale in-memory `CooldownUntil`.
+- Codex chat requests now use the canonical Codex-specific translator, preventing malformed upstream requests that previously failed with `"Unsupported parameter: max_output_tokens"`.
+- Codex streaming/non-streaming responses now use a 50MB SSE scanner buffer (matching CLIProxyAPI) and collect `response.output_item.done` events to patch empty `response.completed` events, fixing empty/truncated responses and `bufio.Scanner: token too long` errors.
 
 ### Changed
 - `streamResponse`, `handleStreamResponse`, and `handleClaudeStreamResponse` now return an `error` so callers can implement retry/failover logic.

@@ -38,13 +38,16 @@ type StreamResult struct {
 
 // StreamConfig holds per-request streaming tunables.
 type StreamConfig struct {
-	FetchTimeoutMs         int // timeout for response headers, e.g. 90000
-	StreamIdleTimeoutMs    int // timeout between chunks, e.g. 60000
-	StreamReadinessTimeoutMs int // timeout for first chunk, e.g. 300000
-	StallTimeoutMs         int // raw-byte stall timeout (0 = use idle timeout)
-	HoldbackMs             int // holdback buffer window in ms (default 750)
-	HoldbackBytes          int // holdback buffer max bytes (default 65536)
-	AdaptiveReadiness      bool // enable adaptive readiness extension
+	FetchTimeoutMs           int  // timeout for response headers, e.g. 90000
+	StreamIdleTimeoutMs      int  // timeout between chunks, e.g. 60000
+	StreamReadinessTimeoutMs int  // timeout for first chunk, e.g. 300000
+	StallTimeoutMs           int  // raw-byte stall timeout (0 = use idle timeout)
+	HoldbackMs               int  // holdback buffer window in ms (default 750)
+	HoldbackBytes            int  // holdback buffer max bytes (default 65536)
+	AdaptiveReadiness        bool // enable adaptive readiness extension
+	// ScannerMaxTokenSize overrides the default 64KB max SSE line size.
+	// Codex Responses can emit single data: lines > 64KB (reasoning, images).
+	ScannerMaxTokenSize int
 }
 
 // StallTapReader wraps an io.Reader and calls onBytes on every successful Read.
@@ -793,8 +796,14 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 		defer resp.Body.Close()
 
 		scanner := bufio.NewScanner(tappedBody)
-		// ponytail: 64KB max line size, good enough for SSE
-		scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+		// Default 64KB is enough for most SSE providers; Codex Responses can send
+		// single data: lines containing full responses/images/reasoning that are
+		// much larger, so allow per-request override (matches CLIProxyAPI Codex).
+		maxToken := 64 * 1024
+		if cfg != nil && cfg.ScannerMaxTokenSize > 0 {
+			maxToken = cfg.ScannerMaxTokenSize
+		}
+		scanner.Buffer(make([]byte, 0, maxToken), maxToken)
 
 		// Run scanner in its own goroutine so select on idle timeout
 		scanCh := make(chan []byte, 1)

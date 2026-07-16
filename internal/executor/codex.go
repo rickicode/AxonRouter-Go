@@ -4,14 +4,20 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // defaultCodexUserAgent is the current Codex CLI default used for upstream requests.
 const defaultCodexUserAgent = "codex_cli_rs/0.142.0 (Debian 12.9; x86_64)"
+
+// codexScannerMax is the per-line buffer size for Codex Responses SSE streams.
+// Codex can emit single data: lines containing full outputs/images (>64 KB).
+const codexScannerMax = 52_428_800 // 50 MB, matching CLIProxyAPI Codex
 
 var (
 	codexDropNonstandardMu sync.RWMutex
@@ -131,7 +137,8 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 	body := codexRequestBody(req.Body)
 	headers := codexHeaders(req)
 
-	streamResult, err := e.DoStreamRequest(ctx, "POST", url, headers, body)
+	cfg := &StreamConfig{ScannerMaxTokenSize: codexScannerMax}
+	streamResult, err := e.DoStreamRequestWithConfig(ctx, "POST", url, headers, body, cfg)
 	if err != nil {
 		if upErr, ok := err.(*UpstreamError); ok {
 			upErr.TranslateErrorBody(req.Provider)
@@ -142,6 +149,12 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 	var buf bytes.Buffer
 	var statusCode int
 	var usage CodexUsage
+	// Codex Responses streams `response.output_item.done` events before the final
+	// `response.completed`, but the completed event sometimes has an empty
+	// `response.output` array. Collect output_item.done items and patch them into
+	// the completed event, matching CLIProxyAPI Codex behavior.
+	outputItemsByIndex := make(map[int64][]byte)
+	var outputItemsFallback [][]byte
 	for chunk := range streamResult.Chunks {
 		if chunk.Err != nil {
 			return nil, fmt.Errorf("codex stream error: %w", chunk.Err)
@@ -149,10 +162,25 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 		if chunk.Payload == nil || isNonstandardCodexSSELine(chunk.Payload) {
 			continue
 		}
-		buf.Write(chunk.Payload)
+		payload := chunk.Payload
+		// Patch the completed event in-place if needed.
+		payload = patchCodexCompletedOutput(payload, outputItemsByIndex, outputItemsFallback)
+		buf.Write(payload)
 		buf.WriteByte('\n')
-		if u := extractCodexUsage(chunk.Payload); u.TotalTokens > 0 || u.InputTokens > 0 || u.OutputTokens > 0 {
+		if u := extractCodexUsage(payload); u.TotalTokens > 0 || u.InputTokens > 0 || u.OutputTokens > 0 {
 			usage = u
+		}
+		// Collect output_item.done for patching a later response.completed.
+		eventData, eventType := parseCodexEvent(payload)
+		if eventType == "response.output_item.done" && len(eventData) > 0 {
+			if item := gjson.GetBytes(eventData, "item"); item.Exists() && item.Type == gjson.JSON {
+				idx := gjson.GetBytes(eventData, "output_index").Int()
+				if gjson.GetBytes(eventData, "output_index").Exists() {
+					outputItemsByIndex[idx] = []byte(item.Raw)
+				} else {
+					outputItemsFallback = append(outputItemsFallback, []byte(item.Raw))
+				}
+			}
 		}
 	}
 
@@ -175,7 +203,8 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, req *Request) (*Strea
 	body := codexRequestBody(req.Body)
 	headers := codexHeaders(req)
 
-	result, err := e.DoStreamRequest(ctx, "POST", url, headers, body)
+	cfg := &StreamConfig{ScannerMaxTokenSize: codexScannerMax}
+	result, err := e.DoStreamRequestWithConfig(ctx, "POST", url, headers, body, cfg)
 	if err != nil {
 		if upErr, ok := err.(*UpstreamError); ok {
 			upErr.TranslateErrorBody(req.Provider)
@@ -232,4 +261,51 @@ func isNonstandardCodexSSELine(line []byte) bool {
 	}
 	name := strings.TrimSpace(string(trimmed[6:]))
 	return strings.HasPrefix(name, "codex.")
+}
+
+// parseCodexEvent extracts the JSON payload and event type from a single SSE
+// line. It strips the optional "data:" prefix if present.
+func parseCodexEvent(line []byte) ([]byte, string) {
+	data := bytes.TrimSpace(line)
+	if bytes.HasPrefix(data, []byte("data:")) {
+		data = bytes.TrimSpace(data[5:])
+	}
+	if len(data) == 0 {
+		return nil, ""
+	}
+	return data, gjson.GetBytes(data, "type").String()
+}
+
+// patchCodexCompletedOutput reconstructs response.output from collected
+// output_item.done events when the upstream response.completed event arrives
+// with an empty output array. This mirrors CLIProxyAPI Codex behavior.
+func patchCodexCompletedOutput(payload []byte, byIndex map[int64][]byte, fallback [][]byte) []byte {
+	data, eventType := parseCodexEvent(payload)
+	if eventType != "response.completed" || len(data) == 0 {
+		return payload
+	}
+	output := gjson.GetBytes(data, "response.output")
+	needsPatch := (!output.Exists() || !output.IsArray() || len(output.Array()) == 0) &&
+		(len(byIndex) > 0 || len(fallback) > 0)
+	if !needsPatch {
+		return payload
+	}
+	patched, err := sjson.SetRawBytes(data, "response.output", []byte(`[]`))
+	if err != nil {
+		return payload
+	}
+	indexes := make([]int64, 0, len(byIndex))
+	for idx := range byIndex {
+		indexes = append(indexes, idx)
+	}
+	sort.Slice(indexes, func(i, j int) bool { return indexes[i] < indexes[j] })
+	for _, idx := range indexes {
+		patched, _ = sjson.SetRawBytes(patched, "response.output.-1", byIndex[idx])
+	}
+	for _, item := range fallback {
+		patched, _ = sjson.SetRawBytes(patched, "response.output.-1", item)
+	}
+	// Re-encode as an SSE data: line so downstream translators see the same
+	// shape as before.
+	return append([]byte("data: "), patched...)
 }

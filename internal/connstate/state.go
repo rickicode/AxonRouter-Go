@@ -93,6 +93,7 @@ func (cs *ConnectionState) SetStatus(status Status, err string) {
 		cs.SuccessCount++
 		cs.FailCount = 0
 		cs.BanCount = 0 // reset ban count on success
+		cs.CooldownUntil = nil
 	} else if status == StatusAuthFailed || status == StatusSuspended || status == StatusQuotaExhausted || status == StatusBalanceEmpty {
 		cs.FailCount++
 		cs.BanCount++

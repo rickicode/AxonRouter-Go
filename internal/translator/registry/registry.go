@@ -46,7 +46,11 @@ func (r *Registry) Register(from, to types.Format, request types.TranslateFunc, 
 	if _, ok := r.responses[from]; !ok {
 		r.responses[from] = make(map[types.Format]types.ResponseTransform)
 	}
-	r.responses[from][to] = response
+	// Allow partial registrations so one package can supply the request transform and
+	// another package the response transform for the same format pair.
+	if response.Stream != nil || response.NonStream != nil {
+		r.responses[from][to] = response
+	}
 }
 
 // TranslateRequest converts a payload between formats.
