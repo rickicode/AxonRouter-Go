@@ -133,6 +133,7 @@ func (h *Handler) Embeddings(c *gin.Context) {
 		ProviderTypeID:     provider,
 		ModelID:              modelName,
 		ProxyPoolID:          executor.ProxyPoolIDFromContext(proxyCtx),
+		ApiType:              apiTypeFromPath(c.Request.URL.Path),
 		Modality:             "embedding",
 		Stream:               false,
 		LatencyMs:            time.Since(start).Milliseconds(),

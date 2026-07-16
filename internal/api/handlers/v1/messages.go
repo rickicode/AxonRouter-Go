@@ -162,6 +162,7 @@ func (h *Handler) Messages(c *gin.Context) {
 		ProviderTypeID: provider,
 		ModelID: modelName,
 		ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
+		ApiType:     apiTypeFromPath(c.Request.URL.Path),
 		Modality: "chat",
 		Stream: stream,
 		InputTokens: tokenCounts.InputTokens,

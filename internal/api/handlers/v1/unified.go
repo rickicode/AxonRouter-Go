@@ -38,23 +38,28 @@ func (h *Handler) Unified(c *gin.Context) {
 
 	switch mode {
 	case "text":
-		// Dispatch to chat completions
+		// Dispatch to chat completions; rewrite path so logs/tagging reflect the
+		// actual client-facing surface instead of the generic /v1/unified path.
 		c.Request.Body = io.NopCloser(executor.JSONToReader(body))
+		c.Request.URL.Path = "/v1/chat/completions"
 		h.ChatCompletions(c)
 
 	case "image":
 		// Dispatch to image generation
 		c.Request.Body = io.NopCloser(executor.JSONToReader(body))
+		c.Request.URL.Path = "/v1/images/generations"
 		h.Images(c)
 
 	case "audio":
 		// Dispatch to TTS
 		c.Request.Body = io.NopCloser(executor.JSONToReader(body))
+		c.Request.URL.Path = "/v1/audio/speech"
 		h.TTS(c)
 
 	case "video":
 		// Dispatch to video generation
 		c.Request.Body = io.NopCloser(executor.JSONToReader(body))
+		c.Request.URL.Path = "/v1/video/generations"
 		h.Video(c)
 
 	default:

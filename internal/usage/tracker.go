@@ -22,6 +22,7 @@ type LogEntry struct {
 	ComboID             string
 	ProxyPoolID         string
 	ApiKeyID            string
+	ApiType             string // client-facing API format, e.g. openai, claude, embeddings
 	Modality            string
 	InputTokens         int64
 	OutputTokens        int64
@@ -170,10 +171,10 @@ func (t *Tracker) writeBatchDirect(database *sql.DB, batch []*LogEntry) error {
 
 	stmt, err := tx.Prepare(`INSERT INTO request_logs
 		(id, timestamp, connection_id, provider_type_id, model_id, combo_id, proxy_pool_id,
-		api_key_id, modality, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_creation_tokens,
+		api_key_id, api_type, modality, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_creation_tokens,
 		stream, tokens_estimated,
 		latency_ms, status_code, error_message, cost_usd, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		tx.Rollback()
 		return fmt.Errorf("usage: prepare: %w", err)
@@ -189,11 +190,12 @@ func (t *Tracker) writeBatchDirect(database *sql.DB, batch []*LogEntry) error {
 		proxyPoolID := toNullString(e.ProxyPoolID)
 		latency := sql.NullInt64{Int64: e.LatencyMs, Valid: e.LatencyMs > 0}
 		apiKeyID := toNullString(e.ApiKeyID)
+		apiType := toNullString(e.ApiType)
 		statusCode := sql.NullInt64{Int64: int64(e.StatusCode), Valid: e.StatusCode > 0}
 		errMsg := toNullString(e.ErrorMessage)
 
 		if _, err := stmt.Exec(uuid.New().String(), e.Timestamp, connID, providerID, modelID, comboID, proxyPoolID,
-			apiKeyID, e.Modality, e.InputTokens, e.OutputTokens, e.ReasoningTokens, e.CachedTokens, e.CacheCreationTokens,
+			apiKeyID, apiType, e.Modality, e.InputTokens, e.OutputTokens, e.ReasoningTokens, e.CachedTokens, e.CacheCreationTokens,
 			e.Stream, e.TokensEstimated,
 			latency, statusCode, errMsg, e.CostUsd, now); err != nil {
 			log.Printf("usage: exec: %v", err)

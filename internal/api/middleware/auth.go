@@ -41,8 +41,7 @@ func Auth(db *sql.DB, cache *AuthCache) gin.HandlerFunc {
 	keyID, rateLimit, maxTokens, ok, expired, dbErr := cache.Validate(db, presented)
 	if dbErr != nil {
 		logging.Logger.Warn("auth system error querying api_keys", "error", dbErr)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "auth system error"})
-		c.Abort()
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "auth system error"})
 		return
 	}
 	if expired {
@@ -53,8 +52,7 @@ func Auth(db *sql.DB, cache *AuthCache) gin.HandlerFunc {
 		var count int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM api_keys WHERE is_active = 1`).Scan(&count); err != nil {
 			logging.Logger.Warn("auth system error querying api_keys", "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "auth system error"})
-			c.Abort()
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "auth system error"})
 			return
 		}
 		if count == 0 {

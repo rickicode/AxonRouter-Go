@@ -42,7 +42,7 @@ dataQuery := fmt.Sprintf(`
 SELECT r.id, r.timestamp, r.connection_id, c.name AS connection_name, r.provider_type_id, r.model_id, r.combo_id,
 r.proxy_pool_id, p.name AS proxy_pool_name,
 COALESCE(NULLIF(k.name,''), NULLIF(k.key_value,''), r.api_key_id) AS api_key,
-r.modality, r.input_tokens, r.output_tokens, r.reasoning_tokens, r.cached_tokens, r.cache_creation_tokens,
+r.api_type, r.modality, r.input_tokens, r.output_tokens, r.reasoning_tokens, r.cached_tokens, r.cache_creation_tokens,
 r.stream, r.tokens_estimated,
 r.latency_ms, r.status_code, r.error_message, r.cost_usd, r.created_at
 FROM request_logs r
@@ -65,7 +65,7 @@ LIMIT ? OFFSET ?
 	for rows.Next() {
 		l := db.RequestLog{}
 rows.Scan(&l.ID, &l.Timestamp, &l.ConnectionID, &l.ConnectionName, &l.ProviderTypeID,
-		&l.ModelID, &l.ComboID, &l.ProxyPoolID, &l.ProxyPoolName, &l.ApiKey, &l.Modality,
+		&l.ModelID, &l.ComboID, &l.ProxyPoolID, &l.ProxyPoolName, &l.ApiKey, &l.ApiType, &l.Modality,
 		&l.InputTokens, &l.OutputTokens, &l.ReasoningTokens, &l.CachedTokens, &l.CacheCreationTokens,
 		&l.Stream, &l.TokensEstimated,
 		&l.LatencyMs, &l.StatusCode, &l.ErrorMessage,

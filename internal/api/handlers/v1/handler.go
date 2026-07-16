@@ -68,23 +68,40 @@ func (h *Handler) TrackActive() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		// Enforce max body size here too, before any tracking reads.
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodySize)
-		raw, err := io.ReadAll(c.Request.Body)
-		if err != nil {
-			if strings.Contains(err.Error(), "http: request body too large") {
-				c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{
-					"error": gin.H{"message": fmt.Sprintf("request body too large (max %d bytes)", maxBodySize), "type": "invalid_request_error"},
-				})
+
+		// Skip body-reading for non-JSON request kinds. Multipart bodies (STT)
+		// cannot be read here and restored reliably for downstream handlers, so
+		// we still track them using the form fields from the original request.
+		contentType := c.GetHeader("Content-Type")
+		isMultipart := strings.Contains(contentType, "multipart/")
+
+		model := ""
+		stream := false
+		if isMultipart {
+			if err := c.Request.ParseMultipartForm(32 << 20); err == nil {
+				model = c.PostForm("model")
+			}
+		} else {
+			// Enforce max body size here too, before any tracking reads.
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodySize)
+			raw, err := io.ReadAll(c.Request.Body)
+			if err != nil {
+				if strings.Contains(err.Error(), "http: request body too large") {
+					c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{
+						"error": gin.H{"message": fmt.Sprintf("request body too large (max %d bytes)", maxBodySize), "type": "invalid_request_error"},
+					})
+					return
+				}
+				// For non-size read failures, continue without tracking rather than failing the request.
+				c.Next()
 				return
 			}
-			// For non-size read failures, continue without tracking rather than failing the request.
-			c.Next()
-			return
+			// Restore body for downstream handlers (readBody reads it again).
+			c.Request.Body = io.NopCloser(bytes.NewReader(raw))
+			model = executor.JSONGet(raw, "model")
+			stream = executor.IsStreamRequest(raw)
 		}
-		// Restore body for downstream handlers (readBody reads it again).
-		c.Request.Body = io.NopCloser(bytes.NewReader(raw))
-		model := executor.JSONGet(raw, "model")
+
 		if model == "" {
 			c.Next()
 			return
@@ -97,7 +114,7 @@ func (h *Handler) TrackActive() gin.HandlerFunc {
 			ProviderTypeID: provider,
 			ModelID:        model,
 			Modality:       modalityFromPath(c.Request.URL.Path),
-			Stream:         executor.IsStreamRequest(raw),
+			Stream:         stream,
 		})
 		c.Request = c.Request.WithContext(active.WithID(c.Request.Context(), id))
 		defer active.Deregister(id)
@@ -126,6 +143,33 @@ func modalityFromPath(path string) string {
 		return "stt"
 	default:
 		return "chat"
+	}
+}
+
+// apiTypeFromPath derives a client-facing API type label from the request path.
+// This tells the dashboard which surface the caller used (openai, claude, etc.).
+func apiTypeFromPath(path string) string {
+	switch {
+	case strings.Contains(path, "/chat/completions"):
+		return "openai"
+	case strings.Contains(path, "/messages"):
+		return "claude"
+	case strings.Contains(path, "/responses"):
+		return "responses"
+	case strings.Contains(path, "/embeddings"):
+		return "embeddings"
+	case strings.Contains(path, "/images/generations"):
+		return "images"
+	case strings.Contains(path, "/video/generations"):
+		return "video"
+	case strings.Contains(path, "/audio/speech"):
+		return "tts"
+	case strings.Contains(path, "/audio/transcriptions"):
+		return "stt"
+	case strings.Contains(path, "/count_tokens"):
+		return "count_tokens"
+	default:
+		return modalityFromPath(path)
 	}
 }
 
@@ -902,6 +946,7 @@ func (h *Handler) handleFailoverError(ctx context.Context, c *gin.Context, conn 
 		ProviderTypeID: provider,
 		ModelID: modelName,
 		ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
+		ApiType: apiTypeFromPath(c.Request.URL.Path),
 		Modality: "chat",
 		Stream: stream,
 		LatencyMs: latency,
@@ -951,6 +996,7 @@ func (h *Handler) writeUpstreamClientError(
 			ProviderTypeID: provider,
 			ModelID: modelName,
 			ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
+			ApiType: apiTypeFromPath(c.Request.URL.Path),
 			Modality: "chat",
 			Stream: stream,
 			LatencyMs: time.Since(start).Milliseconds(),
@@ -1096,6 +1142,7 @@ latency := time.Since(start).Milliseconds()
 				ModelID: model,
 				ComboID: comboID,
 				ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
+				ApiType: apiTypeFromPath(c.Request.URL.Path),
 				Modality: "chat",
 				Stream: true,
 				InputTokens: acc.InputTokens,
@@ -1135,6 +1182,7 @@ latency := time.Since(start).Milliseconds()
 				ModelID: model,
 				ComboID: comboID,
 				ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
+				ApiType: apiTypeFromPath(c.Request.URL.Path),
 				Modality: "chat",
 				Stream: true,
 				LatencyMs: time.Since(start).Milliseconds(),

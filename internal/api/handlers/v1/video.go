@@ -84,6 +84,7 @@ func (h *Handler) Video(c *gin.Context) {
 		ProviderTypeID: provider,
 		ModelID: modelName,
 		ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
+		ApiType:     apiTypeFromPath(c.Request.URL.Path),
 		Modality: "video",
 		Stream: false,
 		LatencyMs: time.Since(start).Milliseconds(),

@@ -123,6 +123,7 @@ export interface RequestLog {
   model_id: string;
   combo_id: string;
   modality: string;
+  api_type?: string;
   stream: boolean;
   input_tokens: number;
   output_tokens: number;

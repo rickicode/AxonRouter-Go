@@ -474,6 +474,9 @@ const columns: ColumnDef[] = [
           </td>
 <td class="py-3 px-4 text-code text-right whitespace-nowrap">
 							<div class="flex flex-col items-end gap-1">
+								{#if row.api_type}
+									<span class="text-caption-mono text-muted-foreground">{row.api_type}</span>
+								{/if}
 								<div>
 									<span class="text-muted-foreground">{formatTokens(row.input_tokens)}</span>
 									<span class="text-muted-foreground/60">/</span>

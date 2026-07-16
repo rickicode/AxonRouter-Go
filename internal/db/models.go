@@ -97,14 +97,15 @@ type RequestLog struct {
 	ID              string         `json:"id"`
 	Timestamp       int64          `json:"timestamp"`
 	ConnectionID    sql.NullString `json:"connection_id,omitempty"`
-	ConnectionName    sql.NullString `json:"connection_name,omitempty"`
+	ConnectionName  sql.NullString `json:"connection_name,omitempty"`
 	ProviderTypeID  sql.NullString `json:"provider_type_id,omitempty"`
 	ModelID         sql.NullString `json:"model_id,omitempty"`
 	ComboID         sql.NullString `json:"combo_id,omitempty"`
-	ProxyPoolID   sql.NullString `json:"proxy_pool_id,omitempty"`
-	ProxyPoolName sql.NullString `json:"proxy_pool_name,omitempty"`
-	ApiKey        sql.NullString `json:"api_key,omitempty"`
-	Modality      string         `json:"modality"`
+	ProxyPoolID     sql.NullString `json:"proxy_pool_id,omitempty"`
+	ProxyPoolName   sql.NullString `json:"proxy_pool_name,omitempty"`
+	ApiKey          sql.NullString `json:"api_key,omitempty"`
+	ApiType         sql.NullString `json:"api_type,omitempty"`
+	Modality        string         `json:"modality"`
 	InputTokens     int64          `json:"input_tokens"`
 	OutputTokens    int64          `json:"output_tokens"`
 	ReasoningTokens int64          `json:"reasoning_tokens"`
@@ -144,10 +145,11 @@ func (r RequestLog) MarshalJSON() ([]byte, error) {
 		ProviderTypeID  string `json:"provider_type_id,omitempty"`
 		ModelID         string `json:"model_id,omitempty"`
 		ComboID         string `json:"combo_id,omitempty"`
-		ProxyPoolID   string `json:"proxy_pool_id,omitempty"`
-		ProxyPoolName string `json:"proxy_pool_name,omitempty"`
-		ApiKey        string `json:"api_key,omitempty"`
-		Modality      string `json:"modality"`
+		ProxyPoolID     string `json:"proxy_pool_id,omitempty"`
+		ProxyPoolName   string `json:"proxy_pool_name,omitempty"`
+		ApiKey          string `json:"api_key,omitempty"`
+		ApiType         string `json:"api_type,omitempty"`
+		Modality        string `json:"modality"`
 		InputTokens     int64  `json:"input_tokens"`
 		OutputTokens    int64  `json:"output_tokens"`
 		ReasoningTokens int64  `json:"reasoning_tokens"`
@@ -169,10 +171,11 @@ func (r RequestLog) MarshalJSON() ([]byte, error) {
 		ProviderTypeID:  getStr(r.ProviderTypeID),
 		ModelID:         getStr(r.ModelID),
 		ComboID:         getStr(r.ComboID),
-		ProxyPoolID:   getStr(r.ProxyPoolID),
-		ProxyPoolName: getStr(r.ProxyPoolName),
-		ApiKey:        getStr(r.ApiKey),
-		Modality:      r.Modality,
+		ProxyPoolID:     getStr(r.ProxyPoolID),
+		ProxyPoolName:   getStr(r.ProxyPoolName),
+		ApiKey:          getStr(r.ApiKey),
+		ApiType:         getStr(r.ApiType),
+		Modality:        r.Modality,
 		InputTokens:     r.InputTokens,
 		OutputTokens:    r.OutputTokens,
 		ReasoningTokens: r.ReasoningTokens,

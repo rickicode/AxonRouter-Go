@@ -8,8 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Request logs now record the client-facing API type (`api_type`) so the `/logs` dashboard shows whether a request came through the OpenAI-compatible surface (`/v1/chat/completions`), Claude surface (`/v1/messages`), responses, embeddings, images, audio, video, or other endpoints.
 - API key expiration with 1/7/30/90 days, custom date, and no expiration options.
 - `AXONROUTER_DIR` environment variable overrides the data directory (default remains `~/axonrouter`). Relative paths resolve against `$HOME`.
+
+### Fixed
+- Auth middleware now uses `AbortWithStatusJSON` instead of writing a body and then aborting, preventing malformed responses on auth-system errors.
+- `TrackActive` middleware no longer consumes and re-reads multipart bodies (used by `/v1/audio/transcriptions`), so STT requests are no longer corrupted by the in-flight request tracker.
 
 ### Changed
 - `installer.sh` now installs the binary into `~/.local/bin` by default and prints clear `sudo`/`--to` instructions when that directory is not writable.
