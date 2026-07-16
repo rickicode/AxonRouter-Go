@@ -29,7 +29,8 @@ const DefaultRoutingMode = RoundRobin
 // ProviderSettings holds per-provider runtime configuration stored outside the
 // database to avoid SQLite write contention on the hot routing path.
 type ProviderSettings struct {
-	RoutingMode RoutingMode `json:"routing_mode"`
+	RoutingMode    RoutingMode    `json:"routing_mode"`
+	Compatibility  *Compatibility `json:"compatibility,omitempty"`
 }
 
 // Manager loads and persists per-provider settings from JSON files in the data
@@ -47,11 +48,12 @@ func NewManager(dataDir string) *Manager {
 	_ = os.MkdirAll(dir, 0o755)
 
 	m := &Manager{
-		dir:        dir,
-		settings:   make(map[string]ProviderSettings),
+		dir: dir,
+		settings: make(map[string]ProviderSettings),
 		rrCounters: make(map[string]*atomic.Uint64),
 	}
 	m.loadAll()
+	setCompatibilityManager(m)
 	return m
 }
 

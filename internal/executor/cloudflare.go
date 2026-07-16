@@ -2,6 +2,8 @@ package executor
 
 import (
 	"context"
+
+	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 )
 
 // CloudflareExecutor wraps OpenAIExecutor with Cloudflare Workers AI-specific
@@ -21,21 +23,33 @@ func cloneRequest(req *Request) *Request {
 	return &cp
 }
 
-// Execute sanitizes the request for Cloudflare constraints and delegates to the
-// underlying OpenAI executor.
+// Execute sanitizes the request using the provider's compatibility config and
+// delegates to the underlying OpenAI executor.
 func (e *CloudflareExecutor) Execute(ctx context.Context, req *Request) (*Response, error) {
 	cp := cloneRequest(req)
-	cp.Body = sanitizeCFRequest(cp.Body)
+	provider := req.Provider
+	if provider == "" {
+		provider = "cf"
+	}
+	c := providercfg.CompatibilityFor(provider)
+	cp.Provider = provider
+	cp.Body = sanitizeRequestWithCompatibility(cp.Body, c)
 	resp, err := e.OpenAIExecutor.Execute(ctx, cp)
 	translateIfCloudflare(err)
 	return resp, err
 }
 
-// ExecuteStream sanitizes the request for Cloudflare constraints and delegates to
-// the underlying OpenAI executor.
+// ExecuteStream sanitizes the request using the provider's compatibility config
+// and delegates to the underlying OpenAI executor.
 func (e *CloudflareExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
 	cp := cloneRequest(req)
-	cp.Body = sanitizeCFRequest(cp.Body)
+	provider := req.Provider
+	if provider == "" {
+		provider = "cf"
+	}
+	c := providercfg.CompatibilityFor(provider)
+	cp.Provider = provider
+	cp.Body = sanitizeRequestWithCompatibility(cp.Body, c)
 	result, err := e.OpenAIExecutor.ExecuteStream(ctx, cp)
 	translateIfCloudflare(err)
 	return result, err
