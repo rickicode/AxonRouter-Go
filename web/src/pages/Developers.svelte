@@ -97,7 +97,10 @@ const proxyUsageResponse = `{
     { method: 'GET', path: '/admin/api/v1/settings' },
   ];
 
-  onMount(loadKey);
+  onMount(() => {
+  document.title = 'Developers — AxonRouter';
+  loadKey();
+});
 </script>
 
 <div class="flex flex-1 flex-col gap-6 p-6">
