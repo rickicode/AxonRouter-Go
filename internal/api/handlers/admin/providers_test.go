@@ -14,8 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/rickicode/AxonRouter-Go/internal/connstate"
+"github.com/gin-gonic/gin"
+"github.com/rickicode/AxonRouter-Go/internal/auth"
+"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
@@ -199,6 +200,178 @@ func TestAll_BatchesToMaxTen(t *testing.T) {
 	}
 	if mock.MaxActive() == 0 {
 		t.Fatalf("mock was never called concurrently")
+	}
+}
+
+// tokenCapturingExecutor captures the access token used on the last ExecuteStream
+// call and returns a trivial successful stream.
+type tokenCapturingExecutor struct {
+	lastAccessToken string
+}
+
+func (m *tokenCapturingExecutor) Execute(ctx context.Context, req *executor.Request) (*executor.Response, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *tokenCapturingExecutor) ExecuteStream(ctx context.Context, req *executor.Request) (*executor.StreamResult, error) {
+	m.lastAccessToken = req.AccessToken
+	ch := make(chan executor.StreamChunk, 1)
+	ch <- executor.StreamChunk{Payload: []byte(`{"ok":true}`)}
+	close(ch)
+	return &executor.StreamResult{Chunks: ch}, nil
+}
+
+// fakeOAuthService is a test double for auth.OAuthService.
+type fakeOAuthService struct {
+	refreshFunc func(ctx context.Context, creds *auth.Credentials) (*auth.Credentials, error)
+}
+
+func (f *fakeOAuthService) GenerateAuthURL(ctx context.Context, state string) (string, error) {
+	return "", nil
+}
+
+func (f *fakeOAuthService) ExchangeCode(ctx context.Context, code string) (*auth.Credentials, error) {
+	return nil, nil
+}
+
+func (f *fakeOAuthService) RefreshToken(ctx context.Context, creds *auth.Credentials) (*auth.Credentials, error) {
+	return f.refreshFunc(ctx, creds)
+}
+
+func (f *fakeOAuthService) StartLocalServer(ctx context.Context, state string) (int, chan *auth.Credentials, error) {
+	return 0, nil, nil
+}
+
+// TestAll_RefreshesNearExpiryOAuth proves TestAll refreshes an OAuth token that is
+// within the provider's lead time and tests with the new token.
+func TestAll_RefreshesNearExpiryOAuth(t *testing.T) {
+	database := newConnectionHandlerTestDB(t)
+	writeQueue := db.NewWriteQueue(database)
+	t.Cleanup(writeQueue.Stop)
+
+	now := time.Now().Unix()
+	expiresAt := time.Now().Add(2 * time.Minute).Unix()
+	if _, err := database.Exec(`INSERT INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('testp','Test Provider','openai','http://x',?)`, now); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if _, err := database.Exec(`
+		INSERT INTO connections (id, provider_type_id, name, auth_type, oauth_token, oauth_refresh_token, oauth_expires_at, status, is_active, created_at, updated_at)
+		VALUES ('conn-test','testp','Test Conn','oauth','old-access','old-refresh',?,'ready',1,?,?)
+	`, expiresAt, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+
+	authMgr := auth.NewManager()
+	authMgr.RegisterService(auth.ProviderType("testp"), &fakeOAuthService{
+		refreshFunc: func(ctx context.Context, creds *auth.Credentials) (*auth.Credentials, error) {
+			return &auth.Credentials{
+				AccessToken:  "new-access",
+				RefreshToken: "new-refresh",
+				ExpiresAt:    time.Now().Add(1 * time.Hour),
+			}, nil
+		},
+	})
+
+	mock := &tokenCapturingExecutor{}
+	registry := executor.GetRegistry()
+	registry.Register("testp", executor.FormatOpenAI, mock)
+
+	store := connstate.NewStore()
+	elig := connstate.NewEligibilityManager(store)
+	providerCfg := providercfg.NewManager("")
+	h := NewProviderHandler(database, registry, store, elig, providerCfg, writeQueue, authMgr)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/providers/testp/test", nil)
+	c.Params = []gin.Param{{Key: "id", Value: "testp"}}
+
+	h.TestAll(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `"status":"ok"`) {
+		t.Fatalf("expected ok result, body=%s", body)
+	}
+	if mock.lastAccessToken != "new-access" {
+		t.Fatalf("executor called with access token %q, want new-access", mock.lastAccessToken)
+	}
+	var persistedToken string
+	if err := database.QueryRow(`SELECT COALESCE(oauth_token,'') FROM connections WHERE id = ?`, "conn-test").Scan(&persistedToken); err != nil {
+		t.Fatalf("fetch persisted token: %v", err)
+	}
+	if persistedToken != "new-access" {
+		t.Fatalf("persisted token = %q, want new-access", persistedToken)
+	}
+}
+
+// TestAll_MarksAuthFailedOnUnrecoverableRefreshError proves TestAll marks a
+// connection auth_failed when token refresh fails with an unrecoverable error.
+func TestAll_MarksAuthFailedOnUnrecoverableRefreshError(t *testing.T) {
+	database := newConnectionHandlerTestDB(t)
+	writeQueue := db.NewWriteQueue(database)
+	t.Cleanup(writeQueue.Stop)
+
+	now := time.Now().Unix()
+	expiresAt := time.Now().Add(2 * time.Minute).Unix()
+	if _, err := database.Exec(`INSERT INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('testp','Test Provider','openai','http://x',?)`, now); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if _, err := database.Exec(`
+		INSERT INTO connections (id, provider_type_id, name, auth_type, oauth_token, oauth_refresh_token, oauth_expires_at, status, is_active, created_at, updated_at)
+		VALUES ('conn-bad','testp','Bad Conn','oauth','old-access','old-refresh',?,'ready',1,?,?)
+	`, expiresAt, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+
+	authMgr := auth.NewManager()
+	authMgr.RegisterService(auth.ProviderType("testp"), &fakeOAuthService{
+		refreshFunc: func(ctx context.Context, creds *auth.Credentials) (*auth.Credentials, error) {
+			return nil, errors.New("invalid_grant")
+		},
+	})
+
+	mock := &tokenCapturingExecutor{}
+	registry := executor.GetRegistry()
+	registry.Register("testp", executor.FormatOpenAI, mock)
+
+	store := connstate.NewStore()
+	elig := connstate.NewEligibilityManager(store)
+	providerCfg := providercfg.NewManager("")
+	h := NewProviderHandler(database, registry, store, elig, providerCfg, writeQueue, authMgr)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/providers/testp/test", nil)
+	c.Params = []gin.Param{{Key: "id", Value: "testp"}}
+
+	h.TestAll(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `"status":"failed"`) {
+		t.Fatalf("expected failed result, body=%s", body)
+	}
+	if mock.lastAccessToken != "" {
+		t.Fatalf("executor should not have been called, got access token %q", mock.lastAccessToken)
+	}
+
+	var isActive int
+	var status string
+	if err := database.QueryRow(`SELECT is_active, status FROM connections WHERE id = ?`, "conn-bad").Scan(&isActive, &status); err != nil {
+		t.Fatalf("fetch connection status: %v", err)
+	}
+	if isActive != 0 {
+		t.Fatalf("is_active = %d, want 0", isActive)
+	}
+	if status != "auth_failed" {
+		t.Fatalf("status = %q, want auth_failed", status)
 	}
 }
 

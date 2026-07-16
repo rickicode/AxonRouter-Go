@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -292,6 +294,17 @@ func parseServiceKinds(raw string) []string {
 // 10 in-flight goroutines/streams.
 const testAllBatchSize = 10
 
+// testAllRefreshLead defines per-provider proactive refresh lead times.
+// Matches OmniRoute REFRESH_LEAD_MS at open-sse/services/tokenRefresh.ts:32-49.
+var testAllRefreshLead = map[string]time.Duration{
+	"cx":      5 * time.Minute, // Codex: Auth0 rotating refresh tokens
+	"ag":      15 * time.Minute, // Antigravity: Google non-rotating refresh tokens
+	"kiro":    5 * time.Minute, // Kiro: AWS SSO OIDC one-time-use refresh tokens
+	"copilot": 5 * time.Minute, // Copilot: GitHub device-code tokens refresh early
+}
+
+const testAllDefaultRefreshLead = 5 * time.Minute
+
 // TestAll tests all connections for a provider using streaming.
 func (h *ProviderHandler) TestAll(c *gin.Context) {
 	providerID := c.Param("id")
@@ -305,7 +318,7 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 	}
 
 	rows, err := h.db.Query(`
-		SELECT c.id, COALESCE(c.api_key,''), COALESCE(c.oauth_token,''), COALESCE(pt.base_url,''), COALESCE(c.provider_specific_data, '')
+		SELECT c.id, COALESCE(c.api_key,''), COALESCE(c.oauth_token,''), COALESCE(c.auth_type,''), COALESCE(c.oauth_refresh_token,''), COALESCE(c.oauth_expires_at,0), COALESCE(pt.base_url,''), COALESCE(c.provider_specific_data, '')
 		FROM connections c
 		JOIN provider_types pt ON c.provider_type_id = pt.id
 		WHERE c.provider_type_id = ? AND c.is_active = 1
@@ -317,11 +330,14 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 	defer rows.Close()
 
 	type testInput struct {
-		connID  string
-		apiKey  string
-		access  string
-		baseURL string
-		psdMap  map[string]string
+		connID       string
+		apiKey       string
+		access       string
+		refreshToken string
+		expiresAt    int64
+		authType     string
+		baseURL      string
+		psdMap       map[string]string
 	}
 	type testResult struct {
 		ConnectionID string `json:"connection_id"`
@@ -341,15 +357,16 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 
 	var inputs []testInput
 	for rows.Next() {
-		var connID, apiKey, accessToken, baseURL, psdRaw string
-		if err := rows.Scan(&connID, &apiKey, &accessToken, &baseURL, &psdRaw); err != nil {
+		var connID, apiKey, accessToken, authType, refreshToken, baseURL, psdRaw string
+		var expiresAt int64
+		if err := rows.Scan(&connID, &apiKey, &accessToken, &authType, &refreshToken, &expiresAt, &baseURL, &psdRaw); err != nil {
 			continue
 		}
 		var psdMap map[string]string
 		if psdRaw != "" {
 			json.Unmarshal([]byte(psdRaw), &psdMap)
 		}
-		inputs = append(inputs, testInput{connID: connID, apiKey: apiKey, access: accessToken, baseURL: baseURL, psdMap: psdMap})
+		inputs = append(inputs, testInput{connID: connID, apiKey: apiKey, access: accessToken, authType: authType, refreshToken: refreshToken, expiresAt: expiresAt, baseURL: baseURL, psdMap: psdMap})
 	}
 	if err := rows.Err(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -372,15 +389,58 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 			go func() {
 				defer wg.Done()
 
-				start := time.Now()
-				streamResult, err := exec.ExecuteStream(ctx, &executor.Request{
-					APIKey:               in.apiKey,
-					AccessToken:          in.access,
-					BaseURL:              in.baseURL,
-					Body:                 bodyBytes,
-					Provider:             providerID,
-					ProviderSpecificData: in.psdMap,
-				})
+			start := time.Now()
+
+			// Refresh expired/near-expiry OAuth tokens before testing.
+			accessToken := in.access
+			expiresAt := in.expiresAt
+			if h.authMgr != nil && in.authType == "oauth" && shouldRefreshTestToken(providerID, in.refreshToken, expiresAt) {
+				creds := &auth.Credentials{
+					AccessToken:  in.access,
+					RefreshToken: in.refreshToken,
+					ExpiresAt:    time.Unix(expiresAt, 0),
+				}
+				newCreds, err := h.authMgr.RefreshToken(ctx, auth.ProviderType(providerID), creds)
+				if err != nil {
+					latency := time.Since(start).Milliseconds()
+			if isUnrecoverableRefreshError(err) {
+				log.Printf("Unrecoverable refresh error for %s/%s: %v — blocking connection", providerID, in.connID, err)
+				connID := in.connID
+				_, _ = h.db.Exec(`UPDATE connections SET is_active = 0, status = 'auth_failed', updated_at = ? WHERE id = ?`, time.Now().Unix(), connID)
+				if h.store != nil {
+					h.store.UpdateStatus(connID, connstate.StatusAuthFailed)
+				}
+			}
+					results[i] = testResult{ConnectionID: in.connID, Status: "failed", Error: err.Error(), LatencyMs: latency}
+					return
+				}
+				accessToken = newCreds.AccessToken
+				expiresAt = newCreds.ExpiresAt.Unix()
+				refreshToken := newCreds.RefreshToken
+				if refreshToken == "" {
+					refreshToken = in.refreshToken
+				}
+				connID := in.connID
+				psd := in.psdMap
+				if len(newCreds.ProviderSpecific) > 0 {
+					psd = newCreds.ProviderSpecific
+				}
+				if len(psd) > 0 {
+					psdJSON, _ := json.Marshal(psd)
+					_, _ = h.db.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?`, accessToken, refreshToken, expiresAt, psdJSON, time.Now().Unix(), connID)
+			} else {
+				_, _ = h.db.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`, accessToken, refreshToken, expiresAt, time.Now().Unix(), connID)
+			}
+		}
+
+		streamResult, err := exec.ExecuteStream(ctx, &executor.Request{
+				APIKey:      in.apiKey,
+				AccessToken: accessToken,
+				BaseURL:     in.baseURL,
+				Body:        bodyBytes,
+				Provider:    providerID,
+				ProviderSpecificData: in.psdMap,
+			})
 				if err != nil {
 					latency := time.Since(start).Milliseconds()
 					if h.store != nil {
@@ -420,6 +480,82 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"provider_id": providerID, "results": results})
+}
+
+// shouldRefreshTestToken reports whether an OAuth token should be refreshed
+// before testing based on per-provider lead times.
+func shouldRefreshTestToken(providerID, refreshToken string, expiresAt int64) bool {
+	if expiresAt == 0 {
+		return false
+	}
+	// GitHub device-code OAuth does not return a refresh token, but the
+	// short-lived Copilot bearer token can still be refreshed from the access
+	// token. For every other provider a refresh token is required.
+	if refreshToken == "" && providerID != "copilot" {
+		return false
+	}
+	lead := testAllDefaultRefreshLead
+	if v, ok := testAllRefreshLead[providerID]; ok {
+		lead = v
+	}
+	return time.Until(time.Unix(expiresAt, 0)) <= lead
+}
+
+// isUnrecoverableRefreshError checks if a refresh error indicates the token is
+// permanently invalid and should not be retried. Matches OmniRoute isUnrecoverableRefreshError
+// at open-sse/services/tokenRefresh.ts:9-19.
+func isUnrecoverableRefreshError(err error) bool {
+	if err == nil {
+		return false
+	}
+	code := extractOAuthErrorCode(err.Error(), 0)
+	return code != ""
+}
+
+// unrecoverableCodes are OAuth error codes that mean the refresh token is permanently dead.
+// Matches OmniRoute UNRECOVERABLE_OAUTH_ERROR_CODES at tokenRefresh.ts:204-212.
+var unrecoverableCodes = map[string]bool{
+	"invalid_grant":             true,
+	"invalid_request":           true,
+	"refresh_token_reused":      true,
+	"refresh_token_invalidated": true,
+	"invalid_token":             true,
+	"token_expired":             true,
+	"expired_token":             true,
+	"unauthorized_client":       true,
+	"access_denied":             true,
+	"unrecoverable_refresh_error": true,
+}
+
+// extractOAuthErrorCode extracts a canonical OAuth error code from an error body
+// of ANY shape. Handles JSON objects, double-encoded JSON strings, and regex fallback.
+// Matches OmniRoute extractOAuthErrorCode at tokenRefresh.ts:229-262.
+func extractOAuthErrorCode(raw string, depth int) string {
+	if raw == "" || depth > 6 {
+		return ""
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(raw), &obj); err == nil {
+		if code, ok := obj["error"].(string); ok {
+			code = strings.ToLower(code)
+			if unrecoverableCodes[code] {
+				return code
+			}
+		}
+		if detail, ok := obj["error_description"].(string); ok {
+			if code := extractOAuthErrorCode(detail, depth+1); code != "" {
+				return code
+			}
+		}
+		return ""
+	}
+	// Fallback: search for canonical OAuth error codes anywhere in the string.
+	for code := range unrecoverableCodes {
+		if strings.Contains(strings.ToLower(raw), code) {
+			return code
+		}
+	}
+	return ""
 }
 
 func joinStrings(ss []string, sep string) string {
