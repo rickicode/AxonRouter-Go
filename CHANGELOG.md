@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+<!-- Add new entries above this line -->
+
+## [0.3.7] - 2026-07-16
+
 ### Fixed
+- Admin handlers now use request context instead of `context.Background()`, allowing client cancellation to propagate to background operations (connection testing, provider testing, model sync, proxy pool deletion).
+- Startup banner now logs warnings for database query failures instead of silently ignoring them.
 - OpenAI-format provider errors are now normalized to canonical OpenAI error codes (`context_length_exceeded`, `rate_limit_exceeded`, etc.) via a default translator. This fixes Bedrock `validation_error` and other provider-specific synonyms so CLI tools like Claude Code and OpenCode correctly trigger auto-compact.
 - Cloudflare Workers AI plain-text context-window errors (e.g. "exceeded this model context window limit") are now correctly translated to `context_length_exceeded`.
 - Streaming upstream errors (`OpenAIExecutor`, `CopilotExecutor`, `MimocodeExecutor`, `AntigravityExecutor`, `GeminiExecutor`) are now translated using the provider prefix, matching non-streaming behavior.
@@ -15,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed Claude → OpenAI non-streaming response translation: `finish_reason` is now placed at the choice level (matching the OpenAI spec) instead of inside `message`.
 
 ### Changed
+- Extracted `unifiedSurface` helper for consistent API surface labeling in logging and in-flight request tracking.
 - Strengthened `InferCodeFromMessage` phrase detection for context-length errors (`input_tokens`, `reduce the length`, `prompt contains`, `context window`, `context exceeds`, etc.) and shared it across all provider translators.
 - Per-provider `Compatibility` config in `internal/providercfg` with seeded defaults for Cloudflare (`cf`) and Bedrock (`bedrock`). Provider-specific OpenAI-compatible quirks (model prefix, max_tokens cap, content-array flattening, reasoning_effort allow-list, provider-prefix strip) are now configurable without rebuilding.
 - Claude → OpenAI streaming response translator now forwards `usage` in the final chunk so clients can track token consumption.
