@@ -67,6 +67,96 @@ let bulkActive = $state(true);
 let bulkHealthy = $state(false);
 let bulkSub1s = $state(false);
 let bulkLoading = $state(false);
+// .txt upload + chunked send (keeps RAM bounded, mirrors provider bulk import).
+const POOL_BULK_CHUNK = 1000;
+const POOL_BULK_MAX = 1000;
+let uploadedPoolFile = $state('');
+let parsedPoolItems = $state<string[]>([]);
+let poolParseWarnings = $state<string[]>([]);
+let poolImportProgress = $state(0); // 0..1
+let poolImportSummary = $state<{ created: number; skipped: number; errors: number } | null>(null);
+
+function parsePoolLines(text: string): { items: string[]; warnings: string[] } {
+  const lines = text.split('\n').map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith('#'));
+  const items: string[] = [];
+  const warnings: string[] = [];
+  lines.forEach((line, index) => {
+    const normalized = normalizeBulkLine(line);
+    if (!normalized) {
+      warnings.push(`Line ${index + 1}: empty after normalization`);
+      return;
+    }
+    items.push(normalized);
+  });
+  return { items, warnings };
+}
+
+function handlePoolFileUpload(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  uploadedPoolFile = file.name;
+  poolImportSummary = null;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const text = typeof reader.result === 'string' ? reader.result : '';
+    const { items, warnings } = parsePoolLines(text);
+    parsedPoolItems = items;
+    poolParseWarnings = warnings;
+    if (items.length === 0) toast.error('No valid proxy URLs found in file');
+    else if (warnings.length > 0) toast.info(`${items.length} valid, ${warnings.length} invalid line(s) skipped`);
+    else toast.success(`Parsed ${items.length} proxy URL(s)`);
+  };
+  reader.onerror = () => toast.error('Failed to read file');
+  reader.readAsText(file);
+  input.value = '';
+}
+
+async function handleBulkImportChunked() {
+  const items = parsedPoolItems.length > 0 ? parsedPoolItems : bulkText.trim().split('\n').map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith('#')).map(normalizeBulkLine);
+  if (items.length === 0) {
+    toast.error('Paste or upload at least one proxy URL');
+    return;
+  }
+  if (items.length > POOL_BULK_MAX) {
+    toast.error(`Maximum ${POOL_BULK_MAX} proxies per bulk import. Split your file.`);
+    return;
+  }
+  bulkLoading = true;
+  poolImportProgress = 0;
+  poolImportSummary = { created: 0, skipped: 0, errors: 0 };
+  try {
+    for (let start = 0; start < items.length; start += POOL_BULK_CHUNK) {
+      const chunk = items.slice(start, start + POOL_BULK_CHUNK);
+      const res = await proxyPoolsApi.bulkCreate({
+        items: chunk,
+        defaultType: bulkType,
+        noProxy: bulkNoProxy.trim() || undefined,
+        isActive: bulkActive,
+        requireHealthy: bulkHealthy,
+        maxResponseTimeMs: bulkHealthy && bulkSub1s ? 1000 : undefined,
+      });
+      poolImportSummary.created += res.created ?? 0;
+      poolImportSummary.skipped += res.skipped ?? 0;
+      poolImportSummary.errors += res.errors ?? 0;
+      poolImportProgress = (start + chunk.length) / items.length;
+    }
+    const s = poolImportSummary;
+    const msg = `${s.created} created, ${s.skipped} skipped, ${s.errors} errors`;
+    if (s.errors === 0) toast.success('Bulk import complete', { description: msg });
+    else toast.error('Bulk import finished with errors', { description: msg });
+    bulkText = '';
+    parsedPoolItems = [];
+    uploadedPoolFile = '';
+    poolParseWarnings = [];
+    poolPage = 1;
+    await loadAll(true);
+  } catch (err) {
+    toast.error('Bulk import failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+  } finally {
+    bulkLoading = false;
+  }
+}
 
 // Selection
 let selectedPoolIds = $state<Set<string>>(new Set());
@@ -581,38 +671,7 @@ async function saveProxyDefaults() {
   }
 
 async function handleBulkImport() {
-	const raw = bulkText.trim();
-	if (!raw) return;
-	bulkLoading = true;
-	try {
-  const items = raw
-    .split('\n')
-    .map(line => line.trim())
-    .filter(line => line.length > 0 && !line.startsWith('#'))
-    .map(normalizeBulkLine);
-  const res = await proxyPoolsApi.bulkCreate({
-    items,
-    defaultType: bulkType,
-    noProxy: bulkNoProxy.trim() || undefined,
-    isActive: bulkActive,
-    requireHealthy: bulkHealthy,
-    maxResponseTimeMs: bulkHealthy && bulkSub1s ? 1000 : undefined,
-  });
-		const msg = `${res.created} created, ${res.skipped} skipped, ${res.errors} errors`;
-		if (res.errors === 0) {
-			toast.success('Bulk import complete', { description: msg });
-			showAddPool = false;
-		} else {
-			toast.error('Bulk import finished with errors', { description: msg });
-		}
-		bulkText = '';
-		poolPage = 1;
-		await loadAll(true);
-	} catch (err) {
-		toast.error('Bulk import failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-	} finally {
-		bulkLoading = false;
-	}
+  await handleBulkImportChunked();
 }
 </script>
 
@@ -1106,6 +1165,49 @@ async function handleBulkImport() {
         <Label class="text-sm font-medium">Proxy URLs</Label>
         <Textarea bind:value={bulkText} placeholder="http://user:pass@proxy:8080 or my-relay|https://relay.vercel.app" rows={10} class="text-body-sm font-mono w-full" />
       </div>
+
+      <div class="flex items-center gap-3">
+        <div class="h-px flex-1 bg-border"></div>
+        <span class="text-[11px] uppercase tracking-wide text-muted-foreground">or upload</span>
+        <div class="h-px flex-1 bg-border"></div>
+      </div>
+
+      <div class="flex flex-col gap-2">
+        <label
+          class="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-muted/30 px-4 py-3 text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+          class:opacity-50={bulkLoading}
+        >
+          <svg class="size-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 15V3m0 0L8 7m4-4l4 4" /></svg>
+          <span>{uploadedPoolFile ? uploadedPoolFile : 'Upload .txt file'}</span>
+          <input
+            type="file"
+            accept=".txt,text/plain"
+            class="hidden"
+            disabled={bulkLoading}
+            onchange={handlePoolFileUpload}
+          />
+        </label>
+        {#if uploadedPoolFile}
+          <div class="flex items-center justify-between rounded-md bg-card px-3 py-2 text-xs">
+            <span class="text-foreground">{parsedPoolItems.length} proxy URL(s) parsed</span>
+            <button
+              type="button"
+              class="text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
+              onclick={() => { uploadedPoolFile = ''; parsedPoolItems = []; poolParseWarnings = []; poolImportSummary = null; }}
+            >
+              Clear
+            </button>
+          </div>
+        {/if}
+        {#if poolParseWarnings.length > 0}
+          <div class="max-h-24 overflow-y-auto rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-400">
+            {#each poolParseWarnings as w}
+              <div>{w}</div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+
       <div class="space-y-4">
         <div class="space-y-2">
           <Label class="text-sm font-medium">Default type</Label>
@@ -1132,11 +1234,28 @@ async function handleBulkImport() {
           <Label for="bulk-sub1s" class="text-sm font-medium cursor-pointer {bulkHealthy ? '' : 'text-muted-foreground'}">&lt;1s response</Label>
         </div>
       </div>
+
+      {#if bulkLoading}
+        <div class="flex flex-col gap-1.5">
+          <div class="h-2 w-full overflow-hidden rounded-full bg-muted">
+            <div
+              class="h-full rounded-full bg-primary transition-all duration-300"
+              style="width: {Math.round(poolImportProgress * 100)}%"
+            ></div>
+          </div>
+          <p class="text-[11px] text-muted-foreground">
+            Importing… {Math.round(poolImportProgress * 100)}%
+            {#if poolImportSummary}
+              ({poolImportSummary.created + poolImportSummary.skipped + poolImportSummary.errors})
+            {/if}
+          </p>
+        </div>
+      {/if}
     </div>
     <Dialog.Footer>
       <Button variant="ghost" onclick={() => (showAddPool = false)}>Cancel</Button>
-      <Button onclick={handleBulkImport} disabled={bulkLoading || !bulkText.trim()}>
-        {bulkLoading ? 'Importing...' : 'Import pools'}
+      <Button onclick={handleBulkImport} disabled={bulkLoading || (!bulkText.trim() && parsedPoolItems.length === 0)}>
+        {bulkLoading ? `Importing… ${Math.round(poolImportProgress * 100)}%` : 'Import pools'}
       </Button>
     </Dialog.Footer>
   </Tabs.Content>
