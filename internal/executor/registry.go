@@ -133,6 +133,18 @@ func RegisterDefaults() {
 	translator.Register("ag", translator.Func(providers.TranslateAntigravity))
 	translator.Register("cx", translator.Func(providers.TranslateCodex))
 
+	// Default OpenAI-compatible translator for every other OpenAI-format provider
+	// (Bedrock, OpenAI, OpenCode Free, Groq, DeepSeek, etc.). Catches native
+	// OpenAI codes and provider-specific synonyms like Bedrock's validation_error.
+	for _, p := range []string{
+		"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo-tp",
+		"elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras",
+		"together", "fireworks", "novita", "lambda", "pollinations", "zenmux",
+		"mimocode", "openrouter", "copilot", "vertex", "bedrock",
+	} {
+		translator.Register(p, translator.Func(providers.TranslateOpenAICompatible))
+	}
+
 	// Claude + compatible providers
 	claudeExec := NewClaudeExecutor(base)
 	for _, p := range []string{"claude", "zai"} {
@@ -199,6 +211,7 @@ func registerCustomProvider(reg *Registry, openaiExec, claudeExec, geminiExec, a
 		translator.Register(id, translator.Func(providers.TranslateKiro))
 	default: // openai, openai-responses, and unknown -> OpenAI-compatible
 		reg.Register(id, FormatOpenAI, openaiExec)
+		translator.Register(id, translator.Func(providers.TranslateOpenAICompatible))
 	}
 }
 

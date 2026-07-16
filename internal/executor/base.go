@@ -154,9 +154,21 @@ func getEnvInt(key string, fallback int) int {
 }
 
 type (
-	proxyContextKey struct{}
-	requestIDKey    struct{}
+	proxyContextKey   struct{}
+	requestIDKey      struct{}
+	providerCtxKey    struct{}
 )
+
+// ContextWithProvider attaches the provider prefix to ctx so the base executor
+// can translate streaming upstream errors with the right translator.
+func ContextWithProvider(ctx context.Context, provider string) context.Context {
+	return context.WithValue(ctx, providerCtxKey{}, provider)
+}
+
+func providerFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(providerCtxKey{}).(string)
+	return v
+}
 
 // ContextWithRequestID attaches a request ID to a context for propagation
 // to upstream providers.
@@ -709,12 +721,16 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 			"proxy", proxyLabelFromCtx(ctx),
 			"body", string(errBody),
 		)
-		return nil, &UpstreamError{
+		upErr := &UpstreamError{
 			StatusCode: resp.StatusCode,
 			Body:       errBody,
 			RawBody:    errBody,
 			Headers:    resp.Header,
 		}
+		if provider := providerFromContext(ctx); provider != "" {
+			upErr.TranslateErrorBody(provider)
+		}
+		return nil, upErr
 	}
 
 	chunks := make(chan StreamChunk, 64)

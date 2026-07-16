@@ -2,9 +2,9 @@ package providers
 
 import (
 	"encoding/json"
-	"net/http"
 	"strings"
 
+	"github.com/rickicode/AxonRouter-Go/internal/executor/translator"
 	"github.com/tidwall/gjson"
 )
 
@@ -80,32 +80,8 @@ func TranslateCloudflare(statusCode int, raw []byte) []byte {
 }
 
 func inferCloudflareOpenAICode(statusCode int, message, oaiType string) string {
-	lower := strings.ToLower(message)
-	switch {
-	case strings.Contains(lower, "maximum context length") ||
-		strings.Contains(lower, "context length") ||
-		strings.Contains(lower, "exceeds the model's maximum") ||
-		strings.Contains(lower, "token count exceeds"):
-		return "context_length_exceeded"
-	case strings.Contains(lower, "model not found") ||
-		strings.Contains(lower, "no such model") ||
-		strings.Contains(lower, "does not exist"):
-		return "model_not_found"
-	case strings.Contains(lower, "invalid api key") ||
-		strings.Contains(lower, "incorrect api key"):
-		return "invalid_api_key"
-	case strings.Contains(lower, "insufficient_quota") ||
-		strings.Contains(lower, "insufficient quota"):
-		return "insufficient_quota"
-	case strings.Contains(lower, "quota"):
-		return "insufficient_quota"
-	case strings.Contains(lower, "content filter") ||
-		strings.Contains(lower, "safety"):
-		return "content_filter"
-	}
-
-	if statusCode == http.StatusTooManyRequests {
-		return "rate_limit_exceeded"
+	if code := translator.InferCodeFromMessage(message, statusCode, ""); code != "" {
+		return code
 	}
 
 	switch oaiType {

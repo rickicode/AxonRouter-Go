@@ -357,7 +357,7 @@ func (e *OpenAIExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
 	openRouterHeaders(headers, req.Provider, req.ProviderSpecificData)
 
-	return e.DoStreamRequestWithConfig(ctx, "POST", url, headers, body, req.StreamConfig)
+	return e.DoStreamRequestWithConfig(ContextWithProvider(ctx, req.Provider), "POST", url, headers, body, req.StreamConfig)
 }
 
 // Embeddings performs an embedding request.
@@ -492,5 +492,5 @@ func (e *OpenAIExecutor) ResponsesStream(ctx context.Context, req *Request) (*St
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
 	openRouterHeaders(headers, req.Provider, req.ProviderSpecificData)
 
-	return e.DoStreamRequestWithConfig(ctx, "POST", url, headers, body, req.StreamConfig)
+	return e.DoStreamRequestWithConfig(ContextWithProvider(ctx, req.Provider), "POST", url, headers, body, req.StreamConfig)
 }

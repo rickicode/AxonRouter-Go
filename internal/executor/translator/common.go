@@ -70,10 +70,24 @@ func InferCodeFromMessage(message string, statusCode int, defaultCode string) st
 	switch {
 	case strings.Contains(lower, "maximum context length") ||
 		strings.Contains(lower, "context length") ||
+		strings.Contains(lower, "context_length_exceeded") ||
+		strings.Contains(lower, "context_too_large") ||
 		strings.Contains(lower, "exceeds the model's maximum") ||
+		strings.Contains(lower, "token count exceeds") ||
 		strings.Contains(lower, "prompt is too long") ||
+		strings.Contains(lower, "reduce the length") ||
+		strings.Contains(lower, "input_tokens") ||
+		strings.Contains(lower, "prompt contains") ||
+		strings.Contains(lower, "too many tokens") ||
+		strings.Contains(lower, "tokens exceed") ||
+		strings.Contains(lower, "context window") ||
+		strings.Contains(lower, "context exceeds") ||
 		strings.Contains(lower, "too long"):
 		return "context_length_exceeded"
+	case strings.Contains(lower, "rate limit") ||
+		strings.Contains(lower, "rate_limit") ||
+		strings.Contains(lower, "too many requests"):
+		return "rate_limit_exceeded"
 	case strings.Contains(lower, "model not found"),
 		strings.Contains(lower, "no such model"),
 		strings.Contains(lower, "does not exist"):
@@ -86,7 +100,7 @@ func InferCodeFromMessage(message string, statusCode int, defaultCode string) st
 		return "insufficient_quota"
 	case strings.Contains(lower, "quota"):
 		return "insufficient_quota"
-	case strings.Contains(lower, "content filter"),
+	case strings.Contains(lower, "content filter") ||
 		strings.Contains(lower, "safety"):
 		return "content_filter"
 	}

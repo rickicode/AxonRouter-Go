@@ -102,7 +102,7 @@ func (e *CopilotExecutor) ExecuteStream(ctx context.Context, req *Request) (*Str
 	}
 
 	headers := e.copilotHeaders(token.Token, body, req.Headers, true)
-	return e.DoStreamRequestWithConfig(ctx, "POST", url, headers, body, req.StreamConfig)
+	return e.DoStreamRequestWithConfig(ContextWithProvider(ctx, req.Provider), "POST", url, headers, body, req.StreamConfig)
 }
 
 // prepareBody applies stream flag, strips provider prefix, and sanitizes the

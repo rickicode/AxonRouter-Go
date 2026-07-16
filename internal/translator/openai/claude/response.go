@@ -134,7 +134,7 @@ func convertClaudeResponseToOpenAINonStream(_ context.Context, _ string, _, _ []
 		msg["finish_reason"] = "stop"
 	case "tool_use":
 		msg["finish_reason"] = "tool_calls"
-	case "max_tokens":
+	case "max_tokens", "model_context_window_exceeded":
 		msg["finish_reason"] = "length"
 	default:
 		msg["finish_reason"] = "stop"
@@ -271,7 +271,7 @@ func handleMessageDelta(root gjson.Result, state *claudeStreamState) [][]byte {
 	case "tool_use":
 		s := "tool_calls"
 		finishReason = &s
-	case "max_tokens":
+	case "max_tokens", "model_context_window_exceeded":
 		s := "length"
 		finishReason = &s
 	}

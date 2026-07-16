@@ -82,11 +82,6 @@ func (e *GeminiExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 	headers["Accept"] = "text/event-stream"
 	headers["Cache-Control"] = "no-cache"
 
-	result, err := e.DoStreamRequest(ctx, "POST", url, headers, req.Body)
-	if err != nil {
-		if upErr, ok := err.(*UpstreamError); ok {
-			upErr.TranslateErrorBody(req.Provider)
-		}
-	}
+	result, err := e.DoStreamRequest(ContextWithProvider(ctx, req.Provider), "POST", url, headers, req.Body)
 	return result, err
 }

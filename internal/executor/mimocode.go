@@ -129,7 +129,7 @@ func (e *MimocodeExecutor) ExecuteStream(ctx context.Context, req *Request) (*St
 	headers := e.buildHeaders(true)
 	headers["Authorization"] = "Bearer " + token
 
-	result, err := e.DoStreamRequestWithConfig(ctx, http.MethodPost, url, headers, body, req.StreamConfig)
+	result, err := e.DoStreamRequestWithConfig(ContextWithProvider(ctx, req.Provider), http.MethodPost, url, headers, body, req.StreamConfig)
 	var ue *UpstreamError
 	if errors.As(err, &ue) && (ue.StatusCode == http.StatusUnauthorized || ue.StatusCode == http.StatusForbidden) {
 		e.invalidate(fingerprint)
@@ -138,7 +138,7 @@ func (e *MimocodeExecutor) ExecuteStream(ctx context.Context, req *Request) (*St
 			return nil, err
 		}
 		headers["Authorization"] = "Bearer " + token
-		result, err = e.DoStreamRequestWithConfig(ctx, http.MethodPost, url, headers, body, req.StreamConfig)
+		result, err = e.DoStreamRequestWithConfig(ContextWithProvider(ctx, req.Provider), http.MethodPost, url, headers, body, req.StreamConfig)
 	}
 	return result, err
 }

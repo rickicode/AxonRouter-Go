@@ -437,5 +437,5 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, req *Request) (
 		"User-Agent":     envelopeUserAgent(req),
 		"X-Goog-Api-Key": req.APIKey,
 	}
-	return e.DoStreamRequest(ctx, "POST", url, headers, body)
+	return e.DoStreamRequest(ContextWithProvider(ctx, req.Provider), "POST", url, headers, body)
 }

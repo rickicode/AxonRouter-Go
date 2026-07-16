@@ -16,6 +16,7 @@ import (
 func init() {
 	logging.Init("text")
 	validateURL = func(string) error { return nil }
+	RegisterDefaults()
 }
 
 func TestCodexExecutor_Headers(t *testing.T) {

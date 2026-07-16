@@ -1,43 +1,54 @@
 package executor
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/rickicode/AxonRouter-Go/internal/executor/translator"
+	"github.com/rickicode/AxonRouter-Go/internal/executor/translator/providers"
 )
 
-func init() {
-	RegisterDefaults()
-}
+func TestDoStreamRequest_TranslatesUpstreamError(t *testing.T) {
+	translator.Register("bedrock", translator.Func(providers.TranslateOpenAICompatible))
 
-func TestUpstreamError_TranslateClaude(t *testing.T) {
-	raw := []byte(`{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 250000 tokens (max: 200000)"}}`)
-	upErr := &UpstreamError{
-		StatusCode: http.StatusBadRequest,
-		Body:       raw,
-		RawBody:    raw,
-	}
-	upErr.TranslateErrorBody("claude")
+	orig := validateURL
+	validateURL = func(string) error { return nil }
+	defer func() { validateURL = orig }()
 
-	var out map[string]any
-	if err := json.Unmarshal(upErr.Body, &out); err != nil {
-		t.Fatalf("invalid body: %v", err)
-	}
-	if got := out["error"].(map[string]any)["code"]; got != "context_length_exceeded" {
-		t.Errorf("code=%v, want context_length_exceeded", got)
-	}
-}
+	upstreamBody := `{"error":{"code":"validation_error","message":"This model's maximum context length is 202752 tokens. However, you requested too many.","type":"invalid_request_error"}}`
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(upstreamBody))
+	}))
+	defer ts.Close()
 
-func TestUpstreamError_PassthroughWhenNoTranslator(t *testing.T) {
-	raw := []byte(`{"error":{"message":"rate limited","type":"rate_limit_error","code":"rate_limit_exceeded"}}`)
-	upErr := &UpstreamError{
-		StatusCode: http.StatusTooManyRequests,
-		Body:       raw,
-		RawBody:    raw,
+	base := NewBaseExecutor()
+	base.FetchTimeout = 2 * time.Second
+	_, err := base.DoStreamRequestWithConfig(ContextWithProvider(context.Background(), "bedrock"), "POST", ts.URL, nil, nil, nil)
+	if err == nil {
+		t.Fatal("expected upstream error")
 	}
-	upErr.TranslateErrorBody("openai")
+	upErr, ok := err.(*UpstreamError)
+	if !ok {
+		t.Fatalf("expected *UpstreamError, got %T", err)
+	}
+	if string(upErr.RawBody) != upstreamBody {
+		t.Fatalf("RawBody should be upstream body, got %s", string(upErr.RawBody))
+	}
 
-	if string(upErr.Body) != string(raw) {
-		t.Errorf("body was modified without translator: %s", string(upErr.Body))
+	var parsed translator.OpenAIError
+	if err := json.Unmarshal(upErr.Body, &parsed); err != nil {
+		t.Fatalf("translated body is not valid JSON: %v\n%s", err, string(upErr.Body))
+	}
+	if parsed.Error.Code != "context_length_exceeded" {
+		t.Errorf("code = %q, want context_length_exceeded", parsed.Error.Code)
+	}
+	if parsed.Error.Type != "invalid_request_error" {
+		t.Errorf("type = %q, want invalid_request_error", parsed.Error.Type)
 	}
 }
