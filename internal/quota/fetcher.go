@@ -304,6 +304,34 @@ func refreshOAuthToken(providerID, refreshToken string) (string, string, int64, 
 	return tokenResp.AccessToken, newRefreshToken, time.Now().Unix() + tokenResp.ExpiresIn, nil
 }
 
+// unrecoverableOAuthCodes are OAuth error codes that mean the refresh token is permanently dead.
+var unrecoverableOAuthCodes = map[string]bool{
+	"invalid_grant":             true,
+	"invalid_request":           true,
+	"refresh_token_reused":      true,
+	"refresh_token_invalidated": true,
+	"invalid_token":             true,
+	"token_expired":             true,
+	"expired_token":             true,
+	"unauthorized_client":       true,
+	"access_denied":             true,
+	"unrecoverable_refresh_error": true,
+}
+
+// isUnrecoverableRefreshError checks if a refresh error indicates the token is permanently invalid.
+func isUnrecoverableRefreshError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	for code := range unrecoverableOAuthCodes {
+		if strings.Contains(s, code) {
+			return true
+		}
+	}
+	return false
+}
+
 // fetchConnectionQuota dispatches to the right provider fetcher.
 // Refreshes expired OAuth tokens before fetching quota.
 func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQuota {
@@ -364,23 +392,37 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 					}
 					newProviderSpecific = newCreds.ProviderSpecific
 					refreshed = true
-				} else {
-					log.Printf("quota: auth manager token refresh failed for %s (%s): %v", c.ID, c.Name, err)
+			} else {
+				log.Printf("quota: auth manager token refresh failed for %s (%s): %v", c.ID, c.Name, err)
+				cq.Error = fmt.Sprintf("token refresh failed: %v", err)
+				if isUnrecoverableRefreshError(err) && db != nil {
+					now := time.Now().Unix()
+					if _, derr := db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', updated_at = ? WHERE id = ?`, now, c.ID); derr == nil {
+						log.Printf("quota: connection %s disabled due to unrecoverable refresh error", c.ID)
+					}
 				}
+				return cq
 			}
 		}
+	}
 
-		// Raw fallback for Antigravity and Kiro when auth manager is unavailable/failed.
+	// Raw fallback for Antigravity and Kiro when auth manager is unavailable/failed.
 		if !refreshed && (providerID == "ag" || providerID == "kiro") {
 			var err error
 			newToken, newRefreshToken, newExpiry, err = refreshOAuthToken(providerID, c.OAuthRefreshToken.String)
-			if err != nil {
-				log.Printf("quota: raw token refresh failed for %s (%s): %v", c.ID, c.Name, err)
-				cq.Error = fmt.Sprintf("token refresh failed: %v", err)
-				return cq
+		if err != nil {
+			log.Printf("quota: raw token refresh failed for %s (%s): %v", c.ID, c.Name, err)
+			cq.Error = fmt.Sprintf("token refresh failed: %v", err)
+			if isUnrecoverableRefreshError(err) && db != nil {
+				now := time.Now().Unix()
+				if _, derr := db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', updated_at = ? WHERE id = ?`, now, c.ID); derr == nil {
+					log.Printf("quota: connection %s disabled due to unrecoverable refresh error", c.ID)
+				}
 			}
-			refreshed = true
+			return cq
 		}
+		refreshed = true
+	}
 
 		if refreshed {
 			token = newToken
