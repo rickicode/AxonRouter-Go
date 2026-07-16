@@ -184,7 +184,7 @@ func unifiedSurface(path string) string {
 // tracked on the request context (if any).
 func (h *Handler) bindActiveConn(ctx context.Context, conn *Connection) {
 	if id, ok := active.IDFrom(ctx); ok {
-		active.BindConn(id, conn.ID, conn.Name)
+		active.BindConn(id, conn.ID, conn.Name, conn.Provider)
 	}
 }
 
