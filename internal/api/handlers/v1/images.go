@@ -105,7 +105,7 @@ func (h *Handler) Images(c *gin.Context) {
 		return
 	}
 
-	h.tracker.Log(&usage.LogEntry{
+	h.logRequest(c, &usage.LogEntry{
 		ApiKeyID: c.GetString("api_key_id"),
 		ConnectionID: conn.ID,
 		ProviderTypeID: provider,

@@ -133,8 +133,10 @@ export interface RequestLog {
   latency_ms: number;
 	proxy_pool_id?: string;
 	proxy_pool_name?: string;
-	api_key?: string;
-	status_code: number;
+  api_key?: string;
+  client_ip?: string;
+  user_agent?: string;
+  status_code: number;
   error_message: string;
   error_category?: string;
   cooldown_until?: number;

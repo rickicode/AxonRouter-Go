@@ -156,7 +156,7 @@ func (h *Handler) Messages(c *gin.Context) {
 					tokensEstimated = true
 				}
 			}
-	h.tracker.Log(&usage.LogEntry{
+	h.logRequest(c, &usage.LogEntry{
 		ApiKeyID: c.GetString("api_key_id"),
 		ConnectionID: conn.ID,
 		ProviderTypeID: provider,

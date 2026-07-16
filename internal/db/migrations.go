@@ -106,11 +106,13 @@ CREATE TABLE IF NOT EXISTS request_logs (
     output_tokens INTEGER DEFAULT 0,
     reasoning_tokens INTEGER DEFAULT 0,
   stream INTEGER NOT NULL DEFAULT 0,
-    latency_ms INTEGER,
-    status_code INTEGER,
-    error_message TEXT,
-    cost_usd REAL DEFAULT 0,
-    created_at INTEGER NOT NULL
+  latency_ms INTEGER,
+  status_code INTEGER,
+  error_message TEXT,
+  cost_usd REAL DEFAULT 0,
+  client_ip TEXT,
+  user_agent TEXT,
+  created_at INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_request_logs_timestamp ON request_logs(timestamp DESC);
@@ -150,8 +152,10 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		`ALTER TABLE api_keys ADD COLUMN expires_at INTEGER`,
 		`ALTER TABLE request_logs ADD COLUMN tokens_estimated INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE request_logs ADD COLUMN proxy_pool_id TEXT`,
-		`ALTER TABLE request_logs ADD COLUMN api_type TEXT`,
-		`CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id, timestamp DESC)`,
+    `ALTER TABLE request_logs ADD COLUMN api_type TEXT`,
+    `ALTER TABLE request_logs ADD COLUMN client_ip TEXT`,
+    `ALTER TABLE request_logs ADD COLUMN user_agent TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id, timestamp DESC)`,
 		`ALTER TABLE provider_types ADD COLUMN category TEXT DEFAULT 'apikey'`,
 		`ALTER TABLE provider_types ADD COLUMN service_kinds TEXT DEFAULT '["llm"]'`,
 		`CREATE TABLE IF NOT EXISTS compression_metrics (

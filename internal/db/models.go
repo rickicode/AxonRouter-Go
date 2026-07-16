@@ -103,9 +103,11 @@ type RequestLog struct {
 	ComboID         sql.NullString `json:"combo_id,omitempty"`
 	ProxyPoolID     sql.NullString `json:"proxy_pool_id,omitempty"`
 	ProxyPoolName   sql.NullString `json:"proxy_pool_name,omitempty"`
-	ApiKey          sql.NullString `json:"api_key,omitempty"`
-	ApiType         sql.NullString `json:"api_type,omitempty"`
-	Modality        string         `json:"modality"`
+  ApiKey sql.NullString `json:"api_key,omitempty"`
+  ApiType sql.NullString `json:"api_type,omitempty"`
+  ClientIP sql.NullString `json:"client_ip,omitempty"`
+  UserAgent sql.NullString `json:"user_agent,omitempty"`
+  Modality string `json:"modality"`
 	InputTokens     int64          `json:"input_tokens"`
 	OutputTokens    int64          `json:"output_tokens"`
 	ReasoningTokens int64          `json:"reasoning_tokens"`
@@ -147,9 +149,11 @@ func (r RequestLog) MarshalJSON() ([]byte, error) {
 		ComboID         string `json:"combo_id,omitempty"`
 		ProxyPoolID     string `json:"proxy_pool_id,omitempty"`
 		ProxyPoolName   string `json:"proxy_pool_name,omitempty"`
-		ApiKey          string `json:"api_key,omitempty"`
-		ApiType         string `json:"api_type,omitempty"`
-		Modality        string `json:"modality"`
+  ApiKey string `json:"api_key,omitempty"`
+  ApiType string `json:"api_type,omitempty"`
+  ClientIP string `json:"client_ip,omitempty"`
+  UserAgent string `json:"user_agent,omitempty"`
+  Modality string `json:"modality"`
 		InputTokens     int64  `json:"input_tokens"`
 		OutputTokens    int64  `json:"output_tokens"`
 		ReasoningTokens int64  `json:"reasoning_tokens"`
@@ -173,9 +177,11 @@ func (r RequestLog) MarshalJSON() ([]byte, error) {
 		ComboID:         getStr(r.ComboID),
 		ProxyPoolID:     getStr(r.ProxyPoolID),
 		ProxyPoolName:   getStr(r.ProxyPoolName),
-		ApiKey:          getStr(r.ApiKey),
-		ApiType:         getStr(r.ApiType),
-		Modality:        r.Modality,
+  ApiKey: getStr(r.ApiKey),
+  ApiType: getStr(r.ApiType),
+  ClientIP: getStr(r.ClientIP),
+  UserAgent: getStr(r.UserAgent),
+  Modality: r.Modality,
 		InputTokens:     r.InputTokens,
 		OutputTokens:    r.OutputTokens,
 		ReasoningTokens: r.ReasoningTokens,

@@ -188,7 +188,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 					tokensEstimated = true
 				}
 			}
-			h.tracker.Log(&usage.LogEntry{
+			h.logRequest(c, &usage.LogEntry{
 				ApiKeyID:            c.GetString("api_key_id"),
 				ConnectionID:        conn.ID,
 				ProviderTypeID:      provider,
@@ -378,7 +378,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 					tokensEstimated = true
 				}
 			}
-			h.tracker.Log(&usage.LogEntry{
+			h.logRequest(c, &usage.LogEntry{
 				ApiKeyID: c.GetString("api_key_id"),
 				ConnectionID: connID,
 				ProviderTypeID: provider,

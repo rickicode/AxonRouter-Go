@@ -111,23 +111,25 @@ func (h *LogHandler) Get(c *gin.Context) {
 	TokensEstimated     bool   `json:"tokens_estimated"`
 		LatencyMs           *int64  `json:"latency_ms"`
 		StatusCode          *int64  `json:"status_code"`
-		ErrorMessage        *string `json:"error_message"`
-		CostUsd             float64 `json:"cost_usd"`
-		CreatedAt           int64   `json:"created_at"`
-	}
+  ErrorMessage *string `json:"error_message"`
+  CostUsd float64 `json:"cost_usd"`
+  ClientIP *string `json:"client_ip"`
+  UserAgent *string `json:"user_agent"`
+  CreatedAt int64 `json:"created_at"`
+ }
 
 		err := h.db.QueryRow(`
 		SELECT id, timestamp, connection_id, provider_type_id, model_id, combo_id,
 		modality, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_creation_tokens,
-		tokens_estimated,
-		latency_ms, status_code, error_message, cost_usd, created_at
-		FROM request_logs WHERE id = ?
-	`, id).Scan(&l.ID, &l.Timestamp, &l.ConnectionID, &l.ProviderTypeID,
-		&l.ModelID, &l.ComboID, &l.Modality,
-		&l.InputTokens, &l.OutputTokens, &l.ReasoningTokens, &l.CachedTokens, &l.CacheCreationTokens,
-		&l.TokensEstimated,
-		&l.LatencyMs, &l.StatusCode, &l.ErrorMessage,
-		&l.CostUsd, &l.CreatedAt)
+  tokens_estimated,
+  latency_ms, status_code, error_message, cost_usd, client_ip, user_agent, created_at
+  FROM request_logs WHERE id = ?
+ `, id).Scan(&l.ID, &l.Timestamp, &l.ConnectionID, &l.ProviderTypeID,
+  &l.ModelID, &l.ComboID, &l.Modality,
+  &l.InputTokens, &l.OutputTokens, &l.ReasoningTokens, &l.CachedTokens, &l.CacheCreationTokens,
+  &l.TokensEstimated,
+  &l.LatencyMs, &l.StatusCode, &l.ErrorMessage,
+  &l.CostUsd, &l.ClientIP, &l.UserAgent, &l.CreatedAt)
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "log not found"})
 		return

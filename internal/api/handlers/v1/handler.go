@@ -152,6 +152,18 @@ func apiTypeFromPath(path string) string {
 	return unifiedSurface(path)
 }
 
+// logRequest enqueues a usage log entry enriched with the client IP and
+// User-Agent from the gin context. It is a single place where all /v1
+// request logging captures request metadata.
+func (h *Handler) logRequest(c *gin.Context, entry *usage.LogEntry) {
+  if h.tracker == nil || entry == nil || c == nil {
+    return
+  }
+  entry.ClientIP = c.ClientIP()
+  entry.UserAgent = c.Request.UserAgent()
+  h.tracker.Log(entry)
+}
+
 // unifiedSurface maps a proxy path to the client-facing API surface name.
 // It is shared by logging and the active-request tracker. The special-case
 // ordering matters: more-specific paths must match before generic substrings.
@@ -958,7 +970,7 @@ func (h *Handler) handleFailoverError(ctx context.Context, c *gin.Context, conn 
 		)
 	}
 
-	h.tracker.Log(&usage.LogEntry{
+	h.logRequest(c, &usage.LogEntry{
 		ApiKeyID: c.GetString("api_key_id"),
 		ConnectionID: conn.ID,
 		ProviderTypeID: provider,
@@ -1008,7 +1020,7 @@ func (h *Handler) writeUpstreamClientError(
 		if len(errBody) == 0 {
 			errBody = upErr.Body
 		}
-		h.tracker.Log(&usage.LogEntry{
+		h.logRequest(c, &usage.LogEntry{
 			ApiKeyID: c.GetString("api_key_id"),
 			ConnectionID: conn.ID,
 			ProviderTypeID: provider,
@@ -1153,7 +1165,7 @@ latency := time.Since(start).Milliseconds()
 					tokensEstimated = true
 				}
 			}
-			h.tracker.Log(&usage.LogEntry{
+			h.logRequest(c, &usage.LogEntry{
 				ApiKeyID: c.GetString("api_key_id"),
 				ConnectionID: conn.ID,
 				ProviderTypeID: provider,
@@ -1193,7 +1205,7 @@ latency := time.Since(start).Milliseconds()
 			c.Writer.Write([]byte("\n\n"))
 			c.Writer.Write([]byte("data: [DONE]\n\n"))
 			flusher.Flush()
-			h.tracker.Log(&usage.LogEntry{
+			h.logRequest(c, &usage.LogEntry{
 				ApiKeyID: c.GetString("api_key_id"),
 				ConnectionID: conn.ID,
 				ProviderTypeID: provider,

@@ -25,7 +25,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import Pagination from '$lib/components/Pagination.svelte';
-	import { type RequestLog } from '$lib/api';
+	import { type RequestLog, type ActiveRequest } from '$lib/api';
 	import TerminalIcon from '@lucide/svelte/icons/terminal';
 	import FilterIcon from '@lucide/svelte/icons/filter';
 	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
@@ -95,12 +95,14 @@ onMount(() => {
 	}
 
 	function handleExport() {
-const headers = [
-		'Time',
-		'Provider Name',
-		'API Key',
-		'Account',
-		'Model',
+  const headers = [
+    'Time',
+    'IP Address',
+    'User Agent',
+    'Provider Name',
+    'API Key',
+    'Account',
+    'Model',
 		'Status',
 		'Stream',
 		'Latency',
@@ -111,9 +113,11 @@ const headers = [
 		'Cost',
 		'Error',
 	];
-	const rows = $logs.map((row) => [
-		formatLogTime(row.timestamp),
-		row.provider_name || providerMeta(row.provider_type_id).displayName,
+  const rows = $logs.map((row) => [
+    formatLogTime(row.timestamp),
+    row.client_ip || '',
+    row.user_agent || '',
+    row.provider_name || providerMeta(row.provider_type_id).displayName,
 		row.api_key || '',
 		row.connection_name || row.connection_id || '',
 		row.model_id,
@@ -235,8 +239,9 @@ function inflightProviderName(ar: ActiveRequest): string {
 type ColumnDef = { key: string; label: string; subLabel?: string };
 
 const columns: ColumnDef[] = [
-	{ key: 'timestamp', label: 'Time' },
-	{ key: 'provider_name', label: 'Provider Name', subLabel: 'API Key' },
+  { key: 'timestamp', label: 'Time' },
+  { key: 'client_ip', label: 'IP Address', subLabel: 'User Agent' },
+  { key: 'provider_name', label: 'Provider Name', subLabel: 'API Key' },
 	{ key: 'connection_name', label: 'Account', subLabel: 'Model' },
 	{ key: 'status_code', label: 'Status Code', subLabel: 'Stream / JSON' },
 	{ key: 'latency_ms', label: 'Latency', subLabel: 'Proxy' },
@@ -432,9 +437,9 @@ const columns: ColumnDef[] = [
 							<tr class="border-b border-border bg-muted/30">
 {#each columns as column}
 						<th
-							class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 align-bottom {column.key === 'timestamp'
-							? 'min-w-[180px]'
-							: ''} {column.key === 'provider_name' ? 'min-w-[180px]' : ''} {column.key === 'connection_name'
+  class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 align-bottom {column.key === 'timestamp'
+    ? 'min-w-[180px]'
+    : ''} {column.key === 'client_ip' ? 'min-w-[200px]' : ''} {column.key === 'provider_name' ? 'min-w-[180px]' : ''} {column.key === 'connection_name'
 							? 'min-w-[220px]'
 							: ''} {column.key === 'status_code' ? 'min-w-[140px]' : ''} {column.key === 'tokens'
 							? 'text-right min-w-[120px]'
@@ -456,10 +461,16 @@ const columns: ColumnDef[] = [
 						<tbody class="divide-y divide-border/60">
 							{#each $logs as row}
 								{@const statusProps = getStatusBadgeProps(row.status_code, row.error_message, row.error_category)}
-								<tr class="transition-colors hover:bg-accent/20">
-									<td class="py-3 px-4 font-mono text-caption text-muted-foreground whitespace-nowrap">{formatLogTime(row.timestamp)}</td>
-<td class="py-3 px-4">
-							<div class="flex items-center gap-2.5">
+  <tr class="transition-colors hover:bg-accent/20">
+    <td class="py-3 px-4 font-mono text-caption text-muted-foreground whitespace-nowrap">{formatLogTime(row.timestamp)}</td>
+    <td class="py-3 px-4">
+      <div class="flex flex-col">
+        <code class="text-caption-mono text-muted-foreground whitespace-nowrap">{row.client_ip || '—'}</code>
+        <span class="text-caption text-muted-foreground truncate max-w-[180px]" title={row.user_agent || ''}>{row.user_agent || '—'}</span>
+      </div>
+    </td>
+    <td class="py-3 px-4">
+      <div class="flex items-center gap-2.5">
 								<ProviderIcon meta={providerMeta(row.provider_type_id)} size={24} />
 								<div class="flex flex-col min-w-0">
 									<a
