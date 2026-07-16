@@ -19,6 +19,50 @@ func init() {
 	RegisterDefaults()
 }
 
+func TestCodexExecutor_PatchesEmptyCompletedWithOutputItemDone(t *testing.T) {
+	large := strings.Repeat("word ", 20000) // ~100 KB of text, bigger than old 64 KB scanner limit
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		fmt.Fprintln(w, `data: {"type":"response.created","response":{"id":"r1","model":"gpt-5.4","created_at":1700000000}}`)
+		flusher.Flush()
+		itemEvent := fmt.Sprintf(`{"type":"response.output_item.done","output_index":0,"item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":%q}]}}`, large)
+		fmt.Fprintln(w, "data: "+itemEvent)
+		flusher.Flush()
+		fmt.Fprintln(w, `data: {"type":"response.completed","response":{"id":"r1","status":"completed","output":[]}}`)
+		flusher.Flush()
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	cx := NewCodexExecutor(base)
+	req := &Request{
+		Provider:    "cx",
+		Model:       "cx/gpt-5.4",
+		BaseURL:     ts.URL,
+		Body:        []byte(`{"messages":[{"role":"user","content":"hi"}]}`),
+		AccessToken: "test-token",
+		StreamConfig: &StreamConfig{
+			FetchTimeoutMs:           5000,
+			StreamIdleTimeoutMs:      5000,
+			StreamReadinessTimeoutMs: 5000,
+		},
+	}
+	res, err := cx.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	body := string(res.Body)
+	if !strings.Contains(body, large) {
+		t.Fatalf("patched response is missing the large output_item.done content")
+	}
+	if strings.Contains(body, `"output":[]`) {
+		t.Fatalf("response.completed still has an empty output array after patching")
+	}
+}
+
 func TestCodexExecutor_Headers(t *testing.T) {
 	var gotHeaders http.Header
 	var gotBody []byte
