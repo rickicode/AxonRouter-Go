@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Improved `Test all` concurrency for providers with thousands of connections: replaced fixed-batch waiting with a semaphore worker pool capped at 10 concurrent streams, plus a 30-second per-connection timeout, so a single slow connection no longer stalls the entire batch.
 
+### Fixed
+- MiMoCode additional connections now always generate a fresh `accountId`, `accountLabel`, and `fingerprint`, ensuring each connection behaves as a distinct logical account and does not reuse a device identity that could trigger MiMoCode anti-abuse controls.
+- MiMoCode bootstrap now respects the same proxy context as chat requests, preventing `Invalid Token` errors caused by JWTs being issued from the server's direct IP but used through a proxy pool IP.
+- MiMoCode "high-frequency non-compliant requests" 400 errors are now classified as rate-limit signals, so flagged proxy/account combinations are auto-cooldowned and skipped during routing.
+- MiMoCode connections configured with a proxy pool no longer fall back to the server's direct IP, preventing direct-IP rate-limit cascades during TestAll and failover attempts.
+
 <!-- Add new entries above this line -->
 
 ## [0.3.7] - 2026-07-16
