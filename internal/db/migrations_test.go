@@ -1,6 +1,58 @@
 package db
 
-import "testing"
+import (
+	"database/sql"
+	"path/filepath"
+	"testing"
+
+	_ "modernc.org/sqlite"
+)
+
+// TestAPIKeysExpiresAtColumn verifies the api_keys.expires_at migration is
+// applied and that re-running migrations is idempotent.
+func TestAPIKeysExpiresAtColumn(t *testing.T) {
+	dir := t.TempDir()
+	d, err := sql.Open("sqlite", filepath.Join(dir, "verify.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	if err := RunMigrations(d); err != nil {
+		t.Fatal(err)
+	}
+
+	if !hasColumn(t, d, "api_keys", "expires_at") {
+		t.Fatal("api_keys table missing expires_at column after migration")
+	}
+
+	// Re-running must be idempotent (duplicate column error is ignored).
+	if err := RunMigrations(d); err != nil {
+		t.Fatalf("re-run migrations failed: %v", err)
+	}
+}
+
+func hasColumn(t *testing.T, d *sql.DB, table, column string) bool {
+	t.Helper()
+	rows, err := d.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		if name == column {
+			return true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return false
+}
 
 // TestValidateSeedPricing enforces the user's hard rule on the pricing seed:
 // no duplicate model IDs and no $0 (free-tier) rows.
