@@ -118,7 +118,7 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 						Provider:             providerID,
 						ProviderSpecificData: psd,
 					}
-					resp, err := tester.Models(context.Background(), creds)
+					resp, err := tester.Models(c.Request.Context(), creds)
 					if err == nil {
 						var modelsResp struct {
 							Data []struct {

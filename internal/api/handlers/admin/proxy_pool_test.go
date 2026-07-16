@@ -2,6 +2,7 @@ package admin
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -390,7 +391,7 @@ func TestProxyPoolDeleteCascadesDirectConnections(t *testing.T) {
 	mustExec(`INSERT INTO connections (id,provider_type_id,name,auth_type,status,is_active,provider_specific_data,created_at,updated_at) VALUES ('conn-pool','oc','c-pool','none','ready',1,'{"proxyPoolId":"pool-x"}',?,?)`, now, now)
 	mustExec(`INSERT INTO connections (id,provider_type_id,name,auth_type,status,is_active,provider_specific_data,created_at,updated_at) VALUES ('conn-other','oc','c-other','none','ready',1,'{"proxyPoolId":"pool-y"}',?,?)`, now, now)
 
-	if err := h.deletePoolCascade("pool-x"); err != nil {
+	if err := h.deletePoolCascade(context.Background(), "pool-x"); err != nil {
 		t.Fatalf("deletePoolCascade: %v", err)
 	}
 
@@ -431,7 +432,7 @@ func TestProxyPoolDeleteCascadesViaGroup(t *testing.T) {
 	mustExec(`INSERT INTO proxy_groups (id,name,mode,sticky_limit,strict_proxy,proxy_pool_ids,is_active,created_at,updated_at) VALUES ('grp-1','grp','round_robin',0,0,'["pool-g"]',1,?,?)`, now, now)
 	mustExec(`INSERT INTO connections (id,provider_type_id,name,auth_type,status,is_active,provider_specific_data,created_at,updated_at) VALUES ('conn-g','oc','c-g','none','ready',1,'{"proxyGroupId":"grp-1"}',?,?)`, now, now)
 
-	if err := h.deletePoolCascade("pool-g"); err != nil {
+	if err := h.deletePoolCascade(context.Background(), "pool-g"); err != nil {
 		t.Fatalf("deletePoolCascade: %v", err)
 	}
 
@@ -466,7 +467,7 @@ func TestProxyPoolDeleteKeepsDefaultDirectConnection(t *testing.T) {
 	// Default direct oc connection references no pool; must survive.
 	mustExec(`INSERT INTO connections (id,provider_type_id,name,auth_type,status,is_active,provider_specific_data,created_at,updated_at) VALUES ('conn-direct','oc','c-direct','none','ready',1,'{"direct":"true"}',?,?)`, now, now)
 
-	if err := h.deletePoolCascade("pool-d"); err != nil {
+	if err := h.deletePoolCascade(context.Background(), "pool-d"); err != nil {
 		t.Fatalf("deletePoolCascade: %v", err)
 	}
 	var active int
