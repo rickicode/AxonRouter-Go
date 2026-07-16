@@ -1318,7 +1318,9 @@ func (h *Handler) persistCooldownScoped(connID string, det connstate.ErrorDetect
 		return
 	}
 
-	if det.CooldownUntil == nil {
+	// Balance-empty is a terminal state (needs manual top-up), so persist it
+	// even when there is no cooldown horizon.
+	if det.CooldownUntil == nil && det.Category != connstate.ErrorBalanceEmpty {
 		return
 	}
 	status := string(det.Status)
@@ -1326,22 +1328,26 @@ func (h *Handler) persistCooldownScoped(connID string, det connstate.ErrorDetect
 		status = string(connstate.StatusQuotaExhausted)
 	}
 	statusVal := status
-	cooldownUntil := det.CooldownUntil.Unix()
+	var cooldownUntil *int64
+	if det.CooldownUntil != nil {
+		u := det.CooldownUntil.Unix()
+		cooldownUntil = &u
+	}
 	errMsg := det.Message
 	errCode := string(det.Category)
 	h.writeQueue.Enqueue("persistCooldownScoped", func(d *sql.DB) error {
 		now := time.Now().Unix()
 		_, err := d.Exec(`
-			UPDATE connections
-			SET status = ?,
-			    cooldown_until = ?,
-			    last_error = ?,
-			    last_error_code = ?,
-			    failure_count = failure_count + 1,
-			    last_failure_at = ?,
-			    updated_at = ?
-			WHERE id = ?
-		`, statusVal, cooldownUntil, errMsg, errCode, now, now, connID)
+UPDATE connections
+SET status = ?,
+    cooldown_until = ?,
+    last_error = ?,
+    last_error_code = ?,
+    failure_count = failure_count + 1,
+    last_failure_at = ?,
+    updated_at = ?
+WHERE id = ?
+`, statusVal, cooldownUntil, errMsg, errCode, now, now, connID)
 		return err
 	})
 }

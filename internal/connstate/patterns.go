@@ -45,6 +45,7 @@ var BalanceEmptyPatterns = []string{
 	"add credits",
 	"billing hard limit",
 	"insufficient funds",
+	"insufficient balance",
 	"out of credits",
 	"credit balance",
 	"payment required",

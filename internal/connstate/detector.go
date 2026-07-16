@@ -119,7 +119,9 @@ func DetectError(ctx context.Context, statusCode int, body string, err error, pr
 	case ErrorAuth:
 		det.Status = StatusAuthFailed
 	case ErrorBalanceEmpty:
-		det.Status = StatusBalanceEmpty
+		// A drained balance is not a temporary quota issue; disable the
+		// connection immediately because it cannot recover without manual top-up.
+		det.Status = StatusDisabled
 	case ErrorQuota:
 		det.Status = StatusQuotaExhausted
 		until := nextMidnightUTC().Add(time.Minute)
