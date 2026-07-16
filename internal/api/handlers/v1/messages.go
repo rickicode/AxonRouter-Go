@@ -171,14 +171,14 @@ func (h *Handler) Messages(c *gin.Context) {
 		CachedTokens: tokenCounts.CachedTokens,
 		CacheCreationTokens: tokenCounts.CacheCreationTokens,
 		LatencyMs: latency,
-		StatusCode: resp.StatusCode,
-		TokensEstimated: tokensEstimated,
-	})
-	h.incrementAPIKeyUsage(c.GetString("api_key_id"), tokenCounts.InputTokens+tokenCounts.OutputTokens)
-	if resp.StatusCode < 300 {
-		h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
-	}
-	h.writeJSONResponse(c, resp.StatusCode, translatedResp)
+			StatusCode: resp.StatusCode,
+			TokensEstimated: tokensEstimated,
+		})
+		h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
+		if resp.StatusCode < 300 {
+			h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
+		}
+		h.writeJSONResponse(c, resp.StatusCode, translatedResp)
 		}
 		return
 	}

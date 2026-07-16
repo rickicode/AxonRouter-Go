@@ -22,6 +22,7 @@ import (
 type fakeEmbeddingsExecutor struct {
 	*executor.BaseExecutor
 	called bool
+	body   []byte
 }
 
 func (f *fakeEmbeddingsExecutor) Execute(ctx context.Context, req *executor.Request) (*executor.Response, error) {
@@ -34,7 +35,11 @@ func (f *fakeEmbeddingsExecutor) ExecuteStream(ctx context.Context, req *executo
 
 func (f *fakeEmbeddingsExecutor) Embeddings(ctx context.Context, req *executor.Request) (*executor.Response, error) {
 	f.called = true
-	return &executor.Response{StatusCode: http.StatusOK, Body: []byte(`{"object":"list","data":[]}`)}, nil
+	body := f.body
+	if body == nil {
+		body = []byte(`{"object":"list","data":[]}`)
+	}
+	return &executor.Response{StatusCode: http.StatusOK, Body: body}, nil
 }
 
 func seedProviderAndConnection(t *testing.T, h *Handler, provider, serviceKinds, connID, baseURL string) {
@@ -174,5 +179,58 @@ func TestEmbeddings_ProviderWithoutEmbeddingServiceKindRejected(t *testing.T) {
 	}
 	if fe.called {
 		t.Fatal("expected Embeddings not to be called when provider lacks embedding service kind")
+	}
+}
+
+func TestEmbeddings_UsageAccumulatesOnSuccess(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	wq := db.NewWriteQueue(h.db)
+	tracker := usage.NewTracker(h.db)
+	tracker.SetWriteQueue(wq)
+	h.tracker = tracker
+	defer func() {
+		tracker.Stop()
+		wq.Stop()
+	}()
+
+	fe := &fakeEmbeddingsExecutor{
+		BaseExecutor: executor.NewBaseExecutor(),
+		body:         []byte(`{"object":"list","data":[],"usage":{"prompt_tokens":5,"total_tokens":5}}`),
+	}
+	executor.GetRegistry().Register("openai", executor.FormatOpenAI, fe)
+	defer executor.GetRegistry().Unregister("openai")
+
+	seedProviderAndConnection(t, h, "openai", `["llm","embedding"]`, "openai-emb-conn-usage", "http://unused")
+
+	hash := mustHashKey(t, "sk-embed")
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_keys (id, name, key_hash, created_at) VALUES ('key-embed', 'test', ?, 0)`, hash); err != nil {
+		t.Fatalf("seed api_key: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_key_usage (api_key_id, total_tokens, updated_at) VALUES ('key-embed', 0, 0)`); err != nil {
+		t.Fatalf("seed api_key_usage: %v", err)
+	}
+
+	body := []byte(`{"model":"openai/text-embedding-3-small","input":"hello"}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/embeddings", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("api_key_id", "key-embed")
+
+	h.Embeddings(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !fe.called {
+		t.Fatal("expected Embeddings to be called")
+	}
+	var total int64
+	if err := h.db.QueryRow(`SELECT total_tokens FROM api_key_usage WHERE api_key_id = 'key-embed'`).Scan(&total); err != nil {
+		t.Fatalf("query api_key_usage: %v", err)
+	}
+	if total != 5 {
+		t.Errorf("total_tokens = %d, want 5", total)
 	}
 }

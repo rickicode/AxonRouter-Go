@@ -128,16 +128,17 @@ func (h *Handler) Embeddings(c *gin.Context) {
 		return
 	}
 	h.tracker.Log(&usage.LogEntry{
-		ApiKeyID:             c.GetString("api_key_id"),
-		ConnectionID:       conn.ID,
-		ProviderTypeID:     provider,
-		ModelID:              modelName,
-		ProxyPoolID:          executor.ProxyPoolIDFromContext(proxyCtx),
-		ApiType:              apiTypeFromPath(c.Request.URL.Path),
-		Modality:             "embedding",
-		Stream:               false,
-		LatencyMs:            time.Since(start).Milliseconds(),
-		StatusCode:           resp.StatusCode})
+		ApiKeyID: c.GetString("api_key_id"),
+		ConnectionID: conn.ID,
+		ProviderTypeID: provider,
+		ModelID: modelName,
+		ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
+		ApiType: apiTypeFromPath(c.Request.URL.Path),
+		Modality: "embedding",
+		Stream: false,
+		LatencyMs: time.Since(start).Milliseconds(),
+		StatusCode: resp.StatusCode})
+	h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, resp.Body, false)
 	c.Header("Content-Type", "application/json")
 	c.Status(resp.StatusCode)
 	c.Writer.Write(resp.Body)
