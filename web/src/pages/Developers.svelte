@@ -45,9 +45,36 @@ import CopyIcon from '@lucide/svelte/icons/copy';
     }
   }
 
-async function copy(text: string, label: string) {
-	await copyToClipboard(text, label);
-}
+  async function copy(text: string, label: string) {
+    await copyToClipboard(text, label);
+  }
+
+const createKeyResponse = `{
+  "id": "ax-xxxx...",
+  "key": "ax-xxxx...",
+  "name": "my-app",
+  "max_tokens": 10000000,
+  "expires_at": 1784782236,
+  "message": "Save this key — it won't be shown again"
+}`;
+
+const listKeysResponse = `{
+  "data": [
+    {
+      "id": "ax-xxxx...",
+      "name": "my-app",
+      "key": "ax-xxxx...",
+      "rate_limit_per_min": 600,
+      "max_tokens": 10000000,
+      "is_active": true,
+      "created_at": 1753497600,
+      "expires_at": 1784782236
+    }
+  ]
+}`;
+
+const toggleKeyResponse = `{\n  "data": { "ok": true }\n}`;
+const deleteKeyResponse = `{\n  "data": { "ok": true }\n}`;
 
   const endpoints = [
     { method: 'GET', path: '/admin/api/v1/providers' },
@@ -148,8 +175,67 @@ async function copy(text: string, label: string) {
       <Card.Title class="text-display-md">Example</Card.Title>
     </Card.Header>
     <Card.Content>
-      <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>curl -s {keyInfo?.base_url ?? 'http://localhost:3777/admin/api/v1'}/api-keys \\
+      <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>curl -s {keyInfo?.base_url ?? 'http://localhost:3777/admin/api/v1'}/api-keys \
   -H "Authorization: Bearer {keyInfo?.key ?? '<master-key>'}"</code></pre>
+    </Card.Content>
+  </Card.Root>
+
+  <Card.Root class="shadow-card">
+    <Card.Header>
+      <Card.Title class="text-display-md">Proxy API keys via master key</Card.Title>
+      <Card.Description>
+        The master key can also create the proxy API keys used for <code>/v1/*</code> requests.
+      </Card.Description>
+    </Card.Header>
+    <Card.Content class="space-y-6">
+      <div class="space-y-2">
+        <p class="text-body-sm font-medium">1. Create an API key</p>
+        <p class="text-body-sm text-muted-foreground">POST <code>/admin/api/v1/api-keys</code></p>
+        <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{keyInfo ? `curl -s -X POST ${keyInfo.base_url}/api-keys \\
+  -H "Authorization: Bearer ${keyInfo.key}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"name":"my-app","rate_limit_per_min":600,"max_tokens":10000000,"expires_at":1784782236}'` : `curl -s -X POST http://localhost:3777/admin/api/v1/api-keys \\
+  -H "Authorization: Bearer <master-key>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"name":"my-app","rate_limit_per_min":600,"max_tokens":10000000,"expires_at":1784782236}'`}</code></pre>
+        <p class="text-body-sm text-muted-foreground">Response <code>201 Created</code>:</p>
+        <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{createKeyResponse}</code></pre>
+        <p class="text-caption text-muted-foreground">Use the returned <code>key</code> in <code>Authorization: Bearer &lt;key&gt;</code> for <code>/v1/*</code>.</p>
+      </div>
+
+      <div class="space-y-2">
+        <p class="text-body-sm font-medium">2. List API keys</p>
+        <p class="text-body-sm text-muted-foreground">GET <code>/admin/api/v1/api-keys</code></p>
+        <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{keyInfo ? `curl -s ${keyInfo.base_url}/api-keys \\
+  -H "Authorization: Bearer ${keyInfo.key}"` : `curl -s http://localhost:3777/admin/api/v1/api-keys \\
+  -H "Authorization: Bearer <master-key>"`}</code></pre>
+        <p class="text-body-sm text-muted-foreground">Response <code>200 OK</code>:</p>
+        <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{listKeysResponse}</code></pre>
+      </div>
+
+      <div class="space-y-2">
+        <p class="text-body-sm font-medium">3. Disable / enable an API key</p>
+        <p class="text-body-sm text-muted-foreground">PATCH <code>/admin/api/v1/api-keys/&#123;id&#125;/toggle</code></p>
+        <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{keyInfo ? `curl -s -X PATCH ${keyInfo.base_url}/api-keys/ax-xxxx.../toggle \\
+  -H "Authorization: Bearer ${keyInfo.key}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"is_active":false,"max_tokens":10000000}'` : `curl -s -X PATCH http://localhost:3777/admin/api/v1/api-keys/ax-xxxx.../toggle \\
+  -H "Authorization: Bearer <master-key>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"is_active":false,"max_tokens":10000000}'`}</code></pre>
+        <p class="text-body-sm text-muted-foreground">Response <code>200 OK</code>:</p>
+        <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{toggleKeyResponse}</code></pre>
+      </div>
+
+      <div class="space-y-2">
+        <p class="text-body-sm font-medium">4. Delete an API key</p>
+        <p class="text-body-sm text-muted-foreground">DELETE <code>/admin/api/v1/api-keys/&#123;id&#125;</code></p>
+        <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{keyInfo ? `curl -s -X DELETE ${keyInfo.base_url}/api-keys/ax-xxxx... \\
+  -H "Authorization: Bearer ${keyInfo.key}"` : `curl -s -X DELETE http://localhost:3777/admin/api/v1/api-keys/ax-xxxx... \\
+  -H "Authorization: Bearer <master-key>"`}</code></pre>
+        <p class="text-body-sm text-muted-foreground">Response <code>200 OK</code>:</p>
+        <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{deleteKeyResponse}</code></pre>
+      </div>
     </Card.Content>
   </Card.Root>
 </div>
