@@ -279,12 +279,23 @@ func handleMessageDelta(root gjson.Result, state *claudeStreamState) [][]byte {
 		finishReason = &s
 	}
 
-	chunk := buildOpenAIChunk(state.MessageID, state.Model, nil, nil, nil)
+	chunk := buildOpenAIChunkRaw(state.MessageID, state.Model, nil, nil, nil)
 	if finishReason != nil {
 		chunk, _ = sjson.SetBytes(chunk, "choices.0.finish_reason", *finishReason)
 	}
+	if usage := root.Get("usage"); usage.Exists() {
+		chunk, _ = sjson.SetBytes(chunk, "usage.prompt_tokens", usage.Get("input_tokens").Int())
+		chunk, _ = sjson.SetBytes(chunk, "usage.completion_tokens", usage.Get("output_tokens").Int())
+		chunk, _ = sjson.SetBytes(chunk, "usage.total_tokens", usage.Get("input_tokens").Int()+usage.Get("output_tokens").Int())
+		if read := usage.Get("cache_read_input_tokens"); read.Exists() && read.Int() > 0 {
+			chunk, _ = sjson.SetBytes(chunk, "usage.prompt_tokens_details.cached_tokens", read.Int())
+		}
+		if creation := usage.Get("cache_creation_input_tokens"); creation.Exists() && creation.Int() > 0 {
+			chunk, _ = sjson.SetBytes(chunk, "usage.prompt_tokens_details.cache_creation_tokens", creation.Int())
+		}
+	}
 
-	return [][]byte{chunk}
+	return [][]byte{[]byte("data: " + string(chunk) + "\n\n")}
 }
 
 func handleMessageStop(state *claudeStreamState) [][]byte {
@@ -293,7 +304,7 @@ func handleMessageStop(state *claudeStreamState) [][]byte {
 	return [][]byte{done}
 }
 
-func buildOpenAIChunk(id, model string, content *string, toolCalls []map[string]interface{}, reasoningContent *string) []byte {
+func buildOpenAIChunkRaw(id, model string, content *string, toolCalls []map[string]interface{}, reasoningContent *string) []byte {
 	chunk := []byte(`{"object":"chat.completion.chunk","choices":[{"index":0,"delta":{}}]}`)
 	chunk, _ = sjson.SetBytes(chunk, "id", "chatcmpl-"+id)
 	chunk, _ = sjson.SetBytes(chunk, "model", model)
@@ -306,7 +317,11 @@ func buildOpenAIChunk(id, model string, content *string, toolCalls []map[string]
 	if reasoningContent != nil {
 		chunk, _ = sjson.SetBytes(chunk, "choices.0.delta.reasoning_content", *reasoningContent)
 	}
-	return []byte("data: " + string(chunk) + "\n\n")
+	return chunk
+}
+
+func buildOpenAIChunk(id, model string, content *string, toolCalls []map[string]interface{}, reasoningContent *string) []byte {
+	return []byte("data: " + string(buildOpenAIChunkRaw(id, model, content, toolCalls, reasoningContent)) + "\n\n")
 }
 
 func mustMarshal(v interface{}) []byte {

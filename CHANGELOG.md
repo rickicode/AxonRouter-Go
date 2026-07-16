@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Strengthened `InferCodeFromMessage` phrase detection for context-length errors (`input_tokens`, `reduce the length`, `prompt contains`, `context window`, `context exceeds`, etc.) and shared it across all provider translators.
+- Claude → OpenAI streaming response translator now forwards `usage` in the final chunk so clients can track token consumption.
 
 ## [0.3.6] - 2026-07-16
 
