@@ -1404,21 +1404,23 @@ func (h *Handler) streamResponse(
 			// This helps distinguish between client disconnects, combo timeouts, and other cancellations.
 			logging.Logger.Warn("stream context cancelled", "provider", provider, "model", model, "error", ctx.Err())
 
-			// Send in-band error event + [DONE] so the client knows the stream
-			// ended. Without this, clients hang waiting for data that will never come.
-			// Matches OmniRoute buildStreamErrorChunks / 9router streamHandler behavior.
-			if !h.isClientCanceled(c, ctx.Err()) {
-				errMsg := ctx.Err().Error()
-				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-					errMsg = "stream deadline exceeded"
+			if !silent {
+				// Send in-band error event + [DONE] so the client knows the stream
+				// ended. Without this, clients hang waiting for data that will never come.
+				// Matches OmniRoute buildStreamErrorChunks / 9router streamHandler behavior.
+				if !h.isClientCanceled(c, ctx.Err()) {
+					errMsg := ctx.Err().Error()
+					if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+						errMsg = "stream deadline exceeded"
+					}
+					errBytes, _ := json.Marshal(gin.H{"error": gin.H{"message": errMsg, "type": "server_error"}})
+					c.Writer.Write([]byte("data: "))
+					c.Writer.Write(errBytes)
+					c.Writer.Write([]byte("\n\n"))
 				}
-				errBytes, _ := json.Marshal(gin.H{"error": gin.H{"message": errMsg, "type": "server_error"}})
-				c.Writer.Write([]byte("data: "))
-				c.Writer.Write(errBytes)
-				c.Writer.Write([]byte("\n\n"))
+				c.Writer.Write([]byte("data: [DONE]\n\n"))
+				flusher.Flush()
 			}
-			c.Writer.Write([]byte("data: [DONE]\n\n"))
-			flusher.Flush()
 			return ctx.Err()
 		}
 	}
