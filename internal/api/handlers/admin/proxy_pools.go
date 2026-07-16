@@ -453,7 +453,7 @@ func (h *ProxyPoolHandler) BulkDelete(c *gin.Context) {
 			skipped++
 			continue
 		}
-		if err := h.deletePoolCascade(id); err != nil {
+		if err := h.deletePoolCascade(c.Request.Context(), id); err != nil {
 			skipped++
 			continue
 		}
@@ -525,7 +525,7 @@ func (h *ProxyPoolHandler) Delete(c *gin.Context) {
 		return
 	}
 	// Cascade: soft-delete referencing connections, detach settings, then delete.
-	if err := h.deletePoolCascade(id); err != nil {
+	if err := h.deletePoolCascade(c.Request.Context(), id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -804,7 +804,7 @@ func (h *ProxyPoolHandler) deletePoolCascadeTx(tx *sql.Tx, poolID string) error 
 // deletePoolCascade removes a proxy pool and cascades the deletion. It routes
 // the write through WriteQueue when available so bulk deletes never contend on
 // the SQLite writer; when writeQueue is nil it falls back to a direct tx.
-func (h *ProxyPoolHandler) deletePoolCascade(poolID string) error {
+func (h *ProxyPoolHandler) deletePoolCascade(ctx context.Context, poolID string) error {
 	run := func(d *sql.DB) error {
 		tx, err := d.Begin()
 		if err != nil {
@@ -823,5 +823,5 @@ func (h *ProxyPoolHandler) deletePoolCascade(poolID string) error {
 	if h.writeQueue == nil {
 		return run(h.db)
 	}
-	return h.writeQueue.Do(context.Background(), "delete-pool-cascade", run)
+	return h.writeQueue.Do(ctx, "delete-pool-cascade", run)
 }
