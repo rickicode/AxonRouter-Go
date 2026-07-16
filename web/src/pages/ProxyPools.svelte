@@ -324,7 +324,7 @@ async function handleCreatePool() {
 		poolName = ''; poolUrl = ''; poolNoProxy = '';
 		poolPage = 1;
 		await loadAll(true);
-	} catch (err) { toast.error('Create failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
+	} catch (err) { toast.error(err instanceof Error ? err.message : 'Unknown error'); }
 	finally { createPoolLoading = false; }
 }
 
@@ -1172,9 +1172,9 @@ async function handleBulkImport() {
 				</div>
 				<Dialog.Footer>
 					<Button variant="ghost" onclick={() => (showAddPool = false)}>Cancel</Button>
-					<Button onclick={handleCreatePool} disabled={createPoolLoading || !poolName.trim() || !poolUrl.trim()}>
-						{createPoolLoading ? 'Creating...' : 'Create pool'}
-					</Button>
+								<Button onclick={handleCreatePool} disabled={createPoolLoading || !poolName.trim() || !poolUrl.trim()}>
+									{createPoolLoading ? 'Checking proxy…' : 'Create pool'}
+								</Button>
 				</Dialog.Footer>
 			</Tabs.Content>
   <Tabs.Content value="bulk">
