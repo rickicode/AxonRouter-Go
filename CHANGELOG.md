@@ -16,7 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Strengthened `InferCodeFromMessage` phrase detection for context-length errors (`input_tokens`, `reduce the length`, `prompt contains`, `context window`, `context exceeds`, etc.) and shared it across all provider translators.
+- Per-provider `Compatibility` config in `internal/providercfg` with seeded defaults for Cloudflare (`cf`) and Bedrock (`bedrock`). Provider-specific OpenAI-compatible quirks (model prefix, max_tokens cap, content-array flattening, reasoning_effort allow-list, provider-prefix strip) are now configurable without rebuilding.
 - Claude → OpenAI streaming response translator now forwards `usage` in the final chunk so clients can track token consumption.
+- Claude → OpenAI streaming response translator now uses statically-typed event structs instead of per-event `map[string]interface{}`, reducing allocations by ~78% (171 → 38 allocs/op) and latency by ~63% (23767 → 8704 ns/op) while producing byte-identical output.
 
 ## [0.3.6] - 2026-07-16
 
