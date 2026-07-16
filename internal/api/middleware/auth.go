@@ -3,6 +3,7 @@ package middleware
 import (
 	"database/sql"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
@@ -19,16 +20,21 @@ func Auth(db *sql.DB, cache *AuthCache) gin.HandlerFunc {
 			presented = authHeader[7:]
 		}
 
-		// Cache hit: zero DB access, zero bcrypt. This is the hot path.
-		if presented != "" && cache != nil {
-			if r := cache.Get(presented); r != nil {
-				c.Set("api_key_id", r.keyID)
-				c.Set("rate_limit", r.rateLimit)
-				c.Set("max_tokens", r.maxTokens)
-				c.Next()
+	// Cache hit: zero DB access, zero bcrypt. This is the hot path.
+	if presented != "" && cache != nil {
+		if r := cache.Get(presented); r != nil {
+			if r.expiresAt > 0 && time.Now().Unix() >= r.expiresAt {
+				cache.Invalidate(presented)
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "api key expired"})
 				return
 			}
+			c.Set("api_key_id", r.keyID)
+			c.Set("rate_limit", r.rateLimit)
+			c.Set("max_tokens", r.maxTokens)
+			c.Next()
+			return
 		}
+	}
 
 	// Cache miss (or no cache): validate with singleflight to collapse
 	// concurrent misses for the same key into one DB+bcrypt call.
