@@ -8,6 +8,16 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 )
 
+// unifiedPaths maps /v1/unified modes to the client-facing surface path used
+// for logging and the in-flight request tracker. The actual HTTP request stays
+// on /v1/unified; only the label derived from the path changes.
+var unifiedPaths = map[string]string{
+	"text":  "/v1/chat/completions",
+	"image": "/v1/images/generations",
+	"audio": "/v1/audio/speech",
+	"video": "/v1/video/generations",
+}
+
 // Unified handles POST /v1/unified — dispatches to the right endpoint by mode.
 func (h *Handler) Unified(c *gin.Context) {
 	body, err := readBody(c)
@@ -36,30 +46,27 @@ func (h *Handler) Unified(c *gin.Context) {
 		return
 	}
 
+	// Tag the request with the real client-facing surface for logging and the
+	// active-request panel without mutating the public URL.
+	if surfacePath, ok := unifiedPaths[mode]; ok {
+		c.Request.URL.Path = surfacePath
+	}
+
 	switch mode {
 	case "text":
-		// Dispatch to chat completions; rewrite path so logs/tagging reflect the
-		// actual client-facing surface instead of the generic /v1/unified path.
 		c.Request.Body = io.NopCloser(executor.JSONToReader(body))
-		c.Request.URL.Path = "/v1/chat/completions"
 		h.ChatCompletions(c)
 
 	case "image":
-		// Dispatch to image generation
 		c.Request.Body = io.NopCloser(executor.JSONToReader(body))
-		c.Request.URL.Path = "/v1/images/generations"
 		h.Images(c)
 
 	case "audio":
-		// Dispatch to TTS
 		c.Request.Body = io.NopCloser(executor.JSONToReader(body))
-		c.Request.URL.Path = "/v1/audio/speech"
 		h.TTS(c)
 
 	case "video":
-		// Dispatch to video generation
 		c.Request.Body = io.NopCloser(executor.JSONToReader(body))
-		c.Request.URL.Path = "/v1/video/generations"
 		h.Video(c)
 
 	default:

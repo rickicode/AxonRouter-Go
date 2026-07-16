@@ -14,8 +14,7 @@ func MasterAuth(km *adminapi.KeyManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		expected := km.Current()
 		if expected == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": gin.H{"message": "invalid master api key", "code": "invalid_master_key"}})
-			c.Abort()
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": gin.H{"message": "invalid master api key", "code": "invalid_master_key"}})
 			return
 		}
 
@@ -26,8 +25,7 @@ func MasterAuth(km *adminapi.KeyManager) gin.HandlerFunc {
 		}
 
 		if subtle.ConstantTimeCompare([]byte(presented), []byte(expected)) != 1 {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": gin.H{"message": "invalid master api key", "code": "invalid_master_key"}})
-			c.Abort()
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": gin.H{"message": "invalid master api key", "code": "invalid_master_key"}})
 			return
 		}
 

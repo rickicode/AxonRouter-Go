@@ -149,6 +149,13 @@ func modalityFromPath(path string) string {
 // apiTypeFromPath derives a client-facing API type label from the request path.
 // This tells the dashboard which surface the caller used (openai, claude, etc.).
 func apiTypeFromPath(path string) string {
+	return unifiedSurface(path)
+}
+
+// unifiedSurface maps a proxy path to the client-facing API surface name.
+// It is shared by logging and the active-request tracker. The special-case
+// ordering matters: more-specific paths must match before generic substrings.
+func unifiedSurface(path string) string {
 	switch {
 	case strings.Contains(path, "/chat/completions"):
 		return "openai"

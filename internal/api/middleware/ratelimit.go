@@ -62,11 +62,10 @@ func RateLimit(limiter *RateLimiter) gin.HandlerFunc {
 		}
 
 		if !limiter.Allow(key, limit) {
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": gin.H{
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": gin.H{
 				"message": "rate limit exceeded",
 				"type":    "rate_limit_error",
 			}})
-			c.Abort()
 			return
 		}
 		c.Next()
