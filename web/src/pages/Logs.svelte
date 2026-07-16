@@ -437,16 +437,16 @@ const columns: ColumnDef[] = [
 							<tr class="border-b border-border bg-muted/30">
 {#each columns as column}
 						<th
-  class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 align-bottom {column.key === 'timestamp'
-    ? 'min-w-[180px]'
-    : ''} {column.key === 'client_ip' ? 'min-w-[200px]' : ''} {column.key === 'provider_name' ? 'min-w-[180px]' : ''} {column.key === 'connection_name'
-							? 'min-w-[220px]'
-							: ''} {column.key === 'status_code' ? 'min-w-[140px]' : ''} {column.key === 'tokens'
-							? 'text-right min-w-[120px]'
-							: ''} {column.key === 'cost_usd' ? 'text-right min-w-[80px]' : ''} {column.key ===
-							'error_message'
-							? 'min-w-[160px]'
-							: ''}"
+        class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 align-bottom whitespace-nowrap {column.key === 'timestamp'
+          ? 'min-w-[120px]'
+          : ''} {column.key === 'client_ip' ? 'min-w-[120px] md:min-w-[160px]' : ''} {column.key === 'provider_name' ? 'min-w-[120px] md:min-w-[150px]' : ''} {column.key === 'connection_name'
+          ? 'min-w-[140px] md:min-w-[180px]'
+          : ''} {column.key === 'status_code' ? 'min-w-[100px]' : ''} {column.key === 'tokens'
+          ? 'text-right min-w-[80px] md:min-w-[100px]'
+          : ''} {column.key === 'cost_usd' ? 'text-right min-w-[70px]' : ''} {column.key === 'error_message'
+          ? 'min-w-[100px] md:min-w-[130px]'
+          : ''} {column.key === 'latency_ms' ? 'min-w-[100px] md:min-w-[120px]' : ''}"
+
 						>
 						<div class="flex flex-col leading-none">
 							<span>{column.label}</span>
@@ -466,26 +466,29 @@ const columns: ColumnDef[] = [
     <td class="py-3 px-4">
       <div class="flex flex-col">
         <code class="text-caption-mono text-muted-foreground whitespace-nowrap">{row.client_ip || '—'}</code>
-        <span class="text-caption text-muted-foreground truncate max-w-[180px]" title={row.user_agent || ''}>{row.user_agent || '—'}</span>
+          <span class="text-caption text-muted-foreground truncate max-w-[140px] md:max-w-[180px]" title={row.user_agent || ''}>{row.user_agent || '—'}</span>
+
       </div>
     </td>
     <td class="py-3 px-4">
       <div class="flex items-center gap-2.5">
 								<ProviderIcon meta={providerMeta(row.provider_type_id)} size={24} />
 								<div class="flex flex-col min-w-0">
-									<a
-										href="/providers/{row.provider_type_id}"
-										class="text-body-sm-strong hover:underline text-foreground leading-none truncate"
-									>{row.provider_name || providerMeta(row.provider_type_id).displayName}</a
-									>
-									<span class="text-caption-mono text-muted-foreground truncate" title={row.api_key || ''}>{row.api_key || '—'}</span>
+          <a
+            href="/providers/{row.provider_type_id}"
+            class="text-body-sm-strong hover:underline text-foreground leading-none truncate max-w-[140px] md:max-w-[170px]"
+            >{row.provider_name || providerMeta(row.provider_type_id).displayName}</a
+          >
+          <span class="text-caption-mono text-muted-foreground truncate max-w-[140px] md:max-w-[170px]" title={row.api_key || ''}>{row.api_key || '—'}</span>
+
 								</div>
 							</div>
 						</td>
 <td class="py-3 px-4">
 							<div class="flex flex-col">
 								<span class="text-body-sm text-foreground truncate" title={row.connection_name || row.connection_id || ''}>{row.connection_name || row.connection_id || '—'}</span>
-								<span class="text-code text-muted-foreground truncate max-w-[220px]" title={row.model_id}>{row.model_id}</span>
+          <span class="text-code text-muted-foreground truncate max-w-[160px] md:max-w-[220px]" title={row.model_id}>{row.model_id}</span>
+
 							</div>
 						</td>
 <td class="py-3 px-4">
@@ -497,17 +500,19 @@ const columns: ColumnDef[] = [
 								<Badge variant="outline" class="text-caption-mono rounded-sm py-0 w-fit border-border text-muted-foreground">{row.stream ? 'stream' : 'json'}</Badge>
 							</div>
 						</td>
-          <td class="py-3 px-4">
-            <div class="flex flex-col">
-              <span class="text-code text-muted-foreground">{formatLatency(row.latency_ms)}</span>
-              <span class="text-caption-mono text-muted-foreground">{row.proxy_pool_id ? row.proxy_pool_name || row.proxy_pool_id : 'direct'}</span>
-            </div>
-          </td>
+        <td class="py-3 px-4">
+          <div class="flex flex-col">
+            <span class="text-code text-muted-foreground">{formatLatency(row.latency_ms)}</span>
+            <span class="text-caption-mono text-muted-foreground truncate max-w-[100px] md:max-w-[140px]" title={row.proxy_pool_id ? row.proxy_pool_name || row.proxy_pool_id : 'direct'}>{row.proxy_pool_id ? row.proxy_pool_name || row.proxy_pool_id : 'direct'}</span>
+          </div>
+        </td>
+
 <td class="py-3 px-4 text-code text-right whitespace-nowrap">
 							<div class="flex flex-col items-end gap-1">
-								{#if row.api_type}
-									<span class="text-caption-mono text-muted-foreground">{row.api_type}</span>
-								{/if}
+          {#if row.api_type}
+            <span class="text-caption-mono text-muted-foreground truncate max-w-[90px]" title={row.api_type}>{row.api_type}</span>
+          {/if}
+
 								<div>
 									<span class="text-muted-foreground">{formatTokens(row.input_tokens)}</span>
 									<span class="text-muted-foreground/60">/</span>

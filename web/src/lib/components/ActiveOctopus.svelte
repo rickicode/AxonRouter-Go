@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { ActiveRequest } from './api';
+	import type { ActiveRequest } from '$lib/api';
 import ProviderIcon from './ProviderIcon.svelte';
 import { getProviderMeta, getComboMeta } from '../provider-catalog';
 import { combos } from '$lib/stores';
@@ -29,10 +29,19 @@ let comboById = $derived(
 	)
 );
 
-function metaFor(id: string) {
+let comboByName = $derived(
+	new Map<string, { id: string; name: string }>(
+		($combos || []).map((combo) => [combo.name, combo])
+	)
+);
+
+function metaFor(id: string, modelId?: string) {
+	const comboByLookup = comboById[id] || (modelId ? comboByName.get(modelId) : undefined);
+	if (comboByLookup) {
+		return getComboMeta(comboByLookup.id, comboByLookup.name);
+	}
 	return (
-		getProviderMeta(id) ??
-		(comboById[id] ? getComboMeta(id, comboById[id].name) : {
+		getProviderMeta(id) ?? {
 			id,
 			displayName: id,
 			icon: 'network',
@@ -45,9 +54,17 @@ function metaFor(id: string) {
 			authType: 'apikey',
 			prefix: `${id}/`,
 			isBuiltIn: false,
-		})
+		}
 	);
 }
+
+function activeProviderName(item: DisplayItem): string {
+	if (item.req.target_provider_type_id) {
+		return getProviderMeta(item.req.target_provider_type_id)?.displayName ?? item.req.target_provider_type_id;
+	}
+	return metaFor(item.provider_type_id, item.req.model_id).displayName;
+}
+
 
 	function buildItems(active: ActiveRequest[]): DisplayItem[] {
 		if (active.length <= INDIVIDUAL_LIMIT) {
@@ -109,8 +126,8 @@ function metaFor(id: string) {
 			const cpX = cx + Math.cos(cpAngle) * cpR;
 			const cpY = cy + Math.sin(cpAngle) * cpR;
 
-			const meta = metaFor(item.provider_type_id);
-			const displayName = meta.displayName;
+			const meta = metaFor(item.provider_type_id, item.req.model_id);
+			const displayName = activeProviderName(item);
 			const label = item.count > 1 ? `${displayName} (${item.count})` : displayName;
 
 			return {
@@ -119,21 +136,26 @@ function metaFor(id: string) {
 				x2,
 				y2,
 				item,
-				label: label.length > 16 ? `${label.slice(0, 15)}…` : label,
+				label: label.length > 18 ? `${label.slice(0, 17)}…` : label,
 			};
+
 		});
 	}
 
 	let tentacles = $derived<Tentacle[]>(buildTentacles(items));
 
-	function tooltipFor(t: Tentacle): string {
-		const meta = metaFor(t.item.provider_type_id);
-		const base = meta.displayName;
-		if (t.item.count === 1) {
-			return `${base}\n${t.item.req.model_id}\n${t.item.req.connection_name || t.item.req.connection_id || ''}`;
-		}
-		return `${base}: ${t.item.count} active requests`;
+function tooltipFor(t: Tentacle): string {
+	const sourceMeta = metaFor(t.item.provider_type_id, t.item.req.model_id);
+	const currentProvider = t.item.req.target_provider_type_id
+		? (getProviderMeta(t.item.req.target_provider_type_id)?.displayName ?? t.item.req.target_provider_type_id)
+		: sourceMeta.displayName;
+	const base = sourceMeta.displayName;
+	if (t.item.count === 1) {
+		return `${base}\nvia ${currentProvider}\n${t.item.req.model_id}\n${t.item.req.connection_name || t.item.req.connection_id || ''}`;
 	}
+	return `${base}: ${t.item.count} active requests`;
+}
+
 </script>
 
 <div class="relative flex items-center justify-center py-10">
@@ -161,7 +183,7 @@ function metaFor(id: string) {
 						class="flex flex-col items-center justify-center"
 						title={tooltipFor(t)}
 					>
-						<ProviderIcon meta={metaFor(t.item.provider_type_id)} size={26} />
+		<ProviderIcon meta={metaFor(t.item.provider_type_id, t.item.req.model_id)} size={26} />
 						<span
 							class="mt-0.5 line-clamp-2 max-w-[88px] text-center text-[9px] font-semibold leading-tight"
 							style="color:#22c55e;text-shadow:0 1px 2px rgba(0,0,0,.8)"
