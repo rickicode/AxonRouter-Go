@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `StreamConfig` extended with `StallTimeoutMs`, `HoldbackMs`, `HoldbackBytes`, and `AdaptiveReadiness`.
 
 ### Fixed
+- Combo strategy override no longer mutates the shared in-memory combo cache, removing a race condition where the original DB strategy could be lost across requests.
+- Combo routing is now format-aware for `/v1/messages` and `/v1/responses`: translation and final errors use the correct client API format instead of always assuming OpenAI chat completions.
+- Fusion strategy is now restricted to `/v1/chat/completions` until full format-aware judge/response translators are ready for Claude and Responses API.
+- Fusion `min_panel` is clamped to the number of steps, so single-step fusion combos no longer fail at runtime with the default config.
+- Admin combo creation now validates `fusion_config`; invalid/missing fusion settings fail at creation time instead of at request time.
+- Strategy settings (`combo_strategy` / `combo_strategies`) are now cached with a short TTL and validated, eliminating a per-request DB lookup on the combo hot path.
+- Capability detection now recognizes Responses API `input_image` and `input_file` content types.
 - Streaming context cancellation now emits an in-band SSE `error` event followed by `[DONE]`, preventing clients from hanging when a stream is cancelled.
 - Codex (`cx`) connections no longer stay excluded from routing after a DB cooldown recovery: setting a connection back to `ready` now clears any stale in-memory `CooldownUntil`.
 - Codex chat requests now use the canonical Codex-specific translator, preventing malformed upstream requests that previously failed with `"Unsupported parameter: max_output_tokens"`.
