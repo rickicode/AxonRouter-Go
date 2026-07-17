@@ -203,7 +203,10 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, req *Request) (*Strea
 	body := codexRequestBody(req.Body)
 	headers := codexHeaders(req)
 
-	cfg := &StreamConfig{ScannerMaxTokenSize: codexScannerMax}
+	cfg := &StreamConfig{
+		ScannerMaxTokenSize:       codexScannerMax,
+		DropNonstandardCodexSSE: shouldDropNonstandardCodexSSE(),
+	}
 	result, err := e.DoStreamRequestWithConfig(ctx, "POST", url, headers, body, cfg)
 	if err != nil {
 		if upErr, ok := err.(*UpstreamError); ok {
@@ -211,30 +214,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, req *Request) (*Strea
 		}
 		return nil, err
 	}
-
-	if !shouldDropNonstandardCodexSSE() {
-		return result, nil
-	}
-
-	filtered := &StreamResult{
-		Chunks:     make(chan StreamChunk),
-		Headers:    result.Headers,
-		StatusCode: result.StatusCode,
-	}
-	go func() {
-		defer close(filtered.Chunks)
-		for chunk := range result.Chunks {
-			if chunk.Err != nil || chunk.Payload == nil {
-				filtered.Chunks <- chunk
-				continue
-			}
-			if isNonstandardCodexSSELine(chunk.Payload) {
-				continue
-			}
-			filtered.Chunks <- chunk
-		}
-	}()
-	return filtered, nil
+	return result, nil
 }
 
 // ToMap returns the usage as a map suitable for the Response.Usage field.

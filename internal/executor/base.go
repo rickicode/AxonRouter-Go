@@ -48,6 +48,10 @@ type StreamConfig struct {
 	// ScannerMaxTokenSize overrides the default 64KB max SSE line size.
 	// Codex Responses can emit single data: lines > 64KB (reasoning, images).
 	ScannerMaxTokenSize int
+	// DropNonstandardCodexSSE drops SSE lines whose event name starts with
+	// "codex." before downstream processing. Codex CLI emits these event-only
+	// lines and they break standard OpenAI SDK consumers.
+	DropNonstandardCodexSSE bool
 }
 
 // StallTapReader wraps an io.Reader and calls onBytes on every successful Read.
@@ -846,10 +850,13 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 					}
 					return
 				}
-				if len(line) == 0 {
-					continue
-				}
-				if !sawFirst {
+			if len(line) == 0 {
+				continue
+			}
+			if ((cfg != nil && cfg.DropNonstandardCodexSSE) || shouldDropNonstandardCodexSSE()) && isNonstandardCodexSSELine(line) {
+				continue
+			}
+			if !sawFirst {
 					sawFirst = true
 					if !readinessTimer.Stop() {
 						select {
