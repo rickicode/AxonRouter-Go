@@ -13,6 +13,12 @@ import (
 // It follows the behavior of CLIProxyAPI's chat-completions→Responses translator:
 // forced stream/store/reasoning defaults, message→input conversion, tool name
 // shortening, response_format mapping, and stripping of unsupported fields.
+var codexHostedToolTypes = map[string]struct{}{
+	"image_generation": {}, "web_search": {}, "web_search_preview": {},
+	"file_search": {}, "computer": {}, "computer_use_preview": {},
+	"code_interpreter": {}, "mcp": {}, "local_shell": {}, "tool_search": {},
+}
+
 func ConvertOpenAIRequestToCodex(modelName string, inputRawJSON []byte, stream bool) []byte {
 	rawJSON := inputRawJSON
 
@@ -32,6 +38,17 @@ func ConvertOpenAIRequestToCodex(modelName string, inputRawJSON []byte, stream b
 	out, _ = sjson.SetBytes(out, "reasoning.summary", "auto")
 	if reasoningEffort != "" && reasoningEffort != "none" {
 		out, _ = sjson.SetBytes(out, "include", []string{"reasoning.encrypted_content"})
+	}
+
+	// Preserve Responses-API fields that Codex supports if they are already present.
+	if v := gjson.GetBytes(rawJSON, "instructions"); v.Exists() && v.Type == gjson.String && v.String() != "" {
+		out, _ = sjson.SetBytes(out, "instructions", v.String())
+	}
+	if v := gjson.GetBytes(rawJSON, "prompt_cache_key"); v.Exists() {
+		out, _ = sjson.SetBytes(out, "prompt_cache_key", v.Value())
+	}
+	if v := gjson.GetBytes(rawJSON, "client_metadata"); v.Exists() {
+		out, _ = sjson.SetRawBytes(out, "client_metadata", []byte(v.Raw))
 	}
 
 	// Model
@@ -236,11 +253,14 @@ func ConvertOpenAIRequestToCodex(modelName string, inputRawJSON []byte, stream b
 		for i := 0; i < len(arr); i++ {
 			t := arr[i]
 			toolType := t.Get("type").String()
-			// Pass through built-in tools (e.g. {"type":"web_search"}) directly.
-			if toolType != "" && toolType != "function" && t.IsObject() {
+	// Pass through hosted tools Codex executes server-side, plus custom passthrough tools.
+		if toolType != "" && toolType != "function" && t.IsObject() {
+			_, hosted := codexHostedToolTypes[toolType]
+			if hosted || toolType == "custom" {
 				out, _ = sjson.SetRawBytes(out, "tools.-1", []byte(t.Raw))
-				continue
 			}
+			continue
+		}
 			if toolType == "function" {
 				item := []byte(`{}`)
 				item, _ = sjson.SetBytes(item, "type", "function")
