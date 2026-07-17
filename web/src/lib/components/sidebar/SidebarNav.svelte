@@ -11,8 +11,9 @@
   import KeyIcon from '@lucide/svelte/icons/key';
   import ZapIcon from '@lucide/svelte/icons/zap';
   import BotIcon from '@lucide/svelte/icons/bot';
-  import BadgeDollarSignIcon from '@lucide/svelte/icons/badge-dollar-sign';
-  import BarChartIcon from '@lucide/svelte/icons/bar-chart';
+import BadgeDollarSignIcon from '@lucide/svelte/icons/badge-dollar-sign';
+import ArchiveRestoreIcon from '@lucide/svelte/icons/archive-restore';
+import BarChartIcon from '@lucide/svelte/icons/bar-chart';
   import CodeIcon from '@lucide/svelte/icons/code';
 import InfoIcon from '@lucide/svelte/icons/info';
 
@@ -32,8 +33,9 @@ const systemItems = [
  { href: '/api-keys', label: 'API Keys', icon: KeyIcon },
  { href: '/developers', label: 'Developers', icon: CodeIcon },
     { href: '/cli-tools', label: 'CLI Tools', icon: BotIcon },
-  { href: '/model-pricing', label: 'Model Pricing', icon: BadgeDollarSignIcon },
-  { href: '/settings', label: 'Settings', icon: SettingsIcon },
+{ href: '/model-pricing', label: 'Model Pricing', icon: BadgeDollarSignIcon },
+{ href: '/backup-restore', label: 'Backup & Restore', icon: ArchiveRestoreIcon },
+{ href: '/settings', label: 'Settings', icon: SettingsIcon },
   { href: '/about', label: 'About', icon: InfoIcon },
 ];
 
