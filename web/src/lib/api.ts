@@ -163,6 +163,45 @@ interface Settings {
 
 type FetchOptions = RequestInit & { timeout_ms?: number };
 
+async function fetchBlob(
+endpoint: string,
+options: FetchOptions = {},
+): Promise<Blob> {
+const url = `${API_BASE}${endpoint}`;
+const timeoutMs = options.timeout_ms ?? 120000;
+
+const controller = new AbortController();
+const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+const token = getToken();
+const headers: Record<string, string> = {};
+if (token) headers["Authorization"] = "Bearer " + token;
+if (options.headers) Object.assign(headers, options.headers);
+
+try {
+const response = await fetch(url, {
+...options,
+headers,
+signal: controller.signal,
+});
+
+const newTok = response.headers.get("X-Auth-Token");
+if (newTok) setToken(newTok);
+
+if (!response.ok) {
+if (response.status === 401) logout();
+const err = await response
+.json()
+.catch(() => ({ message: response.statusText }));
+throw new Error(err.error || err.message || `HTTP ${response.status}`);
+}
+
+return response.blob();
+} finally {
+clearTimeout(timeout);
+}
+}
+
 // Generic fetch wrapper with timeout
 export async function fetchApi<T>(
   endpoint: string,
@@ -175,12 +214,11 @@ export async function fetchApi<T>(
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   const token = getToken();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (token && endpoint !== "/login")
-    headers["Authorization"] = "Bearer " + token;
-  if (options.headers) Object.assign(headers, options.headers);
+const headers: Record<string, string> = {};
+if (!(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
+if (token && endpoint !== "/login")
+headers["Authorization"] = "Bearer " + token;
+if (options.headers) Object.assign(headers, options.headers);
 
   try {
     const response = await fetch(url, {
@@ -205,6 +243,57 @@ export async function fetchApi<T>(
     clearTimeout(timeout);
   }
 }
+
+// Backup API
+export type BackupCategory = "core" | "combos" | "logs" | "cache";
+export type RestoreTarget = "current" | "sqlite" | "turso";
+
+export interface DownloadBackupOptions {
+categories: BackupCategory[];
+password?: string;
+}
+
+export interface RestoreBackupOptions {
+file: File;
+target: RestoreTarget;
+password?: string;
+sqlitePath?: string;
+tursoUrl?: string;
+tursoToken?: string;
+}
+
+export interface RestoreBackupResult {
+data?: unknown;
+[key: string]: unknown;
+}
+
+export const backupApi = {
+downloadBackup: ({ categories, password }: DownloadBackupOptions) => {
+const params = new URLSearchParams();
+if (categories.length > 0) params.set("categories", categories.join(","));
+if (password) params.set("password", password);
+const query = params.toString();
+return fetchBlob(`/backup/download${query ? `?${query}` : ""}`, {
+method: "GET",
+timeout_ms: 120000,
+});
+},
+
+restoreBackup: ({ file, target, password, sqlitePath, tursoUrl, tursoToken }: RestoreBackupOptions) => {
+const body = new FormData();
+body.set("backup", file);
+body.set("target", target);
+if (password) body.set("password", password);
+if (sqlitePath) body.set("sqlite_path", sqlitePath);
+if (tursoUrl) body.set("turso_url", tursoUrl);
+if (tursoToken) body.set("turso_token", tursoToken);
+return fetchApi<RestoreBackupResult>("/backup/restore", {
+method: "POST",
+body,
+timeout_ms: 120000,
+});
+},
+};
 
 // Provider API
 // A model entry in a provider model list. custom marks user-added models that

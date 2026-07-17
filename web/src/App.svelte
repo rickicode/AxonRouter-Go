@@ -33,6 +33,7 @@ import CLITools from './pages/CLITools.svelte';
 	import ModelPricing from './pages/ModelPricing.svelte';
 	import Developers from './pages/Developers.svelte';
 import Usage from './pages/Usage.svelte';
+import BackupRestore from './pages/BackupRestore.svelte';
 import About from './pages/About.svelte';
 import NotFound from './pages/NotFound.svelte';
 
@@ -55,8 +56,9 @@ const labels: Record<string, string> = {
 		'proxy-pools': 'Proxy Pools',
 		'cli-tools': 'CLI Tools',
 		'model-pricing': 'Model Pricing',
-    'developers': 'Developers',
-    'about': 'About',
+'developers': 'Developers',
+'backup-restore': 'Backup & Restore',
+'about': 'About',
   };
     return labels[segment] ?? segment.charAt(0).toUpperCase() + segment.slice(1);
   }
@@ -115,6 +117,9 @@ const labels: Record<string, string> = {
 
 // /developers → Developers
 if (segments[0] === 'developers' && segments.length === 1) return { component: Developers, params: {} };
+
+// /backup-restore → BackupRestore
+if (segments[0] === 'backup-restore' && segments.length === 1) return { component: BackupRestore, params: {} };
 
 // /about → About
 if (segments[0] === 'about' && segments.length === 1) return { component: About, params: {} };
