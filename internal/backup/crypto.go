@@ -38,7 +38,6 @@ func Encrypt(plaintext []byte, password string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("generate encryption nonce: %w", err)
 	}
-
 	gcm, err := newGCM(password, salt)
 	if err != nil {
 		return nil, err

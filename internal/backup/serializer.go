@@ -22,7 +22,6 @@ func NewWriter(dest io.Writer, header Header, password string) (*Writer, error) 
 	if dest == nil {
 		return nil, errors.New("backup writer destination is required")
 	}
-
 	writer := &Writer{dest: dest, password: password}
 	writer.encoder = json.NewEncoder(&writer.buf)
 	if err := writer.encoder.Encode(header); err != nil {
