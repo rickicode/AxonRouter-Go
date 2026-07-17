@@ -159,6 +159,14 @@ $effect(() => {
 	}
 });
 
+const fusionStrategy = $derived(strategy === 'fusion');
+
+$effect(() => {
+	if (fusionStrategy && isSmart) {
+		isSmart = false;
+	}
+});
+
 function addModel(modelId: string) {
   if (steps.some((s) => s.model_id === modelId)) {
     toast.info('Model already added');
@@ -205,11 +213,11 @@ async function handleSave() {
 					strategy,
 					timeout_ms: timeout,
 					sticky_limit: stickyLimit,
-					is_smart: isSmart,
-					smart_goal: isSmart ? smartGoal : null,
-					fusion_config: strategy === 'fusion' ? buildFusionConfig() : undefined,
-				});
-			const plan = planStepSync(existingSteps, steps);
+		is_smart: fusionStrategy ? false : isSmart,
+		smart_goal: fusionStrategy || !isSmart ? null : smartGoal,
+		fusion_config: strategy === 'fusion' ? buildFusionConfig() : undefined,
+		});
+		const plan = planStepSync(existingSteps, steps);
 			for (const stepId of plan.toRemove) {
 				await combosApi.removeStep(stepId);
 			}
@@ -224,10 +232,10 @@ async function handleSave() {
 					strategy,
 					timeout_ms: timeout,
 					sticky_limit: stickyLimit,
-					is_smart: isSmart,
-					smart_goal: isSmart ? smartGoal : null,
-					fusion_config: strategy === 'fusion' ? buildFusionConfig() : undefined,
-					is_active: true,
+			is_smart: fusionStrategy ? false : isSmart,
+			smart_goal: fusionStrategy || !isSmart ? null : smartGoal,
+			fusion_config: strategy === 'fusion' ? buildFusionConfig() : undefined,
+			is_active: true,
 					steps: steps.map((s) => ({ model_id: s.model_id, priority: s.priority, weight: s.weight })),
 				});
 			toast.success('Combo created');
@@ -323,10 +331,13 @@ async function handleSave() {
 				</div>
 			</div>
 
-			<div class="flex items-center gap-3 pt-2 border-t border-border">
-				<Switch id="combo-is-smart" checked={isSmart} onCheckedChange={(v) => (isSmart = v)} />
-				<Label for="combo-is-smart" class="text-body-sm-strong cursor-pointer">Smart combo</Label>
-			</div>
+	<div class="flex items-center gap-3 pt-2 border-t border-border">
+		<Switch id="combo-is-smart" checked={isSmart} onCheckedChange={(v) => (isSmart = v)} disabled={fusionStrategy} />
+		<Label for="combo-is-smart" class="text-body-sm-strong {fusionStrategy ? 'text-muted-foreground cursor-not-allowed' : 'cursor-pointer'}">Smart combo</Label>
+	</div>
+	{#if fusionStrategy}
+		<p class="text-caption text-muted-foreground">Smart routing is not available for fusion combos because fusion already uses its own panel + judge.</p>
+	{/if}
 
 			{#if isSmart}
 				<div class="space-y-2">
