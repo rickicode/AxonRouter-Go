@@ -104,14 +104,14 @@ func openSQLiteFile(t *testing.T, path string) *sql.DB {
 func seedBackupTestData(t *testing.T, d *sql.DB) {
 	t.Helper()
 	now := int64(1700000000)
-	mustExec(t, d, `INSERT OR REPLACE INTO provider_types (id, display_name, format, base_url, is_custom, category, service_kinds, created_at) VALUES ('restore-provider', 'Restore Provider', 'openai', 'https://example.test/v1', 1, 'apikey', '["llm"]', ?)`, now)
-	mustExec(t, d, `INSERT OR REPLACE INTO connections (id, provider_type_id, name, auth_type, api_key, status, is_active, created_at, updated_at) VALUES ('restore-conn', 'restore-provider', 'Restore Conn', 'api_key', 'secret', 'ready', 1, ?, ?)`, now, now)
-	mustExec(t, d, `INSERT OR REPLACE INTO api_keys (id, key_hash, name, rate_limit_per_min, is_active, created_at) VALUES ('restore-key', 'hash-restore', 'Restore Key', 60, 1, ?)`, now)
-	mustExec(t, d, `INSERT OR REPLACE INTO combos (id, name, strategy, created_at, updated_at) VALUES ('restore-combo', 'Restore Combo', 'priority', ?, ?)`, now, now)
-	mustExec(t, d, `INSERT OR REPLACE INTO combo_steps (id, combo_id, connection_id, model_id, priority, created_at) VALUES ('restore-step', 'restore-combo', 'restore-conn', 'gpt-test', 1, ?)`, now)
+	mustExecRestore(t, d, `INSERT OR REPLACE INTO provider_types (id, display_name, format, base_url, is_custom, category, service_kinds, created_at) VALUES ('restore-provider', 'Restore Provider', 'openai', 'https://example.test/v1', 1, 'apikey', '["llm"]', ?)`, now)
+	mustExecRestore(t, d, `INSERT OR REPLACE INTO connections (id, provider_type_id, name, auth_type, api_key, status, is_active, created_at, updated_at) VALUES ('restore-conn', 'restore-provider', 'Restore Conn', 'api_key', 'secret', 'ready', 1, ?, ?)`, now, now)
+	mustExecRestore(t, d, `INSERT OR REPLACE INTO api_keys (id, key_hash, name, rate_limit_per_min, is_active, created_at) VALUES ('restore-key', 'hash-restore', 'Restore Key', 60, 1, ?)`, now)
+	mustExecRestore(t, d, `INSERT OR REPLACE INTO combos (id, name, strategy, created_at, updated_at) VALUES ('restore-combo', 'Restore Combo', 'priority', ?, ?)`, now, now)
+	mustExecRestore(t, d, `INSERT OR REPLACE INTO combo_steps (id, combo_id, connection_id, model_id, priority, created_at) VALUES ('restore-step', 'restore-combo', 'restore-conn', 'gpt-test', 1, ?)`, now)
 }
 
-func mustExec(t *testing.T, d *sql.DB, query string, args ...any) {
+func mustExecRestore(t *testing.T, d *sql.DB, query string, args ...any) {
 	t.Helper()
 	if _, err := d.Exec(query, args...); err != nil {
 		t.Fatalf("exec %q: %v", query, err)
