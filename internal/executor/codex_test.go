@@ -72,6 +72,7 @@ func TestCodexExecutor_Headers(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, "data: {}")
+		fmt.Fprintln(w, `data: {"type":"response.completed","response":{"id":"r1","status":"completed","output":[]}}`)
 	}))
 	defer ts.Close()
 

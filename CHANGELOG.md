@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Codex chat requests now use the canonical Codex-specific translator, preventing malformed upstream requests that previously failed with `"Unsupported parameter: max_output_tokens"`.
 - Codex streaming/non-streaming responses now use a 50MB SSE scanner buffer (matching CLIProxyAPI) and collect `response.output_item.done` events to patch empty `response.completed` events, fixing empty/truncated responses and `bufio.Scanner: token too long` errors.
 - Codex streaming no longer spawns a separate SSE-filter goroutine with an extra channel; filtering of `codex.*` event lines is now done inline in the scanner goroutine. This removes the `send on closed channel` / `close of closed channel` panics seen under failover/retry.
+- Codex non-streaming responses now return only the final `response.completed` event (stripped of SSE framing) to the downstream translator, instead of a multi-line SSE dump starting with `response.created`. This fixes client errors where the raw `response.created` object was exposed and failed response-type validation.
 
 ### Changed
 - `streamResponse`, `handleStreamResponse`, and `handleClaudeStreamResponse` now return an `error` so callers can implement retry/failover logic.

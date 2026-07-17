@@ -146,7 +146,6 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 		return nil, err
 	}
 
-	var buf bytes.Buffer
 	var statusCode int
 	var usage CodexUsage
 	// Codex Responses streams `response.output_item.done` events before the final
@@ -155,6 +154,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 	// the completed event, matching CLIProxyAPI Codex behavior.
 	outputItemsByIndex := make(map[int64][]byte)
 	var outputItemsFallback [][]byte
+	var completedPayload []byte
 	for chunk := range streamResult.Chunks {
 		if chunk.Err != nil {
 			return nil, fmt.Errorf("codex stream error: %w", chunk.Err)
@@ -163,13 +163,6 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 			continue
 		}
 		payload := chunk.Payload
-		// Patch the completed event in-place if needed.
-		payload = patchCodexCompletedOutput(payload, outputItemsByIndex, outputItemsFallback)
-		buf.Write(payload)
-		buf.WriteByte('\n')
-		if u := extractCodexUsage(payload); u.TotalTokens > 0 || u.InputTokens > 0 || u.OutputTokens > 0 {
-			usage = u
-		}
 		// Collect output_item.done for patching a later response.completed.
 		eventData, eventType := parseCodexEvent(payload)
 		if eventType == "response.output_item.done" && len(eventData) > 0 {
@@ -181,17 +174,36 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 					outputItemsFallback = append(outputItemsFallback, []byte(item.Raw))
 				}
 			}
+			continue
+		}
+		// Patch and keep only the final response.completed event. The other
+		// events are only useful for assembling/patching it; downstream
+		// translators expect a single Codex Responses completed object, not a
+		// multi-line SSE dump starting with response.created.
+		if eventType == "response.completed" {
+			payload = patchCodexCompletedOutput(payload, outputItemsByIndex, outputItemsFallback)
+			completedPayload = payload
+			if u := extractCodexUsage(payload); u.TotalTokens > 0 || u.InputTokens > 0 || u.OutputTokens > 0 {
+				usage = u
+			}
 		}
 	}
 
+	if len(completedPayload) == 0 {
+		return nil, fmt.Errorf("codex stream closed before response.completed")
+	}
 	if streamResult.StatusCode > 0 {
 		statusCode = streamResult.StatusCode
 	} else {
 		statusCode = 200
 	}
+
+	// Strip the optional "data: " SSE framing so the downstream non-stream
+	// translator sees a plain JSON object.
+	responseBody, _ := parseCodexEvent(completedPayload)
 	return &Response{
 		StatusCode: statusCode,
-		Body:       buf.Bytes(),
+		Body:       responseBody,
 		Headers:    streamResult.Headers,
 		Usage:      usage.ToMap(),
 	}, nil
