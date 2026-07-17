@@ -25,16 +25,21 @@
 	import { Input } from '$lib/components/ui/input';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import Pagination from '$lib/components/Pagination.svelte';
-	import { type RequestLog, type ActiveRequest } from '$lib/api';
-	import TerminalIcon from '@lucide/svelte/icons/terminal';
-	import FilterIcon from '@lucide/svelte/icons/filter';
-	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
-	import DownloadIcon from '@lucide/svelte/icons/download';
-	import ActivityIcon from '@lucide/svelte/icons/activity';
+import { type RequestLog, type ActiveRequest, logsApi } from '$lib/api';
+import { toast } from 'svelte-sonner';
+import TerminalIcon from '@lucide/svelte/icons/terminal';
+import FilterIcon from '@lucide/svelte/icons/filter';
+import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
+import DownloadIcon from '@lucide/svelte/icons/download';
+import ActivityIcon from '@lucide/svelte/icons/activity';
+import Trash2Icon from '@lucide/svelte/icons/trash-2';
 
-	let currentPage = $state(1);
-	let perPage = $state(100);
-	let selectedErrorLog = $state<RequestLog | null>(null);
+let currentPage = $state(1);
+let perPage = $state(100);
+let selectedErrorLog = $state<RequestLog | null>(null);
+let clearLogsOpen = $state(false);
+let clearLogsDays = $state<7 | 30 | 90>(30);
+let clearLogsLoading = $state(false);
 
 onMount(() => {
 	document.title = 'Logs — AxonRouter';
@@ -141,7 +146,25 @@ onMount(() => {
 		URL.revokeObjectURL(url);
 	}
 
-	function providerMeta(id: string | undefined | null) {
+	function selectClearLogsDays(days: number) {
+  clearLogsDays = days as 7 | 30 | 90;
+}
+
+async function handleClearLogs() {
+  clearLogsLoading = true;
+  try {
+    const result = await logsApi.clear(clearLogsDays);
+    clearLogsOpen = false;
+    toast.success(`Cleared ${result.deleted} old log${result.deleted === 1 ? '' : 's'}`);
+    await loadLogs(currentPage, perPage);
+  } catch (err) {
+    toast.error('Clear logs failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+  } finally {
+    clearLogsLoading = false;
+  }
+}
+
+function providerMeta(id: string | undefined | null) {
 		const safeId = id ?? 'unknown';
 		return (
 			getProviderMeta(safeId) ?? {
@@ -259,10 +282,19 @@ const columns: ColumnDef[] = [
 				Request tracing, latency tracking, and token usage analytics.
 			</p>
 		</div>
-		<div class="flex items-center gap-2">
-			<Button
-				onclick={handleExport}
-				disabled={$logs.length === 0}
+<div class="flex items-center gap-2">
+<Button
+  onclick={() => (clearLogsOpen = true)}
+  variant="outline"
+  size="sm"
+  class="text-body-sm h-9 rounded-sm"
+>
+  <Trash2Icon class="size-3.5 mr-1.5" />
+  Clear old logs
+</Button>
+<Button
+  onclick={handleExport}
+  disabled={$logs.length === 0}
 				variant="outline"
 				size="sm"
 				class="text-body-sm h-9 rounded-sm"
@@ -559,6 +591,41 @@ const columns: ColumnDef[] = [
 		/>
 	{/if}
 </div>
+
+<Dialog.Root bind:open={clearLogsOpen}>
+<Dialog.Content class="sm:max-w-[480px]">
+<Dialog.Header>
+<Dialog.Title class="text-body-md-strong">Clear old logs</Dialog.Title>
+<Dialog.Description class="text-body-sm text-muted-foreground">
+Delete request log rows older than the selected retention window. Usage data and rollups are preserved.
+</Dialog.Description>
+</Dialog.Header>
+<div class="space-y-3 py-2">
+<p class="text-caption-mono text-muted-foreground uppercase font-semibold">Keep logs from the last</p>
+<div class="grid grid-cols-3 gap-2">
+{#each [7, 30, 90] as days}
+<Button
+  variant={clearLogsDays === days ? 'default' : 'outline'}
+  size="sm"
+  class="text-body-sm rounded-sm"
+  onclick={() => selectClearLogsDays(days)}
+>
+  {days} days
+</Button>
+{/each}
+</div>
+<div class="rounded-sm border border-amber-500/30 bg-amber-500/10 p-3 text-body-sm text-amber-200">
+This only removes request log history older than {clearLogsDays} days. Usage data is preserved.
+</div>
+</div>
+<Dialog.Footer>
+<Button variant="outline" size="sm" onclick={() => (clearLogsOpen = false)} disabled={clearLogsLoading}>Cancel</Button>
+<Button size="sm" onclick={handleClearLogs} disabled={clearLogsLoading}>
+{clearLogsLoading ? 'Clearing...' : 'Clear logs'}
+</Button>
+</Dialog.Footer>
+</Dialog.Content>
+</Dialog.Root>
 
 <Dialog.Root
 	open={selectedErrorLog !== null}

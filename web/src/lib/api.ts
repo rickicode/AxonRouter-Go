@@ -663,6 +663,11 @@ export const logsApi = {
     );
   },
   active: () => fetchApi<ActiveRequest[]>("/logs/active"),
+  clear: (days: 7 | 30 | 90) =>
+    fetchApi<{ deleted: number }>("/logs/clear", {
+      method: "POST",
+      body: JSON.stringify({ days }),
+    }),
 };
 
 // Settings API
