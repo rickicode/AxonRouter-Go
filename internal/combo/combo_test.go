@@ -313,13 +313,28 @@ func TestEffectiveStrategy_OverridesAndDefaults(t *testing.T) {
 
 	h.RefreshStrategySettings()
 
-	// Per-combo override wins.
+	// Per-combo override wins over the combo's own strategy.
 	if got := h.EffectiveStrategy("mycombo", "priority"); got != "round-robin" {
 		t.Fatalf("EffectiveStrategy with override = %q, want round-robin", got)
 	}
 
-	// Other combos use the global default.
-	if got := h.EffectiveStrategy("other", "priority"); got != "fallback" {
+	// Per-combo override still wins even when the combo's own strategy is invalid.
+	if got := h.EffectiveStrategy("mycombo", "nope"); got != "round-robin" {
+		t.Fatalf("EffectiveStrategy override invalid = %q, want round-robin", got)
+	}
+
+	// A combo's own valid strategy is honored; the global default does NOT override it.
+	if got := h.EffectiveStrategy("other", "priority"); got != "priority" {
+		t.Fatalf("EffectiveStrategy own strategy = %q, want priority", got)
+	}
+
+	// Global default is only used when the combo has no valid strategy of its own.
+	if got := h.EffectiveStrategy("other", ""); got != "fallback" {
 		t.Fatalf("EffectiveStrategy global default = %q, want fallback", got)
+	}
+
+	// Fusion combo is not overridden by a global priority default.
+	if got := h.EffectiveStrategy("fusion", "fusion"); got != "fusion" {
+		t.Fatalf("EffectiveStrategy fusion = %q, want fusion", got)
 	}
 }

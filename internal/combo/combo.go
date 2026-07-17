@@ -257,9 +257,9 @@ func (h *Handler) EffectiveStrategy(comboName string, comboStrategy string) stri
 	base := comboStrategy
 	if !IsValidStrategy(base) {
 		base = "priority"
-	}
-	if IsValidStrategy(h.strategyDefault) {
-		base = h.strategyDefault
+		if IsValidStrategy(h.strategyDefault) {
+			base = h.strategyDefault
+		}
 	}
 	if s, ok := h.strategyOverrides[comboName]; ok {
 		if IsValidStrategy(s) {
