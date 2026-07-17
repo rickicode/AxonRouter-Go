@@ -9,6 +9,8 @@ import (
 type Config struct {
 	Port      string
 	DBPath    string
+	DBURL     string
+	DBToken   string
 	PIDFile   string
 	LogDir    string
 	DataDir   string
@@ -65,6 +67,8 @@ func Get() Config {
 		global = Config{
 			Port:    getEnv("AXON_PORT", "3777"),
 			DBPath:  filepath.Join(dataDir, "axonrouter.db"),
+			DBURL:   getEnv("AXON_DB_URL", ""),
+			DBToken: getEnv("AXON_DB_TOKEN", ""),
 			PIDFile: filepath.Join(dataDir, "axonrouter.pid"),
 			LogDir:  filepath.Join(dataDir, "logs"),
 			DataDir: dataDir,

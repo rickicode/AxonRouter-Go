@@ -281,7 +281,11 @@ func handleStartupAction(action string) {
 
 func setAdminPassword(password string) {
 	cfg := config.Get()
-	database, err := db.Open(cfg.DBPath)
+	dsn := cfg.DBPath
+	if cfg.DBURL != "" {
+		dsn = cfg.DBURL
+	}
+	database, err := db.Open(dsn, cfg.DBToken)
 	if err != nil {
 		log.Fatalf("Failed to open database: %v", err)
 	}
@@ -304,27 +308,29 @@ func main() {
 	if len(os.Args) == 2 && (os.Args[1] == "--help" || os.Args[1] == "-h") {
 		fmt.Println("AxonRouter-Go - Universal API proxy for coding agents.")
 		fmt.Println()
-	fmt.Println("Usage:")
-	fmt.Println(" axonrouter Start the server")
-	fmt.Println(" axonrouter --tray Start the server with a system tray icon")
-	fmt.Println(" (requires build tag: tray)")
-fmt.Println(" axonrouter --startup install Install user systemd service (no root)")
-fmt.Println(" axonrouter --startup install-root Install system service as root/system")
-	fmt.Println(" axonrouter --startup {status|start|stop|restart|uninstall}")
-	fmt.Println(" Manage system service")
-	fmt.Println(" axonrouter --setpass <password> Set admin dashboard password")
-	fmt.Println(" axonrouter --help Show this help")
-	fmt.Println()
-	fmt.Println("Environment:")
-	fmt.Println(" AXON_PORT Server port (default: 3777)")
-	fmt.Println(" AXONROUTER_DIR Data directory (default: ~/axonrouter)")
-	os.Exit(0)
-}
+		fmt.Println("Usage:")
+		fmt.Println(" axonrouter Start the server")
+		fmt.Println(" axonrouter --tray Start the server with a system tray icon")
+		fmt.Println(" (requires build tag: tray)")
+		fmt.Println(" axonrouter --startup install Install user systemd service (no root)")
+		fmt.Println(" axonrouter --startup install-root Install system service as root/system")
+		fmt.Println(" axonrouter --startup {status|start|stop|restart|uninstall}")
+		fmt.Println(" Manage system service")
+		fmt.Println(" axonrouter --setpass <password> Set admin dashboard password")
+		fmt.Println(" axonrouter --help Show this help")
+		fmt.Println()
+		fmt.Println("Environment:")
+		fmt.Println(" AXON_PORT Server port (default: 3777)")
+		fmt.Println(" AXONROUTER_DIR Data directory (default: ~/axonrouter)")
+		fmt.Println(" AXON_DB_URL Turso/libsql remote database URL (optional)")
+		fmt.Println(" AXON_DB_TOKEN Turso/libsql auth token (used when AXON_DB_URL is set)")
+		os.Exit(0)
+	}
 
-if len(os.Args) == 2 && os.Args[1] == "--startup" {
-	fmt.Fprintln(os.Stderr, "Usage: axonrouter --startup {install|install-root|status|start|stop|restart|uninstall}")
-	os.Exit(1)
-}
+	if len(os.Args) == 2 && os.Args[1] == "--startup" {
+		fmt.Fprintln(os.Stderr, "Usage: axonrouter --startup {install|install-root|status|start|stop|restart|uninstall}")
+		os.Exit(1)
+	}
 	if len(os.Args) >= 3 && os.Args[1] == "--startup" {
 		handleStartupAction(os.Args[2])
 	}
@@ -348,8 +354,12 @@ if len(os.Args) == 2 && os.Args[1] == "--startup" {
 		log.Fatalf("Failed to load HTTPS config: %v", err)
 	}
 
-	// Open database
-	database, err := db.Open(cfg.DBPath)
+	// Open database (local SQLite file or remote Turso/libsql URL)
+	dsn := cfg.DBPath
+	if cfg.DBURL != "" {
+		dsn = cfg.DBURL
+	}
+	database, err := db.Open(dsn, cfg.DBToken)
 	if err != nil {
 		log.Fatalf("Failed to open database: %v", err)
 	}
@@ -359,8 +369,8 @@ if len(os.Args) == 2 && os.Args[1] == "--startup" {
 
 	// Create router with all routes and background goroutines
 	router := api.New(api.Config{
-		DB: database,
-		Port: cfg.Port,
+		DB:               database,
+		Port:             cfg.Port,
 		QuotaIntervalMin: 1,
 		LogRetentionDays: 30,
 	})
