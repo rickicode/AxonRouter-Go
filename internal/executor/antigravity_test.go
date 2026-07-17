@@ -215,7 +215,10 @@ func TestWrapEnvelope_OmniRouteParity(t *testing.T) {
 	if root.Get("request.thinking").Exists() || root.Get("request.reasoning_effort").Exists() {
 		t.Error("expected stripped thinking fields")
 	}
-	if !root.Get("request.safetySettings").Exists() {
-		t.Error("expected safetySettings")
+	// CLIProxyAPI strips request.safetySettings before sending the envelope; the
+	// default safety settings live in the inner request during translation but are
+	// removed by the executor wrapper.
+	if root.Get("request.safetySettings").Exists() {
+		t.Error("expected request.safetySettings to be stripped by wrapEnvelope")
 	}
 }

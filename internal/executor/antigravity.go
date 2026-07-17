@@ -9,9 +9,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Fields that must not reach the Google Antigravity API.
@@ -330,22 +333,40 @@ func pickAntigravityProjectID(data map[string]any) string {
 	return ""
 }
 
-// wrapEnvelope wraps the request body in the Antigravity envelope format.
-// OmniRoute reference: open-sse/executors/antigravity.ts lines 580-758.
+// wrapEnvelope takes the Antigravity request envelope produced by the translator
+// and finalizes it: project id, request id/session id, and provider-specific
+// request normalization. The translator already emits {"request":{...},"model":...};
+// the executor must NOT wrap it again.
+// Reference: CLIProxyAPI geminiToAntigravity + AntigravityRequestEnvelope.
 func (e *AntigravityExecutor) wrapEnvelope(ctx context.Context, req *Request) ([]byte, error) {
-	// Parse the inner request body
-	var inner map[string]any
-	if err := json.Unmarshal(req.Body, &inner); err != nil {
-		inner = map[string]any{
-			"contents": []map[string]any{
-				{"role": "user", "parts": []map[string]string{{"text": "Hi"}}},
+	var envelope map[string]any
+	if err := json.Unmarshal(req.Body, &envelope); err != nil {
+		envelope = map[string]any{
+			"request": map[string]any{
+				"contents": []map[string]any{
+					{"role": "user", "parts": []map[string]string{{"text": "Hi"}}},
+				},
 			},
+		}
+	}
+
+	// Operate on the inner Gemini request ('request' key), not on the envelope itself.
+	// If the translator emitted a plain inner request (older/caller tests), wrap it.
+	inner, _ := envelope["request"].(map[string]any)
+	if inner == nil {
+		inner = envelope
+		envelope = map[string]any{
+			"request": inner,
 		}
 	}
 
 	normalizeAntigravityContents(inner)
 	injectToolConfig(inner)
 	sanitizeRequest(inner)
+
+	// CLIProxyAPI removes per-request safety settings from the inner request;
+	// the envelope-level safety handling is implied by the same defaults.
+	delete(inner, "safetySettings")
 
 	// Get projectId from provider-specific data, or auto-discover if missing.
 	projectID := ""
@@ -362,15 +383,29 @@ func (e *AntigravityExecutor) wrapEnvelope(ctx context.Context, req *Request) ([
 		}
 	}
 
-	// Build envelope (matches OmniRoute AntigravityRequestEnvelope)
-	envelope := map[string]any{
-		"project":            projectID,
-		"requestId":          generateAntigravityRequestId(),
-		"request":            inner,
-		"model":              req.Model,
-		"userAgent":          envelopeUserAgent(req),
-		"requestType":        "agent",
-		"enabledCreditTypes": []string{"GOOGLE_ONE_AI"},
+	// Finalize the envelope. The translator already built the outer shape.
+	envelope["project"] = projectID
+	envelope["model"] = req.Model
+	envelope["userAgent"] = envelopeUserAgent(req)
+	envelope["requestType"] = "agent"
+	envelope["enabledCreditTypes"] = []string{"GOOGLE_ONE_AI"}
+	envelope["requestId"] = generateAntigravityRequestId()
+	// Stable per-conversation session id inside the inner request, matching CLIProxyAPI.
+	envelope["request"] = inner
+	if contents, ok := inner["contents"].([]any); ok && len(contents) > 0 {
+		first := normalizeStringMap(contents[0])
+		if first != nil {
+			if text := normalizeStringMapValue(first["parts"]); len(text) > 0 {
+				if t := normalizeStringMap(text[0]); t != nil {
+					if s, _ := t["text"].(string); s != "" {
+						inner["sessionId"] = generateStableAntigravitySessionID(s)
+					}
+				}
+			}
+		}
+	}
+	if _, ok := inner["sessionId"].(string); !ok {
+		inner["sessionId"] = uuid.NewString()
 	}
 
 	b, err := json.Marshal(envelope)
@@ -380,6 +415,28 @@ func (e *AntigravityExecutor) wrapEnvelope(ctx context.Context, req *Request) ([
 	return b, nil
 }
 
+// normalizeStringMapValue coerces a slice of any to a slice of map[string]any.
+func normalizeStringMapValue(v any) []map[string]any {
+	switch val := v.(type) {
+	case []any:
+		var out []map[string]any
+		for _, item := range val {
+			if m, ok := item.(map[string]any); ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	case []map[string]any:
+		return val
+	}
+	return nil
+}
+
+// generateStableAntigravitySessionID mirrors CLIProxyAPI generateStableSessionID.
+func generateStableAntigravitySessionID(text string) string {
+	return "-" + text[:min(len(text), 16)]
+}
+
 func generateAntigravityRequestId() string {
 	b := make([]byte, 4)
 	rand.Read(b)
@@ -387,19 +444,18 @@ func generateAntigravityRequestId() string {
 }
 
 // Execute performs a non-streaming Antigravity request.
+// Uses generateContent (not streamGenerateContent) so the upstream returns a single
+// JSON response that can be translated to OpenAI Chat Completions format.
 func (e *AntigravityExecutor) Execute(ctx context.Context, req *Request) (*Response, error) {
-	url := req.BaseURL
-	if url == "" {
-		url = "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
-	}
+	url := antigravityNonStreamURL(req.BaseURL)
 	body, err := e.wrapEnvelope(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 	headers := map[string]string{
-		"Content-Type":   "application/json",
-		"Authorization":  "Bearer " + req.AccessToken,
-		"User-Agent":     envelopeUserAgent(req),
+		"Content-Type": "application/json",
+		"Authorization": "Bearer " + req.AccessToken,
+		"User-Agent": envelopeUserAgent(req),
 		"X-Goog-Api-Key": req.APIKey,
 	}
 	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
@@ -417,6 +473,25 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, req *Request) (*Respo
 		return nil, upErr
 	}
 	return resp, nil
+}
+
+// antigravityNonStreamURL converts the streaming/base URL into the non-streaming
+// generateContent endpoint. CLIProxyAPI uses antigravityGeneratePath for non-stream.
+func antigravityNonStreamURL(base string) string {
+	if base == "" {
+		return "https://cloudcode-pa.googleapis.com/v1internal:generateContent"
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return base
+	}
+	if strings.Contains(u.Path, "streamGenerateContent") {
+		u.Path = strings.Replace(u.Path, "streamGenerateContent", "generateContent", 1)
+	} else if !strings.Contains(u.Path, "generateContent") {
+		u.Path = "/v1internal:generateContent"
+	}
+	u.RawQuery = ""
+	return u.String()
 }
 
 // ExecuteStream performs a streaming Antigravity request.

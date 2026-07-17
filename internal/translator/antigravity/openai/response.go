@@ -68,6 +68,8 @@ func RestoreSanitizedToolName(toolNameMap map[string]string, sanitizedName strin
 	return sanitizedName
 }
 
+var dataTag = []byte("data:")
+
 // convertAntigravityResponseToOpenAIStream translates a single chunk of a streaming response.
 func convertAntigravityResponseToOpenAIStream(_ context.Context, _ string, originalRequestRawJSON, _, rawJSON []byte, param *any) [][]byte {
 	if *param == nil {
@@ -82,8 +84,13 @@ func convertAntigravityResponseToOpenAIStream(_ context.Context, _ string, origi
 		p.SanitizedNameMap = SanitizedToolNameMap(originalRequestRawJSON)
 	}
 
-	if bytes.Equal(rawJSON, []byte("[DONE]")) {
-		return [][]byte{}
+	// The SSE scanner forwards the raw line, including the "data:" prefix.
+	rawJSON = bytes.TrimSpace(rawJSON)
+	if bytes.HasPrefix(rawJSON, dataTag) {
+		rawJSON = bytes.TrimSpace(rawJSON[5:])
+	}
+	if len(rawJSON) == 0 || bytes.Equal(rawJSON, []byte("[DONE]")) {
+		return nil
 	}
 
 	template := []byte(`{"id":"","object":"chat.completion.chunk","created":12345,"model":"model","choices":[{"index":0,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":null},"finish_reason":null,"native_finish_reason":null}]}`)
@@ -230,7 +237,7 @@ func convertAntigravityResponseToOpenAIStream(_ context.Context, _ string, origi
 		template, _ = sjson.SetBytes(template, "choices.0.native_finish_reason", strings.ToLower(upstreamFinishReason))
 	}
 
-	return [][]byte{template}
+	return [][]byte{[]byte(fmt.Sprintf("data: %s\n\n", string(template)))}
 }
 
 // convertAntigravityResponseToOpenAINonStream translates a non-streaming response.
