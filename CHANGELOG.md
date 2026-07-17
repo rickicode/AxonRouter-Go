@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Combo strategy `fallback`** — explicit fallback semantics that try steps in priority order and advance only on failure.
+- **Combo strategies `random` and `least-used`** — `random` picks an unweighted random step per request; `least-used` orders steps by recent successful calls from `request_logs` (cached 30s) so the least-used model is tried first.
 - **Combo strategy `fusion`** — parallel panel execution of combo steps followed by a configurable judge model that synthesizes the panel answers. Includes `fusion_config` storage and UI fields for judge model, min panel, straggler grace, hard timeout, and source anonymization.
 - **Capability auto-switch for combos** — detects vision, PDF, audio, video, and tool requirements from the request body and reorders combo steps so models that satisfy the required capabilities are tried first. Model capability registry lives in `internal/models/capabilities.json`.
 - **Per-combo and global strategy override via Settings** — `combo_strategy` default and `combo_strategies` JSON map allow overriding a combo's strategy at runtime without editing the combo.
