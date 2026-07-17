@@ -8,7 +8,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 
@@ -18,6 +20,109 @@ import (
 func TestMain(m *testing.M) {
 	logging.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	os.Exit(m.Run())
+}
+
+func TestWriteQueuePauseBlocksEnqueueUntilResume(t *testing.T) {
+	dir := t.TempDir()
+	d, err := sql.Open("sqlite", filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer d.Close()
+
+	wq := NewWriteQueue(d)
+	defer func() {
+		wq.Resume()
+		wq.Stop()
+	}()
+	wq.Pause()
+
+	enqueued := make(chan struct{})
+	go func() {
+		wq.Enqueue("paused", func(db *sql.DB) error {
+			return nil
+		})
+		close(enqueued)
+	}()
+
+	select {
+	case <-enqueued:
+		t.Fatal("Enqueue returned while queue was paused")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	wq.Resume()
+	select {
+	case <-enqueued:
+	case <-time.After(time.Second):
+		t.Fatal("Enqueue did not return after Resume")
+	}
+}
+
+func TestWriteQueuePauseStopsWorkerProcessingQueuedWrites(t *testing.T) {
+	dir := t.TempDir()
+	d, err := sql.Open("sqlite", filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer d.Close()
+
+	wq := NewWriteQueue(d)
+	defer func() {
+		wq.Resume()
+		wq.Stop()
+	}()
+
+	blockWorker := make(chan struct{})
+	workerBlocked := make(chan struct{})
+	wq.EnqueueOrBlock(context.Background(), "block-worker", func(db *sql.DB) error {
+		close(workerBlocked)
+		<-blockWorker
+		return nil
+	})
+	select {
+	case <-workerBlocked:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not start blocking write")
+	}
+
+	wq.Pause()
+	var ran atomic.Bool
+	enqueued := make(chan struct{})
+	go func() {
+		wq.EnqueueOrBlock(context.Background(), "paused", func(db *sql.DB) error {
+			ran.Store(true)
+			return nil
+		})
+		close(enqueued)
+	}()
+
+	select {
+	case <-enqueued:
+		t.Fatal("EnqueueOrBlock returned while queue was paused")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(blockWorker)
+
+	time.Sleep(50 * time.Millisecond)
+	if ran.Load() {
+		t.Fatal("write ran while queue was paused")
+	}
+
+	wq.Resume()
+	select {
+	case <-enqueued:
+	case <-time.After(time.Second):
+		t.Fatal("EnqueueOrBlock did not return after Resume")
+	}
+	deadline := time.After(time.Second)
+	for !ran.Load() {
+		select {
+		case <-deadline:
+			t.Fatal("write did not run after Resume")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }
 
 // TestWriteQueueDo executes a write synchronously through the queue.
