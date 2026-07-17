@@ -310,6 +310,7 @@ func New(cfg Config) *Router {
 
 		// Logs
 		g.GET("/logs", logH.List)
+		g.POST("/logs/clear", logH.Clear)
 		g.GET("/logs/stats", logH.Stats)
 		g.GET("/logs/active", logH.ActiveRequests)
 

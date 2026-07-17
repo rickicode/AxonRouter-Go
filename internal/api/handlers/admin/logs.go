@@ -86,6 +86,38 @@ func firstQuery(c *gin.Context, keys ...string) string {
 	return ""
 }
 
+// Clear deletes request logs older than the requested retention window.
+func (h *LogHandler) Clear(c *gin.Context) {
+	var req struct {
+		OlderThanDays int `json:"older_than_days"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	switch req.OlderThanDays {
+	case 7, 30, 90:
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "older_than_days must be one of 7, 30, or 90"})
+		return
+	}
+
+	cutoff := time.Now().AddDate(0, 0, -req.OlderThanDays).UnixMilli()
+	result, err := h.db.Exec(`DELETE FROM request_logs WHERE timestamp < ?`, cutoff)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"deleted": deleted})
+}
+
 // ActiveRequests returns currently in-flight proxied requests for the
 // live in-flight panel on the Logs page.
 func (h *LogHandler) ActiveRequests(c *gin.Context) {
@@ -107,29 +139,29 @@ func (h *LogHandler) Get(c *gin.Context) {
 		OutputTokens        int64   `json:"output_tokens"`
 		ReasoningTokens     int64   `json:"reasoning_tokens"`
 		CachedTokens        int64   `json:"cached_tokens"`
-	CacheCreationTokens int64  `json:"cache_creation_tokens"`
-	TokensEstimated     bool   `json:"tokens_estimated"`
+		CacheCreationTokens int64   `json:"cache_creation_tokens"`
+		TokensEstimated     bool    `json:"tokens_estimated"`
 		LatencyMs           *int64  `json:"latency_ms"`
 		StatusCode          *int64  `json:"status_code"`
-  ErrorMessage *string `json:"error_message"`
-  CostUsd float64 `json:"cost_usd"`
-  ClientIP *string `json:"client_ip"`
-  UserAgent *string `json:"user_agent"`
-  CreatedAt int64 `json:"created_at"`
- }
+		ErrorMessage        *string `json:"error_message"`
+		CostUsd             float64 `json:"cost_usd"`
+		ClientIP            *string `json:"client_ip"`
+		UserAgent           *string `json:"user_agent"`
+		CreatedAt           int64   `json:"created_at"`
+	}
 
-		err := h.db.QueryRow(`
+	err := h.db.QueryRow(`
 		SELECT id, timestamp, connection_id, provider_type_id, model_id, combo_id,
 		modality, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_creation_tokens,
   tokens_estimated,
   latency_ms, status_code, error_message, cost_usd, client_ip, user_agent, created_at
   FROM request_logs WHERE id = ?
  `, id).Scan(&l.ID, &l.Timestamp, &l.ConnectionID, &l.ProviderTypeID,
-  &l.ModelID, &l.ComboID, &l.Modality,
-  &l.InputTokens, &l.OutputTokens, &l.ReasoningTokens, &l.CachedTokens, &l.CacheCreationTokens,
-  &l.TokensEstimated,
-  &l.LatencyMs, &l.StatusCode, &l.ErrorMessage,
-  &l.CostUsd, &l.ClientIP, &l.UserAgent, &l.CreatedAt)
+		&l.ModelID, &l.ComboID, &l.Modality,
+		&l.InputTokens, &l.OutputTokens, &l.ReasoningTokens, &l.CachedTokens, &l.CacheCreationTokens,
+		&l.TokensEstimated,
+		&l.LatencyMs, &l.StatusCode, &l.ErrorMessage,
+		&l.CostUsd, &l.ClientIP, &l.UserAgent, &l.CreatedAt)
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "log not found"})
 		return
