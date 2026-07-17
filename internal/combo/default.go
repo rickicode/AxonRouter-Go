@@ -2,11 +2,19 @@ package combo
 
 import (
 	"database/sql"
+	"encoding/json"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 )
+
+// defaultFusionConfig returns a sensible JSON configuration for seeded fusion combos.
+func defaultFusionConfig() string {
+	cfg := DefaultFusionConfig()
+	b, _ := json.Marshal(cfg)
+	return string(b)
+}
 
 // resolveDefaultConnection finds an active connection whose provider matches the
 // model prefix (e.g. "openai/gpt-4o" -> "openai"). Falls back to empty string so
@@ -37,91 +45,62 @@ func resolveDefaultConnection(database *sql.DB, modelID string) string {
 func DefaultCombos() []DefaultComboDef {
 	return []DefaultComboDef{
 		{
-			Name:     "balanced",
+			Name: "balanced",
 			Strategy: "priority",
 			Steps: []DefaultStepDef{
 				{ModelID: "oc/hy3-free", Priority: 1, Weight: 100},
 				{ModelID: "cf/moonshotai/kimi-k2.6", Priority: 2, Weight: 90},
-				{ModelID: "cf/moonshotai/kimi-k2.7-code", Priority: 3, Weight: 85},
-				{ModelID: "ag/claude-sonnet-4-6", Priority: 4, Weight: 80},
-				{ModelID: "cx/gpt-5.4", Priority: 5, Weight: 75},
+				{ModelID: "ag/claude-sonnet-4-6", Priority: 3, Weight: 80},
+				{ModelID: "cx/gpt-5.4", Priority: 4, Weight: 75},
 			},
 		},
 		{
-			Name:     "economy",
+			Name: "economy",
 			Strategy: "priority",
 			Steps: []DefaultStepDef{
 				{ModelID: "oc/hy3-free", Priority: 1, Weight: 100},
 				{ModelID: "cf/moonshotai/kimi-k2.6", Priority: 2, Weight: 95},
-				{ModelID: "cf/moonshotai/kimi-k2.5", Priority: 3, Weight: 90},
-				{ModelID: "cx/gpt-5.4-mini", Priority: 4, Weight: 80},
+				{ModelID: "cx/gpt-5.4-mini", Priority: 3, Weight: 80},
 			},
 		},
 		{
-			Name:     "premium",
+			Name: "premium",
 			Strategy: "priority",
 			Steps: []DefaultStepDef{
 				{ModelID: "ag/claude-opus-4-6-thinking", Priority: 1, Weight: 100},
 				{ModelID: "cx/gpt-5.5", Priority: 2, Weight: 95},
 				{ModelID: "cf/moonshotai/kimi-k2.7-code", Priority: 3, Weight: 90},
-				{ModelID: "oc/hy3-free", Priority: 4, Weight: 80},
 			},
 		},
 		{
-			Name:     "round-robin",
+			Name: "round-robin",
 			Strategy: "round-robin",
 			Steps: []DefaultStepDef{
 				{ModelID: "oc/hy3-free", Priority: 1, Weight: 100},
 				{ModelID: "cf/moonshotai/kimi-k2.6", Priority: 2, Weight: 100},
-				{ModelID: "cf/moonshotai/kimi-k2.7-code", Priority: 3, Weight: 100},
-				{ModelID: "ag/claude-sonnet-4-6", Priority: 4, Weight: 100},
-				{ModelID: "cx/gpt-5.4", Priority: 5, Weight: 100},
+				{ModelID: "ag/claude-sonnet-4-6", Priority: 3, Weight: 100},
+				{ModelID: "cx/gpt-5.4", Priority: 4, Weight: 100},
 			},
 		},
 		{
-			Name:      "smart-balanced",
-			Strategy:  "priority",
-			IsSmart:   true,
-			SmartGoal: "balanced",
+			Name: "fallback",
+			Strategy: "fallback",
+			Steps: []DefaultStepDef{
+				{ModelID: "cf/moonshotai/kimi-k2.6", Priority: 1, Weight: 100},
+				{ModelID: "oc/hy3-free", Priority: 2, Weight: 100},
+				{ModelID: "ag/claude-sonnet-4-6", Priority: 3, Weight: 100},
+				{ModelID: "cx/gpt-5.4", Priority: 4, Weight: 100},
+			},
+		},
+		{
+			Name: "fusion",
+			Strategy: "fusion",
+			FusionConfig: defaultFusionConfig(),
 			Steps: []DefaultStepDef{
 				{ModelID: "oc/hy3-free", Priority: 1, Weight: 100},
 				{ModelID: "cf/moonshotai/kimi-k2.6", Priority: 2, Weight: 90},
 				{ModelID: "ag/claude-sonnet-4-6", Priority: 3, Weight: 85},
-			},
-		},
-		{
-			Name:      "smart-economy",
-			Strategy:  "priority",
-			IsSmart:   true,
-			SmartGoal: "economy",
-			Steps: []DefaultStepDef{
-				{ModelID: "oc/hy3-free", Priority: 1, Weight: 100},
-				{ModelID: "cf/moonshotai/kimi-k2.6", Priority: 2, Weight: 95},
-				{ModelID: "cf/moonshotai/kimi-k2.5", Priority: 3, Weight: 90},
-			},
-		},
-		{
-			Name:      "smart-premium",
-			Strategy:  "priority",
-			IsSmart:   true,
-			SmartGoal: "premium",
-			Steps: []DefaultStepDef{
-				{ModelID: "ag/claude-opus-4-6-thinking", Priority: 1, Weight: 100},
-				{ModelID: "cx/gpt-5.5", Priority: 2, Weight: 95},
-				{ModelID: "cf/moonshotai/kimi-k2.7-code", Priority: 3, Weight: 90},
-			},
-		},
-		{
-			Name:      "smart-auto",
-			Strategy:  "priority",
-			IsSmart:   true,
-			SmartGoal: "auto",
-			Steps: []DefaultStepDef{
-				{ModelID: "oc/hy3-free", Priority: 1, Weight: 100},
-				{ModelID: "cf/moonshotai/kimi-k2.6", Priority: 2, Weight: 90},
-				{ModelID: "cf/moonshotai/kimi-k2.7-code", Priority: 3, Weight: 85},
-				{ModelID: "ag/claude-sonnet-4-6", Priority: 4, Weight: 80},
-				{ModelID: "cx/gpt-5.4", Priority: 5, Weight: 75},
+				{ModelID: "cx/gpt-5.4", Priority: 4, Weight: 80},
 			},
 		},
 	}
@@ -129,11 +108,12 @@ func DefaultCombos() []DefaultComboDef {
 
 // DefaultComboDef is a combo definition for seeding.
 type DefaultComboDef struct {
-	Name      string
-	Strategy  string
-	IsSmart   bool
+	Name string
+	Strategy string
+	IsSmart bool
 	SmartGoal string
-	Steps     []DefaultStepDef
+	FusionConfig string
+	Steps []DefaultStepDef
 }
 
 // DefaultStepDef is a step definition for seeding.
@@ -162,9 +142,9 @@ func SeedDefaultCombos(database *sql.DB) error {
 			smartGoal = sql.NullString{String: def.SmartGoal, Valid: true}
 		}
 		_, err := database.Exec(`
-		INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal, is_active, created_at, updated_at)
-		VALUES (?, ?, ?, 1, 30000, ?, ?, 1, ?, ?)
-		`, comboID, def.Name, def.Strategy, boolToInt(def.IsSmart), smartGoal, now, now)
+		INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal, fusion_config, is_active, created_at, updated_at)
+		VALUES (?, ?, ?, 1, 30000, ?, ?, ?, 1, ?, ?)
+		`, comboID, def.Name, def.Strategy, boolToInt(def.IsSmart), smartGoal, def.FusionConfig, now, now)
 		if err != nil {
 			continue
 		}

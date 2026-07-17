@@ -39,6 +39,7 @@ let steps = $state<StepDraft[]>([]);
 let existingSteps = $state<ExistingStep[]>([]);
 let models = $state<GatewayModel[]>([]);
 let pickerOpen = $state(false);
+let judgePickerOpen = $state(false);
 let loading = $state(false);
 let stepsLoading = $state(false);
 
@@ -206,7 +207,7 @@ async function handleSave() {
 					sticky_limit: stickyLimit,
 					is_smart: isSmart,
 					smart_goal: isSmart ? smartGoal : null,
-					fusion_config: strategy === 'fusion' ? buildFusionConfig() : null,
+					fusion_config: strategy === 'fusion' ? buildFusionConfig() : undefined,
 				});
 			const plan = planStepSync(existingSteps, steps);
 			for (const stepId of plan.toRemove) {
@@ -225,7 +226,7 @@ async function handleSave() {
 					sticky_limit: stickyLimit,
 					is_smart: isSmart,
 					smart_goal: isSmart ? smartGoal : null,
-					fusion_config: strategy === 'fusion' ? buildFusionConfig() : null,
+					fusion_config: strategy === 'fusion' ? buildFusionConfig() : undefined,
 					is_active: true,
 					steps: steps.map((s) => ({ model_id: s.model_id, priority: s.priority, weight: s.weight })),
 				});
@@ -271,12 +272,22 @@ async function handleSave() {
 			</div>
 
 			{#if strategy === 'fusion'}
-				<div class="space-y-3 border border-border rounded-md p-3 bg-card/50">
-					<p class="text-body-sm-strong">Fusion panel configuration</p>
-					<div class="space-y-2">
-						<Label class="text-caption-mono">Judge model</Label>
-						<Input bind:value={judgeModel} placeholder="e.g. openai/gpt-4o" class="h-10 text-body-sm" />
+		<div class="space-y-3 border border-border rounded-md p-3 bg-card/50">
+			<p class="text-body-sm-strong">Fusion panel configuration</p>
+			<div class="space-y-2">
+				<Label class="text-caption-mono">Judge model</Label>
+				{#if judgeModel}
+					<div class="flex items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2">
+						<span class="text-body-sm font-mono truncate">{judgeModel}</span>
+						<Button variant="ghost" size="sm" class="h-7 rounded-sm text-caption-mono" onclick={() => (judgeModel = '')}>Clear</Button>
 					</div>
+				{:else}
+					<Button variant="outline" size="sm" class="text-body-sm rounded-sm w-full justify-start" onclick={() => (judgePickerOpen = true)}>
+						Select judge model
+					</Button>
+				{/if}
+				<p class="text-caption text-muted-foreground">Leave empty to use the first successful panel response as the judge.</p>
+			</div>
 					<div class="grid grid-cols-3 gap-3">
 						<div class="space-y-1">
 							<Label class="text-caption-mono">Min panel</Label>
@@ -414,3 +425,4 @@ async function handleSave() {
 </Dialog.Root>
 
 <ModelPickerDialog bind:open={pickerOpen} {models} onSelect={addModel} />
+<ModelPickerDialog bind:open={judgePickerOpen} {models} selectedModel={judgeModel} onSelect={(id) => (judgeModel = id)} />
