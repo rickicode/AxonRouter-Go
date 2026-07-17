@@ -55,13 +55,13 @@ func (h *Handler) Messages(c *gin.Context) {
 	// Combo-first routing
 	if comboResult, ok := h.combo.Resolve(model); ok {
 		strategy := h.combo.EffectiveStrategy(comboResult.Combo.Name, comboResult.Combo.Strategy)
+		comboResult.Steps = h.combo.ReorderStepsByCapabilities(comboResult.Steps, combo.DetectRequiredCapabilities(body))
 		if strategy == "fusion" {
-			h.handleFusionRequest(c, comboResult, body, model, start, stream)
+			h.handleFusionRequest(c, comboResult, strategy, body, model, start, stream)
 			return
 		}
-		comboResult.Combo.Strategy = strategy
-		comboResult.Steps = h.combo.ReorderStepsByCapabilities(comboResult.Steps, combo.DetectRequiredCapabilities(body))
-		h.handleComboRequest(c, comboResult, body, model, start, stream)
+		comboResult.Steps = h.combo.RotateSteps(comboResult.Combo.ID, strategy, comboResult.Combo.StickyLimit, comboResult.Steps)
+		h.handleComboRequest(c, comboResult, strategy, body, model, start, stream)
 		return
 	}
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,14 +47,14 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	// Combo-first routing
 	if comboResult, ok := h.combo.Resolve(model); ok {
 		strategy := h.combo.EffectiveStrategy(comboResult.Combo.Name, comboResult.Combo.Strategy)
+		comboResult.Steps = h.combo.ReorderStepsByCapabilities(comboResult.Steps, combo.DetectRequiredCapabilities(body))
 		if strategy == "fusion" {
-			h.handleFusionRequest(c, comboResult, body, model, start, stream)
+			h.handleFusionRequest(c, comboResult, strategy, body, model, start, stream)
 			return
 		}
-		// For fallback/priority/round-robin/weighted use the shared combo path.
-		comboResult.Combo.Strategy = strategy
-		comboResult.Steps = h.combo.ReorderStepsByCapabilities(comboResult.Steps, combo.DetectRequiredCapabilities(body))
-		h.handleComboRequest(c, comboResult, body, model, start, stream)
+		// Re-rotate using the effective strategy so overrides like round-robin/weighted are honored.
+		comboResult.Steps = h.combo.RotateSteps(comboResult.Combo.ID, strategy, comboResult.Combo.StickyLimit, comboResult.Steps)
+		h.handleComboRequest(c, comboResult, strategy, body, model, start, stream)
 		return
 	}
 
@@ -322,7 +323,7 @@ attemptLoop:
 // caller immediately instead of being fail-over'd to another model. If every
 // step exhausts its connections, a detailed 503 is returned (last error + which
 // connection/model was attempted) rather than a bare "all combo steps failed".
-func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboResult, body []byte, model string, start time.Time, stream bool) {
+func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboResult, effectiveStrategy string, body []byte, model string, start time.Time, stream bool) {
 	comboTimeout := 30 * time.Second
 	if comboResult.Combo != nil && comboResult.Combo.TimeoutMs > 0 {
 		comboTimeout = time.Duration(comboResult.Combo.TimeoutMs) * time.Millisecond
@@ -331,6 +332,11 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 	defer cancel()
 
 	clientFormat := executor.FormatOpenAI
+	if strings.HasSuffix(c.Request.URL.Path, "/messages") {
+		clientFormat = executor.FormatClaude
+	} else if strings.HasSuffix(c.Request.URL.Path, "/responses") {
+		clientFormat = executor.FormatOpenAIResponses
+	}
 
 	var lastConn *Connection
 	var lastErr error
@@ -489,8 +495,8 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 		return
 	}
 
-	// Holdback committed — stream is live, relay to client.
-			if streamErr := h.handleStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, comboResult.Combo.Name, true); streamErr != nil {
+			// Holdback committed — stream is live, relay to client.
+			if streamErr := h.handleClientStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, comboResult.Combo.Name, true, clientFormat); streamErr != nil {
 			// Mid-stream failure — failover to next connection/model instead of
 			// stopping the stream. handleStreamResponse already skipped writing
 			// error/DONE to the client when in combo mode.
@@ -593,13 +599,25 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 		}
 		return
 	}
+	if clientFormat == executor.FormatClaude {
+		c.JSON(statusCode, claudeError(errType, msg))
+		return
+	}
 	c.JSON(statusCode, gin.H{"error": gin.H{"message": msg, "type": errType, "detail": detail}})
 }
 
 // handleFusionRequest runs a fusion combo: it executes all steps in parallel as
 // a panel, waits for min_panel successes plus a grace period, then asks a judge
 // model to synthesize the panel answers into one response for the client.
-func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboResult, body []byte, model string, start time.Time, stream bool) {
+func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboResult, effectiveStrategy string, body []byte, model string, start time.Time, stream bool) {
+	// Fusion is currently only supported for the OpenAI chat completions API.
+	// The panel/judge pipeline builds an OpenAI-compatible judge body and final
+	// response; supporting Claude/Responses format requires additional translators.
+	if !strings.HasSuffix(c.Request.URL.Path, "/chat/completions") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "fusion strategy is only supported on /v1/chat/completions", "type": "invalid_request_error"}})
+		return
+	}
+
 	cfg, err := combo.ParseFusionConfig(comboResult.Combo.FusionConfig)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": err.Error()}})
@@ -902,6 +920,17 @@ func (h *Handler) writeFusionResponse(c *gin.Context, content, model string, str
 			"finish_reason": "stop",
 		}},
 	})
+}
+
+// handleClientStreamResponse dispatches to the correct stream handler based on
+// the client-facing API format. It is used by both the direct and combo paths.
+func (h *Handler) handleClientStreamResponse(ctx context.Context, c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte, comboID string, silent bool, clientFormat executor.ProviderFormat) error {
+	switch clientFormat {
+	case executor.FormatClaude:
+		return h.handleClaudeStreamResponse(ctx, c, result, conn, provider, model, start, translatedReq, originalReq, comboID, silent)
+	default:
+		return h.handleStreamResponse(ctx, c, result, conn, provider, model, start, translatedReq, originalReq, comboID, silent)
+	}
 }
 
 // handleStreamResponse handles streaming chat completions.

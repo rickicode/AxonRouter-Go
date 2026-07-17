@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
@@ -19,21 +20,41 @@ type ComboResult struct {
 	Steps []db.ComboStep
 }
 
+const strategySettingsTTL = 5 * time.Second
+
+// ValidStrategies is the set of strategies supported by combos.
+var ValidStrategies = map[string]bool{
+	"priority":    true,
+	"round-robin": true,
+	"weighted":    true,
+	"fallback":    true,
+	"fusion":      true,
+}
+
+// IsValidStrategy reports whether a combo strategy name is supported.
+func IsValidStrategy(s string) bool { return ValidStrategies[s] }
+
 // Handler manages combo resolution and routing.
 type Handler struct {
-	mu       sync.RWMutex
-	db       *sql.DB
+	mu sync.RWMutex
+	db *sql.DB
 	rotation *RotationManager
-	smart    *SmartCombo
+	smart *SmartCombo
 	fallback *FallbackManager
-	store    *connstate.Store
-	elig     *connstate.EligibilityManager
+	store *connstate.Store
+	elig *connstate.EligibilityManager
 
 	// In-memory combo cache
-	combos      map[string]*db.Combo
-	byName      map[string]*db.Combo      // combo name → combo (O(1) resolve by name)
-	steps       map[string][]db.ComboStep // comboID → steps
-	smartCombos map[string]*db.Combo      // comboID → smart combo
+	combos map[string]*db.Combo
+	byName map[string]*db.Combo // combo name → combo (O(1) resolve by name)
+	steps map[string][]db.ComboStep // comboID → steps
+	smartCombos map[string]*db.Combo // comboID → smart combo
+
+	// In-memory strategy overrides (combo_strategies) and default (combo_strategy).
+	strategyMu        sync.RWMutex
+	strategyLoadedAt  time.Time
+	strategyDefault   string
+	strategyOverrides map[string]string
 }
 
 // NewHandler creates a new combo handler.
@@ -161,26 +182,91 @@ func (h *Handler) resolveSmart(goal SmartGoal) (*ComboResult, bool) {
 	return &ComboResult{Combo: combo, Steps: rotated}, true
 }
 
+// loadStrategySettings reads combo_strategy / combo_strategies from DB once
+// per TTL. Invalid values are ignored. It is safe to call repeatedly.
+func (h *Handler) loadStrategySettings() {
+	h.strategyMu.Lock()
+	defer h.strategyMu.Unlock()
+
+	if !h.strategyLoadedAt.IsZero() && time.Since(h.strategyLoadedAt) < strategySettingsTTL {
+		return
+	}
+
+	defaultStr := "priority"
+	var defaultVal string
+	row := h.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, "combo_strategy")
+	if err := row.Scan(&defaultVal); err == nil && defaultVal != "" && IsValidStrategy(defaultVal) {
+		defaultStr = defaultVal
+	}
+	h.strategyDefault = defaultStr
+
+	overrides := make(map[string]string)
+	var raw string
+	row = h.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, "combo_strategies")
+	if err := row.Scan(&raw); err == nil && raw != "" {
+		var m map[string]string
+		if err := json.Unmarshal([]byte(raw), &m); err == nil {
+			for name, strat := range m {
+				if IsValidStrategy(strat) {
+					overrides[name] = strat
+				}
+			}
+		}
+	}
+	h.strategyOverrides = overrides
+	h.strategyLoadedAt = time.Now()
+}
+
+// RefreshStrategySettings forces strategy settings to be reloaded on the next
+// EffectiveStrategy call. Call this after settings are changed.
+func (h *Handler) RefreshStrategySettings() {
+	h.strategyMu.Lock()
+	h.strategyLoadedAt = time.Time{}
+	h.strategyMu.Unlock()
+}
+
+// DefaultStrategy returns the global default combo strategy from settings.
+func (h *Handler) DefaultStrategy() string {
+	if h.db == nil {
+		return "priority"
+	}
+	h.loadStrategySettings()
+	h.strategyMu.RLock()
+	defer h.strategyMu.RUnlock()
+	if h.strategyDefault != "" {
+		return h.strategyDefault
+	}
+	return "priority"
+}
+
 // EffectiveStrategy returns the strategy that should be used for a combo.
 // A per-combo override in settings (`combo_strategies` JSON map) takes
-// precedence over the combo's own strategy. An empty string means no override.
+// precedence over the combo's own strategy, which in turn falls back to the
+// global `combo_strategy` setting when empty. Invalid override values are ignored.
 func (h *Handler) EffectiveStrategy(comboName string, comboStrategy string) string {
 	if h.db == nil {
-		return comboStrategy
+		if IsValidStrategy(comboStrategy) {
+			return comboStrategy
+		}
+		return "priority"
 	}
-	var overrides string
-	row := h.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, "combo_strategies")
-	if err := row.Scan(&overrides); err != nil || overrides == "" {
-		return comboStrategy
+	h.loadStrategySettings()
+	h.strategyMu.RLock()
+	defer h.strategyMu.RUnlock()
+
+	base := comboStrategy
+	if !IsValidStrategy(base) {
+		base = "priority"
 	}
-	var m map[string]string
-	if err := json.Unmarshal([]byte(overrides), &m); err != nil {
-		return comboStrategy
+	if IsValidStrategy(h.strategyDefault) {
+		base = h.strategyDefault
 	}
-	if s, ok := m[comboName]; ok && s != "" {
-		return s
+	if s, ok := h.strategyOverrides[comboName]; ok {
+		if IsValidStrategy(s) {
+			base = s
+		}
 	}
-	return comboStrategy
+	return base
 }
 
 // PickConnection picks the next eligible connection for a combo step.
@@ -386,6 +472,13 @@ func splitModel(modelStr string) (string, string) {
 		}
 	}
 	return "", modelStr
+}
+
+// RotateSteps applies the rotation strategy to the given steps. Callers use this
+// after resolving an effective strategy override so the steps are ordered
+// according to the strategy that will actually run.
+func (h *Handler) RotateSteps(comboID, strategy string, stickyLimit int, steps []db.ComboStep) []db.ComboStep {
+	return h.rotation.GetRotatedSteps(comboID, strategy, stickyLimit, steps)
 }
 
 // ResetRotationCounter clears the rotation counter for a combo in memory and DB.

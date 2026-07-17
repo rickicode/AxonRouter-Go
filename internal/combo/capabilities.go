@@ -73,14 +73,21 @@ func detectContentPart(part any, caps *models.ModelCapabilities) {
 	}
 	typ, _ := m["type"].(string)
 	switch typ {
-	case "image_url", "image":
+	case "image_url", "image", "input_image":
 		caps.Vision = true
 	case "input_audio", "audio":
 		caps.AudioInput = true
 	case "video", "input_video":
 		caps.VideoInput = true
-	case "file", "document":
+	case "file", "document", "input_file":
 		if isPDFContent(m) {
+			caps.PDF = true
+		}
+	}
+
+	// Responses API input_file/file may wrap data under a "file" sub-object.
+	if sub, ok := m["file"].(map[string]any); ok {
+		if isPDFContent(sub) {
 			caps.PDF = true
 		}
 	}
