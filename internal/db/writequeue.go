@@ -26,9 +26,9 @@ type WriteOp struct {
 //
 // Architecture:
 // - Producers (request handlers) call Enqueue() — non-blocking unless paused, drops on full.
-//   - A single goroutine drains the channel and executes writes serially.
-//   - Since it is the only writer, there is never write-lock contention.
-//   - Readers (auth, health, connection loads) use the pool freely.
+// - A single goroutine drains the channel and executes writes serially.
+// - Since it is the only writer, there is never write-lock contention.
+// - Readers (auth, health, connection loads) use the pool freely.
 type WriteQueue struct {
 	ch      chan WriteOp
 	db      *sql.DB
