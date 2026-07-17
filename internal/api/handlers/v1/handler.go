@@ -931,6 +931,41 @@ func (h *Handler) executeDirect(ctx context.Context, exec executor.Executor, req
 	return resp, nil, err
 }
 
+// executeProviderCall builds an executor.Request from a connection and translated
+// body, attaches proxy context, and runs executeDirect. It returns the proxy
+// context (for downstream logging/PoolID lookups), the response, stream result,
+// and any error from the executor.
+func (h *Handler) executeProviderCall(
+	ctx context.Context,
+	exec executor.Executor,
+	conn *Connection,
+	provider, modelName string,
+	translatedBody []byte,
+	stream bool,
+	streamCfg *executor.StreamConfig,
+) (context.Context, *executor.Response, *executor.StreamResult, error) {
+	var psdMap map[string]string
+	if conn.ProviderSpecificData != "" {
+		if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
+			logging.Logger.Warn("malformed provider_specific_data", "conn", shortID(conn.ID, 8), "error", err.Error())
+		}
+	}
+	req := &executor.Request{
+		Model:               modelName,
+		Body:                translatedBody,
+		Stream:              stream,
+		APIKey:              conn.APIKey,
+		AccessToken:         conn.AccessToken,
+		BaseURL:             conn.BaseURL,
+		Provider:            provider,
+		ProviderSpecificData: psdMap,
+		StreamConfig:        streamCfg,
+	}
+	proxyCtx := h.proxyContext(ctx, conn)
+	resp, streamResult, err := h.executeDirect(proxyCtx, exec, req)
+	return proxyCtx, resp, streamResult, err
+}
+
 // handleFailoverError records an upstream failure, marks the connection
 // exhausted/cooled-down when appropriate, refreshes eligibility, and logs it.
 // Returns (shouldRetry, category): shouldRetry=false for non-retryable errors

@@ -86,16 +86,17 @@ export interface BulkCreateConnectionResponse {
 }
 
 export interface Combo {
-  id: string;
-  name: string;
-  strategy: string;
-  sticky_limit: number;
-  timeout_ms: number;
-  is_smart: boolean;
-  smart_goal: string | null;
-  is_active: boolean;
-  created_at: number;
-  updated_at: number;
+	id: string;
+	name: string;
+	strategy: string;
+	sticky_limit: number;
+	timeout_ms: number;
+	is_smart: boolean;
+	smart_goal: string | null;
+	fusion_config?: string;
+	is_active: boolean;
+	created_at: number;
+	updated_at: number;
 }
 
 export interface ComboStep {

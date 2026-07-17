@@ -110,8 +110,10 @@ var DefaultSettings = map[string]string{
 	"compression_mode":               "lite",
 	"compression_lite_collapse":      "true",
 	"compression_lite_image_urls":  "true",
-	"compression_lite_redundant":   "false",
-	"compression_lite_dedup":       "false",
+	"compression_lite_redundant":  "false",
+	"compression_lite_dedup":    "false",
+	"combo_strategy":              "priority",
+	"combo_strategies":            "{}",
 }
 
 // SeedDefaults inserts default settings if they don't exist.

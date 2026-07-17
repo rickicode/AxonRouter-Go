@@ -62,6 +62,10 @@ func (rm *RotationManager) GetRotatedSteps(comboID string, strategy string, stic
 		return rotated
 	case "weighted":
 		return weightedShuffle(steps)
+	case "fallback":
+		// fallback is semantically the same as priority: try steps in order
+		// until one succeeds (higher-level execution loop handles the retry).
+		return steps
 	default: // priority
 		return steps
 	}

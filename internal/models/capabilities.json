@@ -1,0 +1,44 @@
+{
+  "openai/gpt-4o": {
+    "vision": true,
+    "pdf": true,
+    "audio_input": true,
+    "video_input": false,
+    "tools": true
+  },
+  "openai/gpt-4o-mini": {
+    "vision": true,
+    "pdf": true,
+    "audio_input": false,
+    "video_input": false,
+    "tools": true
+  },
+  "anthropic/claude-sonnet-4-5-20251022": {
+    "vision": true,
+    "pdf": true,
+    "audio_input": false,
+    "video_input": false,
+    "tools": true
+  },
+  "anthropic/claude-opus-4-6-20251022": {
+    "vision": true,
+    "pdf": true,
+    "audio_input": false,
+    "video_input": false,
+    "tools": true
+  },
+  "google/gemini-2.5-flash": {
+    "vision": true,
+    "pdf": true,
+    "audio_input": true,
+    "video_input": true,
+    "tools": true
+  },
+  "google/gemini-2.5-pro": {
+    "vision": true,
+    "pdf": true,
+    "audio_input": true,
+    "video_input": true,
+    "tools": true
+  }
+}

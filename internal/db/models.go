@@ -76,6 +76,7 @@ type Combo struct {
 	TimeoutMs   int            `json:"timeout_ms"`
 	IsSmart     bool           `json:"is_smart"`
 	SmartGoal   sql.NullString `json:"smart_goal,omitempty"`
+	FusionConfig string        `json:"fusion_config,omitempty"`
 	IsActive    bool           `json:"is_active"`
 	CreatedAt   int64          `json:"created_at"`
 	UpdatedAt   int64          `json:"updated_at"`

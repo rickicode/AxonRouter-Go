@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
@@ -49,6 +50,13 @@ func (h *Handler) Responses(c *gin.Context) {
 
 	// Combo-first routing
 	if comboResult, ok := h.combo.Resolve(model); ok {
+		strategy := h.combo.EffectiveStrategy(comboResult.Combo.Name, comboResult.Combo.Strategy)
+		if strategy == "fusion" {
+			h.handleFusionRequest(c, comboResult, body, model, start, stream)
+			return
+		}
+		comboResult.Combo.Strategy = strategy
+		comboResult.Steps = h.combo.ReorderStepsByCapabilities(comboResult.Steps, combo.DetectRequiredCapabilities(body))
 		h.handleComboRequest(c, comboResult, body, model, start, stream)
 		return
 	}

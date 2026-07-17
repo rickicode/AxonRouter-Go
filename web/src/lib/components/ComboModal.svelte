@@ -30,6 +30,11 @@ let timeout = $state(30000);
 let stickyLimit = $state(1);
 let isSmart = $state(false);
 let smartGoal = $state('balanced');
+let judgeModel = $state('');
+let minPanel = $state(2);
+let stragglerGraceMs = $state(8000);
+let panelHardTimeoutMs = $state(90000);
+let anonymizeSources = $state(true);
 let steps = $state<StepDraft[]>([]);
 let existingSteps = $state<ExistingStep[]>([]);
 let models = $state<GatewayModel[]>([]);
@@ -37,7 +42,7 @@ let pickerOpen = $state(false);
 let loading = $state(false);
 let stepsLoading = $state(false);
 
-const strategyOptions = ['priority', 'round-robin', 'weighted'];
+const strategyOptions = ['priority', 'round-robin', 'weighted', 'fallback', 'fusion'];
 const smartGoalOptions = [
 	{ value: 'auto', label: 'Auto', desc: 'Dynamic selection based on telemetry' },
 	{ value: 'economy', label: 'Economy', desc: 'Lowest cost routing' },
@@ -48,12 +53,16 @@ const smartGoalOptions = [
 function strategyLabel(opt: string) {
 	if (opt === 'priority') return 'Priority';
 	if (opt === 'round-robin') return 'Round Robin';
+	if (opt === 'fallback') return 'Fallback';
+	if (opt === 'fusion') return 'Fusion';
 	return 'Weighted';
 }
 
 function strategyDescription(opt: string) {
 	if (opt === 'priority') return 'Try steps in order. First success wins.';
 	if (opt === 'round-robin') return 'Distribute requests across steps.';
+	if (opt === 'fallback') return 'Try steps in order, advancing only on failure.';
+	if (opt === 'fusion') return 'Parallel panel + judge synthesis.';
 	return 'Weighted-random order by step weight.';
 }
 
@@ -63,9 +72,10 @@ function resetState() {
 		strategy = combo.strategy;
 		timeout = combo.timeout_ms;
 		stickyLimit = combo.sticky_limit;
-    isSmart = combo.is_smart;
-    smartGoal = unwrapStr(combo.smart_goal) ?? 'balanced';
-    loadSteps(combo.id);
+		isSmart = combo.is_smart;
+		smartGoal = unwrapStr(combo.smart_goal) ?? 'balanced';
+		loadFusionConfig(combo.fusion_config);
+		loadSteps(combo.id);
 	} else {
 		name = '';
 		strategy = 'priority';
@@ -73,10 +83,44 @@ function resetState() {
 		stickyLimit = 1;
 		isSmart = false;
 		smartGoal = 'balanced';
+		resetFusionConfig();
 		steps = [];
 		existingSteps = [];
 	}
 	loadModels();
+}
+
+function resetFusionConfig() {
+	judgeModel = '';
+	minPanel = 2;
+	stragglerGraceMs = 8000;
+	panelHardTimeoutMs = 90000;
+	anonymizeSources = true;
+}
+
+function loadFusionConfig(raw: string | null | undefined) {
+	resetFusionConfig();
+	if (!raw) return;
+	try {
+		const cfg = JSON.parse(raw);
+		if (cfg.judge_model !== undefined) judgeModel = cfg.judge_model;
+		if (cfg.min_panel !== undefined) minPanel = cfg.min_panel;
+		if (cfg.straggler_grace_ms !== undefined) stragglerGraceMs = cfg.straggler_grace_ms;
+		if (cfg.panel_hard_timeout_ms !== undefined) panelHardTimeoutMs = cfg.panel_hard_timeout_ms;
+		if (cfg.anonymize_sources !== undefined) anonymizeSources = cfg.anonymize_sources;
+	} catch {
+		// ignore malformed fusion_config
+	}
+}
+
+function buildFusionConfig(): string {
+	return JSON.stringify({
+		judge_model: judgeModel || undefined,
+		min_panel: minPanel,
+		straggler_grace_ms: stragglerGraceMs,
+		panel_hard_timeout_ms: panelHardTimeoutMs,
+		anonymize_sources: anonymizeSources,
+	});
 }
 
 async function loadModels() {
@@ -154,15 +198,16 @@ async function handleSave() {
 	if (!name.trim()) return;
 	loading = true;
 	try {
-		if (combo) {
-			await combosApi.update(combo.id, {
-				name: name.trim(),
-				strategy,
-				timeout_ms: timeout,
-				sticky_limit: stickyLimit,
-				is_smart: isSmart,
-				smart_goal: isSmart ? smartGoal : null,
-			});
+			if (combo) {
+				await combosApi.update(combo.id, {
+					name: name.trim(),
+					strategy,
+					timeout_ms: timeout,
+					sticky_limit: stickyLimit,
+					is_smart: isSmart,
+					smart_goal: isSmart ? smartGoal : null,
+					fusion_config: strategy === 'fusion' ? buildFusionConfig() : null,
+				});
 			const plan = planStepSync(existingSteps, steps);
 			for (const stepId of plan.toRemove) {
 				await combosApi.removeStep(stepId);
@@ -172,17 +217,18 @@ async function handleSave() {
 			}
 			toast.success('Combo updated');
 			onSave?.(combo.id);
-		} else {
-			const created = await combosApi.create({
-				name: name.trim(),
-				strategy,
-				timeout_ms: timeout,
-				sticky_limit: stickyLimit,
-				is_smart: isSmart,
-				smart_goal: isSmart ? smartGoal : null,
-				is_active: true,
-				steps: steps.map((s) => ({ model_id: s.model_id, priority: s.priority, weight: s.weight })),
-			});
+			} else {
+				const created = await combosApi.create({
+					name: name.trim(),
+					strategy,
+					timeout_ms: timeout,
+					sticky_limit: stickyLimit,
+					is_smart: isSmart,
+					smart_goal: isSmart ? smartGoal : null,
+					fusion_config: strategy === 'fusion' ? buildFusionConfig() : null,
+					is_active: true,
+					steps: steps.map((s) => ({ model_id: s.model_id, priority: s.priority, weight: s.weight })),
+				});
 			toast.success('Combo created');
 			onSave?.(created.id);
 		}
@@ -223,6 +269,34 @@ async function handleSave() {
 				</div>
 				<p class="text-caption text-muted-foreground">{strategyDescription(strategy)}</p>
 			</div>
+
+			{#if strategy === 'fusion'}
+				<div class="space-y-3 border border-border rounded-md p-3 bg-card/50">
+					<p class="text-body-sm-strong">Fusion panel configuration</p>
+					<div class="space-y-2">
+						<Label class="text-caption-mono">Judge model</Label>
+						<Input bind:value={judgeModel} placeholder="e.g. openai/gpt-4o" class="h-10 text-body-sm" />
+					</div>
+					<div class="grid grid-cols-3 gap-3">
+						<div class="space-y-1">
+							<Label class="text-caption-mono">Min panel</Label>
+							<Input type="number" bind:value={minPanel} min={1} class="h-10 text-code font-mono" />
+						</div>
+						<div class="space-y-1">
+							<Label class="text-caption-mono">Grace (ms)</Label>
+							<Input type="number" bind:value={stragglerGraceMs} min={0} class="h-10 text-code font-mono" />
+						</div>
+						<div class="space-y-1">
+							<Label class="text-caption-mono">Hard timeout (ms)</Label>
+							<Input type="number" bind:value={panelHardTimeoutMs} min={1000} class="h-10 text-code font-mono" />
+						</div>
+					</div>
+					<div class="flex items-center gap-3 pt-1">
+						<Switch id="combo-anonymize" checked={anonymizeSources} onCheckedChange={(v) => (anonymizeSources = v)} />
+						<Label for="combo-anonymize" class="text-body-sm-strong cursor-pointer">Anonymize panel sources</Label>
+					</div>
+				</div>
+			{/if}
 
 			<div class="grid grid-cols-2 gap-4">
 				<div class="space-y-2">

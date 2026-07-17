@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Combo strategy `fallback`** — explicit fallback semantics that try steps in priority order and advance only on failure.
+- **Combo strategy `fusion`** — parallel panel execution of combo steps followed by a configurable judge model that synthesizes the panel answers. Includes `fusion_config` storage and UI fields for judge model, min panel, straggler grace, hard timeout, and source anonymization.
+- **Capability auto-switch for combos** — detects vision, PDF, audio, video, and tool requirements from the request body and reorders combo steps so models that satisfy the required capabilities are tried first. Model capability registry lives in `internal/models/capabilities.json`.
+- **Per-combo and global strategy override via Settings** — `combo_strategy` default and `combo_strategies` JSON map allow overriding a combo's strategy at runtime without editing the combo.
 - **Stream protection parity with OmniRoute** for combo and direct paths: raw-byte stall detection, adaptive readiness timeout (80s–180s), 750ms/64KB holdback buffer for transparent early retry, and stream-quality peek logging.
 - **Combo mid-stream failover**: if an upstream stream fails after the holdback window commits, the combo now falls back to the next eligible connection/model instead of terminating the stream. Only when all candidates fail does the client receive the final SSE `error` + `[DONE]`.
 - **Direct-mode mid-stream failover**: `/v1/chat/completions` and `/v1/messages` streaming now also use the 750ms/64KB holdback buffer and retry the next connection if the stream fails after commit.
