@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"log"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -16,23 +17,26 @@ import (
 // non-critical writes through the queue, the request path never blocks on
 // a DB write lock.
 type WriteOp struct {
-	fn      func(*sql.DB) error
-	label   string // for logging on failure
+	fn    func(*sql.DB) error
+	label string // for logging on failure
 }
 
 // WriteQueue is a centralized, channel-based async writer.
 // It removes ALL synchronous DB writes from the request path.
 //
 // Architecture:
-//   - Producers (request handlers) call Enqueue() — non-blocking, drops on full.
+// - Producers (request handlers) call Enqueue() — non-blocking unless paused, drops on full.
 //   - A single goroutine drains the channel and executes writes serially.
 //   - Since it is the only writer, there is never write-lock contention.
 //   - Readers (auth, health, connection loads) use the pool freely.
 type WriteQueue struct {
-	ch     chan WriteOp
-	db     *sql.DB
-	stop   chan struct{}
-	done   chan struct{}
+	ch      chan WriteOp
+	db      *sql.DB
+	stop    chan struct{}
+	done    chan struct{}
+	pauseMu sync.Mutex
+	pause   *sync.Cond
+	paused  bool
 	dropped atomic.Int64
 }
 
@@ -46,17 +50,63 @@ func NewWriteQueue(database *sql.DB) *WriteQueue {
 		stop: make(chan struct{}),
 		done: make(chan struct{}),
 	}
+	wq.pause = sync.NewCond(&wq.pauseMu)
 	go wq.loop()
 	return wq
 }
 
+func (wq *WriteQueue) waitUntilResumed() {
+	wq.pauseMu.Lock()
+	for wq.paused {
+		wq.pause.Wait()
+	}
+	wq.pauseMu.Unlock()
+}
+
+func (wq *WriteQueue) waitUntilResumedOrStopped() bool {
+	wq.pauseMu.Lock()
+	for wq.paused {
+		select {
+		case <-wq.stop:
+			wq.pauseMu.Unlock()
+			return false
+		default:
+		}
+		wq.pause.Wait()
+	}
+	wq.pauseMu.Unlock()
+	return true
+}
+
+// Pause prevents the worker from processing writes and makes Enqueue block.
+func (wq *WriteQueue) Pause() {
+	if wq == nil || wq.db == nil {
+		return
+	}
+	wq.pauseMu.Lock()
+	wq.paused = true
+	wq.pauseMu.Unlock()
+}
+
+// Resume releases paused Enqueue calls and lets the worker process writes again.
+func (wq *WriteQueue) Resume() {
+	if wq == nil || wq.db == nil {
+		return
+	}
+	wq.pauseMu.Lock()
+	wq.paused = false
+	wq.pause.Broadcast()
+	wq.pauseMu.Unlock()
+}
+
 // Enqueue submits a write operation for async execution.
-// Non-blocking: if the buffer is full the write is dropped (best-effort for
-// cooldown/ban persistence — the in-memory state is already updated synchronously).
+// Blocks while the queue is paused. Otherwise, if the buffer is full the write is dropped
+// (best-effort for cooldown/ban persistence — the in-memory state is already updated synchronously).
 func (wq *WriteQueue) Enqueue(label string, fn func(*sql.DB) error) {
 	if wq == nil || wq.db == nil {
 		return // no write queue configured — in-memory state is already updated
 	}
+	wq.waitUntilResumed()
 	op := WriteOp{fn: fn, label: label}
 	select {
 	case wq.ch <- op:
@@ -69,6 +119,7 @@ func (wq *WriteQueue) EnqueueOrBlock(ctx context.Context, label string, fn func(
 	if wq == nil || wq.db == nil {
 		return // no write queue configured
 	}
+	wq.waitUntilResumed()
 	select {
 	case wq.ch <- WriteOp{fn: fn, label: label}:
 	case <-ctx.Done():
@@ -111,6 +162,9 @@ func (wq *WriteQueue) loop() {
 	for {
 		select {
 		case op := <-wq.ch:
+			if !wq.waitUntilResumedOrStopped() {
+				return
+			}
 			if err := op.fn(wq.db); err != nil {
 				logging.Logger.Error("writequeue: write failed",
 					"op", op.label, "error", err.Error())
@@ -134,6 +188,10 @@ func (wq *WriteQueue) loop() {
 // Stop gracefully shuts down the queue, flushing all pending writes.
 // Blocks until all buffered writes have been processed.
 func (wq *WriteQueue) Stop() {
+	wq.pauseMu.Lock()
+	wq.paused = false
+	wq.pause.Broadcast()
+	wq.pauseMu.Unlock()
 	close(wq.stop)
 	<-wq.done
 }
