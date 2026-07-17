@@ -48,12 +48,17 @@ func SerializeFusionConfig(cfg FusionConfig) (string, error) {
 
 // Validate checks that the FusionConfig values are consistent with the
 // number of steps in the combo. stepCount is the total number of steps.
-func (cfg FusionConfig) Validate(stepCount int) error {
+// MinPanel is clamped to the number of steps so a single-step combo does not
+// fail because of the default min_panel value.
+func (cfg *FusionConfig) Validate(stepCount int) error {
+	if stepCount == 0 {
+		return fmt.Errorf("combo has no steps")
+	}
 	if cfg.MinPanel < 1 {
-		return fmt.Errorf("min_panel must be >= 1, got %d", cfg.MinPanel)
+		cfg.MinPanel = 1
 	}
 	if cfg.MinPanel > stepCount {
-		return fmt.Errorf("min_panel (%d) exceeds number of steps (%d)", cfg.MinPanel, stepCount)
+		cfg.MinPanel = stepCount
 	}
 	if cfg.PanelHardTimeoutMs < 1000 {
 		return fmt.Errorf("panel_hard_timeout_ms must be >= 1000, got %d", cfg.PanelHardTimeoutMs)

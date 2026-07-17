@@ -16,6 +16,22 @@ func TestDetectRequiredCapabilities_Vision(t *testing.T) {
 	}
 }
 
+func TestDetectRequiredCapabilities_ResponsesInputImage(t *testing.T) {
+	body := []byte(`{"messages":[{"role":"user","content":[{"type":"input_image","detail":"auto"}]}]}`)
+	caps := DetectRequiredCapabilities(body)
+	if !caps.Vision {
+		t.Fatalf("expected vision capability required for input_image")
+	}
+}
+
+func TestDetectRequiredCapabilities_ResponsesInputFilePDF(t *testing.T) {
+	body := []byte(`{"messages":[{"role":"user","content":[{"type":"input_file","file":{"filename":"report.pdf"}}]}]}`)
+	caps := DetectRequiredCapabilities(body)
+	if !caps.PDF {
+		t.Fatalf("expected PDF capability required for input_file PDF")
+	}
+}
+
 func TestDetectRequiredCapabilities_Tools(t *testing.T) {
 	body := []byte(`{"messages":[{"role":"user","content":"hello"}],"tools":[{"type":"function","function":{"name":"x"}}]}`)
 	caps := DetectRequiredCapabilities(body)

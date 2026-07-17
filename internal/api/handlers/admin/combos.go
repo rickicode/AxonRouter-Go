@@ -109,12 +109,13 @@ func (h *ComboHandler) Create(c *gin.Context) {
 		return
 	}
 	if req.Strategy == "" {
-		req.Strategy = "priority"
+		req.Strategy = h.handler.DefaultStrategy()
 	}
-	if !isValidComboStrategy(req.Strategy) {
+	if !combo.IsValidStrategy(req.Strategy) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid strategy: " + req.Strategy})
 		return
 	}
+
 	if req.TimeoutMs == 0 {
 		req.TimeoutMs = 30000
 	}
@@ -138,6 +139,19 @@ func (h *ComboHandler) Create(c *gin.Context) {
 			Priority:     priority,
 			Weight:       weight,
 		})
+	}
+
+	// Validate fusion configuration early so invalid combos fail at creation time.
+	if req.Strategy == "fusion" || req.FusionConfig != "" {
+		cfg, err := combo.ParseFusionConfig(req.FusionConfig)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if err := cfg.Validate(len(steps)); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	result, err := h.handler.CreateCombo(req.Name, req.Strategy, req.TimeoutMs, req.StickyLimit, req.IsSmart, req.SmartGoal, req.FusionConfig, steps)
@@ -326,11 +340,7 @@ func (h *ComboHandler) RemoveStep(c *gin.Context) {
 
 // isValidComboStrategy returns true for supported strategy values.
 func isValidComboStrategy(strategy string) bool {
-	switch strategy {
-	case "priority", "round-robin", "weighted", "fallback", "fusion":
-		return true
-	}
-	return false
+	return combo.IsValidStrategy(strategy)
 }
 
 // SeedDefaults seeds default combos.

@@ -284,3 +284,42 @@ func TestWeightedShuffle_ReturnsPermutation(t *testing.T) {
 		}
 	}
 }
+
+func TestEffectiveStrategy_OverridesAndDefaults(t *testing.T) {
+	database := newComboTestDB(t)
+	seedConnectionForCombo(t, database, "conn-1")
+
+	store := connstate.NewStore()
+	elig := connstate.NewEligibilityManager(store)
+	h := NewHandler(database, store, elig)
+
+	// No settings: returns the combo's own strategy when valid.
+	if got := h.EffectiveStrategy("mycombo", "priority"); got != "priority" {
+		t.Fatalf("EffectiveStrategy without override = %q, want priority", got)
+	}
+
+	// Invalid combo strategy falls back to priority.
+	if got := h.EffectiveStrategy("mycombo", "nope"); got != "priority" {
+		t.Fatalf("EffectiveStrategy invalid fallback = %q, want priority", got)
+	}
+
+	now := time.Now().Unix()
+	if _, err := database.Exec(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)`, "combo_strategy", "fallback", now); err != nil {
+		t.Fatalf("insert combo_strategy: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)`, "combo_strategies", `{"mycombo":"round-robin"}`, now); err != nil {
+		t.Fatalf("insert combo_strategies: %v", err)
+	}
+
+	h.RefreshStrategySettings()
+
+	// Per-combo override wins.
+	if got := h.EffectiveStrategy("mycombo", "priority"); got != "round-robin" {
+		t.Fatalf("EffectiveStrategy with override = %q, want round-robin", got)
+	}
+
+	// Other combos use the global default.
+	if got := h.EffectiveStrategy("other", "priority"); got != "fallback" {
+		t.Fatalf("EffectiveStrategy global default = %q, want fallback", got)
+	}
+}
