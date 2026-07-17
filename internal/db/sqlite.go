@@ -71,42 +71,58 @@ func Open(dsn string, token string) (*sql.DB, error) {
 			initErr = err
 			return
 		}
-
-		// Base pragmas that are safe for both local and remote databases.
-		pragmas := []string{
-			"PRAGMA foreign_keys=ON",
+		if remote {
+			log.Println("database: using remote libsql/Turso database")
 		}
+
 		if !remote {
 			// Local-only tuning. These PRAGMAs manage the SQLite engine on the
 			// local filesystem and are not applicable (or rejected) by a remote
-			// libsql server.
-			pragmas = append(pragmas,
+			// libsql server. Fail fast on local if any PRAGMA cannot be applied.
+			localPragmas := []string{
 				"PRAGMA journal_mode=WAL",
 				"PRAGMA busy_timeout=5000",
+				"PRAGMA foreign_keys=ON",
 				"PRAGMA synchronous=NORMAL",
 				"PRAGMA cache_size=-65536",
 				"PRAGMA mmap_size=268435456",
 				"PRAGMA temp_store=MEMORY",
 				"PRAGMA wal_autocheckpoint=1000",
-			)
-		}
-		for _, p := range pragmas {
-			if _, err := d.Exec(p); err != nil {
-				d.Close()
-				initErr = err
-				return
+			}
+			for _, p := range localPragmas {
+				if _, err := d.Exec(p); err != nil {
+					d.Close()
+					initErr = err
+					return
+				}
+			}
+		} else {
+			// Remote libsql/Turso: the server owns WAL, busy timeout, and cache.
+			// Foreign key enforcement is requested as best-effort because some
+			// hosted configurations restrict PRAGMA statements.
+			if _, err := d.Exec("PRAGMA foreign_keys=ON"); err != nil {
+				log.Printf("WARN: remote libsql did not accept PRAGMA foreign_keys: %v", err)
 			}
 		}
 
-		// ── Connection pool: allow many concurrent readers ──
-		// WAL mode permits unlimited concurrent readers; only writers serialize.
-		// The async WriteQueue ensures there is a single writer, so no write-lock
-		// contention ever reaches the pool. 50 open conns is conservative for Go
-		// (each is a lightweight goroutine-friendly handle in modernc.org/sqlite).
-		d.SetMaxOpenConns(50)
-		d.SetMaxIdleConns(25)
-		d.SetConnMaxLifetime(30 * time.Minute)
-		d.SetConnMaxIdleTime(5 * time.Minute)
+		// ── Connection pool ──
+		// WAL mode permits unlimited concurrent readers locally; only writers
+		// serialize. The async WriteQueue ensures there is a single writer, so no
+		// write-lock contention ever reaches the pool.
+		if remote {
+			// Remote libsql connections are over HTTP/WebSocket; keep the pool
+			// smaller to avoid many idle streams against the Turso edge.
+			d.SetMaxOpenConns(20)
+			d.SetMaxIdleConns(10)
+			d.SetConnMaxLifetime(30 * time.Minute)
+			d.SetConnMaxIdleTime(5 * time.Minute)
+		} else {
+			// 50 open local connections is conservative for the embedded driver.
+			d.SetMaxOpenConns(50)
+			d.SetMaxIdleConns(25)
+			d.SetConnMaxLifetime(30 * time.Minute)
+			d.SetConnMaxIdleTime(5 * time.Minute)
+		}
 
 		// Run migrations (idempotent: CREATE TABLE IF NOT EXISTS + INSERT OR IGNORE
 		// seed + provider-id normalization). Must run on every startup so seeded
