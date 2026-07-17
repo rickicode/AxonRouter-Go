@@ -403,14 +403,16 @@ async function handleSave() {
                   </div>
                   <span class="flex-1 min-w-0 text-body-sm font-mono truncate">{step.model_id}</span>
                   <div class="flex items-center gap-2">
-                    <div class="space-y-1">
-                      <Label class="text-caption text-muted-foreground">Order</Label>
-                      <span class="flex h-8 w-16 items-center justify-center rounded-md border border-border bg-muted/30 text-code font-mono">{i + 1}</span>
-                    </div>
-                    <div class="space-y-1">
-                      <Label class="text-caption text-muted-foreground">Weight</Label>
-                      <Input type="number" bind:value={step.weight} class="h-8 w-20 text-code font-mono" />
-                    </div>
+				<div class="space-y-1">
+					<Label class="text-caption text-muted-foreground">Order</Label>
+					<span class="flex h-8 w-16 items-center justify-center rounded-md border border-border bg-muted/30 text-code font-mono">{i + 1}</span>
+				</div>
+				{#if strategy === 'weighted'}
+					<div class="space-y-1">
+						<Label class="text-caption text-muted-foreground">Weight</Label>
+						<Input type="number" bind:value={step.weight} class="h-8 w-20 text-code font-mono" />
+					</div>
+				{/if}
                   </div>
                   <Button variant="ghost" size="sm" onclick={() => removeStep(i)} class="text-caption-mono text-destructive h-8 px-2 rounded-sm">
                     Remove
