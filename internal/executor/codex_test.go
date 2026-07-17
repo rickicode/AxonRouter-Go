@@ -85,8 +85,8 @@ func TestCodexExecutor_Headers(t *testing.T) {
 		Body:        []byte(`{"messages":[{"role":"user","content":"hi"}]}`),
 		AccessToken: "test-token",
 		ProviderSpecificData: map[string]string{
-			"workspaceId": "ws_123",
-			"userAgent":   "test-agent/1.0",
+			"accountId": "ws_123",
+			"userAgent": "test-agent/1.0",
 		},
 		StreamConfig: &StreamConfig{
 			FetchTimeoutMs:           5000,
@@ -102,17 +102,20 @@ func TestCodexExecutor_Headers(t *testing.T) {
 	if got := gotHeaders.Get("User-Agent"); got != "test-agent/1.0" {
 		t.Errorf("User-Agent=%q, want test-agent/1.0", got)
 	}
-	if got := gotHeaders.Get("chatgpt-account-id"); got != "ws_123" {
-		t.Errorf("chatgpt-account-id=%q, want ws_123", got)
+	if got := gotHeaders.Get("Chatgpt-Account-Id"); got != "ws_123" {
+		t.Errorf("Chatgpt-Account-Id=%q, want ws_123", got)
 	}
-	if got := gotHeaders.Get("Openai-Beta"); got != "responses=experimental" {
-		t.Errorf("Openai-Beta=%q, want responses=experimental", got)
+	if got := gotHeaders.Get("Openai-Beta"); got != "" {
+		t.Errorf("Openai-Beta=%q, want empty", got)
 	}
-	if got := gotHeaders.Get("Originator"); got != "codex_cli_rs" {
-		t.Errorf("Originator=%q, want codex_cli_rs", got)
+	if got := gotHeaders.Get("Originator"); got != "codex-tui" {
+		t.Errorf("Originator=%q, want codex-tui", got)
 	}
-	if got := gotHeaders.Get("Codex-Cli-Simplified-Flow"); got != "true" {
-		t.Errorf("Codex-Cli-Simplified-Flow=%q, want true", got)
+	if got := gotHeaders.Get("Codex-Cli-Simplified-Flow"); got != "" {
+		t.Errorf("Codex-Cli-Simplified-Flow=%q, want empty", got)
+	}
+	if got := gotHeaders.Get("Connection"); got != "Keep-Alive" {
+		t.Errorf("Connection=%q, want Keep-Alive", got)
 	}
 	if !strings.Contains(string(gotBody), `"stream":true`) {
 		t.Fatalf("expected stream=true in body, got %s", string(gotBody))

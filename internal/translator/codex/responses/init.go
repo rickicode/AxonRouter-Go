@@ -8,15 +8,26 @@ import (
 )
 
 func init() {
-	// codex-responses → openai: response translation only (no request transform needed here)
+	// Codex Responses → OpenAI Chat Completions response translation.
+	// The handler's streaming path looks up (clientFormat, providerFormat), i.e.
+	// (openai, openai-responses), while the legacy non-stream /v1/chat/completions
+	// path looks up (providerFormat, clientFormat). Register both directions so
+	// the same Codex-specific response transform is used regardless of call site.
+	resp := types.ResponseTransform{
+		Stream:    convertCodexResponseToOpenAIStream,
+		NonStream: convertCodexResponseToOpenAINonStream,
+	}
+	registry.Register(
+		types.FormatOpenAI,
+		types.FormatCodexResponses,
+		nil,
+		resp,
+	)
 	registry.Register(
 		types.FormatCodexResponses,
 		types.FormatOpenAI,
-		nil, // no request transform: response passthrough path
-		types.ResponseTransform{
-			Stream:    convertCodexResponseToOpenAIStream,
-			NonStream: convertCodexResponseToOpenAINonStream,
-		},
+		nil,
+		resp,
 	)
 }
 

@@ -3,17 +3,25 @@ package executor
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"sort"
 	"strings"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
 
-// defaultCodexUserAgent is the current Codex CLI default used for upstream requests.
-const defaultCodexUserAgent = "codex_cli_rs/0.142.0 (Debian 12.9; x86_64)"
+// CLIProxyAPI Codex defaults (internal/runtime/executor/codex_executor.go:37-38).
+const (
+	defaultCodexUserAgent = "codex-tui/0.135.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.135.0)"
+	codexOriginator       = "codex-tui"
+)
+
+// codexScannerMax is the per-line buffer size for Codex Responses SSE streams.
+// Codex can emit single data: lines containing full outputs/images (>64 KB).
 
 // codexScannerMax is the per-line buffer size for Codex Responses SSE streams.
 // Codex can emit single data: lines containing full outputs/images (>64 KB).
@@ -52,35 +60,77 @@ func NewCodexExecutor(base *BaseExecutor) *CodexExecutor {
 }
 
 func codexHeaders(req *Request) map[string]string {
+	// CLIProxyAPI forwards the client User-Agent when present, otherwise falls
+	// back to a real Codex-CLI default. This reduces Cloudflare 1010 blocks and
+	// matches the headers the upstream OAuth credential was issued for.
 	ua := defaultCodexUserAgent
-	if req.ProviderSpecificData != nil {
-		if v := req.ProviderSpecificData["userAgent"]; v != "" {
-			ua = v
-		}
+	if req.Headers != nil && req.Headers["User-Agent"] != "" {
+		ua = req.Headers["User-Agent"]
+	} else if req.ProviderSpecificData != nil && req.ProviderSpecificData["userAgent"] != "" {
+		ua = req.ProviderSpecificData["userAgent"]
 	}
 
 	headers := map[string]string{
-		"Content-Type":              "application/json",
-		"Accept":                    "text/event-stream",
-		"Cache-Control":             "no-cache",
-		"Authorization":             "Bearer " + req.AccessToken,
-		"User-Agent":                ua,
-		"Openai-Beta":               "responses=experimental",
-		"Originator":                "codex_cli_rs",
-		"Codex-Cli-Simplified-Flow": "true",
+		"Content-Type": "application/json",
+		"Accept":       "text/event-stream",
+		"Authorization": "Bearer " + req.AccessToken,
+		"User-Agent":   ua,
+		"Originator":   codexOriginator,
+		"Connection":   "Keep-Alive",
 	}
 	if req.APIKey != "" && req.AccessToken == "" {
 		headers["Authorization"] = "Bearer " + req.APIKey
 	}
+
+	// chatgpt-account-id is required for some Codex OAuth sessions. Prefer the
+	// value stored during import, but fall back to parsing the access token.
+	accountID := ""
 	if req.ProviderSpecificData != nil {
-		if v := req.ProviderSpecificData["workspaceId"]; v != "" {
-			headers["chatgpt-account-id"] = v
+		accountID = req.ProviderSpecificData["accountId"]
+		// Legacy key used by older imports.
+		if accountID == "" {
+			accountID = req.ProviderSpecificData["workspaceId"]
 		}
 	}
+	if accountID == "" {
+		accountID = codexAccountIDFromToken(req.AccessToken)
+	}
+	if accountID != "" {
+		headers["Chatgpt-Account-Id"] = accountID
+	}
+
+	// Codex's session-level prompt cache header. CLIProxyAPI adds it when the
+	// User-Agent contains "Mac OS".
+	if strings.Contains(ua, "Mac OS") {
+		headers["Session_id"] = uuid.NewString()
+	}
+
+	// Forward any remaining client headers that are not already set.
 	for k, v := range req.Headers {
-		headers[k] = v
+		if _, ok := headers[k]; !ok && v != "" {
+			headers[k] = v
+		}
 	}
 	return headers
+}
+
+// codexAccountIDFromToken extracts chatgpt_account_id from a Codex access-token
+// JWT payload. This matches the claim path used by OpenAI's Auth0 tokens.
+func codexAccountIDFromToken(token string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	root := gjson.ParseBytes(payload)
+	auth := root.Get(`https://api.openai.com/auth`)
+	if auth.Exists() {
+		return auth.Get("chatgpt_account_id").String()
+	}
+	return ""
 }
 
 func codexURL(req *Request) string {

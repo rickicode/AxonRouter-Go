@@ -31,8 +31,8 @@ func TestStreamTextDelta(t *testing.T) {
 		`{"type":"response.completed"}`,
 	}
 	chunks := collectStream(t, "{}", events...)
-	if len(chunks) != 3 { // text chunk + completed chunk + [DONE]
-		t.Fatalf("expected 3 chunks, got %d: %s", len(chunks), stringify(chunks))
+	if len(chunks) != 2 { // text chunk + completed chunk; [DONE] is emitted by handler on EOF
+		t.Fatalf("expected 2 chunks, got %d: %s", len(chunks), stringify(chunks))
 	}
 	textChunk := chunks[0]
 	if !bytes.HasPrefix(textChunk, []byte("data: ")) {
@@ -68,9 +68,9 @@ func TestStreamFunctionCallArgumentStreaming(t *testing.T) {
 	}
 	originalReq := `{"tools":[{"type":"function","function":{"name":"get_weather"}}]}`
 	chunks := collectStream(t, originalReq, events...)
-	// We expect: added chunk, arg delta 1, arg delta 2, completed + [DONE]
-	if len(chunks) != 5 {
-		t.Fatalf("expected 5 chunks, got %d: %s", len(chunks), stringify(chunks))
+	// We expect: added chunk, arg delta 1, arg delta 2, completed (DONE is emitted by handler on EOF)
+	if len(chunks) != 4 {
+		t.Fatalf("expected 4 chunks, got %d: %s", len(chunks), stringify(chunks))
 	}
 	added := bytes.TrimSpace(chunks[0][5:])
 	if gjson.GetBytes(added, "choices.0.delta.tool_calls.0.function.name").String() != "get_weather" {
@@ -94,8 +94,8 @@ func TestStreamFunctionCallWithoutDelta(t *testing.T) {
 	}
 	originalReq := `{"tools":[{"type":"function","function":{"name":"get_weather"}}]}`
 	chunks := collectStream(t, originalReq, events...)
-	if len(chunks) != 3 {
-		t.Fatalf("expected 3 chunks, got %d: %s", len(chunks), stringify(chunks))
+	if len(chunks) != 2 { // function_call chunk + completed chunk
+		t.Fatalf("expected 2 chunks, got %d: %s", len(chunks), stringify(chunks))
 	}
 	fc := bytes.TrimSpace(chunks[0][5:])
 	if got := gjson.GetBytes(fc, "choices.0.delta.tool_calls.0.function.arguments").String(); got != `{"city":"LA"}` {
@@ -115,9 +115,9 @@ func TestStreamImageGenerationDedup(t *testing.T) {
 		`{"type":"response.completed"}`,
 	}
 	chunks := collectStream(t, "{}", events...)
-	// Only one image chunk + completed + [DONE]
-	if len(chunks) != 3 {
-		t.Fatalf("expected 3 chunks after dedup, got %d: %s", len(chunks), stringify(chunks))
+	// Only one image chunk + completed; [DONE] is emitted by handler on EOF
+	if len(chunks) != 2 {
+		t.Fatalf("expected 2 chunks after dedup, got %d: %s", len(chunks), stringify(chunks))
 	}
 }
 

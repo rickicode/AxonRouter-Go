@@ -16,13 +16,14 @@ var dataTag = []byte("data:")
 
 // codexStreamState holds state for Codex Responses→OpenAI streaming.
 type codexStreamState struct {
-	MessageID                 string
-	CreatedAt                 int64
-	Model                     string
-	FunctionCallIndex         int
+	MessageID string
+	CreatedAt int64
+	Model string
+	FunctionCallIndex int
 	HasReceivedArgumentsDelta bool
-	HasToolCallAnnounced      bool
-	LastImageHashByItemID     map[string][32]byte
+	HasToolCallAnnounced bool
+	LastImageHashByItemID map[string][32]byte
+	DoneSent bool
 }
 
 func getCodexState(param *any) *codexStreamState {
@@ -167,6 +168,10 @@ func convertCodexResponseToOpenAIStream(_ context.Context, modelName string, ori
 		}
 		return emitCodexImageDelta(state, itemID, b64, root.Get("output_format").String(), template)
 	case "response.completed", "response.done":
+		if state.DoneSent {
+			return nil
+		}
+		state.DoneSent = true
 		finishReason := "stop"
 		if state.FunctionCallIndex != -1 {
 			finishReason = "tool_calls"
@@ -177,8 +182,7 @@ func convertCodexResponseToOpenAIStream(_ context.Context, modelName string, ori
 			template = extractCodexUsage(template, usageResult)
 		}
 		chunk := []byte(fmt.Sprintf("data: %s\n\n", string(template)))
-		done := []byte("data: [DONE]\n\n")
-		return [][]byte{chunk, done}
+		return [][]byte{chunk}
 	default:
 		return nil
 	}
