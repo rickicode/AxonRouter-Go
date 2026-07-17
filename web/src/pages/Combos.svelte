@@ -214,7 +214,7 @@ $effect(() => {
           </div>
           <h3 class="text-body-md-strong mb-1">No combos configured.</h3>
           <p class="text-body-sm text-muted-foreground mb-4">
-            Create a routing combo for fallback, load balancing, or smart routing.
+            Create a routing combo for load balancing, random selection, or smart routing.
           </p>
           <Button onclick={() => showCreate = true} class="text-button-md rounded-sm px-5">Add combo</Button>
         </CardContent>

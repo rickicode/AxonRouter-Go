@@ -2,7 +2,10 @@ package combo
 
 import (
 	"database/sql"
+	"fmt"
 	"math/rand/v2"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +29,18 @@ type RotationManager struct {
 	pending map[string]int
 	// flushScheduled is true while a debounced flush goroutine is pending.
 	flushScheduled bool
+	// usageCache memoizes request_log counts for the least-used strategy.
+	usageCache     usageCacheSnapshot
+	uMu            sync.Mutex
+}
+
+const usageCacheTTL = 30 * time.Second
+
+// usageCacheSnapshot holds per-model usage counts for least-used ordering.
+type usageCacheSnapshot struct {
+	key     string
+	counts  map[string]int
+	expires time.Time
 }
 
 // NewRotationManager creates a new rotation manager.
@@ -40,8 +55,10 @@ func NewRotationManager(database *sql.DB) *RotationManager {
 // GetRotatedSteps returns combo steps in the order they should be attempted for
 // the given strategy:
 //   - "round-robin": rotated by the persistent counter (sticky for stickyLimit hits)
-//   - "weighted": a weighted-random shuffle (probability ∝ step.Weight)
-//   - "priority" (default) and single-step combos: steps unchanged (priority order)
+// - "weighted": a weighted-random shuffle (probability ∝ step.Weight)
+// - "random": an unweighted random shuffle
+// - "least-used": steps ordered by recent successful usage (lowest first)
+// - "priority" (default) and single-step combos: steps unchanged (priority order)
 func (rm *RotationManager) GetRotatedSteps(comboID string, strategy string, stickyLimit int, steps []db.ComboStep) []db.ComboStep {
 	if len(steps) <= 1 {
 		return steps
@@ -62,13 +79,137 @@ func (rm *RotationManager) GetRotatedSteps(comboID string, strategy string, stic
 		return rotated
 	case "weighted":
 		return weightedShuffle(steps)
-	case "fallback":
-		// fallback is semantically the same as priority: try steps in order
-		// until one succeeds (higher-level execution loop handles the retry).
-		return steps
+	case "random":
+		return randomShuffle(steps)
+	case "least-used":
+		return rm.leastUsedOrder(steps)
 	default: // priority
 		return steps
 	}
+}
+
+// randomShuffle returns steps in an unweighted random order. Each call may return
+// a different permutation; all steps are kept exactly once.
+func randomShuffle(steps []db.ComboStep) []db.ComboStep {
+	out := make([]db.ComboStep, len(steps))
+	copy(out, steps)
+	rand.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
+	return out
+}
+
+// leastUsedOrder reorders steps so models with the lowest recent successful usage
+// counts are tried first. Counts are pulled from request_logs and cached briefly
+// to avoid querying SQLite on every combo resolution.
+func (rm *RotationManager) leastUsedOrder(steps []db.ComboStep) []db.ComboStep {
+	modelIDs := make([]string, len(steps))
+	for i, s := range steps {
+		modelIDs[i] = s.ModelID
+	}
+	counts := rm.cachedUsageCounts(modelIDs)
+
+	out := make([]db.ComboStep, len(steps))
+	copy(out, steps)
+	sort.SliceStable(out, func(i, j int) bool {
+		return counts[out[i].ModelID] < counts[out[j].ModelID]
+	})
+	return out
+}
+
+// cachedUsageCounts returns recent successful request counts per model ID.
+// Results are cached for usageCacheTTL because the value is recomputed from
+// request_logs and the query cost does not need to be paid on every request.
+func (rm *RotationManager) cachedUsageCounts(modelIDs []string) map[string]int {
+	sort.Strings(modelIDs)
+	key := strings.Join(modelIDs, "\x00")
+
+	rm.uMu.Lock()
+	defer rm.uMu.Unlock()
+
+	if rm.usageCache.key == key && time.Now().Before(rm.usageCache.expires) {
+		return rm.usageCache.counts
+	}
+
+	counts := rm.usageCounts(modelIDs)
+	rm.usageCache = usageCacheSnapshot{
+		key:     key,
+		counts:  counts,
+		expires: time.Now().Add(usageCacheTTL),
+	}
+	return counts
+}
+
+// usageCounts queries request_logs for successful calls per provider+model over
+// the last 7 days. Steps with no usage get a count of 0.
+func (rm *RotationManager) usageCounts(modelIDs []string) map[string]int {
+	counts := make(map[string]int, len(modelIDs))
+	providers := make([]string, 0, len(modelIDs))
+	models := make([]string, 0, len(modelIDs))
+	for _, id := range modelIDs {
+		provider, model, ok := splitModelID(id)
+		if !ok {
+			continue
+		}
+		providers = append(providers, provider)
+		models = append(models, model)
+		counts[id] = 0
+	}
+	if len(providers) == 0 || rm.db == nil {
+		return counts
+	}
+
+	minTs := time.Now().Add(-7 * 24 * time.Hour).UnixMilli()
+	q := fmt.Sprintf(""+
+		"SELECT provider_type_id, model_id, COUNT(*) FROM request_logs "+
+		"WHERE provider_type_id IN (%s) AND model_id IN (%s) "+
+		"AND status_code >= 200 AND status_code < 400 AND timestamp > ? "+
+		"GROUP BY provider_type_id, model_id",
+		placeholders(len(providers)), placeholders(len(models)))
+
+	args := make([]any, 0, len(providers)+len(models)+1)
+	for _, p := range providers {
+		args = append(args, p)
+	}
+	for _, m := range models {
+		args = append(args, m)
+	}
+	args = append(args, minTs)
+
+	rows, err := rm.db.Query(q, args...)
+	if err != nil {
+		// Fail open: return zero counts so order stays deterministic.
+		return counts
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var provider, model string
+		var n int
+		if err := rows.Scan(&provider, &model, &n); err != nil {
+			continue
+		}
+		counts[provider+"/"+model] = n
+	}
+	return counts
+}
+
+// splitModelID splits "cx/gpt-5.4" into (provider, model). The provider prefix is
+// everything before the first slash; everything after is the model ID stored in
+// request_logs.model_id.
+func splitModelID(modelID string) (string, string, bool) {
+	idx := strings.Index(modelID, "/")
+	if idx <= 0 || idx+1 >= len(modelID) {
+		return "", "", false
+	}
+	return modelID[:idx], modelID[idx+1:], true
+}
+
+// placeholders returns "?" repeated n times joined by commas.
+func placeholders(n int) string {
+	p := make([]string, n)
+	for i := range p {
+		p[i] = "?"
+	}
+	return strings.Join(p, ",")
 }
 
 // weightedShuffle returns steps in a weighted-random order so that higher-weight

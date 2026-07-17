@@ -27,7 +27,8 @@ var ValidStrategies = map[string]bool{
 	"priority":    true,
 	"round-robin": true,
 	"weighted":    true,
-	"fallback":    true,
+	"random":      true,
+	"least-used":  true,
 	"fusion":      true,
 }
 

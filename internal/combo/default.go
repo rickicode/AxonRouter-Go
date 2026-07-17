@@ -82,18 +82,18 @@ func DefaultCombos() []DefaultComboDef {
 				{ModelID: "cx/gpt-5.4", Priority: 4, Weight: 100},
 			},
 		},
-		{
-			Name: "fallback",
-			Strategy: "fallback",
-			Steps: []DefaultStepDef{
-				{ModelID: "cf/moonshotai/kimi-k2.6", Priority: 1, Weight: 100},
-				{ModelID: "oc/hy3-free", Priority: 2, Weight: 100},
-				{ModelID: "ag/claude-sonnet-4-6", Priority: 3, Weight: 100},
-				{ModelID: "cx/gpt-5.4", Priority: 4, Weight: 100},
-			},
+	{
+		Name:     "random",
+		Strategy: "random",
+		Steps: []DefaultStepDef{
+			{ModelID: "cf/moonshotai/kimi-k2.6", Priority: 1, Weight: 100},
+			{ModelID: "oc/hy3-free", Priority: 2, Weight: 100},
+			{ModelID: "ag/claude-sonnet-4-6", Priority: 3, Weight: 100},
+			{ModelID: "cx/gpt-5.4", Priority: 4, Weight: 100},
 		},
-		{
-			Name: "fusion",
+	},
+{
+	Name: "fusion",
 			Strategy: "fusion",
 			FusionConfig: defaultFusionConfig(),
 			Steps: []DefaultStepDef{

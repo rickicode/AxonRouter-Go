@@ -52,7 +52,7 @@ const settingMeta: Record<string, { label: string; description: string; category
 	},
 	combo_strategies: {
 		label: 'Combo Strategy Overrides',
-		description: 'JSON map of combo name to strategy override, e.g. {"mycombo":"fallback"}.',
+			description: 'JSON map of combo name to strategy override, e.g. {"mycombo":"least-used"}.',
 		category: 'Routing',
 	},
 	log_retention_days: {
@@ -255,7 +255,7 @@ function categoryClass(category: Category): string {
 								bind:value={editingValue}
 								disabled={savingKey === key}
 							>
-								{#each ['priority', 'round-robin', 'weighted', 'fallback', 'fusion'] as opt}
+								{#each ['priority', 'round-robin', 'weighted', 'random', 'least-used', 'fusion'] as opt}
 									<option value={opt}>{opt}</option>
 								{/each}
 							</select>

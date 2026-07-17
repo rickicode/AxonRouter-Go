@@ -43,7 +43,7 @@ let judgePickerOpen = $state(false);
 let loading = $state(false);
 let stepsLoading = $state(false);
 
-const strategyOptions = ['priority', 'round-robin', 'weighted', 'fallback', 'fusion'];
+	const strategyOptions = ['priority', 'round-robin', 'weighted', 'random', 'least-used', 'fusion'];
 const smartGoalOptions = [
 	{ value: 'auto', label: 'Auto', desc: 'Dynamic selection based on telemetry' },
 	{ value: 'economy', label: 'Economy', desc: 'Lowest cost routing' },
@@ -54,15 +54,17 @@ const smartGoalOptions = [
 function strategyLabel(opt: string) {
 	if (opt === 'priority') return 'Priority';
 	if (opt === 'round-robin') return 'Round Robin';
-	if (opt === 'fallback') return 'Fallback';
+	if (opt === 'random') return 'Random';
+	if (opt === 'least-used') return 'Least Used';
 	if (opt === 'fusion') return 'Fusion';
 	return 'Weighted';
 }
 
 function strategyDescription(opt: string) {
 	if (opt === 'priority') return 'Try steps in order. First success wins.';
-	if (opt === 'round-robin') return 'Distribute requests across steps.';
-	if (opt === 'fallback') return 'Try steps in order, advancing only on failure.';
+	if (opt === 'round-robin') return 'Rotate to a different step each request.';
+	if (opt === 'random') return 'Pick a random step each request.';
+	if (opt === 'least-used') return 'Prefer the model with the fewest recent successful calls.';
 	if (opt === 'fusion') return 'Parallel panel + judge synthesis.';
 	return 'Weighted-random order by step weight.';
 }
@@ -261,7 +263,7 @@ async function handleSave() {
 
 			<div class="space-y-2">
 				<Label class="text-body-sm-strong">Name</Label>
-				<Input bind:value={name} placeholder="e.g. fallback, premium-rr" class="h-10 text-body-sm" />
+				<Input bind:value={name} placeholder="e.g. random, premium-rr" class="h-10 text-body-sm" />
 			</div>
 
 			<div class="space-y-2">

@@ -232,7 +232,7 @@ func TestResolveSmart_DeterministicWhenMultipleCombosShareGoal(t *testing.T) {
 	}
 }
 
-func TestFallbackStrategy_SameAsPriorityOrder(t *testing.T) {
+func TestRandomStrategy_ReturnsPermutation(t *testing.T) {
 	database := newComboTestDB(t)
 	seedConnectionForCombo(t, database, "conn-1")
 	seedConnectionForCombo(t, database, "conn-2")
@@ -241,7 +241,7 @@ func TestFallbackStrategy_SameAsPriorityOrder(t *testing.T) {
 	elig := connstate.NewEligibilityManager(store)
 	h := NewHandler(database, store, elig)
 
-	combo, err := h.CreateCombo("fallback-combo", "fallback", 30000, 1, false, "", "", []CreateStepInput{
+	combo, err := h.CreateCombo("random-combo", "random", 30000, 1, false, "", "", []CreateStepInput{
 		{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
 		{ConnectionID: "conn-2", ModelID: "openai/gpt-4o-mini", Priority: 2, Weight: 100},
 	})
@@ -251,13 +251,62 @@ func TestFallbackStrategy_SameAsPriorityOrder(t *testing.T) {
 
 	result, ok := h.Resolve(combo.Name)
 	if !ok {
-		t.Fatalf("Resolve failed for fallback combo")
+		t.Fatalf("Resolve failed for random combo")
 	}
-	if result.Combo.Strategy != "fallback" {
-		t.Fatalf("strategy = %q, want fallback", result.Combo.Strategy)
+	if result.Combo.Strategy != "random" {
+		t.Fatalf("strategy = %q, want random", result.Combo.Strategy)
 	}
-	if len(result.Steps) != 2 || result.Steps[0].ModelID != "openai/gpt-4o" {
-		t.Fatalf("fallback steps not in priority order: %v", result.Steps)
+
+	seen := map[string]bool{}
+	for i := 0; i < 20; i++ {
+		result, _ = h.Resolve(combo.Name)
+		seen[result.Steps[0].ModelID] = true
+	}
+	if len(seen) != 2 {
+		t.Fatalf("random strategy never rotated to second model, got %v", seen)
+	}
+}
+
+func TestLeastUsedStrategy_OrdersByRecentUsage(t *testing.T) {
+	database := newComboTestDB(t)
+	seedConnectionForCombo(t, database, "conn-1")
+	seedConnectionForCombo(t, database, "conn-2")
+
+	// Seed some request logs so openai/gpt-4o has 3 successes and openai/gpt-4o-mini has 1.
+	now := time.Now().UnixMilli()
+	_, err := database.Exec(`
+		INSERT INTO request_logs (id, timestamp, connection_id, provider_type_id, model_id, modality, stream, status_code, created_at)
+		VALUES
+			('r1', ?, 'conn-1', 'combo-test', 'gpt-4o', 'chat', 0, 200, ?),
+			('r2', ?, 'conn-1', 'combo-test', 'gpt-4o', 'chat', 0, 200, ?),
+			('r3', ?, 'conn-1', 'combo-test', 'gpt-4o', 'chat', 0, 200, ?),
+			('r4', ?, 'conn-2', 'combo-test', 'gpt-4o-mini', 'chat', 0, 200, ?)
+	`, now, now, now, now, now, now, now, now)
+	if err != nil {
+		t.Fatalf("seed request logs: %v", err)
+	}
+
+	store := connstate.NewStore()
+	elig := connstate.NewEligibilityManager(store)
+	h := NewHandler(database, store, elig)
+
+	combo, err := h.CreateCombo("least-used-combo", "least-used", 30000, 1, false, "", "", []CreateStepInput{
+		{ConnectionID: "conn-1", ModelID: "combo-test/gpt-4o", Priority: 1, Weight: 100},
+		{ConnectionID: "conn-2", ModelID: "combo-test/gpt-4o-mini", Priority: 2, Weight: 100},
+	})
+	if err != nil {
+		t.Fatalf("CreateCombo failed: %v", err)
+	}
+
+	result, ok := h.Resolve(combo.Name)
+	if !ok {
+		t.Fatalf("Resolve failed for least-used combo")
+	}
+	if result.Combo.Strategy != "least-used" {
+		t.Fatalf("strategy = %q, want least-used", result.Combo.Strategy)
+	}
+	if result.Steps[0].ModelID != "combo-test/gpt-4o-mini" {
+		t.Fatalf("least-used should prefer lower-usage model, got %v", result.Steps)
 	}
 }
 
@@ -304,23 +353,23 @@ func TestEffectiveStrategy_OverridesAndDefaults(t *testing.T) {
 	}
 
 	now := time.Now().Unix()
-	if _, err := database.Exec(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)`, "combo_strategy", "fallback", now); err != nil {
+	if _, err := database.Exec(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)`, "combo_strategy", "round-robin", now); err != nil {
 		t.Fatalf("insert combo_strategy: %v", err)
 	}
-	if _, err := database.Exec(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)`, "combo_strategies", `{"mycombo":"round-robin"}`, now); err != nil {
+	if _, err := database.Exec(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)`, "combo_strategies", `{"mycombo":"random"}`, now); err != nil {
 		t.Fatalf("insert combo_strategies: %v", err)
 	}
 
 	h.RefreshStrategySettings()
 
 	// Per-combo override wins over the combo's own strategy.
-	if got := h.EffectiveStrategy("mycombo", "priority"); got != "round-robin" {
-		t.Fatalf("EffectiveStrategy with override = %q, want round-robin", got)
+	if got := h.EffectiveStrategy("mycombo", "priority"); got != "random" {
+		t.Fatalf("EffectiveStrategy with override = %q, want random", got)
 	}
 
 	// Per-combo override still wins even when the combo's own strategy is invalid.
-	if got := h.EffectiveStrategy("mycombo", "nope"); got != "round-robin" {
-		t.Fatalf("EffectiveStrategy override invalid = %q, want round-robin", got)
+	if got := h.EffectiveStrategy("mycombo", "nope"); got != "random" {
+		t.Fatalf("EffectiveStrategy override invalid = %q, want random", got)
 	}
 
 	// A combo's own valid strategy is honored; the global default does NOT override it.
@@ -329,8 +378,8 @@ func TestEffectiveStrategy_OverridesAndDefaults(t *testing.T) {
 	}
 
 	// Global default is only used when the combo has no valid strategy of its own.
-	if got := h.EffectiveStrategy("other", ""); got != "fallback" {
-		t.Fatalf("EffectiveStrategy global default = %q, want fallback", got)
+	if got := h.EffectiveStrategy("other", ""); got != "round-robin" {
+		t.Fatalf("EffectiveStrategy global default = %q, want round-robin", got)
 	}
 
 	// Fusion combo is not overridden by a global priority default.
