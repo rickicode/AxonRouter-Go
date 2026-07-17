@@ -39,11 +39,11 @@ func (h *ComboHandler) List(c *gin.Context) {
 
 	offset := (page - 1) * perPage
 	rows, err := h.db.Query(`
-		SELECT id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal,
-		       is_active, created_at, updated_at
-		FROM combos WHERE is_active = 1
-		ORDER BY created_at DESC
-		LIMIT ? OFFSET ?
+	SELECT id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal,
+	fusion_config, is_active, created_at, updated_at
+	FROM combos WHERE is_active = 1
+	ORDER BY created_at DESC
+	LIMIT ? OFFSET ?
 	`, perPage, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -55,7 +55,7 @@ func (h *ComboHandler) List(c *gin.Context) {
 	for rows.Next() {
 		cb := db.Combo{}
 		rows.Scan(&cb.ID, &cb.Name, &cb.Strategy, &cb.StickyLimit,
-			&cb.TimeoutMs, &cb.IsSmart, &cb.SmartGoal,
+			&cb.TimeoutMs, &cb.IsSmart, &cb.SmartGoal, &cb.FusionConfig,
 			&cb.IsActive, &cb.CreatedAt, &cb.UpdatedAt)
 		combos = append(combos, cb)
 	}
@@ -94,9 +94,10 @@ func (h *ComboHandler) Create(c *gin.Context) {
 		Strategy    string `json:"strategy"`
 		TimeoutMs   int    `json:"timeout_ms"`
 		StickyLimit int    `json:"sticky_limit"`
-		IsSmart     bool   `json:"is_smart"`
-		SmartGoal   string `json:"smart_goal"`
-		Steps       []struct {
+		IsSmart      bool   `json:"is_smart"`
+		SmartGoal    string `json:"smart_goal"`
+		FusionConfig string `json:"fusion_config"`
+		Steps        []struct {
 			ConnectionID string `json:"connection_id"`
 			ModelID      string `json:"model_id" binding:"required"`
 			Priority     int    `json:"priority"`
@@ -109,6 +110,10 @@ func (h *ComboHandler) Create(c *gin.Context) {
 	}
 	if req.Strategy == "" {
 		req.Strategy = "priority"
+	}
+	if !isValidComboStrategy(req.Strategy) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid strategy: " + req.Strategy})
+		return
 	}
 	if req.TimeoutMs == 0 {
 		req.TimeoutMs = 30000
@@ -135,7 +140,7 @@ func (h *ComboHandler) Create(c *gin.Context) {
 		})
 	}
 
-	result, err := h.handler.CreateCombo(req.Name, req.Strategy, req.TimeoutMs, req.StickyLimit, req.IsSmart, req.SmartGoal, steps)
+	result, err := h.handler.CreateCombo(req.Name, req.Strategy, req.TimeoutMs, req.StickyLimit, req.IsSmart, req.SmartGoal, req.FusionConfig, steps)
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
@@ -149,15 +154,38 @@ func (h *ComboHandler) Update(c *gin.Context) {
 	var req struct {
 		Name        string  `json:"name"`
 		Strategy    string  `json:"strategy"`
-		TimeoutMs   int     `json:"timeout_ms"`
-		StickyLimit *int    `json:"sticky_limit"`
-		IsSmart     *bool   `json:"is_smart"`
-		SmartGoal   *string `json:"smart_goal"`
-		IsActive    *bool   `json:"is_active"`
+		TimeoutMs    int     `json:"timeout_ms"`
+		StickyLimit  *int    `json:"sticky_limit"`
+		IsSmart      *bool   `json:"is_smart"`
+		SmartGoal    *string `json:"smart_goal"`
+		FusionConfig string  `json:"fusion_config"`
+		IsActive     *bool   `json:"is_active"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	if req.Strategy != "" && !isValidComboStrategy(req.Strategy) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid strategy: " + req.Strategy})
+		return
+	}
+
+	if req.FusionConfig != "" {
+		cfg, err := combo.ParseFusionConfig(req.FusionConfig)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		var stepCount int
+		if err := h.db.QueryRow(`SELECT COUNT(*) FROM combo_steps WHERE combo_id = ?`, id).Scan(&stepCount); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if err := cfg.Validate(stepCount); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	sets := []string{}
@@ -185,6 +213,10 @@ func (h *ComboHandler) Update(c *gin.Context) {
 	if req.SmartGoal != nil {
 		sets = append(sets, "smart_goal = ?")
 		args = append(args, *req.SmartGoal)
+	}
+	if req.FusionConfig != "" {
+		sets = append(sets, "fusion_config = ?")
+		args = append(args, req.FusionConfig)
 	}
 	if req.IsActive != nil {
 		sets = append(sets, "is_active = ?")
@@ -290,6 +322,15 @@ func (h *ComboHandler) RemoveStep(c *gin.Context) {
 	}
 	h.handler.RefreshFromDB()
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// isValidComboStrategy returns true for supported strategy values.
+func isValidComboStrategy(strategy string) bool {
+	switch strategy {
+	case "priority", "round-robin", "weighted", "fallback", "fusion":
+		return true
+	}
+	return false
 }
 
 // SeedDefaults seeds default combos.

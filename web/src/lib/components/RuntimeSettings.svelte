@@ -45,7 +45,17 @@ const settingMeta: Record<string, { label: string; description: string; category
 		description: 'How many connections the failover loop tries per request before giving up. Increase when you have many rotating keys for the same provider.',
 		category: 'Routing',
 	},
-  log_retention_days: {
+	combo_strategy: {
+		label: 'Default Combo Strategy',
+		description: 'Default strategy used when creating a new combo.',
+		category: 'Routing',
+	},
+	combo_strategies: {
+		label: 'Combo Strategy Overrides',
+		description: 'JSON map of combo name to strategy override, e.g. {"mycombo":"fallback"}.',
+		category: 'Routing',
+	},
+	log_retention_days: {
     label: 'Log Retention Days',
     description: 'Days to keep request logs before cleanup.',
     category: 'Logging',
@@ -59,6 +69,8 @@ const defaultValues: Record<string, string> = {
 	default_combo_timeout: '30000',
 	max_retries: '3',
 	failover_max_attempts: '5',
+	combo_strategy: 'priority',
+	combo_strategies: '{}',
 	log_retention_days: '30',
 };
 
@@ -235,17 +247,35 @@ function categoryClass(category: Category): string {
               <p class="text-caption text-muted-foreground/60 hidden sm:block">{meta.description}</p>
             </div>
 
-            <div class="flex items-center">
-              {#if editing}
-                <Input
-                  type="text"
-                  class="h-8 w-full text-body-sm font-mono"
-                  bind:value={editingValue}
-                  onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && saveEdit(key)}
-                  disabled={savingKey === key}
-                  autofocus
-                />
-              {:else}
+				<div class="flex items-center">
+					{#if editing}
+						{#if key === 'combo_strategy'}
+							<select
+								class="h-8 w-full rounded-md border border-input bg-background px-2 text-body-sm font-mono"
+								bind:value={editingValue}
+								disabled={savingKey === key}
+							>
+								{#each ['priority', 'round-robin', 'weighted', 'fallback', 'fusion'] as opt}
+									<option value={opt}>{opt}</option>
+								{/each}
+							</select>
+						{:else if key === 'combo_strategies'}
+							<textarea
+								class="h-20 w-full rounded-md border border-input bg-background px-2 py-1 text-body-sm font-mono"
+								bind:value={editingValue}
+								disabled={savingKey === key}
+							></textarea>
+						{:else}
+							<Input
+								type="text"
+								class="h-8 w-full text-body-sm font-mono"
+								bind:value={editingValue}
+								onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && saveEdit(key)}
+								disabled={savingKey === key}
+								autofocus
+							/>
+						{/if}
+					{:else}
                 <button
                   class="text-left w-full truncate rounded-md border border-transparent px-2 py-1 -ml-2 text-code font-mono text-body-sm text-muted-foreground hover:bg-muted hover:border-border transition-colors"
                   onclick={() => startEdit(key)}

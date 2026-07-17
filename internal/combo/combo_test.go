@@ -29,7 +29,7 @@ func newComboTestDB(t *testing.T) *sql.DB {
 func seedConnectionForCombo(t *testing.T, database *sql.DB, id string) {
 	t.Helper()
 	now := time.Now().Unix()
-	if _, err := database.Exec(`INSERT INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('combo-test','Combo Test','openai','http://x',?)`, now); err != nil {
+	if _, err := database.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('combo-test','Combo Test','openai','http://x',?)`, now); err != nil {
 		t.Fatalf("seed provider_type: %v", err)
 	}
 	if _, err := database.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?,'combo-test','c1','none','ready',1,?,?)`, id, now, now); err != nil {
@@ -52,7 +52,7 @@ func TestCreateCombo_AutoPicksConnection(t *testing.T) {
 	elig.RecomputeAll()
 	h := NewHandler(database, store, elig)
 
-	combo, err := h.CreateCombo("auto-conn", "priority", 30000, 1, false, "", []CreateStepInput{
+	combo, err := h.CreateCombo("auto-conn", "priority", 30000, 1, false, "", "", []CreateStepInput{
 		{ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
 	})
 	if err != nil {
@@ -77,7 +77,7 @@ func TestCreateCombo_PersistsSmartAndStickyFields(t *testing.T) {
 	elig := connstate.NewEligibilityManager(store)
 	h := NewHandler(database, store, elig)
 
-	combo, err := h.CreateCombo("premium-smart", "priority", 15000, 3, true, "premium", []CreateStepInput{
+	combo, err := h.CreateCombo("premium-smart", "priority", 15000, 3, true, "premium", "", []CreateStepInput{
 		{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
 	})
 	if err != nil {
@@ -135,7 +135,7 @@ func TestRoundRobin_StickyLimitZeroDoesNotPanic(t *testing.T) {
 	elig.RecomputeAll()
 	h := NewHandler(database, store, elig)
 
-	combo, err := h.CreateCombo("rr-zero", "round-robin", 30000, 0, false, "", []CreateStepInput{
+	combo, err := h.CreateCombo("rr-zero", "round-robin", 30000, 0, false, "", "", []CreateStepInput{
 		{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
 	})
 	if err != nil {
@@ -170,13 +170,13 @@ func TestResolve_RegularComboShadowsSmartKeyword(t *testing.T) {
 	elig.RecomputeAll()
 	h := NewHandler(database, store, elig)
 
-	regular, err := h.CreateCombo("balanced", "priority", 30000, 1, false, "", []CreateStepInput{
+	regular, err := h.CreateCombo("balanced", "priority", 30000, 1, false, "", "", []CreateStepInput{
 		{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
 	})
 	if err != nil {
 		t.Fatalf("create regular combo: %v", err)
 	}
-	_, err = h.CreateCombo("smart-balanced", "priority", 30000, 1, true, "balanced", []CreateStepInput{
+	_, err = h.CreateCombo("smart-balanced", "priority", 30000, 1, true, "balanced", "", []CreateStepInput{
 		{ConnectionID: "conn-2", ModelID: "openai/gpt-4o-mini", Priority: 1, Weight: 100},
 	})
 	if err != nil {
@@ -201,13 +201,13 @@ func TestResolveSmart_DeterministicWhenMultipleCombosShareGoal(t *testing.T) {
 	elig := connstate.NewEligibilityManager(store)
 	h := NewHandler(database, store, elig)
 
-	_, err := h.CreateCombo("z-economy", "priority", 30000, 1, true, "economy", []CreateStepInput{
+	_, err := h.CreateCombo("z-economy", "priority", 30000, 1, true, "economy", "", []CreateStepInput{
 		{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
 	})
 	if err != nil {
 		t.Fatalf("create z-economy: %v", err)
 	}
-	_, err = h.CreateCombo("a-economy", "priority", 30000, 1, true, "economy", []CreateStepInput{
+	_, err = h.CreateCombo("a-economy", "priority", 30000, 1, true, "economy", "", []CreateStepInput{
 		{ConnectionID: "conn-2", ModelID: "openai/gpt-4o-mini", Priority: 1, Weight: 100},
 	})
 	if err != nil {
@@ -229,6 +229,35 @@ func TestResolveSmart_DeterministicWhenMultipleCombosShareGoal(t *testing.T) {
 		if name != "a-economy" {
 			t.Fatalf("expected a-economy (sorted first), got %q", name)
 		}
+	}
+}
+
+func TestFallbackStrategy_SameAsPriorityOrder(t *testing.T) {
+	database := newComboTestDB(t)
+	seedConnectionForCombo(t, database, "conn-1")
+	seedConnectionForCombo(t, database, "conn-2")
+
+	store := connstate.NewStore()
+	elig := connstate.NewEligibilityManager(store)
+	h := NewHandler(database, store, elig)
+
+	combo, err := h.CreateCombo("fallback-combo", "fallback", 30000, 1, false, "", "", []CreateStepInput{
+		{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
+		{ConnectionID: "conn-2", ModelID: "openai/gpt-4o-mini", Priority: 2, Weight: 100},
+	})
+	if err != nil {
+		t.Fatalf("CreateCombo failed: %v", err)
+	}
+
+	result, ok := h.Resolve(combo.Name)
+	if !ok {
+		t.Fatalf("Resolve failed for fallback combo")
+	}
+	if result.Combo.Strategy != "fallback" {
+		t.Fatalf("strategy = %q, want fallback", result.Combo.Strategy)
+	}
+	if len(result.Steps) != 2 || result.Steps[0].ModelID != "openai/gpt-4o" {
+		t.Fatalf("fallback steps not in priority order: %v", result.Steps)
 	}
 }
 

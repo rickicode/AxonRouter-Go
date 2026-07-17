@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
     `CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id, timestamp DESC)`,
 		`ALTER TABLE provider_types ADD COLUMN category TEXT DEFAULT 'apikey'`,
 		`ALTER TABLE provider_types ADD COLUMN service_kinds TEXT DEFAULT '["llm"]'`,
+		`ALTER TABLE combos ADD COLUMN fusion_config TEXT`,
 		`CREATE TABLE IF NOT EXISTS compression_metrics (
     mode TEXT PRIMARY KEY,
     requests INTEGER NOT NULL DEFAULT 0,

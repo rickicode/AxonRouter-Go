@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
+	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
@@ -41,6 +45,14 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 
 	// Combo-first routing
 	if comboResult, ok := h.combo.Resolve(model); ok {
+		strategy := h.combo.EffectiveStrategy(comboResult.Combo.Name, comboResult.Combo.Strategy)
+		if strategy == "fusion" {
+			h.handleFusionRequest(c, comboResult, body, model, start, stream)
+			return
+		}
+		// For fallback/priority/round-robin/weighted use the shared combo path.
+		comboResult.Combo.Strategy = strategy
+		comboResult.Steps = h.combo.ReorderStepsByCapabilities(comboResult.Steps, combo.DetectRequiredCapabilities(body))
 		h.handleComboRequest(c, comboResult, body, model, start, stream)
 		return
 	}
@@ -357,44 +369,27 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				// Preflight rejected (cooldown/exhausted) — try next connection.
 				continue
 			}
-			lastConn = conn
+		lastConn = conn
 
-			var psdMap map[string]string
-			if conn.ProviderSpecificData != "" {
-				if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
-					logging.Logger.Warn("malformed provider_specific_data", "conn", shortID(conn.ID, 8), "error", err.Error())
-				}
+		translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+		translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
+		// Adaptive readiness: extend timeout for large/reasoning requests.
+		var streamCfg *executor.StreamConfig
+		if stream {
+			adaptiveMs := computeAdaptiveReadiness(body, modelName, 80000)
+			streamCfg = &executor.StreamConfig{
+				StreamReadinessTimeoutMs: adaptiveMs,
+				AdaptiveReadiness: true,
 			}
-			translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
-			translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
-	req := &executor.Request{
-
-		Model:              modelName,
-		Body:               translatedBody,
-		Stream:             stream,
-		APIKey:             conn.APIKey,
-		AccessToken:        conn.AccessToken,
-		BaseURL:            conn.BaseURL,
-		Provider:           provider,
-		ProviderSpecificData: psdMap,
-	}
-	// Adaptive readiness: extend timeout for large/reasoning requests.
-	if stream {
-		adaptiveMs := computeAdaptiveReadiness(body, modelName, 80000)
-		req.StreamConfig = &executor.StreamConfig{
-			StreamReadinessTimeoutMs: adaptiveMs,
-			AdaptiveReadiness:      true,
 		}
-	}
-	// Use client's request context for execution to avoid 30s combo timeout
-	// cutting off long-lived streaming responses. comboCtx is only for loop control.
-	execCtx := comboCtx
-	if stream {
-		execCtx = c.Request.Context()
-	}
-	proxyCtx := h.proxyContext(execCtx, conn)
-	resp, streamResult, err := h.executeDirect(proxyCtx, exec, req)
-			latency := time.Since(start).Milliseconds()
+		// Use client's request context for execution to avoid 30s combo timeout
+		// cutting off long-lived streaming responses. comboCtx is only for loop control.
+		execCtx := comboCtx
+		if stream {
+			execCtx = c.Request.Context()
+		}
+		proxyCtx, resp, streamResult, err := h.executeProviderCall(execCtx, exec, conn, provider, modelName, translatedBody, stream, streamCfg)
+		latency := time.Since(start).Milliseconds()
 			if err != nil {
 				if h.isClientCanceled(c, err) {
 					return
@@ -444,25 +439,25 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				h.codexPersistIfCodex(conn, resp, streamResult)
 			}
 
-		if req.Stream {
+		if stream {
 			// Use the client's request context (no timeout) for streaming.
 			// The comboCtx timeout is only for orchestration, not for live streams.
 			// Stream lifecycle is governed by StreamIdleTimeout/StreamReadinessTimeout/StallTimeout.
 
 			// Holdback buffer: wait 750ms/64KB before committing to this connection.
-			// If the stream errors during holdback, we can still retry the next connection
+			// If the stream errors during holdback, still retry the next connection
 			// transparently. Matches OmniRoute holdback behavior.
 			holdbackMs := 750
 			holdbackBytes := 64 * 1024
-			if req.StreamConfig != nil {
-				if req.StreamConfig.HoldbackMs > 0 {
-					holdbackMs = req.StreamConfig.HoldbackMs
+			if streamCfg != nil {
+				if streamCfg.HoldbackMs > 0 {
+					holdbackMs = streamCfg.HoldbackMs
 				}
-				if req.StreamConfig.HoldbackBytes > 0 {
-					holdbackBytes = req.StreamConfig.HoldbackBytes
+				if streamCfg.HoldbackBytes > 0 {
+					holdbackBytes = streamCfg.HoldbackBytes
 				}
-			}
-	// Holdback committed — stream is live, relay to client.
+		}
+		// Holdback committed — stream is live, relay to client.
 	// Use a dedicated sub-context so the holdback relay goroutine is cancelled
 	// the moment we stop reading from it (upstream chunk error, normal end, or
 	// client disconnect). Without this, after a mid-stream error the goroutine
@@ -599,6 +594,314 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 		return
 	}
 	c.JSON(statusCode, gin.H{"error": gin.H{"message": msg, "type": errType, "detail": detail}})
+}
+
+// handleFusionRequest runs a fusion combo: it executes all steps in parallel as
+// a panel, waits for min_panel successes plus a grace period, then asks a judge
+// model to synthesize the panel answers into one response for the client.
+func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboResult, body []byte, model string, start time.Time, stream bool) {
+	cfg, err := combo.ParseFusionConfig(comboResult.Combo.FusionConfig)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": err.Error()}})
+		return
+	}
+	if err := cfg.Validate(len(comboResult.Steps)); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": err.Error()}})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(cfg.PanelHardTimeoutMs)*time.Millisecond)
+	defer cancel()
+
+
+	resultsCh := make(chan fusionPanel, len(comboResult.Steps))
+	var wg sync.WaitGroup
+	for _, step := range comboResult.Steps {
+		wg.Add(1)
+		go func(step db.ComboStep) {
+			defer wg.Done()
+			connID, ok := h.combo.PickConnection(step)
+			if !ok {
+				resultsCh <- fusionPanel{err: errors.New("no eligible connection")}
+				return
+			}
+			provider, modelName := executor.SplitModel(step.ModelID)
+			conn, err := h.prepareConnection(ctx, connID, provider, modelName)
+			if err != nil {
+				resultsCh <- fusionPanel{err: err}
+				return
+			}
+			exec, providerFormat, err := h.resolveExecutor(provider, modelName)
+			if err != nil {
+				resultsCh <- fusionPanel{err: err}
+				return
+			}
+			translatedBody := registry.Request(string(executor.FormatOpenAI), string(providerFormat), modelName, body, false)
+			translatedBody = sanitizeStreamOptions(translatedBody, false, executor.FormatOpenAI, providerFormat, c.Request.URL.Path)
+			translatedBody = stripFusionTools(translatedBody)
+			_, resp, _, err := h.executeProviderCall(ctx, exec, conn, provider, modelName, translatedBody, false, nil)
+			if err != nil {
+				resultsCh <- fusionPanel{err: err}
+				return
+			}
+			content := extractAssistantContent(resp.Body)
+			if content == "" {
+				resultsCh <- fusionPanel{err: errors.New("empty panel response")}
+				return
+			}
+			resultsCh <- fusionPanel{connID: connID, modelID: step.ModelID, content: content}
+		}(step)
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
+
+	var successes []fusionPanel
+	hardTimeout := time.NewTimer(time.Duration(cfg.PanelHardTimeoutMs) * time.Millisecond)
+	defer hardTimeout.Stop()
+
+	// Collect until min_panel successes, then start grace timer.
+	collectResults := func() bool {
+		for {
+			if len(successes) >= len(comboResult.Steps) {
+				return true
+			}
+			select {
+			case r, ok := <-resultsCh:
+				if !ok {
+					return true
+				}
+				if r.err == nil {
+					successes = append(successes, r)
+				}
+			case <-hardTimeout.C:
+				return true
+			}
+		}
+	}
+
+	done := collectResults()
+	if len(successes) >= cfg.MinPanel && !done {
+		grace := time.NewTimer(time.Duration(cfg.StragglerGraceMs) * time.Millisecond)
+	collectGrace:
+		for {
+			select {
+			case r, ok := <-resultsCh:
+				if !ok {
+					break collectGrace
+				}
+				if r.err == nil {
+					successes = append(successes, r)
+				}
+				if len(successes) >= len(comboResult.Steps) {
+					break collectGrace
+				}
+			case <-grace.C:
+				break collectGrace
+			case <-hardTimeout.C:
+				break collectGrace
+			}
+		}
+		grace.Stop()
+	}
+
+	if len(successes) == 0 {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "all fusion panel models failed", "type": "fusion_panel_failed"}})
+		return
+	}
+
+	if len(successes) == 1 {
+		h.writeFusionResponse(c, successes[0].content, model, stream)
+		return
+	}
+
+	// Run judge synthesis.
+	judgeModel := cfg.JudgeModel
+	if judgeModel == "" {
+		judgeModel = comboResult.Steps[0].ModelID
+	}
+	judgeBody := buildFusionJudgeBody(body, successes, cfg.AnonymizeSources)
+	judgeConnID, ok := h.combo.PickConnection(db.ComboStep{ModelID: judgeModel})
+	if !ok {
+		// Fallback to the first successful panel response if no judge connection.
+		logging.Logger.Warn("fusion judge has no eligible connection; returning first panel response", "judge_model", judgeModel)
+		h.writeFusionResponse(c, successes[0].content, model, stream)
+		return
+	}
+	judgeProvider, judgeModelName := executor.SplitModel(judgeModel)
+	judgeConn, err := h.prepareConnection(c.Request.Context(), judgeConnID, judgeProvider, judgeModelName)
+	if err != nil {
+		logging.Logger.Warn("fusion judge connection rejected; returning first panel response", "error", err.Error())
+		h.writeFusionResponse(c, successes[0].content, model, stream)
+		return
+	}
+	judgeExec, judgeFormat, err := h.resolveExecutor(judgeProvider, judgeModelName)
+	if err != nil {
+		logging.Logger.Warn("fusion judge executor unavailable; returning first panel response", "error", err.Error())
+		h.writeFusionResponse(c, successes[0].content, model, stream)
+		return
+	}
+
+	translatedJudge := registry.Request(string(executor.FormatOpenAI), string(judgeFormat), judgeModelName, judgeBody, stream)
+	translatedJudge = sanitizeStreamOptions(translatedJudge, stream, executor.FormatOpenAI, judgeFormat, c.Request.URL.Path)
+
+	execCtx := ctx
+	if stream {
+		execCtx = c.Request.Context()
+	}
+	_, resp, streamResult, err := h.executeProviderCall(execCtx, judgeExec, judgeConn, judgeProvider, judgeModelName, translatedJudge, stream, nil)
+	if err != nil {
+		logging.Logger.Warn("fusion judge execution failed; returning first panel response", "error", err.Error())
+		h.writeFusionResponse(c, successes[0].content, model, stream)
+		return
+	}
+
+	if stream {
+		streamCtx, cancelStream := context.WithCancel(c.Request.Context())
+		defer cancelStream()
+		if err := h.handleStreamResponse(streamCtx, c, streamResult, judgeConn, judgeProvider, judgeModelName, start, translatedJudge, judgeBody, comboResult.Combo.Name, true); err != nil {
+			logging.Logger.Warn("fusion judge stream failed", "error", err.Error())
+			if !h.isClientCanceled(c, err) {
+				// Stream already started silently; we cannot recover, just stop.
+			}
+			return
+		}
+		return
+	}
+
+	// Non-streaming: translate judge response back to client format.
+	translatedResp := registry.ResponseNonStream(ctx, string(judgeFormat), string(executor.FormatOpenAI), judgeModelName, judgeBody, translatedJudge, resp.Body, nil)
+	for k, v := range resp.Headers {
+		c.Writer.Header()[k] = v
+	}
+	c.Data(resp.StatusCode, c.Writer.Header().Get("Content-Type"), translatedResp)
+}
+
+// fusionPanel holds the result of one panel execution for fusion.
+type fusionPanel struct {
+	connID  string
+	modelID string
+	content string
+	err     error
+}
+
+// stripFusionTools removes tool-related fields from a request body for fusion panels.
+func stripFusionTools(body []byte) []byte {
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return body
+	}
+	delete(m, "tools")
+	delete(m, "tool_choice")
+	out, err := json.Marshal(m)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+// setRequestModel replaces the model field in a request body.
+func setRequestModel(body []byte, model string) []byte {
+	return executor.JSONSet(body, "model", model)
+}
+
+// extractAssistantContent extracts the assistant message content from a non-streaming
+// chat completion response body. It supports the standard OpenAI-compatible shape.
+func extractAssistantContent(respBody []byte) string {
+	var out struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(respBody, &out); err != nil {
+		return ""
+	}
+	if len(out.Choices) == 0 {
+		return ""
+	}
+	return out.Choices[0].Message.Content
+}
+
+// buildFusionJudgeBody builds a new request body for the judge model.
+func buildFusionJudgeBody(originalReq []byte, panels []fusionPanel, anonymize bool) []byte {
+	userQuestion := extractUserQuestion(originalReq)
+	prompt := "You are a synthesis assistant. Multiple expert panel models answered the user's question. Review the answers below and produce a single, concise, accurate answer that best addresses the user's original question.\n\n"
+	prompt += "User question: " + userQuestion + "\n\n"
+	for i, p := range panels {
+		label := fmt.Sprintf("Source %d", i+1)
+		if !anonymize {
+			label = fmt.Sprintf("Source %s", p.modelID)
+		}
+		prompt += fmt.Sprintf("%s (%s):\n%s\n\n", label, p.modelID, p.content)
+	}
+	prompt += "Synthesize the best answer."
+
+	return executor.JSONSet(originalReq, "messages", []map[string]any{
+		{"role": "system", "content": prompt},
+		{"role": "user", "content": userQuestion},
+	})
+}
+
+// extractUserQuestion returns the content of the last user message from a request body.
+func extractUserQuestion(reqBody []byte) string {
+	var payload struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(reqBody, &payload); err != nil {
+		return ""
+	}
+	for i := len(payload.Messages) - 1; i >= 0; i-- {
+		if payload.Messages[i].Role == "user" && payload.Messages[i].Content != "" {
+			return payload.Messages[i].Content
+		}
+	}
+	return ""
+}
+
+// writeFusionResponse returns a single panel answer to the client as a normal
+// chat completion response.
+func (h *Handler) writeFusionResponse(c *gin.Context, content, model string, stream bool) {
+	if stream {
+		// Produce a minimal SSE stream containing the content.
+		c.Writer.Header().Set("Content-Type", "text/event-stream")
+		c.Writer.Header().Set("Cache-Control", "no-cache")
+		c.Writer.Header().Set("Connection", "keep-alive")
+		c.Writer.WriteHeader(http.StatusOK)
+		id := "fusion-" + strconv.Itoa(int(time.Now().UnixNano()))
+		chunk, _ := json.Marshal(gin.H{
+			"id":      id,
+			"object":  "chat.completion.chunk",
+			"model":   model,
+			"choices": []gin.H{{"index": 0, "delta": gin.H{"content": content}}},
+		})
+		c.Writer.Write([]byte("data: "))
+		c.Writer.Write(chunk)
+		c.Writer.Write([]byte("\n\ndata: [DONE]\n\n"))
+		if flusher, ok := c.Writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"id":     "fusion-" + strconv.Itoa(int(time.Now().UnixNano())),
+		"object": "chat.completion",
+		"model":  model,
+		"choices": []gin.H{{
+			"index": 0,
+			"message": gin.H{
+				"role":    "assistant",
+				"content": content,
+			},
+			"finish_reason": "stop",
+		}},
+	})
 }
 
 // handleStreamResponse handles streaming chat completions.

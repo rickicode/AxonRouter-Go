@@ -2,6 +2,7 @@ package combo
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -60,9 +61,9 @@ func NewHandler(
 // loadFromDB loads all combos into memory.
 func (h *Handler) loadFromDB() {
 	rows, err := h.db.Query(`
-		SELECT id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal,
-		       is_active, created_at, updated_at
-		FROM combos WHERE is_active = 1
+	SELECT id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal,
+	fusion_config, is_active, created_at, updated_at
+	FROM combos WHERE is_active = 1
 	`)
 	if err != nil {
 		return
@@ -72,7 +73,7 @@ func (h *Handler) loadFromDB() {
 	for rows.Next() {
 		c := &db.Combo{}
 		rows.Scan(&c.ID, &c.Name, &c.Strategy, &c.StickyLimit,
-			&c.TimeoutMs, &c.IsSmart, &c.SmartGoal,
+			&c.TimeoutMs, &c.IsSmart, &c.SmartGoal, &c.FusionConfig,
 			&c.IsActive, &c.CreatedAt, &c.UpdatedAt)
 		h.combos[c.ID] = c
 		h.byName[c.Name] = c
@@ -160,6 +161,28 @@ func (h *Handler) resolveSmart(goal SmartGoal) (*ComboResult, bool) {
 	return &ComboResult{Combo: combo, Steps: rotated}, true
 }
 
+// EffectiveStrategy returns the strategy that should be used for a combo.
+// A per-combo override in settings (`combo_strategies` JSON map) takes
+// precedence over the combo's own strategy. An empty string means no override.
+func (h *Handler) EffectiveStrategy(comboName string, comboStrategy string) string {
+	if h.db == nil {
+		return comboStrategy
+	}
+	var overrides string
+	row := h.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, "combo_strategies")
+	if err := row.Scan(&overrides); err != nil || overrides == "" {
+		return comboStrategy
+	}
+	var m map[string]string
+	if err := json.Unmarshal([]byte(overrides), &m); err != nil {
+		return comboStrategy
+	}
+	if s, ok := m[comboName]; ok && s != "" {
+		return s
+	}
+	return comboStrategy
+}
+
 // PickConnection picks the next eligible connection for a combo step.
 // Returns (connectionID, true) if found, or ("", false) if unavailable.
 func (h *Handler) PickConnection(step db.ComboStep) (string, bool) {
@@ -221,7 +244,7 @@ func (h *Handler) RecordFailure(connID string, det connstate.ErrorDetection) {
 }
 
 // CreateCombo creates a new combo.
-func (h *Handler) CreateCombo(name, strategy string, timeoutMs, stickyLimit int, isSmart bool, smartGoal string, steps []CreateStepInput) (*db.Combo, error) {
+func (h *Handler) CreateCombo(name, strategy string, timeoutMs, stickyLimit int, isSmart bool, smartGoal string, fusionConfig string, steps []CreateStepInput) (*db.Combo, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -234,9 +257,9 @@ func (h *Handler) CreateCombo(name, strategy string, timeoutMs, stickyLimit int,
 	}
 
 	_, err := h.db.Exec(`
-	INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal, is_active, created_at, updated_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-	`, comboID, name, strategy, stickyLimit, timeoutMs, boolToInt(isSmart), sg, now, now)
+	INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal, fusion_config, is_active, created_at, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+	`, comboID, name, strategy, stickyLimit, timeoutMs, boolToInt(isSmart), sg, fusionConfig, now, now)
 	if err != nil {
 		return nil, fmt.Errorf("create combo: %w", err)
 	}
@@ -258,16 +281,17 @@ func (h *Handler) CreateCombo(name, strategy string, timeoutMs, stickyLimit int,
 	}
 
 	combo := &db.Combo{
-		ID:          comboID,
-		Name:        name,
-		Strategy:    strategy,
-		StickyLimit: stickyLimit,
-		TimeoutMs:   timeoutMs,
-		IsSmart:     isSmart,
-		SmartGoal:   sg,
-		IsActive:    true,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:           comboID,
+		Name:         name,
+		Strategy:     strategy,
+		StickyLimit:  stickyLimit,
+		TimeoutMs:    timeoutMs,
+		IsSmart:      isSmart,
+		SmartGoal:    sg,
+		FusionConfig: fusionConfig,
+		IsActive:     true,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 	h.combos[comboID] = combo
 	h.byName[combo.Name] = combo

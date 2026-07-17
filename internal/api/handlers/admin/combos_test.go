@@ -22,7 +22,7 @@ func newComboHandlerForTest(t *testing.T) (*ComboHandler, *combo.Handler) {
 
 func seedCombo(t *testing.T, h *combo.Handler) string {
 	t.Helper()
-	c, err := h.CreateCombo("test-combo", "priority", 30000, 1, false, "", []combo.CreateStepInput{})
+	c, err := h.CreateCombo("test-combo", "priority", 30000, 1, false, "", "", []combo.CreateStepInput{})
 	if err != nil {
 		t.Fatalf("seed combo: %v", err)
 	}
