@@ -176,11 +176,11 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 			}
 			continue
 		}
-		// Patch and keep only the final response.completed event. The other
-		// events are only useful for assembling/patching it; downstream
+		// Patch and keep only the final response.completed / response.done event.
+		// The other events are only useful for assembling/patching it; downstream
 		// translators expect a single Codex Responses completed object, not a
 		// multi-line SSE dump starting with response.created.
-		if eventType == "response.completed" {
+		if eventType == "response.completed" || eventType == "response.done" {
 			payload = patchCodexCompletedOutput(payload, outputItemsByIndex, outputItemsFallback)
 			completedPayload = payload
 			if u := extractCodexUsage(payload); u.TotalTokens > 0 || u.InputTokens > 0 || u.OutputTokens > 0 {
@@ -273,7 +273,7 @@ func parseCodexEvent(line []byte) ([]byte, string) {
 // with an empty output array. This mirrors CLIProxyAPI Codex behavior.
 func patchCodexCompletedOutput(payload []byte, byIndex map[int64][]byte, fallback [][]byte) []byte {
 	data, eventType := parseCodexEvent(payload)
-	if eventType != "response.completed" || len(data) == 0 {
+	if (eventType != "response.completed" && eventType != "response.done") || len(data) == 0 {
 		return payload
 	}
 	output := gjson.GetBytes(data, "response.output")

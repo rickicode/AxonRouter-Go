@@ -23,14 +23,16 @@ func ConvertOpenAIRequestToCodex(modelName string, inputRawJSON []byte, stream b
 	out, _ = sjson.SetBytes(out, "stream", stream)
 
 	// Map reasoning effort with a default of "medium".
+	reasoningEffort := "medium"
 	if v := gjson.GetBytes(rawJSON, "reasoning_effort"); v.Exists() {
-		out, _ = sjson.SetBytes(out, "reasoning.effort", v.Value())
-	} else {
-		out, _ = sjson.SetBytes(out, "reasoning.effort", "medium")
+		reasoningEffort = normalizeCodexReasoningEffort(v.String())
 	}
+	out, _ = sjson.SetBytes(out, "reasoning.effort", reasoningEffort)
 	out, _ = sjson.SetBytes(out, "parallel_tool_calls", true)
 	out, _ = sjson.SetBytes(out, "reasoning.summary", "auto")
-	out, _ = sjson.SetBytes(out, "include", []string{"reasoning.encrypted_content"})
+	if reasoningEffort != "" && reasoningEffort != "none" {
+		out, _ = sjson.SetBytes(out, "include", []string{"reasoning.encrypted_content"})
+	}
 
 	// Model
 	out, _ = sjson.SetBytes(out, "model", modelName)
@@ -303,11 +305,50 @@ func ConvertOpenAIRequestToCodex(modelName string, inputRawJSON []byte, stream b
 	out, _ = sjson.DeleteBytes(out, "max_tokens")
 	out, _ = sjson.DeleteBytes(out, "temperature")
 	out, _ = sjson.DeleteBytes(out, "top_p")
+	out, _ = sjson.DeleteBytes(out, "frequency_penalty")
+	out, _ = sjson.DeleteBytes(out, "presence_penalty")
+	out, _ = sjson.DeleteBytes(out, "logprobs")
+	out, _ = sjson.DeleteBytes(out, "top_logprobs")
+	out, _ = sjson.DeleteBytes(out, "n")
+	out, _ = sjson.DeleteBytes(out, "seed")
 	out, _ = sjson.DeleteBytes(out, "truncation")
 	out, _ = sjson.DeleteBytes(out, "context_management")
 	out, _ = sjson.DeleteBytes(out, "user")
+	out, _ = sjson.DeleteBytes(out, "metadata")
+	out, _ = sjson.DeleteBytes(out, "stream_options")
+	out, _ = sjson.DeleteBytes(out, "safety_identifier")
+	out, _ = sjson.DeleteBytes(out, "prompt_cache_retention")
+	out, _ = sjson.DeleteBytes(out, "previous_response_id")
+
+	// service_tier is restricted to "priority" by Codex. "fast" is mapped to "priority".
+	if st := gjson.GetBytes(out, "service_tier"); st.Exists() {
+		if st.String() == "fast" {
+			out, _ = sjson.SetBytes(out, "service_tier", "priority")
+		} else if st.String() != "priority" {
+			out, _ = sjson.DeleteBytes(out, "service_tier")
+		}
+	}
 
 	out, _ = sjson.SetBytes(out, "store", false)
+
+	// Final allowlist — strip any unknown top-level field that could trigger
+	// upstream "routing_unsupported" / type validation errors.
+	allowed := map[string]struct{}{
+		"model": {}, "input": {}, "instructions": {}, "tools": {},
+		"tool_choice": {}, "stream": {}, "store": {}, "reasoning": {},
+		"parallel_tool_calls": {}, "service_tier": {}, "include": {},
+		"prompt_cache_key": {}, "client_metadata": {}, "text": {},
+	}
+	root := gjson.ParseBytes(out)
+	if root.IsObject() {
+		root.ForEach(func(key, _ gjson.Result) bool {
+			if _, ok := allowed[key.String()]; !ok {
+				out, _ = sjson.DeleteBytes(out, key.String())
+			}
+			return true
+		})
+	}
+
 	return out
 }
 
@@ -398,6 +439,13 @@ func appendToolOutputFallbackPart(output []byte, item gjson.Result) []byte {
 
 // shortenNameIfNeeded applies the simple shortening rule for a single name.
 // If the name length exceeds 64, it will try to preserve the "mcp__" prefix and last segment.
+func normalizeCodexReasoningEffort(value string) string {
+	if value == "max" {
+		return "xhigh"
+	}
+	return value
+}
+
 func shortenNameIfNeeded(name string) string {
 	const limit = 64
 	if len(name) <= limit {

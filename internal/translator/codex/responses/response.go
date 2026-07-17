@@ -166,7 +166,7 @@ func convertCodexResponseToOpenAIStream(_ context.Context, modelName string, ori
 			return nil
 		}
 		return emitCodexImageDelta(state, itemID, b64, root.Get("output_format").String(), template)
-	case "response.completed":
+	case "response.completed", "response.done":
 		finishReason := "stop"
 		if state.FunctionCallIndex != -1 {
 			finishReason = "tool_calls"
