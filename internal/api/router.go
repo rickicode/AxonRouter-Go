@@ -192,6 +192,7 @@ func New(cfg Config) *Router {
 	proxyDeployH := admin.NewProxyDeployHandler(cfg.DB, proxyHealth, proxyResolver)
 	optimizationH := admin.NewOptimizationHandler(cfg.DB, exactCache)
 	tlsH := admin.NewTLSHandler(config.Get().DataDir, http.DefaultClient)
+	backupH := admin.NewBackupHandler(cfg.DB, writeQueue)
 
 	// Additional admin handlers (moved here so the JWT /api/admin and master-key
 	// /admin/api/v1 groups can share the same route table).
@@ -330,15 +331,15 @@ func New(cfg Config) *Router {
 		g.GET("/dashboard/providers", dashboardH.ProviderSummary)
 		g.GET("/dashboard/recent-logs", dashboardH.RecentLogs)
 
-// Metrics
-	g.GET("/metrics", healthH.Metrics)
+		// Metrics
+		g.GET("/metrics", healthH.Metrics)
 
-// Changelog (proxied through the server to avoid CORS issues)
-	g.GET("/changelog", healthH.Changelog)
+		// Changelog (proxied through the server to avoid CORS issues)
+		g.GET("/changelog", healthH.Changelog)
 
-// Upgrade
-	g.GET("/upgrade/check", healthH.CheckUpdate)
-	g.POST("/upgrade", upgradeH.Upgrade)
+		// Upgrade
+		g.GET("/upgrade/check", healthH.CheckUpdate)
+		g.POST("/upgrade", upgradeH.Upgrade)
 
 		// Quota
 		g.GET("/quota", quotaH.List)
@@ -393,13 +394,17 @@ func New(cfg Config) *Router {
 		g.DELETE("/cli-tools/:toolId", cliToolsH.DeleteConfig)
 		g.GET("/cli-tools", cliToolsH.ListTools)
 
-// Compression & Cache
-g.GET("/settings/compression", optimizationH.GetCompressionSettings)
-g.PUT("/settings/compression", optimizationH.UpdateCompressionSettings)
-g.GET("/compression/metrics", optimizationH.GetCompressionMetrics)
-g.GET("/cache/stats", optimizationH.GetCacheStats)
-g.POST("/cache/flush", optimizationH.FlushCache)
-g.POST("/optimization/preview", optimizationH.PreviewCompression)
+		// Compression & Cache
+		g.GET("/settings/compression", optimizationH.GetCompressionSettings)
+		g.PUT("/settings/compression", optimizationH.UpdateCompressionSettings)
+		g.GET("/compression/metrics", optimizationH.GetCompressionMetrics)
+		g.GET("/cache/stats", optimizationH.GetCacheStats)
+		g.POST("/cache/flush", optimizationH.FlushCache)
+		g.POST("/optimization/preview", optimizationH.PreviewCompression)
+
+		// Backup / Restore
+		g.GET("/backup/download", backupH.Download)
+		g.POST("/backup/restore", backupH.Restore)
 
 		// Developers
 		g.GET("/developers/master-key", developersH.GetMasterKey)
