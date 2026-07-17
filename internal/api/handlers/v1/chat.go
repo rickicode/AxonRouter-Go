@@ -643,20 +643,23 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 				resultsCh <- fusionPanel{err: errors.New("no eligible connection")}
 				return
 			}
-			provider, modelName := executor.SplitModel(step.ModelID)
-			conn, err := h.prepareConnection(ctx, connID, provider, modelName)
-			if err != nil {
-				resultsCh <- fusionPanel{err: err}
-				return
-			}
-			exec, providerFormat, err := h.resolveExecutor(provider, modelName)
-			if err != nil {
-				resultsCh <- fusionPanel{err: err}
-				return
-			}
-			translatedBody := registry.Request(string(executor.FormatOpenAI), string(providerFormat), modelName, body, false)
-			translatedBody = sanitizeStreamOptions(translatedBody, false, executor.FormatOpenAI, providerFormat, c.Request.URL.Path)
-			translatedBody = stripFusionTools(translatedBody)
+		provider, modelName := executor.SplitModel(step.ModelID)
+		conn, err := h.prepareConnection(ctx, connID, provider, modelName)
+		if err != nil {
+			resultsCh <- fusionPanel{err: err}
+			return
+		}
+		exec, providerFormat, err := h.resolveExecutor(provider, modelName)
+		if err != nil {
+			resultsCh <- fusionPanel{err: err}
+			return
+		}
+		// Replace the model field with the panel model so OpenAI-compatible passthrough
+		// providers receive the actual upstream model ID instead of "fusion".
+		panelBody := setRequestModel(body, modelName)
+		translatedBody := registry.Request(string(executor.FormatOpenAI), string(providerFormat), modelName, panelBody, false)
+		translatedBody = sanitizeStreamOptions(translatedBody, false, executor.FormatOpenAI, providerFormat, c.Request.URL.Path)
+		translatedBody = stripFusionTools(translatedBody)
 			_, resp, _, err := h.executeProviderCall(ctx, exec, conn, provider, modelName, translatedBody, false, nil)
 			if err != nil {
 				resultsCh <- fusionPanel{err: err}
@@ -762,7 +765,10 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 		return
 	}
 
-	translatedJudge := registry.Request(string(executor.FormatOpenAI), string(judgeFormat), judgeModelName, judgeBody, stream)
+	// Same model-field replacement for the judge so passthrough providers get the
+	// actual judge model ID instead of the combo name.
+	judgeReqBody := setRequestModel(judgeBody, judgeModelName)
+	translatedJudge := registry.Request(string(executor.FormatOpenAI), string(judgeFormat), judgeModelName, judgeReqBody, stream)
 	translatedJudge = sanitizeStreamOptions(translatedJudge, stream, executor.FormatOpenAI, judgeFormat, c.Request.URL.Path)
 
 	execCtx := ctx
@@ -779,7 +785,7 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 	if stream {
 		streamCtx, cancelStream := context.WithCancel(c.Request.Context())
 		defer cancelStream()
-		if err := h.handleStreamResponse(streamCtx, c, streamResult, judgeConn, judgeProvider, judgeModelName, start, translatedJudge, judgeBody, comboResult.Combo.Name, true); err != nil {
+		if err := h.handleStreamResponse(streamCtx, c, streamResult, judgeConn, judgeProvider, judgeModelName, start, translatedJudge, judgeReqBody, comboResult.Combo.Name, true); err != nil {
 			logging.Logger.Warn("fusion judge stream failed", "error", err.Error())
 			if !h.isClientCanceled(c, err) {
 				// Stream already started silently; we cannot recover, just stop.
@@ -790,7 +796,7 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 	}
 
 	// Non-streaming: translate judge response back to client format.
-	translatedResp := registry.ResponseNonStream(ctx, string(judgeFormat), string(executor.FormatOpenAI), judgeModelName, judgeBody, translatedJudge, resp.Body, nil)
+	translatedResp := registry.ResponseNonStream(ctx, string(judgeFormat), string(executor.FormatOpenAI), judgeModelName, judgeReqBody, translatedJudge, resp.Body, nil)
 	for k, v := range resp.Headers {
 		c.Writer.Header()[k] = v
 	}
