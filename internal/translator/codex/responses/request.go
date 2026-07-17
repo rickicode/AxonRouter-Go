@@ -51,6 +51,11 @@ func ConvertOpenAIRequestToCodex(modelName string, inputRawJSON []byte, stream b
 		out, _ = sjson.SetRawBytes(out, "client_metadata", []byte(v.Raw))
 	}
 
+	// Codex expects a default agent instruction similar to CLIProxyAPI/9router.
+	if !gjson.GetBytes(out, "instructions").Exists() {
+		out, _ = sjson.SetBytes(out, "instructions", codexDefaultInstructions)
+	}
+
 	// Model
 	out, _ = sjson.SetBytes(out, "model", modelName)
 

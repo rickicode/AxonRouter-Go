@@ -186,3 +186,20 @@ func TestAssistantWithoutContentIsSkipped(t *testing.T) {
 		t.Fatalf("expected function_call, got %s", items[0].Get("type").String())
 	}
 }
+
+func TestDefaultInstructionsInjected(t *testing.T) {
+	req := []byte(`{"messages":[{"role":"user","content":"hi"}]}`)
+	out := ConvertOpenAIRequestToCodex("cx/gpt-5.4", req, true)
+	inst := gjson.GetBytes(out, "instructions").String()
+	if !strings.Contains(inst, "You are Codex") {
+		t.Fatalf("expected default Codex instructions, got %q", inst)
+	}
+}
+
+func TestInstructionsPreservedWhenProvided(t *testing.T) {
+	req := []byte(`{"messages":[{"role":"user","content":"hi"}],"instructions":"custom prompt"}`)
+	out := ConvertOpenAIRequestToCodex("cx/gpt-5.4", req, true)
+	if got := gjson.GetBytes(out, "instructions").String(); got != "custom prompt" {
+		t.Fatalf("expected custom instructions, got %q", got)
+	}
+}
