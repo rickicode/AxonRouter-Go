@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Seeded default combos** now include `random`, `least-used`, and `fusion` examples and are trimmed to six essential combos instead of eight.
 - **Fusion judge model selector** in the dashboard now uses the model picker instead of a free-text input.
 - **Strategy reference help panel** added to the combo modal: expands inline to explain every routing strategy and how smart combo selection works.
+- **Database backup and restore** via new `internal/backup` package. Backup exports all data (API keys, usage, provider accounts, combos, config, request logs, cache) as encrypted-optional JSON Lines. Restore supports SQLite local files, Turso remote databases, and overwriting the currently running database.
+- **Clear old logs control** on the Logs dashboard page with 7/30/90 day retention options; preserves `api_key_usage` and other usage summary data.
 - **Stream protection parity with OmniRoute** for combo and direct paths: raw-byte stall detection, adaptive readiness timeout (80s–180s), 750ms/64KB holdback buffer for transparent early retry, and stream-quality peek logging.
 - **Combo mid-stream failover**: if an upstream stream fails after the holdback window commits, the combo now falls back to the next eligible connection/model instead of terminating the stream. Only when all candidates fail does the client receive the final SSE `error` + `[DONE]`.
 - **Direct-mode mid-stream failover**: `/v1/chat/completions` and `/v1/messages` streaming now also use the 750ms/64KB holdback buffer and retry the next connection if the stream fails after commit.
