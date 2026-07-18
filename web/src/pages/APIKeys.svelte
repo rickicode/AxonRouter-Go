@@ -25,10 +25,11 @@ import { AlertDialog, AlertDialogContent, AlertDialogTitle, AlertDialogDescripti
   let creating = $state(false);
   let createdKey = $state('');
   let createdKeyId = $state('');
-  let deleteConfirm = $state<{ id: string; name: string } | null>(null);
-  let showDeleteConfirm = $state(false);
+let deleteConfirm = $state<{ id: string; name: string } | null>(null);
+let showDeleteConfirm = $state(false);
+let baseUrl = $state('');
 
-  const expirationLabels: Record<ExpirationPreset, string> = {
+const expirationLabels: Record<ExpirationPreset, string> = {
     never: 'Never',
     '1d': '1 day',
     '7d': '7 days',
@@ -41,10 +42,11 @@ import { AlertDialog, AlertDialogContent, AlertDialogTitle, AlertDialogDescripti
     expirationPreset = v as ExpirationPreset;
   }
 
-  onMount(() => {
-    document.title = 'API Keys — AxonRouter';
-    loadKeys();
-  });
+onMount(() => {
+  document.title = 'API Keys — AxonRouter';
+  baseUrl = window.location.origin;
+  loadKeys();
+});
 
   async function loadKeys() {
     loading = true;
@@ -219,9 +221,59 @@ function formatDate(ts: number): string {
         </div>
       </CardContent>
     </Card>
-  {/if}
+{/if}
 
-  <!-- Create dialog -->
+{#if !loading}
+<Card class="shadow-card">
+  <CardHeader>
+    <CardTitle class="text-display-md">Proxy API docs.</CardTitle>
+  </CardHeader>
+  <CardContent class="space-y-6">
+    <div class="space-y-2">
+      <h3 class="text-body-sm-strong">Base URL</h3>
+      <div class="flex items-center gap-2 flex-wrap">
+        <code class="font-mono text-sm text-foreground bg-muted px-2 py-1 rounded-sm">{baseUrl}/v1</code>
+        <Button variant="outline" size="sm" class="h-7 px-2 text-caption-mono cursor-pointer rounded-sm" onclick={() => copyValue(baseUrl + '/v1', 'Base URL')}>
+          Copy
+        </Button>
+      </div>
+    </div>
+
+    <div class="space-y-2">
+      <h3 class="text-body-sm-strong">Authentication</h3>
+      <p class="text-body-sm text-muted-foreground">Send your API key in the Authorization header on every <code>/v1/*</code> request.</p>
+      <pre class="bg-muted p-3 rounded-sm text-caption-mono overflow-x-auto"><code>Authorization: Bearer &lt;YOUR_API_KEY&gt;</code></pre>
+    </div>
+
+    <div class="space-y-2">
+      <h3 class="text-body-sm-strong">Supported endpoints</h3>
+      <ul class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-body-sm text-muted-foreground">
+        <li><code class="text-foreground">POST /v1/chat/completions</code> — Chat</li>
+        <li><code class="text-foreground">GET /v1/models</code> — Model list</li>
+        <li><code class="text-foreground">POST /v1/messages</code> — Claude Messages</li>
+        <li><code class="text-foreground">POST /v1/responses</code> — Responses API</li>
+        <li><code class="text-foreground">POST /v1/embeddings</code> — Embeddings</li>
+        <li><code class="text-foreground">POST /v1/audio/speech</code> — Text-to-speech</li>
+        <li><code class="text-foreground">POST /v1/audio/transcriptions</code> — Speech-to-text</li>
+        <li><code class="text-foreground">POST /v1/images/generations</code> — Images</li>
+        <li><code class="text-foreground">POST /v1/video/generations</code> — Video</li>
+        <li><code class="text-foreground">POST /v1/unified</code> — Unified gateway</li>
+        <li><code class="text-foreground">POST /v1/messages/count_tokens</code> — Token count</li>
+      </ul>
+    </div>
+
+    <div class="space-y-2">
+      <h3 class="text-body-sm-strong">Example</h3>
+      <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>curl -H "Authorization: Bearer &lt;YOUR_API_KEY&gt;" \
+  -X POST {baseUrl}/v1/chat/completions \
+  -d '&#123;"model":"openai/gpt-4o","messages":[&#123;"role":"user","content":"Hello"&#125;]&#125;'</code></pre>
+      <p class="text-caption text-muted-foreground">Model IDs must include the provider prefix, e.g. <code class="text-foreground">openai/gpt-4o</code>, <code class="text-foreground">claude/claude-sonnet-4</code>, or <code class="text-foreground">cx/gpt-5.4</code>.</p>
+    </div>
+  </CardContent>
+</Card>
+{/if}
+
+<!-- Create dialog -->
 <Dialog.Root bind:open={showCreate}>
   <Dialog.Content class="sm:max-w-md">
     {#if createdKey}
