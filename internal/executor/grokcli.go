@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	defaultGrokCLIBaseURL = "https://cli-chat-proxy.grok.com/v1/responses"
-	defaultGrokCLIClientVersion = "0.2.93"
-	defaultGrokCLIUserAgent     = "xai-grok-workspace/" + defaultGrokCLIClientVersion
+	defaultGrokCLIBaseURL       = "https://cli-chat-proxy.grok.com/v1/responses"
+	defaultGrokCLIClientVersion = "0.2.99"
+	defaultGrokCLIUserAgent     = "grok-shell/" + defaultGrokCLIClientVersion + " (linux; x86_64)"
 )
 
 // GrokCLIExecutor handles xAI Grok CLI's Responses API over OAuth tokens.
@@ -91,17 +91,20 @@ func grokcliHeaders(req *Request) map[string]string {
 		ua = req.Headers["User-Agent"]
 	}
 
-	// Keep headers aligned with CLIProxyAPI's proven set for the Grok CLI
-	// chat-proxy endpoint. Extra identity headers can trigger Cloudflare/404.
+	// Keep headers aligned with Grok CLI's current identity for the
+	// cli-chat-proxy endpoint while avoiding older/xai-grok-workspace headers
+	// that can trigger Cloudflare/404-style rejections.
 	headers := map[string]string{
-		"Content-Type":          "application/json",
-		"Accept":                "text/event-stream",
-		"Authorization":         "Bearer " + token,
-		"X-XAI-Token-Auth":      "xai-grok-cli",
-		"x-grok-client-version": defaultGrokCLIClientVersion,
-		"x-grok-conv-id":        uuid.NewString(),
-		"User-Agent":            ua,
-		"Connection":            "Keep-Alive",
+		"Content-Type":             "application/json",
+		"Accept":                   "text/event-stream",
+		"Authorization":            "Bearer " + token,
+		"X-XAI-Token-Auth":         "xai-grok-cli",
+		"x-grok-client-version":    defaultGrokCLIClientVersion,
+		"x-grok-client-identifier": "grok-shell",
+		"x-grok-client-mode":       "headless",
+		"x-grok-conv-id":           uuid.NewString(),
+		"User-Agent":               ua,
+		"Connection":               "Keep-Alive",
 	}
 	if email != "" {
 		headers["x-email"] = email
@@ -119,28 +122,28 @@ func grokcliHeaders(req *Request) map[string]string {
 }
 
 var grokCLIAllowedTopLevel = map[string]bool{
-	"model": true,
-	"input": true,
-	"instructions": true,
-	"tools": true,
-	"tool_choice": true,
-	"parallel_tool_calls": true,
-	"reasoning": true,
-	"metadata": true,
-	"text": true,
-	"max_output_tokens": true,
-	"temperature": true,
-	"top_p": true,
-	"presence_penalty": true,
-	"frequency_penalty": true,
-	"seed": true,
-	"service_tier": true,
-	"include": true,
-	"stream": true,
-	"store": true,
-	"user": true,
+	"model":                true,
+	"input":                true,
+	"instructions":         true,
+	"tools":                true,
+	"tool_choice":          true,
+	"parallel_tool_calls":  true,
+	"reasoning":            true,
+	"metadata":             true,
+	"text":                 true,
+	"max_output_tokens":    true,
+	"temperature":          true,
+	"top_p":                true,
+	"presence_penalty":     true,
+	"frequency_penalty":    true,
+	"seed":                 true,
+	"service_tier":         true,
+	"include":              true,
+	"stream":               true,
+	"store":                true,
+	"user":                 true,
 	"previous_response_id": true,
-	"prompt_cache_key": true,
+	"prompt_cache_key":     true,
 }
 
 var grokCLIAllowedInputTypes = map[string]bool{
@@ -234,6 +237,7 @@ func grokcliRequestBody(req *Request) ([]byte, error) {
 		}
 	}
 	if len(reasoning) > 0 {
+		reasoning["summary"] = "concise"
 		body["reasoning"] = reasoning
 		include := map[string]bool{}
 		if arr, ok := body["include"].([]any); ok {
@@ -310,9 +314,9 @@ func grokcliConvertMessagesToInput(messages gjson.Result) []any {
 		switch role {
 		case "tool":
 			item := map[string]any{
-				"type":     "function_call_output",
-				"call_id":  msg.Get("tool_call_id").String(),
-				"output":   msg.Get("content").String(),
+				"type":    "function_call_output",
+				"call_id": msg.Get("tool_call_id").String(),
+				"output":  msg.Get("content").String(),
 			}
 			input = append(input, item)
 		case "assistant":

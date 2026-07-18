@@ -14,8 +14,8 @@ import (
 const (
 	grokCliBillingURL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
 	grokCliUserURL    = "https://cli-chat-proxy.grok.com/v1/user?include=subscription"
-	grokCliVersion    = "0.2.93"
-	grokCliUserAgent  = "xai-grok-workspace/" + grokCliVersion
+	grokCliVersion    = "0.2.99"
+	grokCliUserAgent  = "grok-shell/" + grokCliVersion + " (linux; x86_64)"
 )
 
 type grokCliResult struct {
@@ -107,12 +107,13 @@ func grokCliHeaders(accessToken string, psd map[string]any) map[string]string {
 	}
 	h := map[string]string{
 		"Authorization":            "Bearer " + accessToken,
-		"Accept":                 "application/json",
-		"Content-Type":           "application/json",
-		"X-XAI-Token-Auth":       "xai-grok-cli",
-		"x-grok-client-version":  grokCliVersion,
-		"x-grok-client-identifier": "xai-grok-workspace",
-		"User-Agent":             grokCliUserAgent,
+		"Accept":                   "application/json",
+		"Content-Type":             "application/json",
+		"X-XAI-Token-Auth":         "xai-grok-cli",
+		"x-grok-client-version":    grokCliVersion,
+		"x-grok-client-identifier": "grok-shell",
+		"x-grok-client-mode":       "headless",
+		"User-Agent":               grokCliUserAgent,
 	}
 	if email != "" {
 		h["x-email"] = email
@@ -205,7 +206,7 @@ func makeGrokCliQuota(name string, used, total float64, resetAt string) QuotaIte
 	return QuotaItem{
 		Name: name, Used: used, Total: total,
 		RemainingPct: (remaining / total) * 100,
-		ResetAt: resetAt, Unlimited: false,
+		ResetAt:      resetAt, Unlimited: false,
 	}
 }
 

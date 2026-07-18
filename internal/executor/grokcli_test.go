@@ -70,13 +70,15 @@ func TestGrokCLIExecutor_Headers(t *testing.T) {
 	}
 
 	mustEqual := map[string]string{
-		"Authorization":         "Bearer grok-at-123",
-		"X-Xai-Token-Auth":      "xai-grok-cli",
-		"x-grok-client-version": "0.2.93",
-		"User-Agent":            "xai-grok-workspace/0.2.93",
-		"x-email":               "user@example.com",
-		"x-userid":              "grok-sub-abc",
-		"Connection":            "Keep-Alive",
+		"Authorization":            "Bearer grok-at-123",
+		"X-Xai-Token-Auth":         "xai-grok-cli",
+		"x-grok-client-version":    "0.2.99",
+		"User-Agent":               "grok-shell/0.2.99 (linux; x86_64)",
+		"x-grok-client-identifier": "grok-shell",
+		"x-grok-client-mode":       "headless",
+		"x-email":                  "user@example.com",
+		"x-userid":                 "grok-sub-abc",
+		"Connection":               "Keep-Alive",
 	}
 	for name, want := range mustEqual {
 		if got := gotHeaders.Get(name); got != want {
@@ -88,7 +90,7 @@ func TestGrokCLIExecutor_Headers(t *testing.T) {
 	}
 
 	// These extra identity headers should no longer be sent (they can trigger CF/404).
-	for _, name := range []string{"x-grok-client-identifier", "x-grok-client-mode", "x-grok-session-id", "x-grok-req-id", "x-grok-turn-idx", "x-grok-agent-id", "x-grok-model-override"} {
+	for _, name := range []string{"x-grok-session-id", "x-grok-req-id", "x-grok-turn-idx", "x-grok-agent-id", "x-grok-model-override"} {
 		if got := gotHeaders.Get(name); got != "" {
 			t.Errorf("%s should not be set, got %q", name, got)
 		}
@@ -158,6 +160,9 @@ func TestGrokCLIExecutor_RequestTransform(t *testing.T) {
 	}
 	if !gjson.GetBytes(gotBody, "reasoning").Exists() {
 		t.Errorf("expected reasoning object")
+	}
+	if got := gjson.GetBytes(gotBody, "reasoning.summary").String(); got != "concise" {
+		t.Errorf("reasoning.summary=%q, want concise", got)
 	}
 	include := gjson.GetBytes(gotBody, "include").Array()
 	found := false
