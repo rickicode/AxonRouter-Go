@@ -238,6 +238,17 @@ func UserAgentFromContext(ctx context.Context) string {
 	return ua
 }
 
+func clientLogAttrs(ctx context.Context) []any {
+	attrs := make([]any, 0, 4)
+	if ip := ClientIPFromContext(ctx); ip != "" {
+		attrs = append(attrs, "client_ip", ip)
+	}
+	if ua := UserAgentFromContext(ctx); ua != "" {
+		attrs = append(attrs, "user_agent", ua)
+	}
+	return attrs
+}
+
 // ProxyConfig is attached to request contexts by v1 handlers.
 type ProxyConfig struct {
 	Enabled     bool
@@ -609,21 +620,25 @@ func (b *BaseExecutor) doRequestOnce(ctx context.Context, method, rawURL string,
 
 	logging.Logger.Info(
 		"upstream request start",
-		"request_id", RequestIDFromContext(ctx),
-		"method", method,
-		"url", targetURL,
-		"proxy", proxyLabelFromCtx(ctx),
+		append([]any{
+			"request_id", RequestIDFromContext(ctx),
+			"method", method,
+			"url", targetURL,
+			"proxy", proxyLabelFromCtx(ctx),
+		}, clientLogAttrs(ctx)...)...,
 	)
 
 	resp, err := client.Do(req)
 	if err != nil {
 		logging.Logger.Warn(
 			"upstream request failed",
-			"request_id", RequestIDFromContext(ctx),
-			"method", method,
-			"url", targetURL,
-			"proxy", proxyLabelFromCtx(ctx),
-			"error", err,
+			append([]any{
+				"request_id", RequestIDFromContext(ctx),
+				"method", method,
+				"url", targetURL,
+				"proxy", proxyLabelFromCtx(ctx),
+				"error", err,
+			}, clientLogAttrs(ctx)...)...,
 		)
 		return nil, fmt.Errorf("do request: %w", err)
 	}
@@ -637,11 +652,13 @@ func (b *BaseExecutor) doRequestOnce(ctx context.Context, method, rawURL string,
 	if resp.StatusCode >= 400 {
 		logging.Logger.Error(
 			"upstream error response",
-			"request_id", RequestIDFromContext(ctx),
-			"status", resp.StatusCode,
-			"url", targetURL,
-			"proxy", proxyLabelFromCtx(ctx),
-			"body", string(respBody),
+			append([]any{
+				"request_id", RequestIDFromContext(ctx),
+				"status", resp.StatusCode,
+				"url", targetURL,
+				"proxy", proxyLabelFromCtx(ctx),
+				"body", string(respBody),
+			}, clientLogAttrs(ctx)...)...,
 		)
 	}
 
@@ -748,10 +765,12 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 	}
 	logging.Logger.Info(
 		"upstream stream request start",
-		"request_id", RequestIDFromContext(ctx),
-		"method", method,
-		"host", logHost,
-		"proxy", proxyLabelFromCtx(ctx),
+		append([]any{
+			"request_id", RequestIDFromContext(ctx),
+			"method", method,
+			"host", logHost,
+			"proxy", proxyLabelFromCtx(ctx),
+		}, clientLogAttrs(ctx)...)...,
 	)
 
 	resp, err := client.Do(req)
@@ -763,11 +782,13 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 		}
 		logging.Logger.Warn(
 			"upstream stream request failed",
-			"request_id", RequestIDFromContext(ctx),
-			"method", method,
-			"host", logHost,
-			"proxy", proxyLabelFromCtx(ctx),
-			"error", err,
+			append([]any{
+				"request_id", RequestIDFromContext(ctx),
+				"method", method,
+				"host", logHost,
+				"proxy", proxyLabelFromCtx(ctx),
+				"error", err,
+			}, clientLogAttrs(ctx)...)...,
 		)
 		if errors.Is(err, context.DeadlineExceeded) {
 			return nil, fmt.Errorf("stream fetch timeout (%v): %w", fetchTimeout, err)
@@ -782,11 +803,13 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 		errBody, _ := io.ReadAll(resp.Body)
 		logging.Logger.Error(
 			"upstream error response",
-			"request_id", RequestIDFromContext(ctx),
-			"status", resp.StatusCode,
-			"host", logHost,
-			"proxy", proxyLabelFromCtx(ctx),
-			"body", string(errBody),
+			append([]any{
+				"request_id", RequestIDFromContext(ctx),
+				"status", resp.StatusCode,
+				"host", logHost,
+				"proxy", proxyLabelFromCtx(ctx),
+				"body", string(errBody),
+			}, clientLogAttrs(ctx)...)...,
 		)
 		upErr := &UpstreamError{
 			StatusCode: resp.StatusCode,
