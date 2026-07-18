@@ -41,16 +41,22 @@ let customFields = $state<Record<string, string>>({});
 let selectedRegion = $state('');
 let submitting = $state(false);
 let errorMsg = $state('');
-  let oauthPolling = $state(false);
-  let oauthSessionId = $state('');
+let oauthPolling = $state(false);
+let oauthSessionId = $state('');
 let oauthUrl = $state('');
 let oauthUserCode = $state('');
 let codeEl = $state<HTMLElement | null>(null);
-  let oauthStatusText = $state('Waiting for browser authorization...');
-  let callbackUrl = $state('');
-  let submittingCallback = $state(false);
-  let validating = $state(false);
-  let validationResult = $state<'success' | 'failed' | null>(null);
+let oauthStatusText = $state('Waiting for browser authorization...');
+let callbackUrl = $state('');
+let submittingCallback = $state(false);
+let validating = $state(false);
+let validationResult = $state<'success' | 'failed' | null>(null);
+let importMode = $state(false);
+let accessToken = $state('');
+let refreshToken = $state('');
+let expiresAt = $state('');
+let email = $state('');
+let deviceId = $state('');
 let proxyPools = $state<{ id: string; name: string; type: string; proxyUrl: string }[]>([]);
 let proxyPoolsLoading = $state(false);
 let selectedPoolId = $state('');
@@ -188,6 +194,7 @@ const supportsBulk = $derived(isApiKey);
 const isOCProvider = $derived(providerId === 'oc');
 const isMimocodeProvider = $derived(providerId === 'mimocode');
 const needsProxyPool = $derived(isOCProvider || isMimocodeProvider);
+const showImportMode = $derived(providerId === 'grok-cli');
 const existingPoolIds = $derived(
   new Set(
     $connections
@@ -199,26 +206,32 @@ const missingPools = $derived(proxyPools.filter((pool) => !existingPoolIds.has(p
 const connectedPoolCount = $derived(existingPoolIds.size);
 const missingPoolCount = $derived(missingPools.length);
 const filteredPools = $derived(filterProxyPools(proxyPools, poolSearch));
-  function reset() {
-    step = 'form';
-    mode = 'single';
-    connectionName = '';
-    apiKey = '';
-    bulkText = '';
+function reset() {
+  step = 'form';
+  mode = 'single';
+  connectionName = '';
+  apiKey = '';
+  bulkText = '';
   customFields = {};
   selectedRegion = meta?.defaultRegion ?? '';
   connectionPriority = '1';
   errorMsg = '';
-    validating = false;
-    validationResult = null;
-    submitting = false;
-    oauthPolling = false;
-    oauthSessionId = '';
-    oauthUrl = '';
-    oauthUserCode = '';
-    oauthStatusText = 'Waiting for browser authorization...';
-    callbackUrl = '';
-    submittingCallback = false;
+  validating = false;
+  validationResult = null;
+  submitting = false;
+  oauthPolling = false;
+  oauthSessionId = '';
+  oauthUrl = '';
+  oauthUserCode = '';
+  oauthStatusText = 'Waiting for browser authorization...';
+  callbackUrl = '';
+  submittingCallback = false;
+  importMode = false;
+  accessToken = '';
+  refreshToken = '';
+  expiresAt = '';
+  email = '';
+  deviceId = '';
   proxyPools = [];
   proxyPoolsLoading = false;
   selectedPoolId = '';
@@ -505,6 +518,58 @@ async function handleValidate() {
   }
 }
 
+async function handleImportSubmit() {
+  errorMsg = '';
+  submitting = true;
+  try {
+    if (!accessToken.trim()) {
+      errorMsg = 'Access token is required';
+      toast.error(errorMsg);
+      submitting = false;
+      return;
+    }
+    if (!refreshToken.trim()) {
+      errorMsg = 'Refresh token is required';
+      toast.error(errorMsg);
+      submitting = false;
+      return;
+    }
+    if (!expiresAt) {
+      errorMsg = 'Expiry is required';
+      toast.error(errorMsg);
+      submitting = false;
+      return;
+    }
+    const unixSecs = Math.floor(new Date(expiresAt).getTime() / 1000);
+    if (Number.isNaN(unixSecs) || unixSecs <= 0) {
+      errorMsg = 'Invalid expiry';
+      toast.error(errorMsg);
+      submitting = false;
+      return;
+    }
+    const psd: Record<string, string> = {};
+    if (deviceId.trim()) psd.deviceId = deviceId.trim();
+    const name = connectionName.trim() || email.trim() || defaultName();
+    await oauthApi.importToken({
+      provider: providerId,
+      access_token: accessToken.trim(),
+      refresh_token: refreshToken.trim(),
+      expires_at: unixSecs,
+      email: email.trim() || undefined,
+      provider_specific_data: Object.keys(psd).length > 0 ? psd : undefined,
+    });
+    toast.success(`Connection imported: ${name}`);
+    step = 'done';
+    onCreated?.();
+  } catch (err) {
+    errorMsg = err instanceof Error ? err.message : 'Failed to import token';
+    toast.error(errorMsg);
+    step = 'error';
+  } finally {
+    submitting = false;
+  }
+}
+
 async function handleOAuthSubmit() {
     errorMsg = '';
     submitting = true;
@@ -573,18 +638,20 @@ async function handleOAuthSubmit() {
     handleOpenChange(false);
   }
 
-  function handleSubmit() {
-    if (isOAuth) return handleOAuthSubmit();
-    if (isNoAuth) return handleNoAuthSubmit();
-    return handleApiKeySubmit();
+function handleSubmit() {
+  if (isOAuth && importMode) return handleImportSubmit();
+  if (isOAuth) return handleOAuthSubmit();
+  if (isNoAuth) return handleNoAuthSubmit();
+  return handleApiKeySubmit();
+}
+// Auto-start OAuth when modal opens for OAuth providers (matches AxonRouter TS behavior).
+// Grok CLI offers a manual import mode, so skip auto-start while the user is importing tokens.
+$effect(() => {
+  if (open && isOAuth && step === 'form' && !submitting && !oauthPolling && !importMode) {
+    // Use setTimeout to avoid calling during render
+    setTimeout(() => handleOAuthSubmit(), 50);
   }
-  // Auto-start OAuth when modal opens for OAuth providers (matches AxonRouter TS behavior)
-  $effect(() => {
-    if (open && isOAuth && step === 'form' && !submitting && !oauthPolling) {
-      // Use setTimeout to avoid calling during render
-      setTimeout(() => handleOAuthSubmit(), 50);
-    }
-  });
+});
 // Fetch proxy pools when modal opens for OpenCode Free or MiMoCode
 $effect(() => {
   if (open && needsProxyPool && step === 'form') {
@@ -609,10 +676,10 @@ $effect(() => {
           {/if}
           <div class="min-w-0 space-y-1">
             <Dialog.Title class="text-lg font-semibold">
-              {isOAuth ? 'Connect OAuth account' : isNoAuth ? 'Add no-auth connection' : 'Add API key'}
+              {isOAuth ? (importMode ? 'Import OAuth token' : 'Connect OAuth account') : isNoAuth ? 'Add no-auth connection' : 'Add API key'}
             </Dialog.Title>
             <Dialog.Description class="text-sm text-muted-foreground">
-              {meta?.displayName ?? providerId} · {isOAuth ? 'browser login' : isNoAuth ? 'no credential required' : 'single or bulk credential'}
+              {meta?.displayName ?? providerId} · {isOAuth ? (importMode ? 'manual token import' : 'browser login') : isNoAuth ? 'no credential required' : 'single or bulk credential'}
             </Dialog.Description>
             <div class="flex flex-wrap gap-1.5 pt-1">
               <Badge variant="outline" class="rounded-full text-caption-mono">{meta?.prefix ?? `${providerId}/`}</Badge>
@@ -645,12 +712,12 @@ $effect(() => {
           </div>
         {/if}
 
-        {#if !isOAuth && mode === 'single'}
+{#if (!isOAuth && mode === 'single') || importMode}
           <div class="flex flex-col gap-1.5">
             <Label class="text-sm font-medium">Connection name</Label>
             <Input bind:value={connectionName} placeholder={defaultName()} class="h-9 text-sm" />
           </div>
-        {/if}
+          {/if}
 
         {#if meta?.inputFormat === 'pipe' && mode === 'single'}
           <div class="flex flex-col gap-1.5">
@@ -826,11 +893,53 @@ $effect(() => {
           </div>
         {/if}
 
-        {#if isOAuth}
-          <div class="rounded-lg border border-border/50 bg-muted/30 p-3 text-sm text-muted-foreground">
-            <p>A browser tab opens automatically. Complete login there — this modal waits up to 5 minutes for the callback.</p>
-          </div>
-        {/if}
+{#if isOAuth}
+          {#if showImportMode}
+            <div class="grid grid-cols-2 gap-2 rounded-lg border border-border/50 bg-muted/20 p-1">
+              <button
+                type="button"
+                class="rounded-md px-3 py-2 text-sm transition-colors {importMode ? 'text-muted-foreground hover:text-foreground' : 'bg-card text-foreground shadow-sm'}"
+                onclick={() => importMode = false}
+              >
+                OAuth login
+              </button>
+              <button
+                type="button"
+                class="rounded-md px-3 py-2 text-sm transition-colors {importMode ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}"
+                onclick={() => importMode = true}
+              >
+                Import token
+              </button>
+            </div>
+          {/if}
+
+          {#if importMode}
+            <div class="flex flex-col gap-1.5">
+              <Label class="text-sm font-medium">Access token <span class="text-destructive">*</span></Label>
+              <Input bind:value={accessToken} type="password" placeholder="eyJ..." class="h-9 text-sm font-mono" autocomplete="off" spellcheck={false} />
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <Label class="text-sm font-medium">Refresh token <span class="text-destructive">*</span></Label>
+              <Input bind:value={refreshToken} type="password" placeholder="eyJ..." class="h-9 text-sm font-mono" autocomplete="off" spellcheck={false} />
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <Label class="text-sm font-medium">Expires at <span class="text-destructive">*</span></Label>
+              <Input type="datetime-local" bind:value={expiresAt} class="h-9 text-sm font-mono" />
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <Label class="text-sm font-medium">Email</Label>
+              <Input bind:value={email} placeholder="user@example.com" class="h-9 text-sm" />
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <Label class="text-sm font-medium">Device ID <span class="text-muted-foreground font-normal">(optional)</span></Label>
+              <Input bind:value={deviceId} placeholder="device identifier" class="h-9 text-sm font-mono" />
+            </div>
+          {:else}
+            <div class="rounded-lg border border-border/50 bg-muted/30 p-3 text-sm text-muted-foreground">
+              <p>A browser tab opens automatically. Complete login there — this modal waits up to 5 minutes for the callback.</p>
+            </div>
+          {/if}
+          {/if}
 
         {#if isNoAuth && needsProxyPool}
           <div class="flex flex-col gap-1.5">
@@ -934,13 +1043,13 @@ $effect(() => {
             Importing… {Math.round(importProgress * 100)}%
           {:else if submitting}
             {isOAuth ? 'Starting OAuth...' : mode === 'bulk' ? 'Importing...' : 'Adding...'}
-          {:else if isOAuth}
-            Connect
-          {:else if mode === 'bulk'}
-            Import keys
-          {:else}
-            Add connection
-          {/if}
+{:else if isOAuth}
+              {importMode ? 'Import token' : 'Connect'}
+            {:else if mode === 'bulk'}
+              Import keys
+            {:else}
+              Add connection
+            {/if}
         </Button>
       </Dialog.Footer>
     {:else if step === 'oauth-waiting'}
