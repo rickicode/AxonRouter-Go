@@ -86,20 +86,68 @@ const proxyUsageRequest = `curl -s -X POST http://localhost:3777/v1/chat/complet
   `  -d '{"model":"openai/gpt-4o","messages":[{"role":"user","content":"Hello"}]}'`;
 
 const proxyUsageResponse = `{
-  "id": "chatcmpl-...",
-  "object": "chat.completion",
-  "model": "openai/gpt-4o",
-  "choices": [{"message": {"role": "assistant", "content": "Hi!"}}]
+ "id": "chatcmpl-...",
+ "object": "chat.completion",
+ "model": "openai/gpt-4o",
+ "choices": [{"message": {"role": "assistant", "content": "Hi!"}}]
 }`;
 
-  const endpoints = [
-    { method: 'GET', path: '/admin/api/v1/providers' },
-    { method: 'GET', path: '/admin/api/v1/api-keys' },
-    { method: 'POST', path: '/admin/api/v1/api-keys' },
-    { method: 'GET', path: '/admin/api/v1/logs' },
-    { method: 'GET', path: '/admin/api/v1/model-pricing' },
-    { method: 'GET', path: '/admin/api/v1/settings' },
-  ];
+const createProviderBody = '{"name":"myprovider","display_name":"My Provider","format":"openai","base_url":"https://api.example.com/v1"}';
+
+const createProviderResponse = `{
+ "id": "myprovider",
+ "display_name": "My Provider",
+ "format": "openai",
+ "base_url": "https://api.example.com/v1",
+ "is_custom": true,
+ "category": "compatible",
+ "service_kinds": ["llm"]
+}`;
+
+const addConnectionBody = '{"name":"primary","api_key":"sk-...","auth_type":"api_key","priority":0}';
+
+const addConnectionResponse = `{
+ "id": "conn-uuid",
+ "name": "primary",
+ "status": "ready"
+}`;
+
+const bulkAddConnectionsBody = '{"connections":[{"name":"akun-1","api_key":"sk-...","priority":0},{"name":"akun-2","api_key":"sk-...","priority":0}]}';
+
+const bulkAddConnectionsResponse = `{
+ "created": 2,
+ "total": 2,
+ "failed": 0,
+ "errors": []
+}`;
+
+const validateKeyBody = '{"provider":"openai","api_key":"sk-..."}';
+
+const validateKeyResponse = `{
+ "valid": true
+}`;
+
+const importOAuthBody = '{"provider":"grok-cli","access_token":"...","refresh_token":"...","expires_at":1754726400,"email":"ops@example.com"}';
+
+const importOAuthResponse = `{
+ "id": "conn-uuid",
+ "name": "ops@example.com",
+ "status": "ready"
+}`;
+
+const endpoints = [
+ { method: 'GET', path: '/admin/api/v1/providers' },
+ { method: 'POST', path: '/admin/api/v1/providers' },
+ { method: 'POST', path: '/admin/api/v1/providers/:id/connections' },
+ { method: 'POST', path: '/admin/api/v1/providers/:id/connections/bulk' },
+ { method: 'POST', path: '/admin/api/v1/providers/validate' },
+ { method: 'POST', path: '/admin/api/v1/oauth/import-token' },
+ { method: 'GET', path: '/admin/api/v1/api-keys' },
+ { method: 'POST', path: '/admin/api/v1/api-keys' },
+ { method: 'GET', path: '/admin/api/v1/logs' },
+ { method: 'GET', path: '/admin/api/v1/model-pricing' },
+ { method: 'GET', path: '/admin/api/v1/settings' },
+];
 
   onMount(() => {
   document.title = 'Developers — AxonRouter';
@@ -220,11 +268,71 @@ const proxyUsageResponse = `{
       <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>curl -s {keyInfo?.base_url ?? 'http://localhost:3777/admin/api/v1'}/api-keys \
   -H "Authorization: Bearer {keyInfo?.key ?? '<master-key>'}"</code></pre>
     </Card.Content>
-  </Card.Root>
+</Card.Root>
 
-  <Card.Root class="shadow-card">
-    <Card.Header>
-      <Card.Title class="text-display-md">Proxy API keys via master key</Card.Title>
+<Card.Root class="shadow-card">
+<Card.Header>
+<Card.Title class="text-display-md">Providers &amp; connections</Card.Title>
+<Card.Description>
+Bootstrap custom providers and load credentials automatically with the master key.
+</Card.Description>
+</Card.Header>
+<Card.Content class="space-y-6">
+<div class="space-y-2">
+<p class="text-body-sm font-medium">1. Create a custom provider</p>
+<p class="text-body-sm text-muted-foreground">POST <code>/admin/api/v1/providers</code></p>
+<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>curl -s -X POST {keyInfo?.base_url ?? 'http://localhost:3777/admin/api/v1'}/providers -H "Authorization: Bearer {keyInfo?.key ?? '<master-key>'}" -H "Content-Type: application/json" -d '{createProviderBody}'</code></pre>
+<p class="text-body-sm text-muted-foreground">Body:</p>
+<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{createProviderBody}</code></pre>
+<p class="text-body-sm text-muted-foreground">Response <code>201 Created</code>:</p>
+<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{createProviderResponse}</code></pre>
+</div>
+
+<div class="space-y-2">
+<p class="text-body-sm font-medium">2. Add a credential (API key)</p>
+<p class="text-body-sm text-muted-foreground">POST <code>/admin/api/v1/providers/&#123;id&#125;/connections</code></p>
+<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>curl -s -X POST {keyInfo?.base_url ?? 'http://localhost:3777/admin/api/v1'}/providers/PROVIDER_ID/connections -H "Authorization: Bearer {keyInfo?.key ?? '<master-key>'}" -H "Content-Type: application/json" -d '{addConnectionBody}'</code></pre>
+<p class="text-body-sm text-muted-foreground">Body:</p>
+<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{addConnectionBody}</code></pre>
+<p class="text-body-sm text-muted-foreground">Response <code>201 Created</code>:</p>
+<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{addConnectionResponse}</code></pre>
+</div>
+
+<div class="space-y-2">
+<p class="text-body-sm font-medium">3. Bulk add credentials</p>
+<p class="text-body-sm text-muted-foreground">POST <code>/admin/api/v1/providers/&#123;id&#125;/connections/bulk</code> &mdash; up to 5.000 per call</p>
+<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>curl -s -X POST {keyInfo?.base_url ?? 'http://localhost:3777/admin/api/v1'}/providers/PROVIDER_ID/connections/bulk -H "Authorization: Bearer {keyInfo?.key ?? '<master-key>'}" -H "Content-Type: application/json" -d '{bulkAddConnectionsBody}'</code></pre>
+<p class="text-body-sm text-muted-foreground">Body:</p>
+<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{bulkAddConnectionsBody}</code></pre>
+<p class="text-body-sm text-muted-foreground">Response <code>201 Created</code>:</p>
+<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{bulkAddConnectionsResponse}</code></pre>
+</div>
+
+<div class="space-y-2">
+<p class="text-body-sm font-medium">4. Validate a key before storing</p>
+<p class="text-body-sm text-muted-foreground">POST <code>/admin/api/v1/providers/validate</code></p>
+<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>curl -s -X POST {keyInfo?.base_url ?? 'http://localhost:3777/admin/api/v1'}/providers/validate -H "Authorization: Bearer {keyInfo?.key ?? '<master-key>'}" -H "Content-Type: application/json" -d '{validateKeyBody}'</code></pre>
+<p class="text-body-sm text-muted-foreground">Body:</p>
+<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{validateKeyBody}</code></pre>
+<p class="text-body-sm text-muted-foreground">Response <code>200 OK</code>:</p>
+<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{validateKeyResponse}</code></pre>
+</div>
+
+<div class="space-y-2">
+<p class="text-body-sm font-medium">5. Import an OAuth token</p>
+<p class="text-body-sm text-muted-foreground">POST <code>/admin/api/v1/oauth/import-token</code></p>
+<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>curl -s -X POST {keyInfo?.base_url ?? 'http://localhost:3777/admin/api/v1'}/oauth/import-token -H "Authorization: Bearer {keyInfo?.key ?? '<master-key>'}" -H "Content-Type: application/json" -d '{importOAuthBody}'</code></pre>
+<p class="text-body-sm text-muted-foreground">Body:</p>
+<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{importOAuthBody}</code></pre>
+<p class="text-body-sm text-muted-foreground">Response <code>201 Created</code>:</p>
+<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{importOAuthResponse}</code></pre>
+</div>
+</Card.Content>
+</Card.Root>
+
+<Card.Root class="shadow-card">
+<Card.Header>
+<Card.Title class="text-display-md">Proxy API keys via master key</Card.Title>
       <Card.Description>
         The master key can also create the proxy API keys used for <code>/v1/*</code> requests.
       </Card.Description>
