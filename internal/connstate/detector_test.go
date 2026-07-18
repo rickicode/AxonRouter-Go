@@ -121,6 +121,42 @@ func TestDetectError_402InsufficientBalance_Disables(t *testing.T) {
 	}
 }
 
+func TestDetectError_GrokCLI_402SpendingLimit_IsQuota(t *testing.T) {
+	body := `{"error":{"message":"spending-limit exceeded"}}`
+	det := DetectError(context.Background(), http.StatusPaymentRequired, body, nil, "grok-cli", "grok-cli/grok-4.5", nil)
+
+	if det.Category != ErrorQuota {
+		t.Errorf("category=%v, want ErrorQuota", det.Category)
+	}
+	if det.Status != StatusQuotaExhausted {
+		t.Errorf("status=%v, want StatusQuotaExhausted", det.Status)
+	}
+	if det.Scope != "connection" {
+		t.Errorf("scope=%v, want connection", det.Scope)
+	}
+}
+
+func TestDetectError_GrokCLI_402PersonalTeamBlocked_IsBalanceEmpty(t *testing.T) {
+	body := `{"error":{"message":"personal-team-blocked"}}`
+	det := DetectError(context.Background(), http.StatusPaymentRequired, body, nil, "grok-cli", "grok-cli/grok-4.5", nil)
+
+	if det.Category != ErrorBalanceEmpty {
+		t.Errorf("category=%v, want ErrorBalanceEmpty", det.Category)
+	}
+	if det.Status != StatusDisabled {
+		t.Errorf("status=%v, want StatusDisabled", det.Status)
+	}
+	if det.Retryable {
+		t.Error("expected Retryable=false")
+	}
+}
+
+func TestHasPerModelQuota_GrokCLI_ReturnsFalse(t *testing.T) {
+	if HasPerModelQuota("grok-cli") {
+		t.Error("HasPerModelQuota(\"grok-cli\")=true, want false")
+	}
+}
+
 func TestDetectError_ContextCanceled_IsTimeout(t *testing.T) {
 	// A server-side cancellation (not the inbound request) must classify as a
 	// retryable timeout, not ErrorUnknown.
