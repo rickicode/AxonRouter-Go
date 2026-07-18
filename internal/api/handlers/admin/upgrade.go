@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/rickicode/AxonRouter-Go/internal/config"
 	"github.com/rickicode/AxonRouter-Go/internal/version"
 )
 
@@ -37,7 +36,6 @@ func NewUpgradeHandler(checker *version.Checker) *UpgradeHandler {
 		checker: checker,
 		client:  &http.Client{Timeout: upgradeTimeout},
 		baseURL: "https://github.com/rickicode/AxonRouter-Go/releases/download",
-		binDir:  filepath.Join(config.Get().DataDir, "bin"),
 	}
 }
 
@@ -133,17 +131,33 @@ func (h *UpgradeHandler) download(url string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, maxDownloadBytes))
 }
 
+func (h *UpgradeHandler) upgradeBinaryPath() (string, error) {
+	if h.binDir != "" {
+		name := "axonrouter"
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		return filepath.Join(h.binDir, name), nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("locate running executable: %w", err)
+	}
+	exe, err = filepath.EvalSymlinks(exe)
+	if err != nil {
+		return "", fmt.Errorf("resolve executable symlink: %w", err)
+	}
+	return exe, nil
+}
+
 func (h *UpgradeHandler) writeBinary(asset string, binary []byte) (string, error) {
-	if err := os.MkdirAll(h.binDir, 0o755); err != nil {
+	path, err := h.upgradeBinaryPath()
+	if err != nil {
 		return "", err
 	}
-	// Always install as the canonical service binary name so the upgrade
-	// replaces the executable the service manager already points to.
-	targetName := "axonrouter"
-	if runtime.GOOS == "windows" {
-		targetName += ".exe"
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
 	}
-	path := filepath.Join(h.binDir, targetName)
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, binary, 0o755); err != nil {
 		return "", err

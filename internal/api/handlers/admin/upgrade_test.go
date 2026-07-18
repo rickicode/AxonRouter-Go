@@ -27,6 +27,7 @@ func TestUpgrade_DownloadsAndVerifiesBinary(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		asset += ".exe"
 	}
+	t.Setenv("HOME", t.TempDir())
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

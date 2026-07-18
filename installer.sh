@@ -3,13 +3,13 @@
 # AxonRouter-Go installer
 #
 # Downloads the latest (or a pinned) release binary from GitHub and installs it
-# into a directory on your PATH.
+# into ~/axonrouter/bin by default.
 #
 # Usage:
 # curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/master/installer.sh | bash
 # ./installer.sh # latest release, auto OS/arch detection
 # ./installer.sh --version v1.2.3 # specific tag
-# ./installer.sh --to ~/.local/bin
+# ./installer.sh --to ~/axonrouter/bin
 # ./installer.sh --service # install a systemd service (Linux only)
 #
 # The release workflow (.github/workflows/release.yml) builds and uploads assets
@@ -20,9 +20,10 @@ set -euo pipefail
 REPO="rickicode/AxonRouter-Go"
 API="https://api.github.com/repos/${REPO}"
 VERSION="" # empty => latest
-INSTALL_DIR="" # empty => pick a writable dir on PATH
+INSTALL_DIR="" # empty => ~/axonrouter/bin
 INSTALL_SERVICE=false
 BIN_NAME="axonrouter"
+DEFAULT_INSTALL_DIR="${HOME}/axonrouter/bin"
 
 err()  { echo "error: $*" >&2; exit 1; }
 info() { echo "==> $*"; }
@@ -76,7 +77,7 @@ if [[ "$INSTALL_SERVICE" == true ]]; then
     exit 1
   fi
   command -v systemctl >/dev/null 2>&1 || err "systemctl not found; cannot install systemd service"
-  INSTALL_DIR="/opt/axonrouter"
+	INSTALL_DIR="${DEFAULT_INSTALL_DIR}"
 fi
 
 # ---- resolve release --------------------------------------------------------
@@ -98,27 +99,22 @@ if ! curl -fsSL "$URL" -o "$DOWNLOAD_TO"; then
 fi
 
 # ---- choose install directory ----------------------------------------------
-LOCAL_BIN="${HOME}/.local/bin"
 if [[ -z "$INSTALL_DIR" ]]; then
-  INSTALL_DIR="$LOCAL_BIN"
+	INSTALL_DIR="$DEFAULT_INSTALL_DIR"
 fi
 
 if ! mkdir -p "$INSTALL_DIR" 2>/dev/null; then
-  err "could not create ${INSTALL_DIR}. Re-run with sudo or use --to <writable-dir>."
+	err "could not create ${INSTALL_DIR}. Re-run with sudo or use --to <writable-dir>."
 fi
 
 if [[ ! -w "$INSTALL_DIR" ]]; then
-  echo "error: ${INSTALL_DIR} is not writable." >&2
-  echo >&2
-  echo "To install system-wide, re-run with sudo:" >&2
-  if [[ "$INSTALL_DIR" == "$LOCAL_BIN" ]]; then
-    echo "  sudo ./installer.sh --to /usr/local/bin" >&2
-  else
-    echo "  sudo ./installer.sh --to ${INSTALL_DIR}" >&2
-  fi
-  echo "Or install to your user directory without sudo:" >&2
-  echo "  ./installer.sh --to ${LOCAL_BIN}" >&2
-  exit 1
+	echo "error: ${INSTALL_DIR} is not writable." >&2
+	echo >&2
+	echo "To install system-wide, re-run with sudo:" >&2
+	echo " sudo ./installer.sh" >&2
+	echo "Or specify a custom directory:" >&2
+	echo " ./installer.sh --to ${INSTALL_DIR}" >&2
+	exit 1
 fi
 
 # ---- install ----------------------------------------------------------------
