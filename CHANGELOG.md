@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Grok CLI session/turn header persistence** — `/v1/chat/completions` and `/v1/responses` calls routed through `grok-cli` now generate stable `x-grok-session-id`, `x-grok-conv-id`, and `x-grok-agent-id` values per connection, a fresh `x-grok-req-id` per request, and a monotonic `x-grok-turn-idx` that advances only by user messages. State is persisted to the connection's `provider_specific_data` and survives restarts.
 - **Grok CLI upstream quota usage** — `grok-cli` connections now display live{{subscription} quota from xAI billing/user endpoints, including monthly included credits, on-demand cap/usage, and prepaid balance. Registered in the quota scheduler alongside Codex, Antigravity, Kiro, and Copilot.
 
 ## [0.3.9] - 2026-07-18

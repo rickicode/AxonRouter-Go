@@ -952,19 +952,44 @@ func (h *Handler) executeProviderCall(
 		}
 	}
 	req := &executor.Request{
-		Model:               modelName,
-		Body:                translatedBody,
-		Stream:              stream,
-		APIKey:              conn.APIKey,
-		AccessToken:         conn.AccessToken,
-		BaseURL:             conn.BaseURL,
-		Provider:            provider,
+		Model:                modelName,
+		Body:                 translatedBody,
+		Stream:               stream,
+		APIKey:               conn.APIKey,
+		AccessToken:          conn.AccessToken,
+		BaseURL:              conn.BaseURL,
+		Provider:             provider,
 		ProviderSpecificData: psdMap,
-		StreamConfig:        streamCfg,
+		StreamConfig:         streamCfg,
 	}
+	req.ConnectionID = conn.ID
+	req.PersistProviderSpecificData = h.persistProviderSpecificData(ctx, conn)
 	proxyCtx := h.proxyContext(ctx, conn)
 	resp, streamResult, err := h.executeDirect(proxyCtx, exec, req)
 	return proxyCtx, resp, streamResult, err
+}
+
+// persistProviderSpecificData returns a callback that writes an updated PSD map
+// back to the connection cache and database. It is used by executors that
+// mutate per-connection state (e.g., Grok CLI session/turn headers).
+func (h *Handler) persistProviderSpecificData(ctx context.Context, conn *Connection) func(map[string]string) error {
+	return func(psd map[string]string) error {
+		psdBytes, err := json.Marshal(psd)
+		if err != nil {
+			return fmt.Errorf("marshal provider_specific_data: %w", err)
+		}
+		conn.ProviderSpecificData = string(psdBytes)
+		h.conns.Store(conn.ID, cachedConn{conn: conn, cachedAt: time.Now()})
+		connID := conn.ID
+		if h.writeQueue == nil {
+			_, err := h.db.ExecContext(ctx, `UPDATE connections SET provider_specific_data = ?, updated_at = ? WHERE id = ?`, psdBytes, time.Now().Unix(), connID)
+			return err
+		}
+		return h.writeQueue.Do(ctx, "grokcli:persistPSD", func(d *sql.DB) error {
+			_, err := d.ExecContext(ctx, `UPDATE connections SET provider_specific_data = ?, updated_at = ? WHERE id = ?`, psdBytes, time.Now().Unix(), connID)
+			return err
+		})
+	}
 }
 
 // handleFailoverError records an upstream failure, marks the connection

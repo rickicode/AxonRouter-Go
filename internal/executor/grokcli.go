@@ -5,7 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
@@ -13,7 +15,7 @@ import (
 )
 
 const (
-	defaultGrokCLIBaseURL = "https://cli-chat-proxy.grok.com/v1/responses"
+	defaultGrokCLIBaseURL       = "https://cli-chat-proxy.grok.com/v1/responses"
 	defaultGrokCLIClientVersion = "0.2.93"
 	defaultGrokCLIUserAgent     = "xai-grok-workspace/" + defaultGrokCLIClientVersion
 )
@@ -22,6 +24,10 @@ const (
 // It streams to upstream and collects the final response for non-streaming calls.
 type GrokCLIExecutor struct {
 	*BaseExecutor
+	// sessionLocks serializes per-connection state mutation so turn index and
+	// stable session IDs are updated atomically relative to other requests on
+	// the same connection. The actual state lives in provider_specific_data.
+	sessionLocks sync.Map // connectionID -> *sync.Mutex
 }
 
 // NewGrokCLIExecutor creates a new Grok CLI executor.
@@ -67,7 +73,7 @@ func jwtClaimFromToken(token, claim string) string {
 	return ""
 }
 
-func grokcliHeaders(req *Request) map[string]string {
+func grokcliHeaders(req *Request, sessionID, convID, agentID, reqID string, turnIdx int) map[string]string {
 	email := ""
 	userID := ""
 	if req.ProviderSpecificData != nil {
@@ -99,7 +105,12 @@ func grokcliHeaders(req *Request) map[string]string {
 		"Authorization":         "Bearer " + token,
 		"X-XAI-Token-Auth":      "xai-grok-cli",
 		"x-grok-client-version": defaultGrokCLIClientVersion,
-		"x-grok-conv-id":        uuid.NewString(),
+		"x-grok-session-id":     sessionID,
+		"x-grok-conv-id":        convID,
+		"x-grok-req-id":         reqID,
+		"x-grok-turn-idx":       strconv.Itoa(turnIdx),
+		"x-grok-agent-id":       agentID,
+		"x-grok-model-override": ExtractModel(req.Model),
 		"User-Agent":            ua,
 		"Connection":            "Keep-Alive",
 	}
@@ -118,29 +129,144 @@ func grokcliHeaders(req *Request) map[string]string {
 	return headers
 }
 
+func (e *GrokCLIExecutor) connMu(connID string) *sync.Mutex {
+	if connID == "" {
+		return &sync.Mutex{}
+	}
+	if v, ok := e.sessionLocks.Load(connID); ok {
+		return v.(*sync.Mutex)
+	}
+	mu := &sync.Mutex{}
+	if v, loaded := e.sessionLocks.LoadOrStore(connID, mu); loaded {
+		return v.(*sync.Mutex)
+	}
+	return mu
+}
+
+const (
+	grokCLISessionIDKey = "grokSessionId"
+	grokCLIConvIDKey    = "grokConvId"
+	grokCLITurnIdxKey   = "grokTurnIdx"
+	grokCLIAgentIDKey   = "grokAgentId"
+)
+
+func grokcliCountUserMessages(body []byte) int {
+	if input := gjson.GetBytes(body, "input"); input.IsArray() {
+		count := 0
+		input.ForEach(func(_, item gjson.Result) bool {
+			if item.Get("role").String() == "user" {
+				count++
+			}
+			return true
+		})
+		return count
+	}
+	if messages := gjson.GetBytes(body, "messages"); messages.IsArray() {
+		count := 0
+		messages.ForEach(func(_, msg gjson.Result) bool {
+			if msg.Get("role").String() == "user" {
+				count++
+			}
+			return true
+		})
+		return count
+	}
+	return 0
+}
+
+func grokcliStableAgentID(psd map[string]string) string {
+	if v := psd[grokCLIAgentIDKey]; v != "" {
+		return v
+	}
+	seed := psd["deviceId"]
+	if seed == "" {
+		seed = psd["sub"]
+	}
+	if seed == "" {
+		seed = psd["email"]
+	}
+	if seed == "" {
+		seed = psd[grokCLISessionIDKey]
+	}
+	if seed == "" {
+		seed = uuid.NewString()
+	}
+	agentID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("grok-cli-agent:"+seed)).String()
+	psd[grokCLIAgentIDKey] = agentID
+	return agentID
+}
+
+func grokcliGetTurnIdx(psd map[string]string) int {
+	if v := psd[grokCLITurnIdxKey]; v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return 0
+}
+
+func grokcliEnsureID(psd map[string]string, key string) string {
+	if v := psd[key]; v != "" {
+		return v
+	}
+	v := uuid.NewString()
+	psd[key] = v
+	return v
+}
+
+// allocateGrokCLISession reads the connection's persisted session state, assigns
+// a fresh request UUID, computes the current turn index from the number of user
+// messages in the request, increments the stored turn index, and persists the
+// updated state. It returns the values to send as upstream headers.
+func (e *GrokCLIExecutor) allocateGrokCLISession(req *Request) (sessionID, convID, agentID, reqID string, turnIdx int, err error) {
+	mu := e.connMu(req.ConnectionID)
+	mu.Lock()
+	defer mu.Unlock()
+
+	if req.ProviderSpecificData == nil {
+		req.ProviderSpecificData = map[string]string{}
+	}
+
+	n := grokcliCountUserMessages(req.Body)
+	sessionID = grokcliEnsureID(req.ProviderSpecificData, grokCLISessionIDKey)
+	convID = grokcliEnsureID(req.ProviderSpecificData, grokCLIConvIDKey)
+	agentID = grokcliStableAgentID(req.ProviderSpecificData)
+	currentTurn := grokcliGetTurnIdx(req.ProviderSpecificData)
+	turnIdx = currentTurn
+	req.ProviderSpecificData[grokCLITurnIdxKey] = strconv.Itoa(currentTurn + n)
+	reqID = uuid.NewString()
+
+	if req.PersistProviderSpecificData != nil {
+		if err = req.PersistProviderSpecificData(req.ProviderSpecificData); err != nil {
+			return "", "", "", "", 0, err
+		}
+	}
+	return sessionID, convID, agentID, reqID, turnIdx, nil
+}
+
 var grokCLIAllowedTopLevel = map[string]bool{
-	"model": true,
-	"input": true,
-	"instructions": true,
-	"tools": true,
-	"tool_choice": true,
-	"parallel_tool_calls": true,
-	"reasoning": true,
-	"metadata": true,
-	"text": true,
-	"max_output_tokens": true,
-	"temperature": true,
-	"top_p": true,
-	"presence_penalty": true,
-	"frequency_penalty": true,
-	"seed": true,
-	"service_tier": true,
-	"include": true,
-	"stream": true,
-	"store": true,
-	"user": true,
+	"model":                true,
+	"input":                true,
+	"instructions":         true,
+	"tools":                true,
+	"tool_choice":          true,
+	"parallel_tool_calls":  true,
+	"reasoning":            true,
+	"metadata":             true,
+	"text":                 true,
+	"max_output_tokens":    true,
+	"temperature":          true,
+	"top_p":                true,
+	"presence_penalty":     true,
+	"frequency_penalty":    true,
+	"seed":                 true,
+	"service_tier":         true,
+	"include":              true,
+	"stream":               true,
+	"store":                true,
+	"user":                 true,
 	"previous_response_id": true,
-	"prompt_cache_key": true,
+	"prompt_cache_key":     true,
 }
 
 var grokCLIAllowedInputTypes = map[string]bool{
@@ -310,9 +436,9 @@ func grokcliConvertMessagesToInput(messages gjson.Result) []any {
 		switch role {
 		case "tool":
 			item := map[string]any{
-				"type":     "function_call_output",
-				"call_id":  msg.Get("tool_call_id").String(),
-				"output":   msg.Get("content").String(),
+				"type":    "function_call_output",
+				"call_id": msg.Get("tool_call_id").String(),
+				"output":  msg.Get("content").String(),
 			}
 			input = append(input, item)
 		case "assistant":
@@ -467,7 +593,11 @@ func (e *GrokCLIExecutor) Execute(ctx context.Context, req *Request) (*Response,
 	if err != nil {
 		return nil, fmt.Errorf("grok-cli request body: %w", err)
 	}
-	headers := grokcliHeaders(req)
+	sessionID, convID, agentID, reqID, turnIdx, err := e.allocateGrokCLISession(req)
+	if err != nil {
+		return nil, fmt.Errorf("grok-cli session: %w", err)
+	}
+	headers := grokcliHeaders(req, sessionID, convID, agentID, reqID, turnIdx)
 
 	cfg := &StreamConfig{ScannerMaxTokenSize: 64 * 1024}
 	streamResult, err := e.DoStreamRequestWithConfig(ctx, "POST", url, headers, body, cfg)
@@ -535,7 +665,11 @@ func (e *GrokCLIExecutor) ExecuteStream(ctx context.Context, req *Request) (*Str
 	if err != nil {
 		return nil, fmt.Errorf("grok-cli request body: %w", err)
 	}
-	headers := grokcliHeaders(req)
+	sessionID, convID, agentID, reqID, turnIdx, err := e.allocateGrokCLISession(req)
+	if err != nil {
+		return nil, fmt.Errorf("grok-cli session: %w", err)
+	}
+	headers := grokcliHeaders(req, sessionID, convID, agentID, reqID, turnIdx)
 
 	cfg := &StreamConfig{ScannerMaxTokenSize: 64 * 1024}
 	result, err := e.DoStreamRequestWithConfig(ctx, "POST", url, headers, body, cfg)

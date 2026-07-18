@@ -89,6 +89,13 @@ type Request struct {
 	Provider    string
 	// Provider-specific data (e.g., projectId for Antigravity)
 	ProviderSpecificData map[string]string
+	// ConnectionID is the persistent connection identifier; required for
+	// per-connection state mutation (e.g., Grok CLI session/turn headers).
+	ConnectionID string
+	// PersistProviderSpecificData, if set, persists an updated PSD map back to
+	// the connection store. Executors that mutate per-connection state call it
+	// while holding their own concurrency guard.
+	PersistProviderSpecificData func(map[string]string) error
 	// Extra headers
 	Headers map[string]string
 	// Streaming tunables (nil → use BaseExecutor defaults)
