@@ -5,9 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
@@ -16,12 +14,9 @@ import (
 
 const (
 	defaultGrokCLIBaseURL = "https://cli-chat-proxy.grok.com/v1/responses"
-	defaultGrokCLIClientVersion = "0.2.99"
-	defaultGrokCLIClientIdentifier = "grok-shell"
-	defaultGrokCLIUserAgent = "grok-shell/" + defaultGrokCLIClientVersion + " (linux; x86_64)"
+	defaultGrokCLIClientVersion = "0.2.93"
+	defaultGrokCLIUserAgent     = "xai-grok-workspace/" + defaultGrokCLIClientVersion
 )
-
-var grokCLIDeviceIDCache sync.Map
 
 // GrokCLIExecutor handles xAI Grok CLI's Responses API over OAuth tokens.
 // It streams to upstream and collects the final response for non-streaming calls.
@@ -35,37 +30,20 @@ func NewGrokCLIExecutor(base *BaseExecutor) *GrokCLIExecutor {
 }
 
 func grokcliURL(req *Request) string {
-	if req.BaseURL != "" {
-		return req.BaseURL
+	base := req.BaseURL
+	if base == "" {
+		return defaultGrokCLIBaseURL
 	}
-	return defaultGrokCLIBaseURL
-}
-
-func grokcliDeviceID(req *Request) string {
-	psd := req.ProviderSpecificData
-	if psd == nil {
-		psd = map[string]string{}
-		req.ProviderSpecificData = psd
+	// CLIProxyAPI resolves chat requests to cli-chat-proxy.grok.com/v1/responses.
+	// Tolerate older DB/config rows that end at /v1 by forcing the /responses path.
+	base = strings.TrimSuffix(base, "/")
+	if strings.HasSuffix(base, "/responses") {
+		return base
 	}
-	if id := psd["deviceId"]; id != "" {
-		return id
+	if strings.HasSuffix(base, "/v1") {
+		return base + "/responses"
 	}
-	key := psd["sub"]
-	if key == "" && req.AccessToken != "" {
-		key = "token:" + req.AccessToken
-	}
-	if key == "" {
-		key = uuid.NewString()
-	}
-	if cached, ok := grokCLIDeviceIDCache.Load(key); ok {
-		id := cached.(string)
-		psd["deviceId"] = id
-		return id
-	}
-	id := uuid.NewSHA1(uuid.NameSpaceOID, []byte(key)).String()
-	grokCLIDeviceIDCache.Store(key, id)
-	psd["deviceId"] = id
-	return id
+	return base + "/responses"
 }
 
 func jwtClaimFromToken(token, claim string) string {
@@ -89,30 +67,7 @@ func jwtClaimFromToken(token, claim string) string {
 	return ""
 }
 
-func grokcliUserTurnCount(body []byte) int {
-	input := gjson.GetBytes(body, "input")
-	if !input.IsArray() {
-		return 1
-	}
-	n := 0
-	input.ForEach(func(_, item gjson.Result) bool {
-		if item.Get("role").String() == "user" {
-			n++
-		}
-		return true
-	})
-	if n == 0 {
-		return 1
-	}
-	return n
-}
-
 func grokcliHeaders(req *Request) map[string]string {
-	deviceID := grokcliDeviceID(req)
-	sessionID := uuid.NewString()
-	convID := sessionID
-	reqID := uuid.NewString()
-
 	email := ""
 	userID := ""
 	if req.ProviderSpecificData != nil {
@@ -136,24 +91,17 @@ func grokcliHeaders(req *Request) map[string]string {
 		ua = req.Headers["User-Agent"]
 	}
 
-	model := ExtractModel(req.Model)
-
+	// Keep headers aligned with CLIProxyAPI's proven set for the Grok CLI
+	// chat-proxy endpoint. Extra identity headers can trigger Cloudflare/404.
 	headers := map[string]string{
-		"Content-Type": "application/json",
-		"Accept": "text/event-stream",
-		"Authorization": "Bearer " + token,
-		"x-xai-token-auth": "xai-grok-cli",
+		"Content-Type":          "application/json",
+		"Accept":                "text/event-stream",
+		"Authorization":         "Bearer " + token,
+		"X-XAI-Token-Auth":      "xai-grok-cli",
 		"x-grok-client-version": defaultGrokCLIClientVersion,
-		"x-grok-client-identifier": defaultGrokCLIClientIdentifier,
-		"x-grok-client-mode": "headless",
-		"User-Agent": ua,
-		"x-grok-session-id": sessionID,
-		"x-grok-conv-id": convID,
-		"x-grok-req-id": reqID,
-		"x-grok-turn-idx": strconv.Itoa(grokcliUserTurnCount(req.Body)),
-		"x-grok-agent-id": deviceID,
-		"x-grok-model-override": model,
-		"Connection": "Keep-Alive",
+		"x-grok-conv-id":        uuid.NewString(),
+		"User-Agent":            ua,
+		"Connection":            "Keep-Alive",
 	}
 	if email != "" {
 		headers["x-email"] = email
@@ -221,6 +169,13 @@ func grokcliRequestBody(req *Request) ([]byte, error) {
 	body["model"] = model
 	body["stream"] = true
 	body["store"] = false
+
+	// Drop Responses fields that the CLI chat-proxy does not accept; mirrors
+	// CLIProxyAPI's prepareResponsesRequest cleanup.
+	delete(body, "previous_response_id")
+	delete(body, "stream_options")
+	delete(body, "prompt_cache_retention")
+	delete(body, "safety_identifier")
 
 	reasoning := map[string]any{}
 	if existing, ok := body["reasoning"].(map[string]any); ok {

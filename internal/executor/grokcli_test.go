@@ -70,58 +70,28 @@ func TestGrokCLIExecutor_Headers(t *testing.T) {
 	}
 
 	mustEqual := map[string]string{
-		"Authorization":            "Bearer grok-at-123",
-		"X-Xai-Token-Auth":         "xai-grok-cli",
-		"x-grok-client-identifier": "grok-shell",
-		"x-grok-client-version":    "0.2.99",
-		"x-grok-client-mode":       "headless",
-		"User-Agent":               "grok-shell/0.2.99 (linux; x86_64)",
-		"x-grok-turn-idx":          "1",
-		"x-grok-model-override":    "grok-4.5",
-		"x-email":                  "user@example.com",
-		"x-userid":                 "grok-sub-abc",
+		"Authorization":         "Bearer grok-at-123",
+		"X-Xai-Token-Auth":      "xai-grok-cli",
+		"x-grok-client-version": "0.2.93",
+		"User-Agent":            "xai-grok-workspace/0.2.93",
+		"x-email":               "user@example.com",
+		"x-userid":              "grok-sub-abc",
+		"Connection":            "Keep-Alive",
 	}
 	for name, want := range mustEqual {
 		if got := gotHeaders.Get(name); got != want {
 			t.Errorf("%s=%q, want %q", name, got, want)
 		}
 	}
-	for _, name := range []string{"x-grok-session-id", "x-grok-conv-id", "x-grok-req-id", "x-grok-agent-id"} {
-		if got := gotHeaders.Get(name); got == "" {
-			t.Errorf("%s is empty", name)
+	if gotHeaders.Get("x-grok-conv-id") == "" {
+		t.Errorf("x-grok-conv-id is empty")
+	}
+
+	// These extra identity headers should no longer be sent (they can trigger CF/404).
+	for _, name := range []string{"x-grok-client-identifier", "x-grok-client-mode", "x-grok-session-id", "x-grok-req-id", "x-grok-turn-idx", "x-grok-agent-id", "x-grok-model-override"} {
+		if got := gotHeaders.Get(name); got != "" {
+			t.Errorf("%s should not be set, got %q", name, got)
 		}
-	}
-
-	firstDeviceID := req.ProviderSpecificData["deviceId"]
-	if firstDeviceID == "" {
-		t.Fatal("deviceId not persisted")
-	}
-	if gotHeaders.Get("x-grok-agent-id") != firstDeviceID {
-		t.Fatalf("deviceId not used as agent id")
-	}
-
-	body2, _ := json.Marshal(map[string]any{"messages": []any{}})
-	req2 := &Request{
-		Provider:    "grok-cli",
-		Model:       "grok-cli/grok-4.5",
-		BaseURL:     ts.URL,
-		AccessToken: "grok-at-123",
-		ProviderSpecificData: map[string]string{
-			"email": "user@example.com",
-			"sub":   "grok-sub-abc",
-		},
-		Body: body2,
-		StreamConfig: &StreamConfig{
-			FetchTimeoutMs:           5000,
-			StreamIdleTimeoutMs:      5000,
-			StreamReadinessTimeoutMs: 5000,
-		},
-	}
-	if _, err := exec.Execute(context.Background(), req2); err != nil {
-		t.Fatalf("Execute error: %v", err)
-	}
-	if req2.ProviderSpecificData["deviceId"] != firstDeviceID {
-		t.Fatalf("deviceId not stable: got %q, want %q", req2.ProviderSpecificData["deviceId"], firstDeviceID)
 	}
 }
 

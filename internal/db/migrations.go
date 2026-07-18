@@ -243,6 +243,12 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 			p.Category, string(serviceKindsJSON), p.ID)
 	}
 
+	// Repair legacy Grok CLI base_url rows that point at /v1 instead of /v1/responses.
+	// The executor now hardens this too, but fixing the DB avoids confusion in the UI.
+	if _, err := db.Exec(`UPDATE provider_types SET base_url = 'https://cli-chat-proxy.grok.com/v1/responses' WHERE id = 'grok-cli' AND base_url IN ('https://cli-chat-proxy.grok.com/v1', 'https://cli-chat-proxy.grok.com/v1/', 'https://cli-chat-proxy.grok.com/', 'https://cli-chat-proxy.grok.com')`); err != nil {
+		return err
+	}
+
 	// Normalize legacy `opencode` provider type to canonical `oc` alias, keeping
 	// connections and quota cache consistent. Must run after seeding `oc` above.
 	db.Exec(`UPDATE connections SET provider_type_id = 'oc' WHERE provider_type_id = 'opencode'`)

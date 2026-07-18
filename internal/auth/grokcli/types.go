@@ -11,9 +11,7 @@ const (
 	// ClientID is the public Grok CLI OAuth client ID.
 	ClientID = "b1a00492-073a-47ea-816f-4c329264a828"
 	// Scope is the OAuth scope set required for Grok CLI access.
-	// Includes the official CLI's conversations read/write scopes so tokens work
-	// for the cli-chat-proxy endpoints.
-	Scope = "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write"
+	Scope = "openid profile email offline_access grok-cli:access api:access"
 	// DeviceCodeGrantType is the OAuth2 device authorization grant type (RFC 8628).
 	DeviceCodeGrantType = "urn:ietf:params:oauth:grant-type:device_code"
 
