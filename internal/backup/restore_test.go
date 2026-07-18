@@ -42,6 +42,17 @@ func TestRestoreToCurrentTargetMatchesBackedUpRowCounts(t *testing.T) {
 			t.Fatalf("%s row count: got %d want %d", table, got, want)
 		}
 	}
+
+	// IDs must be preserved exactly so provider accounts and connections remain
+	// identical to the source.
+	var providerID string
+	if err := target.QueryRow(`SELECT id FROM provider_types WHERE id = 'restore-provider'`).Scan(&providerID); err != nil {
+		t.Fatalf("provider id not preserved: %v", err)
+	}
+	var connectionID string
+	if err := target.QueryRow(`SELECT id FROM connections WHERE id = 'restore-conn'`).Scan(&connectionID); err != nil {
+		t.Fatalf("connection id not preserved: %v", err)
+	}
 }
 
 func TestRestoreToCurrentTargetWithEncryptedBackup(t *testing.T) {
