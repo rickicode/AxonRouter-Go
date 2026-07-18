@@ -226,6 +226,16 @@ func TestSeedConnectionsFromDB_RestoresCooldown(t *testing.T) {
 
 // TestSeedConnectionsFromDB_ExpiresStaleCooldown proves that a connection whose
 // cooldown_until is in the past is treated as ready on startup.
+func TestShutdownCanBeCalledMultipleTimes(t *testing.T) {
+	router, srv := newTestRouter(t)
+	defer srv.Close()
+
+	// Calling Shutdown twice must not panic (e.g. restore triggers Shutdown
+	// first, then the service manager calls it again on process stop).
+	router.Shutdown()
+	router.Shutdown()
+}
+
 func TestSeedConnectionsFromDB_ExpiresStaleCooldown(t *testing.T) {
 	database := openTestDB(t)
 	now := time.Now().Unix()

@@ -192,3 +192,17 @@ func TestWriteQueueDoNil(t *testing.T) {
 		t.Fatal("expected fn not to be called on nil queue")
 	}
 }
+
+// TestWriteQueueStopIsIdempotent verifies Stop can be called more than once.
+func TestWriteQueueStopIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	d, err := sql.Open("sqlite", filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer d.Close()
+
+	wq := NewWriteQueue(d)
+	wq.Stop()
+	wq.Stop()
+}

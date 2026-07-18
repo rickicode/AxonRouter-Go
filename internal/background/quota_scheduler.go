@@ -14,11 +14,12 @@ import (
 
 // QuotaScheduler periodically checks provider quotas and updates connection states.
 type QuotaScheduler struct {
-	once     sync.Once
-	store    *connstate.Store
-	elig     *connstate.EligibilityManager
+	once sync.Once
+	store *connstate.Store
+	elig *connstate.EligibilityManager
 	interval time.Duration
-	stopCh   chan struct{}
+	stopCh chan struct{}
+	stopOnce sync.Once
 }
 
 // NewQuotaScheduler creates a new quota scheduler.
@@ -86,20 +87,23 @@ func (qs *QuotaScheduler) check() {
 
 // Stop signals the scheduler to stop.
 func (qs *QuotaScheduler) Stop() {
-	close(qs.stopCh)
+	qs.stopOnce.Do(func() {
+		close(qs.stopCh)
+	})
 }
 
 // QuotaSchedulerDB is a version that also queries DB for proactive quota checks.
 // Runs cooldown recovery + proactive quota fetching from provider APIs (Codex, Antigravity, Kiro).
 type QuotaSchedulerDB struct {
-	once       sync.Once
-	db         *sql.DB
+	once sync.Once
+	db *sql.DB
 	writeQueue *db.WriteQueue
-	store      *connstate.Store
-	elig       *connstate.EligibilityManager
+	store *connstate.Store
+	elig *connstate.EligibilityManager
 	exhaustion *quota.ExhaustionCache
-	interval   time.Duration
-	stopCh     chan struct{}
+	interval time.Duration
+	stopCh chan struct{}
+	stopOnce sync.Once
 }
 
 // NewQuotaSchedulerDB creates a DB-aware quota scheduler.
@@ -234,5 +238,7 @@ func (qs *QuotaSchedulerDB) checkQuotas() {
 
 // Stop signals the scheduler to stop.
 func (qs *QuotaSchedulerDB) Stop() {
-	close(qs.stopCh)
+	qs.stopOnce.Do(func() {
+		close(qs.stopCh)
+	})
 }

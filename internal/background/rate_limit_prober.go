@@ -22,15 +22,16 @@ import (
 // It also probes per-model locked models so that after proxy/IP rotation a
 // previously-limited model recovers without waiting for the full TTL.
 type RateLimitProber struct {
-	once       sync.Once
-	db         *sql.DB
+	once sync.Once
+	db *sql.DB
 	writeQueue *db.WriteQueue
-	store      *connstate.Store
-	elig       *connstate.EligibilityManager
+	store *connstate.Store
+	elig *connstate.EligibilityManager
 	exhaustion *quota.ExhaustionCache
-	registry   *executor.Registry
-	resolver   *proxypool.Resolver
-	stopCh     chan struct{}
+	registry *executor.Registry
+	resolver *proxypool.Resolver
+	stopCh chan struct{}
+	stopOnce sync.Once
 }
 
 func NewRateLimitProber(
@@ -61,7 +62,9 @@ func (p *RateLimitProber) Start(ctx context.Context) {
 }
 
 func (p *RateLimitProber) Stop() {
-	close(p.stopCh)
+	p.stopOnce.Do(func() {
+		close(p.stopCh)
+	})
 }
 
 func (p *RateLimitProber) run(ctx context.Context) {

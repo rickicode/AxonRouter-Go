@@ -14,12 +14,13 @@ import (
 // - Circuit breaker cleanup (every 5 min)
 // - Old log deletion (daily)
 type Cleanup struct {
-	once        sync.Once
-	handler     *combo.Handler
-	db          *sql.DB
-	interval    time.Duration
-	logDays     int
-	stopCh      chan struct{}
+	once sync.Once
+	handler *combo.Handler
+	db *sql.DB
+	interval time.Duration
+	logDays int
+	stopCh chan struct{}
+	stopOnce sync.Once
 }
 
 // NewCleanup creates a new cleanup goroutine.
@@ -73,11 +74,17 @@ func (cl *Cleanup) run(ctx context.Context) {
 
 // cleanup removes stale circuit breakers.
 func (cl *Cleanup) cleanup() {
+	if cl.handler == nil {
+		return
+	}
 	cl.handler.CleanupBreakers()
 }
 
 // cleanupOldLogs deletes logs older than the retention period.
 func (cl *Cleanup) cleanupOldLogs() {
+	if cl.db == nil {
+		return
+	}
 	cutoff := time.Now().AddDate(0, 0, -cl.logDays).UnixMilli()
 	result, err := cl.db.Exec(`DELETE FROM request_logs WHERE timestamp < ?`, cutoff)
 	if err != nil {
@@ -92,5 +99,7 @@ func (cl *Cleanup) cleanupOldLogs() {
 
 // Stop signals the cleanup to stop.
 func (cl *Cleanup) Stop() {
-	close(cl.stopCh)
+	cl.stopOnce.Do(func() {
+		close(cl.stopCh)
+	})
 }

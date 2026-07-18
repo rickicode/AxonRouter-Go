@@ -12,10 +12,11 @@ import (
 // UsageFlush periodically logs the tracker's buffer state for monitoring.
 // The actual flushing is handled by usage.Tracker's internal goroutine.
 type UsageFlush struct {
-	once     sync.Once
-	tracker  *usage.Tracker
+	once sync.Once
+	tracker *usage.Tracker
 	interval time.Duration
-	stopCh   chan struct{}
+	stopCh chan struct{}
+	stopOnce sync.Once
 }
 
 // NewUsageFlush creates a new usage flush monitor.
@@ -66,5 +67,7 @@ func (uf *UsageFlush) report() {
 
 // Stop signals the monitor to stop.
 func (uf *UsageFlush) Stop() {
-	close(uf.stopCh)
+	uf.stopOnce.Do(func() {
+		close(uf.stopCh)
+	})
 }

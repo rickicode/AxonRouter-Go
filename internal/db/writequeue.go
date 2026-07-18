@@ -30,14 +30,15 @@ type WriteOp struct {
 // - Since it is the only writer, there is never write-lock contention.
 // - Readers (auth, health, connection loads) use the pool freely.
 type WriteQueue struct {
-	ch      chan WriteOp
-	db      *sql.DB
-	stop    chan struct{}
-	done    chan struct{}
+	ch chan WriteOp
+	db *sql.DB
+	stop chan struct{}
+	done chan struct{}
 	pauseMu sync.Mutex
-	pause   *sync.Cond
-	paused  bool
+	pause *sync.Cond
+	paused bool
 	dropped atomic.Int64
+	stopOnce sync.Once
 }
 
 // NewWriteQueue creates a write queue backed by the given DB.
@@ -186,13 +187,15 @@ func (wq *WriteQueue) loop() {
 }
 
 // Stop gracefully shuts down the queue, flushing all pending writes.
-// Blocks until all buffered writes have been processed.
+// Blocks until all buffered writes have been processed. Safe to call more than once.
 func (wq *WriteQueue) Stop() {
-	wq.pauseMu.Lock()
-	wq.paused = false
-	wq.pause.Broadcast()
-	wq.pauseMu.Unlock()
-	close(wq.stop)
+	wq.stopOnce.Do(func() {
+		wq.pauseMu.Lock()
+		wq.paused = false
+		wq.pause.Broadcast()
+		wq.pauseMu.Unlock()
+		close(wq.stop)
+	})
 	<-wq.done
 }
 
