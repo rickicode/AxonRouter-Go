@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/executor/translator/providers"
 	"github.com/tidwall/gjson"
@@ -704,9 +705,163 @@ func TestTranslateGrokCLI(t *testing.T) {
 			if got := gjson.GetBytes(out, "error.type").String(); got != tc.wantType {
 				t.Errorf("type=%q, want %q", got, tc.wantType)
 			}
-			if got := gjson.GetBytes(out, "error.code").String(); got != tc.wantCode {
-				t.Errorf("code=%q, want %q", got, tc.wantCode)
-			}
+		if got := gjson.GetBytes(out, "error.code").String(); got != tc.wantCode {
+			t.Errorf("code=%q, want %q", got, tc.wantCode)
+		}
 		})
+	}
+}
+
+func TestGrokCLIExecutor_Retry_429ThenSuccess(t *testing.T) {
+	completed, _ := json.Marshal(map[string]any{"type": "response.completed", "response": map[string]any{"id": "r1", "status": "completed", "output": []any{}, "usage": map[string]any{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}})
+	count := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count++
+		if count == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":{"message":"rate limit"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "data: "+string(completed))
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	exec := NewGrokCLIExecutor(base)
+	body, _ := json.Marshal(map[string]any{"input": []any{}})
+	req := &Request{
+		Provider: "grok-cli",
+		Model: "grok-cli/grok-4.5",
+		BaseURL: ts.URL,
+		AccessToken: "grok-at-123",
+		Body: body,
+		StreamConfig: &StreamConfig{FetchTimeoutMs: 5000, StreamIdleTimeoutMs: 5000, StreamReadinessTimeoutMs: 5000},
+	}
+
+	start := time.Now()
+	_, err := exec.Execute(context.Background(), req)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("expected retry success, got error: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("requests=%d, want 2", count)
+	}
+	if elapsed < 1900*time.Millisecond {
+		t.Fatalf("retry delay too short: %v", elapsed)
+	}
+}
+
+func TestGrokCLIExecutor_Retry_502ThenSuccess(t *testing.T) {
+	completed, _ := json.Marshal(map[string]any{"type": "response.completed", "response": map[string]any{"id": "r1", "status": "completed", "output": []any{}, "usage": map[string]any{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}})
+	count := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count++
+		if count == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":{"message":"bad gateway"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "data: "+string(completed))
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	exec := NewGrokCLIExecutor(base)
+	body, _ := json.Marshal(map[string]any{"input": []any{}})
+	req := &Request{
+		Provider: "grok-cli",
+		Model: "grok-cli/grok-4.5",
+		BaseURL: ts.URL,
+		AccessToken: "grok-at-123",
+		Body: body,
+		StreamConfig: &StreamConfig{FetchTimeoutMs: 5000, StreamIdleTimeoutMs: 5000, StreamReadinessTimeoutMs: 5000},
+	}
+
+	start := time.Now()
+	_, err := exec.Execute(context.Background(), req)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("expected retry success, got error: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("requests=%d, want 2", count)
+	}
+	if elapsed < 1400*time.Millisecond {
+		t.Fatalf("retry delay too short: %v", elapsed)
+	}
+}
+
+func TestGrokCLIExecutor_Retry_429MaxAttempts(t *testing.T) {
+	count := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"message":"rate limit"}}`))
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	exec := NewGrokCLIExecutor(base)
+	body, _ := json.Marshal(map[string]any{"input": []any{}})
+	req := &Request{
+		Provider: "grok-cli",
+		Model: "grok-cli/grok-4.5",
+		BaseURL: ts.URL,
+		AccessToken: "grok-at-123",
+		Body: body,
+		StreamConfig: &StreamConfig{FetchTimeoutMs: 5000, StreamIdleTimeoutMs: 5000, StreamReadinessTimeoutMs: 5000},
+	}
+
+	_, err := exec.Execute(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error after max retries")
+	}
+	if count != 2 {
+		t.Fatalf("requests=%d, want 2", count)
+	}
+	upErr, ok := err.(*UpstreamError)
+	if !ok || upErr.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 UpstreamError, got %T %v", err, err)
+	}
+}
+
+func TestGrokCLIExecutor_Retry_NoRetryOnAuth(t *testing.T) {
+	count := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"unauthorized"}}`))
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	exec := NewGrokCLIExecutor(base)
+	body, _ := json.Marshal(map[string]any{"input": []any{}})
+	req := &Request{
+		Provider: "grok-cli",
+		Model: "grok-cli/grok-4.5",
+		BaseURL: ts.URL,
+		AccessToken: "grok-at-123",
+		Body: body,
+		StreamConfig: &StreamConfig{FetchTimeoutMs: 5000, StreamIdleTimeoutMs: 5000, StreamReadinessTimeoutMs: 5000},
+	}
+
+	_, err := exec.Execute(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if count != 1 {
+		t.Fatalf("requests=%d, want 1 (no retry for 401)", count)
 	}
 }

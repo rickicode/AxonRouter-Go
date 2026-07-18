@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
@@ -609,6 +612,49 @@ func grokcliPatchCompletedOutput(payload []byte, byIndex map[int64][]byte, fallb
 	return append([]byte("data: "), patched...)
 }
 
+// grokcliRetryConfig returns the retry policy for a given upstream status code.
+// 429 is retried up to 2 times with a 2s base exponential backoff.
+// 502/503 are retried up to 2 times with a 1.5s base exponential backoff.
+func grokcliRetryConfig(statusCode int) (maxAttempts int, baseDelay time.Duration, retryable bool) {
+	switch statusCode {
+	case http.StatusTooManyRequests:
+		return 2, 2 * time.Second, true
+	case http.StatusBadGateway, http.StatusServiceUnavailable:
+		return 2, 1500 * time.Millisecond, true
+	}
+	return 0, 0, false
+}
+
+// doStreamWithRetry sends the request and retries transient upstream status
+// codes with exponential backoff. It preserves the original request body so it
+// can be re-sent on each attempt.
+func (e *GrokCLIExecutor) doStreamWithRetry(ctx context.Context, url string, headers map[string]string, body []byte, cfg *StreamConfig) (*StreamResult, error) {
+	for attempt := 1; ; attempt++ {
+		result, err := e.DoStreamRequestWithConfig(ctx, "POST", url, headers, body, cfg)
+		if err == nil {
+			return result, nil
+		}
+		var upErr *UpstreamError
+		if !errors.As(err, &upErr) {
+			return nil, err
+		}
+		maxAttempts, baseDelay, retryable := grokcliRetryConfig(upErr.StatusCode)
+		if !retryable || attempt >= maxAttempts {
+			upErr.TranslateErrorBody("grok-cli")
+			return nil, upErr
+		}
+		delay := baseDelay * time.Duration(1<<(attempt-1))
+		if delay > 30*time.Second {
+			delay = 30 * time.Second
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+}
+
 // Execute performs a Grok CLI Responses API call.
 func (e *GrokCLIExecutor) Execute(ctx context.Context, req *Request) (*Response, error) {
 	url := grokcliURL(req)
@@ -623,11 +669,8 @@ func (e *GrokCLIExecutor) Execute(ctx context.Context, req *Request) (*Response,
 	headers := grokcliHeaders(req, sessionID, convID, agentID, reqID, turnIdx)
 
 	cfg := &StreamConfig{ScannerMaxTokenSize: 64 * 1024}
-	streamResult, err := e.DoStreamRequestWithConfig(ctx, "POST", url, headers, body, cfg)
+	streamResult, err := e.doStreamWithRetry(ctx, url, headers, body, cfg)
 	if err != nil {
-		if upErr, ok := err.(*UpstreamError); ok {
-			upErr.TranslateErrorBody(req.Provider)
-		}
 		return nil, err
 	}
 
@@ -695,11 +738,8 @@ func (e *GrokCLIExecutor) ExecuteStream(ctx context.Context, req *Request) (*Str
 	headers := grokcliHeaders(req, sessionID, convID, agentID, reqID, turnIdx)
 
 	cfg := &StreamConfig{ScannerMaxTokenSize: 64 * 1024}
-	result, err := e.DoStreamRequestWithConfig(ctx, "POST", url, headers, body, cfg)
+	result, err := e.doStreamWithRetry(ctx, url, headers, body, cfg)
 	if err != nil {
-		if upErr, ok := err.(*UpstreamError); ok {
-			upErr.TranslateErrorBody(req.Provider)
-		}
 		return nil, err
 	}
 	return result, nil
