@@ -48,6 +48,44 @@ func TestRestoreToSQLiteTargetMatchesBackedUpRowCounts(t *testing.T) {
 	}
 }
 
+func TestRestoreToSQLiteTargetWithEncryptedBackup(t *testing.T) {
+	ctx := context.Background()
+	source := openBackupTestDB(t)
+	seedBackupTestData(t, source)
+
+	password := "strong-password-for-restore-test"
+	var backup bytes.Buffer
+	if err := NewScanner(source).Backup(ctx, &backup, []string{"providers", "api_keys"}, password); err != nil {
+		t.Fatalf("backup source: %v", err)
+	}
+
+	targetPath := filepath.Join(t.TempDir(), "restored-encrypted.db")
+	result, err := Restore(ctx, bytes.NewReader(backup.Bytes()), RestoreOptions{
+		Target:     RestoreTargetSQLite,
+		SQLitePath: targetPath,
+		Password:   password,
+	})
+	if err != nil {
+		t.Fatalf("restore backup: %v", err)
+	}
+	if result.RestartRequired {
+		t.Fatal("sqlite target should not require process restart")
+	}
+	if result.RowsRestored == 0 {
+		t.Fatal("expected restored rows")
+	}
+
+	target := openSQLiteFile(t, targetPath)
+	defer target.Close()
+	for _, table := range []string{"provider_types", "connections", "api_keys", "combos", "combo_steps"} {
+		want := countRows(t, source, table)
+		got := countRows(t, target, table)
+		if got != want {
+			t.Fatalf("%s row count: got %d want %d", table, got, want)
+		}
+	}
+}
+
 func TestRestoreCurrentTargetPausesWriteQueueAndWarnsRestart(t *testing.T) {
 	ctx := context.Background()
 	source := openBackupTestDB(t)

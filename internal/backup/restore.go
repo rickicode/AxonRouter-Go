@@ -2,7 +2,6 @@ package backup
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -38,30 +37,27 @@ type RestoreOptions struct {
 }
 
 type RestoreResult struct {
-	RowsRestored    int
-	TablesRestored  []string
+	RowsRestored   int
+	TablesRestored []string
 	RestartRequired bool
-	Warning         string
+	Warning        string
 }
 
 const currentRestoreRestartWarning = "Process restart required after restore to refresh in-memory caches: connection registry, combo config, model lists, proxy resolver, and quota cache."
+
+// maxBackupLineLength is the largest backup row we will accept. Response-cache
+// and request-log rows can be large, so allow up to 64 MiB per line.
+const maxBackupLineLength = 64 * 1024 * 1024
 
 func Restore(ctx context.Context, src io.Reader, opts RestoreOptions) (RestoreResult, error) {
 	if src == nil {
 		return RestoreResult{}, errors.New("backup restore source is required")
 	}
-	payload, err := io.ReadAll(src)
-	if err != nil {
-		return RestoreResult{}, fmt.Errorf("read backup payload: %w", err)
-	}
-	if opts.Password != "" {
-		payload, err = Decrypt(payload, opts.Password)
-		if err != nil {
-			return RestoreResult{}, fmt.Errorf("decrypt backup payload: %w", err)
-		}
-	}
 
-	header, rows, err := decodeBackupPayload(payload)
+	scanner := bufio.NewScanner(src)
+	scanner.Buffer(make([]byte, 64*1024), maxBackupLineLength)
+
+	header, err := readRestoreHeader(scanner)
 	if err != nil {
 		return RestoreResult{}, err
 	}
@@ -83,14 +79,12 @@ func Restore(ctx context.Context, src io.Reader, opts RestoreOptions) (RestoreRe
 	if err := appdb.RunMigrations(target); err != nil {
 		return RestoreResult{}, fmt.Errorf("run restore migrations: %w", err)
 	}
-	if err := restoreRows(ctx, target, header.Categories, rows); err != nil {
+
+	result, err := restoreRows(ctx, target, header, scanner, opts.Password)
+	if err != nil {
 		return RestoreResult{}, err
 	}
 
-	result := RestoreResult{
-		RowsRestored:   len(rows),
-		TablesRestored: restoredTables(rows),
-	}
 	if opts.Target == RestoreTargetCurrent {
 		result.RestartRequired = true
 		result.Warning = currentRestoreRestartWarning
@@ -98,37 +92,18 @@ func Restore(ctx context.Context, src io.Reader, opts RestoreOptions) (RestoreRe
 	return result, nil
 }
 
-func decodeBackupPayload(payload []byte) (Header, []Row, error) {
-	scanner := bufio.NewScanner(bytes.NewReader(payload))
-	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
-
+func readRestoreHeader(scanner *bufio.Scanner) (Header, error) {
 	if !scanner.Scan() {
 		if err := scanner.Err(); err != nil {
-			return Header{}, nil, fmt.Errorf("read backup header: %w", err)
+			return Header{}, fmt.Errorf("read backup header: %w", err)
 		}
-		return Header{}, nil, errors.New("backup payload is empty")
+		return Header{}, errors.New("backup payload is empty")
 	}
 	var header Header
 	if err := decodeJSONLine(scanner.Text(), &header); err != nil {
-		return Header{}, nil, fmt.Errorf("decode backup header: %w", err)
+		return Header{}, fmt.Errorf("decode backup header: %w", err)
 	}
-
-	var rows []Row
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		var row Row
-		if err := decodeJSONLine(line, &row); err != nil {
-			return Header{}, nil, fmt.Errorf("decode backup row: %w", err)
-		}
-		rows = append(rows, normalizeRow(row))
-	}
-	if err := scanner.Err(); err != nil {
-		return Header{}, nil, fmt.Errorf("read backup rows: %w", err)
-	}
-	return header, rows, nil
+	return header, nil
 }
 
 func decodeJSONLine(line string, dest any) error {
@@ -146,42 +121,6 @@ func validateHeader(header Header) error {
 	}
 	_, err := normalizeCategories(header.Categories)
 	return err
-}
-
-func normalizeRow(row Row) Row {
-	data := make(map[string]any, len(row.Data))
-	for key, value := range row.Data {
-		data[key] = normalizeJSONValue(value)
-	}
-	row.Data = data
-	return row
-}
-
-func normalizeJSONValue(value any) any {
-	switch v := value.(type) {
-	case json.Number:
-		if i, err := v.Int64(); err == nil {
-			return i
-		}
-		if f, err := v.Float64(); err == nil {
-			return f
-		}
-		return v.String()
-	case map[string]any:
-		out := make(map[string]any, len(v))
-		for key, nested := range v {
-			out[key] = normalizeJSONValue(nested)
-		}
-		return out
-	case []any:
-		out := make([]any, len(v))
-		for i, nested := range v {
-			out[i] = normalizeJSONValue(nested)
-		}
-		return out
-	default:
-		return v
-	}
 }
 
 func openRestoreTarget(opts RestoreOptions) (*sql.DB, func(), error) {
@@ -232,15 +171,15 @@ func appendRestoreAuthToken(dsn, token string) (string, error) {
 	return u.String(), nil
 }
 
-func restoreRows(ctx context.Context, target *sql.DB, categories []string, rows []Row) error {
+func restoreRows(ctx context.Context, target *sql.DB, header Header, scanner *bufio.Scanner, password string) (RestoreResult, error) {
 	if _, err := target.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
-		return fmt.Errorf("disable restore foreign keys: %w", err)
+		return RestoreResult{}, fmt.Errorf("disable restore foreign keys: %w", err)
 	}
 	defer target.ExecContext(context.Background(), "PRAGMA foreign_keys=ON")
 
 	tx, err := target.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin restore transaction: %w", err)
+		return RestoreResult{}, fmt.Errorf("begin restore transaction: %w", err)
 	}
 	committed := false
 	defer func() {
@@ -249,21 +188,128 @@ func restoreRows(ctx context.Context, target *sql.DB, categories []string, rows 
 		}
 	}()
 
-	for _, table := range deleteOrder(categories) {
+	for _, table := range deleteOrder(header.Categories) {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+quoteIdentifier(table)); err != nil {
-			return fmt.Errorf("delete restore table %s: %w", table, err)
+			return RestoreResult{}, fmt.Errorf("delete restore table %s: %w", table, err)
 		}
 	}
-	for _, row := range rows {
-		if err := insertRestoreRow(ctx, tx, row); err != nil {
+
+	batch := make([]Row, 0, 100)
+	var currentTable string
+	var rowsRestored int
+	seenTables := make(map[string]bool)
+
+	flush := func(table string) error {
+		if len(batch) == 0 {
+			return nil
+		}
+		if err := insertRestoreBatch(ctx, tx, table, batch); err != nil {
 			return err
 		}
+		rowsRestored += len(batch)
+		seenTables[table] = true
+		batch = batch[:0]
+		return nil
 	}
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		row, err := decodeRestoreRow(line, header.Encrypted, password)
+		if err != nil {
+			return RestoreResult{}, err
+		}
+		if currentTable == "" {
+			currentTable = row.Table
+		}
+		if row.Table != currentTable {
+			if err := flush(currentTable); err != nil {
+				return RestoreResult{}, err
+			}
+			currentTable = row.Table
+		}
+		batch = append(batch, row)
+		if len(batch) >= 100 {
+			if err := flush(currentTable); err != nil {
+				return RestoreResult{}, err
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return RestoreResult{}, fmt.Errorf("read backup rows: %w", err)
+	}
+	if err := flush(currentTable); err != nil {
+		return RestoreResult{}, err
+	}
+
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit restore transaction: %w", err)
+		return RestoreResult{}, fmt.Errorf("commit restore transaction: %w", err)
 	}
 	committed = true
-	return nil
+
+	tables := make([]string, 0, len(seenTables))
+	for table := range seenTables {
+		tables = append(tables, table)
+	}
+	sort.Strings(tables)
+
+	return RestoreResult{
+		RowsRestored:   rowsRestored,
+		TablesRestored: tables,
+	}, nil
+}
+
+func decodeRestoreRow(line string, encrypted bool, password string) (Row, error) {
+	if encrypted {
+		plaintext, err := DecryptLine(line, password)
+		if err != nil {
+			return Row{}, fmt.Errorf("decrypt backup row: %w", err)
+		}
+		line = string(plaintext)
+	}
+	var row Row
+	if err := decodeJSONLine(line, &row); err != nil {
+		return Row{}, fmt.Errorf("decode backup row: %w", err)
+	}
+	row.Data = normalizeRowData(row.Data)
+	return row, nil
+}
+
+func normalizeRowData(data map[string]any) map[string]any {
+	out := make(map[string]any, len(data))
+	for key, value := range data {
+		out[key] = normalizeJSONValue(value)
+	}
+	return out
+}
+
+func normalizeJSONValue(value any) any {
+	switch v := value.(type) {
+	case json.Number:
+		if i, err := v.Int64(); err == nil {
+			return i
+		}
+		if f, err := v.Float64(); err == nil {
+			return f
+		}
+		return v.String()
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, nested := range v {
+			out[key] = normalizeJSONValue(nested)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, nested := range v {
+			out[i] = normalizeJSONValue(nested)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 func deleteOrder(categories []string) []string {
@@ -284,43 +330,40 @@ func deleteOrder(categories []string) []string {
 	return tables
 }
 
-func insertRestoreRow(ctx context.Context, tx *sql.Tx, row Row) error {
-	if row.Table == "" {
-		return errors.New("restore row table is required")
+func insertRestoreBatch(ctx context.Context, tx *sql.Tx, table string, rows []Row) error {
+	if len(rows) == 0 {
+		return nil
 	}
-	if len(row.Data) == 0 {
-		return fmt.Errorf("restore row for table %s has no data", row.Table)
-	}
-	columns := make([]string, 0, len(row.Data))
-	for column := range row.Data {
+	// All rows in a batch come from the same table, so columns are identical.
+	columns := make([]string, 0, len(rows[0].Data))
+	for column := range rows[0].Data {
 		columns = append(columns, column)
 	}
 	sort.Strings(columns)
 
-	placeholders := make([]string, len(columns))
-	quotedColumns := make([]string, len(columns))
-	args := make([]any, len(columns))
-	for i, column := range columns {
-		placeholders[i] = "?"
-		quotedColumns[i] = quoteIdentifier(column)
-		args[i] = row.Data[column]
+	valueGroups := make([]string, 0, len(rows))
+	args := make([]any, 0, len(rows)*len(columns))
+	for _, row := range rows {
+		placeholders := make([]string, len(columns))
+		for i, column := range columns {
+			placeholders[i] = "?"
+			args = append(args, row.Data[column])
+		}
+		valueGroups = append(valueGroups, "("+strings.Join(placeholders, ", ")+")")
 	}
-	query := "INSERT INTO " + quoteIdentifier(row.Table) + " (" + strings.Join(quotedColumns, ", ") + ") VALUES (" + strings.Join(placeholders, ", ") + ")"
+
+	quotedColumns := make([]string, len(columns))
+	for i, column := range columns {
+		quotedColumns[i] = quoteIdentifier(column)
+	}
+
+	query := "INSERT INTO " + quoteIdentifier(table) + " (" + strings.Join(quotedColumns, ", ") + ") VALUES " + strings.Join(valueGroups, ", ")
 	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
-		return fmt.Errorf("insert restore row into %s: %w", row.Table, err)
+		return fmt.Errorf("insert restore batch into %s: %w", table, err)
 	}
 	return nil
 }
 
-func restoredTables(rows []Row) []string {
-	seen := make(map[string]bool)
-	for _, row := range rows {
-		seen[row.Table] = true
-	}
-	tables := make([]string, 0, len(seen))
-	for table := range seen {
-		tables = append(tables, table)
-	}
-	sort.Strings(tables)
-	return tables
+func quoteIdentifier(identifier string) string {
+	return `"` + strings.ReplaceAll(identifier, `"`, `""`) + `"`
 }

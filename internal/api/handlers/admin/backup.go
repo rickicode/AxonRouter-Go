@@ -21,19 +21,25 @@ func NewBackupHandler(database *sql.DB, writeQueue *appdb.WriteQueue) *BackupHan
 }
 
 func (h *BackupHandler) Download(c *gin.Context) {
-	categories := parseBackupCategories(c.Query("categories"))
-	if err := validateBackupCategories(categories); err != nil {
+	var req struct {
+		Categories []string `json:"categories"`
+		Password   string   `json:"password"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	password := c.Query("password")
+	if err := validateBackupCategories(req.Categories); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	c.Header("Content-Type", "application/x-ndjson")
 	c.Header("Content-Disposition", `attachment; filename="axonrouter-backup.ndjson"`)
 	c.Header("Transfer-Encoding", "chunked")
 	c.Status(http.StatusOK)
 
-	if err := backup.NewScanner(h.db).Backup(c.Request.Context(), c.Writer, categories, password); err != nil {
+	if err := backup.NewScanner(h.db).Backup(c.Request.Context(), c.Writer, req.Categories, req.Password); err != nil {
 		c.Error(err)
 		return
 	}
@@ -71,21 +77,6 @@ func (h *BackupHandler) Restore(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": result})
-}
-
-func parseBackupCategories(raw string) []string {
-	if raw == "" {
-		return nil
-	}
-	parts := strings.Split(raw, ",")
-	categories := make([]string, 0, len(parts))
-	for _, part := range parts {
-		category := strings.TrimSpace(part)
-		if category != "" {
-			categories = append(categories, category)
-		}
-	}
-	return categories
 }
 
 func validateBackupCategories(categories []string) error {

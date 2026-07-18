@@ -28,7 +28,9 @@ func TestBackupHandlerDownloadStreamsSelectedCategories(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodGet, "/api/admin/backup/download?categories=providers,config", nil)
+	body := strings.NewReader(`{"categories":["providers","config"]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/backup/download", body)
+	c.Request.Header.Set("Content-Type", "application/json")
 	h.Download(c)
 
 	if w.Code != http.StatusOK {
@@ -76,7 +78,9 @@ func TestBackupHandlerDownloadRejectsUnknownCategory(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodGet, "/api/admin/backup/download?categories=missing", nil)
+	body := strings.NewReader(`{"categories":["missing"]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/backup/download", body)
+	c.Request.Header.Set("Content-Type", "application/json")
 	h.Download(c)
 
 	if w.Code != http.StatusBadRequest {

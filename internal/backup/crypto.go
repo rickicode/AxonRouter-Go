@@ -5,9 +5,11 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"golang.org/x/crypto/pbkdf2"
 )
@@ -24,6 +26,12 @@ var (
 	ErrMissingPassword      = errors.New("backup encryption password is required")
 	ErrInvalidEncryptedData = errors.New("invalid encrypted backup data")
 )
+
+// keyCache avoids re-deriving the PBKDF2 key for every row when encrypting or
+// decrypting a whole backup. A backup operation is single-threaded, but the
+// cache is guarded for safety.
+var keyCache = make(map[string][]byte)
+var keyCacheMu sync.Mutex
 
 func Encrypt(plaintext []byte, password string) ([]byte, error) {
 	if password == "" {
@@ -81,7 +89,7 @@ func Decrypt(ciphertext []byte, password string) ([]byte, error) {
 }
 
 func newGCM(password string, salt []byte) (cipher.AEAD, error) {
-	key := pbkdf2.Key([]byte(password), salt, pbkdf2Iterations, keySize, sha256.New)
+	key := deriveKey(password, salt)
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("create AES cipher: %w", err)
@@ -93,10 +101,41 @@ func newGCM(password string, salt []byte) (cipher.AEAD, error) {
 	return gcm, nil
 }
 
+func deriveKey(password string, salt []byte) []byte {
+	cacheKey := password + "|" + string(salt)
+	keyCacheMu.Lock()
+	defer keyCacheMu.Unlock()
+	if key, ok := keyCache[cacheKey]; ok {
+		return key
+	}
+	key := pbkdf2.Key([]byte(password), salt, pbkdf2Iterations, keySize, sha256.New)
+	keyCache[cacheKey] = key
+	return key
+}
+
 func randomBytes(size int) ([]byte, error) {
 	buf := make([]byte, size)
 	if _, err := io.ReadFull(rand.Reader, buf); err != nil {
 		return nil, err
 	}
 	return buf, nil
+}
+
+// EncryptLine encrypts a single plaintext line and returns it as a base64
+// string suitable for inclusion in a line-based backup file.
+func EncryptLine(plaintext []byte, password string) (string, error) {
+	sealed, err := Encrypt(plaintext, password)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(sealed), nil
+}
+
+// DecryptLine decrypts a base64-encoded line produced by EncryptLine.
+func DecryptLine(ciphertext string, password string) ([]byte, error) {
+	sealed, err := base64.StdEncoding.DecodeString(ciphertext)
+	if err != nil {
+		return nil, ErrInvalidEncryptedData
+	}
+	return Decrypt(sealed, password)
 }

@@ -14,6 +14,7 @@ func TestBackupFormatTypesExposeVersionedEnvelopeAndRows(t *testing.T) {
 		"Version":    "int",
 		"Categories": "[]string",
 		"CreatedAt":  "int64",
+		"Encrypted":  "bool",
 	}
 	for name, wantType := range fields {
 		field, ok := headerType.FieldByName(name)

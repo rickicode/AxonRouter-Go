@@ -6,7 +6,7 @@ describe('backupApi', () => {
     vi.restoreAllMocks();
   });
 
-  it('downloadBackup requests selected categories and password without JSON parsing', async () => {
+  it('downloadBackup posts selected categories and password as JSON body', async () => {
     const blob = new Blob(['backup'], { type: 'application/x-ndjson' });
     vi.stubGlobal(
       'fetch',
@@ -24,8 +24,9 @@ describe('backupApi', () => {
     });
 
     const [url, options] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(url).toBe('/api/admin/backup/download?categories=providers%2Cconfig&password=secret');
-    expect(options.method).toBe('GET');
+    expect(url).toBe('/api/admin/backup/download');
+    expect(options.method).toBe('POST');
+    expect(options.body).toBe(JSON.stringify({ categories: ['providers', 'config'], password: 'secret' }));
     expect(result).toBe(blob);
   });
 

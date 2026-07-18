@@ -3,6 +3,7 @@ package backup
 import (
 	"bufio"
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"reflect"
@@ -44,9 +45,9 @@ func TestWriterWritesHeaderAndRowsAsNDJSON(t *testing.T) {
 	}
 }
 
-func TestWriterEncryptsNDJSONWhenPasswordProvided(t *testing.T) {
+func TestWriterEncryptsRowsWhenPasswordProvided(t *testing.T) {
 	var buf bytes.Buffer
-		header := Header{Format: FormatName, Version: FormatVersion, Categories: []string{"providers"}, CreatedAt: 1700000000}
+	header := Header{Format: FormatName, Version: FormatVersion, Categories: []string{"providers"}, CreatedAt: 1700000000}
 	row := Row{Table: "settings", Data: map[string]any{"key": "api_url", "value": "https://example.test"}}
 	password := "correct horse battery staple"
 
@@ -61,20 +62,38 @@ func TestWriterEncryptsNDJSONWhenPasswordProvided(t *testing.T) {
 		t.Fatalf("Close() error = %v", err)
 	}
 
-	if bytes.Contains(buf.Bytes(), []byte("settings")) || bytes.Contains(buf.Bytes(), []byte("api_url")) {
-		t.Fatalf("encrypted backup contains plaintext row data: %q", buf.Bytes())
+	lines := splitLines(t, buf.Bytes())
+	if len(lines) != 2 {
+		t.Fatalf("expected header + 1 row, got %d lines", len(lines))
 	}
 
-	plaintext, err := Decrypt(buf.Bytes(), password)
+	var gotHeader Header
+	if err := json.Unmarshal([]byte(lines[0]), &gotHeader); err != nil {
+		t.Fatalf("decode header: %v", err)
+	}
+	if !gotHeader.Encrypted {
+		t.Fatal("expected header.Encrypted = true")
+	}
+
+	if bytes.Contains([]byte(lines[1]), []byte("settings")) || bytes.Contains([]byte(lines[1]), []byte("api_url")) {
+		t.Fatalf("encrypted backup row contains plaintext data: %q", lines[1])
+	}
+
+	plaintext, err := DecryptLine(lines[1], password)
 	if err != nil {
-		t.Fatalf("Decrypt() error = %v", err)
+		t.Fatalf("DecryptLine() error = %v", err)
 	}
-	gotHeader, gotRows := decodeBackupNDJSON(t, plaintext)
-	if !reflect.DeepEqual(gotHeader, header) {
-		t.Fatalf("header = %#v, want %#v", gotHeader, header)
+	var gotRow Row
+	if err := json.Unmarshal(plaintext, &gotRow); err != nil {
+		t.Fatalf("decode decrypted row: %v", err)
 	}
-	if !reflect.DeepEqual(gotRows, []Row{row}) {
-		t.Fatalf("rows = %#v, want %#v", gotRows, []Row{row})
+	if !reflect.DeepEqual(gotRow, row) {
+		t.Fatalf("row = %#v, want %#v", gotRow, row)
+	}
+
+	// Encrypted row must be valid base64.
+	if _, err := base64.StdEncoding.DecodeString(lines[1]); err != nil {
+		t.Fatalf("encrypted row is not valid base64: %v", err)
 	}
 }
 
@@ -120,4 +139,17 @@ func decodeBackupNDJSON(t *testing.T, data []byte) (Header, []Row) {
 		t.Fatalf("scan backup: %v", err)
 	}
 	return header, rows
+}
+
+func splitLines(t *testing.T, data []byte) []string {
+	t.Helper()
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	var lines []string
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan lines: %v", err)
+	}
+	return lines
 }

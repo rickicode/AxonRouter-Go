@@ -10,6 +10,7 @@ type Header struct {
 	Version    int      `json:"version"`
 	Categories []string `json:"categories"`
 	CreatedAt  int64    `json:"created_at"`
+	Encrypted  bool     `json:"encrypted"`
 }
 
 type Row struct {

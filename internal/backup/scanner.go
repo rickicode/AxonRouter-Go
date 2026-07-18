@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -136,8 +135,4 @@ func normalizeSQLValue(value any) any {
 	default:
 		return v
 	}
-}
-
-func quoteIdentifier(identifier string) string {
-	return `"` + strings.ReplaceAll(identifier, `"`, `""`) + `"`
 }
