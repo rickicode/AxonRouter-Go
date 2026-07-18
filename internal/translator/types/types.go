@@ -14,6 +14,7 @@ const (
 	FormatCodexResponses Format = "openai-responses"
 	FormatAntigravity    Format = "antigravity"
 	FormatKiro           Format = "kiro"
+	FormatGrokCLI        Format = "grok-cli"
 )
 
 // TranslateFunc translates a request body from one format to another.
