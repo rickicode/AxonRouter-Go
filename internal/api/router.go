@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/config"
@@ -52,24 +53,28 @@ import (
 
 // Router holds all dependencies and mounts all routes.
 type Router struct {
-	engine     *gin.Engine
-	db         *sql.DB
+	engine *gin.Engine
+	db *sql.DB
 	writeQueue *db.WriteQueue // centralized async writer; drained on Shutdown
-	store      *connstate.Store
-	elig       *connstate.EligibilityManager
-	combo      *combo.Handler
-	tracker    *usage.Tracker
-	authMgr    *auth.Manager
+	store *connstate.Store
+	elig *connstate.EligibilityManager
+	combo *combo.Handler
+	tracker *usage.Tracker
+	authMgr *auth.Manager
 
 	// HTTP/HTTPS servers
-	httpServer  *http.Server
+	httpServer *http.Server
 	httpsServer *http.Server
 
 	// Background goroutines
-	quotaScheduler  *background.QuotaSchedulerDB
-	usageFlush      *background.UsageFlush
-	cleanup         *background.Cleanup
+	quotaScheduler *background.QuotaSchedulerDB
+	usageFlush *background.UsageFlush
+	cleanup *background.Cleanup
 	rateLimitProber *background.RateLimitProber
+
+	// Shutdown may be invoked more than once (e.g. service manager + manual
+	// restart after restore). Guard the cleanup so it is idempotent.
+	shutdownOnce sync.Once
 }
 
 // Config holds configuration for creating a router.
@@ -575,19 +580,24 @@ func (r *Router) IsHTTPSActive() bool {
 
 // Shutdown gracefully stops servers and background goroutines.
 func (r *Router) Shutdown() {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if r.httpServer != nil {
-		_ = r.httpServer.Shutdown(ctx)
+	if r == nil {
+		return
 	}
-	if r.httpsServer != nil {
-		_ = r.httpsServer.Shutdown(ctx)
-	}
-	r.tracker.Stop()
-	r.quotaScheduler.Stop()
-	r.usageFlush.Stop()
-	r.cleanup.Stop()
-	r.rateLimitProber.Stop()
+	r.shutdownOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if r.httpServer != nil {
+			_ = r.httpServer.Shutdown(ctx)
+		}
+		if r.httpsServer != nil {
+			_ = r.httpsServer.Shutdown(ctx)
+		}
+		r.tracker.Stop()
+		r.quotaScheduler.Stop()
+		r.usageFlush.Stop()
+		r.cleanup.Stop()
+		r.rateLimitProber.Stop()
+	})
 }
 
 // Engine returns the underlying Gin engine (for testing).

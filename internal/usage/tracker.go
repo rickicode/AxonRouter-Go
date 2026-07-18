@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -44,13 +45,14 @@ type LogEntry struct {
 // through the single writer goroutine, preserving the "one SQLite writer"
 // invariant and preventing WAL write-lock contention with cooldown/ban writes.
 type Tracker struct {
-	buffer      chan *LogEntry
-	db          *sql.DB
-	writeQueue  *db.WriteQueue // optional; nil → direct DB writes (legacy)
+	buffer chan *LogEntry
+	db *sql.DB
+	writeQueue *db.WriteQueue // optional; nil → direct DB writes (legacy)
 	flushTicker *time.Ticker
-	batchSize   int
-	stopCh      chan struct{}
-	dropped     atomic.Int64
+	batchSize int
+	stopCh chan struct{}
+	stopOnce sync.Once
+	dropped atomic.Int64
 }
 
 // SetWriteQueue routes all batch inserts through the centralized WriteQueue.
@@ -212,8 +214,10 @@ func (t *Tracker) writeBatchDirect(database *sql.DB, batch []*LogEntry) error {
 
 // Stop gracefully shuts down the tracker, flushing remaining entries.
 func (t *Tracker) Stop() {
-	close(t.stopCh)
-	t.flushTicker.Stop()
+	t.stopOnce.Do(func() {
+		close(t.stopCh)
+		t.flushTicker.Stop()
+	})
 }
 
 // BufferLen returns the current buffer length (for monitoring).
