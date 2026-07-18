@@ -10,8 +10,7 @@
 	import { formatTokens, formatCost, formatCount, activeRequests, loadActiveRequests, quotaSavings, quotaNextReset, loadQuotaSummary } from '$lib/stores';
 	import { toast } from 'svelte-sonner';
 
-	import { logout } from '$lib/auth';
-	import BarChartIcon from '@lucide/svelte/icons/bar-chart';
+import BarChartIcon from '@lucide/svelte/icons/bar-chart';
 	import CalendarIcon from '@lucide/svelte/icons/calendar';
 	import KeyIcon from '@lucide/svelte/icons/key';
 	import CpuIcon from '@lucide/svelte/icons/cpu';
@@ -26,9 +25,10 @@
 	import ZapIcon from '@lucide/svelte/icons/zap';
 	import CodeIcon from '@lucide/svelte/icons/code';
 
-	let data = $state<UsageData | null>(null);
-	let loading = $state(false);
-	let apiKeys = $state<APIKeyItem[]>([]);
+let data = $state<UsageData | null>(null);
+let loading = $state(false);
+let error = $state<string | null>(null);
+let apiKeys = $state<APIKeyItem[]>([]);
 	let providers = $state<Provider[]>([]);
 
 	let from = $state('');
@@ -100,30 +100,36 @@ function fmtReset(iso?: string): string {
   return `${m}m`;
 }
 
-	async function load(silent = false) {
-		if (!from || !to) return;
-		if (!silent) loading = true;
-		try {
-			const statusCode = filterStatus ? parseInt(filterStatus, 10) : undefined;
-			const res = await usageApi.get({
-				from,
-				to,
-				granularity,
-				api_key_id: filterKey || undefined,
-				provider_id: filterProvider || undefined,
-				model_id: filterModel || undefined,
-				modality: filterModality || undefined,
-				status_code: statusCode,
-			});
-			data = res.data;
-			await tick();
-			updateCharts();
-		} catch (err) {
-			if (!silent) toast.error('Failed to load usage: ' + (err instanceof Error ? err.message : 'unknown error'));
-		} finally {
-			if (!silent) loading = false;
-		}
-	}
+async function load(silent = false) {
+  if (!from || !to) return;
+  if (!silent) {
+    loading = true;
+    error = null;
+  }
+  try {
+    const statusCode = filterStatus ? parseInt(filterStatus, 10) : undefined;
+    const res = await usageApi.get({
+      from,
+      to,
+      granularity,
+      api_key_id: filterKey || undefined,
+      provider_id: filterProvider || undefined,
+      model_id: filterModel || undefined,
+      modality: filterModality || undefined,
+      status_code: statusCode,
+    });
+    data = res.data;
+    await tick();
+    updateCharts();
+  } catch (err) {
+    if (!silent) {
+      error = err instanceof Error ? err.message : 'unknown error';
+      toast.error('Failed to load usage: ' + error);
+    }
+  } finally {
+    if (!silent) loading = false;
+  }
+}
 
 	function setRange(start: string, end: string, g: 'day' | 'month' = 'day') {
 		from = start;
@@ -394,7 +400,62 @@ return `${lbl}: ${v.toLocaleString()}`;
 	</Card>
 
 
-	{#if data}
+	{#if loading}
+<!-- Loading skeleton: mirrors the dashboard layout so users see progress instead of the auth error card. -->
+<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
+  {#each Array(8) as _}
+    <Card class="shadow-card">
+      <CardContent class="p-3 space-y-3">
+        <div class="h-3 w-16 animate-pulse rounded bg-muted"></div>
+        <div class="h-6 w-20 animate-pulse rounded bg-muted"></div>
+      </CardContent>
+    </Card>
+  {/each}
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+  {#each Array(2) as _}
+    <Card class="shadow-card">
+      <CardContent class="p-3 flex items-center gap-3">
+        <div class="size-10 rounded-full animate-pulse bg-muted"></div>
+        <div class="space-y-2">
+          <div class="h-3 w-28 animate-pulse rounded bg-muted"></div>
+          <div class="h-5 w-16 animate-pulse rounded bg-muted"></div>
+        </div>
+      </CardContent>
+    </Card>
+  {/each}
+</div>
+<Card class="shadow-card">
+  <CardContent class="p-4 h-56 animate-pulse rounded bg-muted"></CardContent>
+</Card>
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  {#each Array(2) as _}
+    <Card class="shadow-card">
+      <CardContent class="p-4 h-64 animate-pulse rounded bg-muted"></CardContent>
+    </Card>
+  {/each}
+</div>
+<div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+  {#each Array(4) as _}
+    <Card class="shadow-card overflow-hidden">
+      <CardContent class="p-0 space-y-0">
+        <div class="h-9 bg-muted animate-pulse"></div>
+        {#each Array(4) as _}
+          <div class="h-12 border-t border-border/60 bg-card/60 animate-pulse"></div>
+        {/each}
+      </CardContent>
+    </Card>
+  {/each}
+</div>
+{:else if error}
+<Card class="shadow-card">
+  <CardContent class="p-6 flex flex-col items-center gap-3 text-center">
+    <AlertTriangleIcon class="size-8 text-destructive" />
+    <p class="text-body-sm text-muted-foreground">Gagal memuat data usage: {error}</p>
+    <Button variant="default" size="sm" class="text-body-sm cursor-pointer" onclick={() => void load()}>Coba lagi</Button>
+  </CardContent>
+</Card>
+{:else if data}
 		<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
 			<Card class="shadow-card">
 				<CardContent class="p-3">
@@ -574,14 +635,13 @@ return `${lbl}: ${v.toLocaleString()}`;
 				{/if}
 			</CardContent>
 		</Card>
-	{:else if !loading}
-		<Card class="shadow-card">
-			<CardContent class="p-6 flex flex-col items-center gap-3 text-center">
-				<p class="text-body-sm text-muted-foreground">Sesi berakhir atau data gagal dimuat. Silakan login ulang.</p>
-				<Button variant="default" size="sm" class="text-body-sm cursor-pointer" onclick={() => logout()}>Login ulang</Button>
-			</CardContent>
-		</Card>
-	{/if}
+{:else}
+<Card class="shadow-card">
+  <CardContent class="p-6 flex flex-col items-center gap-3 text-center">
+    <p class="text-body-sm text-muted-foreground">Tidak ada data usage untuk rentang waktu ini.</p>
+  </CardContent>
+</Card>
+{/if}
 </div>
 
 {#snippet breakdownTable(
