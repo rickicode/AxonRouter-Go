@@ -37,6 +37,7 @@ Thumbs.db
 
 # AI tools
 .claude/
+.cortexkit/
 .rpiv/
 .serena/
 .playwright-mcp/
