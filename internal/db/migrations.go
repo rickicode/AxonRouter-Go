@@ -491,11 +491,12 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 		{"llama-4-scout", "Llama 4 Scout", 0.00011, 0.00034, 0, 0, 0},
 		{"llama-4-maverick", "Llama 4 Maverick", 0.0002, 0.0006, 0, 0, 0},
 
-// ── xAI Grok ──
-	{"grok-3-mini", "Grok 3 Mini", 0.0003, 0.0005, 0, 0, 0},
-	{"grok-3-mini-fast", "Grok 3 Mini Fast", 0.0006, 0.004, 0, 0, 0},
-	{"grok-4.3", "Grok 4.3", 0.003, 0.015, 0, 0, 0},
+	// ── xAI Grok ──
+	{"grok-build", "Grok Build", 0.0003, 0.0005, 0, 0, 0},
 	{"grok-4.5", "Grok 4.5", 0.005, 0.025, 0, 0, 0},
+	{"grok-4.5-high", "Grok 4.5 (High)", 0.005, 0.025, 0, 0, 0},
+	{"grok-4.5-medium", "Grok 4.5 (Medium)", 0.005, 0.025, 0, 0, 0},
+	{"grok-4.5-low", "Grok 4.5 (Low)", 0.005, 0.025, 0, 0, 0},
 
 		// ── Moonshot Kimi ──
 		{"kimi-k2", "Kimi K2", 0.000559, 0.002378, 0, 0, 0},
@@ -599,9 +600,7 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 
 		// ── Misc ──
 		{"big-pickle", "Big Pickle", 0.0005, 0.001, 0, 0, 0},
-
-		{"grok-build-0.1", "Grok Build", 0.0003, 0.0005, 0, 0, 0},
-	}
+}
 	// Guard: seed must never contain duplicate model IDs or $0 (free-tier) rows.
 	// Every seeded model must carry a real price; duplicates would surface as
 	// duplicate cards in the UI. Fail the migration loudly if this is violated.

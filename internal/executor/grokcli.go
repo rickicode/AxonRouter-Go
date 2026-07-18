@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -14,9 +15,10 @@ import (
 )
 
 const (
-	defaultGrokCLIBaseURL       = "https://cli-chat-proxy.grok.com/v1/responses"
-	defaultGrokCLIClientVersion = "0.2.93"
-	defaultGrokCLIUserAgent     = "xai-grok-cli/" + defaultGrokCLIClientVersion
+	defaultGrokCLIBaseURL = "https://cli-chat-proxy.grok.com/v1/responses"
+	defaultGrokCLIClientVersion = "0.2.99"
+	defaultGrokCLIClientIdentifier = "grok-shell"
+	defaultGrokCLIUserAgent = "grok-shell/" + defaultGrokCLIClientVersion + " (linux; x86_64)"
 )
 
 var grokCLIDeviceIDCache sync.Map
@@ -87,6 +89,24 @@ func jwtClaimFromToken(token, claim string) string {
 	return ""
 }
 
+func grokcliUserTurnCount(body []byte) int {
+	input := gjson.GetBytes(body, "input")
+	if !input.IsArray() {
+		return 1
+	}
+	n := 0
+	input.ForEach(func(_, item gjson.Result) bool {
+		if item.Get("role").String() == "user" {
+			n++
+		}
+		return true
+	})
+	if n == 0 {
+		return 1
+	}
+	return n
+}
+
 func grokcliHeaders(req *Request) map[string]string {
 	deviceID := grokcliDeviceID(req)
 	sessionID := uuid.NewString()
@@ -119,20 +139,21 @@ func grokcliHeaders(req *Request) map[string]string {
 	model := ExtractModel(req.Model)
 
 	headers := map[string]string{
-		"Content-Type":             "application/json",
-		"Accept":                   "text/event-stream",
-		"Authorization":            "Bearer " + token,
-		"X-XAI-Token-Auth":         "xai-grok-cli",
-		"x-grok-client-version":    defaultGrokCLIClientVersion,
-		"x-grok-client-identifier": deviceID,
-		"User-Agent":               ua,
-		"x-grok-session-id":        sessionID,
-		"x-grok-conv-id":           convID,
-		"x-grok-req-id":            reqID,
-		"x-grok-turn-idx":          "0",
-		"x-grok-agent-id":          deviceID,
-		"x-grok-model-override":    model,
-		"Connection":               "Keep-Alive",
+		"Content-Type": "application/json",
+		"Accept": "text/event-stream",
+		"Authorization": "Bearer " + token,
+		"x-xai-token-auth": "xai-grok-cli",
+		"x-grok-client-version": defaultGrokCLIClientVersion,
+		"x-grok-client-identifier": defaultGrokCLIClientIdentifier,
+		"x-grok-client-mode": "headless",
+		"User-Agent": ua,
+		"x-grok-session-id": sessionID,
+		"x-grok-conv-id": convID,
+		"x-grok-req-id": reqID,
+		"x-grok-turn-idx": strconv.Itoa(grokcliUserTurnCount(req.Body)),
+		"x-grok-agent-id": deviceID,
+		"x-grok-model-override": model,
+		"Connection": "Keep-Alive",
 	}
 	if email != "" {
 		headers["x-email"] = email
@@ -150,27 +171,28 @@ func grokcliHeaders(req *Request) map[string]string {
 }
 
 var grokCLIAllowedTopLevel = map[string]bool{
-	"model":                true,
-	"input":                true,
-	"instructions":         true,
-	"tools":                true,
-	"tool_choice":          true,
-	"parallel_tool_calls":  true,
-	"reasoning":            true,
-	"metadata":             true,
-	"max_output_tokens":    true,
-	"temperature":          true,
-	"top_p":                true,
-	"presence_penalty":     true,
-	"frequency_penalty":    true,
-	"seed":                 true,
-	"service_tier":         true,
-	"include":              true,
-	"stream":               true,
-	"store":                true,
-	"user":                 true,
+	"model": true,
+	"input": true,
+	"instructions": true,
+	"tools": true,
+	"tool_choice": true,
+	"parallel_tool_calls": true,
+	"reasoning": true,
+	"metadata": true,
+	"text": true,
+	"max_output_tokens": true,
+	"temperature": true,
+	"top_p": true,
+	"presence_penalty": true,
+	"frequency_penalty": true,
+	"seed": true,
+	"service_tier": true,
+	"include": true,
+	"stream": true,
+	"store": true,
+	"user": true,
 	"previous_response_id": true,
-	"prompt_cache_key":     true,
+	"prompt_cache_key": true,
 }
 
 var grokCLIAllowedInputTypes = map[string]bool{
@@ -214,20 +236,34 @@ func grokcliRequestBody(req *Request) ([]byte, error) {
 		}
 	}
 	baseModel := model
-	if strings.HasSuffix(baseModel, "-reasoning") {
-		baseModel = strings.TrimSuffix(baseModel, "-reasoning")
-		if _, ok := reasoning["effort"]; !ok {
-			reasoning["effort"] = "medium"
+	effort := ""
+	for _, level := range []string{"xhigh", "high", "medium", "low"} {
+		suffix := "-" + level
+		if strings.HasSuffix(baseModel, suffix) {
+			baseModel = strings.TrimSuffix(baseModel, suffix)
+			effort = level
+			break
 		}
 	}
-	if strings.HasSuffix(baseModel, "-thinking") {
+	if effort == "" && strings.HasSuffix(baseModel, "-reasoning") {
+		baseModel = strings.TrimSuffix(baseModel, "-reasoning")
+		effort = "medium"
+	}
+	if effort == "" && strings.HasSuffix(baseModel, "-thinking") {
 		baseModel = strings.TrimSuffix(baseModel, "-thinking")
-		if _, ok := reasoning["effort"]; !ok {
-			reasoning["effort"] = "medium"
-		}
+		effort = "medium"
+	}
+	// Back-compat: older clients may refer to the pre-release build alias.
+	if baseModel == "grok-build-0.1" {
+		baseModel = "grok-build"
 	}
 	if baseModel != model {
 		body["model"] = baseModel
+	}
+	if effort != "" {
+		if _, ok := reasoning["effort"]; !ok {
+			reasoning["effort"] = effort
+		}
 	}
 	if len(reasoning) > 0 {
 		body["reasoning"] = reasoning

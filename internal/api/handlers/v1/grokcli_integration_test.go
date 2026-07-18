@@ -63,13 +63,13 @@ func TestGrokCLI_EndToEnd(t *testing.T) {
 			t.Fatal("response writer does not support flushing")
 		}
 
-		created, _ := json.Marshal(map[string]any{
-			"type": "response.created",
-			"response": map[string]any{
-				"id":    "resp_grok_123",
-				"model": "grok-build-0.1",
-			},
-		})
+	created, _ := json.Marshal(map[string]any{
+		"type": "response.created",
+		"response": map[string]any{
+			"id": "resp_grok_123",
+			"model": "grok-build",
+		},
+	})
 		writeSSE(w, flusher, created)
 
 		delta, _ := json.Marshal(map[string]any{
@@ -78,20 +78,20 @@ func TestGrokCLI_EndToEnd(t *testing.T) {
 		})
 		writeSSE(w, flusher, delta)
 
-		completed, _ := json.Marshal(map[string]any{
-			"type": "response.completed",
-			"response": map[string]any{
-				"id":     "resp_grok_123",
-				"model":  "grok-build-0.1",
-				"status": "completed",
-				"output": []any{},
-				"usage": map[string]any{
-					"input_tokens":  5,
-					"output_tokens": 4,
-					"total_tokens":  9,
-				},
+	completed, _ := json.Marshal(map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id": "resp_grok_123",
+			"model": "grok-build",
+			"status": "completed",
+			"output": []any{},
+			"usage": map[string]any{
+				"input_tokens":  5,
+				"output_tokens": 4,
+				"total_tokens":  9,
 			},
-		})
+		},
+	})
 		writeSSE(w, flusher, completed)
 	}))
 	defer upstream.Close()
@@ -111,7 +111,7 @@ func TestGrokCLI_EndToEnd(t *testing.T) {
 	h.store.SeedConnection("grok-cli-conn", "grok-cli", "ready", 0)
 	h.elig.RecomputeAll()
 
-	body := []byte(`{"model":"grok-cli/grok-build-0.1","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	body := []byte(`{"model":"grok-cli/grok-build","messages":[{"role":"user","content":"hi"}],"stream":true}`)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))

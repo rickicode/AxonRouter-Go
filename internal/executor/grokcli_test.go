@@ -70,19 +70,23 @@ func TestGrokCLIExecutor_Headers(t *testing.T) {
 	}
 
 	mustEqual := map[string]string{
-		"Authorization":         "Bearer grok-at-123",
-		"X-Xai-Token-Auth":      "xai-grok-cli",
-		"x-grok-turn-idx":       "0",
-		"x-grok-model-override": "grok-4.5",
-		"x-email":               "user@example.com",
-		"x-userid":              "grok-sub-abc",
+		"Authorization":            "Bearer grok-at-123",
+		"X-Xai-Token-Auth":         "xai-grok-cli",
+		"x-grok-client-identifier": "grok-shell",
+		"x-grok-client-version":    "0.2.99",
+		"x-grok-client-mode":       "headless",
+		"User-Agent":               "grok-shell/0.2.99 (linux; x86_64)",
+		"x-grok-turn-idx":          "1",
+		"x-grok-model-override":    "grok-4.5",
+		"x-email":                  "user@example.com",
+		"x-userid":                 "grok-sub-abc",
 	}
 	for name, want := range mustEqual {
 		if got := gotHeaders.Get(name); got != want {
 			t.Errorf("%s=%q, want %q", name, got, want)
 		}
 	}
-	for _, name := range []string{"x-grok-client-version", "x-grok-client-identifier", "User-Agent", "x-grok-session-id", "x-grok-conv-id", "x-grok-req-id", "x-grok-agent-id"} {
+	for _, name := range []string{"x-grok-session-id", "x-grok-conv-id", "x-grok-req-id", "x-grok-agent-id"} {
 		if got := gotHeaders.Get(name); got == "" {
 			t.Errorf("%s is empty", name)
 		}
@@ -92,8 +96,8 @@ func TestGrokCLIExecutor_Headers(t *testing.T) {
 	if firstDeviceID == "" {
 		t.Fatal("deviceId not persisted")
 	}
-	if gotHeaders.Get("x-grok-client-identifier") != firstDeviceID {
-		t.Fatalf("deviceId not used as client identifier")
+	if gotHeaders.Get("x-grok-agent-id") != firstDeviceID {
+		t.Fatalf("deviceId not used as agent id")
 	}
 
 	body2, _ := json.Marshal(map[string]any{"messages": []any{}})

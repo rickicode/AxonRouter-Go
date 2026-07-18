@@ -56,11 +56,11 @@ func TestGetProviderModels_GrokCLIIncludesExpectedModels(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"grok-cli/grok-build-0.1":  "xai",
-		"grok-cli/grok-4.5":        "xai",
-		"grok-cli/grok-4.3":        "xai",
-		"grok-cli/grok-3-mini":     "xai",
-		"grok-cli/grok-3-mini-fast": "xai",
+		"grok-cli/grok-build":       "xai",
+		"grok-cli/grok-4.5":         "xai",
+		"grok-cli/grok-4.5-high":    "xai",
+		"grok-cli/grok-4.5-medium":  "xai",
+		"grok-cli/grok-4.5-low":     "xai",
 	}
 	for id, owner := range want {
 		found := false

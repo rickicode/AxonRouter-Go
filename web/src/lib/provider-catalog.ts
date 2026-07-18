@@ -582,6 +582,7 @@ export const PROVIDER_CATALOG: ProviderMeta[] = [
     displayName: 'Grok CLI (Grok Build)',
     icon: 'terminal',
     textIcon: 'GC',
+    iconFile: '/providers/grok-cli.png',
     category: 'oauth',
     description: 'Grok CLI via OAuth device-code flow or imported access token. Routes to the Grok Build CLI proxy.',
     format: 'grok-cli',
