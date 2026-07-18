@@ -115,11 +115,12 @@ CREATE TABLE IF NOT EXISTS request_logs (
   created_at INTEGER NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_request_logs_timestamp ON request_logs(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider_type_id, timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_request_logs_connection ON request_logs(connection_id, timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_request_logs_model ON request_logs(model_id, timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_connections_provider ON connections(provider_type_id, status);
+	CREATE INDEX IF NOT EXISTS idx_request_logs_timestamp ON request_logs(timestamp DESC);
+	CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider_type_id, timestamp DESC);
+	CREATE INDEX IF NOT EXISTS idx_request_logs_connection ON request_logs(connection_id, timestamp DESC);
+	CREATE INDEX IF NOT EXISTS idx_request_logs_model ON request_logs(model_id, timestamp DESC);
+	CREATE INDEX IF NOT EXISTS idx_request_logs_usage ON request_logs(provider_type_id, model_id, timestamp DESC, status_code);
+	CREATE INDEX IF NOT EXISTS idx_connections_provider ON connections(provider_type_id, status);
 CREATE INDEX IF NOT EXISTS idx_connections_status ON connections(status);
 
 CREATE TABLE IF NOT EXISTS settings (
