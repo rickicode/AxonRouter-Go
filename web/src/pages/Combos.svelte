@@ -12,7 +12,7 @@ import ComboModal from '$lib/components/ComboModal.svelte';
 import { toast } from 'svelte-sonner';
 import PencilIcon from '@lucide/svelte/icons/pencil';
 import Trash2Icon from '@lucide/svelte/icons/trash-2';
-import type { Combo } from '$lib/api';
+import type { Combo, ComboMetric } from '$lib/api';
 
 let showCreate = $state(false);
 let showEdit = $state(false);
@@ -20,20 +20,40 @@ let editingCombo = $state<Combo | null>(null);
 let showDelete = $state(false);
 let deleteTarget = $state<Combo | null>(null);
 let deleteLoading = $state(false);
+let metrics = $state<ComboMetric[]>([]);
+let metricsTotals = $state<ComboMetric | null>(null);
+let metricsLoading = $state(false);
+let metricsError = $state<string | null>(null);
 
 onMount(() => {
-  document.title = 'Combos — AxonRouter';
-  loadCombos();
+	document.title = 'Combos — AxonRouter';
+	loadCombos();
+	loadMetrics();
 });
 
+async function loadMetrics() {
+	metricsLoading = true;
+	metricsError = null;
+	try {
+		const res = await combosApi.metrics();
+		metrics = res.data || [];
+		metricsTotals = res.totals || null;
+	} catch (err) {
+		metricsError = err instanceof Error ? err.message : 'Failed to load combo metrics';
+	} finally {
+		metricsLoading = false;
+	}
+}
+
 async function toggleCombo(combo: Combo) {
-  try {
-    await combosApi.update(combo.id, { is_active: !combo.is_active });
-    toast.success(combo.is_active ? 'Combo disabled' : 'Combo enabled');
-    await loadCombos();
-  } catch (err) {
-    toast.error('Update failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-  }
+	try {
+		await combosApi.update(combo.id, { is_active: !combo.is_active });
+		toast.success(combo.is_active ? 'Combo disabled' : 'Combo enabled');
+		await loadCombos();
+		await loadMetrics();
+	} catch (err) {
+		toast.error('Update failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+	}
 }
 
 function confirmDelete(combo: Combo) {
@@ -42,23 +62,43 @@ function confirmDelete(combo: Combo) {
 }
 
 async function handleDelete() {
-  if (!deleteTarget) return;
-  deleteLoading = true;
-  try {
-    await combosApi.delete(deleteTarget.id);
-    toast.success('Combo deleted');
-    showDelete = false;
-    await loadCombos();
-  } catch (err) {
-    toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-  } finally {
-    deleteLoading = false;
-  }
+	if (!deleteTarget) return;
+	deleteLoading = true;
+	try {
+		await combosApi.delete(deleteTarget.id);
+		toast.success('Combo deleted');
+		showDelete = false;
+		await loadCombos();
+		await loadMetrics();
+	} catch (err) {
+		toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+	} finally {
+		deleteLoading = false;
+	}
 }
 
 const enabledCount = $derived($combos.filter(c => c.is_active).length);
 const smartCount = $derived($combos.filter(c => c.is_smart).length);
 const totalCombos = $derived($combosPagination.total || $combos.length);
+const strategyOptions = ['priority', 'round-robin', 'weighted', 'random', 'least-used', 'fusion'];
+
+function strategyLabel(opt: string) {
+	if (opt === 'priority') return 'Priority';
+	if (opt === 'round-robin') return 'Round Robin';
+	if (opt === 'random') return 'Random';
+	if (opt === 'least-used') return 'Least Used';
+	if (opt === 'fusion') return 'Fusion';
+	return 'Weighted';
+}
+
+function strategyDescription(opt: string) {
+	if (opt === 'priority') return 'Try steps in order. First success wins.';
+	if (opt === 'round-robin') return 'Rotate to a different step each request.';
+	if (opt === 'random') return 'Pick a random step each request.';
+	if (opt === 'least-used') return 'Prefer the model with the fewest recent successful calls.';
+	if (opt === 'fusion') return 'Parallel panel + judge synthesis.';
+	return 'Higher-weight steps are picked more often.';
+}
 
 function goToPage(page: number) {
   loadCombos(page, $combosPagination.per_page);
@@ -69,8 +109,9 @@ function openEdit(combo: Combo) {
   showEdit = true;
 }
 
-function handleSave() {
-  loadCombos();
+async function handleSave() {
+	await loadCombos();
+	await loadMetrics();
 }
 
 $effect(() => {
@@ -123,9 +164,41 @@ $effect(() => {
       <Button onclick={() => showCreate = true} class="text-button-md rounded-sm px-5">
         Add combo
       </Button>
-    </div>
+	</div>
 
-    <!-- Table -->
+	<!-- Metrics cards -->
+	{#if metricsLoading}
+		<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+			{#each [1, 2, 3, 4] as _}
+				<Card class="shadow-card p-4">
+					<div class="h-12 bg-muted animate-pulse rounded-md"></div>
+				</Card>
+			{/each}
+		</div>
+	{:else if metricsError}
+		<p class="text-caption text-destructive">Metrics: {metricsError}</p>
+	{:else if metricsTotals}
+		<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+			<Card class="shadow-card p-4">
+				<p class="text-caption text-muted-foreground mb-1">Total requests</p>
+				<p class="text-display-md">{metricsTotals.requests.toLocaleString()}</p>
+			</Card>
+			<Card class="shadow-card p-4">
+				<p class="text-caption text-muted-foreground mb-1">Successes</p>
+				<p class="text-display-md text-emerald-400">{metricsTotals.successes.toLocaleString()}</p>
+			</Card>
+			<Card class="shadow-card p-4">
+				<p class="text-caption text-muted-foreground mb-1">Errors</p>
+				<p class="text-display-md text-destructive">{metricsTotals.errors.toLocaleString()}</p>
+			</Card>
+			<Card class="shadow-card p-4">
+				<p class="text-caption text-muted-foreground mb-1">Avg latency</p>
+				<p class="text-display-md">{Math.round(metricsTotals.avg_latency_ms)} ms</p>
+			</Card>
+		</div>
+	{/if}
+
+	<!-- Table -->
     {#if $combos.length > 0}
       <Card class="shadow-card overflow-hidden p-0">
         <table class="w-full text-body-sm">
@@ -221,30 +294,60 @@ $effect(() => {
       </Card>
     {/if}
 
-    {#if $combosPagination.total_pages > 1}
-      <div class="flex items-center justify-between">
-        <span class="text-caption text-muted-foreground">
-          Page {$combosPagination.page} of {$combosPagination.total_pages}
-        </span>
-        <div class="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            class="text-caption-mono rounded-sm"
-            disabled={$combosPagination.page <= 1}
-            onclick={() => goToPage($combosPagination.page - 1)}
-          >Prev</Button>
-          <Button
-            variant="outline"
-            size="sm"
-            class="text-caption-mono rounded-sm"
-            disabled={$combosPagination.page >= $combosPagination.total_pages}
-            onclick={() => goToPage($combosPagination.page + 1)}
-          >Next</Button>
-        </div>
-      </div>
-    {/if}
-  {/if}
+	{#if $combosPagination.total_pages > 1}
+		<div class="flex items-center justify-between">
+			<span class="text-caption text-muted-foreground">
+				Page {$combosPagination.page} of {$combosPagination.total_pages}
+			</span>
+			<div class="flex gap-2">
+				<Button
+					variant="outline"
+					size="sm"
+					class="text-caption-mono rounded-sm"
+					disabled={$combosPagination.page <= 1}
+					onclick={() => goToPage($combosPagination.page - 1)}
+				>Prev</Button>
+				<Button
+					variant="outline"
+					size="sm"
+					class="text-caption-mono rounded-sm"
+					disabled={$combosPagination.page >= $combosPagination.total_pages}
+					onclick={() => goToPage($combosPagination.page + 1)}
+				>Next</Button>
+			</div>
+		</div>
+	{/if}
+
+	<Card class="shadow-card p-4">
+		<div class="space-y-4">
+			<div>
+				<p class="text-body-sm-strong text-foreground">Combo strategies</p>
+				<p class="text-caption text-muted-foreground">
+					Each combo uses one routing strategy. A request tries steps in the order shown until one succeeds, except for Fusion which runs all panels in parallel.
+				</p>
+			</div>
+			<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+				{#each strategyOptions as opt}
+					<div class="space-y-1 rounded-md border border-border bg-muted/30 p-3">
+						<p class="text-body-sm-strong text-foreground">{strategyLabel(opt)}</p>
+						<p class="text-caption text-muted-foreground">{strategyDescription(opt)}</p>
+					</div>
+				{/each}
+			</div>
+			<div class="space-y-1">
+				<p class="text-body-sm-strong text-foreground">Smart combo</p>
+				<p class="text-caption text-muted-foreground">
+					Enable Smart combo to let the gateway pick this combo automatically when the user sends a goal keyword such as
+					<span class="font-mono">auto</span>,
+					<span class="font-mono">balanced</span>,
+					<span class="font-mono">economy</span>, or
+					<span class="font-mono">premium</span>.
+					Selection uses live telemetry from request logs. If a combo name is requested directly, it always wins over smart routing.
+				</p>
+			</div>
+		</div>
+	</Card>
+{/if}
 </div>
 
 <ComboModal bind:open={showCreate} combo={null} onSave={handleSave} />

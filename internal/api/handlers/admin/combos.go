@@ -338,6 +338,84 @@ func (h *ComboHandler) RemoveStep(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+// ComboMetric aggregates request_logs usage for a single combo.
+type ComboMetric struct {
+	ComboID        string  `json:"combo_id"`
+	ComboName      string  `json:"combo_name"`
+	Requests       int     `json:"requests"`
+	Successes      int     `json:"successes"`
+	Errors         int     `json:"errors"`
+	InputTokens    int     `json:"input_tokens"`
+	OutputTokens   int     `json:"output_tokens"`
+	AvgLatencyMs   float64 `json:"avg_latency_ms"`
+}
+
+// Metrics returns aggregate usage counts per combo from request_logs.
+// Query param `window` is the lookback window in seconds (default 86400, max 2592000).
+func (h *ComboHandler) Metrics(c *gin.Context) {
+	window := 24 * time.Hour
+	if w, err := strconv.Atoi(c.DefaultQuery("window", "86400")); err == nil && w > 0 {
+		maxWindow := 30 * 24 * time.Hour
+		if time.Duration(w)*time.Second < maxWindow {
+			window = time.Duration(w) * time.Second
+		} else {
+			window = maxWindow
+		}
+	}
+	cutoff := time.Now().Add(-window).UnixMilli()
+
+	rows, err := h.db.Query(`
+		SELECT
+			c.id,
+			c.name,
+			COUNT(r.id) AS requests,
+			COALESCE(SUM(CASE WHEN r.status_code >= 200 AND r.status_code < 400 THEN 1 ELSE 0 END), 0) AS successes,
+			COALESCE(SUM(CASE WHEN r.status_code >= 400 OR r.status_code IS NULL THEN 1 ELSE 0 END), 0) AS errors,
+			COALESCE(SUM(r.input_tokens), 0) AS input_tokens,
+			COALESCE(SUM(r.output_tokens), 0) AS output_tokens,
+			COALESCE(AVG(r.latency_ms), 0) AS avg_latency_ms
+		FROM combos c
+		LEFT JOIN request_logs r ON r.combo_id = c.id AND r.timestamp > ?
+		GROUP BY c.id, c.name
+		ORDER BY requests DESC
+	`, cutoff)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	metrics := []ComboMetric{}
+	totals := ComboMetric{ComboName: "total"}
+	for rows.Next() {
+		var m ComboMetric
+		var avg sql.NullFloat64
+		if err := rows.Scan(&m.ComboID, &m.ComboName, &m.Requests, &m.Successes, &m.Errors, &m.InputTokens, &m.OutputTokens, &avg); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if avg.Valid {
+			m.AvgLatencyMs = avg.Float64
+		}
+		metrics = append(metrics, m)
+		totals.Requests += m.Requests
+		totals.Successes += m.Successes
+		totals.Errors += m.Errors
+		totals.InputTokens += m.InputTokens
+		totals.OutputTokens += m.OutputTokens
+	}
+
+	if totals.Requests > 0 {
+		weightedLatencySum := 0.0
+		for _, m := range metrics {
+			weightedLatencySum += m.AvgLatencyMs * float64(m.Requests)
+		}
+		totals.AvgLatencyMs = weightedLatencySum / float64(totals.Requests)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": metrics, "totals": totals})
+}
+
 // isValidComboStrategy returns true for supported strategy values.
 func isValidComboStrategy(strategy string) bool {
 	return combo.IsValidStrategy(strategy)

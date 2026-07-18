@@ -278,44 +278,8 @@ async function handleSave() {
 						</button>
 					{/each}
 				</div>
-			<p class="text-caption text-muted-foreground">{strategyDescription(strategy)}</p>
-
-			<details class="group rounded-md border border-border bg-card/50">
-				<summary class="cursor-pointer list-none p-3 text-body-sm-strong text-muted-foreground hover:text-foreground transition-colors">
-					<span class="flex items-center gap-2">
-						<span>Strategy reference</span>
-						<span class="text-caption text-muted-foreground group-open:hidden">(click to expand)</span>
-					</span>
-				</summary>
-				<div class="space-y-3 border-t border-border p-3 text-body-sm text-muted-foreground">
-					<div class="space-y-2">
-						<p class="text-body-sm-strong text-foreground">Routing strategies</p>
-						<ul class="space-y-1.5">
-							{#each strategyOptions as opt}
-								<li class="flex flex-col gap-0.5">
-									<span class="text-body-sm-strong text-foreground">{strategyLabel(opt)}</span>
-									<span class="text-caption">{strategyDescription(opt)}</span>
-								</li>
-							{/each}
-						</ul>
-					</div>
-					<div class="space-y-2">
-						<p class="text-body-sm-strong text-foreground">Smart combo</p>
-						<p class="text-caption">
-							Enable this to let the gateway pick this combo automatically when the user sends a goal keyword such as
-							<span class="font-mono">auto</span>,
-							<span class="font-mono">balanced</span>,
-							<span class="font-mono">economy</span>, or
-							<span class="font-mono">premium</span>.
-						</p>
-						<p class="text-caption">
-							Selection uses live telemetry from request logs: models with high error rates or burn rates are avoided.
-							If a combo name is requested directly, it always wins over smart routing.
-						</p>
-					</div>
-				</div>
-			</details>
-		</div>
+		<p class="text-caption text-muted-foreground">{strategyDescription(strategy)}</p>
+	</div>
 
 		{#if strategy === 'fusion'}
 		<div class="space-y-3 border border-border rounded-md p-3 bg-card/50">

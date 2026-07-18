@@ -299,10 +299,11 @@ func New(cfg Config) *Router {
 		g.GET("/oauth/:sessionId/poll", oauthH.PollOAuth)
 		g.POST("/oauth/callback", oauthH.SubmitOAuthCallback)
 
-		// Combos
-		g.GET("/combos", comboH.List)
-		g.GET("/combos/:id", comboH.Get)
-		g.POST("/combos", comboH.Create)
+	// Combos
+	g.GET("/combos", comboH.List)
+	g.GET("/combos/metrics", comboH.Metrics) // NOTE: touched by combo metrics feature
+	g.GET("/combos/:id", comboH.Get)
+	g.POST("/combos", comboH.Create)
 		g.PATCH("/combos/:id", comboH.Update)
 		g.DELETE("/combos/:id", comboH.Delete)
 		g.POST("/combos/:id/steps", comboH.AddStep)
@@ -404,7 +405,7 @@ func New(cfg Config) *Router {
 		g.POST("/optimization/preview", optimizationH.PreviewCompression)
 
 		// Backup / Restore
-		g.GET("/backup/download", backupH.Download)
+		g.POST("/backup/download", backupH.Download)
 		g.POST("/backup/restore", backupH.Restore)
 
 		// Developers

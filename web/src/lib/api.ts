@@ -268,16 +268,13 @@ data?: unknown;
 }
 
 export const backupApi = {
-downloadBackup: ({ categories, password }: DownloadBackupOptions) => {
-const params = new URLSearchParams();
-if (categories.length > 0) params.set("categories", categories.join(","));
-if (password) params.set("password", password);
-const query = params.toString();
-return fetchBlob(`/backup/download${query ? `?${query}` : ""}`, {
-method: "GET",
-timeout_ms: 120000,
-});
-},
+  downloadBackup: ({ categories, password }: DownloadBackupOptions) => {
+    return fetchBlob("/backup/download", {
+      method: "POST",
+      body: JSON.stringify({ categories, password: password || undefined }),
+      timeout_ms: 120000,
+    });
+  },
 
 restoreBackup: ({ file, target, password, sqlitePath, tursoUrl, tursoToken }: RestoreBackupOptions) => {
 const body = new FormData();
@@ -649,8 +646,24 @@ export interface CreateComboPayload extends Partial<Combo> {
   steps?: ComboStepInput[];
 }
 
+export interface ComboMetric {
+	combo_id: string;
+	combo_name: string;
+	requests: number;
+	successes: number;
+	errors: number;
+	input_tokens: number;
+	output_tokens: number;
+	avg_latency_ms: number;
+}
+
+export interface ComboMetricsResponse {
+	data: ComboMetric[];
+	totals: ComboMetric;
+}
+
 export const combosApi = {
-  list: (params?: { page?: number; per_page?: number }) => {
+	list: (params?: { page?: number; per_page?: number }) => {
     const searchParams = new URLSearchParams();
     if (params?.page) searchParams.set("page", params.page.toString());
     if (params?.per_page) searchParams.set("per_page", params.per_page.toString());
@@ -683,10 +696,12 @@ export const combosApi = {
       body: JSON.stringify(step),
     }),
 
-  removeStep: (stepId: string) =>
-    fetchApi<void>(`/combos/steps/${stepId}`, {
-      method: "DELETE",
-    }),
+	removeStep: (stepId: string) =>
+		fetchApi<void>(`/combos/steps/${stepId}`, {
+			method: "DELETE",
+		}),
+	metrics: (windowSeconds = 86400) =>
+		fetchApi<ComboMetricsResponse>(`/combos/metrics?window=${windowSeconds}`),
 };
 // Model Pricing API
 export interface ModelPricing {
