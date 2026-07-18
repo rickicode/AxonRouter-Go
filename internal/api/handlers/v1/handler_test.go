@@ -273,6 +273,50 @@ func TestProactiveRefreshToken_CopilotLead(t *testing.T) {
 	}
 }
 
+func TestProactiveRefreshToken_GrokCliLead(t *testing.T) {
+	h := newTestHandler(t)
+	refreshed := false
+	h.authMgr.RegisterService(auth.ProviderGrokCli, &fakeOAuthService{
+		refreshFunc: func(ctx context.Context, creds *auth.Credentials) (*auth.Credentials, error) {
+			refreshed = true
+			return &auth.Credentials{
+				AccessToken:  "fresh-token",
+				RefreshToken: creds.RefreshToken,
+				ExpiresAt:    time.Now().Add(time.Hour),
+			}, nil
+		},
+	})
+
+	conn := &Connection{
+		ID:             "conn-1",
+		RefreshToken:   "old-refresh",
+		OAuthExpiresAt: time.Now().Add(4 * time.Minute),
+	}
+
+	// Grok CLI must have an explicit 5-minute lead entry.
+	if lead, ok := refreshLeadMs["grok-cli"]; !ok || lead != 5*time.Minute {
+		t.Fatalf("refreshLeadMs missing or invalid grok-cli entry: %v, ok=%v", lead, ok)
+	}
+
+	// Within the 5-minute lead for grok-cli should refresh.
+	if !h.proactiveRefreshToken(context.Background(), conn, "grok-cli") {
+		t.Fatal("expected proactive refresh for grok-cli within lead")
+	}
+	if !refreshed {
+		t.Fatal("expected refresh to be called")
+	}
+
+	// Outside the lead should not refresh.
+	refreshed = false
+	conn.OAuthExpiresAt = time.Now().Add(6 * time.Minute)
+	if h.proactiveRefreshToken(context.Background(), conn, "grok-cli") {
+		t.Fatal("expected no proactive refresh for grok-cli outside lead")
+	}
+	if refreshed {
+		t.Fatal("expected refresh not to be called outside lead")
+	}
+}
+
 func TestExecuteWithRetry_GivesUpAfter3(t *testing.T) {
 	h := newTestHandler(t)
 
