@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.9] - 2026-07-18
 
 ### Added
+- **Grok CLI provider (`grok-cli/`)** — seeded `grok-cli` as a built-in OAuth provider with models `grok-build-0.1`, `grok-4.5`, `grok-4.3`, `grok-3-mini`, and `grok-3-mini-fast`, plus representative pricing. Added the dashboard provider card and a `grokcli` OAuth service implementing xAI OIDC device-code discovery, polling, token refresh, and JWT identity parsing.
 - **Combo strategies `random` and `least-used`** — `random` picks an unweighted random step per request; `least-used` orders steps by recent successful calls from `request_logs` (cached 30s) so the least-used model is tried first.
 - **Combo strategy `fusion`** — parallel panel execution of combo steps followed by a configurable judge model that synthesizes the panel answers. Includes `fusion_config` storage and UI fields for judge model, min panel, straggler grace, hard timeout, and source anonymization.
 - **Capability auto-switch for combos** — detects vision, PDF, audio, video, and tool requirements from the request body and reorders combo steps so models that satisfy the required capabilities are tried first. Model capability registry lives in `internal/models/capabilities.json`.
