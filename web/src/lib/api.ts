@@ -456,6 +456,21 @@ export const connectionsApi = {
     }),
 };
 
+export interface ImportOAuthTokenPayload {
+  provider: string;
+  access_token: string;
+  refresh_token: string;
+  expires_at: number;
+  email?: string;
+  provider_specific_data?: Record<string, string>;
+}
+
+export interface ImportOAuthTokenResponse {
+  id: string;
+  name: string;
+  status: string;
+}
+
 export const oauthApi = {
   start: (provider: string, providerName?: string) =>
     fetchApi<{
@@ -480,6 +495,12 @@ export const oauthApi = {
     fetchApi<{ ok: boolean }>("/oauth/callback", {
       method: "POST",
       body: JSON.stringify({ redirect_url: redirectUrl }),
+    }),
+
+  importToken: (data: ImportOAuthTokenPayload) =>
+    fetchApi<ImportOAuthTokenResponse>("/oauth/import-token", {
+      method: "POST",
+      body: JSON.stringify(data),
     }),
 };
 

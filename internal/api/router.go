@@ -305,6 +305,7 @@ func New(cfg Config) *Router {
 		g.POST("/oauth/start", oauthH.StartOAuth)
 		g.GET("/oauth/:sessionId/poll", oauthH.PollOAuth)
 		g.POST("/oauth/callback", oauthH.SubmitOAuthCallback)
+		g.POST("/oauth/import-token", oauthH.ImportToken)
 
 	// Combos
 	g.GET("/combos", comboH.List)
