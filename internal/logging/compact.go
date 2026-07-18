@@ -1,13 +1,13 @@
 package logging
 
 import (
-  "context"
-  "fmt"
-  "io"
-  "log/slog"
-  "os"
-  "strings"
-  "time"
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"strings"
+	"time"
 )
 
 const (
@@ -41,8 +41,34 @@ func colorEnabled() bool {
 	return os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"
 }
 
+var logKeyColors = map[string]string{
+	"provider":   cyan,
+	"conn":       dim,
+	"name":       magenta + bold,
+	"host":       cyan,
+	"request_id": yellow,
+	"client_ip":  blue,
+	"user_agent": green,
+	"status":     magenta,
+	"method":     green,
+	"proxy":      yellow,
+	"path":       cyan,
+	"lat":        white,
+	"error":      red,
+	"body":       white,
+	"model":      yellow,
+	"account_id": blue,
+}
+
+func colorForKey(key string) string {
+	if c, ok := logKeyColors[key]; ok {
+		return c
+	}
+	return reset
+}
+
 func (h *CompactHandler) Handle(_ context.Context, r slog.Record) error {
-  ts := r.Time.In(time.Local).Format("2006-01-02 15:04:05")
+	ts := r.Time.In(time.Local).Format("2006-01-02 15:04:05")
 	level := r.Level.String()
 	if level == "WARNING" {
 		level = "WARN"
@@ -77,21 +103,8 @@ func (h *CompactHandler) Handle(_ context.Context, r slog.Record) error {
 		dim, ts, reset, levelColor, level, reset, r.Message))
 
 	r.Attrs(func(a slog.Attr) bool {
-		keyColor := reset
-		switch a.Key {
-		case "provider":
-			keyColor = cyan
-		case "model":
-			keyColor = yellow
-		case "name":
-			keyColor = magenta + bold
-		case "account_id":
-			keyColor = blue
-		case "conn":
-			keyColor = dim
-		case "host":
-			keyColor = cyan
-		default:
+		keyColor := colorForKey(a.Key)
+		if keyColor == reset {
 			keyColor = dim
 		}
 		sb.WriteString(fmt.Sprintf(" %s%s%s=%v", keyColor, a.Key, reset, a.Value))

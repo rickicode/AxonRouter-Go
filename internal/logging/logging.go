@@ -1,12 +1,14 @@
 package logging
 
 import (
-  "context"
-  "log"
-  "log/slog"
-  "os"
-  "strings"
-  "time"
+	"bytes"
+	"context"
+	"io"
+	"log"
+	"log/slog"
+	"os"
+	"strings"
+	"time"
 )
 
 // Logger is the application-wide structured logger.
@@ -17,16 +19,22 @@ func Init(format string) {
 	switch format {
 	case "json":
 		Logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
-  case "text":
-    textOpts := &slog.HandlerOptions{
-      ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
-        if a.Key == slog.TimeKey {
-          return slog.String(slog.TimeKey, a.Value.Time().In(time.Local).Format("2006-01-02 15:04:05"))
-        }
-        return a
-      },
-    }
-    Logger = slog.New(slog.NewTextHandler(os.Stdout, textOpts))
+	case "text":
+		textOpts := &slog.HandlerOptions{
+			ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+				if a.Key == slog.TimeKey {
+					return slog.String(slog.TimeKey, a.Value.Time().In(time.Local).Format("2006-01-02 15:04:05"))
+				}
+				if colorEnabled() {
+					if c := colorForKey(a.Key); c != reset {
+						a.Key = c + a.Key + reset
+					}
+				}
+				return a
+			},
+		}
+		Logger = slog.New(slog.NewTextHandler(&ansiWriter{w: os.Stdout}, textOpts))
+
 	default:
 		h := NewCompactHandler(os.Stdout)
 		Logger = slog.New(&levelHandler{inner: h, level: slog.LevelDebug})
@@ -69,4 +77,44 @@ func (h *levelHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 
 func (h *levelHandler) WithGroup(name string) slog.Handler {
 	return &levelHandler{inner: h.inner.WithGroup(name), level: h.level}
+}
+
+type ansiWriter struct {
+	w io.Writer
+}
+
+func (aw *ansiWriter) Write(p []byte) (int, error) {
+	if _, err := aw.w.Write(unescapeANSICodes(p)); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+func unescapeANSICodes(p []byte) []byte {
+	const prefix = "\\x1b["
+	out := make([]byte, 0, len(p))
+	for i := 0; i < len(p); {
+		j := bytes.Index(p[i:], []byte(prefix))
+		if j < 0 {
+			out = append(out, p[i:]...)
+			break
+		}
+		out = append(out, p[i:i+j]...)
+		i += j + len(prefix)
+		start := i
+		for i < len(p) && p[i] != 'm' {
+			i++
+		}
+		if i < len(p) {
+			seq := append([]byte{0x1b, '['}, p[start:i]...)
+			seq = append(seq, 'm')
+			out = append(out, seq...)
+			i++
+		} else {
+			out = append(out, []byte(prefix)...)
+			out = append(out, p[start:]...)
+			break
+		}
+	}
+	return out
 }
