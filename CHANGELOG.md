@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Grok CLI upstream quota usage** — `grok-cli` connections now display live{{subscription} quota from xAI billing/user endpoints, including monthly included credits, on-demand cap/usage, and prepaid balance. Registered in the quota scheduler alongside Codex, Antigravity, Kiro, and Copilot.
+
 ## [0.3.9] - 2026-07-18
 
 ### Added

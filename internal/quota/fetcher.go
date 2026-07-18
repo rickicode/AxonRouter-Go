@@ -73,10 +73,11 @@ type providerMeta struct {
 // knownProviders maps provider_type_id to display metadata (colors, icons).
 // Display names are loaded from the DB provider_types table at runtime.
 var knownProviders = map[string]providerMeta{
-	"cx":      {DisplayName: "Codex", Color: "#10a37f", IconFile: "codex.svg"},
-	"ag":      {DisplayName: "Antigravity", Color: "#4285f4", IconFile: "antigravity.svg"},
-	"kiro":    {DisplayName: "Kiro", Color: "#ff9900", IconFile: "kiro.svg"},
+	"cx": {DisplayName: "Codex", Color: "#10a37f", IconFile: "codex.svg"},
+	"ag": {DisplayName: "Antigravity", Color: "#4285f4", IconFile: "antigravity.svg"},
+	"kiro": {DisplayName: "Kiro", Color: "#ff9900", IconFile: "kiro.svg"},
 	"copilot": {DisplayName: "GitHub Copilot", Color: "#24292E", IconFile: "copilot.png"},
+	"grok-cli": {DisplayName: "Grok CLI (Grok Build)", Color: "#000000", IconFile: "grok-cli.png"},
 }
 
 // ProviderMeta returns display metadata for a provider type, if known.
@@ -456,14 +457,16 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 	ch := make(chan fetchResult, 1)
 	go func() {
 		var r fetchResult
-		switch providerID {
-		case "cx":
-			r.quotas, r.plan, r.headers, r.err = fetchCodexQuota(token, psd)
-		case "ag":
-			r.quotas, r.plan, r.err = fetchAntigravityQuota(token, psd)
-		case "kiro":
-			r.quotas, r.plan, r.err = fetchKiroQuota(token, psd)
-		case "copilot":
+	switch providerID {
+	case "cx":
+		r.quotas, r.plan, r.headers, r.err = fetchCodexQuota(token, psd)
+	case "ag":
+		r.quotas, r.plan, r.err = fetchAntigravityQuota(token, psd)
+	case "kiro":
+		r.quotas, r.plan, r.err = fetchKiroQuota(token, psd)
+	case "grok-cli":
+		r.quotas, r.plan, r.err = fetchGrokCliQuota(token, psd)
+	case "copilot":
 			// The /user endpoint requires the GitHub OAuth access token, not the
 			// short-lived Copilot token. See OmniRoute open-sse/services/usage.ts:643.
 			r.quotas, r.plan, r.err = fetchCopilotQuota(token)
