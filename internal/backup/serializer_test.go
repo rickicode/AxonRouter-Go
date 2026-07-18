@@ -14,7 +14,7 @@ func TestWriterWritesHeaderAndRowsAsNDJSON(t *testing.T) {
 	header := Header{
 		Format:     FormatName,
 		Version:    FormatVersion,
-		Categories: []string{"core", "logs"},
+		Categories: []string{"providers", "usage"},
 		CreatedAt:  1700000000,
 	}
 	rows := []Row{
@@ -46,7 +46,7 @@ func TestWriterWritesHeaderAndRowsAsNDJSON(t *testing.T) {
 
 func TestWriterEncryptsNDJSONWhenPasswordProvided(t *testing.T) {
 	var buf bytes.Buffer
-	header := Header{Format: FormatName, Version: FormatVersion, Categories: []string{"core"}, CreatedAt: 1700000000}
+		header := Header{Format: FormatName, Version: FormatVersion, Categories: []string{"providers"}, CreatedAt: 1700000000}
 	row := Row{Table: "settings", Data: map[string]any{"key": "api_url", "value": "https://example.test"}}
 	password := "correct horse battery staple"
 

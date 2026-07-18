@@ -22,7 +22,7 @@ func TestScannerBacksUpSelectedCategoryTablesAsNDJSON(t *testing.T) {
 
 	var out bytes.Buffer
 	scanner := NewScanner(database)
-	if err := scanner.Backup(context.Background(), &out, []string{"core"}, ""); err != nil {
+	if err := scanner.Backup(context.Background(), &out, []string{"providers"}, ""); err != nil {
 		t.Fatalf("Backup returned error: %v", err)
 	}
 
@@ -33,11 +33,11 @@ func TestScannerBacksUpSelectedCategoryTablesAsNDJSON(t *testing.T) {
 	if header.Version != FormatVersion {
 		t.Fatalf("header version = %d, want %d", header.Version, FormatVersion)
 	}
-	if got, want := header.Categories, []string{"core"}; len(got) != len(want) || got[0] != want[0] {
+	if got, want := header.Categories, []string{"providers"}; len(got) != len(want) || got[0] != want[0] {
 		t.Fatalf("header categories = %#v, want %#v", got, want)
 	}
-	if len(rows) != 2 {
-		t.Fatalf("row count = %d, want 2: %#v", len(rows), rows)
+	if len(rows) != 3 {
+		t.Fatalf("row count = %d, want 3: %#v", len(rows), rows)
 	}
 	assertRow(t, rows, "provider_types", map[string]any{
 		"id":           "openai",
@@ -45,16 +45,37 @@ func TestScannerBacksUpSelectedCategoryTablesAsNDJSON(t *testing.T) {
 		"created_at":   float64(101),
 	})
 	assertRow(t, rows, "connections", map[string]any{
-		"id":               "conn-1",
+		"id":              "conn-1",
 		"provider_type_id": "openai",
-		"name":             "Primary",
-		"created_at":       float64(202),
+		"name":            "Primary",
+		"created_at":      float64(202),
 	})
-	for _, row := range rows {
-		if row.Table == "combos" {
-			t.Fatalf("unexpected combo row in core backup: %#v", row)
-		}
+	assertRow(t, rows, "combos", map[string]any{
+		"id":   "combo-1",
+		"name": "Combo One",
+	})
+}
+
+func TestScannerBacksUpOnlySelectedCategory(t *testing.T) {
+	database := openBackupScannerTestDB(t)
+	mustExec(t, database, `CREATE TABLE provider_types (id TEXT PRIMARY KEY, name TEXT NOT NULL)`)
+	mustExec(t, database, `CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)
+	mustExec(t, database, `INSERT INTO provider_types (id, name) VALUES ('openai', 'OpenAI')`)
+	mustExec(t, database, `INSERT INTO settings (key, value) VALUES ('theme', 'dark')`)
+
+	var out bytes.Buffer
+	if err := NewScanner(database).Backup(context.Background(), &out, []string{"config"}, ""); err != nil {
+		t.Fatalf("Backup returned error: %v", err)
 	}
+
+	_, rows := decodeBackupLines(t, out.Bytes())
+	if len(rows) != 1 {
+		t.Fatalf("row count = %d, want 1: %#v", len(rows), rows)
+	}
+	assertRow(t, rows, "settings", map[string]any{
+		"key":   "theme",
+		"value": "dark",
+	})
 }
 
 func TestScannerSkipsMissingTablesInSelectedCategory(t *testing.T) {
@@ -63,7 +84,7 @@ func TestScannerSkipsMissingTablesInSelectedCategory(t *testing.T) {
 	mustExec(t, database, `INSERT INTO combos (id, name) VALUES ('combo-1', 'Combo One')`)
 
 	var out bytes.Buffer
-	if err := NewScanner(database).Backup(context.Background(), &out, []string{"combos"}, ""); err != nil {
+	if err := NewScanner(database).Backup(context.Background(), &out, []string{"providers"}, ""); err != nil {
 		t.Fatalf("Backup returned error: %v", err)
 	}
 

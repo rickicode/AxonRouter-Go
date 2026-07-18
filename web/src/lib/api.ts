@@ -245,7 +245,7 @@ if (options.headers) Object.assign(headers, options.headers);
 }
 
 // Backup API
-export type BackupCategory = "core" | "combos" | "logs" | "cache";
+export type BackupCategory = "providers" | "config" | "api_keys" | "usage" | "cache";
 export type RestoreTarget = "current" | "sqlite" | "turso";
 
 export interface DownloadBackupOptions {

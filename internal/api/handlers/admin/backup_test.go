@@ -28,7 +28,7 @@ func TestBackupHandlerDownloadStreamsSelectedCategories(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodGet, "/api/admin/backup/download?categories=core,combos", nil)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/admin/backup/download?categories=providers,config", nil)
 	h.Download(c)
 
 	if w.Code != http.StatusOK {
@@ -52,7 +52,7 @@ func TestBackupHandlerDownloadStreamsSelectedCategories(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &header); err != nil {
 		t.Fatalf("decode header: %v", err)
 	}
-	if strings.Join(header.Categories, ",") != "combos,core" {
+	if strings.Join(header.Categories, ",") != "config,providers" {
 		t.Fatalf("categories = %v, want sorted selected categories", header.Categories)
 	}
 
@@ -90,7 +90,7 @@ func TestBackupHandlerRestoreMultipartCurrentTarget(t *testing.T) {
 	seedBackupHandlerTestData(t, source)
 
 	var backupPayload bytes.Buffer
-	if err := backup.NewScanner(source).Backup(context.Background(), &backupPayload, []string{"core"}, ""); err != nil {
+	if err := backup.NewScanner(source).Backup(context.Background(), &backupPayload, []string{"providers"}, ""); err != nil {
 		t.Fatalf("create backup payload: %v", err)
 	}
 

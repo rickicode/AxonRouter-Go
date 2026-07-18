@@ -18,7 +18,7 @@ func TestRestoreToSQLiteTargetMatchesBackedUpRowCounts(t *testing.T) {
 	seedBackupTestData(t, source)
 
 	var backup bytes.Buffer
-	if err := NewScanner(source).Backup(ctx, &backup, []string{"core", "combos"}, ""); err != nil {
+	if err := NewScanner(source).Backup(ctx, &backup, []string{"providers", "api_keys"}, ""); err != nil {
 		t.Fatalf("backup source: %v", err)
 	}
 
@@ -54,7 +54,7 @@ func TestRestoreCurrentTargetPausesWriteQueueAndWarnsRestart(t *testing.T) {
 	seedBackupTestData(t, source)
 
 	var backup bytes.Buffer
-	if err := NewScanner(source).Backup(ctx, &backup, []string{"core"}, ""); err != nil {
+	if err := NewScanner(source).Backup(ctx, &backup, []string{"providers"}, ""); err != nil {
 		t.Fatalf("backup source: %v", err)
 	}
 

@@ -12,10 +12,11 @@ import DatabaseIcon from '@lucide/svelte/icons/database';
 import ShieldIcon from '@lucide/svelte/icons/shield';
 
 const backupCategories: { id: BackupCategory; label: string; description: string }[] = [
-{ id: 'core', label: 'Core configuration', description: 'Providers, connections, API keys, settings, proxy pools, quota cache, and pricing.' },
-{ id: 'combos', label: 'Combos', description: 'Routing combos and combo steps.' },
-{ id: 'logs', label: 'Logs and metrics', description: 'Request logs and compression metrics.' },
-{ id: 'cache', label: 'Response cache', description: 'Cached gateway responses.' },
+	{ id: 'providers', label: 'Providers & combos', description: 'Provider types, connections, custom models, rate limits, combos, and combo steps.' },
+	{ id: 'config', label: 'Configuration', description: 'Settings, model pricing, proxy pools/groups, rotation state, and compression metrics.' },
+	{ id: 'api_keys', label: 'API keys', description: 'Client API keys and lifetime usage totals.' },
+	{ id: 'usage', label: 'Request logs', description: 'Per-request audit logs.' },
+	{ id: 'cache', label: 'Cache', description: 'Response cache and quota cache snapshots.' },
 ];
 
 const restoreTargets: { id: RestoreTarget; label: string; description: string }[] = [

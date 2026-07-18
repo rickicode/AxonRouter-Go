@@ -19,12 +19,12 @@ describe('backupApi', () => {
     );
 
     const result = await backupApi.downloadBackup({
-      categories: ['settings', 'providers'],
+      categories: ['providers', 'config'],
       password: 'secret',
     });
 
     const [url, options] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(url).toBe('/api/admin/backup/download?categories=settings%2Cproviders&password=secret');
+    expect(url).toBe('/api/admin/backup/download?categories=providers%2Cconfig&password=secret');
     expect(options.method).toBe('GET');
     expect(result).toBe(blob);
   });
