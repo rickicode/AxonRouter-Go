@@ -9,7 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Grok CLI session/turn header persistence** — `/v1/chat/completions` and `/v1/responses` calls routed through `grok-cli` now generate stable `x-grok-session-id`, `x-grok-conv-id`, and `x-grok-agent-id` values per connection, a fresh `x-grok-req-id` per request, and a monotonic `x-grok-turn-idx` that advances only by user messages. State is persisted to the connection's `provider_specific_data` and survives restarts.
-- **Grok CLI upstream quota usage** — `grok-cli` connections now display live{{subscription} quota from xAI billing/user endpoints, including monthly included credits, on-demand cap/usage, and prepaid balance. Registered in the quota scheduler alongside Codex, Antigravity, Kiro, and Copilot.
+- **Grok CLI upstream quota usage** — `grok-cli` connections now display live subscription quota from xAI billing/user endpoints, including monthly included credits, on-demand cap/usage, and prepaid balance. Registered in the quota scheduler alongside Codex, Antigravity, Kiro, and Copilot.
+- **Grok CLI identity header alignment** — bumped client version to `0.2.99`, switched User-Agent to `grok-shell/0.2.99 (linux; x86_64)`, and added `x-grok-client-identifier: grok-shell` plus `x-grok-client-mode: headless` to both chat and quota requests. OAuth scope now includes `conversations:read conversations:write`.
+- **Grok CLI request normalization** — removed forbidden top-level fields (`presence_penalty`, `frequency_penalty`, `seed`, `user`, `previous_response_id`), converted `custom_tool_call`/`custom_tool_call_output` types, stripped `item_reference` and server-generated IDs that cannot resolve with `store=false`, preserved hosted tool types (`web_search`, `x_search`, etc.), and gated reasoning to models in the `grok-4.5` family (with `max` → `xhigh` mapping).
+- **Grok CLI retry and soft-success connection test** — retry transient HTTP 429/502/503 responses with exponential backoff, and treat HTTP 402 during connection tests as a soft success indicating valid auth but exhausted credits.
 
 ## [0.3.9] - 2026-07-18
 
