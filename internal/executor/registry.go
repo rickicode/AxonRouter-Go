@@ -20,6 +20,7 @@ const (
 	FormatOpenAIResponses ProviderFormat = "openai-responses"
 	FormatAntigravity     ProviderFormat = "antigravity"
 	FormatKiro            ProviderFormat = "kiro"
+	FormatGrokCLI         ProviderFormat = "grok-cli"
 )
 
 // Registry maps provider prefixes to executors.
@@ -166,6 +167,11 @@ func RegisterDefaults() {
 	// Kiro
 	kiroExec := NewKiroExecutor(base)
 	GetRegistry().Register("kiro", FormatKiro, kiroExec)
+
+	// Grok CLI
+	grokcliExec := NewGrokCLIExecutor(base)
+	GetRegistry().Register("grok-cli", FormatGrokCLI, grokcliExec)
+	translator.Register("grok-cli", translator.Func(providers.TranslateGrokCLI))
 }
 
 // RegisterCustomProviders registers all user-added custom providers from the DB
