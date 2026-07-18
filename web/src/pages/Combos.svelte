@@ -80,6 +80,7 @@ async function handleDelete() {
 const enabledCount = $derived($combos.filter(c => c.is_active).length);
 const smartCount = $derived($combos.filter(c => c.is_smart).length);
 const totalCombos = $derived($combosPagination.total || $combos.length);
+const metricsMap = $derived(new Map(metrics.map((m) => [m.combo_id, m])));
 const strategyOptions = ['priority', 'round-robin', 'weighted', 'random', 'least-used', 'fusion'];
 
 function strategyLabel(opt: string) {
@@ -208,8 +209,9 @@ $effect(() => {
               <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Strategy</th>
               <th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Timeout</th>
               <th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Smart</th>
-              <th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">State</th>
-              <th class="text-right text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5"></th>
+						<th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">State</th>
+						<th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Errors (24h)</th>
+						<th class="text-right text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5"></th>
             </tr>
           </thead>
           <tbody>
@@ -243,12 +245,22 @@ $effect(() => {
                     <span class="text-caption-mono text-muted-foreground">—</span>
                   {/if}
                 </td>
-                <td class="px-4 py-2.5 text-center">
-                  <div class="flex justify-center">
-                    <Switch checked={combo.is_active} onCheckedChange={() => toggleCombo(combo)} aria-label={combo.is_active ? 'Disable combo' : 'Enable combo'} />
-                  </div>
-                </td>
-                <td class="px-4 py-2.5 text-right">
+						<td class="px-4 py-2.5 text-center">
+							<div class="flex justify-center">
+								<Switch checked={combo.is_active} onCheckedChange={() => toggleCombo(combo)} aria-label={combo.is_active ? 'Disable combo' : 'Enable combo'} />
+							</div>
+						</td>
+						<td class="px-4 py-2.5 text-center">
+							{#if metricsLoading}
+								<span class="text-caption-mono text-muted-foreground">—</span>
+							{:else}
+								{@const m = metricsMap.get(combo.id)}
+								<span class="text-caption-mono font-semibold {m && m.errors > 0 ? 'text-destructive' : 'text-muted-foreground'}">
+									{m ? m.errors : 0}
+								</span>
+							{/if}
+						</td>
+						<td class="px-4 py-2.5 text-right">
                   <div class="flex gap-1 justify-end">
                     <Button
                       variant="outline"
