@@ -318,23 +318,34 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 
 	start := time.Now()
 	streamResult, err := exec.ExecuteStream(c.Request.Context(), &executor.Request{
-		APIKey:               conn.APIKey,
-		AccessToken:          conn.AccessToken,
-		BaseURL:              conn.BaseURL,
-		Body:                 bodyBytes,
-		Provider:             conn.ProviderTypeID,
-		Model:                model,
+		APIKey: conn.APIKey,
+		AccessToken: conn.AccessToken,
+		BaseURL: conn.BaseURL,
+		Body: bodyBytes,
+		Provider: conn.ProviderTypeID,
+		Model: model,
 		ProviderSpecificData: psdMap,
 	})
 	if err != nil {
 		latency := time.Since(start).Milliseconds()
+		if upErr, ok := grokCLITestSoftSuccess(conn.ProviderTypeID, err); ok {
+			h.recordTestSuccess(id)
+			c.JSON(http.StatusOK, gin.H{
+				"connection_id": id,
+				"status": "ok",
+				"status_code": upErr.StatusCode,
+				"latency_ms": latency,
+				"message": "Authentication succeeded, but credits/quota are exhausted. The connection remains ready.",
+			})
+			return
+		}
 		det := connstate.DetectError(c.Request.Context(), 0, "", err, conn.ProviderTypeID, "", nil)
 		h.recordTestFailure(id, det)
 		c.JSON(http.StatusOK, gin.H{
 			"connection_id": id,
-			"status":        "failed",
-			"error":         err.Error(),
-			"latency_ms":    latency,
+			"status": "failed",
+			"error": err.Error(),
+			"latency_ms": latency,
 		})
 		return
 	}
@@ -350,13 +361,24 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 	latency := time.Since(start).Milliseconds()
 
 	if firstErr != nil {
+		if upErr, ok := grokCLITestSoftSuccess(conn.ProviderTypeID, firstErr); ok {
+			h.recordTestSuccess(id)
+			c.JSON(http.StatusOK, gin.H{
+				"connection_id": id,
+				"status": "ok",
+				"status_code": upErr.StatusCode,
+				"latency_ms": latency,
+				"message": "Authentication succeeded, but credits/quota are exhausted. The connection remains ready.",
+			})
+			return
+		}
 		det := connstate.DetectError(c.Request.Context(), 0, "", firstErr, conn.ProviderTypeID, "", nil)
 		h.recordTestFailure(id, det)
 		c.JSON(http.StatusOK, gin.H{
 			"connection_id": id,
-			"status":        "failed",
-			"error":         firstErr.Error(),
-			"latency_ms":    latency,
+			"status": "failed",
+			"error": firstErr.Error(),
+			"latency_ms": latency,
 		})
 		return
 	}
@@ -365,10 +387,28 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"connection_id": id,
-		"status":        "ok",
-		"status_code":   streamResult.StatusCode,
-		"latency_ms":    latency,
+		"status": "ok",
+		"status_code": streamResult.StatusCode,
+		"latency_ms": latency,
 	})
+}
+
+// grokCLITestSoftSuccess reports whether a Grok CLI connection test error is an
+// HTTP 402 indicating valid authentication but exhausted credits/quota. This is
+// intentionally limited to grok-cli: other providers treat 402 as a hard
+// balance/quota failure and must not be masked as success.
+func grokCLITestSoftSuccess(providerID string, err error) (*executor.UpstreamError, bool) {
+	if providerID != "grok-cli" {
+		return nil, false
+	}
+	upErr, ok := err.(*executor.UpstreamError)
+	if !ok {
+		return nil, false
+	}
+	if upErr.StatusCode == http.StatusPaymentRequired {
+		return upErr, true
+	}
+	return nil, false
 }
 
 // recordTestSuccess marks a connection as ready after a successful test,

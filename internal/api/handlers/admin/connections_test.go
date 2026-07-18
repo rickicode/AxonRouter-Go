@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +18,8 @@ import (
 
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
+	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 )
 
@@ -41,16 +46,23 @@ func newConnectionHandlerTestDB(t *testing.T) *sql.DB {
 	return database
 }
 
-func newConnectionHandlerForTest(t *testing.T, database *sql.DB) *ConnectionHandler {
+func newConnectionHandlerForTest(t *testing.T, database *sql.DB, registry *executor.Registry) *ConnectionHandler {
 	t.Helper()
 	store := connstate.NewStore()
 	elig := connstate.NewEligibilityManager(store)
 	return &ConnectionHandler{
-		db:         database,
-		store:      store,
-		elig:       elig,
+		db: database,
+		store: store,
+		elig: elig,
 		exhaustion: quota.NewExhaustionCache(),
+		registry: registry,
 	}
+}
+
+func init() {
+	logging.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	executor.RegisterDefaults()
+	_ = executor.SetValidateURLForTest(func(string) error { return nil })
 }
 
 func seedConnection(t *testing.T, database *sql.DB, id string) {
@@ -69,7 +81,7 @@ func seedConnection(t *testing.T, database *sql.DB, id string) {
 // exhaustion so routing can reuse it immediately.
 func TestRecordTestSuccess_ClearsCooldownAndExhaustion(t *testing.T) {
 	database := newConnectionHandlerTestDB(t)
-	h := newConnectionHandlerForTest(t, database)
+	h := newConnectionHandlerForTest(t, database, nil)
 	seedConnection(t, database, "conn-1")
 
 	// Pre-condition: mark connection exhausted and rate-limited inDB.
@@ -113,7 +125,7 @@ func TestRecordTestSuccess_ClearsCooldownAndExhaustion(t *testing.T) {
 // real proxy path does, so the dashboard reflects the failure.
 func TestRecordTestFailure_RateLimit(t *testing.T) {
 	database := newConnectionHandlerTestDB(t)
-	h := newConnectionHandlerForTest(t, database)
+	h := newConnectionHandlerForTest(t, database, nil)
 	seedConnection(t, database, "conn-1")
 
 	cooldown := time.Now().Add(5 * time.Minute)
@@ -153,7 +165,7 @@ func TestRecordTestFailure_RateLimit(t *testing.T) {
 // TestRecordTestFailure_Auth persists status/error without a cooldown window.
 func TestRecordTestFailure_Auth(t *testing.T) {
 	database := newConnectionHandlerTestDB(t)
-	h := newConnectionHandlerForTest(t, database)
+	h := newConnectionHandlerForTest(t, database, nil)
 	seedConnection(t, database, "conn-1")
 
 	det := connstate.ErrorDetection{
@@ -226,5 +238,113 @@ func TestBulkUpdate_ThroughWriteQueue(t *testing.T) {
 	}
 	if cs := h.store.Get("conn-1"); cs == nil || cs.Status != connstate.StatusDisabled {
 		t.Fatalf("in-memory status should be disabled, got %v", cs)
+	}
+}
+
+func seedGrokCLIConnection(t *testing.T, database *sql.DB, id, baseURL string) {
+	t.Helper()
+	now := time.Now().Unix()
+	if _, err := database.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('grok-cli','Grok CLI','grok-cli',?,0)`, baseURL); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if _, err := database.Exec(`UPDATE provider_types SET base_url = ? WHERE id = 'grok-cli'`, baseURL); err != nil {
+		t.Fatalf("update provider_type base_url: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, oauth_token, created_at, updated_at) VALUES (?, 'grok-cli', 'grok', 'oauth', 'ready', 1, 'grok-at-123', ?, ?)`, id, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+}
+
+// TestTestConnection_GrokCLI_402SoftSuccess proves that a Grok CLI connection
+// test which receives HTTP 402 (credits/quota exhausted) is treated as a soft
+// success: the connection status stays ready and the response explains auth is
+// valid but credits/quota are exhausted.
+func TestTestConnection_GrokCLI_402SoftSuccess(t *testing.T) {
+	errBody, _ := json.Marshal(map[string]any{"error": map[string]any{"message": "Spending limit reached"}})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusPaymentRequired)
+		_, _ = w.Write(errBody)
+	}))
+	defer ts.Close()
+
+	database := newConnectionHandlerTestDB(t)
+	h := newConnectionHandlerForTest(t, database, executor.GetRegistry())
+	seedGrokCLIConnection(t, database, "grok-conn-1", ts.URL)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/admin/connections/grok-conn-1/test", nil)
+	c.Params = gin.Params{{Key: "id", Value: "grok-conn-1"}}
+	h.TestConnection(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d, body=%s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got := resp["status"]; got != "ok" {
+		t.Fatalf("status=%v, want ok", got)
+	}
+	msg, _ := resp["message"].(string)
+	lower := strings.ToLower(msg)
+	if !strings.Contains(lower, "auth") || !strings.Contains(lower, "credit") && !strings.Contains(lower, "quota") {
+		t.Fatalf("message does not explain auth success and exhausted credits/quota: %q", msg)
+	}
+
+	var status string
+	row := database.QueryRow(`SELECT status FROM connections WHERE id='grok-conn-1'`)
+	if err := row.Scan(&status); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if status != "ready" {
+		t.Fatalf("status=%q, want ready", status)
+	}
+	if cs := h.store.Get("grok-conn-1"); cs == nil || cs.Status != connstate.StatusReady {
+		t.Fatalf("in-memory status should be ready, got %v", cs)
+	}
+}
+
+// TestTestConnection_GrokCLI_401StillFails verifies that 401/403 auth errors
+// are NOT masked as soft success and still mark the connection failed.
+func TestTestConnection_GrokCLI_401StillFails(t *testing.T) {
+	errBody, _ := json.Marshal(map[string]any{"error": map[string]any{"message": "Unauthorized"}})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write(errBody)
+	}))
+	defer ts.Close()
+
+	database := newConnectionHandlerTestDB(t)
+	h := newConnectionHandlerForTest(t, database, executor.GetRegistry())
+	seedGrokCLIConnection(t, database, "grok-conn-auth", ts.URL)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/admin/connections/grok-conn-auth/test", nil)
+	c.Params = gin.Params{{Key: "id", Value: "grok-conn-auth"}}
+	h.TestConnection(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d, body=%s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got := resp["status"]; got != "failed" {
+		t.Fatalf("status=%v, want failed", got)
+	}
+
+	var status string
+	row := database.QueryRow(`SELECT status FROM connections WHERE id='grok-conn-auth'`)
+	if err := row.Scan(&status); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if status != "auth_failed" {
+		t.Fatalf("status=%q, want auth_failed", status)
 	}
 }
