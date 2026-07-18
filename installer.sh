@@ -20,10 +20,10 @@ set -euo pipefail
 REPO="rickicode/AxonRouter-Go"
 API="https://api.github.com/repos/${REPO}"
 VERSION="" # empty => latest
-INSTALL_DIR="" # empty => ~/axonrouter/bin
+INSTALL_DIR="" # empty => ~/.local/bin
 INSTALL_SERVICE=false
 BIN_NAME="axonrouter"
-DEFAULT_INSTALL_DIR="${HOME}/axonrouter/bin"
+DEFAULT_INSTALL_DIR="${HOME}/.local/bin"
 
 err()  { echo "error: $*" >&2; exit 1; }
 info() { echo "==> $*"; }
