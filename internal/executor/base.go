@@ -356,9 +356,27 @@ func isRetryableProxyErr(err error) bool {
 	return false
 }
 
+// testValidateURL is a test-only hook that replaces the default SSRF check
+// when non-nil. It allows integration tests using httptest local servers to
+// reach mocked upstreams without weakening production validation.
+var testValidateURL func(string) error
+
+// SetValidateURLForTest installs a custom URL validator for the duration of a
+// test. It returns a restore function that should be deferred to re-enable the
+// production SSRF validator.
+func SetValidateURLForTest(fn func(string) error) func() {
+	prev := testValidateURL
+	testValidateURL = fn
+	return func() { testValidateURL = prev }
+}
+
 // validateURL checks for SSRF-safe URLs. Blocks private IPs and localhost.
 // Defined as a var so tests can override it.
 var validateURL = func(rawURL string) error {
+	if testValidateURL != nil {
+		return testValidateURL(rawURL)
+	}
+
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return fmt.Errorf("invalid URL: %w", err)
