@@ -1,9 +1,32 @@
 package executor
 
 import (
+	"context"
 	"net/http"
 	"testing"
 )
+
+func TestClientIPFromContext(t *testing.T) {
+	ctx := context.Background()
+	if got := ClientIPFromContext(ctx); got != "" {
+		t.Errorf("ClientIPFromContext(empty) = %q, want empty", got)
+	}
+	ctx = ContextWithClientIP(ctx, "192.168.1.1")
+	if got := ClientIPFromContext(ctx); got != "192.168.1.1" {
+		t.Errorf("ClientIPFromContext = %q, want 192.168.1.1", got)
+	}
+}
+
+func TestUserAgentFromContext(t *testing.T) {
+	ctx := context.Background()
+	if got := UserAgentFromContext(ctx); got != "" {
+		t.Errorf("UserAgentFromContext(empty) = %q, want empty", got)
+	}
+	ctx = ContextWithUserAgent(ctx, "Mozilla/5.0")
+	if got := UserAgentFromContext(ctx); got != "Mozilla/5.0" {
+		t.Errorf("UserAgentFromContext = %q, want Mozilla/5.0", got)
+	}
+}
 
 func TestNewBaseExecutorTransport(t *testing.T) {
 	be := NewBaseExecutor()

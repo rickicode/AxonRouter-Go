@@ -186,9 +186,11 @@ func getEnvInt(key string, fallback int) int {
 }
 
 type (
-	proxyContextKey   struct{}
-	requestIDKey      struct{}
-	providerCtxKey    struct{}
+	proxyContextKey struct{}
+	requestIDKey    struct{}
+	providerCtxKey  struct{}
+	clientIPKey     struct{}
+	userAgentKey    struct{}
 )
 
 // ContextWithProvider attaches the provider prefix to ctx so the base executor
@@ -212,6 +214,28 @@ func ContextWithRequestID(ctx context.Context, id string) context.Context {
 func RequestIDFromContext(ctx context.Context) string {
 	id, _ := ctx.Value(requestIDKey{}).(string)
 	return id
+}
+
+// ContextWithClientIP attaches the client IP to a context for logging.
+func ContextWithClientIP(ctx context.Context, ip string) context.Context {
+	return context.WithValue(ctx, clientIPKey{}, ip)
+}
+
+// ClientIPFromContext extracts the client IP from a context.
+func ClientIPFromContext(ctx context.Context) string {
+	ip, _ := ctx.Value(clientIPKey{}).(string)
+	return ip
+}
+
+// ContextWithUserAgent attaches the user agent to a context for logging.
+func ContextWithUserAgent(ctx context.Context, ua string) context.Context {
+	return context.WithValue(ctx, userAgentKey{}, ua)
+}
+
+// UserAgentFromContext extracts the user agent from a context.
+func UserAgentFromContext(ctx context.Context) string {
+	ua, _ := ctx.Value(userAgentKey{}).(string)
+	return ua
 }
 
 // ProxyConfig is attached to request contexts by v1 handlers.
