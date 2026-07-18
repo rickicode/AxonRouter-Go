@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-07-18
+
 ### Added
 - **Combo strategies `random` and `least-used`** — `random` picks an unweighted random step per request; `least-used` orders steps by recent successful calls from `request_logs` (cached 30s) so the least-used model is tried first.
 - **Combo strategy `fusion`** — parallel panel execution of combo steps followed by a configurable judge model that synthesizes the panel answers. Includes `fusion_config` storage and UI fields for judge model, min panel, straggler grace, hard timeout, and source anonymization.

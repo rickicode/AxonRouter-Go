@@ -397,22 +397,72 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.6
+### What's New in v0.3.9
 
 ### Added
-- Request logs now record the client-facing API type (`api_type`) so the `/logs` dashboard shows whether a request came through the OpenAI-compatible surface (`/v1/chat/completions`), Claude surface (`/v1/messages`), responses, embeddings, images, audio, video, or other endpoints.
-- API key expiration with 1/7/30/90 days, custom date, and no expiration options.
-- `AXONROUTER_DIR` environment variable overrides the data directory (default remains `~/axonrouter`). Relative paths resolve against `$HOME`.
+- **Combo strategies `random` and `least-used`** — `random` picks an unweighted random step per request; `least-used` orders steps by recent successful calls from `request_logs` (cached 30s) so the least-used model is tried first.
+- **Combo strategy `fusion`** — parallel panel execution of combo steps followed by a configurable judge model that synthesizes the panel answers. Includes `fusion_config` storage and UI fields for judge model, min panel, straggler grace, hard timeout, and source anonymization.
+- **Capability auto-switch for combos** — detects vision, PDF, audio, video, and tool requirements from the request body and reorders combo steps so models that satisfy the required capabilities are tried first. Model capability registry lives in `internal/models/capabilities.json`.
+- **Per-combo and global strategy override via Settings** — `combo_strategy` default and `combo_strategies` JSON map allow overriding a combo's strategy at runtime without editing the combo.
+- **Seeded default combos** now include `random`, `least-used`, and `fusion` examples and are trimmed to six essential combos instead of eight.
+- **Fusion judge model selector** in the dashboard now uses the model picker instead of a free-text input.
+- **Strategy reference** moved to a static card at the bottom of the Combos page, explaining every routing strategy and how smart combo selection works.
+- **Combo metrics summary cards** on the Combos page show total requests, successes, errors, and average latency across all combos over the last 24 hours.
+ - **Database backup and restore** via new `internal/backup` package. Backup always exports all gateway data (API keys, provider accounts/connections, combos, config, request logs, cache) as encrypted-optional JSON Lines. Restore always targets the currently running gateway database.
+ - **Clear old logs control** on the Logs dashboard page with 7/30/90 day retention options; preserves `api_key_usage` and other usage summary data.
+ - **Colored terminal logs** for the `text` and `compact` log formats, with consistent ANSI coloring of common keys such as `provider`, `conn`, `model`, `status`, `method`, `path`, `client_ip`, and `user_agent`.
+ - **Client IP and User-Agent enrichment** for HTTP request logs and upstream executor logs, propagated through request contexts.
+- **Stream protection parity with OmniRoute** for combo and direct paths: raw-byte stall detection, adaptive readiness timeout (80s–180s), 750ms/64KB holdback buffer for transparent early retry, and stream-quality peek logging.
+- **Combo mid-stream failover**: if an upstream stream fails after the holdback window commits, the combo now falls back to the next eligible connection/model instead of terminating the stream. Only when all candidates fail does the client receive the final SSE `error` + `[DONE]`.
+- **Direct-mode mid-stream failover**: `/v1/chat/completions` and `/v1/messages` streaming now also use the 750ms/64KB holdback buffer and retry the next connection if the stream fails after commit.
+- `StreamConfig` extended with `StallTimeoutMs`, `HoldbackMs`, `HoldbackBytes`, and `AdaptiveReadiness`.
 
 ### Fixed
-- Auth middleware now uses `AbortWithStatusJSON` instead of writing a body and then aborting, preventing malformed responses on auth-system errors.
-- `TrackActive` middleware no longer consumes and re-reads multipart bodies (used by `/v1/audio/transcriptions`), so STT requests are no longer corrupted by the in-flight request tracker.
+- Combo strategy override no longer mutates the shared in-memory combo cache, removing a race condition where the original DB strategy could be lost across requests.
+- Combo routing is now format-aware for `/v1/messages` and `/v1/responses`: translation and final errors use the correct client API format instead of always assuming OpenAI chat completions.
+- Fusion strategy is now restricted to `/v1/chat/completions` until full format-aware judge/response translators are ready for Claude and Responses API.
+- Fusion `min_panel` is clamped to the number of steps, so single-step fusion combos no longer fail at runtime with the default config.
+- Admin combo creation now validates `fusion_config`; invalid/missing fusion settings fail at creation time instead of at request time.
+- Strategy settings (`combo_strategy` / `combo_strategies`) are now cached with a short TTL and validated, eliminating a per-request DB lookup on the combo hot path.
+- Capability detection now recognizes Responses API `input_image` and `input_file` content types.
+- Streaming context cancellation now emits an in-band SSE `error` event followed by `[DONE]`, preventing clients from hanging when a stream is cancelled.
+- Codex (`cx`) connections no longer stay excluded from routing after a DB cooldown recovery: setting a connection back to `ready` now clears any stale in-memory `CooldownUntil`.
+- Codex chat requests now use the canonical Codex-specific translator, preventing malformed upstream requests that previously failed with `"Unsupported parameter: max_output_tokens"`.
+- Codex streaming/non-streaming responses now use a 50MB SSE scanner buffer (matching CLIProxyAPI) and collect `response.output_item.done` events to patch empty `response.completed` events, fixing empty/truncated responses and `bufio.Scanner: token too long` errors.
+- Codex streaming no longer spawns a separate SSE-filter goroutine with an extra channel; filtering of `codex.*` event lines is now done inline in the scanner goroutine. This removes the `send on closed channel` / `close of closed channel` panics seen under failover/retry.
+- Codex non-streaming responses now return only the final `response.completed` event (stripped of SSE framing) to the downstream translator, instead of a multi-line SSE dump starting with `response.created`. This fixes client errors where the raw `response.created` object was exposed and failed response-type validation.
+- Codex request translation now aligns with 9router/CLIProxyAPI: strips a broader set of unsupported parameters (`frequency_penalty`, `presence_penalty`, `logprobs`, `top_logprobs`, `n`, `seed`, `metadata`, `stream_options`, `safety_identifier`, `prompt_cache_retention`, `previous_response_id`), maps `service_tier` to `priority`, applies a final allowlist, preserves `instructions`/`prompt_cache_key`/`client_metadata`, restricts passthrough tools to known hosted types, and treats `response.done` as an alias for `response.completed`.
+- Codex streaming responses now correctly translate upstream `openai-responses` SSE events into OpenAI Chat Completions SSE chunks. The response transform is now registered under the lookup key the streaming handler uses, fixing the bug where raw `event: response.*` lines were forwarded to clients.
+- Codex upstream headers are now aligned with CLIProxyAPI: default User-Agent is `codex-tui/...`, Originator is `codex-tui`, `Openai-Beta` and `Codex-Cli-Simplified-Flow` are removed, `Chatgpt-Account-Id` is set from provider metadata or parsed from the access-token JWT, `Session_id` is generated for Mac OS UAs, and `Connection: Keep-Alive` is added.
+- Antigravity (`ag`) request envelope is no longer double-wrapped. The executor finalizes the envelope produced by the translator (sets project, request id/session id, request type, strips `request.safetySettings`) instead of wrapping it inside another `request` object.
+- Antigravity response transform is now registered in both directions so streaming and non-streaming `/v1/chat/completions` paths can find it.
+- Antigravity SSE chunks now include proper `data: ...\n\n` framing, and non-stream requests are routed to `generateContent` instead of `streamGenerateContent`, producing a single translatable JSON response.
+- **Backup/restore target confusion fixed:** restore now always writes to the gateway's current database and automatically triggers a graceful shutdown so Docker/systemd can restart the process with fresh caches.
+- **Restore reliability improved:** larger insert batches (500 rows), exponential backoff retries on transient `database is locked` / busy errors, and a single per-backup encryption salt so encrypted restores no longer re-derive the PBKDF2 key for every row.
 
 ### Changed
-- `installer.sh` now installs the binary into `~/.local/bin` by default and prints clear `sudo`/`--to` instructions when that directory is not writable.
-- `npm/axonrouter-go` postinstall now copies the verified binary to `~/.local/bin/axonrouter` on Linux/macOS when possible, falling back to the package-local binary with instructions.
-- `axonrouter --startup install` now creates a systemd **user** service (`~/.config/systemd/user/axonrouter.service`) and no longer requires root. Running it as root is blocked; use `axonrouter --startup install-root` for a system-wide service.
-- Docs now mention `npx axonrouter-go` as a one-off, no-install way to run the binary once the package is published.
+- `streamResponse`, `handleStreamResponse`, and `handleClaudeStreamResponse` now return an `error` so callers can implement retry/failover logic.
+- **Backup/restore UI simplified further:** category selection removed; backup always includes every category so restore produces a 100% identical gateway (provider accounts, connections, combos, keys, config, logs, cache).
+
+- **Admin "Test all" now refreshes expired/near-expiry OAuth tokens automatically.** For OAuth providers (`cx`, `ag`, `kiro`, `copilot`), each connection's token is refreshed via `auth.Manager` before testing if it is expired or within the provider's lead time. Test results are recorded with the fresh token, and unrecoverable refresh errors disable the connection as `auth_failed`.
+- Docker image now defaults `HOME=/app/data` so the `/app/data` volume is used without manual environment overrides; added GitHub Actions workflow to build and push the container to GHCR on pushes to `master` and version tags.
+
+### Changed
+- Improved `Test all` concurrency for providers with thousands of connections: replaced fixed-batch waiting with a semaphore worker pool capped at 10 concurrent streams, plus a 30-second per-connection timeout, so a single slow connection no longer stalls the entire batch.
+- **Quota refresh and scheduler now refresh expired OAuth tokens automatically**, including Codex (`cx`) through `auth.Manager`. Previously Codex was skipped, causing quota fetches to fail once the access token expired.
+
+### Fixed
+- MiMoCode additional connections now always generate a fresh `accountId`, `accountLabel`, and `fingerprint`, ensuring each connection behaves as a distinct logical account and does not reuse a device identity that could trigger MiMoCode anti-abuse controls.
+- MiMoCode bootstrap now respects the same proxy context as chat requests, preventing `Invalid Token` errors caused by JWTs being issued from the server's direct IP but used through a proxy pool IP.
+- MiMoCode "high-frequency non-compliant requests" 400 errors are now classified as rate-limit signals, so flagged proxy/account combinations are auto-cooldowned and skipped during routing.
+- MiMoCode connections configured with a proxy pool no longer fall back to the server's direct IP, preventing direct-IP rate-limit cascades during TestAll and failover attempts.
+- Split `mimocode` (free tier), `mimo` (PAYG), and `mimo-tp` (token plan) into three distinct providers with separate provider types, executors, model catalogs, and dashboard icons. Previously `mimo` was aliased to `mimocode`, causing PAYG requests to be routed through the no-auth free endpoint.
+- Dashboard **Usage** page now shows a skeleton loader while fetching usage data instead of immediately displaying a session-expired card.
+- Dashboard **API Keys**, **Developers**, and **Provider Add** pages now use skeleton loaders during their initial data fetch instead of plain text or no placeholder.
+- `axonrouter --startup install-root` no longer incorrectly rejects root execution after internally remapping the action to `install`.
+- GitHub Actions npm publish job now syncs the wrapper package version from the release tag, preventing stale `package.json` versions from being published again.
+
+<!-- Add new entries above this line -->
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
