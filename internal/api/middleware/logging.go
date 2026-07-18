@@ -44,6 +44,8 @@ func Logging() gin.HandlerFunc {
 			"method", method,
 			"path", fullPath,
 			"lat", latStr,
+			"client_ip", c.ClientIP(),
+			"user_agent", c.Request.UserAgent(),
 		)
 	}
 }
