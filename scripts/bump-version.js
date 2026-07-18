@@ -37,7 +37,20 @@ if (fs.existsSync(pkgPath)) {
 	console.log(`Updated ${path.relative(root, pkgPath)} -> ${version}`);
 }
 
-// 3. Update CHANGELOG.md: move Unreleased content to the new version section.
+// 3. Sync npm wrapper package version.
+const npmPkgPath = path.join(root, 'npm', 'axonrouter-go', 'package.json');
+if (fs.existsSync(npmPkgPath)) {
+  const npmPkg = JSON.parse(fs.readFileSync(npmPkgPath, 'utf8'));
+  if (npmPkg.version !== version) {
+    npmPkg.version = version;
+    fs.writeFileSync(npmPkgPath, `${JSON.stringify(npmPkg, null, 2)}\n`);
+    console.log(`Updated ${path.relative(root, npmPkgPath)} -> ${version}`);
+  } else {
+    console.log(`${path.relative(root, npmPkgPath)} already at ${version}`);
+  }
+}
+
+// 4. Update CHANGELOG.md: move Unreleased content to the new version section.
 const changelogPath = path.join(root, 'CHANGELOG.md');
 let changelog = fs.existsSync(changelogPath)
 	? fs.readFileSync(changelogPath, 'utf8')

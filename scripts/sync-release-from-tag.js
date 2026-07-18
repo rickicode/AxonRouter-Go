@@ -60,7 +60,20 @@ if (fs.existsSync(pkgPath)) {
   }
 }
 
-// 3. Update CHANGELOG.md if the version section doesn't exist yet.
+// 3. Sync npm wrapper package version.
+const npmPkgPath = path.join(root, 'npm', 'axonrouter-go', 'package.json');
+if (fs.existsSync(npmPkgPath)) {
+  const npmPkg = JSON.parse(fs.readFileSync(npmPkgPath, 'utf8'));
+  if (npmPkg.version !== version) {
+    npmPkg.version = version;
+    fs.writeFileSync(npmPkgPath, `${JSON.stringify(npmPkg, null, 2)}\n`);
+    console.log(`Updated ${path.relative(root, npmPkgPath)} -> ${version}`);
+  } else {
+    console.log(`${path.relative(root, npmPkgPath)} already at ${version}`);
+  }
+}
+
+// 4. Update CHANGELOG.md if the version section doesn't exist yet.
 const changelogPath = path.join(root, 'CHANGELOG.md');
 if (!fs.existsSync(changelogPath)) {
   console.error('CHANGELOG.md not found.');

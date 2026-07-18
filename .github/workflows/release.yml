@@ -210,6 +210,9 @@ jobs:
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "Using version ${VERSION} from tag ${TAG}."
 
+      - name: 📌 Sync version and changelog from tag
+        run: node scripts/sync-release-from-tag.js
+
       - name: 📌 Sync npm package version
         run: node scripts/sync-npm-version.js
 

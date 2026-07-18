@@ -65,6 +65,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MiMoCode "high-frequency non-compliant requests" 400 errors are now classified as rate-limit signals, so flagged proxy/account combinations are auto-cooldowned and skipped during routing.
 - MiMoCode connections configured with a proxy pool no longer fall back to the server's direct IP, preventing direct-IP rate-limit cascades during TestAll and failover attempts.
 - Split `mimocode` (free tier), `mimo` (PAYG), and `mimo-tp` (token plan) into three distinct providers with separate provider types, executors, model catalogs, and dashboard icons. Previously `mimo` was aliased to `mimocode`, causing PAYG requests to be routed through the no-auth free endpoint.
+- Dashboard **Usage** page now shows a skeleton loader while fetching usage data instead of immediately displaying a session-expired card.
+- Dashboard **API Keys**, **Developers**, and **Provider Add** pages now use skeleton loaders during their initial data fetch instead of plain text or no placeholder.
+- `axonrouter --startup install-root` no longer incorrectly rejects root execution after internally remapping the action to `install`.
+- GitHub Actions npm publish job now syncs the wrapper package version from the release tag, preventing stale `package.json` versions from being published again.
 
 <!-- Add new entries above this line -->
 

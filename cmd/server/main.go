@@ -126,13 +126,7 @@ func isRoot() bool {
 }
 
 func handleStartupAction(action string) {
-	root := action == "install-root"
-	if root {
-		action = "install"
-	}
-	// install = current-user service; everything else targets whichever mode
-	// the current privileges imply (non-root -> user service, root -> system).
-	userMode := action == "install" || (action != "install-root" && !isRoot())
+	requestedRoot := action == "install-root"
 
 	enableColor := isTerminal(os.Stdout.Fd())
 
@@ -141,7 +135,8 @@ func handleStartupAction(action string) {
 	green := func(s string) string { return colorize(enableColor, "32", s) }
 	cyan := func(s string) string { return colorize(enableColor, "36", s) }
 
-	if root && !isRoot() {
+	// Validate privileges before mutating the action string.
+	if requestedRoot && !isRoot() {
 		printStartupBox("Root required", []string{
 			red("--startup install-root must be run as root."),
 			"",
@@ -160,6 +155,14 @@ func handleStartupAction(action string) {
 		})
 		os.Exit(1)
 	}
+
+	root := requestedRoot
+	if root {
+		action = "install"
+	}
+	// install = current-user service; install-root = system service;
+	// everything else targets whichever mode the current privileges imply.
+	userMode := !root && !isRoot()
 
 	svcCfg, err := service.ServiceConfig(root, userMode)
 	if err != nil {
@@ -244,9 +247,14 @@ func handleStartupAction(action string) {
 		installLines = append(installLines,
 			"",
 			"Check status: axonrouter --startup status",
-			"User service: systemctl --user status axonrouter",
 		)
-		printStartupBox("User service installed", installLines)
+		if root {
+			installLines = append(installLines, "System service: systemctl status axonrouter")
+			printStartupBox("System service installed", installLines)
+		} else {
+			installLines = append(installLines, "User service: systemctl --user status axonrouter")
+			printStartupBox("User service installed", installLines)
+		}
 	case "start":
 		printStartupBox("Service started", []string{
 			green("axonrouter is starting as user '" + svcCfg.UserName + "'."),
