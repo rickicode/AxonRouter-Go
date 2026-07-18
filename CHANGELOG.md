@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fusion judge model selector** in the dashboard now uses the model picker instead of a free-text input.
 - **Strategy reference** moved to a static card at the bottom of the Combos page, explaining every routing strategy and how smart combo selection works.
 - **Combo metrics summary cards** on the Combos page show total requests, successes, errors, and average latency across all combos over the last 24 hours.
- - **Database backup and restore** via new `internal/backup` package. Backup exports all data (API keys, usage, provider accounts, combos, config, request logs, cache) as encrypted-optional JSON Lines. Restore always targets the currently running gateway database.
+ - **Database backup and restore** via new `internal/backup` package. Backup always exports all gateway data (API keys, provider accounts/connections, combos, config, request logs, cache) as encrypted-optional JSON Lines. Restore always targets the currently running gateway database.
  - **Clear old logs control** on the Logs dashboard page with 7/30/90 day retention options; preserves `api_key_usage` and other usage summary data.
  - **Colored terminal logs** for the `text` and `compact` log formats, with consistent ANSI coloring of common keys such as `provider`, `conn`, `model`, `status`, `method`, `path`, `client_ip`, and `user_agent`.
  - **Client IP and User-Agent enrichment** for HTTP request logs and upstream executor logs, propagated through request contexts.
@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `streamResponse`, `handleStreamResponse`, and `handleClaudeStreamResponse` now return an `error` so callers can implement retry/failover logic.
+- **Backup/restore UI simplified further:** category selection removed; backup always includes every category so restore produces a 100% identical gateway (provider accounts, connections, combos, keys, config, logs, cache).
 
 - **Admin "Test all" now refreshes expired/near-expiry OAuth tokens automatically.** For OAuth providers (`cx`, `ag`, `kiro`, `copilot`), each connection's token is refreshed via `auth.Manager` before testing if it is expired or within the provider's lead time. Test results are recorded with the fresh token, and unrecoverable refresh errors disable the connection as `auth_failed`.
 - Docker image now defaults `HOME=/app/data` so the `/app/data` volume is used without manual environment overrides; added GitHub Actions workflow to build and push the container to GHCR on pushes to `master` and version tags.

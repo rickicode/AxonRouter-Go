@@ -6,7 +6,7 @@ describe('backupApi', () => {
     vi.restoreAllMocks();
   });
 
-  it('downloadBackup posts selected categories and password as JSON body', async () => {
+	it('downloadBackup posts password as JSON body and always backs up all data', async () => {
     const blob = new Blob(['backup'], { type: 'application/x-ndjson' });
     vi.stubGlobal(
       'fetch',
@@ -18,16 +18,15 @@ describe('backupApi', () => {
       }),
     );
 
-    const result = await backupApi.downloadBackup({
-      categories: ['providers', 'config'],
-      password: 'secret',
-    });
+	const result = await backupApi.downloadBackup({
+		password: 'secret',
+	});
 
-    const [url, options] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(url).toBe('/api/admin/backup/download');
-    expect(options.method).toBe('POST');
-    expect(options.body).toBe(JSON.stringify({ categories: ['providers', 'config'], password: 'secret' }));
-    expect(result).toBe(blob);
+	const [url, options] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+	expect(url).toBe('/api/admin/backup/download');
+	expect(options.method).toBe('POST');
+	expect(options.body).toBe(JSON.stringify({ password: 'secret' }));
+	expect(result).toBe(blob);
   });
 
 	it('restoreBackup posts multipart form data with file and password', async () => {

@@ -34,24 +34,18 @@ func (h *BackupHandler) SetRestoreRestartCallback(fn func()) {
 
 func (h *BackupHandler) Download(c *gin.Context) {
 	var req struct {
-		Categories []string `json:"categories"`
-		Password   string   `json:"password"`
+		Password string `json:"password"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if err := validateBackupCategories(req.Categories); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
+	// An empty body is fine; only the optional encryption password matters.
+	_ = c.ShouldBindJSON(&req)
 
 	c.Header("Content-Type", "application/x-ndjson")
 	c.Header("Content-Disposition", `attachment; filename="axonrouter-backup.ndjson"`)
 	c.Header("Transfer-Encoding", "chunked")
 	c.Status(http.StatusOK)
 
-	if err := backup.NewScanner(h.db).Backup(c.Request.Context(), c.Writer, req.Categories, req.Password); err != nil {
+	// Always back up every category so the restore can produce an identical server.
+	if err := backup.NewScanner(h.db).Backup(c.Request.Context(), c.Writer, []string{}, req.Password); err != nil {
 		c.Error(err)
 		return
 	}

@@ -245,10 +245,7 @@ if (options.headers) Object.assign(headers, options.headers);
 }
 
 // Backup API
-export type BackupCategory = "providers" | "config" | "api_keys" | "usage" | "cache";
-
 export interface DownloadBackupOptions {
-	categories: BackupCategory[];
 	password?: string;
 }
 
@@ -263,10 +260,10 @@ export interface RestoreBackupResult {
 }
 
 export const backupApi = {
-	downloadBackup: ({ categories, password }: DownloadBackupOptions) => {
+	downloadBackup: ({ password }: DownloadBackupOptions = {}) => {
 		return fetchBlob("/backup/download", {
 			method: "POST",
-			body: JSON.stringify({ categories, password: password || undefined }),
+			body: JSON.stringify({ password: password || undefined }),
 			timeout_ms: 120000,
 		});
 	},

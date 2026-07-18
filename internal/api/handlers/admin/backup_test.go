@@ -20,7 +20,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestBackupHandlerDownloadStreamsSelectedCategories(t *testing.T) {
+func TestBackupHandlerDownloadAlwaysBacksUpAllCategories(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	database := newBackupHandlerTestDB(t)
 	seedBackupHandlerTestData(t, database)
@@ -28,9 +28,8 @@ func TestBackupHandlerDownloadStreamsSelectedCategories(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	body := strings.NewReader(`{"categories":["providers","config"]}`)
-	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/backup/download", body)
-	c.Request.Header.Set("Content-Type", "application/json")
+	// No body required; the handler always backs up every category.
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/backup/download", nil)
 	h.Download(c)
 
 	if w.Code != http.StatusOK {
@@ -54,8 +53,8 @@ func TestBackupHandlerDownloadStreamsSelectedCategories(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &header); err != nil {
 		t.Fatalf("decode header: %v", err)
 	}
-	if strings.Join(header.Categories, ",") != "config,providers" {
-		t.Fatalf("categories = %v, want sorted selected categories", header.Categories)
+	if len(header.Categories) == 0 {
+		t.Fatalf("expected all categories in header, got none")
 	}
 
 	var sawProvider, sawCombo bool
@@ -69,22 +68,6 @@ func TestBackupHandlerDownloadStreamsSelectedCategories(t *testing.T) {
 	}
 	if !sawProvider || !sawCombo {
 		t.Fatalf("expected provider_types and combos rows in %q", w.Body.String())
-	}
-}
-
-func TestBackupHandlerDownloadRejectsUnknownCategory(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	h := NewBackupHandler(newBackupHandlerTestDB(t), nil, nil)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	body := strings.NewReader(`{"categories":["missing"]}`)
-	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/backup/download", body)
-	c.Request.Header.Set("Content-Type", "application/json")
-	h.Download(c)
-
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d, body = %s", w.Code, http.StatusBadRequest, w.Body.String())
 	}
 }
 
