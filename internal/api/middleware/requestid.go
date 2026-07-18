@@ -9,6 +9,8 @@ import (
 // RequestID ensures every request has a unique request_id attached to both
 // the Gin context and the underlying request context. The ID is read from the
 // X-Request-ID header if present, otherwise a new UUID is generated.
+// Client IP and user agent are also attached to the request context for
+// downstream logging.
 func RequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.GetHeader("X-Request-ID")
@@ -16,7 +18,11 @@ func RequestID() gin.HandlerFunc {
 			id = uuid.NewString()
 		}
 		c.Set("request_id", id)
-		c.Request = c.Request.WithContext(executor.ContextWithRequestID(c.Request.Context(), id))
+		ctx := c.Request.Context()
+		ctx = executor.ContextWithRequestID(ctx, id)
+		ctx = executor.ContextWithClientIP(ctx, c.ClientIP())
+		ctx = executor.ContextWithUserAgent(ctx, c.Request.UserAgent())
+		c.Request = c.Request.WithContext(ctx)
 		c.Next()
 	}
 }
