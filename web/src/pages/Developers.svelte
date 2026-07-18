@@ -7,8 +7,9 @@ import * as Card from '$lib/components/ui/card';
 import { developersApi } from '$lib/api';
 import { copyToClipboard } from '$lib/copy';
 import CopyIcon from '@lucide/svelte/icons/copy';
-  import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
-  import CodeIcon from '@lucide/svelte/icons/code';
+import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
+import CodeIcon from '@lucide/svelte/icons/code';
+import AlertTriangleIcon from '@lucide/svelte/icons/alert-triangle';
 
   type MasterKeyInfo = {
     key: string;
@@ -17,20 +18,23 @@ import CopyIcon from '@lucide/svelte/icons/copy';
     created_at: number;
   };
 
-  let keyInfo: MasterKeyInfo | null = $state(null);
-  let loading = $state(false);
+let keyInfo: MasterKeyInfo | null = $state(null);
+let loading = $state(false);
+let error = $state<string | null>(null);
 
-  async function loadKey() {
-    loading = true;
-    try {
-      const res = await developersApi.getMasterKey();
-      keyInfo = res.data;
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to load master key');
-    } finally {
-      loading = false;
-    }
+async function loadKey() {
+  loading = true;
+  error = null;
+  try {
+    const res = await developersApi.getMasterKey();
+    keyInfo = res.data;
+  } catch (err: any) {
+    error = err.message || 'Failed to load master key';
+    toast.error(error ?? 'Failed to load master key');
+  } finally {
+    loading = false;
   }
+}
 
   async function regenerate() {
     loading = true;
@@ -122,39 +126,62 @@ const proxyUsageResponse = `{
       </Card.Description>
     </Card.Header>
     <Card.Content class="space-y-6">
-      {#if keyInfo}
-        <div class="space-y-2">
-          <label for="master-key" class="text-caption text-muted-foreground">Key</label>
-          <div class="flex gap-2">
-            <Input id="master-key" value={keyInfo.key} readonly class="font-mono text-body-sm bg-muted" />
-            <Button variant="outline" size="icon" onclick={() => copy(keyInfo!.key, 'Master key')} aria-label="Copy master key">
-              <CopyIcon class="size-4" />
-            </Button>
-          </div>
-          <p class="text-caption text-muted-foreground">
-            Prefix: <span class="font-mono">{keyInfo.prefix}</span> · Created: <span>{new Date(keyInfo.created_at * 1000).toLocaleString()}</span>
-          </p>
-        </div>
+{#if loading}
+<div class="space-y-6">
+  <div class="space-y-2">
+    <div class="h-4 w-12 animate-pulse rounded bg-muted"></div>
+    <div class="flex gap-2">
+      <div class="h-10 flex-1 animate-pulse rounded bg-muted"></div>
+      <div class="size-10 animate-pulse rounded bg-muted"></div>
+    </div>
+    <div class="h-3 w-48 animate-pulse rounded bg-muted"></div>
+  </div>
+  <div class="space-y-2">
+    <div class="h-4 w-16 animate-pulse rounded bg-muted"></div>
+    <div class="flex gap-2">
+      <div class="h-10 flex-1 animate-pulse rounded bg-muted"></div>
+      <div class="size-10 animate-pulse rounded bg-muted"></div>
+    </div>
+  </div>
+  <div class="h-10 w-32 animate-pulse rounded bg-muted"></div>
+</div>
+{:else if error}
+<div class="flex flex-col items-center justify-center gap-3 py-6 text-center">
+  <AlertTriangleIcon class="size-8 text-destructive" />
+  <p class="text-body-sm text-muted-foreground">{error}</p>
+  <Button onclick={loadKey} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
+</div>
+{:else if keyInfo}
+<div class="space-y-2">
+  <label for="master-key" class="text-caption text-muted-foreground">Key</label>
+  <div class="flex gap-2">
+    <Input id="master-key" value={keyInfo.key} readonly class="font-mono text-body-sm bg-muted" />
+    <Button variant="outline" size="icon" onclick={() => copy(keyInfo!.key, 'Master key')} aria-label="Copy master key">
+      <CopyIcon class="size-4" />
+    </Button>
+  </div>
+  <p class="text-caption text-muted-foreground">
+    Prefix: <span class="font-mono">{keyInfo.prefix}</span> · Created: <span>{new Date(keyInfo.created_at * 1000).toLocaleString()}</span>
+  </p>
+</div>
 
-        <div class="space-y-2">
-          <label for="base-url" class="text-caption text-muted-foreground">Base URL</label>
-          <div class="flex gap-2">
-            <Input id="base-url" value={keyInfo.base_url} readonly class="font-mono text-body-sm bg-muted" />
-            <Button variant="outline" size="icon" onclick={() => copy(keyInfo!.base_url, 'Base URL')} aria-label="Copy base URL">
-              <CopyIcon class="size-4" />
-            </Button>
-          </div>
-        </div>
+<div class="space-y-2">
+  <label for="base-url" class="text-caption text-muted-foreground">Base URL</label>
+  <div class="flex gap-2">
+    <Input id="base-url" value={keyInfo.base_url} readonly class="font-mono text-body-sm bg-muted" />
+    <Button variant="outline" size="icon" onclick={() => copy(keyInfo!.base_url, 'Base URL')} aria-label="Copy base URL">
+      <CopyIcon class="size-4" />
+    </Button>
+  </div>
+</div>
 
-        <div class="flex gap-2">
-          <Button onclick={regenerate} disabled={loading}>
-            <RefreshCwIcon class="size-4 mr-2" />
-            Regenerate
-          </Button>
-        </div>
-      {:else}
-        <p class="text-body-sm text-muted-foreground">Loading master key...</p>
-      {/if}
+<div class="flex gap-2">
+  <Button onclick={regenerate} disabled={loading}>
+    <RefreshCwIcon class="size-4 mr-2" />
+    Regenerate
+  </Button>
+</div>
+{/if}
     </Card.Content>
   </Card.Root>
 

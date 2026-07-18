@@ -9,14 +9,16 @@ import { AlertDialog, AlertDialogContent, AlertDialogTitle, AlertDialogDescripti
   import * as Dialog from '$lib/components/ui/dialog';
   import * as Select from '$lib/components/ui/select';
   import { toast } from 'svelte-sonner';
-  import { apiKeysApi } from '$lib/api';
-  import { copyToClipboard } from '$lib/copy';
+import { apiKeysApi } from '$lib/api';
+import { copyToClipboard } from '$lib/copy';
+import AlertTriangleIcon from '@lucide/svelte/icons/alert-triangle';
   import { buildExpiryTimestamp, formatExpiry, type ExpirationPreset } from '$lib/api-key-utils';
   import type { APIKeyItem } from '$lib/api';
 
-  let keys = $state<APIKeyItem[]>([]);
-  let loading = $state(true);
-  let showCreate = $state(false);
+let keys = $state<APIKeyItem[]>([]);
+let loading = $state(true);
+let error = $state<string | null>(null);
+let showCreate = $state(false);
   let newName = $state('');
   let newRateLimit = $state('600');
   let newMaxTokensM = $state('');
@@ -48,17 +50,19 @@ onMount(() => {
   loadKeys();
 });
 
-  async function loadKeys() {
-    loading = true;
-    try {
-      const res = await apiKeysApi.list();
-      keys = res.data ?? [];
-    } catch (err) {
-      toast.error('Failed to load API keys');
-    } finally {
-      loading = false;
-    }
+async function loadKeys() {
+  loading = true;
+  error = null;
+  try {
+    const res = await apiKeysApi.list();
+    keys = res.data ?? [];
+  } catch (err) {
+    error = err instanceof Error ? err.message : 'Failed to load API keys';
+    toast.error(error);
+  } finally {
+    loading = false;
   }
+}
 
   async function handleCreate() {
     creating = true;
@@ -141,89 +145,131 @@ function formatDate(ts: number): string {
     </p>
   </div>
 
-  {#if keys.length === 0 && !loading}
-    <Card class="shadow-card">
-      <CardContent class="flex flex-col items-center justify-center py-12 gap-3">
-        <div class="size-12 rounded-full bg-muted/50 flex items-center justify-center">
-          <svg class="size-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-          </svg>
-        </div>
-        <div class="text-center">
-          <p class="text-sm font-medium text-muted-foreground">No API keys configured</p>
-          <p class="text-xs text-muted-foreground/70 mt-0.5">Proxy is currently open. Add a key to require authentication.</p>
-        </div>
-        <Button onclick={() => showCreate = true} size="sm" class="text-body-sm rounded-sm mt-1">
-          Create API key
-        </Button>
-      </CardContent>
-    </Card>
-  {:else}
-    <div class="flex items-center justify-between">
-      <p class="text-caption-mono text-muted-foreground">{keys.length} key{keys.length !== 1 ? 's' : ''}</p>
-      <Button onclick={() => { showCreate = true; createdKey = ''; }} size="sm" class="text-body-sm rounded-sm">
-        Create key
-      </Button>
+{#if loading}
+<Card class="shadow-card overflow-hidden">
+  <CardContent class="p-0">
+    <div class="overflow-x-auto">
+      <table class="w-full text-left border-collapse">
+        <thead>
+          <tr class="border-b border-border bg-muted/30">
+            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-1/4"><div class="h-4 w-16 animate-pulse rounded bg-muted"></div></th>
+            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-20 animate-pulse rounded bg-muted"></div></th>
+            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-14 animate-pulse rounded bg-muted"></div></th>
+            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-16 animate-pulse rounded bg-muted"></div></th>
+            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-14 animate-pulse rounded bg-muted"></div></th>
+            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-32"></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-border">
+          {#each Array(5) as _}
+          <tr>
+            <td class="py-3 px-4 space-y-2">
+              <div class="h-4 w-24 animate-pulse rounded bg-muted"></div>
+              <div class="h-3 w-48 animate-pulse rounded bg-muted"></div>
+            </td>
+            <td class="py-3 px-4"><div class="h-4 w-24 animate-pulse rounded bg-muted"></div></td>
+            <td class="py-3 px-4"><div class="h-5 w-10 animate-pulse rounded bg-muted"></div></td>
+            <td class="py-3 px-4"><div class="h-4 w-20 animate-pulse rounded bg-muted"></div></td>
+            <td class="py-3 px-4"><div class="h-4 w-16 animate-pulse rounded bg-muted"></div></td>
+            <td class="py-3 px-4"><div class="h-7 w-10 animate-pulse rounded bg-muted"></div></td>
+          </tr>
+          {/each}
+        </tbody>
+      </table>
     </div>
+  </CardContent>
+</Card>
+{:else if error}
+<Card class="shadow-card">
+  <CardContent class="flex flex-col items-center justify-center py-12 gap-3">
+    <AlertTriangleIcon class="size-8 text-destructive" />
+    <p class="text-body-sm text-muted-foreground">{error}</p>
+    <Button onclick={loadKeys} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
+  </CardContent>
+</Card>
+{:else if keys.length === 0}
+<Card class="shadow-card">
+  <CardContent class="flex flex-col items-center justify-center py-12 gap-3">
+    <div class="size-12 rounded-full bg-muted/50 flex items-center justify-center">
+      <svg class="size-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+      </svg>
+    </div>
+    <div class="text-center">
+      <p class="text-sm font-medium text-muted-foreground">No API keys configured</p>
+      <p class="text-xs text-muted-foreground/70 mt-0.5">Proxy is currently open. Add a key to require authentication.</p>
+    </div>
+    <Button onclick={() => showCreate = true} size="sm" class="text-body-sm rounded-sm mt-1">
+      Create API key
+    </Button>
+  </CardContent>
+</Card>
+{:else}
+<div class="flex items-center justify-between">
+  <p class="text-caption-mono text-muted-foreground">{keys.length} key{keys.length !== 1 ? 's' : ''}</p>
+  <Button onclick={() => { showCreate = true; createdKey = ''; }} size="sm" class="text-body-sm rounded-sm">
+    Create key
+  </Button>
+</div>
 
-    <Card class="shadow-card overflow-hidden">
-      <CardContent class="p-0">
-        <div class="overflow-x-auto">
-          <table class="w-full text-left border-collapse">
-            <thead>
-              <tr class="border-b border-border bg-muted/30">
-                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Name</th>
-                                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Rate Limit</th>
-              <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Status</th>
-              <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Created</th>
-              <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Expires</th>
-              <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-32"></th>
-              </tr>
-            </thead>
-	<tbody class="divide-y divide-border">
-		{#each keys as key}
-			<tr class="transition-colors hover:bg-accent/20">
-				<td class="py-3 px-4">
-					<div class="text-body-sm font-medium">{key.name || '—'}</div>
-					<div class="flex items-center gap-2 mt-1">
-						<code class="font-mono text-xs text-muted-foreground break-all">{key.key || '—'}</code>
-						{#if key.key}
-						<Button variant="outline" size="sm" class="h-6 px-1.5 py-0.5 text-caption-mono cursor-pointer" onclick={() => handleCopy(key.key)}>Copy</Button>
-						{/if}
-					</div>
-				</td>
-				<td class="py-3 px-4 text-body-sm text-muted-foreground">{key.rate_limit_per_min}/min · {key.max_tokens > 0 ? formatMaxTokens(key.max_tokens) : 'Unlimited'}</td>
-<td class="py-3 px-4">
+<Card class="shadow-card overflow-hidden">
+  <CardContent class="p-0">
+    <div class="overflow-x-auto">
+      <table class="w-full text-left border-collapse">
+        <thead>
+          <tr class="border-b border-border bg-muted/30">
+            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Name</th>
+            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Rate Limit</th>
+            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Status</th>
+            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Created</th>
+            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Expires</th>
+            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-32"></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-border">
+          {#each keys as key}
+          <tr class="transition-colors hover:bg-accent/20">
+            <td class="py-3 px-4">
+              <div class="text-body-sm font-medium">{key.name || '—'}</div>
+              <div class="flex items-center gap-2 mt-1">
+                <code class="font-mono text-xs text-muted-foreground break-all">{key.key || '—'}</code>
+                {#if key.key}
+                <Button variant="outline" size="sm" class="h-6 px-1.5 py-0.5 text-caption-mono cursor-pointer" onclick={() => handleCopy(key.key)}>Copy</Button>
+                {/if}
+              </div>
+            </td>
+            <td class="py-3 px-4 text-body-sm text-muted-foreground">{key.rate_limit_per_min}/min · {key.max_tokens > 0 ? formatMaxTokens(key.max_tokens) : 'Unlimited'}</td>
+            <td class="py-3 px-4">
               <div class="flex justify-center">
                 <Switch checked={key.is_active} onCheckedChange={() => handleToggle(key.id, key.is_active)} aria-label={key.is_active ? 'Disable key' : 'Enable key'} />
               </div>
             </td>
-              <td class="py-3 px-4 text-body-sm text-muted-foreground">{formatDate(key.created_at)}</td>
-              <td class="py-3 px-4">
-                {#if key.expires_at}
-                  {@const expired = isExpired(key.expires_at)}
-                  <span class="text-body-sm {expired ? 'text-destructive font-medium' : 'text-muted-foreground'}" title={new Date(key.expires_at * 1000).toLocaleString()}>
-                    {formatExpiry(key.expires_at)}
-                  </span>
-                {:else}
-                  <span class="text-body-sm text-muted-foreground">Never</span>
-                {/if}
-              </td>
-              <td class="py-3 px-4">
+            <td class="py-3 px-4 text-body-sm text-muted-foreground">{formatDate(key.created_at)}</td>
+            <td class="py-3 px-4">
+              {#if key.expires_at}
+              {@const expired = isExpired(key.expires_at)}
+              <span class="text-body-sm {expired ? 'text-destructive font-medium' : 'text-muted-foreground'}" title={new Date(key.expires_at * 1000).toLocaleString()}>
+                {formatExpiry(key.expires_at)}
+              </span>
+              {:else}
+              <span class="text-body-sm text-muted-foreground">Never</span>
+              {/if}
+            </td>
+            <td class="py-3 px-4">
               <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm text-destructive hover:text-destructive" onclick={() => handleDelete(key.id, key.name)}>
                 Del
               </Button>
             </td>
-			</tr>
-		{/each}
-	</tbody>
-          </table>
-        </div>
-      </CardContent>
-    </Card>
+          </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  </CardContent>
+</Card>
 {/if}
 
-{#if !loading}
+{#if !loading && !error}
 <Card class="shadow-card">
   <CardHeader>
     <CardTitle class="text-display-md">Proxy API docs.</CardTitle>

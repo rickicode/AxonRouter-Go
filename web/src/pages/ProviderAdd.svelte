@@ -288,7 +288,10 @@ Relay
 								</Select.Content>
 							</Select.Root>
 {#if loadingPools}
-<p class="text-caption text-muted-foreground">Loading proxy pools…</p>
+<div class="flex items-center gap-3 py-2">
+  <div class="size-4 animate-pulse rounded-full bg-muted"></div>
+  <div class="h-3 w-32 animate-pulse rounded bg-muted"></div>
+</div>
 {/if}
 <p class="text-caption text-muted-foreground">Direct = shared AxonRouter egress. Proxy/Relay = distinct egress identity for this connection.</p>
 </div>
