@@ -375,6 +375,14 @@ func TestAll_MarksAuthFailedOnUnrecoverableRefreshError(t *testing.T) {
 	}
 }
 
+// TestTestAllRefreshLead_IncludesGrokCli proves the admin TestAll refresh lead map
+// has an explicit 5-minute entry for grok-cli so OAuth tokens are refreshed before expiry.
+func TestTestAllRefreshLead_IncludesGrokCli(t *testing.T) {
+	if lead, ok := testAllRefreshLead["grok-cli"]; !ok || lead != 5*time.Minute {
+		t.Fatalf("testAllRefreshLead missing or invalid grok-cli entry: %v, ok=%v", lead, ok)
+	}
+}
+
 // TestProviderList_IncludesCategoryAndServiceKinds proves every provider returned
 // by the admin list endpoint carries category and a non-empty service_kinds array.
 func TestProviderList_IncludesCategoryAndServiceKinds(t *testing.T) {

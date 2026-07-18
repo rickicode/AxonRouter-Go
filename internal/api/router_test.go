@@ -11,6 +11,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 
 	"github.com/rickicode/AxonRouter-Go/internal/db"
@@ -168,6 +169,18 @@ func TestModelsEndpoint(t *testing.T) {
 	}
 	if _, ok := body["data"]; !ok {
 		t.Errorf("expected data field in models response, got %+v", body)
+	}
+}
+
+// TestOAuthServices_IncludeGrokCli proves the router registers the Grok CLI OAuth
+// service during initialization so dashboard/device-code auth can use it.
+func TestOAuthServices_IncludeGrokCli(t *testing.T) {
+	router, srv := newTestRouter(t)
+	defer srv.Close()
+	defer router.Shutdown()
+
+	if _, ok := router.authMgr.GetService(auth.ProviderGrokCli); !ok {
+		t.Fatalf("grok-cli OAuth service not registered in auth manager")
 	}
 }
 

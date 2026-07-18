@@ -20,7 +20,8 @@ const (
 	ProviderCodex       ProviderType = "cx"
 	ProviderAntigravity ProviderType = "ag"
 	ProviderKiro        ProviderType = "kiro"
-	ProviderGitHub ProviderType = "copilot"
+	ProviderGitHub      ProviderType = "copilot"
+	ProviderGrokCli     ProviderType = "grok-cli"
 )
 
 // Credentials holds authentication tokens for a connection.
