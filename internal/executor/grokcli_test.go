@@ -49,16 +49,25 @@ func TestGrokCLIExecutor_Headers(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
 		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
 	})
+	var persisted map[string]string
 	req := &Request{
-		Provider:    "grok-cli",
-		Model:       "grok-cli/grok-4.5",
-		BaseURL:     ts.URL,
-		AccessToken: "grok-at-123",
+		Provider:     "grok-cli",
+		Model:        "grok-cli/grok-4.5",
+		BaseURL:      ts.URL,
+		AccessToken:  "grok-at-123",
+		ConnectionID: "conn-grok-headers",
 		ProviderSpecificData: map[string]string{
 			"email": "user@example.com",
 			"sub":   "grok-sub-abc",
 		},
 		Body: body,
+		PersistProviderSpecificData: func(psd map[string]string) error {
+			persisted = make(map[string]string, len(psd))
+			for k, v := range psd {
+				persisted[k] = v
+			}
+			return nil
+		},
 		StreamConfig: &StreamConfig{
 			FetchTimeoutMs:           5000,
 			StreamIdleTimeoutMs:      5000,
@@ -76,6 +85,8 @@ func TestGrokCLIExecutor_Headers(t *testing.T) {
 		"User-Agent":            "xai-grok-workspace/0.2.93",
 		"x-email":               "user@example.com",
 		"x-userid":              "grok-sub-abc",
+		"x-grok-model-override": "grok-4.5",
+		"x-grok-turn-idx":       "0",
 		"Connection":            "Keep-Alive",
 	}
 	for name, want := range mustEqual {
@@ -83,15 +94,53 @@ func TestGrokCLIExecutor_Headers(t *testing.T) {
 			t.Errorf("%s=%q, want %q", name, got, want)
 		}
 	}
-	if gotHeaders.Get("x-grok-conv-id") == "" {
-		t.Errorf("x-grok-conv-id is empty")
+	
+	needPresent := []string{"x-grok-session-id", "x-grok-conv-id", "x-grok-req-id", "x-grok-agent-id"}
+	for _, name := range needPresent {
+		if got := gotHeaders.Get(name); got == "" {
+			t.Errorf("%s is empty", name)
+		}
 	}
 
-	// These extra identity headers should no longer be sent (they can trigger CF/404).
-	for _, name := range []string{"x-grok-client-identifier", "x-grok-client-mode", "x-grok-session-id", "x-grok-req-id", "x-grok-turn-idx", "x-grok-agent-id", "x-grok-model-override"} {
+	// Extra identity headers that can trigger Cloudflare or 404 errors must remain absent.
+	for _, name := range []string{"x-grok-client-identifier", "x-grok-client-mode"} {
 		if got := gotHeaders.Get(name); got != "" {
 			t.Errorf("%s should not be set, got %q", name, got)
 		}
+	}
+
+	firstSession := gotHeaders.Get("x-grok-session-id")
+	firstConv := gotHeaders.Get("x-grok-conv-id")
+	firstAgent := gotHeaders.Get("x-grok-agent-id")
+	firstReq := gotHeaders.Get("x-grok-req-id")
+
+	// Second request on the same connection should reuse stable IDs and bump turn.
+	if _, err := exec.Execute(context.Background(), req); err != nil {
+		t.Fatalf("second Execute error: %v", err)
+	}
+	if got := gotHeaders.Get("x-grok-session-id"); got != firstSession {
+		t.Errorf("session id changed from %q to %q", firstSession, got)
+	}
+	if got := gotHeaders.Get("x-grok-conv-id"); got != firstConv {
+		t.Errorf("conv id changed from %q to %q", firstConv, got)
+	}
+	if got := gotHeaders.Get("x-grok-agent-id"); got != firstAgent {
+		t.Errorf("agent id changed from %q to %q", firstAgent, got)
+	}
+	if got := gotHeaders.Get("x-grok-req-id"); got == firstReq {
+		t.Errorf("request id should differ between requests")
+	}
+	if got := gotHeaders.Get("x-grok-turn-idx"); got != "1" {
+		t.Errorf("x-grok-turn-idx=%q, want 1", got)
+	}
+	if persisted == nil {
+		t.Fatalf("expected PSD to be persisted")
+	}
+	if persisted[grokCLISessionIDKey] != firstSession {
+		t.Errorf("persisted session id %q does not match header %q", persisted[grokCLISessionIDKey], firstSession)
+	}
+	if persisted[grokCLITurnIdxKey] != "2" {
+		t.Errorf("persisted turn_idx=%q, want 2", persisted[grokCLITurnIdxKey])
 	}
 }
 
@@ -337,6 +386,74 @@ func TestGrokCLIExecutor_ErrorTranslation(t *testing.T) {
 	bodyStr := string(upErr.Body)
 	if !strings.Contains(bodyStr, "insufficient_quota") {
 		t.Fatalf("expected insufficient_quota, got %s", bodyStr)
+	}
+}
+
+func TestGrokCLI_GetTurnIdx(t *testing.T) {
+	if got := grokcliGetTurnIdx(map[string]string{grokCLITurnIdxKey: "5"}); got != 5 {
+		t.Errorf("persisted turn_idx=5: got %d, want 5", got)
+	}
+	if got := grokcliGetTurnIdx(map[string]string{}); got != 0 {
+		t.Errorf("missing turn_idx: got %d, want 0", got)
+	}
+}
+
+func TestGrokCLI_CountUserMessages(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{
+		"messages": []any{
+			map[string]any{"role": "system", "content": "sys"},
+			map[string]any{"role": "user", "content": "a"},
+			map[string]any{"role": "assistant", "content": "b"},
+			map[string]any{"role": "tool", "content": "c"},
+			map[string]any{"role": "user", "content": "d"},
+		},
+	})
+	if got := grokcliCountUserMessages(body); got != 2 {
+		t.Errorf("messages body: got %d user msgs, want 2", got)
+	}
+
+	inputBody, _ := json.Marshal(map[string]any{
+		"input": []any{
+			map[string]any{"type": "message", "role": "user", "content": "a"},
+			map[string]any{"type": "message", "role": "assistant", "content": "b"},
+			map[string]any{"type": "message", "role": "user", "content": "c"},
+		},
+	})
+	if got := grokcliCountUserMessages(inputBody); got != 2 {
+		t.Errorf("input body: got %d user msgs, want 2", got)
+	}
+
+	if got := grokcliCountUserMessages([]byte(`{}`)); got != 0 {
+		t.Errorf("empty body: got %d, want 0", got)
+	}
+}
+
+func TestGrokCLI_StableAgentID(t *testing.T) {
+	a := grokcliStableAgentID(map[string]string{"deviceId": "dev1"})
+	b := grokcliStableAgentID(map[string]string{"deviceId": "dev1"})
+	c := grokcliStableAgentID(map[string]string{"deviceId": "dev2"})
+
+	if a == "" {
+		t.Fatal("agent id is empty")
+	}
+	if a != b {
+		t.Errorf("same device id should produce same agent id: %q vs %q", a, b)
+	}
+	if a == c {
+		t.Errorf("different device ids should produce different agent ids")
+	}
+
+	// Falls back through sub then email.
+	sub := grokcliStableAgentID(map[string]string{"sub": "sub-1"})
+	email := grokcliStableAgentID(map[string]string{"email": "u@x.com"})
+	if sub == "" || email == "" || sub == email {
+		t.Errorf("fallback agent ids should be non-empty and distinct: sub=%q email=%q", sub, email)
+	}
+
+	// Persisted agent id takes precedence.
+	persisted := grokcliStableAgentID(map[string]string{grokCLIAgentIDKey: "agent-42"})
+	if persisted != "agent-42" {
+		t.Errorf("persisted agent id should win: got %q", persisted)
 	}
 }
 
