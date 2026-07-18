@@ -192,7 +192,7 @@ func New(cfg Config) *Router {
 	proxyDeployH := admin.NewProxyDeployHandler(cfg.DB, proxyHealth, proxyResolver)
 	optimizationH := admin.NewOptimizationHandler(cfg.DB, exactCache)
 	tlsH := admin.NewTLSHandler(config.Get().DataDir, http.DefaultClient)
-	backupH := admin.NewBackupHandler(cfg.DB, writeQueue)
+	backupH := admin.NewBackupHandler(cfg.DB, writeQueue, nil)
 
 	// Additional admin handlers (moved here so the JWT /api/admin and master-key
 	// /admin/api/v1 groups can share the same route table).
@@ -469,6 +469,12 @@ func New(cfg Config) *Router {
 
 	// Let the TLS handler report whether HTTPS is actually listening.
 	tlsH.SetHTTPSActiveChecker(r.IsHTTPSActive)
+
+	// After a successful restore the gateway must restart so in-memory caches
+	// (connections, combos, models, quota, etc.) are rebuilt from the new DB.
+	backupH.SetRestoreRestartCallback(func() {
+		r.Shutdown()
+	})
 
 	return r
 }

@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fusion judge model selector** in the dashboard now uses the model picker instead of a free-text input.
 - **Strategy reference** moved to a static card at the bottom of the Combos page, explaining every routing strategy and how smart combo selection works.
 - **Combo metrics summary cards** on the Combos page show total requests, successes, errors, and average latency across all combos over the last 24 hours.
- - **Database backup and restore** via new `internal/backup` package. Backup exports all data (API keys, usage, provider accounts, combos, config, request logs, cache) as encrypted-optional JSON Lines. Restore supports SQLite local files, Turso remote databases, and overwriting the currently running database.
+ - **Database backup and restore** via new `internal/backup` package. Backup exports all data (API keys, usage, provider accounts, combos, config, request logs, cache) as encrypted-optional JSON Lines. Restore always targets the currently running gateway database.
  - **Clear old logs control** on the Logs dashboard page with 7/30/90 day retention options; preserves `api_key_usage` and other usage summary data.
  - **Colored terminal logs** for the `text` and `compact` log formats, with consistent ANSI coloring of common keys such as `provider`, `conn`, `model`, `status`, `method`, `path`, `client_ip`, and `user_agent`.
  - **Client IP and User-Agent enrichment** for HTTP request logs and upstream executor logs, propagated through request contexts.
@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Antigravity (`ag`) request envelope is no longer double-wrapped. The executor finalizes the envelope produced by the translator (sets project, request id/session id, request type, strips `request.safetySettings`) instead of wrapping it inside another `request` object.
 - Antigravity response transform is now registered in both directions so streaming and non-streaming `/v1/chat/completions` paths can find it.
 - Antigravity SSE chunks now include proper `data: ...\n\n` framing, and non-stream requests are routed to `generateContent` instead of `streamGenerateContent`, producing a single translatable JSON response.
+- **Backup/restore target confusion fixed:** restore now always writes to the gateway's current database and automatically triggers a graceful shutdown so Docker/systemd can restart the process with fresh caches.
+- **Restore reliability improved:** larger insert batches (500 rows), exponential backoff retries on transient `database is locked` / busy errors, and a single per-backup encryption salt so encrypted restores no longer re-derive the PBKDF2 key for every row.
 
 ### Changed
 - `streamResponse`, `handleStreamResponse`, and `handleClaudeStreamResponse` now return an `error` so callers can implement retry/failover logic.

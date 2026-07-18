@@ -24,7 +24,7 @@ func TestBackupHandlerDownloadStreamsSelectedCategories(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	database := newBackupHandlerTestDB(t)
 	seedBackupHandlerTestData(t, database)
-	h := NewBackupHandler(database, nil)
+	h := NewBackupHandler(database, nil, nil)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -74,7 +74,7 @@ func TestBackupHandlerDownloadStreamsSelectedCategories(t *testing.T) {
 
 func TestBackupHandlerDownloadRejectsUnknownCategory(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	h := NewBackupHandler(newBackupHandlerTestDB(t), nil)
+	h := NewBackupHandler(newBackupHandlerTestDB(t), nil, nil)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -101,9 +101,9 @@ func TestBackupHandlerRestoreMultipartCurrentTarget(t *testing.T) {
 	target := newBackupHandlerTestDB(t)
 	queue := appdb.NewWriteQueue(target)
 	t.Cleanup(queue.Stop)
-	h := NewBackupHandler(target, queue)
+	h := NewBackupHandler(target, queue, nil)
 
-	body, contentType := multipartRestoreBody(t, "backup", "backup.ndjson", backupPayload.Bytes(), map[string]string{"target": "current"})
+	body, contentType := multipartRestoreBody(t, "backup", "backup.ndjson", backupPayload.Bytes(), nil)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/backup/restore", body)
@@ -129,9 +129,9 @@ func TestBackupHandlerRestoreMultipartCurrentTarget(t *testing.T) {
 
 func TestBackupHandlerRestoreRequiresBackupFile(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	h := NewBackupHandler(newBackupHandlerTestDB(t), nil)
+	h := NewBackupHandler(newBackupHandlerTestDB(t), nil, nil)
 
-	body, contentType := multipartRestoreBody(t, "other", "backup.ndjson", []byte("not used"), map[string]string{"target": "current"})
+	body, contentType := multipartRestoreBody(t, "other", "backup.ndjson", []byte("not used"), nil)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/backup/restore", body)

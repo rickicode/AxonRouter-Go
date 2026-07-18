@@ -42,6 +42,10 @@ func Encrypt(plaintext []byte, password string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("generate encryption salt: %w", err)
 	}
+	return encryptWithSalt(plaintext, password, salt)
+}
+
+func encryptWithSalt(plaintext []byte, password string, salt []byte) ([]byte, error) {
 	nonce, err := randomBytes(nonceSize)
 	if err != nil {
 		return nil, fmt.Errorf("generate encryption nonce: %w", err)
@@ -57,6 +61,20 @@ func Encrypt(plaintext []byte, password string) ([]byte, error) {
 	sealed = append(sealed, nonce...)
 	sealed = gcm.Seal(sealed, nonce, plaintext, nil)
 	return sealed, nil
+}
+
+// EncryptLineWithSalt encrypts a single plaintext line using a caller-supplied
+// salt. Using the same salt for every row of a backup lets the key cache avoid
+// re-deriving the PBKDF2 key on every row.
+func EncryptLineWithSalt(plaintext []byte, password string, salt []byte) (string, error) {
+	if password == "" {
+		return "", ErrMissingPassword
+	}
+	sealed, err := encryptWithSalt(plaintext, password, salt)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(sealed), nil
 }
 
 func Decrypt(ciphertext []byte, password string) ([]byte, error) {

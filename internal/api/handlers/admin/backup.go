@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/backup"
@@ -14,10 +15,21 @@ import (
 type BackupHandler struct {
 	db         *sql.DB
 	writeQueue *appdb.WriteQueue
+	// onRestoreRestart is called after a successful restore to the current
+	// database. The callback should trigger a graceful shutdown so that the
+	// process manager (systemd/Docker/etc.) can restart the gateway with fresh
+	// in-memory caches.
+	onRestoreRestart func()
 }
 
-func NewBackupHandler(database *sql.DB, writeQueue *appdb.WriteQueue) *BackupHandler {
-	return &BackupHandler{db: database, writeQueue: writeQueue}
+func NewBackupHandler(database *sql.DB, writeQueue *appdb.WriteQueue, onRestoreRestart func()) *BackupHandler {
+	return &BackupHandler{db: database, writeQueue: writeQueue, onRestoreRestart: onRestoreRestart}
+}
+
+// SetRestoreRestartCallback wires the auto-restart callback after the router has
+// been created. The callback is invoked after a successful restore.
+func (h *BackupHandler) SetRestoreRestartCallback(fn func()) {
+	h.onRestoreRestart = fn
 }
 
 func (h *BackupHandler) Download(c *gin.Context) {
@@ -58,15 +70,10 @@ func (h *BackupHandler) Restore(c *gin.Context) {
 	}
 	defer src.Close()
 
-	target := backup.RestoreTarget(c.DefaultPostForm("target", string(backup.RestoreTargetCurrent)))
 	result, err := backup.Restore(c.Request.Context(), src, backup.RestoreOptions{
-		Target:     target,
 		Password:   c.PostForm("password"),
 		CurrentDB:  h.db,
 		WriteQueue: h.writeQueue,
-		SQLitePath: c.PostForm("sqlite_path"),
-		TursoURL:   c.PostForm("turso_url"),
-		TursoToken: c.PostForm("turso_token"),
 	})
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -77,6 +84,16 @@ func (h *BackupHandler) Restore(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": result})
+
+	if h.onRestoreRestart != nil {
+		// Give the HTTP response a moment to flush before shutting down. The
+		// service manager / Docker restart policy will bring the gateway back up
+		// with refreshed in-memory state.
+		go func() {
+			time.Sleep(2 * time.Second)
+			h.onRestoreRestart()
+		}()
+	}
 }
 
 func validateBackupCategories(categories []string) error {
@@ -99,11 +116,8 @@ func isRestoreClientError(err error) bool {
 		"decrypt backup payload",
 		"decode backup header",
 		"decode backup row",
-		"sqlite restore target path is required",
-		"turso restore target url is required",
 		"unsupported backup format",
 		"unsupported backup version",
-		"unsupported restore target",
 		"unknown backup category",
 	}
 	for _, clientErr := range clientErrors {

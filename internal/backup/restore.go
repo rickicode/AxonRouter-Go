@@ -8,39 +8,24 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	appdb "github.com/rickicode/AxonRouter-Go/internal/db"
-
-	_ "github.com/tursodatabase/libsql-client-go/libsql"
-	_ "modernc.org/sqlite"
-)
-
-type RestoreTarget string
-
-const (
-	RestoreTargetCurrent RestoreTarget = "current"
-	RestoreTargetSQLite  RestoreTarget = "sqlite"
-	RestoreTargetTurso   RestoreTarget = "turso"
 )
 
 type RestoreOptions struct {
-	Target     RestoreTarget
 	Password   string
 	CurrentDB  *sql.DB
 	WriteQueue *appdb.WriteQueue
-	SQLitePath string
-	TursoURL   string
-	TursoToken string
 }
 
 type RestoreResult struct {
-	RowsRestored   int
-	TablesRestored []string
+	RowsRestored    int
+	TablesRestored  []string
 	RestartRequired bool
-	Warning        string
+	Warning         string
 }
 
 const currentRestoreRestartWarning = "Process restart required after restore to refresh in-memory caches: connection registry, combo config, model lists, proxy resolver, and quota cache."
@@ -49,9 +34,21 @@ const currentRestoreRestartWarning = "Process restart required after restore to 
 // and request-log rows can be large, so allow up to 64 MiB per line.
 const maxBackupLineLength = 64 * 1024 * 1024
 
+// restoreBatchSize controls how many rows are inserted in a single INSERT.
+// Larger batches reduce SQLite write-lock round-trips but keep memory bounded.
+const restoreBatchSize = 500
+
+// maxRestoreRetries and restoreRetryBaseDelay protect against transient
+// SQLITE_BUSY contention from concurrent writers or background workers.
+const maxRestoreRetries = 5
+const restoreRetryBaseDelay = 50 * time.Millisecond
+
 func Restore(ctx context.Context, src io.Reader, opts RestoreOptions) (RestoreResult, error) {
 	if src == nil {
 		return RestoreResult{}, errors.New("backup restore source is required")
+	}
+	if opts.CurrentDB == nil {
+		return RestoreResult{}, errors.New("current restore target database is required")
 	}
 
 	scanner := bufio.NewScanner(src)
@@ -65,30 +62,22 @@ func Restore(ctx context.Context, src io.Reader, opts RestoreOptions) (RestoreRe
 		return RestoreResult{}, err
 	}
 
-	target, closeTarget, err := openRestoreTarget(opts)
-	if err != nil {
-		return RestoreResult{}, err
-	}
-	defer closeTarget()
-
-	if opts.Target == RestoreTargetCurrent && opts.WriteQueue != nil {
+	if opts.WriteQueue != nil {
 		opts.WriteQueue.Pause()
 		defer opts.WriteQueue.Resume()
 	}
 
-	if err := appdb.RunMigrations(target); err != nil {
+	if err := appdb.RunMigrations(opts.CurrentDB); err != nil {
 		return RestoreResult{}, fmt.Errorf("run restore migrations: %w", err)
 	}
 
-	result, err := restoreRows(ctx, target, header, scanner, opts.Password)
+	result, err := restoreRows(ctx, opts.CurrentDB, header, scanner, opts.Password)
 	if err != nil {
 		return RestoreResult{}, err
 	}
 
-	if opts.Target == RestoreTargetCurrent {
-		result.RestartRequired = true
-		result.Warning = currentRestoreRestartWarning
-	}
+	result.RestartRequired = true
+	result.Warning = currentRestoreRestartWarning
 	return result, nil
 }
 
@@ -123,61 +112,16 @@ func validateHeader(header Header) error {
 	return err
 }
 
-func openRestoreTarget(opts RestoreOptions) (*sql.DB, func(), error) {
-	switch opts.Target {
-	case RestoreTargetCurrent:
-		if opts.CurrentDB == nil {
-			return nil, nil, errors.New("current restore target database is required")
-		}
-		return opts.CurrentDB, func() {}, nil
-	case RestoreTargetSQLite:
-		if opts.SQLitePath == "" {
-			return nil, nil, errors.New("sqlite restore target path is required")
-		}
-		d, err := sql.Open("sqlite", opts.SQLitePath)
-		if err != nil {
-			return nil, nil, fmt.Errorf("open sqlite restore target: %w", err)
-		}
-		return d, func() { _ = d.Close() }, nil
-	case RestoreTargetTurso:
-		if opts.TursoURL == "" {
-			return nil, nil, errors.New("turso restore target url is required")
-		}
-		dsn, err := appendRestoreAuthToken(opts.TursoURL, opts.TursoToken)
-		if err != nil {
-			return nil, nil, fmt.Errorf("prepare turso restore target: %w", err)
-		}
-		d, err := sql.Open("libsql", dsn)
-		if err != nil {
-			return nil, nil, fmt.Errorf("open turso restore target: %w", err)
-		}
-		return d, func() { _ = d.Close() }, nil
-	default:
-		return nil, nil, fmt.Errorf("unsupported restore target %q", opts.Target)
-	}
-}
-
-func appendRestoreAuthToken(dsn, token string) (string, error) {
-	if token == "" || strings.Contains(dsn, "authToken=") {
-		return dsn, nil
-	}
-	u, err := url.Parse(dsn)
-	if err != nil {
-		return "", err
-	}
-	q := u.Query()
-	q.Set("authToken", token)
-	u.RawQuery = q.Encode()
-	return u.String(), nil
-}
-
 func restoreRows(ctx context.Context, target *sql.DB, header Header, scanner *bufio.Scanner, password string) (RestoreResult, error) {
-	if _, err := target.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
+	if err := execWithRetry(ctx, "disable foreign keys", func(ctx context.Context) error {
+		_, err := target.ExecContext(ctx, "PRAGMA foreign_keys=OFF")
+		return err
+	}); err != nil {
 		return RestoreResult{}, fmt.Errorf("disable restore foreign keys: %w", err)
 	}
 	defer target.ExecContext(context.Background(), "PRAGMA foreign_keys=ON")
 
-	tx, err := target.BeginTx(ctx, nil)
+	tx, err := beginRestoreTx(ctx, target)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("begin restore transaction: %w", err)
 	}
@@ -189,12 +133,15 @@ func restoreRows(ctx context.Context, target *sql.DB, header Header, scanner *bu
 	}()
 
 	for _, table := range deleteOrder(header.Categories) {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM "+quoteIdentifier(table)); err != nil {
+		if err := execWithRetry(ctx, "delete "+table, func(ctx context.Context) error {
+			_, err := tx.ExecContext(ctx, "DELETE FROM "+quoteIdentifier(table))
+			return err
+		}); err != nil {
 			return RestoreResult{}, fmt.Errorf("delete restore table %s: %w", table, err)
 		}
 	}
 
-	batch := make([]Row, 0, 100)
+	batch := make([]Row, 0, restoreBatchSize)
 	var currentTable string
 	var rowsRestored int
 	seenTables := make(map[string]bool)
@@ -203,7 +150,9 @@ func restoreRows(ctx context.Context, target *sql.DB, header Header, scanner *bu
 		if len(batch) == 0 {
 			return nil
 		}
-		if err := insertRestoreBatch(ctx, tx, table, batch); err != nil {
+		if err := execWithRetry(ctx, "insert batch into "+table, func(ctx context.Context) error {
+			return insertRestoreBatch(ctx, tx, table, batch)
+		}); err != nil {
 			return err
 		}
 		rowsRestored += len(batch)
@@ -231,7 +180,7 @@ func restoreRows(ctx context.Context, target *sql.DB, header Header, scanner *bu
 			currentTable = row.Table
 		}
 		batch = append(batch, row)
-		if len(batch) >= 100 {
+		if len(batch) >= restoreBatchSize {
 			if err := flush(currentTable); err != nil {
 				return RestoreResult{}, err
 			}
@@ -244,7 +193,7 @@ func restoreRows(ctx context.Context, target *sql.DB, header Header, scanner *bu
 		return RestoreResult{}, err
 	}
 
-	if err := tx.Commit(); err != nil {
+	if err := execWithRetry(context.Background(), "commit restore transaction", func(_ context.Context) error { return tx.Commit() }); err != nil {
 		return RestoreResult{}, fmt.Errorf("commit restore transaction: %w", err)
 	}
 	committed = true
@@ -366,4 +315,51 @@ func insertRestoreBatch(ctx context.Context, tx *sql.Tx, table string, rows []Ro
 
 func quoteIdentifier(identifier string) string {
 	return `"` + strings.ReplaceAll(identifier, `"`, `""`) + `"`
+}
+
+// beginRestoreTx starts a write transaction with retries for transient busy
+// errors so the restore does not fail immediately under light contention.
+func beginRestoreTx(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
+	var tx *sql.Tx
+	err := execWithRetry(ctx, "begin immediate transaction", func(ctx context.Context) error {
+		var err error
+		tx, err = db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelDefault})
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return tx, nil
+}
+
+// execWithRetry retries transient SQLite busy errors. It only retries when the
+// context has not been cancelled and the error looks like a lock/busy problem.
+func execWithRetry(ctx context.Context, label string, op func(ctx context.Context) error) error {
+	delay := restoreRetryBaseDelay
+	var lastErr error
+	for attempt := 0; attempt < maxRestoreRetries; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("%s: %w", label, err)
+		}
+		lastErr = op(ctx)
+		if lastErr == nil {
+			return nil
+		}
+		if attempt == maxRestoreRetries-1 || !isRetryableDBError(lastErr) {
+			return fmt.Errorf("%s: %w", label, lastErr)
+		}
+		time.Sleep(delay)
+		if delay < 2*time.Second {
+			delay *= 2
+		}
+	}
+	return fmt.Errorf("%s: %w", label, lastErr)
+}
+
+func isRetryableDBError(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "busy") ||
+		strings.Contains(msg, "cannot start a transaction within a transaction") ||
+		strings.Contains(msg, "retry")
 }

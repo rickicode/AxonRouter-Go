@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestRestoreToSQLiteTargetMatchesBackedUpRowCounts(t *testing.T) {
+func TestRestoreToCurrentTargetMatchesBackedUpRowCounts(t *testing.T) {
 	ctx := context.Background()
 	source := openBackupTestDB(t)
 	seedBackupTestData(t, source)
@@ -22,23 +22,19 @@ func TestRestoreToSQLiteTargetMatchesBackedUpRowCounts(t *testing.T) {
 		t.Fatalf("backup source: %v", err)
 	}
 
-	targetPath := filepath.Join(t.TempDir(), "restored.db")
+	target := openBackupTestDB(t)
 	result, err := Restore(ctx, bytes.NewReader(backup.Bytes()), RestoreOptions{
-		Target:     RestoreTargetSQLite,
-		SQLitePath: targetPath,
+		CurrentDB: target,
 	})
 	if err != nil {
 		t.Fatalf("restore backup: %v", err)
 	}
-	if result.RestartRequired {
-		t.Fatal("sqlite target should not require process restart")
+	if !result.RestartRequired {
+		t.Fatal("current target should require process restart")
 	}
 	if result.RowsRestored == 0 {
 		t.Fatal("expected restored rows")
 	}
-
-	target := openSQLiteFile(t, targetPath)
-	defer target.Close()
 	for _, table := range []string{"provider_types", "connections", "api_keys", "combos", "combo_steps"} {
 		want := countRows(t, source, table)
 		got := countRows(t, target, table)
@@ -48,7 +44,7 @@ func TestRestoreToSQLiteTargetMatchesBackedUpRowCounts(t *testing.T) {
 	}
 }
 
-func TestRestoreToSQLiteTargetWithEncryptedBackup(t *testing.T) {
+func TestRestoreToCurrentTargetWithEncryptedBackup(t *testing.T) {
 	ctx := context.Background()
 	source := openBackupTestDB(t)
 	seedBackupTestData(t, source)
@@ -59,24 +55,20 @@ func TestRestoreToSQLiteTargetWithEncryptedBackup(t *testing.T) {
 		t.Fatalf("backup source: %v", err)
 	}
 
-	targetPath := filepath.Join(t.TempDir(), "restored-encrypted.db")
+	target := openBackupTestDB(t)
 	result, err := Restore(ctx, bytes.NewReader(backup.Bytes()), RestoreOptions{
-		Target:     RestoreTargetSQLite,
-		SQLitePath: targetPath,
-		Password:   password,
+		CurrentDB: target,
+		Password:  password,
 	})
 	if err != nil {
 		t.Fatalf("restore backup: %v", err)
 	}
-	if result.RestartRequired {
-		t.Fatal("sqlite target should not require process restart")
+	if !result.RestartRequired {
+		t.Fatal("current target should require process restart")
 	}
 	if result.RowsRestored == 0 {
 		t.Fatal("expected restored rows")
 	}
-
-	target := openSQLiteFile(t, targetPath)
-	defer target.Close()
 	for _, table := range []string{"provider_types", "connections", "api_keys", "combos", "combo_steps"} {
 		want := countRows(t, source, table)
 		got := countRows(t, target, table)
@@ -101,7 +93,6 @@ func TestRestoreCurrentTargetPausesWriteQueueAndWarnsRestart(t *testing.T) {
 	defer queue.Stop()
 
 	result, err := Restore(ctx, bytes.NewReader(backup.Bytes()), RestoreOptions{
-		Target:     RestoreTargetCurrent,
 		CurrentDB:  target,
 		WriteQueue: queue,
 	})
@@ -116,6 +107,17 @@ func TestRestoreCurrentTargetPausesWriteQueueAndWarnsRestart(t *testing.T) {
 	}
 	if got, want := countRows(t, target, "connections"), countRows(t, source, "connections"); got != want {
 		t.Fatalf("connections row count: got %d want %d", got, want)
+	}
+}
+
+func TestRestoreRequiresCurrentDB(t *testing.T) {
+	ctx := context.Background()
+	result, err := Restore(ctx, bytes.NewReader([]byte("not a backup")), RestoreOptions{})
+	if err == nil {
+		t.Fatalf("expected error, got result %+v", result)
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("backup payload")) && !bytes.Contains([]byte(err.Error()), []byte("database is required")) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

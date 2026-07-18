@@ -12,6 +12,7 @@ type Writer struct {
 	dest      io.Writer
 	password  string
 	encrypted bool
+	salt      []byte
 	encoder   *json.Encoder
 	rowBuf    bytes.Buffer
 	closed    bool
@@ -39,6 +40,13 @@ func NewWriter(dest io.Writer, header Header, password string) (*Writer, error) 
 	}
 
 	if writer.encrypted {
+		// Use one salt for the whole backup so the PBKDF2 key is derived once
+		// and reused for every row.
+		salt, err := randomBytes(saltSize)
+		if err != nil {
+			return nil, fmt.Errorf("generate backup salt: %w", err)
+		}
+		writer.salt = salt
 		// We still use an encoder for the rare case an error happens while
 		// serializing a row into a temporary buffer, but the real output is
 		// written line-by-line as base64 ciphertext.
@@ -62,7 +70,7 @@ func (w *Writer) WriteRow(row Row) error {
 		return fmt.Errorf("serialize backup row: %w", err)
 	}
 
-	line, err := EncryptLine(w.rowBuf.Bytes(), w.password)
+	line, err := EncryptLineWithSalt(w.rowBuf.Bytes(), w.password, w.salt)
 	if err != nil {
 		return fmt.Errorf("encrypt backup row: %w", err)
 	}

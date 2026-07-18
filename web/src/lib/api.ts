@@ -246,50 +246,40 @@ if (options.headers) Object.assign(headers, options.headers);
 
 // Backup API
 export type BackupCategory = "providers" | "config" | "api_keys" | "usage" | "cache";
-export type RestoreTarget = "current" | "sqlite" | "turso";
 
 export interface DownloadBackupOptions {
-categories: BackupCategory[];
-password?: string;
+	categories: BackupCategory[];
+	password?: string;
 }
 
 export interface RestoreBackupOptions {
-file: File;
-target: RestoreTarget;
-password?: string;
-sqlitePath?: string;
-tursoUrl?: string;
-tursoToken?: string;
+	file: File;
+	password?: string;
 }
 
 export interface RestoreBackupResult {
-data?: unknown;
-[key: string]: unknown;
+	data?: unknown;
+	[key: string]: unknown;
 }
 
 export const backupApi = {
-  downloadBackup: ({ categories, password }: DownloadBackupOptions) => {
-    return fetchBlob("/backup/download", {
-      method: "POST",
-      body: JSON.stringify({ categories, password: password || undefined }),
-      timeout_ms: 120000,
-    });
-  },
-
-restoreBackup: ({ file, target, password, sqlitePath, tursoUrl, tursoToken }: RestoreBackupOptions) => {
-const body = new FormData();
-body.set("backup", file);
-body.set("target", target);
-if (password) body.set("password", password);
-if (sqlitePath) body.set("sqlite_path", sqlitePath);
-if (tursoUrl) body.set("turso_url", tursoUrl);
-if (tursoToken) body.set("turso_token", tursoToken);
-return fetchApi<RestoreBackupResult>("/backup/restore", {
-method: "POST",
-body,
-timeout_ms: 120000,
-});
-},
+	downloadBackup: ({ categories, password }: DownloadBackupOptions) => {
+		return fetchBlob("/backup/download", {
+			method: "POST",
+			body: JSON.stringify({ categories, password: password || undefined }),
+			timeout_ms: 120000,
+		});
+	},
+	restoreBackup: ({ file, password }: RestoreBackupOptions) => {
+		const body = new FormData();
+		body.set("backup", file);
+		if (password) body.set("password", password);
+		return fetchApi<RestoreBackupResult>("/backup/restore", {
+			method: "POST",
+			body,
+			timeout_ms: 120000,
+		});
+	},
 };
 
 // Provider API

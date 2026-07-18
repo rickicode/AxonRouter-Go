@@ -5,7 +5,7 @@ import { Button } from '$lib/components/ui/button';
 import { Input } from '$lib/components/ui/input';
 import { Label } from '$lib/components/ui/label';
 import * as Card from '$lib/components/ui/card';
-import { backupApi, type BackupCategory, type RestoreTarget } from '$lib/api';
+import { backupApi, type BackupCategory } from '$lib/api';
 import DownloadIcon from '@lucide/svelte/icons/download';
 import UploadIcon from '@lucide/svelte/icons/upload';
 import DatabaseIcon from '@lucide/svelte/icons/database';
@@ -19,29 +19,19 @@ const backupCategories: { id: BackupCategory; label: string; description: string
 	{ id: 'cache', label: 'Cache', description: 'Response cache and quota cache snapshots.' },
 ];
 
-const restoreTargets: { id: RestoreTarget; label: string; description: string }[] = [
-{ id: 'current', label: 'Current database', description: 'Restore into the database used by this running gateway.' },
-{ id: 'sqlite', label: 'SQLite file', description: 'Restore into another SQLite database file path.' },
-{ id: 'turso', label: 'Turso database', description: 'Restore into a remote Turso/libSQL database.' },
-];
-
 let selectedCategories = $state<BackupCategory[]>(backupCategories.map((category) => category.id));
 let backupPassword = $state('');
 let downloadLoading = $state(false);
 
 let restoreFiles = $state<FileList>();
-let restoreTarget = $state<RestoreTarget>('current');
 let restorePassword = $state('');
-let sqlitePath = $state('');
-let tursoUrl = $state('');
-let tursoToken = $state('');
 let restoreLoading = $state(false);
 let restoreSummary = $state('');
 
 const selectedCategoryCount = $derived(selectedCategories.length);
 const restoreFile = $derived(restoreFiles?.item(0) ?? null);
 const canDownload = $derived(selectedCategoryCount > 0 && !downloadLoading);
-const canRestore = $derived(!!restoreFile && !restoreLoading && (restoreTarget !== 'sqlite' || !!sqlitePath.trim()) && (restoreTarget !== 'turso' || (!!tursoUrl.trim() && !!tursoToken.trim())));
+const canRestore = $derived(!!restoreFile && !restoreLoading);
 
 onMount(() => {
 document.title = 'Backup & Restore — AxonRouter';
@@ -93,16 +83,12 @@ restoreLoading = true;
 restoreSummary = '';
 toast.info('Restoring backup...');
 try {
-const result = await backupApi.restoreBackup({
-file: restoreFile,
-target: restoreTarget,
-password: restorePassword.trim() || undefined,
-sqlitePath: sqlitePath.trim() || undefined,
-tursoUrl: tursoUrl.trim() || undefined,
-tursoToken: tursoToken.trim() || undefined,
-});
-restoreSummary = JSON.stringify(result.data ?? result, null, 2);
-toast.success(restoreTarget === 'current' ? 'Backup restored. Restart may be required.' : 'Backup restored');
+		const result = await backupApi.restoreBackup({
+			file: restoreFile,
+			password: restorePassword.trim() || undefined,
+		});
+		restoreSummary = JSON.stringify(result.data ?? result, null, 2);
+		toast.success('Backup restored. The gateway is restarting.');
 } catch (err) {
 toast.error('Restore failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
 } finally {
@@ -114,7 +100,7 @@ restoreLoading = false;
 <div class="flex flex-1 flex-col gap-6 p-6">
 <div class="space-y-1">
 <h1 class="text-display-lg">Backup & Restore.</h1>
-<p class="text-body-sm text-muted-foreground">Export selected gateway data or restore a backup into the current database, a SQLite file, or Turso.</p>
+	<p class="text-body-sm text-muted-foreground">Export selected gateway data or restore a backup into the running gateway.</p>
 </div>
 
 <div class="grid gap-6 xl:grid-cols-2">
@@ -180,7 +166,7 @@ onchange={(event) => toggleCategory(category.id, event.currentTarget.checked)}
 </div>
 <div>
 <Card.Title class="text-display-md">Restore backup</Card.Title>
-<Card.Description>Upload an AxonRouter NDJSON backup and select where the data should be restored.</Card.Description>
+					<Card.Description>Upload an AxonRouter NDJSON backup to replace the data in the running gateway.</Card.Description>
 </div>
 </div>
 </Card.Header>
@@ -193,39 +179,7 @@ onchange={(event) => toggleCategory(category.id, event.currentTarget.checked)}
 {/if}
 </div>
 
-<div class="space-y-3">
-<Label for="restore-target" class="text-body-sm-strong">Restore target</Label>
-<select id="restore-target" bind:value={restoreTarget} class="h-9 w-full rounded-sm border border-input bg-transparent px-3 py-1 text-body-sm text-foreground">
-{#each restoreTargets as target}
-<option value={target.id}>{target.label}</option>
-{/each}
-</select>
-{#each restoreTargets.filter((target) => target.id === restoreTarget) as target}
-<p class="text-caption text-muted-foreground">{target.description}</p>
-{/each}
-</div>
-
-{#if restoreTarget === 'sqlite'}
-<div class="space-y-2 rounded-xl border border-border bg-card p-4">
-<Label for="sqlite-path" class="text-body-sm-strong">SQLite path</Label>
-<Input id="sqlite-path" bind:value={sqlitePath} placeholder="/path/to/axonrouter.db" class="h-9 font-mono" />
-</div>
-{/if}
-
-{#if restoreTarget === 'turso'}
-<div class="space-y-3 rounded-xl border border-border bg-card p-4">
-<div class="space-y-2">
-<Label for="turso-url" class="text-body-sm-strong">Turso URL</Label>
-<Input id="turso-url" bind:value={tursoUrl} placeholder="libsql://database.turso.io" class="h-9 font-mono" />
-</div>
-<div class="space-y-2">
-<Label for="turso-token" class="text-body-sm-strong">Turso token</Label>
-<Input id="turso-token" type="password" bind:value={tursoToken} placeholder="Database auth token" class="h-9 font-mono" />
-</div>
-</div>
-{/if}
-
-<div class="space-y-2">
+				<div class="space-y-2">
 <Label for="restore-password" class="text-body-sm-strong">Decryption password (optional)</Label>
 <Input id="restore-password" type="password" bind:value={restorePassword} placeholder="Required only for encrypted backups" class="h-9" />
 </div>
@@ -233,7 +187,7 @@ onchange={(event) => toggleCategory(category.id, event.currentTarget.checked)}
 <div class="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-body-sm text-amber-200">
 <div class="flex gap-2">
 <ShieldIcon class="mt-0.5 size-4 shrink-0" />
-<p>Restoring can replace existing data in the target database. Review the selected target before continuing.</p>
+						<p>Restoring replaces the data in the running gateway. The gateway will restart automatically after a successful restore.</p>
 </div>
 </div>
 

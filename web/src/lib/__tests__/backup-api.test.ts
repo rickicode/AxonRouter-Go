@@ -30,7 +30,7 @@ describe('backupApi', () => {
     expect(result).toBe(blob);
   });
 
-  it('restoreBackup posts multipart form data with file, target, and password', async () => {
+	it('restoreBackup posts multipart form data with file and password', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -42,21 +42,20 @@ describe('backupApi', () => {
     );
     const file = new File(['backup'], 'backup.ndjson', { type: 'application/x-ndjson' });
 
-    const result = await backupApi.restoreBackup({
-      file,
-      target: 'sqlite',
-      password: 'secret',
-    });
+	const result = await backupApi.restoreBackup({
+		file,
+		password: 'secret',
+	});
 
-    const [url, options] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(url).toBe('/api/admin/backup/restore');
-    expect(options.method).toBe('POST');
-    expect(options.headers['Content-Type']).toBeUndefined();
-    expect(options.body).toBeInstanceOf(FormData);
-    const body = options.body as FormData;
-    expect(body.get('backup')).toBe(file);
-    expect(body.get('target')).toBe('sqlite');
-    expect(body.get('password')).toBe('secret');
-    expect(result).toEqual({ restored: true });
+	const [url, options] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+	expect(url).toBe('/api/admin/backup/restore');
+	expect(options.method).toBe('POST');
+	expect(options.headers['Content-Type']).toBeUndefined();
+	expect(options.body).toBeInstanceOf(FormData);
+	const body = options.body as FormData;
+	expect(body.get('backup')).toBe(file);
+	expect(body.get('password')).toBe('secret');
+	expect(body.get('target')).toBeNull();
+	expect(result).toEqual({ restored: true });
   });
 });
