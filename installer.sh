@@ -3,14 +3,19 @@
 # AxonRouter-Go installer
 #
 # Downloads the latest (or a pinned) release binary from GitHub and installs it
-# into ~/axonrouter/bin by default.
+# into ~/.local/bin by default.
+#
+# On Linux with systemctl available, automatically installs and starts a
+# systemd service:
+#   - root  → system service (systemctl status axonrouter)
+#   - user  → user service (systemctl --user status axonrouter) + linger
 #
 # Usage:
 # curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/master/installer.sh | bash
-# ./installer.sh # latest release, auto OS/arch detection
+# ./installer.sh # latest release, auto OS/arch detection, auto service
 # ./installer.sh --version v1.2.3 # specific tag
-# ./installer.sh --to ~/axonrouter/bin
-# ./installer.sh --service # install a systemd service (Linux only)
+# ./installer.sh --to /usr/local/bin
+# ./installer.sh --no-service # skip systemd service installation
 #
 # The release workflow (.github/workflows/release.yml) builds and uploads assets
 # named "axonrouter-<os>-<arch>[.exe]" for windows/linux and darwin (amd64+arm64).
@@ -21,7 +26,7 @@ REPO="rickicode/AxonRouter-Go"
 API="https://api.github.com/repos/${REPO}"
 VERSION="" # empty => latest
 INSTALL_DIR="" # empty => ~/.local/bin
-INSTALL_SERVICE=false
+SKIP_SERVICE=false
 BIN_NAME="axonrouter"
 DEFAULT_INSTALL_DIR="${HOME}/.local/bin"
 
@@ -33,7 +38,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --version) VERSION="$2"; shift 2 ;;
     --to) INSTALL_DIR="$2"; shift 2 ;;
-    --service) INSTALL_SERVICE=true; shift ;;
+    --no-service) SKIP_SERVICE=true; shift ;;
     -h|--help)
       grep '^#' "$0" | sed 's/^#\{1,2\} //'; exit 0 ;;
     *) err "unknown argument: $1" ;;
@@ -63,22 +68,6 @@ EXT=""
 if [[ "$GOOS" == "windows" ]]; then EXT=".exe"; fi
 ASSET="axonrouter-${GOOS}-${GOARCH}${EXT}"
 TARGET="${BIN_NAME}${EXT}"
-
-# ---- service mode guard (fail fast before any download) --------------------------------------------------
-if [[ "$INSTALL_SERVICE" == true ]]; then
-  [[ "$GOOS" == "linux" ]] || err "--service is only supported on Linux"
-  if [[ "$EUID" -ne 0 ]]; then
-    echo "error: --service must be run as root." >&2
-    echo >&2
-    echo "Re-run the installer through sudo, for example:" >&2
-    echo " curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/master/installer.sh | sudo bash -s -- --service" >&2
-    echo "or, if you already downloaded this script:" >&2
-    echo " sudo ./installer.sh --service" >&2
-    exit 1
-  fi
-  command -v systemctl >/dev/null 2>&1 || err "systemctl not found; cannot install systemd service"
-	INSTALL_DIR="${DEFAULT_INSTALL_DIR}"
-fi
 
 # ---- resolve release --------------------------------------------------------
 if [[ -z "$VERSION" ]]; then
@@ -117,7 +106,7 @@ if [[ ! -w "$INSTALL_DIR" ]]; then
 	exit 1
 fi
 
-# ---- install ----------------------------------------------------------------
+# ---- install binary ---------------------------------------------------------
 INSTALLED="${INSTALL_DIR}/${TARGET}"
 if [[ "$GOOS" == "windows" ]]; then
   cp "$DOWNLOAD_TO" "$INSTALLED"
@@ -126,23 +115,28 @@ else
 fi
 info "Installed to ${INSTALLED}"
 
-# ---- install systemd service on Linux using the binary's --startup install-root
-if [[ "$INSTALL_SERVICE" == true ]]; then
-  info "Installing systemd service via ${INSTALLED} --startup install-root"
-  if ! "${INSTALLED}" --startup install-root; then
-    err "service installation failed"
+# ---- install systemd service (Linux only, auto-detect) ----------------------
+install_systemd_service() {
+  [[ "$GOOS" == "linux" ]] || return 0
+  [[ "$SKIP_SERVICE" == false ]] || return 0
+  command -v systemctl >/dev/null 2>&1 || return 0
+
+  info "Installing systemd service..."
+  if ! "${INSTALLED}" --startup install; then
+    echo "warning: service installation failed, skipping." >&2
+    return 0
   fi
 
-  echo
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo " AxonRouter ${VERSION} service installed"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo " Binary:    ${INSTALLED}"
-  echo " Status:    systemctl status axonrouter"
-  echo " Uninstall: ${INSTALLED} --startup uninstall"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  exit 0
-fi
+  # Enable linger for normal users so service starts on boot without login
+  if [[ "$EUID" -ne 0 ]]; then
+    if command -v loginctl >/dev/null 2>&1; then
+      info "Enabling linger for user '$(whoami)' (service starts on boot)..."
+      loginctl enable-linger "$(whoami)" 2>/dev/null || true
+    fi
+  fi
+}
+
+install_systemd_service
 
 # ---- manage PATH ------------------------------------------------------------
 update_shell_path() {
@@ -173,15 +167,23 @@ update_shell_path() {
   echo "Or open a new shell."
 }
 
+# ---- summary ----------------------------------------------------------------
 echo
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo " AxonRouter ${VERSION} installed"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  Binary:    ${INSTALLED}"
 echo "  OS/Arch:   ${GOOS}/${GOARCH}"
-echo "  Run:       ${TARGET}"
+if [[ "$GOOS" == "linux" ]] && command -v systemctl >/dev/null 2>&1 && [[ "$SKIP_SERVICE" == false ]]; then
+  if [[ "$EUID" -eq 0 ]]; then
+    echo "  Service:   systemctl status axonrouter"
+    echo "  Logs:      journalctl -u axonrouter -f"
+  else
+    echo "  Service:   systemctl --user status axonrouter"
+    echo "  Logs:      journalctl --user -u axonrouter -f"
+  fi
+fi
 echo "  Help:      ${TARGET} --help"
-echo " Service: ${TARGET} --startup install"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 if ! command -v "$TARGET" >/dev/null 2>&1 && [[ ":$PATH:" != *":${INSTALL_DIR}:"* ]]; then

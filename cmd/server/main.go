@@ -135,7 +135,7 @@ func handleStartupAction(action string) {
 	green := func(s string) string { return colorize(enableColor, "32", s) }
 	cyan := func(s string) string { return colorize(enableColor, "36", s) }
 
-	// Validate privileges before mutating the action string.
+	// install-root is a backward-compatible alias for install (now works for both).
 	if requestedRoot && !isRoot() {
 		printStartupBox("Root required", []string{
 			red("--startup install-root must be run as root."),
@@ -146,21 +146,12 @@ func handleStartupAction(action string) {
 		os.Exit(1)
 	}
 
-	if action == "install" && isRoot() {
-		printStartupBox("User service only", []string{
-			red("--startup install must be run as a normal user."),
-			"",
-			"For a system-wide service, use:",
-			cyan(" sudo axonrouter --startup install-root"),
-		})
-		os.Exit(1)
-	}
-
 	root := requestedRoot
 	if root {
 		action = "install"
 	}
-	// install = current-user service; install-root = system service;
+	// install = service for current user (root gets system service, normal user gets user service);
+	// install-root = backward-compatible alias for install;
 	// everything else targets whichever mode the current privileges imply.
 	userMode := !root && !isRoot()
 
@@ -184,10 +175,7 @@ func handleStartupAction(action string) {
 	case "status":
 		st, err := svc.Status()
 		if err != nil {
-			installHint := cyan("Install: axonrouter --startup install-root")
-			if userMode {
-				installHint = cyan("Install: axonrouter --startup install")
-			}
+			installHint := cyan("Install: axonrouter --startup install")
 			printStartupBox("Service status unavailable", []string{
 				red(err.Error()),
 				"",
@@ -248,7 +236,7 @@ func handleStartupAction(action string) {
 			"",
 			"Check status: axonrouter --startup status",
 		)
-		if root {
+		if !userMode {
 			installLines = append(installLines, "System service: systemctl status axonrouter")
 			printStartupBox("System service installed", installLines)
 		} else {
@@ -274,14 +262,10 @@ func handleStartupAction(action string) {
 			"Check status: axonrouter --startup status",
 		})
 	case "uninstall":
-		reinstall := "Re-install: axonrouter --startup install"
-		if root {
-			reinstall = "Re-install: axonrouter --startup install-root"
-		}
 		printStartupBox("Service uninstalled", []string{
 			green("axonrouter has been removed from the service manager."),
 			"",
-			reinstall,
+			"Re-install: axonrouter --startup install",
 		})
 	}
 	os.Exit(0)
@@ -320,8 +304,8 @@ func main() {
 		fmt.Println(" axonrouter Start the server")
 		fmt.Println(" axonrouter --tray Start the server with a system tray icon")
 		fmt.Println(" (requires build tag: tray)")
-		fmt.Println(" axonrouter --startup install Install user systemd service (no root)")
-		fmt.Println(" axonrouter --startup install-root Install system service as root/system")
+		fmt.Println(" axonrouter --startup install Install systemd service")
+		fmt.Println(" (root=system service, user=user service+linger)")
 		fmt.Println(" axonrouter --startup {status|start|stop|restart|uninstall}")
 		fmt.Println(" Manage system service")
 		fmt.Println(" axonrouter --setpass <password> Set admin dashboard password")
