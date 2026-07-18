@@ -177,6 +177,19 @@ func grokcliRequestBody(req *Request) ([]byte, error) {
 	delete(body, "prompt_cache_retention")
 	delete(body, "safety_identifier")
 
+	// Fallback: if the request reached the executor without `input` items
+	// (e.g. /v1/responses clients that pass `messages[]`), convert the simple
+	// Chat Completions shape to Responses input items. Tools and other top-level
+	// fields are left for the executor's own flattening/normalization below.
+	if rawInput, hasInput := body["input"].([]any); !hasInput || len(rawInput) == 0 {
+		if rawMessages := gjson.GetBytes(req.Body, "messages"); rawMessages.IsArray() && len(rawMessages.Array()) > 0 {
+			inputItems := grokcliConvertMessagesToInput(rawMessages)
+			if len(inputItems) > 0 {
+				body["input"] = inputItems
+			}
+		}
+	}
+
 	reasoning := map[string]any{}
 	if existing, ok := body["reasoning"].(map[string]any); ok {
 		reasoning = existing
@@ -290,15 +303,74 @@ func grokcliFlattenTools(raw any) []any {
 	return out
 }
 
+func grokcliConvertMessagesToInput(messages gjson.Result) []any {
+	var input []any
+	messages.ForEach(func(_, msg gjson.Result) bool {
+		role := msg.Get("role").String()
+		switch role {
+		case "tool":
+			item := map[string]any{
+				"type":     "function_call_output",
+				"call_id":  msg.Get("tool_call_id").String(),
+				"output":   msg.Get("content").String(),
+			}
+			input = append(input, item)
+		case "assistant":
+			if content := msg.Get("content").String(); content != "" {
+				input = append(input, map[string]any{
+					"type":    "message",
+					"role":    "assistant",
+					"content": content,
+				})
+			}
+			toolCalls := msg.Get("tool_calls")
+			if toolCalls.IsArray() {
+				toolCalls.ForEach(func(_, tc gjson.Result) bool {
+					if tc.Get("type").String() != "function" {
+						return true
+					}
+					input = append(input, map[string]any{
+						"type":      "function_call",
+						"call_id":   tc.Get("id").String(),
+						"name":      tc.Get("function.name").String(),
+						"arguments": tc.Get("function.arguments").String(),
+					})
+					return true
+				})
+			}
+		default:
+			// user, system, developer
+			content := msg.Get("content").String()
+			if content == "" && msg.Get("content").Exists() {
+				content = msg.Get("content").Raw
+			}
+			input = append(input, map[string]any{
+				"type":    "message",
+				"role":    role,
+				"content": content,
+			})
+		}
+		return true
+	})
+	return input
+}
+
 func grokcliFilterInput(input []any) []any {
 	var out []any
 	for _, raw := range input {
+		// Keep plain strings (official CLI accepts string input).
+		if _, ok := raw.(string); ok {
+			out = append(out, raw)
+			continue
+		}
 		m, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
 		typ, _ := m["type"].(string)
-		if !grokCLIAllowedInputTypes[typ] {
+		// Keep typed items that the proxy understands, plus role-based items
+		// that the request translator / 9router produce without an explicit type.
+		if !grokCLIAllowedInputTypes[typ] && m["role"] == nil {
 			continue
 		}
 		out = append(out, m)
