@@ -248,28 +248,23 @@ func (e *GrokCLIExecutor) allocateGrokCLISession(req *Request) (sessionID, convI
 }
 
 var grokCLIAllowedTopLevel = map[string]bool{
-	"model":                true,
-	"input":                true,
-	"instructions":         true,
-	"tools":                true,
-	"tool_choice":          true,
-	"parallel_tool_calls":  true,
-	"reasoning":            true,
-	"metadata":             true,
-	"text":                 true,
-	"max_output_tokens":    true,
-	"temperature":          true,
-	"top_p":                true,
-	"presence_penalty":     true,
-	"frequency_penalty":    true,
-	"seed":                 true,
-	"service_tier":         true,
-	"include":              true,
-	"stream":               true,
-	"store":                true,
-	"user":                 true,
-	"previous_response_id": true,
-	"prompt_cache_key":     true,
+	"model":               true,
+	"input":               true,
+	"instructions":        true,
+	"tools":               true,
+	"tool_choice":         true,
+	"parallel_tool_calls": true,
+	"reasoning":           true,
+	"metadata":            true,
+	"text":                true,
+	"max_output_tokens":   true,
+	"temperature":         true,
+	"top_p":               true,
+	"service_tier":        true,
+	"include":             true,
+	"stream":              true,
+	"store":               true,
+	"prompt_cache_key":    true,
 }
 
 var grokCLIAllowedInputTypes = map[string]bool{
@@ -326,6 +321,9 @@ func grokcliRequestBody(req *Request) ([]byte, error) {
 	if re, ok := body["reasoning_effort"].(string); ok {
 		re = strings.ToLower(strings.TrimSpace(re))
 		delete(body, "reasoning_effort")
+		if re == "max" {
+			re = "xhigh"
+		}
 		if re != "" && re != "none" {
 			if _, ok := reasoning["effort"]; !ok {
 				reasoning["effort"] = re
@@ -362,7 +360,8 @@ func grokcliRequestBody(req *Request) ([]byte, error) {
 			reasoning["effort"] = effort
 		}
 	}
-	if len(reasoning) > 0 {
+	supportsReasoning := strings.Contains(baseModel, "grok-4.5") || strings.Contains(model, "grok-4.5")
+	if len(reasoning) > 0 && supportsReasoning {
 		reasoning["summary"] = "concise"
 		body["reasoning"] = reasoning
 		include := map[string]bool{}
@@ -377,6 +376,8 @@ func grokcliRequestBody(req *Request) ([]byte, error) {
 			newInclude = append(newInclude, k)
 		}
 		body["include"] = newInclude
+	} else {
+		delete(body, "reasoning")
 	}
 
 	if rawTools, ok := body["tools"]; ok {
@@ -489,8 +490,8 @@ func grokcliFilterInput(input []any) []any {
 	var out []any
 	for _, raw := range input {
 		// Keep plain strings (official CLI accepts string input).
-		if _, ok := raw.(string); ok {
-			out = append(out, raw)
+		if s, ok := raw.(string); ok {
+			out = append(out, s)
 			continue
 		}
 		m, ok := raw.(map[string]any)
@@ -498,10 +499,28 @@ func grokcliFilterInput(input []any) []any {
 			continue
 		}
 		typ, _ := m["type"].(string)
-		// Keep typed items that the proxy understands, plus role-based items
-		// that the request translator / 9router produce without an explicit type.
-		if !grokCLIAllowedInputTypes[typ] && m["role"] == nil {
+		switch typ {
+		case "item_reference":
+			// Stale references cannot resolve with store=false.
 			continue
+		case "custom_tool_call":
+			m["type"] = "function_call"
+		case "custom_tool_call_output":
+			m["type"] = "function_call_output"
+		case "internal_chat_message_metadata_passthrough":
+			continue
+		}
+		if typ, _ = m["type"].(string); !grokCLIAllowedInputTypes[typ] && m["role"] == nil {
+			continue
+		}
+		// Drop server-generated item IDs that cannot resolve with store=false.
+		if id, ok := m["id"].(string); ok {
+			for _, prefix := range []string{"rs_", "fc_", "resp_", "msg_"} {
+				if strings.HasPrefix(id, prefix) {
+					delete(m, "id")
+					break
+				}
+			}
 		}
 		out = append(out, m)
 	}

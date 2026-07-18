@@ -454,6 +454,202 @@ func TestGrokCLI_StableAgentID(t *testing.T) {
 	}
 }
 
+func TestGrokCLIExecutor_ForbiddenFieldsDropped(t *testing.T) {
+	var gotBody []byte
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		completed, _ := json.Marshal(map[string]any{"type": "response.completed", "response": map[string]any{"id": "r1", "status": "completed", "output": []any{}, "usage": map[string]any{}}})
+		fmt.Fprintln(w, "data: "+string(completed))
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	exec := NewGrokCLIExecutor(base)
+	body, _ := json.Marshal(map[string]any{
+		"model":                "grok-cli/grok-4.5",
+		"presence_penalty":     0.5,
+		"frequency_penalty":    0.3,
+		"seed":                 42,
+		"user":                 "rick",
+		"previous_response_id": "prev-123",
+		"messages":             []any{map[string]any{"role": "user", "content": "hi"}},
+	})
+	req := &Request{Provider: "grok-cli", Model: "grok-cli/grok-4.5", BaseURL: ts.URL, AccessToken: "grok-at-123", Body: body, StreamConfig: &StreamConfig{FetchTimeoutMs: 5000, StreamIdleTimeoutMs: 5000, StreamReadinessTimeoutMs: 5000}}
+	if _, err := exec.Execute(context.Background(), req); err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	for _, field := range []string{"presence_penalty", "frequency_penalty", "seed", "user", "previous_response_id"} {
+		if gjson.GetBytes(gotBody, field).Exists() {
+			t.Errorf("field %s should have been removed", field)
+		}
+	}
+}
+
+func TestGrokCLIExecutor_CustomToolCallConversionAndItemRefStrip(t *testing.T) {
+	var gotBody []byte
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		completed, _ := json.Marshal(map[string]any{"type": "response.completed", "response": map[string]any{"id": "r1", "status": "completed", "output": []any{}, "usage": map[string]any{}}})
+		fmt.Fprintln(w, "data: "+string(completed))
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	exec := NewGrokCLIExecutor(base)
+	body, _ := json.Marshal(map[string]any{
+		"model": "grok-cli/grok-4.5",
+		"input": []any{
+			map[string]any{"type": "message", "role": "user", "content": "ok"},
+			map[string]any{"type": "custom_tool_call", "call_id": "call-1", "name": "tool_a", "arguments": "{}"},
+			map[string]any{"type": "custom_tool_call_output", "call_id": "call-1", "output": "done"},
+			map[string]any{"type": "item_reference", "id": "msg_ref_1"},
+			map[string]any{"type": "message", "role": "assistant", "id": "msg_abc123", "content": "assistant reply"},
+			map[string]any{"type": "internal_chat_message_metadata_passthrough", "meta": "x"},
+		},
+	})
+	req := &Request{Provider: "grok-cli", Model: "grok-cli/grok-4.5", BaseURL: ts.URL, AccessToken: "grok-at-123", Body: body, StreamConfig: &StreamConfig{FetchTimeoutMs: 5000, StreamIdleTimeoutMs: 5000, StreamReadinessTimeoutMs: 5000}}
+	if _, err := exec.Execute(context.Background(), req); err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	items := gjson.GetBytes(gotBody, "input").Array()
+	foundFuncCall := false
+	foundFuncOut := false
+	for _, it := range items {
+		typ := it.Get("type").String()
+		if typ == "item_reference" {
+			t.Errorf("item_reference should have been stripped")
+		}
+		if typ == "internal_chat_message_metadata_passthrough" {
+			t.Errorf("internal_chat_message_metadata_passthrough should have been stripped")
+		}
+		if typ == "custom_tool_call" || typ == "custom_tool_call_output" {
+			t.Errorf("custom tool types should have been converted, got %s", typ)
+		}
+		if typ == "function_call" && it.Get("call_id").String() == "call-1" {
+			foundFuncCall = true
+		}
+		if typ == "function_call_output" && it.Get("call_id").String() == "call-1" {
+			foundFuncOut = true
+		}
+	}
+	if !foundFuncCall {
+		t.Errorf("expected function_call from custom_tool_call")
+	}
+	if !foundFuncOut {
+		t.Errorf("expected function_call_output from custom_tool_call_output")
+	}
+	if len(items) != 4 {
+		t.Errorf("expected 4 items, got %d", len(items))
+	}
+}
+
+func TestGrokCLIExecutor_ReasoningModelGatingAndMaxMapping(t *testing.T) {
+	server := func(t *testing.T) (*httptest.Server, *[]byte) {
+		var gotBody []byte
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotBody, _ = io.ReadAll(r.Body)
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			completed, _ := json.Marshal(map[string]any{"type": "response.completed", "response": map[string]any{"id": "r1", "status": "completed", "output": []any{}, "usage": map[string]any{}}})
+			fmt.Fprintln(w, "data: "+string(completed))
+			fmt.Fprintln(w)
+		}))
+		return ts, &gotBody
+	}
+
+	cases := []struct {
+		model          string
+		effort         string
+		wantReasoning  bool
+		wantEffort     string
+	}{
+		{"grok-cli/grok-4.5", "max", true, "xhigh"},
+		{"grok-cli/grok-build-0.1", "high", false, ""},
+		{"grok-cli/grok-4.3", "low", false, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.model+"/"+tc.effort, func(t *testing.T) {
+			ts, gotBody := server(t)
+			defer ts.Close()
+			base := NewBaseExecutor()
+			exec := NewGrokCLIExecutor(base)
+			body, _ := json.Marshal(map[string]any{
+				"model":            tc.model,
+				"reasoning_effort": tc.effort,
+				"messages":         []any{map[string]any{"role": "user", "content": "hi"}},
+			})
+			req := &Request{Provider: "grok-cli", Model: tc.model, BaseURL: ts.URL, AccessToken: "grok-at-123", Body: body, StreamConfig: &StreamConfig{FetchTimeoutMs: 5000, StreamIdleTimeoutMs: 5000, StreamReadinessTimeoutMs: 5000}}
+			if _, err := exec.Execute(context.Background(), req); err != nil {
+				t.Fatalf("Execute error: %v", err)
+			}
+			hasReasoning := gjson.GetBytes(*gotBody, "reasoning").Exists()
+			if hasReasoning != tc.wantReasoning {
+				t.Errorf("reasoning exists=%v, want %v", hasReasoning, tc.wantReasoning)
+			}
+			if tc.wantEffort != "" {
+				if got := gjson.GetBytes(*gotBody, "reasoning.effort").String(); got != tc.wantEffort {
+					t.Errorf("reasoning.effort=%q, want %q", got, tc.wantEffort)
+				}
+			}
+		})
+	}
+}
+
+func TestGrokCLIExecutor_HostedToolsPreserved(t *testing.T) {
+	var gotBody []byte
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		completed, _ := json.Marshal(map[string]any{"type": "response.completed", "response": map[string]any{"id": "r1", "status": "completed", "output": []any{}, "usage": map[string]any{}}})
+		fmt.Fprintln(w, "data: "+string(completed))
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	exec := NewGrokCLIExecutor(base)
+	body, _ := json.Marshal(map[string]any{
+		"model": "grok-cli/grok-4.5",
+		"messages": []any{map[string]any{"role": "user", "content": "find"}},
+		"tools": []any{
+			map[string]any{"type": "web_search"},
+			map[string]any{"type": "x_search"},
+			map[string]any{"type": "file_search"},
+			map[string]any{"type": "image_generation"},
+			map[string]any{"type": "code_interpreter"},
+			map[string]any{"type": "mcp"},
+			map[string]any{"type": "local_shell"},
+		},
+	})
+	req := &Request{Provider: "grok-cli", Model: "grok-cli/grok-4.5", BaseURL: ts.URL, AccessToken: "grok-at-123", Body: body, StreamConfig: &StreamConfig{FetchTimeoutMs: 5000, StreamIdleTimeoutMs: 5000, StreamReadinessTimeoutMs: 5000}}
+	if _, err := exec.Execute(context.Background(), req); err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	tools := gjson.GetBytes(gotBody, "tools").Array()
+	if len(tools) != 7 {
+		t.Fatalf("expected 7 tools, got %d", len(tools))
+	}
+	for _, typ := range []string{"web_search", "x_search", "file_search", "image_generation", "code_interpreter", "mcp", "local_shell"} {
+		found := false
+		for _, tool := range tools {
+			if tool.Get("type").String() == typ {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected %s tool to be preserved", typ)
+		}
+	}
+}
+
 func TestTranslateGrokCLI(t *testing.T) {
 	cases := []struct {
 		name       string
