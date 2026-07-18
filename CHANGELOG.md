@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Per-combo and global strategy override via Settings** — `combo_strategy` default and `combo_strategies` JSON map allow overriding a combo's strategy at runtime without editing the combo.
 - **Seeded default combos** now include `random`, `least-used`, and `fusion` examples and are trimmed to six essential combos instead of eight.
 - **Fusion judge model selector** in the dashboard now uses the model picker instead of a free-text input.
-- **Strategy reference help panel** added to the combo modal: expands inline to explain every routing strategy and how smart combo selection works.
+- **Strategy reference** moved to a static card at the bottom of the Combos page, explaining every routing strategy and how smart combo selection works.
+- **Combo metrics summary cards** on the Combos page show total requests, successes, errors, and average latency across all combos over the last 24 hours.
 - **Database backup and restore** via new `internal/backup` package. Backup exports all data (API keys, usage, provider accounts, combos, config, request logs, cache) as encrypted-optional JSON Lines. Restore supports SQLite local files, Turso remote databases, and overwriting the currently running database.
 - **Clear old logs control** on the Logs dashboard page with 7/30/90 day retention options; preserves `api_key_usage` and other usage summary data.
 - **Stream protection parity with OmniRoute** for combo and direct paths: raw-byte stall detection, adaptive readiness timeout (80s–180s), 750ms/64KB holdback buffer for transparent early retry, and stream-quality peek logging.
