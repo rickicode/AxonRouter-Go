@@ -20,6 +20,6 @@ describe('logsApi.clear', () => {
     const calls = fetchMock.mock.calls as [string, RequestInit][];
     expect(calls[0][0]).toBe('/api/admin/logs/clear');
     expect(calls[0][1].method).toBe('POST');
-    expect(calls[0][1].body).toBe(JSON.stringify({ days: 30 }));
+    expect(calls[0][1].body).toBe(JSON.stringify({ older_than_days: 30 }));
   });
 });

@@ -11,9 +11,14 @@ import (
 type Writer struct {
 	dest     io.Writer
 	password string
-	buf      bytes.Buffer
-	encoder  *json.Encoder
-	closed   bool
+	// buf holds the full serialized backup when encryption is enabled,
+	// because AES-GCM requires the entire plaintext to produce a single
+	// authenticated ciphertext. For plaintext backups we write directly to
+	// dest so backups of large tables (e.g. request_logs) stream without
+	// unbounded memory growth.
+	buf     bytes.Buffer
+	encoder *json.Encoder
+	closed  bool
 }
 
 var ErrWriterClosed = errors.New("backup writer is closed")
@@ -23,9 +28,18 @@ func NewWriter(dest io.Writer, header Header, password string) (*Writer, error) 
 		return nil, errors.New("backup writer destination is required")
 	}
 	writer := &Writer{dest: dest, password: password}
-	writer.encoder = json.NewEncoder(&writer.buf)
-	if err := writer.encoder.Encode(header); err != nil {
-		return nil, fmt.Errorf("write backup header: %w", err)
+	if password == "" {
+		// Stream plaintext rows directly to dest for O(1) memory usage.
+		writer.encoder = json.NewEncoder(dest)
+		if err := writer.encoder.Encode(header); err != nil {
+			return nil, fmt.Errorf("write backup header: %w", err)
+		}
+	} else {
+		// Encrypted backups must be buffered in memory for AES-GCM auth tag.
+		writer.encoder = json.NewEncoder(&writer.buf)
+		if err := writer.encoder.Encode(header); err != nil {
+			return nil, fmt.Errorf("write backup header: %w", err)
+		}
 	}
 	return writer, nil
 }
@@ -46,15 +60,17 @@ func (w *Writer) Close() error {
 	}
 	w.closed = true
 
-	payload := w.buf.Bytes()
-	if w.password != "" {
-		sealed, err := Encrypt(payload, w.password)
-		if err != nil {
-			return fmt.Errorf("encrypt backup payload: %w", err)
-		}
-		payload = sealed
+	if w.password == "" {
+		// Plaintext rows have already been streamed to dest.
+		return nil
 	}
-	if _, err := w.dest.Write(payload); err != nil {
+
+	payload := w.buf.Bytes()
+	sealed, err := Encrypt(payload, w.password)
+	if err != nil {
+		return fmt.Errorf("encrypt backup payload: %w", err)
+	}
+	if _, err := w.dest.Write(sealed); err != nil {
 		return fmt.Errorf("write backup payload: %w", err)
 	}
 	return nil

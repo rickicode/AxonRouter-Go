@@ -752,10 +752,10 @@ export const logsApi = {
     );
   },
   active: () => fetchApi<ActiveRequest[]>("/logs/active"),
-  clear: (days: 7 | 30 | 90) =>
+  clear: (olderThanDays: 7 | 30 | 90) =>
     fetchApi<{ deleted: number }>("/logs/clear", {
       method: "POST",
-      body: JSON.stringify({ days }),
+      body: JSON.stringify({ older_than_days: olderThanDays }),
     }),
 };
 

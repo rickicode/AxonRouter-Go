@@ -2,6 +2,7 @@ package backup
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -98,7 +99,7 @@ func Restore(ctx context.Context, src io.Reader, opts RestoreOptions) (RestoreRe
 }
 
 func decodeBackupPayload(payload []byte) (Header, []Row, error) {
-	scanner := bufio.NewScanner(strings.NewReader(string(payload)))
+	scanner := bufio.NewScanner(bytes.NewReader(payload))
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 
 	if !scanner.Scan() {
