@@ -23,6 +23,7 @@ const (
 	FormatCodexResponses = types.FormatCodexResponses
 	FormatAntigravity    = types.FormatAntigravity
 	FormatKiro           = types.FormatKiro
+	FormatGrokCLI        = types.FormatGrokCLI
 )
 
 // Re-export registry functions

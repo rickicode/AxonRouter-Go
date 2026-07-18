@@ -29,5 +29,6 @@ import (
 	// response transform in codex/responses. The generic openai/openai_responses
 	// translator is intentionally omitted because it is not Codex-compatible.
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai/codex_responses"
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai/grok_cli"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/codex/responses"
 )
