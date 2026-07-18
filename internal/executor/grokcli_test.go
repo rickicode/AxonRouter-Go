@@ -79,15 +79,17 @@ func TestGrokCLIExecutor_Headers(t *testing.T) {
 	}
 
 	mustEqual := map[string]string{
-		"Authorization":         "Bearer grok-at-123",
-		"X-Xai-Token-Auth":      "xai-grok-cli",
-		"x-grok-client-version": "0.2.93",
-		"User-Agent":            "xai-grok-workspace/0.2.93",
-		"x-email":               "user@example.com",
-		"x-userid":              "grok-sub-abc",
+		"Authorization": "Bearer grok-at-123",
+		"X-Xai-Token-Auth": "xai-grok-cli",
+		"x-grok-client-version": "0.2.99",
+		"User-Agent": "grok-shell/0.2.99 (linux; x86_64)",
+		"x-grok-client-identifier": "grok-shell",
+		"x-grok-client-mode": "headless",
+		"x-email": "user@example.com",
+		"x-userid": "grok-sub-abc",
 		"x-grok-model-override": "grok-4.5",
-		"x-grok-turn-idx":       "0",
-		"Connection":            "Keep-Alive",
+		"x-grok-turn-idx": "0",
+		"Connection": "Keep-Alive",
 	}
 	for name, want := range mustEqual {
 		if got := gotHeaders.Get(name); got != want {
@@ -95,20 +97,12 @@ func TestGrokCLIExecutor_Headers(t *testing.T) {
 		}
 	}
 	
-	needPresent := []string{"x-grok-session-id", "x-grok-conv-id", "x-grok-req-id", "x-grok-agent-id"}
+	needPresent := []string{"x-grok-session-id", "x-grok-conv-id", "x-grok-req-id", "x-grok-agent-id", "x-grok-client-identifier", "x-grok-client-mode"}
 	for _, name := range needPresent {
 		if got := gotHeaders.Get(name); got == "" {
 			t.Errorf("%s is empty", name)
 		}
 	}
-
-	// Extra identity headers that can trigger Cloudflare or 404 errors must remain absent.
-	for _, name := range []string{"x-grok-client-identifier", "x-grok-client-mode"} {
-		if got := gotHeaders.Get(name); got != "" {
-			t.Errorf("%s should not be set, got %q", name, got)
-		}
-	}
-
 	firstSession := gotHeaders.Get("x-grok-session-id")
 	firstConv := gotHeaders.Get("x-grok-conv-id")
 	firstAgent := gotHeaders.Get("x-grok-agent-id")
@@ -207,6 +201,9 @@ func TestGrokCLIExecutor_RequestTransform(t *testing.T) {
 	}
 	if !gjson.GetBytes(gotBody, "reasoning").Exists() {
 		t.Errorf("expected reasoning object")
+	}
+	if got := gjson.GetBytes(gotBody, "reasoning.summary").String(); got != "concise" {
+		t.Errorf("reasoning.summary=%q, want concise", got)
 	}
 	include := gjson.GetBytes(gotBody, "include").Array()
 	found := false

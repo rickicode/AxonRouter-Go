@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	defaultGrokCLIBaseURL       = "https://cli-chat-proxy.grok.com/v1/responses"
-	defaultGrokCLIClientVersion = "0.2.93"
-	defaultGrokCLIUserAgent     = "xai-grok-workspace/" + defaultGrokCLIClientVersion
+	defaultGrokCLIBaseURL = "https://cli-chat-proxy.grok.com/v1/responses"
+	defaultGrokCLIClientVersion = "0.2.99"
+	defaultGrokCLIUserAgent = "grok-shell/" + defaultGrokCLIClientVersion + " (linux; x86_64)"
 )
 
 // GrokCLIExecutor handles xAI Grok CLI's Responses API over OAuth tokens.
@@ -97,22 +97,25 @@ func grokcliHeaders(req *Request, sessionID, convID, agentID, reqID string, turn
 		ua = req.Headers["User-Agent"]
 	}
 
-	// Keep headers aligned with CLIProxyAPI's proven set for the Grok CLI
-	// chat-proxy endpoint. Extra identity headers can trigger Cloudflare/404.
+	// Keep headers aligned with Grok CLI's current identity for the
+	// cli-chat-proxy endpoint while avoiding older/xai-grok-workspace headers
+	// that can trigger Cloudflare/404-style rejections.
 	headers := map[string]string{
-		"Content-Type":          "application/json",
-		"Accept":                "text/event-stream",
-		"Authorization":         "Bearer " + token,
-		"X-XAI-Token-Auth":      "xai-grok-cli",
+		"Content-Type": "application/json",
+		"Accept": "text/event-stream",
+		"Authorization": "Bearer " + token,
+		"X-XAI-Token-Auth": "xai-grok-cli",
 		"x-grok-client-version": defaultGrokCLIClientVersion,
-		"x-grok-session-id":     sessionID,
-		"x-grok-conv-id":        convID,
-		"x-grok-req-id":         reqID,
-		"x-grok-turn-idx":       strconv.Itoa(turnIdx),
-		"x-grok-agent-id":       agentID,
+		"x-grok-client-identifier": "grok-shell",
+		"x-grok-client-mode": "headless",
+		"x-grok-session-id": sessionID,
+		"x-grok-conv-id": convID,
+		"x-grok-req-id": reqID,
+		"x-grok-turn-idx": strconv.Itoa(turnIdx),
+		"x-grok-agent-id": agentID,
 		"x-grok-model-override": ExtractModel(req.Model),
-		"User-Agent":            ua,
-		"Connection":            "Keep-Alive",
+		"User-Agent": ua,
+		"Connection": "Keep-Alive",
 	}
 	if email != "" {
 		headers["x-email"] = email
@@ -360,6 +363,7 @@ func grokcliRequestBody(req *Request) ([]byte, error) {
 		}
 	}
 	if len(reasoning) > 0 {
+		reasoning["summary"] = "concise"
 		body["reasoning"] = reasoning
 		include := map[string]bool{}
 		if arr, ok := body["include"].([]any); ok {
