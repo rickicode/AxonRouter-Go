@@ -45,10 +45,11 @@ var v1ProviderCatalog = map[string]struct {
 	"lambda":        {keys: []string{"lambda"}, ownedBy: "lambda"},
 	"pollinations":  {keys: []string{"pollinations"}, ownedBy: "pollinations"},
 	"zenmux":        {keys: []string{"zenmux"}, ownedBy: "zenmux"},
-	"bedrock":       {keys: []string{"bedrock"}, ownedBy: "amazon"},
+	"bedrock": {keys: []string{"bedrock"}, ownedBy: "amazon"},
 
 	"zai": {keys: []string{"claude"}, ownedBy: "zai"},
-	"cf":  {keys: []string{"cf"}, ownedBy: "cloudflare"},
+	"cf": {keys: []string{"cf"}, ownedBy: "cloudflare"},
+	"grok-cli": {keys: []string{"grok-cli"}, ownedBy: "xai"},
 }
 
 // buildModelList returns the unified gateway model catalog: registered providers,

@@ -59,7 +59,7 @@ func TestProviderTypeCategoryAndServiceKinds(t *testing.T) {
 		serviceKinds string
 	}
 	got := map[string]row{}
-	r, err := d.Query("SELECT id, category, service_kinds FROM provider_types WHERE id IN ('cf','cx','oc','claude','mimocode','glm','minimax','kimi','mistral','cerebras','together','fireworks','novita','lambda','pollinations')")
+	r, err := d.Query("SELECT id, category, service_kinds FROM provider_types WHERE id IN ('cf','cx','oc','claude','mimocode','glm','minimax','kimi','mistral','cerebras','together','fireworks','novita','lambda','pollinations','grok-cli')")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,6 +95,7 @@ func TestProviderTypeCategoryAndServiceKinds(t *testing.T) {
 		{"novita", "apikey", []string{"llm"}},
 		{"lambda", "apikey", []string{"llm"}},
 		{"pollinations", "apikey", []string{"llm"}},
+		{"grok-cli", "oauth", []string{"llm"}},
 	}
 	for _, c := range cases {
 		gr, ok := got[c.id]

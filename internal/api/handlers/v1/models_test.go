@@ -46,6 +46,43 @@ func TestGetProviderModels_CFIncludesServiceKinds(t *testing.T) {
 	}
 }
 
+// TestGetProviderModels_GrokCLIIncludesExpectedModels verifies the grok-cli
+// provider catalog exposes the seeded models with correct ownership.
+func TestGetProviderModels_GrokCLIIncludesExpectedModels(t *testing.T) {
+	h := newTestHandler(t)
+	models := h.getProviderModels("grok-cli")
+	if len(models) == 0 {
+		t.Fatal("expected grok-cli models from catalog")
+	}
+
+	want := map[string]string{
+		"grok-cli/grok-build-0.1":  "xai",
+		"grok-cli/grok-4.5":        "xai",
+		"grok-cli/grok-4.3":        "xai",
+		"grok-cli/grok-3-mini":     "xai",
+		"grok-cli/grok-3-mini-fast": "xai",
+	}
+	for id, owner := range want {
+		found := false
+		for _, m := range models {
+			gotID, ok := m["id"].(string)
+			if !ok || gotID != id {
+				continue
+			}
+			found = true
+			if gotOwner, _ := m["owned_by"].(string); gotOwner != owner {
+				t.Errorf("model %q owned_by = %q, want %q", id, gotOwner, owner)
+			}
+			if kinds := kindsOf(m); !slices.Contains(kinds, "llm") {
+				t.Errorf("model %q service_kinds = %v, want llm", id, kinds)
+			}
+		}
+		if !found {
+			t.Errorf("missing grok-cli model %q", id)
+		}
+	}
+}
+
 func kindsOf(m map[string]any) []string {
 	if v, ok := m["service_kinds"].([]string); ok {
 		return v

@@ -569,8 +569,9 @@ var providerCatalogKeys = map[string][]string{
 	"novita":        {"novita"},
 	"lambda":        {"lambda"},
 	"pollinations":  {"pollinations"},
-	"copilot":       {"copilot"},
-	"bedrock":       {"bedrock"},
+	"copilot":    {"copilot"},
+	"bedrock":    {"bedrock"},
+	"grok-cli":   {"grok-cli"},
 }
 
 // staticModels returns model IDs from the auto-updating catalog, stripped of leading "@".
