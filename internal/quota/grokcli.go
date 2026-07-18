@@ -161,19 +161,13 @@ func parseGrokCliBilling(billing, user map[string]any) (string, []QuotaItem) {
 	}
 
 	onDemandCap, _ := grokNum(config, billing, "onDemandCap")
-	onDemandUsed, onDemandOK := grokNum(config, billing, "onDemandUsed")
+	onDemandUsed, _ := grokNum(config, billing, "onDemandUsed")
 	if onDemandCap > 0 {
 		used := onDemandUsed
 		if used < 0 {
 			used = 0
 		}
 		quotas = append(quotas, makeGrokCliQuota("On-demand", used, onDemandCap, periodEnd))
-	} else if !subscriptionAccess && onDemandCap == 0 && onDemandOK {
-		// Free/promo account with explicit onDemand data and no cap => depleted.
-		quotas = append(quotas, QuotaItem{
-			Name: "On-demand", Used: 1, Total: 1,
-			RemainingPct: 0, ResetAt: periodEnd, Unlimited: false,
-		})
 	}
 
 	prepaid, _ := grokNum(config, billing, "prepaidBalance")

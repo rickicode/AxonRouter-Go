@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Grok CLI request normalization** — removed forbidden top-level fields (`presence_penalty`, `frequency_penalty`, `seed`, `user`, `previous_response_id`), converted `custom_tool_call`/`custom_tool_call_output` types, stripped `item_reference` and server-generated IDs that cannot resolve with `store=false`, preserved hosted tool types (`web_search`, `x_search`, etc.), and gated reasoning to models in the `grok-4.5` family (with `max` → `xhigh` mapping).
 - **Grok CLI retry and soft-success connection test** — retry transient HTTP 429/502/503 responses with exponential backoff, and treat HTTP 402 during connection tests as a soft success indicating valid auth but exhausted credits.
 
+### Fixed
+- **Grok CLI free accounts no longer auto-marked `quota_exhausted`** — quota parsing no longer synthesizes a depleted row for accounts that simply have no on-demand cap (e.g., free/promo accounts). The scheduler only marks a connection exhausted when actual quota data shows zero remaining credits. Matches the 9router reference handler (`open-sse/services/usage/grok-cli.js`).
+
 ## [0.3.9] - 2026-07-18
 
 ### Added

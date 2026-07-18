@@ -59,21 +59,16 @@ func TestParseGrokCliBilling(t *testing.T) {
 				}
 			},
 		},
-		{
-			name: "exhausted free account",
-			billing: `{
-				"onDemandCap": 0,
-				"onDemandUsed": 0
-			}`,
-			user:     `{}`,
-			wantPlan: "Grok Build",
-			wantLen:  1,
-			checks: func(t *testing.T, q []QuotaItem) {
-				if q[0].RemainingPct != 0 {
-					t.Fatalf("expected exhausted quota, got %f", q[0].RemainingPct)
-				}
-			},
-		},
+	{
+		name: "free account without paid quota",
+		billing: `{
+			"onDemandCap": 0,
+			"onDemandUsed": 0
+		}`,
+		user:     `{}`,
+		wantPlan: "Grok Build",
+		wantLen:  0,
+	},
 		{
 			name:     "paid subscription fallback unlimited",
 			billing:  `{}`,
