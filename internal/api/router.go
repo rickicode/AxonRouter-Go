@@ -133,7 +133,8 @@ func New(cfg Config) *Router {
 	// Register OAuth services
 	authManager.RegisterService(auth.ProviderCodex, codex.NewOAuthService(http.DefaultClient))
 	authManager.RegisterService(auth.ProviderAntigravity, antigravity.NewOAuthService(http.DefaultClient))
-	authManager.RegisterService(auth.ProviderKiro, kiro.NewOAuthService(http.DefaultClient))
+	kiroAuthSvc := kiro.NewAuthService(http.DefaultClient)
+	authManager.RegisterService(auth.ProviderKiro, kiroAuthSvc)
 	authManager.RegisterService(auth.ProviderGitHub, github.NewOAuthService(http.DefaultClient))
 	authManager.RegisterService(auth.ProviderGrokCli, grokcli.NewOAuthService(http.DefaultClient))
 	authManager.RegisterService(auth.ProviderCodeBuddy, codebuddy.NewOAuthService(http.DefaultClient))
@@ -213,6 +214,7 @@ func New(cfg Config) *Router {
 	usageH := admin.NewUsageHandler(cfg.DB)
 	modelH := admin.NewModelHandler(cfg.DB, executor.GetRegistry(), store, authManager)
 	oauthH := admin.NewOAuthHandler(cfg.DB, authManager, store, elig)
+	kiroAuthH := admin.NewKiroAuthHandler(cfg.DB, kiroAuthSvc, store, elig)
 	quotaH := admin.NewQuotaHandler(cfg.DB)
 	modelPricingH := admin.NewModelPricingHandler()
 	developersH := admin.NewDevelopersHandler(cfg.DB, km, cfg.Port)
@@ -313,6 +315,18 @@ func New(cfg Config) *Router {
 		g.GET("/oauth/:sessionId/poll", oauthH.PollOAuth)
 		g.POST("/oauth/callback", oauthH.SubmitOAuthCallback)
 		g.POST("/oauth/import-token", oauthH.ImportToken)
+
+		// Kiro multi-method auth
+		g.POST("/oauth/kiro/builder-id/start", kiroAuthH.StartBuilderID)
+		g.POST("/oauth/kiro/idc/start", kiroAuthH.StartIDC)
+		g.POST("/oauth/kiro/google/start", kiroAuthH.GoogleStart)
+		g.POST("/oauth/kiro/google/callback", kiroAuthH.GoogleCallback)
+		g.POST("/oauth/kiro/github/start", kiroAuthH.GitHubStart)
+		g.POST("/oauth/kiro/github/callback", kiroAuthH.GitHubCallback)
+		g.POST("/oauth/kiro/import", kiroAuthH.ImportKiroToken)
+		g.POST("/oauth/kiro/api-key", kiroAuthH.APIKey)
+		g.POST("/oauth/kiro/external-idp", kiroAuthH.ExternalIDP)
+		g.GET("/oauth/kiro/:sessionId/poll", kiroAuthH.Poll)
 
 		// Combos
 		g.GET("/combos", comboH.List)
