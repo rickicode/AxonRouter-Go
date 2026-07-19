@@ -336,8 +336,8 @@ func TestGenerateAuthURLReturnsVerificationURI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateAuthURL error = %v", err)
 	}
-	if url != "https://accounts.x.ai/device" {
-		t.Errorf("auth URL = %q, want https://accounts.x.ai/device", url)
+	if url != "https://accounts.x.ai/device?user_code=UC-XYZ" {
+		t.Errorf("auth URL = %q, want https://accounts.x.ai/device?user_code=UC-XYZ", url)
 	}
 }
 
@@ -427,8 +427,8 @@ func TestStartLocalServerRunsDeviceFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateAuthURL error = %v", err)
 	}
-	if url != "https://accounts.x.ai/device" {
-		t.Errorf("auth URL = %q", url)
+	if url != "https://accounts.x.ai/device?user_code=ABCD-1234" {
+		t.Errorf("auth URL = %q, want https://accounts.x.ai/device?user_code=ABCD-1234", url)
 	}
 	if got := svc.GetUserCode("state-flow:0"); got != "ABCD-1234" {
 		t.Errorf("GetUserCode = %q, want ABCD-1234", got)
