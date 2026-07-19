@@ -1,7 +1,6 @@
 package codebuddy
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -186,13 +185,15 @@ func (s *OAuthService) requestDeviceCode(ctx context.Context) (*deviceCodeRespon
 		ctx = context.Background()
 	}
 
-	payload := map[string]string{"platform": platform}
-	bodyBytes, err := json.Marshal(payload)
+	stateURL, err := url.Parse(s.stateURL)
 	if err != nil {
-		return nil, fmt.Errorf("marshal request body: %w", err)
+		return nil, fmt.Errorf("parse state URL: %w", err)
 	}
+	q := stateURL.Query()
+	q.Set("platform", platform)
+	stateURL.RawQuery = q.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.stateURL, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, stateURL.String(), strings.NewReader("{}"))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}

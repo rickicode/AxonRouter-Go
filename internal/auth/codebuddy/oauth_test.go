@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -22,15 +23,17 @@ func TestNewOAuthServiceUsesDefaultTimeout(t *testing.T) {
 }
 
 func TestRequestDeviceCodeSuccess(t *testing.T) {
-	var gotBody map[string]any
+	var gotQuery url.Values
 	var gotHeaders http.Header
+	var gotBody string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("method = %s, want POST", r.Method)
 		}
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, &gotBody)
+		gotQuery = r.URL.Query()
 		gotHeaders = r.Header
+		body, _ := io.ReadAll(r.Body)
+		gotBody = string(body)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"code": 0,
 			"data": map[string]any{
@@ -55,8 +58,11 @@ func TestRequestDeviceCodeSuccess(t *testing.T) {
 	if dc.authUrl != "https://copilot.tencent.com/auth/confirm" {
 		t.Errorf("authUrl = %q, want https://copilot.tencent.com/auth/confirm", dc.authUrl)
 	}
-	if gotBody["platform"] != platform {
-		t.Errorf("body platform = %v, want %q", gotBody["platform"], platform)
+	if gotQuery.Get("platform") != platform {
+		t.Errorf("query platform = %v, want %q", gotQuery.Get("platform"), platform)
+	}
+	if strings.TrimSpace(gotBody) != "{}" {
+		t.Errorf("body = %q, want {}", gotBody)
 	}
 	if gotHeaders.Get("User-Agent") != userAgent {
 		t.Errorf("User-Agent = %q, want %q", gotHeaders.Get("User-Agent"), userAgent)
