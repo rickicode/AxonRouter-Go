@@ -226,6 +226,57 @@ func TestGrokCLIExecutor_RequestTransform(t *testing.T) {
 	}
 }
 
+func TestGrokCLIExecutor_ToolListTruncated(t *testing.T) {
+	var gotBody []byte
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		completed, _ := json.Marshal(map[string]any{"type": "response.completed", "response": map[string]any{"id": "r1", "status": "completed", "output": []any{}, "usage": map[string]any{}}})
+		fmt.Fprintln(w, "data: "+string(completed))
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	exec := NewGrokCLIExecutor(base)
+
+	rawTools := make([]any, 0, 250)
+	for i := 0; i < 250; i++ {
+		rawTools = append(rawTools, map[string]any{
+			"namespace": fmt.Sprintf("ns_%d", i),
+			"tools": []any{
+				map[string]any{"type": "function", "name": fmt.Sprintf("tool_%d", i), "parameters": map[string]any{"type": "object"}},
+			},
+		})
+	}
+	body, _ := json.Marshal(map[string]any{
+		"model":    "grok-cli/grok-4.5",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+		"tools":    rawTools,
+	})
+	req := &Request{
+		Provider:    "grok-cli",
+		Model:       "grok-cli/grok-4.5",
+		BaseURL:     ts.URL,
+		AccessToken: "grok-at-123",
+		Body:        body,
+		StreamConfig: &StreamConfig{
+			FetchTimeoutMs:           5000,
+			StreamIdleTimeoutMs:      5000,
+			StreamReadinessTimeoutMs: 5000,
+		},
+	}
+	if _, err := exec.Execute(context.Background(), req); err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	tools := gjson.GetBytes(gotBody, "tools").Array()
+	if len(tools) != grokCLIMaxTools {
+		t.Fatalf("expected %d tools after truncation, got %d", grokCLIMaxTools, len(tools))
+	}
+}
+
 func TestGrokCLIExecutor_ExtractUsage(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
