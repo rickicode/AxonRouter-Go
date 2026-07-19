@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Devin CLI and Qoder providers** — ported from OmniRoute. Devin routes through the local `devin acp` CLI; Qoder supports dual-mode transport (DashScope HTTP for API keys, `qodercli` for PAT `pt-*` tokens). Includes shared CLI subprocess runtime, provider seeding, static model catalog, frontend catalog entries, and alias registry.
 - **Devin and Qoder provider icons** — added `devin.svg` (from OmniRoute Windsurf/Cognition branding) and `qoder.png` (from 9router) to the dashboard provider catalog.
+- **Built-in `codebuddy` provider (Tencent CodeBuddy)** with custom browser OAuth polling flow, v2 chat endpoint, required Tencent CLI headers, and a 15-model catalog (GLM/Kimi/MiniMax/DeepSeek/Hunyuan).
 
 ## [0.3.10] - 2026-07-18
 
