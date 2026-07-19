@@ -320,6 +320,7 @@ func (e *OpenAIExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
 	openRouterHeaders(headers, req.Provider, req.ProviderSpecificData)
+	codebuddyHeaders(headers, req.Provider)
 
 	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
 	if err != nil {
@@ -386,6 +387,7 @@ func (e *OpenAIExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
 	openRouterHeaders(headers, req.Provider, req.ProviderSpecificData)
+	codebuddyHeaders(headers, req.Provider)
 
 	return e.DoStreamRequestWithConfig(ContextWithProvider(ctx, req.Provider), "POST", url, headers, body, req.StreamConfig)
 }
@@ -411,6 +413,7 @@ func (e *OpenAIExecutor) Embeddings(ctx context.Context, req *Request) (*Respons
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
 	openRouterHeaders(headers, req.Provider, req.ProviderSpecificData)
+	codebuddyHeaders(headers, req.Provider)
 
 	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
 	if err != nil {
