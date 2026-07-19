@@ -9,6 +9,9 @@ import (
 const (
 	kiroDefaultRegion = "us-east-1"
 	kiroDevEndpoint   = "https://runtime.us-east-1.kiro.dev/generateAssistantResponse"
+
+	kiroDefaultProfileARNBuilderID = "arn:aws:codewhisperer:us-east-1:638616132270:profile/AAAACCCCXXXX"
+	kiroDefaultProfileARNSocial    = "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK"
 )
 
 var (
@@ -89,6 +92,17 @@ func kiroRuntimeHost(region string) string {
 //     so the AWS endpoint is tried first.
 //   - builder-id, social (github), and import tokens are Kiro OIDC/social tokens that the
 //     kiro.dev gateway accepts, so that endpoint is tried first.
+// resolveDefaultKiroProfileArn returns the shared default profileArn for
+// builder-id/social auth. Account-bound methods (api_key/idc/external_idp)
+// must never use this shared ARN because it belongs to another account.
+func resolveDefaultKiroProfileArn(authMethod string) string {
+	authMethod = normalizeRegion(authMethod)
+	if authMethod == "google" || authMethod == "github" {
+		return kiroDefaultProfileARNSocial
+	}
+	return kiroDefaultProfileARNBuilderID
+}
+
 func kiroEndpointURLs(psd map[string]string, baseURL string) []string {
 	if baseURL != "" {
 		return []string{baseURL}

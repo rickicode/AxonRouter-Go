@@ -71,6 +71,28 @@ func kiroHeaders(req *Request) map[string]string {
 	return headers
 }
 
+// injectKiroProfileArn adds the shared default profileArn for OAuth/social/import
+// auth methods when no profileArn is present. Account-bound methods (api_key,
+// idc, external_idp) must not receive the shared placeholder.
+func injectKiroProfileArn(body []byte, psd map[string]string) ([]byte, error) {
+	if psd["profileArn"] != "" {
+		return body, nil
+	}
+	authMethod := normalizeRegion(psd["authMethod"])
+	if authMethod == "api_key" || authMethod == "idc" || authMethod == "external_idp" {
+		return body, nil
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return body, err
+	}
+	if raw["profileArn"] != nil && raw["profileArn"] != "" {
+		return body, nil
+	}
+	raw["profileArn"] = resolveDefaultKiroProfileArn(authMethod)
+	return json.Marshal(raw)
+}
+
 // buildKiroUpstreamBody strips non-upstream fields from the translated body
 // and keeps only the fields Kiro accepts.
 func buildKiroUpstreamBody(body []byte) ([]byte, map[string]string, error) {
@@ -676,7 +698,12 @@ func (e *KiroExecutor) Models(ctx context.Context, req *Request) (*Response, err
 func (e *KiroExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
 	urls := kiroEndpointURLs(req.ProviderSpecificData, req.BaseURL)
 
-	body, nameMap, err := buildKiroUpstreamBody(req.Body)
+	body, err := injectKiroProfileArn(req.Body, req.ProviderSpecificData)
+	if err != nil {
+		return nil, fmt.Errorf("kiro profile arn injection: %w", err)
+	}
+
+	body, nameMap, err := buildKiroUpstreamBody(body)
 	if err != nil {
 		return nil, fmt.Errorf("kiro upstream body: %w", err)
 	}

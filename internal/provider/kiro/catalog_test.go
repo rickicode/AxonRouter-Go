@@ -7,14 +7,22 @@ import (
 
 func TestBaseModels(t *testing.T) {
 	want := []string{
+		"claude-opus-4.8",
+		"claude-opus-4.7",
+		"claude-opus-4.5",
 		"claude-sonnet-5",
 		"claude-sonnet-4.6",
+		"claude-sonnet-4.5",
 		"claude-haiku-4.5",
 		"deepseek-3.2",
+		"minimax-m2.7",
 		"minimax-m2.5",
 		"minimax-m2.1",
 		"glm-5",
 		"qwen3-coder-next",
+		"gpt-5.6-sol",
+		"gpt-5.6-terra",
+		"gpt-5.6-luna",
 	}
 	got := make([]string, 0, len(BaseModels))
 	for _, m := range BaseModels {

@@ -33,6 +33,27 @@ type Model struct {
 // generated from this list at runtime.
 var BaseModels = []BaseModel{
 	{
+		ID:              "claude-opus-4.8",
+		DisplayName:     "Claude Opus 4.8",
+		OwnedBy:         "amazon",
+		ContextLength:   200000,
+		MaxOutputTokens: 64000,
+	},
+	{
+		ID:              "claude-opus-4.7",
+		DisplayName:     "Claude Opus 4.7",
+		OwnedBy:         "amazon",
+		ContextLength:   200000,
+		MaxOutputTokens: 64000,
+	},
+	{
+		ID:              "claude-opus-4.5",
+		DisplayName:     "Claude Opus 4.5",
+		OwnedBy:         "amazon",
+		ContextLength:   200000,
+		MaxOutputTokens: 64000,
+	},
+	{
 		ID:              "claude-sonnet-5",
 		DisplayName:     "Claude Sonnet 5",
 		OwnedBy:         "amazon",
@@ -42,6 +63,13 @@ var BaseModels = []BaseModel{
 	{
 		ID:              "claude-sonnet-4.6",
 		DisplayName:     "Claude Sonnet 4.6",
+		OwnedBy:         "amazon",
+		ContextLength:   200000,
+		MaxOutputTokens: 64000,
+	},
+	{
+		ID:              "claude-sonnet-4.5",
+		DisplayName:     "Claude Sonnet 4.5",
 		OwnedBy:         "amazon",
 		ContextLength:   200000,
 		MaxOutputTokens: 64000,
@@ -58,6 +86,13 @@ var BaseModels = []BaseModel{
 		DisplayName:     "DeepSeek V3.2",
 		OwnedBy:         "deepseek",
 		ContextLength:   128000,
+		MaxOutputTokens: 8192,
+	},
+	{
+		ID:              "minimax-m2.7",
+		DisplayName:     "MiniMax M2.7",
+		OwnedBy:         "minimax",
+		ContextLength:   200000,
 		MaxOutputTokens: 8192,
 	},
 	{
@@ -87,6 +122,27 @@ var BaseModels = []BaseModel{
 		OwnedBy:         "alibaba",
 		ContextLength:   131072,
 		MaxOutputTokens: 32768,
+	},
+	{
+		ID:              "gpt-5.6-sol",
+		DisplayName:     "GPT 5.6 Sol",
+		OwnedBy:         "openai",
+		ContextLength:   272000,
+		MaxOutputTokens: 8192,
+	},
+	{
+		ID:              "gpt-5.6-terra",
+		DisplayName:     "GPT 5.6 Terra",
+		OwnedBy:         "openai",
+		ContextLength:   272000,
+		MaxOutputTokens: 8192,
+	},
+	{
+		ID:              "gpt-5.6-luna",
+		DisplayName:     "GPT 5.6 Luna",
+		OwnedBy:         "openai",
+		ContextLength:   272000,
+		MaxOutputTokens: 8192,
 	},
 }
 
