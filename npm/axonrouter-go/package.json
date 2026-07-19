@@ -1,6 +1,6 @@
 {
   "name": "axonrouter-go",
-  "version": "0.3.11",
+  "version": "0.3.10",
   "description": "Auto-installer for AxonRouter-Go CLI binary",
   "type": "module",
   "main": "index.js",
