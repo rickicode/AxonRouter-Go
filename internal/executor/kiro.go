@@ -40,11 +40,13 @@ func kiroHeaders(req *Request) map[string]string {
 		ua = "AWS-SDK-JS/3.0.0 kiro-ide/1.0.0"
 	}
 	headers := map[string]string{
-		"Content-Type":    "application/json",
-		"Accept":          "application/vnd.amazon.eventstream",
-		"User-Agent":      ua,
-		"X-Amz-User-Agent": "aws-sdk-js/3.0.0 KiroIDE",
-		"X-Amz-Target":    "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
+		"Content-Type":          "application/json",
+		"Accept":                "application/vnd.amazon.eventstream",
+		"User-Agent":            ua,
+		"X-Amz-User-Agent":      "aws-sdk-js/3.0.0 kiro-ide/1.0.0",
+		"Amz-Sdk-Request":       "attempt=1; max=3",
+		"Amz-Sdk-Invocation-Id": genUUID(),
+		"X-Amz-Target":          "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
 	}
 	if req.AccessToken != "" {
 		headers["Authorization"] = "Bearer " + req.AccessToken
