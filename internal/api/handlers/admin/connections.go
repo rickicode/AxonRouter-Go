@@ -654,11 +654,11 @@ func (h *ConnectionHandler) RefreshToken(c *gin.Context) {
 
 	var providerTypeID, refreshToken string
 	var expiresAt int64
-	var accessToken string
+	var accessToken, psdRaw string
 	err := h.db.QueryRow(`
-		SELECT provider_type_id, COALESCE(oauth_token,''), COALESCE(oauth_refresh_token,''), COALESCE(oauth_expires_at,0)
+		SELECT provider_type_id, COALESCE(oauth_token,''), COALESCE(oauth_refresh_token,''), COALESCE(oauth_expires_at,0), COALESCE(provider_specific_data, '')
 		FROM connections WHERE id = ?
-	`, connID).Scan(&providerTypeID, &accessToken, &refreshToken, &expiresAt)
+	`, connID).Scan(&providerTypeID, &accessToken, &refreshToken, &expiresAt, &psdRaw)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
 		return
@@ -676,10 +676,23 @@ func (h *ConnectionHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 
+	providerSpecific := map[string]string{}
+	if psdRaw != "" {
+		var raw map[string]any
+		if e := json.Unmarshal([]byte(psdRaw), &raw); e == nil {
+			for k, v := range raw {
+				if s, ok := v.(string); ok {
+					providerSpecific[k] = s
+				}
+			}
+		}
+	}
+
 	creds := &auth.Credentials{
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-		ExpiresAt:    time.Unix(expiresAt, 0),
+		AccessToken:      accessToken,
+		RefreshToken:     refreshToken,
+		ExpiresAt:        time.Unix(expiresAt, 0),
+		ProviderSpecific: providerSpecific,
 	}
 
 	newCreds, err := h.authMgr.RefreshToken(c.Request.Context(), auth.ProviderType(providerTypeID), creds)

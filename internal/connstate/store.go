@@ -155,6 +155,47 @@ func (s *Store) HealthyCount() int {
 	return count
 }
 
+// ClassifyProviderUnavailable returns an error category when a provider has no
+// eligible connections but all of its connections share the same failure mode.
+// This lets callers return a precise status code/message (e.g. 429 insufficient
+// quota) instead of a generic 503. It returns an empty category when the state
+// is mixed or unknown so the caller can keep its default behaviour.
+func (s *Store) ClassifyProviderUnavailable(provider string) ErrorCategory {
+	total := 0
+	quota := 0
+	auth := 0
+	balance := 0
+	s.states.Range(func(_, value any) bool {
+		cs := value.(*ConnectionState)
+		if cs.Prefix != provider {
+			return true
+		}
+		total++
+		status := cs.GetStatus()
+		switch status {
+		case StatusQuotaExhausted, StatusCooldown, StatusRateLimited:
+			quota++
+		case StatusAuthFailed, StatusSuspended:
+			auth++
+		case StatusBalanceEmpty, StatusDisabled:
+			balance++
+		}
+		return true
+	})
+	if total == 0 {
+		return ErrorUnknown
+	}
+	switch {
+	case quota == total:
+		return ErrorQuota
+	case auth == total:
+		return ErrorAuth
+	case balance == total:
+		return ErrorBalanceEmpty
+	}
+	return ErrorUnknown
+}
+
 // SeedConnection creates or updates a connection state entry from DB data.
 // Used to keep the in-memory store in sync with the database.
 // Builds a fully-initialized ConnectionState before publishing to map to avoid partial-read races.

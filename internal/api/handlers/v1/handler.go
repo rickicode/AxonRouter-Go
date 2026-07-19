@@ -600,10 +600,23 @@ func (h *Handler) refreshOAuthToken(ctx context.Context, conn *Connection, provi
 		return fmt.Errorf("oauth not supported for provider: %s", provider)
 	}
 
+	providerSpecific := map[string]string{}
+	if conn.ProviderSpecificData != "" {
+		var raw map[string]any
+		if e := json.Unmarshal([]byte(conn.ProviderSpecificData), &raw); e == nil {
+			for k, v := range raw {
+				if s, ok := v.(string); ok {
+					providerSpecific[k] = s
+				}
+			}
+		}
+	}
+
 	creds := &auth.Credentials{
-		AccessToken:  conn.AccessToken,
-		RefreshToken: conn.RefreshToken,
-		ExpiresAt:    conn.OAuthExpiresAt,
+		AccessToken:      conn.AccessToken,
+		RefreshToken:     conn.RefreshToken,
+		ExpiresAt:        conn.OAuthExpiresAt,
+		ProviderSpecific: providerSpecific,
 	}
 
 	newCreds, err := h.authMgr.RefreshToken(ctx, providerType, creds)
@@ -625,6 +638,7 @@ func (h *Handler) refreshOAuthToken(ctx context.Context, conn *Connection, provi
 
 	// Update connection in memory
 	conn.AccessToken = newCreds.AccessToken
+	conn.RefreshToken = newCreds.RefreshToken
 	conn.OAuthExpiresAt = newCreds.ExpiresAt
 	if len(newCreds.ProviderSpecific) > 0 {
 		if psdBytes, err := json.Marshal(newCreds.ProviderSpecific); err == nil {

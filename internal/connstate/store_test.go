@@ -2,6 +2,7 @@ package connstate
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -136,5 +137,36 @@ func TestDetectError_429WithoutQuotaBody(t *testing.T) {
 	det := DetectError(context.Background(),429, `{"error":{"message":"rate limit exceeded"}}`, nil, "openai", "", nil)
 	if det.Category != ErrorRateLimit {
 		t.Errorf("expected ErrorRateLimit for plain 429, got %s", det.Category)
+	}
+}
+
+func TestClassifyProviderUnavailable(t *testing.T) {
+	tests := []struct {
+		name   string
+		states []Status
+		want   ErrorCategory
+	}{
+		{"all quota", []Status{StatusQuotaExhausted, StatusQuotaExhausted}, ErrorQuota},
+		{"all cooldown", []Status{StatusCooldown, StatusCooldown}, ErrorQuota},
+		{"mixed quota+cooldown", []Status{StatusQuotaExhausted, StatusCooldown}, ErrorQuota},
+		{"all auth", []Status{StatusAuthFailed, StatusAuthFailed}, ErrorAuth},
+		{"all disabled", []Status{StatusDisabled, StatusDisabled}, ErrorBalanceEmpty},
+		{"all balance empty", []Status{StatusBalanceEmpty, StatusBalanceEmpty}, ErrorBalanceEmpty},
+		{"mixed quota+ready", []Status{StatusQuotaExhausted, StatusReady}, ErrorUnknown},
+		{"empty provider", []Status{}, ErrorUnknown},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewStore()
+			for i, st := range tt.states {
+				store.SeedConnection(fmt.Sprintf("conn-%d", i), "grok-cli", "ready", i)
+				cs := store.Get(fmt.Sprintf("conn-%d", i))
+				cs.SetStatus(st, "")
+			}
+			if got := store.ClassifyProviderUnavailable("grok-cli"); got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

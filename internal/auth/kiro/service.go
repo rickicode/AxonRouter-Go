@@ -563,6 +563,11 @@ func (s *KiroAuthService) pollDeviceTokenLoop(ctx context.Context, region, clien
 			creds.ProviderSpecific["clientSecret"] = clientSecret
 			creds.ProviderSpecific["region"] = region
 			creds.ProviderSpecific["startUrl"] = startURL
+			if strings.TrimSpace(creds.ProviderSpecific["profileArn"]) == "" {
+				if arn, err := s.discoverProfileArn(ctx, creds.AccessToken, region); err == nil && arn != "" {
+					creds.ProviderSpecific["profileArn"] = arn
+				}
+			}
 			return creds, nil
 		}
 	}
@@ -659,7 +664,25 @@ func (s *KiroAuthService) refreshOIDCWithRetry(ctx context.Context, creds *auth.
 	}
 	newCreds.ProviderSpecific["clientId"] = clientID
 	newCreds.ProviderSpecific["clientSecret"] = clientSecret
+	if strings.TrimSpace(newCreds.ProviderSpecific["profileArn"]) == "" {
+		if arn, err := s.discoverProfileArn(ctx, newCreds.AccessToken, region); err == nil && arn != "" {
+			newCreds.ProviderSpecific["profileArn"] = arn
+		}
+	}
 	return newCreds, nil
+}
+
+// discoverProfileArn calls CodeWhisperer to find the account-bound profile ARN.
+// If the account has no profile, it returns an empty string without an error.
+func (s *KiroAuthService) discoverProfileArn(ctx context.Context, accessToken, region string) (string, error) {
+	if accessToken == "" {
+		return "", fmt.Errorf("no access token")
+	}
+	arn, err := listAvailableProfiles(ctx, s.httpClient, accessToken, region)
+	if err != nil {
+		return "", err
+	}
+	return arn, nil
 }
 
 func (s *KiroAuthService) refreshOIDC(ctx context.Context, region, clientID, clientSecret string, creds *auth.Credentials) (*auth.Credentials, error) {
