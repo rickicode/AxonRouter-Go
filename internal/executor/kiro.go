@@ -642,7 +642,6 @@ func (e *KiroExecutor) Models(ctx context.Context, req *Request) (*Response, err
 // ExecuteStream performs a streaming Kiro request.
 func (e *KiroExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
 	urls := kiroEndpointURLs(req.ProviderSpecificData, req.BaseURL)
-	url := urls[0]
 
 	body, nameMap, err := buildKiroUpstreamBody(req.Body)
 	if err != nil {
@@ -650,45 +649,63 @@ func (e *KiroExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stream
 	}
 	headers := kiroHeaders(req)
 
-	client, targetURL, err := e.clientForContext(ctx, url, headers)
-	if err != nil {
-		return nil, err
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create kiro request: %w", err)
-	}
-	for k, v := range headers {
-		httpReq.Header.Set(k, v)
-	}
-
-	// Preserve exact-casing for auth-method-specific headers; net/http.Header.Set
-	// canonicalizes keys, but the Kiro/CodeWhisperer surface expects these spellings.
-	authMethod := normalizeRegion(req.ProviderSpecificData["authMethod"])
-	switch authMethod {
-	case "api_key":
-		httpReq.Header["tokentype"] = []string{"API_KEY"}
-	case "external_idp":
-		httpReq.Header["TokenType"] = []string{"EXTERNAL_IDP"}
-	}
-
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("kiro request: %w", err)
-	}
-
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		upErr := &UpstreamError{
-			StatusCode: resp.StatusCode,
-			Body:       body,
-			RawBody:    body,
-			Headers:    resp.Header,
+	var (
+		resp    *http.Response
+		lastErr error
+	)
+	for _, url := range urls {
+		client, targetURL, err := e.clientForContext(ctx, url, headers)
+		if err != nil {
+			return nil, err
 		}
-		upErr.TranslateErrorBody(req.Provider)
-		return nil, upErr
+
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("create kiro request: %w", err)
+		}
+		for k, v := range headers {
+			httpReq.Header.Set(k, v)
+		}
+
+		// Preserve exact-casing for auth-method-specific headers; net/http.Header.Set
+		// canonicalizes keys, but the Kiro/CodeWhisperer surface expects these spellings.
+		authMethod := normalizeRegion(req.ProviderSpecificData["authMethod"])
+		switch authMethod {
+		case "api_key":
+			httpReq.Header["tokentype"] = []string{"API_KEY"}
+		case "external_idp":
+			httpReq.Header["TokenType"] = []string{"EXTERNAL_IDP"}
+		}
+
+		resp, err = client.Do(httpReq)
+		if err != nil {
+			lastErr = err
+			resp = nil
+			continue
+		}
+		if resp.StatusCode >= 500 {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			lastErr = fmt.Errorf("upstream %d", resp.StatusCode)
+			resp = nil
+			continue
+		}
+		if resp.StatusCode >= 400 {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			upErr := &UpstreamError{
+				StatusCode: resp.StatusCode,
+				Body:       body,
+				RawBody:    body,
+				Headers:    resp.Header,
+			}
+			upErr.TranslateErrorBody(req.Provider)
+			return nil, upErr
+		}
+		break
+	}
+	if resp == nil {
+		return nil, fmt.Errorf("kiro request failed: %w", lastErr)
 	}
 
 	result := &StreamResult{
