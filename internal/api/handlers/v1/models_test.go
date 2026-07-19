@@ -46,6 +46,40 @@ func TestGetProviderModels_CFIncludesServiceKinds(t *testing.T) {
 	}
 }
 
+// TestGetProviderModels_CodeBuddyIncludesExpectedModels verifies the codebuddy
+// provider catalog exposes the seeded models with correct ownership.
+func TestGetProviderModels_CodeBuddyIncludesExpectedModels(t *testing.T) {
+	h := newTestHandler(t)
+	models := h.getProviderModels("codebuddy")
+	if len(models) == 0 {
+		t.Fatal("expected codebuddy models from catalog")
+	}
+
+	want := map[string]string{
+		"codebuddy/glm-5.2": "tencent",
+		"codebuddy/kimi-k2.7": "tencent",
+	}
+	for id, owner := range want {
+		found := false
+		for _, m := range models {
+			gotID, ok := m["id"].(string)
+			if !ok || gotID != id {
+				continue
+			}
+			found = true
+			if gotOwner, _ := m["owned_by"].(string); gotOwner != owner {
+				t.Errorf("model %q owned_by = %q, want %q", id, gotOwner, owner)
+			}
+			if kinds := kindsOf(m); !slices.Contains(kinds, "llm") {
+				t.Errorf("model %q service_kinds = %v, want llm", id, kinds)
+			}
+		}
+		if !found {
+			t.Errorf("missing codebuddy model %q", id)
+		}
+	}
+}
+
 // TestGetProviderModels_GrokCLIIncludesExpectedModels verifies the grok-cli
 // provider catalog exposes the seeded models with correct ownership.
 func TestGetProviderModels_GrokCLIIncludesExpectedModels(t *testing.T) {

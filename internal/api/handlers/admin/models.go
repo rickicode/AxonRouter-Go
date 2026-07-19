@@ -572,6 +572,7 @@ var providerCatalogKeys = map[string][]string{
 	"copilot":    {"copilot"},
 	"bedrock":    {"bedrock"},
 	"grok-cli":   {"grok-cli"},
+	"codebuddy":  {"codebuddy"},
 	"devin":      {"devin"},
 	"qoder":      {"qoder"},
 }

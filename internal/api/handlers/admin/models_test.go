@@ -16,6 +16,26 @@ func TestDefaultTestModel_CloudflareStripsProviderPrefix(t *testing.T) {
 	}
 }
 
+func TestListModelEntries_CodeBuddyIncludesServiceKinds(t *testing.T) {
+	h := &ModelHandler{}
+	entries := h.listModelEntries("codebuddy", []string{"llm"}, nil, staticModels("codebuddy"), nil)
+	if len(entries) == 0 {
+		t.Fatal("expected CodeBuddy model entries")
+	}
+	find := func(id string) map[string]any {
+		for _, e := range entries {
+			if gotID, ok := e["id"].(string); ok && gotID == id {
+				return e
+			}
+		}
+		return nil
+	}
+	llm := find("codebuddy/glm-5.2")
+	if llm == nil || !slices.Contains(kindsOf(llm), "llm") {
+		t.Errorf("CodeBuddy glm-5.2 entry missing service_kinds llm: %#v", llm)
+	}
+}
+
 func TestListModelEntries_CFIncludesServiceKinds(t *testing.T) {
 	h := &ModelHandler{}
 	entries := h.listModelEntries("cf", nil, nil, staticModels("cf"), nil)
