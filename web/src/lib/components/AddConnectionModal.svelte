@@ -12,8 +12,11 @@ import { copyToClipboard } from '$lib/copy';
 import { connections } from '$lib/stores';
 import { getProxyPoolId, filterProxyPools } from '$lib/auto-add-proxy-pools';
 import ProviderIcon from '$lib/components/ProviderIcon.svelte';
+import KiroDeviceCodeView from '$lib/components/KiroDeviceCodeView.svelte';
+import KiroSocialCallbackView from '$lib/components/KiroSocialCallbackView.svelte';
 import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 import type { ProviderMeta } from '$lib/provider-catalog';
+import { KIRO_METHODS, KIRO_STARTING_METHOD, getKiroMethodLabel, type KiroMethod } from '$lib/components/kiro-method-menu';
 
   let {
     open = $bindable(false),
@@ -63,6 +66,20 @@ let selectedPoolId = $state('');
 let poolSearch = $state('');
 let poolDropdownOpen = $state(false);
 let poolDropdownRef: HTMLDivElement | undefined = $state();
+
+  // Kiro method selection state
+  let kiroMethod = $state<KiroMethod | 'menu'>(KIRO_STARTING_METHOD);
+  let kiroSession = $state<{ authUrl: string; userCode?: string; sessionId: string; provider?: 'google' | 'github' } | null>(null);
+  let idcStartUrl = $state('');
+  let idcRegion = $state('');
+  let apiKeyInput = $state('');
+  let apiKeyRegion = $state('');
+  let importRefreshToken = $state('');
+  let importClientId = $state('');
+  let importClientSecret = $state('');
+  let importStartUrl = $state('');
+  let importRegion = $state('');
+  let externalIdpJson = $state('');
 
 // Bulk import via .txt upload + chunked send (keeps RAM bounded on both sides).
 const BULK_CHUNK = 5000;
@@ -195,6 +212,7 @@ const isOCProvider = $derived(providerId === 'oc');
 const isMimocodeProvider = $derived(providerId === 'mimocode');
 const needsProxyPool = $derived(isOCProvider || isMimocodeProvider);
 const showImportMode = $derived(providerId === 'grok-cli' || providerId === 'kiro');
+const isKiro = $derived(providerId === 'kiro');
 let autoImportedPsd = $state<Record<string, string> | undefined>(undefined);
 const existingPoolIds = $derived(
   new Set(
@@ -245,6 +263,18 @@ function reset() {
   importProgress = 0;
   importSummary = null;
   autoImportedPsd = undefined;
+  kiroMethod = KIRO_STARTING_METHOD;
+  kiroSession = null;
+  idcStartUrl = '';
+  idcRegion = '';
+  apiKeyInput = '';
+  apiKeyRegion = '';
+  importRefreshToken = '';
+  importClientId = '';
+  importClientSecret = '';
+  importStartUrl = '';
+  importRegion = '';
+  externalIdpJson = '';
 }
 
 function handleOpenChange(isOpen: boolean) {
@@ -589,31 +619,21 @@ async function handleAutoImportKiro() {
   try {
     const res = await oauthApi.autoImportKiro();
     if (!res.found) {
-      autoImportedPsd = undefined;
       toast.error(res.error || 'No local Kiro credentials found. Run kiro-cli login first.');
       return;
     }
-    if (!res.access_token || !res.refresh_token) {
-      autoImportedPsd = undefined;
+    if (!res.refresh_token) {
       toast.error('Discovered credential is incomplete');
       return;
     }
-    accessToken = res.access_token;
-    refreshToken = res.refresh_token;
-    if (res.expires_at) {
-      expiresAt = new Date(res.expires_at * 1000).toISOString().slice(0, 16);
-    }
-    autoImportedPsd = {};
-    if (res.auth_method) autoImportedPsd.authMethod = res.auth_method;
-    if (res.region) autoImportedPsd.region = res.region;
-    if (res.profile_arn) autoImportedPsd.profileArn = res.profile_arn;
-    if (res.client_id) autoImportedPsd.clientId = res.client_id;
-    if (res.client_secret) autoImportedPsd.clientSecret = res.client_secret;
-    if (res.token_endpoint) autoImportedPsd.tokenEndpoint = res.token_endpoint;
-    if (res.scopes) autoImportedPsd.scope = res.scopes;
+    importRefreshToken = res.refresh_token;
+    importClientId = res.client_id ?? '';
+    importClientSecret = res.client_secret ?? '';
+    importRegion = res.region ?? '';
+    importStartUrl = '';
     toast.success(`Auto-imported from ${res.source || 'kiro-cli'}. Review the fields and click Import token.`);
+    kiroMethod = 'import';
   } catch (err) {
-    autoImportedPsd = undefined;
     toast.error(err instanceof Error ? err.message : 'Auto-import failed');
   }
 }
@@ -690,11 +710,146 @@ async function handleOAuthSubmit() {
     step = 'error';
   }
 
-  function cancelOAuth() {
-    oauthPolling = false;
-    toast.info('OAuth cancelled');
-    handleOpenChange(false);
+function cancelOAuth() {
+  oauthPolling = false;
+  toast.info('OAuth cancelled');
+  handleOpenChange(false);
+}
+
+function finishKiroConnection(name?: string) {
+  oauthStatusText = name ? `Connected as ${name}` : 'Kiro connected';
+  step = 'done';
+  onCreated?.();
+}
+
+function backToKiroMenu() {
+  kiroMethod = KIRO_STARTING_METHOD;
+  kiroSession = null;
+  errorMsg = '';
+}
+
+function selectKiroMethod(method: KiroMethod) {
+  kiroMethod = method;
+  errorMsg = '';
+  if (method === 'builder-id') {
+    startKiroBuilderID();
+  } else if (method === 'google' || method === 'github') {
+    startKiroSocial(method);
+  } else if (method === 'auto-import') {
+    handleAutoImportKiro();
   }
+}
+
+async function startKiroBuilderID() {
+  errorMsg = '';
+  submitting = true;
+  try {
+    const res = await oauthApi.startKiroBuilderID();
+    kiroSession = { authUrl: res.auth_url, userCode: res.user_code, sessionId: res.session_id };
+    kiroMethod = 'builder-id';
+  } catch (err) {
+    errorMsg = err instanceof Error ? err.message : 'Failed to start AWS Builder ID';
+    toast.error(errorMsg);
+  } finally {
+    submitting = false;
+  }
+}
+
+async function startKiroIDC() {
+  errorMsg = '';
+  if (!idcStartUrl.trim()) {
+    toast.error('Start URL is required');
+    return;
+  }
+  submitting = true;
+  try {
+    const res = await oauthApi.startKiroIDC(idcStartUrl.trim(), '', idcRegion.trim());
+    kiroSession = { authUrl: res.auth_url, userCode: res.user_code, sessionId: res.session_id };
+  } catch (err) {
+    errorMsg = err instanceof Error ? err.message : 'Failed to start IAM Identity Center';
+    toast.error(errorMsg);
+  } finally {
+    submitting = false;
+  }
+}
+
+async function validateKiroAPIKey() {
+  errorMsg = '';
+  if (!apiKeyInput.trim()) {
+    toast.error('API key is required');
+    return;
+  }
+  submitting = true;
+  try {
+    const res = await oauthApi.validateKiroAPIKey(apiKeyInput.trim(), apiKeyRegion.trim() || undefined);
+    toast.success(`Kiro API key connected: ${res.name}`);
+    finishKiroConnection(res.name);
+  } catch (err) {
+    errorMsg = err instanceof Error ? err.message : 'Kiro API key validation failed';
+    toast.error(errorMsg);
+  } finally {
+    submitting = false;
+  }
+}
+
+async function startKiroSocial(provider: 'google' | 'github') {
+  errorMsg = '';
+  submitting = true;
+  try {
+    const res = await oauthApi.startKiroSocial(provider);
+    kiroSession = { authUrl: res.auth_url, sessionId: res.session_id, provider };
+  } catch (err) {
+    errorMsg = err instanceof Error ? err.message : `Failed to start ${provider} login`;
+    toast.error(errorMsg);
+    backToKiroMenu();
+  } finally {
+    submitting = false;
+  }
+}
+
+async function importKiroToken() {
+  errorMsg = '';
+  if (!importRefreshToken.trim()) {
+    toast.error('Refresh token is required');
+    return;
+  }
+  submitting = true;
+  try {
+    const res = await oauthApi.importKiroToken(
+      importRefreshToken.trim(),
+      importClientId.trim() || undefined,
+      importClientSecret.trim() || undefined,
+      importRegion.trim() || undefined,
+      importStartUrl.trim() || undefined,
+    );
+    toast.success(`Kiro token imported: ${res.name}`);
+    finishKiroConnection(res.name);
+  } catch (err) {
+    errorMsg = err instanceof Error ? err.message : 'Failed to import Kiro token';
+    toast.error(errorMsg);
+  } finally {
+    submitting = false;
+  }
+}
+
+async function importKiroExternalIDP() {
+  errorMsg = '';
+  if (!externalIdpJson.trim()) {
+    toast.error('External IDP JSON is required');
+    return;
+  }
+  submitting = true;
+  try {
+    const res = await oauthApi.importKiroExternalIDP(externalIdpJson.trim());
+    toast.success(`Kiro external IDP connected: ${res.name}`);
+    finishKiroConnection(res.name);
+  } catch (err) {
+    errorMsg = err instanceof Error ? err.message : 'Failed to import external IDP';
+    toast.error(errorMsg);
+  } finally {
+    submitting = false;
+  }
+}
 
 function handleSubmit() {
   if (isOAuth && importMode) return handleImportSubmit();
@@ -727,10 +882,10 @@ $effect(() => {
           {/if}
           <div class="min-w-0 space-y-1">
             <Dialog.Title class="text-lg font-semibold">
-              {isOAuth ? (importMode ? 'Import OAuth token' : 'Connect OAuth account') : isNoAuth ? 'Add no-auth connection' : 'Add API key'}
+              {isKiro ? 'Connect Kiro account' : isOAuth ? (importMode ? 'Import OAuth token' : 'Connect OAuth account') : isNoAuth ? 'Add no-auth connection' : 'Add API key'}
             </Dialog.Title>
             <Dialog.Description class="text-sm text-muted-foreground">
-              {meta?.displayName ?? providerId} · {isOAuth ? (importMode ? 'manual token import' : 'browser login') : isNoAuth ? 'no credential required' : 'single or bulk credential'}
+              {meta?.displayName ?? providerId} · {isKiro ? 'choose an authentication method' : isOAuth ? (importMode ? 'manual token import' : 'browser login') : isNoAuth ? 'no credential required' : 'single or bulk credential'}
             </Dialog.Description>
             <div class="flex flex-wrap gap-1.5 pt-1">
               <Badge variant="outline" class="rounded-full text-caption-mono">{meta?.prefix ?? `${providerId}/`}</Badge>
@@ -744,6 +899,114 @@ $effect(() => {
       </Dialog.Header>
 
       <div class="flex flex-col gap-4 py-2">
+        {#if isKiro}
+          <div class="flex flex-col gap-3">
+            <p class="text-body-sm text-muted-foreground">Choose how to authenticate with Kiro.</p>
+
+            {#if kiroMethod === 'menu'}
+              <div class="grid grid-cols-1 gap-2">
+                {#each KIRO_METHODS as method}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    class="text-body-sm rounded-sm cursor-pointer justify-start"
+                    disabled={submitting}
+                    onclick={() => selectKiroMethod(method.id)}
+                  >
+                    {method.label}
+                  </Button>
+                {/each}
+              </div>
+            {:else}
+              <div class="flex flex-col gap-3">
+                <div class="flex items-center gap-2">
+                  <Button variant="ghost" size="sm" class="text-body-sm rounded-sm cursor-pointer" onclick={backToKiroMenu}>
+                    Back
+                  </Button>
+                  <span class="text-body-sm-strong">{getKiroMethodLabel(kiroMethod)}</span>
+                </div>
+
+                {#if (kiroMethod === 'builder-id' || kiroMethod === 'idc') && kiroSession}
+                  <KiroDeviceCodeView
+                    authUrl={kiroSession.authUrl}
+                    userCode={kiroSession.userCode}
+                    sessionId={kiroSession.sessionId}
+                    onSuccess={(id, name) => finishKiroConnection(name)}
+                    onError={(err) => { errorMsg = err; }}
+                  />
+                {:else if kiroMethod === 'idc'}
+                  <div class="flex flex-col gap-1.5">
+                    <Label class="text-body-sm-strong">Start URL</Label>
+                    <Input bind:value={idcStartUrl} placeholder="https://d-xxx.awsapps.com/start" class="h-9 text-body-sm" />
+                  </div>
+                  <div class="flex flex-col gap-1.5">
+                    <Label class="text-body-sm-strong">Region</Label>
+                    <Input bind:value={idcRegion} placeholder="us-east-1" class="h-9 text-body-sm" />
+                  </div>
+                  <Button class="text-body-sm rounded-sm cursor-pointer" disabled={submitting} onclick={startKiroIDC}>
+                    Start device code
+                  </Button>
+                {:else if kiroMethod === 'api-key'}
+                  <div class="flex flex-col gap-1.5">
+                    <Label class="text-body-sm-strong">API key</Label>
+                    <Input bind:value={apiKeyInput} type="password" placeholder="KIRO API key" class="h-9 text-body-sm font-mono" autocomplete="off" spellcheck={false} />
+                  </div>
+                  <div class="flex flex-col gap-1.5">
+                    <Label class="text-body-sm-strong">Region <span class="text-muted-foreground font-normal">(optional)</span></Label>
+                    <Input bind:value={apiKeyRegion} placeholder="us-east-1" class="h-9 text-body-sm font-mono" />
+                  </div>
+                  <Button class="text-body-sm rounded-sm cursor-pointer" disabled={submitting} onclick={validateKiroAPIKey}>
+                    Validate and add
+                  </Button>
+                {:else if (kiroMethod === 'google' || kiroMethod === 'github') && kiroSession?.provider === kiroMethod}
+                  <KiroSocialCallbackView
+                    provider={kiroSession.provider}
+                    authUrl={kiroSession.authUrl}
+                    sessionId={kiroSession.sessionId}
+                    onSuccess={(id, name) => finishKiroConnection(name)}
+                    onError={(err) => { errorMsg = err; }}
+                  />
+                {:else if kiroMethod === 'import'}
+                  <div class="flex flex-col gap-1.5">
+                    <Label class="text-body-sm-strong">Refresh token <span class="text-destructive">*</span></Label>
+                    <Textarea bind:value={importRefreshToken} placeholder="eyJ..." class="min-h-20 font-mono text-code" />
+                  </div>
+                  <div class="flex flex-col gap-1.5">
+                    <Label class="text-body-sm-strong">Client ID <span class="text-muted-foreground font-normal">(optional)</span></Label>
+                    <Input bind:value={importClientId} class="h-9 text-body-sm font-mono" autocomplete="off" spellcheck={false} />
+                  </div>
+                  <div class="flex flex-col gap-1.5">
+                    <Label class="text-body-sm-strong">Client secret <span class="text-muted-foreground font-normal">(optional)</span></Label>
+                    <Input bind:value={importClientSecret} type="password" class="h-9 text-body-sm font-mono" autocomplete="off" spellcheck={false} />
+                  </div>
+                  <div class="flex flex-col gap-1.5">
+                    <Label class="text-body-sm-strong">Region <span class="text-muted-foreground font-normal">(optional)</span></Label>
+                    <Input bind:value={importRegion} placeholder="us-east-1" class="h-9 text-body-sm font-mono" />
+                  </div>
+                  <div class="flex flex-col gap-1.5">
+                    <Label class="text-body-sm-strong">Start URL <span class="text-muted-foreground font-normal">(optional)</span></Label>
+                    <Input bind:value={importStartUrl} placeholder="https://d-xxx.awsapps.com/start" class="h-9 text-body-sm font-mono" />
+                  </div>
+                  <Button class="text-body-sm rounded-sm cursor-pointer" disabled={submitting} onclick={importKiroToken}>
+                    Import token
+                  </Button>
+                {:else if kiroMethod === 'external-idp'}
+                  <div class="flex flex-col gap-1.5">
+                    <Label class="text-body-sm-strong">External IDP JSON</Label>
+                    <Textarea bind:value={externalIdpJson} placeholder="Paste external IdP JSON" class="min-h-36 font-mono text-code" />
+                  </div>
+                  <Button class="text-body-sm rounded-sm cursor-pointer" disabled={submitting} onclick={importKiroExternalIDP}>
+                    Import
+                  </Button>
+                {/if}
+              </div>
+            {/if}
+
+            {#if errorMsg}
+              <p class="rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 text-body-sm text-destructive">{errorMsg}</p>
+            {/if}
+          </div>
+        {:else}
         {#if supportsBulk}
           <div class="grid grid-cols-2 gap-2 rounded-lg border border-border/50 bg-muted/20 p-1">
             <button
@@ -1095,23 +1358,26 @@ $effect(() => {
         {#if errorMsg}
           <p class="rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive">{errorMsg}</p>
         {/if}
+        {/if}
       </div>
 
       <Dialog.Footer>
         <Button variant="outline" onclick={() => handleOpenChange(false)} class="text-sm">Cancel</Button>
-        <Button onclick={handleSubmit} disabled={submitting || importing || (isNoAuth && needsProxyPool && !selectedPoolId) || validationResult === 'failed'} class="text-sm">
-          {#if importing}
-            Importing… {Math.round(importProgress * 100)}%
-          {:else if submitting}
-            {isOAuth ? 'Starting OAuth...' : mode === 'bulk' ? 'Importing...' : 'Adding...'}
+        {#if !isKiro}
+          <Button onclick={handleSubmit} disabled={submitting || importing || (isNoAuth && needsProxyPool && !selectedPoolId) || validationResult === 'failed'} class="text-sm">
+            {#if importing}
+              Importing… {Math.round(importProgress * 100)}%
+            {:else if submitting}
+              {isOAuth ? 'Starting OAuth...' : mode === 'bulk' ? 'Importing...' : 'Adding...'}
 {:else if isOAuth}
-              {importMode ? 'Import token' : 'Connect'}
-            {:else if mode === 'bulk'}
-              Import keys
-            {:else}
-              Add connection
-            {/if}
-        </Button>
+                {importMode ? 'Import token' : 'Connect'}
+              {:else if mode === 'bulk'}
+                Import keys
+              {:else}
+                Add connection
+              {/if}
+          </Button>
+        {/if}
       </Dialog.Footer>
     {:else if step === 'oauth-waiting'}
       <Dialog.Header>
