@@ -643,7 +643,7 @@ func TestMalformedProviderSpecificData_Warns(t *testing.T) {
 	logging.Init("text")
 	h := newTestHandler(t)
 	mh := &memoryHandler{}
-	logging.Logger = slog.New(mh)
+	logging.SetLogger(slog.New(mh))
 
 	wq := db.NewWriteQueue(h.db)
 	tracker := usage.NewTracker(h.db)

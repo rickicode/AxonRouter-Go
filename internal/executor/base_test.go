@@ -21,10 +21,10 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func captureExecutorLogs(t *testing.T, run func()) string {
 	t.Helper()
-	previous := logging.Logger
+	previous := logging.Logger.Load()
 	var buf bytes.Buffer
-	logging.Logger = slog.New(slog.NewJSONHandler(&buf, nil))
-	t.Cleanup(func() { logging.Logger = previous })
+	logging.SetLogger(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { logging.SetLogger(previous) })
 	run()
 	return buf.String()
 }

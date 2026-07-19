@@ -60,7 +60,7 @@ func newConnectionHandlerForTest(t *testing.T, database *sql.DB, registry *execu
 }
 
 func init() {
-	logging.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	logging.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	executor.RegisterDefaults()
 	_ = executor.SetValidateURLForTest(func(string) error { return nil })
 }
