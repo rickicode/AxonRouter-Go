@@ -590,7 +590,7 @@ export const PROVIDER_CATALOG: ProviderMeta[] = [
     authType: 'oauth',
     prefix: 'codebuddy/',
     isBuiltIn: true,
-    website: 'https://copilot.tencent.com',
+    website: 'https://codebuddy.ai',
     color: '#006EFF',
     serviceKinds: ['llm'],
   },

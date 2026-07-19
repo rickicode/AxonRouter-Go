@@ -10,11 +10,12 @@ func TestCodeBuddyHeaders(t *testing.T) {
 		{
 			provider: "codebuddy",
 			wantHeaders: map[string]string{
-				"User-Agent":         "CLI/2.63.2 CodeBuddy/2.63.2",
-				"X-Product":          "SaaS",
-				"X-IDE-Type":         "CLI",
-				"X-IDE-Name":         "CLI",
-				"x-requested-with":   "XMLHttpRequest",
+				"User-Agent":          "CLI/2.63.2 CodeBuddy/2.63.2",
+				"X-Product":           "SaaS",
+				"X-IDE-Type":          "CLI",
+				"X-IDE-Name":          "CLI",
+				"X-Domain":            "codebuddy.ai",
+				"x-requested-with":    "XMLHttpRequest",
 				"x-codebuddy-request": "1",
 			},
 		},

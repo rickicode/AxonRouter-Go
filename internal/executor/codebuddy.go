@@ -8,6 +8,7 @@ func codebuddyHeaders(headers map[string]string, provider string) {
 	headers["X-Product"] = "SaaS"
 	headers["X-IDE-Type"] = "CLI"
 	headers["X-IDE-Name"] = "CLI"
+	headers["X-Domain"] = "codebuddy.ai"
 	headers["x-requested-with"] = "XMLHttpRequest"
 	headers["x-codebuddy-request"] = "1"
 }
