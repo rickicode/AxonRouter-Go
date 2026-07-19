@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -16,8 +17,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	_ "modernc.org/sqlite"
 	"golang.org/x/crypto/bcrypt"
+	_ "modernc.org/sqlite"
 
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
@@ -65,6 +66,7 @@ type fakeExecutor struct {
 		err    error
 	}
 	streamErr bool
+	delay     time.Duration
 }
 
 func (f *fakeExecutor) Execute(ctx context.Context, req *executor.Request) (*executor.Response, error) {
@@ -72,6 +74,13 @@ func (f *fakeExecutor) Execute(ctx context.Context, req *executor.Request) (*exe
 	f.callCount++
 	if idx >= len(f.responses) {
 		return nil, errors.New("no more responses")
+	}
+	if f.delay > 0 {
+		select {
+		case <-time.After(f.delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	return f.responses[idx].resp, f.responses[idx].err
 }
@@ -141,14 +150,14 @@ func newTestHandler(t *testing.T) *Handler {
 	database := openTestDB(t)
 	elig := connstate.NewEligibilityManager(store)
 	return &Handler{
-		db: database,
-		store: store,
-		elig: elig,
-		authMgr: mgr,
-		exhaustion: quota.NewExhaustionCache(),
-		providerCfg: providercfg.NewManager(t.TempDir()),
-		combo: combo.NewHandler(database, store, elig),
-		registry: executor.GetRegistry(),
+		db:                  database,
+		store:               store,
+		elig:                elig,
+		authMgr:             mgr,
+		exhaustion:          quota.NewExhaustionCache(),
+		providerCfg:         providercfg.NewManager(t.TempDir()),
+		combo:               combo.NewHandler(database, store, elig),
+		registry:            executor.GetRegistry(),
 		failoverMaxAttempts: 5,
 	}
 }
@@ -748,52 +757,52 @@ func TestBuildFailoverErrorResponse(t *testing.T) {
 			wantErrType: "server_error",
 		},
 	}
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				msg, status, errType := buildFailoverErrorResponse(string(tt.category), tt.lastErr, tt.modelName)
-				if msg != tt.wantMsg {
-					t.Errorf("msg: got %q, want %q", msg, tt.wantMsg)
-				}
-				if status != tt.wantStatus {
-					t.Errorf("status: got %d, want %d", status, tt.wantStatus)
-				}
-				if errType != tt.wantErrType {
-					t.Errorf("errType: got %q, want %q", errType, tt.wantErrType)
-				}
-			})
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg, status, errType := buildFailoverErrorResponse(string(tt.category), tt.lastErr, tt.modelName)
+			if msg != tt.wantMsg {
+				t.Errorf("msg: got %q, want %q", msg, tt.wantMsg)
+			}
+			if status != tt.wantStatus {
+				t.Errorf("status: got %d, want %d", status, tt.wantStatus)
+			}
+			if errType != tt.wantErrType {
+				t.Errorf("errType: got %q, want %q", errType, tt.wantErrType)
+			}
+		})
 	}
+}
 
-	// TestStreamResponse_UsageAccumulation verifies that per-chunk token extraction
-	// accumulates correctly across a Claude message_start + message_delta stream
-	// and writes merged tokens to request_logs.
-	func TestStreamResponse_UsageAccumulation(t *testing.T) {
-		h := newTestHandler(t)
+// TestStreamResponse_UsageAccumulation verifies that per-chunk token extraction
+// accumulates correctly across a Claude message_start + message_delta stream
+// and writes merged tokens to request_logs.
+func TestStreamResponse_UsageAccumulation(t *testing.T) {
+	h := newTestHandler(t)
 
-		// Create a minimal tracker and set it on the handler so Log() doesn't
-		// panic, but we will verify via api_key_usage instead of request_logs
-		// to avoid the async tracker flush race in tests.
-		wq := db.NewWriteQueue(h.db)
-		tracker := usage.NewTracker(h.db)
-		tracker.SetWriteQueue(wq)
-		h.tracker = tracker
+	// Create a minimal tracker and set it on the handler so Log() doesn't
+	// panic, but we will verify via api_key_usage instead of request_logs
+	// to avoid the async tracker flush race in tests.
+	wq := db.NewWriteQueue(h.db)
+	tracker := usage.NewTracker(h.db)
+	tracker.SetWriteQueue(wq)
+	h.tracker = tracker
 
-		// Seed a provider_type and api_key so the DB FK constraint is satisfied.
-		if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('test','Test','openai','http://x',0)`); err != nil {
-			t.Fatalf("seed provider_type: %v", err)
-		}
-		if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-1','test','c1','none','ready',1,0,0)`); err != nil {
-			t.Fatalf("seed connection: %v", err)
-		}
+	// Seed a provider_type and api_key so the DB FK constraint is satisfied.
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('test','Test','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-1','test','c1','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
 	// Seed the test API key so the increment path has a row to update.
 	hash := mustHashKey(t, "sk-test")
 	if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_keys (id, name, key_hash, created_at) VALUES ('test-key-1', 'test-key', ?, 0)`, hash); err != nil {
 		t.Fatalf("seed api_key: %v", err)
 	}
 
-		if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_key_usage (api_key_id, total_tokens, updated_at) VALUES ('test-key-1', 0, 0)`); err != nil {
-			t.Fatalf("seed api_key_usage: %v", err)
-		}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_key_usage (api_key_id, total_tokens, updated_at) VALUES ('test-key-1', 0, 0)`); err != nil {
+		t.Fatalf("seed api_key_usage: %v", err)
+	}
 
 	// Create a gin test context with api_key_id set.
 	rec := httptest.NewRecorder()
@@ -802,22 +811,21 @@ func TestBuildFailoverErrorResponse(t *testing.T) {
 	c.Request.Header.Set("Authorization", "Bearer sk-test")
 	c.Set("api_key_id", "test-key-1")
 
+	// Build a stream with Claude message_start (input tokens + cache)
+	// and message_delta (output tokens).
+	chunks := make(chan executor.StreamChunk, 3)
+	chunks <- executor.StreamChunk{
+		Payload: []byte(`data: {"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":0,"cache_creation_input_tokens":2,"cache_read_input_tokens":3}}}`),
+	}
+	chunks <- executor.StreamChunk{
+		Payload: []byte(`data: {"type":"message_delta","usage":{"output_tokens":25}}`),
+	}
+	close(chunks)
 
-		// Build a stream with Claude message_start (input tokens + cache)
-		// and message_delta (output tokens).
-		chunks := make(chan executor.StreamChunk, 3)
-		chunks <- executor.StreamChunk{
-			Payload: []byte(`data: {"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":0,"cache_creation_input_tokens":2,"cache_read_input_tokens":3}}}`),
-		}
-		chunks <- executor.StreamChunk{
-			Payload: []byte(`data: {"type":"message_delta","usage":{"output_tokens":25}}`),
-		}
-		close(chunks)
-
-		result := &executor.StreamResult{
-			Chunks:     chunks,
-			StatusCode: http.StatusOK,
-		}
+	result := &executor.StreamResult{
+		Chunks:     chunks,
+		StatusCode: http.StatusOK,
+	}
 
 	conn := &Connection{ID: "conn-1"}
 	dummyReq := []byte(`{}`)
@@ -830,29 +838,29 @@ func TestBuildFailoverErrorResponse(t *testing.T) {
 		time.Now(), "", false,
 	)
 
-		// Verify via api_key_usage: the accumulated tokens (15 input + 25 output = 40)
-		// should have been written by incrementAPIKeyUsage which uses a direct DB write
-		// (not going through the async tracker).
-		var totalTokens int64
-		err := h.db.QueryRow(`SELECT total_tokens FROM api_key_usage WHERE api_key_id = 'test-key-1'`).Scan(&totalTokens)
-		if err != nil {
-			t.Fatalf("query api_key_usage: %v", err)
-		}
-		if totalTokens != 40 {
-			t.Errorf("total_tokens = %d, want 40 (15 input + 25 output)", totalTokens)
-		}
+	// Verify via api_key_usage: the accumulated tokens (15 input + 25 output = 40)
+	// should have been written by incrementAPIKeyUsage which uses a direct DB write
+	// (not going through the async tracker).
+	var totalTokens int64
+	err := h.db.QueryRow(`SELECT total_tokens FROM api_key_usage WHERE api_key_id = 'test-key-1'`).Scan(&totalTokens)
+	if err != nil {
+		t.Fatalf("query api_key_usage: %v", err)
+	}
+	if totalTokens != 40 {
+		t.Errorf("total_tokens = %d, want 40 (15 input + 25 output)", totalTokens)
+	}
 
-		// Also verify the SSE output contains the translated chunks.
-		body := rec.Body.String()
-		if !strings.Contains(body, "data: [DONE]") {
-			t.Errorf("SSE output missing [DONE] marker")
-		}
-		if !strings.Contains(body, "type\":\"message_start") {
-			t.Errorf("SSE output missing message_start chunk")
-		}
-		if !strings.Contains(body, "type\":\"message_delta") {
-			t.Errorf("SSE output missing message_delta chunk")
-		}
+	// Also verify the SSE output contains the translated chunks.
+	body := rec.Body.String()
+	if !strings.Contains(body, "data: [DONE]") {
+		t.Errorf("SSE output missing [DONE] marker")
+	}
+	if !strings.Contains(body, "type\":\"message_start") {
+		t.Errorf("SSE output missing message_start chunk")
+	}
+	if !strings.Contains(body, "type\":\"message_delta") {
+		t.Errorf("SSE output missing message_delta chunk")
+	}
 
 	// Clean up
 	tracker.Stop()
@@ -891,8 +899,8 @@ func TestStreamResponse_UpstreamChunkErrMarksExhausted(t *testing.T) {
 		time.Now(), "", false,
 	)
 
-	if !h.exhaustion.IsExhausted("conn-err") {
-		t.Error("expected connection marked exhausted after rate-limit chunk error")
+	if !h.exhaustion.IsExhaustedScope("conn-err", "test-model") {
+		t.Error("expected connection model scope marked exhausted after rate-limit chunk error")
 	}
 
 	tracker.Stop()
@@ -1036,14 +1044,14 @@ func TestFallbackUsage(t *testing.T) {
 
 		conn := &Connection{ID: "conn-1"}
 		originalReq := []byte(`{"model":"test/model","messages":[{"role":"user","content":"Hello"}]}`)
-	translatedReq := []byte(`{"model":"test-model","messages":[{"role":"user","content":"Hello"}]}`)
+		translatedReq := []byte(`{"model":"test-model","messages":[{"role":"user","content":"Hello"}]}`)
 
-	h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
-		executor.FormatOpenAI, executor.FormatOpenAI,
-		originalReq, translatedReq,
-		func(err error) []byte { return []byte(err.Error()) },
-		time.Now(), "", false,
-	)
+		h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
+			executor.FormatOpenAI, executor.FormatOpenAI,
+			originalReq, translatedReq,
+			func(err error) []byte { return []byte(err.Error()) },
+			time.Now(), "", false,
+		)
 
 		// Verify api_key_usage got non-zero estimated tokens (fallback).
 		var totalTokens int64
@@ -1101,15 +1109,15 @@ func TestFallbackUsage(t *testing.T) {
 			StatusCode: http.StatusOK,
 		}
 
-	conn := &Connection{ID: "conn-1"}
-	dummyReq := []byte(`{}`)
+		conn := &Connection{ID: "conn-1"}
+		dummyReq := []byte(`{}`)
 
-	h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
-		executor.FormatOpenAI, executor.FormatOpenAI,
-		dummyReq, dummyReq,
-		func(err error) []byte { return []byte(err.Error()) },
-		time.Now(), "", false,
-	)
+		h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
+			executor.FormatOpenAI, executor.FormatOpenAI,
+			dummyReq, dummyReq,
+			func(err error) []byte { return []byte(err.Error()) },
+			time.Now(), "", false,
+		)
 
 		var totalTokens int64
 		err := h.db.QueryRow(`SELECT total_tokens FROM api_key_usage WHERE api_key_id = 'test-key-2'`).Scan(&totalTokens)
@@ -1557,5 +1565,272 @@ func TestRefreshOAuthToken_KeepsProviderSpecificWhenEmpty(t *testing.T) {
 	}
 	if psd != existing {
 		t.Errorf("persisted PSD changed: got %q, want %q", psd, existing)
+	}
+}
+
+// TestComboStream_EmptyCloseFailsOverToNextStep verifies that when a streaming
+// combo step's upstream closes without delivering any content, the orchestrator
+// fails over to the next step instead of returning an empty-looking stream.
+func TestComboStream_EmptyCloseFailsOverToNextStep(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('comboempty1','CE1','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed pt1: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('comboempty-conn1','comboempty1','c1','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed conn1: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('comboempty2','CE2','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed pt2: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('comboempty-conn2','comboempty2','c2','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed conn2: %v", err)
+	}
+
+	fe1 := &fakeExecutor{
+		streamResults: []struct {
+			result *executor.StreamResult
+			err    error
+		}{
+			{
+				result: &executor.StreamResult{
+					Chunks:     make(chan executor.StreamChunk),
+					StatusCode: http.StatusOK,
+				},
+			},
+		},
+	}
+	close(fe1.streamResults[0].result.Chunks)
+	executor.GetRegistry().Register("comboempty1", executor.FormatOpenAI, fe1)
+	defer executor.GetRegistry().Unregister("comboempty1")
+
+	chunks2 := make(chan executor.StreamChunk, 2)
+	chunks2 <- executor.StreamChunk{Payload: []byte(`data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"ok"}}]}`)}
+	close(chunks2)
+	fe2 := &fakeExecutor{
+		streamResults: []struct {
+			result *executor.StreamResult
+			err    error
+		}{
+			{
+				result: &executor.StreamResult{
+					Chunks:     chunks2,
+					StatusCode: http.StatusOK,
+				},
+			},
+		},
+	}
+	executor.GetRegistry().Register("comboempty2", executor.FormatOpenAI, fe2)
+	defer executor.GetRegistry().Unregister("comboempty2")
+
+	now := db.UnixNow()
+	if _, err := h.db.Exec(`INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, is_active, created_at, updated_at) VALUES ('combo-empty','combo-empty','priority',1,30000,1,?,?)`, now, now); err != nil {
+		t.Fatalf("insert combo: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at) VALUES (?,?,?,?,?,?,?)`,
+		"cs1", "combo-empty", "comboempty-conn1", "comboempty1/m1", 1, 100, now); err != nil {
+		t.Fatalf("insert step1: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at) VALUES (?,?,?,?,?,?,?)`,
+		"cs2", "combo-empty", "comboempty-conn2", "comboempty2/m2", 2, 100, now); err != nil {
+		t.Fatalf("insert step2: %v", err)
+	}
+
+	h.store.SeedConnection("comboempty-conn1", "comboempty1", "ready", 0)
+	h.store.SeedConnection("comboempty-conn2", "comboempty2", "ready", 0)
+	h.elig.RecomputeAll()
+	h.combo = combo.NewHandler(h.db, h.store, h.elig)
+
+	body := []byte(`{"model":"combo-empty","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.ChatCompletions(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	out := rec.Body.String()
+	if !strings.Contains(out, `"content":"ok"`) {
+		t.Fatalf("expected failover to step 2 content, got: %s", out)
+	}
+	if strings.Count(out, "[DONE]") != 1 {
+		t.Fatalf("expected exactly one [DONE], got: %s", out)
+	}
+}
+
+// TestCombo_NonStreamingUpstreamErrorBodyFailsOver verifies that when a combo
+// step returns an upstream error embedded in a 200-status body, the orchestrator
+// treats it as a retryable failure and moves to the next step.
+func TestCombo_NonStreamingUpstreamErrorBodyFailsOver(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('comboerr1','CE1','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed pt1: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('comboerr-conn1','comboerr1','c1','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed conn1: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('comboerr2','CE2','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed pt2: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('comboerr-conn2','comboerr2','c2','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed conn2: %v", err)
+	}
+
+	fe1 := &fakeExecutor{
+		responses: []struct {
+			resp *executor.Response
+			err  error
+		}{
+			{
+				resp: &executor.Response{
+					StatusCode: http.StatusOK,
+					Body:       []byte(`{"error":{"message":"model overloaded","type":"server_error"}}`),
+				},
+			},
+		},
+	}
+	executor.GetRegistry().Register("comboerr1", executor.FormatOpenAI, fe1)
+	defer executor.GetRegistry().Unregister("comboerr1")
+
+	fe2 := &fakeExecutor{
+		responses: []struct {
+			resp *executor.Response
+			err  error
+		}{
+			{
+				resp: &executor.Response{
+					StatusCode: http.StatusOK,
+					Body:       []byte(`{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"fallback ok"}}]}`),
+				},
+			},
+		},
+	}
+	executor.GetRegistry().Register("comboerr2", executor.FormatOpenAI, fe2)
+	defer executor.GetRegistry().Unregister("comboerr2")
+
+	now := db.UnixNow()
+	if _, err := h.db.Exec(`INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, is_active, created_at, updated_at) VALUES ('combo-err','combo-err','priority',1,30000,1,?,?)`, now, now); err != nil {
+		t.Fatalf("insert combo: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at) VALUES (?,?,?,?,?,?,?)`,
+		"ces1", "combo-err", "comboerr-conn1", "comboerr1/m1", 1, 100, now); err != nil {
+		t.Fatalf("insert step1: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at) VALUES (?,?,?,?,?,?,?)`,
+		"ces2", "combo-err", "comboerr-conn2", "comboerr2/m2", 2, 100, now); err != nil {
+		t.Fatalf("insert step2: %v", err)
+	}
+
+	h.store.SeedConnection("comboerr-conn1", "comboerr1", "ready", 0)
+	h.store.SeedConnection("comboerr-conn2", "comboerr2", "ready", 0)
+	h.elig.RecomputeAll()
+	h.combo = combo.NewHandler(h.db, h.store, h.elig)
+
+	body := []byte(`{"model":"combo-err","messages":[{"role":"user","content":"hi"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.ChatCompletions(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	out := rec.Body.String()
+	if !strings.Contains(out, "fallback ok") {
+		t.Fatalf("expected failover to step 2 response, got: %s", out)
+	}
+}
+
+// TestFusion_MinPanelThenGrace verifies that fusion stops collecting panel
+// responses once min_panel successes are in and only waits for the grace period
+// afterwards, instead of waiting for every panel to finish.
+func TestFusion_MinPanelThenGrace(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+
+	for i, pid := range []string{"fusion1", "fusion2", "fusionslow"} {
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES (?,?, 'openai','http://x',0)`, pid, pid); err != nil {
+			t.Fatalf("seed pt %d: %v", i, err)
+		}
+		cid := fmt.Sprintf("fconn-%d", i)
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?,?, 'c','none','ready',1,0,0)`, cid, pid); err != nil {
+			t.Fatalf("seed conn %d: %v", i, err)
+		}
+		h.store.SeedConnection(cid, pid, "ready", 0)
+	}
+	h.elig.RecomputeAll()
+
+	// First two panels return quickly.
+	for _, pid := range []string{"fusion1", "fusion2"} {
+		fe := &fakeExecutor{
+			responses: []struct {
+				resp *executor.Response
+				err  error
+			}{
+				{
+					resp: &executor.Response{
+						StatusCode: http.StatusOK,
+						Body:       []byte(`{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"panel "}}]}`),
+					},
+				},
+			},
+		}
+		executor.GetRegistry().Register(pid, executor.FormatOpenAI, fe)
+		defer executor.GetRegistry().Unregister(pid)
+	}
+	// Slow panel never returns within test bounds.
+	slow := &fakeExecutor{
+		responses: []struct {
+			resp *executor.Response
+			err  error
+		}{
+			{
+				resp: &executor.Response{
+					StatusCode: http.StatusOK,
+					Body:       []byte(`{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"slow"}}]}`),
+				},
+			},
+		},
+		delay: 30 * time.Second,
+	}
+	executor.GetRegistry().Register("fusionslow", executor.FormatOpenAI, slow)
+	defer executor.GetRegistry().Unregister("fusionslow")
+
+	now := db.UnixNow()
+	if _, err := h.db.Exec(`INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, fusion_config, is_active, created_at, updated_at) VALUES ('combo-fusion','combo-fusion','fusion',1,30000,'{"min_panel":2,"straggler_grace_ms":100}',1,?,?)`, now, now); err != nil {
+		t.Fatalf("insert combo: %v", err)
+	}
+	for i, cid := range []string{"fconn-0", "fconn-1", "fconn-2"} {
+		if _, err := h.db.Exec(`INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at) VALUES (?,?,?,?,?,?,?)`,
+			fmt.Sprintf("cfs-%d", i), "combo-fusion", cid, fmt.Sprintf("fusion%d/m", i+1), i+1, 100, now); err != nil {
+			t.Fatalf("insert step %d: %v", i, err)
+		}
+	}
+	h.combo = combo.NewHandler(h.db, h.store, h.elig)
+
+	body := []byte(`{"model":"combo-fusion","messages":[{"role":"user","content":"hi"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	start := time.Now()
+	h.ChatCompletions(c)
+	elapsed := time.Since(start)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// Should not wait 30s for slow panel; minPanel(2)+grace(100ms) should be enough.
+	if elapsed >= 2*time.Second {
+		t.Fatalf("fusion hung too long waiting for all panels: %v", elapsed)
 	}
 }

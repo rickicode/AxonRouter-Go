@@ -98,12 +98,12 @@ attemptLoop:
 		}
 		lastConn = conn
 		h.proactiveRefreshToken(c.Request.Context(), conn, provider)
-	psdMap := map[string]string{}
-	if conn.ProviderSpecificData != "" {
-		if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
-			logging.Logger.Warn("malformed provider_specific_data", "conn", shortID(conn.ID, 8), "error", err.Error())
+		psdMap := map[string]string{}
+		if conn.ProviderSpecificData != "" {
+			if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
+				logging.Logger.Warn("malformed provider_specific_data", "conn", shortID(conn.ID, 8), "error", err.Error())
+			}
 		}
-	}
 
 		req := &executor.Request{
 			Model:                modelName,
@@ -141,28 +141,28 @@ attemptLoop:
 		if provider == "cx" {
 			h.codexPersistIfCodex(conn, resp, streamResult)
 		}
-	if err != nil {
-		if h.isClientCanceled(c, err) {
-			return
-		}
-		// NOTE: auth and balance failures rotate to sibling connections before surfacing.
-		det := connstate.DetectError(proxyCtx, 0, "", err, provider, modelName, nil)
-		if !isFailoverEligible(det.Category) {
-			if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
+		if err != nil {
+			if h.isClientCanceled(c, err) {
 				return
 			}
+			// NOTE: auth and balance failures rotate to sibling connections before surfacing.
+			det := connstate.DetectError(proxyCtx, 0, "", err, provider, modelName, nil)
+			if !isFailoverEligible(det.Category) {
+				if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
+					return
+				}
+			}
+			retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
+			lastErr = err
+			lastErrCategory = cat
+			if !retry {
+				break attemptLoop
+			}
+			if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+				return
+			}
+			continue
 		}
-		retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
-		lastErr = err
-		lastErrCategory = cat
-		if !retry {
-			break attemptLoop
-		}
-		if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
-			return
-		}
-		continue
-	}
 		h.resetBanCount(conn.ID)
 		h.persistSuccess(conn.ID)
 		h.combo.RecordSuccess(conn.ID)
@@ -196,7 +196,7 @@ attemptLoop:
 							return
 						}
 					}
-					if connstate.HasPerModelQuota(provider) && det.ModelID != "" && (det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
+					if det.ModelID != "" && (det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
 						scope := connstate.ModelScope(provider, det.ModelID)
 						h.exhaustion.MarkExhausted(quota.ExhaustKey(conn.ID, scope), quota.TTLFromCooldown(det.CooldownUntil, 5*time.Minute))
 					} else if det.Category == connstate.ErrorRateLimit {
@@ -237,7 +237,7 @@ attemptLoop:
 						return
 					}
 				}
-				if connstate.HasPerModelQuota(provider) && det.ModelID != "" && (det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
+				if det.ModelID != "" && (det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
 					scope := connstate.ModelScope(provider, det.ModelID)
 					h.exhaustion.MarkExhausted(quota.ExhaustKey(conn.ID, scope), quota.TTLFromCooldown(det.CooldownUntil, 5*time.Minute))
 				} else if det.Category == connstate.ErrorRateLimit {
@@ -275,29 +275,29 @@ attemptLoop:
 					tokensEstimated = true
 				}
 			}
-		h.logRequest(c, &usage.LogEntry{
-			ApiKeyID: c.GetString("api_key_id"),
-			ConnectionID: conn.ID,
-			ProviderTypeID: provider,
-			ModelID: modelName,
-			ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
-			ApiType:     apiTypeFromPath(c.Request.URL.Path),
-			Modality: "chat",
-			Stream: stream,
-			InputTokens: tokenCounts.InputTokens,
-			OutputTokens: tokenCounts.OutputTokens,
-			ReasoningTokens: tokenCounts.ReasoningTokens,
-			CachedTokens: tokenCounts.CachedTokens,
-			CacheCreationTokens: tokenCounts.CacheCreationTokens,
-			LatencyMs: latency,
-			StatusCode: resp.StatusCode,
-			TokensEstimated: tokensEstimated,
-		})
-		h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
-		if resp.StatusCode < 300 {
-			h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
-		}
-		h.writeJSONResponse(c, resp.StatusCode, translatedResp)
+			h.logRequest(c, &usage.LogEntry{
+				ApiKeyID:            c.GetString("api_key_id"),
+				ConnectionID:        conn.ID,
+				ProviderTypeID:      provider,
+				ModelID:             modelName,
+				ProxyPoolID:         executor.ProxyPoolIDFromContext(proxyCtx),
+				ApiType:             apiTypeFromPath(c.Request.URL.Path),
+				Modality:            "chat",
+				Stream:              stream,
+				InputTokens:         tokenCounts.InputTokens,
+				OutputTokens:        tokenCounts.OutputTokens,
+				ReasoningTokens:     tokenCounts.ReasoningTokens,
+				CachedTokens:        tokenCounts.CachedTokens,
+				CacheCreationTokens: tokenCounts.CacheCreationTokens,
+				LatencyMs:           latency,
+				StatusCode:          resp.StatusCode,
+				TokensEstimated:     tokensEstimated,
+			})
+			h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
+			if resp.StatusCode < 300 {
+				h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
+			}
+			h.writeJSONResponse(c, resp.StatusCode, translatedResp)
 		}
 		return
 	}

@@ -156,12 +156,12 @@ func apiTypeFromPath(path string) string {
 // User-Agent from the gin context. It is a single place where all /v1
 // request logging captures request metadata.
 func (h *Handler) logRequest(c *gin.Context, entry *usage.LogEntry) {
-  if h.tracker == nil || entry == nil || c == nil {
-    return
-  }
-  entry.ClientIP = c.ClientIP()
-  entry.UserAgent = c.Request.UserAgent()
-  h.tracker.Log(entry)
+	if h.tracker == nil || entry == nil || c == nil {
+		return
+	}
+	entry.ClientIP = c.ClientIP()
+	entry.UserAgent = c.Request.UserAgent()
+	h.tracker.Log(entry)
 }
 
 // unifiedSurface maps a proxy path to the client-facing API surface name.
@@ -228,10 +228,10 @@ type Handler struct {
 	authMgr             *auth.Manager
 	resolver            *proxypool.Resolver
 	exhaustion          *quota.ExhaustionCache
-	conns sync.Map // connID -> *Connection (write-through credential cache)
+	conns               sync.Map // connID -> *Connection (write-through credential cache)
 	compressionStrategy compression.Strategy
-	exactCache cache.CacheStorage
-	providerCfg *providercfg.Manager
+	exactCache          cache.CacheStorage
+	providerCfg         *providercfg.Manager
 
 	// failoverMaxAttempts caps how many connections the failover loop tries
 	// before giving up. Loaded once from the failover_max_attempts setting (default 5).
@@ -244,8 +244,8 @@ type Handler struct {
 	// test-only executor factories so TTS/STT/Video endpoint tests can bypass
 	// real network calls. Nil in production; handlers fall back to the real
 	// executor constructors when these are unset.
-	ttsExecutorFactory  func() executor.Executor
-	sttExecutorFactory  func() executor.Executor
+	ttsExecutorFactory   func() executor.Executor
+	sttExecutorFactory   func() executor.Executor
 	videoExecutorFactory func() executor.Executor
 }
 
@@ -537,11 +537,11 @@ func (h *Handler) loadConnectionByID(ctx context.Context, connID string) (*Conne
 // refreshLeadMs defines per-provider proactive refresh lead times (ms).
 // Matches OmniRoute REFRESH_LEAD_MS at open-sse/services/tokenRefresh.ts:32-49.
 var refreshLeadMs = map[string]time.Duration{
-	"cx":      5 * time.Minute,  // Codex: Auth0 rotating refresh tokens
-	"ag":      15 * time.Minute, // Antigravity: Google non-rotating refresh tokens
-	"kiro":    5 * time.Minute,  // Kiro: AWS SSO OIDC one-time-use refresh tokens
-	"copilot": 5 * time.Minute, // Copilot: GitHub device-code tokens refresh early due to Copilot token skew
-	"grok-cli": 5 * time.Minute, // Grok CLI: xAI OIDC device-code tokens refresh before expiry
+	"cx":       5 * time.Minute,  // Codex: Auth0 rotating refresh tokens
+	"ag":       15 * time.Minute, // Antigravity: Google non-rotating refresh tokens
+	"kiro":     5 * time.Minute,  // Kiro: AWS SSO OIDC one-time-use refresh tokens
+	"copilot":  5 * time.Minute,  // Copilot: GitHub device-code tokens refresh early due to Copilot token skew
+	"grok-cli": 5 * time.Minute,  // Grok CLI: xAI OIDC device-code tokens refresh before expiry
 }
 
 const defaultRefreshLeadMs = 5 * time.Minute
@@ -998,22 +998,21 @@ func (h *Handler) persistProviderSpecificData(ctx context.Context, conn *Connect
 // (model_not_found, auth_failed), category for the caller to build better error messages.
 func (h *Handler) handleFailoverError(ctx context.Context, c *gin.Context, conn *Connection, provider, modelName string, err error, attempt int, latency int64, stream bool) (bool, string) {
 	det := connstate.DetectError(c.Request.Context(), 0, "", err, provider, modelName, nil)
-	if connstate.HasPerModelQuota(provider) && det.ModelID != "" &&
-		(det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
+	// Always mark rate-limit/quota exhaustion at model scope when we know the
+	// model. This keeps the connection eligible for other models unless the
+	// provider itself is globally exhausted. Connection-wide exhaustion is a
+	// fallback when the model is unknown.
+	if det.ModelID != "" && (det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
 		scope := connstate.ModelScope(provider, det.ModelID)
 		h.exhaustion.MarkExhausted(quota.ExhaustKey(conn.ID, scope), quota.TTLFromCooldown(det.CooldownUntil, 5*time.Minute))
-		// Per-model scope keeps the connection itself ready/eligible so other
-		// models can still route through it.
-	} else {
-		if det.Category == connstate.ErrorRateLimit {
-			h.exhaustion.MarkExhausted(conn.ID, quota.TTLFromCooldown(det.CooldownUntil, quota.DefaultExhaustionTTL))
-		} else if det.Category == connstate.ErrorQuota {
-			ttl := 24 * time.Hour // fallback for daily quotas
-			if det.CooldownUntil != nil {
-				ttl = time.Until(*det.CooldownUntil)
-			}
-			h.exhaustion.MarkExhausted(conn.ID, ttl)
+	} else if det.Category == connstate.ErrorRateLimit {
+		h.exhaustion.MarkExhausted(conn.ID, quota.TTLFromCooldown(det.CooldownUntil, quota.DefaultExhaustionTTL))
+	} else if det.Category == connstate.ErrorQuota {
+		ttl := 24 * time.Hour // fallback for daily quotas
+		if det.CooldownUntil != nil {
+			ttl = time.Until(*det.CooldownUntil)
 		}
+		h.exhaustion.MarkExhausted(conn.ID, ttl)
 	}
 	h.combo.RecordFailure(conn.ID, det)
 	h.persistCooldownScoped(conn.ID, det)
@@ -1062,26 +1061,26 @@ func (h *Handler) handleFailoverError(ctx context.Context, c *gin.Context, conn 
 	}
 
 	h.logRequest(c, &usage.LogEntry{
-		ApiKeyID: c.GetString("api_key_id"),
-		ConnectionID: conn.ID,
+		ApiKeyID:       c.GetString("api_key_id"),
+		ConnectionID:   conn.ID,
 		ProviderTypeID: provider,
-		ModelID: modelName,
-		ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
-		ApiType: apiTypeFromPath(c.Request.URL.Path),
-		Modality: "chat",
-		Stream: stream,
-		LatencyMs: latency,
-		ErrorMessage: err.Error(),
+		ModelID:        modelName,
+		ProxyPoolID:    executor.ProxyPoolIDFromContext(ctx),
+		ApiType:        apiTypeFromPath(c.Request.URL.Path),
+		Modality:       "chat",
+		Stream:         stream,
+		LatencyMs:      latency,
+		ErrorMessage:   err.Error(),
 	})
 
-// Non-retryable errors: only model-not-found is a hard stop. Auth failures
-// now fail over too (a sibling connection may hold a valid key), so they are
-// retryable here.
-switch det.Category {
-case connstate.ErrorModelNotFound:
-	return false, string(det.Category)
-}
-return true, string(det.Category)
+	// Non-retryable errors: only model-not-found is a hard stop. Auth failures
+	// now fail over too (a sibling connection may hold a valid key), so they are
+	// retryable here.
+	switch det.Category {
+	case connstate.ErrorModelNotFound:
+		return false, string(det.Category)
+	}
+	return true, string(det.Category)
 }
 
 // writeUpstreamClientError writes an OpenAI-compatible upstream error directly
@@ -1113,17 +1112,17 @@ func (h *Handler) writeUpstreamClientError(
 			errBody = upErr.Body
 		}
 		h.logRequest(c, &usage.LogEntry{
-			ApiKeyID: c.GetString("api_key_id"),
-			ConnectionID: conn.ID,
+			ApiKeyID:       c.GetString("api_key_id"),
+			ConnectionID:   conn.ID,
 			ProviderTypeID: provider,
-			ModelID: modelName,
-			ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
-			ApiType: apiTypeFromPath(c.Request.URL.Path),
-			Modality: "chat",
-			Stream: stream,
-			LatencyMs: time.Since(start).Milliseconds(),
-			StatusCode: upErr.StatusCode,
-			ErrorMessage: string(errBody),
+			ModelID:        modelName,
+			ProxyPoolID:    executor.ProxyPoolIDFromContext(ctx),
+			ApiType:        apiTypeFromPath(c.Request.URL.Path),
+			Modality:       "chat",
+			Stream:         stream,
+			LatencyMs:      time.Since(start).Milliseconds(),
+			StatusCode:     upErr.StatusCode,
+			ErrorMessage:   string(errBody),
 		})
 	}
 	return true
@@ -1319,6 +1318,15 @@ func (h *Handler) streamResponse(
 		select {
 		case chunk, ok := <-result.Chunks:
 			if !ok {
+				// A clean upstream close that produced zero content is treated as a
+				// failure. In combo/direct silent mode the caller can still fail over;
+				// otherwise the caller will write an in-band error before closing.
+				if !sawContent {
+					logging.Logger.Warn("stream closed without delivering any content",
+						"provider", provider, "model", model, "combo", comboID, "conn", shortID(conn.ID, 8))
+					return errors.New("upstream stream closed without content")
+				}
+
 				c.Writer.Write([]byte("data: [DONE]\n\n"))
 				flusher.Flush()
 
@@ -1337,23 +1345,23 @@ func (h *Handler) streamResponse(
 					}
 				}
 				h.logRequest(c, &usage.LogEntry{
-					ApiKeyID: c.GetString("api_key_id"),
-					ConnectionID: conn.ID,
-					ProviderTypeID: provider,
-					ModelID: model,
-					ComboID: comboID,
-					ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
-					ApiType: apiTypeFromPath(c.Request.URL.Path),
-					Modality: "chat",
-					Stream: true,
-					InputTokens: acc.InputTokens,
-					OutputTokens: acc.OutputTokens,
-					ReasoningTokens: acc.ReasoningTokens,
-					CachedTokens: acc.CachedTokens,
+					ApiKeyID:            c.GetString("api_key_id"),
+					ConnectionID:        conn.ID,
+					ProviderTypeID:      provider,
+					ModelID:             model,
+					ComboID:             comboID,
+					ProxyPoolID:         executor.ProxyPoolIDFromContext(ctx),
+					ApiType:             apiTypeFromPath(c.Request.URL.Path),
+					Modality:            "chat",
+					Stream:              true,
+					InputTokens:         acc.InputTokens,
+					OutputTokens:        acc.OutputTokens,
+					ReasoningTokens:     acc.ReasoningTokens,
+					CachedTokens:        acc.CachedTokens,
 					CacheCreationTokens: acc.CacheCreationTokens,
-					LatencyMs: latency,
-					StatusCode: http.StatusOK,
-					TokensEstimated: tokensEstimated,
+					LatencyMs:           latency,
+					StatusCode:          http.StatusOK,
+					TokensEstimated:     tokensEstimated,
 				})
 				h.incrementAPIKeyUsage(c.GetString("api_key_id"), acc.InputTokens+acc.OutputTokens)
 				return nil
@@ -1371,27 +1379,27 @@ func (h *Handler) streamResponse(
 				}
 				latency := time.Since(start).Milliseconds()
 				h.handleFailoverError(ctx, c, conn, provider, model, chunk.Err, 0, latency, true)
-			// If this is a combo stream or the caller asked for silent failure,
-			// don't write error/DONE yet. Return the error so the caller can
-			// failover to the next connection/model and keep the stream alive.
-			if isCombo || silent {
-				errMsg := chunk.Err.Error()
+				// If this is a combo stream or the caller asked for silent failure,
+				// don't write error/DONE yet. Return the error so the caller can
+				// failover to the next connection/model and keep the stream alive.
+				if isCombo || silent {
+					errMsg := chunk.Err.Error()
 					logging.Logger.Warn("mid-stream failure in combo, failing over",
 						"provider", provider, "model", model, "combo", comboID,
 						"error", errMsg)
 					h.logRequest(c, &usage.LogEntry{
-						ApiKeyID: c.GetString("api_key_id"),
-						ConnectionID: conn.ID,
+						ApiKeyID:       c.GetString("api_key_id"),
+						ConnectionID:   conn.ID,
 						ProviderTypeID: provider,
-						ModelID: model,
-						ComboID: comboID,
-						ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
-						ApiType: apiTypeFromPath(c.Request.URL.Path),
-						Modality: "chat",
-						Stream: true,
-						LatencyMs: latency,
-						StatusCode: http.StatusBadGateway,
-						ErrorMessage: errMsg,
+						ModelID:        model,
+						ComboID:        comboID,
+						ProxyPoolID:    executor.ProxyPoolIDFromContext(ctx),
+						ApiType:        apiTypeFromPath(c.Request.URL.Path),
+						Modality:       "chat",
+						Stream:         true,
+						LatencyMs:      latency,
+						StatusCode:     http.StatusBadGateway,
+						ErrorMessage:   errMsg,
 					})
 					return chunk.Err
 				}
@@ -1401,17 +1409,17 @@ func (h *Handler) streamResponse(
 				c.Writer.Write([]byte("data: [DONE]\n\n"))
 				flusher.Flush()
 				h.logRequest(c, &usage.LogEntry{
-					ApiKeyID: c.GetString("api_key_id"),
-					ConnectionID: conn.ID,
+					ApiKeyID:       c.GetString("api_key_id"),
+					ConnectionID:   conn.ID,
 					ProviderTypeID: provider,
-					ModelID: model,
-					ComboID: comboID,
-					ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
-					ApiType: apiTypeFromPath(c.Request.URL.Path),
-					Modality: "chat",
-					Stream: true,
-					LatencyMs: latency,
-					ErrorMessage: chunk.Err.Error(),
+					ModelID:        model,
+					ComboID:        comboID,
+					ProxyPoolID:    executor.ProxyPoolIDFromContext(ctx),
+					ApiType:        apiTypeFromPath(c.Request.URL.Path),
+					Modality:       "chat",
+					Stream:         true,
+					LatencyMs:      latency,
+					ErrorMessage:   chunk.Err.Error(),
 				})
 				return chunk.Err
 			}
