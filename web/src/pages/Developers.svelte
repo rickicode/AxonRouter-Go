@@ -1,15 +1,16 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { toast } from 'svelte-sonner';
-import { Button } from '$lib/components/ui/button';
-import { Input } from '$lib/components/ui/input';
-import * as Card from '$lib/components/ui/card';
-import { developersApi } from '$lib/api';
-import { copyToClipboard } from '$lib/copy';
-import CopyIcon from '@lucide/svelte/icons/copy';
-import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
-import CodeIcon from '@lucide/svelte/icons/code';
-import AlertTriangleIcon from '@lucide/svelte/icons/alert-triangle';
+  import { Button } from '$lib/components/ui/button';
+  import { Input } from '$lib/components/ui/input';
+  import * as Card from '$lib/components/ui/card';
+  import CodeBlock from '$lib/components/CodeBlock.svelte';
+  import { developersApi } from '$lib/api';
+  import { copyToClipboard } from '$lib/copy';
+  import CopyIcon from '@lucide/svelte/icons/copy';
+  import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
+  import CodeIcon from '@lucide/svelte/icons/code';
+  import AlertTriangleIcon from '@lucide/svelte/icons/alert-triangle';
 
   type MasterKeyInfo = {
     key: string;
@@ -18,23 +19,23 @@ import AlertTriangleIcon from '@lucide/svelte/icons/alert-triangle';
     created_at: number;
   };
 
-let keyInfo: MasterKeyInfo | null = $state(null);
-let loading = $state(false);
-let error = $state<string | null>(null);
+  let keyInfo: MasterKeyInfo | null = $state(null);
+  let loading = $state(false);
+  let error = $state<string | null>(null);
 
-async function loadKey() {
-  loading = true;
-  error = null;
-  try {
-    const res = await developersApi.getMasterKey();
-    keyInfo = res.data;
-  } catch (err: any) {
-    error = err.message || 'Failed to load master key';
-    toast.error(error ?? 'Failed to load master key');
-  } finally {
-    loading = false;
+  async function loadKey() {
+    loading = true;
+    error = null;
+    try {
+      const res = await developersApi.getMasterKey();
+      keyInfo = res.data;
+    } catch (err: any) {
+      error = err.message || 'Failed to load master key';
+      toast.error(error ?? 'Failed to load master key');
+    } finally {
+      loading = false;
+    }
   }
-}
 
   async function regenerate() {
     loading = true;
@@ -53,7 +54,20 @@ async function loadKey() {
     await copyToClipboard(text, label);
   }
 
-const createKeyResponse = `{
+  // Build a shell-ready curl command for a given method/path/body.
+  function curlCmd(method: string, path: string, body?: string): string {
+    const base = keyInfo?.base_url ?? 'http://localhost:3777/admin/api/v1';
+    const key = keyInfo?.key ?? '<master-key>';
+    const lines = [
+      `curl -s -X ${method} ${base}${path} \\`,
+      `  -H "Authorization: Bearer ${key}" \\`,
+    ];
+    if (method !== 'GET') lines.push(`  -H "Content-Type: application/json" \\`);
+    if (body) lines.push(`  -d '${body}'`);
+    return lines.join('\n');
+  }
+
+  const createKeyResponse = `{
   "id": "ax-xxxx...",
   "key": "ax-xxxx...",
   "name": "my-app",
@@ -62,7 +76,7 @@ const createKeyResponse = `{
   "message": "Save this key — it won't be shown again"
 }`;
 
-const listKeysResponse = `{
+  const listKeysResponse = `{
   "data": [
     {
       "id": "ax-xxxx...",
@@ -77,82 +91,107 @@ const listKeysResponse = `{
   ]
 }`;
 
-const toggleKeyResponse = `{\n  "data": { "ok": true }\n}`;
-const deleteKeyResponse = `{\n  "data": { "ok": true }\n}`;
-
-const proxyUsageRequest = `curl -s -X POST http://localhost:3777/v1/chat/completions \\\n` +
-  `  -H "Authorization: Bearer <proxy-key>" \\\n` +
-  `  -H "Content-Type: application/json" \\\n` +
-  `  -d '{"model":"openai/gpt-4o","messages":[{"role":"user","content":"Hello"}]}'`;
-
-const proxyUsageResponse = `{
- "id": "chatcmpl-...",
- "object": "chat.completion",
- "model": "openai/gpt-4o",
- "choices": [{"message": {"role": "assistant", "content": "Hi!"}}]
+  const toggleKeyResponse = `{
+  "data": { "ok": true }
+}`;
+  const deleteKeyResponse = `{
+  "data": { "ok": true }
 }`;
 
-const createProviderBody = '{"name":"myprovider","display_name":"My Provider","format":"openai","base_url":"https://api.example.com/v1"}';
+  const proxyUsageRequest = `curl -s -X POST http://localhost:3777/v1/chat/completions \\
+  -H "Authorization: Bearer <proxy-key>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model":"openai/gpt-4o","messages":[{"role":"user","content":"Hello"}]}'`;
 
-const createProviderResponse = `{
- "id": "myprovider",
- "display_name": "My Provider",
- "format": "openai",
- "base_url": "https://api.example.com/v1",
- "is_custom": true,
- "category": "compatible",
- "service_kinds": ["llm"]
+  const proxyUsageResponse = `{
+  "id": "chatcmpl-...",
+  "object": "chat.completion",
+  "model": "openai/gpt-4o",
+  "choices": [{"message": {"role": "assistant", "content": "Hi!"}}]
 }`;
 
-const addConnectionBody = '{"name":"primary","api_key":"sk-...","auth_type":"api_key","priority":0}';
+  const createProviderBody = '{"name":"myprovider","display_name":"My Provider","format":"openai","base_url":"https://api.example.com/v1"}';
 
-const addConnectionResponse = `{
- "id": "conn-uuid",
- "name": "primary",
- "status": "ready"
+  const createProviderResponse = `{
+  "id": "myprovider",
+  "display_name": "My Provider",
+  "format": "openai",
+  "base_url": "https://api.example.com/v1",
+  "is_custom": true,
+  "category": "compatible",
+  "service_kinds": ["llm"]
 }`;
 
-const bulkAddConnectionsBody = '{"connections":[{"name":"akun-1","api_key":"sk-...","priority":0},{"name":"akun-2","api_key":"sk-...","priority":0}]}';
+  const addConnectionBody = '{"name":"primary","api_key":"sk-...","auth_type":"api_key","priority":0}';
 
-const bulkAddConnectionsResponse = `{
- "created": 2,
- "total": 2,
- "failed": 0,
- "errors": []
+  const addConnectionResponse = `{
+  "id": "conn-uuid",
+  "name": "primary",
+  "status": "ready"
 }`;
 
-const validateKeyBody = '{"provider":"openai","api_key":"sk-..."}';
+  const bulkAddConnectionsBody = '{"connections":[{"name":"akun-1","api_key":"sk-...","priority":0},{"name":"akun-2","api_key":"sk-...","priority":0}]}';
 
-const validateKeyResponse = `{
- "valid": true
+  const bulkAddConnectionsResponse = `{
+  "created": 2,
+  "total": 2,
+  "failed": 0,
+  "errors": []
 }`;
 
-const importOAuthBody = '{"provider":"grok-cli","access_token":"...","refresh_token":"...","expires_at":1754726400,"email":"ops@example.com"}';
+  const validateKeyBody = '{"provider":"openai","api_key":"sk-..."}';
 
-const importOAuthResponse = `{
- "id": "conn-uuid",
- "name": "ops@example.com",
- "status": "ready"
+  const validateKeyResponse = `{
+  "valid": true
 }`;
 
-const endpoints = [
- { method: 'GET', path: '/admin/api/v1/providers' },
- { method: 'POST', path: '/admin/api/v1/providers' },
- { method: 'POST', path: '/admin/api/v1/providers/:id/connections' },
- { method: 'POST', path: '/admin/api/v1/providers/:id/connections/bulk' },
- { method: 'POST', path: '/admin/api/v1/providers/validate' },
- { method: 'POST', path: '/admin/api/v1/oauth/import-token' },
- { method: 'GET', path: '/admin/api/v1/api-keys' },
- { method: 'POST', path: '/admin/api/v1/api-keys' },
- { method: 'GET', path: '/admin/api/v1/logs' },
- { method: 'GET', path: '/admin/api/v1/model-pricing' },
- { method: 'GET', path: '/admin/api/v1/settings' },
-];
+  const importOAuthBody = '{"provider":"grok-cli","access_token":"...","refresh_token":"...","expires_at":1754726400,"email":"ops@example.com"}';
+
+  const importOAuthResponse = `{
+  "id": "conn-uuid",
+  "name": "ops@example.com",
+  "status": "ready"
+}`;
+
+  const startOAuthBody = '{"provider":"grok-cli","provider_name":"Ops Account"}';
+
+  const startOAuthResponse = `{
+  "auth_url": "http://localhost:PORT/auth?response_type=code&...",
+  "session_id": "sess-xxxx...",
+  "port": 31123,
+  "user_code": "ABCD-EFGH"
+}`;
+
+  const pollOAuthResponse = `{
+  "status": "connected",
+  "name": "ops@example.com",
+  "connection_id": "conn-uuid",
+  "error": ""
+}`;
+
+  const submitCallbackBody = '{"redirect_url":"http://localhost:PORT/auth/callback?code=...&state=..."}';
+
+  const endpoints = [
+    { method: 'GET', path: '/admin/api/v1/providers' },
+    { method: 'POST', path: '/admin/api/v1/providers' },
+    { method: 'POST', path: '/admin/api/v1/providers/:id/connections' },
+    { method: 'POST', path: '/admin/api/v1/providers/:id/connections/bulk' },
+    { method: 'POST', path: '/admin/api/v1/providers/validate' },
+    { method: 'POST', path: '/admin/api/v1/oauth/start' },
+    { method: 'GET', path: '/admin/api/v1/oauth/:sessionId/poll' },
+    { method: 'POST', path: '/admin/api/v1/oauth/callback' },
+    { method: 'POST', path: '/admin/api/v1/oauth/import-token' },
+    { method: 'GET', path: '/admin/api/v1/api-keys' },
+    { method: 'POST', path: '/admin/api/v1/api-keys' },
+    { method: 'GET', path: '/admin/api/v1/logs' },
+    { method: 'GET', path: '/admin/api/v1/model-pricing' },
+    { method: 'GET', path: '/admin/api/v1/settings' },
+  ];
 
   onMount(() => {
-  document.title = 'Developers — AxonRouter';
-  loadKey();
-});
+    document.title = 'Developers — AxonRouter';
+    loadKey();
+  });
 </script>
 
 <div class="flex flex-1 flex-col gap-6 p-6">
@@ -174,69 +213,69 @@ const endpoints = [
       </Card.Description>
     </Card.Header>
     <Card.Content class="space-y-6">
-{#if loading}
-<div class="space-y-6">
-  <div class="space-y-2">
-    <div class="h-4 w-12 animate-pulse rounded bg-muted"></div>
-    <div class="flex gap-2">
-      <div class="h-10 flex-1 animate-pulse rounded bg-muted"></div>
-      <div class="size-10 animate-pulse rounded bg-muted"></div>
-    </div>
-    <div class="h-3 w-48 animate-pulse rounded bg-muted"></div>
-  </div>
-  <div class="space-y-2">
-    <div class="h-4 w-16 animate-pulse rounded bg-muted"></div>
-    <div class="flex gap-2">
-      <div class="h-10 flex-1 animate-pulse rounded bg-muted"></div>
-      <div class="size-10 animate-pulse rounded bg-muted"></div>
-    </div>
-  </div>
-  <div class="h-10 w-32 animate-pulse rounded bg-muted"></div>
-</div>
-{:else if error}
-<div class="flex flex-col items-center justify-center gap-3 py-6 text-center">
-  <AlertTriangleIcon class="size-8 text-destructive" />
-  <p class="text-body-sm text-muted-foreground">{error}</p>
-  <Button onclick={loadKey} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
-</div>
-{:else if keyInfo}
-<div class="space-y-2">
-  <label for="master-key" class="text-caption text-muted-foreground">Key</label>
-  <div class="flex gap-2">
-    <Input id="master-key" value={keyInfo.key} readonly class="font-mono text-body-sm bg-muted" />
-    <Button variant="outline" size="icon" onclick={() => copy(keyInfo!.key, 'Master key')} aria-label="Copy master key">
-      <CopyIcon class="size-4" />
-    </Button>
-  </div>
-  <p class="text-caption text-muted-foreground">
-    Prefix: <span class="font-mono">{keyInfo.prefix}</span> · Created: <span>{new Date(keyInfo.created_at * 1000).toLocaleString()}</span>
-  </p>
-</div>
+      {#if loading}
+        <div class="space-y-6">
+          <div class="space-y-2">
+            <div class="h-4 w-12 animate-pulse rounded bg-muted"></div>
+            <div class="flex gap-2">
+              <div class="h-10 flex-1 animate-pulse rounded bg-muted"></div>
+              <div class="size-10 animate-pulse rounded bg-muted"></div>
+            </div>
+            <div class="h-3 w-48 animate-pulse rounded bg-muted"></div>
+          </div>
+          <div class="space-y-2">
+            <div class="h-4 w-16 animate-pulse rounded bg-muted"></div>
+            <div class="flex gap-2">
+              <div class="h-10 flex-1 animate-pulse rounded bg-muted"></div>
+              <div class="size-10 animate-pulse rounded bg-muted"></div>
+            </div>
+          </div>
+          <div class="h-10 w-32 animate-pulse rounded bg-muted"></div>
+        </div>
+      {:else if error}
+        <div class="flex flex-col items-center justify-center gap-3 py-6 text-center">
+          <AlertTriangleIcon class="size-8 text-destructive" />
+          <p class="text-body-sm text-muted-foreground">{error}</p>
+          <Button onclick={loadKey} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
+        </div>
+      {:else if keyInfo}
+        <div class="space-y-2">
+          <label for="master-key" class="text-caption text-muted-foreground">Key</label>
+          <div class="flex gap-2">
+            <Input id="master-key" value={keyInfo.key} readonly class="font-mono text-body-sm bg-muted" />
+            <Button variant="outline" size="icon" onclick={() => copy(keyInfo!.key, 'Master key')} aria-label="Copy master key">
+              <CopyIcon class="size-4" />
+            </Button>
+          </div>
+          <p class="text-caption text-muted-foreground">
+            Prefix: <span class="font-mono">{keyInfo.prefix}</span> · Created: <span>{new Date(keyInfo.created_at * 1000).toLocaleString()}</span>
+          </p>
+        </div>
 
-<div class="space-y-2">
-  <label for="base-url" class="text-caption text-muted-foreground">Base URL</label>
-  <div class="flex gap-2">
-    <Input id="base-url" value={keyInfo.base_url} readonly class="font-mono text-body-sm bg-muted" />
-    <Button variant="outline" size="icon" onclick={() => copy(keyInfo!.base_url, 'Base URL')} aria-label="Copy base URL">
-      <CopyIcon class="size-4" />
-    </Button>
-  </div>
-</div>
+        <div class="space-y-2">
+          <label for="base-url" class="text-caption text-muted-foreground">Base URL</label>
+          <div class="flex gap-2">
+            <Input id="base-url" value={keyInfo.base_url} readonly class="font-mono text-body-sm bg-muted" />
+            <Button variant="outline" size="icon" onclick={() => copy(keyInfo!.base_url, 'Base URL')} aria-label="Copy base URL">
+              <CopyIcon class="size-4" />
+            </Button>
+          </div>
+        </div>
 
-<div class="flex gap-2">
-  <Button onclick={regenerate} disabled={loading}>
-    <RefreshCwIcon class="size-4 mr-2" />
-    Regenerate
-  </Button>
-</div>
-{/if}
+        <div class="flex gap-2">
+          <Button onclick={regenerate} disabled={loading}>
+            <RefreshCwIcon class="size-4 mr-2" />
+            Regenerate
+          </Button>
+        </div>
+      {/if}
     </Card.Content>
   </Card.Root>
 
   <Card.Root class="shadow-card">
     <Card.Header>
       <Card.Title class="text-display-md">Endpoints</Card.Title>
-      <Card.Description>A short reference for the most common programmatic admin calls.</Card.Description>
+      <Card.Description>Common <code>/admin/api/v1</code> paths for gateway automation.</Card.Description>
     </Card.Header>
     <Card.Content>
       <div class="overflow-x-auto">
@@ -262,77 +301,118 @@ const endpoints = [
 
   <Card.Root class="shadow-card">
     <Card.Header>
-      <Card.Title class="text-display-md">Example</Card.Title>
+      <Card.Title class="text-display-md">Quick example</Card.Title>
+      <Card.Description>List the admin API keys currently registered.</Card.Description>
     </Card.Header>
     <Card.Content>
-      <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>curl -s {keyInfo?.base_url ?? 'http://localhost:3777/admin/api/v1'}/api-keys \
-  -H "Authorization: Bearer {keyInfo?.key ?? '<master-key>'}"</code></pre>
+      <CodeBlock code={curlCmd('GET', '/api-keys')} label="List API keys" />
     </Card.Content>
-</Card.Root>
+  </Card.Root>
 
-<Card.Root class="shadow-card">
-<Card.Header>
-<Card.Title class="text-display-md">Providers &amp; connections</Card.Title>
-<Card.Description>
-Bootstrap custom providers and load credentials automatically with the master key.
-</Card.Description>
-</Card.Header>
-<Card.Content class="space-y-6">
-<div class="space-y-2">
-<p class="text-body-sm font-medium">1. Create a custom provider</p>
-<p class="text-body-sm text-muted-foreground">POST <code>/admin/api/v1/providers</code></p>
-<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>curl -s -X POST {keyInfo?.base_url ?? 'http://localhost:3777/admin/api/v1'}/providers -H "Authorization: Bearer {keyInfo?.key ?? '<master-key>'}" -H "Content-Type: application/json" -d '{createProviderBody}'</code></pre>
-<p class="text-body-sm text-muted-foreground">Body:</p>
-<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{createProviderBody}</code></pre>
-<p class="text-body-sm text-muted-foreground">Response <code>201 Created</code>:</p>
-<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{createProviderResponse}</code></pre>
-</div>
+  <Card.Root class="shadow-card">
+    <Card.Header>
+      <Card.Title class="text-display-md">Providers &amp; connections</Card.Title>
+      <Card.Description>
+        Bootstrap custom providers and load credentials automatically with the master key.
+      </Card.Description>
+    </Card.Header>
+    <Card.Content class="space-y-6">
+      <div class="space-y-2">
+        <p class="text-body-sm font-medium">1. Create a custom provider</p>
+        <p class="text-body-sm text-muted-foreground">POST <code>/admin/api/v1/providers</code></p>
+        <CodeBlock code={curlCmd('POST', '/providers', createProviderBody)} label="Create provider" />
+        <p class="text-body-sm text-muted-foreground">Request body:</p>
+        <CodeBlock code={createProviderBody} label="Request body" />
+        <p class="text-body-sm text-muted-foreground">Response <code>201 Created</code>:</p>
+        <CodeBlock code={createProviderResponse} label="Response" />
+      </div>
 
-<div class="space-y-2">
-<p class="text-body-sm font-medium">2. Add a credential (API key)</p>
-<p class="text-body-sm text-muted-foreground">POST <code>/admin/api/v1/providers/&#123;id&#125;/connections</code></p>
-<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>curl -s -X POST {keyInfo?.base_url ?? 'http://localhost:3777/admin/api/v1'}/providers/PROVIDER_ID/connections -H "Authorization: Bearer {keyInfo?.key ?? '<master-key>'}" -H "Content-Type: application/json" -d '{addConnectionBody}'</code></pre>
-<p class="text-body-sm text-muted-foreground">Body:</p>
-<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{addConnectionBody}</code></pre>
-<p class="text-body-sm text-muted-foreground">Response <code>201 Created</code>:</p>
-<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{addConnectionResponse}</code></pre>
-</div>
+      <div class="space-y-2">
+        <p class="text-body-sm font-medium">2. Add a credential (API key)</p>
+        <p class="text-body-sm text-muted-foreground">POST <code>/admin/api/v1/providers/&#123;id&#125;/connections</code></p>
+        <CodeBlock code={curlCmd('POST', '/providers/PROVIDER_ID/connections', addConnectionBody)} label="Add connection" />
+        <p class="text-body-sm text-muted-foreground">Request body:</p>
+        <CodeBlock code={addConnectionBody} label="Request body" />
+        <p class="text-body-sm text-muted-foreground">Response <code>201 Created</code>:</p>
+        <CodeBlock code={addConnectionResponse} label="Response" />
+      </div>
 
-<div class="space-y-2">
-<p class="text-body-sm font-medium">3. Bulk add credentials</p>
-<p class="text-body-sm text-muted-foreground">POST <code>/admin/api/v1/providers/&#123;id&#125;/connections/bulk</code> &mdash; up to 5.000 per call</p>
-<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>curl -s -X POST {keyInfo?.base_url ?? 'http://localhost:3777/admin/api/v1'}/providers/PROVIDER_ID/connections/bulk -H "Authorization: Bearer {keyInfo?.key ?? '<master-key>'}" -H "Content-Type: application/json" -d '{bulkAddConnectionsBody}'</code></pre>
-<p class="text-body-sm text-muted-foreground">Body:</p>
-<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{bulkAddConnectionsBody}</code></pre>
-<p class="text-body-sm text-muted-foreground">Response <code>201 Created</code>:</p>
-<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{bulkAddConnectionsResponse}</code></pre>
-</div>
+      <div class="space-y-2">
+        <p class="text-body-sm font-medium">3. Bulk add credentials</p>
+        <p class="text-body-sm text-muted-foreground">POST <code>/admin/api/v1/providers/&#123;id&#125;/connections/bulk</code> &mdash; up to 5.000 per call</p>
+        <CodeBlock code={curlCmd('POST', '/providers/PROVIDER_ID/connections/bulk', bulkAddConnectionsBody)} label="Bulk add connections" />
+        <p class="text-body-sm text-muted-foreground">Request body:</p>
+        <CodeBlock code={bulkAddConnectionsBody} label="Request body" />
+        <p class="text-body-sm text-muted-foreground">Response <code>201 Created</code>:</p>
+        <CodeBlock code={bulkAddConnectionsResponse} label="Response" />
+      </div>
 
-<div class="space-y-2">
-<p class="text-body-sm font-medium">4. Validate a key before storing</p>
-<p class="text-body-sm text-muted-foreground">POST <code>/admin/api/v1/providers/validate</code></p>
-<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>curl -s -X POST {keyInfo?.base_url ?? 'http://localhost:3777/admin/api/v1'}/providers/validate -H "Authorization: Bearer {keyInfo?.key ?? '<master-key>'}" -H "Content-Type: application/json" -d '{validateKeyBody}'</code></pre>
-<p class="text-body-sm text-muted-foreground">Body:</p>
-<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{validateKeyBody}</code></pre>
-<p class="text-body-sm text-muted-foreground">Response <code>200 OK</code>:</p>
-<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{validateKeyResponse}</code></pre>
-</div>
+      <div class="space-y-2">
+        <p class="text-body-sm font-medium">4. Validate a key before storing</p>
+        <p class="text-body-sm text-muted-foreground">POST <code>/admin/api/v1/providers/validate</code></p>
+        <CodeBlock code={curlCmd('POST', '/providers/validate', validateKeyBody)} label="Validate key" />
+        <p class="text-body-sm text-muted-foreground">Request body:</p>
+        <CodeBlock code={validateKeyBody} label="Request body" />
+        <p class="text-body-sm text-muted-foreground">Response <code>200 OK</code>:</p>
+        <CodeBlock code={validateKeyResponse} label="Response" />
+      </div>
 
-<div class="space-y-2">
-<p class="text-body-sm font-medium">5. Import an OAuth token</p>
-<p class="text-body-sm text-muted-foreground">POST <code>/admin/api/v1/oauth/import-token</code></p>
-<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>curl -s -X POST {keyInfo?.base_url ?? 'http://localhost:3777/admin/api/v1'}/oauth/import-token -H "Authorization: Bearer {keyInfo?.key ?? '<master-key>'}" -H "Content-Type: application/json" -d '{importOAuthBody}'</code></pre>
-<p class="text-body-sm text-muted-foreground">Body:</p>
-<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{importOAuthBody}</code></pre>
-<p class="text-body-sm text-muted-foreground">Response <code>201 Created</code>:</p>
-<pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{importOAuthResponse}</code></pre>
-</div>
-</Card.Content>
-</Card.Root>
+      <div class="space-y-2">
+        <p class="text-body-sm font-medium">5. Import an OAuth token</p>
+        <p class="text-body-sm text-muted-foreground">POST <code>/admin/api/v1/oauth/import-token</code></p>
+        <CodeBlock code={curlCmd('POST', '/oauth/import-token', importOAuthBody)} label="Import OAuth token" />
+        <p class="text-body-sm text-muted-foreground">Request body:</p>
+        <CodeBlock code={importOAuthBody} label="Request body" />
+        <p class="text-body-sm text-muted-foreground">Response <code>201 Created</code>:</p>
+        <CodeBlock code={importOAuthResponse} label="Response" />
+      </div>
+    </Card.Content>
+  </Card.Root>
 
-<Card.Root class="shadow-card">
-<Card.Header>
-<Card.Title class="text-display-md">Proxy API keys via master key</Card.Title>
+  <Card.Root class="shadow-card">
+    <Card.Header>
+      <Card.Title class="text-display-md">Add an OAuth account</Card.Title>
+      <Card.Description>
+        Start an OAuth flow, let the user authorize in the browser, then poll until the
+        connection is created. No orphaned connections are left on failure.
+      </Card.Description>
+    </Card.Header>
+    <Card.Content class="space-y-6">
+      <div class="space-y-2">
+        <p class="text-body-sm font-medium">1. Start the OAuth flow</p>
+        <p class="text-body-sm text-muted-foreground">POST <code>/admin/api/v1/oauth/start</code></p>
+        <CodeBlock code={curlCmd('POST', '/oauth/start', startOAuthBody)} label="Start OAuth" />
+        <p class="text-body-sm text-muted-foreground">Request body:</p>
+        <CodeBlock code={startOAuthBody} label="Request body" />
+        <p class="text-body-sm text-muted-foreground">Response <code>200 OK</code> &mdash; open <code>auth_url</code> and finish login:</p>
+        <CodeBlock code={startOAuthResponse} label="Response" />
+      </div>
+
+      <div class="space-y-2">
+        <p class="text-body-sm font-medium">2. Poll the session status</p>
+        <p class="text-body-sm text-muted-foreground">GET <code>/admin/api/v1/oauth/:sessionId/poll</code></p>
+        <CodeBlock code={curlCmd('GET', '/oauth/SESSION_ID/poll')} label="Poll OAuth status" />
+        <p class="text-body-sm text-muted-foreground">Response <code>200 OK</code> &mdash; repeat until <code>status</code> is <code>connected</code> or <code>failed</code>:</p>
+        <CodeBlock code={pollOAuthResponse} label="Response" />
+      </div>
+
+      <div class="space-y-2">
+        <p class="text-body-sm font-medium">3. Submit the callback (remote dashboards)</p>
+        <p class="text-body-sm text-muted-foreground">POST <code>/admin/api/v1/oauth/callback</code></p>
+        <p class="text-body-sm text-muted-foreground">
+          If the gateway runs on another machine, paste the localhost callback URL the
+          provider redirected to:
+        </p>
+        <CodeBlock code={curlCmd('POST', '/oauth/callback', submitCallbackBody)} label="Submit callback" />
+        <p class="text-body-sm text-muted-foreground">Request body:</p>
+        <CodeBlock code={submitCallbackBody} label="Request body" />
+      </div>
+    </Card.Content>
+  </Card.Root>
+
+  <Card.Root class="shadow-card">
+    <Card.Header>
+      <Card.Title class="text-display-md">Proxy API keys via master key</Card.Title>
       <Card.Description>
         The master key can also create the proxy API keys used for <code>/v1/*</code> requests.
       </Card.Description>
@@ -341,58 +421,42 @@ Bootstrap custom providers and load credentials automatically with the master ke
       <div class="space-y-2">
         <p class="text-body-sm font-medium">1. Create an API key</p>
         <p class="text-body-sm text-muted-foreground">POST <code>/admin/api/v1/api-keys</code></p>
-        <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{keyInfo ? `curl -s -X POST ${keyInfo.base_url}/api-keys \\
-  -H "Authorization: Bearer ${keyInfo.key}" \\
-  -H "Content-Type: application/json" \\
-  -d '{"name":"my-app","rate_limit_per_min":600,"max_tokens":10000000,"expires_at":1784782236}'` : `curl -s -X POST http://localhost:3777/admin/api/v1/api-keys \\
-  -H "Authorization: Bearer <master-key>" \\
-  -H "Content-Type: application/json" \\
-  -d '{"name":"my-app","rate_limit_per_min":600,"max_tokens":10000000,"expires_at":1784782236}'`}</code></pre>
+        <CodeBlock code={curlCmd('POST', '/api-keys', '{"name":"my-app","rate_limit_per_min":600,"max_tokens":10000000,"expires_at":1784782236}')} label="Create API key" />
         <p class="text-body-sm text-muted-foreground">Response <code>201 Created</code>:</p>
-        <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{createKeyResponse}</code></pre>
+        <CodeBlock code={createKeyResponse} label="Response" />
         <p class="text-caption text-muted-foreground">Use the returned <code>key</code> in <code>Authorization: Bearer &lt;key&gt;</code> for <code>/v1/*</code>.</p>
       </div>
 
       <div class="space-y-2">
         <p class="text-body-sm font-medium">2. List API keys</p>
         <p class="text-body-sm text-muted-foreground">GET <code>/admin/api/v1/api-keys</code></p>
-        <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{keyInfo ? `curl -s ${keyInfo.base_url}/api-keys \\
-  -H "Authorization: Bearer ${keyInfo.key}"` : `curl -s http://localhost:3777/admin/api/v1/api-keys \\
-  -H "Authorization: Bearer <master-key>"`}</code></pre>
+        <CodeBlock code={curlCmd('GET', '/api-keys')} label="List API keys" />
         <p class="text-body-sm text-muted-foreground">Response <code>200 OK</code>:</p>
-        <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{listKeysResponse}</code></pre>
+        <CodeBlock code={listKeysResponse} label="Response" />
       </div>
 
       <div class="space-y-2">
         <p class="text-body-sm font-medium">3. Disable / enable an API key</p>
         <p class="text-body-sm text-muted-foreground">PATCH <code>/admin/api/v1/api-keys/&#123;id&#125;/toggle</code></p>
-        <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{keyInfo ? `curl -s -X PATCH ${keyInfo.base_url}/api-keys/ax-xxxx.../toggle \\
-  -H "Authorization: Bearer ${keyInfo.key}" \\
-  -H "Content-Type: application/json" \\
-  -d '{"is_active":false,"max_tokens":10000000}'` : `curl -s -X PATCH http://localhost:3777/admin/api/v1/api-keys/ax-xxxx.../toggle \\
-  -H "Authorization: Bearer <master-key>" \\
-  -H "Content-Type: application/json" \\
-  -d '{"is_active":false,"max_tokens":10000000}'`}</code></pre>
+        <CodeBlock code={curlCmd('PATCH', '/api-keys/ax-xxxx.../toggle', '{"is_active":false,"max_tokens":10000000}')} label="Toggle API key" />
         <p class="text-body-sm text-muted-foreground">Response <code>200 OK</code>:</p>
-        <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{toggleKeyResponse}</code></pre>
+        <CodeBlock code={toggleKeyResponse} label="Response" />
       </div>
 
       <div class="space-y-2">
         <p class="text-body-sm font-medium">4. Delete an API key</p>
         <p class="text-body-sm text-muted-foreground">DELETE <code>/admin/api/v1/api-keys/&#123;id&#125;</code></p>
-        <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{keyInfo ? `curl -s -X DELETE ${keyInfo.base_url}/api-keys/ax-xxxx... \\
-  -H "Authorization: Bearer ${keyInfo.key}"` : `curl -s -X DELETE http://localhost:3777/admin/api/v1/api-keys/ax-xxxx... \\
-  -H "Authorization: Bearer <master-key>"`}</code></pre>
+        <CodeBlock code={curlCmd('DELETE', '/api-keys/ax-xxxx...')} label="Delete API key" />
         <p class="text-body-sm text-muted-foreground">Response <code>200 OK</code>:</p>
-        <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{deleteKeyResponse}</code></pre>
+        <CodeBlock code={deleteKeyResponse} label="Response" />
       </div>
 
       <div class="space-y-2">
         <p class="text-body-sm font-medium">5. Use the proxy API key</p>
         <p class="text-body-sm text-muted-foreground">POST <code>/v1/chat/completions</code></p>
-        <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{proxyUsageRequest}</code></pre>
+        <CodeBlock code={proxyUsageRequest} label="Proxy request" />
         <p class="text-body-sm text-muted-foreground">Response <code>200 OK</code> (OpenAI-compatible):</p>
-        <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>{proxyUsageResponse}</code></pre>
+        <CodeBlock code={proxyUsageResponse} label="Proxy response" />
         <p class="text-caption text-muted-foreground">Model ID harus menyertakan prefix provider, misalnya <code>openai/gpt-4o</code>, <code>claude/claude-sonnet-4</code>, atau <code>cx/gpt-5.4</code>.</p>
       </div>
     </Card.Content>
