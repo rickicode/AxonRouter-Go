@@ -760,15 +760,21 @@ func (e *KiroExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stream
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			respBody, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			lastErr = &UpstreamError{
+			upErr := &UpstreamError{
 				StatusCode: resp.StatusCode,
 				Body:       respBody,
 				RawBody:    respBody,
 				Headers:    resp.Header,
 			}
-			lastErr.(*UpstreamError).TranslateErrorBody(req.Provider)
-			resp = nil
-			continue
+			upErr.TranslateErrorBody(req.Provider)
+			// Only fall back to the next endpoint for transport errors, server errors, or rate limits.
+			// Any other 4xx is a client-side problem; return it immediately to mirror 9router BaseExecutor behavior.
+			if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+				lastErr = upErr
+				resp = nil
+				continue
+			}
+			return nil, upErr
 		}
 		break
 	}
