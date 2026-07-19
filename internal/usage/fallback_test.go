@@ -11,11 +11,11 @@ func TestFallbackEstimate_EstimateTokensFromString(t *testing.T) {
 		want  int64
 	}{
 		{"empty", "", 0},
-		{"short text", "hello world", 2},           // 11 runes / 4 = 2
-		{"unicode", "你好世界", 1},                     // 4 runes / 4 = 1
-		{"exactly 4", "abcd", 1},                    // 4 / 4 = 1
-		{"three chars", "abc", 0},                   // 3 / 4 = 0
-		{"longer text", "the quick brown fox jumps", 6}, // 26 / 4 = 6
+		{"short text", "hello world", 2},                // cl100k_base token count
+		{"unicode", "你好世界", 5},                       // cl100k_base token count
+		{"exactly 4", "abcd", 1},                        // cl100k_base token count
+		{"three chars", "abc", 1},                       // cl100k_base token count
+		{"longer text", "the quick brown fox jumps", 5}, // cl100k_base token count
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -94,9 +94,9 @@ func TestFallbackEstimate_EstimateTokensFromResponse_OpenAIText(t *testing.T) {
 			}
 		]
 	}`)
-	// "Once upon a time in a faraway land" = 34 chars → 34/4 = 8
+	// "Once upon a time in a faraway land" → 9 tokens in cl100k_base
 	got := EstimateTokensFromResponse(body)
-	if got != 8 {
+	if got != 9 {
 		t.Errorf("EstimateTokensFromResponse(openai text) = %d, want 8", got)
 	}
 }
@@ -108,11 +108,10 @@ func TestFallbackEstimate_EstimateTokensFromResponse_ClaudeText(t *testing.T) {
   ]
 }`)
 	// Top-level content[0].text path should be recognized.
-	textLen := len("Hello world")
 	got := EstimateTokensFromResponse(body)
-	want := int64(textLen / 4)
+	want := int64(2) // "Hello world" → 2 tokens in cl100k_base
 	if got != want {
-		t.Errorf("EstimateTokensFromResponse(claude) = %d, want %d (text len %d / 4)", got, want, textLen)
+		t.Errorf("EstimateTokensFromResponse(claude) = %d, want %d", got, want)
 	}
 }
 
@@ -125,12 +124,10 @@ func TestFallbackEstimate_EstimateTokensFromResponse_ClaudeMessages(t *testing.T
   ]
 }`)
 	// Top-level content[0].text path should be recognized.
-	text := "The capital of France is Paris."
-	textLen := len(text)
 	got := EstimateTokensFromResponse(body)
-	want := int64(textLen / 4)
+	want := int64(7) // "The capital of France is Paris." → 7 tokens in cl100k_base
 	if got != want {
-		t.Errorf("EstimateTokensFromResponse(claude messages) = %d, want %d (text len %d / 4)", got, want, textLen)
+		t.Errorf("EstimateTokensFromResponse(claude messages) = %d, want %d", got, want)
 	}
 }
 
@@ -165,9 +162,9 @@ func TestFallbackEstimate_EstimateTokensFromResponse_ResponseOutput(t *testing.T
 			]
 		}
 	}`)
-	// "Nested content path" = 19 chars → 19/4 = 4
+	// "Nested content path" → 3 tokens in cl100k_base
 	got := EstimateTokensFromResponse(body)
-	if got != 4 {
+	if got != 3 {
 		t.Errorf("EstimateTokensFromResponse(response.output) = %d, want 4", got)
 	}
 }
