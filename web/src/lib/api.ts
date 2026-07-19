@@ -527,6 +527,20 @@ export interface APIKeyItem {
   expires_at?: number;
 }
 
+export interface TrackedDevice {
+  fingerprint: string;
+  ip: string;
+  userAgent: string;
+  lastSeen: number;
+}
+
+export interface KeyDevicesResponse {
+  keyId: string;
+  name: string;
+  count: number;
+  devices: TrackedDevice[];
+}
+
 export interface APIKeyCreateResponse {
   id: string;
   key: string;
@@ -626,6 +640,9 @@ export const apiKeysApi = {
 
   value: (id: string) =>
     fetchApi<{ id: string; key: string }>(`/api-keys/${id}/value`),
+
+  getDevices: (id: string) =>
+    fetchApi<KeyDevicesResponse>(`/keys/${id}/devices`),
 };
 
 // Usage API

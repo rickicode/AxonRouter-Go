@@ -13,7 +13,7 @@ import { apiKeysApi } from '$lib/api';
 import { copyToClipboard } from '$lib/copy';
 import AlertTriangleIcon from '@lucide/svelte/icons/alert-triangle';
   import { buildExpiryTimestamp, formatExpiry, type ExpirationPreset } from '$lib/api-key-utils';
-  import type { APIKeyItem } from '$lib/api';
+  import type { APIKeyItem, KeyDevicesResponse } from '$lib/api';
 
 let keys = $state<APIKeyItem[]>([]);
 let loading = $state(true);
@@ -30,6 +30,9 @@ let showCreate = $state(false);
 let deleteConfirm = $state<{ id: string; name: string } | null>(null);
 let showDeleteConfirm = $state(false);
 let baseUrl = $state('');
+let deviceCounts = $state<Record<string, number>>({});
+let selectedDevices = $state<KeyDevicesResponse | null>(null);
+let showDevicesDialog = $state(false);
 
 const expirationLabels: Record<ExpirationPreset, string> = {
     never: 'Never',
@@ -56,12 +59,43 @@ async function loadKeys() {
   try {
     const res = await apiKeysApi.list();
     keys = res.data ?? [];
+    await loadDeviceCounts();
   } catch (err) {
     error = err instanceof Error ? err.message : 'Failed to load API keys';
     toast.error(error);
   } finally {
     loading = false;
   }
+}
+
+async function loadDeviceCounts() {
+  const counts: Record<string, number> = {};
+  await Promise.all(
+    keys.map(async (key) => {
+      try {
+        const res = await apiKeysApi.getDevices(key.id);
+        counts[key.id] = res.count ?? 0;
+      } catch {
+        counts[key.id] = 0;
+      }
+    })
+  );
+  deviceCounts = counts;
+}
+
+async function openDevices(keyId: string) {
+  selectedDevices = null;
+  showDevicesDialog = true;
+  try {
+    selectedDevices = await apiKeysApi.getDevices(keyId);
+  } catch (err) {
+    toast.error('Failed to load devices: ' + (err instanceof Error ? err.message : 'Unknown'));
+    showDevicesDialog = false;
+  }
+}
+
+function formatDateTime(ts: number): string {
+  return new Date(ts * 1000).toLocaleString();
 }
 
   async function handleCreate() {
@@ -155,6 +189,7 @@ function formatDate(ts: number): string {
             <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-1/4"><div class="h-4 w-16 animate-pulse rounded bg-muted"></div></th>
             <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-20 animate-pulse rounded bg-muted"></div></th>
             <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-14 animate-pulse rounded bg-muted"></div></th>
+            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-14 animate-pulse rounded bg-muted"></div></th>
             <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-16 animate-pulse rounded bg-muted"></div></th>
             <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-14 animate-pulse rounded bg-muted"></div></th>
             <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-32"></th>
@@ -169,6 +204,7 @@ function formatDate(ts: number): string {
             </td>
             <td class="py-3 px-4"><div class="h-4 w-24 animate-pulse rounded bg-muted"></div></td>
             <td class="py-3 px-4"><div class="h-5 w-10 animate-pulse rounded bg-muted"></div></td>
+            <td class="py-3 px-4"><div class="h-4 w-14 animate-pulse rounded bg-muted"></div></td>
             <td class="py-3 px-4"><div class="h-4 w-20 animate-pulse rounded bg-muted"></div></td>
             <td class="py-3 px-4"><div class="h-4 w-16 animate-pulse rounded bg-muted"></div></td>
             <td class="py-3 px-4"><div class="h-7 w-10 animate-pulse rounded bg-muted"></div></td>
@@ -221,6 +257,7 @@ function formatDate(ts: number): string {
             <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Name</th>
             <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Rate Limit</th>
             <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Status</th>
+            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Devices</th>
             <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Created</th>
             <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Expires</th>
             <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-32"></th>
@@ -243,6 +280,11 @@ function formatDate(ts: number): string {
               <div class="flex justify-center">
                 <Switch checked={key.is_active} onCheckedChange={() => handleToggle(key.id, key.is_active)} aria-label={key.is_active ? 'Disable key' : 'Enable key'} />
               </div>
+            </td>
+            <td class="py-3 px-4">
+              <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" onclick={() => openDevices(key.id)}>
+                {(deviceCounts[key.id] ?? 0)} device{deviceCounts[key.id] === 1 ? '' : 's'}
+              </Button>
             </td>
             <td class="py-3 px-4 text-body-sm text-muted-foreground">{formatDate(key.created_at)}</td>
             <td class="py-3 px-4">
@@ -392,4 +434,42 @@ function formatDate(ts: number): string {
       </div>
     </AlertDialogContent>
   </AlertDialog>
+
+  <!-- Devices dialog -->
+  <Dialog.Root bind:open={showDevicesDialog}>
+    <Dialog.Content class="sm:max-w-2xl">
+      <h2 class="text-lg font-semibold mb-1">{selectedDevices?.name || 'API key'} devices</h2>
+      <p class="text-sm text-muted-foreground mb-4">{selectedDevices?.count ?? 0} tracked device{selectedDevices?.count === 1 ? '' : 's'}</p>
+      {#if !selectedDevices}
+        <div class="py-8 flex justify-center">
+          <div class="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
+        </div>
+      {:else if selectedDevices.devices.length === 0}
+        <p class="text-body-sm text-muted-foreground">No devices tracked yet.</p>
+      {:else}
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b border-border bg-muted/30">
+                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-3">Fingerprint</th>
+                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-3">IP</th>
+                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-3">User Agent</th>
+                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-3">Last Seen</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-border">
+              {#each selectedDevices.devices as device}
+              <tr>
+                <td class="py-2 px-3 font-mono text-xs text-muted-foreground">{device.fingerprint}</td>
+                <td class="py-2 px-3 text-body-sm text-muted-foreground">{device.ip}</td>
+                <td class="py-2 px-3 text-body-sm text-muted-foreground max-w-xs truncate" title={device.userAgent}>{device.userAgent}</td>
+                <td class="py-2 px-3 text-body-sm text-muted-foreground">{formatDateTime(device.lastSeen)}</td>
+              </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+    </Dialog.Content>
+  </Dialog.Root>
 </div>
