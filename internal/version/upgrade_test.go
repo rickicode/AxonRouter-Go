@@ -185,3 +185,33 @@ func TestUpdateAvailable_Older(t *testing.T) {
 		t.Fatalf("expected no update when cached version is older")
 	}
 }
+
+func TestUpdateAvailable_PrereleaseTag(t *testing.T) {
+	SetTestVersion("0.3.3")
+	defer ClearTestVersion()
+
+	checker := NewChecker(nil)
+	defer checker.Stop()
+	checker.ttl = 5 * time.Minute
+	checker.cached = ReleaseInfo{Version: "0.3.4-beta.1"}
+	checker.cachedAt = time.Now()
+
+	if !checker.UpdateAvailable() {
+		t.Fatalf("expected update available for prerelease of newer version")
+	}
+}
+
+func TestUpdateAvailable_ShorterVersion(t *testing.T) {
+	SetTestVersion("0.3.3")
+	defer ClearTestVersion()
+
+	checker := NewChecker(nil)
+	defer checker.Stop()
+	checker.ttl = 5 * time.Minute
+	checker.cached = ReleaseInfo{Version: "0.4"}
+	checker.cachedAt = time.Now()
+
+	if !checker.UpdateAvailable() {
+		t.Fatalf("expected update available when latest is 0.4 vs current 0.3.3")
+	}
+}
