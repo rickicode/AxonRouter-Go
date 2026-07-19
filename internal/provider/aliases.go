@@ -30,6 +30,8 @@ var Registry = map[string]CanonicalInfo{
 	"elevenlabs": {DisplayName: "ElevenLabs", Aliases: nil},
 	"deepgram":   {DisplayName: "DeepGram", Aliases: nil},
 	"bedrock":    {DisplayName: "Amazon Bedrock Mantle", Aliases: nil},
+	"devin":      {DisplayName: "Devin CLI", Aliases: nil},
+	"qoder":      {DisplayName: "Qoder", Aliases: nil},
 }
 
 // aliasToCanonical is the flattened reverse lookup (built once at init).
