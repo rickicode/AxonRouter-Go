@@ -113,6 +113,10 @@ type kiroStreamState struct {
 	hasContextUsage  bool
 	contextUsagePct  int64
 	hasMeteringEvent bool
+	// Inline-thinking splitter state.
+	thinkingExpected bool
+	thinkingMode     bool
+	pendingTag       string
 }
 
 func (s *kiroStreamState) toolName(raw string, nameMap map[string]string) string {
@@ -122,23 +126,86 @@ func (s *kiroStreamState) toolName(raw string, nameMap map[string]string) string
 	return raw
 }
 
-// splitInlineThinking extracts a single complete <thinking>...</thinking> block from the start
-// of a content chunk. Returns (reasoning, remainingText, true) if a complete block is found.
-func splitInlineThinking(content string) (string, string, bool) {
-	// Only handle the simple case where the block is fully contained in one chunk.
-	start := strings.Index(content, "<thinking>")
-	if start == -1 {
-		return "", "", false
+// splitInlineThinking walks one slice of upstream content at a time and routes
+// characters to either the content channel or the reasoning channel based on the
+// current <thinking> state. State is mutated on s so a tag split between frames
+// (e.g. "</think" followed by "ing>foo") is still recognised.
+func (s *kiroStreamState) splitInlineThinking(content string, model string) [][]byte {
+	text := s.pendingTag + content
+	s.pendingTag = ""
+
+	// Longest unfinished tag we might still complete on the next frame:
+	// "</thinking>" is 11 characters.
+	const partialMax = 11
+
+	var out [][]byte
+	for text != "" {
+		target := "</thinking>"
+		if !s.thinkingMode {
+			target = "<thinking>"
+		}
+		idx := strings.Index(text, target)
+
+		if idx == -1 {
+			// No full target tag in text. Look for a possible partial at the end
+			// so we can complete it on the next frame.
+			holdFrom := len(text)
+			start := len(text) - partialMax
+			if start < 0 {
+				start = 0
+			}
+			for i := start; i < len(text); i++ {
+				tail := text[i:]
+				if tail != "" && strings.HasPrefix(target, tail) {
+					holdFrom = i
+					break
+				}
+			}
+			flushable := text[:holdFrom]
+			if flushable != "" {
+				if s.thinkingMode {
+					s.reasoning.WriteString(flushable)
+					out = append(out, s.emitChunk(map[string]any{"reasoning_content": flushable}, model))
+				} else {
+					s.textLen += int64(len(flushable))
+					out = append(out, s.emitChunk(map[string]any{"content": flushable}, model))
+				}
+			}
+			s.pendingTag = text[holdFrom:]
+			return out
+		}
+
+		// Found a complete target tag. Flush everything before it in the
+		// current mode, flip the mode, and keep walking the remainder.
+		before := text[:idx]
+		if before != "" {
+			if s.thinkingMode {
+				s.reasoning.WriteString(before)
+				out = append(out, s.emitChunk(map[string]any{"reasoning_content": before}, model))
+			} else {
+				s.textLen += int64(len(before))
+				out = append(out, s.emitChunk(map[string]any{"content": before}, model))
+			}
+		}
+		s.thinkingMode = !s.thinkingMode
+		text = text[idx+len(target):]
 	}
-	end := strings.Index(content[start:], "</thinking>")
-	if end == -1 {
-		return "", "", false
+	return out
+}
+
+// flushPendingThinking drains whatever is left in s.pendingTag at end-of-stream.
+func (s *kiroStreamState) flushPendingThinking(model string) [][]byte {
+	if s.pendingTag == "" {
+		return nil
 	}
-	end += start + len("</thinking>")
-	reasoning := strings.TrimSpace(content[start+len("<thinking>") : end-len("</thinking>")])
-	prefix := content[:start]
-	suffix := content[end:]
-	return reasoning, strings.TrimSpace(prefix + suffix), true
+	text := s.pendingTag
+	s.pendingTag = ""
+	if s.thinkingMode {
+		s.reasoning.WriteString(text)
+		return [][]byte{s.emitChunk(map[string]any{"reasoning_content": text}, model)}
+	}
+	s.textLen += int64(len(text))
+	return [][]byte{s.emitChunk(map[string]any{"content": text}, model)}
 }
 
 func (s *kiroStreamState) emitChunk(delta map[string]any, model string) []byte {
@@ -246,20 +313,13 @@ func (s *kiroStreamState) handleEvent(frame *EventFrame, nameMap map[string]stri
 		if content == "" {
 			return nil
 		}
-		s.textLen += int64(len(content))
 
 		// Kiro may inline thinking tags inside assistantResponseEvent content when the
 		// reasoningContentEvent frame is not emitted. Split them stream-safely.
-		var out [][]byte
-		if reasoning, text, ok := splitInlineThinking(content); ok {
-			if reasoning != "" {
-				out = append(out, s.emitChunk(map[string]any{"reasoning_content": reasoning}, model))
-			}
-			if text != "" {
-				out = append(out, s.emitChunk(map[string]any{"content": text}, model))
-			}
-			return out
+		if s.thinkingExpected {
+			return s.splitInlineThinking(content, model)
 		}
+		s.textLen += int64(len(content))
 		return [][]byte{s.emitChunk(map[string]any{"content": content}, model)}
 
 	case "reasoningContentEvent":
@@ -642,15 +702,18 @@ func (e *KiroExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stream
 		modelName = "kiro"
 	}
 
+	thinkingExpected := strings.Contains(string(req.Body), "<thinking_mode>enabled</thinking_mode>")
+
 	go func() {
 		defer resp.Body.Close()
 		defer close(result.Chunks)
 
 		queue := newByteQueue()
 		state := &kiroStreamState{
-			seenToolIDs:     make(map[string]int),
-			toolArgsBuf:     make(map[string]string),
-			toolArgsEmitted: make(map[string]string),
+			seenToolIDs:      make(map[string]int),
+			toolArgsBuf:      make(map[string]string),
+			toolArgsEmitted:  make(map[string]string),
+			thinkingExpected: thinkingExpected,
 		}
 
 		buf := make([]byte, 32*1024)
@@ -693,6 +756,9 @@ func (e *KiroExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stream
 		}
 		// flush remaining buffered tool args and emit final chunk if not emitted
 		if state.started() {
+			for _, c := range state.flushPendingThinking(modelName) {
+				result.Chunks <- StreamChunk{Payload: c}
+			}
 			for _, c := range state.maybeFlushToolArgs(nameMap, modelName) {
 				result.Chunks <- StreamChunk{Payload: c}
 			}
