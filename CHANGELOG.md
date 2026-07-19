@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Kiro region resolution and auth-aware endpoints** — `internal/executor/kiro_region.go` resolves the runtime region from `profileArn` first, supports only `us-east-1`/`eu-central-1`, orders endpoints per auth method, and sets conditional `tokentype`/`TokenType` headers.
 - **Kiro tool schema sanitizer and agentic mode** — tool schemas are sanitized for Kiro's strict JSON Schema subset, long tool names are hash-truncated with reverse name mapping, adaptive thinking is gated to an allowlist of supported models, and synthetic `-agentic` variants receive an agentic system prompt.
 - **Kiro inline thinking splitter** — `internal/executor/kiro.go` splits `<thinking>...</thinking>` blocks out of `assistantResponseEvent` content into `reasoning_content` deltas when a separate `reasoningContentEvent` is not emitted.
+- **Dashboard simplification + system metrics** — removed date-range selector, defaults to today's traffic only, adds CPU/RAM/disk system-metric cards, and links to the Usage page for details. Backend uses cross-platform `gopsutil`.
+- **Usage summary endpoint** — `GET /api/admin/usage/summary` returns today, yesterday, month-to-date, projected month cost, and next quota reset.
+- **Usage page enhancements** — replaced the misleading "Saved this month" card with "Cost this month" and "Projected cost", added today vs yesterday deltas.
 
 ### Fixed
 - **Grok CLI non-stream response translation** — `/v1/chat/completions` responses from `grok-cli` are now translated back to standard OpenAI format instead of leaking Grok's internal `response.completed` event shape.
