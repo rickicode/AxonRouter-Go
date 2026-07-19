@@ -428,9 +428,20 @@ async function handleValidate() {
           validating = true;
           validationResult = null;
           const res = await providersApi.validateKey(providerId, apiKey.trim());
-          validationResult = res.valid ? 'success' : 'failed';
-        } catch {
+          if (!res.valid) {
+            validationResult = 'failed';
+            errorMsg = 'API key validation failed';
+            toast.error(errorMsg);
+            submitting = false;
+            return;
+          }
+          validationResult = 'success';
+        } catch (err) {
           validationResult = 'failed';
+          errorMsg = err instanceof Error ? err.message : 'API key validation failed';
+          toast.error(errorMsg);
+          submitting = false;
+          return;
         } finally {
           validating = false;
         }
@@ -1038,7 +1049,7 @@ $effect(() => {
 
       <Dialog.Footer>
         <Button variant="outline" onclick={() => handleOpenChange(false)} class="text-sm">Cancel</Button>
-        <Button onclick={handleSubmit} disabled={submitting || importing || (isNoAuth && needsProxyPool && !selectedPoolId)} class="text-sm">
+        <Button onclick={handleSubmit} disabled={submitting || importing || (isNoAuth && needsProxyPool && !selectedPoolId) || validationResult === 'failed'} class="text-sm">
           {#if importing}
             Importing… {Math.round(importProgress * 100)}%
           {:else if submitting}
