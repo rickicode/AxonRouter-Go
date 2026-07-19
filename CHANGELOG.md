@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.11] - 2026-07-19
+
 ### Added
 - **Windows icon + tray launch** — Windows release binary embeds `assets/icon.ico` via `.syso` resources and builds with `-H=windowsgui -tags tray`. Double-clicking `axonrouter-windows-amd64.exe` starts the system tray icon instead of a flashing console.
 - **Devin CLI and Qoder providers** — ported from OmniRoute. Devin routes through the local `devin acp` CLI; Qoder supports dual-mode transport (DashScope HTTP for API keys, `qodercli` for PAT `pt-*` tokens). Includes shared CLI subprocess runtime, provider seeding, static model catalog, frontend catalog entries, and alias registry.

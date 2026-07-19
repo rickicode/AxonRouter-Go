@@ -397,17 +397,19 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.10
+### What's New in v0.3.11
 
 ### Added
-- **Grok CLI session/turn header persistence** — `/v1/chat/completions` and `/v1/responses` calls routed through `grok-cli` now generate stable `x-grok-session-id`, `x-grok-conv-id`, and `x-grok-agent-id` values per connection, a fresh `x-grok-req-id` per request, and a monotonic `x-grok-turn-idx` that advances only by user messages. State is persisted to the connection's `provider_specific_data` and survives restarts.
-- **Grok CLI upstream quota usage** — `grok-cli` connections now display live subscription quota from xAI billing/user endpoints, including monthly included credits, on-demand cap/usage, and prepaid balance. Registered in the quota scheduler alongside Codex, Antigravity, Kiro, and Copilot.
-- **Grok CLI identity header alignment** — bumped client version to `0.2.99`, switched User-Agent to `grok-shell/0.2.99 (linux; x86_64)`, and added `x-grok-client-identifier: grok-shell` plus `x-grok-client-mode: headless` to both chat and quota requests. OAuth scope now includes `conversations:read conversations:write`.
-- **Grok CLI request normalization** — removed forbidden top-level fields (`presence_penalty`, `frequency_penalty`, `seed`, `user`, `previous_response_id`), converted `custom_tool_call`/`custom_tool_call_output` types, stripped `item_reference` and server-generated IDs that cannot resolve with `store=false`, preserved hosted tool types (`web_search`, `x_search`, etc.), and gated reasoning to models in the `grok-4.5` family (with `max` → `xhigh` mapping).
-- **Grok CLI retry and soft-success connection test** — retry transient HTTP 429/502/503 responses with exponential backoff, and treat HTTP 402 during connection tests as a soft success indicating valid auth but exhausted credits.
+- **Windows icon + tray launch** — Windows release binary embeds `assets/icon.ico` via `.syso` resources and builds with `-H=windowsgui -tags tray`. Double-clicking `axonrouter-windows-amd64.exe` starts the system tray icon instead of a flashing console.
+- **Devin CLI and Qoder providers** — ported from OmniRoute. Devin routes through the local `devin acp` CLI; Qoder supports dual-mode transport (DashScope HTTP for API keys, `qodercli` for PAT `pt-*` tokens). Includes shared CLI subprocess runtime, provider seeding, static model catalog, frontend catalog entries, and alias registry.
+- **Devin and Qoder provider icons** — added `devin.svg` (from OmniRoute Windsurf/Cognition branding) and `qoder.png` (from 9router) to the dashboard provider catalog.
+- **Built-in `codebuddy` provider (Tencent CodeBuddy)** with custom browser OAuth polling flow, v2 chat endpoint, required Tencent CLI headers, and a 15-model catalog (GLM/Kimi/MiniMax/DeepSeek/Hunyuan).
 
 ### Fixed
-- **Grok CLI free accounts no longer auto-marked `quota_exhausted`** — quota parsing no longer synthesizes a depleted row for accounts that simply have no on-demand cap (e.g., free/promo accounts). The scheduler only marks a connection exhausted when actual quota data shows zero remaining credits. Matches the 9router reference handler (`open-sse/services/usage/grok-cli.js`).
+- **Windows release build** — split Unix process-group logic (`Setpgid`, `Getpgid`, `Kill`) from `internal/executor/cli_runtime.go` into `cli_runtime_unix.go` and `cli_runtime_windows.go`. Windows builds now use `taskkill /F /T /PID` instead of undefined `syscall.Setpgid/Getpgid/Kill`.
+- **Public health endpoint no longer runs bcrypt on every request** — `must_change_password` now uses the `admin_password_changed` setting instead of `bcrypt.CompareHashAndPassword`, keeping `/api/admin/health` fast for load-balancer probes and the dashboard sidebar.
+- **Version comparison handles pre-release and build metadata** — `internal/version` now parses semver-ish tags such as `v0.4.0-beta.1` or `v0.4.0+build.123` without returning a false "up to date" result.
+- **Frontend version helper hardened** — `web/src/lib/about-utils.ts` now ignores pre-release/build suffixes and never returns `NaN` comparison results; stale error state in `About.svelte` is also reset after a successful health fetch.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
