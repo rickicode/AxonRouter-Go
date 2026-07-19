@@ -171,3 +171,32 @@ func uimHasTools(uim map[string]any) bool {
 	tools, _ := ctx["tools"].([]any)
 	return len(tools) > 0
 }
+
+func TestBuildKiroTools_DescriptionTruncation(t *testing.T) {
+	longDesc := strings.Repeat("a", 10050)
+	tools := []any{
+		map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "long_desc_tool",
+				"description": longDesc,
+				"parameters": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+				},
+			},
+		},
+	}
+	out := buildKiroTools(tools)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(out))
+	}
+	spec := out[0]["toolSpecification"].(map[string]any)
+	got, _ := spec["description"].(string)
+	if len(got) > 10000 {
+		t.Errorf("description length = %d, want <= 10000", len(got))
+	}
+	if !strings.HasSuffix(got, " …") {
+		t.Errorf("description should end with ellipsis marker, got suffix %q", got[len(got)-10:])
+	}
+}

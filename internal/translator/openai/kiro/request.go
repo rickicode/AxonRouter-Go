@@ -597,6 +597,7 @@ func buildToolUses(toolCalls []any) []map[string]any {
 }
 
 func buildKiroTools(tools []any) []map[string]any {
+	const kiroMaxToolDescriptionLen = 10000
 	var out []map[string]any
 	for _, raw := range tools {
 		tool, ok := raw.(map[string]any)
@@ -611,6 +612,8 @@ func buildKiroTools(tools []any) []map[string]any {
 		desc, _ := fn["description"].(string)
 		if desc == "" {
 			desc = fmt.Sprintf("Tool: %s", name)
+		} else if len(desc) > kiroMaxToolDescriptionLen {
+			desc = desc[:kiroMaxToolDescriptionLen-len(" …")] + " …"
 		}
 		params, _ := fn["parameters"].(map[string]any)
 		if params == nil {
