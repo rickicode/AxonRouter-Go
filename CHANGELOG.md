@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dashboard simplification + system metrics** — removed date-range selector, defaults to today's traffic only, adds CPU/RAM/disk system-metric cards, and links to the Usage page for details. Backend uses cross-platform `gopsutil`.
 - **Usage summary endpoint** — `GET /api/admin/usage/summary` returns today, yesterday, month-to-date, projected month cost, and next quota reset.
 - **Usage page enhancements** — replaced the misleading "Saved this month" card with "Cost this month" and "Projected cost", added today vs yesterday deltas.
+- **Grok CLI advanced tool normalization** — drops upstream pseudo-tools (`tool_search`, `image_generation`, `apply_patch`), rewrites `custom` → `function`, injects missing parameters, simplifies fragile schemas, auto-injects native `x_search`, normalizes `tool_choice`, and converts legacy `custom_tool_call` / `tool_use` input items.
+- **Grok CLI response namespace restoration** — restores original tool names and a `namespace` field on output items so downstream Chat Completions responses stay readable, and filters internal `x_search` subtool traces.
+- **Grok CLI reasoning replay cache** — caches replayable output items (reasoning `encrypted_content`, assistant messages, tool calls) per model/session and injects them before the last user message on subsequent turns.
 
 ### Fixed
 - **Kiro OAuth account naming** — AWS Builder ID / IDC device-code flows and social/import flows now extract the account email from the JWT; when no email is present the connection is named `Kiro-1`, `Kiro-2`, etc.
