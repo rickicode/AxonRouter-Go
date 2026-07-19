@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Windows release build** — split Unix process-group logic (`Setpgid`, `Getpgid`, `Kill`) from `internal/executor/cli_runtime.go` into `cli_runtime_unix.go` and `cli_runtime_windows.go`. Windows builds now use `taskkill /F /T /PID` instead of undefined `syscall.Setpgid/Getpgid/Kill`.
+
 ## [0.3.11] - 2026-07-19
 
 ### Added

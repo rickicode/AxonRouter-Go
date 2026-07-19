@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -47,7 +46,7 @@ func RunCLI(ctx context.Context, inv CLIInvocation) CLIOutput {
 	cmd.Dir = inv.WorkDir
 	cmd.Env = append(os.Environ(), inv.Env...)
 	cmd.Stdin = bytes.NewReader(inv.Stdin)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setupProcessGroup(cmd)
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -81,19 +80,6 @@ func RunCLI(ctx context.Context, inv CLIInvocation) CLIOutput {
 		Err:      err,
 		TimedOut: timedOut,
 	}
-}
-
-func terminateProcessGroup(pid int, gracefulShutdown time.Duration) {
-	pgid, err := syscall.Getpgid(pid)
-	if err != nil {
-		_ = syscall.Kill(pid, syscall.SIGKILL)
-		return
-	}
-	_ = syscall.Kill(-pgid, syscall.SIGTERM)
-	if gracefulShutdown > 0 {
-		time.Sleep(gracefulShutdown)
-	}
-	_ = syscall.Kill(-pgid, syscall.SIGKILL)
 }
 
 func exitCode(err error) int {
