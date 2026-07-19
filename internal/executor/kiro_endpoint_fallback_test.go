@@ -77,8 +77,9 @@ func TestKiroEndpointFallback_RetriesOn500(t *testing.T) {
 	}
 }
 
-func TestKiroEndpointFallback_StopsOn400(t *testing.T) {
+func TestKiroEndpointFallback_FallsBackOn400(t *testing.T) {
 	kiroDevHost := "runtime.us-east-1.kiro.dev"
+	awsHost := "codewhisperer.us-east-1.amazonaws.com"
 
 	var calls []string
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -115,11 +116,14 @@ func TestKiroEndpointFallback_StopsOn400(t *testing.T) {
 	if upErr.StatusCode != http.StatusBadRequest {
 		t.Errorf("status code = %d, want %d", upErr.StatusCode, http.StatusBadRequest)
 	}
-	if len(calls) != 1 {
-		t.Fatalf("expected 1 upstream call, got %d: %v", len(calls), calls)
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 upstream calls, got %d: %v", len(calls), calls)
 	}
 	if calls[0] != kiroDevHost {
 		t.Errorf("first call = %q, want %q", calls[0], kiroDevHost)
+	}
+	if calls[1] != awsHost {
+		t.Errorf("second call = %q, want %q", calls[1], awsHost)
 	}
 }
 

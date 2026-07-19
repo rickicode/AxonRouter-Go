@@ -40,14 +40,11 @@ func kiroHeaders(req *Request) map[string]string {
 		ua = "AWS-SDK-JS/3.0.0 kiro-ide/1.0.0"
 	}
 	headers := map[string]string{
-		"Content-Type":                 "application/json",
-		"Accept":                       "application/vnd.amazon.eventstream",
-		"User-Agent":                   ua,
-		"Amz-Sdk-Request":              "attempt=1; max=3",
-		"Amz-Sdk-Invocation-Id":        genUUID(),
-		"x-amzn-bedrock-cache-control": "enable",
-		"anthropic-beta":               "prompt-caching-2024-07-31",
-		"X-Amz-Target":                 "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
+		"Content-Type":    "application/json",
+		"Accept":          "application/vnd.amazon.eventstream",
+		"User-Agent":      ua,
+		"X-Amz-User-Agent": "aws-sdk-js/3.0.0 KiroIDE",
+		"X-Amz-Target":    "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
 	}
 	if req.AccessToken != "" {
 		headers["Authorization"] = "Bearer " + req.AccessToken
@@ -743,24 +740,18 @@ func (e *KiroExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stream
 			resp = nil
 			continue
 		}
-		if resp.StatusCode >= 500 {
-			io.Copy(io.Discard, resp.Body)
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			respBody, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			lastErr = fmt.Errorf("upstream %d", resp.StatusCode)
-			resp = nil
-			continue
-		}
-		if resp.StatusCode >= 400 {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			upErr := &UpstreamError{
+			lastErr = &UpstreamError{
 				StatusCode: resp.StatusCode,
-				Body:       body,
-				RawBody:    body,
+				Body:       respBody,
+				RawBody:    respBody,
 				Headers:    resp.Header,
 			}
-			upErr.TranslateErrorBody(req.Provider)
-			return nil, upErr
+			lastErr.(*UpstreamError).TranslateErrorBody(req.Provider)
+			resp = nil
+			continue
 		}
 		break
 	}
