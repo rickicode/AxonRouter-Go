@@ -686,6 +686,18 @@ func (h *ProviderHandler) AddConnection(c *gin.Context) {
 		req.AuthType = "api_key"
 	}
 
+	// Enforce upstream key validation before persisting API-key-backed connections.
+	// Providers can opt out via provider_types.skip_key_validation.
+	if req.AuthType != "oauth" && req.AuthType != "none" && req.APIKey != "" {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+		defer cancel()
+		valid, errMsg := h.validateKeyForRequest(ctx, providerID, req.APIKey, req.ProviderSpecificData)
+		if !valid {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+			return
+		}
+	}
+
 	apiKey := sql.NullString{}
 	if req.APIKey != "" {
 		apiKey = sql.NullString{String: req.APIKey, Valid: true}
@@ -887,63 +899,72 @@ func (h *ProviderHandler) ValidateKey(c *gin.Context) {
 		return
 	}
 
-	// Get provider base URL and format
-	var provider struct {
-		ID      string
-		Format  string
-		BaseURL string
-	}
-	dbErr := h.db.QueryRow(`SELECT id, format, base_url FROM provider_types WHERE id = ?`, req.Provider).Scan(&provider.ID, &provider.Format, &provider.BaseURL)
-	if dbErr != nil {
+	valid, errMsg := h.validateKeyForRequest(c.Request.Context(), req.Provider, req.APIKey, req.ProviderSpecificData)
+	if !valid && errMsg == "provider not found" {
 		c.JSON(http.StatusNotFound, gin.H{"error": "provider not found"})
 		return
 	}
+	c.JSON(http.StatusOK, gin.H{"valid": valid})
+}
 
-	// Resolve executor
-	executorID := req.Provider
-	if dbErr == nil {
-		executorID = provider.ID
+// validateKeyForRequest performs a lightweight upstream request to verify the
+// API key. It returns (true, "") when the key is accepted by the upstream, or
+// (false, <upstream message>) otherwise. Providers may opt out via
+// provider_types.skip_key_validation.
+func (h *ProviderHandler) validateKeyForRequest(ctx context.Context, providerID, apiKey string, psd map[string]string) (bool, string) {
+	var provider struct {
+		ID                string
+		Format            string
+		BaseURL           string
+		SkipKeyValidation int
 	}
-	exec, _, ok := h.registry.Get(executorID)
+	if err := h.db.QueryRow(`SELECT id, format, base_url, skip_key_validation FROM provider_types WHERE id = ?`, providerID).
+		Scan(&provider.ID, &provider.Format, &provider.BaseURL, &provider.SkipKeyValidation); err != nil {
+		if err == sql.ErrNoRows {
+			return false, "provider not found"
+		}
+		return false, err.Error()
+	}
+
+	if provider.SkipKeyValidation == 1 {
+		return true, ""
+	}
+
+	exec, _, ok := h.registry.Get(provider.ID)
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no executor for provider"})
-		return
+		return false, "no executor for provider"
 	}
 
-	// Try a lightweight request to validate the key
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
-
-	testModel := defaultTestModel(req.Provider)
+	testModel := defaultTestModel(providerID)
 	if testModel == "" {
 		testModel = "gpt-4o-mini"
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	resp, err := exec.ExecuteStream(ctx, &executor.Request{
-		APIKey:               req.APIKey,
+		APIKey:               apiKey,
 		BaseURL:              provider.BaseURL,
 		Body:                 buildTestBody(provider.Format, testModel),
-		Provider:             req.Provider,
+		Provider:             providerID,
 		Model:                testModel,
-		ProviderSpecificData: req.ProviderSpecificData,
+		ProviderSpecificData: psd,
 	})
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"valid": false})
-		return
+		return false, err.Error()
 	}
 
-	var valid bool
 	for chunk := range resp.Chunks {
 		if chunk.Err != nil {
-			break
+			return false, chunk.Err.Error()
 		}
 		if chunk.Payload != nil {
-			valid = true
-			break
+			return true, ""
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"valid": valid})
+	return false, "invalid API key"
 }
 
 // GetSettings returns the persistent JSON-file settings for a provider.

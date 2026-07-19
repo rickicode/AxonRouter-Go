@@ -681,3 +681,123 @@ func TestBulkAddConnections_NoContentionUnderLoad(t *testing.T) {
 		t.Fatalf("failed=%d under load (errors=%v)", resp.Failed, resp.Errors)
 	}
 }
+
+// validatingMockExecutor simulates key validation: it returns the configured
+// error, or an empty/payload stream for invalid/valid keys.
+type validatingMockExecutor struct {
+	valid bool
+	err   error
+}
+
+func (m *validatingMockExecutor) Execute(ctx context.Context, req *executor.Request) (*executor.Response, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *validatingMockExecutor) ExecuteStream(ctx context.Context, req *executor.Request) (*executor.StreamResult, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	ch := make(chan executor.StreamChunk, 1)
+	if m.valid {
+		ch <- executor.StreamChunk{Payload: []byte(`{"ok":true}`)}
+	}
+	close(ch)
+	return &executor.StreamResult{Chunks: ch}, nil
+}
+
+func TestAddConnection_InvalidKeyRejected(t *testing.T) {
+	database := newConnectionHandlerTestDB(t)
+	h := newProviderHandlerTestDeps(t, database)
+	seedProviderType(t, database, "valtest")
+
+	registry := executor.GetRegistry()
+	registry.Register("valtest", executor.FormatOpenAI, &validatingMockExecutor{err: errors.New("invalid key: 401 Unauthorized")})
+	t.Cleanup(func() { registry.Unregister("valtest") })
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := `{"name":"Invalid Key Conn","api_key":"sk-bad"}`
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/providers/valtest/connections", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = []gin.Param{{Key: "id", Value: "valtest"}}
+	h.AddConnection(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid key: status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "invalid key") {
+		t.Errorf("expected upstream error message in body, got %s", w.Body.String())
+	}
+	var cnt int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM connections WHERE provider_type_id = 'valtest'`).Scan(&cnt); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if cnt != 0 {
+		t.Fatalf("expected no connections persisted, got %d", cnt)
+	}
+}
+
+func TestAddConnection_ValidKeyCreates(t *testing.T) {
+	database := newConnectionHandlerTestDB(t)
+	h := newProviderHandlerTestDeps(t, database)
+	seedProviderType(t, database, "valtestok")
+
+	registry := executor.GetRegistry()
+	registry.Register("valtestok", executor.FormatOpenAI, &validatingMockExecutor{valid: true})
+	t.Cleanup(func() { registry.Unregister("valtestok") })
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := `{"name":"Valid Key Conn","api_key":"sk-good"}`
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/providers/valtestok/connections", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = []gin.Param{{Key: "id", Value: "valtestok"}}
+	h.AddConnection(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("valid key: status = %d, want 201; body=%s", w.Code, w.Body.String())
+	}
+	var cnt int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM connections WHERE provider_type_id = 'valtestok'`).Scan(&cnt); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if cnt != 1 {
+		t.Fatalf("expected one connection persisted, got %d", cnt)
+	}
+}
+
+func TestAddConnection_SkipValidationBypasses(t *testing.T) {
+	database := newConnectionHandlerTestDB(t)
+	h := newProviderHandlerTestDeps(t, database)
+
+	now := time.Now().Unix()
+	if _, err := database.Exec(`INSERT INTO provider_types (id, display_name, format, base_url, skip_key_validation, created_at) VALUES ('valskip','Skip Provider','openai','http://x',1,?)`, now); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+
+	registry := executor.GetRegistry()
+	registry.Register("valskip", executor.FormatOpenAI, &validatingMockExecutor{err: errors.New("should not be called")})
+	t.Cleanup(func() { registry.Unregister("valskip") })
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := `{"name":"Skip Key Conn","api_key":"sk-any"}`
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/providers/valskip/connections", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = []gin.Param{{Key: "id", Value: "valskip"}}
+	h.AddConnection(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("skip validation: status = %d, want 201; body=%s", w.Code, w.Body.String())
+	}
+	var cnt int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM connections WHERE provider_type_id = 'valskip'`).Scan(&cnt); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if cnt != 1 {
+		t.Fatalf("expected one connection persisted, got %d", cnt)
+	}
+}
