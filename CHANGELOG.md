@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **200-tool cap for `grok-cli`** — flattens and truncates large tool lists to the first 200 entries before sending upstream, with a warn log when truncation occurs.
 - **Transactional provider-account creation with deduplication, auto-priority, and reorder** — `AddConnection` now runs in a SQLite transaction, rejects duplicate `(provider, name)` or OAuth-token accounts with `409`, auto-assigns priority as `max + 1`, and normalizes priority ordering after every add/delete.
 - **Pre-save provider key validation** — backend rejects invalid API keys before persisting the connection; dashboard modal surfaces validation errors inline and blocks submit until the key passes.
 - **Per-model account lockout with exponential backoff** — rate-limit/quota errors lock only the failing `(connection, model)` pair, escalate backoff (`30s × 2^level` capped at `1h`), honor upstream `resets_at` timestamps, and clear automatically on success.
@@ -18,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Device-tracker configuration** — env vars `DEVICE_TRACKER_TTL_MS`, `DEVICE_TRACKER_MAX_PER_KEY`, `DEVICE_TRACKER_MAX_TOTAL_DEVICES`.
 
 ### Fixed
+- **Grok CLI non-stream response translation** — `/v1/chat/completions` responses from `grok-cli` are now translated back to standard OpenAI format instead of leaking Grok's internal `response.completed` event shape.
+- **Grok CLI tool-call argument streaming** — buffers per-call `function_call_arguments.delta` chunks and falls back to accumulated arguments when `output_item.done` arrives with empty arguments.
 - Provider-account single add is now transaction-safe; no more inconsistent in-memory state if DB insert fails.
 - Priority gaps after connection deletion are closed by automatic reordering.
 
