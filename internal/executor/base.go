@@ -34,6 +34,7 @@ type StreamResult struct {
 	Chunks     chan StreamChunk
 	Headers    http.Header
 	StatusCode int
+	CostUsd    float64 // optional provider-reported exact cost
 }
 
 // StreamConfig holds per-request streaming tunables.
@@ -75,6 +76,7 @@ type Response struct {
 	Headers    http.Header
 	Body       []byte
 	Usage      map[string]int64 // optional provider-reported token usage
+	CostUsd    float64          // optional provider-reported exact cost
 }
 
 // Request is the unified execution request.

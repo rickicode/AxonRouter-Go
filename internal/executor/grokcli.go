@@ -19,9 +19,9 @@ import (
 )
 
 const (
-	defaultGrokCLIBaseURL = "https://cli-chat-proxy.grok.com/v1/responses"
+	defaultGrokCLIBaseURL       = "https://cli-chat-proxy.grok.com/v1/responses"
 	defaultGrokCLIClientVersion = "0.2.99"
-	defaultGrokCLIUserAgent = "grok-shell/" + defaultGrokCLIClientVersion + " (linux; x86_64)"
+	defaultGrokCLIUserAgent     = "grok-shell/" + defaultGrokCLIClientVersion + " (linux; x86_64)"
 )
 
 // GrokCLIExecutor handles xAI Grok CLI's Responses API over OAuth tokens.
@@ -105,21 +105,21 @@ func grokcliHeaders(req *Request, sessionID, convID, agentID, reqID string, turn
 	// cli-chat-proxy endpoint while avoiding older/xai-grok-workspace headers
 	// that can trigger Cloudflare/404-style rejections.
 	headers := map[string]string{
-		"Content-Type": "application/json",
-		"Accept": "text/event-stream",
-		"Authorization": "Bearer " + token,
-		"X-XAI-Token-Auth": "xai-grok-cli",
-		"x-grok-client-version": defaultGrokCLIClientVersion,
+		"Content-Type":             "application/json",
+		"Accept":                   "text/event-stream",
+		"Authorization":            "Bearer " + token,
+		"X-XAI-Token-Auth":         "xai-grok-cli",
+		"x-grok-client-version":    defaultGrokCLIClientVersion,
 		"x-grok-client-identifier": "grok-shell",
-		"x-grok-client-mode": "headless",
-		"x-grok-session-id": sessionID,
-		"x-grok-conv-id": convID,
-		"x-grok-req-id": reqID,
-		"x-grok-turn-idx": strconv.Itoa(turnIdx),
-		"x-grok-agent-id": agentID,
-		"x-grok-model-override": ExtractModel(req.Model),
-		"User-Agent": ua,
-		"Connection": "Keep-Alive",
+		"x-grok-client-mode":       "headless",
+		"x-grok-session-id":        sessionID,
+		"x-grok-conv-id":           convID,
+		"x-grok-req-id":            reqID,
+		"x-grok-turn-idx":          strconv.Itoa(turnIdx),
+		"x-grok-agent-id":          agentID,
+		"x-grok-model-override":    ExtractModel(req.Model),
+		"User-Agent":               ua,
+		"Connection":               "Keep-Alive",
 	}
 	if email != "" {
 		headers["x-email"] = email
@@ -251,7 +251,10 @@ func (e *GrokCLIExecutor) allocateGrokCLISession(req *Request) (sessionID, convI
 	return sessionID, convID, agentID, reqID, turnIdx, nil
 }
 
-const grokCLIMaxTools = 200
+const (
+	grokCLIMaxTools            = 200
+	grokCLICostUsdTicksDivisor = 10_000_000_000
+)
 
 var grokCLIAllowedTopLevel = map[string]bool{
 	"model":               true,
@@ -574,6 +577,16 @@ func extractGrokCLIUsage(payload []byte) GrokCLIUsage {
 	}
 }
 
+func extractGrokCLICostInUsdTicks(payload []byte) uint64 {
+	trimmed := strings.TrimSpace(string(payload))
+	data, _ := grokcliParseEvent([]byte(trimmed))
+	root := gjson.ParseBytes(data)
+	if r := root.Get("response"); r.Exists() {
+		root = r
+	}
+	return root.Get("usage.cost_in_usd_ticks").Uint()
+}
+
 func grokcliParseEvent(line []byte) ([]byte, string) {
 	data := strings.TrimSpace(string(line))
 	if strings.HasPrefix(data, "data:") {
@@ -724,11 +737,13 @@ func (e *GrokCLIExecutor) Execute(ctx context.Context, req *Request) (*Response,
 	}
 
 	responseBody, _ := grokcliParseEvent(completedPayload)
+	costTicks := extractGrokCLICostInUsdTicks(completedPayload)
 	return &Response{
 		StatusCode: statusCode,
 		Body:       responseBody,
 		Headers:    streamResult.Headers,
 		Usage:      usage.ToMap(),
+		CostUsd:    float64(costTicks) / grokCLICostUsdTicksDivisor,
 	}, nil
 }
 

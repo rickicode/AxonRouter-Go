@@ -292,6 +292,7 @@ attemptLoop:
 				ReasoningTokens:     tokenCounts.ReasoningTokens,
 				CachedTokens:        tokenCounts.CachedTokens,
 				CacheCreationTokens: tokenCounts.CacheCreationTokens,
+				CostUsd:             resp.CostUsd,
 				LatencyMs:           latency,
 				StatusCode:          resp.StatusCode,
 				TokensEstimated:     tokensEstimated,

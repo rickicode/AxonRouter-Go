@@ -1376,6 +1376,7 @@ func (h *Handler) streamResponse(
 					ReasoningTokens:     acc.ReasoningTokens,
 					CachedTokens:        acc.CachedTokens,
 					CacheCreationTokens: acc.CacheCreationTokens,
+					CostUsd:             acc.CostUsd,
 					LatencyMs:           latency,
 					StatusCode:          http.StatusOK,
 					TokensEstimated:     tokensEstimated,
@@ -1478,6 +1479,9 @@ func (h *Handler) streamResponse(
 
 			if counts, found := ExtractTokensFromSSEChunk(chunk.Payload); found {
 				MergeTokenCounts(&acc, &counts)
+			}
+			if costUsd, found := ExtractCostInUsdTicksFromSSEChunk(chunk.Payload); found {
+				acc.CostUsd = costUsd
 			}
 
 		case <-ticker.C:

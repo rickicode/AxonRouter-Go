@@ -2,7 +2,6 @@ package v1
 
 import "testing"
 
-
 func TestExtractTokensFromBody(t *testing.T) {
 	cases := []struct {
 		name string
@@ -145,6 +144,64 @@ func TestExtractTokensFromSSEChunk(t *testing.T) {
 	}
 }
 
+func TestExtractCostInUsdTicksFromSSEChunk(t *testing.T) {
+	cases := []struct {
+		name  string
+		line  string
+		want  float64
+		found bool
+	}{
+		{
+			name:  "non-data line returns false",
+			line:  "event: message",
+			want:  0,
+			found: false,
+		},
+		{
+			name:  "empty data line returns false",
+			line:  "data:",
+			want:  0,
+			found: false,
+		},
+		{
+			name:  "done marker returns false",
+			line:  "data: [DONE]",
+			want:  0,
+			found: false,
+		},
+		{
+			name:  "response.usage.cost_in_usd_ticks",
+			line:  `data: {"type":"response.completed","response":{"usage":{"cost_in_usd_ticks":25000000000}}}`,
+			want:  2.5,
+			found: true,
+		},
+		{
+			name:  "top-level usage.cost_in_usd_ticks",
+			line:  `data: {"done":true,"usage":{"cost_in_usd_ticks":10000000000}}`,
+			want:  1.0,
+			found: true,
+		},
+		{
+			name:  "content chunk no cost returns false",
+			line:  `data: {"type":"content_block_delta","delta":{"text":"hello"}}`,
+			want:  0,
+			found: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, found := ExtractCostInUsdTicksFromSSEChunk([]byte(tc.line))
+			if found != tc.found {
+				t.Fatalf("got found=%v, want %v", found, tc.found)
+			}
+			if got != tc.want {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestMergeTokenCounts(t *testing.T) {
 	cases := []struct {
 		name string
@@ -155,8 +212,8 @@ func TestMergeTokenCounts(t *testing.T) {
 		{
 			name: "merge all non-zero fields",
 			dst:  StreamTokenCounts{},
-			src:  StreamTokenCounts{InputTokens: 10, OutputTokens: 20, ReasoningTokens: 5, CachedTokens: 3, CacheCreationTokens: 1},
-			want: StreamTokenCounts{InputTokens: 10, OutputTokens: 20, ReasoningTokens: 5, CachedTokens: 3, CacheCreationTokens: 1},
+			src:  StreamTokenCounts{InputTokens: 10, OutputTokens: 20, ReasoningTokens: 5, CachedTokens: 3, CacheCreationTokens: 1, CostUsd: 1.25},
+			want: StreamTokenCounts{InputTokens: 10, OutputTokens: 20, ReasoningTokens: 5, CachedTokens: 3, CacheCreationTokens: 1, CostUsd: 1.25},
 		},
 		{
 			name: "non-zero src overwrites dst",
