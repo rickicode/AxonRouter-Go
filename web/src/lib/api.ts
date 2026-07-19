@@ -500,6 +500,26 @@ export interface KiroAutoImportResult {
   error?: string;
 }
 
+export interface KiroDeviceCodeResponse {
+  auth_url: string;
+  session_id: string;
+  port: number;
+  user_code?: string;
+}
+
+export interface KiroPollResponse {
+  status: string;
+  name?: string;
+  connection_id?: string;
+  error?: string;
+}
+
+export interface KiroConnectionResponse {
+  connection_id: string;
+  name: string;
+  status: string;
+}
+
 export const oauthApi = {
   startFlow: (provider: string, providerName?: string) =>
     fetchApi<{
@@ -531,6 +551,62 @@ export const oauthApi = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+
+  startKiroBuilderID: () =>
+    fetchApi<KiroDeviceCodeResponse>("/oauth/kiro/builder-id/start", {
+      method: "POST",
+    }),
+
+  startKiroIDC: (startUrl: string, issuerUrl?: string, region?: string) =>
+    fetchApi<KiroDeviceCodeResponse>("/oauth/kiro/idc/start", {
+      method: "POST",
+      body: JSON.stringify({ start_url: startUrl, issuer_url: issuerUrl, region }),
+    }),
+
+  startKiroSocial: (provider: "google" | "github") =>
+    fetchApi<{ auth_url: string; session_id: string }>(
+      `/oauth/kiro/${provider}/start`,
+      { method: "POST" }
+    ),
+
+  exchangeKiroSocial: (provider: "google" | "github", sessionId: string, code: string) =>
+    fetchApi<KiroConnectionResponse>(`/oauth/kiro/${provider}/callback`, {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId, code }),
+    }),
+
+  validateKiroAPIKey: (apiKey: string, region?: string) =>
+    fetchApi<KiroConnectionResponse>("/oauth/kiro/api-key", {
+      method: "POST",
+      body: JSON.stringify({ api_key: apiKey, region }),
+    }),
+
+  importKiroToken: (
+    refreshToken: string,
+    clientId?: string,
+    clientSecret?: string,
+    region?: string,
+    startUrl?: string
+  ) =>
+    fetchApi<KiroConnectionResponse>("/oauth/kiro/import", {
+      method: "POST",
+      body: JSON.stringify({
+        refresh_token: refreshToken,
+        client_id: clientId,
+        client_secret: clientSecret,
+        region,
+        start_url: startUrl,
+      }),
+    }),
+
+  importKiroExternalIDP: (json: string) =>
+    fetchApi<KiroConnectionResponse>("/oauth/kiro/external-idp", {
+      method: "POST",
+      body: JSON.stringify({ json }),
+    }),
+
+  pollKiroSession: (sessionId: string) =>
+    fetchApi<KiroPollResponse>(`/oauth/kiro/${sessionId}/poll`),
 
   autoImportKiro: () => fetchApi<KiroAutoImportResult>("/oauth/kiro/auto-import"),
 };
