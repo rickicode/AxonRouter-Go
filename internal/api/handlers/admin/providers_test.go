@@ -615,6 +615,126 @@ func TestBulkAddConnections_PartialFailure(t *testing.T) {
 	}
 }
 
+func seedOCProviderAndConnections(t *testing.T, database *sql.DB) (string, string, string) {
+	t.Helper()
+	now := time.Now().Unix()
+	if _, err := database.Exec(`DELETE FROM connections WHERE provider_type_id = 'oc'`); err != nil {
+		t.Fatalf("clear oc connections: %v", err)
+	}
+	if _, err := database.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('oc','OpenCode Free','openai','http://x',?)`, now); err != nil {
+		t.Fatalf("seed provider_type oc: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO proxy_pools (id, name, type, is_active, created_at, updated_at) VALUES ('pool-a','Pool A','http',1,?,?), ('pool-b','Pool B','http',1,?,?)`, now, now, now, now); err != nil {
+		t.Fatalf("seed proxy pools: %v", err)
+	}
+	conn1 := "oc-conn-1"
+	conn2 := "oc-conn-2"
+	if _, err := database.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, priority, provider_specific_data, is_active, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		conn1, "oc", "OC 1", "none", "ready", 1, `{"accountId":"a1"}`, 1, now, now); err != nil {
+		t.Fatalf("seed connection 1: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, priority, provider_specific_data, is_active, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		conn2, "oc", "OC 2", "none", "ready", 2, `{"accountId":"a2","proxyPoolId":"pool-a"}`, 1, now, now); err != nil {
+		t.Fatalf("seed connection 2: %v", err)
+	}
+	return conn1, conn2, "pool-b"
+}
+
+// TestBulkAssignProxy_BindAndUnbind updates provider_specific_data.proxyPoolId
+// for multiple oc connections in a single transaction and supports unbinding.
+func TestBulkAssignProxy_BindAndUnbind(t *testing.T) {
+	database := newConnectionHandlerTestDB(t)
+	conn1, conn2, poolB := seedOCProviderAndConnections(t, database)
+
+	h := newProviderHandlerTestDeps(t, database)
+	gin.SetMode(gin.TestMode)
+
+	// 1. Bind both connections to pool-b.
+	body, _ := json.Marshal(map[string]any{"connection_ids": []string{conn1, conn2}, "proxy_pool_id": poolB})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/providers/oc/connections/bulk-proxy", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = []gin.Param{{Key: "id", Value: "oc"}}
+	h.BulkAssignProxy(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("bind status=%d, body=%s", w.Code, w.Body.String())
+	}
+	var bindResp struct {
+		Updated int `json:"updated"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &bindResp); err != nil {
+		t.Fatalf("unmarshal bind resp: %v", err)
+	}
+	if bindResp.Updated != 2 {
+		t.Fatalf("updated=%d, want 2", bindResp.Updated)
+	}
+
+	assertPool := func(connID, want string) {
+		t.Helper()
+		var raw string
+		if err := database.QueryRow(`SELECT COALESCE(provider_specific_data,'') FROM connections WHERE id = ?`, connID).Scan(&raw); err != nil {
+			t.Fatalf("fetch psd: %v", err)
+		}
+		var psd map[string]string
+		if err := json.Unmarshal([]byte(raw), &psd); err != nil {
+			t.Fatalf("unmarshal psd: %v", err)
+		}
+		if got := psd["proxyPoolId"]; got != want {
+			t.Errorf("%s proxyPoolId=%q, want %q", connID, got, want)
+		}
+	}
+	assertPool(conn1, "pool-b")
+	assertPool(conn2, "pool-b")
+
+	// 2. Unbind by sending null proxy_pool_id.
+	body, _ = json.Marshal(map[string]any{"connection_ids": []string{conn1, conn2}, "proxy_pool_id": nil})
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/providers/oc/connections/bulk-proxy", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = []gin.Param{{Key: "id", Value: "oc"}}
+	h.BulkAssignProxy(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("unbind status=%d, body=%s", w.Code, w.Body.String())
+	}
+	assertPool(conn1, "")
+	assertPool(conn2, "")
+}
+
+// TestBulkAssignProxy_ProviderWithoutProxyPools rejects bulk proxy assignment
+// for providers that do not require a proxy pool.
+func TestBulkAssignProxy_ProviderWithoutProxyPools(t *testing.T) {
+	database := newConnectionHandlerTestDB(t)
+	now := time.Now().Unix()
+	if _, err := database.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('openai','OpenAI','openai','http://x',?)`, now); err != nil {
+		t.Fatalf("seed openai: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('oa-1','openai','OA 1','api_key','ready',1,?,?)`, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+
+	h := newProviderHandlerTestDeps(t, database)
+	gin.SetMode(gin.TestMode)
+
+	body, _ := json.Marshal(map[string]any{"connection_ids": []string{"oa-1"}, "proxy_pool_id": "pool-a"})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/connections/bulk-proxy", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = []gin.Param{{Key: "id", Value: "openai"}}
+	h.BulkAssignProxy(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400; body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "proxy pool") {
+		t.Errorf("expected proxy pool error, got %s", w.Body.String())
+	}
+}
+
 // TestBulkAddConnections_NoContentionUnderLoad proves the fix: while a
 // background goroutine hammers the SAME WriteQueue with writes, a 1000-row
 // bulk import routed through the queue completes with zero failures (the

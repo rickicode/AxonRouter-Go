@@ -3,8 +3,8 @@
  import { loadProvider, selectedProvider, loadConnections, connections, connectionPagination, connectionFilter, loadProviderModels, providerModels, modelTestResults, testProviderModel, addProviderModel, deleteProviderModel, isLoading, error } from '$lib/stores';
  import { unwrapInt, getTokenExpiry } from '$lib/utils';
 import { copyToClipboard } from '$lib/copy';
- import { connectionsApi, providersApi } from '$lib/api';
-import type { RoutingMode, ProviderModelEntry } from '$lib/api';
+ import { connectionsApi, providersApi, proxyPoolsApi } from '$lib/api';
+import type { RoutingMode, ProviderModelEntry, ProxyPool } from '$lib/api';
  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
  import { Button } from '$lib/components/ui/button';
  import { Badge } from '$lib/components/ui/badge';
@@ -40,8 +40,19 @@ let newModel = $state('');
  let perPage = $state(50);
  let testingAll = $state(false);
  let actionLoading = $state<{ connectionId: string; action: 'test' | 'reset' | 'refresh' | 'delete' } | null>(null);
- let deleteTarget = $state<{ id: string; name: string } | null>(null);
- let deleteDialogOpen = $state(false);
+  let deleteTarget = $state<{ id: string; name: string } | null>(null);
+  let deleteDialogOpen = $state(false);
+
+  // Bulk proxy assignment state
+  let selectedConnectionIds = $state<Set<string>>(new Set());
+  let proxyPools = $state<ProxyPool[]>([]);
+  let selectedProxyPoolId = $state('');
+  let bulkAssigning = $state(false);
+
+  const needsProxyPool = $derived(providerId === 'oc' || providerId === 'mimocode');
+  const selectedCount = $derived(selectedConnectionIds.size);
+  const allVisibleSelected = $derived($connections.length > 0 && $connections.every((c) => selectedConnectionIds.has(c.id)));
+  const canApplyProxy = $derived(selectedCount > 0);
 
  let providerCategoryId = $derived($selectedProvider?.category ?? meta?.category ?? 'compatible');
  let providerCategoryLabel = $derived(getCategoryById(providerCategoryId)?.label ?? providerCategoryId);
@@ -94,17 +105,18 @@ let groupedProviderModels = $derived.by(() => {
 	return groups;
 });
 
-onMount(() => {
- document.title = `${meta?.displayName ?? 'Provider'} — AxonRouter`;
- loadProvider(providerId);
- loadConnections(providerId, currentPage, perPage);
- loadProviderModels(providerId);
- providersApi.getSettings(providerId).then((s) => {
- routingMode = s.routing_mode;
- }).catch(() => {
- // keep default
+ onMount(() => {
+  document.title = `${meta?.displayName ?? 'Provider'} — AxonRouter`;
+  loadProvider(providerId);
+  loadConnections(providerId, currentPage, perPage);
+  loadProviderModels(providerId);
+  loadProxyPools();
+  providersApi.getSettings(providerId).then((s) => {
+  routingMode = s.routing_mode;
+  }).catch(() => {
+  // keep default
+  });
  });
-});
 
  function formatCooldown(raw: unknown): string {
  const cooldownUntil = unwrapInt(raw);
@@ -216,21 +228,71 @@ function confirmDeleteConnection(connId: string, name: string) {
  }
 
  async function executeDeleteConnection() {
- if (!deleteTarget) return;
- const { id: connId, name } = deleteTarget;
- deleteTarget = null;
- deleteDialogOpen = false;
-  actionLoading = { connectionId: connId, action: 'delete' };
-  try {
-    await connectionsApi.delete(connId);
- toast.success(`Deleted "${name}"`);
- await loadConnections(providerId, currentPage, perPage);
- } catch (err) {
- toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-  } finally { actionLoading = null; }
+  if (!deleteTarget) return;
+  const { id: connId, name } = deleteTarget;
+  deleteTarget = null;
+  deleteDialogOpen = false;
+   actionLoading = { connectionId: connId, action: 'delete' };
+   try {
+     await connectionsApi.delete(connId);
+  toast.success(`Deleted "${name}"`);
+  await loadConnections(providerId, currentPage, perPage);
+  } catch (err) {
+  toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+   } finally { actionLoading = null; }
 }
 
-</script>
+function toggleSelectConnection(id: string) {
+  if (selectedConnectionIds.has(id)) {
+    selectedConnectionIds.delete(id);
+  } else {
+    selectedConnectionIds.add(id);
+  }
+  selectedConnectionIds = new Set(selectedConnectionIds);
+}
+
+function toggleSelectAll() {
+  if (allVisibleSelected) {
+    for (const c of $connections) selectedConnectionIds.delete(c.id);
+  } else {
+    for (const c of $connections) selectedConnectionIds.add(c.id);
+  }
+  selectedConnectionIds = new Set(selectedConnectionIds);
+}
+
+function clearSelection() {
+  selectedConnectionIds = new Set();
+}
+
+async function loadProxyPools() {
+  if (!needsProxyPool) return;
+  try {
+    proxyPools = await proxyPoolsApi.listAll();
+  } catch (err) {
+    toast.error('Failed to load proxy pools: ' + (err instanceof Error ? err.message : 'Unknown'));
+  }
+}
+
+async function handleBulkAssignProxy() {
+  if (!needsProxyPool || selectedCount === 0) return;
+  bulkAssigning = true;
+  try {
+    const poolId = selectedProxyPoolId || null;
+    const res = await connectionsApi.bulkAssignProxy(providerId, {
+      connection_ids: [...selectedConnectionIds],
+      proxy_pool_id: poolId,
+    });
+    toast.success(`Proxy pool updated for ${res.updated} connection${res.updated === 1 ? '' : 's'}`);
+    clearSelection();
+    await loadConnections(providerId, currentPage, perPage);
+  } catch (err) {
+    toast.error('Bulk proxy assignment failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+  } finally {
+    bulkAssigning = false;
+  }
+}
+
+ </script>
 
 {#snippet connectionBadges(row: any)}
   {@const isDefault = isDefaultDirect(row)}
@@ -351,13 +413,40 @@ function confirmDeleteConnection(connId: string, name: string) {
  <Button onclick={() => showAddModal = true} size="sm" class="text-body-sm rounded-sm">
  Add connection
  </Button>
- </div>
- </div>
+  </div>
+  </div>
 
- <div class="flex flex-wrap gap-3">
- <Select.Root
- type="single"
- value={$connectionFilter.status}
+  {#if needsProxyPool && selectedCount > 0}
+    <div class="flex items-center justify-between gap-3 flex-wrap rounded-xl border border-border bg-card shadow-card p-3">
+      <span class="text-body-sm-strong">{selectedCount} selected</span>
+      <div class="flex items-center gap-2 flex-wrap">
+        <Select.Root
+          type="single"
+          value={selectedProxyPoolId}
+          onValueChange={(value: string) => { selectedProxyPoolId = value; }}
+        >
+          <Select.Trigger class="w-[200px] h-9 text-body-sm rounded-sm">
+            {selectedProxyPoolId ? (proxyPools.find((p) => p.id === selectedProxyPoolId)?.name ?? 'Select pool') : 'Unbind proxy pool'}
+          </Select.Trigger>
+          <Select.Content>
+            <Select.Item value="" class="text-body-sm">Unbind proxy pool</Select.Item>
+            {#each proxyPools.filter((p) => p.isActive) as pool (pool.id)}
+              <Select.Item value={pool.id} class="text-body-sm">{pool.name}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+        <Button onclick={handleBulkAssignProxy} disabled={!canApplyProxy || bulkAssigning} size="sm" class="text-body-sm rounded-sm">
+          {bulkAssigning ? 'Applying...' : 'Apply'}
+        </Button>
+        <Button onclick={clearSelection} variant="ghost" size="sm" class="text-body-sm rounded-sm">Clear</Button>
+      </div>
+    </div>
+  {/if}
+
+  <div class="flex flex-wrap gap-3">
+  <Select.Root
+  type="single"
+  value={$connectionFilter.status}
  onValueChange={(value: string) => { $connectionFilter.status = value || ''; currentPage = 1; loadConnections(providerId, currentPage, perPage); }}
  >
  <Select.Trigger class="w-full sm:w-[180px] h-9 text-body-sm rounded-sm">
@@ -379,6 +468,11 @@ function confirmDeleteConnection(connId: string, name: string) {
       <table class="w-full text-left border-collapse">
  <thead>
  <tr class="border-b border-border bg-muted/30">
+ {#if needsProxyPool}
+ <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-2 w-10 text-center">
+   <input type="checkbox" checked={allVisibleSelected} onchange={toggleSelectAll} class="size-4 rounded border-border bg-background text-foreground accent-foreground cursor-pointer" aria-label="Select all connections" />
+ </th>
+ {/if}
  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Name</th>
  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Status</th>
  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Auth</th>
@@ -390,7 +484,7 @@ function confirmDeleteConnection(connId: string, name: string) {
  </thead>
 <tbody class="divide-y divide-border">
           {#if $connections.length === 0}
-          <tr><td colspan="7" class="p-0">
+          <tr><td colspan={needsProxyPool ? 8 : 7} class="p-0">
             <div class="flex flex-col items-center justify-center py-12 gap-3">
               <div class="size-12 rounded-full bg-muted/50 flex items-center justify-center">
                 <svg class="size-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -413,6 +507,11 @@ function confirmDeleteConnection(connId: string, name: string) {
           {:else}
           {#each $connections as row}
           <tr class="transition-colors hover:bg-accent/20 group">
+            {#if needsProxyPool}
+            <td class="py-3 px-2 text-center">
+              <input type="checkbox" checked={selectedConnectionIds.has(row.id)} onchange={() => toggleSelectConnection(row.id)} class="size-4 rounded border-border bg-background text-foreground accent-foreground cursor-pointer" aria-label="Select {row.name}" />
+            </td>
+            {/if}
             <td class="py-3 px-4">
               <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <a href="/providers/{providerId}/{row.id}" class="inline-flex items-center gap-1.5 text-body-sm-strong hover:underline">
@@ -479,9 +578,14 @@ function confirmDeleteConnection(connId: string, name: string) {
               </a>
               {@render connectionBadges(row)}
             </div>
-            <Button variant="ghost" size="icon" class="size-9 shrink-0" href={`/providers/${providerId}/${row.id}`} title="Open connection" aria-label="Open connection">
-              <Icon name="chevronRight" class="size-6" />
-            </Button>
+            <div class="flex items-center gap-2 shrink-0">
+              {#if needsProxyPool}
+                <input type="checkbox" checked={selectedConnectionIds.has(row.id)} onchange={() => toggleSelectConnection(row.id)} class="size-4 rounded border-border bg-background text-foreground accent-foreground cursor-pointer" aria-label="Select {row.name}" />
+              {/if}
+              <Button variant="ghost" size="icon" class="size-9 shrink-0" href={`/providers/${providerId}/${row.id}`} title="Open connection" aria-label="Open connection">
+                <Icon name="chevronRight" class="size-6" />
+              </Button>
+            </div>
           </div>
 
           <div class="grid grid-cols-2 gap-3 text-caption-mono text-muted-foreground">

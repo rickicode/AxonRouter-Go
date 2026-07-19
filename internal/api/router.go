@@ -285,6 +285,7 @@ func New(cfg Config) *Router {
 		g.POST("/providers/:id/test", providerH.TestAll)
 		g.POST("/providers/:id/connections", providerH.AddConnection)
 		g.POST("/providers/:id/connections/bulk", providerH.BulkAddConnections)
+		g.POST("/providers/:id/connections/bulk-proxy", providerH.BulkAssignProxy)
 		g.POST("/providers/validate", providerH.ValidateKey)
 		g.GET("/providers/:id/settings", providerH.GetSettings)
 		g.PATCH("/providers/:id/settings", providerH.UpdateSettings)

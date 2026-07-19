@@ -887,6 +887,151 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"created": created, "total": len(req.Connections), "failed": failed, "errors": errors})
 }
 
+// BulkAssignProxy assigns (or unbinds) a proxy pool for multiple connections of
+// a provider that requires proxy pools. It mutates provider_specific_data in a
+// single transaction.
+func (h *ProviderHandler) BulkAssignProxy(c *gin.Context) {
+	providerID := c.Param("id")
+	var req struct {
+		ConnectionIDs []string `json:"connection_ids" binding:"required"`
+		ProxyPoolID   *string  `json:"proxy_pool_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Only oc and mimocode use proxy pools today.
+	if providerID != "oc" && providerID != "mimocode" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bulk proxy assignment is only supported for providers that require proxy pools"})
+		return
+	}
+
+	var exists bool
+	h.db.QueryRow(`SELECT COUNT(*) > 0 FROM provider_types WHERE id = ?`, providerID).Scan(&exists)
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "provider not found"})
+		return
+	}
+
+	if len(req.ConnectionIDs) == 0 {
+		c.JSON(http.StatusOK, gin.H{"updated": 0})
+		return
+	}
+
+	// Validate proxy pool when binding.
+	if req.ProxyPoolID != nil && *req.ProxyPoolID != "" {
+		var poolExists bool
+		h.db.QueryRow(`SELECT COUNT(*) > 0 FROM proxy_pools WHERE id = ? AND is_active = 1`, *req.ProxyPoolID).Scan(&poolExists)
+		if !poolExists {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "proxy pool not found or inactive"})
+			return
+		}
+	}
+
+	const maxBulk = 5000
+	if len(req.ConnectionIDs) > maxBulk {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "too many connections: maximum " + strconv.Itoa(maxBulk)})
+		return
+	}
+
+	placeholders := make([]string, len(req.ConnectionIDs))
+	args := make([]interface{}, 0, len(req.ConnectionIDs)+1)
+	for i, id := range req.ConnectionIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	inClause := strings.Join(placeholders, ",")
+
+	now := time.Now().Unix()
+	run := func(d *sql.DB) (int, error) {
+		tx, err := d.Begin()
+		if err != nil {
+			return 0, err
+		}
+		defer func() {
+			if err != nil {
+				_ = tx.Rollback()
+			}
+		}()
+
+		// Lock the relevant rows and load current provider_specific_data.
+		rows, err := tx.Query(`
+			SELECT id, COALESCE(provider_specific_data, '') FROM connections
+			WHERE provider_type_id = ? AND is_active = 1 AND id IN (`+inClause+`)
+		`, append([]interface{}{providerID}, args...)...)
+		if err != nil {
+			return 0, err
+		}
+		defer rows.Close()
+
+		type item struct {
+			id  string
+			psd map[string]string
+		}
+		var items []item
+		for rows.Next() {
+			var id, raw string
+			if err := rows.Scan(&id, &raw); err != nil {
+				return 0, err
+			}
+			psd := map[string]string{}
+			if raw != "" {
+				if e := json.Unmarshal([]byte(raw), &psd); e != nil {
+					return 0, e
+				}
+			}
+			items = append(items, item{id: id, psd: psd})
+		}
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		if len(items) == 0 {
+			_ = tx.Commit()
+			return 0, nil
+		}
+
+		// Update each row.
+		for _, it := range items {
+			if req.ProxyPoolID != nil && *req.ProxyPoolID != "" {
+				it.psd["proxyPoolId"] = *req.ProxyPoolID
+			} else {
+				delete(it.psd, "proxyPoolId")
+			}
+			b, err := json.Marshal(it.psd)
+			if err != nil {
+				return 0, err
+			}
+			var psdJSON interface{} = b
+			if len(it.psd) == 0 {
+				psdJSON = nil
+			}
+			if _, err := tx.Exec(`UPDATE connections SET provider_specific_data = ?, updated_at = ? WHERE id = ?`, psdJSON, now, it.id); err != nil {
+				return 0, err
+			}
+		}
+
+		return len(items), tx.Commit()
+	}
+
+	var updated int
+	var err error
+	if h.writeQueue != nil {
+		err = h.writeQueue.Do(c.Request.Context(), "bulk-assign-proxy", func(d *sql.DB) error {
+			updated, err = run(d)
+			return err
+		})
+	} else {
+		updated, err = run(h.db)
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"updated": updated})
+}
+
 // ValidateKey checks if an API key is valid for a provider by attempting a lightweight model list request.
 func (h *ProviderHandler) ValidateKey(c *gin.Context) {
 	var req struct {
