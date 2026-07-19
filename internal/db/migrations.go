@@ -236,7 +236,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		{"devin", "Devin CLI", "devin-cli", "", "apikey", []string{"llm"}},
 		{"qoder", "Qoder", "qoder", "https://dashscope.aliyuncs.com/compatible-mode/v1", "apikey", []string{"llm"}},
 
-		{"codebuddy", "CodeBuddy", "openai", "https://codebuddy.ai/v2/chat/completions", "oauth", []string{"llm"}},
+		{"codebuddy", "CodeBuddy", "openai", "https://www.codebuddy.ai/v2/chat/completions", "oauth", []string{"llm"}},
 
 		{"vertex", "Google Vertex AI", "openai", "https://aiplatform.googleapis.com/v1/projects/{projectId}/locations/{location}/endpoints/openapi", "service-account", []string{"llm"}},
 		{"bedrock", "Amazon Bedrock Mantle", "openai", "https://bedrock-mantle.{region}.api.aws/v1", "apikey", []string{"llm"}},
@@ -261,9 +261,9 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 	}
 
 	// CodeBuddy switched from the Tencent China endpoint (copilot.tencent.com)
-	// to the international endpoint (codebuddy.ai). Update existing seeded rows
+	// to the international endpoint (www.codebuddy.ai). Update existing seeded rows
 	// so the auth polling and chat requests stay consistent.
-	if _, err := db.Exec(`UPDATE provider_types SET base_url = 'https://codebuddy.ai/v2/chat/completions' WHERE id = 'codebuddy' AND base_url = 'https://copilot.tencent.com/v2/chat/completions'`); err != nil {
+	if _, err := db.Exec(`UPDATE provider_types SET base_url = 'https://www.codebuddy.ai/v2/chat/completions' WHERE id = 'codebuddy' AND base_url = 'https://copilot.tencent.com/v2/chat/completions'`); err != nil {
 		return err
 	}
 

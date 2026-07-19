@@ -38,7 +38,7 @@ func TestRequestDeviceCodeSuccess(t *testing.T) {
 			"code": 0,
 			"data": map[string]any{
 				"state":   "tencent-state-123",
-				"authUrl": "https://codebuddy.ai/auth/confirm",
+				"authUrl": "https://www.codebuddy.ai/auth/confirm",
 			},
 		})
 	}))
@@ -55,8 +55,8 @@ func TestRequestDeviceCodeSuccess(t *testing.T) {
 	if dc.state != "tencent-state-123" {
 		t.Errorf("state = %q, want tencent-state-123", dc.state)
 	}
-	if dc.authUrl != "https://codebuddy.ai/auth/confirm" {
-		t.Errorf("authUrl = %q, want https://codebuddy.ai/auth/confirm", dc.authUrl)
+	if dc.authUrl != "https://www.codebuddy.ai/auth/confirm" {
+		t.Errorf("authUrl = %q, want https://www.codebuddy.ai/auth/confirm", dc.authUrl)
 	}
 	if gotQuery.Get("platform") != platform {
 		t.Errorf("query platform = %v, want %q", gotQuery.Get("platform"), platform)
@@ -77,7 +77,7 @@ func TestRequestDeviceCodeMissingState(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"code": 0,
 			"data": map[string]any{
-				"authUrl": "https://codebuddy.ai/auth/confirm",
+				"authUrl": "https://www.codebuddy.ai/auth/confirm",
 			},
 		})
 	}))
@@ -203,14 +203,14 @@ func TestGenerateAuthURLAndGetUserCode(t *testing.T) {
 	svc := NewOAuthService(nil)
 	svc.states["state-abc"] = &deviceFlowState{
 		state:   "tencent-state-abc",
-		authUrl: "https://codebuddy.ai/auth/abc",
+		authUrl: "https://www.codebuddy.ai/auth/abc",
 	}
 
 	url, err := svc.GenerateAuthURL(context.Background(), "state-abc:0")
 	if err != nil {
 		t.Fatalf("GenerateAuthURL error = %v", err)
 	}
-	if url != "https://codebuddy.ai/auth/abc" {
+	if url != "https://www.codebuddy.ai/auth/abc" {
 		t.Errorf("auth URL = %q", url)
 	}
 	if got := svc.GetUserCode("state-abc"); got != "tencent-state-abc" {

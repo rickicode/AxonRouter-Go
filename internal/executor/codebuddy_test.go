@@ -14,7 +14,7 @@ func TestCodeBuddyHeaders(t *testing.T) {
 				"X-Product":           "SaaS",
 				"X-IDE-Type":          "CLI",
 				"X-IDE-Name":          "CLI",
-				"X-Domain":            "codebuddy.ai",
+				"X-Domain":            "www.codebuddy.ai",
 				"x-requested-with":    "XMLHttpRequest",
 				"x-codebuddy-request": "1",
 			},

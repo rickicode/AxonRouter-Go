@@ -590,7 +590,7 @@ export const PROVIDER_CATALOG: ProviderMeta[] = [
     authType: 'oauth',
     prefix: 'codebuddy/',
     isBuiltIn: true,
-    website: 'https://codebuddy.ai',
+    website: 'https://www.codebuddy.ai',
     color: '#006EFF',
     serviceKinds: ['llm'],
   },

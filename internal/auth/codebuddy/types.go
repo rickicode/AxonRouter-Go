@@ -3,9 +3,9 @@ package codebuddy
 import "time"
 
 const (
-	stateURL        = "https://codebuddy.ai/v2/plugin/auth/state"
-	tokenURL        = "https://codebuddy.ai/v2/plugin/auth/token"
-	refreshURL      = "https://codebuddy.ai/v2/plugin/auth/token/refresh"
+	stateURL        = "https://www.codebuddy.ai/v2/plugin/auth/state"
+	tokenURL        = "https://www.codebuddy.ai/v2/plugin/auth/token"
+	refreshURL      = "https://www.codebuddy.ai/v2/plugin/auth/token/refresh"
 	userAgent       = "CLI/2.63.2 CodeBuddy/2.63.2"
 	platform        = "CLI"
 	pollInterval    = 5 * time.Second
