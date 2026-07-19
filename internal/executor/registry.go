@@ -21,6 +21,8 @@ const (
 	FormatAntigravity     ProviderFormat = "antigravity"
 	FormatKiro            ProviderFormat = "kiro"
 	FormatGrokCLI         ProviderFormat = "grok-cli"
+	FormatDevinCLI       ProviderFormat = "devin-cli"
+	FormatQoder          ProviderFormat = "qoder"
 )
 
 // Registry maps provider prefixes to executors.
