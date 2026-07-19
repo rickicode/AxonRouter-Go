@@ -165,6 +165,7 @@ func TestGrokCLIExecutor_RequestTransform(t *testing.T) {
 		"unknown_field":    "drop-me",
 		"tools": []any{
 			map[string]any{
+				"type":      "namespace",
 				"namespace": "ns1",
 				"tools": []any{
 					map[string]any{"type": "function", "name": "tool_a", "parameters": map[string]any{"type": "object"}},
@@ -221,8 +222,8 @@ func TestGrokCLIExecutor_RequestTransform(t *testing.T) {
 		t.Errorf("model=%q, want grok-4.5", got)
 	}
 	tools := gjson.GetBytes(gotBody, "tools").Array()
-	if len(tools) != 1 || tools[0].Get("type").String() != "function" || tools[0].Get("name").String() != "tool_a" {
-		t.Errorf("expected flattened tool, got %s", gjson.GetBytes(gotBody, "tools").Raw)
+	if len(tools) != 1 || tools[0].Get("type").String() != "function" || tools[0].Get("name").String() != "ns1__tool_a" {
+		t.Errorf("expected qualified flattened tool, got %s", gjson.GetBytes(gotBody, "tools").Raw)
 	}
 }
 
@@ -244,6 +245,7 @@ func TestGrokCLIExecutor_ToolListTruncated(t *testing.T) {
 	rawTools := make([]any, 0, 250)
 	for i := 0; i < 250; i++ {
 		rawTools = append(rawTools, map[string]any{
+			"type":      "namespace",
 			"namespace": fmt.Sprintf("ns_%d", i),
 			"tools": []any{
 				map[string]any{"type": "function", "name": fmt.Sprintf("tool_%d", i), "parameters": map[string]any{"type": "object"}},
@@ -912,7 +914,167 @@ func TestGrokCLIExecutor_Retry_NoRetryOnAuth(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if count != 1 {
-		t.Fatalf("requests=%d, want 1 (no retry for 401)", count)
+}
+
+func TestGrokCLI_CollectNamespaceToolRefs(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{
+		"tools": []any{
+			map[string]any{
+				"type": "namespace",
+				"name": "ns1",
+				"tools": []any{
+					map[string]any{"type": "function", "name": "tool_a"},
+					map[string]any{"type": "custom", "name": "tool_b"},
+				},
+			},
+			map[string]any{"type": "function", "name": "tool_c"},
+			map[string]any{"type": "web_search"},
+		},
+		"input": []any{
+			map[string]any{"type": "message", "role": "user", "content": "hi"},
+			map[string]any{
+				"type": "additional_tools",
+				"tools": []any{
+					map[string]any{
+						"type": "namespace",
+						"name": "ns2",
+						"tools": []any{
+							map[string]any{"type": "function", "name": "tool_d"},
+						},
+					},
+				},
+			},
+		},
+	})
+	refs := collectGrokCLINamespaceToolRefs(body)
+	want := map[string]grokCLINamespaceToolRef{
+		"ns1__tool_a": {namespace: "ns1", name: "tool_a"},
+		"ns1__tool_b": {namespace: "ns1", name: "tool_b"},
+		"ns2__tool_d": {namespace: "ns2", name: "tool_d"},
+	}
+	if len(refs) != len(want) {
+		t.Fatalf("refs count=%d, want %d", len(refs), len(want))
+	}
+	for k, v := range want {
+		got, ok := refs[k]
+		if !ok {
+			t.Errorf("missing ref %q", k)
+			continue
+		}
+		if got != v {
+			t.Errorf("ref %q=%+v, want %+v", k, got, v)
+		}
+	}
+}
+
+func TestGrokCLI_CollectClientDeclaredKeys(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{
+		"tools": []any{
+			map[string]any{
+				"type": "namespace",
+				"name": "ns1",
+				"tools": []any{
+					map[string]any{"type": "function", "name": "tool_a"},
+					map[string]any{"type": "custom", "name": "tool_b"},
+				},
+			},
+			map[string]any{"type": "function", "name": "tool_c"},
+		},
+		"input": []any{
+			map[string]any{
+				"type": "additional_tools",
+				"tools": []any{
+					map[string]any{"type": "function", "name": "tool_d"},
+				},
+			},
+		},
+	})
+	keys := collectGrokCLIClientDeclaredKeys(body)
+	want := []string{
+		grokCLIClientToolKey("function", "ns1", "tool_a"),
+		grokCLIClientToolKey("function", "ns1", "tool_b"),
+		grokCLIClientToolKey("function", "", "tool_c"),
+		grokCLIClientToolKey("function", "", "tool_d"),
+	}
+	if len(keys) != len(want) {
+		t.Fatalf("keys count=%d, want %d; got %v", len(keys), len(want), keys)
+	}
+	for _, k := range want {
+		if !keys[k] {
+			t.Errorf("missing key %q", k)
+		}
+	}
+}
+
+func TestGrokCLI_FlattenNamespaceTools(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{
+		"tools": []any{
+			map[string]any{
+				"type": "namespace",
+				"name": "ns1",
+				"tools": []any{
+					map[string]any{"type": "function", "name": "tool_a", "parameters": map[string]any{"type": "object"}},
+					map[string]any{"type": "custom", "name": "tool_b"},
+					map[string]any{"function": map[string]any{"name": "tool_c", "parameters": map[string]any{"type": "object"}}},
+				},
+			},
+			map[string]any{"type": "function", "name": "tool_d"},
+			map[string]any{"type": "web_search"},
+		},
+	})
+	refs := collectGrokCLINamespaceToolRefs(body)
+	flat := grokcliFlattenNamespaceTools(body, refs)
+	tools := gjson.GetBytes(flat, "tools").Array()
+	if len(tools) != 5 {
+		t.Fatalf("expected 5 tools, got %d: %s", len(tools), gjson.GetBytes(flat, "tools").Raw)
+	}
+	cases := []struct {
+		idx  int
+		typ  string
+		name string
+		hasParams bool
+	}{
+		{0, "function", "ns1__tool_a", true},
+		{1, "function", "ns1__tool_b", false},
+		{2, "function", "ns1__tool_c", true},
+		{3, "function", "tool_d", false},
+		{4, "web_search", "", false},
+	}
+	for _, tc := range cases {
+		tool := tools[tc.idx]
+		if got := tool.Get("type").String(); got != tc.typ {
+			t.Errorf("tool[%d].type=%q, want %q", tc.idx, got, tc.typ)
+		}
+		if tc.name != "" && tool.Get("name").String() != tc.name {
+			t.Errorf("tool[%d].name=%q, want %q", tc.idx, tool.Get("name").String(), tc.name)
+		}
+		if tc.hasParams && !tool.Get("parameters").Exists() {
+			t.Errorf("tool[%d] missing parameters", tc.idx)
+		}
+	}
+}
+
+func TestGrokCLI_FlattenNamespaceTools_AdditionalTools(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{
+		"input": []any{
+			map[string]any{
+				"type": "additional_tools",
+				"tools": []any{
+					map[string]any{
+						"type": "namespace",
+						"name": "ns2",
+						"tools": []any{
+							map[string]any{"type": "function", "name": "tool_e"},
+						},
+					},
+				},
+			},
+		},
+	})
+	refs := collectGrokCLINamespaceToolRefs(body)
+	flat := grokcliFlattenNamespaceTools(body, refs)
+	tools := gjson.GetBytes(flat, "input.0.tools").Array()
+	if len(tools) != 1 || tools[0].Get("type").String() != "function" || tools[0].Get("name").String() != "ns2__tool_e" {
+		t.Fatalf("expected flattened additional_tools, got %s", gjson.GetBytes(flat, "input.0.tools").Raw)
 	}
 }

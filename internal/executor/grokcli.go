@@ -289,9 +289,32 @@ var grokCLIAllowedInputTypes = map[string]bool{
 	"additional_tools":        true,
 }
 
+// grokCLINormalizeCtx holds request-scoped namespace and client-tool metadata
+// used during Grok CLI request normalization. It must not be persisted to
+// connection state because it is rebuilt from each request payload.
+type grokCLINormalizeCtx struct {
+	namespaceRefs      map[string]grokCLINamespaceToolRef
+	clientDeclaredKeys map[string]bool
+}
+
+// grokCLINamespaceToolRef records the original namespace and short name for a
+// tool whose upstream name has been qualified.
+type grokCLINamespaceToolRef struct {
+	namespace string
+	name      string
+}
+
 func grokcliRequestBody(req *Request) ([]byte, error) {
+	// Build request-scoped normalization context from the raw payload and
+	// flatten namespace tools before unmarshalling into the executor's body map.
+	normCtx := grokCLINormalizeCtx{
+		namespaceRefs:      collectGrokCLINamespaceToolRefs(req.Body),
+		clientDeclaredKeys: collectGrokCLIClientDeclaredKeys(req.Body),
+	}
+	rawBody := grokcliFlattenNamespaceTools(req.Body, normCtx.namespaceRefs)
+
 	var body map[string]any
-	if err := json.Unmarshal(req.Body, &body); err != nil || body == nil {
+	if err := json.Unmarshal(rawBody, &body); err != nil || body == nil {
 		body = map[string]any{}
 	}
 
@@ -387,12 +410,11 @@ func grokcliRequestBody(req *Request) ([]byte, error) {
 	}
 
 	if rawTools, ok := body["tools"].([]any); ok {
-		flat := grokcliFlattenTools(rawTools)
-		if len(flat) > grokCLIMaxTools {
-			logging.Logger.Warn("grok-cli tool list truncated", "original", len(flat), "max", grokCLIMaxTools)
-			flat = flat[:grokCLIMaxTools]
+		if len(rawTools) > grokCLIMaxTools {
+			logging.Logger.Warn("grok-cli tool list truncated", "original", len(rawTools), "max", grokCLIMaxTools)
+			rawTools = rawTools[:grokCLIMaxTools]
 		}
-		body["tools"] = flat
+		body["tools"] = rawTools
 	}
 
 	if rawInput, ok := body["input"].([]any); ok {
@@ -406,43 +428,6 @@ func grokcliRequestBody(req *Request) ([]byte, error) {
 	}
 
 	return json.Marshal(body)
-}
-
-func grokcliFlattenTools(raw any) []any {
-	arr, ok := raw.([]any)
-	if !ok {
-		return nil
-	}
-	var out []any
-	for _, t := range arr {
-		m, ok := t.(map[string]any)
-		if !ok {
-			continue
-		}
-		if _, hasNS := m["namespace"]; hasNS {
-			if nested, ok := m["tools"].([]any); ok {
-				out = append(out, grokcliFlattenTools(nested)...)
-				continue
-			}
-		}
-		if fn, ok := m["function"].(map[string]any); ok {
-			fn["type"] = "function"
-			out = append(out, fn)
-			continue
-		}
-		if typ, ok := m["type"].(string); ok {
-			if typ == "custom" {
-				m["type"] = "function"
-			}
-			if typ == "function" {
-				if _, hasName := m["name"]; !hasName {
-					continue
-				}
-			}
-			out = append(out, m)
-		}
-	}
-	return out
 }
 
 func grokcliConvertMessagesToInput(messages gjson.Result) []any {
