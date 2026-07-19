@@ -2,6 +2,7 @@ package admin
 
 import (
 	"database/sql"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -55,9 +56,14 @@ func (h *ComboHandler) List(c *gin.Context) {
 	var combos []db.Combo
 	for rows.Next() {
 		cb := db.Combo{}
-		rows.Scan(&cb.ID, &cb.Name, &cb.Strategy, &cb.StickyLimit,
-			&cb.TimeoutMs, &cb.IsSmart, &cb.SmartGoal, &cb.FusionConfig,
-			&cb.IsActive, &cb.CreatedAt, &cb.UpdatedAt)
+		var fusionConfig sql.NullString
+		if err := rows.Scan(&cb.ID, &cb.Name, &cb.Strategy, &cb.StickyLimit,
+			&cb.TimeoutMs, &cb.IsSmart, &cb.SmartGoal, &fusionConfig,
+			&cb.IsActive, &cb.CreatedAt, &cb.UpdatedAt); err != nil {
+			log.Printf("WARN: failed to scan combo row in admin list: %v", err)
+			continue
+		}
+		cb.FusionConfig = fusionConfig.String
 		combos = append(combos, cb)
 	}
 

@@ -94,12 +94,14 @@ func (h *Handler) loadFromDB() {
 
 	for rows.Next() {
 		c := &db.Combo{}
+		var fusionConfig sql.NullString
 		if err := rows.Scan(&c.ID, &c.Name, &c.Strategy, &c.StickyLimit,
-			&c.TimeoutMs, &c.IsSmart, &c.SmartGoal, &c.FusionConfig,
+			&c.TimeoutMs, &c.IsSmart, &c.SmartGoal, &fusionConfig,
 			&c.IsActive, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			log.Printf("WARN: failed to scan combo row: %v", err)
 			continue
 		}
+		c.FusionConfig = fusionConfig.String
 		h.combos[c.ID] = c
 		h.byName[c.Name] = c
 		if c.IsSmart {
