@@ -17,6 +17,7 @@ type grokStreamState struct {
 	Model     string
 	ToolIndex int
 	ToolNames map[int]string
+	ToolArgs  map[string]string // call_id -> accumulated arguments
 }
 
 var dataTag = []byte("data:")
@@ -26,6 +27,7 @@ func getGrokState(param *any) *grokStreamState {
 		*param = &grokStreamState{
 			ToolIndex: -1,
 			ToolNames: make(map[int]string),
+			ToolArgs:  make(map[string]string),
 		}
 	}
 	return (*param).(*grokStreamState)
@@ -64,12 +66,19 @@ func convertGrokResponseToOpenAIStream(_ context.Context, _ string, _, _ []byte,
 		return [][]byte{chunk}
 
 	case "response.output_item.done":
-		if root.Get("item.type").String() == "function_call" {
+		item := root.Get("item")
+		if item.Get("type").String() == "function_call" {
 			state.ToolIndex++
-			name := root.Get("item.name").String()
+			name := item.Get("name").String()
 			state.ToolNames[state.ToolIndex] = name
-			callID := root.Get("item.call_id").String()
-			args := root.Get("item.arguments").String()
+			callID := item.Get("call_id").String()
+			args := item.Get("arguments").String()
+			if args == "" {
+				if acc, ok := state.ToolArgs[callID]; ok {
+					args = acc
+					delete(state.ToolArgs, callID)
+				}
+			}
 			tc := map[string]interface{}{
 				"index": state.ToolIndex,
 				"id":    callID,
@@ -93,8 +102,13 @@ func convertGrokResponseToOpenAIStream(_ context.Context, _ string, _, _ []byte,
 		return [][]byte{chunk}
 
 	case "response.function_call_arguments.delta":
-		// Grok CLI may stream function arguments; we ignore incremental argument
-		// deltas and rely on the complete arguments at output_item.done.
+		callID := root.Get("item_id").String()
+		if callID == "" {
+			callID = root.Get("call_id").String()
+		}
+		if callID != "" {
+			state.ToolArgs[callID] += root.Get("delta").String()
+		}
 		return nil
 	}
 
