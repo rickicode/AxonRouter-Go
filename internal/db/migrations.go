@@ -203,7 +203,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 	}{
 		{"ag", "Antigravity", "antigravity", "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse", "oauth", []string{"llm"}},
 		{"cx", "OpenAI Codex", "openai-responses", "https://chatgpt.com/backend-api/codex/responses", "oauth", []string{"llm"}},
-		{"kiro", "Kiro AI", "openai", "https://api.kiro.ai/v1", "oauth", []string{"llm"}},
+		{"kiro", "Kiro AI", "kiro", "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse", "oauth", []string{"llm"}},
 		{"openai", "OpenAI Platform", "openai", "https://api.openai.com/v1", "apikey", []string{"llm", "embedding", "image"}},
 		{"claude", "Anthropic Claude", "anthropic", "https://api.anthropic.com/v1", "apikey", []string{"llm"}},
 		{"gemini", "Gemini", "gemini", "https://generativelanguage.googleapis.com/v1beta", "apikey", []string{"llm"}},
@@ -252,6 +252,11 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 	// Repair legacy Grok CLI base_url rows that point at /v1 instead of /v1/responses.
 	// The executor now hardens this too, but fixing the DB avoids confusion in the UI.
 	if _, err := db.Exec(`UPDATE provider_types SET base_url = 'https://cli-chat-proxy.grok.com/v1/responses' WHERE id = 'grok-cli' AND base_url IN ('https://cli-chat-proxy.grok.com/v1', 'https://cli-chat-proxy.grok.com/v1/', 'https://cli-chat-proxy.grok.com/', 'https://cli-chat-proxy.grok.com')`); err != nil {
+		return err
+	}
+
+	// Repair legacy Kiro rows that were seeded with the wrong format/base_url.
+	if _, err := db.Exec(`UPDATE provider_types SET format = 'kiro', base_url = 'https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse' WHERE id = 'kiro'`); err != nil {
 		return err
 	}
 
@@ -609,6 +614,12 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 		{"deepseek-v3.2", "DeepSeek V3.2", 0.00062, 0.00185, 0, 0, 0},
 		{"grok-4.1-fast", "Grok 4.1 Fast", 0.0002, 0.0005, 0, 0, 0},
 		{"mistral-large", "Mistral Large", 0.002, 0.006, 0, 0, 0},
+
+		// ── Kiro (verified upstream model IDs; variants look up base ID via substring fallback) ──
+		{"claude-sonnet-4.6", "Claude Sonnet 4.6", 0.003, 0.015, 0, 0.0003, 0.00375},
+		{"claude-haiku-4.5", "Claude Haiku 4.5", 0.001, 0.005, 0, 0.0001, 0.00125},
+		{"deepseek-3.2", "DeepSeek V3.2", 0.0005, 0.0015, 0, 0, 0},
+		{"qwen3-coder-next", "Qwen3 Coder Next", 0.0004, 0.0012, 0, 0, 0},
 
 		// ── Misc ──
 		{"big-pickle", "Big Pickle", 0.0005, 0.001, 0, 0, 0},
