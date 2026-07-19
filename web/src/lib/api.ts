@@ -872,7 +872,12 @@ export interface DashboardStats {
   errors_today: number;
   avg_latency_ms_today: number;
   cpu_percent: number;
+  cpu_cores: number;
+  memory_used_bytes: number;
+  memory_total_bytes: number;
   memory_percent: number;
+  disk_used_bytes: number;
+  disk_total_bytes: number;
   disk_percent: number;
   uptime_seconds: number;
   buffer_length?: number;

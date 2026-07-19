@@ -4,7 +4,7 @@
   import { Button } from '$lib/components/ui/button';
   import ProviderOctopus from '$lib/components/ProviderOctopus.svelte';
   import { dashboardApi, type DashboardStats } from '$lib/api';
-  import { formatTokens, formatCount, loadActiveRequests, activeRequests } from '$lib/stores';
+  import { formatTokens, formatCount, formatBytes, loadActiveRequests, activeRequests } from '$lib/stores';
   import { toast } from 'svelte-sonner';
 
   import ActivityIcon from '@lucide/svelte/icons/activity';
@@ -60,14 +60,18 @@
     loading = true;
     errorMsg = null;
     try {
-      const s = await dashboardApi.stats();
-      stats = s;
-      await loadActiveRequests();
+      stats = await dashboardApi.stats();
     } catch (e) {
       errorMsg = e instanceof Error ? e.message : 'Failed to load dashboard';
       toast.error(errorMsg);
     } finally {
       loading = false;
+    }
+    // Best-effort live stream indicator; don't let it fail the whole dashboard.
+    try {
+      await loadActiveRequests();
+    } catch {
+      // ignored
     }
   }
 
@@ -129,9 +133,9 @@
 
     <!-- System KPIs -->
     <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-      {@render kpiCard('CPU', fmtPercent(stats.cpu_percent), 'system load', ZapIcon, 'bg-cyan-500/40', 'text-cyan-400')}
-      {@render kpiCard('Memory', fmtPercent(stats.memory_percent), 'system memory', DatabaseIcon, 'bg-fuchsia-500/40', 'text-fuchsia-400')}
-      {@render kpiCard('Disk', fmtPercent(stats.disk_percent), 'system disk', HardDriveIcon, 'bg-orange-500/40', 'text-orange-400')}
+      {@render kpiCard('CPU', fmtPercent(stats.cpu_percent), `${stats.cpu_cores ?? 0} cores`, ZapIcon, 'bg-cyan-500/40', 'text-cyan-400')}
+      {@render kpiCard('Memory', `${formatBytes(stats.memory_used_bytes ?? 0)} / ${formatBytes(stats.memory_total_bytes ?? 0)}`, fmtPercent(stats.memory_percent), DatabaseIcon, 'bg-fuchsia-500/40', 'text-fuchsia-400')}
+      {@render kpiCard('Disk', `${formatBytes(stats.disk_used_bytes ?? 0)} / ${formatBytes(stats.disk_total_bytes ?? 0)}`, fmtPercent(stats.disk_percent), HardDriveIcon, 'bg-orange-500/40', 'text-orange-400')}
       {@render kpiCard('Connections', `${stats.healthy_connections ?? 0}/${stats.total_connections}`, 'healthy / total', ServerIcon, 'bg-lime-500/40', 'text-lime-400')}
       {@render kpiCard('Providers', fmtInt(stats.total_providers), 'registered', BoxesIcon, 'bg-pink-500/40', 'text-pink-400')}
       {@render kpiCard('Combos', fmtInt(stats.total_combos), 'configured', LayersIcon, 'bg-indigo-500/40', 'text-indigo-400')}

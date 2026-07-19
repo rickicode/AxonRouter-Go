@@ -5,16 +5,30 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
+	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/mem"
 )
+
+// systemMetrics holds raw and percentage system resource readings.
+type systemMetrics struct {
+	CPUCores     int
+	CPUPercent   float64
+	MemUsed      uint64
+	MemTotal     uint64
+	MemPercent   float64
+	DiskUsed     uint64
+	DiskTotal    uint64
+	DiskPercent  float64
+}
 
 // DashboardHandler handles dashboard statistics.
 type DashboardHandler struct {
@@ -22,6 +36,10 @@ type DashboardHandler struct {
 	store   *connstate.Store
 	tracker *usage.Tracker
 	startAt time.Time
+
+	cpuMu  sync.RWMutex
+	cpuPct float64
+	cpuAt  time.Time
 }
 
 // NewDashboardHandler creates a new dashboard handler.
@@ -58,10 +76,13 @@ func (h *DashboardHandler) Stats(c *gin.Context) {
 
 	// Today's stats
 	agg := usage.NewAggregator(h.db)
-	requestsToday, tokensToday, costToday, _ := agg.GetTodayStats()
-	todaySummary, _ := agg.GetTodaySummary()
+	todaySummary, err := agg.GetTodaySummary()
+	if err != nil {
+		logging.Logger.Warn("dashboard: failed to load today summary", "error", err.Error())
+		todaySummary = usage.TodaySummary{}
+	}
 
-	cpuPercent, memPercent, diskPercent := collectSystemMetrics()
+	sys := h.collectSystemMetrics()
 
 	bufferLen := h.tracker.Buffered()
 
@@ -70,14 +91,19 @@ func (h *DashboardHandler) Stats(c *gin.Context) {
 		"total_connections":      totalConns,
 		"total_combos":           totalCombos,
 		"status_counts":          statusCounts,
-		"requests_today":         requestsToday,
-		"tokens_today":           tokensToday,
-		"cost_today":             costToday,
+		"requests_today":         todaySummary.Requests,
+		"tokens_today":           todaySummary.Tokens,
+		"cost_today":             todaySummary.CostUsd,
 		"errors_today":           todaySummary.Errors,
 		"avg_latency_ms_today":   todaySummary.AvgLatencyMs,
-		"cpu_percent":            cpuPercent,
-		"memory_percent":         memPercent,
-		"disk_percent":           diskPercent,
+		"cpu_percent":            sys.CPUPercent,
+		"cpu_cores":              sys.CPUCores,
+		"memory_used_bytes":      sys.MemUsed,
+		"memory_total_bytes":     sys.MemTotal,
+		"memory_percent":         sys.MemPercent,
+		"disk_used_bytes":        sys.DiskUsed,
+		"disk_total_bytes":       sys.DiskTotal,
+		"disk_percent":           sys.DiskPercent,
 		"uptime_seconds":         int(time.Since(h.startAt).Seconds()),
 		"buffer_length":          bufferLen,
 		"healthy_connections":    h.store.HealthyCount(),
@@ -85,15 +111,45 @@ func (h *DashboardHandler) Stats(c *gin.Context) {
 	})
 }
 
-// collectSystemMetrics returns CPU, memory and disk usage percentages.
+// cpuUsage returns the most recent CPU usage percent. It caches the value for
+// 5 seconds so that frequent dashboard polls don't each pay for a 100ms sample.
+func (h *DashboardHandler) cpuUsage() float64 {
+	h.cpuMu.RLock()
+	if time.Since(h.cpuAt) < 5*time.Second {
+		defer h.cpuMu.RUnlock()
+		return h.cpuPct
+	}
+	h.cpuMu.RUnlock()
+
+	h.cpuMu.Lock()
+	defer h.cpuMu.Unlock()
+	if time.Since(h.cpuAt) < 5*time.Second {
+		return h.cpuPct
+	}
+	if pct, err := cpu.Percent(100*time.Millisecond, false); err == nil && len(pct) > 0 {
+		h.cpuPct = pct[0]
+		h.cpuAt = time.Now()
+	}
+	return h.cpuPct
+}
+
+// collectSystemMetrics returns CPU, memory and disk usage data.
 // Errors are swallowed so the dashboard stays available even when host
 // metrics cannot be collected.
-func collectSystemMetrics() (cpuPercent, memPercent, diskPercent float64) {
-	if pct, err := cpu.Percent(100*time.Millisecond, false); err == nil && len(pct) > 0 {
-		cpuPercent = pct[0]
+func (h *DashboardHandler) collectSystemMetrics() systemMetrics {
+	sys := systemMetrics{}
+
+	sys.CPUPercent = h.cpuUsage()
+	if cores, err := cpu.Counts(false); err == nil && cores > 0 {
+		sys.CPUCores = cores
+	} else {
+		sys.CPUCores = runtime.NumCPU()
 	}
+
 	if vm, err := mem.VirtualMemory(); err == nil {
-		memPercent = vm.UsedPercent
+		sys.MemUsed = vm.Used
+		sys.MemTotal = vm.Total
+		sys.MemPercent = vm.UsedPercent
 	}
 
 	path, _ := os.Getwd()
@@ -104,9 +160,11 @@ func collectSystemMetrics() (cpuPercent, memPercent, diskPercent float64) {
 		path = "/"
 	}
 	if du, err := disk.Usage(path); err == nil {
-		diskPercent = du.UsedPercent
+		sys.DiskUsed = du.Used
+		sys.DiskTotal = du.Total
+		sys.DiskPercent = du.UsedPercent
 	}
-	return
+	return sys
 }
 
 // ProviderSummary returns per-provider connection summaries.

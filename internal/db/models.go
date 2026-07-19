@@ -3,7 +3,6 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
-	"time"
 )
 
 // ProviderType represents a provider type (e.g., "openai", "claude", "gemini").
@@ -224,23 +223,6 @@ type Pagination struct {
 type PaginatedResponse struct {
 	Data       interface{} `json:"data"`
 	Pagination Pagination  `json:"pagination"`
-}
-
-// DashboardStats holds aggregated stats for the dashboard.
-type DashboardStats struct {
-	TotalProviders   int            `json:"total_providers"`
-	TotalConnections int            `json:"total_connections"`
-	TotalCombos      int            `json:"total_combos"`
-	StatusCounts     map[string]int `json:"status_counts"`
-	RequestsToday    int64          `json:"requests_today"`
-	TokensToday      int64          `json:"tokens_today"`
-	CostToday        float64        `json:"cost_today"`
-	ErrorsToday      int64          `json:"errors_today"`
-	AvgLatencyToday  float64        `json:"avg_latency_ms_today"`
-	CPUPercent       float64        `json:"cpu_percent"`
-	MemoryPercent    float64        `json:"memory_percent"`
-	DiskPercent      float64        `json:"disk_percent"`
-	Uptime           time.Duration  `json:"uptime"`
 }
 
 // ProviderWithCounts is a provider type with its connection count breakdown.
