@@ -139,7 +139,8 @@ func (h *DashboardHandler) cpuUsage() float64 {
 func (h *DashboardHandler) collectSystemMetrics() systemMetrics {
 	sys := systemMetrics{}
 
-	sys.CPUPercent = h.cpuUsage()
+	// gopsutil returns percentages as 0-100; the frontend fmtPercent helper expects 0-1.
+	sys.CPUPercent = h.cpuUsage() / 100
 	if cores, err := cpu.Counts(false); err == nil && cores > 0 {
 		sys.CPUCores = cores
 	} else {
@@ -149,7 +150,7 @@ func (h *DashboardHandler) collectSystemMetrics() systemMetrics {
 	if vm, err := mem.VirtualMemory(); err == nil {
 		sys.MemUsed = vm.Used
 		sys.MemTotal = vm.Total
-		sys.MemPercent = vm.UsedPercent
+		sys.MemPercent = vm.UsedPercent / 100
 	}
 
 	path, _ := os.Getwd()
@@ -162,7 +163,7 @@ func (h *DashboardHandler) collectSystemMetrics() systemMetrics {
 	if du, err := disk.Usage(path); err == nil {
 		sys.DiskUsed = du.Used
 		sys.DiskTotal = du.Total
-		sys.DiskPercent = du.UsedPercent
+		sys.DiskPercent = du.UsedPercent / 100
 	}
 	return sys
 }
