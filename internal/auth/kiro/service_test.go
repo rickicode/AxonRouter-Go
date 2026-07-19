@@ -113,15 +113,86 @@ func TestExchangeSocialCode(t *testing.T) {
 
 func TestImportToken(t *testing.T) {
 	svc := NewAuthService(nil)
-	if _, err := svc.ImportToken(context.Background(), ""); err == nil {
+	if _, err := svc.ImportToken(context.Background(), ImportTokenRequest{}); err == nil {
 		t.Fatal("expected error for empty token")
 	}
-	creds, err := svc.ImportToken(context.Background(), "aorAAAAAGvalid")
+	creds, err := svc.ImportToken(context.Background(), ImportTokenRequest{RefreshToken: "aorAAAAAGvalid"})
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
 	if creds.ProviderSpecific["authMethod"] != "import" {
 		t.Fatalf("authMethod = %q", creds.ProviderSpecific["authMethod"])
+	}
+	if _, ok := creds.ProviderSpecific["clientId"]; ok {
+		t.Fatal("expected no clientId when not provided")
+	}
+}
+
+func TestImportToken_WithClientCredentials(t *testing.T) {
+	svc := NewAuthService(nil)
+	req := ImportTokenRequest{
+		RefreshToken: "aorAAAAAGvalid",
+		ClientID:     "client-id",
+		ClientSecret: "client-secret",
+		Region:       "us-west-2",
+		StartURL:     "https://view.awsapps.com/start",
+	}
+	creds, err := svc.ImportToken(context.Background(), req)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	psd := creds.ProviderSpecific
+	if psd["authMethod"] != "import" {
+		t.Fatalf("authMethod = %q", psd["authMethod"])
+	}
+	if psd["clientId"] != req.ClientID {
+		t.Fatalf("clientId = %q", psd["clientId"])
+	}
+	if psd["clientSecret"] != req.ClientSecret {
+		t.Fatalf("clientSecret = %q", psd["clientSecret"])
+	}
+	if psd["region"] != req.Region {
+		t.Fatalf("region = %q", psd["region"])
+	}
+	if psd["startUrl"] != req.StartURL {
+		t.Fatalf("startUrl = %q", psd["startUrl"])
+	}
+}
+
+func TestRefreshToken_ImportUsesOIDCWhenClientCredentialsPresent(t *testing.T) {
+	oidcSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"accessToken":  "new-access",
+				"refreshToken": "new-refresh",
+				"expiresIn":    3600,
+			})
+			return
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer oidcSrv.Close()
+
+	svc := NewAuthService(testClient(map[string]*httptest.Server{"oidc.us-east-1.amazonaws.com": oidcSrv}))
+	creds := &auth.Credentials{
+		RefreshToken: "old-refresh",
+		ProviderSpecific: map[string]string{
+			"authMethod":   "import",
+			"clientId":     "client-id",
+			"clientSecret": "client-secret",
+			"region":       "us-east-1",
+			"startUrl":     "https://view.awsapps.com/start",
+		},
+	}
+	newCreds, err := svc.RefreshToken(context.Background(), creds)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if newCreds.AccessToken != "new-access" {
+		t.Fatalf("access token = %q", newCreds.AccessToken)
+	}
+	if newCreds.ProviderSpecific["clientId"] != "client-id" {
+		t.Fatalf("clientId = %q", newCreds.ProviderSpecific["clientId"])
 	}
 }
 

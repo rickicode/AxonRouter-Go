@@ -22,7 +22,7 @@ type stubKiroService struct {
 	startDeviceFlow    func(ctx context.Context, state, region, startURL, issuerURL, authMethod string) (int, chan *auth.Credentials, error)
 	startSocial        func(provider string) (string, string, string, error)
 	exchangeSocialCode func(ctx context.Context, sessionID, code string) (*auth.Credentials, error)
-	importToken        func(ctx context.Context, refreshToken string) (*auth.Credentials, error)
+	importToken        func(ctx context.Context, req kiro.ImportTokenRequest) (*auth.Credentials, error)
 	validateAPIKey     func(ctx context.Context, apiKey, region string) (*auth.Credentials, error)
 	importExternalIDP  func(ctx context.Context, req kiro.ExternalIDPRequest) (*auth.Credentials, error)
 	autoImport         func(ctx context.Context) (*kiro.AutoImportResult, error)
@@ -64,9 +64,9 @@ func (s *stubKiroService) ExchangeSocialCode(ctx context.Context, sessionID, cod
 	}
 	return nil, nil
 }
-func (s *stubKiroService) ImportToken(ctx context.Context, refreshToken string) (*auth.Credentials, error) {
+func (s *stubKiroService) ImportToken(ctx context.Context, req kiro.ImportTokenRequest) (*auth.Credentials, error) {
 	if s.importToken != nil {
-		return s.importToken(ctx, refreshToken)
+		return s.importToken(ctx, req)
 	}
 	return nil, nil
 }
@@ -100,9 +100,9 @@ func newKiroAuthTestDeps(t *testing.T) (*KiroAuthHandler, *sql.DB) {
 func TestKiroAuthHandler_ImportKiroToken(t *testing.T) {
 	h, database := newKiroAuthTestDeps(t)
 	h.svc = &stubKiroService{
-		importToken: func(ctx context.Context, refreshToken string) (*auth.Credentials, error) {
+		importToken: func(ctx context.Context, req kiro.ImportTokenRequest) (*auth.Credentials, error) {
 			return &auth.Credentials{
-				RefreshToken: refreshToken,
+				RefreshToken: req.RefreshToken,
 				ProviderSpecific: map[string]string{
 					"authMethod": "import",
 				},
@@ -156,6 +156,77 @@ func TestKiroAuthHandler_ImportKiroToken(t *testing.T) {
 	}
 	if accessTok != "" {
 		t.Fatalf("access token should be empty for import, got %q", accessTok)
+	}
+}
+
+func TestKiroAuthHandler_ImportKiroToken_WithClientCredentials(t *testing.T) {
+	h, database := newKiroAuthTestDeps(t)
+	var gotReq kiro.ImportTokenRequest
+	h.svc = &stubKiroService{
+		importToken: func(ctx context.Context, req kiro.ImportTokenRequest) (*auth.Credentials, error) {
+			gotReq = req
+			return &auth.Credentials{
+				RefreshToken: req.RefreshToken,
+				ProviderSpecific: map[string]string{
+					"authMethod":   "import",
+					"clientId":     req.ClientID,
+					"clientSecret": req.ClientSecret,
+					"region":       req.Region,
+					"startUrl":     req.StartURL,
+				},
+			}, nil
+		},
+	}
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := `{"refresh_token":"aorAAAAAGimport","client_id":"client-id","client_secret":"client-secret","region":"us-west-2","start_url":"https://view.awsapps.com/start"}`
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/oauth/kiro/import", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.ImportKiroToken(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", w.Code, w.Body.String())
+	}
+	if gotReq.ClientID != "client-id" {
+		t.Fatalf("client_id = %q", gotReq.ClientID)
+	}
+	if gotReq.ClientSecret != "client-secret" {
+		t.Fatalf("client_secret = %q", gotReq.ClientSecret)
+	}
+	if gotReq.Region != "us-west-2" {
+		t.Fatalf("region = %q", gotReq.Region)
+	}
+	if gotReq.StartURL != "https://view.awsapps.com/start" {
+		t.Fatalf("start_url = %q", gotReq.StartURL)
+	}
+
+	var resp struct {
+		ConnectionID string `json:"connection_id"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	var psdRaw string
+	err := database.QueryRow(`SELECT COALESCE(provider_specific_data,'') FROM connections WHERE id = ?`, resp.ConnectionID).Scan(&psdRaw)
+	if err != nil {
+		t.Fatalf("fetch connection: %v", err)
+	}
+	var psd map[string]string
+	json.Unmarshal([]byte(psdRaw), &psd)
+	if psd["clientId"] != "client-id" {
+		t.Fatalf("clientId = %q", psd["clientId"])
+	}
+	if psd["clientSecret"] != "client-secret" {
+		t.Fatalf("clientSecret = %q", psd["clientSecret"])
+	}
+	if psd["region"] != "us-west-2" {
+		t.Fatalf("region = %q", psd["region"])
+	}
+	if psd["startUrl"] != "https://view.awsapps.com/start" {
+		t.Fatalf("startUrl = %q", psd["startUrl"])
 	}
 }
 

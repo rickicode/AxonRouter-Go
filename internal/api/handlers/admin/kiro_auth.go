@@ -29,7 +29,7 @@ type kiroAuthService interface {
 	StartDeviceFlow(ctx context.Context, state, region, startURL, issuerURL, authMethod string) (int, chan *auth.Credentials, error)
 	StartSocial(provider string) (string, string, string, error)
 	ExchangeSocialCode(ctx context.Context, sessionID, code string) (*auth.Credentials, error)
-	ImportToken(ctx context.Context, refreshToken string) (*auth.Credentials, error)
+	ImportToken(ctx context.Context, req kiro.ImportTokenRequest) (*auth.Credentials, error)
 	ValidateAPIKey(ctx context.Context, apiKey, region string) (*auth.Credentials, error)
 	ImportExternalIDP(ctx context.Context, req kiro.ExternalIDPRequest) (*auth.Credentials, error)
 	AutoImport(ctx context.Context) (*kiro.AutoImportResult, error)
@@ -186,14 +186,12 @@ func (h *KiroAuthHandler) socialCallback(c *gin.Context, provider string) {
 
 // ImportKiroToken imports an AWS refresh token.
 func (h *KiroAuthHandler) ImportKiroToken(c *gin.Context) {
-	var req struct {
-		RefreshToken string `json:"refresh_token" binding:"required"`
-	}
+	var req kiro.ImportTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	creds, err := h.svc.ImportToken(c.Request.Context(), req.RefreshToken)
+	creds, err := h.svc.ImportToken(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
