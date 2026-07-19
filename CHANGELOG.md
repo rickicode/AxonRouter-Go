@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Grok CLI non-stream response translation** — `/v1/chat/completions` responses from `grok-cli` are now translated back to standard OpenAI format instead of leaking Grok's internal `response.completed` event shape.
 - **Grok CLI tool-call argument streaming** — buffers per-call `function_call_arguments.delta` chunks and falls back to accumulated arguments when `output_item.done` arrives with empty arguments.
+- **Kiro streaming `Accept` header** — now sends `application/vnd.amazon.eventstream` so AWS CodeWhisperer / Amazon Q returns the expected binary EventStream response.
+- **Kiro inline thinking splitter** — now stateful across EventStream frames; `<thinking>...</thinking>` tags split across chunks are still routed to `reasoning_content` deltas correctly.
+- **Kiro endpoint fallback loop** — `ExecuteStream` now walks the ordered endpoint list from `kiroEndpointURLs` and retries on connection errors / 5xx while returning 4xx errors immediately.
+- **Kiro tool-description limit** — tool descriptions longer than 10,000 characters are truncated before upstream submission to avoid Kiro rejection.
+- **Kiro usage events** — `contextUsageEvent` is now parsed to improve prompt-token estimation, and `meteringEvent` is tracked.
 - Provider-account single add is now transaction-safe; no more inconsistent in-memory state if DB insert fails.
 - Priority gaps after connection deletion are closed by automatic reordering.
 
