@@ -295,6 +295,7 @@ func TestGrokCLIExecutor_ExtractUsage(t *testing.T) {
 					"input_tokens":          8,
 					"output_tokens":         4,
 					"total_tokens":          12,
+					"cost_in_usd_ticks":     125000000000,
 					"output_tokens_details": map[string]any{"reasoning_tokens": 1},
 				},
 			},
@@ -341,6 +342,10 @@ func TestGrokCLIExecutor_ExtractUsage(t *testing.T) {
 	}
 	if res.Usage["reasoning_tokens"] != 1 {
 		t.Fatalf("reasoning_tokens=%d, want 1", res.Usage["reasoning_tokens"])
+	}
+	wantCost := float64(125000000000) / grokCLICostUsdTicksDivisor
+	if res.CostUsd != wantCost {
+		t.Fatalf("CostUsd=%v, want %v", res.CostUsd, wantCost)
 	}
 }
 
