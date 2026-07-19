@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -350,8 +349,8 @@ func (h *Handler) CreateCombo(name, strategy string, timeoutMs, stickyLimit int,
 	now := db.UnixNow()
 
 	sg := sql.NullString{}
-	if smartGoal != "" {
-		sg = sql.NullString{String: smartGoal, Valid: true}
+	if normalized := normalizeSmartGoal(smartGoal); normalized != "" {
+		sg = sql.NullString{String: normalized, Valid: true}
 	}
 
 	tx, err := h.db.Begin()
@@ -488,6 +487,7 @@ type ComboWithSteps struct {
 
 // isSmartCombo checks if a model string is a smart combo goal.
 func isSmartCombo(s string) (SmartGoal, bool) {
+	s = normalizeSmartGoal(s)
 	switch s {
 	case "auto", "smart/auto":
 		return GoalAuto, true
@@ -502,12 +502,12 @@ func isSmartCombo(s string) (SmartGoal, bool) {
 }
 
 // splitModel splits "provider/model" into (provider, model).
+// If the model identifier cannot be parsed, it returns ("", modelStr) so the
+// original model string is preserved.
 func splitModel(modelStr string) (string, string) {
-	for i, c := range modelStr {
-		if c == '/' {
-			prefix := strings.TrimPrefix(modelStr[:i], "@")
-			return prefix, modelStr[i+1:]
-		}
+	provider, model, ok := SplitProviderModel(modelStr)
+	if ok {
+		return provider, model
 	}
 	return "", modelStr
 }

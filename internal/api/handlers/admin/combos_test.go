@@ -121,3 +121,41 @@ func TestComboMetrics_AggregatesRequestLogs(t *testing.T) {
 		t.Fatalf("expected metrics for at least 2 combos, got %d", len(body.Data))
 	}
 }
+
+func TestComboMetrics_WindowExactlyThirtyDays(t *testing.T) {
+	handler, comboH := newComboHandlerForTest(t)
+	comboID := seedComboNamed(t, comboH, "metrics-window-combo")
+
+	// Seed a request just inside the 30-day boundary.
+	db := handler.db
+	now := time.Now().UnixMilli()
+	justInside := now - 30*24*60*60*1000 + 1000
+	_, err := db.Exec(`
+		INSERT INTO request_logs (id, timestamp, combo_id, provider_type_id, model_id, modality, stream, status_code, input_tokens, output_tokens, latency_ms, created_at)
+		VALUES ('w1', ?, ?, 'oc', 'hy3-free', 'chat', 0, 200, 1, 2, 50, ?)
+	`, justInside, comboID, now)
+	if err != nil {
+		t.Fatalf("seed request_logs: %v", err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/admin/combos/metrics?window=2592000", nil)
+
+	handler.Metrics(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+
+	var body struct {
+		Totals map[string]any `json:"totals"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if int(body.Totals["requests"].(float64)) != 1 {
+		t.Fatalf("total requests = %v, want 1", body.Totals["requests"])
+	}
+}
