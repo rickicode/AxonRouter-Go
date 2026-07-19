@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -250,6 +251,8 @@ func (e *GrokCLIExecutor) allocateGrokCLISession(req *Request) (sessionID, convI
 	return sessionID, convID, agentID, reqID, turnIdx, nil
 }
 
+const grokCLIMaxTools = 200
+
 var grokCLIAllowedTopLevel = map[string]bool{
 	"model":               true,
 	"input":               true,
@@ -383,8 +386,13 @@ func grokcliRequestBody(req *Request) ([]byte, error) {
 		delete(body, "reasoning")
 	}
 
-	if rawTools, ok := body["tools"]; ok {
-		body["tools"] = grokcliFlattenTools(rawTools)
+	if rawTools, ok := body["tools"].([]any); ok {
+		flat := grokcliFlattenTools(rawTools)
+		if len(flat) > grokCLIMaxTools {
+			logging.Logger.Warn("grok-cli tool list truncated", "original", len(flat), "max", grokCLIMaxTools)
+			flat = flat[:grokCLIMaxTools]
+		}
+		body["tools"] = flat
 	}
 
 	if rawInput, ok := body["input"].([]any); ok {
