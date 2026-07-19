@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
+	"github.com/rickicode/AxonRouter-Go/internal/db"
 )
 
 func TestLeastUsedStrategy_HandlesAtPrefix(t *testing.T) {
@@ -53,4 +54,33 @@ func TestLeastUsedStrategy_HandlesAtPrefix(t *testing.T) {
 
 func testingTimeNowMs() int64 {
 	return time.Now().UnixMilli()
+}
+
+func TestWeightedShuffle_ZeroWeightsAndSingleStep(t *testing.T) {
+	single := []db.ComboStep{{ID: "only", Weight: 0}}
+	if out := weightedShuffle(single); len(out) != 1 || out[0].ID != "only" {
+		t.Fatalf("single step = %v, want one step with id 'only'", out)
+	}
+
+	steps := []db.ComboStep{
+		{ID: "a", Weight: 0},
+		{ID: "b", Weight: 0},
+		{ID: "c", Weight: 0},
+	}
+	out := weightedShuffle(steps)
+	if len(out) != len(steps) {
+		t.Fatalf("len(out) = %d, want %d", len(out), len(steps))
+	}
+	seen := map[string]bool{}
+	for _, s := range out {
+		if seen[s.ID] {
+			t.Fatalf("step %q appears twice", s.ID)
+		}
+		seen[s.ID] = true
+	}
+	for _, s := range steps {
+		if !seen[s.ID] {
+			t.Fatalf("step %q missing from output", s.ID)
+		}
+	}
 }

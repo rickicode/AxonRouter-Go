@@ -267,6 +267,11 @@ func (h *ComboHandler) Update(c *gin.Context) {
 // Delete removes a combo.
 func (h *ComboHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
+	var exists int
+	if err := h.db.QueryRow(`SELECT COUNT(*) FROM combos WHERE id = ?`, id).Scan(&exists); err != nil || exists == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "combo not found"})
+		return
+	}
 	if err := h.handler.DeleteCombo(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
