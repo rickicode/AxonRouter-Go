@@ -139,11 +139,14 @@ func ConvertOpenAIRequestToKiro(model string, body []byte, stream bool) []byte {
 
 	payload := map[string]any{
 		"conversationState": map[string]any{
-			"chatTriggerType": "MANUAL",
-			"conversationId":  conversationID,
-			"currentMessage":  currentMessage,
-			"history":         history,
+			"chatTriggerType":      "MANUAL",
+			"conversationId":       conversationID,
+			"agentContinuationId":  conversationID,
+			"agentTaskType":        "vibe",
+			"currentMessage":       currentMessage,
+			"history":              history,
 		},
+		"agentMode":    "vibe",
 		"_toolNameMap": toolNameMap,
 	}
 	if profileArn != "" {

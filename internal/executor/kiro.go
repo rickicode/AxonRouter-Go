@@ -87,7 +87,7 @@ func buildKiroUpstreamBody(body []byte) ([]byte, map[string]string, error) {
 		}
 	}
 	out := map[string]any{}
-	for _, k := range []string{"conversationState", "profileArn", "inferenceConfig", "additionalModelRequestFields"} {
+	for _, k := range []string{"conversationState", "profileArn", "inferenceConfig", "additionalModelRequestFields", "agentMode", "systemPrompt"} {
 		if v, ok := raw[k]; ok && v != nil {
 			out[k] = v
 		}
