@@ -315,6 +315,14 @@ func grokcliRequestBody(req *Request) ([]byte, error) {
 		clientDeclaredKeys: collectGrokCLIClientDeclaredKeys(req.Body),
 	}
 	rawBody := grokcliFlattenNamespaceTools(req.Body, normCtx.namespaceRefs)
+	rawBody = grokcliNormalizeTools(rawBody)
+	rawBody, _ = grokcliNormalizeInputItems(rawBody)
+	names := grokcliCollectUpstreamToolNames(rawBody)
+	rawBody, addedXSearch := grokcliEnsureNativeXSearchTool(rawBody)
+	if addedXSearch {
+		names["x_search"] = true
+	}
+	rawBody = grokcliNormalizeToolChoice(rawBody, names)
 
 	var body map[string]any
 	if err := json.Unmarshal(rawBody, &body); err != nil || body == nil {
