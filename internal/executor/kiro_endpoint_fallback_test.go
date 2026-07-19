@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -77,22 +78,89 @@ func TestKiroEndpointFallback_RetriesOn500(t *testing.T) {
 	}
 }
 
-func TestKiroEndpointFallback_FallsBackOn400(t *testing.T) {
+func TestKiroEndpointFallback_ReturnsUpstreamErrorOn400and403(t *testing.T) {
+	kiroDevHost := "runtime.us-east-1.kiro.dev"
+
+	for _, status := range []int{http.StatusBadRequest, http.StatusForbidden} {
+		t.Run(fmt.Sprintf("status-%d", status), func(t *testing.T) {
+			var calls []string
+			client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				calls = append(calls, req.URL.Host)
+				return &http.Response{
+					StatusCode: status,
+					Body:       io.NopCloser(strings.NewReader(`{"message":"client error"}`)),
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Request:    req,
+				}, nil
+			})}
+
+			base := &BaseExecutor{Client: client, streamBase: client}
+			exec := NewKiroExecutor(base)
+
+			req := &Request{
+				Provider: "kiro",
+				Model:    "kiro",
+				Body:     []byte(`{"conversationState":{}}`),
+				ProviderSpecificData: map[string]string{
+					"authMethod": "builder-id",
+					"region":     "us-east-1",
+				},
+			}
+
+			_, err := exec.ExecuteStream(context.Background(), req)
+			if err == nil {
+				t.Fatal("expected error for client error response")
+			}
+			var upErr *UpstreamError
+			if !errors.As(err, &upErr) {
+				t.Fatalf("expected *UpstreamError, got %T: %v", err, err)
+			}
+			if upErr.StatusCode != status {
+				t.Errorf("status code = %d, want %d", upErr.StatusCode, status)
+			}
+			if len(calls) != 1 {
+				t.Fatalf("expected 1 upstream call, got %d: %v", len(calls), calls)
+			}
+			if calls[0] != kiroDevHost {
+				t.Errorf("first call = %q, want %q", calls[0], kiroDevHost)
+			}
+		})
+	}
+}
+
+func TestKiroEndpointFallback_FallsBackOn429(t *testing.T) {
 	kiroDevHost := "runtime.us-east-1.kiro.dev"
 	awsHost := "codewhisperer.us-east-1.amazonaws.com"
 
 	var calls []string
+	successFrame := buildEventFrame(
+		map[string]string{":event-type": "messageStopEvent"},
+		map[string]any{"messageStopEvent": map[string]any{}},
+	)
+
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		calls = append(calls, req.URL.Host)
+		if req.URL.Host == kiroDevHost {
+			return &http.Response{
+				StatusCode: http.StatusTooManyRequests,
+				Body:       io.NopCloser(strings.NewReader(`{"message":"rate limited"}`)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Request:    req,
+			}, nil
+		}
 		return &http.Response{
-			StatusCode: http.StatusBadRequest,
-			Body:       io.NopCloser(strings.NewReader(`{"message":"bad request"}`)),
-			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewReader(successFrame)),
+			Header:     http.Header{"Content-Type": []string{"application/vnd.amazon.eventstream"}},
 			Request:    req,
 		}, nil
 	})}
 
-	base := &BaseExecutor{Client: client, streamBase: client}
+	base := &BaseExecutor{
+		Client:            client,
+		streamBase:        client,
+		StreamIdleTimeout: 200 * time.Millisecond,
+	}
 	exec := NewKiroExecutor(base)
 
 	req := &Request{
@@ -105,17 +173,16 @@ func TestKiroEndpointFallback_FallsBackOn400(t *testing.T) {
 		},
 	}
 
-	_, err := exec.ExecuteStream(context.Background(), req)
-	if err == nil {
-		t.Fatal("expected error for 400 response")
+	res, err := exec.ExecuteStream(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ExecuteStream returned error: %v", err)
 	}
-	var upErr *UpstreamError
-	if !errors.As(err, &upErr) {
-		t.Fatalf("expected *UpstreamError, got %T: %v", err, err)
+	for chunk := range res.Chunks {
+		if chunk.Err != nil {
+			t.Fatalf("unexpected chunk error: %v", chunk.Err)
+		}
 	}
-	if upErr.StatusCode != http.StatusBadRequest {
-		t.Errorf("status code = %d, want %d", upErr.StatusCode, http.StatusBadRequest)
-	}
+
 	if len(calls) != 2 {
 		t.Fatalf("expected 2 upstream calls, got %d: %v", len(calls), calls)
 	}
