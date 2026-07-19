@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -94,14 +95,20 @@ func (h *Handler) loadFromDB() {
 
 	for rows.Next() {
 		c := &db.Combo{}
-		rows.Scan(&c.ID, &c.Name, &c.Strategy, &c.StickyLimit,
+		if err := rows.Scan(&c.ID, &c.Name, &c.Strategy, &c.StickyLimit,
 			&c.TimeoutMs, &c.IsSmart, &c.SmartGoal, &c.FusionConfig,
-			&c.IsActive, &c.CreatedAt, &c.UpdatedAt)
+			&c.IsActive, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			log.Printf("WARN: failed to scan combo row: %v", err)
+			continue
+		}
 		h.combos[c.ID] = c
 		h.byName[c.Name] = c
 		if c.IsSmart {
 			h.smartCombos[c.ID] = c
 		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("WARN: combo rows iteration error: %v", err)
 	}
 
 	// Load steps
@@ -124,9 +131,15 @@ func (h *Handler) loadSteps(comboID string) {
 	var steps []db.ComboStep
 	for rows.Next() {
 		s := db.ComboStep{}
-		rows.Scan(&s.ID, &s.ComboID, &s.ConnectionID, &s.ModelID,
-			&s.Priority, &s.Weight, &s.CreatedAt)
+		if err := rows.Scan(&s.ID, &s.ComboID, &s.ConnectionID, &s.ModelID,
+			&s.Priority, &s.Weight, &s.CreatedAt); err != nil {
+			log.Printf("WARN: failed to scan combo_step row for combo %s: %v", comboID, err)
+			continue
+		}
 		steps = append(steps, s)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("WARN: combo_step rows iteration error for combo %s: %v", comboID, err)
 	}
 	h.steps[comboID] = steps
 }
@@ -341,7 +354,13 @@ func (h *Handler) CreateCombo(name, strategy string, timeoutMs, stickyLimit int,
 		sg = sql.NullString{String: smartGoal, Valid: true}
 	}
 
-	_, err := h.db.Exec(`
+	tx, err := h.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin combo transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 	INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal, fusion_config, is_active, created_at, updated_at)
 	VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
 	`, comboID, name, strategy, stickyLimit, timeoutMs, boolToInt(isSmart), sg, fusionConfig, now, now)
@@ -359,10 +378,17 @@ func (h *Handler) CreateCombo(name, strategy string, timeoutMs, stickyLimit int,
 		if connID == "" {
 			return nil, fmt.Errorf("no eligible connection for model %s", s.ModelID)
 		}
-		h.db.Exec(`
+		_, err := tx.Exec(`
 		INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		`, uuid.New().String(), comboID, connID, s.ModelID, s.Priority, s.Weight, now)
+		if err != nil {
+			return nil, fmt.Errorf("create combo step: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit combo transaction: %w", err)
 	}
 
 	combo := &db.Combo{
@@ -389,15 +415,28 @@ func (h *Handler) CreateCombo(name, strategy string, timeoutMs, stickyLimit int,
 
 // DeleteCombo removes a combo.
 func (h *Handler) DeleteCombo(comboID string) error {
+	tx, err := h.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin delete combo transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM combo_steps WHERE combo_id = ?`, comboID); err != nil {
+		return fmt.Errorf("delete combo steps: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM rotation_state WHERE combo_id = ?`, comboID); err != nil {
+		return fmt.Errorf("delete rotation state: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM combos WHERE id = ?`, comboID); err != nil {
+		return fmt.Errorf("delete combo: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete combo transaction: %w", err)
+	}
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	h.db.Exec(`DELETE FROM combo_steps WHERE combo_id = ?`, comboID)
-	h.db.Exec(`DELETE FROM rotation_state WHERE combo_id = ?`, comboID)
-	_, err := h.db.Exec(`DELETE FROM combos WHERE id = ?`, comboID)
-	if err != nil {
-		return err
-	}
 	if c, ok := h.combos[comboID]; ok {
 		delete(h.byName, c.Name)
 	}

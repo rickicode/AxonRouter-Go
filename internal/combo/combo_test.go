@@ -352,6 +352,77 @@ func TestRoundRobin_AdvancesOneStepPerRequest(t *testing.T) {
 	}
 }
 
+func TestCreateCombo_RollbackOnStepInsertFailure(t *testing.T) {
+	database := newComboTestDB(t)
+	store := connstate.NewStore()
+	elig := connstate.NewEligibilityManager(store)
+	h := NewHandler(database, store, elig)
+
+	_, err := h.CreateCombo("rollback-combo", "priority", 30000, 1, false, "", "", []CreateStepInput{
+		{ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
+	})
+	if err == nil {
+		t.Fatalf("expected error for step without eligible connection")
+	}
+
+	var count int
+	row := database.QueryRow(`SELECT COUNT(*) FROM combos WHERE name = ?`, "rollback-combo")
+	if err := row.Scan(&count); err != nil {
+		t.Fatalf("scan combo count: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("combo row count = %d, want 0 after rollback", count)
+	}
+}
+
+func TestDeleteCombo_RemovesFromMemoryAndDB(t *testing.T) {
+	database := newComboTestDB(t)
+	seedConnectionForCombo(t, database, "conn-1")
+
+	store := connstate.NewStore()
+	cs := &connstate.ConnectionState{
+		ID:     "conn-1",
+		Prefix: "openai",
+		Status: connstate.StatusReady,
+	}
+	store.Set("conn-1", cs)
+	elig := connstate.NewEligibilityManager(store)
+	elig.RecomputeAll()
+	h := NewHandler(database, store, elig)
+
+	combo, err := h.CreateCombo("delete-me", "priority", 30000, 1, false, "", "", []CreateStepInput{
+		{ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
+	})
+	if err != nil {
+		t.Fatalf("CreateCombo failed: %v", err)
+	}
+
+	if err := h.DeleteCombo(combo.ID); err != nil {
+		t.Fatalf("DeleteCombo failed: %v", err)
+	}
+
+	if _, ok := h.Resolve("delete-me"); ok {
+		t.Fatalf("Resolve returned true after delete")
+	}
+
+	var count int
+	row := database.QueryRow(`SELECT COUNT(*) FROM combos WHERE id = ?`, combo.ID)
+	if err := row.Scan(&count); err != nil {
+		t.Fatalf("scan combo count: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("combos row count = %d, want 0", count)
+	}
+
+	row = database.QueryRow(`SELECT COUNT(*) FROM combo_steps WHERE combo_id = ?`, combo.ID)
+	if err := row.Scan(&count); err != nil {
+		t.Fatalf("scan step count: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("combo_steps row count = %d, want 0", count)
+	}
+}
+
 func TestWeightedShuffle_ReturnsPermutation(t *testing.T) {
 	steps := []db.ComboStep{
 		{ID: "a", Weight: 10},
