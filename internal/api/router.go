@@ -55,14 +55,15 @@ import (
 
 // Router holds all dependencies and mounts all routes.
 type Router struct {
-	engine     *gin.Engine
-	db         *sql.DB
-	writeQueue *db.WriteQueue // centralized async writer; drained on Shutdown
-	store      *connstate.Store
-	elig       *connstate.EligibilityManager
-	combo      *combo.Handler
-	tracker    *usage.Tracker
-	authMgr    *auth.Manager
+	engine        *gin.Engine
+	db            *sql.DB
+	writeQueue    *db.WriteQueue // centralized async writer; drained on Shutdown
+	store         *connstate.Store
+	elig          *connstate.EligibilityManager
+	combo         *combo.Handler
+	tracker       *usage.Tracker
+	deviceTracker *usage.DeviceTracker
+	authMgr       *auth.Manager
 
 	// HTTP/HTTPS servers
 	httpServer  *http.Server
@@ -122,6 +123,8 @@ func New(cfg Config) *Router {
 	authCache := middleware.NewAuthCache(30 * time.Second)
 	tracker := usage.NewTracker(cfg.DB)
 	tracker.SetWriteQueue(writeQueue) // route all batch inserts through the single writer goroutine
+	deviceTracker := usage.NewDeviceTracker(config.Get())
+	deviceTracker.StartCleanup()
 	usage.InitPricing(cfg.DB)
 	usage.StartPeriodicReload(context.Background(), time.Hour)
 	km := adminapi.NewKeyManager(cfg.DB)
@@ -224,7 +227,7 @@ func New(cfg Config) *Router {
 	limiter := middleware.NewRateLimiter(600)
 	loginLimiter := middleware.NewRateLimiter(10)
 	// Create v1 handler with all dependencies (must exist before wiring routes)
-	v1H := v1.NewHandler(cfg.DB, writeQueue, store, elig, comboHandler, tracker, authManager, proxyResolver, exhaustionCache, compStrategy, exactCache, providerCfg)
+	v1H := v1.NewHandler(cfg.DB, writeQueue, store, elig, comboHandler, tracker, deviceTracker, authManager, proxyResolver, exhaustionCache, compStrategy, exactCache, providerCfg)
 	// ---- /v1 routes (proxy) ----
 	v1Group := engine.Group("/v1")
 	v1Group.Use(middleware.Auth(cfg.DB, authCache))
@@ -470,6 +473,7 @@ func New(cfg Config) *Router {
 		elig:            elig,
 		combo:           comboHandler,
 		tracker:         tracker,
+		deviceTracker:   deviceTracker,
 		authMgr:         authManager,
 		quotaScheduler:  quotaScheduler,
 		usageFlush:      usageFlush,
@@ -598,6 +602,7 @@ func (r *Router) Shutdown() {
 			_ = r.httpsServer.Shutdown(ctx)
 		}
 		r.tracker.Stop()
+		r.deviceTracker.Stop()
 		r.quotaScheduler.Stop()
 		r.usageFlush.Stop()
 		r.cleanup.Stop()

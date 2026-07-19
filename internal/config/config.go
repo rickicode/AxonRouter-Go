@@ -3,19 +3,23 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 )
 
 type Config struct {
-	Port      string
-	DBPath    string
-	DBURL     string
-	DBToken   string
-	PIDFile   string
-	LogDir    string
-	DataDir   string
-	Debug     bool
-	JWTSecret string
+	Port                   string
+	DBPath                 string
+	DBURL                  string
+	DBToken                string
+	PIDFile                string
+	LogDir                 string
+	DataDir                string
+	Debug                  bool
+	JWTSecret              string
+	DeviceTrackerTTLMs     int
+	DeviceTrackerMaxPerKey int
+	DeviceTrackerMaxTotal  int
 }
 
 var (
@@ -65,13 +69,16 @@ func Get() Config {
 	once.Do(func() {
 		dataDir := resolveDataDir("")
 		global = Config{
-			Port:    getEnv("AXON_PORT", "3777"),
-			DBPath:  filepath.Join(dataDir, "axonrouter.db"),
-			DBURL:   getEnv("AXON_DB_URL", ""),
-			DBToken: getEnv("AXON_DB_TOKEN", ""),
-			PIDFile: filepath.Join(dataDir, "axonrouter.pid"),
-			LogDir:  filepath.Join(dataDir, "logs"),
-			DataDir: dataDir,
+			Port:                   getEnv("AXON_PORT", "3777"),
+			DBPath:                 filepath.Join(dataDir, "axonrouter.db"),
+			DBURL:                  getEnv("AXON_DB_URL", ""),
+			DBToken:                getEnv("AXON_DB_TOKEN", ""),
+			PIDFile:                filepath.Join(dataDir, "axonrouter.pid"),
+			LogDir:                 filepath.Join(dataDir, "logs"),
+			DataDir:                dataDir,
+			DeviceTrackerTTLMs:     getIntEnv("DEVICE_TRACKER_TTL_MS", 30*60*1000),
+			DeviceTrackerMaxPerKey: getIntEnv("DEVICE_TRACKER_MAX_PER_KEY", 1000),
+			DeviceTrackerMaxTotal:  getIntEnv("DEVICE_TRACKER_MAX_TOTAL_DEVICES", 10000),
 		}
 		os.MkdirAll(dataDir, 0o755)
 		os.MkdirAll(global.LogDir, 0o755)
@@ -84,4 +91,16 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func getIntEnv(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
 }
