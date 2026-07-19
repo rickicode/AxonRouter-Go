@@ -194,7 +194,8 @@ const supportsBulk = $derived(isApiKey);
 const isOCProvider = $derived(providerId === 'oc');
 const isMimocodeProvider = $derived(providerId === 'mimocode');
 const needsProxyPool = $derived(isOCProvider || isMimocodeProvider);
-const showImportMode = $derived(providerId === 'grok-cli');
+const showImportMode = $derived(providerId === 'grok-cli' || providerId === 'kiro');
+let autoImportedPsd = $state<Record<string, string> | undefined>(undefined);
 const existingPoolIds = $derived(
   new Set(
     $connections
@@ -243,6 +244,7 @@ function reset() {
   importing = false;
   importProgress = 0;
   importSummary = null;
+  autoImportedPsd = undefined;
 }
 
 function handleOpenChange(isOpen: boolean) {
@@ -559,6 +561,7 @@ async function handleImportSubmit() {
       return;
     }
     const psd: Record<string, string> = {};
+    if (autoImportedPsd) Object.assign(psd, autoImportedPsd);
     if (deviceId.trim()) psd.deviceId = deviceId.trim();
     const name = connectionName.trim() || email.trim() || defaultName();
     await oauthApi.importToken({
@@ -578,6 +581,40 @@ async function handleImportSubmit() {
     step = 'error';
   } finally {
     submitting = false;
+  }
+}
+
+async function handleAutoImportKiro() {
+  errorMsg = '';
+  try {
+    const res = await oauthApi.autoImportKiro();
+    if (!res.found) {
+      autoImportedPsd = undefined;
+      toast.error(res.error || 'No local Kiro credentials found. Run kiro-cli login first.');
+      return;
+    }
+    if (!res.access_token || !res.refresh_token) {
+      autoImportedPsd = undefined;
+      toast.error('Discovered credential is incomplete');
+      return;
+    }
+    accessToken = res.access_token;
+    refreshToken = res.refresh_token;
+    if (res.expires_at) {
+      expiresAt = new Date(res.expires_at * 1000).toISOString().slice(0, 16);
+    }
+    autoImportedPsd = {};
+    if (res.auth_method) autoImportedPsd.authMethod = res.auth_method;
+    if (res.region) autoImportedPsd.region = res.region;
+    if (res.profile_arn) autoImportedPsd.profileArn = res.profile_arn;
+    if (res.client_id) autoImportedPsd.clientId = res.client_id;
+    if (res.client_secret) autoImportedPsd.clientSecret = res.client_secret;
+    if (res.token_endpoint) autoImportedPsd.tokenEndpoint = res.token_endpoint;
+    if (res.scopes) autoImportedPsd.scope = res.scopes;
+    toast.success(`Auto-imported from ${res.source || 'kiro-cli'}. Review the fields and click Import token.`);
+  } catch (err) {
+    autoImportedPsd = undefined;
+    toast.error(err instanceof Error ? err.message : 'Auto-import failed');
   }
 }
 
@@ -928,6 +965,16 @@ $effect(() => {
           {/if}
 
           {#if importMode}
+            {#if providerId === 'kiro'}
+              <Button variant="outline" class="w-full text-sm" onclick={handleAutoImportKiro}>
+                Auto-import from kiro-cli
+              </Button>
+              <div class="flex items-center gap-3">
+                <div class="h-px flex-1 bg-border"></div>
+                <span class="text-[11px] uppercase tracking-wide text-muted-foreground">or manual</span>
+                <div class="h-px flex-1 bg-border"></div>
+              </div>
+            {/if}
             <div class="flex flex-col gap-1.5">
               <Label class="text-sm font-medium">Access token <span class="text-destructive">*</span></Label>
               <Input bind:value={accessToken} type="password" placeholder="eyJ..." class="h-9 text-sm font-mono" autocomplete="off" spellcheck={false} />

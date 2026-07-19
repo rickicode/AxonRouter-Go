@@ -32,6 +32,7 @@ type kiroAuthService interface {
 	ImportToken(ctx context.Context, refreshToken string) (*auth.Credentials, error)
 	ValidateAPIKey(ctx context.Context, apiKey, region string) (*auth.Credentials, error)
 	ImportExternalIDP(ctx context.Context, req kiro.ExternalIDPRequest) (*auth.Credentials, error)
+	AutoImport(ctx context.Context) (*kiro.AutoImportResult, error)
 }
 
 // KiroAuthHandler exposes Kiro-specific auth endpoints.
@@ -226,6 +227,24 @@ func (h *KiroAuthHandler) APIKey(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"connection_id": connID, "name": name, "status": "ready"})
+}
+
+// AutoImport discovers credentials from kiro-cli SQLite or AWS SSO cache.
+func (h *KiroAuthHandler) AutoImport(c *gin.Context) {
+	res, err := h.svc.AutoImport(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if !res.Found {
+		c.JSON(http.StatusNotFound, gin.H{"error": res.Error, "tried_paths": res.TriedPaths})
+		return
+	}
+	if err := kiro.ValidateDiscoveredCredential(res); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "result": res})
+		return
+	}
+	c.JSON(http.StatusOK, res)
 }
 
 // ExternalIDP imports an enterprise SSO credential.

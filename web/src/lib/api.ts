@@ -483,6 +483,23 @@ export interface ImportOAuthTokenResponse {
   status: string;
 }
 
+export interface KiroAutoImportResult {
+  found: boolean;
+  access_token?: string;
+  refresh_token?: string;
+  expires_at?: number;
+  region?: string;
+  profile_arn?: string;
+  auth_method?: string;
+  client_id?: string;
+  client_secret?: string;
+  token_endpoint?: string;
+  scopes?: string;
+  source?: string;
+  tried_paths?: string[];
+  error?: string;
+}
+
 export const oauthApi = {
   startFlow: (provider: string, providerName?: string) =>
     fetchApi<{
@@ -514,6 +531,8 @@ export const oauthApi = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+
+  autoImportKiro: () => fetchApi<KiroAutoImportResult>("/oauth/kiro/auto-import"),
 };
 
 export interface APIKeyItem {

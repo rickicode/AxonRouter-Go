@@ -326,6 +326,7 @@ func New(cfg Config) *Router {
 		g.POST("/oauth/kiro/import", kiroAuthH.ImportKiroToken)
 		g.POST("/oauth/kiro/api-key", kiroAuthH.APIKey)
 		g.POST("/oauth/kiro/external-idp", kiroAuthH.ExternalIDP)
+		g.GET("/oauth/kiro/auto-import", kiroAuthH.AutoImport)
 		g.GET("/oauth/kiro/:sessionId/poll", kiroAuthH.Poll)
 
 		// Combos
