@@ -65,7 +65,7 @@ func TestInjectKiroProfileArn_ApiKeyNoDefault(t *testing.T) {
 	}
 }
 
-func TestInjectKiroProfileArn_PSDProfileArnNoDefault(t *testing.T) {
+func TestInjectKiroProfileArn_PSDProfileArnInjectedIntoBody(t *testing.T) {
 	body := []byte(`{"conversationState":{}}`)
 	psd := map[string]string{
 		"authMethod": "builder-id",
@@ -75,7 +75,23 @@ func TestInjectKiroProfileArn_PSDProfileArnNoDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	var raw map[string]any
+	if err := json.Unmarshal(out, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if raw["profileArn"] != psd["profileArn"] {
+		t.Fatalf("profileArn = %v, want %v", raw["profileArn"], psd["profileArn"])
+	}
+}
+
+func TestInjectKiroProfileArn_ApiKeyNoDefaultWhenNoPSD(t *testing.T) {
+	body := []byte(`{"conversationState":{}}`)
+	psd := map[string]string{"authMethod": "api_key"}
+	out, err := injectKiroProfileArn(body, psd)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if string(out) != string(body) {
-		t.Fatalf("existing psd profileArn caused body change: %s", out)
+		t.Fatalf("api_key body without psd profileArn changed: %s", out)
 	}
 }

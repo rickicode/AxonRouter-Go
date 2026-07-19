@@ -68,25 +68,40 @@ func kiroHeaders(req *Request) map[string]string {
 	return headers
 }
 
-// injectKiroProfileArn adds the shared default profileArn for OAuth/social/import
-// auth methods when no profileArn is present. Account-bound methods (api_key,
-// idc, external_idp) must not receive the shared placeholder.
+// injectKiroProfileArn ensures a profileArn is sent upstream:
+//  1. If the connection already has a real profileArn in PSD, use it.
+//  2. If the translated request already includes a non-empty profileArn, leave it.
+//  3. For OAuth/social/import auth methods, fall back to the shared default placeholder
+//     (this is required for builder-id/social tokens because CodeWhisperer rejects
+//     requests without a profileArn).
+// Account-bound methods (api_key, idc, external_idp) intentionally skip the shared
+// placeholder because it belongs to a different account.
 func injectKiroProfileArn(body []byte, psd map[string]string) ([]byte, error) {
-	if psd["profileArn"] != "" {
-		return body, nil
-	}
+	psdProfileArn := strings.TrimSpace(psd["profileArn"])
 	authMethod := normalizeRegion(psd["authMethod"])
 	if authMethod == "api_key" || authMethod == "idc" || authMethod == "external_idp" {
-		return body, nil
+		if psdProfileArn == "" {
+			return body, nil
+		}
 	}
+
 	var raw map[string]any
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return body, err
 	}
-	if raw["profileArn"] != nil && raw["profileArn"] != "" {
+	if bodyProfileArn, ok := raw["profileArn"].(string); ok && strings.TrimSpace(bodyProfileArn) != "" {
 		return body, nil
 	}
-	raw["profileArn"] = resolveDefaultKiroProfileArn(authMethod)
+
+	if psdProfileArn != "" {
+		raw["profileArn"] = psdProfileArn
+	} else if authMethod != "api_key" && authMethod != "idc" && authMethod != "external_idp" {
+		raw["profileArn"] = resolveDefaultKiroProfileArn(authMethod)
+	}
+
+	if raw["profileArn"] == nil || raw["profileArn"] == "" {
+		return body, nil
+	}
 	return json.Marshal(raw)
 }
 

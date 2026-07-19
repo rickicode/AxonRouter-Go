@@ -593,6 +593,9 @@ func (s *KiroAuthService) pollDeviceToken(ctx context.Context, region, clientID,
 		RefreshToken: tok.RefreshToken,
 		IDToken:      tok.IDToken,
 		ExpiresAt:    expiresAt,
+		ProviderSpecific: map[string]string{
+			"profileArn": strings.TrimSpace(tok.ProfileArn),
+		},
 	}
 	if email := extractEmailFromJWT(tok.AccessToken); email != "" {
 		creds.Email = email
