@@ -327,9 +327,13 @@ func (h *KiroAuthHandler) watchResult(ctx context.Context, cancel context.Cancel
 }
 
 func (h *KiroAuthHandler) persistConnection(creds *auth.Credentials, method string) (string, string, error) {
-	connName := "Kiro " + method
-	if creds.Email != "" {
-		connName = creds.Email
+	connName := creds.Email
+	if connName == "" {
+		fallback, err := nextKiroFallbackName(h.db)
+		if err != nil {
+			fallback = "Kiro-1"
+		}
+		connName = fallback
 	}
 	connID := uuid.New().String()
 	now := time.Now().Unix()

@@ -146,8 +146,16 @@ func (h *OAuthHandler) StartOAuth(c *gin.Context) {
 			connName := "OAuth " + req.Provider
 			if creds.Email != "" {
 				connName = creds.Email
+			} else if providerSpecificData, ok := creds.ProviderSpecific["email"]; ok && providerSpecificData != "" {
+				connName = providerSpecificData
 			} else if req.ProviderName != "" {
 				connName = "OAuth " + req.ProviderName
+			} else if req.Provider == "kiro" {
+				fallback, err := nextKiroFallbackName(h.db)
+				if err != nil {
+					log.Printf("failed to generate Kiro fallback name: %v", err)
+				}
+				connName = fallback
 			}
 
 			// Create connection ONLY on success

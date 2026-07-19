@@ -19,7 +19,22 @@ var (
 	kiroProfileRegions    = map[string]struct{}{"us-east-1": {}, "eu-central-1": {}}
 	kiroHTTPClient        = &http.Client{Timeout: 15 * time.Second}
 	kiroCodeWhispererBase = kiroDefaultBaseURL
+
+	// Default CodeWhisperer profile ARNs from 9router. Used when an account
+	// cannot resolve its own profileArn so quota tracking still works.
+	kiroDefaultProfileARNBuilderID = "arn:aws:codewhisperer:us-east-1:638616132270:profile/AAAACCCCXXXX"
+	kiroDefaultProfileARNSocial    = "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK"
 )
+
+// resolveDefaultKiroProfileArn returns the shared default profileArn for an
+// auth method, mirroring 9router/open-sse/config/kiroConstants.js.
+func resolveDefaultKiroProfileArn(authMethod string) string {
+	authMethod = strings.ToLower(strings.TrimSpace(authMethod))
+	if authMethod == "google" || authMethod == "github" {
+		return kiroDefaultProfileARNSocial
+	}
+	return kiroDefaultProfileARNBuilderID
+}
 
 func stringAny(v any) string {
 	if v == nil {
@@ -336,7 +351,9 @@ func fetchKiroQuota(accessToken string, psd map[string]any) ([]QuotaItem, string
 	}
 
 	if profileArn == "" && !isApiKey {
-		return nil, "", "Kiro connected. Profile ARN not available for quota tracking.", nil
+		// 9router falls back to a shared default profileArn for builder-id
+		// and social auth so the quota API can still return limits.
+		profileArn = resolveDefaultKiroProfileArn(psdStr["authMethod"])
 	}
 
 	region := resolveKiroRuntimeRegion(psdStr)

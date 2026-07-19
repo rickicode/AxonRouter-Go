@@ -147,8 +147,16 @@ import SearchIcon from '@lucide/svelte/icons/search';
       'gemini-2.5-flash': 'Gemini 3.5 Flash',
       'gemini-3-flash': 'Gemini 3.5 Flash',
       'claude-sonnet-4-6': 'Claude Sonnet',
+      'credit': 'Credits',
     };
     return map[name] || name;
+  }
+
+  function formatQuotaText(providerId: string, qi: QuotaItem): string {
+    if (providerId === 'kiro') {
+      return `${qi.used} / ${qi.total} credits`;
+    }
+    return `${qi.remaining_pct.toFixed(0)}%`;
   }
 
 // For Antigravity, only show the three main model families on the Quota page.
@@ -449,7 +457,7 @@ function visibleQuotas(item: QuotaCacheEntry): QuotaItem[] {
                         <span class="text-caption text-violet-400 font-medium">∞ unlimited</span>
                       {:else}
                         <span class="text-caption-mono font-semibold tabular-nums {quotaTextClr(qi.remaining_pct)}">
-                          {qi.remaining_pct.toFixed(0)}%
+                          {formatQuotaText(item.provider_id, qi)}
                         </span>
                       {/if}
                       {#if qi.reset_at}

@@ -29,13 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Usage page enhancements** — replaced the misleading "Saved this month" card with "Cost this month" and "Projected cost", added today vs yesterday deltas.
 
 ### Fixed
+- **Kiro OAuth account naming** — AWS Builder ID / IDC device-code flows and social/import flows now extract the account email from the JWT; when no email is present the connection is named `Kiro-1`, `Kiro-2`, etc.
+- **Kiro device-code auto-fill** — the dashboard now receives `verification_uri_complete` so the browser can pre-fill the user code when opening the AWS authorization page.
+- **Kiro quota fallback profile ARN** — `internal/quota/kiro.go` now falls back to the shared default `profileArn` for AWS Builder ID and social auth (matching 9router), allowing quota to populate instead of returning "Profile ARN not available".
+- **Kiro quota dashboard display** — Kiro credits are shown as `used / total credits` instead of a percentage on the Quota page.
 - **Grok CLI non-stream response translation** — `/v1/chat/completions` responses from `grok-cli` are now translated back to standard OpenAI format instead of leaking Grok's internal `response.completed` event shape.
 - **Grok CLI tool-call argument streaming** — buffers per-call `function_call_arguments.delta` chunks and falls back to accumulated arguments when `output_item.done` arrives with empty arguments.
-- **Kiro streaming `Accept` header** — now sends `application/vnd.amazon.eventstream` so AWS CodeWhisperer / Amazon Q returns the expected binary EventStream response.
-- **Kiro inline thinking splitter** — now stateful across EventStream frames; `<thinking>...</thinking>` tags split across chunks are still routed to `reasoning_content` deltas correctly.
-- **Kiro endpoint fallback loop** — `ExecuteStream` now walks the ordered endpoint list from `kiroEndpointURLs` and retries on connection errors / 5xx while returning 4xx errors immediately.
-- **Kiro tool-description limit** — tool descriptions longer than 10,000 characters are truncated before upstream submission to avoid Kiro rejection.
-- **Kiro usage events** — `contextUsageEvent` is now parsed to improve prompt-token estimation, and `meteringEvent` is tracked.
 - Provider-account single add is now transaction-safe; no more inconsistent in-memory state if DB insert fails.
 - Priority gaps after connection deletion are closed by automatic reordering.
 

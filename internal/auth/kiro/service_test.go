@@ -2,6 +2,7 @@ package kiro
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,15 @@ import (
 
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 )
+
+func makeTestJWT(email string) string {
+	payload, _ := json.Marshal(map[string]string{"email": email})
+	b64 := base64.URLEncoding.EncodeToString(payload)
+	b64 = strings.TrimRight(b64, "=")
+	b64 = strings.ReplaceAll(b64, "+", "-")
+	b64 = strings.ReplaceAll(b64, "/", "_")
+	return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9." + b64 + ".test-signature"
+}
 
 // rewriteTransport swaps real upstream hosts with test servers.
 type rewriteTransport struct {
@@ -290,9 +300,10 @@ func TestStartDeviceFlow(t *testing.T) {
 		case "/device_authorization":
 			deviceHits++
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"deviceCode":      "dc",
-				"userCode":        "UCODE",
-				"verificationUri": "https://example.com/verify",
+				"deviceCode":              "dc",
+				"userCode":                "UCODE",
+				"verificationUri":         "https://example.com/verify",
+				"verificationUriComplete": "https://example.com/verify?userCode=UCODE",
 			})
 		case "/token":
 			tokenHits++
@@ -302,7 +313,7 @@ func TestStartDeviceFlow(t *testing.T) {
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"accessToken":  "access-123",
+				"accessToken":  makeTestJWT("user@example.com"),
 				"refreshToken": "refresh-456",
 				"expiresIn":    3600,
 			})
@@ -324,7 +335,7 @@ func TestStartDeviceFlow(t *testing.T) {
 		t.Fatalf("port = %d, want 0", port)
 	}
 	authURL, err := svc.GenerateAuthURL(ctx, "state1:0")
-	if err != nil || authURL != "https://example.com/verify" {
+	if err != nil || authURL != "https://example.com/verify?userCode=UCODE" {
 		t.Fatalf("auth url = %q, err=%v", authURL, err)
 	}
 	if svc.GetUserCode("state1:0") != "UCODE" {
@@ -335,7 +346,10 @@ func TestStartDeviceFlow(t *testing.T) {
 	if creds == nil || creds.ProviderSpecific["__oauth_error__"] != "" {
 		t.Fatalf("device flow failed: %+v", creds)
 	}
-	if creds.AccessToken != "access-123" || creds.ProviderSpecific["authMethod"] != "idc" {
+	if creds.Email != "user@example.com" {
+		t.Fatalf("email = %q, want user@example.com", creds.Email)
+	}
+	if creds.ProviderSpecific["authMethod"] != "idc" {
 		t.Fatalf("unexpected creds: %+v", creds)
 	}
 	if registerHits != 1 || deviceHits != 1 || tokenHits != 2 {

@@ -44,8 +44,9 @@ var (
 
 // DeviceCodeResult holds device code metadata for the handler to read.
 type DeviceCodeResult struct {
-	VerificationURI string
-	UserCode        string
+	VerificationURI         string
+	VerificationURIComplete string
+	UserCode                string
 }
 
 // ExternalIDPRequest holds imported External IdP credentials.
@@ -91,13 +92,18 @@ func (s *KiroAuthService) StartLocalServer(ctx context.Context, state string) (i
 }
 
 // GenerateAuthURL returns the verification URI stored by StartLocalServer.
+// Prefer verification_uri_complete so the browser can pre-fill the user code.
 func (s *KiroAuthService) GenerateAuthURL(_ context.Context, state string) (string, error) {
 	bare := bareState(state)
 	val, ok := s.pending.Load(bare)
 	if !ok {
 		return "", fmt.Errorf("no pending device code for state")
 	}
-	return val.(*DeviceCodeResult).VerificationURI, nil
+	res := val.(*DeviceCodeResult)
+	if res.VerificationURIComplete != "" {
+		return res.VerificationURIComplete, nil
+	}
+	return res.VerificationURI, nil
 }
 
 // GetUserCode returns the user code for the dashboard.
@@ -331,7 +337,7 @@ func extractEmailFromJWT(accessToken string) string {
 	if claims == nil {
 		return ""
 	}
-	for _, key := range []string{"email", "preferred_username", "upn"} {
+	for _, key := range []string{"email", "preferred_username", "upn", "sub"} {
 		if v, ok := claims[key].(string); ok && v != "" {
 			return v
 		}
@@ -386,15 +392,16 @@ func (s *KiroAuthService) StartDeviceFlow(ctx context.Context, state, region, st
 		return 0, nil, fmt.Errorf("register client: %w", err)
 	}
 
-	verificationURI, userCode, deviceCode, err := s.startDeviceAuthorization(ctx, region, clientID, clientSecret, startURL)
+	verificationURI, verificationURIComplete, userCode, deviceCode, err := s.startDeviceAuthorization(ctx, region, clientID, clientSecret, startURL)
 	if err != nil {
 		return 0, nil, fmt.Errorf("start device auth: %w", err)
 	}
 
 	bare := bareState(state)
 	s.pending.Store(bare, &DeviceCodeResult{
-		VerificationURI: verificationURI,
-		UserCode:        userCode,
+		VerificationURI:         verificationURI,
+		VerificationURIComplete: verificationURIComplete,
+		UserCode:                userCode,
 	})
 
 	resultChan := make(chan *auth.Credentials, 1)
@@ -452,7 +459,7 @@ func (s *KiroAuthService) registerClient(ctx context.Context, region, issuerURL 
 	return result.ClientID, result.ClientSecret, nil
 }
 
-func (s *KiroAuthService) startDeviceAuthorization(ctx context.Context, region, clientID, clientSecret, startURL string) (string, string, string, error) {
+func (s *KiroAuthService) startDeviceAuthorization(ctx context.Context, region, clientID, clientSecret, startURL string) (string, string, string, string, error) {
 	reqBody := map[string]any{
 		"clientId":     clientID,
 		"clientSecret": clientSecret,
@@ -462,33 +469,34 @@ func (s *KiroAuthService) startDeviceAuthorization(ctx context.Context, region, 
 	endpoint := fmt.Sprintf("https://oidc.%s.amazonaws.com/device_authorization", region)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(string(bodyBytes)))
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", "", err
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return "", "", "", fmt.Errorf("device auth failed %d: %s", resp.StatusCode, string(respBody))
+		return "", "", "", "", fmt.Errorf("device auth failed %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var result struct {
-		DeviceCode      string `json:"deviceCode"`
-		UserCode        string `json:"userCode"`
-		VerificationURI string `json:"verificationUri"`
+		DeviceCode              string `json:"deviceCode"`
+		UserCode                string `json:"userCode"`
+		VerificationURI         string `json:"verificationUri"`
+		VerificationURIComplete string `json:"verificationUriComplete"`
 	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return "", "", "", err
+		return "", "", "", "", err
 	}
 	if result.VerificationURI == "" || result.DeviceCode == "" {
-		return "", "", "", fmt.Errorf("missing verification_uri or device_code")
+		return "", "", "", "", fmt.Errorf("missing verification_uri or device_code")
 	}
-	return result.VerificationURI, result.UserCode, result.DeviceCode, nil
+	return result.VerificationURI, result.VerificationURIComplete, result.UserCode, result.DeviceCode, nil
 }
 
 func (s *KiroAuthService) pollDeviceTokenLoop(ctx context.Context, region, clientID, clientSecret, deviceCode, authMethod, startURL string) (*auth.Credentials, error) {
@@ -580,12 +588,18 @@ func (s *KiroAuthService) pollDeviceToken(ctx context.Context, region, clientID,
 	if tok.ExpiresIn > 0 {
 		expiresAt = time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second)
 	}
-	return &auth.Credentials{
+	creds := &auth.Credentials{
 		AccessToken:  tok.AccessToken,
 		RefreshToken: tok.RefreshToken,
 		IDToken:      tok.IDToken,
 		ExpiresAt:    expiresAt,
-	}, false, nil
+	}
+	if email := extractEmailFromJWT(tok.AccessToken); email != "" {
+		creds.Email = email
+	} else if email := extractEmailFromJWT(tok.IDToken); email != "" {
+		creds.Email = email
+	}
+	return creds, false, nil
 }
 
 func (s *KiroAuthService) refreshOIDCWithRetry(ctx context.Context, creds *auth.Credentials) (*auth.Credentials, error) {
@@ -659,6 +673,11 @@ func (s *KiroAuthService) refreshOIDC(ctx context.Context, region, clientID, cli
 	}
 	if tok.ExpiresIn > 0 {
 		newCreds.ExpiresAt = time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second)
+	}
+	if email := extractEmailFromJWT(tok.AccessToken); email != "" {
+		newCreds.Email = email
+	} else if email := extractEmailFromJWT(tok.IDToken); email != "" {
+		newCreds.Email = email
 	}
 	return &newCreds, nil
 }

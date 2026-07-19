@@ -147,13 +147,33 @@ async function copyModelName(id: string) {
  } catch { return false; }
  }
 
- function getAccountLabel(conn: any): string | null {
- if (!conn.provider_specific_data) return null;
- try {
- const psd = typeof conn.provider_specific_data === 'string' ? JSON.parse(conn.provider_specific_data) : conn.provider_specific_data;
- return psd?.accountLabel || null;
- } catch { return null; }
- }
+  function getAccountLabel(conn: any): string | undefined {
+  if (!conn.provider_specific_data) return undefined;
+  try {
+  const psd = typeof conn.provider_specific_data === 'string' ? JSON.parse(conn.provider_specific_data) : conn.provider_specific_data;
+  return psd?.accountLabel || undefined;
+  } catch { return undefined; }
+  }
+
+  function getKiroAuthMethod(conn: any): string | undefined {
+  if (providerId !== 'kiro' || !conn.provider_specific_data) return undefined;
+  try {
+  const psd = typeof conn.provider_specific_data === 'string' ? JSON.parse(conn.provider_specific_data) : conn.provider_specific_data;
+  const authMethod = psd?.authMethod || '';
+  const map: Record<string, string> = {
+    'builder-id': 'AWS Builder ID',
+    'idc': 'IAM Identity Center',
+    'google': 'Google',
+    'github': 'GitHub',
+    'external_idp': 'External IdP',
+    'api_key': 'API Key',
+    'imported': 'Imported',
+    'import': 'Imported',
+  };
+  return map[authMethod];
+  } catch { return undefined; }
+  }
+
 
  function handlePageChange(page: number) {
  currentPage = page;
