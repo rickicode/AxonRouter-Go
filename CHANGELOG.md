@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Transactional provider-account creation with deduplication, auto-priority, and reorder** — `AddConnection` now runs in a SQLite transaction, rejects duplicate `(provider, name)` or OAuth-token accounts with `409`, auto-assigns priority as `max + 1`, and normalizes priority ordering after every add/delete.
+- **Pre-save provider key validation** — backend rejects invalid API keys before persisting the connection; dashboard modal surfaces validation errors inline and blocks submit until the key passes.
+- **Per-model account lockout with exponential backoff** — rate-limit/quota errors lock only the failing `(connection, model)` pair, escalate backoff (`30s × 2^level` capped at `1h`), honor upstream `resets_at` timestamps, and clear automatically on success.
+- **In-memory device tracker ported from 9router/OmniRoute** — passive tracking on every `/v1/*` request after API-key resolution. Stores SHA-256 fingerprints of masked IP + truncated User-Agent, enforces TTL and per-key/total limits, and exposes no raw IPs.
+- **Admin device endpoint and dashboard UI** — `GET /api/admin/keys/:id/devices` returns device count and list; API Keys dashboard page shows count and a detail dialog with fingerprint, masked IP, UA, and last-seen time.
+- **OAuth mode in Add Connection modal** — explicit "Connect" button opens the existing backend OAuth flow in a popup, polls until completion, and refreshes the connection list on success.
+- **Bulk proxy-pool assignment** — `ProviderDetail` supports multi-selecting connections and applying/unbinding a proxy pool in one transaction; only available for proxy-pool providers (`oc`, `mimocode`).
+- **Device-tracker configuration** — env vars `DEVICE_TRACKER_TTL_MS`, `DEVICE_TRACKER_MAX_PER_KEY`, `DEVICE_TRACKER_MAX_TOTAL_DEVICES`.
+
+### Fixed
+- Provider-account single add is now transaction-safe; no more inconsistent in-memory state if DB insert fails.
+- Priority gaps after connection deletion are closed by automatic reordering.
+
 ## [0.3.11] - 2026-07-19
 
 ### Added
