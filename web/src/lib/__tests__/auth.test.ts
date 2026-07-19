@@ -7,18 +7,28 @@ const MUST_CHANGE_KEY = 'axon_must_change_password';
 
 describe('auth storage', () => {
 	beforeEach(() => {
+		localStorage.clear();
 		sessionStorage.clear();
 	});
 
-	it('round-trips the token', () => {
+	it('round-trips the token to session storage by default', () => {
 		expect(getToken()).toBeNull();
 		setToken('abc123');
 		expect(getToken()).toBe('abc123');
+		expect(sessionStorage.getItem(TOKEN_KEY)).toBe('abc123');
+		expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
+	});
+
+	it('persists the token in localStorage when remembered', () => {
+		setToken('abc123', true);
+		expect(getToken()).toBe('abc123');
+		expect(localStorage.getItem(TOKEN_KEY)).toBe('abc123');
+		expect(sessionStorage.getItem(TOKEN_KEY)).toBeNull();
 	});
 
 	it('clears both token and must-change flag on logout', () => {
-		setToken('abc123');
-		setMustChangePassword(true);
+		setToken('abc123', true);
+		setMustChangePassword(true, true);
 		logout();
 		expect(getToken()).toBeNull();
 		expect(getMustChangePassword()).toBe(false);
@@ -27,6 +37,7 @@ describe('auth storage', () => {
 
 describe('passwordApi', () => {
 	beforeEach(() => {
+		localStorage.clear();
 		sessionStorage.clear();
 		vi.restoreAllMocks();
 	});
