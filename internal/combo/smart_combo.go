@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,17 +24,17 @@ const (
 
 // Telemetry holds recent performance data for smart combo decisions.
 type Telemetry struct {
-	ErrorRate   float64
-	TotalCost   float64
-	AvgLatency  float64
-	WindowMin   int
-	TotalReqs   int64
-	ErrorCount  int64
+	ErrorRate  float64
+	TotalCost  float64
+	AvgLatency float64
+	WindowMin  int
+	TotalReqs  int64
+	ErrorCount int64
 }
 
 // Config holds configurable thresholds for smart combo decisions.
 type Config struct {
-	ErrorRateThreshold float64 // Error rate threshold to escalate to premium (default: 0.15)
+	ErrorRateThreshold  float64 // Error rate threshold to escalate to premium (default: 0.15)
 	CostPerMinThreshold float64 // Cost per minute threshold to shift to economy (default: 0.85)
 	TelemetryWindowMin  int     // Telemetry window in minutes (default: 60)
 	CacheTTLSec         int     // Telemetry cache TTL in seconds (default: 60)
@@ -43,11 +44,11 @@ type Config struct {
 // Telemetry is cached in memory with a short TTL so the smart path does not
 // query SQLite on every request.
 type SmartCombo struct {
-	mu             sync.RWMutex
-	db             *sql.DB
+	mu              sync.RWMutex
+	db              *sql.DB
 	cachedTelemetry *Telemetry
-	cachedAt       time.Time
-	config         Config
+	cachedAt        time.Time
+	config          Config
 }
 
 // defaultConfig returns the default configuration with env var overrides.
@@ -163,10 +164,10 @@ func (sc *SmartCombo) resolveAuto(combos []*db.Combo, telemetry *Telemetry) *db.
 	return sc.findByGoalWithFallback(combos, "balanced", []string{"economy", "premium"})
 }
 
-// findByGoal returns the first smart combo matching the goal.
+// findByGoal returns the first smart combo matching the goal (case-insensitive).
 func (sc *SmartCombo) findByGoal(combos []*db.Combo, goal string) *db.Combo {
 	for _, c := range combos {
-		if c.SmartGoal.Valid && c.SmartGoal.String == goal {
+		if c.SmartGoal.Valid && strings.EqualFold(c.SmartGoal.String, goal) {
 			return c
 		}
 	}
