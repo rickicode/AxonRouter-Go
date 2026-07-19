@@ -645,6 +645,22 @@ export const apiKeysApi = {
     fetchApi<KeyDevicesResponse>(`/keys/${id}/devices`),
 };
 
+export interface UsageDaySummary {
+  requests: number;
+  tokens: number;
+  cost_usd: number;
+  errors: number;
+  avg_latency_ms: number;
+}
+
+export interface UsageSummaryResponse {
+  today: UsageDaySummary;
+  yesterday: UsageDaySummary;
+  month_to_date: UsageDaySummary;
+  projected_month_cost: number;
+  next_quota_reset?: string;
+}
+
 // Usage API
 export const usageApi = {
   get: (params?: {
@@ -669,6 +685,7 @@ export const usageApi = {
       : "";
     return fetchApi<{ data: UsageData }>(`/usage${qs}`);
   },
+  summary: () => fetchApi<{ data: UsageSummaryResponse }>("/usage/summary"),
 };
 
 // Combo API
@@ -825,18 +842,27 @@ export const settingsApi = {
 };
 
 // Dashboard API
+export interface DashboardStats {
+  total_providers: number;
+  total_connections: number;
+  total_combos: number;
+  status_counts: Record<string, number>;
+  requests_today: number;
+  tokens_today: number;
+  cost_today: number;
+  errors_today: number;
+  avg_latency_ms_today: number;
+  cpu_percent: number;
+  memory_percent: number;
+  disk_percent: number;
+  uptime_seconds: number;
+  buffer_length?: number;
+  healthy_connections?: number;
+  dropped_usage_events?: number;
+}
+
 export const dashboardApi = {
-  stats: () =>
-    fetchApi<{
-      total_providers: number;
-      total_connections: number;
-      total_combos: number;
-      status_counts: Record<string, number>;
-      requests_today: number;
-      tokens_today: number;
-      cost_today: number;
-      uptime_seconds: number;
-    }>("/dashboard/stats"),
+  stats: () => fetchApi<DashboardStats>("/dashboard/stats"),
   usageStats: (hours = 24) =>
     fetchApi<{
       provider_usage: {

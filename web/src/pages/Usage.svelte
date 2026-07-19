@@ -6,8 +6,8 @@
 	import { Label } from '$lib/components/ui/label';
 	import { Badge } from '$lib/components/ui/badge';
 	import ProviderOctopus from '$lib/components/ProviderOctopus.svelte';
-	import { usageApi, apiKeysApi, providersApi, type UsageData, type UsageBreakdown, type UsageTimeBucket, type APIKeyItem, type Provider } from '$lib/api';
-	import { formatTokens, formatCost, formatCount, activeRequests, loadActiveRequests, quotaSavings, quotaNextReset, loadQuotaSummary } from '$lib/stores';
+	import { usageApi, apiKeysApi, providersApi, type UsageData, type UsageBreakdown, type UsageTimeBucket, type APIKeyItem, type Provider, type UsageSummaryResponse, type UsageDaySummary } from '$lib/api';
+	import { formatTokens, formatCost, formatCount, activeRequests, loadActiveRequests, quotaNextReset, loadQuotaSummary } from '$lib/stores';
 	import { toast } from 'svelte-sonner';
 
 import BarChartIcon from '@lucide/svelte/icons/bar-chart';
@@ -23,11 +23,14 @@ import BarChartIcon from '@lucide/svelte/icons/bar-chart';
 	import DownloadIcon from '@lucide/svelte/icons/download';
 	import LayersIcon from '@lucide/svelte/icons/layers';
 	import ZapIcon from '@lucide/svelte/icons/zap';
+	import TrendingUpIcon from '@lucide/svelte/icons/trending-up';
 	import CodeIcon from '@lucide/svelte/icons/code';
 
 let data = $state<UsageData | null>(null);
 let loading = $state(false);
 let error = $state<string | null>(null);
+let summary = $state<UsageSummaryResponse | null>(null);
+let summaryTimer: ReturnType<typeof setInterval> | null = null;
 let apiKeys = $state<APIKeyItem[]>([]);
 	let providers = $state<Provider[]>([]);
 
@@ -138,6 +141,16 @@ async function load(silent = false) {
 		void load();
 	}
 
+async function loadSummary() {
+  try {
+    const res = await usageApi.summary();
+    summary = res.data;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'unknown error';
+    toast.error('Failed to load usage summary: ' + msg);
+  }
+}
+
 	function resetFilters() {
 		filterKey = '';
 		filterProvider = '';
@@ -173,6 +186,7 @@ async function initPage() {
     apiKeysApi.list().then((r) => { apiKeys = r.data; }).catch(() => {}),
     providersApi.list().then((r) => { providers = r.data; }).catch(() => {}),
     loadQuotaSummary(),
+    loadSummary(),
   ]);
   setPreset('day');
 }
@@ -183,11 +197,13 @@ onMount(() => {
 		void loadActiveRequests();
 		const activeInterval = setInterval(loadActiveRequests, 3000);
   startPolling();
+  summaryTimer = setInterval(loadSummary, 60000);
 		return () => {
 			tokensChart?.destroy();
 			costChart?.destroy();
 			clearInterval(activeInterval);
     stopPolling();
+    if (summaryTimer) clearInterval(summaryTimer);
 		};
 });
 
@@ -313,7 +329,24 @@ return `${lbl}: ${v.toLocaleString()}`;
 		if (!total) return '0%';
 		return `${((value / total) * 100).toFixed(1)}%`;
 	}
+
+	function todayVal(t: UsageDaySummary | undefined, key: keyof UsageDaySummary): number {
+		return Number(t?.[key] ?? 0);
+	}
 </script>
+
+{#snippet metricCard(label: string, today: number, yesterday: number, fmt: (n: number) => string, inverse = false)}
+<Card class="shadow-card">
+	<CardContent class="p-3">
+		<p class="text-caption text-muted-foreground uppercase">{label}</p>
+		<p class="text-display-md">{fmt(today)}</p>
+		{@const diff = yesterday ? ((today - yesterday) / yesterday) * 100 : (today ? 100 : 0)}
+		{@const sign = diff >= 0 ? '+' : ''}
+		{@const color = !yesterday ? 'text-muted-foreground' : (diff >= 0 ? (inverse ? 'text-red-400' : 'text-emerald-400') : (inverse ? 'text-emerald-400' : 'text-red-400'))}
+		<p class="text-caption {color}">{yesterday ? `${sign}${diff.toFixed(1)}% vs yesterday` : (today ? 'new vs yesterday' : '—')}</p>
+	</CardContent>
+</Card>
+{/snippet}
 
 <div class="flex flex-1 flex-col gap-6 p-6">
 	<div class="space-y-1">
@@ -456,67 +489,30 @@ return `${lbl}: ${v.toLocaleString()}`;
   </CardContent>
 </Card>
 {:else if data}
-		<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
-			<Card class="shadow-card">
-				<CardContent class="p-3">
-					<p class="text-caption text-muted-foreground uppercase">Requests</p>
-					<p class="text-display-md">{formatCount(data.summary.requests)}</p>
-				</CardContent>
-			</Card>
-			<Card class="shadow-card">
-				<CardContent class="p-3">
-					<p class="text-caption text-muted-foreground uppercase">Total Tokens</p>
-					<p class="text-display-md">{formatTokens(data.summary.total_tokens)}</p>
-				</CardContent>
-			</Card>
-			<Card class="shadow-card">
-				<CardContent class="p-3">
-					<p class="text-caption text-muted-foreground uppercase">Input</p>
-					<p class="text-display-md">{formatTokens(data.summary.input_tokens)}</p>
-				</CardContent>
-			</Card>
-			<Card class="shadow-card">
-				<CardContent class="p-3">
-					<p class="text-caption text-muted-foreground uppercase">Output</p>
-					<p class="text-display-md">{formatTokens(data.summary.output_tokens)}</p>
-				</CardContent>
-			</Card>
-			<Card class="shadow-card">
-				<CardContent class="p-3">
-					<p class="text-caption text-muted-foreground uppercase">Reasoning</p>
-					<p class="text-display-md">{formatTokens(data.summary.reasoning_tokens)}</p>
-				</CardContent>
-			</Card>
-			<Card class="shadow-card">
-				<CardContent class="p-3">
-					<p class="text-caption text-muted-foreground uppercase">Cost</p>
-					<p class="text-display-md">{formatCost(data.summary.cost_usd)}</p>
-				</CardContent>
-			</Card>
-			<Card class="shadow-card">
-				<CardContent class="p-3">
-					<p class="text-caption text-muted-foreground uppercase">Avg Latency</p>
-					<p class="text-display-md">{fmtLatency(data.summary.avg_latency_ms)}</p>
-				</CardContent>
-			</Card>
-			<Card class="shadow-card">
-				<CardContent class="p-3">
-					<p class="text-caption text-muted-foreground uppercase">Errors</p>
-					<p class="text-display-md flex items-center gap-1.5">
-						{data.summary.errors.toLocaleString()}
-						<Badge variant={data.summary.error_rate > 0.05 ? 'destructive' : 'secondary'} class="text-caption-mono rounded-sm">{fmtPercent(data.summary.error_rate)}</Badge>
-					</p>
-				</CardContent>
-			</Card>
-  </div>
+		<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+			{@render metricCard('Requests', todayVal(summary?.today, 'requests'), todayVal(summary?.yesterday, 'requests'), formatCount)}
+			{@render metricCard('Tokens', todayVal(summary?.today, 'tokens'), todayVal(summary?.yesterday, 'tokens'), formatTokens)}
+			{@render metricCard('Cost', todayVal(summary?.today, 'cost_usd'), todayVal(summary?.yesterday, 'cost_usd'), formatCost)}
+			{@render metricCard('Errors', todayVal(summary?.today, 'errors'), todayVal(summary?.yesterday, 'errors'), (n) => n.toLocaleString(), true)}
+			{@render metricCard('Avg latency', todayVal(summary?.today, 'avg_latency_ms'), todayVal(summary?.yesterday, 'avg_latency_ms'), fmtLatency, true)}
+		</div>
 
-  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
     <Card class="shadow-card">
       <CardContent class="p-3 flex items-center gap-3">
         <DollarSignIcon class="size-5 text-emerald-400" />
         <div>
-          <p class="text-caption text-muted-foreground uppercase">Saved this month</p>
-          <p class="text-display-md">{formatCost($quotaSavings)}</p>
+          <p class="text-caption text-muted-foreground uppercase">Cost this month</p>
+          <p class="text-display-md">{formatCost(summary?.month_to_date?.cost_usd ?? 0)}</p>
+        </div>
+      </CardContent>
+    </Card>
+    <Card class="shadow-card">
+      <CardContent class="p-3 flex items-center gap-3">
+        <TrendingUpIcon class="size-5 text-blue-400" />
+        <div>
+          <p class="text-caption text-muted-foreground uppercase">Projected cost</p>
+          <p class="text-display-md">{formatCost(summary?.projected_month_cost ?? 0)}</p>
         </div>
       </CardContent>
     </Card>
@@ -525,7 +521,7 @@ return `${lbl}: ${v.toLocaleString()}`;
         <TimerIcon class="size-5 text-amber-400" />
         <div>
           <p class="text-caption text-muted-foreground uppercase">Next quota reset</p>
-          <p class="text-display-md">{fmtReset($quotaNextReset ?? undefined)}</p>
+          <p class="text-display-md">{fmtReset(summary?.next_quota_reset ?? $quotaNextReset ?? undefined)}</p>
         </div>
       </CardContent>
     </Card>
