@@ -3,11 +3,25 @@ package usage
 import (
 	"encoding/json"
 	"unicode/utf8"
+
+	"github.com/rickicode/AxonRouter-Go/internal/tokenizer"
 )
 
-// EstimateTokensFromString estimates token count from a string using rune count / 4 heuristic.
+// EstimateTokensFromString estimates token count from a string using the
+// default tiktoken codec (cl100k_base), falling back to rune count / 4 if
+// encoding or counting fails.
 func EstimateTokensFromString(s string) int64 {
-	return int64(utf8.RuneCountInString(s) / 4)
+	enc, err := tokenizer.CodecForModel("")
+	if err != nil {
+		return int64(utf8.RuneCountInString(s) / 4)
+	}
+
+	count, err := enc.Count(s)
+	if err != nil {
+		return int64(utf8.RuneCountInString(s) / 4)
+	}
+
+	return int64(count)
 }
 
 // EstimateTokensFromRequest estimates input token count from a request body
