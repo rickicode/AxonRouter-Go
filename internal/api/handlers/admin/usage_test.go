@@ -81,6 +81,85 @@ func TestUsageHandlerReturnsRecordedRequests(t *testing.T) {
 	}
 }
 
+// TestUsageSummaryHandler returns today, yesterday, month-to-date and
+// projected cost for the dashboard system-metrics cards.
+func TestUsageSummaryHandler(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	dir := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(dir, "usage_summary_test.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer database.Close()
+	if err := db.RunMigrations(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	now := time.Now().UTC()
+	todayMs := now.Truncate(24 * time.Hour).Add(2 * time.Hour).UnixMilli()
+	yesterdayMs := now.Truncate(24 * time.Hour).Add(-2 * time.Hour).UnixMilli()
+	monthStartMs := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).UnixMilli()
+
+	if _, err := database.Exec(`INSERT INTO request_logs (id, timestamp, provider_type_id, model_id, modality, input_tokens, output_tokens, status_code, cost_usd, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"u-today", todayMs, "openai", "gpt-4o", "chat", 10, 20, 200, 1.00, todayMs); err != nil {
+		t.Fatalf("insert today: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO request_logs (id, timestamp, provider_type_id, model_id, modality, input_tokens, output_tokens, status_code, cost_usd, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"u-yesterday", yesterdayMs, "openai", "gpt-4o", "chat", 100, 200, 200, 2.00, yesterdayMs); err != nil {
+		t.Fatalf("insert yesterday: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO request_logs (id, timestamp, provider_type_id, model_id, modality, input_tokens, output_tokens, status_code, cost_usd, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"u-month", monthStartMs, "openai", "gpt-4o", "chat", 1, 1, 200, 5.00, monthStartMs); err != nil {
+		t.Fatalf("insert month start: %v", err)
+	}
+
+	h := NewUsageHandler(database)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/api/admin/usage/summary", nil)
+	h.Summary(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Data struct {
+			Today     map[string]float64 `json:"today"`
+			Yesterday map[string]float64 `json:"yesterday"`
+			Month     map[string]float64 `json:"month_to_date"`
+			Projected float64            `json:"projected_month_cost"`
+			NextReset string             `json:"next_quota_reset"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if resp.Data.Today["requests"] != 1 {
+		t.Errorf("today requests = %v, want 1", resp.Data.Today["requests"])
+	}
+	if resp.Data.Today["cost_usd"] != 1.00 {
+		t.Errorf("today cost_usd = %v, want 1.00", resp.Data.Today["cost_usd"])
+	}
+	if resp.Data.Yesterday["requests"] != 1 {
+		t.Errorf("yesterday requests = %v, want 1", resp.Data.Yesterday["requests"])
+	}
+	if resp.Data.Yesterday["cost_usd"] != 2.00 {
+		t.Errorf("yesterday cost_usd = %v, want 2.00", resp.Data.Yesterday["cost_usd"])
+	}
+	if resp.Data.Month["cost_usd"] != 8.00 {
+		t.Errorf("month cost_usd = %v, want 8.00", resp.Data.Month["cost_usd"])
+	}
+	if resp.Data.Projected <= 0 {
+		t.Errorf("projected_month_cost = %v, want positive", resp.Data.Projected)
+	}
+}
+
 // TestParseFiltersUsesMilliseconds pins the unit contract: From/To must be
 // millisecond epochs so they compare directly against request_logs.timestamp.
 func TestParseFiltersUsesMilliseconds(t *testing.T) {

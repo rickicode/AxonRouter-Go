@@ -235,6 +235,11 @@ type DashboardStats struct {
 	RequestsToday    int64          `json:"requests_today"`
 	TokensToday      int64          `json:"tokens_today"`
 	CostToday        float64        `json:"cost_today"`
+	ErrorsToday      int64          `json:"errors_today"`
+	AvgLatencyToday  float64        `json:"avg_latency_ms_today"`
+	CPUPercent       float64        `json:"cpu_percent"`
+	MemoryPercent    float64        `json:"memory_percent"`
+	DiskPercent      float64        `json:"disk_percent"`
 	Uptime           time.Duration  `json:"uptime"`
 }
 

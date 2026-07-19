@@ -3,12 +3,17 @@ package admin
 import (
 	"database/sql"
 	"net/http"
+	"os"
+	"runtime"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
+	"github.com/shirou/gopsutil/v3/cpu"
+	"github.com/shirou/gopsutil/v3/disk"
+	"github.com/shirou/gopsutil/v3/mem"
 )
 
 // DashboardHandler handles dashboard statistics.
@@ -54,22 +59,54 @@ func (h *DashboardHandler) Stats(c *gin.Context) {
 	// Today's stats
 	agg := usage.NewAggregator(h.db)
 	requestsToday, tokensToday, costToday, _ := agg.GetTodayStats()
+	todaySummary, _ := agg.GetTodaySummary()
+
+	cpuPercent, memPercent, diskPercent := collectSystemMetrics()
 
 	bufferLen := h.tracker.Buffered()
 
 	c.JSON(http.StatusOK, gin.H{
-		"total_providers":      totalProviders,
-		"total_connections":    totalConns,
-		"total_combos":         totalCombos,
-		"status_counts":        statusCounts,
-		"requests_today":       requestsToday,
-		"tokens_today":         tokensToday,
-		"cost_today":           costToday,
-		"uptime_seconds":       int(time.Since(h.startAt).Seconds()),
-		"buffer_length":        bufferLen,
-		"healthy_connections":  h.store.HealthyCount(),
-		"dropped_usage_events": h.tracker.Dropped(),
+		"total_providers":        totalProviders,
+		"total_connections":      totalConns,
+		"total_combos":           totalCombos,
+		"status_counts":          statusCounts,
+		"requests_today":         requestsToday,
+		"tokens_today":           tokensToday,
+		"cost_today":             costToday,
+		"errors_today":           todaySummary.Errors,
+		"avg_latency_ms_today":   todaySummary.AvgLatencyMs,
+		"cpu_percent":            cpuPercent,
+		"memory_percent":         memPercent,
+		"disk_percent":           diskPercent,
+		"uptime_seconds":         int(time.Since(h.startAt).Seconds()),
+		"buffer_length":          bufferLen,
+		"healthy_connections":    h.store.HealthyCount(),
+		"dropped_usage_events":   h.tracker.Dropped(),
 	})
+}
+
+// collectSystemMetrics returns CPU, memory and disk usage percentages.
+// Errors are swallowed so the dashboard stays available even when host
+// metrics cannot be collected.
+func collectSystemMetrics() (cpuPercent, memPercent, diskPercent float64) {
+	if pct, err := cpu.Percent(100*time.Millisecond, false); err == nil && len(pct) > 0 {
+		cpuPercent = pct[0]
+	}
+	if vm, err := mem.VirtualMemory(); err == nil {
+		memPercent = vm.UsedPercent
+	}
+
+	path, _ := os.Getwd()
+	if path == `\` && runtime.GOOS == "windows" {
+		path = `C:\`
+	}
+	if path == "" {
+		path = "/"
+	}
+	if du, err := disk.Usage(path); err == nil {
+		diskPercent = du.UsedPercent
+	}
+	return
 }
 
 // ProviderSummary returns per-provider connection summaries.
