@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/types"
 	"github.com/tidwall/gjson"
 )
 
@@ -110,6 +112,31 @@ func TestNonStreamFunctionCall(t *testing.T) {
 	}
 	if got := gjson.GetBytes(out, "choices.0.message.tool_calls.0.function.arguments").String(); got != `{"city":"LA"}` {
 		t.Fatalf("expected args, got %s", got)
+	}
+}
+
+func TestReverseResponseTranslatorRegistered(t *testing.T) {
+	from := string(types.FormatGrokCLI)
+	to := string(types.FormatOpenAI)
+
+	if !registry.NeedConvert(from, to) {
+		t.Fatalf("expected reverse response translator to be registered")
+	}
+
+	resp := []byte(`{"id":"resp_1","model":"grok-4.3","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Translated"}]}],"usage":{"input_tokens":5,"output_tokens":2}}`)
+	out := registry.ResponseNonStream(context.Background(), from, to, "grok-cli/grok-4.3", nil, nil, resp, nil)
+
+	if got := gjson.GetBytes(out, "choices.0.message.content").String(); got != "Translated" {
+		t.Fatalf("expected content Translated, got %s", got)
+	}
+	if got := gjson.GetBytes(out, "choices.0.finish_reason").String(); got != "stop" {
+		t.Fatalf("expected stop, got %s", got)
+	}
+	if got := gjson.GetBytes(out, "usage.prompt_tokens").Int(); got != 5 {
+		t.Fatalf("expected prompt_tokens 5, got %d", got)
+	}
+	if got := gjson.GetBytes(out, "usage.completion_tokens").Int(); got != 2 {
+		t.Fatalf("expected completion_tokens 2, got %d", got)
 	}
 }
 
