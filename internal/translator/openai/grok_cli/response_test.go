@@ -82,6 +82,29 @@ func TestStreamIgnoresArgumentDeltas(t *testing.T) {
 	}
 }
 
+func TestStreamAccumulatesFunctionArgumentsDelta(t *testing.T) {
+	events := []string{
+		`{"type":"response.created","response":{"id":"resp_1"}}`,
+		`{"type":"response.function_call_arguments.delta","item_id":"call_1","delta":"{\"city\":\""}`,
+		`{"type":"response.function_call_arguments.delta","item_id":"call_1","delta":"LA"}`,
+		`{"type":"response.function_call_arguments.delta","item_id":"call_1","delta":"\"}"}`,
+		`{"type":"response.output_item.done","item":{"type":"function_call","call_id":"call_1","name":"get_weather","arguments":""}}`,
+		`{"type":"response.completed"}`,
+	}
+	chunks := collectStream(t, events...)
+	if len(chunks) != 2 {
+		t.Fatalf("expected 2 chunks, got %d: %s", len(chunks), stringify(chunks))
+	}
+	fc := bytes.TrimSpace(chunks[0][5:])
+	if got := gjson.GetBytes(fc, "choices.0.delta.tool_calls.0.function.arguments").String(); got != `{"city":"LA"}` {
+		t.Fatalf("expected accumulated args {\"city\":\"LA\"}, got %s", got)
+	}
+	completed := bytes.TrimSpace(chunks[1][5:])
+	if got := gjson.GetBytes(completed, "choices.0.finish_reason").String(); got != "tool_calls" {
+		t.Fatalf("expected finish_reason tool_calls, got %s", got)
+	}
+}
+
 func TestNonStreamText(t *testing.T) {
 	resp := []byte(`{"id":"resp_1","model":"grok-4.3","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done"}]}],"usage":{"input_tokens":7,"output_tokens":3}}`)
 	out := convertGrokResponseToOpenAINonStream(context.Background(), "grok-cli/grok-4.3", nil, nil, resp, nil)
