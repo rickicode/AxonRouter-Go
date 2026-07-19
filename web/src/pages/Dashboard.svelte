@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
-  import ProviderOctopus from '$lib/components/ProviderOctopus.svelte';
   import { dashboardApi, type DashboardStats } from '$lib/api';
   import { formatTokens, formatCount, formatBytes, loadActiveRequests, activeRequests } from '$lib/stores';
   import { toast } from 'svelte-sonner';
@@ -19,8 +18,7 @@
   import BoxesIcon from '@lucide/svelte/icons/boxes';
   import LayersIcon from '@lucide/svelte/icons/layers';
   import ClockIcon from '@lucide/svelte/icons/clock';
-  import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
-  import ArrowRightIcon from '@lucide/svelte/icons/arrow-right';
+  import RadioIcon from '@lucide/svelte/icons/radio';
 
   let stats = $state<DashboardStats | null>(null);
   let loading = $state(true);
@@ -47,14 +45,33 @@
     return `${m}m`;
   }
 
-  let activeProviderList = $derived(
-    Array.from(new Set(($activeRequests || []).map((r) => r.provider_type_id))).map((id) => ({
-      id,
-      connection_count: 0,
-    }))
-  );
-  let activeProviderIds = $derived(($activeRequests || []).map((r) => r.provider_type_id));
   let streamCount = $derived(($activeRequests || []).length);
+
+  function connectionSub(stats: DashboardStats): string {
+    const total = stats.total_connections ?? 0;
+    const healthy = stats.healthy_connections ?? 0;
+    const unhealthy = total - healthy;
+    if (unhealthy === 0) return 'all healthy';
+    return `${fmtInt(unhealthy)} ${unhealthy === 1 ? 'error' : 'errors'}`;
+  }
+
+  const STATUS_COLORS: Record<string, string> = {
+    ready: 'bg-green-500',
+    rate_limited: 'bg-yellow-500',
+    quota_exhausted: 'bg-orange-500',
+    balance_empty: 'bg-red-500',
+    auth_failed: 'bg-rose-600',
+    suspended: 'bg-gray-500',
+    disabled: 'bg-zinc-400',
+  };
+
+  function statusDistribution(stats: DashboardStats): { status: string; count: number; color: string }[] {
+    const counts = stats.status_counts ?? {};
+    return Object.entries(counts)
+      .filter(([, count]) => count > 0)
+      .map(([status, count]) => ({ status, count, color: STATUS_COLORS[status] ?? 'bg-zinc-500' }))
+      .sort((a, b) => b.count - a.count);
+  }
 
   async function load() {
     loading = true;
@@ -81,7 +98,7 @@
   onMount(() => {
     document.title = 'Dashboard — AxonRouter';
     load();
-    refreshTimer = setInterval(load, 10000);
+    refreshTimer = setInterval(load, 5000);
     activeTimer = setInterval(loadActiveRequests, 3000);
     return () => {
       if (refreshTimer) clearInterval(refreshTimer);
@@ -91,21 +108,9 @@
 </script>
 
 <div class="flex flex-1 flex-col gap-6 p-6">
-  <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-    <div class="space-y-1">
-      <h1 class="text-display-lg">Dashboard.</h1>
-      <p class="text-body-sm text-muted-foreground">Real-time overview of traffic, cost, and system health.</p>
-    </div>
-    <div class="flex items-center gap-2">
-      <Button variant="outline" size="sm" onclick={load} class="text-body-sm rounded-sm cursor-pointer gap-1.5">
-        <RefreshCwIcon class="size-3.5" />Refresh
-      </Button>
-      <a href="/usage">
-        <Button variant="outline" size="sm" class="text-body-sm rounded-sm cursor-pointer gap-1.5">
-          View full usage<ArrowRightIcon class="size-3.5" />
-        </Button>
-      </a>
-    </div>
+  <div class="space-y-1">
+    <h1 class="text-display-lg">Dashboard.</h1>
+    <p class="text-body-sm text-muted-foreground">Auto-refreshing overview of traffic, cost, and system health.</p>
   </div>
 
   {#if loading && !stats}
@@ -136,27 +141,42 @@
       {@render kpiCard('CPU', fmtPercent(stats.cpu_percent), `${stats.cpu_cores ?? 0} cores`, ZapIcon, 'bg-cyan-500/40', 'text-cyan-400')}
       {@render kpiCard('Memory', `${formatBytes(stats.memory_used_bytes ?? 0)} / ${formatBytes(stats.memory_total_bytes ?? 0)}`, fmtPercent(stats.memory_percent), DatabaseIcon, 'bg-fuchsia-500/40', 'text-fuchsia-400')}
       {@render kpiCard('Disk', `${formatBytes(stats.disk_used_bytes ?? 0)} / ${formatBytes(stats.disk_total_bytes ?? 0)}`, fmtPercent(stats.disk_percent), HardDriveIcon, 'bg-orange-500/40', 'text-orange-400')}
-      {@render kpiCard('Connections', `${stats.healthy_connections ?? 0}/${stats.total_connections}`, 'healthy / total', ServerIcon, 'bg-lime-500/40', 'text-lime-400')}
+      {@render kpiCard('Connections', `${stats.healthy_connections ?? 0}/${stats.total_connections}`, connectionSub(stats), ServerIcon, 'bg-lime-500/40', 'text-lime-400')}
       {@render kpiCard('Providers', fmtInt(stats.total_providers), 'registered', BoxesIcon, 'bg-pink-500/40', 'text-pink-400')}
       {@render kpiCard('Combos', fmtInt(stats.total_combos), 'configured', LayersIcon, 'bg-indigo-500/40', 'text-indigo-400')}
       {@render kpiCard('Uptime', fmtUptime(stats.uptime_seconds), 'since start', ClockIcon, 'bg-sky-500/40', 'text-sky-400')}
+      {@render kpiCard('Active requests', formatCount(streamCount), 'live', RadioIcon, 'bg-teal-500/40', 'text-teal-400')}
     </div>
 
-    <!-- Provider octopus mini -->
+    <!-- Connection status chart -->
     <Card class="shadow-card">
-      <CardHeader class="pb-3 border-b border-border flex flex-row items-center justify-between">
+      <CardHeader class="pb-3 border-b border-border">
         <div class="flex items-center gap-2">
-          <ActivityIcon class="size-4 text-muted-foreground" />
-          <CardTitle class="text-body-md-strong">Provider network</CardTitle>
+          <ServerIcon class="size-4 text-muted-foreground" />
+          <CardTitle class="text-body-md-strong">Connection status</CardTitle>
         </div>
-        <a href="/usage">
-          <Button variant="outline" size="sm" class="text-body-sm rounded-sm cursor-pointer gap-1.5">
-            View full usage<ArrowRightIcon class="size-3.5" />
-          </Button>
-        </a>
       </CardHeader>
       <CardContent class="pt-4">
-        <ProviderOctopus providers={activeProviderList} activeIds={activeProviderIds} streamCount={streamCount} />
+        {#if Object.keys(stats.status_counts ?? {}).length === 0}
+          <p class="text-body-sm text-muted-foreground py-8 text-center">No connection status data.</p>
+        {:else}
+          {@const dist = statusDistribution(stats)}
+          {@const total = dist.reduce((sum, d) => sum + d.count, 0)}
+          <div class="flex h-4 w-full overflow-hidden rounded-full bg-muted">
+            {#each dist as s}
+              <div class="{s.color} h-full" style="width: {(s.count / total) * 100}%;" title="{s.status}: {s.count}"></div>
+            {/each}
+          </div>
+          <div class="mt-4 flex flex-wrap gap-3">
+            {#each dist as s}
+              <div class="flex items-center gap-1.5">
+                <span class="inline-block size-3 rounded-full {s.color}"></span>
+                <span class="text-body-sm text-muted-foreground capitalize">{s.status.replace(/_/g, ' ')}</span>
+                <span class="text-body-sm-strong tabular-nums">{fmtInt(s.count)}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
       </CardContent>
     </Card>
   {/if}
