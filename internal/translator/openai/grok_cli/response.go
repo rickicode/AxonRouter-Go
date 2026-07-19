@@ -106,6 +106,13 @@ func convertGrokResponseToOpenAIStream(_ context.Context, _ string, _, _ []byte,
 func convertGrokResponseToOpenAINonStream(_ context.Context, _ string, _, _ []byte, rawResponse []byte, _ *any) []byte {
 	root := gjson.ParseBytes(rawResponse)
 
+	// Grok CLI's non-stream executor returns the SSE event wrapper for
+	// /v1/responses compatibility. If we see a top-level "response" object,
+	// unwrap it before translating to OpenAI Chat Completions format.
+	if r := root.Get("response"); r.Exists() && r.Type == gjson.JSON {
+		root = r
+	}
+
 	out := make(map[string]interface{})
 	out["id"] = root.Get("id").String()
 	out["object"] = "chat.completion"
