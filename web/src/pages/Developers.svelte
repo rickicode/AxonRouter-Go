@@ -153,7 +153,7 @@
   "status": "ready"
 }`;
 
-  const startOAuthBody = '{"provider":"grok-cli","provider_name":"Ops Account"}';
+  const startOAuthBody = '{"provider":"grok-cli"}';
 
   const startOAuthResponse = `{
   "auth_url": "http://localhost:PORT/auth?response_type=code&...",
@@ -384,6 +384,12 @@
         <CodeBlock code={curlCmd('POST', '/oauth/start', startOAuthBody)} label="Start OAuth" />
         <p class="text-body-sm text-muted-foreground">Request body:</p>
         <CodeBlock code={startOAuthBody} label="Request body" />
+        <p class="text-body-sm text-muted-foreground">
+          Only <code>provider</code> is required. The eventual connection name is taken from the
+          authorized OAuth account email; if no email is returned it falls back to
+          <code>OAuth &lt;provider&gt;</code>. You can optionally send <code>provider_name</code> to
+          override the fallback label.
+        </p>
         <p class="text-body-sm text-muted-foreground">Response <code>200 OK</code> &mdash; open <code>auth_url</code> and finish login:</p>
         <CodeBlock code={startOAuthResponse} label="Response" />
       </div>
