@@ -98,10 +98,21 @@ func DetectError(ctx context.Context, statusCode int, body string, err error, pr
 		Scope:     "connection",
 		ModelID:   modelID,
 	}
+	freeUsageExhausted := false
 	switch cat {
 	case ErrorRateLimit:
 		det.Status = StatusRateLimited
 		cooldown := 60 * time.Second
+		if statusCode == http.StatusTooManyRequests {
+			lower := strings.ToLower(msg)
+			if strings.Contains(lower, "free-usage-exhausted") || strings.Contains(lower, "included free usage") {
+				det.Category = ErrorQuota
+				det.Status = StatusQuotaExhausted
+				cat = ErrorQuota
+				cooldown = 24 * time.Hour
+				freeUsageExhausted = true
+			}
+		}
 		if headers != nil {
 			if retryAfter := headers.Get("Retry-After"); retryAfter != "" {
 				if seconds, err2 := strconv.Atoi(retryAfter); err2 == nil && seconds > 0 {
@@ -109,7 +120,7 @@ func DetectError(ctx context.Context, statusCode int, body string, err error, pr
 				}
 			}
 		}
-		if cooldown == 60*time.Second && msg != "" {
+		if !freeUsageExhausted && cooldown == 60*time.Second && msg != "" {
 			if retryBody := parseRetryAfterFromBody(msg); retryBody > 0 {
 				cooldown = time.Duration(retryBody) * time.Second
 			}
@@ -131,8 +142,9 @@ func DetectError(ctx context.Context, statusCode int, body string, err error, pr
 	}
 
 	// Per-model quota/rate-limit: only oc/ag mark at model scope; other providers
-	// keep connection-wide cooldown/exhaustion as before.
-	if HasPerModelQuota(providerPrefix) && det.ModelID != "" && (cat == ErrorRateLimit || cat == ErrorQuota) {
+	// keep connection-wide cooldown/exhaustion as before. Free-tier exhaustion is
+	// account-wide, so it is never scoped to a single model.
+	if !freeUsageExhausted && HasPerModelQuota(providerPrefix) && det.ModelID != "" && (cat == ErrorRateLimit || cat == ErrorQuota) {
 		det.Scope = "model"
 		det.CooldownUntil = exactCooldown(msg, headers, defaultCooldownFor(cat))
 	}

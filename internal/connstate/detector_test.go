@@ -157,6 +157,51 @@ func TestHasPerModelQuota_GrokCLI_ReturnsFalse(t *testing.T) {
 	}
 }
 
+func TestDetectError_FreeUsageExhausted429_IsQuotaWith24hCooldown(t *testing.T) {
+	for _, body := range []string{
+		`{"code":"free-usage-exhausted","error":"subscription changed"}`,
+		`{"error":{"message":"You have included free usage of xAI API"}}`,
+		`free-usage-exhausted`,
+	} {
+		det := DetectError(context.Background(), http.StatusTooManyRequests, body, nil, "xai", "xai/grok-3", nil)
+
+		if det.Category != ErrorQuota {
+			t.Errorf("body=%q: category=%v, want ErrorQuota", body, det.Category)
+		}
+		if det.Status != StatusQuotaExhausted {
+			t.Errorf("body=%q: status=%v, want StatusQuotaExhausted", body, det.Status)
+		}
+		if det.CooldownUntil == nil {
+			t.Fatalf("body=%q: expected CooldownUntil", body)
+		}
+		want := time.Now().Add(24 * time.Hour)
+		if det.CooldownUntil.Before(want.Add(-2*time.Second)) || det.CooldownUntil.After(want.Add(2*time.Second)) {
+			t.Errorf("body=%q: cooldown=%v, want around %v", body, det.CooldownUntil, want)
+		}
+	}
+}
+
+func TestDetectError_FreeUsageExhausted429_UsesRetryAfterHeader(t *testing.T) {
+	body := `{"error":{"message":"free-usage-exhausted"}}`
+	headers := http.Header{}
+	headers.Set("Retry-After", "600")
+	det := DetectError(context.Background(), http.StatusTooManyRequests, body, nil, "xai", "xai/grok-3", headers)
+
+	if det.Category != ErrorQuota {
+		t.Errorf("category=%v, want ErrorQuota", det.Category)
+	}
+	if det.Status != StatusQuotaExhausted {
+		t.Errorf("status=%v, want StatusQuotaExhausted", det.Status)
+	}
+	if det.CooldownUntil == nil {
+		t.Fatal("expected CooldownUntil")
+	}
+	want := time.Now().Add(600 * time.Second)
+	if det.CooldownUntil.Before(want.Add(-2*time.Second)) || det.CooldownUntil.After(want.Add(2*time.Second)) {
+		t.Errorf("cooldown=%v, want around %v", det.CooldownUntil, want)
+	}
+}
+
 func TestDetectError_ContextCanceled_IsTimeout(t *testing.T) {
 	// A server-side cancellation (not the inbound request) must classify as a
 	// retryable timeout, not ErrorUnknown.
