@@ -37,19 +37,19 @@ func IsValidStrategy(s string) bool { return ValidStrategies[s] }
 
 // Handler manages combo resolution and routing.
 type Handler struct {
-	mu sync.RWMutex
-	db *sql.DB
+	mu       sync.RWMutex
+	db       *sql.DB
 	rotation *RotationManager
-	smart *SmartCombo
+	smart    *SmartCombo
 	fallback *FallbackManager
-	store *connstate.Store
-	elig *connstate.EligibilityManager
+	store    *connstate.Store
+	elig     *connstate.EligibilityManager
 
 	// In-memory combo cache
-	combos map[string]*db.Combo
-	byName map[string]*db.Combo // combo name → combo (O(1) resolve by name)
-	steps map[string][]db.ComboStep // comboID → steps
-	smartCombos map[string]*db.Combo // comboID → smart combo
+	combos      map[string]*db.Combo
+	byName      map[string]*db.Combo      // combo name → combo (O(1) resolve by name)
+	steps       map[string][]db.ComboStep // comboID → steps
+	smartCombos map[string]*db.Combo      // comboID → smart combo
 
 	// In-memory strategy overrides (combo_strategies) and default (combo_strategy).
 	strategyMu        sync.RWMutex
@@ -144,8 +144,7 @@ func (h *Handler) Resolve(modelStr string) (*ComboResult, bool) {
 		if len(steps) == 0 {
 			return nil, false
 		}
-		rotated := h.rotation.GetRotatedSteps(c.ID, c.Strategy, c.StickyLimit, steps)
-		return &ComboResult{Combo: c, Steps: rotated}, true
+		return &ComboResult{Combo: c, Steps: steps}, true
 	}
 	h.mu.RUnlock()
 
@@ -179,8 +178,7 @@ func (h *Handler) resolveSmart(goal SmartGoal) (*ComboResult, bool) {
 	if len(steps) == 0 {
 		return nil, false
 	}
-	rotated := h.rotation.GetRotatedSteps(combo.ID, combo.Strategy, combo.StickyLimit, steps)
-	return &ComboResult{Combo: combo, Steps: rotated}, true
+	return &ComboResult{Combo: combo, Steps: steps}, true
 }
 
 // loadStrategySettings reads combo_strategy / combo_strategies from DB once

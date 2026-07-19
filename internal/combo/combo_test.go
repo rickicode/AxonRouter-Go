@@ -260,6 +260,7 @@ func TestRandomStrategy_ReturnsPermutation(t *testing.T) {
 	seen := map[string]bool{}
 	for i := 0; i < 20; i++ {
 		result, _ = h.Resolve(combo.Name)
+		result.Steps = h.RotateSteps(result.Combo.ID, result.Combo.Strategy, result.Combo.StickyLimit, result.Steps)
 		seen[result.Steps[0].ModelID] = true
 	}
 	if len(seen) != 2 {
@@ -305,8 +306,49 @@ func TestLeastUsedStrategy_OrdersByRecentUsage(t *testing.T) {
 	if result.Combo.Strategy != "least-used" {
 		t.Fatalf("strategy = %q, want least-used", result.Combo.Strategy)
 	}
+	result.Steps = h.RotateSteps(result.Combo.ID, result.Combo.Strategy, result.Combo.StickyLimit, result.Steps)
 	if result.Steps[0].ModelID != "combo-test/gpt-4o-mini" {
 		t.Fatalf("least-used should prefer lower-usage model, got %v", result.Steps)
+	}
+}
+
+func TestRoundRobin_AdvancesOneStepPerRequest(t *testing.T) {
+	database := newComboTestDB(t)
+	seedConnectionForCombo(t, database, "conn-1")
+	seedConnectionForCombo(t, database, "conn-2")
+	seedConnectionForCombo(t, database, "conn-3")
+
+	store := connstate.NewStore()
+	elig := connstate.NewEligibilityManager(store)
+	h := NewHandler(database, store, elig)
+
+	combo, err := h.CreateCombo("rr-three", "round-robin", 30000, 1, false, "", "", []CreateStepInput{
+		{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
+		{ConnectionID: "conn-2", ModelID: "openai/gpt-4o-mini", Priority: 2, Weight: 100},
+		{ConnectionID: "conn-3", ModelID: "openai/gpt-4.1", Priority: 3, Weight: 100},
+	})
+	if err != nil {
+		t.Fatalf("CreateCombo failed: %v", err)
+	}
+
+	wantOrder := []string{"openai/gpt-4o", "openai/gpt-4o-mini", "openai/gpt-4.1"}
+	counts := map[string]int{}
+	for i := 0; i < 30; i++ {
+		result, ok := h.Resolve(combo.Name)
+		if !ok {
+			t.Fatalf("Resolve failed on iteration %d", i)
+		}
+		result.Steps = h.RotateSteps(result.Combo.ID, result.Combo.Strategy, result.Combo.StickyLimit, result.Steps)
+		first := result.Steps[0].ModelID
+		counts[first]++
+		if first != wantOrder[i%len(wantOrder)] {
+			t.Fatalf("first step on iteration %d = %q, want %q", i, first, wantOrder[i%len(wantOrder)])
+		}
+	}
+	for _, modelID := range wantOrder {
+		if counts[modelID] != 10 {
+			t.Fatalf("first-step count for %s = %d, want 10 (all counts: %v)", modelID, counts[modelID], counts)
+		}
 	}
 }
 
