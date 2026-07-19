@@ -294,6 +294,10 @@ func (s *kiroStreamState) handleEvent(frame *EventFrame, nameMap map[string]stri
 			eventType = "messageStopEvent"
 		} else if _, ok := frame.Payload["usageEvent"]; ok {
 			eventType = "usageEvent"
+		} else if _, ok := frame.Payload["contextUsageEvent"]; ok {
+			eventType = "contextUsageEvent"
+		} else if _, ok := frame.Payload["meteringEvent"]; ok {
+			eventType = "meteringEvent"
 		}
 	}
 
@@ -431,6 +435,21 @@ func (s *kiroStreamState) handleEvent(frame *EventFrame, nameMap map[string]stri
 		b, _ := json.Marshal(chunk)
 		return [][]byte{[]byte("data: " + string(b))}
 
+	case "contextUsageEvent":
+		payload := frame.Payload
+		if p, ok := frame.Payload["contextUsageEvent"].(map[string]any); ok {
+			payload = p
+		}
+		if pct, ok := toFloat64(payload["contextUsagePercentage"]); ok && pct > 0 {
+			s.hasContextUsage = true
+			s.contextUsagePct = int64(pct)
+		}
+		return nil
+
+	case "meteringEvent":
+		s.hasMeteringEvent = true
+		return nil
+
 	case "usageEvent":
 		payload := frame.Payload
 		if p, ok := frame.Payload["usageEvent"].(map[string]any); ok {
@@ -468,6 +487,20 @@ func toInt64(v any) (int64, bool) {
 		return int64(n), true
 	case int:
 		return int64(n), true
+	}
+	return 0, false
+}
+
+func toFloat64(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case int64:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case float32:
+		return float64(n), true
 	}
 	return 0, false
 }
