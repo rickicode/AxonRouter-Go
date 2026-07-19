@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/rickicode/AxonRouter-Go/internal/provider/kiro"
 )
 
 // KiroExecutor handles AWS CodeWhisperer / Kiro streaming (AWS EventStream)
@@ -518,6 +520,31 @@ func mergeKiroToolCalls(out *[]map[string]any, deltas []any) {
 			}
 		}
 	}
+}
+
+// Models returns the live Kiro model catalog. Falls back to the static catalog
+// when the account is offline or unauthenticated, so model listing never breaks.
+func (e *KiroExecutor) Models(ctx context.Context, req *Request) (*Response, error) {
+	psd := make(map[string]any, len(req.ProviderSpecificData))
+	for k, v := range req.ProviderSpecificData {
+		psd[k] = v
+	}
+	result, err := kiro.FetchLiveModels(req.AccessToken, psd)
+	if err != nil {
+		return nil, err
+	}
+	type item struct {
+		ID string `json:"id"`
+	}
+	resp := struct {
+		Object string `json:"object"`
+		Data   []item `json:"data"`
+	}{Object: "list", Data: make([]item, 0, len(result.Models))}
+	for _, m := range result.Models {
+		resp.Data = append(resp.Data, item{ID: m.ID})
+	}
+	body, _ := json.Marshal(resp)
+	return &Response{StatusCode: http.StatusOK, Body: body}, nil
 }
 
 // ExecuteStream performs a streaming Kiro request.

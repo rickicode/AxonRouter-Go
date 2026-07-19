@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **OAuth mode in Add Connection modal** — explicit "Connect" button opens the existing backend OAuth flow in a popup, polls until completion, and refreshes the connection list on success.
 - **Bulk proxy-pool assignment** — `ProviderDetail` supports multi-selecting connections and applying/unbinding a proxy pool in one transaction; only available for proxy-pool providers (`oc`, `mimocode`).
 - **Device-tracker configuration** — env vars `DEVICE_TRACKER_TTL_MS`, `DEVICE_TRACKER_MAX_PER_KEY`, `DEVICE_TRACKER_MAX_TOTAL_DEVICES`.
+- **Live Kiro model catalog** — `internal/provider/kiro/models.go` calls `ListAvailableModels` with fingerprint headers, caches results for 5 minutes, falls back to the static catalog, and expands each live model into base / `-thinking` / `-agentic` / `-thinking-agentic` variants carrying `rateMultiplier` and `contextLength`.
+- **Kiro multi-endpoint quota fetcher** — `internal/quota/kiro.go` tries `codewhisperer` POST, `codewhisperer` GET, and `q` GET fallbacks; discovers `profileArn` across AWS regions; parses `usageBreakdownList`, `overageConfiguration.unlimited`, and `freeTrialInfo`; surfaces a friendly message for social-auth accounts when quota APIs reject the token.
 
 ### Fixed
 - **Grok CLI non-stream response translation** — `/v1/chat/completions` responses from `grok-cli` are now translated back to standard OpenAI format instead of leaking Grok's internal `response.completed` event shape.

@@ -463,7 +463,7 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 	case "ag":
 		r.quotas, r.plan, r.err = fetchAntigravityQuota(token, psd)
 	case "kiro":
-		r.quotas, r.plan, r.err = fetchKiroQuota(token, psd)
+		r.quotas, r.plan, r.msg, r.err = fetchKiroQuota(token, psd)
 	case "grok-cli":
 		r.quotas, r.plan, r.err = fetchGrokCliQuota(token, psd)
 	case "copilot":

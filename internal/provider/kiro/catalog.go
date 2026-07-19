@@ -24,6 +24,7 @@ type Model struct {
 	UpstreamModelID string
 	VariantSuffix   string
 	Description     string
+	RateMultiplier  float64
 }
 
 // BaseModels lists the verified upstream Kiro models.
