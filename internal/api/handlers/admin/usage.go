@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/quota"
+	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
 
 // UsageHandler aggregates request_logs into rich usage reports.
@@ -509,4 +511,36 @@ func parseInt(v string) (int, error) {
 	var n int
 	_, err := fmt.Sscanf(v, "%d", &n)
 	return n, err
+}
+
+// Summary returns compact usage stats for the dashboard system-metrics cards.
+// GET /api/admin/usage/summary
+func (h *UsageHandler) Summary(c *gin.Context) {
+	agg := usage.NewAggregator(h.db)
+
+	today, _ := agg.GetTodaySummary()
+	yesterday, _ := agg.GetDaySummary(-1)
+	month, _ := agg.GetMonthToDateSummary()
+
+	now := time.Now().UTC()
+	daysInMonth := time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day()
+	daysElapsed := now.Day()
+	if daysElapsed < 1 {
+		daysElapsed = 1
+	}
+	projected := 0.0
+	if month.CostUsd > 0 {
+		projected = month.CostUsd / float64(daysElapsed) * float64(daysInMonth)
+	}
+
+	resets, _ := quota.NextProviderResets(h.db)
+	c.JSON(http.StatusOK, gin.H{
+		"data": gin.H{
+			"today":               today,
+			"yesterday":           yesterday,
+			"month_to_date":       month,
+			"projected_month_cost": projected,
+			"next_quota_reset":    earliestReset(resets),
+		},
+	})
 }
