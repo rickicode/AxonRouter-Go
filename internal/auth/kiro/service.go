@@ -61,6 +61,16 @@ type ExternalIDPRequest struct {
 	Region        string `json:"region"`
 }
 
+// ImportTokenRequest holds a manually imported AWS refresh token and optional
+// OIDC client registration so refresh can use the AWS OIDC token endpoint.
+type ImportTokenRequest struct {
+	RefreshToken string `json:"refresh_token"`
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+	Region       string `json:"region"`
+	StartURL     string `json:"start_url"`
+}
+
 // KiroAuthService dispatches all Kiro authentication methods.
 type KiroAuthService struct {
 	httpClient     *http.Client
@@ -127,7 +137,12 @@ func (s *KiroAuthService) RefreshToken(ctx context.Context, creds *auth.Credenti
 	switch am {
 	case "external_idp":
 		return s.refreshExternalIDPFromCreds(ctx, creds)
-	case "google", "github", "import":
+	case "google", "github":
+		return s.refreshSocialToken(ctx, creds)
+	case "import":
+		if s.hasOIDCData(creds) {
+			return s.refreshOIDCWithRetry(ctx, creds)
+		}
 		return s.refreshSocialToken(ctx, creds)
 	case "builder-id", "idc":
 		return s.refreshOIDCWithRetry(ctx, creds)
@@ -200,18 +215,32 @@ func (s *KiroAuthService) ExchangeSocialCode(ctx context.Context, sessionID, cod
 }
 
 // ImportToken validates and imports a manually supplied AWS refresh token.
-func (s *KiroAuthService) ImportToken(_ context.Context, refreshToken string) (*auth.Credentials, error) {
+func (s *KiroAuthService) ImportToken(_ context.Context, req ImportTokenRequest) (*auth.Credentials, error) {
+	refreshToken := strings.TrimSpace(req.RefreshToken)
 	if refreshToken == "" {
 		return nil, fmt.Errorf("refresh token is required")
 	}
 	if !isAWSRefreshToken(refreshToken) {
 		return nil, fmt.Errorf("invalid token format: AWS refresh tokens start with aorAAAAAG...")
 	}
+	psd := map[string]string{
+		"authMethod": "import",
+	}
+	if v := strings.TrimSpace(req.ClientID); v != "" {
+		psd["clientId"] = v
+	}
+	if v := strings.TrimSpace(req.ClientSecret); v != "" {
+		psd["clientSecret"] = v
+	}
+	if v := strings.TrimSpace(req.Region); v != "" {
+		psd["region"] = v
+	}
+	if v := strings.TrimSpace(req.StartURL); v != "" {
+		psd["startUrl"] = v
+	}
 	return &auth.Credentials{
-		RefreshToken: refreshToken,
-		ProviderSpecific: map[string]string{
-			"authMethod": "import",
-		},
+		RefreshToken:     refreshToken,
+		ProviderSpecific: psd,
 	}, nil
 }
 
