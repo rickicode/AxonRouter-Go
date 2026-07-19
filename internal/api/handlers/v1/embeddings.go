@@ -24,6 +24,8 @@ func (h *Handler) Embeddings(c *gin.Context) {
 		return
 	}
 
+	h.trackDevice(c)
+
 	// Apply compression (fail-open); skip if the request uses prompt-cache markers.
 	// Embeddings bodies rarely benefit, but this keeps the handler consistent with
 	// the rest of the v1 surface and is essentially a no-op when no messages exist.
@@ -93,12 +95,12 @@ func (h *Handler) Embeddings(c *gin.Context) {
 		}
 	}
 	req := &executor.Request{
-		Model: modelName,
-		Body: body,
-		APIKey: conn.APIKey,
-		AccessToken: conn.AccessToken,
-		BaseURL: conn.BaseURL,
-		Provider: provider,
+		Model:                modelName,
+		Body:                 body,
+		APIKey:               conn.APIKey,
+		AccessToken:          conn.AccessToken,
+		BaseURL:              conn.BaseURL,
+		Provider:             provider,
 		ProviderSpecificData: psdMap,
 	}
 	proxyCtx := h.proxyContext(c.Request.Context(), conn)
@@ -128,16 +130,16 @@ func (h *Handler) Embeddings(c *gin.Context) {
 		return
 	}
 	h.logRequest(c, &usage.LogEntry{
-		ApiKeyID: c.GetString("api_key_id"),
-		ConnectionID: conn.ID,
+		ApiKeyID:       c.GetString("api_key_id"),
+		ConnectionID:   conn.ID,
 		ProviderTypeID: provider,
-		ModelID: modelName,
-		ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
-		ApiType: apiTypeFromPath(c.Request.URL.Path),
-		Modality: "embedding",
-		Stream: false,
-		LatencyMs: time.Since(start).Milliseconds(),
-		StatusCode: resp.StatusCode})
+		ModelID:        modelName,
+		ProxyPoolID:    executor.ProxyPoolIDFromContext(proxyCtx),
+		ApiType:        apiTypeFromPath(c.Request.URL.Path),
+		Modality:       "embedding",
+		Stream:         false,
+		LatencyMs:      time.Since(start).Milliseconds(),
+		StatusCode:     resp.StatusCode})
 	h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, resp.Body, false)
 	c.Header("Content-Type", "application/json")
 	c.Status(resp.StatusCode)
@@ -154,6 +156,6 @@ func normalizeEmbeddingModel(provider, modelName string) string {
 			return "@" + modelName
 		}
 		return "@cf/" + modelName
-}
+	}
 	return modelName
 }

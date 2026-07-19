@@ -31,6 +31,8 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
+	h.trackDevice(c)
+
 	// Apply compression (fail-open); skip if the request uses prompt-cache markers.
 	body = h.compressRequestBody(body)
 

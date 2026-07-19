@@ -164,6 +164,20 @@ func (h *Handler) logRequest(c *gin.Context, entry *usage.LogEntry) {
 	h.tracker.Log(entry)
 }
 
+// trackDevice records the calling client device for the resolved API key.
+// It is a no-op when no device tracker is configured or the request is
+// unauthenticated, so handlers can call it unconditionally after auth.
+func (h *Handler) trackDevice(c *gin.Context) {
+	if h.deviceTracker == nil || c == nil {
+		return
+	}
+	apiKeyID := c.GetString("api_key_id")
+	if apiKeyID == "" {
+		return
+	}
+	h.deviceTracker.Track(apiKeyID, c.Request.Header, c.Request.UserAgent())
+}
+
 // unifiedSurface maps a proxy path to the client-facing API surface name.
 // It is shared by logging and the active-request tracker. The special-case
 // ordering matters: more-specific paths must match before generic substrings.
@@ -225,6 +239,7 @@ type Handler struct {
 	elig                *connstate.EligibilityManager
 	combo               *combo.Handler
 	tracker             *usage.Tracker
+	deviceTracker       *usage.DeviceTracker
 	authMgr             *auth.Manager
 	resolver            *proxypool.Resolver
 	exhaustion          *quota.ExhaustionCache
@@ -257,6 +272,7 @@ func NewHandler(
 	elig *connstate.EligibilityManager,
 	comboHandler *combo.Handler,
 	tracker *usage.Tracker,
+	deviceTracker *usage.DeviceTracker,
 	authManager *auth.Manager,
 	resolver *proxypool.Resolver,
 	exhaustionCache *quota.ExhaustionCache,
@@ -272,6 +288,7 @@ func NewHandler(
 		elig:                elig,
 		combo:               comboHandler,
 		tracker:             tracker,
+		deviceTracker:       deviceTracker,
 		authMgr:             authManager,
 		resolver:            resolver,
 		exhaustion:          exhaustionCache,
