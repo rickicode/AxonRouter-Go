@@ -49,6 +49,7 @@ async function fetchHealth() {
     currentVersion = typeof data.version === 'string' ? data.version : '';
     latestVersion = typeof data.latest_version === 'string' ? data.latest_version : '';
     updateAvailable = data.update_available === true;
+    error = '';
     healthErrorShown = false;
     upgradeJustCompleted = false;
   } catch (err) {

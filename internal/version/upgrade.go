@@ -245,13 +245,30 @@ func versionGreater(latest, current string) bool {
 func versionParts(v string) ([3]int, bool) {
 	v = strings.TrimSpace(v)
 	v = strings.TrimPrefix(v, "v")
-	parts := strings.Split(v, ".")
-	if len(parts) < 3 {
-		parts = append(parts, "0", "0")
+	if v == "" {
+		return [3]int{}, false
 	}
+
+	parts := strings.Split(v, ".")
 	var out [3]int
 	for i := 0; i < 3; i++ {
-		n, err := strconv.Atoi(strings.TrimSpace(parts[i]))
+		part := ""
+		if i < len(parts) {
+			part = strings.TrimSpace(parts[i])
+		}
+		// Strip any non-numeric suffix (e.g. pre-release or build metadata like
+		// "0", "1-beta", "2+build.123") so semver-ish tags don't fail parsing.
+		num := part
+		for j := 0; j < len(num); j++ {
+			if num[j] < '0' || num[j] > '9' {
+				num = num[:j]
+				break
+			}
+		}
+		if num == "" {
+			num = "0"
+		}
+		n, err := strconv.Atoi(num)
 		if err != nil {
 			return [3]int{}, false
 		}

@@ -8,7 +8,6 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 	"github.com/rickicode/AxonRouter-Go/internal/version"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // HealthHandler exposes liveness and operational metrics.
@@ -32,12 +31,22 @@ func NewHealthHandler(database *sql.DB, store *connstate.Store, tracker *usage.T
 // Health returns a simple liveness check. It is reachable without admin auth
 // so the dashboard and load balancers can use it for online checks.
 func (h *HealthHandler) mustChangePassword() bool {
-	const defaultAdminPassword = "12345677"
-	var hash string
-	if err := h.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, "admin_password_hash").Scan(&hash); err != nil || hash == "" {
-		return false
+	// Use the explicit "admin_password_changed" flag written by
+	// ChangePasswordHandler instead of running bcrypt on every liveness probe.
+	// This keeps the health endpoint cheap and avoids leaking whether the stored
+	// hash matches a known default password on an unauthenticated route.
+	var changed string
+	if err := h.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, "admin_password_changed").Scan(&changed); err != nil || changed == "" {
+		// Fallback for databases created before the flag existed: if a password
+		// hash is present but the flag is missing, assume the default password
+		// is still in use.
+		var hash string
+		if err := h.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, "admin_password_hash").Scan(&hash); err != nil || hash == "" {
+			return false
+		}
+		return true
 	}
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(defaultAdminPassword)) == nil
+	return changed != "true"
 }
 
 func (h *HealthHandler) Health(c *gin.Context) {
