@@ -156,6 +156,12 @@ func (h *OAuthHandler) StartOAuth(c *gin.Context) {
 					log.Printf("failed to generate Kiro fallback name: %v", err)
 				}
 				connName = fallback
+			} else if req.Provider == "codebuddy" {
+				fallback, err := nextCodeBuddyFallbackName(h.db)
+				if err != nil {
+					log.Printf("failed to generate CodeBuddy fallback name: %v", err)
+				}
+				connName = fallback
 			}
 
 			// Create connection ONLY on success

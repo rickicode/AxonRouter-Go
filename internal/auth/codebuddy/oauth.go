@@ -328,10 +328,14 @@ func (s *OAuthService) pollTokenOnce(ctx context.Context, tokenURL string) (*aut
 			AccessToken:  strings.TrimSpace(tokenRes.Data.AccessToken),
 			RefreshToken: strings.TrimSpace(tokenRes.Data.RefreshToken),
 		}
+		if email := strings.TrimSpace(tokenRes.Data.Email); email != "" {
+			creds.Email = email
+		}
 		if tokenRes.Data.TokenType != "" {
-			creds.ProviderSpecific = map[string]string{
-				"token_type": tokenRes.Data.TokenType,
+			if creds.ProviderSpecific == nil {
+				creds.ProviderSpecific = map[string]string{}
 			}
+			creds.ProviderSpecific["token_type"] = tokenRes.Data.TokenType
 		}
 		if tokenRes.Data.ExpiresIn > 0 {
 			creds.ExpiresAt = time.Now().Add(time.Duration(tokenRes.Data.ExpiresIn) * time.Second)

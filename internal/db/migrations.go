@@ -262,8 +262,10 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 
 	// CodeBuddy switched from the Tencent China endpoint (copilot.tencent.com)
 	// to the international endpoint (www.codebuddy.ai). Update existing seeded rows
-	// so the auth polling and chat requests stay consistent.
-	if _, err := db.Exec(`UPDATE provider_types SET base_url = 'https://www.codebuddy.ai/v2/chat/completions' WHERE id = 'codebuddy' AND base_url = 'https://copilot.tencent.com/v2/chat/completions'`); err != nil {
+	// so the auth polling and chat requests stay consistent. Also fix any rows that
+	// were previously pointed at the bare codebuddy.ai apex, which has TLS/cert
+	// issues in some environments.
+	if _, err := db.Exec(`UPDATE provider_types SET base_url = 'https://www.codebuddy.ai/v2/chat/completions' WHERE id = 'codebuddy' AND base_url IN ('https://copilot.tencent.com/v2/chat/completions', 'https://codebuddy.ai/v2/chat/completions')`); err != nil {
 		return err
 	}
 

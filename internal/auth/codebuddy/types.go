@@ -41,5 +41,7 @@ type tokenResponse struct {
 		RefreshToken string `json:"refreshToken"`
 		TokenType    string `json:"tokenType"`
 		ExpiresIn    int64  `json:"expiresIn"`
+		Email        string `json:"email"`
+		Nickname     string `json:"nickname"`
 	} `json:"data"`
 }
