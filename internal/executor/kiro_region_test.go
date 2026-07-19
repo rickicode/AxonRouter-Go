@@ -320,3 +320,14 @@ func TestKiroHeaders_DefaultUserAgent(t *testing.T) {
 		t.Errorf("expected default AWS-SDK-JS user agent, got %q", h["User-Agent"])
 	}
 }
+
+func TestKiroHeaders_Accept(t *testing.T) {
+	req := &Request{ProviderSpecificData: map[string]string{"authMethod": "builder-id"}}
+	h := kiroHeaders(req)
+	if got := h["Accept"]; got != "application/vnd.amazon.eventstream" {
+		t.Errorf("Accept = %q, want %q", got, "application/vnd.amazon.eventstream")
+	}
+	if got := h["Content-Type"]; got != "application/json" {
+		t.Errorf("Content-Type = %q, want %q", got, "application/json")
+	}
+}

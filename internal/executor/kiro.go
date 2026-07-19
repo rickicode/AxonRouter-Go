@@ -41,7 +41,7 @@ func kiroHeaders(req *Request) map[string]string {
 	}
 	headers := map[string]string{
 		"Content-Type":                 "application/json",
-		"Accept":                       "application/json",
+		"Accept":                       "application/vnd.amazon.eventstream",
 		"User-Agent":                   ua,
 		"Amz-Sdk-Request":              "attempt=1; max=3",
 		"Amz-Sdk-Invocation-Id":        genUUID(),
