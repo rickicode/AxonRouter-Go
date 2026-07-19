@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 )
@@ -25,47 +24,12 @@ func NewKiroExecutor(base *BaseExecutor) *KiroExecutor {
 	return &KiroExecutor{BaseExecutor: base}
 }
 
-const (
-	kiroDefaultRegion = "us-east-1"
-)
-
-var kiroProfileARNRe = regexp.MustCompile(`^arn:aws:codewhisperer:([a-z0-9-]+):`)
-
 func genUUID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-}
-
-func resolveKiroRegion(psd map[string]string) string {
-	if psd != nil {
-		if r := psd["region"]; r != "" {
-			return strings.ToLower(strings.TrimSpace(r))
-		}
-		if arn := psd["profileArn"]; arn != "" {
-			if m := kiroProfileARNRe.FindStringSubmatch(arn); len(m) > 1 {
-				return m[1]
-			}
-		}
-	}
-	return kiroDefaultRegion
-}
-
-func kiroRuntimeHost(region string) string {
-	if region == "us-east-1" {
-		return "https://codewhisperer.us-east-1.amazonaws.com"
-	}
-	return fmt.Sprintf("https://q.%s.amazonaws.com", region)
-}
-
-func kiroURL(psd map[string]string, baseURL string) string {
-	if baseURL != "" {
-		return baseURL
-	}
-	region := resolveKiroRegion(psd)
-	return kiroRuntimeHost(region) + "/generateAssistantResponse"
 }
 
 func kiroHeaders(req *Request) map[string]string {
@@ -81,6 +45,7 @@ func kiroHeaders(req *Request) map[string]string {
 		"Amz-Sdk-Invocation-Id":        genUUID(),
 		"x-amzn-bedrock-cache-control": "enable",
 		"anthropic-beta":               "prompt-caching-2024-07-31",
+		"X-Amz-Target":                 "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
 	}
 	if req.AccessToken != "" {
 		headers["Authorization"] = "Bearer " + req.AccessToken
@@ -90,6 +55,16 @@ func kiroHeaders(req *Request) map[string]string {
 	}
 	for k, v := range req.Headers {
 		headers[k] = v
+	}
+
+	// Apply auth-method-specific headers after upstream overlays so they cannot be
+	// accidentally overridden by client-provided headers.
+	authMethod := normalizeRegion(req.ProviderSpecificData["authMethod"])
+	switch authMethod {
+	case "api_key":
+		headers["tokentype"] = "API_KEY"
+	case "external_idp":
+		headers["TokenType"] = "EXTERNAL_IDP"
 	}
 	return headers
 }
@@ -547,7 +522,9 @@ func mergeKiroToolCalls(out *[]map[string]any, deltas []any) {
 
 // ExecuteStream performs a streaming Kiro request.
 func (e *KiroExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
-	url := kiroURL(req.ProviderSpecificData, req.BaseURL)
+	urls := kiroEndpointURLs(req.ProviderSpecificData, req.BaseURL)
+	url := urls[0]
+
 	body, nameMap, err := buildKiroUpstreamBody(req.Body)
 	if err != nil {
 		return nil, fmt.Errorf("kiro upstream body: %w", err)
@@ -565,6 +542,16 @@ func (e *KiroExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stream
 	}
 	for k, v := range headers {
 		httpReq.Header.Set(k, v)
+	}
+
+	// Preserve exact-casing for auth-method-specific headers; net/http.Header.Set
+	// canonicalizes keys, but the Kiro/CodeWhisperer surface expects these spellings.
+	authMethod := normalizeRegion(req.ProviderSpecificData["authMethod"])
+	switch authMethod {
+	case "api_key":
+		httpReq.Header["tokentype"] = []string{"API_KEY"}
+	case "external_idp":
+		httpReq.Header["TokenType"] = []string{"EXTERNAL_IDP"}
 	}
 
 	resp, err := client.Do(httpReq)
