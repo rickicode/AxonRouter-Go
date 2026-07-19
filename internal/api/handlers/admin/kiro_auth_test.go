@@ -16,15 +16,16 @@ import (
 )
 
 type stubKiroService struct {
-	startLocalServer  func(ctx context.Context, state string) (int, chan *auth.Credentials, error)
-	generateAuthURL   func(ctx context.Context, state string) (string, error)
-	getUserCode       func(state string) string
-	startDeviceFlow   func(ctx context.Context, state, region, startURL, issuerURL, authMethod string) (int, chan *auth.Credentials, error)
-	startSocial       func(provider string) (string, string, string, error)
+	startLocalServer   func(ctx context.Context, state string) (int, chan *auth.Credentials, error)
+	generateAuthURL    func(ctx context.Context, state string) (string, error)
+	getUserCode        func(state string) string
+	startDeviceFlow    func(ctx context.Context, state, region, startURL, issuerURL, authMethod string) (int, chan *auth.Credentials, error)
+	startSocial        func(provider string) (string, string, string, error)
 	exchangeSocialCode func(ctx context.Context, sessionID, code string) (*auth.Credentials, error)
-	importToken       func(ctx context.Context, refreshToken string) (*auth.Credentials, error)
-	validateAPIKey    func(ctx context.Context, apiKey, region string) (*auth.Credentials, error)
-	importExternalIDP func(ctx context.Context, req kiro.ExternalIDPRequest) (*auth.Credentials, error)
+	importToken        func(ctx context.Context, refreshToken string) (*auth.Credentials, error)
+	validateAPIKey     func(ctx context.Context, apiKey, region string) (*auth.Credentials, error)
+	importExternalIDP  func(ctx context.Context, req kiro.ExternalIDPRequest) (*auth.Credentials, error)
+	autoImport         func(ctx context.Context) (*kiro.AutoImportResult, error)
 }
 
 func (s *stubKiroService) StartLocalServer(ctx context.Context, state string) (int, chan *auth.Credentials, error) {
@@ -78,6 +79,12 @@ func (s *stubKiroService) ValidateAPIKey(ctx context.Context, apiKey, region str
 func (s *stubKiroService) ImportExternalIDP(ctx context.Context, req kiro.ExternalIDPRequest) (*auth.Credentials, error) {
 	if s.importExternalIDP != nil {
 		return s.importExternalIDP(ctx, req)
+	}
+	return nil, nil
+}
+func (s *stubKiroService) AutoImport(ctx context.Context) (*kiro.AutoImportResult, error) {
+	if s.autoImport != nil {
+		return s.autoImport(ctx)
 	}
 	return nil, nil
 }
