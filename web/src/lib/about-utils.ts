@@ -7,19 +7,27 @@ export function normalizeVersion(version: string): string {
   return version.trim().replace(/^v/, '');
 }
 
+function numericParts(version: string): number[] {
+  // Compare only the major.minor.patch prefix; discard pre-release/build
+  // segments such as "0.4.0-beta.2" or "0.4.0+build.123".
+  return version.split('.').slice(0, 3).map((part) => {
+    const match = /^\d+/.exec(part);
+    return match ? Number.parseInt(match[0], 10) : 0;
+  });
+}
+
 export function isUpdateAvailable(current: string, latest: string): boolean {
   const cur = normalizeVersion(current);
   const lat = normalizeVersion(latest);
   if (!cur || !lat) return false;
 
-  const curParts = cur.split('.').map((part) => Number.parseInt(part, 10));
-  const latParts = lat.split('.').map((part) => Number.parseInt(part, 10));
+  const curParts = numericParts(cur);
+  const latParts = numericParts(lat);
 
   const maxLength = Math.max(curParts.length, latParts.length);
   for (let i = 0; i < maxLength; i++) {
-    const c = curParts[i] || 0;
-    const l = latParts[i] || 0;
-    if (Number.isNaN(c) || Number.isNaN(l)) return false;
+    const c = curParts[i] ?? 0;
+    const l = latParts[i] ?? 0;
     if (l > c) return true;
     if (l < c) return false;
   }

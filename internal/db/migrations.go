@@ -232,6 +232,11 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 
 	{"grok-cli", "Grok CLI (Grok Build)", "grok-cli", "https://cli-chat-proxy.grok.com/v1/responses", "oauth", []string{"llm"}},
 
+	{"devin", "Devin CLI", "devin-cli", "", "apikey", []string{"llm"}},
+	{"qoder", "Qoder", "qoder", "https://dashscope.aliyuncs.com/compatible-mode/v1", "apikey", []string{"llm"}},
+
+	{"codebuddy", "CodeBuddy", "openai", "https://copilot.tencent.com/v2/chat/completions", "oauth", []string{"llm"}},
+
 	{"vertex", "Google Vertex AI", "openai", "https://aiplatform.googleapis.com/v1/projects/{projectId}/locations/{location}/endpoints/openapi", "service-account", []string{"llm"}},
 		{"bedrock", "Amazon Bedrock Mantle", "openai", "https://bedrock-mantle.{region}.api.aws/v1", "apikey", []string{"llm"}},
 	}

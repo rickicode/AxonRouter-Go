@@ -2,8 +2,10 @@ package admin
 
 import (
 	"database/sql"
+	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -54,9 +56,14 @@ func (h *ComboHandler) List(c *gin.Context) {
 	var combos []db.Combo
 	for rows.Next() {
 		cb := db.Combo{}
-		rows.Scan(&cb.ID, &cb.Name, &cb.Strategy, &cb.StickyLimit,
-			&cb.TimeoutMs, &cb.IsSmart, &cb.SmartGoal, &cb.FusionConfig,
-			&cb.IsActive, &cb.CreatedAt, &cb.UpdatedAt)
+		var fusionConfig sql.NullString
+		if err := rows.Scan(&cb.ID, &cb.Name, &cb.Strategy, &cb.StickyLimit,
+			&cb.TimeoutMs, &cb.IsSmart, &cb.SmartGoal, &fusionConfig,
+			&cb.IsActive, &cb.CreatedAt, &cb.UpdatedAt); err != nil {
+			log.Printf("WARN: failed to scan combo row in admin list: %v", err)
+			continue
+		}
+		cb.FusionConfig = fusionConfig.String
 		combos = append(combos, cb)
 	}
 
@@ -90,10 +97,10 @@ func (h *ComboHandler) Get(c *gin.Context) {
 // Create creates a new combo with steps.
 func (h *ComboHandler) Create(c *gin.Context) {
 	var req struct {
-		Name        string `json:"name" binding:"required"`
-		Strategy    string `json:"strategy"`
-		TimeoutMs   int    `json:"timeout_ms"`
-		StickyLimit int    `json:"sticky_limit"`
+		Name         string `json:"name" binding:"required"`
+		Strategy     string `json:"strategy"`
+		TimeoutMs    int    `json:"timeout_ms"`
+		StickyLimit  int    `json:"sticky_limit"`
 		IsSmart      bool   `json:"is_smart"`
 		SmartGoal    string `json:"smart_goal"`
 		FusionConfig string `json:"fusion_config"`
@@ -166,8 +173,8 @@ func (h *ComboHandler) Create(c *gin.Context) {
 func (h *ComboHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		Name        string  `json:"name"`
-		Strategy    string  `json:"strategy"`
+		Name         string  `json:"name"`
+		Strategy     string  `json:"strategy"`
 		TimeoutMs    int     `json:"timeout_ms"`
 		StickyLimit  *int    `json:"sticky_limit"`
 		IsSmart      *bool   `json:"is_smart"`
@@ -226,7 +233,7 @@ func (h *ComboHandler) Update(c *gin.Context) {
 	}
 	if req.SmartGoal != nil {
 		sets = append(sets, "smart_goal = ?")
-		args = append(args, *req.SmartGoal)
+		args = append(args, strings.ToLower(strings.TrimSpace(*req.SmartGoal)))
 	}
 	if req.FusionConfig != "" {
 		sets = append(sets, "fusion_config = ?")
@@ -266,6 +273,11 @@ func (h *ComboHandler) Update(c *gin.Context) {
 // Delete removes a combo.
 func (h *ComboHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
+	var exists int
+	if err := h.db.QueryRow(`SELECT COUNT(*) FROM combos WHERE id = ?`, id).Scan(&exists); err != nil || exists == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "combo not found"})
+		return
+	}
 	if err := h.handler.DeleteCombo(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -340,14 +352,14 @@ func (h *ComboHandler) RemoveStep(c *gin.Context) {
 
 // ComboMetric aggregates request_logs usage for a single combo.
 type ComboMetric struct {
-	ComboID        string  `json:"combo_id"`
-	ComboName      string  `json:"combo_name"`
-	Requests       int     `json:"requests"`
-	Successes      int     `json:"successes"`
-	Errors         int     `json:"errors"`
-	InputTokens    int     `json:"input_tokens"`
-	OutputTokens   int     `json:"output_tokens"`
-	AvgLatencyMs   float64 `json:"avg_latency_ms"`
+	ComboID      string  `json:"combo_id"`
+	ComboName    string  `json:"combo_name"`
+	Requests     int     `json:"requests"`
+	Successes    int     `json:"successes"`
+	Errors       int     `json:"errors"`
+	InputTokens  int     `json:"input_tokens"`
+	OutputTokens int     `json:"output_tokens"`
+	AvgLatencyMs float64 `json:"avg_latency_ms"`
 }
 
 // Metrics returns aggregate usage counts per combo from request_logs.
@@ -356,7 +368,7 @@ func (h *ComboHandler) Metrics(c *gin.Context) {
 	window := 24 * time.Hour
 	if w, err := strconv.Atoi(c.DefaultQuery("window", "86400")); err == nil && w > 0 {
 		maxWindow := 30 * 24 * time.Hour
-		if time.Duration(w)*time.Second < maxWindow {
+		if time.Duration(w)*time.Second <= maxWindow {
 			window = time.Duration(w) * time.Second
 		} else {
 			window = maxWindow

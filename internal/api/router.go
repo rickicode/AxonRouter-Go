@@ -30,6 +30,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/api/middleware"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/antigravity"
+	"github.com/rickicode/AxonRouter-Go/internal/auth/codebuddy"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/codex"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/github"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/grokcli"
@@ -54,23 +55,23 @@ import (
 
 // Router holds all dependencies and mounts all routes.
 type Router struct {
-	engine *gin.Engine
-	db *sql.DB
+	engine     *gin.Engine
+	db         *sql.DB
 	writeQueue *db.WriteQueue // centralized async writer; drained on Shutdown
-	store *connstate.Store
-	elig *connstate.EligibilityManager
-	combo *combo.Handler
-	tracker *usage.Tracker
-	authMgr *auth.Manager
+	store      *connstate.Store
+	elig       *connstate.EligibilityManager
+	combo      *combo.Handler
+	tracker    *usage.Tracker
+	authMgr    *auth.Manager
 
 	// HTTP/HTTPS servers
-	httpServer *http.Server
+	httpServer  *http.Server
 	httpsServer *http.Server
 
 	// Background goroutines
-	quotaScheduler *background.QuotaSchedulerDB
-	usageFlush *background.UsageFlush
-	cleanup *background.Cleanup
+	quotaScheduler  *background.QuotaSchedulerDB
+	usageFlush      *background.UsageFlush
+	cleanup         *background.Cleanup
 	rateLimitProber *background.RateLimitProber
 
 	// Shutdown may be invoked more than once (e.g. service manager + manual
@@ -132,6 +133,7 @@ func New(cfg Config) *Router {
 	authManager.RegisterService(auth.ProviderKiro, kiro.NewOAuthService(http.DefaultClient))
 	authManager.RegisterService(auth.ProviderGitHub, github.NewOAuthService(http.DefaultClient))
 	authManager.RegisterService(auth.ProviderGrokCli, grokcli.NewOAuthService(http.DefaultClient))
+	authManager.RegisterService(auth.ProviderCodeBuddy, codebuddy.NewOAuthService(http.DefaultClient))
 	quota.SetAuthManager(authManager)
 	settingHandler := admin.NewSettingHandler(cfg.DB)
 	settingHandler.SeedDefaults()
@@ -307,11 +309,11 @@ func New(cfg Config) *Router {
 		g.POST("/oauth/callback", oauthH.SubmitOAuthCallback)
 		g.POST("/oauth/import-token", oauthH.ImportToken)
 
-	// Combos
-	g.GET("/combos", comboH.List)
-	g.GET("/combos/metrics", comboH.Metrics) // NOTE: touched by combo metrics feature
-	g.GET("/combos/:id", comboH.Get)
-	g.POST("/combos", comboH.Create)
+		// Combos
+		g.GET("/combos", comboH.List)
+		g.GET("/combos/metrics", comboH.Metrics) // NOTE: touched by combo metrics feature
+		g.GET("/combos/:id", comboH.Get)
+		g.POST("/combos", comboH.Create)
 		g.PATCH("/combos/:id", comboH.Update)
 		g.DELETE("/combos/:id", comboH.Delete)
 		g.POST("/combos/:id/steps", comboH.AddStep)

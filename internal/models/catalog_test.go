@@ -34,10 +34,11 @@ func TestGetModelTargetFormat_UnknownProvider(t *testing.T) {
 
 func TestGetModelIDs_NewOpenAICompatibleProviders(t *testing.T) {
 	want := map[string][]string{
-		"glm":     {"glm-4", "glm-5"},
-		"minimax": {"minimax-m2.1", "minimax-m2.5"},
-		"kimi":    {"kimi-k2"},
-		"mistral": {"mistral-large-latest", "codestral-latest"},
+		"glm":       {"glm-4", "glm-5"},
+		"minimax":   {"minimax-m2.1", "minimax-m2.5"},
+		"kimi":      {"kimi-k2"},
+		"mistral":   {"mistral-large-latest", "codestral-latest"},
+		"codebuddy": {"glm-5.2", "kimi-k2.7"},
 	}
 	for key, ids := range want {
 		got := GetModelIDs(key)

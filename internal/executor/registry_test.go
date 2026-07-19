@@ -8,6 +8,7 @@ func TestRegistry_NewOpenAICompatibleProviders(t *testing.T) {
 		"glm", "minimax", "kimi", "mistral",
 		"cerebras", "together", "fireworks",
 		"novita", "lambda", "pollinations",
+		"codebuddy",
 	}
 	for _, prefix := range want {
 		exec, format, ok := GetRegistry().Get(prefix)
@@ -37,6 +38,7 @@ func TestRegistry_GetByModel_NewProviders(t *testing.T) {
 		{"kimi/kimi-k2", "kimi", "kimi-k2", FormatOpenAI},
 		{"mistral/mistral-large-latest", "mistral", "mistral-large-latest", FormatOpenAI},
 		{"cerebras/gpt-oss-120b", "cerebras", "gpt-oss-120b", FormatOpenAI},
+		{"codebuddy/glm-5.2", "codebuddy", "glm-5.2", FormatOpenAI},
 	}
 	for _, c := range cases {
 		exec, format, model, err := GetRegistry().GetByModel(c.model)

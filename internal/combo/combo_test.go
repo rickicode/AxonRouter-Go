@@ -260,6 +260,7 @@ func TestRandomStrategy_ReturnsPermutation(t *testing.T) {
 	seen := map[string]bool{}
 	for i := 0; i < 20; i++ {
 		result, _ = h.Resolve(combo.Name)
+		result.Steps = h.RotateSteps(result.Combo.ID, result.Combo.Strategy, result.Combo.StickyLimit, result.Steps)
 		seen[result.Steps[0].ModelID] = true
 	}
 	if len(seen) != 2 {
@@ -305,8 +306,120 @@ func TestLeastUsedStrategy_OrdersByRecentUsage(t *testing.T) {
 	if result.Combo.Strategy != "least-used" {
 		t.Fatalf("strategy = %q, want least-used", result.Combo.Strategy)
 	}
+	result.Steps = h.RotateSteps(result.Combo.ID, result.Combo.Strategy, result.Combo.StickyLimit, result.Steps)
 	if result.Steps[0].ModelID != "combo-test/gpt-4o-mini" {
 		t.Fatalf("least-used should prefer lower-usage model, got %v", result.Steps)
+	}
+}
+
+func TestRoundRobin_AdvancesOneStepPerRequest(t *testing.T) {
+	database := newComboTestDB(t)
+	seedConnectionForCombo(t, database, "conn-1")
+	seedConnectionForCombo(t, database, "conn-2")
+	seedConnectionForCombo(t, database, "conn-3")
+
+	store := connstate.NewStore()
+	elig := connstate.NewEligibilityManager(store)
+	h := NewHandler(database, store, elig)
+
+	combo, err := h.CreateCombo("rr-three", "round-robin", 30000, 1, false, "", "", []CreateStepInput{
+		{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
+		{ConnectionID: "conn-2", ModelID: "openai/gpt-4o-mini", Priority: 2, Weight: 100},
+		{ConnectionID: "conn-3", ModelID: "openai/gpt-4.1", Priority: 3, Weight: 100},
+	})
+	if err != nil {
+		t.Fatalf("CreateCombo failed: %v", err)
+	}
+
+	wantOrder := []string{"openai/gpt-4o", "openai/gpt-4o-mini", "openai/gpt-4.1"}
+	counts := map[string]int{}
+	for i := 0; i < 30; i++ {
+		result, ok := h.Resolve(combo.Name)
+		if !ok {
+			t.Fatalf("Resolve failed on iteration %d", i)
+		}
+		result.Steps = h.RotateSteps(result.Combo.ID, result.Combo.Strategy, result.Combo.StickyLimit, result.Steps)
+		first := result.Steps[0].ModelID
+		counts[first]++
+		if first != wantOrder[i%len(wantOrder)] {
+			t.Fatalf("first step on iteration %d = %q, want %q", i, first, wantOrder[i%len(wantOrder)])
+		}
+	}
+	for _, modelID := range wantOrder {
+		if counts[modelID] != 10 {
+			t.Fatalf("first-step count for %s = %d, want 10 (all counts: %v)", modelID, counts[modelID], counts)
+		}
+	}
+}
+
+func TestCreateCombo_RollbackOnStepInsertFailure(t *testing.T) {
+	database := newComboTestDB(t)
+	store := connstate.NewStore()
+	elig := connstate.NewEligibilityManager(store)
+	h := NewHandler(database, store, elig)
+
+	_, err := h.CreateCombo("rollback-combo", "priority", 30000, 1, false, "", "", []CreateStepInput{
+		{ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
+	})
+	if err == nil {
+		t.Fatalf("expected error for step without eligible connection")
+	}
+
+	var count int
+	row := database.QueryRow(`SELECT COUNT(*) FROM combos WHERE name = ?`, "rollback-combo")
+	if err := row.Scan(&count); err != nil {
+		t.Fatalf("scan combo count: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("combo row count = %d, want 0 after rollback", count)
+	}
+}
+
+func TestDeleteCombo_RemovesFromMemoryAndDB(t *testing.T) {
+	database := newComboTestDB(t)
+	seedConnectionForCombo(t, database, "conn-1")
+
+	store := connstate.NewStore()
+	cs := &connstate.ConnectionState{
+		ID:     "conn-1",
+		Prefix: "openai",
+		Status: connstate.StatusReady,
+	}
+	store.Set("conn-1", cs)
+	elig := connstate.NewEligibilityManager(store)
+	elig.RecomputeAll()
+	h := NewHandler(database, store, elig)
+
+	combo, err := h.CreateCombo("delete-me", "priority", 30000, 1, false, "", "", []CreateStepInput{
+		{ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
+	})
+	if err != nil {
+		t.Fatalf("CreateCombo failed: %v", err)
+	}
+
+	if err := h.DeleteCombo(combo.ID); err != nil {
+		t.Fatalf("DeleteCombo failed: %v", err)
+	}
+
+	if _, ok := h.Resolve("delete-me"); ok {
+		t.Fatalf("Resolve returned true after delete")
+	}
+
+	var count int
+	row := database.QueryRow(`SELECT COUNT(*) FROM combos WHERE id = ?`, combo.ID)
+	if err := row.Scan(&count); err != nil {
+		t.Fatalf("scan combo count: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("combos row count = %d, want 0", count)
+	}
+
+	row = database.QueryRow(`SELECT COUNT(*) FROM combo_steps WHERE combo_id = ?`, combo.ID)
+	if err := row.Scan(&count); err != nil {
+		t.Fatalf("scan step count: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("combo_steps row count = %d, want 0", count)
 	}
 }
 
@@ -385,5 +498,114 @@ func TestEffectiveStrategy_OverridesAndDefaults(t *testing.T) {
 	// Fusion combo is not overridden by a global priority default.
 	if got := h.EffectiveStrategy("fusion", "fusion"); got != "fusion" {
 		t.Fatalf("EffectiveStrategy fusion = %q, want fusion", got)
+	}
+}
+
+func TestPickConnection_EligibleAndBreaker(t *testing.T) {
+	database := newComboTestDB(t)
+	seedConnectionForCombo(t, database, "conn-1")
+
+	store := connstate.NewStore()
+	cs := &connstate.ConnectionState{
+		ID:     "conn-1",
+		Prefix: "openai",
+		Status: connstate.StatusReady,
+	}
+	store.Set("conn-1", cs)
+	elig := connstate.NewEligibilityManager(store)
+	elig.RecomputeAll()
+	h := NewHandler(database, store, elig)
+
+	if id, ok := h.PickConnection(db.ComboStep{ModelID: "openai/gpt-4o"}); !ok || id != "conn-1" {
+		t.Fatalf("PickConnection eligible = (%q, %v), want (conn-1, true)", id, ok)
+	}
+
+	cb := h.fallback.GetBreaker("conn-1")
+	cb.RecordFailure()
+	cb.RecordFailure()
+	cb.RecordFailure()
+	if cb.GetState() != connstate.CBOpen {
+		t.Fatalf("breaker state = %v, want open", cb.GetState())
+	}
+	if id, ok := h.PickConnection(db.ComboStep{ModelID: "openai/gpt-4o"}); ok {
+		t.Fatalf("PickConnection with open breaker = (%q, %v), want false", id, ok)
+	}
+}
+
+func TestPickConnections_RespectsCooldown(t *testing.T) {
+	database := newComboTestDB(t)
+	ids := []string{"conn-a", "conn-b", "conn-c", "conn-d", "conn-e"}
+	for _, id := range ids {
+		seedConnectionForCombo(t, database, id)
+	}
+
+	store := connstate.NewStore()
+	future := time.Now().Add(time.Hour)
+
+	ready := func(id string) *connstate.ConnectionState {
+		return &connstate.ConnectionState{ID: id, Prefix: "openai", Status: connstate.StatusReady}
+	}
+
+	store.Set("conn-a", ready("conn-a"))
+
+	csB := ready("conn-b")
+	csB.SetCooldown(future)
+	store.Set("conn-b", csB)
+
+	csC := ready("conn-c")
+	csC.SetModelCooldown("openai/gpt-4o", future)
+	store.Set("conn-c", csC)
+
+	store.Set("conn-d", &connstate.ConnectionState{ID: "conn-d", Prefix: "openai", Status: connstate.StatusDisabled})
+	store.Set("conn-e", ready("conn-e"))
+
+	elig := connstate.NewEligibilityManager(store)
+	elig.RecomputeAll()
+	h := NewHandler(database, store, elig)
+
+	cb := h.fallback.GetBreaker("conn-e")
+	cb.RecordFailure()
+	cb.RecordFailure()
+	cb.RecordFailure()
+	if cb.GetState() != connstate.CBOpen {
+		t.Fatalf("breaker state = %v, want open", cb.GetState())
+	}
+
+	got := h.PickConnections("openai", "openai/gpt-4o")
+	if len(got) != 1 || got[0] != "conn-a" {
+		t.Fatalf("PickConnections = %v, want [conn-a]", got)
+	}
+}
+
+func TestRefreshFromDB_ReflectsExternalChanges(t *testing.T) {
+	database := newComboTestDB(t)
+	seedConnectionForCombo(t, database, "conn-1")
+
+	store := connstate.NewStore()
+	cs := &connstate.ConnectionState{ID: "conn-1", Prefix: "openai", Status: connstate.StatusReady}
+	store.Set("conn-1", cs)
+	elig := connstate.NewEligibilityManager(store)
+	elig.RecomputeAll()
+	h := NewHandler(database, store, elig)
+
+	combo, err := h.CreateCombo("refreshable", "priority", 30000, 1, false, "", "", []CreateStepInput{
+		{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
+	})
+	if err != nil {
+		t.Fatalf("CreateCombo failed: %v", err)
+	}
+
+	if _, ok := h.Resolve("refreshable"); !ok {
+		t.Fatalf("Resolve before refresh returned false")
+	}
+
+	if _, err := database.Exec(`UPDATE combos SET is_active = 0 WHERE id = ?`, combo.ID); err != nil {
+		t.Fatalf("update combo is_active: %v", err)
+	}
+
+	h.RefreshFromDB()
+
+	if _, ok := h.Resolve("refreshable"); ok {
+		t.Fatalf("Resolve returned true after deactivating combo in DB")
 	}
 }

@@ -15,10 +15,10 @@ import (
 func TestLoggingIncludesClientInfo(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	previous := logging.Logger
+	previous := logging.Logger.Load()
 	var buf bytes.Buffer
-	logging.Logger = slog.New(slog.NewJSONHandler(&buf, nil))
-	t.Cleanup(func() { logging.Logger = previous })
+	logging.SetLogger(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { logging.SetLogger(previous) })
 
 	router := gin.New()
 	router.Use(Logging())

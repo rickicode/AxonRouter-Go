@@ -83,9 +83,9 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-// Connection failover loop: try up to failoverMaxAttempts connections before giving up.
-// On each failure, mark the connection exhausted/cooldown and update eligibility
-// so the next getConnection call picks a different connection.
+	// Connection failover loop: try up to failoverMaxAttempts connections before giving up.
+	// On each failure, mark the connection exhausted/cooldown and update eligibility
+	// so the next getConnection call picks a different connection.
 	clientFormat := executor.FormatOpenAI
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
 	translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
@@ -227,19 +227,19 @@ attemptLoop:
 					retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, holdbackErr, attempt, time.Since(start).Milliseconds(), stream)
 					lastErr = holdbackErr
 					lastErrCategory = cat
-				if !retry {
-					break attemptLoop
+					if !retry {
+						break attemptLoop
+					}
+					if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+						return
+					}
+					continue
 				}
-				if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
-					return
-				}
-				continue
+			case <-streamCtx.Done():
+				return
 			}
-		case <-streamCtx.Done():
-			return
-		}
 
-		if streamErr := h.handleStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, "", true); streamErr != nil {
+			if streamErr := h.handleStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, "", true); streamErr != nil {
 				if h.isClientCanceled(c, streamErr) {
 					return
 				}
@@ -375,47 +375,56 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				// Preflight rejected (cooldown/exhausted) — try next connection.
 				continue
 			}
-		lastConn = conn
+			lastConn = conn
 
-		translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
-		translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
-		// Adaptive readiness: extend timeout for large/reasoning requests.
-		var streamCfg *executor.StreamConfig
-		if stream {
-			adaptiveMs := computeAdaptiveReadiness(body, modelName, 80000)
-			streamCfg = &executor.StreamConfig{
-				StreamReadinessTimeoutMs: adaptiveMs,
-				AdaptiveReadiness: true,
+			translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+			translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
+			// Adaptive readiness: extend timeout for large/reasoning requests.
+			var streamCfg *executor.StreamConfig
+			if stream {
+				adaptiveMs := computeAdaptiveReadiness(body, modelName, 80000)
+				streamCfg = &executor.StreamConfig{
+					StreamReadinessTimeoutMs: adaptiveMs,
+					AdaptiveReadiness:        true,
+				}
 			}
-		}
-		// Use client's request context for execution to avoid 30s combo timeout
-		// cutting off long-lived streaming responses. comboCtx is only for loop control.
-		execCtx := comboCtx
-		if stream {
-			execCtx = c.Request.Context()
-		}
-		proxyCtx, resp, streamResult, err := h.executeProviderCall(execCtx, exec, conn, provider, modelName, translatedBody, stream, streamCfg)
-		latency := time.Since(start).Milliseconds()
+			// Use the client's request context for execution to avoid combo timeout
+			// cutting off long-lived streaming responses.
+			execCtx := comboCtx
+			if stream {
+				execCtx = c.Request.Context()
+			}
+			proxyCtx, resp, streamResult, err := h.executeProviderCall(execCtx, exec, conn, provider, modelName, translatedBody, stream, streamCfg)
+			latency := time.Since(start).Milliseconds()
+			// Before declaring success, treat an upstream HTTP error (non-streaming)
+			// as a retryable failure so the combo can failover instead of returning
+			// an error status as if it were a real response.
+			if err == nil && !stream && resp != nil && (resp.StatusCode >= 500 || isUpstreamErrorBody(resp.Body)) {
+				err = &executor.UpstreamError{
+					StatusCode: resp.StatusCode,
+					Body:       resp.Body,
+					RawBody:    resp.Body,
+				}
+			}
 			if err != nil {
 				if h.isClientCanceled(c, err) {
 					return
 				}
 				det := connstate.DetectError(comboCtx, 0, "", err, provider, modelName, nil)
 
-	// Non-retryable: only model-not-found is surfaced directly. Auth and
-	// balance failures now fail over so a sibling connection gets a chance.
-	if det.Category == connstate.ErrorModelNotFound {
-		if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
-			return
-		}
-		lastErr = err
-		lastErrCategory = string(det.Category)
-		break
+				// Non-retryable: only model-not-found is surfaced directly. Auth and
+				// balance failures now fail over so a sibling connection gets a chance.
+				if det.Category == connstate.ErrorModelNotFound {
+					if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
+						return
+					}
+					lastErr = err
+					lastErrCategory = string(det.Category)
+					break
 				}
 
-				// Retryable: apply the same failover marking as the direct path.
-				if connstate.HasPerModelQuota(provider) && det.ModelID != "" &&
-					(det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
+				// Retryable: apply model-scoped failover marking like the direct path.
+				if det.ModelID != "" && (det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
 					scope := connstate.ModelScope(provider, det.ModelID)
 					h.exhaustion.MarkExhausted(quota.ExhaustKey(connID, scope), quota.TTLFromCooldown(det.CooldownUntil, 5*time.Minute))
 				} else if det.Category == connstate.ErrorRateLimit {
@@ -445,130 +454,133 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				h.codexPersistIfCodex(conn, resp, streamResult)
 			}
 
-		if stream {
-			// Use the client's request context (no timeout) for streaming.
-			// The comboCtx timeout is only for orchestration, not for live streams.
-			// Stream lifecycle is governed by StreamIdleTimeout/StreamReadinessTimeout/StallTimeout.
+			if stream {
+				// Use the client's request context (no timeout) for streaming.
+				// The comboCtx timeout is only for orchestration, not for live streams.
+				// Stream lifecycle is governed by StreamIdleTimeout/StreamReadinessTimeout/StallTimeout.
 
-			// Holdback buffer: wait 750ms/64KB before committing to this connection.
-			// If the stream errors during holdback, still retry the next connection
-			// transparently. Matches OmniRoute holdback behavior.
-			holdbackMs := 750
-			holdbackBytes := 64 * 1024
-			if streamCfg != nil {
-				if streamCfg.HoldbackMs > 0 {
-					holdbackMs = streamCfg.HoldbackMs
+				// Holdback buffer: wait 750ms/64KB before committing to this connection.
+				// If the stream errors during holdback, still retry the next connection
+				// transparently. Matches OmniRoute holdback behavior.
+				holdbackMs := 750
+				holdbackBytes := 64 * 1024
+				if streamCfg != nil {
+					if streamCfg.HoldbackMs > 0 {
+						holdbackMs = streamCfg.HoldbackMs
+					}
+					if streamCfg.HoldbackBytes > 0 {
+						holdbackBytes = streamCfg.HoldbackBytes
+					}
 				}
-				if streamCfg.HoldbackBytes > 0 {
-					holdbackBytes = streamCfg.HoldbackBytes
+				// Holdback committed — stream is live, relay to client.
+				// Use a dedicated sub-context so the holdback relay goroutine is cancelled
+				// the moment we stop reading from it (upstream chunk error, normal end, or
+				// client disconnect). Without this, after a mid-stream error the goroutine
+				// leaks blocked on `out <- chunk` with no consumer.
+				streamCtx, cancelStream := context.WithCancel(c.Request.Context())
+				defer cancelStream() // safety net when handleComboRequest returns
+
+				holdbackChunks, holdbackErrCh := executor.WrapWithHoldback(streamCtx, streamResult.Chunks, holdbackMs, holdbackBytes)
+				streamResult.Chunks = holdbackChunks
+
+				// Wait for holdback to commit or fail. Read directly from holdbackErrCh
+				// (no forwarding goroutine) so a client disconnect doesn't leak a goroutine.
+				select {
+				case holdbackErr := <-holdbackErrCh:
+					if holdbackErr != nil {
+						// Stream failed during holdback window — kill the relay goroutine
+						// and treat as retryable error so the next connection is tried.
+						cancelStream()
+						logging.Logger.Warn("combo stream failed during holdback",
+							"provider", provider, "model", modelName,
+							"conn", shortID(connID, 8), "error", holdbackErr.Error())
+						det := connstate.DetectError(comboCtx, 0, "", holdbackErr, provider, modelName, nil)
+						h.combo.RecordFailure(connID, det)
+						lastErr = holdbackErr
+						lastErrCategory = "holdback"
+						continue // try next connection
+					}
+					// Holdback committed — stream is live, relay to client.
+				case <-streamCtx.Done():
+					cancelStream()
+					return
 				}
-		}
-		// Holdback committed — stream is live, relay to client.
-	// Use a dedicated sub-context so the holdback relay goroutine is cancelled
-	// the moment we stop reading from it (upstream chunk error, normal end, or
-	// client disconnect). Without this, after a mid-stream error the goroutine
-	// leaks blocked on `out <- chunk` with no consumer.
-	streamCtx, cancelStream := context.WithCancel(c.Request.Context())
-	defer cancelStream() // safety net when handleComboRequest returns
 
-	holdbackChunks, holdbackErrCh := executor.WrapWithHoldback(streamCtx, streamResult.Chunks, holdbackMs, holdbackBytes)
-	streamResult.Chunks = holdbackChunks
-
-	// Wait for holdback to commit or fail. Read directly from holdbackErrCh
-	// (no forwarding goroutine) so a client disconnect doesn't leak a goroutine.
-	select {
-	case holdbackErr := <-holdbackErrCh:
-		if holdbackErr != nil {
-			// Stream failed during holdback window — kill the relay goroutine
-			// and treat as retryable error so the next connection is tried.
-			cancelStream()
-			logging.Logger.Warn("combo stream failed during holdback",
-				"provider", provider, "model", modelName,
-				"conn", shortID(connID, 8), "error", holdbackErr.Error())
-			det := connstate.DetectError(comboCtx, 0, "", holdbackErr, provider, modelName, nil)
-			h.combo.RecordFailure(connID, det)
-			lastErr = holdbackErr
-			lastErrCategory = "holdback"
-			continue // try next connection
-		}
-	case <-streamCtx.Done():
-		return
-	}
-
-			// Holdback committed — stream is live, relay to client.
-			if streamErr := h.handleClientStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, comboResult.Combo.Name, true, clientFormat); streamErr != nil {
-			// Mid-stream failure — failover to next connection/model instead of
-			// stopping the stream. handleStreamResponse already skipped writing
-			// error/DONE to the client when in combo mode.
-			if h.isClientCanceled(c, streamErr) {
+				if streamErr := h.handleClientStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, comboResult.Combo.Name, true, clientFormat); streamErr != nil {
+					// Mid-stream failure — failover to next connection/model instead of
+					// stopping the stream. handleStreamResponse already skipped writing
+					// error/DONE to the client when in combo mode.
+					if h.isClientCanceled(c, streamErr) {
+						cancelStream()
+						return
+					}
+					cancelStream()
+					det := connstate.DetectError(comboCtx, 0, "", streamErr, provider, modelName, nil)
+					if det.Category == connstate.ErrorModelNotFound {
+						lastErr = streamErr
+						lastErrCategory = string(det.Category)
+						break
+					}
+					// Always exhaust at model scope when we know the model, so other
+					// models on the same connection remain routable.
+					if det.ModelID != "" && (det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
+						scope := connstate.ModelScope(provider, det.ModelID)
+						h.exhaustion.MarkExhausted(quota.ExhaustKey(connID, scope), quota.TTLFromCooldown(det.CooldownUntil, 5*time.Minute))
+					} else if det.Category == connstate.ErrorRateLimit {
+						h.exhaustion.MarkExhausted(connID, quota.TTLFromCooldown(det.CooldownUntil, quota.DefaultExhaustionTTL))
+					} else if det.Category == connstate.ErrorQuota {
+						ttl := 24 * time.Hour
+						if det.CooldownUntil != nil {
+							ttl = time.Until(*det.CooldownUntil)
+						}
+						h.exhaustion.MarkExhausted(connID, ttl)
+					}
+					h.combo.RecordFailure(connID, det)
+					h.persistCooldownScoped(connID, det)
+					if det.Status != connstate.StatusReady {
+						h.elig.ScheduleUpdate()
+					}
+					lastErr = streamErr
+					lastErrCategory = "stream-" + string(det.Category)
+					continue
+				}
 				return
-			}
-			cancelStream()
-			det := connstate.DetectError(comboCtx, 0, "", streamErr, provider, modelName, nil)
-			if det.Category == connstate.ErrorModelNotFound {
-				lastErr = streamErr
-				lastErrCategory = string(det.Category)
-				break
-			}
-			if connstate.HasPerModelQuota(provider) && det.ModelID != "" &&
-				(det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
-				scope := connstate.ModelScope(provider, det.ModelID)
-				h.exhaustion.MarkExhausted(quota.ExhaustKey(connID, scope), quota.TTLFromCooldown(det.CooldownUntil, 5*time.Minute))
-			} else if det.Category == connstate.ErrorRateLimit {
-				h.exhaustion.MarkExhausted(connID, quota.TTLFromCooldown(det.CooldownUntil, quota.DefaultExhaustionTTL))
-			} else if det.Category == connstate.ErrorQuota {
-				ttl := 24 * time.Hour
-				if det.CooldownUntil != nil {
-					ttl = time.Until(*det.CooldownUntil)
+			} else {
+				translatedResp := registry.ResponseNonStream(comboCtx, string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
+				tokenCounts := ExtractTokensFromBody(translatedResp)
+				tokensEstimated := false
+				if tokenCounts.InputTokens+tokenCounts.OutputTokens == 0 && resp.StatusCode < 400 {
+					estInput := usage.EstimateTokensFromRequest(body)
+					estOutput := usage.EstimateTokensFromResponse(translatedResp)
+					if estInput > 0 || estOutput > 0 {
+						tokenCounts.InputTokens = estInput
+						tokenCounts.OutputTokens = estOutput
+						tokensEstimated = true
+					}
 				}
-				h.exhaustion.MarkExhausted(connID, ttl)
-			}
-			h.combo.RecordFailure(connID, det)
-			h.persistCooldownScoped(connID, det)
-			if det.Status != connstate.StatusReady {
-				h.elig.ScheduleUpdate()
-			}
-			lastErr = streamErr
-			lastErrCategory = "stream-" + string(det.Category)
-			continue
-		}
-		return
-		} else {
-			translatedResp := registry.ResponseNonStream(comboCtx, string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
-			tokenCounts := ExtractTokensFromBody(translatedResp)
-			tokensEstimated := false
-			if tokenCounts.InputTokens+tokenCounts.OutputTokens == 0 && resp.StatusCode < 400 {
-				estInput := usage.EstimateTokensFromRequest(body)
-				estOutput := usage.EstimateTokensFromResponse(translatedResp)
-				if estInput > 0 || estOutput > 0 {
-					tokenCounts.InputTokens = estInput
-					tokenCounts.OutputTokens = estOutput
-					tokensEstimated = true
-				}
-			}
-			h.logRequest(c, &usage.LogEntry{
-				ApiKeyID: c.GetString("api_key_id"),
-				ConnectionID: connID,
-				ProviderTypeID: provider,
-				ModelID: modelName,
-				ComboID: comboResult.Combo.Name,
-				ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
-				ApiType:             apiTypeFromPath(c.Request.URL.Path),
-				Modality:            "chat",
-				Stream:              stream,
-				InputTokens:         tokenCounts.InputTokens,
-				OutputTokens:        tokenCounts.OutputTokens,
-				ReasoningTokens:     tokenCounts.ReasoningTokens,
-				CachedTokens:        tokenCounts.CachedTokens,
-				CacheCreationTokens: tokenCounts.CacheCreationTokens,
-				LatencyMs:           latency,
-				StatusCode:          resp.StatusCode,
-				TokensEstimated:     tokensEstimated,
+				h.logRequest(c, &usage.LogEntry{
+					ApiKeyID:            c.GetString("api_key_id"),
+					ConnectionID:        connID,
+					ProviderTypeID:      provider,
+					ModelID:             modelName,
+					ComboID:             comboResult.Combo.Name,
+					ProxyPoolID:         executor.ProxyPoolIDFromContext(proxyCtx),
+					ApiType:             apiTypeFromPath(c.Request.URL.Path),
+					Modality:            "chat",
+					Stream:              stream,
+					InputTokens:         tokenCounts.InputTokens,
+					OutputTokens:        tokenCounts.OutputTokens,
+					ReasoningTokens:     tokenCounts.ReasoningTokens,
+					CachedTokens:        tokenCounts.CachedTokens,
+					CacheCreationTokens: tokenCounts.CacheCreationTokens,
+					LatencyMs:           latency,
+					StatusCode:          resp.StatusCode,
+					TokensEstimated:     tokensEstimated,
 				})
-		c.Header("Content-Type", "application/json")
-		h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
-		c.Status(resp.StatusCode)
-		c.Writer.Write(translatedResp)
+				c.Header("Content-Type", "application/json")
+				h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
+				c.Status(resp.StatusCode)
+				c.Writer.Write(translatedResp)
 			}
 			return
 		}
@@ -631,7 +643,6 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(cfg.PanelHardTimeoutMs)*time.Millisecond)
 	defer cancel()
 
-
 	resultsCh := make(chan fusionPanel, len(comboResult.Steps))
 	var wg sync.WaitGroup
 	for _, step := range comboResult.Steps {
@@ -643,26 +654,30 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 				resultsCh <- fusionPanel{err: errors.New("no eligible connection")}
 				return
 			}
-		provider, modelName := executor.SplitModel(step.ModelID)
-		conn, err := h.prepareConnection(ctx, connID, provider, modelName)
-		if err != nil {
-			resultsCh <- fusionPanel{err: err}
-			return
-		}
-		exec, providerFormat, err := h.resolveExecutor(provider, modelName)
-		if err != nil {
-			resultsCh <- fusionPanel{err: err}
-			return
-		}
-		// Replace the model field with the panel model so OpenAI-compatible passthrough
-		// providers receive the actual upstream model ID instead of "fusion".
-		panelBody := setRequestModel(body, modelName)
-		translatedBody := registry.Request(string(executor.FormatOpenAI), string(providerFormat), modelName, panelBody, false)
-		translatedBody = sanitizeStreamOptions(translatedBody, false, executor.FormatOpenAI, providerFormat, c.Request.URL.Path)
-		translatedBody = stripFusionTools(translatedBody)
+			provider, modelName := executor.SplitModel(step.ModelID)
+			conn, err := h.prepareConnection(ctx, connID, provider, modelName)
+			if err != nil {
+				resultsCh <- fusionPanel{err: err}
+				return
+			}
+			exec, providerFormat, err := h.resolveExecutor(provider, modelName)
+			if err != nil {
+				resultsCh <- fusionPanel{err: err}
+				return
+			}
+			// Replace the model field with the panel model so OpenAI-compatible passthrough
+			// providers receive the actual upstream model ID instead of "fusion".
+			panelBody := setRequestModel(body, modelName)
+			translatedBody := registry.Request(string(executor.FormatOpenAI), string(providerFormat), modelName, panelBody, false)
+			translatedBody = sanitizeStreamOptions(translatedBody, false, executor.FormatOpenAI, providerFormat, c.Request.URL.Path)
+			translatedBody = stripFusionTools(translatedBody)
 			_, resp, _, err := h.executeProviderCall(ctx, exec, conn, provider, modelName, translatedBody, false, nil)
 			if err != nil {
 				resultsCh <- fusionPanel{err: err}
+				return
+			}
+			if resp != nil && (resp.StatusCode >= 500 || isUpstreamErrorBody(resp.Body)) {
+				resultsCh <- fusionPanel{err: fmt.Errorf("panel upstream error: status %d", resp.StatusCode)}
 				return
 			}
 			content := extractAssistantContent(resp.Body)
@@ -680,14 +695,18 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 	}()
 
 	var successes []fusionPanel
+	var failures int
 	hardTimeout := time.NewTimer(time.Duration(cfg.PanelHardTimeoutMs) * time.Millisecond)
 	defer hardTimeout.Stop()
 
-	// Collect until min_panel successes, then start grace timer.
+	// Collect until min_panel successes, then hand off to the grace period.
 	collectResults := func() bool {
 		for {
-			if len(successes) >= len(comboResult.Steps) {
-				return true
+			if len(successes) >= cfg.MinPanel {
+				return false // not done — caller should collect grace
+			}
+			if len(successes)+failures >= len(comboResult.Steps) {
+				return true // all panels reported; no grace needed
 			}
 			select {
 			case r, ok := <-resultsCh:
@@ -696,6 +715,8 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 				}
 				if r.err == nil {
 					successes = append(successes, r)
+				} else {
+					failures++
 				}
 			case <-hardTimeout.C:
 				return true
@@ -787,9 +808,6 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 		defer cancelStream()
 		if err := h.handleStreamResponse(streamCtx, c, streamResult, judgeConn, judgeProvider, judgeModelName, start, translatedJudge, judgeReqBody, comboResult.Combo.Name, true); err != nil {
 			logging.Logger.Warn("fusion judge stream failed", "error", err.Error())
-			if !h.isClientCanceled(c, err) {
-				// Stream already started silently; we cannot recover, just stop.
-			}
 			return
 		}
 		return
@@ -928,6 +946,22 @@ func (h *Handler) writeFusionResponse(c *gin.Context, content, model string, str
 	})
 }
 
+// isUpstreamErrorBody reports whether a non-streaming response body is clearly
+// an error envelope (e.g. OpenAI's {"error":{...}}). Used by the combo path to
+// promote a 200-status error body to a retryable upstream error.
+func isUpstreamErrorBody(body []byte) bool {
+	var envelope struct {
+		Error *struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return false
+	}
+	return envelope.Error != nil && (envelope.Error.Message != "" || envelope.Error.Type != "")
+}
+
 // handleClientStreamResponse dispatches to the correct stream handler based on
 // the client-facing API format. It is used by both the direct and combo paths.
 func (h *Handler) handleClientStreamResponse(ctx context.Context, c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte, comboID string, silent bool, clientFormat executor.ProviderFormat) error {
@@ -953,4 +987,3 @@ func (h *Handler) handleStreamResponse(ctx context.Context, c *gin.Context, resu
 	}
 	return h.streamResponse(ctx, c, result, conn, provider, model, executor.FormatOpenAI, providerFormat, originalReq, translatedReq, errFormatter, start, comboID, silent)
 }
-

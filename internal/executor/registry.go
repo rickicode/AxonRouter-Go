@@ -21,6 +21,8 @@ const (
 	FormatAntigravity     ProviderFormat = "antigravity"
 	FormatKiro            ProviderFormat = "kiro"
 	FormatGrokCLI         ProviderFormat = "grok-cli"
+	FormatDevinCLI       ProviderFormat = "devin-cli"
+	FormatQoder          ProviderFormat = "qoder"
 )
 
 // Registry maps provider prefixes to executors.
@@ -113,7 +115,7 @@ func RegisterDefaults() {
 
 	// OpenAI-compatible providers
 	openaiExec := NewOpenAIExecutor(base)
-	for _, p := range []string{"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp", "elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras", "together", "fireworks", "novita", "lambda", "pollinations", "zenmux"} {
+	for _, p := range []string{"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp", "elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras", "together", "fireworks", "novita", "lambda", "pollinations", "zenmux", "codebuddy"} {
 		GetRegistry().Register(p, FormatOpenAI, openaiExec)
 	}
 	GetRegistry().Register("mimocode", FormatOpenAI, NewMimocodeExecutor(base))
@@ -141,7 +143,7 @@ func RegisterDefaults() {
 		"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp",
 		"elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras",
 		"together", "fireworks", "novita", "lambda", "pollinations", "zenmux",
-		"mimocode", "openrouter", "copilot", "vertex", "bedrock",
+		"mimocode", "openrouter", "copilot", "vertex", "bedrock", "codebuddy",
 	} {
 		translator.Register(p, translator.Func(providers.TranslateOpenAICompatible))
 	}
@@ -172,6 +174,16 @@ func RegisterDefaults() {
 	grokcliExec := NewGrokCLIExecutor(base)
 	GetRegistry().Register("grok-cli", FormatGrokCLI, grokcliExec)
 	translator.Register("grok-cli", translator.Func(providers.TranslateGrokCLI))
+
+	// Devin CLI
+	devinExec := NewDevinCLIExecutor(base)
+	GetRegistry().Register("devin", FormatDevinCLI, devinExec)
+	translator.Register("devin", translator.Func(providers.TranslateOpenAICompatible))
+
+	// Qoder (dual-mode CLI/HTTP)
+	qoderExec := NewQoderExecutor(base, openaiExec)
+	GetRegistry().Register("qoder", FormatQoder, qoderExec)
+	translator.Register("qoder", translator.Func(providers.TranslateOpenAICompatible))
 }
 
 // RegisterCustomProviders registers all user-added custom providers from the DB
@@ -184,6 +196,8 @@ func RegisterCustomProviders(db *sql.DB) {
 	geminiExec := NewGeminiExecutor(base)
 	agExec := NewAntigravityExecutor(base)
 	kiroExec := NewKiroExecutor(base)
+	devinExec := NewDevinCLIExecutor(base)
+	qoderExec := NewQoderExecutor(base, openaiExec)
 
 	rows, err := db.Query(`SELECT id, format FROM provider_types WHERE is_custom = 1`)
 	if err != nil {
@@ -195,13 +209,13 @@ func RegisterCustomProviders(db *sql.DB) {
 		if err := rows.Scan(&id, &format); err != nil {
 			continue
 		}
-		registerCustomProvider(reg, openaiExec, claudeExec, geminiExec, agExec, kiroExec, id, format)
+		registerCustomProvider(reg, openaiExec, claudeExec, geminiExec, agExec, kiroExec, devinExec, qoderExec, id, format)
 	}
 }
 
 // registerCustomProvider maps a provider format to the reusable built-in executor
 // and translator so the custom provider routes and translates like a built-in.
-func registerCustomProvider(reg *Registry, openaiExec, claudeExec, geminiExec, agExec, kiroExec Executor, id, format string) {
+func registerCustomProvider(reg *Registry, openaiExec, claudeExec, geminiExec, agExec, kiroExec, devinExec, qoderExec Executor, id, format string) {
 	switch format {
 	case "anthropic", "claude":
 		reg.Register(id, FormatClaude, claudeExec)
@@ -215,6 +229,12 @@ func registerCustomProvider(reg *Registry, openaiExec, claudeExec, geminiExec, a
 	case "kiro":
 		reg.Register(id, FormatKiro, kiroExec)
 		translator.Register(id, translator.Func(providers.TranslateKiro))
+	case "devin", "devin-cli":
+		reg.Register(id, FormatDevinCLI, devinExec)
+		translator.Register(id, translator.Func(providers.TranslateOpenAICompatible))
+	case "qoder":
+		reg.Register(id, FormatQoder, qoderExec)
+		translator.Register(id, translator.Func(providers.TranslateOpenAICompatible))
 	default: // openai, openai-responses, and unknown -> OpenAI-compatible
 		reg.Register(id, FormatOpenAI, openaiExec)
 		translator.Register(id, translator.Func(providers.TranslateOpenAICompatible))

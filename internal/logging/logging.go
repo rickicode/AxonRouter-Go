@@ -8,17 +8,59 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
 // Logger is the application-wide structured logger.
-var Logger *slog.Logger
+// It is safe for concurrent use and reinitialization via Init/SetLogger.
+var Logger = &SafeLogger{}
+
+// SafeLogger is a concurrency-safe wrapper around *slog.Logger.
+type SafeLogger struct {
+	mu sync.RWMutex
+	l  *slog.Logger
+}
+
+func (sl *SafeLogger) set(l *slog.Logger) {
+	sl.mu.Lock()
+	defer sl.mu.Unlock()
+	sl.l = l
+}
+
+// Load returns the underlying logger. If no logger has been set, it returns slog.Default.
+func (sl *SafeLogger) Load() *slog.Logger {
+	sl.mu.RLock()
+	defer sl.mu.RUnlock()
+	if sl.l == nil {
+		return slog.Default()
+	}
+	return sl.l
+}
+
+// Info logs at LevelInfo.
+func (sl *SafeLogger) Info(msg string, args ...any) { sl.Load().Info(msg, args...) }
+
+// Error logs at LevelError.
+func (sl *SafeLogger) Error(msg string, args ...any) { sl.Load().Error(msg, args...) }
+
+// Warn logs at LevelWarn.
+func (sl *SafeLogger) Warn(msg string, args ...any) { sl.Load().Warn(msg, args...) }
+
+// Debug logs at LevelDebug.
+func (sl *SafeLogger) Debug(msg string, args ...any) { sl.Load().Debug(msg, args...) }
+
+// SetLogger updates the application-wide logger.
+func SetLogger(l *slog.Logger) {
+	Logger.set(l)
+}
 
 // Init initialises the global logger. format must be "json", "text", or "compact" (default).
 func Init(format string) {
+	var l *slog.Logger
 	switch format {
 	case "json":
-		Logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+		l = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	case "text":
 		textOpts := &slog.HandlerOptions{
 			ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
@@ -33,15 +75,16 @@ func Init(format string) {
 				return a
 			},
 		}
-		Logger = slog.New(slog.NewTextHandler(&ansiWriter{w: os.Stdout}, textOpts))
+		l = slog.New(slog.NewTextHandler(&ansiWriter{w: os.Stdout}, textOpts))
 
 	default:
 		h := NewCompactHandler(os.Stdout)
-		Logger = slog.New(&levelHandler{inner: h, level: slog.LevelDebug})
+		l = slog.New(&levelHandler{inner: h, level: slog.LevelDebug})
 	}
+	Logger.set(l)
 	// Redirect standard log to slog so log.Printf also uses compact format
-	slog.SetDefault(Logger)
-	log.SetOutput(&slogWriter{l: Logger})
+	slog.SetDefault(l)
+	log.SetOutput(&slogWriter{l: l})
 }
 
 // slogWriter redirects standard log calls to slog.

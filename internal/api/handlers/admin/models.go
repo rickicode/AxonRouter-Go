@@ -572,6 +572,9 @@ var providerCatalogKeys = map[string][]string{
 	"copilot":    {"copilot"},
 	"bedrock":    {"bedrock"},
 	"grok-cli":   {"grok-cli"},
+	"codebuddy":  {"codebuddy"},
+	"devin":      {"devin"},
+	"qoder":      {"qoder"},
 }
 
 // staticModels returns model IDs from the auto-updating catalog, stripped of leading "@".
@@ -636,6 +639,10 @@ func defaultTestModel(providerID string) string {
 	case "bedrock":
 		// Bedrock Mantle's OpenAI-compatible chat endpoint reliably supports this model.
 		return "openai.gpt-oss-120b"
+	case "devin":
+		return "devin"
+	case "qoder":
+		return "qoder-rome-30ba3b"
 	default:
 		return ""
 	}

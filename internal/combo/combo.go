@@ -4,8 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -37,19 +37,19 @@ func IsValidStrategy(s string) bool { return ValidStrategies[s] }
 
 // Handler manages combo resolution and routing.
 type Handler struct {
-	mu sync.RWMutex
-	db *sql.DB
+	mu       sync.RWMutex
+	db       *sql.DB
 	rotation *RotationManager
-	smart *SmartCombo
+	smart    *SmartCombo
 	fallback *FallbackManager
-	store *connstate.Store
-	elig *connstate.EligibilityManager
+	store    *connstate.Store
+	elig     *connstate.EligibilityManager
 
 	// In-memory combo cache
-	combos map[string]*db.Combo
-	byName map[string]*db.Combo // combo name → combo (O(1) resolve by name)
-	steps map[string][]db.ComboStep // comboID → steps
-	smartCombos map[string]*db.Combo // comboID → smart combo
+	combos      map[string]*db.Combo
+	byName      map[string]*db.Combo      // combo name → combo (O(1) resolve by name)
+	steps       map[string][]db.ComboStep // comboID → steps
+	smartCombos map[string]*db.Combo      // comboID → smart combo
 
 	// In-memory strategy overrides (combo_strategies) and default (combo_strategy).
 	strategyMu        sync.RWMutex
@@ -94,14 +94,22 @@ func (h *Handler) loadFromDB() {
 
 	for rows.Next() {
 		c := &db.Combo{}
-		rows.Scan(&c.ID, &c.Name, &c.Strategy, &c.StickyLimit,
-			&c.TimeoutMs, &c.IsSmart, &c.SmartGoal, &c.FusionConfig,
-			&c.IsActive, &c.CreatedAt, &c.UpdatedAt)
+		var fusionConfig sql.NullString
+		if err := rows.Scan(&c.ID, &c.Name, &c.Strategy, &c.StickyLimit,
+			&c.TimeoutMs, &c.IsSmart, &c.SmartGoal, &fusionConfig,
+			&c.IsActive, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			log.Printf("WARN: failed to scan combo row: %v", err)
+			continue
+		}
+		c.FusionConfig = fusionConfig.String
 		h.combos[c.ID] = c
 		h.byName[c.Name] = c
 		if c.IsSmart {
 			h.smartCombos[c.ID] = c
 		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("WARN: combo rows iteration error: %v", err)
 	}
 
 	// Load steps
@@ -124,9 +132,15 @@ func (h *Handler) loadSteps(comboID string) {
 	var steps []db.ComboStep
 	for rows.Next() {
 		s := db.ComboStep{}
-		rows.Scan(&s.ID, &s.ComboID, &s.ConnectionID, &s.ModelID,
-			&s.Priority, &s.Weight, &s.CreatedAt)
+		if err := rows.Scan(&s.ID, &s.ComboID, &s.ConnectionID, &s.ModelID,
+			&s.Priority, &s.Weight, &s.CreatedAt); err != nil {
+			log.Printf("WARN: failed to scan combo_step row for combo %s: %v", comboID, err)
+			continue
+		}
 		steps = append(steps, s)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("WARN: combo_step rows iteration error for combo %s: %v", comboID, err)
 	}
 	h.steps[comboID] = steps
 }
@@ -144,8 +158,7 @@ func (h *Handler) Resolve(modelStr string) (*ComboResult, bool) {
 		if len(steps) == 0 {
 			return nil, false
 		}
-		rotated := h.rotation.GetRotatedSteps(c.ID, c.Strategy, c.StickyLimit, steps)
-		return &ComboResult{Combo: c, Steps: rotated}, true
+		return &ComboResult{Combo: c, Steps: steps}, true
 	}
 	h.mu.RUnlock()
 
@@ -179,8 +192,7 @@ func (h *Handler) resolveSmart(goal SmartGoal) (*ComboResult, bool) {
 	if len(steps) == 0 {
 		return nil, false
 	}
-	rotated := h.rotation.GetRotatedSteps(combo.ID, combo.Strategy, combo.StickyLimit, steps)
-	return &ComboResult{Combo: combo, Steps: rotated}, true
+	return &ComboResult{Combo: combo, Steps: steps}, true
 }
 
 // loadStrategySettings reads combo_strategy / combo_strategies from DB once
@@ -339,11 +351,17 @@ func (h *Handler) CreateCombo(name, strategy string, timeoutMs, stickyLimit int,
 	now := db.UnixNow()
 
 	sg := sql.NullString{}
-	if smartGoal != "" {
-		sg = sql.NullString{String: smartGoal, Valid: true}
+	if normalized := normalizeSmartGoal(smartGoal); normalized != "" {
+		sg = sql.NullString{String: normalized, Valid: true}
 	}
 
-	_, err := h.db.Exec(`
+	tx, err := h.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin combo transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 	INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal, fusion_config, is_active, created_at, updated_at)
 	VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
 	`, comboID, name, strategy, stickyLimit, timeoutMs, boolToInt(isSmart), sg, fusionConfig, now, now)
@@ -361,10 +379,17 @@ func (h *Handler) CreateCombo(name, strategy string, timeoutMs, stickyLimit int,
 		if connID == "" {
 			return nil, fmt.Errorf("no eligible connection for model %s", s.ModelID)
 		}
-		h.db.Exec(`
+		_, err := tx.Exec(`
 		INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		`, uuid.New().String(), comboID, connID, s.ModelID, s.Priority, s.Weight, now)
+		if err != nil {
+			return nil, fmt.Errorf("create combo step: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit combo transaction: %w", err)
 	}
 
 	combo := &db.Combo{
@@ -391,15 +416,28 @@ func (h *Handler) CreateCombo(name, strategy string, timeoutMs, stickyLimit int,
 
 // DeleteCombo removes a combo.
 func (h *Handler) DeleteCombo(comboID string) error {
+	tx, err := h.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin delete combo transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM combo_steps WHERE combo_id = ?`, comboID); err != nil {
+		return fmt.Errorf("delete combo steps: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM rotation_state WHERE combo_id = ?`, comboID); err != nil {
+		return fmt.Errorf("delete rotation state: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM combos WHERE id = ?`, comboID); err != nil {
+		return fmt.Errorf("delete combo: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete combo transaction: %w", err)
+	}
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	h.db.Exec(`DELETE FROM combo_steps WHERE combo_id = ?`, comboID)
-	h.db.Exec(`DELETE FROM rotation_state WHERE combo_id = ?`, comboID)
-	_, err := h.db.Exec(`DELETE FROM combos WHERE id = ?`, comboID)
-	if err != nil {
-		return err
-	}
 	if c, ok := h.combos[comboID]; ok {
 		delete(h.byName, c.Name)
 	}
@@ -451,6 +489,7 @@ type ComboWithSteps struct {
 
 // isSmartCombo checks if a model string is a smart combo goal.
 func isSmartCombo(s string) (SmartGoal, bool) {
+	s = normalizeSmartGoal(s)
 	switch s {
 	case "auto", "smart/auto":
 		return GoalAuto, true
@@ -465,12 +504,12 @@ func isSmartCombo(s string) (SmartGoal, bool) {
 }
 
 // splitModel splits "provider/model" into (provider, model).
+// If the model identifier cannot be parsed, it returns ("", modelStr) so the
+// original model string is preserved.
 func splitModel(modelStr string) (string, string) {
-	for i, c := range modelStr {
-		if c == '/' {
-			prefix := strings.TrimPrefix(modelStr[:i], "@")
-			return prefix, modelStr[i+1:]
-		}
+	provider, model, ok := SplitProviderModel(modelStr)
+	if ok {
+		return provider, model
 	}
 	return "", modelStr
 }

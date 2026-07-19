@@ -1,9 +1,11 @@
 package admin
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,13 +15,35 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 )
 
-func newComboHandlerForTest(t *testing.T) (*ComboHandler, *combo.Handler) {
+func newComboHandlerForTest(t *testing.T) (*ComboHandler, *combo.Handler, *connstate.Store, *connstate.EligibilityManager) {
 	t.Helper()
 	database := newConnectionHandlerTestDB(t)
 	store := connstate.NewStore()
 	elig := connstate.NewEligibilityManager(store)
 	ch := combo.NewHandler(database, store, elig)
-	return NewComboHandler(database, ch), ch
+	return NewComboHandler(database, ch), ch, store, elig
+}
+
+func seedConnectionForAdminCombo(t *testing.T, database *sql.DB, store *connstate.Store, elig *connstate.EligibilityManager, id, prefix string) {
+	t.Helper()
+	now := time.Now().Unix()
+	if _, err := database.Exec(`
+		INSERT INTO provider_types (id, display_name, format, base_url, created_at)
+		VALUES (?, 'Admin Combo Test', 'openai', 'http://x', ?)
+		ON CONFLICT(id) DO NOTHING
+	`, prefix, now); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if _, err := database.Exec(`
+		INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at)
+		VALUES (?, ?, 'c', 'none', 'ready', 1, ?, ?)
+	`, id, prefix, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	store.Set(id, &connstate.ConnectionState{ID: id, Prefix: prefix, Status: connstate.StatusReady})
+	if elig != nil {
+		elig.RecomputeAll()
+	}
 }
 
 func seedCombo(t *testing.T, h *combo.Handler) string {
@@ -36,7 +60,7 @@ func seedComboNamed(t *testing.T, h *combo.Handler, name string) string {
 }
 
 func TestComboUpdate_PersistsSmartAndStickyFields(t *testing.T) {
-	handler, comboH := newComboHandlerForTest(t)
+	handler, comboH, _, _ := newComboHandlerForTest(t)
 	id := seedCombo(t, comboH)
 
 	gin.SetMode(gin.TestMode)
@@ -70,7 +94,7 @@ func TestComboUpdate_PersistsSmartAndStickyFields(t *testing.T) {
 }
 
 func TestComboMetrics_AggregatesRequestLogs(t *testing.T) {
-	handler, comboH := newComboHandlerForTest(t)
+	handler, comboH, _, _ := newComboHandlerForTest(t)
 	combo1 := seedComboNamed(t, comboH, "metrics-combo-1")
 	combo2 := seedComboNamed(t, comboH, "metrics-combo-2")
 
@@ -119,5 +143,156 @@ func TestComboMetrics_AggregatesRequestLogs(t *testing.T) {
 	}
 	if len(body.Data) < 2 {
 		t.Fatalf("expected metrics for at least 2 combos, got %d", len(body.Data))
+	}
+}
+
+func TestComboMetrics_WindowExactlyThirtyDays(t *testing.T) {
+	handler, comboH, _, _ := newComboHandlerForTest(t)
+	comboID := seedComboNamed(t, comboH, "metrics-window-combo")
+
+	// Seed a request just inside the 30-day boundary.
+	db := handler.db
+	now := time.Now().UnixMilli()
+	justInside := now - 30*24*60*60*1000 + 1000
+	_, err := db.Exec(`
+		INSERT INTO request_logs (id, timestamp, combo_id, provider_type_id, model_id, modality, stream, status_code, input_tokens, output_tokens, latency_ms, created_at)
+		VALUES ('w1', ?, ?, 'oc', 'hy3-free', 'chat', 0, 200, 1, 2, 50, ?)
+	`, justInside, comboID, now)
+	if err != nil {
+		t.Fatalf("seed request_logs: %v", err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/admin/combos/metrics?window=2592000", nil)
+
+	handler.Metrics(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+
+	var body struct {
+		Totals map[string]any `json:"totals"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if int(body.Totals["requests"].(float64)) != 1 {
+		t.Fatalf("total requests = %v, want 1", body.Totals["requests"])
+	}
+}
+
+func TestComboCreate_ValidatesFusion(t *testing.T) {
+	handler, _, store, elig := newComboHandlerForTest(t)
+	seedConnectionForAdminCombo(t, handler.db, store, elig, "conn-fusion", "openai")
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := `{"name":"fusion-bad","strategy":"fusion","fusion_config":"{\"panel_hard_timeout_ms\":500}","steps":[{"model_id":"openai/gpt-4o"},{"model_id":"openai/gpt-4o-mini"}]}`
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/combos", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.Create(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestComboDelete_Returns404IfMissing(t *testing.T) {
+	handler, _, _, _ := newComboHandlerForTest(t)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodDelete, "/api/admin/combos/not-there", nil)
+	c.Params = []gin.Param{{Key: "id", Value: "not-there"}}
+
+	handler.Delete(c)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestComboList_Paginated(t *testing.T) {
+	handler, comboH, _, _ := newComboHandlerForTest(t)
+	for i := 1; i <= 3; i++ {
+		seedComboNamed(t, comboH, "list-combo-"+strconv.Itoa(i))
+	}
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/admin/combos?page=1&per_page=2", nil)
+
+	handler.List(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Data       []map[string]any `json:"data"`
+		Pagination struct {
+			Page       int `json:"page"`
+			PerPage    int `json:"per_page"`
+			Total      int `json:"total"`
+			TotalPages int `json:"total_pages"`
+		} `json:"pagination"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Pagination.Total != 3 {
+		t.Fatalf("total = %d, want 3", resp.Pagination.Total)
+	}
+	if resp.Pagination.PerPage != 2 {
+		t.Fatalf("per_page = %d, want 2", resp.Pagination.PerPage)
+	}
+	if resp.Pagination.TotalPages != 2 {
+		t.Fatalf("total_pages = %d, want 2", resp.Pagination.TotalPages)
+	}
+	if len(resp.Data) != 2 {
+		t.Fatalf("len(data) = %d, want 2", len(resp.Data))
+	}
+}
+
+func TestComboUpdate_ResetsRotationCounter(t *testing.T) {
+	handler, comboH, store, elig := newComboHandlerForTest(t)
+	seedConnectionForAdminCombo(t, handler.db, store, elig, "conn-update", "openai")
+	id := seedComboNamed(t, comboH, "rotation-reset")
+
+	now := time.Now().Unix()
+	if _, err := handler.db.Exec(`
+		INSERT INTO rotation_state (combo_id, counter, updated_at) VALUES (?, 5, ?)
+	`, id, now); err != nil {
+		t.Fatalf("seed rotation_state: %v", err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := `{"strategy":"round-robin"}`
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/admin/combos/"+id, strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = []gin.Param{{Key: "id", Value: id}}
+
+	handler.Update(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+
+	var count int
+	err := handler.db.QueryRow(`SELECT COUNT(*) FROM rotation_state WHERE combo_id = ?`, id).Scan(&count)
+	if err != nil {
+		t.Fatalf("query rotation_state: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("rotation_state rows = %d, want 0 after strategy update", count)
 	}
 }

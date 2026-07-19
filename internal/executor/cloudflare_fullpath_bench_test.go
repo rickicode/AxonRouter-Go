@@ -14,7 +14,7 @@ import (
 
 func silenceLogs() {
 	h := slog.New(slog.NewTextHandler(io.Discard, nil))
-	logging.Logger = h
+	logging.SetLogger(h)
 	slog.SetDefault(h)
 }
 

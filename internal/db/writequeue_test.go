@@ -18,7 +18,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	logging.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	logging.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	os.Exit(m.Run())
 }
 
