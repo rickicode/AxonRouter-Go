@@ -8,6 +8,7 @@
 *.dll
 *.so
 *.dylib
+cmd/server/rsrc_windows_*.syso
 
 # Go
 *.test

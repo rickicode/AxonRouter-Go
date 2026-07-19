@@ -1,4 +1,4 @@
-.PHONY: all build build-frontend build-backend build-dev build-backend-dev build-tray clean run run-dev kill-port kill-dev-port dev install frontend backend test lint help version set-version release release-binary extract-changelog
+.PHONY: all build build-frontend build-backend build-dev build-backend-dev build-tray clean run run-dev kill-port kill-dev-port dev install frontend backend test lint help version set-version release release-binary windows-resources extract-changelog
 
 # Variables
 BINARY_NAME=axonrouter
@@ -56,6 +56,7 @@ clean:
 	rm -rf $(FRONTEND_DIR)/.svelte-kit
 	# Also remove stray binaries, DB files, and session logs left in the workspace
 	rm -f server axonrouter v1.test
+	rm -f cmd/server/rsrc_windows_*.syso
 	rm -rf bin/
 	rm -f *.db *.db-wal *.db-shm
 	rm -f console-*.log
@@ -159,15 +160,17 @@ set-version:
 sync-npm-version:
 	@node scripts/sync-npm-version.js
 
-# Extract changelog notes for the current VERSION. Redirect to a file as needed.
-extract-changelog:
-	@node scripts/extract-changelog.js $(VERSION)
+# Generate Windows resource files for the application icon.
+windows-resources:
+	@GOOS=$(shell $(GO) env GOHOSTOS) GOARCH=$(shell $(GO) env GOHOSTARCH) $(GO) run github.com/akavel/rsrc@latest -ico assets/icon.ico -arch amd64 -o cmd/server/rsrc_windows_amd64.syso
+	@GOOS=$(shell $(GO) env GOHOSTOS) GOARCH=$(shell $(GO) env GOHOSTARCH) $(GO) run github.com/akavel/rsrc@latest -ico assets/icon.ico -arch arm64 -o cmd/server/rsrc_windows_arm64.syso
 
 # Build a release binary for the configured GOOS/GOARCH.
 release-binary:
 	@mkdir -p $(BUILD_DIR)
 	@if [ "$(GOOS)" = "windows" ]; then \
-		GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-$(GOOS)-$(GOARCH).exe ./cmd/server; \
+		$(MAKE) windows-resources CGO_ENABLED=0; \
+		GOOS=$(GOOS) GOARCH=$(GOARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w -H=windowsgui" -tags tray -o $(BUILD_DIR)/$(BINARY_NAME)-$(GOOS)-$(GOARCH).exe ./cmd/server; \
 	else \
 		GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-$(GOOS)-$(GOARCH) ./cmd/server; \
 	fi

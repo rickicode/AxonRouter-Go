@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Windows icon + tray launch** — Windows release binary embeds `assets/icon.ico` via `.syso` resources and builds with `-H=windowsgui -tags tray`. Double-clicking `axonrouter-windows-amd64.exe` starts the system tray icon instead of a flashing console.
+
 ### Fixed
 - **Windows release build** — split Unix process-group logic (`Setpgid`, `Getpgid`, `Kill`) from `internal/executor/cli_runtime.go` into `cli_runtime_unix.go` and `cli_runtime_windows.go`. Windows builds now use `taskkill /F /T /PID` instead of undefined `syscall.Setpgid/Getpgid/Kill`.
 

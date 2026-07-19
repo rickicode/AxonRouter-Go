@@ -302,8 +302,10 @@ func main() {
 		fmt.Println()
 		fmt.Println("Usage:")
 		fmt.Println(" axonrouter Start the server")
-		fmt.Println(" axonrouter --tray Start the server with a system tray icon")
-		fmt.Println(" (requires build tag: tray)")
+	fmt.Println(" axonrouter --tray Start the server with a system tray icon")
+	fmt.Println(" (requires build tag: tray)")
+	fmt.Println(" axonrouter --no-tray Start the server without the system tray icon")
+	fmt.Println(" (tray builds only)")
 		fmt.Println(" axonrouter --startup install Install systemd service")
 		fmt.Println(" (root=system service, user=user service+linger)")
 		fmt.Println(" axonrouter --startup {status|start|stop|restart|uninstall}")
@@ -331,7 +333,13 @@ func main() {
 		setAdminPassword(os.Args[2])
 	}
 
-	trayMode := len(os.Args) >= 2 && os.Args[1] == "--tray"
+	trayMode := defaultTrayMode
+	if len(os.Args) >= 2 && os.Args[1] == "--tray" {
+		trayMode = true
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "--no-tray" {
+		trayMode = false
+	}
 	if trayMode && len(os.Args) >= 3 && os.Args[2] == "--help" {
 		fmt.Println("--tray          Start the server with a system tray icon")
 		fmt.Println("                (requires building with -tags tray)")
