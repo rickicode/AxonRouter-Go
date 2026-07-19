@@ -346,7 +346,7 @@ async function copyOAuthUrl() {
       for (let i = 0; i < 15; i++) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
         try {
-          const status = await oauthApi.poll(oauthSessionId);
+          const status = await oauthApi.pollStatus(oauthSessionId);
           if (status.status === 'connected') {
             oauthPolling = false;
             const accountName = status.name || (meta?.displayName ?? providerId);
@@ -588,7 +588,7 @@ async function handleOAuthSubmit() {
     oauthStatusText = 'Starting OAuth login...';
 
     try {
-      const res = await oauthApi.start(providerId, meta?.displayName ?? providerId);
+      const res = await oauthApi.startFlow(providerId, meta?.displayName ?? providerId);
       oauthUrl = res.auth_url;
       oauthUserCode = res.user_code || '';
       oauthSessionId = res.session_id;
@@ -596,10 +596,20 @@ async function handleOAuthSubmit() {
       oauthPolling = true;
       oauthStatusText = oauthUserCode
         ? 'Enter the code below in your browser, then authorize.'
-        : 'Open the URL below in your browser to authenticate.';
+        : 'A browser window was opened. Complete login there to finish.';
 
       toast.info(`OAuth started for ${meta?.displayName ?? providerId}`);
       pollOAuthStatus(res.session_id);
+
+      // Open a small popup for the OAuth provider so the user stays in the dashboard.
+      // If the popup is blocked, the user can still open the URL from the waiting step.
+      if (oauthUrl) {
+        window.open(
+          oauthUrl,
+          'oauth',
+          'width=600,height=700,popup=yes,scrollbars=yes,resizable=yes'
+        );
+      }
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : 'Failed to start OAuth';
       toast.error(errorMsg);
@@ -615,7 +625,7 @@ async function handleOAuthSubmit() {
       await new Promise((resolve) => setTimeout(resolve, 2000));
       if (!oauthPolling) return;
       try {
-        const status = await oauthApi.poll(sessionId);
+        const status = await oauthApi.pollStatus(sessionId);
         if (status.status === 'connected') {
           oauthPolling = false;
           const accountName = status.name || (meta?.displayName ?? providerId);
@@ -655,14 +665,7 @@ function handleSubmit() {
   if (isNoAuth) return handleNoAuthSubmit();
   return handleApiKeySubmit();
 }
-// Auto-start OAuth when modal opens for OAuth providers (matches AxonRouter TS behavior).
-// Grok CLI offers a manual import mode, so skip auto-start while the user is importing tokens.
-$effect(() => {
-  if (open && isOAuth && step === 'form' && !submitting && !oauthPolling && !importMode) {
-    // Use setTimeout to avoid calling during render
-    setTimeout(() => handleOAuthSubmit(), 50);
-  }
-});
+
 // Fetch proxy pools when modal opens for OpenCode Free or MiMoCode
 $effect(() => {
   if (open && needsProxyPool && step === 'form') {
@@ -947,7 +950,7 @@ $effect(() => {
             </div>
           {:else}
             <div class="rounded-lg border border-border/50 bg-muted/30 p-3 text-sm text-muted-foreground">
-              <p>A browser tab opens automatically. Complete login there — this modal waits up to 5 minutes for the callback.</p>
+              <p>Click <strong>Connect</strong> to open a small browser window and complete OAuth login. This modal waits up to 5 minutes for the callback.</p>
             </div>
           {/if}
           {/if}

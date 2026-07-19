@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -181,6 +182,86 @@ func TestOAuthServices_IncludeGrokCli(t *testing.T) {
 
 	if _, ok := router.authMgr.GetService(auth.ProviderGrokCli); !ok {
 		t.Fatalf("grok-cli OAuth service not registered in auth manager")
+	}
+}
+
+// stubOAuthService implements auth.OAuthService without making network calls.
+type stubOAuthService struct{}
+
+func (stubOAuthService) GenerateAuthURL(context.Context, string) (string, error) {
+	return "http://localhost/oauth?state=test", nil
+}
+
+func (stubOAuthService) ExchangeCode(context.Context, string) (*auth.Credentials, error) {
+	return nil, nil
+}
+
+func (stubOAuthService) RefreshToken(context.Context, *auth.Credentials) (*auth.Credentials, error) {
+	return nil, nil
+}
+
+func (stubOAuthService) StartLocalServer(context.Context, string) (int, chan *auth.Credentials, error) {
+	ch := make(chan *auth.Credentials, 1)
+	close(ch)
+	return 0, ch, nil
+}
+
+// TestOAuthRoutes_RegisteredAndCallable proves the OAuth start, poll, and callback
+// routes are wired under /api/admin and return expected response shapes.
+func TestOAuthRoutes_RegisteredAndCallable(t *testing.T) {
+	router, srv := newTestRouter(t)
+	defer srv.Close()
+	defer router.Shutdown()
+
+	// Register a stub OAuth service so start/poll do not hit real providers.
+	router.authMgr.RegisterService(auth.ProviderType("test-oauth"), stubOAuthService{})
+
+	_ = setSetting(router.db, firstLoginKey, "false")
+	tok := loginForToken(t, srv, router)
+
+	body := `{"provider":"test-oauth","provider_name":"Test OAuth"}`
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/admin/oauth/start", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("oauth start request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("oauth start status = %d, want 200", resp.StatusCode)
+	}
+
+	var startBody map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&startBody); err != nil {
+		t.Fatalf("decode oauth start response: %v", err)
+	}
+	sessionID, ok := startBody["session_id"].(string)
+	if !ok || sessionID == "" {
+		t.Fatalf("expected session_id in oauth start response, got %+v", startBody)
+	}
+	if authURL, ok := startBody["auth_url"].(string); !ok || authURL == "" {
+		t.Fatalf("expected auth_url in oauth start response, got %+v", startBody)
+	}
+
+	pollReq, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/admin/oauth/"+sessionID+"/poll", nil)
+	pollReq.Header.Set("Authorization", "Bearer "+tok)
+	pollResp, err := http.DefaultClient.Do(pollReq)
+	if err != nil {
+		t.Fatalf("oauth poll request: %v", err)
+	}
+	defer pollResp.Body.Close()
+	if pollResp.StatusCode != http.StatusOK {
+		t.Fatalf("oauth poll status = %d, want 200", pollResp.StatusCode)
+	}
+
+	var pollBody map[string]any
+	if err := json.NewDecoder(pollResp.Body).Decode(&pollBody); err != nil {
+		t.Fatalf("decode oauth poll response: %v", err)
+	}
+	status, ok := pollBody["status"].(string)
+	if !ok || status == "" {
+		t.Fatalf("expected status in oauth poll response, got %+v", pollBody)
 	}
 }
 

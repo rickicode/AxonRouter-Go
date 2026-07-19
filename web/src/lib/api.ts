@@ -484,7 +484,7 @@ export interface ImportOAuthTokenResponse {
 }
 
 export const oauthApi = {
-  start: (provider: string, providerName?: string) =>
+  startFlow: (provider: string, providerName?: string) =>
     fetchApi<{
       auth_url: string;
       session_id: string;
@@ -495,7 +495,7 @@ export const oauthApi = {
       body: JSON.stringify({ provider, provider_name: providerName }),
     }),
 
-  poll: (sessionId: string) =>
+  pollStatus: (sessionId: string) =>
     fetchApi<{
       status: string;
       name?: string;
