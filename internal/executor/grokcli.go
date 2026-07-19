@@ -2,17 +2,21 @@ package executor
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -307,7 +311,7 @@ type grokCLINamespaceToolRef struct {
 	name      string
 }
 
-func grokcliRequestBody(req *Request) ([]byte, error) {
+func grokcliRequestBody(ctx context.Context, req *Request, sessionKey string) ([]byte, error) {
 	// Build request-scoped normalization context from the raw payload and
 	// flatten namespace tools before unmarshalling into the executor's body map.
 	normCtx := grokCLINormalizeCtx{
@@ -352,6 +356,11 @@ func grokcliRequestBody(req *Request) ([]byte, error) {
 				body["input"] = inputItems
 			}
 		}
+	}
+
+	// Inject cached reasoning replay items from previous turns.
+	if sessionKey != "" {
+		grokcliInjectReasoningReplay(ctx, body, model, sessionKey)
 	}
 
 	reasoning := map[string]any{}
@@ -672,13 +681,14 @@ func (e *GrokCLIExecutor) doStreamWithRetry(ctx context.Context, url string, hea
 // Execute performs a Grok CLI Responses API call.
 func (e *GrokCLIExecutor) Execute(ctx context.Context, req *Request) (*Response, error) {
 	url := grokcliURL(req)
-	body, err := grokcliRequestBody(req)
-	if err != nil {
-		return nil, fmt.Errorf("grok-cli request body: %w", err)
-	}
 	sessionID, convID, agentID, reqID, turnIdx, err := e.allocateGrokCLISession(req)
 	if err != nil {
 		return nil, fmt.Errorf("grok-cli session: %w", err)
+	}
+	sessionKey := grokcliReasoningSessionKey(convID, grokcliReasoningAPIKey(req))
+	body, err := grokcliRequestBody(ctx, req, sessionKey)
+	if err != nil {
+		return nil, fmt.Errorf("grok-cli request body: %w", err)
 	}
 	headers := grokcliHeaders(req, sessionID, convID, agentID, reqID, turnIdx)
 
@@ -730,6 +740,7 @@ func (e *GrokCLIExecutor) Execute(ctx context.Context, req *Request) (*Response,
 	}
 
 	responseBody, _ := grokcliParseEvent(completedPayload)
+	grokcliCacheReasoningReplay(ctx, ExtractModel(req.Model), sessionKey, responseBody)
 	costTicks := extractGrokCLICostInUsdTicks(completedPayload)
 	return &Response{
 		StatusCode: statusCode,
@@ -743,13 +754,14 @@ func (e *GrokCLIExecutor) Execute(ctx context.Context, req *Request) (*Response,
 // ExecuteStream performs a streaming Grok CLI Responses API call.
 func (e *GrokCLIExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
 	url := grokcliURL(req)
-	body, err := grokcliRequestBody(req)
-	if err != nil {
-		return nil, fmt.Errorf("grok-cli request body: %w", err)
-	}
 	sessionID, convID, agentID, reqID, turnIdx, err := e.allocateGrokCLISession(req)
 	if err != nil {
 		return nil, fmt.Errorf("grok-cli session: %w", err)
+	}
+	sessionKey := grokcliReasoningSessionKey(convID, grokcliReasoningAPIKey(req))
+	body, err := grokcliRequestBody(ctx, req, sessionKey)
+	if err != nil {
+		return nil, fmt.Errorf("grok-cli request body: %w", err)
 	}
 	headers := grokcliHeaders(req, sessionID, convID, agentID, reqID, turnIdx)
 
@@ -759,4 +771,208 @@ func (e *GrokCLIExecutor) ExecuteStream(ctx context.Context, req *Request) (*Str
 		return nil, err
 	}
 	return result, nil
+}
+
+// grokcliReasoningAPIKey returns the key material used to isolate reasoning
+// replay caches between different accounts on the same connection.
+func grokcliReasoningAPIKey(req *Request) string {
+	if req.APIKey != "" {
+		return req.APIKey
+	}
+	return req.AccessToken
+}
+
+// grokcliReasoningSessionKey returns the per-conversation cache key segment.
+// It isolates cached reasoning by API key hash so different credentials on the
+// same connection do not share sensitive replay state.
+func grokcliReasoningSessionKey(convID, apiKey string) string {
+	if convID == "" {
+		return ""
+	}
+	h := sha256.Sum256([]byte(apiKey))
+	return convID + ":" + hex.EncodeToString(h[:4])
+}
+
+// grokcliNormalizeReplayItem strips an output item down to the fields needed
+// for a replayable conversation context.
+func grokcliNormalizeReplayItem(raw []byte) (map[string]any, bool) {
+	typ := strings.TrimSpace(gjson.GetBytes(raw, "type").String())
+	switch typ {
+	case "reasoning":
+		enc := strings.TrimSpace(gjson.GetBytes(raw, "encrypted_content").String())
+		if enc == "" {
+			return nil, false
+		}
+		return map[string]any{"type": "reasoning", "encrypted_content": enc}, true
+	case "message":
+		if strings.TrimSpace(gjson.GetBytes(raw, "role").String()) != "assistant" {
+			return nil, false
+		}
+		return map[string]any{
+			"type":    "message",
+			"role":    "assistant",
+			"content": gjson.GetBytes(raw, "content").Value(),
+		}, true
+	case "function_call":
+		cid := strings.TrimSpace(gjson.GetBytes(raw, "call_id").String())
+		name := strings.TrimSpace(gjson.GetBytes(raw, "name").String())
+		if cid == "" || name == "" {
+			return nil, false
+		}
+		return map[string]any{
+			"type":      "function_call",
+			"call_id":   cid,
+			"name":      name,
+			"arguments": gjson.GetBytes(raw, "arguments").String(),
+		}, true
+	case "custom_tool_call":
+		cid := strings.TrimSpace(gjson.GetBytes(raw, "call_id").String())
+		name := strings.TrimSpace(gjson.GetBytes(raw, "name").String())
+		if cid == "" || name == "" {
+			return nil, false
+		}
+		return map[string]any{
+			"type":    "custom_tool_call",
+			"call_id": cid,
+			"name":    name,
+			"input":   gjson.GetBytes(raw, "input").Value(),
+			"status":  gjson.GetBytes(raw, "status").String(),
+		}, true
+	}
+	return nil, false
+}
+
+// grokcliHasReasoningAnchor reports whether any item is a reasoning replay
+// anchor (encrypted_content), which is required before we store replay state.
+func grokcliHasReasoningAnchor(items []map[string]any) bool {
+	for _, item := range items {
+		if item["type"] == "reasoning" && item["encrypted_content"] != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// grokcliCacheReasoningReplay stores replayable output items from a completed
+// response. If no reasoning anchor exists the cache entry is purged.
+func grokcliCacheReasoningReplay(ctx context.Context, model, sessionKey string, responseBody []byte) {
+	if sessionKey == "" || model == "" {
+		return
+	}
+	root := gjson.ParseBytes(responseBody)
+	if r := root.Get("response"); r.Exists() {
+		root = r
+	}
+	output := root.Get("output")
+	if !output.Exists() || !output.IsArray() {
+		return
+	}
+	var items []map[string]any
+	for _, it := range output.Array() {
+		if m, ok := grokcliNormalizeReplayItem([]byte(it.Raw)); ok {
+			items = append(items, m)
+		}
+	}
+	if grokcliHasReasoningAnchor(items) {
+		_ = cache.CacheGrokCLIReasoningReplayItems(ctx, model, sessionKey, items)
+	} else {
+		_ = cache.PurgeGrokCLIReasoningForSession(ctx, model, sessionKey)
+	}
+}
+
+// grokcliReplayItemInInput checks whether a cached replay item is already
+// represented in the current request input.
+func grokcliReplayItemInInput(item map[string]any, input []any) bool {
+	itemType, _ := item["type"].(string)
+	switch itemType {
+	case "reasoning":
+		enc, _ := item["encrypted_content"].(string)
+		for _, raw := range input {
+			m, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			if m["type"] != "reasoning" {
+				continue
+			}
+			if s, _ := m["encrypted_content"].(string); s == enc && enc != "" {
+				return true
+			}
+		}
+	case "message":
+		content := item["content"]
+		for i := len(input) - 1; i >= 0; i-- {
+			m, ok := input[i].(map[string]any)
+			if !ok {
+				continue
+			}
+			if m["type"] != "message" || m["role"] != "assistant" {
+				continue
+			}
+			if reflect.DeepEqual(m["content"], content) {
+				return true
+			}
+		}
+	case "function_call", "custom_tool_call":
+		cid, _ := item["call_id"].(string)
+		for _, raw := range input {
+			m, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			if s, _ := m["call_id"].(string); s == cid && cid != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// grokcliLastUserMessageIndex returns the index of the last user message in
+// input, or 0 if no user message is present.
+func grokcliLastUserMessageIndex(input []any) int {
+	idx := 0
+	for i, raw := range input {
+		m, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if m["role"] == "user" {
+			idx = i
+		}
+	}
+	return idx
+}
+
+// grokcliInjectReasoningReplay inserts previously cached replay items into the
+// current request input, just before the last user message.
+func grokcliInjectReasoningReplay(ctx context.Context, body map[string]any, model, sessionKey string) {
+	if sessionKey == "" || model == "" || body == nil {
+		return
+	}
+	cached, err := cache.GetGrokCLIReasoningReplayItems(ctx, model, sessionKey)
+	if err != nil || len(cached) == 0 {
+		return
+	}
+	rawInput, _ := body["input"].([]any)
+	if rawInput == nil {
+		rawInput = []any{}
+	}
+	var filtered []map[string]any
+	for _, item := range cached {
+		if !grokcliReplayItemInInput(item, rawInput) {
+			filtered = append(filtered, item)
+		}
+	}
+	if len(filtered) == 0 {
+		return
+	}
+	spliceIdx := grokcliLastUserMessageIndex(rawInput)
+	newInput := make([]any, 0, len(rawInput)+len(filtered))
+	newInput = append(newInput, rawInput[:spliceIdx]...)
+	for _, item := range filtered {
+		newInput = append(newInput, item)
+	}
+	newInput = append(newInput, rawInput[spliceIdx:]...)
+	body["input"] = newInput
 }
