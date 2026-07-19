@@ -115,7 +115,7 @@ func RegisterDefaults() {
 
 	// OpenAI-compatible providers
 	openaiExec := NewOpenAIExecutor(base)
-	for _, p := range []string{"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp", "elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras", "together", "fireworks", "novita", "lambda", "pollinations", "zenmux"} {
+	for _, p := range []string{"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp", "elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras", "together", "fireworks", "novita", "lambda", "pollinations", "zenmux", "codebuddy"} {
 		GetRegistry().Register(p, FormatOpenAI, openaiExec)
 	}
 	GetRegistry().Register("mimocode", FormatOpenAI, NewMimocodeExecutor(base))
@@ -143,7 +143,7 @@ func RegisterDefaults() {
 		"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp",
 		"elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras",
 		"together", "fireworks", "novita", "lambda", "pollinations", "zenmux",
-		"mimocode", "openrouter", "copilot", "vertex", "bedrock",
+		"mimocode", "openrouter", "copilot", "vertex", "bedrock", "codebuddy",
 	} {
 		translator.Register(p, translator.Func(providers.TranslateOpenAICompatible))
 	}
