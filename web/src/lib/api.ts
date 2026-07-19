@@ -454,6 +454,18 @@ export const connectionsApi = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
+
+  bulkAssignProxy: (
+    providerId: string,
+    data: { connection_ids: string[]; proxy_pool_id: string | null },
+  ) =>
+    fetchApi<{ updated: number }>(
+      `/providers/${providerId}/connections/bulk-proxy`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    ),
 };
 
 export interface ImportOAuthTokenPayload {
