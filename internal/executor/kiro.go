@@ -122,6 +122,25 @@ func (s *kiroStreamState) toolName(raw string, nameMap map[string]string) string
 	return raw
 }
 
+// splitInlineThinking extracts a single complete <thinking>...</thinking> block from the start
+// of a content chunk. Returns (reasoning, remainingText, true) if a complete block is found.
+func splitInlineThinking(content string) (string, string, bool) {
+	// Only handle the simple case where the block is fully contained in one chunk.
+	start := strings.Index(content, "<thinking>")
+	if start == -1 {
+		return "", "", false
+	}
+	end := strings.Index(content[start:], "</thinking>")
+	if end == -1 {
+		return "", "", false
+	}
+	end += start + len("</thinking>")
+	reasoning := strings.TrimSpace(content[start+len("<thinking>") : end-len("</thinking>")])
+	prefix := content[:start]
+	suffix := content[end:]
+	return reasoning, strings.TrimSpace(prefix + suffix), true
+}
+
 func (s *kiroStreamState) emitChunk(delta map[string]any, model string) []byte {
 	if s.chunkIndex == 0 && delta != nil {
 		delta["role"] = "assistant"
@@ -228,6 +247,19 @@ func (s *kiroStreamState) handleEvent(frame *EventFrame, nameMap map[string]stri
 			return nil
 		}
 		s.textLen += int64(len(content))
+
+		// Kiro may inline thinking tags inside assistantResponseEvent content when the
+		// reasoningContentEvent frame is not emitted. Split them stream-safely.
+		var out [][]byte
+		if reasoning, text, ok := splitInlineThinking(content); ok {
+			if reasoning != "" {
+				out = append(out, s.emitChunk(map[string]any{"reasoning_content": reasoning}, model))
+			}
+			if text != "" {
+				out = append(out, s.emitChunk(map[string]any{"content": text}, model))
+			}
+			return out
+		}
 		return [][]byte{s.emitChunk(map[string]any{"content": content}, model)}
 
 	case "reasoningContentEvent":
