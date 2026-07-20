@@ -147,6 +147,7 @@ func RegisterDefaults() {
 		"elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras",
 		"together", "fireworks", "novita", "lambda", "pollinations", "zenmux",
 		"mimocode", "openrouter", "copilot", "vertex", "bedrock", "codebuddy",
+		"qwencloud",
 	} {
 		translator.Register(p, translator.Func(providers.TranslateOpenAICompatible))
 	}
@@ -164,6 +165,10 @@ func RegisterDefaults() {
 	// Codex (openai-responses format)
 	codexExec := NewCodexExecutor(base)
 	GetRegistry().Register("cx", FormatOpenAIResponses, codexExec)
+
+	// Qwen Cloud exposes an OpenAI-compatible Responses endpoint.
+	GetRegistry().Register("qwencloud", FormatOpenAIResponses, openaiExec)
+	translator.Register("qwencloud", translator.Func(providers.TranslateOpenAICompatible))
 
 	// Antigravity
 	agExec := NewAntigravityExecutor(base)

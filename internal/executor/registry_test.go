@@ -25,6 +25,24 @@ func TestRegistry_NewOpenAICompatibleProviders(t *testing.T) {
 	}
 }
 
+func TestRegistry_OpenAIResponsesProviders(t *testing.T) {
+	RegisterDefaults()
+	want := []string{"cx", "qwencloud"}
+	for _, prefix := range want {
+		exec, format, ok := GetRegistry().Get(prefix)
+		if !ok {
+			t.Errorf("provider %q not registered", prefix)
+			continue
+		}
+		if format != FormatOpenAIResponses {
+			t.Errorf("provider %q format = %q, want %q", prefix, format, FormatOpenAIResponses)
+		}
+		if exec == nil {
+			t.Errorf("provider %q has nil executor", prefix)
+		}
+	}
+}
+
 func TestRegistry_GetByModel_NewProviders(t *testing.T) {
 	RegisterDefaults()
 	cases := []struct {
@@ -39,6 +57,7 @@ func TestRegistry_GetByModel_NewProviders(t *testing.T) {
 		{"mistral/mistral-large-latest", "mistral", "mistral-large-latest", FormatOpenAI},
 		{"cerebras/gpt-oss-120b", "cerebras", "gpt-oss-120b", FormatOpenAI},
 		{"codebuddy/glm-5.0", "codebuddy", "glm-5.0", FormatOpenAI},
+		{"qwencloud/qwen3.7-plus", "qwencloud", "qwen3.7-plus", FormatOpenAIResponses},
 	}
 	for _, c := range cases {
 		exec, format, model, err := GetRegistry().GetByModel(c.model)

@@ -32,6 +32,7 @@ var Registry = map[string]CanonicalInfo{
 	"bedrock":    {DisplayName: "Amazon Bedrock Mantle", Aliases: nil},
 	"devin":      {DisplayName: "Devin CLI", Aliases: nil},
 	"qoder":      {DisplayName: "Qoder", Aliases: nil},
+	"qwencloud":  {DisplayName: "Qwen Cloud", Aliases: nil},
 	"codebuddy":  {DisplayName: "CodeBuddy", Aliases: []string{"codebuddy-cn"}},
 }
 
