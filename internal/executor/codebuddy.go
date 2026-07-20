@@ -68,17 +68,7 @@ func (e *CodeBuddyExecutor) Execute(ctx context.Context, req *Request) (*Respons
 		return nil, err
 	}
 
-	var buf bytes.Buffer
-	for chunk := range result.Chunks {
-		if chunk.Err != nil {
-			return nil, chunk.Err
-		}
-		if chunk.Payload != nil {
-			buf.Write(chunk.Payload)
-		}
-	}
-
-	body, err := assembleCodeBuddyNonStream(buf.Bytes())
+	body, err := aggregateCodeBuddyStream(result.Chunks)
 	if err != nil {
 		return nil, err
 	}
@@ -95,17 +85,25 @@ func (e *CodeBuddyExecutor) ExecuteStream(ctx context.Context, req *Request) (*S
 	return e.OpenAIExecutor.ExecuteStream(ctx, req)
 }
 
-func assembleCodeBuddyNonStream(sse []byte) ([]byte, error) {
+// aggregateCodeBuddyStream reads SSE chunks from the channel and builds a single
+// non-streaming chat.completion response. Each chunk payload is an SSE line from
+// the base executor (e.g. `data: {"choices":...}` or `data: [DONE]`).
+func aggregateCodeBuddyStream(ch <-chan StreamChunk) ([]byte, error) {
 	var content strings.Builder
 	var reasoning strings.Builder
 	var usage map[string]any
 	var finishReason string
-	var id string
-	var model string
+	var id, model string
 	var created int64
 
-	for _, line := range bytes.Split(sse, []byte("\n")) {
-		line = bytes.TrimSpace(line)
+	for chunk := range ch {
+		if chunk.Err != nil {
+			return nil, chunk.Err
+		}
+		line := bytes.TrimSpace(chunk.Payload)
+		if len(line) == 0 {
+			continue
+		}
 		if !bytes.HasPrefix(line, []byte("data:")) {
 			continue
 		}
@@ -113,28 +111,29 @@ func assembleCodeBuddyNonStream(sse []byte) ([]byte, error) {
 		if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
 			continue
 		}
-		var chunk map[string]any
-		if err := json.Unmarshal(data, &chunk); err != nil {
+		var chunkJSON map[string]any
+		if err := json.Unmarshal(data, &chunkJSON); err != nil {
 			continue
 		}
 		if id == "" {
-			if v, ok := chunk["id"].(string); ok {
+			if v, ok := chunkJSON["id"].(string); ok {
 				id = v
 			}
 		}
 		if model == "" {
-			if v, ok := chunk["model"].(string); ok {
+			if v, ok := chunkJSON["model"].(string); ok {
 				model = v
 			}
 		}
 		if created == 0 {
-			if v, ok := chunk["created"].(float64); ok {
+			if v, ok := chunkJSON["created"].(float64); ok {
 				created = int64(v)
 			}
 		}
-		choices, _ := chunk["choices"].([]any)
+
+		choices, _ := chunkJSON["choices"].([]any)
 		if len(choices) == 0 {
-			if u, ok := chunk["usage"].(map[string]any); ok {
+			if u, ok := chunkJSON["usage"].(map[string]any); ok {
 				usage = u
 			}
 			continue
@@ -151,7 +150,7 @@ func assembleCodeBuddyNonStream(sse []byte) ([]byte, error) {
 		if fr, ok := choice["finish_reason"].(string); ok && fr != "" {
 			finishReason = fr
 		}
-		if u, ok := chunk["usage"].(map[string]any); ok {
+		if u, ok := chunkJSON["usage"].(map[string]any); ok {
 			usage = u
 		}
 	}
