@@ -2,10 +2,13 @@
 // generator used by discovery and routing.
 package kiro
 
-// Capabilities flags a model variant as thinking / agentic.
+// Capabilities flags a model variant as thinking / agentic / vision / reasoning / search.
 type Capabilities struct {
-	Thinking bool
-	Agentic  bool
+	Thinking  bool
+	Agentic   bool
+	Vision    bool
+	Reasoning bool
+	Search    bool
 }
 
 // BaseModel is a verified upstream Kiro model without synthetic suffixes.
@@ -25,6 +28,56 @@ type Model struct {
 	VariantSuffix   string
 	Description     string
 	RateMultiplier  float64
+	Strip           []string
+}
+
+// baseCapabilities returns the upstream capability flags for a base model ID.
+// These are independent from synthetic -thinking / -agentic variants.
+func baseCapabilities(id string) Capabilities {
+	switch id {
+	case "claude-opus-4.8", "claude-opus-4.7", "claude-opus-4.5",
+		"claude-sonnet-5", "claude-sonnet-4.6", "claude-sonnet-4.5",
+		"claude-haiku-4.5":
+		return Capabilities{Vision: true}
+	case "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna":
+		return Capabilities{Vision: true, Reasoning: true, Search: true}
+	}
+	return Capabilities{}
+}
+
+// baseStrip returns content types a base model cannot consume.
+func baseStrip(id string) []string {
+	switch id {
+	case "deepseek-3.2", "qwen3-coder-next":
+		return []string{"image", "audio"}
+	}
+	return nil
+}
+
+// baseRateMultiplier returns the cost multiplier used by 9router for GPT 5.6 models.
+func baseRateMultiplier(id string) float64 {
+	switch id {
+	case "gpt-5.6-sol":
+		return 2.4
+	case "gpt-5.6-terra":
+		return 1.2
+	case "gpt-5.6-luna":
+		return 0.6
+	}
+	return 1.0
+}
+
+// baseDescription returns a short description for known experimental models.
+func baseDescription(id string) string {
+	switch id {
+	case "gpt-5.6-sol":
+		return "Experimental preview of OpenAI GPT 5.6 Sol with 272k context window"
+	case "gpt-5.6-terra":
+		return "Experimental preview of OpenAI GPT 5.6 Terra with 272k context window"
+	case "gpt-5.6-luna":
+		return "Experimental preview of OpenAI GPT 5.6 Luna with 272k context window"
+	}
+	return ""
 }
 
 // BaseModels lists the verified upstream Kiro models.
@@ -162,32 +215,58 @@ func ExpandVariants(bases []BaseModel) []Model {
 		base := b
 		base.ID = baseID
 		base.DisplayName = stripVariantDisplayName(b.DisplayName)
+		caps := baseCapabilities(baseID)
+		strip := baseStrip(baseID)
+		desc := baseDescription(baseID)
+		rate := baseRateMultiplier(baseID)
 		out = append(out, Model{
 			BaseModel:       base,
-			Capabilities:    Capabilities{},
+			Capabilities:    caps,
 			UpstreamModelID: baseID,
 			VariantSuffix:   "",
+			Description:     desc,
+			RateMultiplier:  rate,
+			Strip:           strip,
 		})
 		out = append(out, Model{
 			BaseModel:       variantBase(base, "thinking"),
-			Capabilities:    Capabilities{Thinking: true},
+			Capabilities:    withThinking(caps),
 			UpstreamModelID: baseID,
 			VariantSuffix:   "thinking",
+			Description:     desc,
+			RateMultiplier:  rate,
+			Strip:           strip,
 		})
 		out = append(out, Model{
 			BaseModel:       variantBase(base, "agentic"),
-			Capabilities:    Capabilities{Agentic: true},
+			Capabilities:    withAgentic(caps),
 			UpstreamModelID: baseID,
 			VariantSuffix:   "agentic",
+			Description:     desc,
+			RateMultiplier:  rate,
+			Strip:           strip,
 		})
 		out = append(out, Model{
 			BaseModel:       variantBase(base, "thinking-agentic"),
-			Capabilities:    Capabilities{Thinking: true, Agentic: true},
+			Capabilities:    withThinking(withAgentic(caps)),
 			UpstreamModelID: baseID,
 			VariantSuffix:   "thinking-agentic",
+			Description:     desc,
+			RateMultiplier:  rate,
+			Strip:           strip,
 		})
 	}
 	return out
+}
+
+func withThinking(c Capabilities) Capabilities {
+	c.Thinking = true
+	return c
+}
+
+func withAgentic(c Capabilities) Capabilities {
+	c.Agentic = true
+	return c
 }
 
 // StripSyntheticSuffix removes -thinking, -agentic and -thinking-agentic
