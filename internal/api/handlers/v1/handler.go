@@ -350,7 +350,7 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 	conns := h.elig.GetByPrefixState(provider)
 	logging.Logger.Debug("getConnection", "provider", provider, "eligible", len(conns))
 	if len(conns) > 0 {
-		start := h.pickStartIndex(provider, len(conns), mode)
+		start := h.pickStartIndex(provider, modelID, len(conns), mode)
 		bound := pickMaxAttempts
 		if bound > len(conns) {
 			bound = len(conns)
@@ -396,7 +396,7 @@ func (h *Handler) getConnectionFallback(ctx context.Context, provider, modelID s
 		return true
 	})
 
-	candidates = h.orderCandidates(provider, candidates, mode)
+	candidates = h.orderCandidates(provider, modelID, candidates, mode)
 
 	// Pass 1: respect cooldowns, just expand the pool beyond the eligibility snapshot.
 	for _, cs := range candidates {
@@ -439,6 +439,7 @@ func (h *Handler) tryPickConnectionFallback(ctx context.Context, connID, provide
 		logging.Logger.Debug("load conn failed", "conn", connID[:8], "err", err)
 		return nil, false
 	}
+	cs.RecordUsed()
 	logging.Logger.Debug("getConnection fallback selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name, "mode", mode)
 	h.bindActiveConn(ctx, conn)
 	return conn, true
@@ -446,14 +447,14 @@ func (h *Handler) tryPickConnectionFallback(ctx context.Context, connID, provide
 
 // pickStartIndex returns the first index to inspect based on the configured
 // routing mode. first_eligible always starts at 0; round_robin rotates an
-// atomic counter; random chooses a uniform index.
-func (h *Handler) pickStartIndex(provider string, total int, mode providercfg.RoutingMode) int {
+// atomic counter keyed by provider and modelID; random chooses a uniform index.
+func (h *Handler) pickStartIndex(provider, modelID string, total int, mode providercfg.RoutingMode) int {
 	if total <= 1 {
 		return 0
 	}
 	switch mode {
 	case providercfg.RoundRobin:
-		return h.providerCfg.NextRoundRobinIndex(provider, total)
+		return h.providerCfg.NextRoundRobinIndex(provider, modelID, total)
 	case providercfg.Random:
 		return rand.IntN(total)
 	default:
@@ -484,6 +485,7 @@ func (h *Handler) tryPickConnection(ctx context.Context, cs *connstate.Connectio
 		logging.Logger.Debug("load conn failed", "conn", connID[:8], "err", err)
 		return nil, false
 	}
+	cs.RecordUsed()
 	logging.Logger.Debug("getConnection selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name, "mode", mode)
 	h.bindActiveConn(ctx, conn)
 	return conn, true
@@ -493,24 +495,31 @@ func (h *Handler) tryPickConnection(ctx context.Context, cs *connstate.Connectio
 // configured routing mode.
 //
 //   - first_eligible: accounts are sorted by remaining quota (highest first).
-//   - round_robin: rotate the starting index, but the rotation is applied on
-//     top of the quota-sorted list so healthier accounts are preferred.
+//   - round_robin: rotate the starting index keyed by provider and modelID,
+//     but the rotation is applied on top of the quota-sorted list so healthier
+//     accounts are preferred.
 //   - random: pick a random starting index on the quota-sorted list.
-func (h *Handler) orderCandidates(provider string, candidates []*connstate.ConnectionState, mode providercfg.RoutingMode) []*connstate.ConnectionState {
+func (h *Handler) orderCandidates(provider, modelID string, candidates []*connstate.ConnectionState, mode providercfg.RoutingMode) []*connstate.ConnectionState {
 	if len(candidates) <= 1 {
 		return candidates
 	}
 
-	// Quota-aware: put accounts with the most remaining quota first. This avoids
-	// wasting requests on nearly-exhausted siblings when healthier accounts exist.
+	// Quota-aware, then recency-aware: put accounts with the most remaining quota
+	// first, and break ties by preferring least-recently-used connections. This
+	// spreads simultaneous requests across siblings instead of concentrating them
+	// on the same freshly-selected connection.
 	sort.SliceStable(candidates, func(i, j int) bool {
-		return candidates[i].GetRemainingPct() > candidates[j].GetRemainingPct()
+		ri, rj := candidates[i].GetRemainingPct(), candidates[j].GetRemainingPct()
+		if ri != rj {
+			return ri > rj
+		}
+		return candidates[i].LastUsedAt().Before(candidates[j].LastUsedAt())
 	})
 
 	var start int
 	switch mode {
 	case providercfg.RoundRobin:
-		start = h.providerCfg.NextRoundRobinIndex(provider, len(candidates))
+		start = h.providerCfg.NextRoundRobinIndex(provider, modelID, len(candidates))
 	case providercfg.Random:
 		start = rand.IntN(len(candidates))
 	default:
@@ -551,6 +560,7 @@ func (h *Handler) prepareConnection(ctx context.Context, connID, provider, model
 	if err != nil {
 		return nil, err
 	}
+	cs.RecordUsed()
 
 	// Proactive token refresh (same as regular routing path)
 	h.proactiveRefreshToken(ctx, conn, provider)

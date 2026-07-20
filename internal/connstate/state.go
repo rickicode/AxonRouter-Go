@@ -2,6 +2,7 @@ package connstate
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -53,6 +54,7 @@ type ConnectionState struct {
 	RemainingPct  float64 // cached min remaining quota percentage (0-100)
 	ModelLimits   sync.Map // modelID -> *ModelLimitState
 	mu            sync.RWMutex
+	lastUsedAt    atomic.Int64
 }
 
 // GetStatus returns the current status (thread-safe).
@@ -95,6 +97,21 @@ func (cs *ConnectionState) SetRemainingPct(pct float64) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.RemainingPct = pct
+}
+
+// RecordUsed marks this connection as having just been selected. In-memory only.
+func (cs *ConnectionState) RecordUsed() {
+	cs.lastUsedAt.Store(time.Now().UnixNano())
+}
+
+// LastUsedAt returns the timestamp of the last selection (zero if never used).
+func (cs *ConnectionState) LastUsedAt() time.Time {
+	return time.Unix(0, cs.lastUsedAt.Load())
+}
+
+// lastUsedAtNano returns the raw nanosecond timestamp for cheap comparisons.
+func (cs *ConnectionState) lastUsedAtNano() int64 {
+	return cs.lastUsedAt.Load()
 }
 
 // SetStatus updates the status and timestamps (thread-safe).

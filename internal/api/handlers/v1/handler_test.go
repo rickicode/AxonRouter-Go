@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -574,7 +575,7 @@ func TestOrderCandidatesPrioritizesRemainingQuota(t *testing.T) {
 	h.store.Get("conn-mid").SetRemainingPct(50)
 	h.store.Get("conn-high").SetRemainingPct(90)
 
-	ordered := h.orderCandidates("oc", []*connstate.ConnectionState{
+	ordered := h.orderCandidates("oc", "hy3-free", []*connstate.ConnectionState{
 		h.store.Get("conn-low"),
 		h.store.Get("conn-mid"),
 		h.store.Get("conn-high"),
@@ -593,6 +594,117 @@ func idsFromConnStates(states []*connstate.ConnectionState) []string {
 		ids[i] = s.ID
 	}
 	return ids
+}
+
+// TestRecencyAwareDistribution proves that concurrent requests for the same
+// provider/model do not concentrate on a single connection. It seeds several
+// eligible connections with equal remaining quota and spawns many goroutines
+// that all call getConnection; no connection should receive more than 60% of
+// the selections.
+func TestRecencyAwareDistribution(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('recency','Recency','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+
+	connIDs := []string{"recency-a", "recency-b", "recency-c"}
+	for _, id := range connIDs {
+		if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?, 'recency', ?, 'none', 'ready', 1, ?, ?)`, id, id, now, now); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+		h.store.SeedConnection(id, "recency", "ready", 0)
+		h.store.Get(id).SetRemainingPct(50)
+	}
+	h.elig.RecomputeAll()
+
+	const workers = 50
+	const callsPerWorker = 20
+	counts := make(map[string]int)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	ctx := context.Background()
+
+	wg.Add(workers)
+	for w := 0; w < workers; w++ {
+		go func() {
+			defer wg.Done()
+			for i := 0; i < callsPerWorker; i++ {
+				conn, err := h.getConnection(ctx, "recency", "gpt-4o")
+				if err != nil {
+					t.Errorf("getConnection failed: %v", err)
+					return
+				}
+				mu.Lock()
+				counts[conn.ID]++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+
+	total := workers * callsPerWorker
+	if len(counts) != len(connIDs) {
+		t.Fatalf("expected selections across %d connections, got %d: %v", len(connIDs), len(counts), counts)
+	}
+	for id, n := range counts {
+		pct := float64(n) / float64(total)
+		if pct > 0.60 {
+			t.Fatalf("connection %s received %.0f%% of requests (%d/%d): %v", id, pct*100, n, total, counts)
+		}
+	}
+}
+
+// TestRecencyTiebreaker proves that, when remaining quota is equal, the
+// eligibility snapshot and getConnection prefer the least-recently-used
+// connection and mark it as used on selection.
+func TestRecencyTiebreaker(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('recency','Recency','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if err := h.providerCfg.Save("recency", providercfg.ProviderSettings{RoutingMode: providercfg.FirstEligible}); err != nil {
+		t.Fatalf("save routing mode: %v", err)
+	}
+
+	connIDs := []string{"recency-a", "recency-b", "recency-c"}
+	for _, id := range connIDs {
+		if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?, 'recency', ?, 'none', 'ready', 1, ?, ?)`, id, id, now, now); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+		h.store.SeedConnection(id, "recency", "ready", 0)
+		h.store.Get(id).SetRemainingPct(50)
+	}
+
+	// Make a and b recently used; c should be preferred next.
+	h.store.Get("recency-a").RecordUsed()
+	h.store.Get("recency-b").RecordUsed()
+	h.elig.RecomputeAll()
+
+	conns := h.elig.GetByPrefixState("recency")
+	if len(conns) != 3 {
+		t.Fatalf("expected 3 eligible connections, got %d", len(conns))
+	}
+	if conns[0].ID != "recency-c" {
+		t.Fatalf("expected least-recently-used recency-c first, got %s", conns[0].ID)
+	}
+
+	ctx := context.Background()
+	conn, err := h.getConnection(ctx, "recency", "gpt-4o")
+	if err != nil {
+		t.Fatalf("getConnection failed: %v", err)
+	}
+	if conn.ID != "recency-c" {
+		t.Fatalf("expected to select recency-c, got %s", conn.ID)
+	}
+	if h.store.Get("recency-c").LastUsedAt().IsZero() {
+		t.Fatal("expected recency-c LastUsedAt to be updated")
+	}
 }
 
 func TestIsClientCanceled(t *testing.T) {

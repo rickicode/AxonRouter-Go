@@ -67,12 +67,18 @@ func (e *EligibilityManager) Update(store *Store) {
 		return true
 	})
 
-	// Order each prefix by remaining quota (highest first). Routing modes then
-	// rotate or pick a random start on this list, naturally preferring accounts
-	// with the most credits without breaking round-robin/random semantics.
+	// Order each prefix by remaining quota (highest first), then by recency
+	// (least-recently-used first). Routing modes then rotate or pick a random
+	// start on this list, naturally preferring healthy accounts while spreading
+	// simultaneous requests across siblings instead of concentrating on the
+	// same freshly-selected connection.
 	for _, conns := range eligibleStates {
 		sort.SliceStable(conns, func(i, j int) bool {
-			return conns[i].GetRemainingPct() > conns[j].GetRemainingPct()
+			ri, rj := conns[i].GetRemainingPct(), conns[j].GetRemainingPct()
+			if ri != rj {
+				return ri > rj
+			}
+			return conns[i].lastUsedAtNano() < conns[j].lastUsedAtNano()
 		})
 	}
 

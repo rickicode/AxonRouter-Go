@@ -120,9 +120,6 @@ func (m *Manager) Get(providerID string) (ProviderSettings, error) {
 
 		m.mu.Lock()
 		m.settings[providerID] = s
-		if m.rrCounters[providerID] == nil {
-			m.rrCounters[providerID] = &atomic.Uint64{}
-		}
 		m.mu.Unlock()
 		return s, nil
 	})
@@ -159,25 +156,25 @@ func (m *Manager) Save(providerID string, s ProviderSettings) error {
 
 	m.mu.Lock()
 	m.settings[providerID] = s
-	if m.rrCounters[providerID] == nil {
-		m.rrCounters[providerID] = &atomic.Uint64{}
-	}
 	m.mu.Unlock()
 	return nil
 }
 
 // NextRoundRobinIndex returns the next index to use for round-robin selection
-// across the given number of candidates. Callers must ensure total > 0.
-func (m *Manager) NextRoundRobinIndex(providerID string, total int) int {
+// across the given number of candidates. The cursor is keyed by
+// providerID + "\x00" + modelID so high-traffic models do not steal rotation
+// from sibling models. Callers must ensure total > 0.
+func (m *Manager) NextRoundRobinIndex(providerID, modelID string, total int) int {
+	key := providerID + "\x00" + modelID
 	m.mu.RLock()
-	counter := m.rrCounters[providerID]
+	counter := m.rrCounters[key]
 	m.mu.RUnlock()
 	if counter == nil {
 		m.mu.Lock()
-		counter = m.rrCounters[providerID]
+		counter = m.rrCounters[key]
 		if counter == nil {
 			counter = &atomic.Uint64{}
-			m.rrCounters[providerID] = counter
+			m.rrCounters[key] = counter
 		}
 		m.mu.Unlock()
 	}

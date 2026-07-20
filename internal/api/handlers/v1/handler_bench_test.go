@@ -81,7 +81,7 @@ func (h *Handler) getConnectionOld(ctx context.Context, provider string, modelID
 	connIDs := h.elig.GetByPrefix(provider)
 	logging.Logger.Debug("getConnection", "provider", provider, "eligible", len(connIDs))
 	if len(connIDs) > 0 {
-		start := h.pickStartIndex(provider, len(connIDs), h.providerCfg.RoutingMode(provider))
+		start := h.pickStartIndex(provider, modelID, len(connIDs), h.providerCfg.RoutingMode(provider))
 		bound := pickMaxAttempts
 		if bound > len(connIDs) {
 			bound = len(connIDs)
