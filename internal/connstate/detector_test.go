@@ -216,3 +216,21 @@ func TestDetectError_ContextCanceled_IsTimeout(t *testing.T) {
 		t.Errorf("status=%v, want StatusDegraded", det.Status)
 	}
 }
+
+func TestDetectError_CodeBuddy_CreditsExhausted14018_IsQuota(t *testing.T) {
+	body := `{"error":{"message":"{\"error\":{\"data\":{\"code\":14018,\"msg\":\"Credits exhausted. Please visit the link below to purchase add-on packs and get more credits: https://www.codebuddy.ai/profile/usage\",\"requestId\":\"b8f02f06-8bb6-43bc-9f18-5289cbf91840\"}}}","type":"rate_limit_error","code":"rate_limit_exceeded"}}`
+
+	det := DetectError(context.Background(), http.StatusTooManyRequests, body, nil, "codebuddy", "codebuddy/glm-5.2", nil)
+	if det.Category != ErrorQuota {
+		t.Errorf("category=%v, want ErrorQuota", det.Category)
+	}
+	if det.Status != StatusQuotaExhausted {
+		t.Errorf("status=%v, want StatusQuotaExhausted", det.Status)
+	}
+	if det.Scope != "connection" {
+		t.Errorf("scope=%v, want connection", det.Scope)
+	}
+	if det.CooldownUntil == nil {
+		t.Fatal("expected CooldownUntil")
+	}
+}
