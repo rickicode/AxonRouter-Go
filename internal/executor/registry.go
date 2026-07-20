@@ -166,9 +166,10 @@ func RegisterDefaults() {
 	codexExec := NewCodexExecutor(base)
 	GetRegistry().Register("cx", FormatOpenAIResponses, codexExec)
 
-	// Qwen Cloud exposes an OpenAI-compatible Responses endpoint.
-	GetRegistry().Register("qwencloud", FormatOpenAIResponses, openaiExec)
-	translator.Register("qwencloud", translator.Func(providers.TranslateOpenAICompatible))
+	// Qwen Cloud exposes an OpenAI-compatible Responses endpoint; route both
+	// /v1/responses and translated /v1/chat/completions traffic to
+	// /v1/responses upstream.
+	GetRegistry().Register("qwencloud", FormatOpenAIResponses, NewOpenAIResponsesExecutor(base))
 
 	// Antigravity
 	agExec := NewAntigravityExecutor(base)
