@@ -81,6 +81,12 @@ var (
 		mu  sync.Mutex
 		last time.Time
 	}
+
+	// codebuddyAllowlist guards the CodeBuddy model list against stale remote
+	// catalogs. Only IDs present in the embedded models.json are kept; remote
+	// refreshes can update metadata for these IDs but cannot add back removed
+	// or invalid CodeBuddy models.
+	codebuddyAllowlist map[string]struct{}
 )
 
 func resetCloudflareDiscoveryCache() {
@@ -256,6 +262,12 @@ func loadEmbedded() {
 	mergeModalities(c)
 	mu.Lock()
 	current = c
+	// Capture the CodeBuddy IDs present in the embedded catalog before remote
+	// refreshes can re-introduce removed/invalid models.
+	codebuddyAllowlist = make(map[string]struct{}, len(c["codebuddy"]))
+	for _, e := range c["codebuddy"] {
+		codebuddyAllowlist[e.ID] = struct{}{}
+	}
 	mu.Unlock()
 }
 
@@ -477,6 +489,22 @@ func run(ctx context.Context) {
 	}
 }
 
+// filterCodeBuddyModelsLocked removes any CodeBuddy models not present in the
+// embedded allowlist. Caller must hold mu.
+func filterCodeBuddyModelsLocked() {
+	if len(codebuddyAllowlist) == 0 {
+		return
+	}
+	entries := current["codebuddy"]
+	filtered := entries[:0]
+	for _, e := range entries {
+		if _, ok := codebuddyAllowlist[e.ID]; ok {
+			filtered = append(filtered, e)
+		}
+	}
+	current["codebuddy"] = filtered
+}
+
 func tryFetch(ctx context.Context) {
 	for _, url := range remoteURLs {
 		c, err := fetchCatalog(ctx, url)
@@ -494,6 +522,7 @@ func tryFetch(ctx context.Context) {
 	for k, v := range c {
 		current[k] = mergeProviderEntries(current[k], v)
 	}
+	filterCodeBuddyModelsLocked()
 	mu.Unlock()
 		log.Printf("model catalog updated from %s (%d providers, %d total)", url, len(c), len(current))
 		return

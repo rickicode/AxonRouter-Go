@@ -56,8 +56,8 @@ func TestGetProviderModels_CodeBuddyIncludesExpectedModels(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"codebuddy/glm-5.2": "tencent",
-		"codebuddy/kimi-k2.7": "tencent",
+		"codebuddy/glm-5.0": "tencent",
+		"codebuddy/kimi-k2.6": "tencent",
 	}
 	for id, owner := range want {
 		found := false

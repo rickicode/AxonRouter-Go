@@ -30,9 +30,9 @@ func TestListModelEntries_CodeBuddyIncludesServiceKinds(t *testing.T) {
 		}
 		return nil
 	}
-	llm := find("codebuddy/glm-5.2")
+	llm := find("codebuddy/glm-5.0")
 	if llm == nil || !slices.Contains(kindsOf(llm), "llm") {
-		t.Errorf("CodeBuddy glm-5.2 entry missing service_kinds llm: %#v", llm)
+		t.Errorf("CodeBuddy glm-5.0 entry missing service_kinds llm: %#v", llm)
 	}
 }
 
