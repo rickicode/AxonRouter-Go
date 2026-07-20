@@ -574,7 +574,7 @@ func TestOrderCandidatesPrioritizesRemainingQuota(t *testing.T) {
 	h.store.Get("conn-mid").SetRemainingPct(50)
 	h.store.Get("conn-high").SetRemainingPct(90)
 
-	ordered := h.orderCandidates("oc", []string{"conn-low", "conn-mid", "conn-high"})
+	ordered := h.orderCandidates("oc", []string{"conn-low", "conn-mid", "conn-high"}, providercfg.DefaultRoutingMode)
 	want := []string{"conn-high", "conn-mid", "conn-low"}
 	for i, id := range want {
 		if ordered[i] != id {
