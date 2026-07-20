@@ -116,8 +116,8 @@ func ConvertOpenAIRequestToKiro(model string, body []byte, stream bool) []byte {
 	}
 	content, _ := currentUserInput["content"].(string)
 
-	// Attach context timestamp to current user message.
-	content = fmt.Sprintf("[Context: Current time is %s]\n\n%s", time.Now().UTC().Format(time.RFC3339), content)
+	// Extract original system messages for the top-level systemPrompt field.
+	systemTexts := extractSystemTexts(messages)
 
 	// Build deterministic conversationId from first real user content.
 	firstUser := firstRealUserContent(messages, history)
@@ -130,10 +130,23 @@ func ConvertOpenAIRequestToKiro(model string, body []byte, stream bool) []byte {
 	if supportsReasoning(normalizedModel) {
 		effort = resolveKiroEffort(req)
 	}
+
+	// Assemble the top-level system prompt: thinking directive + agentic prompt + original system texts.
+	var systemPromptParts []string
 	if effort != "" {
 		thinkingLength := capThinkingBudget(normalizedModel, thinkingLengthForEffort(effort))
-		directive := fmt.Sprintf("<thinking_mode>enabled</thinking_mode><max_thinking_length>%d</max_thinking_length>", thinkingLength)
-		content = directive + "\n\n" + content
+		systemPromptParts = append(systemPromptParts, fmt.Sprintf("<thinking_mode>enabled</thinking_mode><max_thinking_length>%d</max_thinking_length>", thinkingLength))
+	}
+	if isAgenticVariant(normalizedModel) {
+		systemPromptParts = append(systemPromptParts, agenticSystemPrompt)
+	}
+	systemPromptParts = append(systemPromptParts, systemTexts...)
+	systemPrompt := strings.Join(systemPromptParts, "\n\n")
+
+	// Attach context timestamp and system prompt to current user message.
+	content = fmt.Sprintf("[Context: Current time is %s]\n\n%s", time.Now().UTC().Format(time.RFC3339), content)
+	if systemPrompt != "" {
+		content = systemPrompt + "\n\n" + content
 	}
 	currentUserInput["content"] = content
 
@@ -151,6 +164,9 @@ func ConvertOpenAIRequestToKiro(model string, body []byte, stream bool) []byte {
 	}
 	if profileArn != "" {
 		payload["profileArn"] = profileArn
+	}
+	if systemPrompt != "" {
+		payload["systemPrompt"] = systemPrompt
 	}
 	if maxTokens > 0 || temperature != nil || topP != nil {
 		inference := map[string]any{}
@@ -315,7 +331,7 @@ func convertMessages(messages, tools []any, model string, agentic bool) ([]map[s
 		}
 
 		if originalRole == "system" && text != "" {
-			text = wrapSystemReminder(text)
+			text = wrapKiroInstructions(text)
 		}
 
 		if currentRole == "user" {
@@ -421,8 +437,38 @@ func convertMessages(messages, tools []any, model string, agentic bool) ([]map[s
 	return history, currentMessage
 }
 
-func wrapSystemReminder(text string) string {
-	return "<system-reminder>\n" + text + "\n</system-reminder>"
+func wrapKiroInstructions(text string) string {
+	return "<instructions>\n" + text + "\n</instructions>"
+}
+
+// extractSystemTexts pulls role=system messages out of the OpenAI request so
+// they can be sent as Kiro's top-level systemPrompt in addition to being folded
+// into the user content prefix.
+func extractSystemTexts(messages []any) []string {
+	var out []string
+	for _, raw := range messages {
+		msg, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		role, _ := msg["role"].(string)
+		if role != "system" {
+			continue
+		}
+		content := msg["content"]
+		switch v := content.(type) {
+		case string:
+			if v != "" {
+				out = append(out, v)
+			}
+		case []any:
+			text := extractTextFromBlocks(v)
+			if text != "" {
+				out = append(out, text)
+			}
+		}
+	}
+	return out
 }
 
 func injectAgenticSystemPrompt(messages []any) []any {
