@@ -9,6 +9,7 @@ import (
 const (
 	kiroDefaultRegion = "us-east-1"
 	kiroDevEndpoint   = "https://runtime.us-east-1.kiro.dev/generateAssistantResponse"
+	kiroQuSEndpoint   = "https://q.us-east-1.amazonaws.com/generateAssistantResponse"
 
 	kiroDefaultProfileARNBuilderID = "arn:aws:codewhisperer:us-east-1:638616132270:profile/AAAACCCCXXXX"
 	kiroDefaultProfileARNSocial    = "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK"
@@ -103,8 +104,35 @@ func resolveDefaultKiroProfileArn(authMethod string) string {
 	return kiroDefaultProfileARNBuilderID
 }
 
+func dedupeStrings(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
+// isDefaultKiroBaseURL reports whether url is one of the built-in Kiro endpoints.
+// A default base_url is treated as empty so the executor falls back to the
+// regional + dev + q.us-east-1 endpoint list instead of forcing a single URL.
+func isDefaultKiroBaseURL(url string) bool {
+	switch url {
+	case "",
+		kiroDevEndpoint,
+		"https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse",
+		kiroQuSEndpoint:
+		return true
+	}
+	return false
+}
+
 func kiroEndpointURLs(psd map[string]string, baseURL string) []string {
-	if baseURL != "" {
+	if baseURL != "" && !isDefaultKiroBaseURL(baseURL) {
 		return []string{baseURL}
 	}
 
@@ -113,7 +141,7 @@ func kiroEndpointURLs(psd map[string]string, baseURL string) []string {
 
 	authMethod := normalizeRegion(psd["authMethod"])
 	if _, isCodeWhisperer := kiroCodeWhispererAuthMethods[authMethod]; isCodeWhisperer {
-		return []string{awsEndpoint, kiroDevEndpoint}
+		return dedupeStrings([]string{awsEndpoint, kiroDevEndpoint, kiroQuSEndpoint})
 	}
-	return []string{kiroDevEndpoint, awsEndpoint}
+	return dedupeStrings([]string{kiroDevEndpoint, awsEndpoint, kiroQuSEndpoint})
 }

@@ -203,7 +203,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 	}{
 		{"ag", "Antigravity", "antigravity", "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse", "oauth", []string{"llm"}},
 		{"cx", "OpenAI Codex", "openai-responses", "https://chatgpt.com/backend-api/codex/responses", "oauth", []string{"llm"}},
-		{"kiro", "Kiro AI", "kiro", "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse", "oauth", []string{"llm"}},
+		{"kiro", "Kiro AI", "kiro", "https://runtime.us-east-1.kiro.dev/generateAssistantResponse", "oauth", []string{"llm"}},
 		{"openai", "OpenAI Platform", "openai", "https://api.openai.com/v1", "apikey", []string{"llm", "embedding", "image"}},
 		{"claude", "Anthropic Claude", "anthropic", "https://api.anthropic.com/v1", "apikey", []string{"llm"}},
 		{"gemini", "Gemini", "gemini", "https://generativelanguage.googleapis.com/v1beta", "apikey", []string{"llm"}},
@@ -256,7 +256,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 	}
 
 	// Repair legacy Kiro rows that were seeded with the wrong format/base_url.
-	if _, err := db.Exec(`UPDATE provider_types SET format = 'kiro', base_url = 'https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse' WHERE id = 'kiro'`); err != nil {
+	if _, err := db.Exec(`UPDATE provider_types SET format = 'kiro', base_url = 'https://runtime.us-east-1.kiro.dev/generateAssistantResponse' WHERE id = 'kiro'`); err != nil {
 		return err
 	}
 

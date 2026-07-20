@@ -223,8 +223,8 @@ func TestKiroEndpointFallback_AllFail(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when all endpoints fail")
 	}
-	if len(calls) != 2 {
-		t.Fatalf("expected 2 upstream calls, got %d: %v", len(calls), calls)
+	if len(calls) != 3 {
+		t.Fatalf("expected 3 upstream calls, got %d: %v", len(calls), calls)
 	}
 	if !strings.Contains(err.Error(), "kiro request failed") {
 		t.Errorf("error = %q, want it to contain 'kiro request failed'", err.Error())
