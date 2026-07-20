@@ -45,3 +45,31 @@ type tokenResponse struct {
 		Nickname     string `json:"nickname"`
 	} `json:"data"`
 }
+
+type accountsResponse struct {
+	Code int           `json:"code"`
+	Msg  string        `json:"msg"`
+	Data accountsData  `json:"data"`
+}
+
+type accountsData struct {
+	Accounts []codebuddyAccount `json:"accounts"`
+}
+
+type codebuddyAccount struct {
+	UID            string `json:"uid"`
+	Nickname       string `json:"nickname"`
+	UIN            string `json:"uin"`
+	Type           string `json:"type"`
+	LastLogin      bool   `json:"lastLogin"`
+	EnterpriseID   string `json:"enterpriseId"`
+	EnterpriseName   string `json:"enterpriseName"`
+}
+
+type paymentTypeResponse struct {
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
+	Data struct {
+		PaymentType string `json:"paymentType"`
+	} `json:"data"`
+}

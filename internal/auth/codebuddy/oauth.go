@@ -237,6 +237,135 @@ func (s *OAuthService) requestDeviceCode(ctx context.Context) (*deviceCodeRespon
 	}, nil
 }
 
+// enrichCredentials fetches the CodeBuddy account profile and payment/plan type
+// using the access token, then fills Email and ProviderSpecific fields.
+func (s *OAuthService) enrichCredentials(ctx context.Context, creds *auth.Credentials, state string) error {
+	if creds == nil || creds.AccessToken == "" {
+		return nil
+	}
+
+	if creds.ProviderSpecific == nil {
+		creds.ProviderSpecific = map[string]string{}
+	}
+
+	account, err := s.fetchAccount(ctx, creds.AccessToken)
+	if err != nil {
+		return err
+	}
+
+	email := strings.TrimSpace(account.Nickname)
+	if email == "" {
+		email = strings.TrimSpace(account.UID)
+	}
+	if email != "" && creds.Email == "" {
+		creds.Email = email
+	}
+	if account.UID != "" {
+		creds.ProviderSpecific["uid"] = account.UID
+	}
+	if account.Type != "" {
+		creds.ProviderSpecific["account_type"] = account.Type
+	}
+	if account.EnterpriseID != "" {
+		creds.ProviderSpecific["enterprise_id"] = account.EnterpriseID
+	}
+	if account.EnterpriseName != "" {
+		creds.ProviderSpecific["enterprise_name"] = account.EnterpriseName
+	}
+
+	paymentType, err := s.fetchPaymentType(ctx, creds.AccessToken, account.UID, account.EnterpriseID)
+	if err == nil && paymentType != "" {
+		creds.ProviderSpecific["plan_type"] = paymentType
+	}
+
+	return nil
+}
+
+func (s *OAuthService) fetchAccount(ctx context.Context, accessToken string) (codebuddyAccount, error) {
+	var empty codebuddyAccount
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://www.codebuddy.ai/v2/plugin/accounts", nil)
+	if err != nil {
+		return empty, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("X-Domain", "www.codebuddy.ai")
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return empty, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return empty, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return empty, fmt.Errorf("accounts fetch failed %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var accountsRes accountsResponse
+	if err := json.Unmarshal(body, &accountsRes); err != nil {
+		return empty, err
+	}
+	if accountsRes.Code != 0 {
+		return empty, fmt.Errorf("accounts fetch error (code %d): %s", accountsRes.Code, accountsRes.Msg)
+	}
+
+	for _, a := range accountsRes.Data.Accounts {
+		if a.LastLogin {
+			return a, nil
+		}
+	}
+	if len(accountsRes.Data.Accounts) > 0 {
+		return accountsRes.Data.Accounts[0], nil
+	}
+	return empty, fmt.Errorf("no accounts returned")
+}
+
+func (s *OAuthService) fetchPaymentType(ctx context.Context, accessToken, uid, enterpriseID string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://www.codebuddy.ai/v2/billing/meter/get-payment-type", strings.NewReader("{}"))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Domain", "www.codebuddy.ai")
+	if uid != "" {
+		req.Header.Set("X-User-Id", uid)
+	}
+	if enterpriseID != "" {
+		req.Header.Set("X-Enterprise-Id", enterpriseID)
+		req.Header.Set("X-Tenant-Id", enterpriseID)
+	}
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("payment type fetch failed %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var paymentRes paymentTypeResponse
+	if err := json.Unmarshal(body, &paymentRes); err != nil {
+		return "", err
+	}
+	if paymentRes.Code != 0 {
+		return "", fmt.Errorf("payment type fetch error (code %d): %s", paymentRes.Code, paymentRes.Msg)
+	}
+	return strings.TrimSpace(paymentRes.Data.PaymentType), nil
+}
+
 func (s *OAuthService) pollToken(ctx context.Context, state string) (*auth.Credentials, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -276,6 +405,11 @@ func (s *OAuthService) pollToken(ctx context.Context, state string) (*auth.Crede
 
 			creds, pending, pollErr := s.pollTokenOnce(ctx, tokenURL.String())
 			if creds != nil {
+				// Best-effort: fetch profile email and plan type. Failures are logged
+				// but do not block the OAuth flow.
+				if err := s.enrichCredentials(ctx, creds, state); err != nil {
+					_ = err
+				}
 				return creds, nil
 			}
 			if pollErr != nil {
