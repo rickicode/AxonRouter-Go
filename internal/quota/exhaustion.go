@@ -16,15 +16,12 @@ type exhaustionEntry struct {
 // quota-exhausted from 429 responses. Entries auto-expire after their TTL.
 // Matches OmniRoute's markAccountExhaustedFrom429 / isAccountQuotaExhausted.
 type ExhaustionCache struct {
-	mu      sync.RWMutex
-	entries map[string]exhaustionEntry
+	entries sync.Map // key: string, value: exhaustionEntry
 }
 
 // NewExhaustionCache creates a new exhaustion cache.
 func NewExhaustionCache() *ExhaustionCache {
-	return &ExhaustionCache{
-		entries: make(map[string]exhaustionEntry),
-	}
+	return &ExhaustionCache{}
 }
 
 // ExhaustKey builds a composite key for per-model or per-connection exhaustion.
@@ -40,13 +37,11 @@ func ExhaustKey(connID, scope string) string {
 // Called when a 429 is received from an upstream provider.
 // For per-model scope use MarkExhausted(ExhaustKey(connID, modelScope), ttl).
 func (ec *ExhaustionCache) MarkExhausted(key string, ttl time.Duration) {
-	ec.mu.Lock()
-	defer ec.mu.Unlock()
 	now := time.Now()
-	ec.entries[key] = exhaustionEntry{
+	ec.entries.Store(key, exhaustionEntry{
 		markedAt:  now,
 		expiresAt: now.Add(ttl),
-	}
+	})
 }
 
 // IsExhausted returns true if the given key is currently marked as exhausted
@@ -58,12 +53,11 @@ func (ec *ExhaustionCache) IsExhausted(key string) bool {
 // IsExhaustedAt returns true if the given key is marked as exhausted and the
 // TTL has not expired at the provided time.
 func (ec *ExhaustionCache) IsExhaustedAt(key string, now time.Time) bool {
-	ec.mu.RLock()
-	entry, ok := ec.entries[key]
-	ec.mu.RUnlock()
+	value, ok := ec.entries.Load(key)
 	if !ok {
 		return false
 	}
+	entry := value.(exhaustionEntry)
 	return now.Before(entry.expiresAt)
 }
 
@@ -81,38 +75,37 @@ func (ec *ExhaustionCache) IsExhaustedScopeAt(connID, scope string, now time.Tim
 // Clear removes the exhaustion mark for a key (e.g. after successful
 // quota fetch confirms the connection is no longer exhausted).
 func (ec *ExhaustionCache) Clear(key string) {
-	ec.mu.Lock()
-	defer ec.mu.Unlock()
-	delete(ec.entries, key)
+	ec.entries.Delete(key)
 }
 
 // ScopesForConn returns the non-empty scopes currently marked exhausted for a
 // given connection ID. Used by the model prober to recover per-model locks.
 func (ec *ExhaustionCache) ScopesForConn(connID string) []string {
-	ec.mu.RLock()
-	defer ec.mu.RUnlock()
 	prefix := connID + "\x00"
 	scopes := make([]string, 0)
-	for k := range ec.entries {
-		if strings.HasPrefix(k, prefix) {
-			if now := time.Now(); now.Before(ec.entries[k].expiresAt) {
-				scopes = append(scopes, k[len(prefix):])
+	ec.entries.Range(func(k, v any) bool {
+		key := k.(string)
+		if strings.HasPrefix(key, prefix) {
+			entry := v.(exhaustionEntry)
+			if time.Now().Before(entry.expiresAt) {
+				scopes = append(scopes, key[len(prefix):])
 			}
 		}
-	}
+		return true
+	})
 	return scopes
 }
 
 // Cleanup removes expired entries. Should be called periodically.
 func (ec *ExhaustionCache) Cleanup() {
-	ec.mu.Lock()
-	defer ec.mu.Unlock()
 	now := time.Now()
-	for k, v := range ec.entries {
-		if now.After(v.expiresAt) {
-			delete(ec.entries, k)
+	ec.entries.Range(func(k, v any) bool {
+		entry := v.(exhaustionEntry)
+		if now.After(entry.expiresAt) {
+			ec.entries.Delete(k)
 		}
-	}
+		return true
+	})
 }
 
 // Default exhaustion TTL: 5 minutes (matches OmniRoute EXHAUSTED_TTL_MS).
