@@ -31,6 +31,7 @@ var QuotaPatterns = []string{
 	"insufficient quota",
 	"credit",
 	"out of credits",
+	"credits exhausted", // CodeBuddy credits exhausted (code 14018)
 	"payment required",
 	"usage limit",
 	"monthly limit",
@@ -40,6 +41,7 @@ var QuotaPatterns = []string{
 	"daily free allocation", // CF Workers AI daily quota
 	"upgrade to cloudflare", // CF Workers AI paid plan prompt
 	"4006",                  // CF Workers AI error code
+	"14018",                 // CodeBuddy credits exhausted error code
 }
 
 var BalanceEmptyPatterns = []string{
