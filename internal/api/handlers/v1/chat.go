@@ -381,7 +381,8 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				// Overall combo deadline exceeded; stop trying further connections.
 				break
 			}
-			conn, err := h.prepareConnection(comboCtx, connID, provider, modelName)
+			now := time.Now()
+			conn, err := h.prepareConnection(comboCtx, connID, provider, modelName, now)
 			if err != nil {
 				// Preflight rejected (cooldown/exhausted) — try next connection.
 				continue
@@ -666,7 +667,8 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 				return
 			}
 			provider, modelName := executor.SplitModel(step.ModelID)
-			conn, err := h.prepareConnection(ctx, connID, provider, modelName)
+			now := time.Now()
+			conn, err := h.prepareConnection(ctx, connID, provider, modelName, now)
 			if err != nil {
 				resultsCh <- fusionPanel{err: err}
 				return
@@ -784,7 +786,8 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 		return
 	}
 	judgeProvider, judgeModelName := executor.SplitModel(judgeModel)
-	judgeConn, err := h.prepareConnection(c.Request.Context(), judgeConnID, judgeProvider, judgeModelName)
+	now := time.Now()
+	judgeConn, err := h.prepareConnection(c.Request.Context(), judgeConnID, judgeProvider, judgeModelName, now)
 	if err != nil {
 		logging.Logger.Warn("fusion judge connection rejected; returning first panel response", "error", err.Error())
 		h.writeFusionResponse(c, successes[0].content, model, stream)

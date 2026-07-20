@@ -137,12 +137,17 @@ func (cs *ConnectionState) SetQuotaCooldown(until time.Time) {
 
 // IsInCooldown checks if the connection is in cooldown.
 func (cs *ConnectionState) IsInCooldown() bool {
+	return cs.IsInCooldownAt(time.Now())
+}
+
+// IsInCooldownAt checks if the connection is in cooldown at the given time.
+func (cs *ConnectionState) IsInCooldownAt(now time.Time) bool {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
 	if cs.CooldownUntil == nil {
 		return false
 	}
-	return time.Now().Before(*cs.CooldownUntil)
+	return now.Before(*cs.CooldownUntil)
 }
 
 // IsCooldownExpired checks if the connection has an expired cooldown timer (thread-safe).
@@ -188,8 +193,13 @@ func (cs *ConnectionState) GetModelLimit(modelID string) *ModelLimitState {
 
 // IsModelInCooldown checks if a specific model is in cooldown.
 func (cs *ConnectionState) IsModelInCooldown(modelID string) bool {
+	return cs.IsModelInCooldownAt(modelID, time.Now())
+}
+
+// IsModelInCooldownAt checks if a specific model is in cooldown at the given time.
+func (cs *ConnectionState) IsModelInCooldownAt(modelID string, now time.Time) bool {
 	mls := cs.GetModelLimit(modelID)
-	return mls.IsInCooldown()
+	return mls.IsInCooldownAt(now)
 }
 
 // SetModelCooldown sets a cooldown for a specific model.
@@ -248,12 +258,17 @@ type ModelLimitState struct {
 
 // IsInCooldown checks if the model is in cooldown.
 func (mls *ModelLimitState) IsInCooldown() bool {
+	return mls.IsInCooldownAt(time.Now())
+}
+
+// IsInCooldownAt checks if the model is in cooldown at the given time.
+func (mls *ModelLimitState) IsInCooldownAt(now time.Time) bool {
 	mls.mu.RLock()
 	defer mls.mu.RUnlock()
 	if mls.CooldownUntil == nil {
 		return false
 	}
-	return time.Now().Before(*mls.CooldownUntil)
+	return now.Before(*mls.CooldownUntil)
 }
 
 // SetCooldown sets a cooldown timer for this model.
