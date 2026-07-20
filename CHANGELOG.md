@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **CodeBuddy executor wrapper** — adds a dedicated executor for the `codebuddy` provider that prepends a required leading `system` message and always calls the upstream streaming endpoint, aggregating SSE chunks back into a single non-streaming response.
 
+### Fixed
+- **Grok 4.5 model catalog limits** — corrected `grok-cli/grok-4.5*` entries in `internal/models/models.json` from 1M context / 65,536 output tokens to 500k context / 32,768 output tokens to match xAI's official Grok 4.5 spec.
+
 ## [0.3.13] - 2026-07-20
 
 ### Added
