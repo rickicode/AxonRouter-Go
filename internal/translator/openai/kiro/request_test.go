@@ -200,3 +200,55 @@ func TestBuildKiroTools_DescriptionTruncation(t *testing.T) {
 		t.Errorf("description should end with ellipsis marker, got suffix %q", got[len(got)-10:])
 	}
 }
+
+func TestConvertOpenAIRequestToKiro_HTTPImageFallback(t *testing.T) {
+	body := []byte(`{
+		"model": "kiro/claude-sonnet-4-6",
+		"messages": [
+			{"role": "user", "content": [
+				{"type": "text", "text": "describe this"},
+				{"type": "image_url", "image_url": {"url": "https://example.com/pic.png"}}
+			]},
+			{"role": "assistant", "content": "ok"}
+		]
+	}`)
+
+	out := ConvertOpenAIRequestToKiro("kiro/claude-sonnet-4-6", body, false)
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cs := payload["conversationState"].(map[string]any)
+	history, _ := cs["history"].([]any)
+	if len(history) == 0 {
+		t.Fatalf("expected history user message, got none")
+	}
+	uim := history[0].(map[string]any)["userInputMessage"].(map[string]any)
+	content := uim["content"].(string)
+	if !strings.Contains(content, "[Image: https://example.com/pic.png]") {
+		t.Errorf("history user content missing HTTP image fallback, got %q", content)
+	}
+}
+
+func TestConvertOpenAIRequestToKiro_Base64ImageStillInImages(t *testing.T) {
+	body := []byte(`{
+		"model": "kiro/claude-sonnet-4-6",
+		"messages": [
+			{"role": "user", "content": [
+				{"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}}
+			]}
+		]
+	}`)
+
+	out := ConvertOpenAIRequestToKiro("kiro/claude-sonnet-4-6", body, false)
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cs := payload["conversationState"].(map[string]any)
+	current := cs["currentMessage"].(map[string]any)["userInputMessage"].(map[string]any)
+	images, _ := current["images"].([]any)
+	if len(images) == 0 {
+		t.Errorf("base64 image was not placed into images field")
+	}
+}
