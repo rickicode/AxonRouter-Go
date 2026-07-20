@@ -108,13 +108,13 @@ func TestConvertOpenAIRequestToKiro_Basic(t *testing.T) {
 
 func TestConvertOpenAIRequestToKiro_Reasoning(t *testing.T) {
 	body := []byte(`{
-		"model": "claude-opus-4",
+		"model": "claude-sonnet-4.5",
 		"messages": [{"role": "user", "content": "Think deeply"}],
 		"reasoning_effort": "high",
 		"max_tokens": 8192
 	}`)
 
-	out := ConvertOpenAIRequestToKiro("claude-opus-4", body, true)
+	out := ConvertOpenAIRequestToKiro("claude-sonnet-4.5", body, true)
 	var payload map[string]any
 	if err := json.Unmarshal(out, &payload); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -207,12 +207,10 @@ func TestConvertOpenAIRequestToKiro_SystemPromptUsesInstructionsTag(t *testing.T
 
 func TestSupportsReasoning_NewClaudeModels(t *testing.T) {
 	cases := map[string]bool{
-		"claude-opus-4.8":  true,
-		"claude-opus-4.7":  true,
-		"claude-sonnet-4.8": true,
-		"claude-sonnet-4.7": true,
-		"claude-opus-4.5":  false,
-		"claude-haiku-4.5": false,
+		"claude-sonnet-4.5": true,
+		"claude-sonnet-4":   true,
+		"claude-haiku-4.5":  false,
+		"auto":              false,
 	}
 	for model, want := range cases {
 		if got := supportsReasoning(model); got != want {

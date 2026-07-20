@@ -329,9 +329,10 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 	// Refresh expired/near-expiry OAuth tokens before testing.
 	if h.authMgr != nil && conn.AuthType == "oauth" && shouldRefreshTestToken(conn.ProviderTypeID, refreshToken, expiresAt) {
 		creds := &auth.Credentials{
-			AccessToken:  accessToken,
-			RefreshToken: refreshToken,
-			ExpiresAt:    time.Unix(expiresAt, 0),
+			AccessToken:      accessToken,
+			RefreshToken:     refreshToken,
+			ExpiresAt:        time.Unix(expiresAt, 0),
+			ProviderSpecific: psdMap,
 		}
 		newCreds, refreshErr := h.authMgr.RefreshToken(ctx, auth.ProviderType(conn.ProviderTypeID), creds)
 		if refreshErr != nil {
@@ -403,9 +404,10 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 	det := connstate.DetectError(ctx, 0, "", testErr, conn.ProviderTypeID, "", nil)
 	if h.authMgr != nil && conn.AuthType == "oauth" && refreshToken != "" && isRefreshableTestError(conn.ProviderTypeID, testErr, det) {
 		creds := &auth.Credentials{
-			AccessToken:  accessToken,
-			RefreshToken: refreshToken,
-			ExpiresAt:    time.Unix(expiresAt, 0),
+			AccessToken:      accessToken,
+			RefreshToken:     refreshToken,
+			ExpiresAt:        time.Unix(expiresAt, 0),
+			ProviderSpecific: psdMap,
 		}
 		newCreds, refreshErr := h.authMgr.RefreshToken(ctx, auth.ProviderType(conn.ProviderTypeID), creds)
 		if refreshErr == nil {

@@ -7,22 +7,15 @@ import (
 
 func TestBaseModels(t *testing.T) {
 	want := []string{
-		"claude-opus-4.8",
-		"claude-opus-4.7",
-		"claude-opus-4.5",
-		"claude-sonnet-5",
-		"claude-sonnet-4.6",
+		"auto",
 		"claude-sonnet-4.5",
+		"claude-sonnet-4",
 		"claude-haiku-4.5",
 		"deepseek-3.2",
-		"minimax-m2.7",
 		"minimax-m2.5",
 		"minimax-m2.1",
 		"glm-5",
 		"qwen3-coder-next",
-		"gpt-5.6-sol",
-		"gpt-5.6-terra",
-		"gpt-5.6-luna",
 	}
 	got := make([]string, 0, len(BaseModels))
 	for _, m := range BaseModels {
@@ -63,15 +56,14 @@ func TestExpandVariants(t *testing.T) {
 	}
 
 	cases := map[string]Capabilities{
-		"claude-sonnet-5":                  {Thinking: false, Agentic: false, Vision: true},
-		"claude-sonnet-5-thinking":          {Thinking: true, Agentic: false, Vision: true},
-		"claude-sonnet-5-agentic":           {Thinking: false, Agentic: true, Vision: true},
-		"claude-sonnet-5-thinking-agentic": {Thinking: true, Agentic: true, Vision: true},
+		"claude-sonnet-4.5":                  {Thinking: false, Agentic: false, Vision: true},
+		"claude-sonnet-4.5-thinking":          {Thinking: true, Agentic: false, Vision: true},
+		"claude-sonnet-4.5-agentic":           {Thinking: false, Agentic: true, Vision: true},
+		"claude-sonnet-4.5-thinking-agentic": {Thinking: true, Agentic: true, Vision: true},
 		"deepseek-3.2-thinking":             {Thinking: true, Agentic: false},
 		"qwen3-coder-next-agentic":          {Thinking: false, Agentic: true},
 		"minimax-m2.5-thinking-agentic":     {Thinking: true, Agentic: true},
-		"gpt-5.6-sol":                       {Vision: true, Reasoning: true, Search: true},
-		"gpt-5.6-sol-thinking":            {Thinking: true, Vision: true, Reasoning: true, Search: true},
+		"auto":                              {},
 	}
 	for id, want := range cases {
 		m, ok := findModel(models, id)
@@ -93,7 +85,7 @@ func TestExpandVariants(t *testing.T) {
 		"deepseek-3.2":             {"image", "audio"},
 		"deepseek-3.2-thinking":    {"image", "audio"},
 		"qwen3-coder-next":         {"image", "audio"},
-		"claude-sonnet-5":          nil,
+		"claude-sonnet-4.5":          nil,
 	}
 	for id, want := range stripCases {
 		m, ok := findModel(models, id)
@@ -105,11 +97,7 @@ func TestExpandVariants(t *testing.T) {
 		}
 	}
 
-	rateCases := map[string]float64{
-		"gpt-5.6-sol":   2.4,
-		"gpt-5.6-terra": 1.2,
-		"gpt-5.6-luna":  0.6,
-	}
+	rateCases := map[string]float64{}
 	for id, want := range rateCases {
 		m, ok := findModel(models, id)
 		if !ok {
@@ -126,10 +114,10 @@ func TestExpandVariants(t *testing.T) {
 
 func TestStripSyntheticSuffix(t *testing.T) {
 	cases := map[string]string{
-		"claude-sonnet-5-thinking":            "claude-sonnet-5",
-		"claude-sonnet-5-agentic":             "claude-sonnet-5",
-		"claude-sonnet-5-thinking-agentic":    "claude-sonnet-5",
-		"deepseek-3.2":                        "deepseek-3.2",
+		"claude-sonnet-4.5-thinking":            "claude-sonnet-4.5",
+		"claude-sonnet-4.5-agentic":             "claude-sonnet-4.5",
+		"claude-sonnet-4.5-thinking-agentic":    "claude-sonnet-4.5",
+		"deepseek-3.2":                          "deepseek-3.2",
 	}
 	for in, want := range cases {
 		if got := StripSyntheticSuffix(in); got != want {

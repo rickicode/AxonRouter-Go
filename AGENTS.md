@@ -9,12 +9,17 @@
 2. **ASSUMPTION = hallucination** — if no data exists, do not assume.
 3. **VERIFY before claiming** — check first, then speak.
 4. **Model names, URLs, endpoints, behavior** — ALL must be verified from the codebase or live API.
+5. **ALWAYS use Semble + `rg` first** — for implementation questions, model names, endpoints, or any code context, search with Semble (discovery) and `rg` (exact/literal verification) before answering.
 
 ### Workflow (MUST follow)
-1. Search the codebase first (`grep`, `read`, `lsp`).
-2. If missing, check reference codebases (`OmniRoute`, `CLIProxyAPI`, `AMRouter`).
-3. If still missing, use web search.
-4. If still missing, say: **"I don't know; no data available."**
+1. **Always use Semble first** when the file, symbol, or behavior is not yet known; it is the primary discovery tool for this project.
+2. Use **`rg`** (or the built-in `grep` tool) for exact text/regex searches, error messages, TODOs, URLs, and for verifying an old name/value has been completely removed.
+3. Verify any code, model name, URL, endpoint, or behavior against actual source code or a live API response before claiming it.
+4. If missing in this repo, check reference codebases (`OmniRoute`, `CLIProxyAPI`, `AMRouter`) with the same Semble/`rg` discipline.
+5. If still missing, use web search.
+6. If still missing, say: **"I don't know; no data available."**
+
+**No guessing.** When there is no supporting data, respond "I don't know" rather than filling the gap with assumptions.
 
 ### Examples
 - ❌ Wrong: "Mimo has balance tracking" — not checked against code.

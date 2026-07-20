@@ -35,12 +35,8 @@ type Model struct {
 // These are independent from synthetic -thinking / -agentic variants.
 func baseCapabilities(id string) Capabilities {
 	switch id {
-	case "claude-opus-4.8", "claude-opus-4.7", "claude-opus-4.5",
-		"claude-sonnet-5", "claude-sonnet-4.6", "claude-sonnet-4.5",
-		"claude-haiku-4.5":
+	case "claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5":
 		return Capabilities{Vision: true}
-	case "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna":
-		return Capabilities{Vision: true, Reasoning: true, Search: true}
 	}
 	return Capabilities{}
 }
@@ -56,27 +52,11 @@ func baseStrip(id string) []string {
 
 // baseRateMultiplier returns the cost multiplier used by 9router for GPT 5.6 models.
 func baseRateMultiplier(id string) float64 {
-	switch id {
-	case "gpt-5.6-sol":
-		return 2.4
-	case "gpt-5.6-terra":
-		return 1.2
-	case "gpt-5.6-luna":
-		return 0.6
-	}
 	return 1.0
 }
 
 // baseDescription returns a short description for known experimental models.
 func baseDescription(id string) string {
-	switch id {
-	case "gpt-5.6-sol":
-		return "Experimental preview of OpenAI GPT 5.6 Sol with 272k context window"
-	case "gpt-5.6-terra":
-		return "Experimental preview of OpenAI GPT 5.6 Terra with 272k context window"
-	case "gpt-5.6-luna":
-		return "Experimental preview of OpenAI GPT 5.6 Luna with 272k context window"
-	}
 	return ""
 }
 
@@ -86,36 +66,8 @@ func baseDescription(id string) string {
 // generated from this list at runtime.
 var BaseModels = []BaseModel{
 	{
-		ID:              "claude-opus-4.8",
-		DisplayName:     "Claude Opus 4.8",
-		OwnedBy:         "amazon",
-		ContextLength:   200000,
-		MaxOutputTokens: 64000,
-	},
-	{
-		ID:              "claude-opus-4.7",
-		DisplayName:     "Claude Opus 4.7",
-		OwnedBy:         "amazon",
-		ContextLength:   200000,
-		MaxOutputTokens: 64000,
-	},
-	{
-		ID:              "claude-opus-4.5",
-		DisplayName:     "Claude Opus 4.5",
-		OwnedBy:         "amazon",
-		ContextLength:   200000,
-		MaxOutputTokens: 64000,
-	},
-	{
-		ID:              "claude-sonnet-5",
-		DisplayName:     "Claude Sonnet 5",
-		OwnedBy:         "amazon",
-		ContextLength:   1000000,
-		MaxOutputTokens: 128000,
-	},
-	{
-		ID:              "claude-sonnet-4.6",
-		DisplayName:     "Claude Sonnet 4.6",
+		ID:              "auto",
+		DisplayName:     "Kiro Auto",
 		OwnedBy:         "amazon",
 		ContextLength:   200000,
 		MaxOutputTokens: 64000,
@@ -123,6 +75,13 @@ var BaseModels = []BaseModel{
 	{
 		ID:              "claude-sonnet-4.5",
 		DisplayName:     "Claude Sonnet 4.5",
+		OwnedBy:         "amazon",
+		ContextLength:   200000,
+		MaxOutputTokens: 64000,
+	},
+	{
+		ID:              "claude-sonnet-4",
+		DisplayName:     "Claude Sonnet 4",
 		OwnedBy:         "amazon",
 		ContextLength:   200000,
 		MaxOutputTokens: 64000,
@@ -139,13 +98,6 @@ var BaseModels = []BaseModel{
 		DisplayName:     "DeepSeek V3.2",
 		OwnedBy:         "deepseek",
 		ContextLength:   128000,
-		MaxOutputTokens: 8192,
-	},
-	{
-		ID:              "minimax-m2.7",
-		DisplayName:     "MiniMax M2.7",
-		OwnedBy:         "minimax",
-		ContextLength:   200000,
 		MaxOutputTokens: 8192,
 	},
 	{
@@ -175,27 +127,6 @@ var BaseModels = []BaseModel{
 		OwnedBy:         "alibaba",
 		ContextLength:   131072,
 		MaxOutputTokens: 32768,
-	},
-	{
-		ID:              "gpt-5.6-sol",
-		DisplayName:     "GPT 5.6 Sol",
-		OwnedBy:         "openai",
-		ContextLength:   272000,
-		MaxOutputTokens: 8192,
-	},
-	{
-		ID:              "gpt-5.6-terra",
-		DisplayName:     "GPT 5.6 Terra",
-		OwnedBy:         "openai",
-		ContextLength:   272000,
-		MaxOutputTokens: 8192,
-	},
-	{
-		ID:              "gpt-5.6-luna",
-		DisplayName:     "GPT 5.6 Luna",
-		OwnedBy:         "openai",
-		ContextLength:   272000,
-		MaxOutputTokens: 8192,
 	},
 }
 

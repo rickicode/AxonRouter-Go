@@ -611,6 +611,10 @@ func defaultTestModel(providerID string) string {
 			// Bedrock Mantle's OpenAI-compatible chat endpoint reliably supports this model.
 			return "openai.gpt-oss-120b"
 		}
+		if providerID == "kiro" {
+			// Kiro's "auto" model is a stable, capability-agnostic upstream id.
+			return "auto"
+		}
 		return ids[0]
 	}
 	switch providerID {

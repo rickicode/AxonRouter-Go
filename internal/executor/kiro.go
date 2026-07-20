@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/provider/kiro"
+	transregistry "github.com/rickicode/AxonRouter-Go/internal/translator/registry"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/types"
 )
 
 // KiroExecutor handles AWS CodeWhisperer / Kiro streaming (AWS EventStream)
@@ -712,7 +714,19 @@ func (e *KiroExecutor) Models(ctx context.Context, req *Request) (*Response, err
 func (e *KiroExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
 	urls := kiroEndpointURLs(req.ProviderSpecificData, req.BaseURL)
 
-	body, err := injectKiroProfileArn(req.Body, req.ProviderSpecificData)
+	body := req.Body
+	// Translate inbound OpenAI Chat Completions requests into Kiro's native payload
+	// shape when a translator is registered. The handler sends OpenAI-shaped test
+	// bodies, and the executor is the right place to perform the final conversion
+	// before upstreaming.
+	if transregistry.Default().HasRequestTransformer(types.FormatOpenAI, types.FormatKiro) {
+		raw := string(body)
+		if strings.Contains(raw, `"messages"`) || strings.Contains(raw, `"model"`) {
+			body = transregistry.Default().TranslateRequest(types.FormatOpenAI, types.FormatKiro, req.Model, body, true)
+		}
+	}
+
+	body, err := injectKiroProfileArn(body, req.ProviderSpecificData)
 	if err != nil {
 		return nil, fmt.Errorf("kiro profile arn injection: %w", err)
 	}
