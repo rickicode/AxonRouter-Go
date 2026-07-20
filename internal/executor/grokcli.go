@@ -26,6 +26,9 @@ const (
 	defaultGrokCLIBaseURL       = "https://cli-chat-proxy.grok.com/v1/responses"
 	defaultGrokCLIClientVersion = "0.2.99"
 	defaultGrokCLIUserAgent     = "grok-shell/" + defaultGrokCLIClientVersion + " (linux; x86_64)"
+	// grokCLIScannerMax gives the SSE-line buffer room for large Grok CLI events
+	// such as reasoning replay, tool results, or image data.
+	grokCLIScannerMax = 52_428_800 // 50 MB, matching Codex/CLIProxyAPI scanners
 )
 
 // GrokCLIExecutor handles xAI Grok CLI's Responses API over OAuth tokens.
@@ -692,7 +695,7 @@ func (e *GrokCLIExecutor) Execute(ctx context.Context, req *Request) (*Response,
 	}
 	headers := grokcliHeaders(req, sessionID, convID, agentID, reqID, turnIdx)
 
-	cfg := &StreamConfig{ScannerMaxTokenSize: 64 * 1024}
+	cfg := &StreamConfig{ScannerMaxTokenSize: grokCLIScannerMax}
 	streamResult, err := e.doStreamWithRetry(ctx, url, headers, body, cfg)
 	if err != nil {
 		return nil, err
@@ -765,7 +768,7 @@ func (e *GrokCLIExecutor) ExecuteStream(ctx context.Context, req *Request) (*Str
 	}
 	headers := grokcliHeaders(req, sessionID, convID, agentID, reqID, turnIdx)
 
-	cfg := &StreamConfig{ScannerMaxTokenSize: 64 * 1024}
+	cfg := &StreamConfig{ScannerMaxTokenSize: grokCLIScannerMax}
 	result, err := e.doStreamWithRetry(ctx, url, headers, body, cfg)
 	if err != nil {
 		return nil, err

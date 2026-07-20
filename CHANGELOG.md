@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Priority gaps after connection deletion are closed by automatic reordering.
 - **Grok CLI 402 spending-limit handling** — `personal-team-blocked:spending-limit` responses are now treated as a quota cooldown instead of permanently disabling the connection, so the connection can recover automatically after the user tops up.
 - **Grok CLI failover error mapping** — when all `grok-cli` connections are exhausted due to quota/cooldown, the client now receives HTTP 429 `insufficient_quota` with the upstream message instead of HTTP 503 `server_error`.
+- **Grok CLI scanner buffer** — raised the SSE line scanner limit from 64 KB to 50 MB to avoid `bufio.Scanner: token too long` on large streaming events (reasoning replay, tool results, image data).
 
 ## [0.3.11] - 2026-07-19
 
