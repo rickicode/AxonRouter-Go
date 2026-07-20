@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // RoutingMode determines how requests are distributed across a provider's
@@ -33,6 +35,10 @@ type ProviderSettings struct {
 	Compatibility  *Compatibility `json:"compatibility,omitempty"`
 }
 
+// readFileHook is swapped during tests to count disk reads. In production it
+// always points to os.ReadFile.
+var readFileHook = os.ReadFile
+
 // Manager loads and persists per-provider settings from JSON files in the data
 // directory. It keeps settings in memory and is safe for concurrent use.
 type Manager struct {
@@ -40,6 +46,7 @@ type Manager struct {
 	mu         sync.RWMutex
 	settings   map[string]ProviderSettings
 	rrCounters map[string]*atomic.Uint64
+	group      singleflight.Group
 }
 
 // NewManager creates a Manager that stores settings under dataDir.
@@ -77,7 +84,8 @@ func (m *Manager) loadAll() {
 }
 
 // Get returns the stored settings for a provider, falling back to the default
-// when no file exists yet.
+// when no file exists yet. Concurrent first-time reads for the same provider are
+// collapsed into a single disk load via singleflight.
 func (m *Manager) Get(providerID string) (ProviderSettings, error) {
 	m.mu.RLock()
 	gs, ok := m.settings[providerID]
@@ -86,29 +94,42 @@ func (m *Manager) Get(providerID string) (ProviderSettings, error) {
 		return gs, nil
 	}
 
-	data, err := os.ReadFile(m.settingsPath(providerID))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return ProviderSettings{RoutingMode: DefaultRoutingMode}, nil
+	v, err, _ := m.group.Do(providerID, func() (interface{}, error) {
+		m.mu.RLock()
+		gs, ok := m.settings[providerID]
+		m.mu.RUnlock()
+		if ok {
+			return gs, nil
 		}
-		return ProviderSettings{RoutingMode: DefaultRoutingMode}, fmt.Errorf("read settings: %w", err)
-	}
 
-	var s ProviderSettings
-	if err := json.Unmarshal(data, &s); err != nil {
-		return ProviderSettings{RoutingMode: DefaultRoutingMode}, fmt.Errorf("parse settings: %w", err)
-	}
-	if s.RoutingMode == "" {
-		s.RoutingMode = DefaultRoutingMode
-	}
+		data, err := readFileHook(m.settingsPath(providerID))
+		if err != nil {
+			if os.IsNotExist(err) {
+				return ProviderSettings{RoutingMode: DefaultRoutingMode}, nil
+			}
+			return ProviderSettings{RoutingMode: DefaultRoutingMode}, fmt.Errorf("read settings: %w", err)
+		}
 
-	m.mu.Lock()
-	m.settings[providerID] = s
-	if m.rrCounters[providerID] == nil {
-		m.rrCounters[providerID] = &atomic.Uint64{}
+		var s ProviderSettings
+		if err := json.Unmarshal(data, &s); err != nil {
+			return ProviderSettings{RoutingMode: DefaultRoutingMode}, fmt.Errorf("parse settings: %w", err)
+		}
+		if s.RoutingMode == "" {
+			s.RoutingMode = DefaultRoutingMode
+		}
+
+		m.mu.Lock()
+		m.settings[providerID] = s
+		if m.rrCounters[providerID] == nil {
+			m.rrCounters[providerID] = &atomic.Uint64{}
+		}
+		m.mu.Unlock()
+		return s, nil
+	})
+	if err != nil {
+		return ProviderSettings{RoutingMode: DefaultRoutingMode}, err
 	}
-	m.mu.Unlock()
-	return s, nil
+	return v.(ProviderSettings), nil
 }
 
 // RoutingMode returns the effective routing mode for a provider.
