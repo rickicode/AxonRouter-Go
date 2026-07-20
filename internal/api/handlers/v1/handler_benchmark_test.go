@@ -150,10 +150,16 @@ func BenchmarkTryPickConnection(b *testing.B) {
 	h := newBenchHandler(b, 1)
 	ctx := context.Background()
 	id := connIDFor(0)
+	cs := h.store.Get(id)
+	if cs == nil {
+		b.Fatal("benchmark connection state not found")
+	}
+	now := time.Now()
+	mode := h.providerCfg.RoutingMode("bench")
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = h.tryPickConnection(ctx, id, "bench", "model-x")
+		_, _ = h.tryPickConnection(ctx, cs, "bench", "model-x", now, mode)
 	}
 }
 

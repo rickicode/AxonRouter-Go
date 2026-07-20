@@ -33,6 +33,6 @@ func BenchmarkNextRoundRobinIndex(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = m.NextRoundRobinIndex("openai", 10)
+		_ = m.NextRoundRobinIndex("openai", "gpt-4o", 10)
 	}
 }
