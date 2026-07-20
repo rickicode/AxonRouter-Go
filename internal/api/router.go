@@ -165,6 +165,7 @@ func New(cfg Config) *Router {
 	rateLimitProber := background.NewRateLimitProber(cfg.DB, writeQueue, store, elig, exhaustionCache, executor.GetRegistry(), proxyResolver)
 	rateLimitProber.Start(ctx)
 	models.StartUpdater(ctx)
+	cache.StartGrokCLIReasoningEviction(ctx, 5*time.Minute)
 	proxyHealth := proxypool.NewHealthChecker(cfg.DB)
 	proxyHealth.Start(ctx)
 
@@ -632,6 +633,7 @@ func (r *Router) Shutdown() {
 		r.usageFlush.Stop()
 		r.cleanup.Stop()
 		r.rateLimitProber.Stop()
+		cache.StopGrokCLIReasoningEviction()
 		if r.versionChecker != nil {
 			r.versionChecker.Stop()
 		}

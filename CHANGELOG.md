@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Grok 4.5 model catalog limits** — corrected `grok-cli/grok-4.5*` entries in `internal/models/models.json` from 1M context / 65,536 output tokens to 500k context / 32,768 output tokens to match xAI's official Grok 4.5 spec.
+- **Grok CLI reasoning cache eviction** — replaced O(n·k) oldest-entry eviction with O(n log n) single-pass sort, added a background goroutine that purges expired replay entries every 5 minutes, and wired start/stop into the router lifecycle.
 
 ## [0.3.13] - 2026-07-20
 
