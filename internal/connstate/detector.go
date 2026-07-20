@@ -130,9 +130,21 @@ func DetectError(ctx context.Context, statusCode int, body string, err error, pr
 	case ErrorAuth:
 		det.Status = StatusAuthFailed
 	case ErrorBalanceEmpty:
-		// A drained balance is not a temporary quota issue; disable the
-		// connection immediately because it cannot recover without manual top-up.
-		det.Status = StatusDisabled
+		// Grok CLI returns 402 with a "personal-team-blocked:spending-limit" code
+		// when the account hits its spending cap. This is recoverable by the user
+		// adding credits or upgrading, so treat it as a quota cooldown instead of
+		// permanently disabling the connection. Other balance-empty cases mean the
+		// account has no funds/payment method and require manual top-up before
+		// reuse.
+		if providerPrefix == "grok-cli" && strings.Contains(strings.ToLower(msg), "spending-limit") {
+			det.Category = ErrorQuota
+			cat = ErrorQuota
+			det.Status = StatusQuotaExhausted
+			until := time.Now().Add(24 * time.Hour)
+			det.CooldownUntil = &until
+		} else {
+			det.Status = StatusDisabled
+		}
 	case ErrorQuota:
 		det.Status = StatusQuotaExhausted
 		until := nextMidnightUTC().Add(time.Minute)

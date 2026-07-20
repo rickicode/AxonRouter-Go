@@ -804,6 +804,8 @@ func buildFailoverErrorResponse(category string, lastErr error, modelName string
 		return upstreamMessage("rate limit exceeded for all connections"), http.StatusTooManyRequests, "rate_limit_error"
 	case connstate.ErrorQuota:
 		return upstreamMessage("quota exhausted for all connections"), http.StatusTooManyRequests, "insufficient_quota"
+	case connstate.ErrorBalanceEmpty:
+		return upstreamMessage("balance empty for all connections"), http.StatusTooManyRequests, "insufficient_quota"
 	default:
 		return "all connections exhausted or failing", http.StatusServiceUnavailable, "server_error"
 	}
