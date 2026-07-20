@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **In-product upgrade, logs, and restart flow** — `POST /api/admin/upgrade` now returns per-step upgrade logs, and `POST /api/admin/restart` restarts the service; the About page and update-available modal show live logs and a restart prompt after upgrade completes.
 
+### Fixed
+- **Cloudflare Kimi reasoning stream hang** — defaults `chat_template_kwargs.thinking` to `false` for Cloudflare reasoning models unless the client explicitly requests reasoning, and normalizes upstream `reasoning` fields to OpenAI-standard `reasoning_content` in both streaming and non-streaming responses so `cf/moonshotai/kimi-k2.7` no longer appears stuck in thinking.
+
 ## [0.3.16] - 2026-07-20
 
 ### Added
