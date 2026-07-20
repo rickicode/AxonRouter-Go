@@ -6156,5 +6156,37 @@
         "context_length": 200000,
         "max_completion_tokens": 8192
       }
-    ]
+    ],
+  "qwencloud": [
+    {
+      "id": "qwen3.7-plus"
+    },
+    {
+      "id": "qwen3.7-max"
+    },
+    {
+      "id": "qwen3.6-plus"
+    },
+    {
+      "id": "qwen3.6-max"
+    },
+    {
+      "id": "qwen3.6-flash"
+    },
+    {
+      "id": "qwen3.5-omni-plus"
+    },
+    {
+      "id": "qwen-plus"
+    },
+    {
+      "id": "glm-5.2"
+    },
+    {
+      "id": "deepseek-v4-flash"
+    },
+    {
+      "id": "qwen3-coder-plus"
+    }
+  ]
 }

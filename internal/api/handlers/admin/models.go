@@ -579,6 +579,7 @@ var providerCatalogKeys = map[string][]string{
 	"codebuddy":     {"codebuddy"},
 	"devin":         {"devin"},
 	"qoder":         {"qoder"},
+	"qwencloud":     {"qwencloud"},
 }
 
 // staticModels returns model IDs from the auto-updating catalog, stripped of leading "@".

@@ -122,6 +122,30 @@ func TestServiceKindsForModelID_Unknown(t *testing.T) {
 	}
 }
 
+func TestGetModelIDs_QwenCloudContainsExpectedModels(t *testing.T) {
+	want := []string{
+		"qwen3.7-plus",
+		"qwen3.7-max",
+		"qwen3.6-plus",
+		"qwen3.6-max",
+		"qwen3.6-flash",
+		"qwen3.5-omni-plus",
+		"qwen-plus",
+		"glm-5.2",
+		"deepseek-v4-flash",
+		"qwen3-coder-plus",
+	}
+	got := GetModelIDs("qwencloud")
+	if len(got) == 0 {
+		t.Fatal("GetModelIDs(qwencloud) returned empty")
+	}
+	for _, id := range want {
+		if !slices.Contains(got, id) {
+			t.Errorf("GetModelIDs(qwencloud) missing %q; got %v", id, got)
+		}
+	}
+}
+
 func TestDiscoverCloudflareModelsCached_HitsUpstreamOnceWithinTTL(t *testing.T) {
 	var calls int
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

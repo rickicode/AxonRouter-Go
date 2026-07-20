@@ -88,6 +88,37 @@ func TestListModelEntries_MultiKindProviderDoesNotFallback(t *testing.T) {
 	}
 }
 
+func TestListModelEntries_QwenCloudIncludesExpectedModels(t *testing.T) {
+	h := &ModelHandler{}
+	entries := h.listModelEntries("qwencloud", []string{"llm"}, nil, staticModels("qwencloud"), nil)
+	if len(entries) == 0 {
+		t.Fatal("expected QwenCloud model entries")
+	}
+	ids := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if id, ok := e["id"].(string); ok {
+			ids = append(ids, id)
+		}
+	}
+	want := []string{
+		"qwencloud/qwen3.7-plus",
+		"qwencloud/qwen3.7-max",
+		"qwencloud/qwen3.6-plus",
+		"qwencloud/qwen3.6-max",
+		"qwencloud/qwen3.6-flash",
+		"qwencloud/qwen3.5-omni-plus",
+		"qwencloud/qwen-plus",
+		"qwencloud/glm-5.2",
+		"qwencloud/deepseek-v4-flash",
+		"qwencloud/qwen3-coder-plus",
+	}
+	for _, w := range want {
+		if !slices.Contains(ids, w) {
+			t.Errorf("QwenCloud entries missing %q; got %v", w, ids)
+		}
+	}
+}
+
 func kindsOf(m map[string]any) []string {
 	if v, ok := m["service_kinds"].([]string); ok {
 		return v
