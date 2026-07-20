@@ -106,6 +106,18 @@ After every edit:
 - Run `go build ./...` and `go test ./...` (or the relevant package tests).
 - For frontend changes, run `npm run build` in `web/` until zero warnings.
 
+## Prohibited: MITM, Traffic Interception, and Transparent Proxies (CRITICAL)
+
+NEVER implement, ship, or configure any form of **MITM**, **traffic intercept**, **IDE transparent proxy**, **TLS termination**, **certificate bypass**, or **man-in-the-middle handler** for Kiro, Codex, OpenAI, Mimo, or any other provider. This applies to any code, configuration, documentation, or workaround that sits between a user, IDE, plugin, or command-line tool and an upstream provider's official endpoint in order to inspect, modify, reroute, or replay encrypted traffic.
+
+This is non-negotiable because:
+- It violates provider Terms of Service and applicable computer-fraud / privacy laws.
+- It breaks TLS trust for users and upstream services, creating a severe security liability.
+- It introduces unsustainable maintenance: certificate pinning, protocol drift, and IDE/version-specific proxy behavior become the project's responsibility.
+- It makes AxonRouter liable for intercepted content, credentials, and telemetry.
+
+All provider integrations MUST use documented, official HTTP/HTTPS endpoints and explicit API keys supplied by the operator. If a provider's official API does not support a feature, that feature is out of scope — do not work around it via interception.
+
 ## Multi-Codebase Comparison Rule (CRITICAL)
 When CLIProxyAPI, AxonRouter, and OmniRoute implement the same subsystem:
 1. Read ALL three implementations.
