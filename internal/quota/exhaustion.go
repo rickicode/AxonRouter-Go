@@ -52,18 +52,30 @@ func (ec *ExhaustionCache) MarkExhausted(key string, ttl time.Duration) {
 // IsExhausted returns true if the given key is currently marked as exhausted
 // and the TTL has not expired. Returns false if not marked or expired.
 func (ec *ExhaustionCache) IsExhausted(key string) bool {
+	return ec.IsExhaustedAt(key, time.Now())
+}
+
+// IsExhaustedAt returns true if the given key is marked as exhausted and the
+// TTL has not expired at the provided time.
+func (ec *ExhaustionCache) IsExhaustedAt(key string, now time.Time) bool {
 	ec.mu.RLock()
 	entry, ok := ec.entries[key]
 	ec.mu.RUnlock()
 	if !ok {
 		return false
 	}
-	return time.Now().Before(entry.expiresAt)
+	return now.Before(entry.expiresAt)
 }
 
 // IsExhaustedScope is a convenience for checking a connID + scope composite key.
 func (ec *ExhaustionCache) IsExhaustedScope(connID, scope string) bool {
 	return ec.IsExhausted(ExhaustKey(connID, scope))
+}
+
+// IsExhaustedScopeAt is a convenience for checking a connID + scope composite
+// key at the provided time.
+func (ec *ExhaustionCache) IsExhaustedScopeAt(connID, scope string, now time.Time) bool {
+	return ec.IsExhaustedAt(ExhaustKey(connID, scope), now)
 }
 
 // Clear removes the exhaustion mark for a key (e.g. after successful

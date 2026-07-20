@@ -345,6 +345,7 @@ const pickMaxAttempts = 10
 func (h *Handler) getConnection(ctx context.Context, provider string, modelID string) (*Connection, error) {
 	provider = provideralias.ResolveAlias(provider)
 	mode := h.providerCfg.RoutingMode(provider)
+	now := time.Now()
 
 	connIDs := h.elig.GetByPrefix(provider)
 	logging.Logger.Debug("getConnection", "provider", provider, "eligible", len(connIDs))
@@ -356,14 +357,14 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 		}
 		for i := 0; i < bound; i++ {
 			idx := (start + i) % len(connIDs)
-			if conn, ok := h.tryPickConnection(ctx, connIDs[idx], provider, modelID, mode); ok {
+			if conn, ok := h.tryPickConnection(ctx, connIDs[idx], provider, modelID, now, mode); ok {
 				return conn, nil
 			}
 		}
 
 		for i := bound; i < len(connIDs); i++ {
 			idx := (start + i) % len(connIDs)
-			if conn, ok := h.tryPickConnection(ctx, connIDs[idx], provider, modelID, mode); ok {
+			if conn, ok := h.tryPickConnection(ctx, connIDs[idx], provider, modelID, now, mode); ok {
 				return conn, nil
 			}
 		}
@@ -373,7 +374,7 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 	// candidate was filtered out (e.g. all accounts are in a transient cooldown),
 	// scan all known connections for this provider and try them, ignoring
 	// cooldown windows but still honoring exhaustion and terminal statuses.
-	return h.getConnectionFallback(ctx, provider, modelID, mode)
+	return h.getConnectionFallback(ctx, provider, modelID, now, mode)
 }
 
 // getConnectionFallback is the last-resort router used when the eligibility
@@ -381,7 +382,7 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 //  1. Respect cooldowns but consider any non-terminal connection.
 //  2. If everything is in cooldown, bypass cooldown once as emergency fallback
 //     so a healthy account that was briefly cooled down can still receive traffic.
-func (h *Handler) getConnectionFallback(ctx context.Context, provider, modelID string, mode providercfg.RoutingMode) (*Connection, error) {
+func (h *Handler) getConnectionFallback(ctx context.Context, provider, modelID string, now time.Time, mode providercfg.RoutingMode) (*Connection, error) {
 	var candidates []string
 	h.store.Range(func(connID string, cs *connstate.ConnectionState) bool {
 		if cs.Prefix != provider {
@@ -399,7 +400,7 @@ func (h *Handler) getConnectionFallback(ctx context.Context, provider, modelID s
 
 	// Pass 1: respect cooldowns, just expand the pool beyond the eligibility snapshot.
 	for _, connID := range candidates {
-		if conn, ok := h.tryPickConnection(ctx, connID, provider, modelID, mode); ok {
+		if conn, ok := h.tryPickConnection(ctx, connID, provider, modelID, now, mode); ok {
 			logging.Logger.Info("getConnection fallback (cooldown-aware) selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name)
 			return conn, nil
 		}
@@ -407,7 +408,7 @@ func (h *Handler) getConnectionFallback(ctx context.Context, provider, modelID s
 
 	// Pass 2: every account is in cooldown. Bypass it as emergency fallback.
 	for _, connID := range candidates {
-		if conn, ok := h.tryPickConnectionFallback(ctx, connID, provider, modelID, mode); ok {
+		if conn, ok := h.tryPickConnectionFallback(ctx, connID, provider, modelID, now, mode); ok {
 			logging.Logger.Info("getConnection emergency fallback selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name)
 			return conn, nil
 		}
@@ -419,21 +420,21 @@ func (h *Handler) getConnectionFallback(ctx context.Context, provider, modelID s
 // tryPickConnectionFallback is like tryPickConnection but ignores connection-level
 // cooldowns. It still respects model-level cooldowns and exhaustion so we do not
 // hammer accounts that are genuinely out of quota.
-func (h *Handler) tryPickConnectionFallback(ctx context.Context, connID, provider, modelID string, mode providercfg.RoutingMode) (*Connection, bool) {
+func (h *Handler) tryPickConnectionFallback(ctx context.Context, connID, provider, modelID string, now time.Time, mode providercfg.RoutingMode) (*Connection, bool) {
 	cs := h.store.Get(connID)
 	if cs == nil {
 		return nil, false
 	}
-	if modelID != "" && cs.IsModelInCooldown(modelID) {
+	if modelID != "" && cs.IsModelInCooldownAt(modelID, now) {
 		return nil, false
 	}
-	if modelID != "" && h.exhaustion.IsExhaustedScope(connID, connstate.ModelScope(provider, modelID)) {
+	if modelID != "" && h.exhaustion.IsExhaustedScopeAt(connID, connstate.ModelScope(provider, modelID), now) {
 		return nil, false
 	}
-	if h.exhaustion.IsExhausted(connID) {
+	if h.exhaustion.IsExhaustedAt(connID, now) {
 		return nil, false
 	}
-	conn, err := h.getCachedConn(ctx, connID)
+	conn, err := h.getCachedConn(ctx, connID, now)
 	if err != nil {
 		logging.Logger.Debug("load conn failed", "conn", connID[:8], "err", err)
 		return nil, false
@@ -462,24 +463,24 @@ func (h *Handler) pickStartIndex(provider string, total int, mode providercfg.Ro
 
 // tryPickConnection checks a single eligible connection for model-level
 // cooldowns/quota exhaustion and loads its DB credentials when it passes.
-func (h *Handler) tryPickConnection(ctx context.Context, connID, provider, modelID string, mode providercfg.RoutingMode) (*Connection, bool) {
+func (h *Handler) tryPickConnection(ctx context.Context, connID, provider, modelID string, now time.Time, mode providercfg.RoutingMode) (*Connection, bool) {
 	cs := h.store.Get(connID)
 	if cs == nil {
 		return nil, false
 	}
-	if cs.IsInCooldown() {
+	if cs.IsInCooldownAt(now) {
 		return nil, false
 	}
-	if modelID != "" && cs.IsModelInCooldown(modelID) {
+	if modelID != "" && cs.IsModelInCooldownAt(modelID, now) {
 		return nil, false
 	}
-	if modelID != "" && h.exhaustion.IsExhaustedScope(connID, connstate.ModelScope(provider, modelID)) {
+	if modelID != "" && h.exhaustion.IsExhaustedScopeAt(connID, connstate.ModelScope(provider, modelID), now) {
 		return nil, false
 	}
-	if h.exhaustion.IsExhausted(connID) {
+	if h.exhaustion.IsExhaustedAt(connID, now) {
 		return nil, false
 	}
-	conn, err := h.getCachedConn(ctx, connID)
+	conn, err := h.getCachedConn(ctx, connID, now)
 	if err != nil {
 		logging.Logger.Debug("load conn failed", "conn", connID[:8], "err", err)
 		return nil, false
@@ -538,25 +539,25 @@ func (h *Handler) orderCandidates(provider string, candidates []string, mode pro
 // prepareConnection performs preflight checks and proactive token refresh for a
 // specific connection. Used by combo routing so it gets the same cooldown/exhaustion
 // guards and OAuth refresh as the regular single-model path.
-func (h *Handler) prepareConnection(ctx context.Context, connID, provider, modelID string) (*Connection, error) {
+func (h *Handler) prepareConnection(ctx context.Context, connID, provider, modelID string, now time.Time) (*Connection, error) {
 	cs := h.store.Get(connID)
 	if cs == nil {
 		return nil, fmt.Errorf("connection state not found")
 	}
-	if cs.IsInCooldown() {
+	if cs.IsInCooldownAt(now) {
 		return nil, fmt.Errorf("connection in cooldown")
 	}
-	if modelID != "" && cs.IsModelInCooldown(modelID) {
+	if modelID != "" && cs.IsModelInCooldownAt(modelID, now) {
 		return nil, fmt.Errorf("model in cooldown")
 	}
-	if modelID != "" && h.exhaustion.IsExhaustedScope(connID, connstate.ModelScope(provider, modelID)) {
+	if modelID != "" && h.exhaustion.IsExhaustedScopeAt(connID, connstate.ModelScope(provider, modelID), now) {
 		return nil, fmt.Errorf("model exhausted")
 	}
-	if h.exhaustion.IsExhausted(connID) {
+	if h.exhaustion.IsExhaustedAt(connID, now) {
 		return nil, fmt.Errorf("connection exhausted")
 	}
 
-	conn, err := h.getCachedConn(ctx, connID)
+	conn, err := h.getCachedConn(ctx, connID, now)
 	if err != nil {
 		return nil, err
 	}
@@ -587,10 +588,10 @@ type cachedConn struct {
 // getCachedConn returns a cached connection by ID, falling back to a DB load
 // on miss or TTL expiry (60s). This eliminates the per-request DB SELECT on the
 // hot path — the last remaining DB call in getConnection/prepareConnection.
-func (h *Handler) getCachedConn(ctx context.Context, connID string) (*Connection, error) {
+func (h *Handler) getCachedConn(ctx context.Context, connID string, now time.Time) (*Connection, error) {
 	if v, ok := h.conns.Load(connID); ok {
 		cc := v.(cachedConn)
-		if time.Since(cc.cachedAt) < connCacheTTL {
+		if now.Sub(cc.cachedAt) < connCacheTTL {
 			copied := *cc.conn
 			return &copied, nil
 		}
@@ -600,7 +601,7 @@ func (h *Handler) getCachedConn(ctx context.Context, connID string) (*Connection
 	if err != nil {
 		return nil, err
 	}
-	h.conns.Store(connID, cachedConn{conn: conn, cachedAt: time.Now()})
+	h.conns.Store(connID, cachedConn{conn: conn, cachedAt: now})
 	copied := *conn
 	return &copied, nil
 }
