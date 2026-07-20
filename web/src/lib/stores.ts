@@ -484,7 +484,7 @@ export async function refreshConnectionQuota(connId: string): Promise<Connection
     quotaItems.update(items =>
       items.map(item =>
         item.connection_id === connId
-          ? { ...item, quotas: result.quotas, plan: result.plan || '', error: result.error || '', fetched_at: result.fetched_at, status: result.error ? 'error' : (result.quotas.length ? 'ok' : 'no_data') }
+          ? { ...item, quotas: result.quotas || [], plan: result.plan || '', error: result.error || '', fetched_at: result.fetched_at, status: result.error ? 'error' : ((result.quotas || []).length ? 'ok' : 'no_data') }
           : item
       )
     );

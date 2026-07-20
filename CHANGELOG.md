@@ -48,6 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Grok CLI 402 spending-limit handling** — `personal-team-blocked:spending-limit` responses are now treated as a quota cooldown instead of permanently disabling the connection, so the connection can recover automatically after the user tops up.
 - **Grok CLI failover error mapping** — when all `grok-cli` connections are exhausted due to quota/cooldown, the client now receives HTTP 429 `insufficient_quota` with the upstream message instead of HTTP 503 `server_error`.
 - **Grok CLI scanner buffer** — raised the SSE line scanner limit from 64 KB to 50 MB to avoid `bufio.Scanner: token too long` on large streaming events (reasoning replay, tool results, image data).
+- **Grok CLI quota info** — fetches Grok task usage (`https://grok.com/rest/tasks/usage`) in addition to the billing/user endpoints, parses `creditUsagePercent`, `creditBalance`, `productUsage`, `onDemandCap`, and weekly/occasional task limits so the Quota page no longer shows "no data" for Grok CLI accounts.
+- **Quota page empty refresh** — fixed `Cannot read properties of null (reading 'length')` when a manual quota refresh returns an empty/null quota list.
 
 ## [0.3.11] - 2026-07-19
 

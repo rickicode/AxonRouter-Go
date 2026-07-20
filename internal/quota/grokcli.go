@@ -12,10 +12,11 @@ import (
 )
 
 const (
-	grokCliBillingURL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
-	grokCliUserURL    = "https://cli-chat-proxy.grok.com/v1/user?include=subscription"
-	grokCliVersion    = "0.2.99"
-	grokCliUserAgent  = "grok-shell/" + grokCliVersion + " (linux; x86_64)"
+	grokCliBillingURL   = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
+	grokCliUserURL      = "https://cli-chat-proxy.grok.com/v1/user?include=subscription"
+	grokCliTaskUsageURL = "https://grok.com/rest/tasks/usage"
+	grokCliVersion      = "0.2.99"
+	grokCliUserAgent    = "grok-shell/" + grokCliVersion + " (linux; x86_64)"
 )
 
 type grokCliResult struct {
@@ -36,9 +37,10 @@ func fetchGrokCliQuota(accessToken string, psd map[string]any) ([]QuotaItem, str
 
 	billingCh := make(chan grokCliResult, 1)
 	userCh := make(chan grokCliResult, 1)
+	taskCh := make(chan grokCliResult, 1)
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		billingCh <- fetchGrokCliJSON(client, grokCliBillingURL, headers)
@@ -47,21 +49,28 @@ func fetchGrokCliQuota(accessToken string, psd map[string]any) ([]QuotaItem, str
 		defer wg.Done()
 		userCh <- fetchGrokCliJSON(client, grokCliUserURL, headers)
 	}()
+	go func() {
+		defer wg.Done()
+		taskCh <- fetchGrokCliJSON(client, grokCliTaskUsageURL, headers)
+	}()
 	wg.Wait()
 	close(billingCh)
 	close(userCh)
+	close(taskCh)
 
 	billing := <-billingCh
 	user := <-userCh
+	task := <-taskCh
 	if billing.err != nil {
 		return nil, "", billing.err
 	}
 
-	var billingMap, userMap map[string]any
+	var billingMap, userMap, taskMap map[string]any
 	json.Unmarshal(billing.body, &billingMap)
 	json.Unmarshal(user.body, &userMap)
+	json.Unmarshal(task.body, &taskMap)
 
-	plan, quotas := parseGrokCliBilling(billingMap, userMap)
+	plan, quotas := parseGrokCliBilling(billingMap, userMap, taskMap)
 	return quotas, plan, nil
 }
 
@@ -110,7 +119,9 @@ func grokCliHeaders(accessToken string, psd map[string]any) map[string]string {
 		"Accept":                   "application/json",
 		"Content-Type":             "application/json",
 		"X-XAI-Token-Auth":         "xai-grok-cli",
+		"x-grok-cli-version":       grokCliVersion,
 		"x-grok-client-version":    grokCliVersion,
+		"x-grok-client-surface":    "grok-cli",
 		"x-grok-client-identifier": "grok-shell",
 		"x-grok-client-mode":       "headless",
 		"User-Agent":               grokCliUserAgent,
@@ -124,7 +135,115 @@ func grokCliHeaders(accessToken string, psd map[string]any) map[string]string {
 	return h
 }
 
-func parseGrokCliBilling(billing, user map[string]any) (string, []QuotaItem) {
+// grokCreditAmounts extracts a used/total credit pair from a set of possible
+// bag locations used by Grok CLI billing payloads.
+func grokCreditAmounts(billing, config map[string]any) (used, total float64) {
+	sources := []map[string]any{billing, config}
+	keys := []string{"credits", "creditBalance", "usage", "includedCredits", "subscriptionCredits", "weeklyCredits", "sharedPool"}
+	for _, src := range sources {
+		if src == nil {
+			continue
+		}
+		for _, k := range keys {
+			if v, ok := src[k]; ok {
+				if u, t := grokCreditBagAmounts(v); t > 0 {
+					return u, t
+				}
+			}
+		}
+	}
+	return 0, 0
+}
+
+func grokCreditBagAmounts(v any) (used, total float64) {
+	if items, ok := v.([]any); ok && len(items) > 0 {
+		// Pick the first item with a positive total.
+		for _, raw := range items {
+			if u, t := grokCreditBagAmounts(raw); t > 0 {
+				return u, t
+			}
+		}
+		return 0, 0
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return 0, 0
+	}
+	total = unwrapGrokVal(m["total"])
+	if total <= 0 {
+		total = unwrapGrokVal(m["limit"])
+	}
+	if total <= 0 {
+		total = unwrapGrokVal(m["cap"])
+	}
+	if total <= 0 {
+		total = unwrapGrokVal(m["allocation"])
+	}
+	if total <= 0 {
+		total = unwrapGrokVal(m["amount"])
+	}
+	used = unwrapGrokVal(m["used"])
+	if used <= 0 {
+		used = unwrapGrokVal(m["spent"])
+	}
+	if used <= 0 {
+		used = unwrapGrokVal(m["consumed"])
+	}
+	if used <= 0 {
+		used = unwrapGrokVal(m["usage"])
+	}
+	if used <= 0 && total > 0 {
+		remaining := unwrapGrokVal(m["remaining"])
+		if remaining <= 0 {
+			remaining = unwrapGrokVal(m["balance"])
+		}
+		if remaining <= 0 {
+			remaining = unwrapGrokVal(m["left"])
+		}
+		if remaining > 0 {
+			used = total - remaining
+			if used < 0 {
+				used = 0
+			}
+		}
+	}
+	return used, total
+}
+
+func grokProductUsageQuota(item map[string]any, resetAt string) *QuotaItem {
+	name := getStringField(item, "product", "name", "productName")
+	if name == "" {
+		return nil
+	}
+	used, total := grokCreditBagAmounts(item)
+	if total <= 0 {
+		return nil
+	}
+	return &QuotaItem{
+		Name:         name,
+		Used:         used,
+		Total:        total,
+		RemainingPct: ((total - used) / total) * 100,
+		ResetAt:      resetAt,
+	}
+}
+
+func grokTaskUsageQuota(name string, taskUsage map[string]any, usageKey, limitKey, resetAt string) *QuotaItem {
+	usageVal := unwrapGrokVal(taskUsage[usageKey])
+	limitVal := unwrapGrokVal(taskUsage[limitKey])
+	if limitVal <= 0 {
+		return nil
+	}
+	return &QuotaItem{
+		Name:         name,
+		Used:         usageVal,
+		Total:        limitVal,
+		RemainingPct: ((limitVal - usageVal) / limitVal) * 100,
+		ResetAt:      resetAt,
+	}
+}
+
+func parseGrokCliBilling(billing, user, taskUsage map[string]any) (string, []QuotaItem) {
 	if billing == nil {
 		billing = map[string]any{}
 	}
@@ -147,8 +266,9 @@ func parseGrokCliBilling(billing, user map[string]any) (string, []QuotaItem) {
 	tier := grokCliSubscriptionTier(user, config)
 	subscriptionAccess := tier != "" && !strings.EqualFold(tier, "free") && !strings.EqualFold(tier, "none")
 
-	var quotas []QuotaItem
+	quotas := make([]QuotaItem, 0)
 
+	// Legacy monthly included fields, kept for backward compatibility.
 	monthlyLimit, _ := grokNum(config, billing, "monthlyLimit", "monthly_limit")
 	includedUsed, _ := grokNum(config, billing, "includedUsed", "included_used")
 	totalUsed, _ := grokNum(config, billing, "totalUsed", "total_used")
@@ -160,6 +280,27 @@ func parseGrokCliBilling(billing, user map[string]any) (string, []QuotaItem) {
 		quotas = append(quotas, makeGrokCliQuota("Monthly included", used, monthlyLimit, periodEnd))
 	}
 
+	// creditUsagePercent mirrors Grok CLI web/app overview: weekly pool usage.
+	if creditPct, ok := grokNum(config, billing, "creditUsagePercent", "credit_usage_percent", "usagePercent"); ok && creditPct > 0 {
+		quotas = append(quotas, makeGrokCliQuota("Weekly credits", creditPct, 100, periodEnd))
+	}
+
+	// Try several possible credit bag locations (config, billing top-level).
+	if used, total := grokCreditAmounts(billing, config); total > 0 {
+		quotas = append(quotas, makeGrokCliQuota("Weekly credits", used, total, periodEnd))
+	}
+
+	// Product-level usage (Grok, DeepSearch, etc.).
+	productUsage := getSliceField(config, "productUsage", "product_usage")
+	for _, raw := range productUsage {
+		if item, ok := raw.(map[string]any); ok {
+			if q := grokProductUsageQuota(item, periodEnd); q != nil {
+				quotas = append(quotas, *q)
+			}
+		}
+	}
+
+	// On-demand cap.
 	onDemandCap, _ := grokNum(config, billing, "onDemandCap")
 	onDemandUsed, _ := grokNum(config, billing, "onDemandUsed")
 	if onDemandCap > 0 {
@@ -170,6 +311,7 @@ func parseGrokCliBilling(billing, user map[string]any) (string, []QuotaItem) {
 		quotas = append(quotas, makeGrokCliQuota("On-demand", used, onDemandCap, periodEnd))
 	}
 
+	// Prepaid balance (remaining money, not a usage-limit; show as total).
 	prepaid, _ := grokNum(config, billing, "prepaidBalance")
 	if prepaid > 0 {
 		quotas = append(quotas, QuotaItem{
@@ -178,6 +320,18 @@ func parseGrokCliBilling(billing, user map[string]any) (string, []QuotaItem) {
 		})
 	}
 
+	// Task-based limits from grok.com/rest/tasks/usage (frequent / occasional tiers).
+	if taskUsage != nil {
+		if q := grokTaskUsageQuota("Frequent", taskUsage, "frequentUsage", "frequentLimit", periodEnd); q != nil {
+			quotas = append(quotas, *q)
+		}
+		if q := grokTaskUsageQuota("Occasional", taskUsage, "occasionalUsage", "occasionalLimit", periodEnd); q != nil {
+			quotas = append(quotas, *q)
+		}
+	}
+
+	// Fallback unlimited indicator when we know the account is paid but no
+	// concrete limits were returned.
 	if len(quotas) == 0 && subscriptionAccess {
 		quotas = append(quotas, QuotaItem{
 			Name: "Included", Used: 0, Total: 0,
