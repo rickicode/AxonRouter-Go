@@ -11,7 +11,7 @@ import (
 // EventFrame represents a parsed AWS EventStream message (used by Kiro / CodeWhisperer).
 type EventFrame struct {
 	Headers map[string]string
-	Payload map[string]any
+	Payload json.RawMessage
 }
 
 // byteQueue is a simple growable byte buffer with peek/read support.
@@ -152,13 +152,11 @@ func parseEventFrame(data []byte) (*EventFrame, error) {
 
 	payloadStart := 12 + int(headersLength)
 	payloadEnd := len(data) - 4
-	var payload map[string]any
+	var payload json.RawMessage
 	if payloadEnd > payloadStart {
 		s := bytes.TrimSpace(data[payloadStart:payloadEnd])
 		if len(s) > 0 {
-			if err := json.Unmarshal(s, &payload); err != nil {
-				return nil, fmt.Errorf("payload JSON parse: %w", err)
-			}
+			payload = append([]byte(nil), s...)
 		}
 	}
 	return &EventFrame{Headers: headers, Payload: payload}, nil

@@ -44,6 +44,11 @@ func buildEventFrame(headers map[string]string, payload map[string]any) []byte {
 	return buf
 }
 
+func testPayload(p map[string]any) json.RawMessage {
+	b, _ := json.Marshal(p)
+	return b
+}
+
 func TestParseEventFrame(t *testing.T) {
 	frame := buildEventFrame(
 		map[string]string{
@@ -65,7 +70,11 @@ func TestParseEventFrame(t *testing.T) {
 	if parsed.Payload == nil {
 		t.Fatalf("payload nil")
 	}
-	inner := parsed.Payload["assistantResponseEvent"].(map[string]any)
+	var parsedPayload map[string]any
+	if err := json.Unmarshal(parsed.Payload, &parsedPayload); err != nil {
+		t.Fatalf("payload JSON parse: %v", err)
+	}
+	inner := parsedPayload["assistantResponseEvent"].(map[string]any)
 	if inner["content"] != "hello" {
 		t.Errorf("payload content = %v, want hello", inner["content"])
 	}
@@ -120,9 +129,9 @@ func TestKiroContextUsageEvent(t *testing.T) {
 
 	chunks := state.handleEvent(&EventFrame{
 		Headers: map[string]string{":event-type": "contextUsageEvent"},
-		Payload: map[string]any{
+		Payload: testPayload(map[string]any{
 			"contextUsageEvent": map[string]any{"contextUsagePercentage": 10},
-		},
+		}),
 	}, nil, "kiro")
 	if len(chunks) != 0 {
 		t.Errorf("contextUsageEvent should not emit chunks, got %d", len(chunks))
@@ -130,7 +139,7 @@ func TestKiroContextUsageEvent(t *testing.T) {
 
 	chunks = state.handleEvent(&EventFrame{
 		Headers: map[string]string{":event-type": "messageStopEvent"},
-		Payload: map[string]any{"messageStopEvent": map[string]any{}},
+		Payload: testPayload(map[string]any{"messageStopEvent": map[string]any{}}),
 	}, nil, "kiro")
 	if len(chunks) != 1 {
 		t.Fatalf("expected 1 chunk from messageStopEvent, got %d", len(chunks))
@@ -154,9 +163,9 @@ func TestKiroContextUsageEvent_FallbackWithoutHeader(t *testing.T) {
 
 	chunks := state.handleEvent(&EventFrame{
 		Headers: map[string]string{},
-		Payload: map[string]any{
+		Payload: testPayload(map[string]any{
 			"contextUsageEvent": map[string]any{"contextUsagePercentage": 25},
-		},
+		}),
 	}, nil, "kiro")
 	if len(chunks) != 0 {
 		t.Errorf("contextUsageEvent should not emit chunks, got %d", len(chunks))
@@ -164,7 +173,7 @@ func TestKiroContextUsageEvent_FallbackWithoutHeader(t *testing.T) {
 
 	chunks = state.handleEvent(&EventFrame{
 		Headers: map[string]string{":event-type": "messageStopEvent"},
-		Payload: map[string]any{"messageStopEvent": map[string]any{}},
+		Payload: testPayload(map[string]any{"messageStopEvent": map[string]any{}}),
 	}, nil, "kiro")
 	if len(chunks) != 1 {
 		t.Fatalf("expected 1 chunk from messageStopEvent, got %d", len(chunks))
@@ -185,7 +194,7 @@ func TestKiroMeteringEvent(t *testing.T) {
 
 	chunks := state.handleEvent(&EventFrame{
 		Headers: map[string]string{":event-type": "meteringEvent"},
-		Payload: map[string]any{"meteringEvent": map[string]any{}},
+		Payload: testPayload(map[string]any{"meteringEvent": map[string]any{}}),
 	}, nil, "kiro")
 	if len(chunks) != 0 {
 		t.Errorf("meteringEvent should not emit chunks, got %d", len(chunks))
@@ -193,7 +202,7 @@ func TestKiroMeteringEvent(t *testing.T) {
 
 	chunks = state.handleEvent(&EventFrame{
 		Headers: map[string]string{":event-type": "messageStopEvent"},
-		Payload: map[string]any{"messageStopEvent": map[string]any{}},
+		Payload: testPayload(map[string]any{"messageStopEvent": map[string]any{}}),
 	}, nil, "kiro")
 	if len(chunks) != 1 {
 		t.Fatalf("expected 1 chunk from messageStopEvent, got %d", len(chunks))

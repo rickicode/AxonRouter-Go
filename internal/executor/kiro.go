@@ -206,10 +206,10 @@ func (s *kiroStreamState) splitInlineThinking(content string, model string) [][]
 			if flushable != "" {
 				if s.thinkingMode {
 					s.reasoning.WriteString(flushable)
-					out = append(out, s.emitChunk(map[string]any{"reasoning_content": flushable}, model))
+					out = append(out, s.emitChunk(kiroOpenAIDelta{ReasoningContent: flushable}, model))
 				} else {
 					s.textLen += int64(len(flushable))
-					out = append(out, s.emitChunk(map[string]any{"content": flushable}, model))
+					out = append(out, s.emitChunk(kiroOpenAIDelta{Content: flushable}, model))
 				}
 			}
 			s.pendingTag = text[holdFrom:]
@@ -222,10 +222,10 @@ func (s *kiroStreamState) splitInlineThinking(content string, model string) [][]
 		if before != "" {
 			if s.thinkingMode {
 				s.reasoning.WriteString(before)
-				out = append(out, s.emitChunk(map[string]any{"reasoning_content": before}, model))
+				out = append(out, s.emitChunk(kiroOpenAIDelta{ReasoningContent: before}, model))
 			} else {
 				s.textLen += int64(len(before))
-				out = append(out, s.emitChunk(map[string]any{"content": before}, model))
+				out = append(out, s.emitChunk(kiroOpenAIDelta{Content: before}, model))
 			}
 		}
 		s.thinkingMode = !s.thinkingMode
@@ -243,39 +243,34 @@ func (s *kiroStreamState) flushPendingThinking(model string) [][]byte {
 	s.pendingTag = ""
 	if s.thinkingMode {
 		s.reasoning.WriteString(text)
-		return [][]byte{s.emitChunk(map[string]any{"reasoning_content": text}, model)}
+		return [][]byte{s.emitChunk(kiroOpenAIDelta{ReasoningContent: text}, model)}
 	}
 	s.textLen += int64(len(text))
-	return [][]byte{s.emitChunk(map[string]any{"content": text}, model)}
+	return [][]byte{s.emitChunk(kiroOpenAIDelta{Content: text}, model)}
 }
 
-func (s *kiroStreamState) emitChunk(delta map[string]any, model string) []byte {
-	if s.chunkIndex == 0 && delta != nil {
-		delta["role"] = "assistant"
-	}
-	chunk := map[string]any{
-		"id":      s.responseID,
-		"object":  "chat.completion.chunk",
-		"created": s.created,
-		"model":   model,
-		"choices": []any{
-			map[string]any{
-				"index":         0,
-				"delta":         delta,
-				"finish_reason": nil,
-			},
-		},
+func (s *kiroStreamState) emitChunk(delta kiroOpenAIDelta, model string) []byte {
+	if s.chunkIndex == 0 {
+		delta.Role = "assistant"
 	}
 	s.chunkIndex++
-	b, _ := json.Marshal(chunk)
-	return []byte("data: " + string(b) + "\n\n")
+	chunk := kiroOpenAIStreamChunk{
+		ID:      s.responseID,
+		Object:  "chat.completion.chunk",
+		Created: s.created,
+		Model:   model,
+		Choices: []kiroOpenAIStreamChoice{
+			{Index: 0, Delta: delta, FinishReason: nil},
+		},
+	}
+	return encodeSSEChunk(chunk)
 }
 
 func (s *kiroStreamState) emitStartChunk(model string) []byte {
 	if s.started() {
 		return nil
 	}
-	return s.emitChunk(map[string]any{}, model)
+	return s.emitChunk(kiroOpenAIDelta{}, model)
 }
 
 func (s *kiroStreamState) started() bool { return s.responseID != "" }
@@ -286,7 +281,7 @@ func (s *kiroStreamState) ensureStarted(model string) []byte {
 	}
 	s.responseID = "chatcmpl-" + hex.EncodeToString([]byte(fmt.Sprintf("%d-%s", s.created, genUUID())))[:16]
 	s.created = time.Now().Unix()
-	return s.emitChunk(map[string]any{}, model)
+	return s.emitChunk(kiroOpenAIDelta{}, model)
 }
 
 func (s *kiroStreamState) maybeFlushToolArgs(nameMap map[string]string, model string) [][]byte {
@@ -298,13 +293,11 @@ func (s *kiroStreamState) maybeFlushToolArgs(nameMap map[string]string, model st
 		}
 		last := s.toolArgsEmitted[id]
 		if buf != last {
-			delta := map[string]any{
-				"tool_calls": []any{
-					map[string]any{
-						"index": toolIdx,
-						"function": map[string]any{
-							"arguments": buf,
-						},
+			delta := kiroOpenAIDelta{
+				ToolCalls: []kiroOpenAIToolCallDelta{
+					{
+						Index:    toolIdx,
+						Function: kiroOpenAIFunction{Arguments: buf},
 					},
 				},
 			}
@@ -322,125 +315,120 @@ func (s *kiroStreamState) handleEvent(frame *EventFrame, nameMap map[string]stri
 	}
 
 	eventType := frame.Headers[":event-type"]
-	if eventType == "" && frame.Payload != nil {
-		if _, ok := frame.Payload["assistantResponseEvent"]; ok {
-			eventType = "assistantResponseEvent"
-		} else if _, ok := frame.Payload["reasoningContentEvent"]; ok {
-			eventType = "reasoningContentEvent"
-		} else if _, ok := frame.Payload["toolUseEvent"]; ok {
-			eventType = "toolUseEvent"
-		} else if _, ok := frame.Payload["codeEvent"]; ok {
-			eventType = "codeEvent"
-		} else if _, ok := frame.Payload["messageStopEvent"]; ok {
-			eventType = "messageStopEvent"
-		} else if _, ok := frame.Payload["usageEvent"]; ok {
-			eventType = "usageEvent"
-		} else if _, ok := frame.Payload["contextUsageEvent"]; ok {
-			eventType = "contextUsageEvent"
-		} else if _, ok := frame.Payload["meteringEvent"]; ok {
-			eventType = "meteringEvent"
+	if eventType == "" && len(frame.Payload) > 0 {
+		var keys map[string]json.RawMessage
+		if err := json.Unmarshal(frame.Payload, &keys); err == nil {
+			candidates := []string{
+				"assistantResponseEvent",
+				"reasoningContentEvent",
+				"toolUseEvent",
+				"codeEvent",
+				"messageStopEvent",
+				"usageEvent",
+				"contextUsageEvent",
+				"meteringEvent",
+			}
+			for _, c := range candidates {
+				if _, ok := keys[c]; ok {
+					eventType = c
+					break
+				}
+			}
 		}
 	}
 
 	switch eventType {
 	case "assistantResponseEvent", "codeEvent":
-		payload := frame.Payload
-		if eventType == "assistantResponseEvent" {
-			if p, ok := frame.Payload["assistantResponseEvent"].(map[string]any); ok {
-				payload = p
-			}
-		} else if eventType == "codeEvent" {
-			if p, ok := frame.Payload["codeEvent"].(map[string]any); ok {
-				payload = p
-			}
+		var wrapper struct {
+			AssistantResponse kiroAssistantResponseEvent `json:"assistantResponseEvent"`
+			CodeEvent       kiroAssistantResponseEvent `json:"codeEvent"`
 		}
-		content, _ := payload["content"].(string)
-		if content == "" {
+		_ = json.Unmarshal(frame.Payload, &wrapper)
+		ev := wrapper.AssistantResponse
+		if eventType == "codeEvent" {
+			ev = wrapper.CodeEvent
+		}
+		if ev.Content == "" {
 			return nil
 		}
 
 		// Kiro may inline thinking tags inside assistantResponseEvent content when the
 		// reasoningContentEvent frame is not emitted. Split them stream-safely.
 		if s.thinkingExpected {
-			return s.splitInlineThinking(content, model)
+			return s.splitInlineThinking(ev.Content, model)
 		}
-		s.textLen += int64(len(content))
-		return [][]byte{s.emitChunk(map[string]any{"content": content}, model)}
+		s.textLen += int64(len(ev.Content))
+		return [][]byte{s.emitChunk(kiroOpenAIDelta{Content: ev.Content}, model)}
 
 	case "reasoningContentEvent":
-		payload := frame.Payload
-		if p, ok := frame.Payload["reasoningContentEvent"].(map[string]any); ok {
-			payload = p
+		var wrapper struct {
+			ReasoningContent kiroReasoningContentEvent `json:"reasoningContentEvent"`
 		}
-		text := ""
-		if rt, ok := payload["reasoningText"].(map[string]any); ok {
-			if v, ok := rt["text"].(string); ok {
-				text = v
-			} else if v, ok := rt["Text"].(string); ok {
-				text = v
+		_ = json.Unmarshal(frame.Payload, &wrapper)
+		text := wrapper.ReasoningContent.ReasoningText.Text
+		if text == "" {
+			var direct struct {
+				ReasoningText kiroReasoningText `json:"reasoningText"`
+				Text          string            `json:"text"`
 			}
-		} else if v, ok := payload["text"].(string); ok {
-			text = v
+			_ = json.Unmarshal(frame.Payload, &direct)
+			if direct.Text != "" {
+				text = direct.Text
+			} else {
+				text = direct.ReasoningText.Text
+			}
 		}
 		if text == "" {
 			return nil
 		}
-		return [][]byte{s.emitChunk(map[string]any{"reasoning_content": text}, model)}
+		return [][]byte{s.emitChunk(kiroOpenAIDelta{ReasoningContent: text}, model)}
 
 	case "toolUseEvent":
-		toolUse := frame.Payload
-		if p, ok := frame.Payload["toolUseEvent"].(map[string]any); ok {
-			toolUse = p
+		var wrapper struct {
+			ToolUseEvent kiroToolUseEvent `json:"toolUseEvent"`
 		}
-		toolUseID, _ := toolUse["toolUseId"].(string)
-		if toolUseID == "" {
-			toolUseID, _ = toolUse["toolUseId"].(string)
-		}
+		_ = json.Unmarshal(frame.Payload, &wrapper)
+		ev := wrapper.ToolUseEvent
+		toolUseID := ev.ToolUseId
 		if toolUseID == "" {
 			toolUseID = fmt.Sprintf("call_%d", time.Now().UnixMilli())
 		}
-		name := ""
-		if n, ok := toolUse["name"].(string); ok {
-			name = s.toolName(n, nameMap)
-		}
+		name := s.toolName(ev.Name, nameMap)
+
 		var out [][]byte
 		if _, seen := s.seenToolIDs[toolUseID]; !seen {
 			s.sawToolUse = true
 			s.seenToolIDs[toolUseID] = s.toolIndex
-			delta := map[string]any{
-				"tool_calls": []any{
-					map[string]any{
-						"index": s.toolIndex,
-						"id":    toolUseID,
-						"type":  "function",
-						"function": map[string]any{
-							"name":      name,
-							"arguments": "",
-						},
+			delta := kiroOpenAIDelta{
+				ToolCalls: []kiroOpenAIToolCallDelta{
+					{
+						Index:    s.toolIndex,
+						ID:       toolUseID,
+						Type:     "function",
+						Function: kiroOpenAIFunction{Name: name, Arguments: ""},
 					},
 				},
 			}
 			out = append(out, s.emitChunk(delta, model))
 			s.toolIndex++
 		}
-		if input, ok := toolUse["input"]; ok {
-			var args string
-			switch v := input.(type) {
-			case string:
-				args = v
-			default:
-				b, _ := json.Marshal(v)
-				args = string(b)
+
+		var args string
+		if len(ev.Input) > 0 {
+			if ev.Input[0] == '"' {
+				_ = json.Unmarshal(ev.Input, &args)
+			} else {
+				args = string(ev.Input)
 			}
-			if args != "" {
-				if s.toolArgsBuf == nil {
-					s.toolArgsBuf = make(map[string]string)
-				}
-				s.toolArgsBuf[toolUseID] = args
-				// Emit incrementally if arguments are string deltas, otherwise buffer until flush.
-				if _, isStr := input.(string); isStr {
-					out = append(out, s.maybeFlushToolArgs(nameMap, model)...)
-				}
+		}
+		if args != "" {
+			if s.toolArgsBuf == nil {
+				s.toolArgsBuf = make(map[string]string)
+			}
+			s.toolArgsBuf[toolUseID] = args
+			// Emit incrementally if arguments are string deltas, otherwise buffer until flush.
+			if ev.Input[0] == '"' {
+				out = append(out, s.maybeFlushToolArgs(nameMap, model)...)
 			}
 		}
 		return out
@@ -451,88 +439,90 @@ func (s *kiroStreamState) handleEvent(frame *EventFrame, nameMap map[string]stri
 			finish = "tool_calls"
 		}
 		s.estimateUsage()
-		usage := map[string]any{}
+		var u *kiroOpenAIUsage
 		if s.estInputTokens > 0 || s.estOutputTokens > 0 {
-			usage["prompt_tokens"] = s.estInputTokens
-			usage["completion_tokens"] = s.estOutputTokens
-			usage["total_tokens"] = s.estInputTokens + s.estOutputTokens
+			u = &kiroOpenAIUsage{
+				PromptTokens:     s.estInputTokens,
+				CompletionTokens: s.estOutputTokens,
+				TotalTokens:      s.estInputTokens + s.estOutputTokens,
+			}
 		}
 		if s.cacheReadTokens > 0 {
-			usage["cache_read_input_tokens"] = s.cacheReadTokens
+			if u == nil {
+				u = &kiroOpenAIUsage{}
+			}
+			u.CacheReadInputTokens = s.cacheReadTokens
 		}
 		if s.cacheCreationTokens > 0 {
-			usage["cache_creation_input_tokens"] = s.cacheCreationTokens
+			if u == nil {
+				u = &kiroOpenAIUsage{}
+			}
+			u.CacheCreationInputTokens = s.cacheCreationTokens
 		}
-		chunk := map[string]any{
-			"id":      s.responseID,
-			"object":  "chat.completion.chunk",
-			"created": s.created,
-			"model":   model,
-			"choices": []any{
-				map[string]any{
-					"index":         0,
-					"delta":         map[string]any{},
-					"finish_reason": finish,
-				},
+		finishReason := finish
+		chunk := kiroOpenAIStreamChunk{
+			ID:      s.responseID,
+			Object:  "chat.completion.chunk",
+			Created: s.created,
+			Model:   model,
+			Choices: []kiroOpenAIStreamChoice{
+				{Index: 0, Delta: kiroOpenAIDelta{}, FinishReason: &finishReason},
 			},
-		}
-		if len(usage) > 0 {
-			chunk["usage"] = usage
+			Usage: u,
 		}
 		s.finishEmitted = true
-		b, _ := json.Marshal(chunk)
-		return [][]byte{[]byte("data: " + string(b) + "\n\n")}
+		return [][]byte{encodeSSEChunk(chunk)}
 
 	case "contextUsageEvent":
-		payload := frame.Payload
-		if p, ok := frame.Payload["contextUsageEvent"].(map[string]any); ok {
-			payload = p
+		var wrapper struct {
+			ContextUsageEvent kiroContextUsageEvent `json:"contextUsageEvent"`
 		}
-		if pct, ok := toFloat64(payload["contextUsagePercentage"]); ok && pct > 0 {
-			s.hasContextUsage = true
-			s.contextUsagePct = int64(pct)
+		if err := json.Unmarshal(frame.Payload, &wrapper); err == nil {
+			if pct := wrapper.ContextUsageEvent.ContextUsagePercentage; pct > 0 {
+				s.hasContextUsage = true
+				s.contextUsagePct = int64(pct)
+			}
 		}
 		return nil
 
 	case "meteringEvent":
 		s.hasMeteringEvent = true
-		payload := frame.Payload
-		if p, ok := frame.Payload["meteringEvent"].(map[string]any); ok {
-			payload = p
+		var wrapper struct {
+			MeteringEvent kiroMeteringEvent `json:"meteringEvent"`
 		}
-		if p, ok := payload["metricsEvent"].(map[string]any); ok {
-			payload = p
+		if err := json.Unmarshal(frame.Payload, &wrapper); err != nil {
+			return nil
 		}
-		if inTok, ok := toInt64(payload["inputTokens"]); ok && inTok > 0 {
-			s.estInputTokens = inTok
+		m := wrapper.MeteringEvent.MetricsEvent
+		if m.InputTokens > 0 {
+			s.estInputTokens = m.InputTokens
 		}
-		if outTok, ok := toInt64(payload["outputTokens"]); ok && outTok > 0 {
-			s.estOutputTokens = outTok
+		if m.OutputTokens > 0 {
+			s.estOutputTokens = m.OutputTokens
 		}
-		if v, ok := toInt64(payload["cacheReadInputTokens"]); ok && v > 0 {
-			s.cacheReadTokens = v
+		if m.CacheReadInputTokens > 0 {
+			s.cacheReadTokens = m.CacheReadInputTokens
+		} else if m.CacheReadInputTokensSnake > 0 {
+			s.cacheReadTokens = m.CacheReadInputTokensSnake
 		}
-		if v, ok := toInt64(payload["cache_read_input_tokens"]); ok && v > 0 {
-			s.cacheReadTokens = v
-		}
-		if v, ok := toInt64(payload["cacheCreationInputTokens"]); ok && v > 0 {
-			s.cacheCreationTokens = v
-		}
-		if v, ok := toInt64(payload["cache_creation_input_tokens"]); ok && v > 0 {
-			s.cacheCreationTokens = v
+		if m.CacheCreationInputTokens > 0 {
+			s.cacheCreationTokens = m.CacheCreationInputTokens
+		} else if m.CacheCreationInputTokensSnake > 0 {
+			s.cacheCreationTokens = m.CacheCreationInputTokensSnake
 		}
 		return nil
 
 	case "usageEvent":
-		payload := frame.Payload
-		if p, ok := frame.Payload["usageEvent"].(map[string]any); ok {
-			payload = p
+		var wrapper struct {
+			UsageEvent kiroUsageEvent `json:"usageEvent"`
 		}
-		if inTok, ok := toInt64(payload["inputTokens"]); ok {
-			s.estInputTokens = inTok
-		}
-		if outTok, ok := toInt64(payload["outputTokens"]); ok {
-			s.estOutputTokens = outTok
+		if err := json.Unmarshal(frame.Payload, &wrapper); err == nil {
+			if wrapper.UsageEvent.InputTokens > 0 {
+				s.estInputTokens = wrapper.UsageEvent.InputTokens
+			}
+			if wrapper.UsageEvent.OutputTokens > 0 {
+				s.estOutputTokens = wrapper.UsageEvent.OutputTokens
+			}
 		}
 		return nil
 	}
