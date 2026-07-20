@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **In-product upgrade, logs, and restart flow** — `POST /api/admin/upgrade` now returns per-step upgrade logs, and `POST /api/admin/restart` restarts the service; the About page and update-available modal show live logs and a restart prompt after upgrade completes.
+
 ## [0.3.16] - 2026-07-20
 
 ### Added
