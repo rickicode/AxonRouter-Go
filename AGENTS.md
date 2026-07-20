@@ -170,6 +170,19 @@ When CLIProxyAPI, AxonRouter, and OmniRoute implement the same subsystem:
 - Pre-computed eligible list for O(1) routing.
 - Dashboard pagination is mandatory.
 
+## Routing Hot Path Implementation Notes
+
+The connection-selection path in `internal/api/handlers/v1/handler.go` is heavily optimized. When touching routing code, preserve these invariants:
+
+1. **Eligibility snapshot is lock-free** — stored in `atomic.Value` (`internal/connstate/eligibility.go`). Rebuilds are coalesced into a 50ms window to avoid O(N) spikes under bursty failovers.
+2. **Hot path is bounded** — `getConnection` samples at most `pickMaxAttempts = 10` eligible candidates before falling back; the snapshot also stores pre-sorted `*ConnectionState` pointers (`ByPrefixState`) to avoid repeated `store.Get` lookups.
+3. **Round-robin is per `provider/model`** — `providercfg.NextRoundRobinIndex` keys its atomic counter by `providerID + "\x00" + modelID` so models rotate independently.
+4. **Avoid repeated `time.Now()`** — `tryPickConnection` captures one `now` value and passes it to cooldown/exhaustion checks. Add `_At(now)` variants instead of adding new clock reads.
+5. **Read-heavy caches use `sync.Map`** — `ExhaustionCache` and the connection credential cache in `Handler.conns` are `sync.Map`; don't introduce `sync.RWMutex` guarding a global map on the hot path.
+6. **Resolve `RoutingMode` once per request** — pass the resolved `providercfg.RoutingMode` down the call chain; do not re-query the provider-config manager inside loops or log statements.
+7. **Cold disk loads use `singleflight`** — `providercfg.Manager.Get` collapses concurrent first-time reads for the same provider JSON to a single `os.ReadFile`.
+8. **Recency tiebreaker is in-memory only** — `ConnectionState.lastUsedAt` is an `atomic.Int64` (unix-nano) used as a secondary sort key; it is not persisted to SQLite.
+
 ## Execution & Build Rules
 
 1. **Always commit** once the work is stable and tests pass.

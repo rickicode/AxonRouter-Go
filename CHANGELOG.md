@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - **Restrict master API key break-glass actions** — the programmatic `/admin/api/v1` master key can no longer change the admin password, restart/upgrade the gateway, download/restore backups, read/regenerate itself, or alter TLS config. It remains usable for all other admin-automation endpoints (providers, connections, models, combos, proxy pools, API keys, logs, usage, quota, settings, etc.).
 
+### Changed
+- **Routing hot-path optimizations** — reduced `getConnection` ready-snapshot latency by ~4.7× (17.3 µs → 3.7 µs) by capturing `time.Now()` once per candidate, removing redundant `RoutingMode()` lookups from the hot path, converting `ExhaustionCache` to `sync.Map`, and using `singleflight` to collapse concurrent first-time provider-config disk reads.
+- **Pre-materialized eligibility readyView** — `EligibilitySnapshot` now stores sorted `*ConnectionState` pointers per provider prefix so the routing loop avoids repeated `store.Get` map lookups.
+
+### Added
+- **Routing hot-path benchmarks** — `internal/api/handlers/v1/handler_benchmark_test.go`, `providercfg_benchmark_test.go`, `modellock_benchmark_test.go`, and `exhaustion_benchmark_test.go` baseline the connection-selection path.
+- **Per-model round-robin cursor** — round-robin counters are now keyed by `provider + "\x00" + modelID` so independent models on the same provider rotate separately and high-traffic models do not steal rotation from siblings.
+
 ## [0.3.17] - 2026-07-20
 
 ### Added
