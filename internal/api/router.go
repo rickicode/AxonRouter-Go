@@ -75,6 +75,9 @@ type Router struct {
 	cleanup         *background.Cleanup
 	rateLimitProber *background.RateLimitProber
 
+	// versionChecker polls GitHub Releases for update notifications.
+	versionChecker *version.Checker
+
 	// Shutdown may be invoked more than once (e.g. service manager + manual
 	// restart after restore). Guard the cleanup so it is idempotent.
 	shutdownOnce sync.Once
@@ -498,6 +501,7 @@ func New(cfg Config) *Router {
 		usageFlush:      usageFlush,
 		cleanup:         cleanup,
 		rateLimitProber: rateLimitProber,
+		versionChecker:  versionChecker,
 	}
 
 	// Let the TLS handler report whether HTTPS is actually listening.
@@ -626,6 +630,9 @@ func (r *Router) Shutdown() {
 		r.usageFlush.Stop()
 		r.cleanup.Stop()
 		r.rateLimitProber.Stop()
+		if r.versionChecker != nil {
+			r.versionChecker.Stop()
+		}
 	})
 }
 

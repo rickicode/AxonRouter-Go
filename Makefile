@@ -189,5 +189,5 @@ release:
 	@git add -A
 	@git commit -m "release: v$(v)"
 	@git tag -a "v$(v)" -m "Release v$(v)"
-	@git push origin main "v$(v)"
+	@git push origin master "v$(v)"
 	@echo "Released v$(v)"

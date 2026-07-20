@@ -387,23 +387,12 @@ Use the exact version the user asked for. If no version was specified, ask.
 make release v=X.Y.Z
 ```
 
-#### 7.5 Work around the Makefile push bug
-`make release` tries to push branch `main`, but this repo uses `master`. When you see:
-```
-error: src refspec main does not match any
-```
-finish the push manually:
-```bash
-git push origin master
-git push origin vX.Y.Z
-```
-
-#### 7.6 Verify the release artifacts
+#### 7.5 Verify the release artifacts
 - Local tag: `git tag --list 'vX.Y.Z'`
 - Remote tag: `git ls-remote --tags origin vX.Y.Z`
 - GitHub Actions release workflow is triggered by the tag.
 
-#### 7.7 If recreating an existing release
+#### 7.6 If recreating an existing release
 Sometimes the user deletes a release and wants the same version again. Do this first:
 1. Delete remote tag: `git push --delete origin vX.Y.Z`
 2. Delete local tag: `git tag -d vX.Y.Z`

@@ -108,30 +108,30 @@ async function handleUpgrade() {
       throw new Error(data.error || `Upgrade returned ${res.status}`);
     }
 
-		const path = typeof data.path === 'string' ? data.path : '';
-		restartCommand = typeof data.restart_command === 'string' ? data.restart_command : '';
-		restartHint = typeof data.restart_hint === 'string' ? data.restart_hint : '';
-		upgradeJustCompleted = true;
-		toast.success(path ? `Upgrade saved to ${path}` : 'Upgrade completed');
-	} catch (err) {
+    const path = typeof data.path === 'string' ? data.path : '';
+    restartCommand = typeof data.restart_command === 'string' ? data.restart_command : '';
+    restartHint = typeof data.restart_hint === 'string' ? data.restart_hint : '';
+    upgradeJustCompleted = true;
+    toast.success(path ? `Upgrade saved to ${path}` : 'Upgrade completed');
+  } catch (err) {
     const message = err instanceof Error ? err.message : 'Upgrade failed';
     toast.error('Upgrade failed: ' + message);
-	} finally {
-		clearTimeout(timeout);
-		upgrading = false;
-	}
+  } finally {
+    clearTimeout(timeout);
+    upgrading = false;
+  }
 }
 
 async function copyRestartCommand() {
-	if (!restartCommand) return;
-	try {
-		await navigator.clipboard.writeText(restartCommand);
-		copiedCommand = true;
-		toast.success('Restart command copied');
-		setTimeout(() => { copiedCommand = false; }, 2000);
-	} catch {
-		toast.error('Copy failed');
-	}
+  if (!restartCommand) return;
+  try {
+    await navigator.clipboard.writeText(restartCommand);
+    copiedCommand = true;
+    toast.success('Restart command copied');
+    setTimeout(() => { copiedCommand = false; }, 2000);
+  } catch {
+    toast.error('Copy failed');
+  }
 }
 
 let checking = $state(false);
