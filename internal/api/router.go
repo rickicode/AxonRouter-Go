@@ -205,6 +205,7 @@ func New(cfg Config) *Router {
 	healthH := admin.NewHealthHandler(cfg.DB, store, tracker, versionChecker)
 	upgradeH := admin.NewUpgradeHandler(versionChecker)
 	restartH := admin.NewRestartHandler()
+	consoleLogsH := admin.NewConsoleLogsHandler()
 	proxyPoolH := admin.NewProxyPoolHandler(cfg.DB, proxyHealth, proxyResolver, writeQueue)
 	proxyGroupH := admin.NewProxyGroupHandler(cfg.DB, proxyResolver)
 	proxyDeployH := admin.NewProxyDeployHandler(cfg.DB, proxyHealth, proxyResolver)
@@ -378,6 +379,9 @@ func New(cfg Config) *Router {
 		g.GET("/upgrade/check", healthH.CheckUpdate)
 		g.POST("/upgrade", upgradeH.Upgrade)
 		g.POST("/restart", restartH.Restart)
+
+		// Console logs (rotating file in /tmp)
+		g.GET("/console-logs", consoleLogsH.Get)
 
 		// Quota
 		g.GET("/quota", quotaH.List)
