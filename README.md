@@ -397,15 +397,14 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.16
+### What's New in v0.3.17
 
 ### Added
-- **Auto-refresh OAuth tokens during connection test** — expired OAuth tokens are refreshed automatically before `TestConnection` validates the account.
-- Docker image build/push moved into the GitHub Actions release workflow.
+- **Console log file rotation and dashboard Console page** — application logs are now written to a rotating on-disk file (`/tmp/axonrouter.log`) via `internal/logging/file.go` (2 MB max, 3 backups). A new `GET /api/admin/console-logs` endpoint tails up to 500 lines for the dashboard, and the new Console page under System shows live, auto-polling log output in the sidebar.
+- **In-product upgrade, logs, and restart flow** — `POST /api/admin/upgrade` now returns per-step upgrade logs, and `POST /api/admin/restart` restarts the service; the About page and update-available modal show live logs and a restart prompt after upgrade completes.
 
 ### Fixed
-- **CodeBuddy routing and quota display** — adds a fallback router path for CodeBuddy so requests reach the right translator and surfaces CodeBuddy quota as credits in the dashboard.
-- **Kiro OpenAI translator wiring** — wires the OpenAI→Kiro translator, refreshes provider-specific defaults (PSD), and syncs the live model catalog.
+- **Cloudflare Kimi reasoning stream hang** — defaults `chat_template_kwargs.thinking` to `false` for Cloudflare reasoning models unless the client explicitly requests reasoning, and normalizes upstream `reasoning` fields to OpenAI-standard `reasoning_content` in both streaming and non-streaming responses so `cf/moonshotai/kimi-k2.7` no longer appears stuck in thinking.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
