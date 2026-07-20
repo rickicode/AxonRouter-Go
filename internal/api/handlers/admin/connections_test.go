@@ -51,11 +51,11 @@ func newConnectionHandlerForTest(t *testing.T, database *sql.DB, registry *execu
 	store := connstate.NewStore()
 	elig := connstate.NewEligibilityManager(store)
 	return &ConnectionHandler{
-		db: database,
-		store: store,
-		elig: elig,
+		db:         database,
+		store:      store,
+		elig:       elig,
 		exhaustion: quota.NewExhaustionCache(),
-		registry: registry,
+		registry:   registry,
 	}
 }
 

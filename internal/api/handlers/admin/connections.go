@@ -279,17 +279,22 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 		ID             string
 		ProviderTypeID string
 		Format         string
+		AuthType       string
 		APIKey         string
 		AccessToken    string
+		RefreshToken   string
+		ExpiresAt      int64
 		BaseURL        string
 		PSDRaw         string
 	}
 	err := h.db.QueryRow(`
-		SELECT c.id, c.provider_type_id, pt.format, COALESCE(c.api_key,''), COALESCE(c.oauth_token,''),
+		SELECT c.id, c.provider_type_id, pt.format, COALESCE(c.auth_type,''), COALESCE(c.api_key,''),
+		       COALESCE(c.oauth_token,''), COALESCE(c.oauth_refresh_token,''), COALESCE(c.oauth_expires_at,0),
 		       COALESCE(pt.base_url,''), COALESCE(c.provider_specific_data, '')
 		FROM connections c JOIN provider_types pt ON c.provider_type_id = pt.id
 		WHERE c.id = ?
-	`, id).Scan(&conn.ID, &conn.ProviderTypeID, &conn.Format, &conn.APIKey, &conn.AccessToken, &conn.BaseURL, &conn.PSDRaw)
+	`, id).Scan(&conn.ID, &conn.ProviderTypeID, &conn.Format, &conn.AuthType, &conn.APIKey,
+		&conn.AccessToken, &conn.RefreshToken, &conn.ExpiresAt, &conn.BaseURL, &conn.PSDRaw)
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
 		return
@@ -316,41 +321,170 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 		json.Unmarshal([]byte(conn.PSDRaw), &psdMap)
 	}
 
-	start := time.Now()
-	streamResult, err := exec.ExecuteStream(c.Request.Context(), &executor.Request{
+	ctx := c.Request.Context()
+	accessToken := conn.AccessToken
+	refreshToken := conn.RefreshToken
+	expiresAt := conn.ExpiresAt
+
+	// Refresh expired/near-expiry OAuth tokens before testing.
+	if h.authMgr != nil && conn.AuthType == "oauth" && shouldRefreshTestToken(conn.ProviderTypeID, refreshToken, expiresAt) {
+		creds := &auth.Credentials{
+			AccessToken:  accessToken,
+			RefreshToken: refreshToken,
+			ExpiresAt:    time.Unix(expiresAt, 0),
+		}
+		newCreds, refreshErr := h.authMgr.RefreshToken(ctx, auth.ProviderType(conn.ProviderTypeID), creds)
+		if refreshErr != nil {
+			log.Printf("TestConnection proactive refresh failed for %s: %v", id, refreshErr)
+		} else {
+			accessToken = newCreds.AccessToken
+			expiresAt = newCreds.ExpiresAt.Unix()
+			refreshToken = newCreds.RefreshToken
+			if refreshToken == "" {
+				refreshToken = conn.RefreshToken
+			}
+			if len(newCreds.ProviderSpecific) > 0 {
+				psdMap = newCreds.ProviderSpecific
+			}
+			if len(psdMap) > 0 {
+				psdJSON, _ := json.Marshal(psdMap)
+				if err := h.execWrite(ctx, "testconnection:refresh:"+id, func(d *sql.DB) error {
+					_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?`,
+						accessToken, refreshToken, expiresAt, psdJSON, time.Now().Unix(), id)
+					return err
+				}); err != nil {
+					log.Printf("TestConnection failed to persist refreshed token for %s: %v", id, err)
+				}
+			} else {
+				if err := h.execWrite(ctx, "testconnection:refresh:"+id, func(d *sql.DB) error {
+					_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
+						accessToken, refreshToken, expiresAt, time.Now().Unix(), id)
+					return err
+				}); err != nil {
+					log.Printf("TestConnection failed to persist refreshed token for %s: %v", id, err)
+				}
+			}
+		}
+	}
+
+	req := &executor.Request{
 		APIKey:               conn.APIKey,
-		AccessToken:          conn.AccessToken,
+		AccessToken:          accessToken,
 		BaseURL:              conn.BaseURL,
 		Body:                 bodyBytes,
 		Provider:             conn.ProviderTypeID,
 		Model:                model,
 		ProviderSpecificData: psdMap,
-	})
-	if err != nil {
-		latency := time.Since(start).Milliseconds()
-		if upErr, ok := grokCLITestSoftSuccess(conn.ProviderTypeID, err); ok {
-			h.recordTestSuccess(id)
-			c.JSON(http.StatusOK, gin.H{
-				"connection_id": id,
-				"status":        "ok",
-				"status_code":   upErr.StatusCode,
-				"latency_ms":    latency,
-				"message":       "Authentication succeeded, but credits/quota are exhausted. The connection remains ready.",
-			})
-			return
-		}
-		det := connstate.DetectError(c.Request.Context(), 0, "", err, conn.ProviderTypeID, "", nil)
-		h.recordTestFailure(id, det)
+	}
+	latency, statusCode, testErr := h.runTestAttempt(ctx, exec, req)
+	if testErr == nil {
+		h.recordTestSuccess(id)
 		c.JSON(http.StatusOK, gin.H{
 			"connection_id": id,
-			"status":        "failed",
-			"error":         err.Error(),
+			"status":        "ok",
+			"status_code":   statusCode,
 			"latency_ms":    latency,
 		})
 		return
 	}
 
-	// Read first chunk to verify connectivity, drain rest
+	if upErr, ok := grokCLITestSoftSuccess(conn.ProviderTypeID, testErr); ok {
+		h.recordTestSuccess(id)
+		c.JSON(http.StatusOK, gin.H{
+			"connection_id": id,
+			"status":        "ok",
+			"status_code":   upErr.StatusCode,
+			"latency_ms":    latency,
+			"message":       "Authentication succeeded, but credits/quota are exhausted. The connection remains ready.",
+		})
+		return
+	}
+
+	det := connstate.DetectError(ctx, 0, "", testErr, conn.ProviderTypeID, "", nil)
+	if h.authMgr != nil && conn.AuthType == "oauth" && refreshToken != "" && isRefreshableTestError(conn.ProviderTypeID, testErr, det) {
+		creds := &auth.Credentials{
+			AccessToken:  accessToken,
+			RefreshToken: refreshToken,
+			ExpiresAt:    time.Unix(expiresAt, 0),
+		}
+		newCreds, refreshErr := h.authMgr.RefreshToken(ctx, auth.ProviderType(conn.ProviderTypeID), creds)
+		if refreshErr == nil {
+			accessToken = newCreds.AccessToken
+			expiresAt = newCreds.ExpiresAt.Unix()
+			refreshToken = newCreds.RefreshToken
+			if refreshToken == "" {
+				refreshToken = conn.RefreshToken
+			}
+			if len(newCreds.ProviderSpecific) > 0 {
+				psdMap = newCreds.ProviderSpecific
+			}
+			if len(psdMap) > 0 {
+				psdJSON, _ := json.Marshal(psdMap)
+				if err := h.execWrite(ctx, "testconnection:refresh:"+id, func(d *sql.DB) error {
+					_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?`,
+						accessToken, refreshToken, expiresAt, psdJSON, time.Now().Unix(), id)
+					return err
+				}); err != nil {
+					log.Printf("TestConnection failed to persist refreshed token for %s: %v", id, err)
+				}
+			} else {
+				if err := h.execWrite(ctx, "testconnection:refresh:"+id, func(d *sql.DB) error {
+					_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
+						accessToken, refreshToken, expiresAt, time.Now().Unix(), id)
+					return err
+				}); err != nil {
+					log.Printf("TestConnection failed to persist refreshed token for %s: %v", id, err)
+				}
+			}
+
+			req.AccessToken = accessToken
+			req.ProviderSpecificData = psdMap
+			latency, statusCode, testErr = h.runTestAttempt(ctx, exec, req)
+			if testErr == nil {
+				h.recordTestSuccess(id)
+				c.JSON(http.StatusOK, gin.H{
+					"connection_id": id,
+					"status":        "ok",
+					"status_code":   statusCode,
+					"latency_ms":    latency,
+				})
+				return
+			}
+			if upErr, ok := grokCLITestSoftSuccess(conn.ProviderTypeID, testErr); ok {
+				h.recordTestSuccess(id)
+				c.JSON(http.StatusOK, gin.H{
+					"connection_id": id,
+					"status":        "ok",
+					"status_code":   upErr.StatusCode,
+					"latency_ms":    latency,
+					"message":       "Authentication succeeded, but credits/quota are exhausted. The connection remains ready.",
+				})
+				return
+			}
+			det = connstate.DetectError(ctx, 0, "", testErr, conn.ProviderTypeID, "", nil)
+		} else {
+			log.Printf("TestConnection reactive refresh failed for %s: %v", id, refreshErr)
+		}
+	}
+
+	h.recordTestFailure(id, det)
+	c.JSON(http.StatusOK, gin.H{
+		"connection_id": id,
+		"status":        "failed",
+		"error":         testErr.Error(),
+		"latency_ms":    latency,
+	})
+}
+
+// runTestAttempt executes the stream and drains the first chunk, returning the
+// latency, HTTP status code on success, and the first error encountered.
+func (h *ConnectionHandler) runTestAttempt(ctx context.Context, exec executor.Executor, req *executor.Request) (int64, int, error) {
+	start := time.Now()
+	streamResult, err := exec.ExecuteStream(ctx, req)
+	if err != nil {
+		return time.Since(start).Milliseconds(), 0, err
+	}
+
 	var firstErr error
 	for chunk := range streamResult.Chunks {
 		if chunk.Err != nil {
@@ -359,38 +493,10 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 		}
 	}
 	latency := time.Since(start).Milliseconds()
-
 	if firstErr != nil {
-		if upErr, ok := grokCLITestSoftSuccess(conn.ProviderTypeID, firstErr); ok {
-			h.recordTestSuccess(id)
-			c.JSON(http.StatusOK, gin.H{
-				"connection_id": id,
-				"status":        "ok",
-				"status_code":   upErr.StatusCode,
-				"latency_ms":    latency,
-				"message":       "Authentication succeeded, but credits/quota are exhausted. The connection remains ready.",
-			})
-			return
-		}
-		det := connstate.DetectError(c.Request.Context(), 0, "", firstErr, conn.ProviderTypeID, "", nil)
-		h.recordTestFailure(id, det)
-		c.JSON(http.StatusOK, gin.H{
-			"connection_id": id,
-			"status":        "failed",
-			"error":         firstErr.Error(),
-			"latency_ms":    latency,
-		})
-		return
+		return latency, 0, firstErr
 	}
-
-	h.recordTestSuccess(id)
-
-	c.JSON(http.StatusOK, gin.H{
-		"connection_id": id,
-		"status":        "ok",
-		"status_code":   streamResult.StatusCode,
-		"latency_ms":    latency,
-	})
+	return latency, streamResult.StatusCode, nil
 }
 
 // grokCLITestSoftSuccess reports whether a Grok CLI connection test error is an
@@ -482,6 +588,15 @@ func (h *ConnectionHandler) recordTestFailure(connID string, det connstate.Error
 	if h.elig != nil {
 		h.elig.Update(h.store)
 	}
+}
+
+// execWrite runs a DB write through the single-writer queue when available,
+// falling back to a direct exec so callers can run with or without a queue.
+func (h *ConnectionHandler) execWrite(ctx context.Context, label string, fn func(*sql.DB) error) error {
+	if h.writeQueue != nil {
+		return h.writeQueue.Do(ctx, label, fn)
+	}
+	return fn(h.db)
 }
 
 // ResetStatus resets a connection's status and syncs in-memory state.
