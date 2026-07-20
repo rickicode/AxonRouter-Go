@@ -121,14 +121,26 @@ install_systemd_service() {
   [[ "$SKIP_SERVICE" == false ]] || return 0
   command -v systemctl >/dev/null 2>&1 || return 0
 
+  # Detect whether an existing unit is installed in the user scope or system
+  # scope. Prefer the detected location over the current UID so that an
+  # upgrade works even if the installer is accidentally run with sudo after
+  # the service was originally installed as a user service.
   local systemctl_user=""
-  [[ "$EUID" -ne 0 ]] && systemctl_user="--user"
+  local has_user_unit=false
+  local has_system_unit=false
+  if systemctl --user cat axonrouter.service >/dev/null 2>&1; then
+    has_user_unit=true
+    systemctl_user="--user"
+  elif systemctl cat axonrouter.service >/dev/null 2>&1; then
+    has_system_unit=true
+    systemctl_user=""
+  fi
 
   # If the service is already installed, we are doing an upgrade: just reload
   # systemd and restart/start with the new binary. Otherwise kardianos/service
   # fails with "Init already exists".
-  if systemctl $systemctl_user cat axonrouter.service >/dev/null 2>&1; then
-    info "axonrouter.service is already installed; restarting with the new binary..."
+  if [[ "$has_user_unit" == true || "$has_system_unit" == true ]]; then
+    info "axonrouter.service is already installed ($([[ "$has_user_unit" == true ]] && echo user || echo system)); restarting with the new binary..."
     systemctl $systemctl_user daemon-reload
     if systemctl $systemctl_user is-active --quiet axonrouter.service; then
       systemctl $systemctl_user restart axonrouter.service || echo "warning: service restart failed." >&2
@@ -137,6 +149,9 @@ install_systemd_service() {
     fi
     return 0
   fi
+
+  # Fresh install: choose scope based on current privileges.
+  [[ "$EUID" -ne 0 ]] && systemctl_user="--user"
 
   info "Installing systemd service..."
   if ! "${INSTALLED}" --service install; then
