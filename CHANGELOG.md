@@ -21,9 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `version.Checker` is now owned by `Router` and stopped during graceful shutdown.
 
 ### Fixed
+- **CodeBuddy streaming reasoning leak** — aggregates `reasoning_content` deltas into a single block, strips non-standard SSE noise (`extra_fields`, null `function_call`, empty `refusal`, intermediate `usage`) so clients such as OpenCode don't render choppy "thinking" placeholders.
 - `installer.sh` no longer fails with `Init already exists` when upgrading an existing installation; it now reloads and restarts the axonrouter service automatically.
 - `Makefile` release target now pushes the `master` branch instead of `main`.
-- Sidebar changelog link now points to the `master` branch.
 
 ## [0.3.14] - 2026-07-20
 
