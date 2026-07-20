@@ -2,6 +2,7 @@ package connstate
 
 import (
 	"strings"
+	"sync"
 
 	provideralias "github.com/rickicode/AxonRouter-Go/internal/provider"
 )
@@ -10,6 +11,11 @@ var perModelProviders = map[string]bool{
 	"oc": true,
 	"ag": true,
 }
+
+// antigravityScopeCache memoizes antigravityQuotaFamily results keyed by
+// the original model string. Only Antigravity uses family logic today, so
+// a per-model key is sufficient and avoids concatenation overhead.
+var antigravityScopeCache sync.Map
 
 // HasPerModelQuota returns true if the provider has independent per-model quotas
 // on a single connection. For these providers a 429/quota error on one model must
@@ -24,13 +30,18 @@ func HasPerModelQuota(provider string) bool {
 // quota family (family:gemini or family:claude). Returns the original model for
 // non-per-model providers (the value is unused by callers in that case).
 func ModelScope(provider, model string) string {
-	if !HasPerModelQuota(provider) {
+	provider = provideralias.ResolveAlias(provider)
+	if !perModelProviders[provider] {
 		return model
 	}
-	provider = provideralias.ResolveAlias(provider)
 	switch provider {
 	case "ag":
-		return antigravityQuotaFamily(model)
+		if cached, ok := antigravityScopeCache.Load(model); ok {
+			return cached.(string)
+		}
+		scope := antigravityQuotaFamily(model)
+		antigravityScopeCache.Store(model, scope)
+		return scope
 	default:
 		return model
 	}
