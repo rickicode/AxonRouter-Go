@@ -102,6 +102,36 @@ func TestUpgrade_DownloadsAndVerifiesBinary(t *testing.T) {
 	if resp["restart_hint"] != wantHint {
 		t.Errorf("restart_hint = %v, want %s", resp["restart_hint"], wantHint)
 	}
+
+	logs, ok := resp["logs"].([]any)
+	if !ok || len(logs) == 0 {
+		t.Fatalf("logs = %v, want non-empty []string", resp["logs"])
+	}
+	wantLogs := []string{
+		"Checking latest version...",
+		fmt.Sprintf("Downloading %s...", asset),
+		"Verifying checksum...",
+		"Writing new binary...",
+		"Upgrade complete",
+	}
+	for _, want := range wantLogs {
+		found := false
+		for _, l := range logs {
+			if l == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("missing expected log: %q in %v", want, logs)
+		}
+	}
+	backupLog := fmt.Sprintf("Backing up existing binary to %s.bak...", wantPath)
+	for _, l := range logs {
+		if l == backupLog {
+			t.Errorf("unexpected backup log in fresh install: %q", l)
+		}
+	}
 }
 
 func TestRestartInstructions(t *testing.T) {
@@ -198,6 +228,26 @@ func TestUpgrade_BackupCreated(t *testing.T) {
 	}
 	if string(backup) != string(original) {
 		t.Errorf("backup binary = %q, want %q", backup, original)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	logs, ok := resp["logs"].([]any)
+	if !ok {
+		t.Fatalf("logs = %v, want []string", resp["logs"])
+	}
+	wantBackupLog := fmt.Sprintf("Backing up existing binary to %s.bak...", path)
+	found := false
+	for _, l := range logs {
+		if l == wantBackupLog {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("missing backup log: %q in %v", wantBackupLog, logs)
 	}
 }
 

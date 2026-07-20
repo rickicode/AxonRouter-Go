@@ -28,6 +28,7 @@ type UpgradeHandler struct {
 	baseURL string
 	binDir  string
 	mu      sync.Mutex
+	logs    []string
 }
 
 // NewUpgradeHandler creates a handler that downloads the latest release.
@@ -45,6 +46,9 @@ func (h *UpgradeHandler) Upgrade(c *gin.Context) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	h.logs = nil
+	h.logs = append(h.logs, "Checking latest version...")
+
 	info, ok := h.checker.LatestVersion()
 	if !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to determine latest version"})
@@ -56,6 +60,8 @@ func (h *UpgradeHandler) Upgrade(c *gin.Context) {
 	}
 
 	asset := assetName()
+	h.logs = append(h.logs, fmt.Sprintf("Downloading %s...", asset))
+
 	assetURL := fmt.Sprintf("%s/%s/%s", h.baseURL, info.Tag, asset)
 	checksumURL := fmt.Sprintf("%s/%s/checksums.txt", h.baseURL, info.Tag)
 
@@ -71,6 +77,8 @@ func (h *UpgradeHandler) Upgrade(c *gin.Context) {
 		return
 	}
 
+	h.logs = append(h.logs, "Verifying checksum...")
+
 	expected, err := findChecksum(checksums, asset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("checksum lookup: %v", err)})
@@ -83,11 +91,15 @@ func (h *UpgradeHandler) Upgrade(c *gin.Context) {
 		return
 	}
 
+	h.logs = append(h.logs, "Writing new binary...")
+
 	path, err := h.writeBinary(asset, binary)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("write binary: %v", err)})
 		return
 	}
+
+	h.logs = append(h.logs, "Upgrade complete")
 
 	restartCmd, restartHint := restartInstructions()
 
@@ -98,6 +110,7 @@ func (h *UpgradeHandler) Upgrade(c *gin.Context) {
 		"asset":           asset,
 		"restart_command": restartCmd,
 		"restart_hint":    restartHint,
+		"logs":            h.logs,
 	})
 }
 
@@ -180,6 +193,7 @@ func (h *UpgradeHandler) writeBinary(asset string, binary []byte) (string, error
 	targetExisted := false
 	if _, err := os.Stat(path); err == nil {
 		targetExisted = true
+		h.logs = append(h.logs, fmt.Sprintf("Backing up existing binary to %s...", backupPath))
 		if err := copyFile(path, backupPath); err != nil {
 			return "", fmt.Errorf("backup existing binary: %w", err)
 		}
