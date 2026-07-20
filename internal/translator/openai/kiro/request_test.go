@@ -172,6 +172,22 @@ func uimHasTools(uim map[string]any) bool {
 	return len(tools) > 0
 }
 
+func TestSupportsReasoning_NewClaudeModels(t *testing.T) {
+	cases := map[string]bool{
+		"claude-opus-4.8":  true,
+		"claude-opus-4.7":  true,
+		"claude-sonnet-4.8": true,
+		"claude-sonnet-4.7": true,
+		"claude-opus-4.5":  false,
+		"claude-haiku-4.5": false,
+	}
+	for model, want := range cases {
+		if got := supportsReasoning(model); got != want {
+			t.Errorf("supportsReasoning(%q) = %v, want %v", model, got, want)
+		}
+	}
+}
+
 func TestBuildKiroTools_DescriptionTruncation(t *testing.T) {
 	longDesc := strings.Repeat("a", 10050)
 	tools := []any{

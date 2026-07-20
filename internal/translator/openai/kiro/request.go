@@ -28,14 +28,19 @@ var (
 
 	// KiroAdaptiveThinkingModels is the strict allowlist of models that support
 	// Kiro's adaptive thinking. Sending it to other models causes 400 errors.
+	// Legacy 4.5 and Haiku models are excluded based on live smoke tests.
 	kiroAdaptiveThinkingModels = map[string]struct{}{
 		"claude-sonnet-5":    {},
 		"claude-sonnet-5.0":  {},
+		"claude-sonnet-4.8":  {},
+		"claude-sonnet-4.7":  {},
 		"claude-sonnet-4.6":  {},
-		"claude-opus-4":      {},
-		"claude-opus-4.0":    {},
 		"claude-sonnet-4":    {},
 		"claude-sonnet-4.0":  {},
+		"claude-opus-4":      {},
+		"claude-opus-4.0":    {},
+		"claude-opus-4.8":    {},
+		"claude-opus-4.7":    {},
 	}
 
 	// Agentic system prompt (chunked-write assistant) injected for synthetic -agentic variants.
