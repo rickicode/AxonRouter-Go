@@ -79,7 +79,6 @@ let poolDropdownRef: HTMLDivElement | undefined = $state();
   let importClientSecret = $state('');
   let importStartUrl = $state('');
   let importRegion = $state('');
-  let externalIdpJson = $state('');
 
 // Bulk import via .txt upload + chunked send (keeps RAM bounded on both sides).
 const BULK_CHUNK = 5000;
@@ -274,7 +273,6 @@ function reset() {
   importClientSecret = '';
   importStartUrl = '';
   importRegion = '';
-  externalIdpJson = '';
 }
 
 function handleOpenChange(isOpen: boolean) {
@@ -735,8 +733,6 @@ function selectKiroMethod(method: KiroMethod) {
     startKiroBuilderID();
   } else if (method === 'google' || method === 'github') {
     startKiroSocial(method);
-  } else if (method === 'auto-import') {
-    handleAutoImportKiro();
   }
 }
 
@@ -826,25 +822,6 @@ async function importKiroToken() {
     finishKiroConnection(res.name);
   } catch (err) {
     errorMsg = err instanceof Error ? err.message : 'Failed to import Kiro token';
-    toast.error(errorMsg);
-  } finally {
-    submitting = false;
-  }
-}
-
-async function importKiroExternalIDP() {
-  errorMsg = '';
-  if (!externalIdpJson.trim()) {
-    toast.error('External IDP JSON is required');
-    return;
-  }
-  submitting = true;
-  try {
-    const res = await oauthApi.importKiroExternalIDP(externalIdpJson.trim());
-    toast.success(`Kiro external IDP connected: ${res.name}`);
-    finishKiroConnection(res.name);
-  } catch (err) {
-    errorMsg = err instanceof Error ? err.message : 'Failed to import external IDP';
     toast.error(errorMsg);
   } finally {
     submitting = false;
@@ -967,37 +944,43 @@ $effect(() => {
                     onError={(err) => { errorMsg = err; }}
                   />
                 {:else if kiroMethod === 'import'}
-                  <div class="flex flex-col gap-1.5">
-                    <Label class="text-body-sm-strong">Refresh token <span class="text-destructive">*</span></Label>
-                    <Textarea bind:value={importRefreshToken} placeholder="eyJ..." class="min-h-20 font-mono text-code" />
+                  <div class="flex flex-col gap-3">
+                    <div class="flex flex-col gap-1.5">
+                      <Button variant="outline" class="text-body-sm rounded-sm cursor-pointer justify-start" disabled={submitting} onclick={handleAutoImportKiro}>
+                        <span class="material-symbols-outlined mr-2 text-base">folder_open</span>
+                        Auto-import from this machine
+                      </Button>
+                      <p class="text-caption text-muted-foreground">Scan kiro-cli SQLite, AWS SSO cache, and Kiro IDE profile.json on this machine.</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                      <div class="h-px flex-1 bg-border"></div>
+                      <span class="text-[11px] uppercase tracking-wide text-muted-foreground">or paste token</span>
+                      <div class="h-px flex-1 bg-border"></div>
+                    </div>
+                    <div class="flex flex-col gap-1.5">
+                      <Label class="text-body-sm-strong">Refresh token <span class="text-destructive">*</span></Label>
+                      <Textarea bind:value={importRefreshToken} placeholder="eyJ..." class="min-h-20 font-mono text-code" />
+                    </div>
+                    <div class="flex flex-col gap-1.5">
+                      <Label class="text-body-sm-strong">Client ID <span class="text-muted-foreground font-normal">(optional)</span></Label>
+                      <Input bind:value={importClientId} class="h-9 text-body-sm font-mono" autocomplete="off" spellcheck={false} />
+                    </div>
+                    <div class="flex flex-col gap-1.5">
+                      <Label class="text-body-sm-strong">Client secret <span class="text-muted-foreground font-normal">(optional)</span></Label>
+                      <Input bind:value={importClientSecret} type="password" class="h-9 text-body-sm font-mono" autocomplete="off" spellcheck={false} />
+                    </div>
+                    <div class="flex flex-col gap-1.5">
+                      <Label class="text-body-sm-strong">Region <span class="text-muted-foreground font-normal">(optional)</span></Label>
+                      <Input bind:value={importRegion} placeholder="us-east-1" class="h-9 text-body-sm font-mono" />
+                    </div>
+                    <div class="flex flex-col gap-1.5">
+                      <Label class="text-body-sm-strong">Start URL <span class="text-muted-foreground font-normal">(optional)</span></Label>
+                      <Input bind:value={importStartUrl} placeholder="https://d-xxx.awsapps.com/start" class="h-9 text-body-sm font-mono" />
+                    </div>
+                    <Button class="text-body-sm rounded-sm cursor-pointer" disabled={submitting} onclick={importKiroToken}>
+                      Import
+                    </Button>
                   </div>
-                  <div class="flex flex-col gap-1.5">
-                    <Label class="text-body-sm-strong">Client ID <span class="text-muted-foreground font-normal">(optional)</span></Label>
-                    <Input bind:value={importClientId} class="h-9 text-body-sm font-mono" autocomplete="off" spellcheck={false} />
-                  </div>
-                  <div class="flex flex-col gap-1.5">
-                    <Label class="text-body-sm-strong">Client secret <span class="text-muted-foreground font-normal">(optional)</span></Label>
-                    <Input bind:value={importClientSecret} type="password" class="h-9 text-body-sm font-mono" autocomplete="off" spellcheck={false} />
-                  </div>
-                  <div class="flex flex-col gap-1.5">
-                    <Label class="text-body-sm-strong">Region <span class="text-muted-foreground font-normal">(optional)</span></Label>
-                    <Input bind:value={importRegion} placeholder="us-east-1" class="h-9 text-body-sm font-mono" />
-                  </div>
-                  <div class="flex flex-col gap-1.5">
-                    <Label class="text-body-sm-strong">Start URL <span class="text-muted-foreground font-normal">(optional)</span></Label>
-                    <Input bind:value={importStartUrl} placeholder="https://d-xxx.awsapps.com/start" class="h-9 text-body-sm font-mono" />
-                  </div>
-                  <Button class="text-body-sm rounded-sm cursor-pointer" disabled={submitting} onclick={importKiroToken}>
-                    Import token
-                  </Button>
-                {:else if kiroMethod === 'external-idp'}
-                  <div class="flex flex-col gap-1.5">
-                    <Label class="text-body-sm-strong">External IDP JSON</Label>
-                    <Textarea bind:value={externalIdpJson} placeholder="Paste external IdP JSON" class="min-h-36 font-mono text-code" />
-                  </div>
-                  <Button class="text-body-sm rounded-sm cursor-pointer" disabled={submitting} onclick={importKiroExternalIDP}>
-                    Import
-                  </Button>
                 {/if}
               </div>
             {/if}

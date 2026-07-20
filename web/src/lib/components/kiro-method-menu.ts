@@ -4,9 +4,7 @@ export const KIRO_METHODS = [
 	{ id: 'api-key', label: 'API Key' },
 	{ id: 'google', label: 'Google' },
 	{ id: 'github', label: 'GitHub' },
-	{ id: 'import', label: 'Import Token' },
-	{ id: 'external-idp', label: 'External IDP' },
-	{ id: 'auto-import', label: 'Auto-import from kiro-cli' },
+	{ id: 'import', label: 'Import from CLI / Token' },
 ] as const;
 
 export type KiroMethod = (typeof KIRO_METHODS)[number]['id'];
