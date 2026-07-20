@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **QwenCloud built-in provider** — new `qwencloud/` prefix routing to the international DashScope Responses API (`https://dashscope-intl.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1/responses`) with API-key auth. Reuses the OpenAI Responses executor so `/v1/responses` passes through and `/v1/chat/completions` is translated to Responses format. Includes dashboard catalog entry with the provided Alibaba logo and a seeded model list covering `qwen3.7-plus`, `qwen3.7-max`, `qwen3.6-plus`, `qwen3.6-max`, `qwen3.6-flash`, `qwen3.5-omni-plus`, `qwen-plus`, `glm-5.2`, `deepseek-v4-flash`, and `qwen3-coder-plus`.
+
 ## [0.3.18] - 2026-07-20
 
 ### Security
