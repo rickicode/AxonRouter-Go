@@ -122,7 +122,7 @@ install_systemd_service() {
   command -v systemctl >/dev/null 2>&1 || return 0
 
   info "Installing systemd service..."
-  if ! "${INSTALLED}" --startup install; then
+  if ! "${INSTALLED}" --service install; then
     echo "warning: service installation failed, skipping." >&2
     return 0
   fi

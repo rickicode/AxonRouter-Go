@@ -103,24 +103,24 @@ The release binary has a small built-in CLI for help, systemd management, and pa
 axonrouter --help
 
 # Install and manage the systemd service (Linux only)
-axonrouter --startup install
-axonrouter --startup status
-axonrouter --startup start
-axonrouter --startup stop
-axonrouter --startup restart
+axonrouter --service install
+axonrouter --service status
+axonrouter --service start
+axonrouter --service stop
+axonrouter --service restart
 
 # Change the admin dashboard password
 axonrouter --setpass <password>
 ```
 
-`--startup install` writes `/etc/systemd/system/axonrouter.service`, runs as the invoking user (or `SUDO_USER` when called via `sudo`), and uses the binary default data directory (`~/axonrouter`).
+`--service install` writes `/etc/systemd/system/axonrouter.service`, runs as the invoking user (or `SUDO_USER` when called via `sudo`), and uses the binary default data directory (`~/axonrouter`).
 
 ## Systemd Service
 
 ### User service (no root)
 
 ```bash
-axonrouter --startup install
+axonrouter --service install
 systemctl --user status axonrouter
 ```
 
@@ -129,7 +129,7 @@ The unit is written to `~/.config/systemd/user/axonrouter.service` and runs as t
 ### System-wide service (root)
 
 ```bash
-sudo axonrouter --startup install-root
+sudo axonrouter --service install-root
 sudo systemctl status axonrouter
 ```
 
