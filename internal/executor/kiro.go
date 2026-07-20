@@ -15,6 +15,8 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/provider/kiro"
 	transregistry "github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/types"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // KiroExecutor handles AWS CodeWhisperer / Kiro streaming (AWS EventStream)
@@ -78,6 +80,7 @@ func kiroHeaders(req *Request) map[string]string {
 //  3. For OAuth/social/import auth methods, fall back to the shared default placeholder
 //     (this is required for builder-id/social tokens because CodeWhisperer rejects
 //     requests without a profileArn).
+//
 // Account-bound methods (api_key, idc, external_idp) intentionally skip the shared
 // placeholder because it belongs to a different account.
 func injectKiroProfileArn(body []byte, psd map[string]string) ([]byte, error) {
@@ -89,65 +92,52 @@ func injectKiroProfileArn(body []byte, psd map[string]string) ([]byte, error) {
 		}
 	}
 
-	var raw map[string]any
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return body, err
-	}
-	if bodyProfileArn, ok := raw["profileArn"].(string); ok && strings.TrimSpace(bodyProfileArn) != "" {
+	if v := gjson.GetBytes(body, "profileArn").String(); strings.TrimSpace(v) != "" {
 		return body, nil
 	}
 
+	var profileArn string
 	if psdProfileArn != "" {
-		raw["profileArn"] = psdProfileArn
+		profileArn = psdProfileArn
 	} else if authMethod != "api_key" && authMethod != "idc" && authMethod != "external_idp" {
-		raw["profileArn"] = resolveDefaultKiroProfileArn(authMethod)
+		profileArn = resolveDefaultKiroProfileArn(authMethod)
 	}
 
-	if raw["profileArn"] == nil || raw["profileArn"] == "" {
+	if profileArn == "" {
 		return body, nil
 	}
-	return json.Marshal(raw)
+	return sjson.SetBytes(body, "profileArn", profileArn)
 }
 
 // buildKiroUpstreamBody strips non-upstream fields from the translated body
 // and keeps only the fields Kiro accepts.
 func buildKiroUpstreamBody(body []byte) ([]byte, map[string]string, error) {
-	var raw map[string]any
-	if err := json.Unmarshal(body, &raw); err != nil {
+	var req kiroUpstreamRequest
+	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, nil, err
 	}
-	nameMap := map[string]string{}
-	if m, ok := raw["_toolNameMap"].(map[string]any); ok {
-		for k, v := range m {
-			if s, ok := v.(string); ok {
-				nameMap[k] = s
-			}
-		}
+	nameMap := req.ToolNameMap
+	if nameMap == nil {
+		nameMap = map[string]string{}
 	}
-	out := map[string]any{}
-	for _, k := range []string{"conversationState", "profileArn", "inferenceConfig", "additionalModelRequestFields", "agentMode", "systemPrompt"} {
-		if v, ok := raw[k]; ok && v != nil {
-			out[k] = v
-		}
-	}
-	b, err := json.Marshal(out)
+	b, err := json.Marshal(req.kiroUpstreamEnvelope)
 	return b, nameMap, err
 }
 
 type kiroStreamState struct {
-	chunkIndex       int
-	responseID       string
-	created          int64
-	content          strings.Builder
-	textLen          int64
-	reasoning        strings.Builder
-	sawToolUse       bool
-	seenToolIDs      map[string]int
-	toolIndex        int
-	toolArgsBuf      map[string]string
-	toolArgsEmitted  map[string]string
-	estInputTokens   int64
-	estOutputTokens  int64
+	chunkIndex          int
+	responseID          string
+	created             int64
+	content             strings.Builder
+	textLen             int64
+	reasoning           strings.Builder
+	sawToolUse          bool
+	seenToolIDs         map[string]int
+	toolIndex           int
+	toolArgsBuf         map[string]string
+	toolArgsEmitted     map[string]string
+	estInputTokens      int64
+	estOutputTokens     int64
 	hasContextUsage     bool
 	contextUsagePct     int64
 	hasMeteringEvent    bool
@@ -341,7 +331,7 @@ func (s *kiroStreamState) handleEvent(frame *EventFrame, nameMap map[string]stri
 	case "assistantResponseEvent", "codeEvent":
 		var wrapper struct {
 			AssistantResponse kiroAssistantResponseEvent `json:"assistantResponseEvent"`
-			CodeEvent       kiroAssistantResponseEvent `json:"codeEvent"`
+			CodeEvent         kiroAssistantResponseEvent `json:"codeEvent"`
 		}
 		_ = json.Unmarshal(frame.Payload, &wrapper)
 		ev := wrapper.AssistantResponse
@@ -597,8 +587,8 @@ func (e *KiroExecutor) Execute(ctx context.Context, req *Request) (*Response, er
 
 func assembleKiroNonStream(sse []byte) ([]byte, error) {
 	var content, reasoning strings.Builder
-	var toolCalls []map[string]any
-	var usage map[string]any
+	var toolCalls []kiroOpenAIToolCall
+	var usage *kiroOpenAIUsage
 	var finishReason string
 
 	for _, line := range bytes.Split(sse, []byte("\n")) {
@@ -610,103 +600,83 @@ func assembleKiroNonStream(sse []byte) ([]byte, error) {
 		if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
 			continue
 		}
-		var chunk map[string]any
+		var chunk kiroOpenAIStreamChunk
 		if err := json.Unmarshal(data, &chunk); err != nil {
 			continue
 		}
-		choices, _ := chunk["choices"].([]any)
-		if len(choices) == 0 {
-			if u, ok := chunk["usage"].(map[string]any); ok {
-				usage = u
-			}
-			if fr, ok := chunk["finish_reason"].(string); ok {
-				finishReason = fr
+		if len(chunk.Choices) == 0 {
+			if chunk.Usage != nil {
+				usage = chunk.Usage
 			}
 			continue
 		}
-		choice, _ := choices[0].(map[string]any)
-		delta, _ := choice["delta"].(map[string]any)
-		if v, ok := delta["content"].(string); ok {
-			content.WriteString(v)
+		choice := chunk.Choices[0]
+		content.WriteString(choice.Delta.Content)
+		reasoning.WriteString(choice.Delta.ReasoningContent)
+		if len(choice.Delta.ToolCalls) > 0 {
+			mergeKiroToolCalls(&toolCalls, choice.Delta.ToolCalls)
 		}
-		if v, ok := delta["reasoning_content"].(string); ok {
-			reasoning.WriteString(v)
+		if choice.FinishReason != nil {
+			finishReason = *choice.FinishReason
 		}
-		if tcs, ok := delta["tool_calls"].([]any); ok && len(tcs) > 0 {
-			mergeKiroToolCalls(&toolCalls, tcs)
-		}
-		if fr, ok := choice["finish_reason"].(string); ok {
-			finishReason = fr
-		}
-		if u, ok := chunk["usage"].(map[string]any); ok {
-			usage = u
+		if chunk.Usage != nil {
+			usage = chunk.Usage
 		}
 	}
 
-	out := map[string]any{
-		"id":      genUUID(),
-		"object":  "chat.completion",
-		"created": time.Now().Unix(),
-		"model":   "kiro",
-		"choices": []any{},
-		"usage":   usage,
-	}
 	if finishReason == "" && len(toolCalls) > 0 {
 		finishReason = "tool_calls"
 	}
-	msg := map[string]any{
-		"role":    "assistant",
-		"content": content.String(),
+	msg := kiroOpenAIChatMessage{
+		Role:    "assistant",
+		Content: content.String(),
 	}
 	if reasoning.Len() > 0 {
-		msg["content"] = content.String()
-		msg["reasoning_content"] = reasoning.String()
+		msg.Content = content.String()
+		msg.ReasoningContent = reasoning.String()
 	}
 	if len(toolCalls) > 0 {
-		msg["tool_calls"] = toolCalls
+		msg.ToolCalls = toolCalls
 	}
-	out["choices"] = []any{
-		map[string]any{
-			"index":         0,
-			"message":       msg,
-			"finish_reason": finishReason,
+	var use kiroOpenAIUsage
+	if usage != nil {
+		use = *usage
+	}
+	out := kiroOpenAICompletion{
+		ID:      genUUID(),
+		Object:  "chat.completion",
+		Created: time.Now().Unix(),
+		Model:   "kiro",
+		Choices: []kiroOpenAICompletionChoice{
+			{Index: 0, Message: msg, FinishReason: finishReason},
 		},
+		Usage: use,
 	}
 	return json.Marshal(out)
 }
 
-func mergeKiroToolCalls(out *[]map[string]any, deltas []any) {
-	for _, raw := range deltas {
-		d, _ := raw.(map[string]any)
-		if d == nil {
-			continue
-		}
-		idxF, _ := d["index"].(float64)
-		idx := int(idxF)
-		id, _ := d["id"].(string)
-		fnDelta, _ := d["function"].(map[string]any)
-		name, _ := fnDelta["name"].(string)
-		args, _ := fnDelta["arguments"].(string)
+func mergeKiroToolCalls(out *[]kiroOpenAIToolCall, deltas []kiroOpenAIToolCallDelta) {
+	for _, d := range deltas {
+		idx := d.Index
+		id := d.ID
+		name := d.Function.Name
+		args := d.Function.Arguments
 
 		for len(*out) <= idx {
-			*out = append(*out, map[string]any{
-				"id":       id,
-				"type":     "function",
-				"function": map[string]any{"name": "", "arguments": ""},
+			*out = append(*out, kiroOpenAIToolCall{
+				ID:       id,
+				Type:     "function",
+				Function: kiroOpenAIFunction{Name: "", Arguments: ""},
 			})
 		}
-		tc := (*out)[idx]
+		tc := &(*out)[idx]
 		if id != "" {
-			tc["id"] = id
+			tc.ID = id
 		}
-		if fn, ok := tc["function"].(map[string]any); ok {
-			if name != "" {
-				fn["name"] = name
-			}
-			if args != "" {
-				fn["arguments"] = fn["arguments"].(string) + args
-			}
+		if name != "" {
+			tc.Function.Name = name
 		}
+		tc.Function.Arguments += args
 	}
 }
 
@@ -822,7 +792,7 @@ func (e *KiroExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stream
 	}
 
 	result := &StreamResult{
-		Chunks:     make(chan StreamChunk),
+		Chunks:     make(chan StreamChunk, 64),
 		Headers:    resp.Header,
 		StatusCode: resp.StatusCode,
 	}

@@ -104,11 +104,11 @@ type kiroUsageEvent struct {
 }
 
 type kiroMetricsEvent struct {
-	InputTokens                  int64 `json:"inputTokens"`
-	OutputTokens                 int64 `json:"outputTokens"`
-	CacheReadInputTokens         int64 `json:"cacheReadInputTokens"`
-	CacheReadInputTokensSnake    int64 `json:"cache_read_input_tokens"`
-	CacheCreationInputTokens     int64 `json:"cacheCreationInputTokens"`
+	InputTokens                   int64 `json:"inputTokens"`
+	OutputTokens                  int64 `json:"outputTokens"`
+	CacheReadInputTokens          int64 `json:"cacheReadInputTokens"`
+	CacheReadInputTokensSnake     int64 `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens      int64 `json:"cacheCreationInputTokens"`
 	CacheCreationInputTokensSnake int64 `json:"cache_creation_input_tokens"`
 }
 
@@ -127,6 +127,17 @@ type kiroUpstreamEnvelope struct {
 	AdditionalModelRequestFields json.RawMessage `json:"additionalModelRequestFields,omitempty"`
 	AgentMode                    json.RawMessage `json:"agentMode,omitempty"`
 	SystemPrompt                 string          `json:"systemPrompt,omitempty"`
+	// _stream is an internal marker required by the Kiro endpoint to indicate
+	// that the response should be streamed back as AWS EventStream frames.
+	Stream bool `json:"_stream,omitempty"`
+}
+
+// kiroUpstreamRequest is the translated request body before stripping non-upstream
+// fields. Embedding kiroUpstreamEnvelope lets json.Unmarshal copy the accepted
+// fields directly without an intermediate map[string]any.
+type kiroUpstreamRequest struct {
+	kiroUpstreamEnvelope
+	ToolNameMap map[string]string `json:"_toolNameMap,omitempty"`
 }
 
 // pool for reused bytes.Buffer used to encode SSE chunks. The returned byte

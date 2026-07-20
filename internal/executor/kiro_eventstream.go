@@ -14,9 +14,11 @@ type EventFrame struct {
 	Payload json.RawMessage
 }
 
-// byteQueue is a simple growable byte buffer with peek/read support.
+// byteQueue is a growable contiguous byte buffer with cheap peek/read support.
+// The underlying slice is reused and compacted when the consumed prefix grows
+// large, avoiding the slice-of-slices allocation pattern.
 type byteQueue struct {
-	chunks [][]byte
+	buf    []byte
 	head   int
 	length int
 }
@@ -27,61 +29,46 @@ func (q *byteQueue) push(data []byte) {
 	if len(data) == 0 {
 		return
 	}
-	q.chunks = append(q.chunks, data)
+	q.buf = append(q.buf, data...)
 	q.length += len(data)
 }
 
 func (q *byteQueue) len() int { return q.length }
 
 func (q *byteQueue) byteAt(offset int) byte {
-	remaining := offset
-	for i, chunk := range q.chunks {
-		start := 0
-		if i == 0 {
-			start = q.head
-		}
-		available := len(chunk) - start
-		if remaining < available {
-			return chunk[start+remaining]
-		}
-		remaining -= available
+	if offset < 0 || offset >= q.length {
+		return 0
 	}
-	return 0
+	return q.buf[q.head+offset]
 }
 
 func (q *byteQueue) peekUint32BE(offset int) (uint32, bool) {
 	if q.length < offset+4 {
 		return 0, false
 	}
-	return binary.BigEndian.Uint32([]byte{
-		q.byteAt(offset),
-		q.byteAt(offset + 1),
-		q.byteAt(offset + 2),
-		q.byteAt(offset + 3),
-	}), true
+	start := q.head + offset
+	return binary.BigEndian.Uint32(q.buf[start : start+4]), true
 }
 
 func (q *byteQueue) read(n int) []byte {
 	if n <= 0 || q.length < n {
 		return nil
 	}
-	out := make([]byte, n)
-	written := 0
-	for written < n {
-		headChunk := q.chunks[0]
-		available := len(headChunk) - q.head
-		take := available
-		if n-written < take {
-			take = n - written
-		}
-		copy(out[written:], headChunk[q.head:q.head+take])
-		q.head += take
-		q.length -= take
-		written += take
-		if q.head >= len(headChunk) {
-			q.chunks = q.chunks[1:]
-			q.head = 0
-		}
+	start := q.head
+	end := start + n
+	out := append([]byte(nil), q.buf[start:end]...)
+	q.head = end
+	q.length -= n
+
+	// Compact when the consumed prefix is larger than the remaining data so the
+	// buffer does not grow indefinitely on a long-lived stream.
+	if q.head > q.length && q.length > 0 {
+		copy(q.buf, q.buf[q.head:q.head+q.length])
+		q.head = 0
+		q.buf = q.buf[:q.length]
+	} else if q.length == 0 {
+		q.head = 0
+		q.buf = q.buf[:0]
 	}
 	return out
 }
