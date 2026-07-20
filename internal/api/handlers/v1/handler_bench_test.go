@@ -2,114 +2,129 @@ package v1
 
 import (
 	"context"
+	"fmt"
 	"io"
-	"path/filepath"
+	"log/slog"
 	"testing"
 	"time"
 
-	"database/sql"
-	"log/slog"
-	_ "modernc.org/sqlite"
-
-	"github.com/rickicode/AxonRouter-Go/internal/auth"
-	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
-	"github.com/rickicode/AxonRouter-Go/internal/db"
-	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
-	"github.com/rickicode/AxonRouter-Go/internal/quota"
+	provideralias "github.com/rickicode/AxonRouter-Go/internal/provider"
 )
 
-func openBenchDB(b *testing.B) *sql.DB {
-	b.Helper()
-	tmp := filepath.Join(b.TempDir(), "handler-bench.db")
-	database, err := sql.Open("sqlite", tmp)
-	if err != nil {
-		b.Fatalf("open db: %v", err)
+func benchmarkSetup(b *testing.B) (*Handler, context.Context) {
+	logging.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	h := newTestHandler(b)
+	now := time.Now().Unix()
+
+	if err := h.providerCfg.Save("bench", providercfg.ProviderSettings{RoutingMode: providercfg.FirstEligible}); err != nil {
+		b.Fatalf("save provider cfg: %v", err)
 	}
-	database.SetMaxOpenConns(1)
-	if err := db.RunMigrations(database); err != nil {
-		b.Fatalf("migrate: %v", err)
-	}
-	return database
-}
 
-func newBenchHandler(b *testing.B, connCount int) *Handler {
-	b.Helper()
-	logging.SetLogger(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError})))
-
-	store := connstate.NewStore()
-	database := openBenchDB(b)
-	b.Cleanup(func() { database.Close() })
-
-	if _, err := database.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('bp','BP','openai','http://x',0)`); err != nil {
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('bench','Bench','openai','http://x',?)`, now); err != nil {
 		b.Fatalf("seed provider type: %v", err)
 	}
-	now := db.UnixNow()
-	for i := 0; i < connCount; i++ {
-		id := benchConnID(i)
-		if _, err := database.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?, 'bp', ?, 'none', 'ready', 1, ?, ?)`, id, id, now, now); err != nil {
+
+	future := time.Now().Add(time.Hour)
+	for i := 0; i < 100; i++ {
+		id := fmt.Sprintf("bench-conn-%03d", i)
+		if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?, 'bench', ?, 'none', 'ready', 1, ?, ?)`, id, id, now, now); err != nil {
 			b.Fatalf("seed %s: %v", id, err)
 		}
-		store.SeedConnection(id, "bp", "ready", 0)
-	}
-
-	elig := connstate.NewEligibilityManager(store)
-	elig.RecomputeAll()
-
-	h := &Handler{
-		db:                  database,
-		store:               store,
-		elig:                elig,
-		authMgr:             auth.NewManager(),
-		exhaustion:          quota.NewExhaustionCache(),
-		providerCfg:         providercfg.NewManager(b.TempDir()),
-		combo:               combo.NewHandler(database, store, elig),
-		registry:            executor.GetRegistry(),
-		failoverMaxAttempts: 5,
-	}
-
-	// Warm the connection cache so the benchmark measures routing, not DB loads.
-	ctx := context.Background()
-	for i := 0; i < connCount; i++ {
-		if _, err := h.getCachedConn(ctx, benchConnID(i), time.Now()); err != nil {
-			b.Fatalf("warm cache %s: %v", benchConnID(i), err)
+		h.store.SeedConnection(id, "bench", "ready", 0)
+		h.store.Get(id).SetRemainingPct(50)
+		if i < 99 {
+			h.store.Get(id).SetModelCooldown("gpt-4o", future)
 		}
 	}
-	return h
-}
+	// Put the single usable connection last in quota-sorted order so the hot
+	// path must inspect all 99 model-cooled candidates before succeeding.
+	h.store.Get("bench-conn-099").SetRemainingPct(0.1)
+	h.elig.RecomputeAll()
 
-func benchConnID(i int) string {
-	return benchConnIDs[i%len(benchConnIDs)]
-}
-
-// Pre-generated stable IDs to avoid allocation in the hot loop.
-var benchConnIDs = func() []string {
-	ids := make([]string, 100)
-	for i := range ids {
-		ids[i] = benchConnIDRaw(i)
-	}
-	return ids
-}()
-
-func benchConnIDRaw(i int) string {
-	// Fixed-width IDs so string allocation is not part of the measured path.
-	const prefix = "conn-bench-"
-	return prefix + string(rune('0'+i/10)) + string(rune('0'+i%10))
-}
-
-func BenchmarkTryPickConnection(b *testing.B) {
-	h := newBenchHandler(b, 10)
 	ctx := context.Background()
-	now := time.Now()
-	connID := benchConnID(0)
+	if _, err := h.getConnection(ctx, "bench", "gpt-4o"); err != nil {
+		b.Fatalf("warmup failed: %v", err)
+	}
+	return h, ctx
+}
 
+// BenchmarkGetConnection_ReadySnapshot measures the optimized routing hot path.
+func BenchmarkGetConnection_ReadySnapshot(b *testing.B) {
+	h, ctx := benchmarkSetup(b)
 	b.ResetTimer()
+	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, ok := h.tryPickConnection(ctx, connID, "bp", "gpt-4o", now)
-		if !ok {
-			b.Fatal("expected connection to be picked")
+		_, _ = h.getConnection(ctx, "bench", "gpt-4o")
+	}
+}
+
+// BenchmarkGetConnection_ReadySnapshotOld measures the pre-optimization hot path
+// where the snapshot returned IDs and every candidate required a store.Get lookup.
+func BenchmarkGetConnection_ReadySnapshotOld(b *testing.B) {
+	h, ctx := benchmarkSetup(b)
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = h.getConnectionOld(ctx, "bench", "gpt-4o")
+	}
+}
+
+// getConnectionOld replicates the hot path before pre-materialization: it uses
+// the string-ID snapshot and re-does a store.Get lookup for every candidate.
+func (h *Handler) getConnectionOld(ctx context.Context, provider string, modelID string) (*Connection, error) {
+	provider = provideralias.ResolveAlias(provider)
+
+	connIDs := h.elig.GetByPrefix(provider)
+	logging.Logger.Debug("getConnection", "provider", provider, "eligible", len(connIDs))
+	if len(connIDs) > 0 {
+		start := h.pickStartIndex(provider, len(connIDs), h.providerCfg.RoutingMode(provider))
+		bound := pickMaxAttempts
+		if bound > len(connIDs) {
+			bound = len(connIDs)
+		}
+		for i := 0; i < bound; i++ {
+			idx := (start + i) % len(connIDs)
+			if conn, ok := h.tryPickConnectionOld(ctx, connIDs[idx], provider, modelID); ok {
+				return conn, nil
+			}
+		}
+		for i := bound; i < len(connIDs); i++ {
+			idx := (start + i) % len(connIDs)
+			if conn, ok := h.tryPickConnectionOld(ctx, connIDs[idx], provider, modelID); ok {
+				return conn, nil
+			}
 		}
 	}
+	return h.getConnectionFallback(ctx, provider, modelID, time.Now(), h.providerCfg.RoutingMode(provider))
+}
+
+func (h *Handler) tryPickConnectionOld(ctx context.Context, connID, provider, modelID string) (*Connection, bool) {
+	cs := h.store.Get(connID)
+	if cs == nil {
+		return nil, false
+	}
+	if cs.IsInCooldownAt(time.Now()) {
+		return nil, false
+	}
+	if modelID != "" && cs.IsModelInCooldownAt(modelID, time.Now()) {
+		return nil, false
+	}
+	if modelID != "" && h.exhaustion.IsExhaustedScopeAt(connID, connstate.ModelScope(provider, modelID), time.Now()) {
+		return nil, false
+	}
+	if h.exhaustion.IsExhaustedAt(connID, time.Now()) {
+		return nil, false
+	}
+	conn, err := h.getCachedConn(ctx, connID, time.Now())
+	if err != nil {
+		logging.Logger.Debug("load conn failed", "conn", connID[:8], "err", err)
+		return nil, false
+	}
+	logging.Logger.Info("getConnection selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name, "mode", h.providerCfg.RoutingMode(provider))
+	h.bindActiveConn(ctx, conn)
+	return conn, true
 }

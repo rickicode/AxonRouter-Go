@@ -347,24 +347,24 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 	mode := h.providerCfg.RoutingMode(provider)
 	now := time.Now()
 
-	connIDs := h.elig.GetByPrefix(provider)
-	logging.Logger.Debug("getConnection", "provider", provider, "eligible", len(connIDs))
-	if len(connIDs) > 0 {
-		start := h.pickStartIndex(provider, len(connIDs), mode)
+	conns := h.elig.GetByPrefixState(provider)
+	logging.Logger.Debug("getConnection", "provider", provider, "eligible", len(conns))
+	if len(conns) > 0 {
+		start := h.pickStartIndex(provider, len(conns), mode)
 		bound := pickMaxAttempts
-		if bound > len(connIDs) {
-			bound = len(connIDs)
+		if bound > len(conns) {
+			bound = len(conns)
 		}
 		for i := 0; i < bound; i++ {
-			idx := (start + i) % len(connIDs)
-			if conn, ok := h.tryPickConnection(ctx, connIDs[idx], provider, modelID, now, mode); ok {
+			idx := (start + i) % len(conns)
+			if conn, ok := h.tryPickConnection(ctx, conns[idx], provider, modelID, now, mode); ok {
 				return conn, nil
 			}
 		}
 
-		for i := bound; i < len(connIDs); i++ {
-			idx := (start + i) % len(connIDs)
-			if conn, ok := h.tryPickConnection(ctx, connIDs[idx], provider, modelID, now, mode); ok {
+		for i := bound; i < len(conns); i++ {
+			idx := (start + i) % len(conns)
+			if conn, ok := h.tryPickConnection(ctx, conns[idx], provider, modelID, now, mode); ok {
 				return conn, nil
 			}
 		}
@@ -383,7 +383,7 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 //  2. If everything is in cooldown, bypass cooldown once as emergency fallback
 //     so a healthy account that was briefly cooled down can still receive traffic.
 func (h *Handler) getConnectionFallback(ctx context.Context, provider, modelID string, now time.Time, mode providercfg.RoutingMode) (*Connection, error) {
-	var candidates []string
+	var candidates []*connstate.ConnectionState
 	h.store.Range(func(connID string, cs *connstate.ConnectionState) bool {
 		if cs.Prefix != provider {
 			return true
@@ -392,23 +392,23 @@ func (h *Handler) getConnectionFallback(ctx context.Context, provider, modelID s
 		case connstate.StatusDisabled, connstate.StatusAuthFailed, connstate.StatusSuspended, connstate.StatusBalanceEmpty:
 			return true
 		}
-		candidates = append(candidates, connID)
+		candidates = append(candidates, cs)
 		return true
 	})
 
 	candidates = h.orderCandidates(provider, candidates, mode)
 
 	// Pass 1: respect cooldowns, just expand the pool beyond the eligibility snapshot.
-	for _, connID := range candidates {
-		if conn, ok := h.tryPickConnection(ctx, connID, provider, modelID, now, mode); ok {
+	for _, cs := range candidates {
+		if conn, ok := h.tryPickConnection(ctx, cs, provider, modelID, now, mode); ok {
 			logging.Logger.Info("getConnection fallback (cooldown-aware) selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name)
 			return conn, nil
 		}
 	}
 
 	// Pass 2: every account is in cooldown. Bypass it as emergency fallback.
-	for _, connID := range candidates {
-		if conn, ok := h.tryPickConnectionFallback(ctx, connID, provider, modelID, now, mode); ok {
+	for _, cs := range candidates {
+		if conn, ok := h.tryPickConnectionFallback(ctx, cs.ID, provider, modelID, now, mode); ok {
 			logging.Logger.Info("getConnection emergency fallback selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name)
 			return conn, nil
 		}
@@ -463,17 +463,16 @@ func (h *Handler) pickStartIndex(provider string, total int, mode providercfg.Ro
 
 // tryPickConnection checks a single eligible connection for model-level
 // cooldowns/quota exhaustion and loads its DB credentials when it passes.
-func (h *Handler) tryPickConnection(ctx context.Context, connID, provider, modelID string, now time.Time, mode providercfg.RoutingMode) (*Connection, bool) {
-	cs := h.store.Get(connID)
-	if cs == nil {
-		return nil, false
-	}
+// The caller supplies the pre-resolved *ConnectionState so the routing hot path
+// avoids a store.Get lookup per candidate.
+func (h *Handler) tryPickConnection(ctx context.Context, cs *connstate.ConnectionState, provider, modelID string, now time.Time, mode providercfg.RoutingMode) (*Connection, bool) {
 	if cs.IsInCooldownAt(now) {
 		return nil, false
 	}
 	if modelID != "" && cs.IsModelInCooldownAt(modelID, now) {
 		return nil, false
 	}
+	connID := cs.ID
 	if modelID != "" && h.exhaustion.IsExhaustedScopeAt(connID, connstate.ModelScope(provider, modelID), now) {
 		return nil, false
 	}
@@ -490,14 +489,14 @@ func (h *Handler) tryPickConnection(ctx context.Context, connID, provider, model
 	return conn, true
 }
 
-// orderCandidates reorders eligible connection IDs according to the provider's
+// orderCandidates reorders eligible connections according to the provider's
 // configured routing mode.
 //
 //   - first_eligible: accounts are sorted by remaining quota (highest first).
 //   - round_robin: rotate the starting index, but the rotation is applied on
 //     top of the quota-sorted list so healthier accounts are preferred.
 //   - random: pick a random starting index on the quota-sorted list.
-func (h *Handler) orderCandidates(provider string, candidates []string, mode providercfg.RoutingMode) []string {
+func (h *Handler) orderCandidates(provider string, candidates []*connstate.ConnectionState, mode providercfg.RoutingMode) []*connstate.ConnectionState {
 	if len(candidates) <= 1 {
 		return candidates
 	}
@@ -505,16 +504,7 @@ func (h *Handler) orderCandidates(provider string, candidates []string, mode pro
 	// Quota-aware: put accounts with the most remaining quota first. This avoids
 	// wasting requests on nearly-exhausted siblings when healthier accounts exist.
 	sort.SliceStable(candidates, func(i, j int) bool {
-		ci := h.store.Get(candidates[i])
-		cj := h.store.Get(candidates[j])
-		var ri, rj float64 = 100, 100
-		if ci != nil {
-			ri = ci.GetRemainingPct()
-		}
-		if cj != nil {
-			rj = cj.GetRemainingPct()
-		}
-		return ri > rj
+		return candidates[i].GetRemainingPct() > candidates[j].GetRemainingPct()
 	})
 
 	var start int
@@ -530,7 +520,7 @@ func (h *Handler) orderCandidates(provider string, candidates []string, mode pro
 	if start == 0 {
 		return candidates
 	}
-	out := make([]string, 0, len(candidates))
+	out := make([]*connstate.ConnectionState, 0, len(candidates))
 	out = append(out, candidates[start:]...)
 	out = append(out, candidates[:start]...)
 	return out

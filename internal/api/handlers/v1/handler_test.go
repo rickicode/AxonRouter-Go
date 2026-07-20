@@ -118,7 +118,7 @@ func (f *fakeOAuthService) StartLocalServer(ctx context.Context, state string) (
 	return 0, nil, nil
 }
 
-func openTestDB(t *testing.T) *sql.DB {
+func openTestDB(t testing.TB) *sql.DB {
 	t.Helper()
 	tmp := filepath.Join(t.TempDir(), "handler-test.db")
 	database, err := sql.Open("sqlite", tmp)
@@ -142,7 +142,7 @@ func mustHashKey(t *testing.T, key string) string {
 	return string(hash)
 }
 
-func newTestHandler(t *testing.T) *Handler {
+func newTestHandler(t testing.TB) *Handler {
 	t.Helper()
 	store := connstate.NewStore()
 	store.SeedConnection("conn-1", "test", "ready", 0)
@@ -574,13 +574,25 @@ func TestOrderCandidatesPrioritizesRemainingQuota(t *testing.T) {
 	h.store.Get("conn-mid").SetRemainingPct(50)
 	h.store.Get("conn-high").SetRemainingPct(90)
 
-	ordered := h.orderCandidates("oc", []string{"conn-low", "conn-mid", "conn-high"}, providercfg.DefaultRoutingMode)
+	ordered := h.orderCandidates("oc", []*connstate.ConnectionState{
+		h.store.Get("conn-low"),
+		h.store.Get("conn-mid"),
+		h.store.Get("conn-high"),
+	}, providercfg.DefaultRoutingMode)
 	want := []string{"conn-high", "conn-mid", "conn-low"}
 	for i, id := range want {
-		if ordered[i] != id {
-			t.Fatalf("order[%d] = %s, want %s; got %v", i, ordered[i], id, ordered)
+		if ordered[i].ID != id {
+			t.Fatalf("order[%d] = %s, want %s; got %v", i, ordered[i].ID, id, idsFromConnStates(ordered))
 		}
 	}
+}
+
+func idsFromConnStates(states []*connstate.ConnectionState) []string {
+	ids := make([]string, len(states))
+	for i, s := range states {
+		ids[i] = s.ID
+	}
+	return ids
 }
 
 func TestIsClientCanceled(t *testing.T) {
