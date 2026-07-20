@@ -346,30 +346,87 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 
 	connIDs := h.elig.GetByPrefix(provider)
 	logging.Logger.Debug("getConnection", "provider", provider, "eligible", len(connIDs))
-	if len(connIDs) == 0 {
-		return nil, fmt.Errorf("no eligible connection for provider: %s", provider)
-	}
+	if len(connIDs) > 0 {
+		start := h.pickStartIndex(provider, len(connIDs))
+		bound := pickMaxAttempts
+		if bound > len(connIDs) {
+			bound = len(connIDs)
+		}
+		for i := 0; i < bound; i++ {
+			idx := (start + i) % len(connIDs)
+			if conn, ok := h.tryPickConnection(ctx, connIDs[idx], provider, modelID); ok {
+				return conn, nil
+			}
+		}
 
-	start := h.pickStartIndex(provider, len(connIDs))
-	bound := pickMaxAttempts
-	if bound > len(connIDs) {
-		bound = len(connIDs)
-	}
-	for i := 0; i < bound; i++ {
-		idx := (start + i) % len(connIDs)
-		if conn, ok := h.tryPickConnection(ctx, connIDs[idx], provider, modelID); ok {
-			return conn, nil
+		for i := bound; i < len(connIDs); i++ {
+			idx := (start + i) % len(connIDs)
+			if conn, ok := h.tryPickConnection(ctx, connIDs[idx], provider, modelID); ok {
+				return conn, nil
+			}
 		}
 	}
 
-	for i := bound; i < len(connIDs); i++ {
-		idx := (start + i) % len(connIDs)
-		if conn, ok := h.tryPickConnection(ctx, connIDs[idx], provider, modelID); ok {
+	// Safety net: if the eligibility snapshot is empty or every eligible
+	// candidate was filtered out (e.g. all accounts are in a transient cooldown),
+	// scan all known connections for this provider and try them, ignoring
+	// cooldown windows but still honoring exhaustion and terminal statuses.
+	return h.getConnectionFallback(ctx, provider, modelID)
+}
+
+// getConnectionFallback is the last-resort router used when the eligibility
+// snapshot has no usable connection. It skips cooldown checks so a healthy
+// account that was briefly cooled down can still receive traffic.
+func (h *Handler) getConnectionFallback(ctx context.Context, provider, modelID string) (*Connection, error) {
+	var candidates []string
+	h.store.Range(func(connID string, cs *connstate.ConnectionState) bool {
+		if cs.Prefix != provider {
+			return true
+		}
+		switch cs.GetStatus() {
+		case connstate.StatusDisabled, connstate.StatusAuthFailed, connstate.StatusSuspended, connstate.StatusBalanceEmpty:
+			return true
+		}
+		candidates = append(candidates, connID)
+		return true
+	})
+
+	candidates = h.orderCandidates(provider, candidates)
+	for _, connID := range candidates {
+		if conn, ok := h.tryPickConnectionFallback(ctx, connID, provider, modelID); ok {
+			logging.Logger.Info("getConnection fallback selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name)
 			return conn, nil
 		}
 	}
 
 	return nil, fmt.Errorf("no available connection for provider: %s (all exhausted or failing)", provider)
+}
+
+// tryPickConnectionFallback is like tryPickConnection but ignores connection-level
+// cooldowns. It still respects model-level cooldowns and exhaustion so we do not
+// hammer accounts that are genuinely out of quota.
+func (h *Handler) tryPickConnectionFallback(ctx context.Context, connID, provider, modelID string) (*Connection, bool) {
+	cs := h.store.Get(connID)
+	if cs == nil {
+		return nil, false
+	}
+	if modelID != "" && cs.IsModelInCooldown(modelID) {
+		return nil, false
+	}
+	if modelID != "" && h.exhaustion.IsExhaustedScope(connID, connstate.ModelScope(provider, modelID)) {
+		return nil, false
+	}
+	if h.exhaustion.IsExhausted(connID) {
+		return nil, false
+	}
+	conn, err := h.getCachedConn(ctx, connID)
+	if err != nil {
+		logging.Logger.Debug("load conn failed", "conn", connID[:8], "err", err)
+		return nil, false
+	}
+	logging.Logger.Info("getConnection fallback selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name, "mode", h.providerCfg.RoutingMode(provider))
+	h.bindActiveConn(ctx, conn)
+	return conn, true
 }
 
 // pickStartIndex returns the first index to inspect based on the configured

@@ -542,13 +542,18 @@ func TestGetConnectionRejectsCooledDownConnection(t *testing.T) {
 		t.Fatalf("expected conn-oc-1, got %s", conn.ID)
 	}
 
-	// Mark cooldown and rebuild snapshot.
+	// Mark cooldown and rebuild snapshot. The connection is removed from the
+	// eligibility snapshot, but the last-resort fallback should still pick it
+	// because it is the only active connection.
 	cs.SetCooldown(time.Now().Add(time.Hour))
 	h.elig.RecomputeAll()
 
 	conn, err = h.getConnection(context.Background(), "oc", "hy3-free")
-	if err == nil {
-		t.Fatalf("expected error for cooled-down connection, got conn %s", conn.ID)
+	if err != nil {
+		t.Fatalf("expected fallback to cooled-down connection: %v", err)
+	}
+	if conn.ID != "conn-oc-1" {
+		t.Fatalf("expected conn-oc-1, got %s", conn.ID)
 	}
 }
 

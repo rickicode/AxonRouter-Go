@@ -153,7 +153,7 @@ import SearchIcon from '@lucide/svelte/icons/search';
   }
 
   function formatQuotaText(providerId: string, qi: QuotaItem): string {
-    if (providerId === 'kiro') {
+    if (providerId === 'kiro' || providerId === 'codebuddy') {
       return `${qi.used} / ${qi.total} credits`;
     }
     return `${qi.remaining_pct.toFixed(0)}%`;
