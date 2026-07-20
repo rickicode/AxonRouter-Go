@@ -131,6 +131,11 @@ func ConvertOpenAIRequestToKiro(model string, body []byte, stream bool) []byte {
 	}
 	conversationID := uuidv5(firstUser[:maxLen(firstUser, 4000)], kiroNamespaceUUID())
 
+	// Freeze and replay the first user message to keep the upstream cache key stable.
+	// The translator registry does not expose a connection ID, so the replay cache is
+	// keyed by the deterministic conversation ID.
+	history = applySessionReplay(conversationID, history, currentMessage)
+
 	effort := ""
 	if supportsReasoning(normalizedModel) {
 		effort = resolveKiroEffort(req)
