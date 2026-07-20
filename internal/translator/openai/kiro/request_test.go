@@ -172,6 +172,39 @@ func uimHasTools(uim map[string]any) bool {
 	return len(tools) > 0
 }
 
+func TestConvertOpenAIRequestToKiro_SystemPromptUsesInstructionsTag(t *testing.T) {
+	body := []byte(`{
+		"model": "kiro/claude-sonnet-4-6",
+		"messages": [
+			{"role": "system", "content": "Be concise."},
+			{"role": "user", "content": "Hello"}
+		]
+	}`)
+
+	out := ConvertOpenAIRequestToKiro("kiro/claude-sonnet-4-6", body, true)
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	systemPrompt, ok := payload["systemPrompt"].(string)
+	if !ok || systemPrompt == "" {
+		t.Fatalf("systemPrompt field missing or empty")
+	}
+	if !strings.Contains(systemPrompt, "Be concise.") {
+		t.Errorf("systemPrompt missing original instruction: %q", systemPrompt)
+	}
+
+	current := payload["conversationState"].(map[string]any)["currentMessage"].(map[string]any)
+	content := current["userInputMessage"].(map[string]any)["content"].(string)
+	if !strings.Contains(content, "<instructions>") {
+		t.Errorf("current content missing <instructions> tag: %q", content)
+	}
+	if strings.Contains(content, "<system-reminder>") {
+		t.Errorf("current content still uses old <system-reminder> tag: %q", content)
+	}
+}
+
 func TestBuildKiroTools_DescriptionTruncation(t *testing.T) {
 	longDesc := strings.Repeat("a", 10050)
 	tools := []any{
