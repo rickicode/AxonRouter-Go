@@ -50,6 +50,10 @@ func (h *UpgradeHandler) Upgrade(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to determine latest version"})
 		return
 	}
+	if !h.checker.UpdateAvailable() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no newer version available"})
+		return
+	}
 
 	asset := assetName()
 	assetURL := fmt.Sprintf("%s/%s/%s", h.baseURL, info.Tag, asset)
@@ -150,6 +154,19 @@ func (h *UpgradeHandler) upgradeBinaryPath() (string, error) {
 	return exe, nil
 }
 
+// copyFile copies the contents and permissions of src to dst.
+func copyFile(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, info.Mode())
+}
+
 func (h *UpgradeHandler) writeBinary(asset string, binary []byte) (string, error) {
 	path, err := h.upgradeBinaryPath()
 	if err != nil {
@@ -158,18 +175,37 @@ func (h *UpgradeHandler) writeBinary(asset string, binary []byte) (string, error
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}
+
+	backupPath := path + ".bak"
+	targetExisted := false
+	if _, err := os.Stat(path); err == nil {
+		targetExisted = true
+		if err := copyFile(path, backupPath); err != nil {
+			return "", fmt.Errorf("backup existing binary: %w", err)
+		}
+	}
+
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, binary, 0o755); err != nil {
-		return "", err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		if runtime.GOOS != "windows" {
-			return "", err
+		if targetExisted {
+			_ = copyFile(backupPath, path)
 		}
-		// Windows Rename does not overwrite an existing file.
-		_ = os.Remove(path)
-		if err := os.Rename(tmp, path); err != nil {
-			return "", err
+		return "", fmt.Errorf("write new binary: %w", err)
+	}
+
+	if err := os.Rename(tmp, path); err != nil {
+		if runtime.GOOS == "windows" {
+			_ = os.Remove(path)
+			err = os.Rename(tmp, path)
+		}
+		if err != nil {
+			_ = os.Remove(tmp)
+			if targetExisted {
+				if rerr := copyFile(backupPath, path); rerr != nil {
+					return "", fmt.Errorf("replace failed and restore failed: %v (original: %w)", rerr, err)
+				}
+			}
+			return "", fmt.Errorf("replace binary: %w", err)
 		}
 	}
 	return path, nil

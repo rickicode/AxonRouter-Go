@@ -2,6 +2,7 @@
   import './app.css';
   import { onMount } from 'svelte';
   import { router, currentPath } from '$lib/router';
+  import { startHealthChecks } from '$lib/health';
 import * as Sidebar from '$lib/components/ui/sidebar';
   import { Toaster } from '$lib/components/ui/sonner';
   import { toast } from 'svelte-sonner';
@@ -11,6 +12,7 @@ import * as Sidebar from '$lib/components/ui/sidebar';
 import { authStore, logout, mustChangePasswordStore } from '$lib/auth';
 import Login from './pages/Login.svelte';
 import ChangePasswordModal from '$lib/components/ChangePasswordModal.svelte';
+import UpdateAvailableModal from '$lib/components/UpdateAvailableModal.svelte';
 import LogOutIcon from '@lucide/svelte/icons/log-out';
 import HeartIcon from '@lucide/svelte/icons/heart';
 import { Button } from '$lib/components/ui/button';
@@ -38,10 +40,15 @@ import About from './pages/About.svelte';
 import NotFound from './pages/NotFound.svelte';
 
   let cleanup: (() => void) | undefined;
+  let stopHealthChecks: (() => void) | undefined;
 
   onMount(() => {
     cleanup = router.start();
-    return () => cleanup?.();
+    stopHealthChecks = startHealthChecks();
+    return () => {
+      cleanup?.();
+      stopHealthChecks?.();
+    };
   });
 
   function getPageLabel(path: string): string {
@@ -178,6 +185,7 @@ function handleLogout() {
   {#if $mustChangePasswordStore}
     <ChangePasswordModal />
   {/if}
+  <UpdateAvailableModal />
 {:else}
   <Login />
 {/if}
