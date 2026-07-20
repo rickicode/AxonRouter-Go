@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -316,6 +317,106 @@ func TestCfInjectReasoningControl(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCloudflareStreamNormalize_RewritesReasoningDelta(t *testing.T) {
+	in := make(chan StreamChunk, 1)
+	in <- StreamChunk{Payload: []byte(`data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"reasoning":"think"},"finish_reason":null}]}`)}
+	close(in)
+
+	out := collectStreamChunks(normalizeCloudflareStream(in))
+	if len(out) != 1 {
+		t.Fatalf("expected 1 chunk, got %d", len(out))
+	}
+	if !strings.Contains(out[0], `"reasoning_content":"think"`) {
+		t.Fatalf("expected reasoning_content, got %s", out[0])
+	}
+	if strings.Contains(out[0], `"reasoning":"think"`) {
+		t.Fatalf("reasoning field should be removed, got %s", out[0])
+	}
+}
+
+func TestCloudflareStreamNormalize_AggregatesReasoningBeforeContent(t *testing.T) {
+	in := make(chan StreamChunk, 3)
+	in <- StreamChunk{Payload: []byte(`data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"reasoning":"step1"},"finish_reason":null}]}`)}
+	in <- StreamChunk{Payload: []byte(`data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"reasoning":"step2"},"finish_reason":null}]}`)}
+	in <- StreamChunk{Payload: []byte(`data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}]}`)}
+	close(in)
+
+	out := collectStreamChunks(normalizeCloudflareStream(in))
+	if len(out) != 2 {
+		t.Fatalf("expected 2 chunks, got %d: %v", len(out), out)
+	}
+	if !strings.Contains(out[0], `"reasoning_content":"step1step2"`) {
+		t.Fatalf("expected aggregated reasoning_content, got %s", out[0])
+	}
+	if !strings.Contains(out[1], `"content":"hello"`) {
+		t.Fatalf("expected content chunk, got %s", out[1])
+	}
+}
+
+func TestCloudflareStreamNormalize_NoReasoningPassesUnchanged(t *testing.T) {
+	payload := `data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}`
+	in := make(chan StreamChunk, 1)
+	in <- StreamChunk{Payload: []byte(payload)}
+	close(in)
+
+	out := collectStreamChunks(normalizeCloudflareStream(in))
+	if len(out) != 1 {
+		t.Fatalf("expected 1 chunk, got %d", len(out))
+	}
+	if out[0] != payload {
+		t.Fatalf("expected unchanged payload, got %s", out[0])
+	}
+}
+
+func TestCloudflareStreamNormalize_EmptyReasoningPassesUnchanged(t *testing.T) {
+	payload := `data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"reasoning":"","content":"hello"},"finish_reason":null}]}`
+	in := make(chan StreamChunk, 1)
+	in <- StreamChunk{Payload: []byte(payload)}
+	close(in)
+
+	out := collectStreamChunks(normalizeCloudflareStream(in))
+	if len(out) != 1 {
+		t.Fatalf("expected 1 chunk, got %d", len(out))
+	}
+	if out[0] != payload {
+		t.Fatalf("expected unchanged payload, got %s", out[0])
+	}
+}
+
+func TestCloudflareStreamNormalize_PreservesDoneAndErrors(t *testing.T) {
+	in := make(chan StreamChunk, 3)
+	in <- StreamChunk{Payload: []byte("data: [DONE]")}
+	in <- StreamChunk{Err: errors.New("boom")}
+	in <- StreamChunk{Payload: []byte{}}
+	close(in)
+
+	out := collectStreamChunks(normalizeCloudflareStream(in))
+	if len(out) != 3 {
+		t.Fatalf("expected 3 chunks, got %d", len(out))
+	}
+	if out[0] != "data: [DONE]" {
+		t.Fatalf("expected DONE unchanged, got %s", out[0])
+	}
+	if out[1] != "boom" {
+		t.Fatalf("expected error chunk, got %s", out[1])
+	}
+	if len(out[2]) != 0 {
+		t.Fatalf("expected empty payload, got %s", out[2])
+	}
+}
+
+func collectStreamChunks(ch <-chan StreamChunk) []string {
+	var out []string
+	for c := range ch {
+		if c.Err != nil {
+			out = append(out, c.Err.Error())
+			continue
+		}
+		out = append(out, string(c.Payload))
+	}
+	return out
 }
 
 func mustJSON(v any) []byte {
