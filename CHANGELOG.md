@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `version.Checker` is now owned by `Router` and stopped during graceful shutdown.
 
 ### Fixed
+- `installer.sh` no longer fails with `Init already exists` when upgrading an existing installation; it now reloads and restarts the axonrouter service automatically.
 - `Makefile` release target now pushes the `master` branch instead of `main`.
 - Sidebar changelog link now points to the `master` branch.
 

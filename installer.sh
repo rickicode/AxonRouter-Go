@@ -121,6 +121,23 @@ install_systemd_service() {
   [[ "$SKIP_SERVICE" == false ]] || return 0
   command -v systemctl >/dev/null 2>&1 || return 0
 
+  local systemctl_user=""
+  [[ "$EUID" -ne 0 ]] && systemctl_user="--user"
+
+  # If the service is already installed, we are doing an upgrade: just reload
+  # systemd and restart/start with the new binary. Otherwise kardianos/service
+  # fails with "Init already exists".
+  if systemctl $systemctl_user cat axonrouter.service >/dev/null 2>&1; then
+    info "axonrouter.service is already installed; restarting with the new binary..."
+    systemctl $systemctl_user daemon-reload
+    if systemctl $systemctl_user is-active --quiet axonrouter.service; then
+      systemctl $systemctl_user restart axonrouter.service || echo "warning: service restart failed." >&2
+    else
+      systemctl $systemctl_user start axonrouter.service || echo "warning: service start failed." >&2
+    fi
+    return 0
+  fi
+
   info "Installing systemd service..."
   if ! "${INSTALLED}" --service install; then
     echo "warning: service installation failed, skipping." >&2
