@@ -9,8 +9,9 @@ import (
 
 // EligibilitySnapshot is an immutable set of eligible provider IDs for fast routing.
 type EligibilitySnapshot struct {
-	Providers []string
-	ByPrefix  map[string][]string
+	Providers     []string
+	ByPrefix      map[string][]string
+	ByPrefixState map[string][]*ConnectionState
 }
 
 // EligibilityManager manages eligibility snapshots for O(1) routing decisions.
@@ -46,8 +47,8 @@ func NewEligibilityManager(store *Store) *EligibilityManager {
 // so routing modes such as round_robin and first_eligible prefer healthy
 // accounts while still rotating fallback across siblings.
 func (e *EligibilityManager) Update(store *Store) {
-	eligible := make(map[string][]string)
-	var all []string
+	eligibleStates := make(map[string][]*ConnectionState)
+	var allStates []*ConnectionState
 
 	store.RangeByConnID(func(connID string, cs *ConnectionState) bool {
 		status := cs.GetStatus()
@@ -60,33 +61,40 @@ func (e *EligibilityManager) Update(store *Store) {
 		if cs.IsInCooldown() {
 			return true
 		}
-		all = append(all, connID)
+		allStates = append(allStates, cs)
 		prefix := cs.Prefix
-		eligible[prefix] = append(eligible[prefix], connID)
+		eligibleStates[prefix] = append(eligibleStates[prefix], cs)
 		return true
 	})
 
 	// Order each prefix by remaining quota (highest first). Routing modes then
 	// rotate or pick a random start on this list, naturally preferring accounts
 	// with the most credits without breaking round-robin/random semantics.
-	for _, ids := range eligible {
-		sort.SliceStable(ids, func(i, j int) bool {
-			ci := store.Get(ids[i])
-			cj := store.Get(ids[j])
-			ri, rj := 100.0, 100.0
-			if ci != nil {
-				ri = ci.GetRemainingPct()
-			}
-			if cj != nil {
-				rj = cj.GetRemainingPct()
-			}
-			return ri > rj
+	for _, conns := range eligibleStates {
+		sort.SliceStable(conns, func(i, j int) bool {
+			return conns[i].GetRemainingPct() > conns[j].GetRemainingPct()
 		})
 	}
 
+	// Build string slices from the sorted pointer slices for callers that only
+	// need connection IDs. Both views share the same ordering.
+	eligible := make(map[string][]string, len(eligibleStates))
+	for prefix, conns := range eligibleStates {
+		ids := make([]string, len(conns))
+		for i, cs := range conns {
+			ids[i] = cs.ID
+		}
+		eligible[prefix] = ids
+	}
+	providers := make([]string, 0, len(allStates))
+	for _, cs := range allStates {
+		providers = append(providers, cs.ID)
+	}
+
 	e.snapshot.Store(&EligibilitySnapshot{
-		Providers: all,
-		ByPrefix:  eligible,
+		Providers:     providers,
+		ByPrefix:      eligible,
+		ByPrefixState: eligibleStates,
 	})
 }
 
@@ -136,6 +144,17 @@ func (e *EligibilityManager) GetByPrefix(prefix string) []string {
 		return nil
 	}
 	return snap.ByPrefix[prefix]
+}
+
+// GetByPrefixState returns eligible connection states for a specific prefix.
+// The slice is pre-sorted by remaining quota (highest first) and is safe for
+// lock-free use on the routing hot path.
+func (e *EligibilityManager) GetByPrefixState(prefix string) []*ConnectionState {
+	snap := e.Get()
+	if snap.ByPrefixState == nil {
+		return nil
+	}
+	return snap.ByPrefixState[prefix]
 }
 
 // GetAll returns all eligible connection IDs.
