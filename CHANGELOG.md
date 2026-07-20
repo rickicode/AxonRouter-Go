@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Auto-refresh OAuth tokens during connection test** — expired OAuth tokens are refreshed automatically before `TestConnection` validates the account.
+- Docker image build/push moved into the GitHub Actions release workflow.
+
+### Fixed
+- **CodeBuddy routing and quota display** — adds a fallback router path for CodeBuddy so requests reach the right translator and surfaces CodeBuddy quota as credits in the dashboard.
+- **Kiro OpenAI translator wiring** — wires the OpenAI→Kiro translator, refreshes provider-specific defaults (PSD), and syncs the live model catalog.
+
 ## [0.3.15] - 2026-07-20
 
 ### Added
