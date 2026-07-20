@@ -397,43 +397,13 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.13
+### What's New in v0.3.14
 
 ### Added
-- **200-tool cap for `grok-cli`** — flattens and truncates large tool lists to the first 200 entries before sending upstream, with a warn log when truncation occurs.
-- **Transactional provider-account creation with deduplication, auto-priority, and reorder** — `AddConnection` now runs in a SQLite transaction, rejects duplicate `(provider, name)` or OAuth-token accounts with `409`, auto-assigns priority as `max + 1`, and normalizes priority ordering after every add/delete.
-- **Pre-save provider key validation** — backend rejects invalid API keys before persisting the connection; dashboard modal surfaces validation errors inline and blocks submit until the key passes.
-- **Per-model account lockout with exponential backoff** — rate-limit/quota errors lock only the failing `(connection, model)` pair, escalate backoff (`30s × 2^level` capped at `1h`), honor upstream `resets_at` timestamps, and clear automatically on success.
-- **In-memory device tracker ported from 9router/OmniRoute** — passive tracking on every `/v1/*` request after API-key resolution. Stores SHA-256 fingerprints of masked IP + truncated User-Agent, enforces TTL and per-key/total limits, and exposes no raw IPs.
-- **Admin device endpoint and dashboard UI** — `GET /api/admin/keys/:id/devices` returns device count and list; API Keys dashboard page shows count and a detail dialog with fingerprint, masked IP, UA, and last-seen time.
-- **OAuth mode in Add Connection modal** — explicit "Connect" button opens the existing backend OAuth flow in a popup, polls until completion, and refreshes the connection list on success.
-- **Bulk proxy-pool assignment** — `ProviderDetail` supports multi-selecting connections and applying/unbinding a proxy pool in one transaction; only available for proxy-pool providers (`oc`, `mimocode`).
-- **Device-tracker configuration** — env vars `DEVICE_TRACKER_TTL_MS`, `DEVICE_TRACKER_MAX_PER_KEY`, `DEVICE_TRACKER_MAX_TOTAL_DEVICES`.
-- **Live Kiro model catalog** — `internal/provider/kiro/models.go` calls `ListAvailableModels` with fingerprint headers, caches results for 5 minutes, falls back to the static catalog, and expands each live model into base / `-thinking` / `-agentic` / `-thinking-agentic` variants carrying `rateMultiplier` and `contextLength`.
-- **Kiro multi-endpoint quota fetcher** — `internal/quota/kiro.go` tries `codewhisperer` POST, `codewhisperer` GET, and `q` GET fallbacks; discovers `profileArn` across AWS regions; parses `usageBreakdownList`, `overageConfiguration.unlimited`, and `freeTrialInfo`; surfaces a friendly message for social-auth accounts when quota APIs reject the token.
-- **Kiro multi-method authentication** — Kiro now supports AWS Builder ID, IAM Identity Center (IDC), Google/GitHub social OAuth, refresh-token import, API key, and enterprise External IdP (SSO) auth methods. SSRF-guarded enterprise IdP refresh with an allowlist of 15 common IdP host suffixes.
-- **Kiro auto-import from local Kiro app** — `internal/auth/kiro/autoimport.go` reads `kiro-cli` SQLite storage, AWS SSO cache, and Kiro IDE `profile.json` to discover existing tokens and profile Arn.
-- **Kiro region resolution and auth-aware endpoints** — `internal/executor/kiro_region.go` resolves the runtime region from `profileArn` first, supports only `us-east-1`/`eu-central-1`, orders endpoints per auth method, and sets conditional `tokentype`/`TokenType` headers.
-- **Kiro tool schema sanitizer and agentic mode** — tool schemas are sanitized for Kiro's strict JSON Schema subset, long tool names are hash-truncated with reverse name mapping, adaptive thinking is gated to an allowlist of supported models, and synthetic `-agentic` variants receive an agentic system prompt.
-- **Kiro inline thinking splitter** — `internal/executor/kiro.go` splits `<thinking>...</thinking>` blocks out of `assistantResponseEvent` content into `reasoning_content` deltas when a separate `reasoningContentEvent` is not emitted.
-- **Dashboard simplification + system metrics** — removed date-range selector, defaults to today's traffic only, adds CPU/RAM/disk system-metric cards, and links to the Usage page for details. Backend uses cross-platform `gopsutil`.
-- **Usage summary endpoint** — `GET /api/admin/usage/summary` returns today, yesterday, month-to-date, projected month cost, and next quota reset.
-- **Usage page enhancements** — replaced the misleading "Saved this month" card with "Cost this month" and "Projected cost", added today vs yesterday deltas.
-- **Grok CLI advanced tool normalization** — drops upstream pseudo-tools (`tool_search`, `image_generation`, `apply_patch`), rewrites `custom` → `function`, injects missing parameters, simplifies fragile schemas, auto-injects native `x_search`, normalizes `tool_choice`, and converts legacy `custom_tool_call` / `tool_use` input items.
-- **Grok CLI response namespace restoration** — restores original tool names and a `namespace` field on output items so downstream Chat Completions responses stay readable, and filters internal `x_search` subtool traces.
-- **Grok CLI reasoning replay cache** — caches replayable output items (reasoning `encrypted_content`, assistant messages, tool calls) per model/session and injects them before the last user message on subsequent turns.
+- **CodeBuddy executor wrapper** — adds a dedicated executor for the `codebuddy` provider that prepends a required leading `system` message and always calls the upstream streaming endpoint, aggregating SSE chunks back into a single non-streaming response.
 
 ### Fixed
-- **Kiro OAuth account naming** — AWS Builder ID / IDC device-code flows and social/import flows now extract the account email from the JWT; when no email is present the connection is named `Kiro-1`, `Kiro-2`, etc.
-- **Kiro device-code auto-fill** — the dashboard now receives `verification_uri_complete` so the browser can pre-fill the user code when opening the AWS authorization page.
-- **Kiro quota fallback profile ARN** — `internal/quota/kiro.go` now falls back to the shared default `profileArn` for AWS Builder ID and social auth (matching 9router), allowing quota to populate instead of returning "Profile ARN not available".
-- **Kiro quota dashboard display** — Kiro credits are shown as `used / total credits` instead of a percentage on the Quota page.
-- **Grok CLI non-stream response translation** — `/v1/chat/completions` responses from `grok-cli` are now translated back to standard OpenAI format instead of leaking Grok's internal `response.completed` event shape.
-- **Grok CLI tool-call argument streaming** — buffers per-call `function_call_arguments.delta` chunks and falls back to accumulated arguments when `output_item.done` arrives with empty arguments.
-- Provider-account single add is now transaction-safe; no more inconsistent in-memory state if DB insert fails.
-- Priority gaps after connection deletion are closed by automatic reordering.
-- **Grok CLI 402 spending-limit handling** — `personal-team-blocked:spending-limit` responses are now treated as a quota cooldown instead of permanently disabling the connection, so the connection can recover automatically after the user tops up.
-- **Grok CLI failover error mapping** — when all `grok-cli` connections are exhausted due to quota/cooldown, the client now receives HTTP 429 `insufficient_quota` with the upstream message instead of HTTP 503 `server_error`.
+- **Grok 4.5 model catalog limits** — corrected `grok-cli/grok-4.5*` entries in `internal/models/models.json` from 1M context / 65,536 output tokens to 500k context / 32,768 output tokens to match xAI's official Grok 4.5 spec.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
