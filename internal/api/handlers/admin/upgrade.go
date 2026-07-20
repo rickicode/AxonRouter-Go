@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -250,4 +251,57 @@ func findChecksum(data []byte, asset string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no checksum for %s", asset)
+}
+
+// RestartHandler initiates a service restart when AxonRouter is managed by systemd.
+type RestartHandler struct {
+	checkActive func(name string, arg ...string) error
+	restart     func(name string, arg ...string) error
+}
+
+// NewRestartHandler creates a handler that restarts the systemd service.
+func NewRestartHandler() *RestartHandler {
+	return &RestartHandler{
+		checkActive: func(name string, arg ...string) error {
+			return exec.Command(name, arg...).Run()
+		},
+		restart: func(name string, arg ...string) error {
+			return exec.Command(name, arg...).Start()
+		},
+	}
+}
+
+// Restart checks whether the axonrouter systemd unit is active and, if so,
+// starts a non-blocking restart. It prefers a user-scoped unit and falls back
+// to a system-scoped unit.
+func (h *RestartHandler) Restart(c *gin.Context) {
+	userActive := h.checkActive("systemctl", "--user", "is-active", "axonrouter") == nil
+	systemActive := false
+	if !userActive {
+		systemActive = h.checkActive("systemctl", "is-active", "axonrouter") == nil
+	}
+
+	if !userActive && !systemActive {
+		cmd, _ := restartInstructions()
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":           "service not managed by systemd",
+			"restart_command": cmd,
+		})
+		return
+	}
+
+	args := []string{"restart", "axonrouter"}
+	if userActive {
+		args = []string{"--user", "restart", "axonrouter"}
+	}
+
+	if err := h.restart("systemctl", args...); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to start restart: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"ok":      true,
+		"message": "restart initiated",
+	})
 }
