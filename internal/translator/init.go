@@ -10,6 +10,7 @@ import (
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/claude/antigravity"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/claude/openai"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/gemini/openai"
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/kiro/claude"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/kiro/openai"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai/antigravity"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai/claude"
