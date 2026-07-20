@@ -461,6 +461,7 @@ func New(cfg Config) *Router {
 	masterGroup := engine.Group("/admin/api/v1")
 	masterGroup.Use(middleware.MasterAuth(km))
 	masterGroup.Use(admin.ProgrammaticResponseWrapper())
+	masterGroup.Use(middleware.MasterRestrict())
 	registerAdminRoutes(masterGroup)
 
 	// ---- Static frontend (SPA) ----

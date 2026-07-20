@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Restrict master API key break-glass actions** — the programmatic `/admin/api/v1` master key can no longer change the admin password, restart/upgrade the gateway, download/restore backups, read/regenerate itself, or alter TLS config. It remains usable for all other admin-automation endpoints (providers, connections, models, combos, proxy pools, API keys, logs, usage, quota, settings, etc.).
+
 ## [0.3.17] - 2026-07-20
 
 ### Added
