@@ -55,6 +55,51 @@ func TestSanitizeCodeBuddyChunkStripsReasoning(t *testing.T) {
 	}
 }
 
+func TestSanitizeCodeBuddyChunkStripsEmptyReasoning(t *testing.T) {
+	input := `data: {"id":"cmb-1","object":"chat.completion.chunk","created":1,"model":"glm-5.2","choices":[{"index":0,"delta":{"role":"assistant","content":"Hi","reasoning_content":"","function_call":null},"finish_reason":""}]}`
+	got := string(sanitizeCodeBuddyChunk([]byte(input)))
+	if strings.Contains(got, "reasoning_content") {
+		t.Errorf("sanitized chunk still contains empty reasoning_content: %s", got)
+	}
+}
+
+func TestSanitizeCodeBuddyChunkStripsNullReasoning(t *testing.T) {
+	input := `data: {"id":"cmb-1","object":"chat.completion.chunk","created":1,"model":"glm-5.2","choices":[{"index":0,"delta":{"role":"assistant","content":"Hi","reasoning_content":null,"function_call":null},"finish_reason":""}]}`
+	got := string(sanitizeCodeBuddyChunk([]byte(input)))
+	if strings.Contains(got, "reasoning_content") {
+		t.Errorf("sanitized chunk still contains null reasoning_content: %s", got)
+	}
+}
+
+func TestSanitizeCodeBuddyChunkStripsIntermediateUsage(t *testing.T) {
+	input := `data: {"id":"cmb-1","object":"chat.completion.chunk","created":1,"model":"glm-5.2","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":""}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`
+	got := string(sanitizeCodeBuddyChunk([]byte(input)))
+	if strings.Contains(got, "usage") {
+		t.Errorf("sanitized intermediate chunk still contains usage: %s", got)
+	}
+}
+
+func TestSanitizeCodeBuddyChunkKeepsFinalUsage(t *testing.T) {
+	input := `data: {"id":"cmb-1","object":"chat.completion.chunk","created":1,"model":"glm-5.2","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`
+	got := string(sanitizeCodeBuddyChunk([]byte(input)))
+	if !strings.Contains(got, "usage") {
+		t.Errorf("sanitized final chunk lost usage: %s", got)
+	}
+}
+
+func TestSanitizeCodeBuddyChunkCleansJunkFields(t *testing.T) {
+	input := `data: {"id":"cmb-1","object":"chat.completion.chunk","created":1,"model":"glm-5.2","choices":[{"index":0,"delta":{"content":"Hi","extra_fields":null,"function_call":null,"refusal":"","role":"assistant","tool_calls":[]},"finish_reason":"","logprobs":null}],"usage":null}`
+	got := string(sanitizeCodeBuddyChunk([]byte(input)))
+	for _, field := range []string{"extra_fields", "function_call", "refusal", "tool_calls", "logprobs", "usage"} {
+		if strings.Contains(got, field) {
+			t.Errorf("sanitized chunk still contains junk field %q: %s", field, got)
+		}
+	}
+	if !strings.Contains(got, `"content":"Hi"`) {
+		t.Errorf("sanitized chunk lost content: %s", got)
+	}
+}
+
 func TestSanitizeCodeBuddyChunkPassesDone(t *testing.T) {
 	input := []byte("data: [DONE]")
 	got := string(sanitizeCodeBuddyChunk(input))

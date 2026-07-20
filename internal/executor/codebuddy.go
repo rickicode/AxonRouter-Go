@@ -108,8 +108,11 @@ func (e *CodeBuddyExecutor) ExecuteStream(ctx context.Context, req *Request) (*S
 	}, nil
 }
 
-// sanitizeCodeBuddyChunk removes any `reasoning_content` field from the delta of
-// an SSE data line. Other lines (comments, blanks, [DONE]) are passed through.
+// sanitizeCodeBuddyChunk cleans up a CodeBuddy SSE chunk so it behaves like a
+// standard OpenAI-compatible stream. CodeBuddy emits several non-standard
+// fields (`extra_fields`, empty arrays, `usage` on every chunk,
+// `reasoning_content`) that confuse clients such as OpenCode. We remove the
+// noise while preserving real content and the final usage/finish_reason.
 func sanitizeCodeBuddyChunk(payload []byte) []byte {
 	trimmed := bytes.TrimSpace(payload)
 	if !bytes.HasPrefix(trimmed, []byte("data:")) {
@@ -124,25 +127,40 @@ func sanitizeCodeBuddyChunk(payload []byte) []byte {
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		return payload
 	}
-	choices, ok := parsed["choices"].([]any)
-	if !ok || len(choices) == 0 {
-		return payload
-	}
-	choice, ok := choices[0].(map[string]any)
-	if !ok {
-		return payload
-	}
-	delta, ok := choice["delta"].(map[string]any)
-	if !ok {
-		return payload
-	}
-	delete(delta, "reasoning_content")
 
-	// If the delta is now empty and this is not the final chunk, drop the delta
-	// from the choice to avoid emitting empty content events that some clients
-	// render as stuttering.
-	if len(delta) == 0 {
-		delete(choice, "delta")
+	choices, _ := parsed["choices"].([]any)
+	isFinalUsage := len(choices) == 0
+	var choice map[string]any
+	if len(choices) > 0 {
+		choice, _ = choices[0].(map[string]any)
+		if fr, ok := choice["finish_reason"].(string); ok && fr != "" {
+			isFinalUsage = true
+		}
+	}
+
+	if choice != nil {
+		if delta, ok := choice["delta"].(map[string]any); ok {
+			cleanDelta(delta)
+
+			// If the delta is now empty and this is not the final chunk, drop the
+			// delta from the choice to avoid emitting empty content events that some
+			// clients render as stuttering.
+			if len(delta) == 0 {
+				delete(choice, "delta")
+			}
+		}
+
+		// Drop null/empty non-standard choice-level fields that CodeBuddy includes.
+		if lp, ok := choice["logprobs"]; ok && lp == nil {
+			delete(choice, "logprobs")
+		}
+	}
+
+	// CodeBuddy sends usage on every chunk; standard OpenAI only sends it on the
+	// final chunk. Strip intermediate usage rows to avoid clients rendering a
+	// thinking/progress marker per chunk.
+	if !isFinalUsage {
+		delete(parsed, "usage")
 	}
 
 	b, err := json.Marshal(parsed)
@@ -152,11 +170,39 @@ func sanitizeCodeBuddyChunk(payload []byte) []byte {
 	return append([]byte("data: "), b...)
 }
 
+// cleanDelta removes junk fields from a streaming delta. CodeBuddy often
+// includes empty/null `reasoning_content`, empty `refusal`, empty `tool_calls`,
+// null `function_call`, and null `extra_fields` on chunks. Keeping them makes
+// clients such as OpenCode render empty reasoning/thought placeholders or
+// leak thinking text. We strip all `reasoning_content` here; exposing thinking
+// cleanly requires a client that understands it or an explicit opt-in format.
+func cleanDelta(delta map[string]any) {
+	delete(delta, "reasoning_content")
+
+	if v, ok := delta["extra_fields"]; ok && v == nil {
+		delete(delta, "extra_fields")
+	}
+	if v, ok := delta["function_call"]; ok && v == nil {
+		delete(delta, "function_call")
+	}
+	if v, ok := delta["refusal"]; ok {
+		if s, _ := v.(string); s == "" {
+			delete(delta, "refusal")
+		}
+	}
+	if v, ok := delta["tool_calls"]; ok {
+		if a, _ := v.([]any); len(a) == 0 {
+			delete(delta, "tool_calls")
+		}
+	}
+}
+
 // aggregateCodeBuddyStream reads SSE chunks from the channel and builds a single
 // non-streaming chat.completion response. Each chunk payload is an SSE line from
 // the base executor (e.g. `data: {"choices":...}` or `data: [DONE]`).
 func aggregateCodeBuddyStream(ch <-chan StreamChunk) ([]byte, error) {
 	var content strings.Builder
+	var reasoning strings.Builder
 	var usage map[string]any
 	var finishReason string
 	var id, model string
@@ -207,8 +253,14 @@ func aggregateCodeBuddyStream(ch <-chan StreamChunk) ([]byte, error) {
 
 		choice, _ := choices[0].(map[string]any)
 		delta, _ := choice["delta"].(map[string]any)
-		if v, ok := delta["content"].(string); ok {
-			content.WriteString(v)
+		if delta != nil {
+			cleanDelta(delta)
+			if v, ok := delta["content"].(string); ok {
+				content.WriteString(v)
+			}
+			if v, ok := delta["reasoning_content"].(string); ok && v != "" {
+				reasoning.WriteString(v)
+			}
 		}
 		if fr, ok := choice["finish_reason"].(string); ok && fr != "" {
 			finishReason = fr
@@ -221,6 +273,9 @@ func aggregateCodeBuddyStream(ch <-chan StreamChunk) ([]byte, error) {
 	msg := map[string]any{
 		"role":    "assistant",
 		"content": content.String(),
+	}
+	if reasoning.Len() > 0 {
+		msg["reasoning_content"] = reasoning.String()
 	}
 	out := map[string]any{
 		"id":      id,
