@@ -289,18 +289,21 @@ func convertMessages(messages, tools []any, model string, agentic bool) ([]map[s
 			text = v
 		case []any:
 			text = extractTextFromBlocks(v)
-			if supportsImages {
-				for _, raw := range v {
-					if img, ok := raw.(map[string]any); ok {
-						if format, bytes := extractImage(img); bytes != "" {
-							pendingImages = append(pendingImages, map[string]any{
-								"format": format,
-								"source": map[string]any{"bytes": bytes},
-							})
+				if supportsImages {
+					for _, raw := range v {
+						if img, ok := raw.(map[string]any); ok {
+							format, bytes, url := extractImage(img)
+							if bytes != "" {
+								pendingImages = append(pendingImages, map[string]any{
+									"format": format,
+									"source": map[string]any{"bytes": bytes},
+								})
+							} else if url != "" {
+								pendingUser = append(pendingUser, fmt.Sprintf("[Image: %s]", url))
+							}
 						}
 					}
 				}
-			}
 			// Inline tool_result blocks inside content array.
 			for _, raw := range v {
 				if block, ok := raw.(map[string]any); ok && block["type"] == "tool_result" {
@@ -469,24 +472,26 @@ func extractTextFromBlocks(blocks []any) string {
 	return strings.Join(parts, "\n")
 }
 
-func extractImage(block map[string]any) (format, bytes string) {
+func extractImage(block map[string]any) (format, bytes, url string) {
 	btype, _ := block["type"].(string)
 	switch btype {
 	case "image_url":
 		iu, _ := block["image_url"].(map[string]any)
-		url, _ := iu["url"].(string)
-		return parseDataURL(url)
+		url, _ = iu["url"].(string)
+		format, bytes = parseDataURL(url)
+		return format, bytes, url
 	case "image":
 		src, _ := block["source"].(map[string]any)
 		if src["type"] == "base64" {
 			mediaType, _ := src["media_type"].(string)
-			return extFromMime(mediaType), asString(src["data"])
+			return extFromMime(mediaType), asString(src["data"]), ""
 		}
 		if img, ok := block["image"].(string); ok {
-			return parseDataURL(img)
+			format, bytes = parseDataURL(img)
+			return format, bytes, img
 		}
 	}
-	return "", ""
+	return "", "", ""
 }
 
 func parseDataURL(url string) (format, bytes string) {
