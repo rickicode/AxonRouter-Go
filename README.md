@@ -397,14 +397,18 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.17
+### What's New in v0.3.18
+
+### Security
+- **Restrict master API key break-glass actions** — the programmatic `/admin/api/v1` master key can no longer change the admin password, restart/upgrade the gateway, download/restore backups, read/regenerate itself, or alter TLS config. It remains usable for all other admin-automation endpoints (providers, connections, models, combos, proxy pools, API keys, logs, usage, quota, settings, etc.).
+
+### Changed
+- **Routing hot-path optimizations** — reduced `getConnection` ready-snapshot latency by ~4.7× (17.3 µs → 3.7 µs) by capturing `time.Now()` once per candidate, removing redundant `RoutingMode()` lookups from the hot path, converting `ExhaustionCache` to `sync.Map`, and using `singleflight` to collapse concurrent first-time provider-config disk reads.
+- **Pre-materialized eligibility readyView** — `EligibilitySnapshot` now stores sorted `*ConnectionState` pointers per provider prefix so the routing loop avoids repeated `store.Get` map lookups.
 
 ### Added
-- **Console log file rotation and dashboard Console page** — application logs are now written to a rotating on-disk file (`/tmp/axonrouter.log`) via `internal/logging/file.go` (2 MB max, 3 backups). A new `GET /api/admin/console-logs` endpoint tails up to 500 lines for the dashboard, and the new Console page under System shows live, auto-polling log output in the sidebar.
-- **In-product upgrade, logs, and restart flow** — `POST /api/admin/upgrade` now returns per-step upgrade logs, and `POST /api/admin/restart` restarts the service; the About page and update-available modal show live logs and a restart prompt after upgrade completes.
-
-### Fixed
-- **Cloudflare Kimi reasoning stream hang** — defaults `chat_template_kwargs.thinking` to `false` for Cloudflare reasoning models unless the client explicitly requests reasoning, and normalizes upstream `reasoning` fields to OpenAI-standard `reasoning_content` in both streaming and non-streaming responses so `cf/moonshotai/kimi-k2.7` no longer appears stuck in thinking.
+- **Routing hot-path benchmarks** — `internal/api/handlers/v1/handler_benchmark_test.go`, `providercfg_benchmark_test.go`, `modellock_benchmark_test.go`, and `exhaustion_benchmark_test.go` baseline the connection-selection path.
+- **Per-model round-robin cursor** — round-robin counters are now keyed by `provider + "\x00" + modelID` so independent models on the same provider rotate separately and high-traffic models do not steal rotation from siblings.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
