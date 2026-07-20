@@ -79,10 +79,77 @@ func (e *CodeBuddyExecutor) Execute(ctx context.Context, req *Request) (*Respons
 	}, nil
 }
 
-// ExecuteStream performs a streaming chat completion.
+// ExecuteStream performs a streaming chat completion. CodeBuddy's upstream can
+// include a `reasoning_content` field in the delta; some clients (e.g. OpenCode)
+// render it as part of the visible response and show it as choppy "thinking"
+// leakage. We strip that field from every SSE chunk before forwarding.
 func (e *CodeBuddyExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
 	req.Body = codebuddyEnsureSystemMessage(req.Body)
-	return e.OpenAIExecutor.ExecuteStream(ctx, req)
+	upstream, err := e.OpenAIExecutor.ExecuteStream(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(chan StreamChunk)
+	go func() {
+		defer close(out)
+		for chunk := range upstream.Chunks {
+			if chunk.Err == nil && len(chunk.Payload) > 0 {
+				chunk.Payload = sanitizeCodeBuddyChunk(chunk.Payload)
+			}
+			out <- chunk
+		}
+	}()
+
+	return &StreamResult{
+		StatusCode: upstream.StatusCode,
+		Headers:    upstream.Headers,
+		Chunks:     out,
+	}, nil
+}
+
+// sanitizeCodeBuddyChunk removes any `reasoning_content` field from the delta of
+// an SSE data line. Other lines (comments, blanks, [DONE]) are passed through.
+func sanitizeCodeBuddyChunk(payload []byte) []byte {
+	trimmed := bytes.TrimSpace(payload)
+	if !bytes.HasPrefix(trimmed, []byte("data:")) {
+		return payload
+	}
+	data := bytes.TrimSpace(trimmed[5:])
+	if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
+		return payload
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return payload
+	}
+	choices, ok := parsed["choices"].([]any)
+	if !ok || len(choices) == 0 {
+		return payload
+	}
+	choice, ok := choices[0].(map[string]any)
+	if !ok {
+		return payload
+	}
+	delta, ok := choice["delta"].(map[string]any)
+	if !ok {
+		return payload
+	}
+	delete(delta, "reasoning_content")
+
+	// If the delta is now empty and this is not the final chunk, drop the delta
+	// from the choice to avoid emitting empty content events that some clients
+	// render as stuttering.
+	if len(delta) == 0 {
+		delete(choice, "delta")
+	}
+
+	b, err := json.Marshal(parsed)
+	if err != nil {
+		return payload
+	}
+	return append([]byte("data: "), b...)
 }
 
 // aggregateCodeBuddyStream reads SSE chunks from the channel and builds a single
@@ -90,7 +157,6 @@ func (e *CodeBuddyExecutor) ExecuteStream(ctx context.Context, req *Request) (*S
 // the base executor (e.g. `data: {"choices":...}` or `data: [DONE]`).
 func aggregateCodeBuddyStream(ch <-chan StreamChunk) ([]byte, error) {
 	var content strings.Builder
-	var reasoning strings.Builder
 	var usage map[string]any
 	var finishReason string
 	var id, model string
@@ -144,9 +210,6 @@ func aggregateCodeBuddyStream(ch <-chan StreamChunk) ([]byte, error) {
 		if v, ok := delta["content"].(string); ok {
 			content.WriteString(v)
 		}
-		if v, ok := delta["reasoning_content"].(string); ok {
-			reasoning.WriteString(v)
-		}
 		if fr, ok := choice["finish_reason"].(string); ok && fr != "" {
 			finishReason = fr
 		}
@@ -158,9 +221,6 @@ func aggregateCodeBuddyStream(ch <-chan StreamChunk) ([]byte, error) {
 	msg := map[string]any{
 		"role":    "assistant",
 		"content": content.String(),
-	}
-	if reasoning.Len() > 0 {
-		msg["reasoning_content"] = reasoning.String()
 	}
 	out := map[string]any{
 		"id":      id,

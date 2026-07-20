@@ -1,6 +1,9 @@
 package executor
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestCodeBuddyHeaders(t *testing.T) {
 	tests := []struct {
@@ -38,5 +41,24 @@ func TestCodeBuddyHeaders(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSanitizeCodeBuddyChunkStripsReasoning(t *testing.T) {
+	input := `data: {"id":"cmb-1","object":"chat.completion.chunk","created":1,"model":"glm-5.2","choices":[{"index":0,"delta":{"role":"assistant","content":"Hi","reasoning_content":"hidden thought","function_call":null},"finish_reason":""}]}`
+	got := string(sanitizeCodeBuddyChunk([]byte(input)))
+	if strings.Contains(got, "reasoning_content") {
+		t.Errorf("sanitized chunk still contains reasoning_content: %s", got)
+	}
+	if !strings.Contains(got, `"content":"Hi"`) {
+		t.Errorf("sanitized chunk lost content: %s", got)
+	}
+}
+
+func TestSanitizeCodeBuddyChunkPassesDone(t *testing.T) {
+	input := []byte("data: [DONE]")
+	got := string(sanitizeCodeBuddyChunk(input))
+	if got != string(input) {
+		t.Errorf("sanitized [DONE] changed: %s", got)
 	}
 }
