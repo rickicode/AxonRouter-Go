@@ -23,6 +23,45 @@ func codebuddyHeaders(headers map[string]string, provider string) {
 	headers["x-codebuddy-request"] = "1"
 }
 
+// codebuddyMaybeInjectThinking adds reasoning_effort to CodeBuddy requests for
+// known reasoning-capable models when the client has not already asked for
+// reasoning. This lets OpenCode and other clients receive the thinking stream
+// automatically without manual model config.
+func codebuddyMaybeInjectThinking(body []byte, model string) []byte {
+	if !isCodeBuddyReasoningModel(model) {
+		return body
+	}
+	// Respect any client-set reasoning directive.
+	if gjson.GetBytes(body, "reasoning_effort").Exists() || gjson.GetBytes(body, "thinking").Exists() {
+		return body
+	}
+	out, err := sjson.SetBytes(body, "reasoning_effort", "high")
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+// isCodeBuddyReasoningModel identifies CodeBuddy models that expose reasoning.
+// It layers CodeBuddy-specific naming on top of the generic reasoning heuristic.
+func isCodeBuddyReasoningModel(model string) bool {
+	if IsReasoningModel(model) {
+		return true
+	}
+	lower := strings.ToLower(model)
+	switch {
+	case strings.Contains(lower, "deepseek-v4"):
+		return true
+	case strings.Contains(lower, "kimi-k2-thinking"):
+		return true
+	case strings.Contains(lower, "minimax-m2."):
+		return true
+	case strings.Contains(lower, "thinking"):
+		return true
+	}
+	return false
+}
+
 // codebuddyEnsureSystemMessage prepends a default system message if the
 // request body does not already contain one. CodeBuddy's /v2/chat/completions
 // endpoint rejects requests whose messages array starts with a user message
@@ -87,6 +126,7 @@ func (e *CodeBuddyExecutor) Execute(ctx context.Context, req *Request) (*Respons
 // content chunks.
 func (e *CodeBuddyExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
 	req.Body = codebuddyEnsureSystemMessage(req.Body)
+	req.Body = codebuddyMaybeInjectThinking(req.Body, req.Model)
 	upstream, err := e.OpenAIExecutor.ExecuteStream(ctx, req)
 	if err != nil {
 		return nil, err

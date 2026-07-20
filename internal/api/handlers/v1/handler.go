@@ -12,6 +12,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -375,8 +376,10 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 }
 
 // getConnectionFallback is the last-resort router used when the eligibility
-// snapshot has no usable connection. It skips cooldown checks so a healthy
-// account that was briefly cooled down can still receive traffic.
+// snapshot has no usable connection. It tries two passes:
+//  1. Respect cooldowns but consider any non-terminal connection.
+//  2. If everything is in cooldown, bypass cooldown once as emergency fallback
+//     so a healthy account that was briefly cooled down can still receive traffic.
 func (h *Handler) getConnectionFallback(ctx context.Context, provider, modelID string) (*Connection, error) {
 	var candidates []string
 	h.store.Range(func(connID string, cs *connstate.ConnectionState) bool {
@@ -392,9 +395,19 @@ func (h *Handler) getConnectionFallback(ctx context.Context, provider, modelID s
 	})
 
 	candidates = h.orderCandidates(provider, candidates)
+
+	// Pass 1: respect cooldowns, just expand the pool beyond the eligibility snapshot.
+	for _, connID := range candidates {
+		if conn, ok := h.tryPickConnection(ctx, connID, provider, modelID); ok {
+			logging.Logger.Info("getConnection fallback (cooldown-aware) selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name)
+			return conn, nil
+		}
+	}
+
+	// Pass 2: every account is in cooldown. Bypass it as emergency fallback.
 	for _, connID := range candidates {
 		if conn, ok := h.tryPickConnectionFallback(ctx, connID, provider, modelID); ok {
-			logging.Logger.Info("getConnection fallback selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name)
+			logging.Logger.Info("getConnection emergency fallback selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name)
 			return conn, nil
 		}
 	}
@@ -478,14 +491,29 @@ func (h *Handler) tryPickConnection(ctx context.Context, connID, provider, model
 // orderCandidates reorders eligible connection IDs according to the provider's
 // configured routing mode.
 //
-//   - first_eligible: use the snapshot order (one account stays first until it
-//     becomes ineligible).
-//   - round_robin: rotate the starting index on every request.
-//   - random: pick a random starting index for each request.
+//   - first_eligible: accounts are sorted by remaining quota (highest first).
+//   - round_robin: rotate the starting index, but the rotation is applied on
+//     top of the quota-sorted list so healthier accounts are preferred.
+//   - random: pick a random starting index on the quota-sorted list.
 func (h *Handler) orderCandidates(provider string, candidates []string) []string {
 	if len(candidates) <= 1 {
 		return candidates
 	}
+
+	// Quota-aware: put accounts with the most remaining quota first. This avoids
+	// wasting requests on nearly-exhausted siblings when healthier accounts exist.
+	sort.SliceStable(candidates, func(i, j int) bool {
+		ci := h.store.Get(candidates[i])
+		cj := h.store.Get(candidates[j])
+		var ri, rj float64 = 100, 100
+		if ci != nil {
+			ri = ci.GetRemainingPct()
+		}
+		if cj != nil {
+			rj = cj.GetRemainingPct()
+		}
+		return ri > rj
+	})
 
 	mode := h.providerCfg.RoutingMode(provider)
 	var start int
@@ -1110,6 +1138,11 @@ func (h *Handler) handleFailoverError(ctx context.Context, c *gin.Context, conn 
 	if det.Status != "" {
 		h.store.UpdateStatus(conn.ID, det.Status)
 	}
+	// For providers with API-backed quota (CodeBuddy), refresh quota inline so
+	// the next routing decision uses the latest state instead of stale cache.
+	if provider == "codebuddy" && (det.Category == connstate.ErrorQuota || det.Category == connstate.ErrorRateLimit) {
+		h.refreshQuotaAsync(conn.ID)
+	}
 	h.elig.ScheduleUpdate()
 	h.checkAutoDisable(conn.ID, provider)
 
@@ -1171,6 +1204,36 @@ func (h *Handler) handleFailoverError(ctx context.Context, c *gin.Context, conn 
 		return false, string(det.Category)
 	}
 	return true, string(det.Category)
+}
+
+// refreshQuotaAsync fetches and caches the latest quota for a connection in
+// the background. Used after a quota/rate-limit error so routing decisions
+// use fresh data instead of the scheduled cache.
+func (h *Handler) refreshQuotaAsync(connID string) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logging.Logger.Warn("refreshQuotaAsync panic recovered", "conn", shortID(connID, 8), "panic", r)
+			}
+		}()
+
+		cq, err := quota.FetchConnectionQuota(h.db, connID)
+		if err != nil {
+			logging.Logger.Debug("inline quota refresh failed", "conn", shortID(connID, 8), "err", err.Error())
+			return
+		}
+
+		var changed bool
+		quota.SaveQuotaCache(h.db, []quota.ProviderQuota{{
+			ProviderID:   cq.ProviderID,
+			ProviderName: cq.ProviderName,
+			Connections:  []quota.ConnectionQuota{*cq},
+		}})
+		quota.UpdateConnectionQuotaStatus(h.db, h.store, h.exhaustion, connID, cq.Quotas, cq.Error, &changed)
+		if changed {
+			h.elig.ScheduleUpdate()
+		}
+	}()
 }
 
 // writeUpstreamClientError writes an OpenAI-compatible upstream error directly

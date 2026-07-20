@@ -50,6 +50,7 @@ type ConnectionState struct {
 	BanCount      int // Consecutive ban signals (auth/quota/balance)
 	SuccessCount  int
 	CooldownUntil *time.Time
+	RemainingPct  float64 // cached min remaining quota percentage (0-100)
 	ModelLimits   sync.Map // modelID -> *ModelLimitState
 	mu            sync.RWMutex
 }
@@ -80,6 +81,20 @@ func (cs *ConnectionState) ResetBanCount() {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.BanCount = 0
+}
+
+// GetRemainingPct returns the cached minimum remaining quota percentage.
+func (cs *ConnectionState) GetRemainingPct() float64 {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return cs.RemainingPct
+}
+
+// SetRemainingPct stores the minimum remaining quota percentage (thread-safe).
+func (cs *ConnectionState) SetRemainingPct(pct float64) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.RemainingPct = pct
 }
 
 // SetStatus updates the status and timestamps (thread-safe).

@@ -352,6 +352,22 @@ func UpdateConnectionQuotaStatus(db *sql.DB, store *connstate.Store, exhaustion 
 		if hasExhausted {
 			newStatus = "quota_exhausted"
 		}
+
+		// Cache the minimum remaining percentage for quota-aware routing.
+		minRemaining := 100.0
+		hasQuota := false
+		for _, q := range quotas {
+			hasQuota = true
+			if !q.Unlimited && q.RemainingPct < minRemaining {
+				minRemaining = q.RemainingPct
+			}
+		}
+		if !hasQuota {
+			minRemaining = 100
+		}
+		if cs := store.Get(connID); cs != nil {
+			cs.SetRemainingPct(minRemaining)
+		}
 	}
 
 	// Get current DB status

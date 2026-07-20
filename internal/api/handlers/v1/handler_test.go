@@ -557,6 +557,32 @@ func TestGetConnectionRejectsCooledDownConnection(t *testing.T) {
 	}
 }
 
+func TestOrderCandidatesPrioritizesRemainingQuota(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('oc','OC','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	ids := []string{"conn-low", "conn-mid", "conn-high"}
+	for _, id := range ids {
+		if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?, 'oc', ?, 'none', 'ready', 1, ?, ?)`, id, id, now, now); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+		h.store.SeedConnection(id, "oc", "ready", 0)
+	}
+	h.store.Get("conn-low").SetRemainingPct(10)
+	h.store.Get("conn-mid").SetRemainingPct(50)
+	h.store.Get("conn-high").SetRemainingPct(90)
+
+	ordered := h.orderCandidates("oc", []string{"conn-low", "conn-mid", "conn-high"})
+	want := []string{"conn-high", "conn-mid", "conn-low"}
+	for i, id := range want {
+		if ordered[i] != id {
+			t.Fatalf("order[%d] = %s, want %s; got %v", i, ordered[i], id, ordered)
+		}
+	}
+}
+
 func TestIsClientCanceled(t *testing.T) {
 	h := &Handler{}
 	ctx, cancel := context.WithCancel(context.Background())

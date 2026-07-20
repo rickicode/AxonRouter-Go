@@ -1,7 +1,7 @@
 package connstate
 
 import (
-	"math/rand/v2"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -42,7 +42,9 @@ func NewEligibilityManager(store *Store) *EligibilityManager {
 }
 
 // Update recomputes the eligibility snapshot from the current store state.
-// Connections are shuffled randomly within each prefix for load balancing.
+// Connections are ordered by remaining quota (highest first) within each prefix,
+// so routing modes such as round_robin and first_eligible prefer healthy
+// accounts while still rotating fallback across siblings.
 func (e *EligibilityManager) Update(store *Store) {
 	eligible := make(map[string][]string)
 	var all []string
@@ -64,10 +66,21 @@ func (e *EligibilityManager) Update(store *Store) {
 		return true
 	})
 
-	// Shuffle each prefix's connections for load balancing
+	// Order each prefix by remaining quota (highest first). Routing modes then
+	// rotate or pick a random start on this list, naturally preferring accounts
+	// with the most credits without breaking round-robin/random semantics.
 	for _, ids := range eligible {
-		rand.Shuffle(len(ids), func(i, j int) {
-			ids[i], ids[j] = ids[j], ids[i]
+		sort.SliceStable(ids, func(i, j int) bool {
+			ci := store.Get(ids[i])
+			cj := store.Get(ids[j])
+			ri, rj := 100.0, 100.0
+			if ci != nil {
+				ri = ci.GetRemainingPct()
+			}
+			if cj != nil {
+				rj = cj.GetRemainingPct()
+			}
+			return ri > rj
 		})
 	}
 

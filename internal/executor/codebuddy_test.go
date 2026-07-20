@@ -46,6 +46,29 @@ func TestCodeBuddyHeaders(t *testing.T) {
 	}
 }
 
+func TestCodeBuddyInjectThinking(t *testing.T) {
+	tests := []struct {
+		name      string
+		model     string
+		body      string
+		wantAdded bool
+	}{
+		{"reasoning model without config", "glm-5.2", `{"messages":[]}`, true},
+		{"reasoning model with reasoning_effort", "glm-5.2", `{"reasoning_effort":"medium","messages":[]}`, false},
+		{"reasoning model with thinking", "deepseek-v4-pro", `{"thinking":{},"messages":[]}`, false},
+		{"non-reasoning model", "codebuddy-minimax-m3", `{"messages":[]}`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := string(codebuddyMaybeInjectThinking([]byte(tt.body), tt.model))
+			hasReasoning := strings.Contains(got, `"reasoning_effort":"high"`)
+			if hasReasoning != tt.wantAdded {
+				t.Errorf("body=%s, want added=%v, got added=%v", got, tt.wantAdded, hasReasoning)
+			}
+		})
+	}
+}
+
 func TestNormalizeCodeBuddyStreamAggregatesReasoning(t *testing.T) {
 	in := make(chan StreamChunk, 5)
 	in <- StreamChunk{Payload: []byte(`data: {"id":"cmb-1","object":"chat.completion.chunk","created":1,"model":"glm-5.2","choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning_content":"Think "},"finish_reason":""}]}`)}
