@@ -1,5 +1,6 @@
 <script lang="ts">
 import { onMount } from 'svelte';
+import { get } from 'svelte/store';
 import { toast } from 'svelte-sonner';
 import { Button } from '$lib/components/ui/button';
 import { Badge } from '$lib/components/ui/badge';
@@ -14,18 +15,22 @@ import CopyIcon from '@lucide/svelte/icons/copy';
 import CheckIcon from '@lucide/svelte/icons/check';
 import { getToken } from '$lib/auth';
 import {
+  healthCurrentVersion,
+  healthLatestVersion,
+  healthUpdateAvailable,
+} from '$lib/health';
+import {
   normalizeVersion,
   parseChangelogForVersion,
   type ChangelogSection,
 } from '$lib/about-utils';
 
 const REPO_URL = 'https://github.com/rickicode/AxonRouter-Go';
-const HEALTH_POLL_INTERVAL_MS = 30000;
 const UPGRADE_TIMEOUT_MS = 70000;
 
-let currentVersion = $state('');
-let latestVersion = $state('');
-let updateAvailable = $state(false);
+let currentVersion = $state(get(healthCurrentVersion));
+let latestVersion = $state(get(healthLatestVersion));
+let updateAvailable = $state(get(healthUpdateAvailable));
 let changelogSections = $state<ChangelogSection[]>([]);
 let loading = $state(true);
 let changelogLoading = $state(true);
@@ -35,32 +40,16 @@ let upgradeJustCompleted = $state(false);
 let restartCommand = $state('');
 let restartHint = $state('');
 let copiedCommand = $state(false);
-let error = $state('');
-let healthErrorShown = $state(false);
 
 const normalizedCurrent = $derived(currentVersion ? normalizeVersion(currentVersion) : '');
 const normalizedLatest = $derived(latestVersion ? normalizeVersion(latestVersion) : '');
 
-async function fetchHealth() {
-  try {
-    const res = await fetch('/api/admin/health');
-    if (!res.ok) throw new Error(`Health returned ${res.status}`);
-    const data = await res.json();
-    currentVersion = typeof data.version === 'string' ? data.version : '';
-    latestVersion = typeof data.latest_version === 'string' ? data.latest_version : '';
-    updateAvailable = data.update_available === true;
-    error = '';
-    healthErrorShown = false;
-    upgradeJustCompleted = false;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Failed to load version';
-    error = message;
-    if (!healthErrorShown) {
-      healthErrorShown = true;
-      toast.error('Failed to load version: ' + message);
-    }
-  }
-}
+$effect(() => {
+	currentVersion = $healthCurrentVersion;
+	latestVersion = $healthLatestVersion;
+	updateAvailable = $healthUpdateAvailable;
+	upgradeJustCompleted = false;
+});
 
 async function fetchChangelog() {
   changelogError = '';
@@ -76,7 +65,7 @@ async function fetchChangelog() {
     }
     const data = await res.json();
     const markdown = typeof data.markdown === 'string' ? data.markdown : '';
-    changelogSections = parseChangelogForVersion(markdown, currentVersion || '0.0.0');
+    changelogSections = parseChangelogForVersion(markdown, $healthCurrentVersion || '0.0.0');
   } catch (err) {
     changelogSections = [];
     changelogError = err instanceof Error ? err.message : 'Failed to load release notes';
@@ -135,7 +124,6 @@ async function copyRestartCommand() {
 }
 
 let checking = $state(false);
-let healthInterval: ReturnType<typeof setInterval> | undefined;
 
 async function checkForUpdates() {
   if (checking) return;
@@ -154,6 +142,10 @@ async function checkForUpdates() {
     currentVersion = typeof data.version === 'string' ? data.version : currentVersion;
     latestVersion = typeof data.latest_version === 'string' ? data.latest_version : '';
     updateAvailable = data.update_available === true;
+
+    healthCurrentVersion.set(currentVersion);
+    healthLatestVersion.set(latestVersion);
+    healthUpdateAvailable.set(updateAvailable);
 
     await fetchChangelog();
 
@@ -175,19 +167,13 @@ async function checkForUpdates() {
 onMount(() => {
   document.title = 'About — AxonRouter';
   void (async () => {
-    await fetchHealth();
-    loading = false;
     if (!latestVersion) {
       await checkForUpdates();
     } else {
       await fetchChangelog();
     }
+    loading = false;
   })();
-
-  healthInterval = setInterval(fetchHealth, HEALTH_POLL_INTERVAL_MS);
-  return () => {
-    if (healthInterval) clearInterval(healthInterval);
-  };
 });
 </script>
 
