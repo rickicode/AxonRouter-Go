@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.15] - 2026-07-20
+
 ### Added
 - Dashboard update modal with short changelog shown once per browser session when an update is available.
 - Sidebar badge on the About menu when an update is available.

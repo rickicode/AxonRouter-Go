@@ -397,13 +397,25 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.14
+### What's New in v0.3.15
 
 ### Added
-- **CodeBuddy executor wrapper** — adds a dedicated executor for the `codebuddy` provider that prepends a required leading `system` message and always calls the upstream streaming endpoint, aggregating SSE chunks back into a single non-streaming response.
+- Dashboard update modal with short changelog shown once per browser session when an update is available.
+- Sidebar badge on the About menu when an update is available.
+- Centralized `web/src/lib/health.ts` store for health/version/update state.
+- CLI `--version` / `-v` flag to print the current version without starting the server.
+
+### Changed
+- Renamed service-management CLI flag from `--startup` to `--service` (e.g., `axonrouter --service install`).
+- `installer.sh` now uses `axonrouter --service install`.
+- `POST /api/admin/upgrade` now rejects upgrades unless a newer release is actually available.
+- Upgrade now backs up the existing binary to `.bak` before replacing it and restores the backup if replacement fails.
+- `version.Checker` is now owned by `Router` and stopped during graceful shutdown.
 
 ### Fixed
-- **Grok 4.5 model catalog limits** — corrected `grok-cli/grok-4.5*` entries in `internal/models/models.json` from 1M context / 65,536 output tokens to 500k context / 32,768 output tokens to match xAI's official Grok 4.5 spec.
+- **CodeBuddy streaming reasoning leak** — aggregates `reasoning_content` deltas into a single block, strips non-standard SSE noise (`extra_fields`, null `function_call`, empty `refusal`, intermediate `usage`) so clients such as OpenCode don't render choppy "thinking" placeholders.
+- `installer.sh` no longer fails with `Init already exists` when upgrading an existing installation; it now reloads and restarts the axonrouter service automatically.
+- `Makefile` release target now pushes the `master` branch instead of `main`.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
