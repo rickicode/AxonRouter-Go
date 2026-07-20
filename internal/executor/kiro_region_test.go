@@ -118,6 +118,7 @@ func TestKiroEndpointURLs(t *testing.T) {
 	amazonUSEast := "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse"
 	amazonEUCentral := "https://q.eu-central-1.amazonaws.com/generateAssistantResponse"
 	kiroDev := "https://runtime.us-east-1.kiro.dev/generateAssistantResponse"
+	qUSEast := "https://q.us-east-1.amazonaws.com/generateAssistantResponse"
 	override := "https://custom.example.com/generateAssistantResponse"
 
 	tests := []struct {
@@ -138,17 +139,17 @@ func TestKiroEndpointURLs(t *testing.T) {
 		{
 			name: "api_key tries amazon first",
 			psd:  map[string]string{"authMethod": "api_key"},
-			want: []string{amazonUSEast, kiroDev},
+			want: []string{amazonUSEast, kiroDev, qUSEast},
 		},
 		{
 			name: "external_idp tries amazon first",
 			psd:  map[string]string{"authMethod": "external_idp"},
-			want: []string{amazonUSEast, kiroDev},
+			want: []string{amazonUSEast, kiroDev, qUSEast},
 		},
 		{
 			name: "idc tries amazon first",
 			psd:  map[string]string{"authMethod": "idc"},
-			want: []string{amazonUSEast, kiroDev},
+			want: []string{amazonUSEast, kiroDev, qUSEast},
 		},
 		{
 			name: "api_key with eu-central-1 profile uses q endpoint first",
@@ -156,33 +157,33 @@ func TestKiroEndpointURLs(t *testing.T) {
 				"authMethod": "api_key",
 				"region":     "eu-central-1",
 			},
-			want: []string{amazonEUCentral, kiroDev},
+			want: []string{amazonEUCentral, kiroDev, qUSEast},
 		},
 		{
 			name: "builder-id tries kiro.dev first",
 			psd:  map[string]string{"authMethod": "builder-id"},
-			want: []string{kiroDev, amazonUSEast},
+			want: []string{kiroDev, amazonUSEast, qUSEast},
 		},
 		{
 			name: "github social tries kiro.dev first",
 			psd:  map[string]string{"authMethod": "github"},
-			want: []string{kiroDev, amazonUSEast},
+			want: []string{kiroDev, amazonUSEast, qUSEast},
 		},
 		{
 			name: "import tries kiro.dev first",
 			psd:  map[string]string{"authMethod": "import"},
-			want: []string{kiroDev, amazonUSEast},
+			want: []string{kiroDev, amazonUSEast, qUSEast},
 		},
 		{
 			name: "empty authMethod defaults to kiro.dev first",
 			psd:  map[string]string{"region": "us-east-1"},
-			want: []string{kiroDev, amazonUSEast},
+			want: []string{kiroDev, amazonUSEast, qUSEast},
 		},
 		{
 			name:    "empty psd defaults to kiro.dev first on us-east-1",
 			psd:     map[string]string{},
 			baseURL: "",
-			want:    []string{kiroDev, amazonUSEast},
+			want:    []string{kiroDev, amazonUSEast, qUSEast},
 		},
 	}
 
@@ -198,6 +199,40 @@ func TestKiroEndpointURLs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestKiroEndpointURLs_DefaultBaseURLIgnored(t *testing.T) {
+	amazonUSEast := "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse"
+	kiroDev := "https://runtime.us-east-1.kiro.dev/generateAssistantResponse"
+	qUSEast := "https://q.us-east-1.amazonaws.com/generateAssistantResponse"
+
+	got := kiroEndpointURLs(map[string]string{"authMethod": "builder-id"}, amazonUSEast)
+	want := []string{kiroDev, amazonUSEast, qUSEast}
+	if len(got) != len(want) {
+		t.Fatalf("kiroEndpointURLs() = %v, want %v", got, want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("kiroEndpointURLs()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestKiroEndpointURLs_ThreeFallbackForUSEastApiKey(t *testing.T) {
+	amazonUSEast := "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse"
+	kiroDev := "https://runtime.us-east-1.kiro.dev/generateAssistantResponse"
+	qUSEast := "https://q.us-east-1.amazonaws.com/generateAssistantResponse"
+
+	got := kiroEndpointURLs(map[string]string{"authMethod": "api_key", "region": "us-east-1"}, "")
+	want := []string{amazonUSEast, kiroDev, qUSEast}
+	if len(got) != len(want) {
+		t.Fatalf("kiroEndpointURLs() = %v, want %v", got, want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("kiroEndpointURLs()[%d] = %q, want %q", i, got[i], want[i])
+		}
 	}
 }
 

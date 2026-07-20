@@ -75,14 +75,14 @@ func TestKiroProviderTypeFormat(t *testing.T) {
 	if format != "kiro" {
 		t.Errorf("kiro format = %q, want 'kiro'", format)
 	}
-	wantBaseURL := "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse"
+	wantBaseURL := "https://runtime.us-east-1.kiro.dev/generateAssistantResponse"
 	if baseURL != wantBaseURL {
 		t.Errorf("kiro base_url = %q, want %q", baseURL, wantBaseURL)
 	}
 }
 
 // TestKiroFormatMigration verifies legacy Kiro rows seeded as "openai" get
-// repaired to "kiro" and the base URL is updated to the AWS endpoint.
+// repaired to "kiro" and the base URL is updated to the Kiro IDE gateway endpoint.
 func TestKiroFormatMigration(t *testing.T) {
 	dir := t.TempDir()
 	d, err := sql.Open("sqlite", filepath.Join(dir, "verify.db"))
@@ -113,7 +113,7 @@ func TestKiroFormatMigration(t *testing.T) {
 	if format != "kiro" {
 		t.Errorf("kiro format after migration = %q, want 'kiro'", format)
 	}
-	wantBaseURL := "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse"
+	wantBaseURL := "https://runtime.us-east-1.kiro.dev/generateAssistantResponse"
 	if baseURL != wantBaseURL {
 		t.Errorf("kiro base_url after migration = %q, want %q", baseURL, wantBaseURL)
 	}
