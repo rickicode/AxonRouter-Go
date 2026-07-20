@@ -63,13 +63,15 @@ func TestExpandVariants(t *testing.T) {
 	}
 
 	cases := map[string]Capabilities{
-		"claude-sonnet-5":                         {Thinking: false, Agentic: false},
-		"claude-sonnet-5-thinking":                {Thinking: true, Agentic: false},
-		"claude-sonnet-5-agentic":                 {Thinking: false, Agentic: true},
-		"claude-sonnet-5-thinking-agentic":         {Thinking: true, Agentic: true},
-		"deepseek-3.2-thinking":                   {Thinking: true, Agentic: false},
-		"qwen3-coder-next-agentic":                {Thinking: false, Agentic: true},
-		"minimax-m2.5-thinking-agentic":           {Thinking: true, Agentic: true},
+		"claude-sonnet-5":                  {Thinking: false, Agentic: false, Vision: true},
+		"claude-sonnet-5-thinking":          {Thinking: true, Agentic: false, Vision: true},
+		"claude-sonnet-5-agentic":           {Thinking: false, Agentic: true, Vision: true},
+		"claude-sonnet-5-thinking-agentic": {Thinking: true, Agentic: true, Vision: true},
+		"deepseek-3.2-thinking":             {Thinking: true, Agentic: false},
+		"qwen3-coder-next-agentic":          {Thinking: false, Agentic: true},
+		"minimax-m2.5-thinking-agentic":     {Thinking: true, Agentic: true},
+		"gpt-5.6-sol":                       {Vision: true, Reasoning: true, Search: true},
+		"gpt-5.6-sol-thinking":            {Thinking: true, Vision: true, Reasoning: true, Search: true},
 	}
 	for id, want := range cases {
 		m, ok := findModel(models, id)
@@ -84,6 +86,40 @@ func TestExpandVariants(t *testing.T) {
 		}
 		if m.ContextLength <= 0 || m.MaxOutputTokens <= 0 {
 			t.Errorf("%s: context/output must be > 0", id)
+		}
+	}
+
+	stripCases := map[string][]string{
+		"deepseek-3.2":             {"image", "audio"},
+		"deepseek-3.2-thinking":    {"image", "audio"},
+		"qwen3-coder-next":         {"image", "audio"},
+		"claude-sonnet-5":          nil,
+	}
+	for id, want := range stripCases {
+		m, ok := findModel(models, id)
+		if !ok {
+			t.Fatalf("missing model %q", id)
+		}
+		if len(m.Strip) != len(want) {
+			t.Errorf("%s strip = %v, want %v", id, m.Strip, want)
+		}
+	}
+
+	rateCases := map[string]float64{
+		"gpt-5.6-sol":   2.4,
+		"gpt-5.6-terra": 1.2,
+		"gpt-5.6-luna":  0.6,
+	}
+	for id, want := range rateCases {
+		m, ok := findModel(models, id)
+		if !ok {
+			t.Fatalf("missing model %q", id)
+		}
+		if m.RateMultiplier != want {
+			t.Errorf("%s rate multiplier = %v, want %v", id, m.RateMultiplier, want)
+		}
+		if m.Description == "" {
+			t.Errorf("%s description must not be empty", id)
 		}
 	}
 }
