@@ -30,6 +30,7 @@ const platformItems = [
  { href: '/logs', label: 'Logs', icon: TerminalIcon },
 ];
 const systemItems = [
+    { href: '/console', label: 'Console', icon: TerminalIcon },
     { href: '/proxy-pools', label: 'Proxy Pools', icon: GlobeIcon },
  { href: '/api-keys', label: 'API Keys', icon: KeyIcon },
  { href: '/developers', label: 'Developers', icon: CodeIcon },

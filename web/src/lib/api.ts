@@ -884,6 +884,14 @@ export const modelPricingApi = {
     fetchApi<{ ok: boolean }>(`/model-pricing/${id}`, { method: "DELETE" }),
 };
 
+// Console Logs API
+export interface ConsoleLogsResponse {
+	lines: string[];
+	path: string;
+}
+
+export const getConsoleLogs = () => fetchApi<ConsoleLogsResponse>("/console-logs");
+
 // Logs API
 export const logsApi = {
   list: (params?: {
