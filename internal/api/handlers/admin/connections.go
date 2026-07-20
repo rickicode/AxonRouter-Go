@@ -308,7 +308,7 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 
 	// Build format-specific test body with default model for this provider
 	model := defaultTestModel(conn.ProviderTypeID)
-	bodyBytes := buildTestBody(conn.Format, model)
+	bodyBytes := buildTestBody(conn.Format, model, conn.ProviderTypeID)
 
 	// Parse provider_specific_data
 	var psdMap map[string]string
@@ -318,12 +318,12 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 
 	start := time.Now()
 	streamResult, err := exec.ExecuteStream(c.Request.Context(), &executor.Request{
-		APIKey: conn.APIKey,
-		AccessToken: conn.AccessToken,
-		BaseURL: conn.BaseURL,
-		Body: bodyBytes,
-		Provider: conn.ProviderTypeID,
-		Model: model,
+		APIKey:               conn.APIKey,
+		AccessToken:          conn.AccessToken,
+		BaseURL:              conn.BaseURL,
+		Body:                 bodyBytes,
+		Provider:             conn.ProviderTypeID,
+		Model:                model,
 		ProviderSpecificData: psdMap,
 	})
 	if err != nil {
@@ -332,10 +332,10 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 			h.recordTestSuccess(id)
 			c.JSON(http.StatusOK, gin.H{
 				"connection_id": id,
-				"status": "ok",
-				"status_code": upErr.StatusCode,
-				"latency_ms": latency,
-				"message": "Authentication succeeded, but credits/quota are exhausted. The connection remains ready.",
+				"status":        "ok",
+				"status_code":   upErr.StatusCode,
+				"latency_ms":    latency,
+				"message":       "Authentication succeeded, but credits/quota are exhausted. The connection remains ready.",
 			})
 			return
 		}
@@ -343,9 +343,9 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 		h.recordTestFailure(id, det)
 		c.JSON(http.StatusOK, gin.H{
 			"connection_id": id,
-			"status": "failed",
-			"error": err.Error(),
-			"latency_ms": latency,
+			"status":        "failed",
+			"error":         err.Error(),
+			"latency_ms":    latency,
 		})
 		return
 	}
@@ -365,10 +365,10 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 			h.recordTestSuccess(id)
 			c.JSON(http.StatusOK, gin.H{
 				"connection_id": id,
-				"status": "ok",
-				"status_code": upErr.StatusCode,
-				"latency_ms": latency,
-				"message": "Authentication succeeded, but credits/quota are exhausted. The connection remains ready.",
+				"status":        "ok",
+				"status_code":   upErr.StatusCode,
+				"latency_ms":    latency,
+				"message":       "Authentication succeeded, but credits/quota are exhausted. The connection remains ready.",
 			})
 			return
 		}
@@ -376,9 +376,9 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 		h.recordTestFailure(id, det)
 		c.JSON(http.StatusOK, gin.H{
 			"connection_id": id,
-			"status": "failed",
-			"error": firstErr.Error(),
-			"latency_ms": latency,
+			"status":        "failed",
+			"error":         firstErr.Error(),
+			"latency_ms":    latency,
 		})
 		return
 	}
@@ -387,9 +387,9 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"connection_id": id,
-		"status": "ok",
-		"status_code": streamResult.StatusCode,
-		"latency_ms": latency,
+		"status":        "ok",
+		"status_code":   streamResult.StatusCode,
+		"latency_ms":    latency,
 	})
 }
 

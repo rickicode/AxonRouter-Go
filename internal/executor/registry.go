@@ -21,8 +21,8 @@ const (
 	FormatAntigravity     ProviderFormat = "antigravity"
 	FormatKiro            ProviderFormat = "kiro"
 	FormatGrokCLI         ProviderFormat = "grok-cli"
-	FormatDevinCLI       ProviderFormat = "devin-cli"
-	FormatQoder          ProviderFormat = "qoder"
+	FormatDevinCLI        ProviderFormat = "devin-cli"
+	FormatQoder           ProviderFormat = "qoder"
 )
 
 // Registry maps provider prefixes to executors.
@@ -115,9 +115,12 @@ func RegisterDefaults() {
 
 	// OpenAI-compatible providers
 	openaiExec := NewOpenAIExecutor(base)
-	for _, p := range []string{"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp", "elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras", "together", "fireworks", "novita", "lambda", "pollinations", "zenmux", "codebuddy"} {
+	for _, p := range []string{"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp", "elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras", "together", "fireworks", "novita", "lambda", "pollinations", "zenmux"} {
 		GetRegistry().Register(p, FormatOpenAI, openaiExec)
 	}
+	// CodeBuddy uses an OpenAI-compatible endpoint but requires a leading system
+	// message and only supports streaming chat completions upstream.
+	GetRegistry().Register("codebuddy", FormatOpenAI, NewCodeBuddyExecutor(base))
 	GetRegistry().Register("mimocode", FormatOpenAI, NewMimocodeExecutor(base))
 	GetRegistry().Register("openrouter", FormatOpenAI, NewOpenRouterExecutor(base))
 	GetRegistry().Register("copilot", FormatOpenAI, NewCopilotExecutor(base))

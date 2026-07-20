@@ -1,5 +1,15 @@
 package executor
 
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"strings"
+
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
+)
+
 func codebuddyHeaders(headers map[string]string, provider string) {
 	if provider != "codebuddy" {
 		return
@@ -11,4 +21,155 @@ func codebuddyHeaders(headers map[string]string, provider string) {
 	headers["X-Domain"] = "www.codebuddy.ai"
 	headers["x-requested-with"] = "XMLHttpRequest"
 	headers["x-codebuddy-request"] = "1"
+}
+
+// codebuddyEnsureSystemMessage prepends a default system message if the
+// request body does not already contain one. CodeBuddy's /v2/chat/completions
+// endpoint rejects requests whose messages array starts with a user message
+// ("Parse message failed"), so a leading system message is required.
+func codebuddyEnsureSystemMessage(body []byte) []byte {
+	if !gjson.GetBytes(body, "messages").Exists() {
+		return body
+	}
+	firstRole := gjson.GetBytes(body, "messages.0.role").String()
+	if firstRole == "system" {
+		return body
+	}
+	var arr []map[string]any
+	if err := json.Unmarshal([]byte(gjson.GetBytes(body, "messages").Raw), &arr); err != nil {
+		return body
+	}
+	arr = append([]map[string]any{{"role": "system", "content": "You are a helpful assistant."}}, arr...)
+	out, err := sjson.SetBytes(body, "messages", arr)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+// CodeBuddyExecutor wraps the generic OpenAI-compatible executor with
+// CodeBuddy-specific request/response handling.
+type CodeBuddyExecutor struct {
+	*OpenAIExecutor
+}
+
+// NewCodeBuddyExecutor creates a new CodeBuddy executor.
+func NewCodeBuddyExecutor(base *BaseExecutor) *CodeBuddyExecutor {
+	return &CodeBuddyExecutor{OpenAIExecutor: NewOpenAIExecutor(base)}
+}
+
+// Execute performs a non-streaming chat completion. CodeBuddy's upstream only
+// supports streaming chat completions, so we always call the streaming endpoint
+// and aggregate the SSE chunks back into a single completion response.
+func (e *CodeBuddyExecutor) Execute(ctx context.Context, req *Request) (*Response, error) {
+	req.Body = codebuddyEnsureSystemMessage(req.Body)
+	result, err := e.ExecuteStream(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	var buf bytes.Buffer
+	for chunk := range result.Chunks {
+		if chunk.Err != nil {
+			return nil, chunk.Err
+		}
+		if chunk.Payload != nil {
+			buf.Write(chunk.Payload)
+		}
+	}
+
+	body, err := assembleCodeBuddyNonStream(buf.Bytes())
+	if err != nil {
+		return nil, err
+	}
+	return &Response{
+		StatusCode: result.StatusCode,
+		Body:       body,
+		Headers:    result.Headers,
+	}, nil
+}
+
+// ExecuteStream performs a streaming chat completion.
+func (e *CodeBuddyExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
+	req.Body = codebuddyEnsureSystemMessage(req.Body)
+	return e.OpenAIExecutor.ExecuteStream(ctx, req)
+}
+
+func assembleCodeBuddyNonStream(sse []byte) ([]byte, error) {
+	var content strings.Builder
+	var reasoning strings.Builder
+	var usage map[string]any
+	var finishReason string
+	var id string
+	var model string
+	var created int64
+
+	for _, line := range bytes.Split(sse, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+		data := bytes.TrimSpace(line[5:])
+		if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
+			continue
+		}
+		var chunk map[string]any
+		if err := json.Unmarshal(data, &chunk); err != nil {
+			continue
+		}
+		if id == "" {
+			if v, ok := chunk["id"].(string); ok {
+				id = v
+			}
+		}
+		if model == "" {
+			if v, ok := chunk["model"].(string); ok {
+				model = v
+			}
+		}
+		if created == 0 {
+			if v, ok := chunk["created"].(float64); ok {
+				created = int64(v)
+			}
+		}
+		choices, _ := chunk["choices"].([]any)
+		if len(choices) == 0 {
+			if u, ok := chunk["usage"].(map[string]any); ok {
+				usage = u
+			}
+			continue
+		}
+
+		choice, _ := choices[0].(map[string]any)
+		delta, _ := choice["delta"].(map[string]any)
+		if v, ok := delta["content"].(string); ok {
+			content.WriteString(v)
+		}
+		if v, ok := delta["reasoning_content"].(string); ok {
+			reasoning.WriteString(v)
+		}
+		if fr, ok := choice["finish_reason"].(string); ok && fr != "" {
+			finishReason = fr
+		}
+		if u, ok := chunk["usage"].(map[string]any); ok {
+			usage = u
+		}
+	}
+
+	msg := map[string]any{
+		"role":    "assistant",
+		"content": content.String(),
+	}
+	if reasoning.Len() > 0 {
+		msg["reasoning_content"] = reasoning.String()
+	}
+	out := map[string]any{
+		"id":      id,
+		"object":  "chat.completion",
+		"created": created,
+		"model":   model,
+		"choices": []map[string]any{{"index": 0, "message": msg, "finish_reason": finishReason}},
+		"usage":   usage,
+	}
+	return json.Marshal(out)
 }

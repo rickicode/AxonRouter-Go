@@ -451,7 +451,7 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 		return
 	}
 
-	testReq.Body = buildTestBody(format, modelName)
+	testReq.Body = buildTestBody(format, modelName, providerID)
 	streamResult, err := exec.ExecuteStream(c.Request.Context(), testReq)
 	if err != nil {
 		latency := time.Since(start).Milliseconds()
@@ -493,7 +493,7 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 }
 
 // buildTestBody constructs a minimal test request body matching the provider's native API format.
-func buildTestBody(format, model string) []byte {
+func buildTestBody(format, model, providerID string) []byte {
 	switch executor.ProviderFormat(format) {
 	case executor.FormatOpenAIResponses:
 		body := map[string]any{
@@ -524,9 +524,13 @@ func buildTestBody(format, model string) []byte {
 		b, _ := json.Marshal(body)
 		return b
 	default:
+		messages := []map[string]string{{"role": "user", "content": "Hi"}}
+		if providerID == "codebuddy" {
+			messages = append([]map[string]string{{"role": "system", "content": "You are a helpful assistant."}}, messages...)
+		}
 		body := map[string]any{
 			"model":      model,
-			"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
+			"messages":   messages,
 			"max_tokens": 5,
 		}
 		b, _ := json.Marshal(body)

@@ -299,11 +299,11 @@ const testConnTimeout = 30 * time.Second
 // testAllRefreshLead defines per-provider proactive refresh lead times.
 // Matches OmniRoute REFRESH_LEAD_MS at open-sse/services/tokenRefresh.ts:32-49.
 var testAllRefreshLead = map[string]time.Duration{
-	"cx":      5 * time.Minute,  // Codex: Auth0 rotating refresh tokens
-	"ag":      15 * time.Minute, // Antigravity: Google non-rotating refresh tokens
-	"kiro":    5 * time.Minute,  // Kiro: AWS SSO OIDC one-time-use refresh tokens
-	"copilot": 5 * time.Minute, // Copilot: GitHub device-code tokens refresh early
-	"grok-cli": 5 * time.Minute, // Grok CLI: xAI OIDC device-code tokens refresh before expiry
+	"cx":       5 * time.Minute,  // Codex: Auth0 rotating refresh tokens
+	"ag":       15 * time.Minute, // Antigravity: Google non-rotating refresh tokens
+	"kiro":     5 * time.Minute,  // Kiro: AWS SSO OIDC one-time-use refresh tokens
+	"copilot":  5 * time.Minute,  // Copilot: GitHub device-code tokens refresh early
+	"grok-cli": 5 * time.Minute,  // Grok CLI: xAI OIDC device-code tokens refresh before expiry
 }
 
 const testAllDefaultRefreshLead = 5 * time.Minute
@@ -355,7 +355,7 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 		return
 	}
 
-	bodyBytes := buildTestBody(format, defaultTestModel(providerID))
+	bodyBytes := buildTestBody(format, defaultTestModel(providerID), providerID)
 	ctx := c.Request.Context()
 
 	var inputs []testInput
@@ -1091,7 +1091,7 @@ func (h *ProviderHandler) validateKeyForRequest(ctx context.Context, providerID,
 	resp, err := exec.ExecuteStream(ctx, &executor.Request{
 		APIKey:               apiKey,
 		BaseURL:              provider.BaseURL,
-		Body:                 buildTestBody(provider.Format, testModel),
+		Body:                 buildTestBody(provider.Format, testModel, providerID),
 		Provider:             providerID,
 		Model:                testModel,
 		ProviderSpecificData: psd,
