@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Recency-aware connection rotation** — tracks an in-memory `lastUsedAt` timestamp per connection and uses it as a secondary sort key when building the eligibility snapshot and fallback candidate order, spreading simultaneous requests across siblings instead of concentrating them on the same freshly-selected connection.
 - **In-product upgrade, logs, and restart flow** — `POST /api/admin/upgrade` now returns per-step upgrade logs, and `POST /api/admin/restart` restarts the service; the About page and update-available modal show live logs and a restart prompt after upgrade completes.
 
 ### Fixed

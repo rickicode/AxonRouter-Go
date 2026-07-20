@@ -437,6 +437,7 @@ func (h *Handler) tryPickConnectionFallback(ctx context.Context, connID, provide
 		logging.Logger.Debug("load conn failed", "conn", connID[:8], "err", err)
 		return nil, false
 	}
+	cs.RecordUsed()
 	logging.Logger.Info("getConnection fallback selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name, "mode", h.providerCfg.RoutingMode(provider))
 	h.bindActiveConn(ctx, conn)
 	return conn, true
@@ -482,6 +483,7 @@ func (h *Handler) tryPickConnection(ctx context.Context, cs *connstate.Connectio
 		logging.Logger.Debug("load conn failed", "conn", connID[:8], "err", err)
 		return nil, false
 	}
+	cs.RecordUsed()
 	logging.Logger.Info("getConnection selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name, "mode", h.providerCfg.RoutingMode(provider))
 	h.bindActiveConn(ctx, conn)
 	return conn, true
@@ -500,10 +502,16 @@ func (h *Handler) orderCandidates(provider, modelID string, candidates []*connst
 		return candidates
 	}
 
-	// Quota-aware: put accounts with the most remaining quota first. This avoids
-	// wasting requests on nearly-exhausted siblings when healthier accounts exist.
+	// Quota-aware, then recency-aware: put accounts with the most remaining quota
+	// first, and break ties by preferring least-recently-used connections. This
+	// spreads simultaneous requests across siblings instead of concentrating them
+	// on the same freshly-selected connection.
 	sort.SliceStable(candidates, func(i, j int) bool {
-		return candidates[i].GetRemainingPct() > candidates[j].GetRemainingPct()
+		ri, rj := candidates[i].GetRemainingPct(), candidates[j].GetRemainingPct()
+		if ri != rj {
+			return ri > rj
+		}
+		return candidates[i].LastUsedAt().Before(candidates[j].LastUsedAt())
 	})
 
 	mode := h.providerCfg.RoutingMode(provider)
@@ -551,6 +559,7 @@ func (h *Handler) prepareConnection(ctx context.Context, connID, provider, model
 	if err != nil {
 		return nil, err
 	}
+	cs.RecordUsed()
 
 	// Proactive token refresh (same as regular routing path)
 	h.proactiveRefreshToken(ctx, conn, provider)
