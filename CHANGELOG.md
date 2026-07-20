@@ -114,6 +114,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Restore reliability improved:** larger insert batches (500 rows), exponential backoff retries on transient `database is locked` / busy errors, and a single per-backup encryption salt so encrypted restores no longer re-derive the PBKDF2 key for every row.
 
 ### Changed
+- **Simplified Kiro add-connection auth menu** — removed the rarely-used External IDP tile and merged "Import Token" with "Auto-import from kiro-cli" into a single "Import from CLI / Token" flow. Backend support for External IdP and auto-import remains intact; only the dashboard UI was consolidated.
 - `streamResponse`, `handleStreamResponse`, and `handleClaudeStreamResponse` now return an `error` so callers can implement retry/failover logic.
 - **Backup/restore UI simplified further:** category selection removed; backup always includes every category so restore produces a 100% identical gateway (provider accounts, connections, combos, keys, config, logs, cache).
 
