@@ -58,6 +58,32 @@ func sanitizeCFRequest(body []byte) []byte {
 	return sanitizeRequestWithCompatibility(body, providercfg.CompatibilityFor("cf"))
 }
 
+// cfInjectReasoningControl ensures Cloudflare Workers AI reasoning models do
+// not start reasoning unless the client explicitly requested it. Cloudflare
+// uses chat_template_kwargs.thinking for Kimi/Glm reasoning models, while
+// generic OpenAI clients send reasoning_effort. We map between the two,
+// preserving any explicit chat_template_kwargs the client provided.
+func cfInjectReasoningControl(body []byte) []byte {
+	model := gjson.GetBytes(body, "model").String()
+	if !IsReasoningModel(model) {
+		return body
+	}
+
+	// Respect explicit native Cloudflare thinking controls.
+	if gjson.GetBytes(body, "chat_template_kwargs.thinking").Exists() {
+		return body
+	}
+
+	// Map generic reasoning_effort to Cloudflare's thinking flag.
+	if re := gjson.GetBytes(body, "reasoning_effort"); re.Exists() {
+		thinking := strings.ToLower(strings.TrimSpace(re.String())) != "none"
+		return JSONSet(body, "chat_template_kwargs.thinking", thinking)
+	}
+
+	// Default to no reasoning so content generation starts immediately.
+	return JSONSet(body, "chat_template_kwargs.thinking", false)
+}
+
 // sanitizeRequestWithCompatibility applies provider-specific OpenAI-compatible
 // request normalisation based on a Compatibility config. It replaces the
 // previously hard-coded Cloudflare and Bedrock quirks with values that can be

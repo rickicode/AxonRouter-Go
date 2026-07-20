@@ -34,6 +34,7 @@ func (e *CloudflareExecutor) Execute(ctx context.Context, req *Request) (*Respon
 	c := providercfg.CompatibilityFor(provider)
 	cp.Provider = provider
 	cp.Body = sanitizeRequestWithCompatibility(cp.Body, c)
+	cp.Body = cfInjectReasoningControl(cp.Body)
 	resp, err := e.OpenAIExecutor.Execute(ctx, cp)
 	translateIfCloudflare(err)
 	return resp, err
@@ -50,6 +51,7 @@ func (e *CloudflareExecutor) ExecuteStream(ctx context.Context, req *Request) (*
 	c := providercfg.CompatibilityFor(provider)
 	cp.Provider = provider
 	cp.Body = sanitizeRequestWithCompatibility(cp.Body, c)
+	cp.Body = cfInjectReasoningControl(cp.Body)
 	result, err := e.OpenAIExecutor.ExecuteStream(ctx, cp)
 	translateIfCloudflare(err)
 	return result, err

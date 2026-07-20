@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
+	"github.com/tidwall/gjson"
 )
 
 func init() {
@@ -258,6 +259,62 @@ func TestDoStreamRequest_IdleTimeout(t *testing.T) {
 	}
 	if !gotIdleErr {
 		t.Fatal("expected stream idle timeout error")
+	}
+}
+
+func TestCfInjectReasoningControl(t *testing.T) {
+	tests := []struct {
+		name         string
+		body         []byte
+		wantThinking any
+	}{
+		{
+			name:         "default reasoning model defaults thinking to false",
+			body:         []byte(`{"model":"@cf/moonshotai/kimi-k2.7","messages":[{"role":"user","content":"hi"}]}`),
+			wantThinking: false,
+		},
+		{
+			name:         "reasoning_effort high enables thinking",
+			body:         []byte(`{"model":"@cf/moonshotai/kimi-k2.7","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"high"}`),
+			wantThinking: true,
+		},
+		{
+			name:         "reasoning_effort none disables thinking",
+			body:         []byte(`{"model":"@cf/moonshotai/kimi-k2.7","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"none"}`),
+			wantThinking: false,
+		},
+		{
+			name:         "explicit chat_template_kwargs.thinking true is preserved",
+			body:         []byte(`{"model":"@cf/moonshotai/kimi-k2.7","chat_template_kwargs":{"thinking":true,"depth":3}}`),
+			wantThinking: true,
+		},
+		{
+			name:         "non-reasoning CF model is unchanged",
+			body:         []byte(`{"model":"@cf/meta/llama-3.2-1b-instruct","messages":[{"role":"user","content":"hi"}]}`),
+			wantThinking: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := cfInjectReasoningControl(tt.body)
+			th := gjson.GetBytes(got, "chat_template_kwargs.thinking")
+			switch want := tt.wantThinking.(type) {
+			case nil:
+				if th.Exists() {
+					t.Fatalf("expected no chat_template_kwargs.thinking, got %v", th.Value())
+				}
+			case bool:
+				if !th.Exists() || th.Bool() != want {
+					t.Fatalf("chat_template_kwargs.thinking=%v, want %v", th.Value(), want)
+				}
+			}
+
+			// Existing chat_template_kwargs keys should never be stripped.
+			if depth := gjson.GetBytes(got, "chat_template_kwargs.depth"); depth.Exists() && depth.Int() != 3 {
+				t.Fatalf("chat_template_kwargs.depth=%v, want 3", depth.Int())
+			}
+		})
 	}
 }
 
