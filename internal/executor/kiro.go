@@ -148,9 +148,12 @@ type kiroStreamState struct {
 	toolArgsEmitted  map[string]string
 	estInputTokens   int64
 	estOutputTokens  int64
-	hasContextUsage  bool
-	contextUsagePct  int64
-	hasMeteringEvent bool
+	hasContextUsage     bool
+	contextUsagePct     int64
+	hasMeteringEvent    bool
+	cacheReadTokens     int64
+	cacheCreationTokens int64
+	finishEmitted       bool
 	// Inline-thinking splitter state.
 	thinkingExpected bool
 	thinkingMode     bool
@@ -265,7 +268,7 @@ func (s *kiroStreamState) emitChunk(delta map[string]any, model string) []byte {
 	}
 	s.chunkIndex++
 	b, _ := json.Marshal(chunk)
-	return []byte("data: " + string(b))
+	return []byte("data: " + string(b) + "\n\n")
 }
 
 func (s *kiroStreamState) emitStartChunk(model string) []byte {
@@ -454,6 +457,12 @@ func (s *kiroStreamState) handleEvent(frame *EventFrame, nameMap map[string]stri
 			usage["completion_tokens"] = s.estOutputTokens
 			usage["total_tokens"] = s.estInputTokens + s.estOutputTokens
 		}
+		if s.cacheReadTokens > 0 {
+			usage["cache_read_input_tokens"] = s.cacheReadTokens
+		}
+		if s.cacheCreationTokens > 0 {
+			usage["cache_creation_input_tokens"] = s.cacheCreationTokens
+		}
 		chunk := map[string]any{
 			"id":      s.responseID,
 			"object":  "chat.completion.chunk",
@@ -470,8 +479,9 @@ func (s *kiroStreamState) handleEvent(frame *EventFrame, nameMap map[string]stri
 		if len(usage) > 0 {
 			chunk["usage"] = usage
 		}
+		s.finishEmitted = true
 		b, _ := json.Marshal(chunk)
-		return [][]byte{[]byte("data: " + string(b))}
+		return [][]byte{[]byte("data: " + string(b) + "\n\n")}
 
 	case "contextUsageEvent":
 		payload := frame.Payload
@@ -486,6 +496,31 @@ func (s *kiroStreamState) handleEvent(frame *EventFrame, nameMap map[string]stri
 
 	case "meteringEvent":
 		s.hasMeteringEvent = true
+		payload := frame.Payload
+		if p, ok := frame.Payload["meteringEvent"].(map[string]any); ok {
+			payload = p
+		}
+		if p, ok := payload["metricsEvent"].(map[string]any); ok {
+			payload = p
+		}
+		if inTok, ok := toInt64(payload["inputTokens"]); ok && inTok > 0 {
+			s.estInputTokens = inTok
+		}
+		if outTok, ok := toInt64(payload["outputTokens"]); ok && outTok > 0 {
+			s.estOutputTokens = outTok
+		}
+		if v, ok := toInt64(payload["cacheReadInputTokens"]); ok && v > 0 {
+			s.cacheReadTokens = v
+		}
+		if v, ok := toInt64(payload["cache_read_input_tokens"]); ok && v > 0 {
+			s.cacheReadTokens = v
+		}
+		if v, ok := toInt64(payload["cacheCreationInputTokens"]); ok && v > 0 {
+			s.cacheCreationTokens = v
+		}
+		if v, ok := toInt64(payload["cache_creation_input_tokens"]); ok && v > 0 {
+			s.cacheCreationTokens = v
+		}
 		return nil
 
 	case "usageEvent":
@@ -809,9 +844,13 @@ func (e *KiroExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stream
 
 	thinkingExpected := strings.Contains(string(req.Body), "<thinking_mode>enabled</thinking_mode>")
 
+	// Capture the original output channel so the caller can safely reassign
+	// streamResult.Chunks (e.g. to a holdback wrapper) without racing the
+	// goroutine that reads and closes it.
+	chunks := result.Chunks
 	go func() {
 		defer resp.Body.Close()
-		defer close(result.Chunks)
+		defer close(chunks)
 
 		queue := newByteQueue()
 		state := &kiroStreamState{
@@ -844,34 +883,34 @@ func (e *KiroExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stream
 						continue
 					}
 					if start := state.ensureStarted(modelName); start != nil {
-						result.Chunks <- StreamChunk{Payload: start}
+						chunks <- StreamChunk{Payload: start}
 					}
-					chunks := state.handleEvent(frame, nameMap, modelName)
-					for _, c := range chunks {
-						result.Chunks <- StreamChunk{Payload: c}
+					emit := state.handleEvent(frame, nameMap, modelName)
+					for _, c := range emit {
+						chunks <- StreamChunk{Payload: c}
 					}
 				}
 			}
 			if readErr != nil {
 				if readErr != io.EOF {
-					result.Chunks <- StreamChunk{Err: readErr}
+					chunks <- StreamChunk{Err: readErr}
 				}
 				break
 			}
 		}
-		// flush remaining buffered tool args and emit final chunk if not emitted
-		if state.started() {
+		// flush remaining buffered tool args and emit a final stop chunk if the
+		// upstream did not already send messageStopEvent. Without this, non-stream
+		// assembly has no finish_reason and clients never see usage.
+		if state.started() && !state.finishEmitted {
 			for _, c := range state.flushPendingThinking(modelName) {
-				result.Chunks <- StreamChunk{Payload: c}
+				chunks <- StreamChunk{Payload: c}
 			}
 			for _, c := range state.maybeFlushToolArgs(nameMap, modelName) {
-				result.Chunks <- StreamChunk{Payload: c}
+				chunks <- StreamChunk{Payload: c}
 			}
-			if state.sawToolUse {
-				chunks := state.handleEvent(&EventFrame{Headers: map[string]string{":event-type": "messageStopEvent"}}, nameMap, modelName)
-				for _, c := range chunks {
-					result.Chunks <- StreamChunk{Payload: c}
-				}
+			emit := state.handleEvent(&EventFrame{Headers: map[string]string{":event-type": "messageStopEvent"}}, nameMap, modelName)
+			for _, c := range emit {
+				chunks <- StreamChunk{Payload: c}
 			}
 		}
 	}()
