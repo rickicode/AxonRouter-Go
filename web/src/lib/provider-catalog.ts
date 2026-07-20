@@ -584,6 +584,7 @@ export const PROVIDER_CATALOG: ProviderMeta[] = [
     displayName: 'CodeBuddy',
     icon: 'smart_toy',
     textIcon: 'CB',
+    iconFile: '/providers/codebuddy.png',
     category: 'oauth',
     description: 'Tencent CodeBuddy via browser OAuth polling flow.',
     format: 'openai',

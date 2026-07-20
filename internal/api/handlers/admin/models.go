@@ -569,12 +569,12 @@ var providerCatalogKeys = map[string][]string{
 	"novita":        {"novita"},
 	"lambda":        {"lambda"},
 	"pollinations":  {"pollinations"},
-	"copilot":    {"copilot"},
-	"bedrock":    {"bedrock"},
-	"grok-cli":   {"grok-cli"},
-	"codebuddy":  {"codebuddy"},
-	"devin":      {"devin"},
-	"qoder":      {"qoder"},
+	"copilot":       {"copilot"},
+	"bedrock":       {"bedrock"},
+	"grok-cli":      {"grok-cli"},
+	"codebuddy":     {"codebuddy"},
+	"devin":         {"devin"},
+	"qoder":         {"qoder"},
 }
 
 // staticModels returns model IDs from the auto-updating catalog, stripped of leading "@".
@@ -643,6 +643,8 @@ func defaultTestModel(providerID string) string {
 		return "devin"
 	case "qoder":
 		return "qoder-rome-30ba3b"
+	case "codebuddy":
+		return "glm-5.0"
 	default:
 		return ""
 	}

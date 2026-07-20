@@ -2371,108 +2371,108 @@
       "max_completion_tokens": 32768
     }
   ],
-"grok-cli": [
-  {
-    "id": "grok-build",
-    "object": "model",
-    "created": 1779321600,
-    "owned_by": "xai",
-    "type": "xai",
-    "display_name": "Grok Build",
-    "name": "grok-build",
-    "description": "Grok Build is xAI's fast coding model for agentic software engineering workflows.",
-    "context_length": 500000,
-    "max_completion_tokens": 64000
-  },
-  {
-    "id": "grok-4.5",
-    "object": "model",
-    "created": 1779321600,
-    "owned_by": "xai",
-    "type": "xai",
-    "display_name": "Grok 4.5",
-    "name": "grok-4.5",
-    "description": "xAI Grok 4.5 model for the Responses API.",
-    "context_length": 1000000,
-    "max_completion_tokens": 65536,
-    "thinking": {
-      "zero_allowed": true,
-      "levels": [
-        "none",
-        "low",
-        "medium",
-        "high",
-        "xhigh"
-      ]
+  "grok-cli": [
+    {
+      "id": "grok-build",
+      "object": "model",
+      "created": 1779321600,
+      "owned_by": "xai",
+      "type": "xai",
+      "display_name": "Grok Build",
+      "name": "grok-build",
+      "description": "Grok Build is xAI's fast coding model for agentic software engineering workflows.",
+      "context_length": 500000,
+      "max_completion_tokens": 64000
+    },
+    {
+      "id": "grok-4.5",
+      "object": "model",
+      "created": 1779321600,
+      "owned_by": "xai",
+      "type": "xai",
+      "display_name": "Grok 4.5",
+      "name": "grok-4.5",
+      "description": "xAI Grok 4.5 model for the Responses API.",
+      "context_length": 1000000,
+      "max_completion_tokens": 65536,
+      "thinking": {
+        "zero_allowed": true,
+        "levels": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      }
+    },
+    {
+      "id": "grok-4.5-high",
+      "object": "model",
+      "created": 1779321600,
+      "owned_by": "xai",
+      "type": "xai",
+      "display_name": "Grok 4.5 (High)",
+      "name": "grok-4.5-high",
+      "description": "Grok 4.5 with higher reasoning effort.",
+      "context_length": 1000000,
+      "max_completion_tokens": 65536,
+      "thinking": {
+        "zero_allowed": true,
+        "levels": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      }
+    },
+    {
+      "id": "grok-4.5-medium",
+      "object": "model",
+      "created": 1779321600,
+      "owned_by": "xai",
+      "type": "xai",
+      "display_name": "Grok 4.5 (Medium)",
+      "name": "grok-4.5-medium",
+      "description": "Grok 4.5 with medium reasoning effort.",
+      "context_length": 1000000,
+      "max_completion_tokens": 65536,
+      "thinking": {
+        "zero_allowed": true,
+        "levels": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      }
+    },
+    {
+      "id": "grok-4.5-low",
+      "object": "model",
+      "created": 1779321600,
+      "owned_by": "xai",
+      "type": "xai",
+      "display_name": "Grok 4.5 (Low)",
+      "name": "grok-4.5-low",
+      "description": "Grok 4.5 with lower reasoning effort.",
+      "context_length": 1000000,
+      "max_completion_tokens": 65536,
+      "thinking": {
+        "zero_allowed": true,
+        "levels": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      }
     }
-  },
-  {
-    "id": "grok-4.5-high",
-    "object": "model",
-    "created": 1779321600,
-    "owned_by": "xai",
-    "type": "xai",
-    "display_name": "Grok 4.5 (High)",
-    "name": "grok-4.5-high",
-    "description": "Grok 4.5 with higher reasoning effort.",
-    "context_length": 1000000,
-    "max_completion_tokens": 65536,
-    "thinking": {
-      "zero_allowed": true,
-      "levels": [
-        "none",
-        "low",
-        "medium",
-        "high",
-        "xhigh"
-      ]
-    }
-  },
-  {
-    "id": "grok-4.5-medium",
-    "object": "model",
-    "created": 1779321600,
-    "owned_by": "xai",
-    "type": "xai",
-    "display_name": "Grok 4.5 (Medium)",
-    "name": "grok-4.5-medium",
-    "description": "Grok 4.5 with medium reasoning effort.",
-    "context_length": 1000000,
-    "max_completion_tokens": 65536,
-    "thinking": {
-      "zero_allowed": true,
-      "levels": [
-        "none",
-        "low",
-        "medium",
-        "high",
-        "xhigh"
-      ]
-    }
-  },
-  {
-    "id": "grok-4.5-low",
-    "object": "model",
-    "created": 1779321600,
-    "owned_by": "xai",
-    "type": "xai",
-    "display_name": "Grok 4.5 (Low)",
-    "name": "grok-4.5-low",
-    "description": "Grok 4.5 with lower reasoning effort.",
-    "context_length": 1000000,
-    "max_completion_tokens": 65536,
-    "thinking": {
-      "zero_allowed": true,
-      "levels": [
-        "none",
-        "low",
-        "medium",
-        "high",
-        "xhigh"
-      ]
-    }
-  }
-],
+  ],
   "oc": [
     {
       "id": "deepseek-v4-flash-free"
@@ -3812,273 +3812,273 @@
     }
   ],
   "bedrock": [
-  {
-    "id": "writer.palmyra-vision-7b",
-    "display_name": "Writer Palmyra Vision 7B",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "qwen.qwen3-coder-30b-a3b-instruct",
-    "display_name": "Qwen3 Coder 30B A3B Instruct",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "zai.glm-4.7",
-    "display_name": "Z.AI GLM-4.7",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "nvidia.nemotron-nano-12b-v2",
-    "display_name": "NVIDIA Nemotron Nano 12B V2",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "google.gemma-3-27b-it",
-    "display_name": "Google Gemma 3 27B IT",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "nvidia.nemotron-super-3-120b",
-    "display_name": "NVIDIA Nemotron Super 3 120B",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "deepseek.v3.2",
-    "display_name": "DeepSeek V3.2",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "minimax.minimax-m2.5",
-    "display_name": "MiniMax M2.5",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "moonshotai.kimi-k2.5",
-    "display_name": "Moonshot AI Kimi K2.5",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "google.gemma-3-4b-it",
-    "display_name": "Google Gemma 3 4B IT",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "nvidia.nemotron-nano-3-30b",
-    "display_name": "NVIDIA Nemotron Nano 3 30B",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "qwen.qwen3-coder-next",
-    "display_name": "Qwen3 Coder Next",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "minimax.minimax-m2",
-    "display_name": "MiniMax M2",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "qwen.qwen3-vl-235b-a22b-instruct",
-    "display_name": "Qwen3 VL 235B A22B Instruct",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "openai.gpt-oss-safeguard-120b",
-    "display_name": "OpenAI GPT-OSS Safeguard 120B",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "mistral.mistral-large-3-675b-instruct",
-    "display_name": "Mistral Large 3 675B Instruct",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "qwen.qwen3-32b",
-    "display_name": "Qwen3 32B",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "minimax.minimax-m2.1",
-    "display_name": "MiniMax M2.1",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "mistral.voxtral-small-24b-2507",
-    "display_name": "Mistral Voxtral Small 24B 2507",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "mistral.devstral-2-123b",
-    "display_name": "Mistral Devstral 2 123B",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "qwen.qwen3-next-80b-a3b-instruct",
-    "display_name": "Qwen3 Next 80B A3B Instruct",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "openai.gpt-oss-120b",
-    "display_name": "OpenAI GPT-OSS 120B",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "mistral.ministral-3-14b-instruct",
-    "display_name": "Mistral Ministral 3 14B Instruct",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "mistral.magistral-small-2509",
-    "display_name": "Mistral Magistral Small 2509",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "mistral.voxtral-mini-3b-2507",
-    "display_name": "Mistral Voxtral Mini 3B 2507",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "deepseek.v3.1",
-    "display_name": "DeepSeek V3.1",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "zai.glm-4.7-flash",
-    "display_name": "Z.AI GLM-4.7 Flash",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "google.gemma-3-12b-it",
-    "display_name": "Google Gemma 3 12B IT",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "openai.gpt-oss-safeguard-20b",
-    "display_name": "OpenAI GPT-OSS Safeguard 20B",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "mistral.ministral-3-3b-instruct",
-    "display_name": "Mistral Ministral 3 3B Instruct",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "openai.gpt-oss-20b",
-    "display_name": "OpenAI GPT-OSS 20B",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "nvidia.nemotron-nano-9b-v2",
-    "display_name": "NVIDIA Nemotron Nano 9B V2",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "qwen.qwen3-coder-480b-a35b-instruct",
-    "display_name": "Qwen3 Coder 480B A35B Instruct",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "qwen.qwen3-235b-a22b-2507",
-    "display_name": "Qwen3 235B A22B 2507",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "moonshotai.kimi-k2-thinking",
-    "display_name": "Moonshot AI Kimi K2 Thinking",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "zai.glm-5",
-    "display_name": "Z.AI GLM-5",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "mistral.ministral-3-8b-instruct",
-    "display_name": "Mistral Ministral 3 8B Instruct",
-    "service_kinds": [
-      "llm"
-    ]
-  },
-  {
-    "id": "zai.glm-4.6",
-    "display_name": "Z.AI GLM-4.6",
-    "service_kinds": [
-      "llm"
-    ]
-  }
-],
+    {
+      "id": "writer.palmyra-vision-7b",
+      "display_name": "Writer Palmyra Vision 7B",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "qwen.qwen3-coder-30b-a3b-instruct",
+      "display_name": "Qwen3 Coder 30B A3B Instruct",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "zai.glm-4.7",
+      "display_name": "Z.AI GLM-4.7",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "nvidia.nemotron-nano-12b-v2",
+      "display_name": "NVIDIA Nemotron Nano 12B V2",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "google.gemma-3-27b-it",
+      "display_name": "Google Gemma 3 27B IT",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "nvidia.nemotron-super-3-120b",
+      "display_name": "NVIDIA Nemotron Super 3 120B",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "deepseek.v3.2",
+      "display_name": "DeepSeek V3.2",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "minimax.minimax-m2.5",
+      "display_name": "MiniMax M2.5",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "moonshotai.kimi-k2.5",
+      "display_name": "Moonshot AI Kimi K2.5",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "google.gemma-3-4b-it",
+      "display_name": "Google Gemma 3 4B IT",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "nvidia.nemotron-nano-3-30b",
+      "display_name": "NVIDIA Nemotron Nano 3 30B",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "qwen.qwen3-coder-next",
+      "display_name": "Qwen3 Coder Next",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "minimax.minimax-m2",
+      "display_name": "MiniMax M2",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "qwen.qwen3-vl-235b-a22b-instruct",
+      "display_name": "Qwen3 VL 235B A22B Instruct",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "openai.gpt-oss-safeguard-120b",
+      "display_name": "OpenAI GPT-OSS Safeguard 120B",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "mistral.mistral-large-3-675b-instruct",
+      "display_name": "Mistral Large 3 675B Instruct",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "qwen.qwen3-32b",
+      "display_name": "Qwen3 32B",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "minimax.minimax-m2.1",
+      "display_name": "MiniMax M2.1",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "mistral.voxtral-small-24b-2507",
+      "display_name": "Mistral Voxtral Small 24B 2507",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "mistral.devstral-2-123b",
+      "display_name": "Mistral Devstral 2 123B",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "qwen.qwen3-next-80b-a3b-instruct",
+      "display_name": "Qwen3 Next 80B A3B Instruct",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "openai.gpt-oss-120b",
+      "display_name": "OpenAI GPT-OSS 120B",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "mistral.ministral-3-14b-instruct",
+      "display_name": "Mistral Ministral 3 14B Instruct",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "mistral.magistral-small-2509",
+      "display_name": "Mistral Magistral Small 2509",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "mistral.voxtral-mini-3b-2507",
+      "display_name": "Mistral Voxtral Mini 3B 2507",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "deepseek.v3.1",
+      "display_name": "DeepSeek V3.1",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "zai.glm-4.7-flash",
+      "display_name": "Z.AI GLM-4.7 Flash",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "google.gemma-3-12b-it",
+      "display_name": "Google Gemma 3 12B IT",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "openai.gpt-oss-safeguard-20b",
+      "display_name": "OpenAI GPT-OSS Safeguard 20B",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "mistral.ministral-3-3b-instruct",
+      "display_name": "Mistral Ministral 3 3B Instruct",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "openai.gpt-oss-20b",
+      "display_name": "OpenAI GPT-OSS 20B",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "nvidia.nemotron-nano-9b-v2",
+      "display_name": "NVIDIA Nemotron Nano 9B V2",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "qwen.qwen3-coder-480b-a35b-instruct",
+      "display_name": "Qwen3 Coder 480B A35B Instruct",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "qwen.qwen3-235b-a22b-2507",
+      "display_name": "Qwen3 235B A22B 2507",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "moonshotai.kimi-k2-thinking",
+      "display_name": "Moonshot AI Kimi K2 Thinking",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "zai.glm-5",
+      "display_name": "Z.AI GLM-5",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "mistral.ministral-3-8b-instruct",
+      "display_name": "Mistral Ministral 3 8B Instruct",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "zai.glm-4.6",
+      "display_name": "Z.AI GLM-4.6",
+      "service_kinds": [
+        "llm"
+      ]
+    }
+  ],
   "cerebras": [
     {
       "id": "llama-3.1-8b",
@@ -6023,6 +6023,248 @@
       "owned_by": "qoder",
       "type": "qoder",
       "display_name": "Qwen3 235B",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "codebuddy": [
+    {
+      "id": "deepseek-v3-2-volc",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Deepseek V3 2 Volc",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "glm-4.7",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Glm 4.7",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "glm-4.6",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Glm 4.6",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "deepseek-v3.1",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Deepseek V3.1",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "hunyuan-chat",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Hunyuan Chat",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "deepseek-v3-0324",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Deepseek V3 0324",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "kimi-k2-thinking",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Kimi K2 Thinking",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "deepseek-v4-pro",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Deepseek V4 Pro",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "deepseek-v4-flash",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Deepseek V4 Flash",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "minimax-m2.5",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Minimax M2.5",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "minimax-m2.7",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Minimax M2.7",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "glm-5.1",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Glm 5.1",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "glm-5.0",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Glm 5.0",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "glm-5.0-turbo",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Glm 5.0 Turbo",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "glm-5v-turbo",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Glm 5V Turbo",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "glm-4.6v",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Glm 4.6V",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "kimi-k2.6",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Kimi K2.6",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "kimi-k2.5",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Kimi K2.5",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "deepseek-v4-pro-exclusive",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Deepseek V4 Pro Exclusive",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "hunyuan-2.0-instruct",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Hunyuan 2.0 Instruct",
       "service_kinds": [
         "llm"
       ],
