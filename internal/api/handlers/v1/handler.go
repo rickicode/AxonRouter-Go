@@ -348,7 +348,7 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 	connIDs := h.elig.GetByPrefix(provider)
 	logging.Logger.Debug("getConnection", "provider", provider, "eligible", len(connIDs))
 	if len(connIDs) > 0 {
-		start := h.pickStartIndex(provider, len(connIDs))
+		start := h.pickStartIndex(provider, modelID, len(connIDs))
 		bound := pickMaxAttempts
 		if bound > len(connIDs) {
 			bound = len(connIDs)
@@ -394,7 +394,7 @@ func (h *Handler) getConnectionFallback(ctx context.Context, provider, modelID s
 		return true
 	})
 
-	candidates = h.orderCandidates(provider, candidates)
+	candidates = h.orderCandidates(provider, modelID, candidates)
 
 	// Pass 1: respect cooldowns, just expand the pool beyond the eligibility snapshot.
 	for _, connID := range candidates {
@@ -444,14 +444,14 @@ func (h *Handler) tryPickConnectionFallback(ctx context.Context, connID, provide
 
 // pickStartIndex returns the first index to inspect based on the configured
 // routing mode. first_eligible always starts at 0; round_robin rotates an
-// atomic counter; random chooses a uniform index.
-func (h *Handler) pickStartIndex(provider string, total int) int {
+// atomic counter keyed by provider and modelID; random chooses a uniform index.
+func (h *Handler) pickStartIndex(provider, modelID string, total int) int {
 	if total <= 1 {
 		return 0
 	}
 	switch h.providerCfg.RoutingMode(provider) {
 	case providercfg.RoundRobin:
-		return h.providerCfg.NextRoundRobinIndex(provider, total)
+		return h.providerCfg.NextRoundRobinIndex(provider, modelID, total)
 	case providercfg.Random:
 		return rand.IntN(total)
 	default:
@@ -492,10 +492,11 @@ func (h *Handler) tryPickConnection(ctx context.Context, connID, provider, model
 // configured routing mode.
 //
 //   - first_eligible: accounts are sorted by remaining quota (highest first).
-//   - round_robin: rotate the starting index, but the rotation is applied on
-//     top of the quota-sorted list so healthier accounts are preferred.
+//   - round_robin: rotate the starting index keyed by provider and modelID,
+//     but the rotation is applied on top of the quota-sorted list so healthier
+//     accounts are preferred.
 //   - random: pick a random starting index on the quota-sorted list.
-func (h *Handler) orderCandidates(provider string, candidates []string) []string {
+func (h *Handler) orderCandidates(provider, modelID string, candidates []string) []string {
 	if len(candidates) <= 1 {
 		return candidates
 	}
@@ -519,7 +520,7 @@ func (h *Handler) orderCandidates(provider string, candidates []string) []string
 	var start int
 	switch mode {
 	case providercfg.RoundRobin:
-		start = h.providerCfg.NextRoundRobinIndex(provider, len(candidates))
+		start = h.providerCfg.NextRoundRobinIndex(provider, modelID, len(candidates))
 	case providercfg.Random:
 		start = rand.IntN(len(candidates))
 	default:
