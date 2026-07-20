@@ -3,6 +3,7 @@ package admin
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -424,4 +425,140 @@ func installedName() string {
 		name += ".exe"
 	}
 	return name
+}
+
+func TestRestart_UserServiceActive(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewRestartHandler()
+	var calls []string
+	h.checkActive = func(name string, arg ...string) error {
+		calls = append(calls, fmt.Sprintf("%s %s", name, strings.Join(arg, " ")))
+		if name == "systemctl" && len(arg) == 3 && arg[0] == "--user" && arg[1] == "is-active" && arg[2] == "axonrouter" {
+			return nil
+		}
+		return errors.New("inactive")
+	}
+	h.restart = func(name string, arg ...string) error {
+		calls = append(calls, fmt.Sprintf("%s %s", name, strings.Join(arg, " ")))
+		return nil
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/restart", nil)
+	h.Restart(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["ok"] != true {
+		t.Errorf("ok = %v, want true", resp["ok"])
+	}
+	if resp["message"] != "restart initiated" {
+		t.Errorf("message = %v, want restart initiated", resp["message"])
+	}
+	wantCalls := []string{"systemctl --user is-active axonrouter", "systemctl --user restart axonrouter"}
+	if len(calls) != 2 || calls[0] != wantCalls[0] || calls[1] != wantCalls[1] {
+		t.Errorf("calls = %v, want %v", calls, wantCalls)
+	}
+}
+
+func TestRestart_SystemServiceActive(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewRestartHandler()
+	var calls []string
+	h.checkActive = func(name string, arg ...string) error {
+		calls = append(calls, fmt.Sprintf("%s %s", name, strings.Join(arg, " ")))
+		if name == "systemctl" && len(arg) == 2 && arg[0] == "is-active" && arg[1] == "axonrouter" {
+			return nil
+		}
+		return errors.New("inactive")
+	}
+	h.restart = func(name string, arg ...string) error {
+		calls = append(calls, fmt.Sprintf("%s %s", name, strings.Join(arg, " ")))
+		return nil
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/restart", nil)
+	h.Restart(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["ok"] != true {
+		t.Errorf("ok = %v, want true", resp["ok"])
+	}
+	wantCalls := []string{"systemctl --user is-active axonrouter", "systemctl is-active axonrouter", "systemctl restart axonrouter"}
+	if len(calls) != 3 || calls[2] != wantCalls[2] {
+		t.Errorf("calls = %v, want %v", calls, wantCalls)
+	}
+}
+
+func TestRestart_NotManagedBySystemd(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewRestartHandler()
+	h.checkActive = func(name string, arg ...string) error {
+		return errors.New("inactive")
+	}
+	h.restart = func(name string, arg ...string) error {
+		t.Error("restart should not be called")
+		return nil
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/restart", nil)
+	h.Restart(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["error"] != "service not managed by systemd" {
+		t.Errorf("error = %v, want service not managed by systemd", resp["error"])
+	}
+	wantCmd, _ := restartInstructions()
+	if resp["restart_command"] != wantCmd {
+		t.Errorf("restart_command = %v, want %s", resp["restart_command"], wantCmd)
+	}
+}
+
+func TestRestart_RestartStartFails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewRestartHandler()
+	h.checkActive = func(name string, arg ...string) error {
+		return nil
+	}
+	h.restart = func(name string, arg ...string) error {
+		return errors.New("start error")
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/restart", nil)
+	h.Restart(c)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["error"] == nil || !strings.Contains(resp["error"].(string), "start error") {
+		t.Errorf("error = %v, want containing start error", resp["error"])
+	}
 }
