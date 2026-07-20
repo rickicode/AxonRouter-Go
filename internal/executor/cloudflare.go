@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // CloudflareExecutor wraps OpenAIExecutor with Cloudflare Workers AI-specific
@@ -40,6 +42,9 @@ func (e *CloudflareExecutor) Execute(ctx context.Context, req *Request) (*Respon
 	cp.Body = cfInjectReasoningControl(cp.Body)
 	resp, err := e.OpenAIExecutor.Execute(ctx, cp)
 	translateIfCloudflare(err)
+	if resp != nil {
+		normalizeCloudflareResponse(resp)
+	}
 	return resp, err
 }
 
@@ -221,6 +226,28 @@ func normalizeCloudflareStream(in <-chan StreamChunk) chan StreamChunk {
 		}
 	}()
 	return out
+}
+
+// normalizeCloudflareResponse rewrites a non-streaming chat completion response
+// from Cloudflare Workers AI so that any choices[0].message.reasoning field is
+// renamed to the OpenAI-standard choices[0].message.reasoning_content field.
+// When reasoning_content already exists, the original value is preserved and
+// the non-standard reasoning field is removed to avoid duplication. Status
+// codes, headers, and non-JSON bodies are left untouched.
+func normalizeCloudflareResponse(resp *Response) {
+	if resp == nil || !gjson.ValidBytes(resp.Body) {
+		return
+	}
+	r := gjson.GetBytes(resp.Body, "choices.0.message.reasoning")
+	if !r.Exists() {
+		return
+	}
+	body := resp.Body
+	if !gjson.GetBytes(resp.Body, "choices.0.message.reasoning_content").Exists() {
+		body, _ = sjson.SetBytes(body, "choices.0.message.reasoning_content", r.Value())
+	}
+	body, _ = sjson.DeleteBytes(body, "choices.0.message.reasoning")
+	resp.Body = body
 }
 
 func translateIfCloudflare(err error) {

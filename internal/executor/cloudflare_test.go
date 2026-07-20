@@ -407,6 +407,74 @@ func TestCloudflareStreamNormalize_PreservesDoneAndErrors(t *testing.T) {
 	}
 }
 
+func TestCloudflareResponseNormalize_RenamesMessageReasoning(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, `{"choices":[{"message":{"role":"assistant","reasoning":"think","content":"hi"}}],"usage":{"total_tokens":10}}`)
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	cf := NewCloudflareExecutor(NewOpenAIExecutor(base))
+
+	req := &Request{
+		Model:   "@cf/moonshotai/kimi-k2.7",
+		BaseURL: ts.URL + "/v1/chat/completions",
+		Body:    mustJSON(map[string]any{"model": "@cf/moonshotai/kimi-k2.7", "messages": []any{map[string]any{"role": "user", "content": "hi"}}}),
+	}
+
+	resp, err := cf.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response")
+	}
+
+	msg := gjson.GetBytes(resp.Body, "choices.0.message")
+	if msg.Get("reasoning_content").String() != "think" {
+		t.Fatalf("expected reasoning_content=think, got %s", msg.Get("reasoning_content").String())
+	}
+	if msg.Get("reasoning").Exists() {
+		t.Fatalf("reasoning field should be removed, got %s", msg.Get("reasoning").String())
+	}
+}
+
+func TestCloudflareResponseNormalize_PreservesExistingReasoningContent(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, `{"choices":[{"message":{"role":"assistant","reasoning":"new","reasoning_content":"existing","content":"hi"}}]}`)
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	cf := NewCloudflareExecutor(NewOpenAIExecutor(base))
+
+	req := &Request{
+		Model:   "@cf/moonshotai/kimi-k2.7",
+		BaseURL: ts.URL + "/v1/chat/completions",
+		Body:    mustJSON(map[string]any{"model": "@cf/moonshotai/kimi-k2.7", "messages": []any{map[string]any{"role": "user", "content": "hi"}}}),
+	}
+
+	resp, err := cf.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response")
+	}
+
+	msg := gjson.GetBytes(resp.Body, "choices.0.message")
+	if msg.Get("reasoning_content").String() != "existing" {
+		t.Fatalf("expected reasoning_content=existing, got %s", msg.Get("reasoning_content").String())
+	}
+	if msg.Get("reasoning").Exists() {
+		t.Fatalf("reasoning field should be removed when reasoning_content exists, got %s", msg.Get("reasoning").String())
+	}
+}
+
 func collectStreamChunks(ch <-chan StreamChunk) []string {
 	var out []string
 	for c := range ch {
