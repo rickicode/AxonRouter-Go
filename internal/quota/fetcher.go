@@ -78,6 +78,7 @@ var knownProviders = map[string]providerMeta{
 	"kiro": {DisplayName: "Kiro", Color: "#ff9900", IconFile: "kiro.svg"},
 	"copilot": {DisplayName: "GitHub Copilot", Color: "#24292E", IconFile: "copilot.png"},
 	"grok-cli": {DisplayName: "Grok CLI (Grok Build)", Color: "#000000", IconFile: "grok-cli.png"},
+	"codebuddy": {DisplayName: "CodeBuddy", Color: "#5b21b6", IconFile: "codebuddy.png"},
 }
 
 // ProviderMeta returns display metadata for a provider type, if known.
@@ -475,6 +476,8 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 			if _, _, syncErr := refreshCopilotTokenIfNeeded(db, c.ID, token, psd); syncErr != nil {
 				log.Printf("quota: failed to sync Copilot token expiry for %s: %v", c.ID, syncErr)
 			}
+		case "codebuddy":
+			r.quotas, r.plan, r.err = fetchCodeBuddyQuota(token, psd)
 		default:
 			if _, known := knownProviders[providerID]; known {
 				// A provider in knownProviders must have a fetcher; fail loudly so it

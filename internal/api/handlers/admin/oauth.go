@@ -164,14 +164,6 @@ func (h *OAuthHandler) StartOAuth(c *gin.Context) {
 				connName = fallback
 			}
 
-			// Append CodeBuddy plan type to the connection name so operators can see
-			// the account tier (e.g. trial, subscribed, enterprise) at a glance.
-			if req.Provider == "codebuddy" {
-				if planType := creds.ProviderSpecific["plan_type"]; planType != "" && connName != "" {
-					connName = fmt.Sprintf("%s (%s)", connName, planType)
-				}
-			}
-
 			// Create connection ONLY on success
 			connID := uuid.New().String()
 			now := time.Now().Unix()
