@@ -3,6 +3,8 @@ package kiro
 import (
 	"slices"
 	"testing"
+
+	"github.com/rickicode/AxonRouter-Go/internal/models"
 )
 
 func TestBaseModels(t *testing.T) {
@@ -133,4 +135,13 @@ func findModel(models []Model, id string) (Model, bool) {
 		}
 	}
 	return Model{}, false
+}
+
+func TestBaseModelsPresentInModelsJSON(t *testing.T) {
+	catalogIDs := models.GetModelIDs("kiro")
+	for _, m := range BaseModels {
+		if !slices.Contains(catalogIDs, m.ID) {
+			t.Errorf("kiro base model %q is missing from internal/models/models.json", m.ID)
+		}
+	}
 }
