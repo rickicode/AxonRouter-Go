@@ -53,6 +53,47 @@ var antigravityDiscoveryBaseURLs = []string{
 	"https://daily-cloudcode-pa.sandbox.googleapis.com",
 }
 
+// antigravityModelAliases maps public/client-facing model IDs to upstream-valid
+// Antigravity model IDs. Kept minimal after the catalog cleanup; primarily for
+// backward compatibility and retired IDs that external clients or configs still use.
+// Sources: OmniRoute open-sse/config/antigravityModelAliases.ts + CLIProxyAPI model list.
+var antigravityModelAliases = map[string]string{
+	// OmniRoute forward aliases (kept for backward compatibility even after catalog cleanup)
+	"gemini-3-pro-preview":                    "gemini-3.1-pro",
+	"gemini-3-pro-image-preview":                "gemini-3-pro-image",
+	"gemini-2.5-computer-use-preview-10-2025":   "rev19-uic3-1p",
+	// Resilience alias: older client configs may still reference the plain Pro ID
+	"gemini-3.1-pro":                            "gemini-pro-agent",
+}
+
+// antigravityProFallbackChains provides per-request upstream-id retries for the
+// Gemini Pro family, which Antigravity renames frequently. Only HTTP 400 from an
+// invalid upstream id triggers the next candidate; rate-limit/quota errors are
+// handled by the normal failover path.
+// See OmniRoute open-sse/config/antigravityModelAliases.ts:208-218.
+var antigravityProFallbackChains = map[string][]string{
+	"gemini-3.1-pro-high": {"gemini-3.1-pro-high", "gemini-pro-agent", "gemini-3-pro-high"},
+	"gemini-3.1-pro-low":  {"gemini-3.1-pro-low", "gemini-3-pro-low"},
+}
+
+// resolveAntigravityModelID resolves a public model ID to the upstream ID that
+// should be sent to Antigravity. It follows alias chains (e.g. preview -> public
+// -> upstream) and stops when no further mapping exists or a cycle is detected.
+func resolveAntigravityModelID(modelID string) string {
+	seen := map[string]bool{}
+	for {
+		if seen[modelID] {
+			return modelID
+		}
+		seen[modelID] = true
+		v, ok := antigravityModelAliases[modelID]
+		if !ok {
+			return modelID
+		}
+		modelID = v
+	}
+}
+
 // antigravityProjectCache memoizes loadCodeAssist results per access token.
 // This avoids repeated discovery round-trips within the process lifetime.
 var antigravityProjectCache sync.Map
@@ -339,6 +380,11 @@ func pickAntigravityProjectID(data map[string]any) string {
 // the executor must NOT wrap it again.
 // Reference: CLIProxyAPI geminiToAntigravity + AntigravityRequestEnvelope.
 func (e *AntigravityExecutor) wrapEnvelope(ctx context.Context, req *Request) ([]byte, error) {
+	return e.buildEnvelope(ctx, req, resolveAntigravityModelID(req.Model))
+}
+
+// buildEnvelope finalizes the Antigravity envelope for a specific upstream model id.
+func (e *AntigravityExecutor) buildEnvelope(ctx context.Context, req *Request, upstreamModelID string) ([]byte, error) {
 	var envelope map[string]any
 	if err := json.Unmarshal(req.Body, &envelope); err != nil {
 		envelope = map[string]any{
@@ -385,7 +431,7 @@ func (e *AntigravityExecutor) wrapEnvelope(ctx context.Context, req *Request) ([
 
 	// Finalize the envelope. The translator already built the outer shape.
 	envelope["project"] = projectID
-	envelope["model"] = req.Model
+	envelope["model"] = upstreamModelID
 	envelope["userAgent"] = envelopeUserAgent(req)
 	envelope["requestType"] = "agent"
 	envelope["enabledCreditTypes"] = []string{"GOOGLE_ONE_AI"}
@@ -446,33 +492,52 @@ func generateAntigravityRequestId() string {
 // Execute performs a non-streaming Antigravity request.
 // Uses generateContent (not streamGenerateContent) so the upstream returns a single
 // JSON response that can be translated to OpenAI Chat Completions format.
+//
+// For Pro-family model IDs, an upstream 400 (commonly caused by an invalid or
+// renamed model id) triggers a per-model fallback chain (OmniRoute #3786).
 func (e *AntigravityExecutor) Execute(ctx context.Context, req *Request) (*Response, error) {
 	url := antigravityNonStreamURL(req.BaseURL)
-	body, err := e.wrapEnvelope(ctx, req)
-	if err != nil {
-		return nil, err
-	}
 	headers := map[string]string{
-		"Content-Type": "application/json",
-		"Authorization": "Bearer " + req.AccessToken,
-		"User-Agent": envelopeUserAgent(req),
+		"Content-Type":   "application/json",
+		"Authorization":  "Bearer " + req.AccessToken,
+		"User-Agent":     envelopeUserAgent(req),
 		"X-Goog-Api-Key": req.APIKey,
 	}
-	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
-	if err != nil {
-		return nil, err
+
+	baseModel := resolveAntigravityModelID(req.Model)
+	candidates := antigravityProFallbackChains[baseModel]
+	if len(candidates) == 0 {
+		candidates = []string{baseModel}
 	}
-	if resp.StatusCode >= 400 {
-		upErr := &UpstreamError{
-			StatusCode: resp.StatusCode,
-			Body:       resp.Body,
-			RawBody:    resp.Body,
-			Headers:    resp.Headers,
+
+	var lastErr error
+	for _, modelID := range candidates {
+		body, err := e.buildEnvelope(ctx, req, modelID)
+		if err != nil {
+			return nil, err
 		}
-		upErr.TranslateErrorBody(req.Provider)
-		return nil, upErr
+		resp, err := e.DoRequest(ctx, "POST", url, headers, body)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode >= 400 {
+			upErr := &UpstreamError{
+				StatusCode: resp.StatusCode,
+				Body:       resp.Body,
+				RawBody:    resp.Body,
+				Headers:    resp.Headers,
+			}
+			upErr.TranslateErrorBody(req.Provider)
+			lastErr = upErr
+			// Retry 400s only when we have another Pro-family candidate id.
+			if resp.StatusCode == http.StatusBadRequest && len(candidates) > 1 {
+				continue
+			}
+			return nil, upErr
+		}
+		return resp, nil
 	}
-	return resp, nil
+	return nil, lastErr
 }
 
 // antigravityNonStreamURL converts the streaming/base URL into the non-streaming
@@ -495,14 +560,11 @@ func antigravityNonStreamURL(base string) string {
 }
 
 // ExecuteStream performs a streaming Antigravity request.
+// Similar to Execute, it retries Pro-family model ids on an upstream 400.
 func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
 	url := req.BaseURL
 	if url == "" {
 		url = "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
-	}
-	body, err := e.wrapEnvelope(ctx, req)
-	if err != nil {
-		return nil, err
 	}
 	headers := map[string]string{
 		"Content-Type":   "application/json",
@@ -512,5 +574,31 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, req *Request) (
 		"User-Agent":     envelopeUserAgent(req),
 		"X-Goog-Api-Key": req.APIKey,
 	}
-	return e.DoStreamRequest(ContextWithProvider(ctx, req.Provider), "POST", url, headers, body)
+
+	baseModel := resolveAntigravityModelID(req.Model)
+	candidates := antigravityProFallbackChains[baseModel]
+	if len(candidates) == 0 {
+		candidates = []string{baseModel}
+	}
+
+	var lastErr error
+	for _, modelID := range candidates {
+		body, err := e.buildEnvelope(ctx, req, modelID)
+		if err != nil {
+			return nil, err
+		}
+		result, err := e.DoStreamRequest(ContextWithProvider(ctx, req.Provider), "POST", url, headers, body)
+		if err != nil {
+			// Network-level errors are not retried here.
+			return nil, err
+		}
+		// If the upstream rejects the model id with 400, attempt the next candidate.
+		// DoStreamRequest surfaces the HTTP status on StreamResult immediately.
+		if result != nil && result.StatusCode == http.StatusBadRequest && len(candidates) > 1 {
+			lastErr = fmt.Errorf("antigravity stream rejected model %s with status %d", modelID, result.StatusCode)
+			continue
+		}
+		return result, nil
+	}
+	return nil, lastErr
 }
