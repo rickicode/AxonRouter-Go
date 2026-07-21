@@ -3,6 +3,9 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/tidwall/gjson"
@@ -220,5 +223,106 @@ func TestWrapEnvelope_OmniRouteParity(t *testing.T) {
 	// removed by the executor wrapper.
 	if root.Get("request.safetySettings").Exists() {
 		t.Error("expected request.safetySettings to be stripped by wrapEnvelope")
+	}
+}
+
+func TestResolveAntigravityModelID(t *testing.T) {
+	cases := []struct {
+		input    string
+		expected string
+	}{
+		{"gemini-3.1-pro", "gemini-pro-agent"},
+		{"gemini-3-pro-preview", "gemini-pro-agent"}, // chain: preview -> 3.1-pro -> pro-agent
+		{"gemini-3-pro-image-preview", "gemini-3-pro-image"},
+		{"gemini-3-flash", "gemini-3-flash"},
+		{"claude-sonnet-4-6", "claude-sonnet-4-6"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			if got := resolveAntigravityModelID(tc.input); got != tc.expected {
+				t.Errorf("resolveAntigravityModelID(%q) = %q, want %q", tc.input, got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestWrapEnvelope_ResolvesModelAlias(t *testing.T) {
+	e := NewAntigravityExecutor(NewBaseExecutor())
+	ctx := context.Background()
+
+	body, _ := json.Marshal(map[string]any{
+		"contents": []any{
+			map[string]any{
+				"role": "user",
+				"parts": []any{map[string]any{"text": "hi"}},
+			},
+		},
+	})
+
+	req := &Request{
+		Model:                "gemini-3.1-pro", // public alias
+		Body:                 body,
+		ProviderSpecificData: map[string]string{"projectId": "proj-1"},
+	}
+
+	out, err := e.wrapEnvelope(ctx, req)
+	if err != nil {
+		t.Fatalf("wrapEnvelope failed: %v", err)
+	}
+	root := gjson.ParseBytes(out)
+	if got := root.Get("model").String(); got != "gemini-pro-agent" {
+		t.Errorf("expected upstream model gemini-pro-agent, got %q", got)
+	}
+}
+
+func TestAntigravityProFallbackChains(t *testing.T) {
+	if got := antigravityProFallbackChains["gemini-3.1-pro-high"]; len(got) == 0 {
+		t.Error("expected fallback chain for gemini-3.1-pro-high")
+	}
+	if got := antigravityProFallbackChains["gemini-3.1-pro-low"]; len(got) == 0 {
+		t.Error("expected fallback chain for gemini-3.1-pro-low")
+	}
+}
+
+func TestExecute_ProFallbackChainRetriesOn400(t *testing.T) {
+	requests := 0
+	expectedModels := []string{"gemini-3.1-pro-high", "gemini-pro-agent"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		model := gjson.GetBytes(body, "model").String()
+		if requests >= len(expectedModels) {
+			t.Errorf("unexpected extra request model=%q", model)
+			http.Error(w, "too many attempts", http.StatusInternalServerError)
+			return
+		}
+		if model != expectedModels[requests] {
+			t.Errorf("request %d: expected model %q, got %q", requests, expectedModels[requests], model)
+		}
+		requests++
+		if requests < 2 {
+			http.Error(w, `{"error":{"message":"invalid model"}}`, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	be := NewBaseExecutor()
+	e := NewAntigravityExecutor(be)
+	req := &Request{
+		Model:                "gemini-3.1-pro-high",
+		BaseURL:              server.URL,
+		Body:                 []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`),
+		AccessToken:          "token",
+		ProviderSpecificData: map[string]string{"projectId": "proj-1"},
+	}
+	_, err := e.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if requests != len(expectedModels) {
+		t.Errorf("expected %d requests, got %d", len(expectedModels), requests)
 	}
 }
