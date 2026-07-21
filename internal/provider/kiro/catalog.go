@@ -35,7 +35,8 @@ type Model struct {
 // These are independent from synthetic -thinking / -agentic variants.
 func baseCapabilities(id string) Capabilities {
 	switch id {
-	case "claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5":
+	case "claude-sonnet-4.5", "claude-sonnet-4", "claude-sonnet-4.6", "claude-sonnet-4.7",
+		"claude-opus-4.6", "claude-opus-4.7", "claude-haiku-4.5":
 		return Capabilities{Vision: true}
 	}
 	return Capabilities{}
@@ -82,6 +83,34 @@ var BaseModels = []BaseModel{
 	{
 		ID:              "claude-sonnet-4",
 		DisplayName:     "Claude Sonnet 4",
+		OwnedBy:         "amazon",
+		ContextLength:   200000,
+		MaxOutputTokens: 64000,
+	},
+	{
+		ID:              "claude-sonnet-4.6",
+		DisplayName:     "Claude Sonnet 4.6",
+		OwnedBy:         "amazon",
+		ContextLength:   200000,
+		MaxOutputTokens: 64000,
+	},
+	{
+		ID:              "claude-opus-4.6",
+		DisplayName:     "Claude Opus 4.6",
+		OwnedBy:         "amazon",
+		ContextLength:   200000,
+		MaxOutputTokens: 64000,
+	},
+	{
+		ID:              "claude-sonnet-4.7",
+		DisplayName:     "Claude Sonnet 4.7",
+		OwnedBy:         "amazon",
+		ContextLength:   200000,
+		MaxOutputTokens: 64000,
+	},
+	{
+		ID:              "claude-opus-4.7",
+		DisplayName:     "Claude Opus 4.7",
 		OwnedBy:         "amazon",
 		ContextLength:   200000,
 		MaxOutputTokens: 64000,
