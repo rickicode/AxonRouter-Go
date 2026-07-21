@@ -269,6 +269,32 @@ func injectToolConfig(inner map[string]any) {
 	}
 }
 
+// reverseParametersJsonSchema renames every "parametersJsonSchema" field to
+// "parameters" recursively. The translator uses parametersJsonSchema as an
+// internal representation; Antigravity upstream requires the Gemini JSON schema
+// key to be named "parameters". Mirrors CLIProxyAPI util.Walk + RenameKey for
+// parametersJsonSchema paths (antigravity_executor.go:2245-2248).
+func reverseParametersJsonSchema(v any) {
+	switch val := v.(type) {
+	case map[string]any:
+		if ps, ok := val["parametersJsonSchema"]; ok {
+			val["parameters"] = ps
+			delete(val, "parametersJsonSchema")
+		}
+		for _, child := range val {
+			reverseParametersJsonSchema(child)
+		}
+	case []any:
+		for _, item := range val {
+			reverseParametersJsonSchema(item)
+		}
+	case []map[string]any:
+		for _, item := range val {
+			reverseParametersJsonSchema(item)
+		}
+	}
+}
+
 // envelopeUserAgent returns "antigravity" or "jetski" based on account/client profile.
 // Mirrors OmniRoute getAntigravityEnvelopeUserAgent (antigravityIdentity.ts:65-68).
 func envelopeUserAgent(req *Request) string {
@@ -413,6 +439,12 @@ func (e *AntigravityExecutor) buildEnvelope(ctx context.Context, req *Request, u
 	// CLIProxyAPI removes per-request safety settings from the inner request;
 	// the envelope-level safety handling is implied by the same defaults.
 	delete(inner, "safetySettings")
+
+	// The translator stores tool schemas under parametersJsonSchema so they do
+	// not collide with OpenAI's tools[].function.parameters. Antigravity expects
+	// the Gemini-native "parameters" key, so rename it back recursively before
+	// sending upstream.
+	reverseParametersJsonSchema(inner)
 
 	// Get projectId from provider-specific data, or auto-discover if missing.
 	projectID := ""

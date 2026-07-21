@@ -326,3 +326,53 @@ func TestExecute_ProFallbackChainRetriesOn400(t *testing.T) {
 		t.Errorf("expected %d requests, got %d", len(expectedModels), requests)
 	}
 }
+
+func TestAntigravity_RenamesParametersJsonSchemaToParameters(t *testing.T) {
+	e := NewAntigravityExecutor(NewBaseExecutor())
+	ctx := context.Background()
+
+	body, _ := json.Marshal(map[string]any{
+		"tools": []any{
+			map[string]any{
+				"functionDeclarations": []any{
+					map[string]any{
+						"name":        "get_weather",
+						"description": "Get the weather",
+						"parametersJsonSchema": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"location": map[string]any{"type": "string"},
+							},
+							"required": []string{"location"},
+						},
+					},
+				},
+			},
+		},
+		"contents": []any{
+			map[string]any{"role": "user", "parts": []any{map[string]any{"text": "hi"}}},
+		},
+	})
+
+	req := &Request{
+		Model:                "gemini-pro-agent",
+		Body:                 body,
+		ProviderSpecificData: map[string]string{"projectId": "proj-1"},
+	}
+
+	out, err := e.wrapEnvelope(ctx, req)
+	if err != nil {
+		t.Fatalf("wrapEnvelope failed: %v", err)
+	}
+	root := gjson.ParseBytes(out)
+
+	if root.Get("request.tools.0.functionDeclarations.0.parametersJsonSchema").Exists() {
+		t.Error("expected parametersJsonSchema to be renamed to parameters")
+	}
+	if !root.Get("request.tools.0.functionDeclarations.0.parameters").Exists() {
+		t.Error("expected parameters field after reverse rename")
+	}
+	if got := root.Get("request.tools.0.functionDeclarations.0.parameters.type").String(); got != "object" {
+		t.Errorf("expected parameters.type = object, got %q", got)
+	}
+}
