@@ -121,15 +121,9 @@ type kiroContextUsageEvent struct {
 }
 
 type kiroUpstreamEnvelope struct {
-	ConversationState            json.RawMessage `json:"conversationState,omitempty"`
-	ProfileArn                   string          `json:"profileArn,omitempty"`
-	InferenceConfig              json.RawMessage `json:"inferenceConfig,omitempty"`
-	AdditionalModelRequestFields json.RawMessage `json:"additionalModelRequestFields,omitempty"`
-	AgentMode                    json.RawMessage `json:"agentMode,omitempty"`
-	SystemPrompt                 string          `json:"systemPrompt,omitempty"`
-	// _stream is an internal marker required by the Kiro endpoint to indicate
-	// that the response should be streamed back as AWS EventStream frames.
-	Stream bool `json:"_stream,omitempty"`
+	ConversationState json.RawMessage `json:"conversationState,omitempty"`
+	ProfileArn        string          `json:"profileArn,omitempty"`
+	InferenceConfig   json.RawMessage `json:"inferenceConfig,omitempty"`
 }
 
 // kiroUpstreamRequest is the translated request body before stripping non-upstream

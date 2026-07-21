@@ -153,21 +153,15 @@ func ConvertOpenAIRequestToKiro(model string, body []byte, stream bool) []byte {
 
 	payload := map[string]any{
 		"conversationState": map[string]any{
-			"chatTriggerType":      "MANUAL",
-			"conversationId":       conversationID,
-			"agentContinuationId":  conversationID,
-			"agentTaskType":        "vibe",
-			"currentMessage":       currentMessage,
-			"history":              history,
+			"chatTriggerType": "MANUAL",
+			"conversationId":  conversationID,
+			"currentMessage":  currentMessage,
+			"history":         history,
 		},
-		"agentMode":    "vibe",
 		"_toolNameMap": toolNameMap,
 	}
 	if profileArn != "" {
 		payload["profileArn"] = profileArn
-	}
-	if systemPrompt != "" {
-		payload["systemPrompt"] = systemPrompt
 	}
 	if maxTokens > 0 || temperature != nil || topP != nil {
 		inference := map[string]any{}
@@ -181,32 +175,6 @@ func ConvertOpenAIRequestToKiro(model string, body []byte, stream bool) []byte {
 			inference["topP"] = *topP
 		}
 		payload["inferenceConfig"] = inference
-	}
-	if effort != "" {
-		fields := map[string]any{
-			"output_config": map[string]any{"effort": effort},
-			"thinking":      map[string]any{"type": "adaptive", "display": "summarized"},
-		}
-		// Heuristic floor to avoid rejected small max_tokens while thinking.
-		if capped := capMaxOutputTokens(normalizedModel, maxTokens); capped > 0 {
-			if capped < 1024 {
-				capped = 1024
-			}
-			fields["max_tokens"] = capped
-		}
-		payload["additionalModelRequestFields"] = fields
-		// Strip temperature/topP from inferenceConfig for adaptive-only Claude models.
-		if inf, ok := payload["inferenceConfig"].(map[string]any); ok {
-			delete(inf, "temperature")
-			delete(inf, "topP")
-			if len(inf) == 0 {
-				delete(payload, "inferenceConfig")
-			}
-		}
-	}
-
-	if stream {
-		payload["_stream"] = true
 	}
 
 	return mustMarshal(payload)
