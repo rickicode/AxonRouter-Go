@@ -160,6 +160,103 @@ func TestUsageSummaryHandler(t *testing.T) {
 	}
 }
 
+// TestUsageActivity returns sparse daily activity for the last 12 months, ignoring
+// explicit from/to ranges but respecting dimension filters.
+func TestUsageActivity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	dir := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(dir, "usage_activity_test.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer database.Close()
+	if err := db.RunMigrations(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	now := time.Now().UTC()
+	today := now.Truncate(24 * time.Hour).Add(2 * time.Hour).UnixMilli()
+	yesterday := now.Truncate(24 * time.Hour).Add(-2 * time.Hour).UnixMilli()
+	old := now.AddDate(0, 0, -400).Truncate(24 * time.Hour).Add(2 * time.Hour).UnixMilli()
+
+	insert := func(id string, ts int64, provider, model, key, modality string, input, output, reason int64, status int, cost float64) {
+		t.Helper()
+		_, err := database.Exec(`INSERT INTO request_logs
+			(id, timestamp, connection_id, provider_type_id, model_id, api_key_id,
+			 modality, input_tokens, output_tokens, reasoning_tokens, status_code, cost_usd, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, ts, "conn-"+id, provider, model, key, modality, input, output, reason, status, cost, ts)
+		if err != nil {
+			t.Fatalf("insert %s: %v", id, err)
+		}
+	}
+
+	insert("a1", today, "openai", "gpt-4o", "key-a", "chat", 10, 20, 5, 200, 0.05)
+	insert("a2", today, "openai", "gpt-4o", "key-b", "chat", 5, 5, 0, 200, 0.02)
+	insert("a3", yesterday, "openai", "gpt-4o", "key-a", "chat", 100, 200, 50, 200, 0.50)
+	insert("a4", yesterday, "anthropic", "claude", "key-a", "chat", 1, 1, 0, 200, 0.01)
+	insert("a5", old, "openai", "gpt-4o", "key-a", "chat", 1, 1, 0, 200, 0.01)
+
+	h := NewUsageHandler(database)
+
+	call := func(query string) map[string]any {
+		t.Helper()
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest("GET", "/api/admin/usage/activity?"+query, nil)
+		h.Activity(c)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			Data map[string]any `json:"data"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return resp.Data
+	}
+
+	data := call("")
+	if data["from"] == "" || data["to"] == "" {
+		t.Fatalf("expected from/to date strings, got %v", data)
+	}
+	from := data["from"].(string)
+	to := data["to"].(string)
+	if from == to {
+		t.Fatalf("expected 364-day range, got from=%s to=%s", from, to)
+	}
+
+	days := data["days"].([]any)
+	if len(days) != 2 {
+		t.Fatalf("expected 2 day buckets (today, yesterday), got %d: %v", len(days), days)
+	}
+	// Last day is today.
+	todayMap := days[len(days)-1].(map[string]any)
+	if todayMap["date"].(string) != now.Truncate(24*time.Hour).Format(time.DateOnly) {
+		t.Errorf("last day date = %v, want today", todayMap["date"])
+	}
+	// 35 = 10+20+5 active today across all providers/keys.
+	if todayMap["requests"].(float64) != 2 {
+		t.Errorf("today requests = %v, want 2", todayMap["requests"])
+	}
+
+	// Filter by provider_id returns only matching days.
+	data = call("provider_id=openai")
+	days = data["days"].([]any)
+	if len(days) != 2 { // today and yesterday only
+		t.Fatalf("expected 2 openai days, got %d: %v", len(days), days)
+	}
+
+	// from/to query params are ignored.
+	data = call("from=2020-01-01&to=2020-01-02")
+	days = data["days"].([]any)
+	if len(days) != 2 {
+		t.Fatalf("ignored from/to should still default to 12 months, got %d days", len(days))
+	}
+}
+
 // TestParseFiltersUsesMilliseconds pins the unit contract: From/To must be
 // millisecond epochs so they compare directly against request_logs.timestamp.
 func TestParseFiltersUsesMilliseconds(t *testing.T) {

@@ -427,6 +427,7 @@ func New(cfg Config) *Router {
 		// Usage
 		g.GET("/usage", usageH.Get)
 		g.GET("/usage/summary", usageH.Summary)
+		g.GET("/usage/activity", usageH.Activity)
 
 		// CLI Tools — unified model catalog for dashboard pickers + per-tool config generation
 		g.GET("/models", func(c *gin.Context) {

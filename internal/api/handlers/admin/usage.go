@@ -66,6 +66,19 @@ type timeBucket struct {
 	CostUSD      float64 `json:"cost_usd"`
 }
 
+type activityDay struct {
+	Date     string  `json:"date"`
+	Requests int64   `json:"requests"`
+	Tokens   int64   `json:"tokens"`
+	CostUSD  float64 `json:"cost_usd"`
+}
+
+type activityResponse struct {
+	From string        `json:"from"`
+	To   string        `json:"to"`
+	Days []activityDay `json:"days"`
+}
+
 type usageSummary struct {
 	Requests     int64   `json:"requests"`
 	InputTokens  int64   `json:"input_tokens"`
@@ -543,4 +556,68 @@ func (h *UsageHandler) Summary(c *gin.Context) {
 			"next_quota_reset":    earliestReset(resets),
 		},
 	})
+}
+
+// Activity returns sparse per-day activity for the last 12 months in UTC,
+// with the same dimension filters as /usage. Explicit from/to query params
+// are ignored; the date range is always now-364 days through now inclusive.
+func (h *UsageHandler) Activity(c *gin.Context) {
+	now := time.Now().UTC()
+	from := now.AddDate(0, 0, -364).Truncate(24 * time.Hour)
+	to := now.Truncate(24 * time.Hour).Add(24*time.Hour - time.Second)
+
+	f := usageFilters{
+		From:       from.UnixMilli(),
+		To:         to.UnixMilli(),
+		APIKeyID:   c.Query("api_key_id"),
+		ModelID:    c.Query("model_id"),
+		ProviderID: c.Query("provider_id"),
+		Modality:   c.Query("modality"),
+	}
+	if v := c.Query("status_code"); v != "" {
+		if n, err := parseInt(v); err == nil {
+			f.StatusCode = n
+		}
+	}
+
+	days, err := h.activity(c.Request.Context(), f)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": activityResponse{
+		From: from.Format(time.DateOnly),
+		To:   to.Format(time.DateOnly),
+		Days: days,
+	}})
+}
+
+func (h *UsageHandler) activity(ctx context.Context, f usageFilters) ([]activityDay, error) {
+	where, args := baseWhere(f)
+	rows, err := h.db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT
+			date(rl.timestamp / 1000, 'unixepoch') AS day,
+			COUNT(*),
+			COALESCE(SUM(rl.input_tokens + rl.output_tokens + rl.reasoning_tokens), 0),
+			COALESCE(SUM(rl.cost_usd), 0)
+		FROM request_logs rl
+		%s
+		GROUP BY day
+		ORDER BY day ASC
+	`, where), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]activityDay, 0)
+	for rows.Next() {
+		var d activityDay
+		if err := rows.Scan(&d.Date, &d.Requests, &d.Tokens, &d.CostUSD); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }
