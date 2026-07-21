@@ -115,6 +115,19 @@ func TestImportToken_Success(t *testing.T) {
 	if cs := h.store.Get(resp.ID); cs == nil || cs.Status != connstate.StatusReady {
 		t.Fatalf("in-memory status should be ready, got %v", cs)
 	}
+	if cs := h.store.Get(resp.ID); cs == nil || cs.Prefix != "grok-cli" {
+		t.Fatalf("expected connection prefix grok-cli, got cs=%v", cs)
+	}
+	found := false
+	for _, id := range h.elig.GetByPrefix("grok-cli") {
+		if id == resp.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected connection %s in grok-cli eligible list", resp.ID)
+	}
 }
 
 func TestImportToken_MissingAccessToken(t *testing.T) {

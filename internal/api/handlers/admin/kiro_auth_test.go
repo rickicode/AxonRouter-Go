@@ -157,6 +157,21 @@ func TestKiroAuthHandler_ImportKiroToken(t *testing.T) {
 	if accessTok != "" {
 		t.Fatalf("access token should be empty for import, got %q", accessTok)
 	}
+	if cs := h.store.Get(resp.ConnectionID); cs == nil || cs.Prefix != "kiro" {
+		t.Fatalf("expected connection prefix kiro, got cs=%v", cs)
+	}
+	if ids := h.elig.GetByPrefix("kiro"); !containsString(ids, resp.ConnectionID) {
+		t.Fatalf("expected connection %s in kiro eligible list, got %v", resp.ConnectionID, ids)
+	}
+}
+
+func containsString(ids []string, id string) bool {
+	for _, v := range ids {
+		if v == id {
+			return true
+		}
+	}
+	return false
 }
 
 func TestKiroAuthHandler_ImportKiroToken_WithClientCredentials(t *testing.T) {
@@ -256,7 +271,9 @@ func TestKiroAuthHandler_APIKey(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body=%s", w.Code, w.Body.String())
 	}
-	var resp struct{ ConnectionID string `json:"connection_id"` }
+	var resp struct {
+		ConnectionID string `json:"connection_id"`
+	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal resp: %v", err)
 	}
@@ -273,6 +290,12 @@ func TestKiroAuthHandler_APIKey(t *testing.T) {
 	json.Unmarshal([]byte(psdRaw), &psd)
 	if psd["authMethod"] != "api_key" {
 		t.Fatalf("authMethod = %q", psd["authMethod"])
+	}
+	if cs := h.store.Get(resp.ConnectionID); cs == nil || cs.Prefix != "kiro" {
+		t.Fatalf("expected connection prefix kiro, got cs=%v", cs)
+	}
+	if !h.elig.IsEligible(resp.ConnectionID) {
+		t.Fatalf("expected connection %s to be eligible", resp.ConnectionID)
 	}
 }
 
@@ -311,7 +334,9 @@ func TestKiroAuthHandler_ExternalIDP(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body=%s", w.Code, w.Body.String())
 	}
-	var resp struct{ ConnectionID string `json:"connection_id"` }
+	var resp struct {
+		ConnectionID string `json:"connection_id"`
+	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal resp: %v", err)
 	}
@@ -322,6 +347,12 @@ func TestKiroAuthHandler_ExternalIDP(t *testing.T) {
 	json.Unmarshal([]byte(psdRaw), &psd)
 	if psd["tokenType"] != "EXTERNAL_IDP" {
 		t.Fatalf("tokenType = %q", psd["tokenType"])
+	}
+	if cs := h.store.Get(resp.ConnectionID); cs == nil || cs.Prefix != "kiro" {
+		t.Fatalf("expected connection prefix kiro, got cs=%v", cs)
+	}
+	if !h.elig.IsEligible(resp.ConnectionID) {
+		t.Fatalf("expected connection %s to be eligible", resp.ConnectionID)
 	}
 }
 
@@ -366,6 +397,12 @@ func TestKiroAuthHandler_SocialCallback(t *testing.T) {
 	database.QueryRow(`SELECT name FROM connections WHERE id = ?`, resp.ConnectionID).Scan(&name)
 	if name != "user@example.com" {
 		t.Fatalf("db name = %q", name)
+	}
+	if cs := h.store.Get(resp.ConnectionID); cs == nil || cs.Prefix != "kiro" {
+		t.Fatalf("expected connection prefix kiro, got cs=%v", cs)
+	}
+	if !h.elig.IsEligible(resp.ConnectionID) {
+		t.Fatalf("expected connection %s to be eligible", resp.ConnectionID)
 	}
 }
 
