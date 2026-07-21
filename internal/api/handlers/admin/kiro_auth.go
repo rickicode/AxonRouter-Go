@@ -45,13 +45,13 @@ type KiroAuthHandler struct {
 }
 
 type kiroAuthSession struct {
-	method   string
-	status   string
-	name     string
-	connID   string
-	err      string
-	doneAt   time.Time
-	creds    *auth.Credentials
+	method string
+	status string
+	name   string
+	connID string
+	err    string
+	doneAt time.Time
+	creds  *auth.Credentials
 }
 
 // NewKiroAuthHandler creates a new Kiro auth handler.
@@ -356,7 +356,7 @@ func (h *KiroAuthHandler) persistConnection(creds *auth.Credentials, method stri
 		return "", "", fmt.Errorf("failed to create connection: %w", err)
 	}
 	if h.store != nil {
-		h.store.UpdateStatus(connID, connstate.StatusReady)
+		h.store.SeedConnection(connID, "kiro", "ready", 0)
 		if h.elig != nil {
 			h.elig.Update(h.store)
 		}

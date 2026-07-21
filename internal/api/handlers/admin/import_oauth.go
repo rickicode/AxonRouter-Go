@@ -9,7 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
-	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 )
 
 // ImportToken creates a ready OAuth connection from manually supplied tokens.
@@ -75,7 +74,7 @@ func (h *OAuthHandler) ImportToken(c *gin.Context) {
 
 	// Sync in-memory state so the connection is immediately eligible for routing.
 	if h.store != nil {
-		h.store.UpdateStatus(connID, connstate.StatusReady)
+		h.store.SeedConnection(connID, req.Provider, "ready", 0)
 		if h.elig != nil {
 			h.elig.Update(h.store)
 		}
