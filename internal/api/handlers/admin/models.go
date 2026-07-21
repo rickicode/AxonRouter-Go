@@ -547,6 +547,7 @@ var providerCatalogKeys = map[string][]string{
 	"ag":            {"antigravity"},
 	"antigravity":   {"antigravity"},
 	"kiro":          {"kiro"},
+	"amazon-q":      {"amazon-q"},
 	"aistudio":      {"aistudio"},
 	"xai":           {"xai"},
 	"oc":            {"oc"},

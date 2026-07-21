@@ -122,6 +122,32 @@ func TestServiceKindsForModelID_Unknown(t *testing.T) {
 	}
 }
 
+func TestGetModelIDs_AmazonQMirrorsKiro(t *testing.T) {
+	want := []string{
+		"claude-sonnet-5",
+		"claude-sonnet-4.5",
+		"claude-haiku-4.5",
+		"deepseek-3.2",
+		"minimax-m2.5",
+		"minimax-m2.1",
+		"glm-5",
+		"qwen3-coder-next",
+	}
+	kiroIDs := GetModelIDs("kiro")
+	amazonQIDs := GetModelIDs("amazon-q")
+	if len(amazonQIDs) == 0 {
+		t.Fatal("GetModelIDs(amazon-q) returned empty")
+	}
+	if !slices.Equal(amazonQIDs, kiroIDs) {
+		t.Errorf("GetModelIDs(amazon-q) = %v, want %v (kiro)", amazonQIDs, kiroIDs)
+	}
+	for _, id := range want {
+		if !slices.Contains(amazonQIDs, id) {
+			t.Errorf("GetModelIDs(amazon-q) missing %q; got %v", id, amazonQIDs)
+		}
+	}
+}
+
 func TestGetModelIDs_QwenCloudContainsExpectedModels(t *testing.T) {
 	want := []string{
 		"qwen3.7-plus",

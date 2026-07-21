@@ -81,6 +81,36 @@ func TestKiroProviderTypeFormat(t *testing.T) {
 	}
 }
 
+// TestAmazonQProviderTypeFormat verifies Amazon Q is seeded as a separate
+// provider using the Kiro protocol and the same AWS upstream base URL.
+func TestAmazonQProviderTypeFormat(t *testing.T) {
+	dir := t.TempDir()
+	d, err := sql.Open("sqlite", filepath.Join(dir, "verify.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	if err := RunMigrations(d); err != nil {
+		t.Fatal(err)
+	}
+
+	var format, baseURL, category string
+	if err := d.QueryRow("SELECT format, base_url, category FROM provider_types WHERE id = 'amazon-q'").Scan(&format, &baseURL, &category); err != nil {
+		t.Fatal(err)
+	}
+	if format != "kiro" {
+		t.Errorf("amazon-q format = %q, want 'kiro'", format)
+	}
+	wantBaseURL := "https://runtime.us-east-1.kiro.dev/generateAssistantResponse"
+	if baseURL != wantBaseURL {
+		t.Errorf("amazon-q base_url = %q, want %q", baseURL, wantBaseURL)
+	}
+	if category != "oauth" {
+		t.Errorf("amazon-q category = %q, want 'oauth'", category)
+	}
+}
+
 // TestKiroFormatMigration verifies legacy Kiro rows seeded as "openai" get
 // repaired to "kiro" and the base URL is updated to the Kiro IDE gateway endpoint.
 func TestKiroFormatMigration(t *testing.T) {
