@@ -242,7 +242,8 @@
 				{/each}
 			</div>
 		<div class="flex">
-				<div class="flex flex-col gap-1 pr-2 pt-7">
+				<div class="flex flex-col gap-1 pr-2">
+					<div class="h-4 mb-1"></div>
 					{#each dayLabels as label}
 						<div class="h-4 flex items-center text-caption text-muted-foreground">{label}</div>
 					{/each}
@@ -250,7 +251,7 @@
 				<div class="overflow-x-auto">
 					<div class="flex gap-1 mb-1">
 						{#each Array(12) as _}
-							<Skeleton class="h-3 flex-1 min-w-[3rem] rounded-sm" />
+							<Skeleton class="h-4 flex-1 min-w-[3rem] rounded-sm" />
 						{/each}
 					</div>
 					<div class="flex gap-1">
@@ -297,7 +298,8 @@
 			</div>
 
 			<div class="flex">
-				<div class="flex flex-col gap-1 pr-2 pt-7">
+				<div class="flex flex-col gap-1 pr-2">
+					<div class="h-4 mb-1"></div>
 					{#each dayLabels as label}
 						<div class="h-4 flex items-center text-caption text-muted-foreground">{label}</div>
 					{/each}
@@ -306,7 +308,7 @@
 					<div class="flex gap-1 mb-1">
 						{#each processed.months as m}
 							<div
-								class="text-caption text-muted-foreground whitespace-nowrap"
+								class="h-4 flex items-center text-caption text-muted-foreground whitespace-nowrap"
 								style="width: calc({m.weeks * 1.25}rem - 0.25rem)"
 							>
 								{m.label}
