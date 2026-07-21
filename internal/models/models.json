@@ -2016,6 +2016,16 @@
   ],
   "amazon-q": [
     {
+      "id": "auto",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "amazon",
+      "type": "llm",
+      "display_name": "Kiro Auto",
+      "context_length": 200000,
+      "max_completion_tokens": 64000
+    },
+    {
       "id": "claude-sonnet-5",
       "object": "model",
       "created": 1759276800,
@@ -2032,6 +2042,56 @@
       "owned_by": "amazon",
       "type": "claude",
       "display_name": "Claude Sonnet 4.5",
+      "context_length": 200000,
+      "max_completion_tokens": 64000
+    },
+    {
+      "id": "claude-sonnet-4",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "amazon",
+      "type": "claude",
+      "display_name": "Claude Sonnet 4",
+      "context_length": 200000,
+      "max_completion_tokens": 64000
+    },
+    {
+      "id": "claude-sonnet-4.6",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "amazon",
+      "type": "claude",
+      "display_name": "Claude Sonnet 4.6",
+      "context_length": 200000,
+      "max_completion_tokens": 64000
+    },
+    {
+      "id": "claude-opus-4.6",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "amazon",
+      "type": "claude",
+      "display_name": "Claude Opus 4.6",
+      "context_length": 200000,
+      "max_completion_tokens": 64000
+    },
+    {
+      "id": "claude-sonnet-4.7",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "amazon",
+      "type": "claude",
+      "display_name": "Claude Sonnet 4.7",
+      "context_length": 200000,
+      "max_completion_tokens": 64000
+    },
+    {
+      "id": "claude-opus-4.7",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "amazon",
+      "type": "claude",
+      "display_name": "Claude Opus 4.7",
       "context_length": 200000,
       "max_completion_tokens": 64000
     },
@@ -2505,28 +2565,28 @@
   ],
   "grok-cli": [
     {
-"id": "grok-build",
-    "object": "model",
-    "created": 1779321600,
-    "owned_by": "xai",
-    "type": "xai",
-    "display_name": "Grok Build",
-    "name": "grok-build",
-    "description": "Grok Build is xAI's fast coding model for agentic software engineering workflows.",
-    "context_length": 256000,
-    "max_completion_tokens": 64000
+      "id": "grok-build",
+      "object": "model",
+      "created": 1779321600,
+      "owned_by": "xai",
+      "type": "xai",
+      "display_name": "Grok Build",
+      "name": "grok-build",
+      "description": "Grok Build is xAI's fast coding model for agentic software engineering workflows.",
+      "context_length": 256000,
+      "max_completion_tokens": 64000
     },
     {
-"id": "grok-4.5",
-    "object": "model",
-    "created": 1779321600,
-    "owned_by": "xai",
-    "type": "xai",
-    "display_name": "Grok 4.5",
-    "name": "grok-4.5",
-    "description": "xAI Grok 4.5 model for the Responses API.",
-    "context_length": 500000,
-    "max_completion_tokens": 32768,
+      "id": "grok-4.5",
+      "object": "model",
+      "created": 1779321600,
+      "owned_by": "xai",
+      "type": "xai",
+      "display_name": "Grok 4.5",
+      "name": "grok-4.5",
+      "description": "xAI Grok 4.5 model for the Responses API.",
+      "context_length": 500000,
+      "max_completion_tokens": 32768,
       "thinking": {
         "zero_allowed": true,
         "levels": [
@@ -2539,16 +2599,16 @@
       }
     },
     {
-"id": "grok-4.5-high",
-    "object": "model",
-    "created": 1779321600,
-    "owned_by": "xai",
-    "type": "xai",
-    "display_name": "Grok 4.5 (High)",
-    "name": "grok-4.5-high",
-    "description": "Grok 4.5 with higher reasoning effort.",
-    "context_length": 500000,
-    "max_completion_tokens": 32768,
+      "id": "grok-4.5-high",
+      "object": "model",
+      "created": 1779321600,
+      "owned_by": "xai",
+      "type": "xai",
+      "display_name": "Grok 4.5 (High)",
+      "name": "grok-4.5-high",
+      "description": "Grok 4.5 with higher reasoning effort.",
+      "context_length": 500000,
+      "max_completion_tokens": 32768,
       "thinking": {
         "zero_allowed": true,
         "levels": [
@@ -2561,16 +2621,16 @@
       }
     },
     {
-"id": "grok-4.5-medium",
-    "object": "model",
-    "created": 1779321600,
-    "owned_by": "xai",
-    "type": "xai",
-    "display_name": "Grok 4.5 (Medium)",
-    "name": "grok-4.5-medium",
-    "description": "Grok 4.5 with medium reasoning effort.",
-    "context_length": 500000,
-    "max_completion_tokens": 32768,
+      "id": "grok-4.5-medium",
+      "object": "model",
+      "created": 1779321600,
+      "owned_by": "xai",
+      "type": "xai",
+      "display_name": "Grok 4.5 (Medium)",
+      "name": "grok-4.5-medium",
+      "description": "Grok 4.5 with medium reasoning effort.",
+      "context_length": 500000,
+      "max_completion_tokens": 32768,
       "thinking": {
         "zero_allowed": true,
         "levels": [
@@ -2583,16 +2643,16 @@
       }
     },
     {
-"id": "grok-4.5-low",
-    "object": "model",
-    "created": 1779321600,
-    "owned_by": "xai",
-    "type": "xai",
-    "display_name": "Grok 4.5 (Low)",
-    "name": "grok-4.5-low",
-    "description": "Grok 4.5 with lower reasoning effort.",
-    "context_length": 500000,
-    "max_completion_tokens": 32768,
+      "id": "grok-4.5-low",
+      "object": "model",
+      "created": 1779321600,
+      "owned_by": "xai",
+      "type": "xai",
+      "display_name": "Grok 4.5 (Low)",
+      "name": "grok-4.5-low",
+      "description": "Grok 4.5 with lower reasoning effort.",
+      "context_length": 500000,
+      "max_completion_tokens": 32768,
       "thinking": {
         "zero_allowed": true,
         "levels": [
@@ -6162,133 +6222,133 @@
     }
   ],
   "codebuddy": [
-      {
-        "id": "deepseek-v3-0324",
-        "object": "model",
-        "created": 1759276800,
-        "owned_by": "tencent",
-        "type": "openai",
-        "display_name": "Deepseek V3 0324",
-        "service_kinds": [
-          "llm"
-        ],
-        "target_format": "openai",
-        "context_length": 128000,
-        "max_completion_tokens": 8192
-      },
-      {
-        "id": "glm-4.6",
-        "object": "model",
-        "created": 1759276800,
-        "owned_by": "tencent",
-        "type": "openai",
-        "display_name": "Glm 4.6",
-        "service_kinds": [
-          "llm"
-        ],
-        "target_format": "openai",
-        "context_length": 128000,
-        "max_completion_tokens": 8192
-      },
-      {
-        "id": "glm-5.0",
-        "object": "model",
-        "created": 1759276800,
-        "owned_by": "tencent",
-        "type": "openai",
-        "display_name": "Glm 5.0",
-        "service_kinds": [
-          "llm"
-        ],
-        "target_format": "openai",
-        "context_length": 128000,
-        "max_completion_tokens": 8192
-      },
-      {
-        "id": "glm-5.1",
-        "object": "model",
-        "created": 1759276800,
-        "owned_by": "tencent",
-        "type": "openai",
-        "display_name": "Glm 5.1",
-        "service_kinds": [
-          "llm"
-        ],
-        "target_format": "openai",
-        "context_length": 128000,
-        "max_completion_tokens": 8192
-      },
-      {
-        "id": "glm-5.2",
-        "object": "model",
-        "created": 1759276800,
-        "owned_by": "tencent",
-        "type": "openai",
-        "display_name": "Glm 5.2",
-        "service_kinds": [
-          "llm"
-        ],
-        "target_format": "openai",
-        "context_length": 128000,
-        "max_completion_tokens": 8192
-      },
-      {
-        "id": "glm-5v-turbo",
-        "object": "model",
-        "created": 1759276800,
-        "owned_by": "tencent",
-        "type": "openai",
-        "display_name": "Glm 5V Turbo",
-        "service_kinds": [
-          "llm"
-        ],
-        "target_format": "openai",
-        "context_length": 128000,
-        "max_completion_tokens": 8192
-      },
-      {
-        "id": "kimi-k2.5",
-        "object": "model",
-        "created": 1759276800,
-        "owned_by": "tencent",
-        "type": "openai",
-        "display_name": "Kimi K2.5",
-        "service_kinds": [
-          "llm"
-        ],
-        "target_format": "openai",
-        "context_length": 256000,
-        "max_completion_tokens": 8192
-      },
-      {
-        "id": "kimi-k2.6",
-        "object": "model",
-        "created": 1759276800,
-        "owned_by": "tencent",
-        "type": "openai",
-        "display_name": "Kimi K2.6",
-        "service_kinds": [
-          "llm"
-        ],
-        "target_format": "openai",
-        "context_length": 256000,
-        "max_completion_tokens": 8192
-      },
-      {
-        "id": "minimax-m3",
-        "object": "model",
-        "created": 1759276800,
-        "owned_by": "tencent",
-        "type": "openai",
-        "display_name": "Minimax M3",
-        "service_kinds": [
-          "llm"
-        ],
-        "target_format": "openai",
-        "context_length": 200000,
-        "max_completion_tokens": 8192
-      }
-    ],
+    {
+      "id": "deepseek-v3-0324",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Deepseek V3 0324",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 128000,
+      "max_completion_tokens": 8192
+    },
+    {
+      "id": "glm-4.6",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Glm 4.6",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 128000,
+      "max_completion_tokens": 8192
+    },
+    {
+      "id": "glm-5.0",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Glm 5.0",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 128000,
+      "max_completion_tokens": 8192
+    },
+    {
+      "id": "glm-5.1",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Glm 5.1",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 128000,
+      "max_completion_tokens": 8192
+    },
+    {
+      "id": "glm-5.2",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Glm 5.2",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 128000,
+      "max_completion_tokens": 8192
+    },
+    {
+      "id": "glm-5v-turbo",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Glm 5V Turbo",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 128000,
+      "max_completion_tokens": 8192
+    },
+    {
+      "id": "kimi-k2.5",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Kimi K2.5",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 256000,
+      "max_completion_tokens": 8192
+    },
+    {
+      "id": "kimi-k2.6",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Kimi K2.6",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 256000,
+      "max_completion_tokens": 8192
+    },
+    {
+      "id": "minimax-m3",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "tencent",
+      "type": "openai",
+      "display_name": "Minimax M3",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 200000,
+      "max_completion_tokens": 8192
+    }
+  ],
   "qwencloud": [
     {
       "id": "qwen3.7-plus"

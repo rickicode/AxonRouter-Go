@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Amazon Q built-in provider** — new `amazon-q/` (and `aq/`) prefix for Amazon Q Developer, reusing the Kiro executor and translator. Registers `amazon-q` in provider types, the executor registry, and the dashboard catalog with a static model list mirroring Kiro (`auto`, Claude 4.x/4.5/4.6/4.7/5, DeepSeek V3.2, MiniMax M2.x, GLM-5, and Qwen3 Coder Next).
+- **Kiro Claude 4.6 / 4.7 models** — adds `claude-sonnet-4.6`, `claude-opus-4.6`, `claude-sonnet-4.7`, and `claude-opus-4.7` base models with pricing seed so the full Claude 4.x family is routable.
+- **Kiro catalog sync** — keeps `internal/models/models.json` in sync with `internal/provider/kiro/catalog.go` by adding missing `auto` and `claude-sonnet-4` entries, plus a regression test to prevent future drift.
 - **QwenCloud built-in provider** — new `qwencloud/` prefix routing to the international DashScope Responses API (`https://dashscope-intl.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1/responses`) with API-key auth. Uses a dedicated `OpenAIResponsesExecutor` so both `/v1/responses` and translated `/v1/chat/completions` traffic hit the upstream `/v1/responses` endpoint. Includes dashboard catalog entry with the provided Alibaba logo and a seeded model list covering `qwen3.7-plus`, `qwen3.7-max`, `qwen3.6-plus`, `qwen3.6-max`, `qwen3.6-flash`, `qwen3.5-omni-plus`, `qwen-plus`, `glm-5.2`, `deepseek-v4-flash`, and `qwen3-coder-plus`.
 
 ## [0.3.18] - 2026-07-20
