@@ -14,6 +14,7 @@ var Registry = map[string]CanonicalInfo{
 	"ag":         {DisplayName: "Antigravity", Aliases: nil},
 	"cx":         {DisplayName: "OpenAI Codex", Aliases: nil},
 	"kiro":       {DisplayName: "Kiro AI", Aliases: nil},
+	"amazon-q":   {DisplayName: "Amazon Q", Aliases: []string{"aq"}},
 	"openai":     {DisplayName: "OpenAI Platform", Aliases: nil},
 	"claude":     {DisplayName: "Anthropic Claude", Aliases: nil},
 	"gemini":     {DisplayName: "Gemini", Aliases: nil},

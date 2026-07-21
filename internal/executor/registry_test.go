@@ -76,3 +76,31 @@ func TestRegistry_GetByModel_NewProviders(t *testing.T) {
 		}
 	}
 }
+
+func TestRegistry_AmazonQUsesKiroFormatAndExecutor(t *testing.T) {
+	RegisterDefaults()
+	exec, format, ok := GetRegistry().Get("amazon-q")
+	if !ok {
+		t.Fatalf("provider %q not registered", "amazon-q")
+	}
+	if format != FormatKiro {
+		t.Errorf("provider %q format = %q, want %q", "amazon-q", format, FormatKiro)
+	}
+	if exec == nil {
+		t.Errorf("provider %q has nil executor", "amazon-q")
+	}
+
+	exec2, format2, model, err := GetRegistry().GetByModel("amazon-q/auto")
+	if err != nil {
+		t.Fatalf("GetByModel(amazon-q/auto) unexpected error: %v", err)
+	}
+	if exec2 != exec {
+		t.Errorf("GetByModel(amazon-q/auto) returned a different executor than Get(amazon-q)")
+	}
+	if format2 != FormatKiro {
+		t.Errorf("GetByModel(amazon-q/auto) format = %q, want %q", format2, FormatKiro)
+	}
+	if model != "auto" {
+		t.Errorf("GetByModel(amazon-q/auto) model = %q, want %q", model, "auto")
+	}
+}

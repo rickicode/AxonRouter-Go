@@ -179,6 +179,12 @@ func RegisterDefaults() {
 	kiroExec := NewKiroExecutor(base)
 	GetRegistry().Register("kiro", FormatKiro, kiroExec)
 
+	// Amazon Q shares the Kiro executor and translator because it exposes the
+	// same upstream protocol, but it is registered as a separate provider so
+	// routing, connections, and quota are isolated from Kiro.
+	GetRegistry().Register("amazon-q", FormatKiro, kiroExec)
+	translator.Register("amazon-q", translator.Func(providers.TranslateKiro))
+
 	// Grok CLI
 	grokcliExec := NewGrokCLIExecutor(base)
 	GetRegistry().Register("grok-cli", FormatGrokCLI, grokcliExec)
