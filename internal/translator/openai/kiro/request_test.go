@@ -120,13 +120,8 @@ func TestConvertOpenAIRequestToKiro_Reasoning(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	fields, ok := payload["additionalModelRequestFields"].(map[string]any)
-	if !ok {
-		t.Fatalf("additionalModelRequestFields missing")
-	}
-	cfg := fields["output_config"].(map[string]any)
-	if cfg["effort"] != "high" {
-		t.Errorf("effort = %v", cfg["effort"])
+	if _, ok := payload["additionalModelRequestFields"]; ok {
+		t.Errorf("additionalModelRequestFields should not be present in top-level payload")
 	}
 
 	current := payload["conversationState"].(map[string]any)["currentMessage"].(map[string]any)
@@ -135,15 +130,12 @@ func TestConvertOpenAIRequestToKiro_Reasoning(t *testing.T) {
 	if !strings.HasPrefix(content, "<thinking_mode>enabled</thinking_mode>") {
 		t.Errorf("thinking directive missing: %s", content)
 	}
+	if !strings.Contains(content, "Think deeply") {
+		t.Errorf("user content missing: %s", content)
+	}
 	inf, ok := payload["inferenceConfig"].(map[string]any)
 	if !ok {
 		t.Fatalf("inferenceConfig missing; maxTokens should be preserved")
-	}
-	if _, ok := inf["temperature"]; ok {
-		t.Errorf("temperature should be stripped while thinking")
-	}
-	if _, ok := inf["topP"]; ok {
-		t.Errorf("topP should be stripped while thinking")
 	}
 	if inf["maxTokens"] != float64(8192) {
 		t.Errorf("maxTokens = %v, want 8192", inf["maxTokens"])
@@ -187,18 +179,14 @@ func TestConvertOpenAIRequestToKiro_SystemPromptUsesInstructionsTag(t *testing.T
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	systemPrompt, ok := payload["systemPrompt"].(string)
-	if !ok || systemPrompt == "" {
-		t.Fatalf("systemPrompt field missing or empty")
-	}
-	if !strings.Contains(systemPrompt, "Be concise.") {
-		t.Errorf("systemPrompt missing original instruction: %q", systemPrompt)
+	if _, ok := payload["systemPrompt"]; ok {
+		t.Errorf("systemPrompt top-level field should not be present")
 	}
 
 	current := payload["conversationState"].(map[string]any)["currentMessage"].(map[string]any)
 	content := current["userInputMessage"].(map[string]any)["content"].(string)
-	if !strings.Contains(content, "<instructions>") {
-		t.Errorf("current content missing <instructions> tag: %q", content)
+	if !strings.Contains(content, "<instructions>\nBe concise.\n</instructions>") {
+		t.Errorf("current content missing folded system instructions: %q", content)
 	}
 	if strings.Contains(content, "<system-reminder>") {
 		t.Errorf("current content still uses old <system-reminder> tag: %q", content)
