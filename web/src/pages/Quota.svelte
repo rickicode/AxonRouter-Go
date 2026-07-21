@@ -8,7 +8,7 @@
   quotaLoading,
   quotaError,
   quotaSummary,
-  quotaSavings,
+  quotaSpent,
   quotaNextReset,
   loadQuota,
   loadQuotaSummary,
@@ -283,8 +283,8 @@ function visibleQuotas(item: QuotaCacheEntry): QuotaItem[] {
     <CardContent class="p-4 flex items-center gap-3">
       <DollarSignIcon class="size-5 text-emerald-400" />
       <div>
-        <p class="text-caption text-muted-foreground uppercase">Saved this month</p>
-        <p class="text-display-md">{formatCost($quotaSavings)}</p>
+        <p class="text-caption text-muted-foreground uppercase">Spent this month</p>
+        <p class="text-display-md">{formatCost($quotaSpent)}</p>
       </div>
     </CardContent>
   </Card>

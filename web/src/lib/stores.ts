@@ -447,7 +447,7 @@ export const quotaTotalPages = writable(1);
 export const quotaLoading = writable(false);
 export const quotaError = writable<string | null>(null);
 export const quotaSummary = writable<QuotaProviderSummary[]>([]);
-export const quotaSavings = writable<number>(0);
+export const quotaSpent = writable<number>(0);
 export const quotaNextReset = writable<string | null>(null);
 
 export async function loadQuota(params?: { provider?: string; search?: string; status?: string; page?: number; per_page?: number }) {
@@ -471,7 +471,7 @@ export async function loadQuotaSummary() {
   try {
     const data: QuotaSummaryResponse = await quotaApi.summary();
     quotaSummary.set(data.providers || []);
-    quotaSavings.set(data.savings_usd || 0);
+    quotaSpent.set(data.spent_usd || 0);
     quotaNextReset.set(data.next_reset || null);
   } catch {
     // silent — summary is optional enhancement

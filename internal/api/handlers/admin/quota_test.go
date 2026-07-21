@@ -31,7 +31,7 @@ func newQuotaTestDB(t *testing.T) *sql.DB {
 	return database
 }
 
-func TestSummary_IncludesResetAndSavings(t *testing.T) {
+func TestSummary_IncludesResetAndSpent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	db := newQuotaTestDB(t)
@@ -61,12 +61,13 @@ func TestSummary_IncludesResetAndSavings(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
 
-	var resp struct {
+		var resp struct {
 		Providers []struct {
-			ProviderID string `json:"provider_id"`
-			NextReset  string `json:"next_reset"`
-			SavingsUSD float64 `json:"savings_usd"`
+			ProviderID string  `json:"provider_id"`
+			NextReset    string  `json:"next_reset"`
+			SpentUSD     float64 `json:"spent_usd"`
 		} `json:"providers"`
+		SpentUSD float64 `json:"spent_usd"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -79,8 +80,11 @@ func TestSummary_IncludesResetAndSavings(t *testing.T) {
 			if p.NextReset == "" {
 				t.Errorf("expected next_reset for cx")
 			}
-			if p.SavingsUSD <= 0 {
-				t.Errorf("expected positive savings_usd for cx, got %f", p.SavingsUSD)
+			if p.SpentUSD <= 0 {
+				t.Errorf("expected positive spent_usd for cx, got %f", p.SpentUSD)
+			}
+			if resp.SpentUSD <= 0 {
+				t.Errorf("expected positive total spent_usd, got %f", resp.SpentUSD)
 			}
 		}
 	}
