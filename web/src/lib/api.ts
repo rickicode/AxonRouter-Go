@@ -676,6 +676,21 @@ export interface UsageTimeBucket {
   cost_usd: number;
 }
 
+export interface UsageActivityDay {
+  date: string;
+  requests: number;
+  tokens: number;
+  cost_usd: number;
+}
+
+export interface UsageActivityResponse {
+  data: {
+    from: string;
+    to: string;
+    days: UsageActivityDay[];
+  };
+}
+
 export interface UsageSummary {
   requests: number;
   input_tokens: number;
@@ -781,6 +796,24 @@ export const usageApi = {
     return fetchApi<{ data: UsageData }>(`/usage${qs}`);
   },
   summary: () => fetchApi<{ data: UsageSummaryResponse }>("/usage/summary"),
+  activity: (params?: {
+    api_key_id?: string;
+    provider_id?: string;
+    model_id?: string;
+    modality?: string;
+    status_code?: number;
+  }) => {
+    const searchParams = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== "") {
+          searchParams.set(k, String(v));
+        }
+      });
+    }
+    const qs = searchParams.toString() ? `?${searchParams.toString()}` : "";
+    return fetchApi<UsageActivityResponse>(`/usage/activity${qs}`);
+  },
 };
 
 // Combo API
