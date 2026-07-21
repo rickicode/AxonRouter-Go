@@ -55,30 +55,30 @@
 		4: 'bg-emerald-500',
 	};
 
-	function parseDate(dateStr: string): Date {
-		return new Date(`${dateStr}T00:00:00`);
+	function parseDateUTC(dateStr: string): Date {
+		const [y, m, d] = dateStr.split('-').map(Number);
+		return new Date(Date.UTC(y, m - 1, d));
 	}
 
-	function formatDateKey(date: Date): string {
-		return date.toISOString().split('T')[0];
+	function formatDateKeyUTC(date: Date): string {
+		const y = date.getUTCFullYear();
+		const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+		const d = String(date.getUTCDate()).padStart(2, '0');
+		return `${y}-${m}-${d}`;
 	}
 
-	function addDays(date: Date, days: number): Date {
-		const next = new Date(date);
-		next.setDate(next.getDate() + days);
-		return next;
+	function addDaysUTC(date: Date, days: number): Date {
+		return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + days));
 	}
 
-	function startOfWeek(date: Date): Date {
-		const start = new Date(date);
-		start.setDate(start.getDate() - start.getDay());
-		return start;
+	function startOfWeekUTC(date: Date): Date {
+		const day = date.getUTCDay();
+		return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - day));
 	}
 
-	function endOfWeek(date: Date): Date {
-		const end = new Date(date);
-		end.setDate(end.getDate() + (6 - end.getDay()));
-		return end;
+	function endOfWeekUTC(date: Date): Date {
+		const day = date.getUTCDay();
+		return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + (6 - day)));
 	}
 
 	function intensityFor(value: number, max: number): number {
@@ -101,18 +101,18 @@
 			lookup.set(day.date, day);
 		}
 
-		const first = parseDate(sorted[0].date);
-		const last = parseDate(sorted[sorted.length - 1].date);
-		const start = startOfWeek(first);
-		const end = endOfWeek(last);
+		const first = parseDateUTC(sorted[0].date);
+		const last = parseDateUTC(sorted[sorted.length - 1].date);
+		const start = startOfWeekUTC(first);
+		const end = endOfWeekUTC(last);
 
 		const cells: HeatmapCell[] = [];
 		let maxValue = 0;
 		let total = 0;
 		let activeCount = 0;
 
-		for (let current = new Date(start); current <= end; current = addDays(current, 1)) {
-			const dateStr = formatDateKey(current);
+		for (let current = new Date(start); current <= end; current = addDaysUTC(current, 1)) {
+			const dateStr = formatDateKeyUTC(current);
 			const day = lookup.get(dateStr);
 			const value = day ? day[metric] : 0;
 
@@ -156,12 +156,13 @@
 	});
 
 	function formatLabel(dateStr: string): string {
-		const date = parseDate(dateStr);
+		const date = parseDateUTC(dateStr);
 		return date.toLocaleDateString('en-GB', {
 			weekday: 'short',
 			day: 'numeric',
 			month: 'short',
 			year: 'numeric',
+			timeZone: 'UTC',
 		});
 	}
 
