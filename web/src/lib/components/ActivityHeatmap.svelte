@@ -25,6 +25,7 @@
 
 	interface Props {
 		title?: string;
+		subtitle?: string;
 		days?: ActivityDay[];
 		metric?: MetricKey;
 		metrics?: MetricOption[];
@@ -35,7 +36,8 @@
 	}
 
 	let {
-		title = 'Activity Heatmap',
+		title,
+		subtitle,
 		days = [],
 		metric = 'requests',
 		metrics = [],
@@ -46,6 +48,14 @@
 	}: Props = $props();
 
 	const dayLabels = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+
+	const defaultTitles: Record<MetricKey, string> = {
+		tokens: 'Token activity',
+		requests: 'Request activity',
+		cost_usd: 'Cost activity',
+	};
+
+	const displayTitle = $derived(title ?? defaultTitles[metric]);
 
 	const intensityClasses: Record<number, string> = {
 		0: 'bg-muted',
@@ -134,6 +144,22 @@
 			weeks.push(cells.slice(i, i + 7));
 		}
 
+		const months: { label: string; weeks: number }[] = [];
+		let currentMonth = '';
+		let currentWeeks = 0;
+		for (const week of weeks) {
+			const mid = week[3] ?? week[0];
+			const label = formatMonthUTC(mid.date);
+			if (label !== currentMonth) {
+				if (currentWeeks > 0) months.push({ label: currentMonth, weeks: currentWeeks });
+				currentMonth = label;
+				currentWeeks = 1;
+			} else {
+				currentWeeks++;
+			}
+		}
+		if (currentWeeks > 0) months.push({ label: currentMonth, weeks: currentWeeks });
+
 		let bestStreak = 0;
 		let currentStreak = 0;
 		for (const cell of cells) {
@@ -147,6 +173,7 @@
 
 		return {
 			weeks,
+			months,
 			total,
 			peak: maxValue,
 			activeCount,
@@ -154,6 +181,11 @@
 			avgPerActiveDay: activeCount > 0 ? total / activeCount : 0,
 		};
 	});
+
+	function formatMonthUTC(dateStr: string): string {
+		const date = parseDateUTC(dateStr);
+		return date.toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' });
+	}
 
 	function formatLabel(dateStr: string): string {
 		const date = parseDateUTC(dateStr);
@@ -174,8 +206,10 @@
 <Card class="shadow-card">
 	<CardHeader class="pb-3 border-b border-border flex flex-wrap items-center justify-between gap-3">
 		<div class="space-y-0.5">
-			<CardTitle class="text-body-md-strong">{title}</CardTitle>
-			{#if metrics.length > 1}
+			<CardTitle class="text-body-md-strong">{displayTitle}</CardTitle>
+			{#if subtitle}
+				<CardDescription class="text-caption">{subtitle}</CardDescription>
+			{:else if metrics.length > 1}
 				<CardDescription class="text-caption">Select a metric to color the grid</CardDescription>
 			{/if}
 		</div>
@@ -207,18 +241,23 @@
 					</Card>
 				{/each}
 			</div>
-			<div class="flex">
-				<div class="flex flex-col gap-1 pr-2 pt-5">
+		<div class="flex">
+				<div class="flex flex-col gap-1 pr-2 pt-7">
 					{#each dayLabels as label}
-						<div class="h-3 flex items-center text-caption text-muted-foreground">{label}</div>
+						<div class="h-4 flex items-center text-caption text-muted-foreground">{label}</div>
 					{/each}
 				</div>
 				<div class="overflow-x-auto">
+					<div class="flex gap-1 mb-1">
+						{#each Array(12) as _}
+							<Skeleton class="h-3 flex-1 min-w-[3rem] rounded-sm" />
+						{/each}
+					</div>
 					<div class="flex gap-1">
 						{#each Array(40) as _}
 							<div class="flex flex-col gap-1">
 								{#each Array(7) as _}
-									<Skeleton class="size-3 rounded-sm" />
+									<Skeleton class="size-4 rounded-sm" />
 								{/each}
 							</div>
 						{/each}
@@ -258,19 +297,29 @@
 			</div>
 
 			<div class="flex">
-				<div class="flex flex-col gap-1 pr-2 pt-5">
+				<div class="flex flex-col gap-1 pr-2 pt-7">
 					{#each dayLabels as label}
-						<div class="h-3 flex items-center text-caption text-muted-foreground">{label}</div>
+						<div class="h-4 flex items-center text-caption text-muted-foreground">{label}</div>
 					{/each}
 				</div>
 				<div class="overflow-x-auto">
+					<div class="flex gap-1 mb-1">
+						{#each processed.months as m}
+							<div
+								class="text-caption text-muted-foreground whitespace-nowrap"
+								style="width: calc({m.weeks * 1.25}rem - 0.25rem)"
+							>
+								{m.label}
+							</div>
+						{/each}
+					</div>
 					<div class="flex gap-1">
 						{#each processed.weeks as week}
 							<div class="flex flex-col gap-1">
 								{#each week as cell}
 									<button
 										type="button"
-										class="size-3 rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none {intensityClasses[cell.intensity]}"
+										class="size-4 rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none {intensityClasses[cell.intensity]}"
 										title={cellTooltip(cell)}
 										aria-label={cellTooltip(cell)}
 									></button>
@@ -279,6 +328,16 @@
 						{/each}
 					</div>
 				</div>
+			</div>
+
+			<div class="flex items-center justify-end gap-2 pt-1">
+				<span class="text-caption text-muted-foreground">Less</span>
+				<div class="flex gap-1">
+					{#each [1, 2, 3, 4] as level}
+						<div class="size-4 rounded-sm {intensityClasses[level]}" aria-hidden="true"></div>
+					{/each}
+				</div>
+				<span class="text-caption text-muted-foreground">More</span>
 			</div>
 		{/if}
 	</CardContent>

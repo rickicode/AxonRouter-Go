@@ -577,7 +577,7 @@ return `${lbl}: ${v.toLocaleString()}`;
   </div>
 
   <ActivityHeatmap
-    title="Token/Request/Cost Activity"
+    subtitle="Last 12 months"
     days={activityData}
     metric={activityMetricKey}
     metrics={activityMetrics}
