@@ -249,18 +249,12 @@
 					{/each}
 				</div>
 				<div class="overflow-x-auto">
-					<div class="flex gap-1 mb-1">
+					<div class="grid" style="grid-template-columns: repeat(40, minmax(0, 1fr)); gap: 0.25rem;">
 						{#each Array(12) as _}
-							<Skeleton class="h-4 flex-1 min-w-[3rem] rounded-sm" />
+							<Skeleton class="h-4 rounded-sm" style="grid-column: span 3;" />
 						{/each}
-					</div>
-					<div class="flex gap-1">
-						{#each Array(40) as _}
-							<div class="flex flex-col gap-1">
-								{#each Array(7) as _}
-									<Skeleton class="size-4 rounded-sm" />
-								{/each}
-							</div>
+						{#each Array(280) as _}
+							<Skeleton class="size-4 rounded-sm" />
 						{/each}
 					</div>
 				</div>
@@ -305,32 +299,29 @@
 					{/each}
 				</div>
 				<div class="overflow-x-auto">
-					<div class="flex gap-1 mb-1">
+					<div class="grid" style="grid-template-columns: repeat({processed.weeks.length}, minmax(0, 1fr)); gap: 0.25rem;">
 						{#each processed.months as m}
 							<div
 								class="h-4 flex items-center text-caption text-muted-foreground whitespace-nowrap"
-								style="width: calc({m.weeks * 1.25}rem - 0.25rem)"
+								style="grid-column: span {m.weeks};"
 							>
 								{m.label}
 							</div>
 						{/each}
-					</div>
-					<div class="flex gap-1">
-						{#each processed.weeks as week}
-							<div class="flex flex-col gap-1">
-								{#each week as cell}
-									<button
-										type="button"
-										class="size-4 rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none {intensityClasses[cell.intensity]}"
-										title={cellTooltip(cell)}
-										aria-label={cellTooltip(cell)}
-									></button>
+						{#each [0, 1, 2, 3, 4, 5, 6] as dayIndex}
+							{#each processed.weeks as week}
+								{@const cell = week[dayIndex]}
+								<button
+									type="button"
+									class="size-4 rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none {intensityClasses[cell.intensity]}"
+									title={cellTooltip(cell)}
+									aria-label={cellTooltip(cell)}
+								></button>
 								{/each}
-							</div>
-						{/each}
+							{/each}
+						</div>
 					</div>
 				</div>
-			</div>
 
 			<div class="flex items-center justify-end gap-2 pt-1">
 				<span class="text-caption text-muted-foreground">Less</span>
