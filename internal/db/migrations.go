@@ -636,6 +636,9 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 
 		// ── Kiro (verified upstream model IDs; variants look up base ID via substring fallback) ──
 		{"claude-sonnet-4.6", "Claude Sonnet 4.6", 0.003, 0.015, 0, 0.0003, 0.00375},
+		{"claude-opus-4.6", "Claude Opus 4.6", 0.015, 0.075, 0, 0.0003, 0.00375},
+		{"claude-sonnet-4.7", "Claude Sonnet 4.7", 0.003, 0.015, 0, 0.0003, 0.00375},
+		{"claude-opus-4.7", "Claude Opus 4.7", 0.015, 0.075, 0, 0.0003, 0.00375},
 		{"claude-haiku-4.5", "Claude Haiku 4.5", 0.001, 0.005, 0, 0.0001, 0.00125},
 		{"deepseek-3.2", "DeepSeek V3.2", 0.0005, 0.0015, 0, 0, 0},
 		{"qwen3-coder-next", "Qwen3 Coder Next", 0.0004, 0.0012, 0, 0, 0},
