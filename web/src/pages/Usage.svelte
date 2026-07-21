@@ -6,7 +6,8 @@
 	import { Label } from '$lib/components/ui/label';
 	import { Badge } from '$lib/components/ui/badge';
 	import ProviderOctopus from '$lib/components/ProviderOctopus.svelte';
-	import { usageApi, apiKeysApi, providersApi, type UsageData, type UsageBreakdown, type UsageTimeBucket, type APIKeyItem, type Provider, type UsageSummaryResponse, type UsageDaySummary } from '$lib/api';
+	import ActivityHeatmap from '$lib/components/ActivityHeatmap.svelte';
+	import { usageApi, apiKeysApi, providersApi, type UsageData, type UsageBreakdown, type UsageTimeBucket, type APIKeyItem, type Provider, type UsageSummaryResponse, type UsageDaySummary, type UsageActivityDay } from '$lib/api';
 	import { formatTokens, formatCost, formatCount, activeRequests, loadActiveRequests, quotaNextReset, loadQuotaSummary } from '$lib/stores';
 	import { toast } from 'svelte-sonner';
 
@@ -42,8 +43,24 @@ let apiKeys = $state<APIKeyItem[]>([]);
 	let filterModel = $state('');
 	let filterModality = $state('');
 	let filterStatus = $state('');
-let realtime = $state(true);
-let rangePreset = $state<'day' | 'weekly' | 'month'>('day');
+	let realtime = $state(true);
+	let rangePreset = $state<'day' | 'weekly' | 'month'>('day');
+	let activityData = $state<UsageActivityDay[]>([]);
+	let activityMetric = $state<'tokens' | 'requests' | 'cost'>('tokens');
+	let activityLoading = $state(false);
+	let activityMetricKey = $derived<'tokens' | 'requests' | 'cost_usd'>(
+		activityMetric === 'cost' ? 'cost_usd' : activityMetric,
+	);
+	const activityMetrics = [
+		{ value: 'tokens' as const, label: 'Tokens' },
+		{ value: 'requests' as const, label: 'Requests' },
+		{ value: 'cost_usd' as const, label: 'Cost' },
+	];
+	function activityFormatter(value: number, metric: 'tokens' | 'requests' | 'cost_usd'): string {
+		if (metric === 'cost_usd') return formatCost(value);
+		if (metric === 'tokens') return formatTokens(value);
+		return formatCount(value);
+	}
 	let hasActiveFilters = $derived(
   !!(filterKey || filterProvider || filterModel || filterModality || filterStatus)
 	);
@@ -151,6 +168,29 @@ async function loadSummary() {
   }
 }
 
+async function loadActivity(silent = false) {
+	if (!silent) activityLoading = true;
+	try {
+		const statusCode = filterStatus ? parseInt(filterStatus, 10) : undefined;
+		const res = await usageApi.activity({
+			api_key_id: filterKey || undefined,
+			provider_id: filterProvider || undefined,
+			model_id: filterModel || undefined,
+			modality: filterModality || undefined,
+			status_code: statusCode,
+		});
+		activityData = res.data.days;
+	} catch (err) {
+		activityData = [];
+		if (!silent) {
+			const msg = err instanceof Error ? err.message : 'unknown error';
+			toast.error('Failed to load activity: ' + msg);
+		}
+	} finally {
+		if (!silent) activityLoading = false;
+	}
+}
+
 	function resetFilters() {
 		filterKey = '';
 		filterProvider = '';
@@ -158,6 +198,7 @@ async function loadSummary() {
 		filterModality = '';
 		filterStatus = '';
 		void load();
+		void loadActivity();
 	}
 
 	function setPreset(p: 'day' | 'weekly' | 'month') {
@@ -165,6 +206,11 @@ async function loadSummary() {
   if (p === 'day') setRange(today(), today());
   else if (p === 'weekly') setRange(daysAgo(7), today());
   else setRange(daysAgo(30), today());
+}
+
+function onDimensionFilterChange() {
+	void load();
+	void loadActivity();
 }
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -189,6 +235,7 @@ async function initPage() {
     loadSummary(),
   ]);
   setPreset('day');
+  void loadActivity();
 }
 
 onMount(() => {
@@ -198,12 +245,14 @@ onMount(() => {
 		const activeInterval = setInterval(loadActiveRequests, 3000);
   startPolling();
   summaryTimer = setInterval(loadSummary, 60000);
+  const activityTimer = setInterval(() => void loadActivity(true), 60000);
 		return () => {
 			tokensChart?.destroy();
 			costChart?.destroy();
 			clearInterval(activeInterval);
     stopPolling();
     if (summaryTimer) clearInterval(summaryTimer);
+    clearInterval(activityTimer);
 		};
 });
 
@@ -390,7 +439,7 @@ return `${lbl}: ${v.toLocaleString()}`;
 				</div>
  <div class="space-y-1.5">
  <Label class="text-caption-mono text-muted-foreground uppercase font-semibold">API Key</Label>
- <select bind:value={filterKey} onchange={() => void load()} class="h-9 font-mono text-body-sm rounded-sm border border-input bg-transparent px-3 py-1 w-full text-foreground">
+				<select bind:value={filterKey} onchange={() => onDimensionFilterChange()} class="h-9 font-mono text-body-sm rounded-sm border border-input bg-transparent px-3 py-1 w-full text-foreground">
 						<option value="">All keys</option>
 						{#each apiKeys as k}
 							<option value={k.id}>{k.name || k.id}</option>
@@ -399,7 +448,7 @@ return `${lbl}: ${v.toLocaleString()}`;
 					</div>
  <div class="space-y-1.5">
  <Label class="text-caption-mono text-muted-foreground uppercase font-semibold">Provider</Label>
- <select bind:value={filterProvider} onchange={() => void load()} class="h-9 font-mono text-body-sm rounded-sm border border-input bg-transparent px-3 py-1 w-full text-foreground">
+				<select bind:value={filterProvider} onchange={() => onDimensionFilterChange()} class="h-9 font-mono text-body-sm rounded-sm border border-input bg-transparent px-3 py-1 w-full text-foreground">
 						<option value="">All providers</option>
 						{#each providers as p}
 							<option value={p.id}>{p.display_name || p.id}</option>
@@ -408,11 +457,11 @@ return `${lbl}: ${v.toLocaleString()}`;
 				</div>
  <div class="space-y-1.5">
  <Label class="text-caption-mono text-muted-foreground uppercase font-semibold">Model</Label>
- <Input bind:value={filterModel} onchange={() => void load()} placeholder="e.g. cx/gpt-5.4" class="h-9 font-mono text-body-sm w-full" />
+				<Input bind:value={filterModel} onchange={() => onDimensionFilterChange()} placeholder="e.g. cx/gpt-5.4" class="h-9 font-mono text-body-sm w-full" />
 			</div>
  <div class="space-y-1.5">
  <Label class="text-caption-mono text-muted-foreground uppercase font-semibold">Modality</Label>
- <select bind:value={filterModality} onchange={() => void load()} class="h-9 font-mono text-body-sm rounded-sm border border-input bg-transparent px-3 py-1 w-full text-foreground">
+				<select bind:value={filterModality} onchange={() => onDimensionFilterChange()} class="h-9 font-mono text-body-sm rounded-sm border border-input bg-transparent px-3 py-1 w-full text-foreground">
 						<option value="">All</option>
 						<option value="chat">chat</option>
 						<option value="messages">messages</option>
@@ -426,7 +475,7 @@ return `${lbl}: ${v.toLocaleString()}`;
 				</div>
  <div class="space-y-1.5">
  <Label class="text-caption-mono text-muted-foreground uppercase font-semibold">Status</Label>
- <Input bind:value={filterStatus} onchange={() => void load()} type="number" placeholder="e.g. 200" class="h-9 font-mono text-body-sm w-full" />
+				<Input bind:value={filterStatus} onchange={() => onDimensionFilterChange()} type="number" placeholder="e.g. 200" class="h-9 font-mono text-body-sm w-full" />
 				</div>
 				</div>
 		</CardContent>
@@ -526,6 +575,16 @@ return `${lbl}: ${v.toLocaleString()}`;
       </CardContent>
     </Card>
   </div>
+
+  <ActivityHeatmap
+    title="Token/Request/Cost Activity"
+    days={activityData}
+    metric={activityMetricKey}
+    metrics={activityMetrics}
+    formatter={activityFormatter}
+    loading={activityLoading}
+    onMetricChange={(m) => { activityMetric = m === 'cost_usd' ? 'cost' : m; }}
+  />
 
   <Card class="shadow-card">
     <CardHeader class="pb-3 border-b border-border flex flex-row items-center justify-between space-y-0">
