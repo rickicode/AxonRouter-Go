@@ -265,6 +265,84 @@ func TestConvertOpenAIRequestToKiro_HTTPImageFallback(t *testing.T) {
 	}
 }
 
+func TestBuildKiroTools_FallsBackToInputSchema(t *testing.T) {
+	tools := []any{
+		map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "read_file",
+				"description": "Read a file",
+				"input_schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"path": map[string]any{"type": "string"},
+					},
+					"required": []any{"path"},
+				},
+			},
+		},
+	}
+	out := buildKiroTools(tools)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(out))
+	}
+	spec, ok := out[0]["toolSpecification"].(map[string]any)
+	if !ok {
+		t.Fatalf("toolSpecification missing")
+	}
+	inputSchema, ok := spec["inputSchema"].(map[string]any)
+	if !ok {
+		t.Fatalf("inputSchema missing")
+	}
+	schemaJSON, ok := inputSchema["json"].(map[string]any)
+	if !ok {
+		t.Fatalf("inputSchema.json missing")
+	}
+	req, _ := schemaJSON["required"].([]any)
+	if len(req) != 1 || req[0] != "path" {
+		t.Errorf("required = %v, want [path]", req)
+	}
+}
+
+func TestBuildKiroTools_FiltersInvalidRequired(t *testing.T) {
+	tools := []any{
+		map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "run_cmd",
+				"description": "Run command",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"cmd": map[string]any{"type": "string"},
+					},
+					"required": []any{"cmd", map[string]any{"type": "string"}},
+				},
+			},
+		},
+	}
+	out := buildKiroTools(tools)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(out))
+	}
+	spec, ok := out[0]["toolSpecification"].(map[string]any)
+	if !ok {
+		t.Fatalf("toolSpecification missing")
+	}
+	inputSchema, ok := spec["inputSchema"].(map[string]any)
+	if !ok {
+		t.Fatalf("inputSchema missing")
+	}
+	schemaJSON, ok := inputSchema["json"].(map[string]any)
+	if !ok {
+		t.Fatalf("inputSchema.json missing")
+	}
+	req, _ := schemaJSON["required"].([]any)
+	if len(req) != 1 || req[0] != "cmd" {
+		t.Errorf("required = %v, want [cmd]", req)
+	}
+}
+
 func TestConvertOpenAIRequestToKiro_PreservesRequiredStrings(t *testing.T) {
 	body := []byte(`{
 		"model": "kiro/claude-sonnet-4-6",

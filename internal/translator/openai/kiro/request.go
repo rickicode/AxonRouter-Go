@@ -640,7 +640,13 @@ func buildKiroTools(tools []any) []map[string]any {
 		}
 		params, _ := fn["parameters"].(map[string]any)
 		if params == nil {
-			params = tool["parameters"].(map[string]any)
+			params, _ = tool["parameters"].(map[string]any)
+		}
+		if params == nil {
+			params, _ = fn["input_schema"].(map[string]any)
+		}
+		if params == nil {
+			params, _ = tool["input_schema"].(map[string]any)
 		}
 		out = append(out, map[string]any{
 			"toolSpecification": map[string]any{
@@ -660,8 +666,18 @@ func normalizeKiroToolSchema(schema map[string]any) map[string]any {
 	out := map[string]any{}
 	for k, v := range schema {
 		switch {
-		case k == "required" && isEmptyArray(v):
-			continue
+		case k == "required":
+			if arr, ok := v.([]any); ok {
+				filtered := make([]any, 0, len(arr))
+				for _, r := range arr {
+					if s, ok := r.(string); ok && s != "" {
+						filtered = append(filtered, s)
+					}
+				}
+				if len(filtered) > 0 {
+					out[k] = filtered
+				}
+			}
 		case k == "additionalProperties":
 			continue
 		case k == "properties" && isObject(v):
