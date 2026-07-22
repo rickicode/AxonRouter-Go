@@ -54,18 +54,35 @@ func (ts *TokenStore) Get(ctx context.Context, connID string) (*auth.Credentials
 	if err != nil {
 		return nil, fmt.Errorf("refresh token: %w", err)
 	}
-	if err := ts.Store(ctx, connID, newCreds); err != nil {
+	if err := ts.Store(ctx, connID, creds.RefreshToken, newCreds); err != nil {
 		// Log but don't fail: the token is still usable in memory.
 		fmt.Printf("warning: failed to persist refreshed token for %s: %v\n", connID, err)
 	}
 	return newCreds, nil
 }
 
-// Store persists credentials for a connection in the database.
-func (ts *TokenStore) Store(ctx context.Context, connID string, creds *auth.Credentials) error {
+// Store persists credentials for a connection in the database using a
+// compare-and-swap check on the refresh token. If the current DB refresh token
+// differs from oldRefreshToken (another writer already rotated), the write is
+// skipped and no error is returned.
+func (ts *TokenStore) Store(ctx context.Context, connID string, oldRefreshToken string, creds *auth.Credentials) error {
 	if ts.db == nil {
 		return fmt.Errorf("database not configured")
 	}
+
+	var currentRefresh string
+	if err := ts.db.QueryRowContext(ctx, `
+		SELECT COALESCE(oauth_refresh_token, '')
+		FROM connections
+		WHERE id = ?
+	`, connID).Scan(&currentRefresh); err != nil {
+		return err
+	}
+	if currentRefresh != oldRefreshToken {
+		// Another writer already rotated the refresh token.
+		return nil
+	}
+
 	var refresh sql.NullString
 	if creds.RefreshToken != "" {
 		refresh = sql.NullString{String: creds.RefreshToken, Valid: true}

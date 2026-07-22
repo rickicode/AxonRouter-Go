@@ -192,7 +192,7 @@ func (s *TokenRefreshScheduler) refresh(r refreshRow) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	newCreds, err := s.authMgr.RefreshToken(ctx, providerType, creds)
+	newCreds, err := s.authMgr.RefreshTokenForConnection(ctx, r.id, providerType, creds)
 	if err != nil {
 		log.Printf("background: token refresh failed for %s/%s: %v", r.providerTypeID, r.id, err)
 		if quota.IsUnrecoverableRefreshError(err) {
@@ -204,39 +204,29 @@ func (s *TokenRefreshScheduler) refresh(r refreshRow) {
 	s.persist(r, newCreds)
 }
 
-// persist stores refreshed tokens in the database and updates in-memory state.
+// persist updates the connection status after a successful refresh. Token fields
+// are persisted by auth.Manager.RefreshTokenForConnection using a CAS write.
 func (s *TokenRefreshScheduler) persist(r refreshRow, newCreds *auth.Credentials) {
 	expiresAt := newCreds.ExpiresAt.Unix()
 	if expiresAt == 0 {
 		expiresAt = time.Now().Add(time.Hour).Unix()
-	}
-	refreshToken := newCreds.RefreshToken
-	if refreshToken == "" {
-		refreshToken = r.refreshToken
-	}
-
-	psd := r.providerSpecificData
-	if len(newCreds.ProviderSpecific) > 0 {
-		if b, err := json.Marshal(newCreds.ProviderSpecific); err == nil {
-			psd = string(b)
-		}
 	}
 
 	now := time.Now().Unix()
 	update := func(d *sql.DB) error {
 		_, err := d.Exec(`
 			UPDATE connections
-			SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, status = 'ready', updated_at = ?
+			SET status = 'ready', updated_at = ?
 			WHERE id = ?
-		`, newCreds.AccessToken, refreshToken, expiresAt, psd, now, r.id)
+		`, now, r.id)
 		return err
 	}
 
 	if s.wq != nil {
-		s.wq.Enqueue("tokenRefresh:persist", update)
+		s.wq.Enqueue("tokenRefresh:setReady", update)
 	} else {
 		if err := update(s.db); err != nil {
-			log.Printf("background: failed to persist refreshed token for %s: %v", r.id, err)
+			log.Printf("background: failed to update status for %s: %v", r.id, err)
 			return
 		}
 	}

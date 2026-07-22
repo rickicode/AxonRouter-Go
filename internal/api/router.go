@@ -132,7 +132,7 @@ func New(cfg Config) *Router {
 	usage.InitPricing(cfg.DB)
 	usage.StartPeriodicReload(context.Background(), time.Hour)
 	km := adminapi.NewKeyManager(cfg.DB)
-	authManager := auth.NewManager()
+	authManager := auth.NewManagerWithWriter(db.NewOAuthTokenWriter(cfg.DB, writeQueue))
 
 	// Register OAuth services
 	authManager.RegisterService(auth.ProviderCodex, codex.NewOAuthService(http.DefaultClient))

@@ -334,7 +334,7 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 			ExpiresAt:        time.Unix(expiresAt, 0),
 			ProviderSpecific: psdMap,
 		}
-		newCreds, refreshErr := h.authMgr.RefreshToken(ctx, auth.ProviderType(conn.ProviderTypeID), creds)
+		newCreds, refreshErr := h.authMgr.RefreshTokenForConnection(ctx, id, auth.ProviderType(conn.ProviderTypeID), creds)
 		if refreshErr != nil {
 			log.Printf("TestConnection proactive refresh failed for %s: %v", id, refreshErr)
 		} else {
@@ -346,24 +346,6 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 			}
 			if len(newCreds.ProviderSpecific) > 0 {
 				psdMap = newCreds.ProviderSpecific
-			}
-			if len(psdMap) > 0 {
-				psdJSON, _ := json.Marshal(psdMap)
-				if err := h.execWrite(ctx, "testconnection:refresh:"+id, func(d *sql.DB) error {
-					_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?`,
-						accessToken, refreshToken, expiresAt, psdJSON, time.Now().Unix(), id)
-					return err
-				}); err != nil {
-					log.Printf("TestConnection failed to persist refreshed token for %s: %v", id, err)
-				}
-			} else {
-				if err := h.execWrite(ctx, "testconnection:refresh:"+id, func(d *sql.DB) error {
-					_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
-						accessToken, refreshToken, expiresAt, time.Now().Unix(), id)
-					return err
-				}); err != nil {
-					log.Printf("TestConnection failed to persist refreshed token for %s: %v", id, err)
-				}
 			}
 		}
 	}
@@ -409,7 +391,7 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 			ExpiresAt:        time.Unix(expiresAt, 0),
 			ProviderSpecific: psdMap,
 		}
-		newCreds, refreshErr := h.authMgr.RefreshToken(ctx, auth.ProviderType(conn.ProviderTypeID), creds)
+		newCreds, refreshErr := h.authMgr.RefreshTokenForConnection(ctx, id, auth.ProviderType(conn.ProviderTypeID), creds)
 		if refreshErr == nil {
 			accessToken = newCreds.AccessToken
 			expiresAt = newCreds.ExpiresAt.Unix()
@@ -419,24 +401,6 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 			}
 			if len(newCreds.ProviderSpecific) > 0 {
 				psdMap = newCreds.ProviderSpecific
-			}
-			if len(psdMap) > 0 {
-				psdJSON, _ := json.Marshal(psdMap)
-				if err := h.execWrite(ctx, "testconnection:refresh:"+id, func(d *sql.DB) error {
-					_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?`,
-						accessToken, refreshToken, expiresAt, psdJSON, time.Now().Unix(), id)
-					return err
-				}); err != nil {
-					log.Printf("TestConnection failed to persist refreshed token for %s: %v", id, err)
-				}
-			} else {
-				if err := h.execWrite(ctx, "testconnection:refresh:"+id, func(d *sql.DB) error {
-					_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
-						accessToken, refreshToken, expiresAt, time.Now().Unix(), id)
-					return err
-				}); err != nil {
-					log.Printf("TestConnection failed to persist refreshed token for %s: %v", id, err)
-				}
 			}
 
 			req.AccessToken = accessToken
@@ -812,27 +776,10 @@ func (h *ConnectionHandler) RefreshToken(c *gin.Context) {
 		ProviderSpecific: providerSpecific,
 	}
 
-	newCreds, err := h.authMgr.RefreshToken(c.Request.Context(), auth.ProviderType(providerTypeID), creds)
+	newCreds, err := h.authMgr.RefreshTokenForConnection(c.Request.Context(), connID, auth.ProviderType(providerTypeID), creds)
 	if err != nil {
 		log.Printf("Manual token refresh failed for %s: %v", connID, err)
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
-	}
-
-	now := time.Now().Unix()
-	if len(newCreds.ProviderSpecific) > 0 {
-		psdJSON, _ := json.Marshal(newCreds.ProviderSpecific)
-		_, err = h.db.Exec(`
-			UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?
-		`, newCreds.AccessToken, newCreds.RefreshToken, newCreds.ExpiresAt.Unix(), psdJSON, now, connID)
-	} else {
-		_, err = h.db.Exec(`
-			UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?
-		`, newCreds.AccessToken, newCreds.RefreshToken, newCreds.ExpiresAt.Unix(), now, connID)
-	}
-	if err != nil {
-		log.Printf("Failed to persist refreshed token for %s: %v", connID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to persist token"})
 		return
 	}
 

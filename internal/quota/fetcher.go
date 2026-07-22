@@ -377,8 +377,6 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 		time.Now().Unix() > c.OAuthExpiresAt-refreshLead {
 		var (
 			newToken            string
-			newRefreshToken     string
-			newExpiry           int64
 			newProviderSpecific map[string]string
 			refreshed           bool
 			authMgrAttempted    bool
@@ -400,13 +398,9 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 					ExpiresAt:        time.Unix(c.OAuthExpiresAt, 0),
 					ProviderSpecific: providerSpecific,
 				}
-				newCreds, err := authMgr.RefreshToken(context.Background(), providerType, creds)
-				if err == nil {
-					newToken = newCreds.AccessToken
-					newRefreshToken = newCreds.RefreshToken
-					if !newCreds.ExpiresAt.IsZero() {
-						newExpiry = newCreds.ExpiresAt.Unix()
-					}
+			newCreds, err := authMgr.RefreshTokenForConnection(context.Background(), c.ID, providerType, creds)
+			if err == nil {
+				newToken = newCreds.AccessToken
 				newProviderSpecific = newCreds.ProviderSpecific
 				refreshed = true
 				proactiveRefreshDone = true
@@ -435,7 +429,7 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 		// Raw fallback for Antigravity and Kiro when auth manager is unavailable/failed.
 		if !refreshed && !authMgrAttempted && (providerID == "ag" || providerID == "kiro") {
 			var err error
-			newToken, newRefreshToken, newExpiry, err = refreshOAuthToken(providerID, c.OAuthRefreshToken.String)
+			newToken, _, _, err = refreshOAuthToken(providerID, c.OAuthRefreshToken.String)
 			if err != nil {
 				log.Printf("quota: raw token refresh failed for %s (%s): %v", c.ID, c.Name, err)
 				cq.Error = fmt.Sprintf("token refresh failed: %v", err)
@@ -445,29 +439,18 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 						log.Printf("quota: connection %s disabled due to unrecoverable refresh error", c.ID)
 					}
 				}
-			return cq
+				return cq
+			}
+			refreshed = true
+			proactiveRefreshDone = true
 		}
-		refreshed = true
-		proactiveRefreshDone = true
-	}
 
-	if refreshed {
+		if refreshed {
 			token = newToken
-			var psdJSON []byte
 			if len(newProviderSpecific) > 0 {
-				psdJSON, _ = json.Marshal(newProviderSpecific)
+				psdJSON, _ := json.Marshal(newProviderSpecific)
 				psd = mapStringToAny(newProviderSpecific)
 				c.ProviderSpecificData = sql.NullString{Valid: true, String: string(psdJSON)}
-			}
-			if db != nil {
-				now := time.Now().Unix()
-				if psdJSON != nil {
-					db.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?`,
-						newToken, newRefreshToken, newExpiry, psdJSON, now, c.ID)
-				} else {
-					db.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
-						newToken, newRefreshToken, newExpiry, now, c.ID)
-				}
 			}
 		}
 	}
@@ -586,32 +569,14 @@ func forceRefreshOnQuotaAuthError(c connRow, token string, psd map[string]any, p
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	newCreds, err := authMgr.RefreshToken(ctx, providerType, creds)
+	newCreds, err := authMgr.RefreshTokenForConnection(ctx, c.ID, providerType, creds)
 	if err != nil {
 		log.Printf("quota: forced token refresh failed for %s (%s): %v", c.ID, c.Name, err)
 		return "", nil, false
 	}
 
-	var psdJSON []byte
 	if len(newCreds.ProviderSpecific) > 0 {
-		psdJSON, _ = json.Marshal(newCreds.ProviderSpecific)
 		psd = mapStringToAny(newCreds.ProviderSpecific)
-	}
-
-	if db != nil {
-		now := time.Now().Unix()
-		refreshToken := newCreds.RefreshToken
-		if refreshToken == "" {
-			refreshToken = c.OAuthRefreshToken.String
-		}
-		expiry := newCreds.ExpiresAt.Unix()
-		if psdJSON != nil {
-			db.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?`,
-				newCreds.AccessToken, refreshToken, expiry, psdJSON, now, c.ID)
-		} else {
-			db.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
-				newCreds.AccessToken, refreshToken, expiry, now, c.ID)
-		}
 	}
 
 	log.Printf("quota: forced token refresh succeeded for %s (%s)", c.ID, c.Name)

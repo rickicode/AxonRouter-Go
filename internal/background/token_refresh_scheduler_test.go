@@ -89,7 +89,7 @@ func TestTokenRefreshScheduler_RefreshesNearExpiryToken(t *testing.T) {
 			ProviderSpecific: map[string]string{"profileArn": "arn:new"},
 		},
 	}
-	mgr := auth.NewManager()
+	mgr := auth.NewManagerWithWriter(queuedb.NewOAuthTokenWriter(database, nil))
 	mgr.RegisterService(auth.ProviderType("testprovider"), mock)
 
 	store := connstate.NewStore()
@@ -220,11 +220,11 @@ func TestTokenRefreshScheduler_UsesWriteQueueWhenProvided(t *testing.T) {
 			ExpiresAt:    time.Now().Add(time.Hour),
 		},
 	}
-	mgr := auth.NewManager()
-	mgr.RegisterService(auth.ProviderType("testprovider"), mock)
-
 	wq := queuedb.NewWriteQueue(database)
 	defer wq.Stop()
+
+	mgr := auth.NewManagerWithWriter(queuedb.NewOAuthTokenWriter(database, wq))
+	mgr.RegisterService(auth.ProviderType("testprovider"), mock)
 
 	s := NewTokenRefreshScheduler(database, wq, nil, nil, mgr, 1)
 	s.check()

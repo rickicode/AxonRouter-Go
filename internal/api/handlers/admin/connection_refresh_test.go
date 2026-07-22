@@ -15,6 +15,7 @@ import (
 
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
+	db "github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 )
 
@@ -138,9 +139,9 @@ func seedKiroOAuthConnection(t *testing.T, database *sql.DB, id, accessToken, re
 	}
 }
 
-func newAuthManagerWithKiro(t *testing.T, svc auth.OAuthService) *auth.Manager {
+func newAuthManagerWithKiro(t *testing.T, database *sql.DB, svc auth.OAuthService) *auth.Manager {
 	t.Helper()
-	mgr := auth.NewManager()
+	mgr := auth.NewManagerWithWriter(db.NewOAuthTokenWriter(database, nil))
 	mgr.RegisterService(auth.ProviderType("kiro"), svc)
 	return mgr
 }
@@ -233,7 +234,7 @@ func TestTestConnection_ProactiveRefresh(t *testing.T) {
 
 	svc := &fakeKiroOAuthService{newAccess: "new-access", newRefresh: "new-refresh"}
 	h := newConnectionHandlerForTest(t, database, executor.GetRegistry())
-	h.authMgr = newAuthManagerWithKiro(t, svc)
+	h.authMgr = newAuthManagerWithKiro(t, database, svc)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -294,7 +295,7 @@ func TestTestConnection_ReactiveRefreshKiro400(t *testing.T) {
 
 	svc := &fakeKiroOAuthService{newAccess: "new-access", newRefresh: "new-refresh"}
 	h := newConnectionHandlerForTest(t, database, executor.GetRegistry())
-	h.authMgr = newAuthManagerWithKiro(t, svc)
+	h.authMgr = newAuthManagerWithKiro(t, database, svc)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -344,7 +345,7 @@ func TestTestConnection_RefreshStillFails(t *testing.T) {
 
 	svc := &fakeKiroOAuthService{newAccess: "new-access", newRefresh: "new-refresh"}
 	h := newConnectionHandlerForTest(t, database, executor.GetRegistry())
-	h.authMgr = newAuthManagerWithKiro(t, svc)
+	h.authMgr = newAuthManagerWithKiro(t, database, svc)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -390,7 +391,7 @@ func TestTestConnection_NonAuthErrorDoesNotRefresh(t *testing.T) {
 
 	svc := &fakeKiroOAuthService{newAccess: "new-access", newRefresh: "new-refresh"}
 	h := newConnectionHandlerForTest(t, database, executor.GetRegistry())
-	h.authMgr = newAuthManagerWithKiro(t, svc)
+	h.authMgr = newAuthManagerWithKiro(t, database, svc)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)

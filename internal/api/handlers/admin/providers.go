@@ -399,13 +399,14 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 			// Refresh expired/near-expiry OAuth tokens before testing.
 			accessToken := in.access
 			expiresAt := in.expiresAt
+			psd := in.psdMap
 			if h.authMgr != nil && in.authType == "oauth" && shouldRefreshTestToken(providerID, in.refreshToken, expiresAt) {
 				creds := &auth.Credentials{
 					AccessToken:  in.access,
 					RefreshToken: in.refreshToken,
 					ExpiresAt:    time.Unix(expiresAt, 0),
 				}
-				newCreds, err := h.authMgr.RefreshToken(ctx, auth.ProviderType(providerID), creds)
+				newCreds, err := h.authMgr.RefreshTokenForConnection(ctx, in.connID, auth.ProviderType(providerID), creds)
 				if err != nil {
 					latency := time.Since(start).Milliseconds()
 					if isUnrecoverableRefreshError(err) {
@@ -428,22 +429,8 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 				if refreshToken == "" {
 					refreshToken = in.refreshToken
 				}
-				connID := in.connID
-				psd := in.psdMap
 				if len(newCreds.ProviderSpecific) > 0 {
 					psd = newCreds.ProviderSpecific
-				}
-				if len(psd) > 0 {
-					psdJSON, _ := json.Marshal(psd)
-					h.execWrite(requestCtx, "testall:refresh:"+connID, func(d *sql.DB) error {
-						_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?`, accessToken, refreshToken, expiresAt, psdJSON, time.Now().Unix(), connID)
-						return err
-					})
-				} else {
-					h.execWrite(requestCtx, "testall:refresh:"+connID, func(d *sql.DB) error {
-						_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`, accessToken, refreshToken, expiresAt, time.Now().Unix(), connID)
-						return err
-					})
 				}
 			}
 
@@ -453,7 +440,7 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 				BaseURL:              in.baseURL,
 				Body:                 bodyBytes,
 				Provider:             providerID,
-				ProviderSpecificData: in.psdMap,
+				ProviderSpecificData: psd,
 			})
 			if err != nil {
 				latency := time.Since(start).Milliseconds()
