@@ -425,6 +425,9 @@ func (h *Handler) tryPickConnectionFallback(ctx context.Context, connID, provide
 	if cs == nil {
 		return nil, false
 	}
+	if cs.GetStatus().IsRoutingTerminal() {
+		return nil, false
+	}
 	if modelID != "" && cs.IsModelInCooldownAt(modelID, now) {
 		return nil, false
 	}
@@ -466,7 +469,17 @@ func (h *Handler) pickStartIndex(provider, modelID string, total int, mode provi
 // cooldowns/quota exhaustion and loads its DB credentials when it passes.
 // The caller supplies the pre-resolved *ConnectionState so the routing hot path
 // avoids a store.Get lookup per candidate.
+//
+// Terminal statuses are checked explicitly as a safety net: the eligibility
+// snapshot is rebuilt asynchronously, so an account that was just marked
+// auth_failed/disabled/etc. could still appear in the snapshot for a few
+// milliseconds and be selected again. Cooldown/expired statuses are *not*
+// terminal: a connection whose cooldown has already expired must be usable
+// even if the snapshot still lists it as cooldown/quota_exhausted.
 func (h *Handler) tryPickConnection(ctx context.Context, cs *connstate.ConnectionState, provider, modelID string, now time.Time, mode providercfg.RoutingMode) (*Connection, bool) {
+	if cs.GetStatus().IsRoutingTerminal() {
+		return nil, false
+	}
 	if cs.IsInCooldownAt(now) {
 		return nil, false
 	}
@@ -542,6 +555,9 @@ func (h *Handler) prepareConnection(ctx context.Context, connID, provider, model
 	cs := h.store.Get(connID)
 	if cs == nil {
 		return nil, fmt.Errorf("connection state not found")
+	}
+	if cs.GetStatus().IsRoutingTerminal() {
+		return nil, fmt.Errorf("connection terminal status")
 	}
 	if cs.IsInCooldownAt(now) {
 		return nil, fmt.Errorf("connection in cooldown")
@@ -1797,11 +1813,52 @@ func (h *Handler) persistCooldown(connID string, det connstate.ErrorDetection) {
 	})
 }
 
-// persistSuccess records a successful request so the dashboard reflects last_success_at.
+// persistSuccess records a successful request so the dashboard reflects
+// last_success_at. It also heals a stale cooldown/quota status back to ready
+// so a connection that was briefly exhausted can be reused immediately after
+// a successful request or test-connection.
 func (h *Handler) persistSuccess(connID string) {
 	now := time.Now().Unix()
+
+	// In-memory recovery: clear exhaustion and reset status so the next
+	// eligibility snapshot includes this connection right away.
+	if cs := h.store.Get(connID); cs != nil {
+		status := cs.GetStatus()
+		if status == connstate.StatusCooldown ||
+			status == connstate.StatusRateLimited ||
+			status == connstate.StatusQuotaExhausted ||
+			status == connstate.StatusDegraded ||
+			status == connstate.StatusReady {
+			cs.SetStatus(connstate.StatusReady, "")
+		}
+	}
+	if h.exhaustion != nil {
+		h.exhaustion.Clear(connID)
+	}
+	h.elig.ScheduleUpdate()
+
+	// Only clear a stale DB cooldown row when the cooldown has actually
+	// expired. If the cooldown is still active, leave the DB row alone so the
+	// scheduler can recover it when the time comes.
 	h.writeQueue.Enqueue("persistSuccess", func(d *sql.DB) error {
-		_, err := d.Exec(`UPDATE connections SET last_success_at = ?, updated_at = ? WHERE id = ?`, now, now, connID)
+		_, err := d.Exec(`
+			UPDATE connections
+			SET status = CASE
+					WHEN status IN ('cooldown','rate_limited','quota_exhausted','degraded')
+						 AND (cooldown_until IS NULL OR cooldown_until <= ?)
+					THEN 'ready'
+					ELSE status
+				END,
+				cooldown_until = CASE
+					WHEN status IN ('cooldown','rate_limited','quota_exhausted','degraded')
+					     AND (cooldown_until IS NULL OR cooldown_until <= ?)
+					THEN NULL
+					ELSE cooldown_until
+				END,
+				last_success_at = ?,
+				updated_at = ?
+			WHERE id = ?
+		`, now, now, now, now, connID)
 		return err
 	})
 }

@@ -516,6 +516,45 @@ func TestPersistCooldown_WritesRealColumns(t *testing.T) {
 	}
 }
 
+func TestPersistSuccess_ResetsExpiredCooldown(t *testing.T) {
+	h := newTestHandler(t)
+	database := h.db
+	wq := db.NewWriteQueue(database)
+	h.writeQueue = wq
+
+	if _, err := database.Exec(`INSERT INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('test2','Test2','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	past := time.Now().Add(-time.Hour).Unix()
+	if _, err := database.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, cooldown_until, is_active, created_at, updated_at) VALUES ('conn-expired','test2','c2','none','cooldown',?,1,0,0)`, past); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-expired", "test2", "cooldown", 0)
+
+	// In-memory should also reflect the stale cooldown row.
+	cs := h.store.Get("conn-expired")
+	cs.SetCooldown(time.Now().Add(-time.Hour))
+
+	h.persistSuccess("conn-expired")
+	wq.Stop()
+
+	var status string
+	var cooldownU sql.NullInt64
+	row := database.QueryRow(`SELECT status, cooldown_until FROM connections WHERE id='conn-expired'`)
+	if err := row.Scan(&status, &cooldownU); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if status != "ready" {
+		t.Fatalf("status = %q, want ready", status)
+	}
+	if cooldownU.Valid {
+		t.Fatalf("expected cooldown_until cleared, got %v", cooldownU.Int64)
+	}
+	if cs.GetStatus() != connstate.StatusReady {
+		t.Fatalf("in-memory status = %v, want ready", cs.GetStatus())
+	}
+}
+
 // TestGetConnectionRejectsCooledDownConnection proves that getConnection never
 // returns a connection that is actively in cooldown, even when an eligibility
 // snapshot is stale.
@@ -556,6 +595,54 @@ func TestGetConnectionRejectsCooledDownConnection(t *testing.T) {
 	}
 	if conn.ID != "conn-oc-1" {
 		t.Fatalf("expected conn-oc-1, got %s", conn.ID)
+	}
+}
+
+func TestTryPickConnection_RejectsTerminalStatus(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('terminal','Terminal','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-terminal','terminal','t1','none','ready',1,?,?)`, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-terminal", "terminal", "ready", 0)
+
+	cs := h.store.Get("conn-terminal")
+	cs.SetStatus(connstate.StatusAuthFailed, "bad creds")
+
+	picked, ok := h.tryPickConnection(context.Background(), cs, "terminal", "gpt-4o", time.Now(), providercfg.DefaultRoutingMode)
+	if ok {
+		t.Fatalf("expected auth_failed connection to be rejected, got %s", picked.ID)
+	}
+}
+
+func TestTryPickConnection_AcceptsCooldownExpired(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('expired','Expired','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-expired','expired','e1','none','ready',1,?,?)`, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-expired", "expired", "ready", 0)
+
+	cs := h.store.Get("conn-expired")
+	past := time.Now().Add(-time.Hour)
+	cs.SetCooldown(past)
+
+	picked, ok := h.tryPickConnection(context.Background(), cs, "expired", "gpt-4o", time.Now(), providercfg.DefaultRoutingMode)
+	if !ok {
+		t.Fatal("expected cooldown-expired connection to be accepted")
+	}
+	if picked.ID != "conn-expired" {
+		t.Fatalf("expected conn-expired, got %s", picked.ID)
 	}
 }
 

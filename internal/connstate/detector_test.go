@@ -202,6 +202,40 @@ func TestDetectError_FreeUsageExhausted429_UsesRetryAfterHeader(t *testing.T) {
 	}
 }
 
+func TestDetectError_GrokCLI_403PermissionDenied_IsAuth(t *testing.T) {
+	// Raw upstream body as reported by the user: error.message is a JSON string
+	// that itself contains "permission-denied" and "insufficient_quota".
+	body := `{"error":{"message":"{\"code\":\"permission-denied\",\"error\":\"Access to the chat endpoint is denied. Please ensure you're using the correct credentials. If you believe this is a mistake, please log into console.x.ai and update the permissions, or contact support.\",\"type\":\"permission_error\",\"code\":\"insufficient_quota\"}"}}`
+
+	det := DetectError(context.Background(), http.StatusForbidden, body, nil, "grok-cli", "grok-cli/grok-4.5", nil)
+
+	if det.Category != ErrorAuth {
+		t.Errorf("category=%v, want ErrorAuth", det.Category)
+	}
+	if det.Status != StatusAuthFailed {
+		t.Errorf("status=%v, want StatusAuthFailed", det.Status)
+	}
+	if det.CooldownUntil != nil {
+		t.Errorf("expected no cooldown for auth error, got %v", det.CooldownUntil)
+	}
+}
+
+func TestDetectError_GrokCLI_403PermissionDenied_Translated_IsAuth(t *testing.T) {
+	// After the translator normalizes the body, the message still contains
+	// "insufficient_quota" indirectly in the original upstream text. The
+	// detector must still treat 403 as auth, never as quota/rate-limit.
+	body := `{"error":{"message":"Access to the chat endpoint is denied. Please ensure you're using the correct credentials.","type":"permission_error","code":"permission_error"}}`
+
+	det := DetectError(context.Background(), http.StatusForbidden, body, nil, "grok-cli", "grok-cli/grok-4.5", nil)
+
+	if det.Category != ErrorAuth {
+		t.Errorf("category=%v, want ErrorAuth", det.Category)
+	}
+	if det.Status != StatusAuthFailed {
+		t.Errorf("status=%v, want StatusAuthFailed", det.Status)
+	}
+}
+
 func TestDetectError_ContextCanceled_IsTimeout(t *testing.T) {
 	// A server-side cancellation (not the inbound request) must classify as a
 	// retryable timeout, not ErrorUnknown.

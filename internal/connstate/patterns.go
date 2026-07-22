@@ -66,7 +66,10 @@ var AuthPatterns = []string{
 	"invalid token",
 	"expired token",
 	"permission denied",
+	"permission-denied",
 	"access denied",
+	"access to the chat endpoint is denied",
+	"incorrect credentials",
 	"invalid bearer",
 }
 

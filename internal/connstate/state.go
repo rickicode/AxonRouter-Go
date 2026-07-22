@@ -37,6 +37,17 @@ func (s Status) IsEligible() bool {
 	return s == StatusReady || s == StatusDegraded
 }
 
+// IsRoutingTerminal returns true if the status means the connection should not
+// be selected for routing regardless of cooldown state. This guards against stale
+// eligibility snapshots re-picking an account that was just marked failed.
+func (s Status) IsRoutingTerminal() bool {
+	switch s {
+	case StatusAuthFailed, StatusDisabled, StatusSuspended, StatusBalanceEmpty:
+		return true
+	}
+	return false
+}
+
 // ConnectionState holds the live state of a single provider connection.
 type ConnectionState struct {
 	ID            string
