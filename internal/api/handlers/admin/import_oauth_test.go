@@ -198,6 +198,63 @@ func TestImportToken_NonOAuthProvider(t *testing.T) {
 	}
 }
 
+func TestImportToken_DeduplicatesByEmail(t *testing.T) {
+	h, database := newOAuthImportTestDeps(t)
+	now := time.Now().Unix()
+	existingID := "existing-grok"
+	if _, err := database.Exec(`
+		INSERT INTO connections (id, provider_type_id, name, auth_type, oauth_email, oauth_token, oauth_refresh_token, oauth_expires_at, status, is_active, created_at, updated_at)
+		VALUES (?, 'grok-cli', 'user@example.com', 'oauth', 'user@example.com', 'old-at', 'old-rt', ?, 'auth_failed', 0, ?, ?)
+	`, existingID, now+1000, now, now); err != nil {
+		t.Fatalf("seed existing connection: %v", err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := `{
+		"provider": "grok-cli",
+		"access_token": "access-123",
+		"refresh_token": "refresh-456",
+		"expires_at": 1893456000,
+		"email": "user@example.com"
+	}`
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/oauth/import-token", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.ImportToken(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		ID     string `json:"id"`
+		Name   string `json:"name"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.ID != existingID {
+		t.Fatalf("expected existing connection id %q, got %q", existingID, resp.ID)
+	}
+	if resp.Status != "ready" {
+		t.Fatalf("status = %q, want ready", resp.Status)
+	}
+
+	var accessTok string
+	var isActive int
+	if err := database.QueryRow(`SELECT COALESCE(oauth_token,''), is_active FROM connections WHERE id = ?`, existingID).Scan(&accessTok, &isActive); err != nil {
+		t.Fatal(err)
+	}
+	if accessTok != "access-123" {
+		t.Errorf("access token = %q, want access-123", accessTok)
+	}
+	if isActive != 1 {
+		t.Errorf("is_active = %d, want 1", isActive)
+	}
+}
+
 func TestImportToken_CustomProviderRejected(t *testing.T) {
 	h, database := newOAuthImportTestDeps(t)
 	now := time.Now().Unix()

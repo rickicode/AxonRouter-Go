@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/kiro"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
+	"github.com/rickicode/AxonRouter-Go/internal/db"
 )
 
 const kiroSessionTimeout = 5 * time.Minute
@@ -333,7 +333,6 @@ func (h *KiroAuthHandler) persistConnection(creds *auth.Credentials, method stri
 		}
 		connName = fallback
 	}
-	connID := uuid.New().String()
 	now := time.Now().Unix()
 
 	psd := creds.ProviderSpecific
@@ -348,10 +347,7 @@ func (h *KiroAuthHandler) persistConnection(creds *auth.Credentials, method stri
 		expiresAt = creds.ExpiresAt.Unix()
 	}
 
-	_, err := h.db.Exec(`
-		INSERT INTO connections (id, provider_type_id, name, auth_type, oauth_token, oauth_refresh_token, oauth_expires_at, provider_specific_data, status, is_active, created_at, updated_at)
-		VALUES (?, 'kiro', ?, 'oauth', ?, ?, ?, ?, 'ready', 1, ?, ?)
-	`, connID, connName, creds.AccessToken, creds.RefreshToken, expiresAt, psdJSON, now, now)
+	connID, _, err := db.UpsertOAuthConnection(context.Background(), h.db, "kiro", creds.Email, connName, creds.AccessToken, creds.RefreshToken, expiresAt, sql.NullString{String: string(psdJSON), Valid: true}, now)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to create connection: %w", err)
 	}
