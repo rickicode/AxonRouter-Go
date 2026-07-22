@@ -950,6 +950,24 @@ func writeReadBodyError(c *gin.Context, err error) {
 	c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": errReadBody.Error(), "type": "invalid_request_error"}})
 }
 
+// allowedModelsFromContext extracts the API-key allowlist set stored on the
+// request context by the auth middleware. A nil or empty set means unlimited.
+func allowedModelsFromContext(ctx context.Context) map[string]struct{} {
+	if v := ctx.Value("allowed_models"); v != nil {
+		if set, ok := v.(map[string]struct{}); ok {
+			return set
+		}
+	}
+	return nil
+}
+
+// isModelAllowed reports whether modelID is permitted by the API-key allowlist
+// stored on the request context. An absent or empty allowlist means unlimited
+// access (legacy keys or the internal admin surface).
+func (h *Handler) isModelAllowed(ctx context.Context, modelID string) bool {
+	return modelIDAllowed(modelID, allowedModelsFromContext(ctx))
+}
+
 // writeContextDone writes an explicit 499 for client cancellations and 504 for timeouts.
 func writeContextDone(c *gin.Context) {
 	err := c.Request.Context().Err()
