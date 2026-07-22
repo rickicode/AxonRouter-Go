@@ -215,7 +215,7 @@ attemptLoop:
 					h.combo.RecordFailure(conn.ID, det)
 					h.persistCooldownScoped(conn.ID, det)
 					if det.Status != connstate.StatusReady {
-						h.elig.ScheduleUpdate()
+						h.elig.ScheduleUpdateProvider(provider)
 					}
 					lastErr = holdbackErr
 					lastErrCategory = string(det.Category)
@@ -256,7 +256,7 @@ attemptLoop:
 				h.combo.RecordFailure(conn.ID, det)
 				h.persistCooldownScoped(conn.ID, det)
 				if det.Status != connstate.StatusReady {
-					h.elig.ScheduleUpdate()
+					h.elig.ScheduleUpdateProvider(provider)
 				}
 				lastErr = streamErr
 				lastErrCategory = "stream-" + string(det.Category)

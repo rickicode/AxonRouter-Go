@@ -74,6 +74,7 @@ type Router struct {
 	tokenRefreshScheduler *background.TokenRefreshScheduler
 	usageFlush            *background.UsageFlush
 	cleanup               *background.Cleanup
+	lifecycleManager      *background.LifecycleManager
 	rateLimitProber       *background.RateLimitProber
 
 	// versionChecker polls GitHub Releases for update notifications.
@@ -86,12 +87,13 @@ type Router struct {
 
 // Config holds configuration for creating a router.
 type Config struct {
-	DB               *sql.DB
-	WriteQueue       *db.WriteQueue // centralized async writer (nil → one is created)
-	Port             string
-	QuotaIntervalMin int
-	LogRetentionDays int
-	WebFS            fs.FS // embedded frontend filesystem
+	DB                           *sql.DB
+	WriteQueue                   *db.WriteQueue // centralized async writer (nil → one is created)
+	Port                         string
+	QuotaIntervalMin             int
+	LogRetentionDays               int
+	ConnectionCleanupIntervalMin int
+	WebFS                        fs.FS // embedded frontend filesystem
 }
 
 // New creates and configures the Gin router with all routes and middleware.
@@ -132,7 +134,7 @@ func New(cfg Config) *Router {
 	usage.InitPricing(cfg.DB)
 	usage.StartPeriodicReload(context.Background(), time.Hour)
 	km := adminapi.NewKeyManager(cfg.DB)
-	authManager := auth.NewManager()
+	authManager := auth.NewManagerWithWriter(db.NewOAuthTokenWriter(cfg.DB, writeQueue))
 
 	// Register OAuth services
 	authManager.RegisterService(auth.ProviderCodex, codex.NewOAuthService(http.DefaultClient))
@@ -156,10 +158,12 @@ func New(cfg Config) *Router {
 	tokenRefreshScheduler := background.NewTokenRefreshScheduler(cfg.DB, writeQueue, store, elig, authManager, cfg.QuotaIntervalMin)
 	usageFlush := background.NewUsageFlush(tracker)
 	cleanup := background.NewCleanup(comboHandler, cfg.DB, cfg.LogRetentionDays)
+	lifecycleManager := background.NewLifecycleManager(cfg.DB, cfg.ConnectionCleanupIntervalMin)
 	quotaScheduler.Start(ctx)
 	tokenRefreshScheduler.Start(ctx)
 	usageFlush.Start(ctx)
 	cleanup.Start(ctx)
+	lifecycleManager.Start(ctx)
 	// Proxy pool system
 	proxyResolver := proxypool.NewResolver(cfg.DB)
 	// Flush cached proxy idle connections whenever proxy pool/group/default
@@ -176,7 +180,7 @@ func New(cfg Config) *Router {
 	providerCfg := providercfg.NewManager(config.Get().DataDir)
 
 	// Create admin handlers
-	connectionH := admin.NewConnectionHandler(cfg.DB, executor.GetRegistry(), store, elig, exhaustionCache, authManager, writeQueue)
+	connectionH := admin.NewConnectionHandler(cfg.DB, executor.GetRegistry(), store, elig, exhaustionCache, authManager, writeQueue, lifecycleManager)
 	providerH := admin.NewProviderHandler(cfg.DB, executor.GetRegistry(), store, elig, providerCfg, writeQueue, authManager)
 
 	// Auto-migrate raw API keys to bcrypt
@@ -311,6 +315,7 @@ func New(cfg Config) *Router {
 		g.POST("/connections/:id/refresh", connectionH.RefreshToken)
 		g.POST("/connections/:id/reset", connectionH.ResetStatus)
 		g.PATCH("/connections/bulk", connectionH.BulkUpdate)
+		g.POST("/system/connection-cleanup", connectionH.CleanupConnections)
 
 		// Models
 		g.GET("/providers/:id/models", modelH.ListModels)
@@ -512,6 +517,7 @@ func New(cfg Config) *Router {
 		quotaScheduler:        quotaScheduler,
 		usageFlush:            usageFlush,
 		cleanup:               cleanup,
+		lifecycleManager:      lifecycleManager,
 		tokenRefreshScheduler: tokenRefreshScheduler,
 		rateLimitProber:       rateLimitProber,
 		versionChecker:        versionChecker,
@@ -643,6 +649,7 @@ func (r *Router) Shutdown() {
 		r.tokenRefreshScheduler.Stop()
 		r.usageFlush.Stop()
 		r.cleanup.Stop()
+		r.lifecycleManager.Stop()
 		r.rateLimitProber.Stop()
 		cache.StopGrokCLIReasoningEviction()
 		if r.versionChecker != nil {

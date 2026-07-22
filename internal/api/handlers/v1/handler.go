@@ -730,7 +730,7 @@ func (h *Handler) refreshOAuthToken(ctx context.Context, conn *Connection, provi
 		ProviderSpecific: providerSpecific,
 	}
 
-	newCreds, err := h.authMgr.RefreshToken(ctx, providerType, creds)
+	newCreds, err := h.authMgr.RefreshTokenForConnection(ctx, conn.ID, providerType, creds)
 	if err != nil {
 		// Check for unrecoverable errors (matches OmniRoute isUnrecoverableRefreshError)
 		if isUnrecoverableRefreshError(err) {
@@ -742,7 +742,7 @@ func (h *Handler) refreshOAuthToken(ctx context.Context, conn *Connection, provi
 				return err
 			})
 			h.store.UpdateStatus(conn.ID, connstate.StatusAuthFailed)
-			h.elig.ScheduleUpdate()
+			h.elig.ScheduleUpdateProvider(provider)
 		}
 		return fmt.Errorf("refresh token: %w", err)
 	}
@@ -758,20 +758,6 @@ func (h *Handler) refreshOAuthToken(ctx context.Context, conn *Connection, provi
 	}
 	// Update the credential cache so subsequent requests see the new token immediately.
 	h.conns.Store(conn.ID, cachedConn{conn: conn, cachedAt: time.Now()})
-	// Persist to DB (async — does not block the request path).
-	connID := conn.ID
-	accessToken := conn.AccessToken
-	refreshToken := conn.RefreshToken
-	expiresAt := conn.OAuthExpiresAt.Unix()
-	providerSpecificData := conn.ProviderSpecificData
-	h.writeQueue.EnqueueOrBlock(ctx, "refreshOAuth:persist", func(d *sql.DB) error {
-		_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?`,
-			accessToken, refreshToken, expiresAt, providerSpecificData, time.Now().Unix(), connID)
-		if err != nil {
-			log.Printf("WARN: failed to persist OAuth token for connection %s: %v", connID, err)
-		}
-		return err
-	})
 	return nil
 }
 
@@ -1177,7 +1163,7 @@ func (h *Handler) handleFailoverError(ctx context.Context, c *gin.Context, conn 
 	if provider == "codebuddy" && (det.Category == connstate.ErrorQuota || det.Category == connstate.ErrorRateLimit) {
 		h.refreshQuotaAsync(conn.ID)
 	}
-	h.elig.ScheduleUpdate()
+	h.elig.ScheduleUpdateProvider(provider)
 	h.checkAutoDisable(conn.ID, provider)
 
 	// Truncate error for log readability — full error goes to tracker DB
@@ -1265,7 +1251,7 @@ func (h *Handler) refreshQuotaAsync(connID string) {
 		}})
 		quota.UpdateConnectionQuotaStatus(h.db, h.store, h.exhaustion, connID, cq.Quotas, cq.Error, &changed)
 		if changed {
-			h.elig.ScheduleUpdate()
+			h.scheduleEligibilityUpdate(connID)
 		}
 	}()
 }
@@ -1713,7 +1699,7 @@ func (h *Handler) checkAutoDisable(connID, provider string) {
 	// In-memory status update is synchronous (cheap, lock-free sync.Map).
 	if banCount >= threshold {
 		h.store.UpdateStatus(connID, connstate.StatusDisabled)
-		h.elig.ScheduleUpdate()
+		h.scheduleEligibilityUpdate(connID)
 	}
 }
 
@@ -1828,7 +1814,7 @@ func (h *Handler) persistSuccess(connID string) {
 			cs.SetStatus(connstate.StatusReady, "")
 		}
 	}
-	h.elig.ScheduleUpdate()
+	h.scheduleEligibilityUpdate(connID)
 
 	// Only clear a stale DB cooldown row when the cooldown has actually
 	// expired. If the cooldown is still active, leave the DB row alone so the
@@ -1973,4 +1959,18 @@ func (h *Handler) accumulateAPIKeyUsage(apiKeyID string, reqBody, respBody []byt
 		}
 	}
 	h.incrementAPIKeyUsage(apiKeyID, total)
+}
+
+// scheduleEligibilityUpdate triggers a per-provider eligibility rebuild for the
+// provider that owns connID. If the connection is not found in the store, it
+// falls back to a full rebuild.
+func (h *Handler) scheduleEligibilityUpdate(connID string) {
+	cs := h.store.Get(connID)
+	if cs == nil || h.elig == nil {
+		if h.elig != nil {
+			h.elig.ScheduleUpdate()
+		}
+		return
+	}
+	h.elig.ScheduleUpdateProvider(cs.Prefix)
 }

@@ -62,6 +62,16 @@ type OAuthService interface {
 	StartLocalServer(ctx context.Context, state string) (port int, resultChan chan *Credentials, err error)
 }
 
+// TokenWriter persists refreshed OAuth tokens to the backing store. It is used
+// by Manager.RefreshToken/RefreshTokenForConnection to apply a compare-and-swap
+// (CAS) pattern: read the current refresh token, write only if it still matches
+// the token we presented to the upstream provider. This prevents concurrent
+// refreshes from overwriting a token rotated by another writer.
+type TokenWriter interface {
+	GetRefreshToken(ctx context.Context, connID string) (string, error)
+	SaveTokens(ctx context.Context, connID, accessToken, refreshToken string, expiresAt int64, providerSpecific map[string]string) error
+}
+
 // Manager coordinates authentication across providers.
 type Manager struct {
 	mu           sync.RWMutex
@@ -79,6 +89,10 @@ type Manager struct {
 	// Matches OmniRoute tokenRefresh.ts:83-141 tokenRotationMap.
 	rotationMu  sync.Mutex
 	rotationMap map[string]rotationEntry // key → {result, expiresAt}
+
+	// tokenWriter optionally persists refreshed tokens to the database using CAS.
+	writerMu    sync.RWMutex
+	tokenWriter TokenWriter
 }
 
 // rotationEntry caches a recent token rotation.
@@ -99,13 +113,27 @@ var rotationGroup = map[ProviderType]string{
 
 const refreshSpacingMs = 2000
 
-// NewManager creates a new auth manager.
+// NewManager creates a new auth manager without persistence.
 func NewManager() *Manager {
+	return NewManagerWithWriter(nil)
+}
+
+// NewManagerWithWriter creates a new auth manager that persists refreshed
+// OAuth tokens via the supplied TokenWriter using a CAS pattern.
+func NewManagerWithWriter(w TokenWriter) *Manager {
 	return &Manager{
 		services:    make(map[ProviderType]OAuthService),
 		groupTail:   make(map[string]chan struct{}),
 		rotationMap: make(map[string]rotationEntry),
+		tokenWriter: w,
 	}
+}
+
+// SetTokenWriter configures the writer used for CAS token persistence.
+func (m *Manager) SetTokenWriter(w TokenWriter) {
+	m.writerMu.Lock()
+	defer m.writerMu.Unlock()
+	m.tokenWriter = w
 }
 
 // rotationCacheKey creates a cache key for the rotation map.
@@ -168,11 +196,31 @@ func (m *Manager) GetService(provider ProviderType) (OAuthService, bool) {
 // RefreshToken refreshes tokens with singleflight deduplication AND rotation-group serialization.
 // Providers in the same rotation group (e.g. codex+openai → openai-auth0) are serialized
 // to prevent Auth0 family revocation. Matches OmniRoute refreshSerializer.ts.
+// This method does not persist refreshed tokens; use RefreshTokenForConnection when you
+// need CAS database persistence.
 func (m *Manager) RefreshToken(ctx context.Context, provider ProviderType, creds *Credentials) (*Credentials, error) {
+	return m.refreshToken(ctx, "", provider, creds)
+}
+
+// RefreshTokenForConnection refreshes tokens with the same deduplication/serialization
+// guarantees as RefreshToken, and additionally persists refreshed tokens to the
+// database using a compare-and-swap pattern keyed by connection ID. If the current
+// DB refresh token differs from the token we presented, another writer already
+// rotated it and our DB write is skipped, but the in-memory rotation map is still
+// updated so stale callers can be redirected to the latest token.
+func (m *Manager) RefreshTokenForConnection(ctx context.Context, connID string, provider ProviderType, creds *Credentials) (*Credentials, error) {
+	return m.refreshToken(ctx, connID, provider, creds)
+}
+
+func (m *Manager) refreshToken(ctx context.Context, connID string, provider ProviderType, creds *Credentials) (*Credentials, error) {
 	svc, ok := m.GetService(provider)
 	if !ok {
 		return nil, fmt.Errorf("no auth service for provider: %s", provider)
 	}
+
+	m.writerMu.RLock()
+	writer := m.tokenWriter
+	m.writerMu.RUnlock()
 
 	// Check rotation map: if this refresh_token was recently rotated, return cached result
 	if entry := m.lookupRotation(provider, creds.RefreshToken); entry != nil {
@@ -226,6 +274,23 @@ func (m *Manager) RefreshToken(ctx context.Context, provider ProviderType, creds
 	// Preserve old refresh token when provider omits it (Google/Antigravity often omit)
 	if newCreds.RefreshToken == "" {
 		newCreds.RefreshToken = oldRefreshToken
+	}
+
+	// CAS persistence: read current refresh token from DB and write only if it
+	// matches the token we just presented. Skip writes when another writer has
+	// already rotated the refresh token, but still update the rotation map below.
+	if writer != nil && connID != "" {
+		currentRefresh, readErr := writer.GetRefreshToken(ctx, connID)
+		if readErr == nil {
+			if currentRefresh == oldRefreshToken {
+				expiresAt := newCreds.ExpiresAt.Unix()
+				if err := writer.SaveTokens(ctx, connID, newCreds.AccessToken, newCreds.RefreshToken, expiresAt, newCreds.ProviderSpecific); err != nil {
+					return nil, err
+				}
+			}
+		}
+		// If the read fails we cannot safely CAS; skip the write but do not fail
+		// the refresh because the new tokens are still usable in memory.
 	}
 
 	// Record rotation for stale caller redirect

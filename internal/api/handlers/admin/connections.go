@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
+	"github.com/rickicode/AxonRouter-Go/internal/background"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
@@ -26,18 +27,19 @@ type modelTester interface {
 
 // ConnectionHandler handles connection CRUD operations.
 type ConnectionHandler struct {
-	db         *sql.DB
-	registry   *executor.Registry
-	store      *connstate.Store
-	elig       *connstate.EligibilityManager
-	exhaustion *quota.ExhaustionCache
-	authMgr    *auth.Manager
-	writeQueue *db.WriteQueue
+	db           *sql.DB
+	registry     *executor.Registry
+	store        *connstate.Store
+	elig         *connstate.EligibilityManager
+	exhaustion   *quota.ExhaustionCache
+	authMgr      *auth.Manager
+	writeQueue   *db.WriteQueue
+	lifecycleMgr *background.LifecycleManager
 }
 
 // NewConnectionHandler creates a new connection handler.
-func NewConnectionHandler(database *sql.DB, registry *executor.Registry, store *connstate.Store, elig *connstate.EligibilityManager, exhaustion *quota.ExhaustionCache, authMgr *auth.Manager, writeQueue *db.WriteQueue) *ConnectionHandler {
-	return &ConnectionHandler{db: database, registry: registry, store: store, elig: elig, exhaustion: exhaustion, authMgr: authMgr, writeQueue: writeQueue}
+func NewConnectionHandler(database *sql.DB, registry *executor.Registry, store *connstate.Store, elig *connstate.EligibilityManager, exhaustion *quota.ExhaustionCache, authMgr *auth.Manager, writeQueue *db.WriteQueue, lifecycleMgr *background.LifecycleManager) *ConnectionHandler {
+	return &ConnectionHandler{db: database, registry: registry, store: store, elig: elig, exhaustion: exhaustion, authMgr: authMgr, writeQueue: writeQueue, lifecycleMgr: lifecycleMgr}
 }
 
 // List returns paginated connections for a provider.
@@ -334,7 +336,7 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 			ExpiresAt:        time.Unix(expiresAt, 0),
 			ProviderSpecific: psdMap,
 		}
-		newCreds, refreshErr := h.authMgr.RefreshToken(ctx, auth.ProviderType(conn.ProviderTypeID), creds)
+		newCreds, refreshErr := h.authMgr.RefreshTokenForConnection(ctx, id, auth.ProviderType(conn.ProviderTypeID), creds)
 		if refreshErr != nil {
 			log.Printf("TestConnection proactive refresh failed for %s: %v", id, refreshErr)
 		} else {
@@ -346,24 +348,6 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 			}
 			if len(newCreds.ProviderSpecific) > 0 {
 				psdMap = newCreds.ProviderSpecific
-			}
-			if len(psdMap) > 0 {
-				psdJSON, _ := json.Marshal(psdMap)
-				if err := h.execWrite(ctx, "testconnection:refresh:"+id, func(d *sql.DB) error {
-					_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?`,
-						accessToken, refreshToken, expiresAt, psdJSON, time.Now().Unix(), id)
-					return err
-				}); err != nil {
-					log.Printf("TestConnection failed to persist refreshed token for %s: %v", id, err)
-				}
-			} else {
-				if err := h.execWrite(ctx, "testconnection:refresh:"+id, func(d *sql.DB) error {
-					_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
-						accessToken, refreshToken, expiresAt, time.Now().Unix(), id)
-					return err
-				}); err != nil {
-					log.Printf("TestConnection failed to persist refreshed token for %s: %v", id, err)
-				}
 			}
 		}
 	}
@@ -409,7 +393,7 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 			ExpiresAt:        time.Unix(expiresAt, 0),
 			ProviderSpecific: psdMap,
 		}
-		newCreds, refreshErr := h.authMgr.RefreshToken(ctx, auth.ProviderType(conn.ProviderTypeID), creds)
+		newCreds, refreshErr := h.authMgr.RefreshTokenForConnection(ctx, id, auth.ProviderType(conn.ProviderTypeID), creds)
 		if refreshErr == nil {
 			accessToken = newCreds.AccessToken
 			expiresAt = newCreds.ExpiresAt.Unix()
@@ -419,24 +403,6 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 			}
 			if len(newCreds.ProviderSpecific) > 0 {
 				psdMap = newCreds.ProviderSpecific
-			}
-			if len(psdMap) > 0 {
-				psdJSON, _ := json.Marshal(psdMap)
-				if err := h.execWrite(ctx, "testconnection:refresh:"+id, func(d *sql.DB) error {
-					_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?`,
-						accessToken, refreshToken, expiresAt, psdJSON, time.Now().Unix(), id)
-					return err
-				}); err != nil {
-					log.Printf("TestConnection failed to persist refreshed token for %s: %v", id, err)
-				}
-			} else {
-				if err := h.execWrite(ctx, "testconnection:refresh:"+id, func(d *sql.DB) error {
-					_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
-						accessToken, refreshToken, expiresAt, time.Now().Unix(), id)
-					return err
-				}); err != nil {
-					log.Printf("TestConnection failed to persist refreshed token for %s: %v", id, err)
-				}
 			}
 
 			req.AccessToken = accessToken
@@ -812,27 +778,10 @@ func (h *ConnectionHandler) RefreshToken(c *gin.Context) {
 		ProviderSpecific: providerSpecific,
 	}
 
-	newCreds, err := h.authMgr.RefreshToken(c.Request.Context(), auth.ProviderType(providerTypeID), creds)
+	newCreds, err := h.authMgr.RefreshTokenForConnection(c.Request.Context(), connID, auth.ProviderType(providerTypeID), creds)
 	if err != nil {
 		log.Printf("Manual token refresh failed for %s: %v", connID, err)
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
-	}
-
-	now := time.Now().Unix()
-	if len(newCreds.ProviderSpecific) > 0 {
-		psdJSON, _ := json.Marshal(newCreds.ProviderSpecific)
-		_, err = h.db.Exec(`
-			UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?
-		`, newCreds.AccessToken, newCreds.RefreshToken, newCreds.ExpiresAt.Unix(), psdJSON, now, connID)
-	} else {
-		_, err = h.db.Exec(`
-			UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?
-		`, newCreds.AccessToken, newCreds.RefreshToken, newCreds.ExpiresAt.Unix(), now, connID)
-	}
-	if err != nil {
-		log.Printf("Failed to persist refreshed token for %s: %v", connID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to persist token"})
 		return
 	}
 
@@ -848,4 +797,22 @@ func (h *ConnectionHandler) RefreshToken(c *gin.Context) {
 		"expires_at": newCreds.ExpiresAt.Unix(),
 		"message":    "Token refreshed successfully",
 	})
+}
+
+// CleanupConnections runs the connection lifecycle cleanup synchronously and
+// returns how many stale disabled/auth_failed rows were deleted.
+// POST /api/admin/system/connection-cleanup
+func (h *ConnectionHandler) CleanupConnections(c *gin.Context) {
+	if h.lifecycleMgr == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "lifecycle manager not configured"})
+		return
+	}
+
+	deleted, err := h.lifecycleMgr.Cleanup()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "cleanup failed: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"deleted": deleted})
 }

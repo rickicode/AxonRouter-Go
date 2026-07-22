@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
+	internaldb "github.com/rickicode/AxonRouter-Go/internal/db"
 	_ "modernc.org/sqlite"
 )
 
@@ -84,7 +85,7 @@ func TestFetchConnectionQuota_RefreshesTokenViaAuthManager(t *testing.T) {
 			ProviderSpecific: map[string]string{"key": "newval"},
 		},
 	}
-	mgr := auth.NewManager()
+	mgr := auth.NewManagerWithWriter(internaldb.NewOAuthTokenWriter(db, nil))
 	mgr.RegisterService(auth.ProviderType("testprovider"), mock)
 	SetAuthManager(mgr)
 	defer SetAuthManager(nil)
@@ -140,7 +141,7 @@ func TestFetchConnectionQuota_NoRefreshWhenTokenValid(t *testing.T) {
 			ExpiresAt:    time.Now().Add(2 * time.Hour),
 		},
 	}
-	mgr := auth.NewManager()
+	mgr := auth.NewManagerWithWriter(internaldb.NewOAuthTokenWriter(db, nil))
 	mgr.RegisterService(auth.ProviderType("testprovider"), mock)
 	SetAuthManager(mgr)
 	defer SetAuthManager(nil)
@@ -176,7 +177,7 @@ func TestFetchConnectionQuota_SkipsRefreshWithoutRefreshToken(t *testing.T) {
 	}
 
 	mock := &mockOAuthService{creds: &auth.Credentials{AccessToken: "x"}}
-	mgr := auth.NewManager()
+	mgr := auth.NewManagerWithWriter(internaldb.NewOAuthTokenWriter(db, nil))
 	mgr.RegisterService(auth.ProviderType("testprovider"), mock)
 	SetAuthManager(mgr)
 	defer SetAuthManager(nil)
@@ -212,7 +213,7 @@ func TestFetchConnectionQuota_PassesProviderSpecificToAuthManager(t *testing.T) 
 			ProviderSpecific: map[string]string{"profileArn": "arn:new"},
 		},
 	}
-	mgr := auth.NewManager()
+	mgr := auth.NewManagerWithWriter(internaldb.NewOAuthTokenWriter(db, nil))
 	mgr.RegisterService(auth.ProviderType("testprovider"), mock)
 	SetAuthManager(mgr)
 	defer SetAuthManager(nil)
@@ -258,7 +259,7 @@ func TestFetchConnectionQuota_DeferredRefreshWhenTokenStillValid(t *testing.T) {
 	}
 
 	mock := &mockOAuthService{returnErr: errors.New("social refresh failed 401: Bad credentials")}
-	mgr := auth.NewManager()
+	mgr := auth.NewManagerWithWriter(internaldb.NewOAuthTokenWriter(db, nil))
 	mgr.RegisterService(auth.ProviderType("testprovider"), mock)
 	SetAuthManager(mgr)
 	defer SetAuthManager(nil)
@@ -308,7 +309,7 @@ func TestForceRefreshOnQuotaAuthError_UpdatesTokenAndProviderSpecific(t *testing
 			ProviderSpecific: map[string]string{"profileArn": "arn:forced"},
 		},
 	}
-	mgr := auth.NewManager()
+	mgr := auth.NewManagerWithWriter(internaldb.NewOAuthTokenWriter(db, nil))
 	mgr.RegisterService(auth.ProviderType("kiro"), mock)
 	SetAuthManager(mgr)
 	defer SetAuthManager(nil)
