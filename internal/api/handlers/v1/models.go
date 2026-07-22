@@ -141,6 +141,23 @@ func (h *Handler) ListActiveModels() []gin.H {
 	return result
 }
 
+// modelIDAllowed reports whether a model id is explicitly allowed or its
+// provider prefix is present in the allowed set. An empty allowed set means
+// unlimited access. The matching logic is shared with filterAllowedModels.
+func modelIDAllowed(modelID string, allowed map[string]struct{}) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	prefix := strings.SplitN(modelID, "/", 2)[0]
+	if _, ok := allowed[modelID]; ok {
+		return true
+	}
+	if _, ok := allowed[prefix]; ok {
+		return true
+	}
+	return false
+}
+
 // filterAllowedModels returns only models whose id or provider prefix is present
 // in allowed. An empty allowed map means unlimited access.
 func filterAllowedModels(all []gin.H, allowed map[string]struct{}) []gin.H {
@@ -150,12 +167,7 @@ func filterAllowedModels(all []gin.H, allowed map[string]struct{}) []gin.H {
 	var result []gin.H
 	for _, m := range all {
 		id, _ := m["id"].(string)
-		prefix := strings.SplitN(id, "/", 2)[0]
-		if _, ok := allowed[id]; ok {
-			result = append(result, m)
-			continue
-		}
-		if _, ok := allowed[prefix]; ok {
+		if modelIDAllowed(id, allowed) {
 			result = append(result, m)
 		}
 	}

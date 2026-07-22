@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Enforce allowed_models on direct `/v1/*` routes** — all direct routing handlers (`/v1/chat/completions`, `/v1/messages`, `/v1/messages/count_tokens`, `/v1/responses`, `/v1/embeddings`, `/v1/images/generations`, `/v1/video/generations`, `/v1/audio/speech`, `/v1/audio/transcriptions`, `/v1/unified`) now reject requests with `403 Forbidden` when the requested model is not in the API key's allowlist. The check uses the same full-ID and provider-prefix matching as the `GET /v1/models` filter, and a missing or empty allowlist preserves unlimited access.
 - **Amazon Q built-in provider** — new `amazon-q/` (and `aq/`) prefix for Amazon Q Developer, reusing the Kiro executor and translator. Registers `amazon-q` in provider types, the executor registry, and the dashboard catalog with a static model list mirroring Kiro (`auto`, Claude 4.x/4.5/4.6/4.7/5, DeepSeek V3.2, MiniMax M2.x, GLM-5, and Qwen3 Coder Next).
 - **Kiro Claude 4.6 / 4.7 models** — adds `claude-sonnet-4.6`, `claude-opus-4.6`, `claude-sonnet-4.7`, and `claude-opus-4.7` base models with pricing seed so the full Claude 4.x family is routable.
 - **Kiro catalog sync** — keeps `internal/models/models.json` in sync with `internal/provider/kiro/catalog.go` by adding missing `auto` and `claude-sonnet-4` entries, plus a regression test to prevent future drift.

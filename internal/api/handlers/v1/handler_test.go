@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -1987,5 +1988,231 @@ func TestFusion_MinPanelThenGrace(t *testing.T) {
 	// Should not wait 30s for slow panel; minPanel(2)+grace(100ms) should be enough.
 	if elapsed >= 2*time.Second {
 		t.Fatalf("fusion hung too long waiting for all panels: %v", elapsed)
+	}
+}
+
+func TestIsModelAllowed(t *testing.T) {
+	h := newTestHandler(t)
+
+	tests := []struct {
+		name    string
+		model   string
+		allowed map[string]struct{}
+		want    bool
+	}{
+		{name: "nil allowed means unlimited", model: "openai/gpt-4o", allowed: nil, want: true},
+		{name: "empty allowed means unlimited", model: "openai/gpt-4o", allowed: map[string]struct{}{}, want: true},
+		{name: "exact full id match", model: "openai/gpt-4o", allowed: map[string]struct{}{"openai/gpt-4o": {}}, want: true},
+		{name: "provider prefix match", model: "openai/gpt-4o", allowed: map[string]struct{}{"openai": {}}, want: true},
+		{name: "no match", model: "openai/gpt-4o", allowed: map[string]struct{}{"claude": {}}, want: false},
+		{name: "exact mismatch", model: "openai/gpt-4o", allowed: map[string]struct{}{"openai/gpt-4o-mini": {}}, want: false},
+		{name: "combo name exact match", model: "my-combo", allowed: map[string]struct{}{"my-combo": {}}, want: true},
+		{name: "smart prefix match", model: "smart/auto", allowed: map[string]struct{}{"smart": {}}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			if tt.allowed != nil {
+				ctx = context.WithValue(ctx, "allowed_models", tt.allowed)
+			}
+			if got := h.isModelAllowed(ctx, tt.model); got != tt.want {
+				t.Errorf("isModelAllowed(%q) = %v, want %v", tt.model, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestModelIDAllowed(t *testing.T) {
+	tests := []struct {
+		name    string
+		model   string
+		allowed map[string]struct{}
+		want    bool
+	}{
+		{name: "unlimited", model: "openai/gpt-4o", allowed: nil, want: true},
+		{name: "exact id", model: "openai/gpt-4o", allowed: map[string]struct{}{"openai/gpt-4o": {}}, want: true},
+		{name: "prefix", model: "openai/gpt-4o-mini", allowed: map[string]struct{}{"openai": {}}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := modelIDAllowed(tt.model, tt.allowed); got != tt.want {
+				t.Errorf("modelIDAllowed(%q) = %v, want %v", tt.model, got, tt.want)
+			}
+		})
+	}
+}
+
+// jsonRequestWithAllowedModels builds a Gin test context carrying an allowed_models
+// set on the request context. nil allowed means unlimited.
+func jsonRequestWithAllowedModels(t *testing.T, method, path string, body []byte, allowed map[string]struct{}) (*httptest.ResponseRecorder, *gin.Context) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	ctx := context.Background()
+	if allowed != nil {
+		ctx = context.WithValue(ctx, "allowed_models", allowed)
+	}
+	c.Request = httptest.NewRequest(method, path, bytes.NewReader(body)).WithContext(ctx)
+	c.Request.Header.Set("Content-Type", "application/json")
+	return rec, c
+}
+
+func TestDirectRoutes_ModelNotAllowed_ReturnsForbidden(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := newTestHandler(t)
+
+	forbidden := map[string]struct{}{"claude": {}}
+
+	cases := []struct {
+		name         string
+		path         string
+		body         []byte
+		allowed      map[string]struct{}
+		wantStatus   int
+		checkBody    bool
+		wantContains string
+		handler      func(*gin.Context)
+	}{
+		{
+			name:         "chat completions forbidden",
+			path:         "/v1/chat/completions",
+			body:         []byte(`{"model":"openai/gpt-4o","messages":[{"role":"user","content":"hi"}]}`),
+			allowed:      forbidden,
+			wantStatus:   http.StatusForbidden,
+			checkBody:    true,
+			wantContains: "model not allowed for this API key",
+			handler:      h.ChatCompletions,
+		},
+		{
+			name:         "messages forbidden",
+			path:         "/v1/messages",
+			body:         []byte(`{"model":"openai/gpt-4o","messages":[{"role":"user","content":"hi"}]}`),
+			allowed:      forbidden,
+			wantStatus:   http.StatusForbidden,
+			checkBody:    true,
+			wantContains: "model not allowed for this API key",
+			handler:      h.Messages,
+		},
+		{
+			name:         "count tokens forbidden",
+			path:         "/v1/messages/count_tokens",
+			body:         []byte(`{"model":"openai/gpt-4o","messages":[{"role":"user","content":"hi"}]}`),
+			allowed:      forbidden,
+			wantStatus:   http.StatusForbidden,
+			checkBody:    true,
+			wantContains: "model not allowed for this API key",
+			handler:      h.CountTokens,
+		},
+		{
+			name:         "responses forbidden",
+			path:         "/v1/responses",
+			body:         []byte(`{"model":"openai/gpt-4o","input":"hi"}`),
+			allowed:      forbidden,
+			wantStatus:   http.StatusForbidden,
+			checkBody:    true,
+			wantContains: "model not allowed for this API key",
+			handler:      h.Responses,
+		},
+		{
+			name:         "embeddings forbidden",
+			path:         "/v1/embeddings",
+			body:         []byte(`{"model":"openai/text-embedding-3-small","input":"hi"}`),
+			allowed:      forbidden,
+			wantStatus:   http.StatusForbidden,
+			checkBody:    true,
+			wantContains: "model not allowed for this API key",
+			handler:      h.Embeddings,
+		},
+		{
+			name:         "images forbidden",
+			path:         "/v1/images/generations",
+			body:         []byte(`{"model":"openai/dall-e-3","prompt":"hi"}`),
+			allowed:      forbidden,
+			wantStatus:   http.StatusForbidden,
+			checkBody:    true,
+			wantContains: "model not allowed for this API key",
+			handler:      h.Images,
+		},
+		{
+			name:         "video forbidden",
+			path:         "/v1/video/generations",
+			body:         []byte(`{"model":"openai/gpt-4o","prompt":"hi"}`),
+			allowed:      forbidden,
+			wantStatus:   http.StatusForbidden,
+			checkBody:    true,
+			wantContains: "model not allowed for this API key",
+			handler:      h.Video,
+		},
+		{
+			name:         "tts forbidden",
+			path:         "/v1/audio/speech",
+			body:         []byte(`{"model":"openai/tts-1","input":"hi"}`),
+			allowed:      forbidden,
+			wantStatus:   http.StatusForbidden,
+			checkBody:    true,
+			wantContains: "model not allowed for this API key",
+			handler:      h.TTS,
+		},
+		{
+			name:         "unified forbidden",
+			path:         "/v1/unified",
+			body:         []byte(`{"mode":"text","model":"openai/gpt-4o","messages":[{"role":"user","content":"hi"}]}`),
+			allowed:      forbidden,
+			wantStatus:   http.StatusForbidden,
+			checkBody:    true,
+			wantContains: "model not allowed for this API key",
+			handler:      h.Unified,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec, c := jsonRequestWithAllowedModels(t, http.MethodPost, tc.path, tc.body, tc.allowed)
+			tc.handler(c)
+			if rec.Code != tc.wantStatus {
+				t.Errorf("status = %d, want %d: body = %s", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			if tc.checkBody && !strings.Contains(rec.Body.String(), tc.wantContains) {
+				t.Errorf("body does not contain %q: %s", tc.wantContains, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestSTT_ModelNotAllowed_ReturnsForbidden(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := newTestHandler(t)
+
+	forbidden := map[string]struct{}{"claude": {}}
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if err := mw.WriteField("model", "openai/whisper-1"); err != nil {
+		t.Fatalf("write model field: %v", err)
+	}
+	part, err := mw.CreateFormFile("file", "audio.wav")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write([]byte("fake audio")); err != nil {
+		t.Fatalf("write file data: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	ctx := context.WithValue(context.Background(), "allowed_models", forbidden)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", &buf).WithContext(ctx)
+	c.Request.Header.Set("Content-Type", mw.FormDataContentType())
+
+	h.STT(c)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d: body = %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "model not allowed for this API key") {
+		t.Errorf("body does not contain forbidden message: %s", rec.Body.String())
 	}
 }

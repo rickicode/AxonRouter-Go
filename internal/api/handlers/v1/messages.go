@@ -37,6 +37,10 @@ func (h *Handler) Messages(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, claudeError("invalid_request_error", "model is required"))
 		return
 	}
+	if !h.isModelAllowed(c.Request.Context(), model) {
+		c.JSON(http.StatusForbidden, claudeError("invalid_request_error", "model not allowed for this API key"))
+		return
+	}
 
 	stream := executor.IsStreamRequest(body)
 	if h.checkTokenBudget(c, body) != nil {
@@ -288,6 +292,10 @@ func (h *Handler) CountTokens(c *gin.Context) {
 	model := executor.JSONGet(body, "model")
 	if model == "" {
 		c.JSON(http.StatusBadRequest, claudeError("invalid_request_error", "model is required"))
+		return
+	}
+	if !h.isModelAllowed(c.Request.Context(), model) {
+		c.JSON(http.StatusForbidden, claudeError("invalid_request_error", "model not allowed for this API key"))
 		return
 	}
 	provider, modelName := executor.SplitModel(model)
