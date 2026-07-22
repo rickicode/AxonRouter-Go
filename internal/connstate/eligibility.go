@@ -52,6 +52,9 @@ func (e *EligibilityManager) Update(store *Store) {
 
 	store.RangeByConnID(func(connID string, cs *ConnectionState) bool {
 		status := cs.GetStatus()
+		if status.IsRoutingTerminal() {
+			return true
+		}
 		// Exclude connections that are actively cooled down or exhausted.  This keeps
 		// the eligibility snapshot consistent with getConnection's preflight checks
 		// and guarantees we never route to rate-limited/exhausted accounts.

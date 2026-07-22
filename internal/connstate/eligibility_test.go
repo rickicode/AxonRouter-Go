@@ -63,6 +63,42 @@ func TestEligibilityByPrefixStatePreMaterialized(t *testing.T) {
 	}
 }
 
+// TestEligibilityExcludesTerminalStatuses proves that connections with a
+// routing-terminal status never appear in the snapshot.
+func TestEligibilityExcludesTerminalStatuses(t *testing.T) {
+	store := NewStore()
+
+	store.SeedConnection("conn-ready", "test", string(StatusReady), 0)
+	store.SeedConnection("conn-auth", "test", string(StatusAuthFailed), 0)
+	store.SeedConnection("conn-disabled", "test", string(StatusDisabled), 0)
+	store.SeedConnection("conn-suspended", "test", string(StatusSuspended), 0)
+	store.SeedConnection("conn-balance", "test", string(StatusBalanceEmpty), 0)
+
+	mgr := NewEligibilityManager(store)
+	mgr.RecomputeAll()
+
+	ids := mgr.GetByPrefix("test")
+	if len(ids) != 1 || ids[0] != "conn-ready" {
+		t.Fatalf("expected only conn-ready in ByPrefix, got %v", ids)
+	}
+
+	states := mgr.GetByPrefixState("test")
+	if len(states) != 1 || states[0].ID != "conn-ready" {
+		t.Fatalf("expected only conn-ready in ByPrefixState, got %v", idsFromStates(states))
+	}
+
+	all := mgr.GetAll()
+	if len(all) != 1 || all[0] != "conn-ready" {
+		t.Fatalf("expected only conn-ready in GetAll, got %v", all)
+	}
+
+	for _, id := range []string{"conn-auth", "conn-disabled", "conn-suspended", "conn-balance"} {
+		if mgr.IsEligible(id) {
+			t.Fatalf("terminal connection %s should not be eligible", id)
+		}
+	}
+}
+
 func idsFromStates(states []*ConnectionState) []string {
 	ids := make([]string, len(states))
 	for i, s := range states {
