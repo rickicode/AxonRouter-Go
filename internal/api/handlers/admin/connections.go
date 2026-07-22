@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
+	"github.com/rickicode/AxonRouter-Go/internal/background"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
@@ -26,18 +27,19 @@ type modelTester interface {
 
 // ConnectionHandler handles connection CRUD operations.
 type ConnectionHandler struct {
-	db         *sql.DB
-	registry   *executor.Registry
-	store      *connstate.Store
-	elig       *connstate.EligibilityManager
-	exhaustion *quota.ExhaustionCache
-	authMgr    *auth.Manager
-	writeQueue *db.WriteQueue
+	db           *sql.DB
+	registry     *executor.Registry
+	store        *connstate.Store
+	elig         *connstate.EligibilityManager
+	exhaustion   *quota.ExhaustionCache
+	authMgr      *auth.Manager
+	writeQueue   *db.WriteQueue
+	lifecycleMgr *background.LifecycleManager
 }
 
 // NewConnectionHandler creates a new connection handler.
-func NewConnectionHandler(database *sql.DB, registry *executor.Registry, store *connstate.Store, elig *connstate.EligibilityManager, exhaustion *quota.ExhaustionCache, authMgr *auth.Manager, writeQueue *db.WriteQueue) *ConnectionHandler {
-	return &ConnectionHandler{db: database, registry: registry, store: store, elig: elig, exhaustion: exhaustion, authMgr: authMgr, writeQueue: writeQueue}
+func NewConnectionHandler(database *sql.DB, registry *executor.Registry, store *connstate.Store, elig *connstate.EligibilityManager, exhaustion *quota.ExhaustionCache, authMgr *auth.Manager, writeQueue *db.WriteQueue, lifecycleMgr *background.LifecycleManager) *ConnectionHandler {
+	return &ConnectionHandler{db: database, registry: registry, store: store, elig: elig, exhaustion: exhaustion, authMgr: authMgr, writeQueue: writeQueue, lifecycleMgr: lifecycleMgr}
 }
 
 // List returns paginated connections for a provider.
@@ -848,4 +850,22 @@ func (h *ConnectionHandler) RefreshToken(c *gin.Context) {
 		"expires_at": newCreds.ExpiresAt.Unix(),
 		"message":    "Token refreshed successfully",
 	})
+}
+
+// CleanupConnections runs the connection lifecycle cleanup synchronously and
+// returns how many stale disabled/auth_failed rows were deleted.
+// POST /api/admin/system/connection-cleanup
+func (h *ConnectionHandler) CleanupConnections(c *gin.Context) {
+	if h.lifecycleMgr == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "lifecycle manager not configured"})
+		return
+	}
+
+	deleted, err := h.lifecycleMgr.Cleanup()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "cleanup failed: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"deleted": deleted})
 }
