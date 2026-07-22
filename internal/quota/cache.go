@@ -329,7 +329,7 @@ func UpdateConnectionQuotaStatus(db *sql.DB, store *connstate.Store, exhaustion 
 				case "disabled", "suspended", "balance_empty":
 					// already in a terminal state; leave it
 				default:
-					if _, derr := db.Exec(`UPDATE connections SET status = 'disabled', updated_at = ? WHERE id = ?`, time.Now().Unix(), connID); derr == nil {
+					if _, derr := db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', updated_at = ? WHERE id = ?`, time.Now().Unix(), connID); derr == nil {
 						if cs := store.Get(connID); cs != nil {
 							cs.SetStatus(connstate.Status("disabled"), connError)
 						}

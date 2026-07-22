@@ -19,6 +19,7 @@ func newCacheTestDB(t *testing.T) *sql.DB {
 	db.Exec(`CREATE TABLE connections (
 		id TEXT PRIMARY KEY,
 		status TEXT,
+		is_active INTEGER,
 		updated_at INTEGER
 	)`)
 	db.Exec(`CREATE TABLE quota_cache (

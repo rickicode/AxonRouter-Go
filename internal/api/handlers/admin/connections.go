@@ -191,6 +191,14 @@ func (h *ConnectionHandler) Update(c *gin.Context) {
 	if req.IsActive != nil {
 		sets = append(sets, "is_active = ?")
 		args = append(args, boolToInt(*req.IsActive))
+		// Keep status in sync with active flag unless caller explicitly provided a status.
+		if req.Status == "" {
+			if *req.IsActive {
+				sets = append(sets, "status = 'ready'")
+			} else {
+				sets = append(sets, "status = 'disabled'")
+			}
+		}
 	}
 	if req.Capabilities != "" {
 		sets = append(sets, "capabilities = ?")
@@ -249,7 +257,7 @@ func (h *ConnectionHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	result, err := h.db.Exec(`UPDATE connections SET is_active = 0, updated_at = ? WHERE id = ?`, time.Now().Unix(), id)
+	result, err := h.db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', updated_at = ? WHERE id = ?`, time.Now().Unix(), id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -625,11 +633,11 @@ func (h *ConnectionHandler) BulkUpdate(c *gin.Context) {
 	var status connstate.Status
 	switch req.Action {
 	case "disable":
-		query = "UPDATE connections SET is_active = ?, updated_at = ? WHERE id IN (" + inClause + ")"
+		query = "UPDATE connections SET is_active = ?, status = 'disabled', updated_at = ? WHERE id IN (" + inClause + ")"
 		args = append([]interface{}{false, now}, args...)
 		status = connstate.StatusDisabled
 	case "enable":
-		query = "UPDATE connections SET is_active = ?, updated_at = ? WHERE id IN (" + inClause + ")"
+		query = "UPDATE connections SET is_active = ?, status = 'ready', updated_at = ? WHERE id IN (" + inClause + ")"
 		args = append([]interface{}{true, now}, args...)
 		status = connstate.StatusReady
 	case "reset":
@@ -637,7 +645,7 @@ func (h *ConnectionHandler) BulkUpdate(c *gin.Context) {
 		args = append([]interface{}{now}, args...)
 		status = connstate.StatusReady
 	case "delete":
-		query = "UPDATE connections SET is_active = ?, updated_at = ? WHERE id IN (" + inClause + ")"
+		query = "UPDATE connections SET is_active = ?, status = 'disabled', updated_at = ? WHERE id IN (" + inClause + ")"
 		args = append([]interface{}{false, now}, args...)
 		status = connstate.StatusDisabled
 	default:
@@ -802,13 +810,29 @@ func (h *ConnectionHandler) RefreshToken(c *gin.Context) {
 // CleanupConnections runs the connection lifecycle cleanup synchronously and
 // returns how many stale disabled/auth_failed rows were deleted.
 // POST /api/admin/system/connection-cleanup
+//
+// Query params:
+//   grace_days - optional retention window in days; defaults to the manager's
+//                configured retention. Use 0 to delete every eligible row.
 func (h *ConnectionHandler) CleanupConnections(c *gin.Context) {
 	if h.lifecycleMgr == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "lifecycle manager not configured"})
 		return
 	}
 
-	deleted, err := h.lifecycleMgr.Cleanup()
+	var deleted int64
+	var err error
+	if s := c.Query("grace_days"); s != "" {
+		days, parseErr := strconv.Atoi(s)
+		if parseErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid grace_days"})
+			return
+		}
+		retention := time.Duration(days) * 24 * time.Hour
+		deleted, err = h.lifecycleMgr.CleanupWithRetention(retention)
+	} else {
+		deleted, err = h.lifecycleMgr.Cleanup()
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "cleanup failed: " + err.Error()})
 		return

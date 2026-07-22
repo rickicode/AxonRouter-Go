@@ -68,23 +68,72 @@ func (lm *LifecycleManager) run(ctx context.Context) {
 }
 
 // Cleanup runs a single DELETE for connections that have been soft-deleted
-// with a terminal status and are older than the retention window. It returns
-// the number of rows removed and any database error.
+// with a terminal status and are older than the manager's configured retention
+// window. It returns the number of rows removed and any database error.
 func (lm *LifecycleManager) Cleanup() (int64, error) {
+	return lm.CleanupWithRetention(lm.retention)
+}
+
+// CleanupWithRetention runs a cleanup using the caller-provided retention
+// window. A zero or negative retention deletes every eligible row regardless of
+// age (use with caution). It returns the number of connection rows removed and
+// any error. Child rows in model_rate_limits and combo_connections are removed
+// first inside the same transaction so foreign-key constraints stay satisfied.
+func (lm *LifecycleManager) CleanupWithRetention(retention time.Duration) (int64, error) {
 	if lm.db == nil {
 		return 0, nil
 	}
-	result, err := lm.db.Exec(`
-		DELETE FROM connections
-		WHERE is_active = 0
-		  AND status IN ('disabled', 'auth_failed')
-		  AND updated_at < unixepoch() - ?
-	`, int64(lm.retention.Seconds()))
+
+	var where string
+	args := []any{}
+	if retention <= 0 {
+		where = `is_active = 0 AND status IN ('disabled', 'auth_failed')`
+	} else {
+		where = `is_active = 0 AND status IN ('disabled', 'auth_failed') AND updated_at < unixepoch() - ?`
+		args = append(args, int64(retention.Seconds()))
+	}
+
+	tx, err := lm.db.Begin()
 	if err != nil {
+		log.Printf("background: connection lifecycle cleanup tx begin error: %v", err)
+		return 0, err
+	}
+
+	deleted, err := func() (int64, error) {
+		// Delete child rows first to avoid FK violations.
+		if _, err := tx.Exec(`
+			DELETE FROM model_rate_limits
+			WHERE connection_id IN (SELECT id FROM connections WHERE `+where+`)
+		`, args...); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(`
+			DELETE FROM combo_steps
+			WHERE connection_id IN (SELECT id FROM connections WHERE `+where+`)
+		`, args...); err != nil {
+			return 0, err
+		}
+
+		result, err := tx.Exec(`DELETE FROM connections WHERE `+where, args...)
+		if err != nil {
+			return 0, err
+		}
+		return result.RowsAffected()
+	}()
+
+	if err != nil {
+		if rbErr := tx.Rollback(); rbErr != nil {
+			log.Printf("background: connection lifecycle cleanup rollback error: %v", rbErr)
+		}
 		log.Printf("background: connection lifecycle cleanup error: %v", err)
 		return 0, err
 	}
-	deleted, _ := result.RowsAffected()
+
+	if err := tx.Commit(); err != nil {
+		log.Printf("background: connection lifecycle cleanup commit error: %v", err)
+		return 0, err
+	}
+
 	if deleted > 0 {
 		log.Printf("background: deleted %d stale disabled/auth_failed connections", deleted)
 	}
