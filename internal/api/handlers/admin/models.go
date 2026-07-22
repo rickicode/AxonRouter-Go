@@ -325,13 +325,11 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 			// Refresh OAuth token if expired
 			if accessToken != "" && expiresAt > 0 && time.Now().Unix() > expiresAt-30 && refreshToken.Valid && refreshToken.String != "" && h.authMgr != nil {
 				creds := &auth.Credentials{AccessToken: accessToken, RefreshToken: refreshToken.String, ExpiresAt: time.Unix(expiresAt, 0)}
-				newCreds, err := h.authMgr.RefreshToken(c.Request.Context(), auth.ProviderType(providerID), creds)
+				newCreds, err := h.authMgr.RefreshTokenForConnection(c.Request.Context(), connID, auth.ProviderType(providerID), creds)
 				if err != nil {
 					logging.Logger.Debug("OAuth refresh failed", "conn", connID, "err", err)
 				} else {
 					accessToken = newCreds.AccessToken
-					h.db.Exec(`UPDATE connections SET oauth_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
-						newCreds.AccessToken, newCreds.ExpiresAt.Unix(), time.Now().Unix(), connID)
 				}
 			}
 		}

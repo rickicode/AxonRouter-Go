@@ -261,7 +261,7 @@ func TestAll_RefreshesNearExpiryOAuth(t *testing.T) {
 		t.Fatalf("seed connection: %v", err)
 	}
 
-	authMgr := auth.NewManager()
+	authMgr := auth.NewManagerWithWriter(db.NewOAuthTokenWriter(database, writeQueue))
 	authMgr.RegisterService(auth.ProviderType("testp"), &fakeOAuthService{
 		refreshFunc: func(ctx context.Context, creds *auth.Credentials) (*auth.Credentials, error) {
 			return &auth.Credentials{
@@ -299,6 +299,7 @@ func TestAll_RefreshesNearExpiryOAuth(t *testing.T) {
 	if mock.lastAccessToken != "new-access" {
 		t.Fatalf("executor called with access token %q, want new-access", mock.lastAccessToken)
 	}
+	writeQueue.FlushIdle(2 * time.Second)
 	var persistedToken string
 	if err := database.QueryRow(`SELECT COALESCE(oauth_token,'') FROM connections WHERE id = ?`, "conn-test").Scan(&persistedToken); err != nil {
 		t.Fatalf("fetch persisted token: %v", err)
@@ -327,7 +328,7 @@ func TestAll_MarksAuthFailedOnUnrecoverableRefreshError(t *testing.T) {
 		t.Fatalf("seed connection: %v", err)
 	}
 
-	authMgr := auth.NewManager()
+	authMgr := auth.NewManagerWithWriter(db.NewOAuthTokenWriter(database, writeQueue))
 	authMgr.RegisterService(auth.ProviderType("testp"), &fakeOAuthService{
 		refreshFunc: func(ctx context.Context, creds *auth.Credentials) (*auth.Credentials, error) {
 			return nil, errors.New("invalid_grant")

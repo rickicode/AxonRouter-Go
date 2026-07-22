@@ -1917,11 +1917,12 @@ func TestRefreshOAuthToken_PersistsProviderSpecific(t *testing.T) {
 	h := newTestHandler(t)
 	wq := db.NewWriteQueue(h.db)
 	h.writeQueue = wq
+	h.authMgr.SetTokenWriter(db.NewOAuthTokenWriter(h.db, wq))
 
 	if _, err := h.db.Exec(`INSERT INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('psdtest','PsdTest','openai','http://x',0)`); err != nil {
 		t.Fatalf("seed provider_type: %v", err)
 	}
-	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, provider_specific_data, created_at, updated_at) VALUES ('psdtest-conn','psdtest','c1','oauth','ready',1,'',0,0)`); err != nil {
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, oauth_token, oauth_refresh_token, oauth_expires_at, provider_specific_data, created_at, updated_at) VALUES ('psdtest-conn','psdtest','c1','oauth','ready',1,'old-access','old-refresh',?,'',0,0)`, time.Now().Add(-time.Minute).Unix()); err != nil {
 		t.Fatalf("seed connection: %v", err)
 	}
 
@@ -1987,12 +1988,13 @@ func TestRefreshOAuthToken_KeepsProviderSpecificWhenEmpty(t *testing.T) {
 	h := newTestHandler(t)
 	wq := db.NewWriteQueue(h.db)
 	h.writeQueue = wq
+	h.authMgr.SetTokenWriter(db.NewOAuthTokenWriter(h.db, wq))
 
 	if _, err := h.db.Exec(`INSERT INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('psdempty','PsdEmpty','openai','http://x',0)`); err != nil {
 		t.Fatalf("seed provider_type: %v", err)
 	}
 	existing := `{"proxyPoolId":"pool-abc"}`
-	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, provider_specific_data, created_at, updated_at) VALUES ('psdempty-conn','psdempty','c1','oauth','ready',1,?,0,0)`, existing); err != nil {
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, oauth_token, oauth_refresh_token, oauth_expires_at, provider_specific_data, created_at, updated_at) VALUES ('psdempty-conn','psdempty','c1','oauth','ready',1,'old-access','old-refresh',?,?,0,0)`, time.Now().Add(-time.Minute).Unix(), existing); err != nil {
 		t.Fatalf("seed connection: %v", err)
 	}
 
