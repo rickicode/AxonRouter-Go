@@ -49,9 +49,9 @@ func TestAPIKeyHandler_Create_IncludesExpiresAt(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/api-keys", jsonBodyAPIKey(t, map[string]any{
-		"name":         "test-key",
-		"max_tokens":   1000,
-		"expires_at":   exp,
+		"name":       "test-key",
+		"max_tokens": 1000,
+		"expires_at": exp,
 	}))
 	h.Create(c)
 
@@ -114,6 +114,83 @@ func TestAPIKeyHandler_Create_NoExpiresAt(t *testing.T) {
 	}
 }
 
+func TestAPIKeyHandler_List_IncludesAllowedModels(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	database := newAPIKeyHandlerTestDB(t)
+	h := NewAPIKeyHandler(database, middleware.NewAuthCache(30*time.Second))
+
+	allowedJSON, _ := json.Marshal([]string{"gpt-4o", "claude-3.5-sonnet"})
+	_, err := database.Exec(`INSERT INTO api_keys (id, key_hash, key_value, name, rate_limit_per_min, max_tokens, is_active, created_at, allowed_models) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"key-models", "hash", "raw", "models-key", 60, 1000, 1, 1000, string(allowedJSON))
+	if err != nil {
+		t.Fatalf("seed api key: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/admin/api-keys", nil)
+	h.List(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var listResp struct {
+		Data []struct {
+			ID            string   `json:"id"`
+			AllowedModels []string `json:"allowed_models"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(listResp.Data) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(listResp.Data))
+	}
+	got := listResp.Data[0].AllowedModels
+	want := []string{"gpt-4o", "claude-3.5-sonnet"}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("list allowed_models = %v, want %v", got, want)
+	}
+}
+
+func TestAPIKeyHandler_List_EmptyAllowedModels(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	database := newAPIKeyHandlerTestDB(t)
+	h := NewAPIKeyHandler(database, middleware.NewAuthCache(30*time.Second))
+
+	_, err := database.Exec(`INSERT INTO api_keys (id, key_hash, key_value, name, rate_limit_per_min, max_tokens, is_active, created_at, allowed_models) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"key-empty", "hash", "raw", "empty-key", 60, 1000, 1, 1000, nil)
+	if err != nil {
+		t.Fatalf("seed api key: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/admin/api-keys", nil)
+	h.List(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var listResp struct {
+		Data []struct {
+			ID            string   `json:"id"`
+			AllowedModels []string `json:"allowed_models"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(listResp.Data) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(listResp.Data))
+	}
+	if listResp.Data[0].AllowedModels != nil && len(listResp.Data[0].AllowedModels) != 0 {
+		t.Errorf("list allowed_models = %v, want nil or empty", listResp.Data[0].AllowedModels)
+	}
+}
+
 func TestAPIKeyHandler_List_IncludesExpiresAt(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	database := newAPIKeyHandlerTestDB(t)
@@ -148,6 +225,49 @@ func TestAPIKeyHandler_List_IncludesExpiresAt(t *testing.T) {
 		t.Errorf("list expires_at = %v, want %v", listResp.Data[0]["expires_at"], exp)
 	}
 }
+func TestAPIKeyHandler_Create_IncludesAllowedModels(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	database := newAPIKeyHandlerTestDB(t)
+	h := NewAPIKeyHandler(database, middleware.NewAuthCache(30*time.Second))
+
+	allowed := []string{"gpt-4o", "claude-3.5-sonnet"}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/api-keys", jsonBodyAPIKey(t, map[string]any{
+		"name":           "test-key-models",
+		"max_tokens":     1000,
+		"allowed_models": allowed,
+	}))
+	h.Create(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		ID            string   `json:"id"`
+		AllowedModels []string `json:"allowed_models"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.AllowedModels) != 2 || resp.AllowedModels[0] != "gpt-4o" || resp.AllowedModels[1] != "claude-3.5-sonnet" {
+		t.Errorf("response allowed_models = %v, want %v", resp.AllowedModels, allowed)
+	}
+
+	var raw string
+	if err := database.QueryRow(`SELECT COALESCE(allowed_models, '') FROM api_keys WHERE id = ?`, resp.ID).Scan(&raw); err != nil {
+		t.Fatalf("query stored allowed_models: %v", err)
+	}
+	var stored []string
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+		t.Fatalf("stored allowed_models is not valid JSON: %q, err=%v", raw, err)
+	}
+	if len(stored) != 2 || stored[0] != "gpt-4o" || stored[1] != "claude-3.5-sonnet" {
+		t.Errorf("stored allowed_models = %v, want %v", stored, allowed)
+	}
+}
+
 func TestAPIKeyHandler_Create_PastExpiresAt(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	database := newAPIKeyHandlerTestDB(t)
@@ -165,7 +285,6 @@ func TestAPIKeyHandler_Create_PastExpiresAt(t *testing.T) {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }
-
 
 func TestAPIKeyHandler_ToggleActive_KeepsExpiresAt_WhenOmitted(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -215,7 +334,7 @@ func TestAPIKeyHandler_ToggleInvalidatesCache(t *testing.T) {
 	}
 
 	// Populate the cache entry as if a recent request validated the key.
-	cache.Put("raw-toggle", "key-toggle", 60, 1000, 0)
+	cache.Put("raw-toggle", "key-toggle", 60, 1000, 0, nil)
 	if r := cache.Get("raw-toggle"); r == nil {
 		t.Fatal("expected cached entry before toggle")
 	}
