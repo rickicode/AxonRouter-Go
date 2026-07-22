@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
@@ -172,6 +173,68 @@ func containsString(ids []string, id string) bool {
 		}
 	}
 	return false
+}
+
+func TestKiroAuthHandler_ImportKiroToken_DeduplicatesByEmail(t *testing.T) {
+	h, database := newKiroAuthTestDeps(t)
+	now := time.Now().Unix()
+	existingID := "existing-kiro"
+	if _, err := database.Exec(`
+		INSERT INTO connections (id, provider_type_id, name, auth_type, oauth_email, oauth_token, oauth_refresh_token, oauth_expires_at, status, is_active, created_at, updated_at)
+		VALUES (?, 'kiro', 'kiro@example.com', 'oauth', 'kiro@example.com', 'old-at', 'old-rt', ?, 'auth_failed', 0, ?, ?)
+	`, existingID, now+1000, now, now); err != nil {
+		t.Fatalf("seed existing connection: %v", err)
+	}
+
+	h.svc = &stubKiroService{
+		importToken: func(ctx context.Context, req kiro.ImportTokenRequest) (*auth.Credentials, error) {
+			return &auth.Credentials{
+				RefreshToken: req.RefreshToken,
+				Email:        "kiro@example.com",
+				ProviderSpecific: map[string]string{
+					"authMethod": "import",
+				},
+			}, nil
+		},
+	}
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := `{"refresh_token":"aorAAAAAGnew"}`
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/oauth/kiro/import", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.ImportKiroToken(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		ConnectionID string `json:"connection_id"`
+		Status       string `json:"status"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.ConnectionID != existingID {
+		t.Fatalf("expected existing connection id %q, got %q", existingID, resp.ConnectionID)
+	}
+	if resp.Status != "ready" {
+		t.Fatalf("status = %q, want ready", resp.Status)
+	}
+
+	var refreshTok string
+	var isActive int
+	if err := database.QueryRow(`SELECT COALESCE(oauth_refresh_token,''), is_active FROM connections WHERE id = ?`, existingID).Scan(&refreshTok, &isActive); err != nil {
+		t.Fatal(err)
+	}
+	if refreshTok != "aorAAAAAGnew" {
+		t.Errorf("refresh token = %q, want aorAAAAAGnew", refreshTok)
+	}
+	if isActive != 1 {
+		t.Errorf("is_active = %d, want 1", isActive)
+	}
 }
 
 func TestKiroAuthHandler_ImportKiroToken_WithClientCredentials(t *testing.T) {

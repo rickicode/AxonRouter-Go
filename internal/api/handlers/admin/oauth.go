@@ -17,9 +17,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
+	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 )
 
@@ -164,8 +164,16 @@ func (h *OAuthHandler) StartOAuth(c *gin.Context) {
 				connName = fallback
 			}
 
-			// Create connection ONLY on success
-			connID := uuid.New().String()
+			// Create or update connection ONLY on success
+			accountKey := creds.Email
+			if accountKey == "" {
+				if emailFromSpecific, ok := creds.ProviderSpecific["email"]; ok && emailFromSpecific != "" {
+					accountKey = emailFromSpecific
+				} else if creds.AccountID != "" {
+					accountKey = creds.AccountID
+				}
+			}
+
 			now := time.Now().Unix()
 			providerSpecific := sql.NullString{}
 			if len(creds.ProviderSpecific) > 0 {
@@ -174,10 +182,12 @@ func (h *OAuthHandler) StartOAuth(c *gin.Context) {
 				}
 			}
 
-			_, err := h.db.Exec(`
-				INSERT INTO connections (id, provider_type_id, name, auth_type, oauth_token, oauth_refresh_token, oauth_expires_at, provider_specific_data, status, is_active, created_at, updated_at)
-				VALUES (?, ?, ?, 'oauth', ?, ?, ?, ?, 'ready', 1, ?, ?)
-			`, connID, req.Provider, connName, creds.AccessToken, creds.RefreshToken, creds.ExpiresAt.Unix(), providerSpecific, now, now)
+			expiresAt := int64(0)
+			if !creds.ExpiresAt.IsZero() {
+				expiresAt = creds.ExpiresAt.Unix()
+			}
+
+			connID, _, err := db.UpsertOAuthConnection(context.Background(), h.db, req.Provider, accountKey, connName, creds.AccessToken, creds.RefreshToken, expiresAt, providerSpecific, now)
 			if err != nil {
 				session.status = "failed"
 				session.err = "failed to create connection: " + err.Error()

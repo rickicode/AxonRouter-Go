@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Deduplicate OAuth connections by account** — new `internal/db.UpsertOAuthConnection` helper looks up an existing OAuth row by `provider_type_id` + `oauth_email` and updates its tokens, resets `status='ready'` and `is_active=1`, and returns the existing id instead of creating a duplicate. Added the `connections.oauth_email` column and a partial unique index `idx_connections_oauth_account`. Wired the upsert into the generic OAuth callback, Kiro auth flows, OAuth token import, and Codex CLI credential import.
+
 ## [0.3.19] - 2026-07-22
 
 ### Added
