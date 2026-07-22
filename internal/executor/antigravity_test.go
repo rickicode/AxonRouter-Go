@@ -3,9 +3,11 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/tidwall/gjson"
@@ -391,12 +393,113 @@ func TestAntigravity_NormalizesToolKeys(t *testing.T) {
 	if got := root.Get("request.tools.0.function_declarations.0.parameters.type").String(); got != "object" {
 		t.Errorf("expected parameters.type = object, got %q", got)
 	}
-	for _, bad := range []string{"$schema", "title", "format", "default", "x-provider", "propertyNames", "minLength"} {
+	for _, bad := range []string{"$schema", "format", "default", "x-provider", "propertyNames", "minLength"} {
 		if root.Get("request.tools.0.function_declarations.0.parameters." + bad).Exists() {
 			t.Errorf("expected unsupported key %q to be stripped", bad)
 		}
 	}
+	// Constraints under property schemas are preserved as description hints.
+	if !strings.Contains(root.Get("request.tools.0.function_declarations.0.parameters.properties.location.description").String(), "minLength: 1") {
+		t.Errorf("expected minLength to be moved to description hint")
+	}
 	if got := root.Get("request.tools.0.function_declarations.0.parameters.properties.location.type").String(); got != "string" {
 		t.Errorf("expected location type to remain, got %q", got)
+	}
+}
+
+func TestCleanJSONSchemaForAntigravity_RemovesUnsupportedKeywords(t *testing.T) {
+	input := `{
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "root-schema",
+		"type": "object",
+		"propertyNames": {"type": "string"},
+		"patternProperties": {"^x-": {"type": "string"}},
+		"x-google-enum-descriptions": ["foo"],
+		"properties": {
+			"url": {"type": "string", "format": "uri", "default": "https://example.com"},
+			"tags": {"type": "array", "minItems": 1, "uniqueItems": true}
+		}
+	}`
+
+	result := CleanJSONSchemaForAntigravity(input)
+
+	for _, key := range []string{"$schema", "$id", "propertyNames", "patternProperties", "format", "default", "uniqueItems", "minItems"} {
+		if strings.Contains(result, fmt.Sprintf("\"%s\"", key)) {
+			t.Errorf("expected %q to be removed, got: %s", key, result)
+		}
+	}
+	if strings.Contains(result, "x-google-enum-descriptions") {
+		t.Error("expected x-* extension field to be removed")
+	}
+	if !strings.Contains(result, "format: uri") {
+		t.Error("expected format hint in description")
+	}
+	if !strings.Contains(result, "minItems: 1") {
+		t.Error("expected minItems hint in description")
+	}
+}
+
+func TestCleanJSONSchemaForAntigravity_ConvertsRefToHint(t *testing.T) {
+	input := `{
+		"definitions": {"User": {"type": "object", "properties": {"name": {"type": "string"}}}},
+		"type": "object",
+		"properties": {
+			"customer": {"$ref": "#/definitions/User"}
+		}
+	}`
+
+	result := CleanJSONSchemaForAntigravity(input)
+
+	parsed := gjson.Parse(result)
+	if prop := parsed.Get("properties.customer"); !prop.Exists() {
+		t.Fatal("customer property missing")
+	} else {
+		if prop.Get("$ref").Exists() {
+			t.Error("expected $ref to be removed")
+		}
+		desc := prop.Get("description").String()
+		if !strings.Contains(desc, "See: User") {
+			t.Errorf("expected ref hint, got description %q", desc)
+		}
+	}
+}
+
+func TestCleanJSONSchemaForAntigravity_ConvertsConstToEnum(t *testing.T) {
+	input := `{
+		"type": "object",
+		"properties": {
+			"kind": {"type": "string", "const": "InsightVizNode"}
+		}
+	}`
+
+	result := CleanJSONSchemaForAntigravity(input)
+
+	parsed := gjson.Parse(result)
+	enum := parsed.Get("properties.kind.enum").Array()
+	if len(enum) != 1 || enum[0].String() != "InsightVizNode" {
+		t.Errorf("expected const converted to enum, got %s", parsed.Get("properties.kind").Raw)
+	}
+}
+
+func TestCleanJSONSchemaForAntigravity_FlattensNullableTypeArray(t *testing.T) {
+	input := `{
+		"type": "object",
+		"properties": {
+			"name": {"type": ["string", "null"]}
+		},
+		"required": ["name"]
+	}`
+
+	result := CleanJSONSchemaForAntigravity(input)
+
+	parsed := gjson.Parse(result)
+	if got := parsed.Get("properties.name.type").String(); got != "string" {
+		t.Errorf("expected type flattened to string, got %q", got)
+	}
+	if !strings.Contains(parsed.Get("properties.name.description").String(), "(nullable)") {
+		t.Error("expected nullable hint")
+	}
+	if parsed.Get("required").Exists() {
+		t.Error("expected nullable property to be removed from required")
 	}
 }

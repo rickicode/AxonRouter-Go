@@ -301,53 +301,6 @@ func normalizeAntigravityToolKeys(v any) {
 	}
 }
 
-// antigravityUnsupportedSchemaKeywords are JSON Schema keywords the upstream
-// Antigravity/Gemini API does not accept inside tool parameter schemas.
-// Mirrors CLIProxyAPI internal/util/gemini_schema.go.
-var antigravityUnsupportedSchemaKeywords = map[string]bool{
-	"$schema": true, "$id": true, "$comment": true, "$ref": true,
-	"$defs": true, "definitions": true,
-	"propertyNames": true, "patternProperties": true, "additionalProperties": true,
-	"enumDescriptions": true, "enumTitles": true,
-	"prefill": true, "deprecated": true,
-	"format": true, "default": true, "examples": true,
-	"minLength": true, "maxLength": true,
-	"minItems": true, "maxItems": true, "uniqueItems": true,
-	"pattern": true, "exclusiveMinimum": true, "exclusiveMaximum": true,
-	"nullable": true, "title": true, "const": true,
-}
-
-// sanitizeAntigravityJSONSchema recursively strips unsupported JSON Schema
-// keywords from the request body. This is applied to the whole inner request;
-// the blacklist only overlaps with tool schemas, so message contents etc. are
-// unaffected.
-func sanitizeAntigravityJSONSchema(v any) {
-	switch val := v.(type) {
-	case map[string]any:
-		for k := range val {
-			if antigravityUnsupportedSchemaKeywords[k] {
-				delete(val, k)
-				continue
-			}
-			if strings.HasPrefix(k, "x-") {
-				delete(val, k)
-				continue
-			}
-		}
-		for _, child := range val {
-			sanitizeAntigravityJSONSchema(child)
-		}
-	case []any:
-		for _, item := range val {
-			sanitizeAntigravityJSONSchema(item)
-		}
-	case []map[string]any:
-		for _, item := range val {
-			sanitizeAntigravityJSONSchema(item)
-		}
-	}
-}
-
 // envelopeUserAgent returns "antigravity" or "jetski" based on account/client profile.
 // Mirrors OmniRoute getAntigravityEnvelopeUserAgent (antigravityIdentity.ts:65-68).
 func envelopeUserAgent(req *Request) string {
@@ -499,9 +452,15 @@ func (e *AntigravityExecutor) buildEnvelope(ctx context.Context, req *Request, u
 	// before sending upstream.
 	normalizeAntigravityToolKeys(inner)
 
-	// Strip JSON Schema keywords the upstream API rejects (e.g. $schema,
-	// propertyNames, patternProperties, format, x-* extensions).
-	sanitizeAntigravityJSONSchema(inner)
+	// Run the production-tested schema sanitizer across the whole inner request.
+	innerJSON, err := json.Marshal(inner)
+	if err != nil {
+		return nil, fmt.Errorf("marshal antigravity request for schema cleaning: %w", err)
+	}
+	cleaned := CleanJSONSchemaForAntigravity(string(innerJSON))
+	if err := json.Unmarshal([]byte(cleaned), &inner); err != nil {
+		return nil, fmt.Errorf("unmarshal cleaned antigravity request: %w", err)
+	}
 
 	// Get projectId from provider-specific data, or auto-discover if missing.
 	projectID := ""
