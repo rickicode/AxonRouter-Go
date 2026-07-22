@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **API-key allowed_models loaded by auth middleware** — `Auth` now reads `api_keys.allowed_models`, parses it into a set, and stores it both in the Gin context (`allowed_models`) and on the request context via `AllowedModelsFromContext`. Invalid JSON is treated as unlimited.
 - **Amazon Q built-in provider** — new `amazon-q/` (and `aq/`) prefix for Amazon Q Developer, reusing the Kiro executor and translator. Registers `amazon-q` in provider types, the executor registry, and the dashboard catalog with a static model list mirroring Kiro (`auto`, Claude 4.x/4.5/4.6/4.7/5, DeepSeek V3.2, MiniMax M2.x, GLM-5, and Qwen3 Coder Next).
 - **Kiro Claude 4.6 / 4.7 models** — adds `claude-sonnet-4.6`, `claude-opus-4.6`, `claude-sonnet-4.7`, and `claude-opus-4.7` base models with pricing seed so the full Claude 4.x family is routable.
 - **Kiro catalog sync** — keeps `internal/models/models.json` in sync with `internal/provider/kiro/catalog.go` by adding missing `auto` and `claude-sonnet-4` entries, plus a regression test to prevent future drift.

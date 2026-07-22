@@ -49,9 +49,9 @@ func TestAPIKeyHandler_Create_IncludesExpiresAt(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/api-keys", jsonBodyAPIKey(t, map[string]any{
-		"name":         "test-key",
-		"max_tokens":   1000,
-		"expires_at":   exp,
+		"name":       "test-key",
+		"max_tokens": 1000,
+		"expires_at": exp,
 	}))
 	h.Create(c)
 
@@ -166,7 +166,6 @@ func TestAPIKeyHandler_Create_PastExpiresAt(t *testing.T) {
 	}
 }
 
-
 func TestAPIKeyHandler_ToggleActive_KeepsExpiresAt_WhenOmitted(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	database := newAPIKeyHandlerTestDB(t)
@@ -215,7 +214,7 @@ func TestAPIKeyHandler_ToggleInvalidatesCache(t *testing.T) {
 	}
 
 	// Populate the cache entry as if a recent request validated the key.
-	cache.Put("raw-toggle", "key-toggle", 60, 1000, 0)
+	cache.Put("raw-toggle", "key-toggle", 60, 1000, 0, nil)
 	if r := cache.Get("raw-toggle"); r == nil {
 		t.Fatal("expected cached entry before toggle")
 	}

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
@@ -11,8 +12,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
-	_ "modernc.org/sqlite"
 	"golang.org/x/crypto/bcrypt"
+	_ "modernc.org/sqlite"
 )
 
 func openTestDB(t *testing.T) *sql.DB {
@@ -167,7 +168,7 @@ func TestAuthCache_Validate_StoresResult(t *testing.T) {
 	}
 
 	cache := NewAuthCache(30 * time.Second)
-	keyID, rateLimit, maxTokens, ok, expired, dbErr := cache.Validate(database, key)
+	keyID, rateLimit, maxTokens, _, ok, expired, dbErr := cache.Validate(database, key)
 	if dbErr != nil {
 		t.Fatalf("Validate returned DB error: %v", dbErr)
 	}
@@ -249,11 +250,233 @@ func TestValidateKey_ReturnsDBError(t *testing.T) {
 	database := openTestDB(t)
 	database.Close()
 
-	_, _, _, _, _, ok, dbErr := validateKey(database, "any-key")
+	_, _, _, _, _, _, ok, dbErr := validateKey(database, "any-key")
 	if dbErr == nil {
 		t.Fatalf("expected DB error from validateKey on closed DB")
 	}
 	if ok {
 		t.Fatalf("expected ok=false when DB errors")
+	}
+}
+
+func TestAuthCache_Validate_StoresAllowedModels(t *testing.T) {
+	database := openTestDB(t)
+
+	key := "limited-key"
+	hash, _ := bcrypt.GenerateFromPassword([]byte(key), bcrypt.DefaultCost)
+	if _, err := database.Exec(
+		`INSERT INTO api_keys (id, name, key_hash, is_active, rate_limit_per_min, max_tokens, allowed_models, created_at) VALUES (?, ?, ?, 1, 10, 100, ?, ?)`,
+		"limited-key-id", "test", string(hash), `["gpt-4o","claude-3-opus"]`, time.Now().Unix(),
+	); err != nil {
+		t.Fatalf("insert key: %v", err)
+	}
+
+	cache := NewAuthCache(30 * time.Second)
+	keyID, rateLimit, maxTokens, allowedModels, ok, expired, dbErr := cache.Validate(database, key)
+	if dbErr != nil {
+		t.Fatalf("Validate returned DB error: %v", dbErr)
+	}
+	if expired {
+		t.Fatalf("Validate returned expired for a non-expiring key")
+	}
+	if !ok {
+		t.Fatalf("Validate returned !ok")
+	}
+	if keyID != "limited-key-id" || rateLimit != 10 || maxTokens != 100 {
+		t.Fatalf("unexpected result: %s, %d, %d", keyID, rateLimit, maxTokens)
+	}
+	if len(allowedModels) != 2 {
+		t.Fatalf("allowedModels count = %d, want 2", len(allowedModels))
+	}
+	if _, ok := allowedModels["gpt-4o"]; !ok {
+		t.Errorf("allowedModels missing gpt-4o")
+	}
+	if _, ok := allowedModels["claude-3-opus"]; !ok {
+		t.Errorf("allowedModels missing claude-3-opus")
+	}
+
+	r := cache.Get(key)
+	if r == nil {
+		t.Fatalf("Validate did not store the result in the cache")
+	}
+	if len(r.allowedModels) != 2 {
+		t.Errorf("cached allowedModels count = %d, want 2", len(r.allowedModels))
+	}
+}
+
+func TestAuth_SetsAllowedModels(t *testing.T) {
+	database := openTestDB(t)
+
+	key := "model-limited-key"
+	hash, _ := bcrypt.GenerateFromPassword([]byte(key), bcrypt.DefaultCost)
+	if _, err := database.Exec(
+		`INSERT INTO api_keys (id, name, key_hash, is_active, rate_limit_per_min, allowed_models, created_at) VALUES (?, ?, ?, 1, 10, ?, ?)`,
+		"model-limited-id", "test", string(hash), `["gpt-4o"]`, time.Now().Unix(),
+	); err != nil {
+		t.Fatalf("insert key: %v", err)
+	}
+
+	router := gin.New()
+	router.Use(Auth(database, nil))
+	var got map[string]struct{}
+	router.GET("/test", func(c *gin.Context) {
+		if v, ok := c.Get("allowed_models"); ok {
+			got = v.(map[string]struct{})
+		}
+		c.Status(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+key)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if got == nil {
+		t.Fatalf("allowed_models not set in context")
+	}
+	if len(got) != 1 {
+		t.Errorf("allowed_models count = %d, want 1", len(got))
+	}
+	if _, ok := got["gpt-4o"]; !ok {
+		t.Errorf("allowed_models missing gpt-4o")
+	}
+
+	// Allowed models are also available via the request context helper.
+	var ctxGot map[string]struct{}
+	router.GET("/ctx", func(c *gin.Context) {
+		ctxGot = AllowedModelsFromContext(c.Request.Context())
+		c.Status(http.StatusOK)
+	})
+
+	req = httptest.NewRequest(http.MethodGet, "/ctx", nil)
+	req.Header.Set("Authorization", "Bearer "+key)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("ctx status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if ctxGot == nil {
+		t.Fatalf("AllowedModelsFromContext returned nil")
+	}
+	if len(ctxGot) != 1 {
+		t.Errorf("AllowedModelsFromContext count = %d, want 1", len(ctxGot))
+	}
+	if _, ok := ctxGot["gpt-4o"]; !ok {
+		t.Errorf("AllowedModelsFromContext missing gpt-4o")
+	}
+}
+
+func TestAuth_CacheHit_SetsAllowedModels(t *testing.T) {
+	database := openTestDB(t)
+
+	key := "cached-limited-key"
+	hash, _ := bcrypt.GenerateFromPassword([]byte(key), bcrypt.DefaultCost)
+	if _, err := database.Exec(
+		`INSERT INTO api_keys (id, name, key_hash, is_active, rate_limit_per_min, allowed_models, created_at) VALUES (?, ?, ?, 1, 10, ?, ?)`,
+		"cached-limited-id", "test", string(hash), `["claude-sonnet-4"]`, time.Now().Unix(),
+	); err != nil {
+		t.Fatalf("insert key: %v", err)
+	}
+
+	cache := NewAuthCache(30 * time.Second)
+	router := gin.New()
+	router.Use(Auth(database, cache))
+	var got map[string]struct{}
+	router.GET("/test", func(c *gin.Context) {
+		if v, ok := c.Get("allowed_models"); ok {
+			got = v.(map[string]struct{})
+		}
+		c.Status(http.StatusOK)
+	})
+
+	// First request populates cache.
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+key)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("first request status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if got == nil {
+		t.Fatalf("allowed_models not set on first request")
+	}
+
+	// Second request hits cache.
+	got = nil
+	req = httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+key)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("second request status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if got == nil {
+		t.Fatalf("allowed_models not set on cache hit")
+	}
+	if len(got) != 1 {
+		t.Errorf("allowed_models count = %d, want 1", len(got))
+	}
+	if _, ok := got["claude-sonnet-4"]; !ok {
+		t.Errorf("allowed_models missing claude-sonnet-4")
+	}
+}
+
+func TestAuth_AllowedModels_InvalidJSON_AllowsAll(t *testing.T) {
+	database := openTestDB(t)
+
+	key := "bad-models-key"
+	hash, _ := bcrypt.GenerateFromPassword([]byte(key), bcrypt.DefaultCost)
+	if _, err := database.Exec(
+		`INSERT INTO api_keys (id, name, key_hash, is_active, rate_limit_per_min, allowed_models, created_at) VALUES (?, ?, ?, 1, 10, ?, ?)`,
+		"bad-models-id", "test", string(hash), `not-json`, time.Now().Unix(),
+	); err != nil {
+		t.Fatalf("insert key: %v", err)
+	}
+
+	router := gin.New()
+	router.Use(Auth(database, nil))
+	var got map[string]struct{}
+	router.GET("/test", func(c *gin.Context) {
+		if v, ok := c.Get("allowed_models"); ok {
+			got = v.(map[string]struct{})
+		}
+		c.Status(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+key)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if got == nil {
+		t.Fatalf("allowed_models not set in context")
+	}
+	if len(got) != 0 {
+		t.Errorf("allowed_models count = %d, want 0 for invalid JSON", len(got))
+	}
+}
+
+func TestAllowedModelsFromContext(t *testing.T) {
+	set := map[string]struct{}{"gpt-4o": {}}
+	ctx := context.Background()
+	ctx = contextWithAllowedModels(ctx, set)
+
+	got := AllowedModelsFromContext(ctx)
+	if len(got) != 1 {
+		t.Fatalf("AllowedModelsFromContext count = %d, want 1", len(got))
+	}
+	if _, ok := got["gpt-4o"]; !ok {
+		t.Errorf("AllowedModelsFromContext missing gpt-4o")
+	}
+
+	if v := AllowedModelsFromContext(context.Background()); v != nil {
+		t.Errorf("AllowedModelsFromContext(empty) = %v, want nil", v)
 	}
 }
