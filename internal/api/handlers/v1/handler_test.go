@@ -646,6 +646,231 @@ func TestTryPickConnection_AcceptsCooldownExpired(t *testing.T) {
 	}
 }
 
+func TestTryPickConnection_HealsExpiredCooldown(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('heal','Heal','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-heal','heal','h1','none','ready',1,?,?)`, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-heal", "heal", "ready", 0)
+
+	cs := h.store.Get("conn-heal")
+	cs.SetCooldown(time.Now().Add(-time.Hour))
+	if cs.GetStatus() != connstate.StatusCooldown {
+		t.Fatalf("setup: status = %v, want cooldown", cs.GetStatus())
+	}
+
+	picked, ok := h.tryPickConnection(context.Background(), cs, "heal", "gpt-4o", time.Now(), providercfg.DefaultRoutingMode)
+	if !ok {
+		t.Fatal("expected cooldown-expired connection to be accepted")
+	}
+	if picked.ID != "conn-heal" {
+		t.Fatalf("expected conn-heal, got %s", picked.ID)
+	}
+	if cs.GetStatus() != connstate.StatusReady {
+		t.Fatalf("status = %v, want ready after heal", cs.GetStatus())
+	}
+}
+
+func TestTryPickConnection_HealsExpiredRateLimited(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('rl','RateLimited','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-rl','rl','r1','none','ready',1,?,?)`, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-rl", "rl", "ready", 0)
+
+	cs := h.store.Get("conn-rl")
+	cs.SetCooldown(time.Now().Add(-time.Hour))
+	cs.SetStatus(connstate.StatusRateLimited, "")
+	if cs.GetStatus() != connstate.StatusRateLimited {
+		t.Fatalf("setup: status = %v, want rate_limited", cs.GetStatus())
+	}
+
+	picked, ok := h.tryPickConnection(context.Background(), cs, "rl", "gpt-4o", time.Now(), providercfg.DefaultRoutingMode)
+	if !ok {
+		t.Fatal("expected rate-limited expired connection to be accepted")
+	}
+	if picked.ID != "conn-rl" {
+		t.Fatalf("expected conn-rl, got %s", picked.ID)
+	}
+	if cs.GetStatus() != connstate.StatusReady {
+		t.Fatalf("status = %v, want ready after heal", cs.GetStatus())
+	}
+}
+
+func TestTryPickConnection_DoesNotHealActiveCooldown(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('activecd','ActiveCooldown','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-active','activecd','a1','none','ready',1,?,?)`, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-active", "activecd", "ready", 0)
+
+	cs := h.store.Get("conn-active")
+	future := time.Now().Add(time.Hour)
+	cs.SetCooldown(future)
+
+	picked, ok := h.tryPickConnection(context.Background(), cs, "activecd", "gpt-4o", time.Now(), providercfg.DefaultRoutingMode)
+	if ok {
+		t.Fatalf("expected active-cooldown connection to be rejected, got %s", picked.ID)
+	}
+	if cs.GetStatus() != connstate.StatusCooldown {
+		t.Fatalf("status = %v, want cooldown to stay active", cs.GetStatus())
+	}
+}
+
+func TestTryPickConnectionFallback_HealsExpiredCooldown(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('fb','Fallback','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-fb','fb','f1','none','ready',1,?,?)`, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-fb", "fb", "ready", 0)
+
+	cs := h.store.Get("conn-fb")
+	cs.SetCooldown(time.Now().Add(-time.Hour))
+
+	picked, ok := h.tryPickConnectionFallback(context.Background(), "conn-fb", "fb", "", time.Now(), providercfg.DefaultRoutingMode)
+	if !ok {
+		t.Fatal("expected fallback to accept cooldown-expired connection")
+	}
+	if picked.ID != "conn-fb" {
+		t.Fatalf("expected conn-fb, got %s", picked.ID)
+	}
+	if cs.GetStatus() != connstate.StatusReady {
+		t.Fatalf("status = %v, want ready after heal", cs.GetStatus())
+	}
+}
+
+func TestPrepareConnection_HealsExpiredCooldown(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('prep','Prepare','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-prep','prep','p1','none','ready',1,?,?)`, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-prep", "prep", "ready", 0)
+
+	cs := h.store.Get("conn-prep")
+	cs.SetCooldown(time.Now().Add(-time.Hour))
+
+	conn, err := h.prepareConnection(context.Background(), "conn-prep", "prep", "", time.Now())
+	if err != nil {
+		t.Fatalf("expected prepare to succeed: %v", err)
+	}
+	if conn.ID != "conn-prep" {
+		t.Fatalf("expected conn-prep, got %s", conn.ID)
+	}
+	if cs.GetStatus() != connstate.StatusReady {
+		t.Fatalf("status = %v, want ready after heal", cs.GetStatus())
+	}
+}
+
+func TestPersistSuccess_HealsTransientStatus(t *testing.T) {
+	h := newTestHandler(t)
+	database := h.db
+	wq := db.NewWriteQueue(database)
+	h.writeQueue = wq
+
+	if _, err := database.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('suc','Success','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-suc','suc','s1','none','rate_limited',1,0,0)`); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-suc", "suc", "rate_limited", 0)
+
+	cs := h.store.Get("conn-suc")
+	h.persistSuccess("conn-suc")
+	wq.Stop()
+
+	if cs.GetStatus() != connstate.StatusReady {
+		t.Fatalf("in-memory status = %v, want ready", cs.GetStatus())
+	}
+	var status string
+	if err := database.QueryRow(`SELECT status FROM connections WHERE id='conn-suc'`).Scan(&status); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if status != "ready" {
+		t.Fatalf("db status = %q, want ready", status)
+	}
+}
+
+func TestPersistSuccess_LeavesTerminalStatusAlone(t *testing.T) {
+	h := newTestHandler(t)
+	wq := db.NewWriteQueue(h.db)
+	h.writeQueue = wq
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('term','Terminal','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-term','term','t1','none','disabled',1,0,0)`); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-term", "term", "disabled", 0)
+
+	cs := h.store.Get("conn-term")
+	h.persistSuccess("conn-term")
+	wq.Stop()
+
+	if cs.GetStatus() != connstate.StatusDisabled {
+		t.Fatalf("in-memory status = %v, want disabled", cs.GetStatus())
+	}
+	var status string
+	if err := h.db.QueryRow(`SELECT status FROM connections WHERE id='conn-term'`).Scan(&status); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if status != "disabled" {
+		t.Fatalf("db status = %q, want disabled", status)
+	}
+}
+
+func TestPersistSuccess_LeavesReadyStatusAlone(t *testing.T) {
+	h := newTestHandler(t)
+	wq := db.NewWriteQueue(h.db)
+	h.writeQueue = wq
+
+	cs := h.store.Get("conn-1")
+	cs.SetStatus(connstate.StatusReady, "")
+	before := cs.Snapshot()
+
+	h.persistSuccess("conn-1")
+	wq.Stop()
+
+	after := cs.Snapshot()
+	if after.Status != connstate.StatusReady {
+		t.Fatalf("status = %v, want ready", after.Status)
+	}
+	if after.SuccessCount != before.SuccessCount {
+		t.Fatalf("SuccessCount changed from %d to %d on already-ready connection", before.SuccessCount, after.SuccessCount)
+	}
+}
+
 func TestOrderCandidatesPrioritizesRemainingQuota(t *testing.T) {
 	h := newTestHandler(t)
 	now := time.Now().Unix()

@@ -428,6 +428,9 @@ func (h *Handler) tryPickConnectionFallback(ctx context.Context, connID, provide
 	if cs.GetStatus().IsRoutingTerminal() {
 		return nil, false
 	}
+	if status := cs.GetStatus(); status.IsHealable() && !cs.IsInCooldownAt(now) {
+		cs.SetStatus(connstate.StatusReady, "")
+	}
 	if modelID != "" && cs.IsModelInCooldownAt(modelID, now) {
 		return nil, false
 	}
@@ -479,6 +482,9 @@ func (h *Handler) pickStartIndex(provider, modelID string, total int, mode provi
 func (h *Handler) tryPickConnection(ctx context.Context, cs *connstate.ConnectionState, provider, modelID string, now time.Time, mode providercfg.RoutingMode) (*Connection, bool) {
 	if cs.GetStatus().IsRoutingTerminal() {
 		return nil, false
+	}
+	if status := cs.GetStatus(); status.IsHealable() && !cs.IsInCooldownAt(now) {
+		cs.SetStatus(connstate.StatusReady, "")
 	}
 	if cs.IsInCooldownAt(now) {
 		return nil, false
@@ -558,6 +564,9 @@ func (h *Handler) prepareConnection(ctx context.Context, connID, provider, model
 	}
 	if cs.GetStatus().IsRoutingTerminal() {
 		return nil, fmt.Errorf("connection terminal status")
+	}
+	if status := cs.GetStatus(); status.IsHealable() && !cs.IsInCooldownAt(now) {
+		cs.SetStatus(connstate.StatusReady, "")
 	}
 	if cs.IsInCooldownAt(now) {
 		return nil, fmt.Errorf("connection in cooldown")
@@ -1815,12 +1824,7 @@ func (h *Handler) persistSuccess(connID string) {
 	// exhaustion cache here; model-scoped rate limits may still be active for
 	// other models, and expired entries are ignored by the pick checks anyway.
 	if cs := h.store.Get(connID); cs != nil {
-		status := cs.GetStatus()
-		if status == connstate.StatusCooldown ||
-			status == connstate.StatusRateLimited ||
-			status == connstate.StatusQuotaExhausted ||
-			status == connstate.StatusDegraded ||
-			status == connstate.StatusReady {
+		if cs.GetStatus().IsHealable() {
 			cs.SetStatus(connstate.StatusReady, "")
 		}
 	}

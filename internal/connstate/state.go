@@ -37,6 +37,16 @@ func (s Status) IsEligible() bool {
 	return s == StatusReady || s == StatusDegraded
 }
 
+// IsHealable returns true for transient, non-terminal statuses that can be
+// reset to ready when a cooldown expires or a request succeeds.
+func (s Status) IsHealable() bool {
+	switch s {
+	case StatusCooldown, StatusRateLimited, StatusQuotaExhausted, StatusDegraded:
+		return true
+	}
+	return false
+}
+
 // IsRoutingTerminal returns true if the status means the connection should not
 // be selected for routing regardless of cooldown state. This guards against stale
 // eligibility snapshots re-picking an account that was just marked failed.
