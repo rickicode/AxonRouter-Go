@@ -300,12 +300,21 @@ func TestAll_RefreshesNearExpiryOAuth(t *testing.T) {
 		t.Fatalf("executor called with access token %q, want new-access", mock.lastAccessToken)
 	}
 	writeQueue.FlushIdle(2 * time.Second)
+	// Poll the persisted token because SQLite read transactions started before
+	// the async queue write may keep a stale snapshot for a short window.
 	var persistedToken string
-	if err := database.QueryRow(`SELECT COALESCE(oauth_token,'') FROM connections WHERE id = ?`, "conn-test").Scan(&persistedToken); err != nil {
-		t.Fatalf("fetch persisted token: %v", err)
-	}
-	if persistedToken != "new-access" {
-		t.Fatalf("persisted token = %q, want new-access", persistedToken)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if err := database.QueryRow(`SELECT COALESCE(oauth_token,'') FROM connections WHERE id = ?`, "conn-test").Scan(&persistedToken); err != nil {
+			t.Fatalf("fetch persisted token: %v", err)
+		}
+		if persistedToken == "new-access" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("persisted token = %q, want new-access", persistedToken)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
