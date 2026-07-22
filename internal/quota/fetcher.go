@@ -320,6 +320,11 @@ var unrecoverableOAuthCodes = map[string]bool{
 	"unrecoverable_refresh_error": true,
 }
 
+// IsUnrecoverableRefreshError is the exported form used by other packages.
+func IsUnrecoverableRefreshError(err error) bool {
+	return isUnrecoverableRefreshError(err)
+}
+
 // isUnrecoverableRefreshError checks if a refresh error indicates the token is permanently invalid.
 func isUnrecoverableRefreshError(err error) bool {
 	if err == nil {

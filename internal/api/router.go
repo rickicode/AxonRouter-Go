@@ -70,10 +70,11 @@ type Router struct {
 	httpsServer *http.Server
 
 	// Background goroutines
-	quotaScheduler  *background.QuotaSchedulerDB
-	usageFlush      *background.UsageFlush
-	cleanup         *background.Cleanup
-	rateLimitProber *background.RateLimitProber
+	quotaScheduler        *background.QuotaSchedulerDB
+	tokenRefreshScheduler *background.TokenRefreshScheduler
+	usageFlush            *background.UsageFlush
+	cleanup               *background.Cleanup
+	rateLimitProber       *background.RateLimitProber
 
 	// versionChecker polls GitHub Releases for update notifications.
 	versionChecker *version.Checker
@@ -152,9 +153,11 @@ func New(cfg Config) *Router {
 	quota.SetAuthManager(authManager)
 	exhaustionCache := quota.NewExhaustionCache()
 	quotaScheduler := background.NewQuotaSchedulerDB(cfg.DB, writeQueue, store, elig, cfg.QuotaIntervalMin, exhaustionCache)
+	tokenRefreshScheduler := background.NewTokenRefreshScheduler(cfg.DB, writeQueue, store, elig, authManager, cfg.QuotaIntervalMin)
 	usageFlush := background.NewUsageFlush(tracker)
 	cleanup := background.NewCleanup(comboHandler, cfg.DB, cfg.LogRetentionDays)
 	quotaScheduler.Start(ctx)
+	tokenRefreshScheduler.Start(ctx)
 	usageFlush.Start(ctx)
 	cleanup.Start(ctx)
 	// Proxy pool system
@@ -497,20 +500,21 @@ func New(cfg Config) *Router {
 	})
 
 	r := &Router{
-		engine:          engine,
-		db:              cfg.DB,
-		writeQueue:      writeQueue,
-		store:           store,
-		elig:            elig,
-		combo:           comboHandler,
-		tracker:         tracker,
-		deviceTracker:   deviceTracker,
-		authMgr:         authManager,
-		quotaScheduler:  quotaScheduler,
-		usageFlush:      usageFlush,
-		cleanup:         cleanup,
-		rateLimitProber: rateLimitProber,
-		versionChecker:  versionChecker,
+		engine:                engine,
+		db:                    cfg.DB,
+		writeQueue:            writeQueue,
+		store:                 store,
+		elig:                  elig,
+		combo:                 comboHandler,
+		tracker:               tracker,
+		deviceTracker:         deviceTracker,
+		authMgr:               authManager,
+		quotaScheduler:        quotaScheduler,
+		usageFlush:            usageFlush,
+		cleanup:               cleanup,
+		tokenRefreshScheduler: tokenRefreshScheduler,
+		rateLimitProber:       rateLimitProber,
+		versionChecker:        versionChecker,
 	}
 
 	// Let the TLS handler report whether HTTPS is actually listening.
@@ -636,6 +640,7 @@ func (r *Router) Shutdown() {
 		r.tracker.Stop()
 		r.deviceTracker.Stop()
 		r.quotaScheduler.Stop()
+		r.tokenRefreshScheduler.Stop()
 		r.usageFlush.Stop()
 		r.cleanup.Stop()
 		r.rateLimitProber.Stop()
