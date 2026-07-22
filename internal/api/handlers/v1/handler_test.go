@@ -2008,6 +2008,9 @@ func TestIsModelAllowed(t *testing.T) {
 		{name: "exact mismatch", model: "openai/gpt-4o", allowed: map[string]struct{}{"openai/gpt-4o-mini": {}}, want: false},
 		{name: "combo name exact match", model: "my-combo", allowed: map[string]struct{}{"my-combo": {}}, want: true},
 		{name: "smart prefix match", model: "smart/auto", allowed: map[string]struct{}{"smart": {}}, want: true},
+		{name: "combo smart virtual prefix match", model: "smart/balanced", allowed: map[string]struct{}{"smart": {}}, want: true},
+		{name: "negative exact mismatch", model: "openai/gpt-4o", allowed: map[string]struct{}{"openai/gpt-4o-mini": {}}, want: false},
+		{name: "negative unrelated prefix", model: "openai/gpt-4o", allowed: map[string]struct{}{"claude": {}}, want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2032,6 +2035,11 @@ func TestModelIDAllowed(t *testing.T) {
 		{name: "unlimited", model: "openai/gpt-4o", allowed: nil, want: true},
 		{name: "exact id", model: "openai/gpt-4o", allowed: map[string]struct{}{"openai/gpt-4o": {}}, want: true},
 		{name: "prefix", model: "openai/gpt-4o-mini", allowed: map[string]struct{}{"openai": {}}, want: true},
+		{name: "combo exact", model: "my-combo", allowed: map[string]struct{}{"my-combo": {}}, want: true},
+		{name: "smart virtual prefix", model: "smart/balanced", allowed: map[string]struct{}{"smart": {}}, want: true},
+		{name: "negative no match", model: "openai/gpt-4o", allowed: map[string]struct{}{"claude": {}}, want: false},
+		{name: "negative exact mismatch", model: "openai/gpt-4o", allowed: map[string]struct{}{"openai/gpt-4o-mini": {}}, want: false},
+		{name: "negative empty allowed means unlimited still true", model: "openai/gpt-4o", allowed: map[string]struct{}{}, want: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
