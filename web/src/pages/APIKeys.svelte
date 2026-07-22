@@ -2,18 +2,28 @@
   import { onMount } from 'svelte';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
-import { Input } from '$lib/components/ui/input';
-import { Label } from '$lib/components/ui/label';
-import { Switch } from '$lib/components/ui/switch';
-import { AlertDialog, AlertDialogContent, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from '$lib/components/ui/alert-dialog';
+  import { Input } from '$lib/components/ui/input';
+  import { Label } from '$lib/components/ui/label';
+  import { Badge } from '$lib/components/ui/badge';
+  import * as Popover from '$lib/components/ui/popover';
+  import { ScrollArea } from '$lib/components/ui/scroll-area';
+  import { Switch } from '$lib/components/ui/switch';
+  import { AlertDialog, AlertDialogContent, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from '$lib/components/ui/alert-dialog';
   import * as Dialog from '$lib/components/ui/dialog';
   import * as Select from '$lib/components/ui/select';
   import { toast } from 'svelte-sonner';
-import { apiKeysApi } from '$lib/api';
-import { copyToClipboard } from '$lib/copy';
-import AlertTriangleIcon from '@lucide/svelte/icons/alert-triangle';
+  import { apiKeysApi, providersApi, modelsApi } from '$lib/api';
+  import { copyToClipboard } from '$lib/copy';
+  import AlertTriangleIcon from '@lucide/svelte/icons/alert-triangle';
+  import CheckIcon from '@lucide/svelte/icons/check';
   import { buildExpiryTimestamp, formatExpiry, type ExpirationPreset } from '$lib/api-key-utils';
-  import type { APIKeyItem, KeyDevicesResponse } from '$lib/api';
+  import {
+    payloadFromSelections,
+	formatAllowlistSummary,
+	detectLimitMode,
+	type LimitMode,
+  } from '$lib/api-key-allowlist';
+  import type { APIKeyItem, KeyDevicesResponse, Provider, GatewayModel } from '$lib/api';
 
 let keys = $state<APIKeyItem[]>([]);
 let loading = $state(true);
@@ -33,6 +43,15 @@ let baseUrl = $state('');
 let deviceCounts = $state<Record<string, number>>({});
 let selectedDevices = $state<KeyDevicesResponse | null>(null);
 let showDevicesDialog = $state(false);
+let limitMode = $state<LimitMode>('none');
+let allowedProviders = $state<string[]>([]);
+let allowedModels = $state<string[]>([]);
+let providers = $state<Provider[]>([]);
+let models = $state<GatewayModel[]>([]);
+let loadingPickers = $state(false);
+let pickerError = $state<string | null>(null);
+let providerSearch = $state('');
+let modelSearch = $state('');
 
 const expirationLabels: Record<ExpirationPreset, string> = {
     never: 'Never',
@@ -99,16 +118,27 @@ function formatDateTime(ts: number): string {
 }
 
   async function handleCreate() {
+    const allowedPayload = payloadFromSelections(limitMode, $state.snapshot(allowedProviders), $state.snapshot(allowedModels));
+    if (limitMode !== 'none' && (!allowedPayload || allowedPayload.length === 0)) {
+      toast.error(limitMode === 'providers' ? 'Select at least one provider' : 'Select at least one model');
+      return;
+    }
+
     creating = true;
     try {
       const m = parseInt(newMaxTokensM) || 0;
       const maxTokens = m > 0 ? m * 1_000_000 : undefined;
       const expiresAt = buildExpiryTimestamp(expirationPreset, customDate);
-      const res = await apiKeysApi.create(newName.trim() || undefined, parseInt(newRateLimit) || 600, maxTokens, expiresAt);
+      const res = await apiKeysApi.create(newName.trim() || undefined, parseInt(newRateLimit) || 600, maxTokens, expiresAt, allowedPayload);
       newName = '';
       newMaxTokensM = '';
       expirationPreset = 'never';
       customDate = '';
+      limitMode = 'none';
+      allowedProviders = [];
+      allowedModels = [];
+      providerSearch = '';
+      modelSearch = '';
       createdKey = res.key;
       createdKeyId = res.id;
       toast.success('API key created');
@@ -169,6 +199,72 @@ function formatDate(ts: number): string {
   function isExpired(ts?: number): boolean {
     return !!ts && ts <= Date.now() / 1000;
   }
+
+  async function loadPickerData() {
+    loadingPickers = true;
+    pickerError = null;
+    try {
+      const [pRes, mRes] = await Promise.all([
+        providersApi.list(),
+        modelsApi.list(),
+      ]);
+      providers = pRes.data ?? [];
+      models = mRes.data ?? [];
+    } catch (err) {
+      pickerError = err instanceof Error ? err.message : 'Failed to load providers/models';
+      toast.error(pickerError);
+    } finally {
+      loadingPickers = false;
+    }
+  }
+
+  function toggleProvider(id: string) {
+    if (allowedProviders.includes(id)) {
+      allowedProviders = allowedProviders.filter((p) => p !== id);
+    } else {
+      allowedProviders = [...allowedProviders, id];
+    }
+  }
+
+  function toggleModel(id: string) {
+    if (allowedModels.includes(id)) {
+      allowedModels = allowedModels.filter((m) => m !== id);
+    } else {
+      allowedModels = [...allowedModels, id];
+    }
+  }
+
+  const filteredProviders = $derived(
+    providers
+      .filter((p) => {
+        const term = providerSearch.toLowerCase();
+        return (
+          p.id.toLowerCase().includes(term) ||
+          (p.display_name ?? '').toLowerCase().includes(term)
+        );
+      })
+      .sort((a, b) => (a.display_name || a.id).localeCompare(b.display_name || b.id)),
+  );
+
+  const filteredModels = $derived(
+    models
+      .filter((m) => {
+        const term = modelSearch.toLowerCase();
+        return m.id.toLowerCase().includes(term);
+      })
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  );
+
+  function resetCreateDialog() {
+    showCreate = true;
+    createdKey = '';
+    limitMode = 'none';
+    allowedProviders = [];
+    allowedModels = [];
+    providerSearch = '';
+    modelSearch = '';
+    loadPickerData();
+  }
 </script>
 
 <div class="flex flex-1 flex-col gap-6 p-6">
@@ -192,6 +288,7 @@ function formatDate(ts: number): string {
             <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-14 animate-pulse rounded bg-muted"></div></th>
             <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-16 animate-pulse rounded bg-muted"></div></th>
             <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-14 animate-pulse rounded bg-muted"></div></th>
+            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-16 animate-pulse rounded bg-muted"></div></th>
             <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-32"></th>
           </tr>
         </thead>
@@ -206,6 +303,7 @@ function formatDate(ts: number): string {
             <td class="py-3 px-4"><div class="h-5 w-10 animate-pulse rounded bg-muted"></div></td>
             <td class="py-3 px-4"><div class="h-4 w-14 animate-pulse rounded bg-muted"></div></td>
             <td class="py-3 px-4"><div class="h-4 w-20 animate-pulse rounded bg-muted"></div></td>
+            <td class="py-3 px-4"><div class="h-4 w-16 animate-pulse rounded bg-muted"></div></td>
             <td class="py-3 px-4"><div class="h-4 w-16 animate-pulse rounded bg-muted"></div></td>
             <td class="py-3 px-4"><div class="h-7 w-10 animate-pulse rounded bg-muted"></div></td>
           </tr>
@@ -235,7 +333,7 @@ function formatDate(ts: number): string {
       <p class="text-sm font-medium text-muted-foreground">No API keys configured</p>
       <p class="text-xs text-muted-foreground/70 mt-0.5">Proxy is currently open. Add a key to require authentication.</p>
     </div>
-    <Button onclick={() => showCreate = true} size="sm" class="text-body-sm rounded-sm mt-1">
+    <Button onclick={resetCreateDialog} size="sm" class="text-body-sm rounded-sm mt-1">
       Create API key
     </Button>
   </CardContent>
@@ -243,7 +341,7 @@ function formatDate(ts: number): string {
 {:else}
 <div class="flex items-center justify-between">
   <p class="text-caption-mono text-muted-foreground">{keys.length} key{keys.length !== 1 ? 's' : ''}</p>
-  <Button onclick={() => { showCreate = true; createdKey = ''; }} size="sm" class="text-body-sm rounded-sm">
+  <Button onclick={resetCreateDialog} size="sm" class="text-body-sm rounded-sm">
     Create key
   </Button>
 </div>
@@ -256,6 +354,7 @@ function formatDate(ts: number): string {
           <tr class="border-b border-border bg-muted/30">
             <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Name</th>
             <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Rate Limit</th>
+            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Limit</th>
             <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Status</th>
             <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Devices</th>
             <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Created</th>
@@ -276,6 +375,9 @@ function formatDate(ts: number): string {
               </div>
             </td>
             <td class="py-3 px-4 text-body-sm text-muted-foreground">{key.rate_limit_per_min}/min · {key.max_tokens > 0 ? formatMaxTokens(key.max_tokens) : 'Unlimited'}</td>
+            <td class="py-3 px-4 text-body-sm text-muted-foreground">
+              {formatAllowlistSummary(detectLimitMode(key.allowed_models), key.allowed_models)}
+            </td>
             <td class="py-3 px-4">
               <div class="flex justify-center">
                 <Switch checked={key.is_active} onCheckedChange={() => handleToggle(key.id, key.is_active)} aria-label={key.is_active ? 'Disable key' : 'Enable key'} />
@@ -379,20 +481,116 @@ function formatDate(ts: number): string {
           </div>
         {:else}
           <h2 class="text-lg font-semibold mb-4">Create API key</h2>
-	<div class="flex flex-col gap-4">
-		<div class="flex flex-col gap-1.5">
-			<Label class="text-sm font-medium">Name (optional)</Label>
-			<Input bind:value={newName} placeholder="My API key" class="h-9 text-sm" />
-		</div>
-		<div class="flex flex-col gap-1.5">
-			<Label class="text-sm font-medium">Rate limit (per minute)</Label>
-			<Input bind:value={newRateLimit} type="number" min="1" class="h-9 text-sm" />
-		</div>
+          <div class="flex flex-col gap-4">
+            <div class="flex flex-col gap-1.5">
+              <Label class="text-sm font-medium">Name (optional)</Label>
+              <Input bind:value={newName} placeholder="My API key" class="h-9 text-sm" />
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <Label class="text-sm font-medium">Rate limit (per minute)</Label>
+              <Input bind:value={newRateLimit} type="number" min="1" class="h-9 text-sm" />
+            </div>
             <div class="flex flex-col gap-1.5">
               <Label class="text-sm font-medium">Max tokens (M)</Label>
               <Input bind:value={newMaxTokensM} type="number" min="1" placeholder="Unlimited" class="h-9 text-sm" />
               <p class="text-xs text-muted-foreground">Leave empty for unlimited. Min 1M (1 = 1,000,000 tokens).</p>
             </div>
+            <div class="flex flex-col gap-1.5">
+              <Label class="text-sm font-medium">Limit access</Label>
+              <div class="flex gap-2 flex-wrap">
+                <Button variant={limitMode === 'none' ? 'default' : 'outline'} size="sm" onclick={() => limitMode = 'none'} class="text-body-sm rounded-sm">Unlimited</Button>
+                <Button variant={limitMode === 'providers' ? 'default' : 'outline'} size="sm" onclick={() => limitMode = 'providers'} class="text-body-sm rounded-sm">Providers</Button>
+                <Button variant={limitMode === 'models' ? 'default' : 'outline'} size="sm" onclick={() => limitMode = 'models'} class="text-body-sm rounded-sm">Models</Button>
+              </div>
+            </div>
+
+            {#if limitMode === 'providers'}
+              <div class="flex flex-col gap-1.5">
+                <Label class="text-sm font-medium">Allowed providers</Label>
+                <Popover.Root>
+                  <Popover.Trigger class="flex h-9 w-full items-center justify-between rounded-sm border border-input bg-background px-3 py-1 text-body-sm shadow-sm transition-colors hover:bg-accent">
+                    {allowedProviders.length ? `${allowedProviders.length} provider${allowedProviders.length === 1 ? '' : 's'} selected` : 'Select providers'}
+                  </Popover.Trigger>
+                  <Popover.Content class="w-72 p-2">
+                    {#if loadingPickers}
+                      <div class="py-4 flex justify-center">
+                        <div class="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
+                      </div>
+                    {:else if pickerError}
+                      <p class="text-body-sm text-destructive">{pickerError}</p>
+                      <Button variant="outline" size="sm" class="mt-2 w-full text-body-sm rounded-sm" onclick={loadPickerData}>Retry</Button>
+                    {:else}
+                      <Input placeholder="Search providers..." bind:value={providerSearch} class="h-8 text-sm mb-2" />
+                      <ScrollArea class="h-48">
+                        <div class="flex flex-col gap-0.5">
+                          {#each filteredProviders as provider}
+                            <Button variant="ghost" size="sm" class="w-full justify-between text-body-sm font-normal" onclick={() => toggleProvider(provider.id)}>
+                              <span class="truncate">{provider.display_name || provider.id}</span>
+                              {#if allowedProviders.includes(provider.id)}
+                                <CheckIcon class="size-4 text-primary shrink-0 ml-2" />
+                              {/if}
+                            </Button>
+                          {:else}
+                            <p class="text-body-sm text-muted-foreground px-2 py-1">No providers found</p>
+                          {/each}
+                        </div>
+                      </ScrollArea>
+                    {/if}
+                  </Popover.Content>
+                </Popover.Root>
+                {#if allowedProviders.length > 0}
+                  <div class="flex flex-wrap gap-1 mt-1">
+                    {#each allowedProviders as id}
+                      {@const provider = providers.find((p) => p.id === id)}
+                      <Badge variant="secondary">{provider?.display_name || id}</Badge>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {:else if limitMode === 'models'}
+              <div class="flex flex-col gap-1.5">
+                <Label class="text-sm font-medium">Allowed models</Label>
+                <Popover.Root>
+                  <Popover.Trigger class="flex h-9 w-full items-center justify-between rounded-sm border border-input bg-background px-3 py-1 text-body-sm shadow-sm transition-colors hover:bg-accent">
+                    {allowedModels.length ? `${allowedModels.length} model${allowedModels.length === 1 ? '' : 's'} selected` : 'Select models'}
+                  </Popover.Trigger>
+                  <Popover.Content class="w-80 p-2">
+                    {#if loadingPickers}
+                      <div class="py-4 flex justify-center">
+                        <div class="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
+                      </div>
+                    {:else if pickerError}
+                      <p class="text-body-sm text-destructive">{pickerError}</p>
+                      <Button variant="outline" size="sm" class="mt-2 w-full text-body-sm rounded-sm" onclick={loadPickerData}>Retry</Button>
+                    {:else}
+                      <Input placeholder="Search models..." bind:value={modelSearch} class="h-8 text-sm mb-2" />
+                      <ScrollArea class="h-64">
+                        <div class="flex flex-col gap-0.5">
+                          {#each filteredModels as model}
+                            <Button variant="ghost" size="sm" class="w-full justify-between text-body-sm font-normal" onclick={() => toggleModel(model.id)}>
+                              <span class="truncate font-mono text-xs">{model.id}</span>
+                              {#if allowedModels.includes(model.id)}
+                                <CheckIcon class="size-4 text-primary shrink-0 ml-2" />
+                              {/if}
+                            </Button>
+                          {:else}
+                            <p class="text-body-sm text-muted-foreground px-2 py-1">No models found</p>
+                          {/each}
+                        </div>
+                      </ScrollArea>
+                    {/if}
+                  </Popover.Content>
+                </Popover.Root>
+                {#if allowedModels.length > 0}
+                  <div class="flex flex-wrap gap-1 mt-1">
+                    {#each allowedModels as id}
+                      <Badge variant="secondary">{id}</Badge>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/if}
+
             <div class="flex flex-col gap-1.5">
               <Label class="text-sm font-medium">Expiration</Label>
               <Select.Root type="single" value={expirationPreset} onValueChange={setExpirationPreset}>
@@ -412,11 +610,11 @@ function formatDate(ts: number): string {
             </div>
           </div>
           <div class="flex gap-2 mt-6">
-	<Button onclick={handleCreate} disabled={creating} class="flex-1 text-sm">
-		{creating ? 'Creating...' : 'Create'}
-	</Button>
-	<Button variant="outline" onclick={() => { showCreate = false; createdKey = ''; }} class="text-sm">Cancel</Button>
-</div>
+            <Button onclick={handleCreate} disabled={creating} class="flex-1 text-sm">
+              {creating ? 'Creating...' : 'Create'}
+            </Button>
+            <Button variant="outline" onclick={() => { showCreate = false; createdKey = ''; }} class="text-sm">Cancel</Button>
+          </div>
 
 {/if}
 </Dialog.Content>
