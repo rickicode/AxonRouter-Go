@@ -327,7 +327,7 @@ func TestExecute_ProFallbackChainRetriesOn400(t *testing.T) {
 	}
 }
 
-func TestAntigravity_RenamesParametersJsonSchemaToParameters(t *testing.T) {
+func TestAntigravity_NormalizesToolKeys(t *testing.T) {
 	e := NewAntigravityExecutor(NewBaseExecutor())
 	ctx := context.Background()
 
@@ -366,13 +366,19 @@ func TestAntigravity_RenamesParametersJsonSchemaToParameters(t *testing.T) {
 	}
 	root := gjson.ParseBytes(out)
 
-	if root.Get("request.tools.0.functionDeclarations.0.parametersJsonSchema").Exists() {
+	if root.Get("request.tools.0.functionDeclarations").Exists() {
+		t.Error("expected functionDeclarations to be renamed to function_declarations")
+	}
+	if !root.Get("request.tools.0.function_declarations").Exists() {
+		t.Error("expected function_declarations field after normalize")
+	}
+	if root.Get("request.tools.0.function_declarations.0.parametersJsonSchema").Exists() {
 		t.Error("expected parametersJsonSchema to be renamed to parameters")
 	}
-	if !root.Get("request.tools.0.functionDeclarations.0.parameters").Exists() {
-		t.Error("expected parameters field after reverse rename")
+	if !root.Get("request.tools.0.function_declarations.0.parameters").Exists() {
+		t.Error("expected parameters field after normalize")
 	}
-	if got := root.Get("request.tools.0.functionDeclarations.0.parameters.type").String(); got != "object" {
+	if got := root.Get("request.tools.0.function_declarations.0.parameters.type").String(); got != "object" {
 		t.Errorf("expected parameters.type = object, got %q", got)
 	}
 }
