@@ -14,13 +14,25 @@ type EligibilitySnapshot struct {
 	ByPrefixState map[string][]*ConnectionState
 }
 
+// providerSnapshot holds the eligible connection state for a single provider.
+// It is immutable after publication and safe for lock-free reads via atomic.Value.
+type providerSnapshot struct {
+	States []*ConnectionState
+	IDs    []string
+}
+
 // EligibilityManager manages eligibility snapshots for O(1) routing decisions.
 type EligibilityManager struct {
-	store     *Store
-	snapshot  atomic.Value // *EligibilitySnapshot
-	updateMu  sync.Mutex    // guards coalescing window state
-	updateScheduled bool    // true while a coalesced Update is pending
-	lastUpdate time.Time    // timestamp of last actual rebuild
+	store      *Store
+	snapshot   atomic.Value // *EligibilitySnapshot
+	byProvider sync.Map     // provider_type_id -> *providerSnapshot
+
+	updateMu        sync.Mutex // guards coalescing window state
+	updateScheduled bool       // true while a coalesced full Update is pending
+	lastUpdate      time.Time  // timestamp of last full rebuild
+
+	providerUpdateScheduled map[string]bool      // true while a coalesced per-provider update is pending
+	providerLastUpdate      map[string]time.Time // timestamp of last per-provider rebuild
 }
 
 // updateCoalesceWindow bounds how often the O(N) snapshot rebuild runs when
@@ -33,11 +45,14 @@ const updateCoalesceWindow = 50 * time.Millisecond
 // NewEligibilityManager creates a new eligibility manager.
 func NewEligibilityManager(store *Store) *EligibilityManager {
 	e := &EligibilityManager{
-		store: store,
+		store:                   store,
+		providerUpdateScheduled: make(map[string]bool),
+		providerLastUpdate:      make(map[string]time.Time),
 	}
 	e.snapshot.Store(&EligibilitySnapshot{
-		Providers: nil,
-		ByPrefix:  make(map[string][]string),
+		Providers:     nil,
+		ByPrefix:      make(map[string][]string),
+		ByPrefixState: make(map[string][]*ConnectionState),
 	})
 	return e
 }
@@ -47,63 +62,128 @@ func NewEligibilityManager(store *Store) *EligibilityManager {
 // so routing modes such as round_robin and first_eligible prefer healthy
 // accounts while still rotating fallback across siblings.
 func (e *EligibilityManager) Update(store *Store) {
-	eligibleStates := make(map[string][]*ConnectionState)
-	var allStates []*ConnectionState
+	next := make(map[string]*providerSnapshot)
 
 	store.RangeByConnID(func(connID string, cs *ConnectionState) bool {
 		status := cs.GetStatus()
+		// Exclude routing-terminal and non-eligible statuses, plus active cooldowns.
 		if status.IsRoutingTerminal() {
 			return true
 		}
-		// Exclude connections that are actively cooled down or exhausted.  This keeps
-		// the eligibility snapshot consistent with getConnection's preflight checks
-		// and guarantees we never route to rate-limited/exhausted accounts.
 		if status != StatusReady && status != StatusDegraded {
 			return true
 		}
 		if cs.IsInCooldown() {
 			return true
 		}
-		allStates = append(allStates, cs)
+
 		prefix := cs.Prefix
-		eligibleStates[prefix] = append(eligibleStates[prefix], cs)
+		ps := next[prefix]
+		if ps == nil {
+			ps = &providerSnapshot{}
+			next[prefix] = ps
+		}
+		ps.States = append(ps.States, cs)
 		return true
 	})
 
-	// Order each prefix by remaining quota (highest first), then by recency
-	// (least-recently-used first). Routing modes then rotate or pick a random
-	// start on this list, naturally preferring healthy accounts while spreading
-	// simultaneous requests across siblings instead of concentrating on the
-	// same freshly-selected connection.
-	for _, conns := range eligibleStates {
-		sort.SliceStable(conns, func(i, j int) bool {
-			ri, rj := conns[i].GetRemainingPct(), conns[j].GetRemainingPct()
-			if ri != rj {
-				return ri > rj
+	for _, ps := range next {
+		sortProviderSnapshot(ps)
+	}
+
+	for prefix, ps := range next {
+		e.byProvider.Store(prefix, ps)
+	}
+
+	// Providers that previously had a snapshot but now have no eligible
+	// connections must be removed from the aggregate view.
+	var stale []string
+	e.byProvider.Range(func(key, value any) bool {
+		prefix := key.(string)
+		if _, ok := next[prefix]; !ok {
+			stale = append(stale, prefix)
+		}
+		return true
+	})
+	for _, prefix := range stale {
+		e.byProvider.Delete(prefix)
+	}
+
+	e.rebuildAggregate()
+}
+
+// UpdateProvider recomputes the eligibility snapshot for a single provider.
+// This avoids scanning and rebuilding unaffected providers during hot-path
+// status changes (failover, recovery, cooldown expiry).
+func (e *EligibilityManager) UpdateProvider(provider string) {
+	ps := &providerSnapshot{}
+
+	if e.store != nil {
+		e.store.RangeByConnID(func(connID string, cs *ConnectionState) bool {
+			if cs.Prefix != provider {
+				return true
 			}
-			return conns[i].lastUsedAtNano() < conns[j].lastUsedAtNano()
+			status := cs.GetStatus()
+			if status.IsRoutingTerminal() {
+				return true
+			}
+			if status != StatusReady && status != StatusDegraded {
+				return true
+			}
+			if cs.IsInCooldown() {
+				return true
+			}
+			ps.States = append(ps.States, cs)
+			return true
 		})
 	}
 
-	// Build string slices from the sorted pointer slices for callers that only
-	// need connection IDs. Both views share the same ordering.
-	eligible := make(map[string][]string, len(eligibleStates))
-	for prefix, conns := range eligibleStates {
-		ids := make([]string, len(conns))
-		for i, cs := range conns {
-			ids[i] = cs.ID
+	sortProviderSnapshot(ps)
+	e.byProvider.Store(provider, ps)
+	e.rebuildAggregate()
+}
+
+// sortProviderSnapshot orders a provider's eligible connections by remaining
+// quota (highest first) and then by recency (least-recently-used first).
+func sortProviderSnapshot(ps *providerSnapshot) {
+	if ps == nil {
+		return
+	}
+	sort.SliceStable(ps.States, func(i, j int) bool {
+		ri, rj := ps.States[i].GetRemainingPct(), ps.States[j].GetRemainingPct()
+		if ri != rj {
+			return ri > rj
 		}
-		eligible[prefix] = ids
+		return ps.States[i].lastUsedAtNano() < ps.States[j].lastUsedAtNano()
+	})
+	ps.IDs = make([]string, len(ps.States))
+	for i, cs := range ps.States {
+		ps.IDs[i] = cs.ID
 	}
-	providers := make([]string, 0, len(allStates))
-	for _, cs := range allStates {
-		providers = append(providers, cs.ID)
-	}
+}
+
+// rebuildAggregate builds the full EligibilitySnapshot from per-provider snapshots.
+func (e *EligibilityManager) rebuildAggregate() {
+	byPrefix := make(map[string][]string)
+	byPrefixState := make(map[string][]*ConnectionState)
+	var providers []string
+
+	e.byProvider.Range(func(key, value any) bool {
+		prefix := key.(string)
+		ps := value.(*providerSnapshot)
+		if len(ps.States) == 0 {
+			return true
+		}
+		byPrefix[prefix] = ps.IDs
+		byPrefixState[prefix] = ps.States
+		providers = append(providers, ps.IDs...)
+		return true
+	})
 
 	e.snapshot.Store(&EligibilitySnapshot{
 		Providers:     providers,
-		ByPrefix:      eligible,
-		ByPrefixState: eligibleStates,
+		ByPrefix:      byPrefix,
+		ByPrefixState: byPrefixState,
 	})
 }
 
@@ -138,6 +218,39 @@ func (e *EligibilityManager) ScheduleUpdate() {
 		e.lastUpdate = time.Now()
 		e.updateMu.Unlock()
 		e.Update(e.store)
+	}()
+}
+
+// ScheduleUpdateProvider coalesces concurrent eligibility rebuild requests for a
+// single provider into a single per-provider rebuild per updateCoalesceWindow.
+// This is the hot-path entry point: a 429 for one provider only rebuilds that
+// provider's snapshot and the aggregate view, leaving all other providers untouched.
+func (e *EligibilityManager) ScheduleUpdateProvider(provider string) {
+	if provider == "" {
+		e.ScheduleUpdate()
+		return
+	}
+
+	e.updateMu.Lock()
+	if e.providerUpdateScheduled[provider] {
+		e.updateMu.Unlock()
+		return
+	}
+	if time.Since(e.providerLastUpdate[provider]) >= updateCoalesceWindow {
+		e.providerLastUpdate[provider] = time.Now()
+		e.updateMu.Unlock()
+		e.UpdateProvider(provider)
+		return
+	}
+	e.providerUpdateScheduled[provider] = true
+	e.updateMu.Unlock()
+	go func() {
+		time.Sleep(updateCoalesceWindow)
+		e.updateMu.Lock()
+		e.providerUpdateScheduled[provider] = false
+		e.providerLastUpdate[provider] = time.Now()
+		e.updateMu.Unlock()
+		e.UpdateProvider(provider)
 	}()
 }
 
