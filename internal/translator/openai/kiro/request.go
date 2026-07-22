@@ -676,7 +676,11 @@ func normalizeKiroToolSchema(schema map[string]any) map[string]any {
 			arr := v.([]any)
 			next := make([]any, len(arr))
 			for i, item := range arr {
-				next[i] = normalizeKiroToolSchema(asObject(item))
+				if child, ok := item.(map[string]any); ok {
+					next[i] = normalizeKiroToolSchema(child)
+				} else {
+					next[i] = item
+				}
 			}
 			out[k] = next
 		default:

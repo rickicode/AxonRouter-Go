@@ -265,6 +265,59 @@ func TestConvertOpenAIRequestToKiro_HTTPImageFallback(t *testing.T) {
 	}
 }
 
+func TestConvertOpenAIRequestToKiro_PreservesRequiredStrings(t *testing.T) {
+	body := []byte(`{
+		"model": "kiro/claude-sonnet-4-6",
+		"messages": [{"role": "user", "content": "Hello"}],
+		"tools": [
+			{"type": "function", "function": {
+				"name": "get_weather",
+				"description": "Get weather",
+				"parameters": {
+					"type": "object",
+					"properties": {
+						"city": {"type": "string"},
+						"unit": {"type": "string", "enum": ["celsius","fahrenheit"]}
+					},
+					"required": ["city"]
+				}
+			}}
+		]
+	}`)
+
+	out := ConvertOpenAIRequestToKiro("kiro/claude-sonnet-4-6", body, true)
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	current := payload["conversationState"].(map[string]any)["currentMessage"].(map[string]any)
+	uim := current["userInputMessage"].(map[string]any)
+	ctx, _ := uim["userInputMessageContext"].(map[string]any)
+	if ctx == nil {
+		t.Fatalf("userInputMessageContext missing")
+	}
+	tools, _ := ctx["tools"].([]any)
+	if len(tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(tools))
+	}
+	tool := tools[0].(map[string]any)
+	spec := tool["toolSpecification"].(map[string]any)
+	inputSchema := spec["inputSchema"].(map[string]any)
+	schemaJSON := inputSchema["json"].(map[string]any)
+
+	req, _ := schemaJSON["required"].([]any)
+	if len(req) != 1 || req[0] != "city" {
+		t.Errorf("required = %v, want [city]", req)
+	}
+
+	unit := schemaJSON["properties"].(map[string]any)["unit"].(map[string]any)
+	enum, _ := unit["enum"].([]any)
+	if len(enum) != 2 || enum[0] != "celsius" || enum[1] != "fahrenheit" {
+		t.Errorf("enum = %v, want [celsius fahrenheit]", enum)
+	}
+}
+
 func TestConvertOpenAIRequestToKiro_Base64ImageStillInImages(t *testing.T) {
 	body := []byte(`{
 		"model": "kiro/claude-sonnet-4-6",
