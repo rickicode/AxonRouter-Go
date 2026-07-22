@@ -64,6 +64,20 @@ type APIKey struct {
 	RateLimitPerMin int            `json:"rate_limit_per_min"`
 	IsActive        bool           `json:"is_active"`
 	CreatedAt       int64          `json:"created_at"`
+	AllowedModels   sql.NullString `json:"allowed_models,omitempty"`
+}
+
+// AllowedModelsList JSON-unmarshals the raw allowed_models value and returns nil
+// when the value is empty, null, or invalid.
+func (k APIKey) AllowedModelsList() []string {
+	if !k.AllowedModels.Valid || k.AllowedModels.String == "" {
+		return nil
+	}
+	var models []string
+	if err := json.Unmarshal([]byte(k.AllowedModels.String), &models); err != nil {
+		return nil
+	}
+	return models
 }
 
 // Combo is a named ordered list of model steps with a routing strategy.
