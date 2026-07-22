@@ -1820,8 +1820,10 @@ func (h *Handler) persistCooldown(connID string, det connstate.ErrorDetection) {
 func (h *Handler) persistSuccess(connID string) {
 	now := time.Now().Unix()
 
-	// In-memory recovery: clear exhaustion and reset status so the next
-	// eligibility snapshot includes this connection right away.
+	// In-memory recovery: reset status so the next eligibility snapshot
+	// includes this connection right away. We intentionally do NOT clear the
+	// exhaustion cache here; model-scoped rate limits may still be active for
+	// other models, and expired entries are ignored by the pick checks anyway.
 	if cs := h.store.Get(connID); cs != nil {
 		status := cs.GetStatus()
 		if status == connstate.StatusCooldown ||
@@ -1831,9 +1833,6 @@ func (h *Handler) persistSuccess(connID string) {
 			status == connstate.StatusReady {
 			cs.SetStatus(connstate.StatusReady, "")
 		}
-	}
-	if h.exhaustion != nil {
-		h.exhaustion.Clear(connID)
 	}
 	h.elig.ScheduleUpdate()
 
