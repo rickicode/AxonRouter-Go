@@ -339,11 +339,21 @@ func TestAntigravity_NormalizesToolKeys(t *testing.T) {
 						"name":        "get_weather",
 						"description": "Get the weather",
 						"parametersJsonSchema": map[string]any{
-							"type": "object",
+							"$schema":    "http://json-schema.org/draft-07/schema#",
+							"type":       "object",
+							"title":      "weather",
+							"format":     "foo",
+							"default":    map[string]any{},
+							"x-provider": "openai",
 							"properties": map[string]any{
-								"location": map[string]any{"type": "string"},
+								"location": map[string]any{
+									"type":          "string",
+									"propertyNames": true,
+									"minLength":     1,
+								},
 							},
-							"required": []string{"location"},
+							"required":      []string{"location"},
+							"propertyNames": map[string]any{"type": "string"},
 						},
 					},
 				},
@@ -380,5 +390,13 @@ func TestAntigravity_NormalizesToolKeys(t *testing.T) {
 	}
 	if got := root.Get("request.tools.0.function_declarations.0.parameters.type").String(); got != "object" {
 		t.Errorf("expected parameters.type = object, got %q", got)
+	}
+	for _, bad := range []string{"$schema", "title", "format", "default", "x-provider", "propertyNames", "minLength"} {
+		if root.Get("request.tools.0.function_declarations.0.parameters." + bad).Exists() {
+			t.Errorf("expected unsupported key %q to be stripped", bad)
+		}
+	}
+	if got := root.Get("request.tools.0.function_declarations.0.parameters.properties.location.type").String(); got != "string" {
+		t.Errorf("expected location type to remain, got %q", got)
 	}
 }
