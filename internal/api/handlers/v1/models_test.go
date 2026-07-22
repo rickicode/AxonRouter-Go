@@ -184,6 +184,36 @@ func TestFilterAllowedModels(t *testing.T) {
 			t.Errorf("got %v, want empty", ids(got))
 		}
 	})
+
+	t.Run("filters smart virtual models by prefix", func(t *testing.T) {
+		allowed := map[string]struct{}{"smart": {}}
+		got := filterAllowedModels(all, allowed)
+		want := []string{"smart/auto"}
+		if !slices.Equal(ids(got), want) {
+			t.Errorf("got %v, want %v", ids(got), want)
+		}
+	})
+
+	t.Run("filters combo by exact name", func(t *testing.T) {
+		allowed := map[string]struct{}{"my-combo": {}}
+		got := filterAllowedModels(all, allowed)
+		want := []string{"my-combo"}
+		if !slices.Equal(ids(got), want) {
+			t.Errorf("got %v, want %v", ids(got), want)
+		}
+	})
+
+	t.Run("negative ids are excluded when allowed is non-empty", func(t *testing.T) {
+		allowed := map[string]struct{}{
+			"openai/gpt-4o": {},
+			"claude":        {},
+		}
+		got := filterAllowedModels(all, allowed)
+		want := []string{"openai/gpt-4o", "claude/claude-sonnet-4"}
+		if !slices.Equal(ids(got), want) {
+			t.Errorf("got %v, want %v", ids(got), want)
+		}
+	})
 }
 
 func TestModels_AllowedModelsContext(t *testing.T) {
