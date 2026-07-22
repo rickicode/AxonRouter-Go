@@ -12,6 +12,8 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 )
 
+const socialUserAgent = "kiro-cli/1.0.0"
+
 // buildSocialLoginURL returns the Kiro social-login URL for Google or GitHub.
 func buildSocialLoginURL(provider, codeChallenge, state string) string {
 	idp := "Google"
@@ -42,6 +44,7 @@ func exchangeSocialCode(ctx context.Context, cli *http.Client, code, codeVerifie
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", socialUserAgent)
 
 	resp, err := cli.Do(req)
 	if err != nil {
@@ -85,6 +88,7 @@ func refreshSocial(ctx context.Context, cli *http.Client, creds *auth.Credential
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", socialUserAgent)
 
 	resp, err := cli.Do(req)
 	if err != nil {

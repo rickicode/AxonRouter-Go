@@ -3,6 +3,7 @@ package quota
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -11,9 +12,10 @@ import (
 )
 
 type mockOAuthService struct {
-	refreshed bool
-	returnErr error
-	creds     *auth.Credentials
+	refreshed   bool
+	returnErr   error
+	creds       *auth.Credentials
+	lastCreds   *auth.Credentials
 }
 
 func (m *mockOAuthService) GenerateAuthURL(ctx context.Context, state string) (string, error) {
@@ -26,6 +28,7 @@ func (m *mockOAuthService) ExchangeCode(ctx context.Context, code string) (*auth
 
 func (m *mockOAuthService) RefreshToken(ctx context.Context, creds *auth.Credentials) (*auth.Credentials, error) {
 	m.refreshed = true
+	m.lastCreds = creds
 	if m.returnErr != nil {
 		return nil, m.returnErr
 	}
@@ -182,5 +185,101 @@ func TestFetchConnectionQuota_SkipsRefreshWithoutRefreshToken(t *testing.T) {
 
 	if mock.refreshed {
 		t.Error("expected no refresh when refresh token is missing")
+	}
+}
+
+func TestFetchConnectionQuota_PassesProviderSpecificToAuthManager(t *testing.T) {
+	db := newFetcherTestDB(t)
+	defer db.Close()
+
+	connID := "conn-psd"
+	oldToken := "old-access"
+	oldRefresh := "old-refresh"
+	oldExpiry := time.Now().Add(-time.Minute).Unix()
+
+	_, err := db.Exec(`INSERT INTO connections (id, provider_type_id, auth_type, is_active, name, oauth_token, oauth_refresh_token, oauth_expires_at, provider_specific_data, status, updated_at)
+		VALUES (?, ?, 'oauth', 1, 'Test Conn', ?, ?, ?, ?, 'ready', ?)`,
+		connID, "testprovider", oldToken, oldRefresh, oldExpiry, `{"profileArn":"arn:test","ignored":42,"keep":"val"}`, time.Now().Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockOAuthService{
+		creds: &auth.Credentials{
+			AccessToken:      "new-access",
+			RefreshToken:     "new-refresh",
+			ExpiresAt:        time.Now().Add(time.Hour),
+			ProviderSpecific: map[string]string{"profileArn": "arn:new"},
+		},
+	}
+	mgr := auth.NewManager()
+	mgr.RegisterService(auth.ProviderType("testprovider"), mock)
+	SetAuthManager(mgr)
+	defer SetAuthManager(nil)
+
+	_, _ = FetchConnectionQuota(db, connID)
+
+	if mock.lastCreds == nil {
+		t.Fatal("expected RefreshToken to receive credentials")
+	}
+	if mock.lastCreds.AccessToken != oldToken {
+		t.Errorf("expected access token %q, got %q", oldToken, mock.lastCreds.AccessToken)
+	}
+	if mock.lastCreds.RefreshToken != oldRefresh {
+		t.Errorf("expected refresh token %q, got %q", oldRefresh, mock.lastCreds.RefreshToken)
+	}
+	gotPSD := mock.lastCreds.ProviderSpecific
+	if gotPSD["profileArn"] != "arn:test" {
+		t.Errorf("expected profileArn passed to auth manager, got %q", gotPSD["profileArn"])
+	}
+	if gotPSD["keep"] != "val" {
+		t.Errorf("expected keep string passed, got %q", gotPSD["keep"])
+	}
+	if _, ok := gotPSD["ignored"]; ok {
+		t.Errorf("expected non-string provider_specific_data keys to be skipped")
+	}
+}
+
+func TestFetchConnectionQuota_DeferredRefreshWhenTokenStillValid(t *testing.T) {
+	db := newFetcherTestDB(t)
+	defer db.Close()
+
+	connID := "conn-deferred"
+	oldToken := "old-access"
+	oldRefresh := "old-refresh"
+	// Expires in 4 minutes, inside the default 5-minute refresh lead but still valid.
+	oldExpiry := time.Now().Add(4 * time.Minute).Unix()
+
+	_, err := db.Exec(`INSERT INTO connections (id, provider_type_id, auth_type, is_active, name, oauth_token, oauth_refresh_token, oauth_expires_at, status, updated_at)
+		VALUES (?, ?, 'oauth', 1, 'Test Conn', ?, ?, ?, 'ready', ?)`,
+		connID, "testprovider", oldToken, oldRefresh, oldExpiry, time.Now().Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockOAuthService{returnErr: errors.New("social refresh failed 401: Bad credentials")}
+	mgr := auth.NewManager()
+	mgr.RegisterService(auth.ProviderType("testprovider"), mock)
+	SetAuthManager(mgr)
+	defer SetAuthManager(nil)
+
+	cq, err := FetchConnectionQuota(db, connID)
+	if err != nil {
+		t.Fatalf("FetchConnectionQuota: %v", err)
+	}
+
+	if !mock.refreshed {
+		t.Fatal("expected refresh to be attempted")
+	}
+	if cq.Error != "" {
+		t.Errorf("expected deferred refresh when token still valid, got hard error %q", cq.Error)
+	}
+
+	var isActive int
+	if err := db.QueryRow(`SELECT is_active FROM connections WHERE id = ?`, connID).Scan(&isActive); err != nil {
+		t.Fatal(err)
+	}
+	if isActive != 1 {
+		t.Errorf("expected connection to remain active, got is_active=%d", isActive)
 	}
 }
