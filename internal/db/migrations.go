@@ -151,6 +151,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		`ALTER TABLE request_logs ADD COLUMN api_key_id TEXT`,
 		`ALTER TABLE api_keys ADD COLUMN max_tokens INTEGER DEFAULT 0`,
 		`ALTER TABLE api_keys ADD COLUMN expires_at INTEGER`,
+		`ALTER TABLE api_keys ADD COLUMN allowed_models TEXT`,
 		`ALTER TABLE request_logs ADD COLUMN tokens_estimated INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE request_logs ADD COLUMN proxy_pool_id TEXT`,
 		`ALTER TABLE request_logs ADD COLUMN api_type TEXT`,

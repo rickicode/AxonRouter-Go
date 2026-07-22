@@ -1,8 +1,13 @@
 package v1
 
 import (
+	"encoding/json"
+	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestGetProviderModels_CFIncludesServiceKinds(t *testing.T) {
@@ -113,6 +118,103 @@ func TestGetProviderModels_GrokCLIIncludesExpectedModels(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("missing grok-cli model %q", id)
+		}
+	}
+}
+
+func TestFilterAllowedModels(t *testing.T) {
+	all := []gin.H{
+		{"id": "openai/gpt-4o"},
+		{"id": "openai/gpt-4o-mini"},
+		{"id": "claude/claude-sonnet-4"},
+		{"id": "smart/auto"},
+		{"id": "my-combo"},
+	}
+
+	ids := func(ms []gin.H) []string {
+		out := make([]string, 0, len(ms))
+		for _, m := range ms {
+			out = append(out, m["id"].(string))
+		}
+		return out
+	}
+
+	t.Run("empty allowed keeps all", func(t *testing.T) {
+		got := filterAllowedModels(all, nil)
+		want := []string{"openai/gpt-4o", "openai/gpt-4o-mini", "claude/claude-sonnet-4", "smart/auto", "my-combo"}
+		if !slices.Equal(ids(got), want) {
+			t.Errorf("got %v, want %v", ids(got), want)
+		}
+	})
+
+	t.Run("filters by full id", func(t *testing.T) {
+		allowed := map[string]struct{}{"openai/gpt-4o": {}}
+		got := filterAllowedModels(all, allowed)
+		want := []string{"openai/gpt-4o"}
+		if !slices.Equal(ids(got), want) {
+			t.Errorf("got %v, want %v", ids(got), want)
+		}
+	})
+
+	t.Run("filters by provider prefix", func(t *testing.T) {
+		allowed := map[string]struct{}{"openai": {}}
+		got := filterAllowedModels(all, allowed)
+		want := []string{"openai/gpt-4o", "openai/gpt-4o-mini"}
+		if !slices.Equal(ids(got), want) {
+			t.Errorf("got %v, want %v", ids(got), want)
+		}
+	})
+
+	t.Run("filters by mix of id and prefix", func(t *testing.T) {
+		allowed := map[string]struct{}{
+			"claude":          {},
+			"openai/gpt-4o-mini": {},
+		}
+		got := filterAllowedModels(all, allowed)
+		want := []string{"openai/gpt-4o-mini", "claude/claude-sonnet-4"}
+		if !slices.Equal(ids(got), want) {
+			t.Errorf("got %v, want %v", ids(got), want)
+		}
+	})
+
+	t.Run("no match returns empty", func(t *testing.T) {
+		allowed := map[string]struct{}{"gemini": {}}
+		got := filterAllowedModels(all, allowed)
+		if len(got) != 0 {
+			t.Errorf("got %v, want empty", ids(got))
+		}
+	})
+}
+
+func TestModels_AllowedModelsContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := newTestHandler(t)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("allowed_models", map[string]struct{}{"smart": {}})
+
+	h.Models(c)
+
+	resp := w.Result()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body struct {
+		Data []gin.H `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if len(body.Data) == 0 {
+		t.Fatal("expected filtered models, got none")
+	}
+	for _, m := range body.Data {
+		id, _ := m["id"].(string)
+		if !strings.HasPrefix(id, "smart/") {
+			t.Errorf("unexpected model id in filtered response: %q", id)
 		}
 	}
 }

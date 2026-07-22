@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -25,7 +26,7 @@ func NewAPIKeyHandler(db *sql.DB, cache *middleware.AuthCache) *APIKeyHandler {
 
 // List returns all API keys (masked).
 func (h *APIKeyHandler) List(c *gin.Context) {
-	rows, err := h.db.Query(`SELECT id, COALESCE(name, ''), COALESCE(key_value, ''), rate_limit_per_min, max_tokens, is_active, created_at, COALESCE(expires_at, 0) FROM api_keys ORDER BY created_at DESC`)
+	rows, err := h.db.Query(`SELECT id, COALESCE(name, ''), COALESCE(key_value, ''), rate_limit_per_min, max_tokens, is_active, created_at, COALESCE(expires_at, 0), COALESCE(allowed_models, '') FROM api_keys ORDER BY created_at DESC`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -33,14 +34,15 @@ func (h *APIKeyHandler) List(c *gin.Context) {
 	defer rows.Close()
 
 	type apiKeyView struct {
-		ID              string `json:"id"`
-		Name            string `json:"name"`
-		Key             string `json:"key"`
-		RateLimitPerMin int    `json:"rate_limit_per_min"`
-		MaxTokens       int64  `json:"max_tokens"`
-		IsActive        bool   `json:"is_active"`
-		CreatedAt       int64  `json:"created_at"`
-		ExpiresAt       int64  `json:"expires_at"`
+		ID              string   `json:"id"`
+		Name            string   `json:"name"`
+		Key             string   `json:"key"`
+		RateLimitPerMin int      `json:"rate_limit_per_min"`
+		MaxTokens       int64    `json:"max_tokens"`
+		IsActive        bool     `json:"is_active"`
+		CreatedAt       int64    `json:"created_at"`
+		ExpiresAt       int64    `json:"expires_at"`
+		AllowedModels   []string `json:"allowed_models"`
 	}
 
 	keys := make([]apiKeyView, 0)
@@ -49,13 +51,19 @@ func (h *APIKeyHandler) List(c *gin.Context) {
 		var isActive int
 		var keyValue string
 		var maxTokens int64
-		if err := rows.Scan(&k.ID, &k.Name, &keyValue, &k.RateLimitPerMin, &maxTokens, &isActive, &k.CreatedAt, &k.ExpiresAt); err != nil {
+		var allowedModelsRaw string
+		if err := rows.Scan(&k.ID, &k.Name, &keyValue, &k.RateLimitPerMin, &maxTokens, &isActive, &k.CreatedAt, &k.ExpiresAt, &allowedModelsRaw); err != nil {
 			continue
 		}
 		k.IsActive = isActive == 1
 		k.Key = keyValue
 		k.MaxTokens = maxTokens
-		// k.Key already assigned from key_value above
+		if allowedModelsRaw != "" {
+			var models []string
+			if err := json.Unmarshal([]byte(allowedModelsRaw), &models); err == nil {
+				k.AllowedModels = models
+			}
+		}
 		keys = append(keys, k)
 	}
 
@@ -65,10 +73,11 @@ func (h *APIKeyHandler) List(c *gin.Context) {
 // Create generates a new API key.
 func (h *APIKeyHandler) Create(c *gin.Context) {
 	var req struct {
-		Name            string  `json:"name"`
-		RateLimitPerMin int     `json:"rate_limit_per_min"`
-		MaxTokens       int64   `json:"max_tokens"`
-		ExpiresAt       *int64  `json:"expires_at"`
+		Name            string   `json:"name"`
+		RateLimitPerMin int      `json:"rate_limit_per_min"`
+		MaxTokens       int64    `json:"max_tokens"`
+		ExpiresAt       *int64   `json:"expires_at"`
+		AllowedModels   []string `json:"allowed_models"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		// Defaults are fine
@@ -110,10 +119,20 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 		expiresAt = sql.NullInt64{Int64: *req.ExpiresAt, Valid: true}
 	}
 
+	allowedModels := sql.NullString{}
+	if len(req.AllowedModels) > 0 {
+		b, err := json.Marshal(req.AllowedModels)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to serialize allowed_models"})
+			return
+		}
+		allowedModels = sql.NullString{String: string(b), Valid: true}
+	}
+
 	_, err = h.db.Exec(`
-	INSERT INTO api_keys (id, key_hash, key_value, name, rate_limit_per_min, max_tokens, is_active, created_at, expires_at)
-	VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
-	`, id, string(hash), keyValue, name, req.RateLimitPerMin, req.MaxTokens, now, expiresAt)
+	INSERT INTO api_keys (id, key_hash, key_value, name, rate_limit_per_min, max_tokens, is_active, created_at, expires_at, allowed_models)
+	VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+	`, id, string(hash), keyValue, name, req.RateLimitPerMin, req.MaxTokens, now, expiresAt, allowedModels)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -125,12 +144,13 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"id":          id,
-		"key":         keyValue, // Only shown once
-		"name":        req.Name,
-		"max_tokens":  req.MaxTokens,
-		"expires_at":  expiresAtResponse,
-		"message":     "Save this key — it won't be shown again",
+		"id":             id,
+		"key":            keyValue, // Only shown once
+		"name":           req.Name,
+		"max_tokens":     req.MaxTokens,
+		"expires_at":     expiresAtResponse,
+		"allowed_models": req.AllowedModels,
+		"message":        "Save this key — it won't be shown again",
 	})
 }
 
