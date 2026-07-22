@@ -743,13 +743,15 @@ func (h *ProviderHandler) AddConnection(c *gin.Context) {
 // failures are reported instead of being silently dropped.
 func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 	providerID := c.Param("id")
+	type bulkInput struct {
+		Name                 string            `json:"name"`
+		APIKey               string            `json:"api_key"`
+		Priority             int               `json:"priority"`
+		ProviderSpecificData map[string]string `json:"provider_specific_data,omitempty"`
+	}
 	var req struct {
-		Connections []struct {
-			Name                 string            `json:"name"`
-			APIKey               string            `json:"api_key"`
-			Priority             int               `json:"priority"`
-			ProviderSpecificData map[string]string `json:"provider_specific_data,omitempty"`
-		} `json:"connections"`
+		Connections        []bulkInput `json:"connections"`
+		ValidateSampleSize int         `json:"validate_sample_size"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -784,58 +786,112 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 
 	const batchSize = 200
 	now := time.Now().Unix()
-	var created, failed int
-	var errors []string
-	var seeded []struct {
+
+	type classifiedConn struct {
+		bulkInput
+		state  string // accepted, rejected, duplicate
+		errMsg string
+	}
+
+	// Classify duplicate API keys within this import request. Empty keys are not
+	// considered duplicates because they typically represent no-auth providers.
+	seenKeys := make(map[string]int)
+	classified := make([]classifiedConn, 0, len(req.Connections))
+	for i, conn := range req.Connections {
+		if conn.APIKey != "" {
+			if prev, dup := seenKeys[conn.APIKey]; dup {
+				classified = append(classified, classifiedConn{
+					bulkInput: conn,
+					state:     "duplicate",
+					errMsg:    fmt.Sprintf("connection %q: duplicate api_key (first at index %d)", conn.Name, prev+1),
+				})
+				continue
+			}
+			seenKeys[conn.APIKey] = i
+		}
+		classified = append(classified, classifiedConn{bulkInput: conn, state: "accepted"})
+	}
+
+	// Sample validation: test up to N accepted, non-empty keys against the provider.
+	// Rows that fail validation are still persisted with status='auth_failed' and
+	// is_active=0 so the lifecycle GC can clean them up later.
+	if req.ValidateSampleSize > 0 {
+		sample := make([]*classifiedConn, 0, len(classified))
+		for i := range classified {
+			if classified[i].state == "accepted" && classified[i].APIKey != "" {
+				sample = append(sample, &classified[i])
+			}
+		}
+		if len(sample) > req.ValidateSampleSize {
+			sample = sample[:req.ValidateSampleSize]
+		}
+		ctx := c.Request.Context()
+		for _, item := range sample {
+			valid, errMsg := h.validateKeyForRequest(ctx, providerID, item.APIKey, item.ProviderSpecificData)
+			if !valid {
+				item.state = "rejected"
+				item.errMsg = fmt.Sprintf("connection %q: validation failed: %s", item.Name, errMsg)
+			}
+		}
+	}
+
+	type seedInfo struct {
 		id       string
 		priority int
 	}
+	var errors []string
+	var seeded []seedInfo
+	var totalAccepted, totalRejected, totalDuplicates, dbErrors int
 
 	// batchResult is returned from the batch closure; the handler reads it
 	// only AFTER WriteQueue.Do returns (the queue's done-channel establishes a
 	// happens-before edge, so this is race-free — do NOT mutate handler
 	// locals from inside the closure).
 	type batchResult struct {
-		seeded []struct {
-			id       string
-			priority int
-		}
-		created int
-		fails   []string
-		err     error
+		accepted   int
+		rejected   int
+		duplicates int
+		seeded     []seedInfo
+		fails      []string
+		err        error
 	}
 
-	runBatch := func(d *sql.DB, conns []struct {
-		Name                 string            `json:"name"`
-		APIKey               string            `json:"api_key"`
-		Priority             int               `json:"priority"`
-		ProviderSpecificData map[string]string `json:"provider_specific_data,omitempty"`
-	}) batchResult {
+	runBatch := func(d *sql.DB, batch []classifiedConn) batchResult {
 		res := batchResult{}
 		tx, err := d.Begin()
 		if err != nil {
 			res.err = err
 			return res
 		}
-		for _, conn := range conns {
+		for _, item := range batch {
 			connID := uuid.New().String()
-			apiKey := sql.NullString{String: conn.APIKey, Valid: conn.APIKey != ""}
+			apiKey := sql.NullString{String: item.APIKey, Valid: item.APIKey != ""}
 			var psdJSON sql.NullString
-			if len(conn.ProviderSpecificData) > 0 {
-				if b, err := json.Marshal(conn.ProviderSpecificData); err == nil {
+			if len(item.ProviderSpecificData) > 0 {
+				if b, err := json.Marshal(item.ProviderSpecificData); err == nil {
 					psdJSON = sql.NullString{String: string(b), Valid: true}
 				}
 			}
-			if _, err := tx.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, priority, provider_specific_data, status, is_active, created_at, updated_at) VALUES (?, ?, ?, 'api_key', ?, ?, ?, 'ready', 1, ?, ?)`,
-				connID, providerID, conn.Name, apiKey, conn.Priority, psdJSON, now, now); err != nil {
-				res.fails = append(res.fails, fmt.Sprintf("connection %q: %s", conn.Name, err.Error()))
+			status := "ready"
+			active := 1
+			if item.state == "rejected" || item.state == "duplicate" {
+				status = "auth_failed"
+				active = 0
+			}
+			if _, err := tx.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, priority, provider_specific_data, status, is_active, created_at, updated_at) VALUES (?, ?, ?, 'api_key', ?, ?, ?, ?, ?, ?, ?)`,
+				connID, providerID, item.Name, apiKey, item.Priority, psdJSON, status, active, now, now); err != nil {
+				res.fails = append(res.fails, fmt.Sprintf("connection %q: %s", item.Name, err.Error()))
 				continue
 			}
-			res.created++
-			res.seeded = append(res.seeded, struct {
-				id       string
-				priority int
-			}{id: connID, priority: conn.Priority})
+			switch item.state {
+			case "accepted":
+				res.accepted++
+				res.seeded = append(res.seeded, seedInfo{id: connID, priority: item.Priority})
+			case "rejected":
+				res.rejected++
+			case "duplicate":
+				res.duplicates++
+			}
 		}
 		if err := tx.Commit(); err != nil {
 			res.err = err
@@ -844,12 +900,12 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 		return res
 	}
 
-	for start := 0; start < len(req.Connections); start += batchSize {
+	for start := 0; start < len(classified); start += batchSize {
 		end := start + batchSize
-		if end > len(req.Connections) {
-			end = len(req.Connections)
+		if end > len(classified) {
+			end = len(classified)
 		}
-		batch := req.Connections[start:end]
+		batch := classified[start:end]
 		var br batchResult
 		var batchErr error
 		if h.writeQueue != nil {
@@ -862,19 +918,29 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 		}
 		if batchErr != nil {
 			// Whole-batch failure: nothing in this batch was persisted.
-			for _, conn := range batch {
-				failed++
-				errors = append(errors, fmt.Sprintf("connection %q: %s", conn.Name, batchErr.Error()))
+			for _, item := range batch {
+				dbErrors++
+				errors = append(errors, fmt.Sprintf("connection %q: %s", item.Name, batchErr.Error()))
 			}
 			continue
 		}
-		created += br.created
-		failed += len(br.fails)
+		totalAccepted += br.accepted
+		totalRejected += br.rejected
+		totalDuplicates += br.duplicates
+		dbErrors += len(br.fails)
 		errors = append(errors, br.fails...)
 		seeded = append(seeded, br.seeded...)
 	}
 
-	// Seed in-memory store ONLY for committed rows, then recompute eligibility once.
+	// Append duplicate/validation error messages so callers can see why each row
+	// was not accepted.
+	for _, item := range classified {
+		if item.errMsg != "" {
+			errors = append(errors, item.errMsg)
+		}
+	}
+
+	// Seed in-memory store ONLY for committed accepted rows, then recompute eligibility once.
 	if h.store != nil {
 		for _, s := range seeded {
 			h.store.SeedConnection(s.id, providerID, "ready", s.priority)
@@ -884,7 +950,15 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"created": created, "total": len(req.Connections), "failed": failed, "errors": errors})
+	c.JSON(http.StatusCreated, gin.H{
+		"total":      len(req.Connections),
+		"accepted":   totalAccepted,
+		"rejected":   totalRejected,
+		"duplicates": totalDuplicates,
+		"created":    totalAccepted,
+		"failed":     totalRejected + totalDuplicates + dbErrors,
+		"errors":     errors,
+	})
 }
 
 // BulkAssignProxy assigns (or unbinds) a proxy pool for multiple connections of

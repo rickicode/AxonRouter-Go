@@ -802,6 +802,25 @@ func TestBulkAddConnections_NoContentionUnderLoad(t *testing.T) {
 	}
 }
 
+// bulkValidationExecutor accepts keys that do not contain "-bad-" and rejects
+// keys that do, letting bulk-import tests exercise accepted/rejected/duplicate
+// reporting deterministically.
+type bulkValidationExecutor struct{}
+
+func (m *bulkValidationExecutor) Execute(ctx context.Context, req *executor.Request) (*executor.Response, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *bulkValidationExecutor) ExecuteStream(ctx context.Context, req *executor.Request) (*executor.StreamResult, error) {
+	if strings.Contains(req.APIKey, "-bad-") {
+		return nil, errors.New("invalid key: 401 Unauthorized")
+	}
+	ch := make(chan executor.StreamChunk, 1)
+	ch <- executor.StreamChunk{Payload: []byte(`{"ok":true}`)}
+	close(ch)
+	return &executor.StreamResult{Chunks: ch}, nil
+}
+
 // validatingMockExecutor simulates key validation: it returns the configured
 // error, or an empty/payload stream for invalid/valid keys.
 type validatingMockExecutor struct {
@@ -919,5 +938,185 @@ func TestAddConnection_SkipValidationBypasses(t *testing.T) {
 	}
 	if cnt != 1 {
 		t.Fatalf("expected one connection persisted, got %d", cnt)
+	}
+}
+
+func TestBulkAddConnections_NoValidationByDefault(t *testing.T) {
+	database := newConnectionHandlerTestDB(t)
+	seedProviderType(t, database, "bulkdefault")
+	h := bulkHandlerWithQueue(t, database)
+
+	gin.SetMode(gin.TestMode)
+	conns := []map[string]any{
+		{"name": "a", "api_key": "sk-a"},
+		{"name": "b", "api_key": "sk-b"},
+		{"name": "dup", "api_key": "sk-a"},
+	}
+	body, _ := json.Marshal(map[string]any{"connections": conns})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/providers/bulkdefault/connections/bulk", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = []gin.Param{{Key: "id", Value: "bulkdefault"}}
+	h.BulkAddConnections(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status=%d, body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Total      int `json:"total"`
+		Accepted   int `json:"accepted"`
+		Rejected   int `json:"rejected"`
+		Duplicates int `json:"duplicates"`
+		Created    int `json:"created"`
+		Failed     int `json:"failed"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", w.Body.String())
+	}
+	if resp.Total != 3 || resp.Accepted != 2 || resp.Duplicates != 1 || resp.Rejected != 0 || resp.Failed != 1 {
+		t.Errorf("unexpected summary: %+v", resp)
+	}
+	if resp.Created != resp.Accepted {
+		t.Errorf("created=%d, want %d", resp.Created, resp.Accepted)
+	}
+}
+
+func TestBulkAddConnections_ValidationSampleLimits(t *testing.T) {
+	database := newConnectionHandlerTestDB(t)
+	seedProviderType(t, database, "bulklim")
+	h := bulkHandlerWithQueue(t, database)
+	h.registry = executor.GetRegistry()
+
+	registry := executor.GetRegistry()
+	registry.Register("bulklim", executor.FormatOpenAI, &bulkValidationExecutor{})
+	t.Cleanup(func() { registry.Unregister("bulklim") })
+
+	gin.SetMode(gin.TestMode)
+	// First row is good; second row would fail validation, but sample_size=1 means
+	// only the first row is tested, so the second is accepted without validation.
+	conns := []map[string]any{
+		{"name": "good", "api_key": "sk-good-1"},
+		{"name": "bad", "api_key": "sk-bad-1"},
+	}
+	body, _ := json.Marshal(map[string]any{"connections": conns, "validate_sample_size": 1})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/providers/bulklim/connections/bulk", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = []gin.Param{{Key: "id", Value: "bulklim"}}
+	h.BulkAddConnections(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status=%d, body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Total      int `json:"total"`
+		Accepted   int `json:"accepted"`
+		Rejected   int `json:"rejected"`
+		Duplicates int `json:"duplicates"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", w.Body.String())
+	}
+	if resp.Total != 2 || resp.Accepted != 2 || resp.Rejected != 0 || resp.Duplicates != 0 {
+		t.Errorf("unexpected summary: %+v", resp)
+	}
+}
+
+func TestBulkAddConnections_ValidationAndReporting(t *testing.T) {
+	database := newConnectionHandlerTestDB(t)
+	seedProviderType(t, database, "bulkval")
+	h := bulkHandlerWithQueue(t, database)
+	h.registry = executor.GetRegistry()
+
+	registry := executor.GetRegistry()
+	registry.Register("bulkval", executor.FormatOpenAI, &bulkValidationExecutor{})
+	t.Cleanup(func() { registry.Unregister("bulkval") })
+
+	gin.SetMode(gin.TestMode)
+	conns := []map[string]any{
+		{"name": "ok-1", "api_key": "sk-good-1"},
+		{"name": "ok-2", "api_key": "sk-good-2"},
+		{"name": "dup-1", "api_key": "sk-duplicate"},
+		{"name": "dup-2", "api_key": "sk-duplicate"},
+		{"name": "bad-1", "api_key": "sk-bad-1"},
+	}
+	body, _ := json.Marshal(map[string]any{"connections": conns, "validate_sample_size": 5})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/providers/bulkval/connections/bulk", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = []gin.Param{{Key: "id", Value: "bulkval"}}
+	h.BulkAddConnections(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status=%d, body=%s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Total      int      `json:"total"`
+		Accepted   int      `json:"accepted"`
+		Rejected   int      `json:"rejected"`
+		Duplicates int      `json:"duplicates"`
+		Created    int      `json:"created"`
+		Failed     int      `json:"failed"`
+		Errors     []string `json:"errors"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", w.Body.String())
+	}
+
+	if resp.Total != 5 {
+		t.Errorf("total=%d, want 5", resp.Total)
+	}
+	if resp.Accepted != 3 {
+		t.Errorf("accepted=%d, want 3", resp.Accepted)
+	}
+	if resp.Rejected != 1 {
+		t.Errorf("rejected=%d, want 1", resp.Rejected)
+	}
+	if resp.Duplicates != 1 {
+		t.Errorf("duplicates=%d, want 1", resp.Duplicates)
+	}
+	if resp.Created != resp.Accepted {
+		t.Errorf("created=%d, want %d (accepted)", resp.Created, resp.Accepted)
+	}
+	if resp.Failed != resp.Rejected+resp.Duplicates {
+		t.Errorf("failed=%d, want %d (rejected+duplicates)", resp.Failed, resp.Rejected+resp.Duplicates)
+	}
+
+	var accepted, rejected int
+	rows, err := database.Query(`SELECT status, is_active FROM connections WHERE provider_type_id = 'bulkval' ORDER BY name`)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var status string
+		var active int
+		if err := rows.Scan(&status, &active); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		switch status {
+		case "ready":
+			if active != 1 {
+				t.Errorf("ready row should be active, got active=%d", active)
+			}
+			accepted++
+		case "auth_failed":
+			if active != 0 {
+				t.Errorf("auth_failed row should be inactive, got active=%d", active)
+			}
+			rejected++
+		default:
+			t.Errorf("unexpected status=%q active=%d", status, active)
+		}
+	}
+	if accepted != 3 {
+		t.Errorf("db accepted rows=%d, want 3", accepted)
+	}
+	if rejected != 2 {
+		t.Errorf("db rejected rows=%d, want 2", rejected)
 	}
 }
