@@ -32,6 +32,64 @@ func TestAPIKeysExpiresAtColumn(t *testing.T) {
 	}
 }
 
+// TestAPIKeysAllowedModelsColumn verifies the api_keys.allowed_models migration
+// is applied and that re-running migrations is idempotent.
+func TestAPIKeysAllowedModelsColumn(t *testing.T) {
+	dir := t.TempDir()
+	d, err := sql.Open("sqlite", filepath.Join(dir, "verify.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	if err := RunMigrations(d); err != nil {
+		t.Fatal(err)
+	}
+
+	if !hasColumn(t, d, "api_keys", "allowed_models") {
+		t.Fatal("api_keys table missing allowed_models column after migration")
+	}
+
+	// Re-running must be idempotent (duplicate column error is ignored).
+	if err := RunMigrations(d); err != nil {
+		t.Fatalf("re-run migrations failed: %v", err)
+	}
+}
+
+// TestAPIKeyAllowedModelsList verifies AllowedModelsList JSON-unmarshals the
+// stored value and returns nil for empty/null/invalid values.
+func TestAPIKeyAllowedModelsList(t *testing.T) {
+	// Null/empty values return nil.
+	nullKey := APIKey{AllowedModels: sql.NullString{Valid: false}}
+	if got := nullKey.AllowedModelsList(); got != nil {
+		t.Fatalf("null AllowedModels: got %v, want nil", got)
+	}
+
+	emptyKey := APIKey{AllowedModels: sql.NullString{String: "", Valid: true}}
+	if got := emptyKey.AllowedModelsList(); got != nil {
+		t.Fatalf("empty AllowedModels: got %v, want nil", got)
+	}
+
+	// Valid JSON array is parsed.
+	validKey := APIKey{AllowedModels: sql.NullString{String: `["gpt-4o","claude-3.5-sonnet"]`, Valid: true}}
+	got := validKey.AllowedModelsList()
+	want := []string{"gpt-4o", "claude-3.5-sonnet"}
+	if len(got) != len(want) {
+		t.Fatalf("valid AllowedModels: got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("AllowedModelsList()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+
+	// Invalid JSON is tolerated and returns nil.
+	invalidKey := APIKey{AllowedModels: sql.NullString{String: "not-json", Valid: true}}
+	if got := invalidKey.AllowedModelsList(); got != nil {
+		t.Fatalf("invalid AllowedModels: got %v, want nil", got)
+	}
+}
+
 func hasColumn(t *testing.T, d *sql.DB, table, column string) bool {
 	t.Helper()
 	rows, err := d.Query(`SELECT name FROM pragma_table_info(?)`, table)
