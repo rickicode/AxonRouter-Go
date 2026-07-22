@@ -939,16 +939,6 @@ func failoverBackoff(ctx context.Context, attempt int, maxAttempts int) bool {
 
 // isAuthError checks if an error indicates an authentication failure (401/403).
 // Used for reactive retry: refresh token and retry once on auth errors.
-func isAuthError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "401") || strings.Contains(msg, "403") ||
-		strings.Contains(msg, "unauthorized") || strings.Contains(msg, "forbidden") ||
-		strings.Contains(msg, "authentication") || strings.Contains(msg, "access denied")
-}
-
 // shortID returns a safe prefix of id up to n bytes; it never panics on short IDs.
 func shortID(id string, n int) string {
 	if n <= 0 || len(id) <= n {
@@ -1042,11 +1032,11 @@ func (h *Handler) executeWithRetry(
 		if isUnrecoverableRefreshError(err) {
 			break
 		}
-		if attempt < 2 && isAuthError(err) && h.proactiveRefreshToken(ctx, conn, provider) {
+		if attempt < 2 && auth.IsAuthError(err) && h.proactiveRefreshToken(ctx, conn, provider) {
 			req.AccessToken = conn.AccessToken
 			continue
 		}
-		if !isAuthError(err) {
+		if !auth.IsAuthError(err) {
 			break
 		}
 	}

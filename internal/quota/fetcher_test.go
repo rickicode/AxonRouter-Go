@@ -283,3 +283,65 @@ func TestFetchConnectionQuota_DeferredRefreshWhenTokenStillValid(t *testing.T) {
 		t.Errorf("expected connection to remain active, got is_active=%d", isActive)
 	}
 }
+
+func TestForceRefreshOnQuotaAuthError_UpdatesTokenAndProviderSpecific(t *testing.T) {
+	db := newFetcherTestDB(t)
+	defer db.Close()
+
+	connID := "conn-force-refresh"
+	oldToken := "old-access"
+	oldRefresh := "old-refresh"
+	oldExpiry := time.Now().Add(-time.Hour).Unix()
+
+	_, err := db.Exec(`INSERT INTO connections (id, provider_type_id, auth_type, is_active, name, oauth_token, oauth_refresh_token, oauth_expires_at, provider_specific_data, status, updated_at)
+		VALUES (?, ?, 'oauth', 1, 'Test Conn', ?, ?, ?, ?, 'ready', ?)`,
+		connID, "kiro", oldToken, oldRefresh, oldExpiry, `{"profileArn":"arn:old"}`, time.Now().Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockOAuthService{
+		creds: &auth.Credentials{
+			AccessToken:      "forced-access",
+			RefreshToken:     "forced-refresh",
+			ExpiresAt:        time.Now().Add(time.Hour),
+			ProviderSpecific: map[string]string{"profileArn": "arn:forced"},
+		},
+	}
+	mgr := auth.NewManager()
+	mgr.RegisterService(auth.ProviderType("kiro"), mock)
+	SetAuthManager(mgr)
+	defer SetAuthManager(nil)
+
+	c := connRow{
+		ID:                   connID,
+		ProviderTypeID:       "kiro",
+		Name:                 "Test Conn",
+		OAuthToken:           sql.NullString{String: oldToken, Valid: true},
+		OAuthRefreshToken:    sql.NullString{String: oldRefresh, Valid: true},
+		OAuthExpiresAt:       oldExpiry,
+		ProviderSpecificData: sql.NullString{String: `{"profileArn":"arn:old"}`, Valid: true},
+	}
+
+	newToken, psd, ok := forceRefreshOnQuotaAuthError(c, oldToken, mapStringToAny(map[string]string{"profileArn": "arn:old"}), "kiro", db)
+	if !ok {
+		t.Fatal("expected forced refresh to succeed")
+	}
+	if newToken != "forced-access" {
+		t.Errorf("expected forced access token forced-access, got %s", newToken)
+	}
+	if psd["profileArn"] != "arn:forced" {
+		t.Errorf("expected profileArn arn:forced, got %v", psd["profileArn"])
+	}
+
+	var gotToken, gotPSD string
+	if err := db.QueryRow(`SELECT oauth_token, provider_specific_data FROM connections WHERE id = ?`, connID).Scan(&gotToken, &gotPSD); err != nil {
+		t.Fatal(err)
+	}
+	if gotToken != "forced-access" {
+		t.Errorf("expected persisted token forced-access, got %s", gotToken)
+	}
+	if gotPSD != `{"profileArn":"arn:forced"}` {
+		t.Errorf("expected persisted provider_specific_data updated, got %s", gotPSD)
+	}
+}
