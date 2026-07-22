@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	_ "modernc.org/sqlite"
 
+	"github.com/rickicode/AxonRouter-Go/internal/background"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
@@ -51,11 +52,12 @@ func newConnectionHandlerForTest(t *testing.T, database *sql.DB, registry *execu
 	store := connstate.NewStore()
 	elig := connstate.NewEligibilityManager(store)
 	return &ConnectionHandler{
-		db:         database,
-		store:      store,
-		elig:       elig,
-		exhaustion: quota.NewExhaustionCache(),
-		registry:   registry,
+		db:           database,
+		store:        store,
+		elig:         elig,
+		exhaustion:   quota.NewExhaustionCache(),
+		registry:     registry,
+		lifecycleMgr: background.NewLifecycleManager(database, 60),
 	}
 }
 

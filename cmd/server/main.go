@@ -375,10 +375,11 @@ func main() {
 
 	// Create router with all routes and background goroutines
 	router := api.New(api.Config{
-		DB:               database,
-		Port:             cfg.Port,
-		QuotaIntervalMin: 1,
-		LogRetentionDays: 30,
+		DB:                           database,
+		Port:                         cfg.Port,
+		QuotaIntervalMin:             1,
+		LogRetentionDays:             30,
+		ConnectionCleanupIntervalMin: 60,
 	})
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
