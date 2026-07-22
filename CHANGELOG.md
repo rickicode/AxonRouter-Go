@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.19] - 2026-07-22
+
 ### Added
 - **Standalone OAuth token refresh scheduler** — `internal/background/token_refresh_scheduler.go` runs independently of the quota scheduler, scans active OAuth connections, refreshes tokens before expiry, and marks connections `auth_failed` on unrecoverable refresh errors.
 - **Forced token refresh retry on quota auth failures** — when a quota fetch fails with an auth error (HTTP 401/403 or equivalent), the quota fetcher performs an unconditional token refresh via `auth.Manager` and retries the fetch once. This applies globally to all OAuth providers.
