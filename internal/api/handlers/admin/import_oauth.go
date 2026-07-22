@@ -1,14 +1,15 @@
 package admin
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
+	"github.com/rickicode/AxonRouter-Go/internal/db"
 )
 
 // ImportToken creates a ready OAuth connection from manually supplied tokens.
@@ -50,7 +51,6 @@ func (h *OAuthHandler) ImportToken(c *gin.Context) {
 		connName = req.Email
 	}
 
-	connID := uuid.New().String()
 	now := time.Now().Unix()
 
 	var psdJSON sql.NullString
@@ -63,10 +63,7 @@ func (h *OAuthHandler) ImportToken(c *gin.Context) {
 		psdJSON = sql.NullString{String: string(b), Valid: true}
 	}
 
-	_, err := h.db.Exec(`
-		INSERT INTO connections (id, provider_type_id, name, auth_type, oauth_token, oauth_refresh_token, oauth_expires_at, provider_specific_data, status, is_active, created_at, updated_at)
-		VALUES (?, ?, ?, 'oauth', ?, ?, ?, ?, 'ready', 1, ?, ?)
-	`, connID, req.Provider, connName, req.AccessToken, req.RefreshToken, req.ExpiresAt, psdJSON, now, now)
+	connID, _, err := db.UpsertOAuthConnection(context.Background(), h.db, req.Provider, req.Email, connName, req.AccessToken, req.RefreshToken, req.ExpiresAt, psdJSON, now)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

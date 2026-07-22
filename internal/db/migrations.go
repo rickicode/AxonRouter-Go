@@ -353,6 +353,20 @@ CREATE INDEX IF NOT EXISTS idx_quota_cache_connection ON quota_cache(connection_
 		}
 	}
 
+	// OAuth account deduplication: stable identifier separate from the user-editable name.
+	if _, err := db.Exec(`ALTER TABLE connections ADD COLUMN oauth_email TEXT`); err != nil {
+		if !isDuplicateColumnError(err) {
+			return err
+		}
+	}
+	if _, err := db.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_connections_oauth_account
+		ON connections(provider_type_id, oauth_email)
+		WHERE auth_type = 'oauth' AND oauth_email IS NOT NULL AND oauth_email != ''
+	`); err != nil {
+		return err
+	}
+
 	// Proxy pool tables
 	if _, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS proxy_pools (

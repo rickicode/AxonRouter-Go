@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
+	dbpkg "github.com/rickicode/AxonRouter-Go/internal/db"
 )
 
 // rawAuthShape captures the common fields found in both a bare access-token
@@ -31,8 +31,8 @@ type rawAuthShape struct {
 
 // ImportCredentials persists a raw access-token or Codex CLI auth.json blob as
 // a ready Codex OAuth connection. It returns the new connection ID.
-func ImportCredentials(ctx context.Context, db *sql.DB, raw []byte) (string, error) {
-	if db == nil {
+func ImportCredentials(ctx context.Context, database *sql.DB, raw []byte) (string, error) {
+	if database == nil {
 		return "", fmt.Errorf("database not configured")
 	}
 	var shape rawAuthShape
@@ -63,14 +63,13 @@ func ImportCredentials(ctx context.Context, db *sql.DB, raw []byte) (string, err
 		email = shape.Email
 	}
 
-	if _, err := db.ExecContext(ctx, `
+	if _, err := database.ExecContext(ctx, `
 		INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at)
 		VALUES ('cx', 'OpenAI Codex', 'openai-responses', 'https://api.openai.com', ?)
 	`, time.Now().Unix()); err != nil {
 		return "", fmt.Errorf("ensure provider type: %w", err)
 	}
 
-	connID := uuid.New().String()
 	connName := email
 	if connName == "" {
 		if accountID != "" {
@@ -91,18 +90,13 @@ func ImportCredentials(ctx context.Context, db *sql.DB, raw []byte) (string, err
 		b, _ := json.Marshal(psd)
 		psdJSON = sql.NullString{String: string(b), Valid: true}
 	}
-	var refreshNull sql.NullString
-	if refreshToken != "" {
-		refreshNull = sql.NullString{String: refreshToken, Valid: true}
+	accountKey := email
+	if accountKey == "" {
+		accountKey = accountID
 	}
+
 	now := time.Now().Unix()
-	_, err := db.ExecContext(ctx, `
-		INSERT INTO connections (
-			id, provider_type_id, name, auth_type,
-			oauth_token, oauth_refresh_token, oauth_expires_at,
-			provider_specific_data, status, is_active, created_at, updated_at
-		) VALUES (?, ?, ?, 'oauth', ?, ?, ?, ?, 'ready', 1, ?, ?)
-	`, connID, "cx", connName, accessToken, refreshNull, expiresAt.Unix(), psdJSON, now, now)
+	connID, _, err := dbpkg.UpsertOAuthConnection(ctx, database, "cx", accountKey, connName, accessToken, refreshToken, expiresAt.Unix(), psdJSON, now)
 	if err != nil {
 		return "", fmt.Errorf("insert connection: %w", err)
 	}

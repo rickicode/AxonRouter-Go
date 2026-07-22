@@ -222,14 +222,14 @@ func TestKiroPricingSeed(t *testing.T) {
 	}
 
 	want := map[string]bool{
-		"claude-sonnet-5":    true,
-		"claude-sonnet-4.6":  true,
-		"claude-haiku-4.5":   true,
-		"deepseek-3.2":       true,
-		"minimax-m2.5":       true,
-		"minimax-m2.1":       true,
-		"glm-5":              true,
-		"qwen3-coder-next":   true,
+		"claude-sonnet-5":   true,
+		"claude-sonnet-4.6": true,
+		"claude-haiku-4.5":  true,
+		"deepseek-3.2":      true,
+		"minimax-m2.5":      true,
+		"minimax-m2.1":      true,
+		"glm-5":             true,
+		"qwen3-coder-next":  true,
 	}
 
 	rows, err := d.Query("SELECT model_id, display_name, input_per_1k, output_per_1k FROM model_pricing WHERE model_id IN ('claude-sonnet-5','claude-sonnet-4.6','claude-haiku-4.5','deepseek-3.2','minimax-m2.5','minimax-m2.1','glm-5','qwen3-coder-next')")
@@ -261,6 +261,40 @@ func TestKiroPricingSeed(t *testing.T) {
 			missing = append(missing, id)
 		}
 		t.Errorf("missing Kiro pricing rows: %v", missing)
+	}
+}
+
+// TestConnectionsOAuthEmailColumn verifies the oauth_email column and the
+// partial unique index used to deduplicate OAuth connections by account.
+func TestConnectionsOAuthEmailColumn(t *testing.T) {
+	dir := t.TempDir()
+	d, err := sql.Open("sqlite", filepath.Join(dir, "verify.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	if err := RunMigrations(d); err != nil {
+		t.Fatal(err)
+	}
+
+	if !hasColumn(t, d, "connections", "oauth_email") {
+		t.Fatal("connections table missing oauth_email column after migration")
+	}
+
+	var indexExists bool
+	if err := d.QueryRow(`
+		SELECT COUNT(*) > 0 FROM sqlite_master
+		WHERE type = 'index' AND name = 'idx_connections_oauth_account'
+	`).Scan(&indexExists); err != nil {
+		t.Fatal(err)
+	}
+	if !indexExists {
+		t.Fatal("missing partial unique index idx_connections_oauth_account")
+	}
+
+	if err := RunMigrations(d); err != nil {
+		t.Fatalf("re-run migrations failed: %v", err)
 	}
 }
 
