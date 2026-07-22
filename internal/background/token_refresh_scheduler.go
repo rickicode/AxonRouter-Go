@@ -275,7 +275,7 @@ func (s *TokenRefreshScheduler) markFailed(r refreshRow, err error) {
 			cs.SetStatus(connstate.StatusAuthFailed, err.Error())
 		}
 		if s.elig != nil {
-			s.elig.ScheduleUpdate()
+			s.elig.ScheduleUpdateProvider(r.providerTypeID)
 		}
 	}
 }

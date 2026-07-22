@@ -455,7 +455,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				h.combo.RecordFailure(connID, det)
 				h.persistCooldownScoped(connID, det)
 				if det.Status != connstate.StatusReady {
-					h.elig.ScheduleUpdate()
+					h.elig.ScheduleUpdateProvider(provider)
 				}
 				lastErr = err
 				lastErrCategory = string(det.Category)
@@ -554,7 +554,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 					h.combo.RecordFailure(connID, det)
 					h.persistCooldownScoped(connID, det)
 					if det.Status != connstate.StatusReady {
-						h.elig.ScheduleUpdate()
+						h.elig.ScheduleUpdateProvider(provider)
 					}
 					lastErr = streamErr
 					lastErrCategory = "stream-" + string(det.Category)
