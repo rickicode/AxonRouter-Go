@@ -28,6 +28,10 @@ func (h *Handler) Images(c *gin.Context) {
 	if model == "" {
 		model = "dall-e-3"
 	}
+	if !h.isModelAllowed(c.Request.Context(), model) {
+		c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"message": "model not allowed for this API key", "type": "invalid_request_error"}})
+		return
+	}
 	if h.checkTokenBudget(c, body) != nil {
 		return
 	}

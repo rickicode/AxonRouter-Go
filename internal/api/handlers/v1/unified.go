@@ -39,6 +39,10 @@ func (h *Handler) Unified(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "model is required", "type": "invalid_request_error"}})
 		return
 	}
+	if !h.isModelAllowed(c.Request.Context(), model) {
+		c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"message": "model not allowed for this API key", "type": "invalid_request_error"}})
+		return
+	}
 
 	provider, _ := executor.SplitModel(model)
 	if provider == "" {
