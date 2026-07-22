@@ -361,6 +361,11 @@ func TestGrokCLI_EndToEnd_FailoverAuthFailed(t *testing.T) {
 		}
 		h.store.SeedConnection(tc.id, "grok-cli", tc.status, 0)
 	}
+	// Force deterministic selection order: mark the valid connection as recently
+	// used so the invalid one is sorted first and gets the initial request.
+	if validCS := h.store.Get("grok-cli-valid"); validCS != nil {
+		validCS.RecordUsed()
+	}
 	h.elig.RecomputeAll()
 
 	body := []byte(`{"model":"grok-cli/grok-build","messages":[{"role":"user","content":"hi"}],"stream":true}`)

@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Standalone OAuth token refresh scheduler** — `internal/background/token_refresh_scheduler.go` runs independently of the quota scheduler, scans active OAuth connections, refreshes tokens before expiry, and marks connections `auth_failed` on unrecoverable refresh errors.
+- **Forced token refresh retry on quota auth failures** — when a quota fetch fails with an auth error (HTTP 401/403 or equivalent), the quota fetcher performs an unconditional token refresh via `auth.Manager` and retries the fetch once. This applies globally to all OAuth providers.
 - **Bedrock tool schema normalization** — strips unsupported JSON Schema keywords (`additionalProperties`, `anyOf`, `oneOf`, `allOf`, `not`, `$schema`, `$id`, `$ref`, `$defs`, `definitions`) from tool schemas sent to Bedrock and ensures every `function.parameters` object has `type: object` with a `properties` map. Required strings that do not match property keys are filtered out, and nested schemas are normalized recursively.
 - **API-key allowed_models admin persistence** — `POST /api/admin/api-keys` now accepts `allowed_models`, persists the list as JSON in `api_keys.allowed_models`, and returns it in the creation response. `GET /api/admin/api-keys` parses the stored JSON and includes `allowed_models` in each listed key.
 - **API-key allowed_models loaded by auth middleware** — `Auth` now reads `api_keys.allowed_models`, parses it into a set, and stores it both in the Gin context (`allowed_models`) and on the request context via `AllowedModelsFromContext`. Invalid JSON is treated as unlimited.
@@ -19,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Filter `GET /v1/models` by API-key allowed models** — `internal/api/handlers/v1/models.go` now reads `allowed_models` from the Gin context (populated by auth middleware in task 02) and restricts the returned model list to entries whose full model ID or provider prefix appears in the set. An empty set preserves the previous unlimited behavior, and the dashboard's `ListActiveModels()` admin route is left unchanged.
 - **Dashboard API-key allowlist UI** — the API Keys page now lets operators create keys restricted to specific providers or models. Provider and model multi-selects are built from `providersApi.list()` and `modelsApi.list()`, validation blocks submission with a toast when a restricted mode is chosen with no selection, and the keys table shows a compact summary such as "Limited to 2 model(s)".
 - **API-key allowlist regression tests** — expanded unit tests for `filterAllowedModels`, `modelIDAllowed`, and `isModelAllowed` covering unlimited, exact full-ID, provider-prefix, combo, smart virtual model, and negative cases.
+
+### Fixed
+- **Kiro social token refresh** — `internal/auth/kiro/social.go` now sends `User-Agent: kiro-cli/1.0.0` during social code exchange and refresh, matching the working 9router flow against Kiro's auth service.
+- **Quota refresh passes provider-specific data** — `internal/quota/fetcher.go` forwards `provider_specific_data` strings to `auth.Credentials.ProviderSpecific` so fields like Kiro `profileArn` survive refresh.
+- **Tolerant quota refresh** — a failed token refresh no longer disables a connection when the current access token is still valid; the quota fetch continues and defers refresh to the next scheduler tick.
+- **Avoid over-clearing exhaustion cache** — `persistSuccess` no longer clears the entire exhaustion cache on every successful request, preserving model-scoped rate-limit entries that may still be active for other models.
+- **Deterministic Grok CLI failover test** — `TestGrokCLI_EndToEnd_FailoverAuthFailed` now pins the valid connection as recently-used so the invalid connection is consistently selected first.
 
 ## [0.3.18] - 2026-07-20
 
