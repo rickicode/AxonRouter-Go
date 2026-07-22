@@ -141,11 +141,34 @@ func (h *Handler) ListActiveModels() []gin.H {
 	return result
 }
 
+// filterAllowedModels returns only models whose id or provider prefix is present
+// in allowed. An empty allowed map means unlimited access.
+func filterAllowedModels(all []gin.H, allowed map[string]struct{}) []gin.H {
+	if len(allowed) == 0 {
+		return all
+	}
+	var result []gin.H
+	for _, m := range all {
+		id, _ := m["id"].(string)
+		prefix := strings.SplitN(id, "/", 2)[0]
+		if _, ok := allowed[id]; ok {
+			result = append(result, m)
+			continue
+		}
+		if _, ok := allowed[prefix]; ok {
+			result = append(result, m)
+		}
+	}
+	return result
+}
+
 // Models handles GET /v1/models — includes combos and virtual models.
 func (h *Handler) Models(c *gin.Context) {
+	allowed, _ := c.Get("allowed_models")
+	allowedSet, _ := allowed.(map[string]struct{})
 	c.JSON(http.StatusOK, gin.H{
 		"object": "list",
-		"data":   h.ListActiveModels(),
+		"data":   filterAllowedModels(h.ListActiveModels(), allowedSet),
 	})
 }
 
