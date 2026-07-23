@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { getToken, setToken, logout, getMustChangePassword, setMustChangePassword } from '$lib/auth';
+import { getToken, setToken, logout, getMustChangePassword, setMustChangePassword, isPasswordWarningDismissed, dismissPasswordWarning, clearPasswordWarningDismissal } from '$lib/auth';
 import { passwordApi } from '$lib/api';
 
 const TOKEN_KEY = 'axon_token';
@@ -32,6 +32,25 @@ describe('auth storage', () => {
 		logout();
 		expect(getToken()).toBeNull();
 		expect(getMustChangePassword()).toBe(false);
+	});
+
+	it('remembers password warning dismissal for 24 hours', () => {
+		expect(isPasswordWarningDismissed()).toBe(false);
+		dismissPasswordWarning(true);
+		expect(isPasswordWarningDismissed()).toBe(true);
+	});
+
+	it('shows the password warning again after 24 hours', () => {
+		const overOneDayAgo = String(Date.now() - 25 * 60 * 60 * 1000);
+		localStorage.setItem('axon_password_warning_dismissed_at', overOneDayAgo);
+		expect(isPasswordWarningDismissed()).toBe(false);
+	});
+
+	it('clears password warning dismissal on logout', () => {
+		dismissPasswordWarning(true);
+		setToken('abc123', true);
+		logout();
+		expect(isPasswordWarningDismissed()).toBe(false);
 	});
 });
 
