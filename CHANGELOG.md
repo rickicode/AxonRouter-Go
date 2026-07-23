@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Concurrent provider detail test-all for large providers** — `Test all` on the provider detail page now processes connections sequentially for small lists, but runs with two parallel workers when there are more than 100 accounts. Each row is still refreshed inline after its test completes.
+
+### Fixed
+- **Security Warning modal respects 24-hour dismissal** — `ChangePasswordModal` is no longer shown for 24 hours after the user dismisses it. Dismissal is stored as a timestamp in `localStorage`/`sessionStorage` and automatically expires after one day. The old boolean dismissal flag is migrated to the new timestamp format on first load.
+
 ## [0.3.20] - 2026-07-23
 
 ### Added
