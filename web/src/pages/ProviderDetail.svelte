@@ -235,27 +235,18 @@ function refreshConnections(resetPage = false) {
  return loadConnections(providerId, currentPage, perPage);
 }
 
-  async function handleTestAll() {
- if ($connections.length === 0) {
- toast.info('No connections to test');
- return;
- }
- testingAll = true;
- let passed = 0;
- let failed = 0;
- try {
- for (const conn of $connections) {
+async function testConnectionAndRefresh(conn: Connection): Promise<boolean> {
  actionLoading = { connectionId: conn.id, action: 'test' };
  try {
  const res = (await connectionsApi.test(conn.id)) as any;
- if (res?.status === 'ok' || res?.success) {
- passed++;
- } else {
- failed++;
+ const ok = res?.status === 'ok' || res?.success;
+ if (!ok) {
+ toast.error(`Test failed for ${conn.name ?? conn.id}: ${res?.error ?? res?.message ?? 'Unknown error'}`);
  }
+ return ok;
  } catch (err) {
- failed++;
  toast.error(`Test failed for ${conn.name ?? conn.id}: ${err instanceof Error ? err.message : 'Unknown'}`);
+ return false;
  } finally {
  // Refresh just this row so the status badge updates inline.
  try {
@@ -265,6 +256,36 @@ function refreshConnections(resetPage = false) {
  // Ignore refresh errors; the next full reload will catch up.
  }
  }
+}
+
+  async function handleTestAll() {
+ if ($connections.length === 0) {
+ toast.info('No connections to test');
+ return;
+ }
+ testingAll = true;
+ let passed = 0;
+ let failed = 0;
+ try {
+ const conns = $connections;
+ // For large provider lists, run tests with limited concurrency so we
+ // don't hammer the backend while still finishing in a reasonable time.
+ const parallel = conns.length > 100 ? 2 : 1;
+ if (parallel === 1) {
+ for (const conn of conns) {
+ if (await testConnectionAndRefresh(conn)) passed++;
+ else failed++;
+ }
+ } else {
+ let index = 0;
+ async function worker() {
+ while (index < conns.length) {
+ const conn = conns[index++];
+ if (await testConnectionAndRefresh(conn)) passed++;
+ else failed++;
+ }
+ }
+ await Promise.all(Array.from({ length: parallel }, worker));
  }
  } finally {
  actionLoading = null;
