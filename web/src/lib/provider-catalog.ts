@@ -19,6 +19,7 @@ export interface ProviderMeta {
   format: string;
   authType: 'none' | 'apikey' | 'oauth' | 'custom';
   prefix: string;
+  aliases?: string[];
   isBuiltIn: boolean;
   website?: string;
   color: string;
@@ -598,6 +599,26 @@ export const PROVIDER_CATALOG: ProviderMeta[] = [
     freeNote: 'Free tier includes Gemini 3 Flash, DeepSeek V3.2, Grok 4.1 Fast, Mistral Large, and more.',
     apiHint: 'Get your API key at https://zenmux.ai',
   },
+{
+  id: 'zenmux-free',
+  displayName: 'ZenMux Free',
+  icon: 'swap_horiz',
+  textIcon: 'ZF',
+  iconFile: '/providers/zenmux-free.svg',
+  category: 'apikey',
+  description: 'ZenMux free-tier OpenAI-compatible API gateway.',
+  format: 'openai',
+  authType: 'apikey',
+  prefix: 'zenmux-free/',
+  aliases: ['zxfree'],
+  isBuiltIn: true,
+  website: 'https://zenmux.ai',
+  color: '#059669',
+  serviceKinds: ['llm'],
+  hasFree: true,
+  freeNote: 'Free tier access to ZenMux models.',
+  apiHint: 'Get your API key at https://zenmux.ai',
+},
   {
     id: 'copilot',
     displayName: 'GitHub Copilot',

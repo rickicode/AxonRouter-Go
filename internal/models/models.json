@@ -6308,4 +6308,73 @@
       "id": "qwen3-coder-plus"
     }
   ]
+,
+  "zenmux-free": [
+    {
+      "id": "x-ai/grok-4.5-free",
+      "object": "model",
+      "created": 1700000000,
+      "owned_by": "zenmux-free",
+      "type": "id",
+      "display_name": "x-ai/grok-4.5-free",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "stepfun/step-3.7-flash-free",
+      "object": "model",
+      "created": 1700000000,
+      "owned_by": "zenmux-free",
+      "type": "id",
+      "display_name": "stepfun/step-3.7-flash-free",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "z-ai/glm-4.7-flash-free",
+      "object": "model",
+      "created": 1700000000,
+      "owned_by": "zenmux-free",
+      "type": "id",
+      "display_name": "z-ai/glm-4.7-flash-free",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "z-ai/glm-4.6v-flash-free",
+      "object": "model",
+      "created": 1700000000,
+      "owned_by": "zenmux-free",
+      "type": "id",
+      "display_name": "z-ai/glm-4.6v-flash-free",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "inclusionai/ling-3.0-flash",
+      "object": "model",
+      "created": 1700000000,
+      "owned_by": "zenmux-free",
+      "type": "id",
+      "display_name": "inclusionai/ling-3.0-flash",
+      "service_kinds": [
+        "llm"
+      ]
+    },
+    {
+      "id": "moonshotai/kimi-k3-free",
+      "object": "model",
+      "created": 1700000000,
+      "owned_by": "zenmux-free",
+      "type": "id",
+      "display_name": "moonshotai/kimi-k3-free",
+      "service_kinds": [
+        "llm"
+      ]
+    }
+  ]
 }

@@ -46,11 +46,12 @@ var v1ProviderCatalog = map[string]struct {
 	"lambda":        {keys: []string{"lambda"}, ownedBy: "lambda"},
 	"pollinations":  {keys: []string{"pollinations"}, ownedBy: "pollinations"},
 	"zenmux":        {keys: []string{"zenmux"}, ownedBy: "zenmux"},
-	"bedrock": {keys: []string{"bedrock"}, ownedBy: "amazon"},
+	"zenmux-free":   {keys: []string{"zenmux-free"}, ownedBy: "zenmux"},
+	"bedrock":       {keys: []string{"bedrock"}, ownedBy: "amazon"},
 
-	"zai": {keys: []string{"claude"}, ownedBy: "zai"},
-	"cf": {keys: []string{"cf"}, ownedBy: "cloudflare"},
-	"grok-cli": {keys: []string{"grok-cli"}, ownedBy: "xai"},
+	"zai":       {keys: []string{"claude"}, ownedBy: "zai"},
+	"cf":        {keys: []string{"cf"}, ownedBy: "cloudflare"},
+	"grok-cli":  {keys: []string{"grok-cli"}, ownedBy: "xai"},
 	"codebuddy": {keys: []string{"codebuddy"}, ownedBy: "tencent"},
 }
 

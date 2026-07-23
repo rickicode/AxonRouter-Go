@@ -119,6 +119,33 @@ func TestListModelEntries_QwenCloudIncludesExpectedModels(t *testing.T) {
 	}
 }
 
+func TestDefaultTestModel_ZenMuxReturnsPaidHead(t *testing.T) {
+	got := defaultTestModel("zenmux")
+	want := "openai/gpt-5.6-luna"
+	if got != want {
+		t.Errorf("defaultTestModel(zenmux) = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultTestModel_ZenMuxFreeReturnsFreeModel(t *testing.T) {
+	got := defaultTestModel("zenmux-free")
+	want := "inclusionai/ling-3.0-flash"
+	if got != want {
+		t.Errorf("defaultTestModel(zenmux-free) = %q, want %q", got, want)
+	}
+	freeModels := []string{
+		"inclusionai/ling-3.0-flash",
+		"z-ai/glm-4.7-flash-free",
+		"x-ai/grok-4.5-free",
+		"stepfun/step-3.7-flash-free",
+		"z-ai/glm-4.6v-flash-free",
+		"moonshotai/kimi-k3-free",
+	}
+	if !slices.Contains(freeModels, got) {
+		t.Errorf("defaultTestModel(zenmux-free) returned non-free model %q; expected one of %v", got, freeModels)
+	}
+}
+
 func kindsOf(m map[string]any) []string {
 	if v, ok := m["service_kinds"].([]string); ok {
 		return v

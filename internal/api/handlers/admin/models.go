@@ -548,6 +548,8 @@ var providerCatalogKeys = map[string][]string{
 	"amazon-q":      {"amazon-q"},
 	"aistudio":      {"aistudio"},
 	"xai":           {"xai"},
+	"zenmux":        {"zenmux"},
+	"zenmux-free":   {"zenmux-free"},
 	"oc":            {"oc"},
 	"oc-zen":        {"oc-zen"},
 	"oc-go":         {"oc-go"},
@@ -595,6 +597,22 @@ func staticModels(providerID string) []string {
 	return stripped
 }
 
+// pickModel returns the first candidate that satisfies any of the provided
+// preference predicates. If none match, it falls back to the first candidate.
+func pickModel(ids []string, preds ...func(string) bool) string {
+	for _, pred := range preds {
+		for _, id := range ids {
+			if pred(id) {
+				return id
+			}
+		}
+	}
+	if len(ids) > 0 {
+		return ids[0]
+	}
+	return ""
+}
+
 // defaultTestModel returns the first available model for a provider from the catalog.
 // For Cloudflare, the catalog stores gateway IDs like cf/author/model; the test
 // body should contain only the upstream model name (author/model) so the CF
@@ -614,6 +632,13 @@ func defaultTestModel(providerID string) string {
 		if providerID == "kiro" {
 			// Kiro's "auto" model is a stable, capability-agnostic upstream id.
 			return "auto"
+		}
+		if providerID == "zenmux-free" {
+			return pickModel(ids,
+				func(id string) bool { return strings.Contains(id, "inclusionai/ling-3.0-flash") },
+				func(id string) bool { return strings.Contains(id, "z-ai/glm-4.7") },
+				func(id string) bool { return strings.Contains(id, "-free") },
+			)
 		}
 		return ids[0]
 	}

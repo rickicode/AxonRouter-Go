@@ -248,6 +248,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		{"lambda", "Lambda", "openai", "https://api.lambda.ai/v1", "apikey", []string{"llm"}},
 		{"pollinations", "Pollinations.AI", "openai", "https://gen.pollinations.ai/v1", "apikey", []string{"llm"}},
 		{"zenmux", "ZenMux", "openai", "https://zenmux.ai/api/v1", "apikey", []string{"llm"}},
+		{"zenmux-free", "ZenMux Free", "openai", "https://zenmux.ai/api/v1", "apikey", []string{"llm"}},
 
 		{"copilot", "GitHub Copilot", "openai", "https://api.githubcopilot.com", "oauth", []string{"llm"}},
 
