@@ -28,7 +28,7 @@ func (h *Handler) Responses(c *gin.Context) {
 	// Apply compression (fail-open); skip if the request uses prompt-cache markers.
 	body = h.compressRequestBody(body)
 
-	model := executor.JSONGet(body, "model")
+	body, model, _ := h.parseThinkingSuffixFromBody(c, body)
 	if model == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "model is required", "type": "invalid_request_error"}})
 		return
@@ -71,6 +71,9 @@ func (h *Handler) Responses(c *gin.Context) {
 		provider = "cx"
 		modelName = model
 	}
+
+	sessionID := h.sessionIDForAffinity(c, provider, modelName, body)
+
 	exec, providerFormat, err := h.resolveExecutor(provider, modelName)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": err.Error(), "type": "invalid_request_error"}})
@@ -79,6 +82,7 @@ func (h *Handler) Responses(c *gin.Context) {
 	body = executor.JSONSet(body, "model", modelName)
 	clientFormat := executor.FormatOpenAIResponses
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+	translatedBody = h.applyThinkingOverrideFromContext(c.Request.Context(), translatedBody, string(providerFormat))
 	translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
 
 	// NOTE: configurable via failover_max_attempts setting.
@@ -92,7 +96,7 @@ attemptLoop:
 			writeContextDone(c)
 			return
 		}
-		conn, err := h.getConnection(c.Request.Context(), provider, modelName)
+		conn, err := h.getConnection(c.Request.Context(), provider, modelName, sessionID)
 		if err != nil {
 			if attempt == 0 {
 				c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})

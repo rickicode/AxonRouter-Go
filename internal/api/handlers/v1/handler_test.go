@@ -158,6 +158,7 @@ func newTestHandler(t testing.TB) *Handler {
 		authMgr:             mgr,
 		exhaustion:          quota.NewExhaustionCache(),
 		providerCfg:         providercfg.NewManager(t.TempDir()),
+		sessions:            connstate.NewSessionCache(),
 		combo:               combo.NewHandler(database, store, elig),
 		registry:            executor.GetRegistry(),
 		failoverMaxAttempts: 5,
@@ -615,7 +616,7 @@ func TestGetConnectionRejectsCooledDownConnection(t *testing.T) {
 	cs := h.store.Get("conn-oc-1")
 
 	// Normal case: connection is eligible.
-	conn, err := h.getConnection(context.Background(), "oc", "hy3-free")
+	conn, err := h.getConnection(context.Background(), "oc", "hy3-free", "")
 	if err != nil {
 		t.Fatalf("expected eligible connection: %v", err)
 	}
@@ -629,7 +630,7 @@ func TestGetConnectionRejectsCooledDownConnection(t *testing.T) {
 	cs.SetCooldown(time.Now().Add(time.Hour))
 	h.elig.RecomputeAll()
 
-	conn, err = h.getConnection(context.Background(), "oc", "hy3-free")
+	conn, err = h.getConnection(context.Background(), "oc", "hy3-free", "")
 	if err != nil {
 		t.Fatalf("expected fallback to cooled-down connection: %v", err)
 	}
@@ -985,7 +986,7 @@ func TestRecencyAwareDistribution(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < callsPerWorker; i++ {
-				conn, err := h.getConnection(ctx, "recency", "gpt-4o")
+				conn, err := h.getConnection(ctx, "recency", "gpt-4o", "")
 				if err != nil {
 					t.Errorf("getConnection failed: %v", err)
 					return
@@ -1048,7 +1049,7 @@ func TestRecencyTiebreaker(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	conn, err := h.getConnection(ctx, "recency", "gpt-4o")
+	conn, err := h.getConnection(ctx, "recency", "gpt-4o", "")
 	if err != nil {
 		t.Fatalf("getConnection failed: %v", err)
 	}
@@ -1235,10 +1236,10 @@ func TestBuildFailoverErrorResponse(t *testing.T) {
 			wantErrType: "authentication_error",
 		},
 		{
-			name:     "auth error preserves upstream message",
-			category: connstate.ErrorAuth,
-			lastErr:  &executor.UpstreamError{StatusCode: 403, Body: []byte(`{"error":{"message":"Access denied"}}`)},
-			wantMsg:  "Access denied",
+			name:        "auth error preserves upstream message",
+			category:    connstate.ErrorAuth,
+			lastErr:     &executor.UpstreamError{StatusCode: 403, Body: []byte(`{"error":{"message":"Access denied"}}`)},
+			wantMsg:     "Access denied",
 			wantStatus:  http.StatusUnauthorized,
 			wantErrType: "authentication_error",
 		},

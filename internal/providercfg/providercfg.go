@@ -23,16 +23,25 @@ const (
 	RoundRobin RoutingMode = "round_robin"
 	// Random picks one eligible connection uniformly at random per request.
 	Random RoutingMode = "random"
+	// Affinity routes repeat calls from the same session to the same
+	// connection when it is still eligible.
+	Affinity RoutingMode = "affinity"
 )
 
 // DefaultRoutingMode is applied when no explicit setting has been saved.
 const DefaultRoutingMode = RoundRobin
 
+// ValidRoutingModes lists the routing modes that may be persisted for a
+// provider. It is used by API validation to reject unknown values.
+func ValidRoutingModes() []RoutingMode {
+	return []RoutingMode{FirstEligible, RoundRobin, Random, Affinity}
+}
+
 // ProviderSettings holds per-provider runtime configuration stored outside the
 // database to avoid SQLite write contention on the hot routing path.
 type ProviderSettings struct {
-	RoutingMode    RoutingMode    `json:"routing_mode"`
-	Compatibility  *Compatibility `json:"compatibility,omitempty"`
+	RoutingMode   RoutingMode    `json:"routing_mode"`
+	Compatibility *Compatibility `json:"compatibility,omitempty"`
 }
 
 // readFileHook is swapped during tests to count disk reads. In production it
@@ -55,8 +64,8 @@ func NewManager(dataDir string) *Manager {
 	_ = os.MkdirAll(dir, 0o755)
 
 	m := &Manager{
-		dir: dir,
-		settings: make(map[string]ProviderSettings),
+		dir:        dir,
+		settings:   make(map[string]ProviderSettings),
 		rrCounters: make(map[string]*atomic.Uint64),
 	}
 	m.loadAll()

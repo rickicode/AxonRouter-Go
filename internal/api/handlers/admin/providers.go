@@ -890,21 +890,21 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 					psdJSON = sql.NullString{String: string(b), Valid: true}
 				}
 			}
-		status := "ready"
-		disabledReason := sql.NullString{}
-		active := 1
-		switch item.state {
-		case "rejected":
-			status = "disabled"
-			disabledReason = sql.NullString{String: "auth_failed", Valid: true}
-			active = 0
-		case "duplicate":
-			status = "disabled"
-			disabledReason = sql.NullString{String: "manual", Valid: true}
-			active = 0
-		}
-		if _, err := tx.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, priority, provider_specific_data, status, disabled_reason, is_active, created_at, updated_at) VALUES (?, ?, ?, 'api_key', ?, ?, ?, ?, ?, ?, ?, ?)`,
-			connID, providerID, item.Name, apiKey, item.Priority, psdJSON, status, disabledReason, active, now, now); err != nil {
+			status := "ready"
+			disabledReason := sql.NullString{}
+			active := 1
+			switch item.state {
+			case "rejected":
+				status = "disabled"
+				disabledReason = sql.NullString{String: "auth_failed", Valid: true}
+				active = 0
+			case "duplicate":
+				status = "disabled"
+				disabledReason = sql.NullString{String: "manual", Valid: true}
+				active = 0
+			}
+			if _, err := tx.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, priority, provider_specific_data, status, disabled_reason, is_active, created_at, updated_at) VALUES (?, ?, ?, 'api_key', ?, ?, ?, ?, ?, ?, ?, ?)`,
+				connID, providerID, item.Name, apiKey, item.Priority, psdJSON, status, disabledReason, active, now, now); err != nil {
 				res.fails = append(res.fails, fmt.Sprintf("connection %q: %s", item.Name, err.Error()))
 				continue
 			}
@@ -1237,11 +1237,11 @@ func (h *ProviderHandler) UpdateSettings(c *gin.Context) {
 	}
 
 	switch req.RoutingMode {
-	case providercfg.FirstEligible, providercfg.RoundRobin, providercfg.Random:
+	case providercfg.FirstEligible, providercfg.RoundRobin, providercfg.Random, providercfg.Affinity:
 		// ok
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "routing_mode must be one of: first_eligible, round_robin, random",
+			"error": "routing_mode must be one of: first_eligible, round_robin, random, affinity",
 		})
 		return
 	}
