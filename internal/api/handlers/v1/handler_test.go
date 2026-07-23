@@ -516,6 +516,42 @@ func TestPersistCooldown_WritesRealColumns(t *testing.T) {
 	}
 }
 
+func TestPersistCooldown_PersistsAuthFailedAsInactive(t *testing.T) {
+	h := newTestHandler(t)
+	database := h.db
+	wq := db.NewWriteQueue(database)
+	h.writeQueue = wq
+
+	if _, err := database.Exec(`INSERT INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('test-auth','Test Auth','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-auth','test-auth','c-auth','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+
+	det := connstate.ErrorDetection{
+		Category: connstate.ErrorAuth,
+		Message:  "permission denied",
+		Status:   connstate.StatusAuthFailed,
+	}
+	h.persistCooldownScoped("conn-auth", det)
+
+	wq.Stop() // flush all queued writes
+
+	var status string
+	var isActive int
+	row := database.QueryRow(`SELECT status, is_active FROM connections WHERE id='conn-auth'`)
+	if err := row.Scan(&status, &isActive); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if status != string(connstate.StatusAuthFailed) {
+		t.Fatalf("status = %q, want auth_failed", status)
+	}
+	if isActive != 0 {
+		t.Fatalf("is_active = %d, want 0", isActive)
+	}
+}
+
 func TestPersistSuccess_ResetsExpiredCooldown(t *testing.T) {
 	h := newTestHandler(t)
 	database := h.db
@@ -1190,7 +1226,15 @@ func TestBuildFailoverErrorResponse(t *testing.T) {
 		{
 			name:        "auth error",
 			category:    connstate.ErrorAuth,
-			wantMsg:     "authentication failed for all connections",
+			wantMsg:     "authentication failed",
+			wantStatus:  http.StatusUnauthorized,
+			wantErrType: "authentication_error",
+		},
+		{
+			name:     "auth error preserves upstream message",
+			category: connstate.ErrorAuth,
+			lastErr:  &executor.UpstreamError{StatusCode: 403, Body: []byte(`{"error":{"message":"Access denied"}}`)},
+			wantMsg:  "Access denied",
 			wantStatus:  http.StatusUnauthorized,
 			wantErrType: "authentication_error",
 		},

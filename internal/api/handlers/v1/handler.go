@@ -896,7 +896,7 @@ func buildFailoverErrorResponse(category string, lastErr error, modelName string
 	case connstate.ErrorModelNotFound:
 		return "model not found: " + modelName, http.StatusNotFound, "invalid_request_error"
 	case connstate.ErrorAuth:
-		return "authentication failed for all connections", http.StatusUnauthorized, "authentication_error"
+		return upstreamMessage("authentication failed"), http.StatusUnauthorized, "authentication_error"
 	case connstate.ErrorRateLimit:
 		return upstreamMessage("rate limit exceeded for all connections"), http.StatusTooManyRequests, "rate_limit_error"
 	case connstate.ErrorQuota:
