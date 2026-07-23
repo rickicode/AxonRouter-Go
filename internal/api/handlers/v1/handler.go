@@ -1740,9 +1740,10 @@ func (h *Handler) persistCooldownScoped(connID string, det connstate.ErrorDetect
 		return
 	}
 
-	// Balance-empty is a terminal state (needs manual top-up), so persist it
-	// even when there is no cooldown horizon.
-	if det.CooldownUntil == nil && det.Category != connstate.ErrorBalanceEmpty {
+	// Balance-empty is a terminal state (needs manual top-up), and auth failures
+	// are also terminal (invalid credentials). Persist these immediately even when
+	// there is no cooldown horizon so a restart does not resurrect a bad account.
+	if det.CooldownUntil == nil && det.Category != connstate.ErrorBalanceEmpty && det.Category != connstate.ErrorAuth {
 		return
 	}
 	status := string(det.Status)
@@ -1755,13 +1756,20 @@ func (h *Handler) persistCooldownScoped(connID string, det connstate.ErrorDetect
 		u := det.CooldownUntil.Unix()
 		cooldownUntil = &u
 	}
+	// Terminal statuses should also be marked inactive so they stop being routed to
+	// and become eligible for lifecycle garbage collection.
+	isActive := 1
+	if connstate.Status(statusVal).IsRoutingTerminal() || statusVal == string(connstate.StatusBalanceEmpty) {
+		isActive = 0
+	}
 	errMsg := det.Message
 	errCode := string(det.Category)
 	h.writeQueue.Enqueue("persistCooldownScoped", func(d *sql.DB) error {
 		now := time.Now().Unix()
 		_, err := d.Exec(`
 UPDATE connections
-SET status = ?,
+SET is_active = ?,
+    status = ?,
     cooldown_until = ?,
     last_error = ?,
     last_error_code = ?,
@@ -1769,7 +1777,7 @@ SET status = ?,
     last_failure_at = ?,
     updated_at = ?
 WHERE id = ?
-`, statusVal, cooldownUntil, errMsg, errCode, now, now, connID)
+`, isActive, statusVal, cooldownUntil, errMsg, errCode, now, now, connID)
 		return err
 	})
 }
