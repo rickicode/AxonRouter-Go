@@ -4,7 +4,7 @@
  import { unwrapInt, getTokenExpiry } from '$lib/utils';
 import { copyToClipboard } from '$lib/copy';
  import { connectionsApi, providersApi, proxyPoolsApi } from '$lib/api';
-import type { RoutingMode, ProviderModelEntry, ProxyPool } from '$lib/api';
+import type { RoutingMode, ProviderModelEntry, ProxyPool, Connection } from '$lib/api';
  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
  import { Button } from '$lib/components/ui/button';
  import { Badge } from '$lib/components/ui/badge';
@@ -107,7 +107,7 @@ let groupedProviderModels = $derived.by(() => {
  onMount(() => {
   document.title = `${meta?.displayName ?? 'Provider'} — AxonRouter`;
   loadProvider(providerId);
-  loadConnections(providerId, currentPage, perPage);
+  refreshConnections();
   loadProviderModels(providerId);
   loadProxyPools();
   providersApi.getSettings(providerId).then((s) => {
@@ -176,33 +176,105 @@ async function copyModelName(id: string) {
 
  function handlePageChange(page: number) {
  currentPage = page;
- loadConnections(providerId, currentPage, perPage);
+ refreshConnections();
  }
 
 function handlePerPageChange(p: number) {
  perPage = p;
- currentPage = 1;
- loadConnections(providerId, currentPage, perPage);
+ refreshConnections(true);
+ }
+
+function currentConnectionFilter(): { status: string; search: string } {
+ let status = '';
+ let search = '';
+ connectionFilter.subscribe((f) => {
+ status = f.status;
+ search = f.search;
+ })();
+ return { status, search };
 }
 
- async function handleTestAll() {
- testingAll = true;
+async function loadAllConnections() {
+ isLoading.set(true);
+ error.set(null);
  try {
- const res = (await providersApi.test(providerId)) as any;
- await loadProvider(providerId);
- await loadConnections(providerId, currentPage, perPage);
- const results = res?.results ?? [];
- const ok = results.filter((r: any) => r.status === 'ok').length;
- const failed = results.filter((r: any) => r.status === 'failed').length;
- const skipped = results.filter((r: any) => r.status === 'skipped').length;
- if (failed > 0) {
- toast.error(`Test all: ${ok} passed, ${failed} failed${skipped ? `, ${skipped} skipped` : ''}`);
+ const filter = currentConnectionFilter();
+ const all: Connection[] = [];
+ let pageNum = 1;
+ let totalPages = 1;
+ do {
+ const response = await connectionsApi.list(providerId, {
+ page: pageNum,
+ per_page: 200,
+ status: filter.status || undefined,
+ search: filter.search || undefined,
+ });
+ all.push(...(response.data || []));
+ totalPages = response.pagination?.total_pages ?? 1;
+ pageNum++;
+ } while (pageNum <= totalPages);
+ connections.set(all);
+ connectionPagination.set({
+ page: 1,
+ per_page: all.length,
+ total: all.length,
+ total_pages: 1,
+ });
+ currentPage = 1;
+ } catch (err) {
+ error.set(err instanceof Error ? err.message : 'Failed to load all connections');
+ toast.error('Failed to load all connections');
+ } finally {
+ isLoading.set(false);
+ }
+}
+
+function refreshConnections(resetPage = false) {
+ if (resetPage) currentPage = 1;
+ if (perPage === 0) return loadAllConnections();
+ return loadConnections(providerId, currentPage, perPage);
+}
+
+  async function handleTestAll() {
+ if ($connections.length === 0) {
+ toast.info('No connections to test');
+ return;
+ }
+ testingAll = true;
+ let passed = 0;
+ let failed = 0;
+ try {
+ for (const conn of $connections) {
+ actionLoading = { connectionId: conn.id, action: 'test' };
+ try {
+ const res = (await connectionsApi.test(conn.id)) as any;
+ if (res?.status === 'ok' || res?.success) {
+ passed++;
  } else {
- toast.success(`Test all: ${ok} passed${skipped ? `, ${skipped} skipped` : ''}`);
+ failed++;
  }
  } catch (err) {
- toast.error('Test all failed: ' + (err instanceof Error ? err.message : 'Unknown'));
- } finally { testingAll = false; }
+ failed++;
+ toast.error(`Test failed for ${conn.name ?? conn.id}: ${err instanceof Error ? err.message : 'Unknown'}`);
+ } finally {
+ // Refresh just this row so the status badge updates inline.
+ try {
+ const fresh = await connectionsApi.get(conn.id);
+ connections.update((list) => list.map((c) => (c.id === fresh.id ? fresh : c)));
+ } catch (_) {
+ // Ignore refresh errors; the next full reload will catch up.
+ }
+ }
+ }
+ } finally {
+ actionLoading = null;
+ testingAll = false;
+ }
+ if (failed > 0) {
+ toast.error(`Test all: ${passed} passed, ${failed} failed`);
+ } else {
+ toast.success(`Test all: ${passed} passed`);
+ }
  }
 
 async function handleTestConnection(connId: string) {
@@ -214,7 +286,7 @@ async function handleTestConnection(connId: string) {
  } else {
  toast.error(`Test failed: ${res?.error ?? res?.message ?? 'Unknown error'}`);
  }
- await loadConnections(providerId, currentPage, perPage);
+ await refreshConnections();
  } catch (err) {
  toast.error('Test failed: ' + (err instanceof Error ? err.message : 'Unknown'));
   } finally { actionLoading = null; }
@@ -225,7 +297,7 @@ async function handleResetConnection(connId: string) {
   try {
  await connectionsApi.reset(connId);
  toast.success('Connection reset to ready');
- await loadConnections(providerId, currentPage, perPage);
+ await refreshConnections();
  } catch (err) {
  toast.error('Reset failed: ' + (err instanceof Error ? err.message : 'Unknown'));
   } finally { actionLoading = null; }
@@ -236,7 +308,7 @@ async function handleRefreshToken(connId: string) {
   try {
  const res = await connectionsApi.refreshToken(connId);
  toast.success(`Token refreshed, expires ${new Date(res.expires_at * 1000).toLocaleTimeString()}`);
- await loadConnections(providerId, currentPage, perPage);
+ await refreshConnections();
  } catch (err) {
  toast.error('Refresh failed: ' + (err instanceof Error ? err.message : 'Unknown'));
   } finally { actionLoading = null; }
@@ -255,7 +327,7 @@ function confirmDeleteConnection(connId: string, name: string) {
    try {
      await connectionsApi.delete(connId);
   toast.success(`Deleted "${name}"`);
-  await loadConnections(providerId, currentPage, perPage);
+  await refreshConnections();
   } catch (err) {
   toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
    } finally { actionLoading = null; }
@@ -303,7 +375,7 @@ async function handleBulkAssignProxy() {
     });
     toast.success(`Proxy pool updated for ${res.updated} connection${res.updated === 1 ? '' : 's'}`);
     clearSelection();
-    await loadConnections(providerId, currentPage, perPage);
+    await refreshConnections();
   } catch (err) {
     toast.error('Bulk proxy assignment failed: ' + (err instanceof Error ? err.message : 'Unknown'));
   } finally {
@@ -375,7 +447,7 @@ async function handleBulkAssignProxy() {
  <Card class="shadow-card">
  <CardContent class="flex flex-col items-center justify-center py-12">
  <p class="text-body-sm text-muted-foreground mb-4">{$error}</p>
- <Button onclick={() => { loadProvider(providerId); loadConnections(providerId, currentPage, perPage); loadProviderModels(providerId); }} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
+ <Button onclick={() => { loadProvider(providerId); refreshConnections(); loadProviderModels(providerId); }} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
  </CardContent>
  </Card>
  {:else if $selectedProvider}
@@ -466,7 +538,7 @@ async function handleBulkAssignProxy() {
   <Select.Root
   type="single"
   value={$connectionFilter.status}
- onValueChange={(value: string) => { $connectionFilter.status = value || ''; currentPage = 1; loadConnections(providerId, currentPage, perPage); }}
+ onValueChange={(value: string) => { $connectionFilter.status = value || ''; currentPage = 1; refreshConnections(); }}
  >
  <Select.Trigger class="w-full sm:w-[180px] h-9 text-body-sm rounded-sm">
  {statusOptions.find(o => o.value === $connectionFilter.status)?.label || 'All statuses'}
@@ -477,7 +549,7 @@ async function handleBulkAssignProxy() {
  {/each}
  </Select.Content>
  </Select.Root>
- <Input type="text" class="w-full sm:w-64 h-9 text-body-sm" placeholder="Search connections..." bind:value={$connectionFilter.search} oninput={() => { currentPage = 1; loadConnections(providerId, currentPage, perPage); }} />
+ <Input type="text" class="w-full sm:w-64 h-9 text-body-sm" placeholder="Search connections..." bind:value={$connectionFilter.search} oninput={() => { currentPage = 1; refreshConnections(); }} />
  </div>
 
  <Card class="shadow-card overflow-hidden">
@@ -647,7 +719,7 @@ async function handleBulkAssignProxy() {
  totalPages={$connectionPagination.total_pages}
  total={$connectionPagination.total}
  perPage={perPage}
- perPageOptions={[25, 50, 100]}
+ perPageOptions={[25, 50, 100, { value: 0, label: 'All' }]}
  onPerPageChange={handlePerPageChange}
  onChange={handlePageChange}
 />
@@ -735,7 +807,7 @@ async function handleBulkAssignProxy() {
  {/if}
  </div>
 
-<AddConnectionModal bind:open={showAddModal} {providerId} {meta} onCreated={() => { loadConnections(providerId, currentPage, perPage); loadProvider(providerId); loadProviderModels(providerId); }} />
+<AddConnectionModal bind:open={showAddModal} {providerId} {meta} onCreated={() => { refreshConnections(); loadProvider(providerId); loadProviderModels(providerId); }} />
 <ProviderRoutingModal bind:open={showRoutingModal} {providerId} currentMode={routingMode} onSaved={(mode) => (routingMode = mode)} />
 <ProviderEditModal
 	bind:open={showEditModal}
