@@ -3,7 +3,9 @@ package v1
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -464,6 +467,125 @@ func (h *Handler) tryPickConnectionFallback(ctx context.Context, connID, provide
 	logging.Logger.Debug("getConnection fallback selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name, "mode", mode)
 	h.bindActiveConn(ctx, conn)
 	return conn, true
+}
+
+// tryAffinityConnection attempts to reuse a cached connection for the
+// provider/session/model combination. The cached connection is validated
+// with the same cooldown/exhaustion checks as normal selection.
+func (h *Handler) tryAffinityConnection(ctx context.Context, provider, sessionID, modelID string, now time.Time, mode providercfg.RoutingMode) (*Connection, bool) {
+	if h.sessions == nil {
+		return nil, false
+	}
+	cachedID, ok := h.sessions.Get(connstate.SessionKey(provider, sessionID, modelID))
+	if !ok {
+		return nil, false
+	}
+	cs := h.store.Get(cachedID)
+	if cs == nil {
+		return nil, false
+	}
+	if c, ok := h.tryPickConnection(ctx, cs, provider, modelID, now, mode); ok {
+		logging.Logger.Debug("getConnection affinity hit", "provider", provider, "model", modelID, "conn", shortID(c.ID, 8))
+		return c, true
+	}
+	return nil, false
+}
+
+// sessionIDForAffinity extracts a session identifier when the provider is
+// configured for affinity routing. It is a no-op for other routing modes so
+// the default hot path avoids unnecessary JSON/header parsing.
+func (h *Handler) sessionIDForAffinity(c *gin.Context, provider, modelID string, body []byte) string {
+	if h.sessions == nil || h.providerCfg.RoutingMode(provider) != providercfg.Affinity {
+		return ""
+	}
+	return h.extractSessionID(c, body)
+}
+
+var sessionUUIDRegex = regexp.MustCompile(`_session_([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})`)
+
+// extractSessionID returns a stable session identifier for affinity routing.
+// The priority order is:
+//  1. UUID embedded in metadata.user_id after "_session_".
+//  2. X-Session-ID header.
+//  3. Session-Id / Session_id header.
+//  4. X-Client-Request-Id header.
+//  5. conversation_id field in the JSON body.
+//  6. Stable SHA-256 hash of the first system+user+assistant message contents.
+func (h *Handler) extractSessionID(c *gin.Context, body []byte) string {
+	if len(body) > 0 {
+		if userID := gjson.GetBytes(body, "metadata.user_id").String(); userID != "" {
+			if m := sessionUUIDRegex.FindStringSubmatch(userID); len(m) > 1 {
+				return m[1]
+			}
+		}
+	}
+	if c != nil && c.Request != nil {
+		if v := firstHeaderValue(c.Request.Header, "x-session-id"); v != "" {
+			return v
+		}
+		if v := firstHeaderValue(c.Request.Header, "session-id"); v != "" {
+			return v
+		}
+		if v := firstHeaderValue(c.Request.Header, "session_id"); v != "" {
+			return v
+		}
+		if v := firstHeaderValue(c.Request.Header, "x-client-request-id"); v != "" {
+			return v
+		}
+	}
+	if len(body) > 0 {
+		if conv := gjson.GetBytes(body, "conversation_id").String(); conv != "" {
+			return conv
+		}
+		if messages := gjson.GetBytes(body, "messages"); messages.IsArray() {
+			var parts []string
+			var seenSystem, seenUser, seenAssistant bool
+			for _, msg := range messages.Array() {
+				role := msg.Get("role").String()
+				content := msg.Get("content").String()
+				switch role {
+				case "system":
+					if !seenSystem {
+						parts = append(parts, content)
+						seenSystem = true
+					}
+				case "user":
+					if !seenUser {
+						parts = append(parts, content)
+						seenUser = true
+					}
+				case "assistant":
+					if !seenAssistant {
+						parts = append(parts, content)
+						seenAssistant = true
+					}
+				}
+				if seenSystem && seenUser && seenAssistant {
+					break
+				}
+			}
+			if len(parts) > 0 {
+				sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+				return hex.EncodeToString(sum[:])
+			}
+		}
+	}
+	return ""
+}
+
+func firstHeaderValue(h http.Header, name string) string {
+	if h == nil {
+		return ""
+	}
+	lower := strings.ToLower(name)
+	for k, v := range h {
+		if strings.ToLower(k) == lower && len(v) > 0 {
+			if s := strings.TrimSpace(v[0]); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
 }
 
 // pickStartIndex returns the first index to inspect based on the configured
@@ -1104,6 +1226,8 @@ func (h *Handler) executeProviderCall(
 			logging.Logger.Warn("malformed provider_specific_data", "conn", shortID(conn.ID, 8), "error", err.Error())
 		}
 	}
+	_, providerFormat, _ := h.registry.Get(provider)
+	translatedBody = h.applyThinkingOverrideFromContext(ctx, translatedBody, string(providerFormat))
 	req := &executor.Request{
 		Model:                modelName,
 		Body:                 translatedBody,

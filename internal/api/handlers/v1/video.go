@@ -40,6 +40,8 @@ func (h *Handler) Video(c *gin.Context) {
 		return
 	}
 
+	sessionID := h.sessionIDForAffinity(c, provider, modelName, body)
+
 	// Get video executor (test hook overrides the real one).
 	var videoExec executor.Executor
 	if h.videoExecutorFactory != nil {
@@ -48,7 +50,7 @@ func (h *Handler) Video(c *gin.Context) {
 		videoExec = executor.NewVideoExecutor(executor.NewBaseExecutor())
 	}
 
-	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
+	conn, err := h.getConnection(c.Request.Context(), provider, modelName, sessionID)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
 		return
@@ -89,16 +91,16 @@ func (h *Handler) Video(c *gin.Context) {
 	}
 
 	h.logRequest(c, &usage.LogEntry{
-		ApiKeyID: c.GetString("api_key_id"),
-		ConnectionID: conn.ID,
+		ApiKeyID:       c.GetString("api_key_id"),
+		ConnectionID:   conn.ID,
 		ProviderTypeID: provider,
-		ModelID: modelName,
-		ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
-		ApiType: apiTypeFromPath(c.Request.URL.Path),
-		Modality: "video",
-		Stream: false,
-		LatencyMs: time.Since(start).Milliseconds(),
-		StatusCode: resp.StatusCode})
+		ModelID:        modelName,
+		ProxyPoolID:    executor.ProxyPoolIDFromContext(proxyCtx),
+		ApiType:        apiTypeFromPath(c.Request.URL.Path),
+		Modality:       "video",
+		Stream:         false,
+		LatencyMs:      time.Since(start).Milliseconds(),
+		StatusCode:     resp.StatusCode})
 
 	h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, resp.Body, false)
 	c.Header("Content-Type", "application/json")

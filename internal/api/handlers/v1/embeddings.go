@@ -49,6 +49,8 @@ func (h *Handler) Embeddings(c *gin.Context) {
 		modelName = model
 	}
 
+	sessionID := h.sessionIDForAffinity(c, provider, modelName, body)
+
 	// Resolve executor before capability checks so we can report unknown providers
 	// explicitly and then validate modality requirements.
 	exec, _, err := h.resolveExecutor(provider, modelName)
@@ -84,7 +86,7 @@ func (h *Handler) Embeddings(c *gin.Context) {
 	}
 
 	body = executor.JSONSet(body, "model", modelName)
-	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
+	conn, err := h.getConnection(c.Request.Context(), provider, modelName, sessionID)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
 		return

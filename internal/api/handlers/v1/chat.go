@@ -37,7 +37,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	// Apply compression (fail-open); skip if the request uses prompt-cache markers.
 	body = h.compressRequestBody(body)
 
-	model := executor.JSONGet(body, "model")
+	body, model, _ := h.parseThinkingSuffixFromBody(c, body)
 	if model == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "model is required", "type": "invalid_request_error"}})
 		return
@@ -72,6 +72,8 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
+	sessionID := h.sessionIDForAffinity(c, provider, modelName, body)
+
 	// Cache check (exact match, non-stream, no tools, no cache_control)
 	cacheKey := h.exactCacheKey(body, model, stream)
 	if cacheKey != "" {
@@ -96,6 +98,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	clientFormat := executor.FormatOpenAI
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
 	translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
+	translatedBody = h.applyThinkingOverrideFromContext(c.Request.Context(), translatedBody, string(providerFormat))
 	// NOTE: failover limit now configurable via failover_max_attempts setting.
 	maxAttempts := h.failoverAttempts()
 	var lastConn *Connection
@@ -107,7 +110,7 @@ attemptLoop:
 			writeContextDone(c)
 			return
 		}
-		conn, err := h.getConnection(c.Request.Context(), provider, modelName)
+		conn, err := h.getConnection(c.Request.Context(), provider, modelName, sessionID)
 		if err != nil {
 			if attempt == 0 {
 				logging.Logger.Info("chat: get connection failed", "err", err.Error())
@@ -395,6 +398,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 
 			translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
 			translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
+			translatedBody = h.applyThinkingOverrideFromContext(c.Request.Context(), translatedBody, string(providerFormat))
 			// Adaptive readiness: extend timeout for large/reasoning requests.
 			var streamCfg *executor.StreamConfig
 			if stream {

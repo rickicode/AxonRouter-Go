@@ -32,7 +32,7 @@ func (h *Handler) Messages(c *gin.Context) {
 	// Apply compression (fail-open); skip if the request uses prompt-cache markers.
 	body = h.compressRequestBody(body)
 
-	model := executor.JSONGet(body, "model")
+	body, model, _ := h.parseThinkingSuffixFromBody(c, body)
 	if model == "" {
 		c.JSON(http.StatusBadRequest, claudeError("invalid_request_error", "model is required"))
 		return
@@ -75,6 +75,9 @@ func (h *Handler) Messages(c *gin.Context) {
 		provider = "claude"
 		modelName = model
 	}
+
+	sessionID := h.sessionIDForAffinity(c, provider, modelName, body)
+
 	exec, providerFormat, err := h.resolveExecutor(provider, modelName)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, claudeError("invalid_request_error", err.Error()))
@@ -85,6 +88,7 @@ func (h *Handler) Messages(c *gin.Context) {
 	// Connection failover loop: try up to failoverMaxAttempts connections before giving up.
 	clientFormat := executor.FormatClaude
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+	translatedBody = h.applyThinkingOverrideFromContext(c.Request.Context(), translatedBody, string(providerFormat))
 	translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
 	// NOTE: configurable via failover_max_attempts setting.
 	maxAttempts := h.failoverAttempts()
@@ -96,7 +100,7 @@ attemptLoop:
 			writeContextDone(c)
 			return
 		}
-		conn, err := h.getConnection(c.Request.Context(), provider, modelName)
+		conn, err := h.getConnection(c.Request.Context(), provider, modelName, sessionID)
 		if err != nil {
 			if attempt == 0 {
 				c.JSON(http.StatusServiceUnavailable, claudeError("server_error", "no available connection"))
@@ -105,13 +109,12 @@ attemptLoop:
 			break
 		}
 		h.proactiveRefreshToken(c.Request.Context(), conn, provider)
-	psdMap := map[string]string{}
-	if conn.ProviderSpecificData != "" {
-		if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
-			logging.Logger.Warn("malformed provider_specific_data", "conn", shortID(conn.ID, 8), "error", err.Error())
+		psdMap := map[string]string{}
+		if conn.ProviderSpecificData != "" {
+			if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
+				logging.Logger.Warn("malformed provider_specific_data", "conn", shortID(conn.ID, 8), "error", err.Error())
+			}
 		}
-	}
-
 
 		req := &executor.Request{
 			Model:                modelName,
@@ -139,23 +142,23 @@ attemptLoop:
 			if h.isClientCanceled(c, err) {
 				return
 			}
-		retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
-		lastErr = err
-		lastErrCategory = cat
-		if !retry {
-			break attemptLoop
+			retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
+			lastErr = err
+			lastErrCategory = cat
+			if !retry {
+				break attemptLoop
+			}
+			if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+				return
+			}
+			continue
 		}
-		if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
-			return
-		}
-		continue
-	}
 
-	h.resetBanCount(conn.ID)
-	h.persistSuccess(conn.ID)
-	h.combo.RecordSuccess(conn.ID)
+		h.resetBanCount(conn.ID)
+		h.persistSuccess(conn.ID)
+		h.combo.RecordSuccess(conn.ID)
 
-	if req.Stream {
+		if req.Stream {
 			// Retry mid-stream failures across connections, like the combo path.
 			streamCtx, cancelStream := context.WithCancel(proxyCtx)
 			defer cancelStream()
@@ -181,19 +184,19 @@ attemptLoop:
 					retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, holdbackErr, attempt, time.Since(start).Milliseconds(), stream)
 					lastErr = holdbackErr
 					lastErrCategory = cat
-			if !retry {
-				break attemptLoop
-			}
-			if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+					if !retry {
+						break attemptLoop
+					}
+					if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+						return
+					}
+					continue
+				}
+			case <-streamCtx.Done():
 				return
 			}
-			continue
-		}
-	case <-streamCtx.Done():
-		return
-	}
 
-	if streamErr := h.handleClaudeStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, "", true); streamErr != nil {
+			if streamErr := h.handleClaudeStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, "", true); streamErr != nil {
 				if h.isClientCanceled(c, streamErr) {
 					return
 				}
@@ -202,16 +205,16 @@ attemptLoop:
 				retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, streamErr, attempt, time.Since(start).Milliseconds(), stream)
 				lastErr = streamErr
 				lastErrCategory = cat
-			if !retry {
-				break attemptLoop
+				if !retry {
+					break attemptLoop
+				}
+				if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+					return
+				}
+				continue
 			}
-			if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
-				return
-			}
-			continue
-		}
-		return
-	} else {
+			return
+		} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(clientFormat), string(providerFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			tokensEstimated := false
@@ -224,29 +227,29 @@ attemptLoop:
 					tokensEstimated = true
 				}
 			}
-	h.logRequest(c, &usage.LogEntry{
-		ApiKeyID: c.GetString("api_key_id"),
-		ConnectionID: conn.ID,
-		ProviderTypeID: provider,
-		ModelID: modelName,
-		ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
-		ApiType:     apiTypeFromPath(c.Request.URL.Path),
-		Modality: "chat",
-		Stream: stream,
-		InputTokens: tokenCounts.InputTokens,
-		OutputTokens: tokenCounts.OutputTokens,
-		ReasoningTokens: tokenCounts.ReasoningTokens,
-		CachedTokens: tokenCounts.CachedTokens,
-		CacheCreationTokens: tokenCounts.CacheCreationTokens,
-		LatencyMs: latency,
-			StatusCode: resp.StatusCode,
-			TokensEstimated: tokensEstimated,
-		})
-		h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
-		if resp.StatusCode < 300 {
-			h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
-		}
-		h.writeJSONResponse(c, resp.StatusCode, translatedResp)
+			h.logRequest(c, &usage.LogEntry{
+				ApiKeyID:            c.GetString("api_key_id"),
+				ConnectionID:        conn.ID,
+				ProviderTypeID:      provider,
+				ModelID:             modelName,
+				ProxyPoolID:         executor.ProxyPoolIDFromContext(proxyCtx),
+				ApiType:             apiTypeFromPath(c.Request.URL.Path),
+				Modality:            "chat",
+				Stream:              stream,
+				InputTokens:         tokenCounts.InputTokens,
+				OutputTokens:        tokenCounts.OutputTokens,
+				ReasoningTokens:     tokenCounts.ReasoningTokens,
+				CachedTokens:        tokenCounts.CachedTokens,
+				CacheCreationTokens: tokenCounts.CacheCreationTokens,
+				LatencyMs:           latency,
+				StatusCode:          resp.StatusCode,
+				TokensEstimated:     tokensEstimated,
+			})
+			h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
+			if resp.StatusCode < 300 {
+				h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
+			}
+			h.writeJSONResponse(c, resp.StatusCode, translatedResp)
 		}
 		return
 	}
@@ -310,7 +313,8 @@ func (h *Handler) CountTokens(c *gin.Context) {
 	}
 	body = executor.JSONSet(body, "model", modelName)
 
-	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
+	sessionID := ""
+	conn, err := h.getConnection(c.Request.Context(), provider, modelName, sessionID)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, claudeError("server_error", "no available connection"))
 		return

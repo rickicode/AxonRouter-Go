@@ -71,20 +71,21 @@ func newBenchHandler(b *testing.B, n int) *Handler {
 	}
 
 	h := &Handler{
-			db:                  database,
-			store:               store,
-			elig:                elig,
-			authMgr:             authMgr,
-			exhaustion:          quota.NewExhaustionCache(),
-			providerCfg:         providerCfg,
-			combo:               combo.NewHandler(database, store, elig),
-			registry:            executor.GetRegistry(),
-			resolver:            &proxypool.Resolver{},
-			tracker:             &usage.Tracker{},
-			deviceTracker:       &usage.DeviceTracker{},
-			compressionStrategy: compression.Strategy{},
-			failoverMaxAttempts: 5,
-		}
+		db:                  database,
+		store:               store,
+		elig:                elig,
+		authMgr:             authMgr,
+		exhaustion:          quota.NewExhaustionCache(),
+		providerCfg:         providerCfg,
+		sessions:            connstate.NewSessionCache(),
+		combo:               combo.NewHandler(database, store, elig),
+		registry:            executor.GetRegistry(),
+		resolver:            &proxypool.Resolver{},
+		tracker:             &usage.Tracker{},
+		deviceTracker:       &usage.DeviceTracker{},
+		compressionStrategy: compression.Strategy{},
+		failoverMaxAttempts: 5,
+	}
 
 	h.registry.Register("bench", executor.FormatOpenAI, benchExecutor{})
 
@@ -139,7 +140,7 @@ func BenchmarkGetConnection(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					_, _ = h.getConnection(ctx, "bench", "model-x")
+					_, _ = h.getConnection(ctx, "bench", "model-x", "")
 				}
 			})
 		}

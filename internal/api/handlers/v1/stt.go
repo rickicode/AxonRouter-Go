@@ -87,7 +87,7 @@ func (h *Handler) STT(c *gin.Context) {
 		sttExec = executor.NewSTTExecutor(executor.NewBaseExecutor())
 	}
 
-	conn, err := h.getConnection(c.Request.Context(), provider, model)
+	conn, err := h.getConnection(c.Request.Context(), provider, model, "")
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
 		return
@@ -131,16 +131,16 @@ func (h *Handler) STT(c *gin.Context) {
 	}
 
 	h.logRequest(c, &usage.LogEntry{
-		ApiKeyID: c.GetString("api_key_id"),
-		ConnectionID: conn.ID,
+		ApiKeyID:       c.GetString("api_key_id"),
+		ConnectionID:   conn.ID,
 		ProviderTypeID: provider,
-		ModelID: model,
-		ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
-		ApiType: apiTypeFromPath(c.Request.URL.Path),
-		Modality: "audio",
-		Stream: false,
-		LatencyMs: time.Since(start).Milliseconds(),
-		StatusCode: resp.StatusCode})
+		ModelID:        model,
+		ProxyPoolID:    executor.ProxyPoolIDFromContext(proxyCtx),
+		ApiType:        apiTypeFromPath(c.Request.URL.Path),
+		Modality:       "audio",
+		Stream:         false,
+		LatencyMs:      time.Since(start).Milliseconds(),
+		StatusCode:     resp.StatusCode})
 
 	h.accumulateAPIKeyUsage(c.GetString("api_key_id"), nil, resp.Body, false)
 	c.Header("Content-Type", "application/json")

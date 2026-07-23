@@ -46,7 +46,7 @@ func benchmarkSetup(b *testing.B) (*Handler, context.Context) {
 	h.elig.RecomputeAll()
 
 	ctx := context.Background()
-	if _, err := h.getConnection(ctx, "bench", "gpt-4o"); err != nil {
+	if _, err := h.getConnection(ctx, "bench", "gpt-4o", ""); err != nil {
 		b.Fatalf("warmup failed: %v", err)
 	}
 	return h, ctx
@@ -58,7 +58,7 @@ func BenchmarkGetConnection_ReadySnapshot(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, _ = h.getConnection(ctx, "bench", "gpt-4o")
+		_, _ = h.getConnection(ctx, "bench", "gpt-4o", "")
 	}
 }
 
