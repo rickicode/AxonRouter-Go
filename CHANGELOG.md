@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Account status model refactor** — collapsed the legacy terminal statuses `auth_failed`, `balance_empty`, and `suspended` into `disabled` with a new `disabled_reason` column. Added a non-destructive migration that preserves the cause of existing terminal rows as `manual`, `auth_failed`, `balance_empty`, or `suspended`. Updated connection state, admin connection handlers, token refresh scheduler, quota fetcher, lifecycle cleanup, and dashboard provider summary to set, read, and expose `disabled_reason`. Updated dashboard and provider detail UI so the status distribution, filters, badges, and color helpers only render the canonical statuses (`ready`, `rate_limited`, `quota_exhausted`, `disabled`). Dashboard stats and provider list now count all connections (including disabled), and provider cards expose a `disabled_reasons` breakdown.
+- **Global HTTP status-code classification** — moved the unambiguous status-code mappings (`401`/`403` → auth, `408` → timeout, `5xx` → server) into a declarative `StatusCodeCategories` table in `internal/connstate/patterns.go`. Ambiguous codes (`402`, `429`, `404`) still use body-pattern fallbacks so providers cannot force a false classification with a generic status code. Refactored `ClassifyFromResponse` to use the new table and added regression tests.
 
 ## [0.3.19] - 2026-07-22
 

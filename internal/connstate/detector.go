@@ -165,13 +165,21 @@ func DetectError(ctx context.Context, statusCode int, body string, err error, pr
 }
 
 // ClassifyFromResponse classifies an error from HTTP status code and response body.
+// Status codes that unambiguously map to a category are resolved first; ambiguous
+// codes (402, 429) use body-pattern fallbacks so providers cannot force a false
+// classification with a generic status code.
 func (d *Detector) ClassifyFromResponse(statusCode int, body string) ErrorCategory {
 	body = strings.ToLower(body)
 
-	switch {
-	case statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden:
-		return ErrorAuth
-	case statusCode == http.StatusTooManyRequests:
+	if cat, ok := StatusCodeCategories[statusCode]; ok {
+		return cat
+	}
+	if IsServerErrorStatus(statusCode) {
+		return ErrorServer
+	}
+
+	switch statusCode {
+	case http.StatusTooManyRequests:
 		// CF daily limit (4006) and similar providers return 429 with quota body.
 		// Check body for quota patterns BEFORE defaulting to ErrorRateLimit.
 		if containsAny(body, QuotaPatterns...) {
@@ -181,21 +189,18 @@ func (d *Detector) ClassifyFromResponse(statusCode int, body string) ErrorCatego
 			return ErrorBalanceEmpty
 		}
 		return ErrorRateLimit
-	case statusCode == http.StatusPaymentRequired:
-		// BalanceEmpty checked before Quota — balance-empty is a stricter classification (manual action required)
+	case http.StatusPaymentRequired:
+		// BalanceEmpty checked before Quota — balance-empty is a stricter
+		// classification (manual action required).
 		if containsAny(body, BalanceEmptyPatterns...) {
 			return ErrorBalanceEmpty
 		}
 		return ErrorQuota
-	case statusCode == http.StatusNotFound:
+	case http.StatusNotFound:
 		if strings.Contains(body, "model") {
 			return ErrorModelNotFound
 		}
 		return ErrorServer
-	case statusCode >= 500:
-		return ErrorServer
-	case statusCode == http.StatusRequestTimeout:
-		return ErrorTimeout
 	}
 
 	return d.ClassifyFromMessage(body)

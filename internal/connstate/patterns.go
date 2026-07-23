@@ -3,6 +3,27 @@ package connstate
 // Error patterns for classification. Hardcoded for fast matching.
 // These cover the most common error messages from OpenAI, Claude, Gemini, and other providers.
 
+// StatusCodeCategories maps HTTP status codes that unambiguously indicate an
+// error category. Ambiguous codes (402, 429, 404) are handled by
+// ClassifyFromResponse using body patterns so a provider cannot force a wrong
+// classification just by returning a generic status code.
+var StatusCodeCategories = map[int]ErrorCategory{
+	401: ErrorAuth,    // Unauthorized
+	403: ErrorAuth,    // Forbidden
+	408: ErrorTimeout, // Request Timeout
+}
+
+// StatusCodeNeedsBodyClassification returns true for status codes where the
+// category depends on the response body (payment required / too many requests).
+func StatusCodeNeedsBodyClassification(statusCode int) bool {
+	return statusCode == 402 || statusCode == 429
+}
+
+// IsServerErrorStatus returns true for HTTP 5xx status codes.
+func IsServerErrorStatus(statusCode int) bool {
+	return statusCode >= 500
+}
+
 var RateLimitPatterns = []string{
 	"rate limit",
 	"rate_limit",

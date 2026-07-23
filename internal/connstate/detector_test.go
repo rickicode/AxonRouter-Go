@@ -251,6 +251,27 @@ func TestDetectError_ContextCanceled_IsTimeout(t *testing.T) {
 	}
 }
 
+func TestClassifyFromResponse_GlobalStatusCodeCategories(t *testing.T) {
+	cases := []struct {
+		status int
+		body   string
+		want   ErrorCategory
+	}{
+		{401, "", ErrorAuth},
+		{403, "some quota text", ErrorAuth},
+		{408, "", ErrorTimeout},
+		{500, "", ErrorServer},
+		{503, "rate limit", ErrorServer},
+	}
+	d := NewDetector()
+	for _, tc := range cases {
+		got := d.ClassifyFromResponse(tc.status, tc.body)
+		if got != tc.want {
+			t.Errorf("status=%d body=%q: got %v, want %v", tc.status, tc.body, got, tc.want)
+		}
+	}
+}
+
 func TestDetectError_CodeBuddy_CreditsExhausted14018_IsQuota(t *testing.T) {
 	body := `{"error":{"message":"{\"error\":{\"data\":{\"code\":14018,\"msg\":\"Credits exhausted. Please visit the link below to purchase add-on packs and get more credits: https://www.codebuddy.ai/profile/usage\",\"requestId\":\"b8f02f06-8bb6-43bc-9f18-5289cbf91840\"}}}","type":"rate_limit_error","code":"rate_limit_exceeded"}}`
 
