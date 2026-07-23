@@ -45,7 +45,7 @@ func (h *ProviderHandler) List(c *gin.Context) {
 	SELECT pt.id, pt.display_name, pt.format, pt.base_url, pt.is_custom, pt.custom_headers, pt.category, pt.service_kinds, pt.created_at,
 	COUNT(c.id) as connection_count
 	FROM provider_types pt
-	LEFT JOIN connections c ON c.provider_type_id = pt.id AND c.is_active = 1
+	LEFT JOIN connections c ON c.provider_type_id = pt.id
 	GROUP BY pt.id
 	ORDER BY pt.display_name
 	`)
@@ -69,6 +69,7 @@ func (h *ProviderHandler) List(c *gin.Context) {
 	// Fill status counts after outer rows are closed (avoids SQLite deadlock)
 	for i := range providers {
 		providers[i].StatusCounts = h.getStatusCounts(providers[i].ID)
+		providers[i].DisabledReasons = h.getDisabledReasonCounts(providers[i].ID)
 		if info, ok := provider.Registry[providers[i].ID]; ok {
 			providers[i].Aliases = info.Aliases
 		}
@@ -259,7 +260,7 @@ func (h *ProviderHandler) getStatusCounts(providerID string) map[string]int {
 	counts := make(map[string]int)
 	rows, err := h.db.Query(`
 		SELECT status, COUNT(*) FROM connections
-		WHERE provider_type_id = ? AND is_active = 1
+		WHERE provider_type_id = ?
 		GROUP BY status
 	`, providerID)
 	if err != nil {
@@ -271,6 +272,28 @@ func (h *ProviderHandler) getStatusCounts(providerID string) map[string]int {
 		var count int
 		rows.Scan(&status, &count)
 		counts[status] = count
+	}
+	return counts
+}
+
+// getDisabledReasonCounts returns per-reason totals for disabled connections of
+// a provider so the provider cards can show *why* accounts are disabled.
+func (h *ProviderHandler) getDisabledReasonCounts(providerID string) map[string]int {
+	counts := make(map[string]int)
+	rows, err := h.db.Query(`
+		SELECT COALESCE(disabled_reason, 'unknown'), COUNT(*) FROM connections
+		WHERE provider_type_id = ? AND status = 'disabled'
+		GROUP BY disabled_reason
+	`, providerID)
+	if err != nil {
+		return counts
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var reason string
+		var count int
+		rows.Scan(&reason, &count)
+		counts[reason] = count
 	}
 	return counts
 }

@@ -27,6 +27,7 @@ export interface Provider {
     quota_exhausted: number;
     disabled: number;
   };
+  disabled_reasons?: Record<string, number>;
   aliases?: string[];
   category: string;
   service_kinds: string[];

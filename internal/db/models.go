@@ -243,9 +243,10 @@ type PaginatedResponse struct {
 // ProviderWithCounts is a provider type with its connection count breakdown.
 type ProviderWithCounts struct {
 	ProviderType
-	ConnectionCount int            `json:"connection_count"`
-	StatusCounts    map[string]int `json:"status_counts"`
-	Aliases         []string       `json:"aliases"`
+	ConnectionCount  int            `json:"connection_count"`
+	StatusCounts     map[string]int `json:"status_counts"`
+	DisabledReasons  map[string]int `json:"disabled_reasons"`
+	Aliases          []string       `json:"aliases"`
 }
 
 // ProxyPool represents a proxy endpoint (HTTP proxy or relay).

@@ -116,6 +116,18 @@ function providerColor(provider: Provider): string {
     return Number(provider.status_counts?.ready ?? 0);
   }
 
+  function disabledCount(provider: Provider): number {
+    return Number(provider.status_counts?.disabled ?? 0);
+  }
+
+  function disabledReasonBreakdown(provider: Provider): string {
+    const reasons = provider.disabled_reasons ?? {};
+    const parts = Object.entries(reasons)
+      .filter(([, count]) => count > 0)
+      .map(([reason, count]) => `${count} ${reason.replace(/_/g, ' ')}`);
+    return parts.length ? parts.join('\n') : 'disabled';
+  }
+
   function categoryProviders(categoryId: string, source: Provider[]): Provider[] {
     if (categoryId === 'free') return source.filter(providerHasFree);
     return source.filter((provider) => providerCategoryId(provider) === categoryId);
@@ -406,7 +418,17 @@ function providerColor(provider: Provider): string {
                       {issueCount(provider)} issues
                     </Badge>
                   {/if}
-                  {#if readyCount(provider) === 0 && issueCount(provider) === 0}
+                  {#if disabledCount(provider) > 0}
+                    <Badge
+                      variant="outline"
+                      class="rounded-full text-[10px] px-1.5 py-0 h-auto gap-1 text-muted-foreground"
+                      title={disabledReasonBreakdown(provider)}
+                    >
+                      <span class="h-1.5 w-1.5 rounded-full bg-zinc-500"></span>
+                      {disabledCount(provider)} disabled
+                    </Badge>
+                  {/if}
+                  {#if readyCount(provider) === 0 && issueCount(provider) === 0 && disabledCount(provider) === 0}
                     <span class="text-caption text-muted-foreground">{provider.connection_count || 0} connections</span>
                   {/if}
                 </div>

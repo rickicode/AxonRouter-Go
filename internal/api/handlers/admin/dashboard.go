@@ -56,13 +56,13 @@ func NewDashboardHandler(database *sql.DB, store *connstate.Store, tracker *usag
 func (h *DashboardHandler) Stats(c *gin.Context) {
 	var totalProviders, totalConns, totalCombos int
 	h.db.QueryRow(`SELECT COUNT(*) FROM provider_types`).Scan(&totalProviders)
-	h.db.QueryRow(`SELECT COUNT(*) FROM connections WHERE is_active = 1`).Scan(&totalConns)
+	h.db.QueryRow(`SELECT COUNT(*) FROM connections`).Scan(&totalConns)
 	h.db.QueryRow(`SELECT COUNT(*) FROM combos WHERE is_active = 1`).Scan(&totalCombos)
 
-	// Status breakdown
+	// Status breakdown (include disabled so the dashboard shows terminal accounts too).
 	statusCounts := make(map[string]int)
 	rows, err := h.db.Query(`
-		SELECT status, COUNT(*) FROM connections WHERE is_active = 1 GROUP BY status
+		SELECT status, COUNT(*) FROM connections GROUP BY status
 	`)
 	if err == nil {
 		defer rows.Close()
