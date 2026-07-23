@@ -1483,6 +1483,7 @@ func (h *Handler) streamResponse(
 	lastChunkTime := time.Now()
 	var streamState any
 	var sawContent bool
+	var sawFinish bool
 	streamStart := time.Now()
 	isCombo := comboID != ""
 
@@ -1499,10 +1500,30 @@ func (h *Handler) streamResponse(
 					return errors.New("upstream stream closed without content")
 				}
 
+				// Some strict clients (e.g. PI Coding Agent) require a terminal
+				// finish_reason chunk before [DONE]. If the upstream stream ended
+				// without emitting one, synthesize it. Only do this for the OpenAI
+				// chat-completions SSE format; Claude/Responses streams have their
+				// own terminal shapes.
+				if !sawFinish && clientFormat == executor.FormatOpenAI {
+					finishChunk, _ := json.Marshal(map[string]any{
+						"id":      "chatcmpl-" + strconv.FormatInt(time.Now().UnixNano(), 10),
+						"object":  "chat.completion.chunk",
+						"created": time.Now().Unix(),
+						"model":   model,
+						"choices": []map[string]any{{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}},
+					})
+					c.Writer.Write([]byte("data: "))
+					c.Writer.Write(finishChunk)
+					c.Writer.Write([]byte("\n\n"))
+					flusher.Flush()
+				}
+
 				c.Writer.Write([]byte("data: [DONE]\n\n"))
 				flusher.Flush()
 
 				latency := time.Since(start).Milliseconds()
+
 				tokensEstimated := false
 				if acc.InputTokens+acc.OutputTokens == 0 {
 					estInput := usage.EstimateTokensFromRequest(originalReq)
@@ -1603,6 +1624,9 @@ func (h *Handler) streamResponse(
 				c.Writer.Write(tc)
 				flusher.Flush()
 				totalOutputBytes += estimateOutputFromTranslatedChunk(tc)
+				if !sawFinish {
+					sawFinish = chunkHasNonNullFinishReason(tc)
+				}
 			}
 
 			// Stream quality peek: log time-to-first-content and validate
@@ -1670,6 +1694,35 @@ func (h *Handler) streamResponse(
 		}
 	}
 }
+
+// chunkHasNonNullFinishReason reports whether a translated SSE frame contains a
+// non-null finish_reason value. This is a fast path check; it intentionally
+// ignores null-valued finish_reason markers that appear on intermediate chunks.
+func chunkHasNonNullFinishReason(frame []byte) bool {
+	data := bytes.TrimSpace(frame)
+	if bytes.HasPrefix(data, []byte("data:")) {
+		data = bytes.TrimSpace(data[5:])
+	}
+	if len(data) == 0 || string(data) == "[DONE]" {
+		return false
+	}
+	idx := bytes.Index(data, []byte(`"finish_reason"`))
+	if idx == -1 {
+		return false
+	}
+	i := idx + len(`"finish_reason"`)
+	for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\n' || data[i] == '\r') {
+		i++
+	}
+	if i < len(data) && data[i] == ':' {
+		i++
+	}
+	for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\n' || data[i] == '\r') {
+		i++
+	}
+	return i < len(data) && data[i] == '"'
+}
+
 func (h *Handler) checkAutoDisable(connID, provider string) {
 	cs := h.store.Get(connID)
 	if cs == nil {

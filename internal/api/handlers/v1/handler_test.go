@@ -1579,6 +1579,18 @@ func TestFallbackUsage(t *testing.T) {
 			t.Error("expected non-zero estimated tokens from fallback, got 0")
 		}
 
+		// The upstream stream had no finish_reason, so streamResponse should
+		// synthesize one before [DONE].
+		body := rec.Body.String()
+		if !strings.Contains(body, `"finish_reason":"stop"`) {
+			t.Errorf("expected synthetic finish_reason=stop before [DONE]; body:\n%s", body)
+		}
+		finishIdx := strings.Index(body, `"finish_reason":"stop"`)
+		doneIdx := strings.Index(body, "data: [DONE]")
+		if finishIdx == -1 || doneIdx == -1 || finishIdx > doneIdx {
+			t.Errorf("synthetic finish_reason must appear before [DONE]; finishIdx=%d doneIdx=%d", finishIdx, doneIdx)
+		}
+
 		tracker.Stop()
 		wq.Stop()
 	})
