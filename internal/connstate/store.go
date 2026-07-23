@@ -89,19 +89,31 @@ func (s *Store) RecordFailure(connID string, det ErrorDetection) {
 				cs.SetCooldown(*det.CooldownUntil)
 			}
 		}
-	} else {
-		// Connection-level status change
-		switch {
-		case det.Category == ErrorQuota && det.CooldownUntil != nil:
-			cs.SetQuotaCooldown(*det.CooldownUntil)
-		case det.CooldownUntil != nil:
-			cs.SetCooldown(*det.CooldownUntil)
-		case det.Category == ErrorRateLimit:
-			// Rate limit without explicit CooldownUntil: use default short cooldown
-			cs.SetCooldown(time.Now().Add(60 * time.Second))
-		default:
-			cs.SetStatus(det.Status, det.Message)
+		return
+	}
+
+	// Connection-level status change.
+	reason := det.Message
+	if det.DisabledReason != "" {
+		reason = det.DisabledReason
+	}
+
+	switch {
+	case det.Status == StatusDisabled:
+		if det.CooldownUntil != nil {
+			cs.SetStatusWithCooldown(StatusDisabled, reason, *det.CooldownUntil)
+		} else {
+			cs.SetStatus(StatusDisabled, reason)
 		}
+	case det.Category == ErrorQuota && det.CooldownUntil != nil:
+		cs.SetQuotaCooldown(*det.CooldownUntil)
+	case det.CooldownUntil != nil:
+		cs.SetCooldown(*det.CooldownUntil)
+	case det.Category == ErrorRateLimit:
+		// Rate limit without explicit CooldownUntil: use default short cooldown
+		cs.SetCooldown(time.Now().Add(60 * time.Second))
+	default:
+		cs.SetStatus(det.Status, reason)
 	}
 }
 

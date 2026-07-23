@@ -53,12 +53,12 @@ func (s Status) IsRoutingTerminal() bool {
 
 // ConnectionState holds the live state of a single provider connection.
 type ConnectionState struct {
-	ID            string
-	ProviderID    int64
-	Prefix        string
-	Priority      int // Higher = tried first
-	Status        Status
-	LastCheckAt   time.Time
+	ID             string
+	ProviderID     int64
+	Prefix         string
+	Priority       int // Higher = tried first
+	Status         Status
+	LastCheckAt    time.Time
 	LastError      string
 	DisabledReason string // reason when Status == StatusDisabled (auth_failed, balance_empty, manual, ...)
 	ResponseTime   time.Duration
@@ -66,10 +66,10 @@ type ConnectionState struct {
 	BanCount       int // Consecutive ban signals (auth/quota/balance)
 	SuccessCount   int
 	CooldownUntil  *time.Time
-	RemainingPct   float64 // cached min remaining quota percentage (0-100)
-	ModelLimits   sync.Map // modelID -> *ModelLimitState
-	mu            sync.RWMutex
-	lastUsedAt    atomic.Int64
+	RemainingPct   float64  // cached min remaining quota percentage (0-100)
+	ModelLimits    sync.Map // modelID -> *ModelLimitState
+	mu             sync.RWMutex
+	lastUsedAt     atomic.Int64
 }
 
 // GetStatus returns the current status (thread-safe).
@@ -148,6 +148,24 @@ func (cs *ConnectionState) SetStatus(status Status, err string) {
 			cs.DisabledReason = err
 		}
 	}
+}
+
+// SetStatusWithCooldown sets a terminal status and a cooldown horizon at the
+// same time (thread-safe). This is used for auth/balance failures that should
+// stop routing immediately but still be eligible for automatic recovery after
+// the cooldown expires.
+func (cs *ConnectionState) SetStatusWithCooldown(status Status, err string, until time.Time) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.Status = status
+	cs.LastCheckAt = time.Now()
+	cs.LastError = err
+	cs.CooldownUntil = &until
+	if status == StatusDisabled {
+		cs.DisabledReason = err
+	}
+	cs.FailCount++
+	cs.BanCount++
 }
 
 // SetCooldown sets a cooldown timer.

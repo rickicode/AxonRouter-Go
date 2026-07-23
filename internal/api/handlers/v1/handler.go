@@ -248,6 +248,7 @@ type Handler struct {
 	compressionStrategy compression.Strategy
 	exactCache          cache.CacheStorage
 	providerCfg         *providercfg.Manager
+	sessions            *connstate.SessionCache
 
 	// failoverMaxAttempts caps how many connections the failover loop tries
 	// before giving up. Loaded once from the failover_max_attempts setting (default 5).
@@ -296,6 +297,7 @@ func NewHandler(
 		compressionStrategy: compressionStrategy,
 		exactCache:          exactCache,
 		providerCfg:         providerCfg,
+		sessions:            connstate.NewSessionCache(),
 		failoverMaxAttempts: loadFailoverMaxAttempts(db),
 	}
 }
@@ -342,10 +344,24 @@ const pickMaxAttempts = 10
 // so routing cost stays bounded regardless of how many eligible connections a
 // provider has. A full scan is only used as a fallback when every sampled
 // connection fails model-level cooldown/exhaustion checks.
-func (h *Handler) getConnection(ctx context.Context, provider string, modelID string) (*Connection, error) {
+func (h *Handler) getConnection(ctx context.Context, provider string, modelID string, sessionID string) (conn *Connection, err error) {
 	provider = provideralias.ResolveAlias(provider)
 	mode := h.providerCfg.RoutingMode(provider)
 	now := time.Now()
+
+	// Remember the selected connection for affinity routing, and try to
+	// reuse a previously cached connection for this session/model.
+	defer func() {
+		if err == nil && conn != nil && mode == providercfg.Affinity && sessionID != "" {
+			h.sessions.Put(connstate.SessionKey(provider, sessionID, modelID), conn.ID)
+		}
+	}()
+	if mode == providercfg.Affinity && sessionID != "" {
+		if c, ok := h.tryAffinityConnection(ctx, provider, sessionID, modelID, now, mode); ok {
+			conn = c
+			return
+		}
+	}
 
 	conns := h.elig.GetByPrefixState(provider)
 	logging.Logger.Debug("getConnection", "provider", provider, "eligible", len(conns))
@@ -1155,7 +1171,11 @@ func (h *Handler) handleFailoverError(ctx context.Context, c *gin.Context, conn 
 	h.persistCooldownScoped(conn.ID, det)
 	// Update in-memory status so dashboard reflects rate_limited/quota_exhausted immediately.
 	if det.Status != "" {
-		h.store.UpdateStatus(conn.ID, det.Status)
+		if det.Status == connstate.StatusDisabled && det.DisabledReason != "" {
+			h.store.UpdateStatus(conn.ID, det.Status, det.DisabledReason)
+		} else {
+			h.store.UpdateStatus(conn.ID, det.Status)
+		}
 	}
 	// For providers with API-backed quota (CodeBuddy), refresh quota inline so
 	// the next routing decision uses the latest state instead of stale cache.

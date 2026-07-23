@@ -27,6 +27,7 @@ func IsServerErrorStatus(statusCode int) bool {
 var RateLimitPatterns = []string{
 	"rate limit",
 	"rate_limit",
+	"rate_limit_exceeded",
 	"ratelimit",
 	"too many requests",
 	"too_many_requests",
@@ -39,8 +40,8 @@ var RateLimitPatterns = []string{
 	"retry-after",
 	"throttled",
 	"throttling",
-	"capacity temporarily exceeded", // CF Workers AI capacity overload (code 3040)
-	"3040", // CF Workers AI capacity error code
+	"capacity temporarily exceeded",         // CF Workers AI capacity overload (code 3040)
+	"3040",                                  // CF Workers AI capacity error code
 	"high-frequency non-compliant requests", // MiMoCode anti-abuse IP/account flag
 }
 
@@ -48,6 +49,7 @@ var QuotaPatterns = []string{
 	"quota exceeded",
 	"quota_exceeded",
 	"billing",
+	"billing_hard_limit_reached",
 	"insufficient_quota",
 	"insufficient quota",
 	"credit",
@@ -56,8 +58,8 @@ var QuotaPatterns = []string{
 	"payment required",
 	"usage limit",
 	"monthly limit",
-	"spending-limit", // Grok CLI spending limit reached
-	"freeusage", // OpenCode Zen FreeUsageLimitError (daily free quota, not per-minute rate limit)
+	"spending-limit",        // Grok CLI spending limit reached
+	"freeusage",             // OpenCode Zen FreeUsageLimitError (daily free quota, not per-minute rate limit)
 	"neurons",               // CF Workers AI daily quota
 	"daily free allocation", // CF Workers AI daily quota
 	"upgrade to cloudflare", // CF Workers AI paid plan prompt
@@ -67,6 +69,7 @@ var QuotaPatterns = []string{
 
 var BalanceEmptyPatterns = []string{
 	"add credits",
+	"balance_empty",
 	"billing hard limit",
 	"insufficient funds",
 	"insufficient balance",
@@ -81,6 +84,8 @@ var BalanceEmptyPatterns = []string{
 var AuthPatterns = []string{
 	"invalid api key",
 	"invalid_api_key",
+	"incorrect_api_key",
+	"auth_failed",
 	"unauthorized",
 	"authentication",
 	"auth failed",
@@ -97,6 +102,8 @@ var AuthPatterns = []string{
 var ModelNotFoundPatterns = []string{
 	"model not found",
 	"model_not_found",
+	"model_not_supported",
+	"model is not supported",
 	"no such model",
 	"unknown model",
 	"invalid model",
