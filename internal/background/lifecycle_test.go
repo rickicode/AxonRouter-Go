@@ -55,12 +55,15 @@ func insertConnection(t *testing.T, database *sql.DB, id, providerID, status str
 	}
 }
 
-func TestLifecycleCleanupDeletesOldAuthFailedAndDisabled(t *testing.T) {
+func TestLifecycleCleanupDeletesOldLegacyTerminal(t *testing.T) {
 	database := openLifecycleTestDB(t)
 	seedProviderType(t, database, "test")
 
 	cutoff := time.Now().Add(-8 * 24 * time.Hour).Unix()
 	insertConnection(t, database, "conn-auth-old", "test", "auth_failed", false, cutoff)
+	insertConnection(t, database, "conn-suspended-old", "test", "suspended", false, cutoff)
+	insertConnection(t, database, "conn-balance-old", "test", "balance_empty", false, cutoff)
+	// Canonical disabled rows must NEVER be auto-deleted.
 	insertConnection(t, database, "conn-disabled-old", "test", "disabled", false, cutoff)
 
 	lm := NewLifecycleManager(database, 60)
@@ -68,8 +71,8 @@ func TestLifecycleCleanupDeletesOldAuthFailedAndDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
-	if deleted != 2 {
-		t.Fatalf("deleted = %d, want 2", deleted)
+	if deleted != 3 {
+		t.Fatalf("deleted = %d, want 3", deleted)
 	}
 }
 

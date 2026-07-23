@@ -12,11 +12,13 @@ const defaultLifecycleCleanupInterval = 60 * time.Minute
 const defaultLifecycleRetention = 7 * 24 * time.Hour
 
 // LifecycleManager periodically garbage-collects terminal connection rows from
-// the database. A connection is eligible for removal when it has been soft
-// deleted (is_active=0), its status is terminal ('disabled'), and it has not
-// been modified for the configured retention period. Legacy statuses
-// ('auth_failed', 'suspended', 'balance_empty') are still recognised during
-// the migration window so rows created before the schema change are not leaked.
+// the database. A connection is eligible for removal only when it is a legacy
+// terminal row left over from before the status refactor: it must be inactive
+// (is_active=0), have one of the legacy terminal statuses
+// ('auth_failed', 'suspended', 'balance_empty'), and not have been modified for
+// the configured retention period. The canonical 'disabled' status is NEVER
+// auto-deleted here; disabled connections must be removed explicitly by the
+// operator via the admin delete endpoint.
 // Each run issues a single DELETE so no row locks are held during iteration and
 // no cross-table transactions are used.
 type LifecycleManager struct {
@@ -88,7 +90,7 @@ func (lm *LifecycleManager) CleanupWithRetention(retention time.Duration) (int64
 
 	var where string
 	args := []any{}
-	terminalStatuses := "'disabled', 'auth_failed', 'suspended', 'balance_empty'"
+	terminalStatuses := "'auth_failed', 'suspended', 'balance_empty'"
 	if retention <= 0 {
 		where = `is_active = 0 AND status IN (` + terminalStatuses + `)`
 	} else {
@@ -138,7 +140,7 @@ func (lm *LifecycleManager) CleanupWithRetention(retention time.Duration) (int64
 	}
 
 	if deleted > 0 {
-		log.Printf("background: deleted %d stale disabled connections", deleted)
+		log.Printf("background: deleted %d stale legacy terminal connections", deleted)
 	}
 	return deleted, nil
 }

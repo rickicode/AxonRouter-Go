@@ -846,7 +846,8 @@ func (h *ConnectionHandler) RefreshToken(c *gin.Context) {
 }
 
 // CleanupConnections runs the connection lifecycle cleanup synchronously and
-// returns how many stale disabled/auth_failed rows were deleted.
+// returns how many stale legacy terminal rows were deleted. Canonical 'disabled'
+// rows are never removed by this endpoint; they must be deleted manually.
 // POST /api/admin/system/connection-cleanup
 //
 // Query params:
