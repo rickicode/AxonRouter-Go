@@ -19,7 +19,6 @@ var v1ProviderCatalog = map[string]struct {
 	"cx":            {keys: []string{"codex-free", "codex-team", "codex-plus", "codex-pro"}, ownedBy: "openai"},
 	"ag":            {keys: []string{"antigravity"}, ownedBy: "google"},
 	"kiro":          {keys: []string{"kiro"}, ownedBy: "amazon"},
-	"amazon-q":      {keys: []string{"amazon-q"}, ownedBy: "amazon"},
 	"aistudio":      {keys: []string{"aistudio"}, ownedBy: "google"},
 	"oc":            {keys: []string{"oc"}, ownedBy: "opencode"},
 	"oc-zen":        {keys: []string{"oc-zen"}, ownedBy: "opencode"},
