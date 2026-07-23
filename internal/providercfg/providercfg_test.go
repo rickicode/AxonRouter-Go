@@ -177,3 +177,25 @@ func TestNextRoundRobinIndexIndependentPerProvider(t *testing.T) {
 		t.Fatalf("cx cursor = %d, want 0", got)
 	}
 }
+
+func TestValidRoutingModes_IncludesAffinity(t *testing.T) {
+	modes := ValidRoutingModes()
+	have := false
+	for _, m := range modes {
+		if m == Affinity {
+			have = true
+		}
+		if m == "" {
+			t.Fatalf("empty routing mode in ValidRoutingModes")
+		}
+	}
+	if !have {
+		t.Fatalf("expected Affinity in ValidRoutingModes, got %v", modes)
+	}
+}
+
+func TestAffinity_Value(t *testing.T) {
+	if Affinity != "affinity" {
+		t.Fatalf("Affinity = %q, want affinity", Affinity)
+	}
+}

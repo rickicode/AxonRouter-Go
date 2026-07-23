@@ -30,6 +30,7 @@ const routingModeLabels: Record<RoutingMode, string> = {
  round_robin: 'Round robin',
  random: 'Random',
  first_eligible: 'First eligible',
+affinity: 'Session affinity',
 };
 let newModel = $state('');
 

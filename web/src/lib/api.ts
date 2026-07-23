@@ -33,7 +33,7 @@ export interface Provider {
   service_kinds: string[];
 }
 
-export type RoutingMode = "first_eligible" | "round_robin" | "random";
+export type RoutingMode = "first_eligible" | "round_robin" | "random" | "affinity";
 
 export interface ProviderSettings {
   provider_id: string;

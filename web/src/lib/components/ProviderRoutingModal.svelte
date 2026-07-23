@@ -26,6 +26,7 @@
 		{ value: 'round_robin', label: 'Round robin' },
 		{ value: 'random', label: 'Random' },
 		{ value: 'first_eligible', label: 'First eligible' },
+		{ value: 'affinity', label: 'Session affinity' },
 	];
 
 	$effect(() => {
@@ -82,6 +83,9 @@
 				</p>
 				<p class="text-body-sm text-muted-foreground">
 					<span class="font-medium text-foreground">First eligible</span> keeps one account until it cools down or exhausts.
+				</p>
+				<p class="text-body-sm text-muted-foreground">
+					<span class="font-medium text-foreground">Session affinity</span> sticks repeat calls from the same Claude Code / Codex CLI session to the same account.
 				</p>
 			</div>
 		</div>
