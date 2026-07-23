@@ -57,11 +57,14 @@ func (h *ConnectionHandler) List(c *gin.Context) {
 		perPage = 50
 	}
 
-	// Build where clause
-	where := "provider_type_id = ? AND is_active = 1"
+	// Build where clause. Disabled rows are is_active=0, so when showing all
+	// or filtering by 'disabled' we must drop the active-only constraint.
+	where := "provider_type_id = ?"
 	args := []interface{}{providerID}
-	if status != "" {
-		where += " AND status = ?"
+	if status == "disabled" {
+		where += " AND is_active = 0 AND status = 'disabled'"
+	} else if status != "" {
+		where += " AND is_active = 1 AND status = ?"
 		args = append(args, status)
 	}
 	if search != "" {

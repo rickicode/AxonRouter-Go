@@ -361,3 +361,54 @@ func TestTestConnection_GrokCLI_401StillFails(t *testing.T) {
 		t.Fatalf("disabled_reason=%q, want auth_failed", reason)
 	}
 }
+
+// TestList_IncludesDisabledConnections verifies that disabled (inactive) rows
+// are included in the default list so the provider detail page stays consistent
+// with the provider card counts.
+func TestList_IncludesDisabledConnections(t *testing.T) {
+	database := newConnectionHandlerTestDB(t)
+	h := newConnectionHandlerForTest(t, database, nil)
+	now := time.Now().Unix()
+	if _, err := database.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('testp','Test','openai','http://x',?)`, now); err != nil {
+		t.Fatalf("seed provider: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-ready','testp','Ready','none','ready',1,?,?)`, now, now); err != nil {
+		t.Fatalf("seed ready: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, disabled_reason, created_at, updated_at) VALUES ('conn-disabled','testp','Disabled','none','disabled',0,'auth_failed',?,?)`, now, now); err != nil {
+		t.Fatalf("seed disabled: %v", err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/admin/providers/testp/connections", nil)
+	c.Params = gin.Params{{Key: "id", Value: "testp"}}
+	h.List(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Data       []map[string]any `json:"data"`
+		Pagination struct {
+			Total int `json:"total"`
+		} `json:"pagination"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Pagination.Total != 2 {
+		t.Fatalf("total = %d, want 2", body.Pagination.Total)
+	}
+	ids := make(map[string]bool)
+	for _, conn := range body.Data {
+		ids[conn["id"].(string)] = true
+	}
+	if !ids["conn-ready"] {
+		t.Fatal("missing conn-ready")
+	}
+	if !ids["conn-disabled"] {
+		t.Fatal("missing conn-disabled")
+	}
+}

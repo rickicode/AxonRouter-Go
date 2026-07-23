@@ -98,7 +98,7 @@ func (h *ProviderHandler) Get(c *gin.Context) {
 		return
 	}
 
-	h.db.QueryRow(`SELECT COUNT(*) FROM connections WHERE provider_type_id = ? AND is_active = 1`, id).Scan(&p.ConnectionCount)
+	h.db.QueryRow(`SELECT COUNT(*) FROM connections WHERE provider_type_id = ?`, id).Scan(&p.ConnectionCount)
 	p.StatusCounts = h.getStatusCounts(id)
 	if info, ok := provider.Registry[id]; ok {
 		p.Aliases = info.Aliases
