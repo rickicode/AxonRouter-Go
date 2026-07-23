@@ -2599,3 +2599,83 @@ func TestSTT_ModelNotAllowed_ReturnsForbidden(t *testing.T) {
 		t.Errorf("body does not contain forbidden message: %s", rec.Body.String())
 	}
 }
+
+func TestSessionAffinity_CachesConnectionPerSessionModel(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if err := h.providerCfg.Save("affinity-test", providercfg.ProviderSettings{RoutingMode: providercfg.Affinity}); err != nil {
+		t.Fatalf("save routing mode: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('affinity-test','AffinityTest','openai','http://x',?)`, now); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	ids := []string{"aff-a", "aff-b"}
+	for _, id := range ids {
+		if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?,'affinity-test',?,'none','ready',1,?,?)`, id, id, now, now); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+		h.store.SeedConnection(id, "affinity-test", "ready", 0)
+		h.store.Get(id).SetRemainingPct(50)
+	}
+	h.elig.RecomputeAll()
+
+	ctx := context.Background()
+	body := []byte(`{"model":"affinity-test/model","messages":[{"role":"user","content":"hi"}]}`)
+
+	// First call selects and caches a connection for the message-hash session.
+	c1, err := h.getConnection(ctx, "affinity-test", "gpt-4o", h.extractSessionID(nil, body))
+	if err != nil {
+		t.Fatalf("first call failed: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		c2, err := h.getConnection(ctx, "affinity-test", "gpt-4o", h.extractSessionID(nil, body))
+		if err != nil {
+			t.Fatalf("repeat call %d failed: %v", i, err)
+		}
+		if c2.ID != c1.ID {
+			t.Fatalf("affinity broke on repeat call %d: got %s want %s", i, c2.ID, c1.ID)
+		}
+	}
+
+	// A different session should be allowed to select a different connection.
+	otherBody := []byte(`{"model":"affinity-test/model","messages":[{"role":"user","content":"hello"}]}`)
+	otherSession := h.extractSessionID(nil, otherBody)
+	if otherSession == h.extractSessionID(nil, body) {
+		t.Fatal("different bodies produced the same session hash")
+	}
+}
+
+func TestExtractSessionID_Priority(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Priority 1: metadata.user_id with _session_<uuid>
+	body := []byte(`{"metadata":{"user_id":"rickicode_session_550e8400-e29b-41d4-a716-446655440000"}}`)
+	if got := h.extractSessionID(nil, body); got != "550e8400-e29b-41d4-a716-446655440000" {
+		t.Fatalf("metadata.user_id extraction = %q", got)
+	}
+
+	// Priority 6: stable hash of first messages.
+	body = []byte(`{"messages":[{"role":"system","content":"sys"},{"role":"user","content":"hi"}]}`)
+	first := h.extractSessionID(nil, body)
+	if first == "" {
+		t.Fatal("expected stable hash fallback")
+	}
+	// Same messages produce same session.
+	if second := h.extractSessionID(nil, body); second != first {
+		t.Fatalf("stable hash changed: %q vs %q", first, second)
+	}
+}
+
+func TestExtractSessionID_HeaderPriority(t *testing.T) {
+	h := newTestHandler(t)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	c.Request.Header.Set("X-Session-ID", "header-session")
+	body := []byte(`{"messages":[{"role":"user","content":"hi"}]}`)
+	if got := h.extractSessionID(c, body); got != "header-session" {
+		t.Fatalf("X-Session-ID priority = %q", got)
+	}
+}
