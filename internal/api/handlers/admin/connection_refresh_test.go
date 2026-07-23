@@ -367,13 +367,16 @@ func TestTestConnection_RefreshStillFails(t *testing.T) {
 		t.Fatalf("refresh calls = %d, want 1", svc.refreshCalls())
 	}
 
-	var status string
-	row := database.QueryRow(`SELECT status FROM connections WHERE id='kiro-conn-3'`)
-	if err := row.Scan(&status); err != nil {
+	var status, reason string
+	row := database.QueryRow(`SELECT status, COALESCE(disabled_reason,'') FROM connections WHERE id='kiro-conn-3'`)
+	if err := row.Scan(&status, &reason); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	if status != "auth_failed" {
-		t.Fatalf("status = %q, want auth_failed", status)
+	if status != "disabled" {
+		t.Fatalf("status = %q, want disabled", status)
+	}
+	if reason != "auth_failed" {
+		t.Fatalf("disabled_reason = %q, want auth_failed", reason)
 	}
 }
 

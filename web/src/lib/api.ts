@@ -25,9 +25,6 @@ export interface Provider {
     ready: number;
     rate_limited: number;
     quota_exhausted: number;
-    balance_empty: number;
-    auth_failed: number;
-    suspended: number;
     disabled: number;
   };
   aliases?: string[];
@@ -47,8 +44,9 @@ export interface Connection {
   provider_type_id: string;
   name: string;
   auth_type: string;
- api_key?: string;
+  api_key?: string;
   status: string;
+  disabled_reason?: string | null;
   cooldown_until: number | null;
   last_error: string | null;
   last_error_code: number | null;

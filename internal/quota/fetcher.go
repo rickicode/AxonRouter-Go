@@ -416,29 +416,29 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 						cq.Error = fmt.Sprintf("token refresh failed: %v", err)
 						if isUnrecoverableRefreshError(err) && db != nil {
 							now := time.Now().Unix()
-							if _, derr := db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', updated_at = ? WHERE id = ?`, now, c.ID); derr == nil {
-								log.Printf("quota: connection %s disabled due to unrecoverable refresh error", c.ID)
-							}
+						if _, derr := db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', disabled_reason = 'auth_failed', updated_at = ? WHERE id = ?`, now, c.ID); derr == nil {
+							log.Printf("quota: connection %s disabled due to unrecoverable refresh error", c.ID)
 						}
-						return cq
 					}
+					return cq
 				}
 			}
 		}
+	}
 
-		// Raw fallback for Antigravity and Kiro when auth manager is unavailable/failed.
-		if !refreshed && !authMgrAttempted && (providerID == "ag" || providerID == "kiro") {
-			var err error
-			newToken, _, _, err = refreshOAuthToken(providerID, c.OAuthRefreshToken.String)
-			if err != nil {
-				log.Printf("quota: raw token refresh failed for %s (%s): %v", c.ID, c.Name, err)
-				cq.Error = fmt.Sprintf("token refresh failed: %v", err)
-				if isUnrecoverableRefreshError(err) && db != nil {
-					now := time.Now().Unix()
-					if _, derr := db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', updated_at = ? WHERE id = ?`, now, c.ID); derr == nil {
-						log.Printf("quota: connection %s disabled due to unrecoverable refresh error", c.ID)
-					}
+	// Raw fallback for Antigravity and Kiro when auth manager is unavailable/failed.
+	if !refreshed && !authMgrAttempted && (providerID == "ag" || providerID == "kiro") {
+		var err error
+		newToken, _, _, err = refreshOAuthToken(providerID, c.OAuthRefreshToken.String)
+		if err != nil {
+			log.Printf("quota: raw token refresh failed for %s (%s): %v", c.ID, c.Name, err)
+			cq.Error = fmt.Sprintf("token refresh failed: %v", err)
+			if isUnrecoverableRefreshError(err) && db != nil {
+				now := time.Now().Unix()
+				if _, derr := db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', disabled_reason = 'auth_failed', updated_at = ? WHERE id = ?`, now, c.ID); derr == nil {
+					log.Printf("quota: connection %s disabled due to unrecoverable refresh error", c.ID)
 				}
+			}
 				return cq
 			}
 			refreshed = true

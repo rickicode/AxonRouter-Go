@@ -246,7 +246,7 @@ func (s *TokenRefreshScheduler) markFailed(r refreshRow, err error) {
 	update := func(d *sql.DB) error {
 		_, derr := d.Exec(`
 			UPDATE connections
-			SET is_active = 0, status = 'auth_failed', updated_at = ?
+			SET is_active = 0, status = 'disabled', disabled_reason = 'auth_failed', updated_at = ?
 			WHERE id = ?
 		`, now, r.id)
 		return derr
@@ -256,13 +256,13 @@ func (s *TokenRefreshScheduler) markFailed(r refreshRow, err error) {
 		s.wq.Enqueue("tokenRefresh:authFailed", update)
 	} else {
 		if derr := update(s.db); derr != nil {
-			log.Printf("background: failed to mark %s auth_failed: %v", r.id, derr)
+			log.Printf("background: failed to mark %s disabled: %v", r.id, derr)
 		}
 	}
 
 	if s.store != nil {
 		if cs := s.store.Get(r.id); cs != nil {
-			cs.SetStatus(connstate.StatusAuthFailed, err.Error())
+			cs.SetStatus(connstate.StatusDisabled, "auth_failed")
 		}
 		if s.elig != nil {
 			s.elig.ScheduleUpdateProvider(r.providerTypeID)

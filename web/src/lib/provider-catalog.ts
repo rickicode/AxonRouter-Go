@@ -789,9 +789,6 @@ export function getStatusDotColor(status: string): string {
     case 'ready': return '#10b981';
     case 'rate_limited': return '#f59e0b';
     case 'quota_exhausted': return '#f97316';
-    case 'balance_empty': return '#ef4444';
-    case 'auth_failed': return '#ef4444';
-    case 'suspended': return '#6b7280';
     case 'disabled': return '#6b7280';
     default: return '#6b7280';
   }
@@ -801,7 +798,6 @@ export function getStatusVariant(status: string): 'default' | 'secondary' | 'des
   switch (status) {
     case 'ready': return 'default';
     case 'rate_limited': case 'quota_exhausted': return 'secondary';
-    case 'balance_empty': case 'auth_failed': case 'suspended': return 'destructive';
     case 'disabled': return 'outline';
     default: return 'secondary';
   }
@@ -812,9 +808,6 @@ export function getStatusLabel(status: string): string {
     case 'ready': return 'Ready';
     case 'rate_limited': return 'Rate limited';
     case 'quota_exhausted': return 'Quota exhausted';
-    case 'balance_empty': return 'Balance empty';
-    case 'auth_failed': return 'Auth failed';
-    case 'suspended': return 'Suspended';
     case 'disabled': return 'Disabled';
     default: return status;
   }

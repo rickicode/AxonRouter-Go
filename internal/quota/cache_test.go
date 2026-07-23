@@ -20,6 +20,7 @@ func newCacheTestDB(t *testing.T) *sql.DB {
 		id TEXT PRIMARY KEY,
 		status TEXT,
 		is_active INTEGER,
+		disabled_reason TEXT,
 		updated_at INTEGER
 	)`)
 	db.Exec(`CREATE TABLE quota_cache (
@@ -110,8 +111,8 @@ func TestUpdateConnectionQuotaStatus_KeepsTerminalState(t *testing.T) {
 	exhaustion := NewExhaustionCache()
 	connID := "conn-terminal"
 
-	db.Exec(`INSERT INTO connections (id, status, updated_at) VALUES (?, 'suspended', 0)`, connID)
-	store.GetOrCreate(connID).SetStatus(connstate.StatusSuspended, "")
+	db.Exec(`INSERT INTO connections (id, status, updated_at) VALUES (?, 'disabled', 0)`, connID)
+	store.GetOrCreate(connID).SetStatus(connstate.StatusDisabled, "")
 
 	changed := false
 	UpdateConnectionQuotaStatus(db, store, exhaustion, connID, nil, "no projectId for retrieveUserQuota", &changed)
@@ -123,7 +124,7 @@ func TestUpdateConnectionQuotaStatus_KeepsTerminalState(t *testing.T) {
 	if err := db.QueryRow(`SELECT status FROM connections WHERE id = ?`, connID).Scan(&status); err != nil {
 		t.Fatal(err)
 	}
-	if status != "suspended" {
-		t.Errorf("expected suspended unchanged, got %s", status)
+	if status != "disabled" {
+		t.Errorf("expected disabled unchanged, got %s", status)
 	}
 }

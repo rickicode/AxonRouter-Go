@@ -90,6 +90,96 @@ func TestAPIKeyAllowedModelsList(t *testing.T) {
 	}
 }
 
+func TestConnectionStatusCollapseMigration(t *testing.T) {
+	dir := t.TempDir()
+	d, err := sql.Open("sqlite", filepath.Join(dir, "verify.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	// Seed legacy terminal statuses before migrations run.
+	if _, err := d.Exec(`CREATE TABLE IF NOT EXISTS provider_types (id TEXT PRIMARY KEY, display_name TEXT NOT NULL, format TEXT NOT NULL, base_url TEXT NOT NULL, created_at INTEGER NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`INSERT INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('grok-cli','Grok CLI','openai','http://x',0)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`CREATE TABLE IF NOT EXISTS connections (
+		id TEXT PRIMARY KEY,
+		provider_type_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		auth_type TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'ready',
+		is_active INTEGER DEFAULT 1,
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	seed := []struct {
+		id, status string
+		active     int
+	}{
+		{"conn-auth", "auth_failed", 1},
+		{"conn-suspended", "suspended", 1},
+		{"conn-balance", "balance_empty", 1},
+		{"conn-disabled", "disabled", 0},
+	}
+	for _, s := range seed {
+		if _, err := d.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?, 'grok-cli', ?, 'none', ?, ?, 0, 0)`, s.id, s.id, s.status, s.active); err != nil {
+			t.Fatalf("seed %s: %v", s.id, err)
+		}
+	}
+
+	if err := RunMigrations(d); err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-running must be idempotent.
+	if err := RunMigrations(d); err != nil {
+		t.Fatalf("re-run migrations failed: %v", err)
+	}
+
+	// No legacy terminal statuses should remain.
+	var count int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM connections WHERE status IN ('auth_failed','suspended','balance_empty')`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("found %d rows with legacy terminal status", count)
+	}
+
+	// Verify disabled_reason mapping.
+	cases := map[string]string{
+		"conn-auth":      "auth_failed",
+		"conn-suspended": "suspended",
+		"conn-balance":   "balance_empty",
+		"conn-disabled":  "unknown",
+	}
+	for id, want := range cases {
+		var status, reason string
+		if err := d.QueryRow(`SELECT status, COALESCE(disabled_reason,'') FROM connections WHERE id = ?`, id).Scan(&status, &reason); err != nil {
+			t.Fatalf("scan %s: %v", id, err)
+		}
+		if status != "disabled" {
+			t.Errorf("%s status = %q, want disabled", id, status)
+		}
+		if reason != want {
+			t.Errorf("%s disabled_reason = %q, want %q", id, reason, want)
+		}
+	}
+
+	// auth_failed rows must also be inactive.
+	var active int
+	if err := d.QueryRow(`SELECT is_active FROM connections WHERE id = 'conn-auth'`).Scan(&active); err != nil {
+		t.Fatal(err)
+	}
+	if active != 0 {
+		t.Fatalf("conn-auth is_active = %d, want 0", active)
+	}
+}
+
 func hasColumn(t *testing.T, d *sql.DB, table, column string) bool {
 	t.Helper()
 	rows, err := d.Query(`SELECT name FROM pragma_table_info(?)`, table)

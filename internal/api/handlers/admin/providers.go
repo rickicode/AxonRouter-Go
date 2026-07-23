@@ -413,11 +413,11 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 						log.Printf("Unrecoverable refresh error for %s/%s: %v — blocking connection", providerID, in.connID, err)
 						connID := in.connID
 						h.execWrite(requestCtx, "testall:auth_failed:"+connID, func(d *sql.DB) error {
-							_, err := d.Exec(`UPDATE connections SET is_active = 0, status = 'auth_failed', updated_at = ? WHERE id = ?`, time.Now().Unix(), connID)
+							_, err := d.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', disabled_reason = 'auth_failed', updated_at = ? WHERE id = ?`, time.Now().Unix(), connID)
 							return err
 						})
 						if h.store != nil {
-							h.store.UpdateStatus(connID, connstate.StatusAuthFailed)
+							h.store.UpdateStatus(connID, connstate.StatusDisabled, "auth_failed")
 						}
 					}
 					results[i] = testResult{ConnectionID: in.connID, Status: "failed", Error: err.Error(), LatencyMs: latency}

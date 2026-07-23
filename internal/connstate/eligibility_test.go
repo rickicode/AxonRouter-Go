@@ -69,10 +69,10 @@ func TestEligibilityExcludesTerminalStatuses(t *testing.T) {
 	store := NewStore()
 
 	store.SeedConnection("conn-ready", "test", string(StatusReady), 0)
-	store.SeedConnection("conn-auth", "test", string(StatusAuthFailed), 0)
 	store.SeedConnection("conn-disabled", "test", string(StatusDisabled), 0)
-	store.SeedConnection("conn-suspended", "test", string(StatusSuspended), 0)
-	store.SeedConnection("conn-balance", "test", string(StatusBalanceEmpty), 0)
+	store.SeedConnection("conn-disabled-2", "test", string(StatusDisabled), 0)
+	store.SeedConnection("conn-disabled-3", "test", string(StatusDisabled), 0)
+	store.SeedConnection("conn-disabled-4", "test", string(StatusDisabled), 0)
 
 	mgr := NewEligibilityManager(store)
 	mgr.RecomputeAll()
@@ -92,7 +92,7 @@ func TestEligibilityExcludesTerminalStatuses(t *testing.T) {
 		t.Fatalf("expected only conn-ready in GetAll, got %v", all)
 	}
 
-	for _, id := range []string{"conn-auth", "conn-disabled", "conn-suspended", "conn-balance"} {
+	for _, id := range []string{"conn-disabled", "conn-disabled-2", "conn-disabled-3", "conn-disabled-4"} {
 		if mgr.IsEligible(id) {
 			t.Fatalf("terminal connection %s should not be eligible", id)
 		}
@@ -139,7 +139,7 @@ func TestEligibility_UpdateProvider_only_affected_provider(t *testing.T) {
 	}
 
 	// Fail only provider-a; update just that provider.
-	store.Get("a-1").SetStatus(StatusAuthFailed, "")
+	store.Get("a-1").SetStatus(StatusDisabled, "")
 	mgr.UpdateProvider("provider-a")
 
 	if got := mgr.GetByPrefix("provider-a"); len(got) != 0 {

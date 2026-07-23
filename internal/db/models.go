@@ -38,6 +38,7 @@ type Connection struct {
 	LastFailureAt        sql.NullInt64  `json:"last_failure_at,omitempty"`
 	FailureCount         int            `json:"failure_count"`
 	Capabilities         sql.NullString `json:"capabilities,omitempty"`
+	DisabledReason       sql.NullString `json:"disabled_reason,omitempty"`
 	IsActive             bool           `json:"is_active"`
 	CreatedAt            int64          `json:"created_at"`
 	UpdatedAt            int64          `json:"updated_at"`

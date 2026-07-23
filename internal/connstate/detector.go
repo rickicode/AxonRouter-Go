@@ -128,7 +128,7 @@ func DetectError(ctx context.Context, statusCode int, body string, err error, pr
 		until := time.Now().Add(cooldown)
 		det.CooldownUntil = &until
 	case ErrorAuth:
-		det.Status = StatusAuthFailed
+		det.Status = StatusDisabled
 	case ErrorBalanceEmpty:
 		// Grok CLI returns 402 with a "personal-team-blocked:spending-limit" code
 		// when the account hits its spending cap. This is recoverable by the user

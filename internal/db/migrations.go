@@ -169,6 +169,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
     compressed_tokens INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL DEFAULT 0
 )`,
+		`ALTER TABLE connections ADD COLUMN disabled_reason TEXT`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			// Ignore "duplicate column name" errors
@@ -176,6 +177,22 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 				return err
 			}
 		}
+	}
+
+	// Collapse legacy terminal statuses into `disabled` with a reason.
+	// Each UPDATE is idempotent because it only touches rows whose status still
+	// matches the legacy value. Re-running after all rows are migrated is a no-op.
+	if _, err := db.Exec(`UPDATE connections SET status='disabled', disabled_reason='auth_failed', is_active=0 WHERE status='auth_failed'`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE connections SET status='disabled', disabled_reason='suspended' WHERE status='suspended'`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE connections SET status='disabled', disabled_reason='balance_empty' WHERE status='balance_empty'`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE connections SET disabled_reason='unknown' WHERE status='disabled' AND COALESCE(disabled_reason,'')=''`); err != nil {
+		return err
 	}
 
 	// Backfill status_code for legacy request_logs rows that only recorded the

@@ -390,8 +390,8 @@ func TestGrokCLI_EndToEnd_FailoverAuthFailed(t *testing.T) {
 	if invalidCS == nil {
 		t.Fatal("missing invalid connection state")
 	}
-	if invalidCS.GetStatus() != connstate.StatusAuthFailed {
-		t.Errorf("invalid conn status=%v, want auth_failed", invalidCS.GetStatus())
+	if invalidCS.GetStatus() != connstate.StatusDisabled {
+		t.Errorf("invalid conn status=%v, want disabled", invalidCS.GetStatus())
 	}
 
 	validCS := h.store.Get("grok-cli-valid")

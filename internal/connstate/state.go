@@ -24,9 +24,6 @@ const (
 	StatusReady          Status = "ready"
 	StatusRateLimited    Status = "rate_limited"
 	StatusQuotaExhausted Status = "quota_exhausted"
-	StatusBalanceEmpty   Status = "balance_empty"
-	StatusAuthFailed     Status = "auth_failed"
-	StatusSuspended      Status = "suspended"
 	StatusDisabled       Status = "disabled"
 	StatusDegraded       Status = "degraded"
 	StatusCooldown       Status = "cooldown"
@@ -51,11 +48,7 @@ func (s Status) IsHealable() bool {
 // be selected for routing regardless of cooldown state. This guards against stale
 // eligibility snapshots re-picking an account that was just marked failed.
 func (s Status) IsRoutingTerminal() bool {
-	switch s {
-	case StatusAuthFailed, StatusDisabled, StatusSuspended, StatusBalanceEmpty:
-		return true
-	}
-	return false
+	return s == StatusDisabled
 }
 
 // ConnectionState holds the live state of a single provider connection.
@@ -66,13 +59,14 @@ type ConnectionState struct {
 	Priority      int // Higher = tried first
 	Status        Status
 	LastCheckAt   time.Time
-	LastError     string
-	ResponseTime  time.Duration
-	FailCount     int
-	BanCount      int // Consecutive ban signals (auth/quota/balance)
-	SuccessCount  int
-	CooldownUntil *time.Time
-	RemainingPct  float64 // cached min remaining quota percentage (0-100)
+	LastError      string
+	DisabledReason string // reason when Status == StatusDisabled (auth_failed, balance_empty, manual, ...)
+	ResponseTime   time.Duration
+	FailCount      int
+	BanCount       int // Consecutive ban signals (auth/quota/balance)
+	SuccessCount   int
+	CooldownUntil  *time.Time
+	RemainingPct   float64 // cached min remaining quota percentage (0-100)
 	ModelLimits   sync.Map // modelID -> *ModelLimitState
 	mu            sync.RWMutex
 	lastUsedAt    atomic.Int64
@@ -147,9 +141,12 @@ func (cs *ConnectionState) SetStatus(status Status, err string) {
 		cs.FailCount = 0
 		cs.BanCount = 0 // reset ban count on success
 		cs.CooldownUntil = nil
-	} else if status == StatusAuthFailed || status == StatusSuspended || status == StatusQuotaExhausted || status == StatusBalanceEmpty {
+	} else if status == StatusDisabled || status == StatusQuotaExhausted {
 		cs.FailCount++
 		cs.BanCount++
+		if status == StatusDisabled {
+			cs.DisabledReason = err
+		}
 	}
 }
 

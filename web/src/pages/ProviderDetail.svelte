@@ -66,7 +66,6 @@ const statusOptions = [
 	{ value: 'ready', label: 'Ready' },
 	{ value: 'rate_limited', label: 'Rate Limited' },
 	{ value: 'quota_exhausted', label: 'Quota Exhausted' },
-	{ value: 'auth_failed', label: 'Auth Failed' },
 	{ value: 'disabled', label: 'Disabled' },
 ];
 

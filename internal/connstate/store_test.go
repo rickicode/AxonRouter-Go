@@ -142,18 +142,19 @@ func TestDetectError_429WithoutQuotaBody(t *testing.T) {
 
 func TestClassifyProviderUnavailable(t *testing.T) {
 	tests := []struct {
-		name   string
-		states []Status
-		want   ErrorCategory
+		name    string
+		states  []Status
+		reasons []string
+		want    ErrorCategory
 	}{
-		{"all quota", []Status{StatusQuotaExhausted, StatusQuotaExhausted}, ErrorQuota},
-		{"all cooldown", []Status{StatusCooldown, StatusCooldown}, ErrorQuota},
-		{"mixed quota+cooldown", []Status{StatusQuotaExhausted, StatusCooldown}, ErrorQuota},
-		{"all auth", []Status{StatusAuthFailed, StatusAuthFailed}, ErrorAuth},
-		{"all disabled", []Status{StatusDisabled, StatusDisabled}, ErrorBalanceEmpty},
-		{"all balance empty", []Status{StatusBalanceEmpty, StatusBalanceEmpty}, ErrorBalanceEmpty},
-		{"mixed quota+ready", []Status{StatusQuotaExhausted, StatusReady}, ErrorUnknown},
-		{"empty provider", []Status{}, ErrorUnknown},
+		{"all quota", []Status{StatusQuotaExhausted, StatusQuotaExhausted}, nil, ErrorQuota},
+		{"all cooldown", []Status{StatusCooldown, StatusCooldown}, nil, ErrorQuota},
+		{"mixed quota+cooldown", []Status{StatusQuotaExhausted, StatusCooldown}, nil, ErrorQuota},
+		{"all auth", []Status{StatusDisabled, StatusDisabled}, []string{"auth_failed", "auth_failed"}, ErrorAuth},
+		{"all balance empty", []Status{StatusDisabled, StatusDisabled}, []string{"balance_empty", "balance_empty"}, ErrorBalanceEmpty},
+		{"mixed disabled reasons", []Status{StatusDisabled, StatusDisabled}, []string{"auth_failed", "balance_empty"}, ErrorUnknown},
+		{"mixed quota+ready", []Status{StatusQuotaExhausted, StatusReady}, nil, ErrorUnknown},
+		{"empty provider", []Status{}, nil, ErrorUnknown},
 	}
 
 	for _, tt := range tests {
@@ -163,6 +164,9 @@ func TestClassifyProviderUnavailable(t *testing.T) {
 				store.SeedConnection(fmt.Sprintf("conn-%d", i), "grok-cli", "ready", i)
 				cs := store.Get(fmt.Sprintf("conn-%d", i))
 				cs.SetStatus(st, "")
+				if len(tt.reasons) > i {
+					cs.DisabledReason = tt.reasons[i]
+				}
 			}
 			if got := store.ClassifyProviderUnavailable("grok-cli"); got != tt.want {
 				t.Errorf("got %v, want %v", got, tt.want)

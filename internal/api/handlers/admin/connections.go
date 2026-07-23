@@ -77,16 +77,16 @@ func (h *ConnectionHandler) List(c *gin.Context) {
 	offset := (page - 1) * perPage
 	queryArgs := append(args, perPage, offset)
 	rows, err := h.db.Query(`
- SELECT id, provider_type_id, name, auth_type, status,
- COALESCE(priority, 0), cooldown_until, last_error, last_error_code,
- last_success_at, last_failure_at, failure_count,
- capabilities, is_active, created_at, updated_at,
- COALESCE(oauth_expires_at, 0),
- COALESCE(provider_specific_data, '')
- FROM connections WHERE `+where+`
- ORDER BY priority DESC, created_at DESC
- LIMIT ? OFFSET ?
- `, queryArgs...)
+  SELECT id, provider_type_id, name, auth_type, status,
+  COALESCE(priority, 0), cooldown_until, last_error, last_error_code,
+  last_success_at, last_failure_at, failure_count,
+  capabilities, COALESCE(disabled_reason, ''), is_active, created_at, updated_at,
+  COALESCE(oauth_expires_at, 0),
+  COALESCE(provider_specific_data, '')
+  FROM connections WHERE `+where+`
+  ORDER BY priority DESC, created_at DESC
+  LIMIT ? OFFSET ?
+  `, queryArgs...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -100,7 +100,7 @@ func (h *ConnectionHandler) List(c *gin.Context) {
 		rows.Scan(&conn.ID, &conn.ProviderTypeID, &conn.Name, &conn.AuthType,
 			&conn.Status, &conn.Priority, &conn.CooldownUntil, &conn.LastError, &conn.LastErrorCode,
 			&conn.LastSuccessAt, &conn.LastFailureAt, &conn.FailureCount,
-			&conn.Capabilities, &conn.IsActive, &conn.CreatedAt, &conn.UpdatedAt,
+			&conn.Capabilities, &conn.DisabledReason, &conn.IsActive, &conn.CreatedAt, &conn.UpdatedAt,
 			&conn.OAuthExpiresAt, &psd)
 		entry := connToJSON(conn)
 		if psd != "" {
@@ -132,18 +132,18 @@ func (h *ConnectionHandler) Get(c *gin.Context) {
 	id := c.Param("id")
 	conn := db.Connection{}
 	var psd sql.NullString
-	err := h.db.QueryRow(`
+		err := h.db.QueryRow(`
 		SELECT id, provider_type_id, name, auth_type, status,
 		       cooldown_until, last_error, last_error_code,
 		       last_success_at, last_failure_at, failure_count,
-		       capabilities, is_active, created_at, updated_at,
+		       capabilities, COALESCE(disabled_reason, ''), is_active, created_at, updated_at,
 		       COALESCE(provider_specific_data, ''),
 		       COALESCE(oauth_expires_at, 0)
 		FROM connections WHERE id = ?
 	`, id).Scan(&conn.ID, &conn.ProviderTypeID, &conn.Name, &conn.AuthType,
 		&conn.Status, &conn.CooldownUntil, &conn.LastError, &conn.LastErrorCode,
 		&conn.LastSuccessAt, &conn.LastFailureAt, &conn.FailureCount,
-		&conn.Capabilities, &conn.IsActive, &conn.CreatedAt, &conn.UpdatedAt,
+		&conn.Capabilities, &conn.DisabledReason, &conn.IsActive, &conn.CreatedAt, &conn.UpdatedAt,
 		&psd, &conn.OAuthExpiresAt)
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
@@ -187,6 +187,12 @@ func (h *ConnectionHandler) Update(c *gin.Context) {
 	if req.Status != "" {
 		sets = append(sets, "status = ?")
 		args = append(args, req.Status)
+		switch req.Status {
+		case "disabled":
+			sets = append(sets, "disabled_reason = 'manual'")
+		case "ready":
+			sets = append(sets, "disabled_reason = NULL")
+		}
 	}
 	if req.IsActive != nil {
 		sets = append(sets, "is_active = ?")
@@ -194,9 +200,9 @@ func (h *ConnectionHandler) Update(c *gin.Context) {
 		// Keep status in sync with active flag unless caller explicitly provided a status.
 		if req.Status == "" {
 			if *req.IsActive {
-				sets = append(sets, "status = 'ready'")
+				sets = append(sets, "status = 'ready', disabled_reason = NULL")
 			} else {
-				sets = append(sets, "status = 'disabled'")
+				sets = append(sets, "status = 'disabled', disabled_reason = 'manual'")
 			}
 		}
 	}
@@ -230,13 +236,21 @@ func (h *ConnectionHandler) Update(c *gin.Context) {
 
 	// Sync in-memory state
 	if h.store != nil && req.Status != "" {
-		h.store.UpdateStatus(id, connstate.Status(req.Status))
+		if req.Status == "disabled" {
+			h.store.UpdateStatus(id, connstate.StatusDisabled, "manual")
+		} else {
+			h.store.UpdateStatus(id, connstate.Status(req.Status))
+		}
 		if h.elig != nil {
 			h.elig.Update(h.store)
 		}
 	}
-	if req.IsActive != nil && !*req.IsActive && h.store != nil {
-		h.store.UpdateStatus(id, connstate.StatusDisabled)
+	if req.IsActive != nil && h.store != nil {
+		if *req.IsActive {
+			h.store.UpdateStatus(id, connstate.StatusReady)
+		} else {
+			h.store.UpdateStatus(id, connstate.StatusDisabled, "manual")
+		}
 		if h.elig != nil {
 			h.elig.Update(h.store)
 		}
@@ -257,7 +271,7 @@ func (h *ConnectionHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	result, err := h.db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', updated_at = ? WHERE id = ?`, time.Now().Unix(), id)
+	result, err := h.db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', disabled_reason = 'manual', updated_at = ? WHERE id = ?`, time.Now().Unix(), id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -270,7 +284,7 @@ func (h *ConnectionHandler) Delete(c *gin.Context) {
 
 	// Sync in-memory state
 	if h.store != nil {
-		h.store.UpdateStatus(id, connstate.StatusDisabled)
+		h.store.UpdateStatus(id, connstate.StatusDisabled, "manual")
 		if h.elig != nil {
 			h.elig.Update(h.store)
 		}
@@ -527,24 +541,43 @@ func (h *ConnectionHandler) recordTestFailure(connID string, det connstate.Error
 	if det.Category == connstate.ErrorQuota {
 		status = connstate.StatusQuotaExhausted
 	}
+
+	disabledReason := ""
+	isActive := 1
+	if status == connstate.StatusDisabled {
+		isActive = 0
+		switch det.Category {
+		case connstate.ErrorAuth:
+			disabledReason = "auth_failed"
+		case connstate.ErrorBalanceEmpty:
+			disabledReason = "balance_empty"
+		default:
+			disabledReason = "manual"
+		}
+	}
+
 	if status != "" && h.store != nil {
-		h.store.UpdateStatus(connID, status)
+		if status == connstate.StatusDisabled {
+			h.store.UpdateStatus(connID, status, disabledReason)
+		} else {
+			h.store.UpdateStatus(connID, status)
+		}
 	}
 	if status != "" {
 		errCode := string(det.Category)
 		now := time.Now().Unix()
 		if det.CooldownUntil != nil {
 			if _, err := h.db.Exec(`
-				UPDATE connections SET status = ?, cooldown_until = ?, last_error = ?, last_error_code = ?,
+				UPDATE connections SET status = ?, disabled_reason = ?, is_active = ?, cooldown_until = ?, last_error = ?, last_error_code = ?,
 				failure_count = failure_count + 1, last_failure_at = ?, updated_at = ? WHERE id = ?
-			`, status, det.CooldownUntil.Unix(), det.Message, errCode, now, now, connID); err != nil {
+			`, status, disabledReason, isActive, det.CooldownUntil.Unix(), det.Message, errCode, now, now, connID); err != nil {
 				log.Printf("recordTestFailure db update failed for %s: %v", connID, err)
 			}
 		} else {
 			if _, err := h.db.Exec(`
-				UPDATE connections SET status = ?, last_error = ?, last_error_code = ?,
+				UPDATE connections SET status = ?, disabled_reason = ?, is_active = ?, last_error = ?, last_error_code = ?,
 				failure_count = failure_count + 1, last_failure_at = ?, updated_at = ? WHERE id = ?
-			`, status, det.Message, errCode, now, now, connID); err != nil {
+			`, status, disabledReason, isActive, det.Message, errCode, now, now, connID); err != nil {
 				log.Printf("recordTestFailure db update failed for %s: %v", connID, err)
 			}
 		}
@@ -633,19 +666,19 @@ func (h *ConnectionHandler) BulkUpdate(c *gin.Context) {
 	var status connstate.Status
 	switch req.Action {
 	case "disable":
-		query = "UPDATE connections SET is_active = ?, status = 'disabled', updated_at = ? WHERE id IN (" + inClause + ")"
+		query = "UPDATE connections SET is_active = ?, status = 'disabled', disabled_reason = 'manual', updated_at = ? WHERE id IN (" + inClause + ")"
 		args = append([]interface{}{false, now}, args...)
 		status = connstate.StatusDisabled
 	case "enable":
-		query = "UPDATE connections SET is_active = ?, status = 'ready', updated_at = ? WHERE id IN (" + inClause + ")"
+		query = "UPDATE connections SET is_active = ?, status = 'ready', disabled_reason = NULL, updated_at = ? WHERE id IN (" + inClause + ")"
 		args = append([]interface{}{true, now}, args...)
 		status = connstate.StatusReady
 	case "reset":
-		query = "UPDATE connections SET status = 'ready', failure_count = 0, updated_at = ? WHERE id IN (" + inClause + ")"
+		query = "UPDATE connections SET status = 'ready', disabled_reason = NULL, failure_count = 0, updated_at = ? WHERE id IN (" + inClause + ")"
 		args = append([]interface{}{now}, args...)
 		status = connstate.StatusReady
 	case "delete":
-		query = "UPDATE connections SET is_active = ?, status = 'disabled', updated_at = ? WHERE id IN (" + inClause + ")"
+		query = "UPDATE connections SET is_active = ?, status = 'disabled', disabled_reason = 'manual', updated_at = ? WHERE id IN (" + inClause + ")"
 		args = append([]interface{}{false, now}, args...)
 		status = connstate.StatusDisabled
 	default:
@@ -682,7 +715,11 @@ func (h *ConnectionHandler) BulkUpdate(c *gin.Context) {
 	// Only mutate in-memory state after the DB write committed successfully.
 	if h.store != nil {
 		for _, id := range req.IDs {
-			h.store.UpdateStatus(id, status)
+			if status == connstate.StatusDisabled {
+				h.store.UpdateStatus(id, status, "manual")
+			} else {
+				h.store.UpdateStatus(id, status)
+			}
 		}
 		if h.elig != nil {
 			h.elig.Update(h.store)
@@ -732,6 +769,7 @@ func connToJSON(conn db.Connection) gin.H {
 		"last_failure_at":  nullInt64(conn.LastFailureAt),
 		"failure_count":    conn.FailureCount,
 		"capabilities":     nullStr(conn.Capabilities),
+		"disabled_reason":  nullStr(conn.DisabledReason),
 		"is_active":        conn.IsActive,
 		"created_at":       conn.CreatedAt,
 		"updated_at":       conn.UpdatedAt,

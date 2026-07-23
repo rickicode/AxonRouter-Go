@@ -212,8 +212,8 @@ func TestDetectError_GrokCLI_403PermissionDenied_IsAuth(t *testing.T) {
 	if det.Category != ErrorAuth {
 		t.Errorf("category=%v, want ErrorAuth", det.Category)
 	}
-	if det.Status != StatusAuthFailed {
-		t.Errorf("status=%v, want StatusAuthFailed", det.Status)
+	if det.Status != StatusDisabled {
+		t.Errorf("status=%v, want StatusDisabled", det.Status)
 	}
 	if det.CooldownUntil != nil {
 		t.Errorf("expected no cooldown for auth error, got %v", det.CooldownUntil)
@@ -231,8 +231,8 @@ func TestDetectError_GrokCLI_403PermissionDenied_Translated_IsAuth(t *testing.T)
 	if det.Category != ErrorAuth {
 		t.Errorf("category=%v, want ErrorAuth", det.Category)
 	}
-	if det.Status != StatusAuthFailed {
-		t.Errorf("status=%v, want StatusAuthFailed", det.Status)
+	if det.Status != StatusDisabled {
+		t.Errorf("status=%v, want StatusDisabled", det.Status)
 	}
 }
 

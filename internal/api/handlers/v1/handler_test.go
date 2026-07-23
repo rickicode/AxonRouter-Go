@@ -532,7 +532,7 @@ func TestPersistCooldown_PersistsAuthFailedAsInactive(t *testing.T) {
 	det := connstate.ErrorDetection{
 		Category: connstate.ErrorAuth,
 		Message:  "permission denied",
-		Status:   connstate.StatusAuthFailed,
+		Status:   connstate.StatusDisabled,
 	}
 	h.persistCooldownScoped("conn-auth", det)
 
@@ -540,15 +540,19 @@ func TestPersistCooldown_PersistsAuthFailedAsInactive(t *testing.T) {
 
 	var status string
 	var isActive int
-	row := database.QueryRow(`SELECT status, is_active FROM connections WHERE id='conn-auth'`)
-	if err := row.Scan(&status, &isActive); err != nil {
+	var reason string
+	row := database.QueryRow(`SELECT status, is_active, COALESCE(disabled_reason,'') FROM connections WHERE id='conn-auth'`)
+	if err := row.Scan(&status, &isActive, &reason); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	if status != string(connstate.StatusAuthFailed) {
-		t.Fatalf("status = %q, want auth_failed", status)
+	if status != string(connstate.StatusDisabled) {
+		t.Fatalf("status = %q, want disabled", status)
 	}
 	if isActive != 0 {
 		t.Fatalf("is_active = %d, want 0", isActive)
+	}
+	if reason != "auth_failed" {
+		t.Fatalf("disabled_reason = %q, want auth_failed", reason)
 	}
 }
 
@@ -648,11 +652,11 @@ func TestTryPickConnection_RejectsTerminalStatus(t *testing.T) {
 	h.store.SeedConnection("conn-terminal", "terminal", "ready", 0)
 
 	cs := h.store.Get("conn-terminal")
-	cs.SetStatus(connstate.StatusAuthFailed, "bad creds")
+	cs.SetStatus(connstate.StatusDisabled, "bad creds")
 
 	picked, ok := h.tryPickConnection(context.Background(), cs, "terminal", "gpt-4o", time.Now(), providercfg.DefaultRoutingMode)
 	if ok {
-		t.Fatalf("expected auth_failed connection to be rejected, got %s", picked.ID)
+		t.Fatalf("expected disabled connection to be rejected, got %s", picked.ID)
 	}
 }
 

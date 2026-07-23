@@ -173,19 +173,27 @@ func TestRecordTestFailure_Auth(t *testing.T) {
 	det := connstate.ErrorDetection{
 		Category: connstate.ErrorAuth,
 		Message:  "Invalid API key",
-		Status:   connstate.StatusAuthFailed,
+		Status:   connstate.StatusDisabled,
 	}
 	h.recordTestFailure("conn-1", det)
 
 	var status string
+	var reason string
+	var isActive int
 	var cooldownU sql.NullInt64
 	var failureCount int
-	row := database.QueryRow(`SELECT status, cooldown_until, failure_count FROM connections WHERE id='conn-1'`)
-	if err := row.Scan(&status, &cooldownU, &failureCount); err != nil {
+	row := database.QueryRow(`SELECT status, COALESCE(disabled_reason,''), is_active, cooldown_until, failure_count FROM connections WHERE id='conn-1'`)
+	if err := row.Scan(&status, &reason, &isActive, &cooldownU, &failureCount); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	if status != "auth_failed" {
-		t.Fatalf("status = %q, want auth_failed", status)
+	if status != "disabled" {
+		t.Fatalf("status = %q, want disabled", status)
+	}
+	if reason != "auth_failed" {
+		t.Fatalf("disabled_reason = %q, want auth_failed", reason)
+	}
+	if isActive != 0 {
+		t.Fatalf("is_active = %d, want 0", isActive)
 	}
 	if cooldownU.Valid {
 		t.Fatalf("cooldown_until should be null for auth failure, got %v", cooldownU)
@@ -341,12 +349,15 @@ func TestTestConnection_GrokCLI_401StillFails(t *testing.T) {
 		t.Fatalf("status=%v, want failed", got)
 	}
 
-	var status string
-	row := database.QueryRow(`SELECT status FROM connections WHERE id='grok-conn-auth'`)
-	if err := row.Scan(&status); err != nil {
+	var status, reason string
+	row := database.QueryRow(`SELECT status, COALESCE(disabled_reason,'') FROM connections WHERE id='grok-conn-auth'`)
+	if err := row.Scan(&status, &reason); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	if status != "auth_failed" {
-		t.Fatalf("status=%q, want auth_failed", status)
+	if status != "disabled" {
+		t.Fatalf("status=%q, want disabled", status)
+	}
+	if reason != "auth_failed" {
+		t.Fatalf("disabled_reason=%q, want auth_failed", reason)
 	}
 }

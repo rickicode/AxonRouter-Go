@@ -13,10 +13,12 @@ const defaultLifecycleRetention = 7 * 24 * time.Hour
 
 // LifecycleManager periodically garbage-collects terminal connection rows from
 // the database. A connection is eligible for removal when it has been soft
-// deleted (is_active=0), its terminal status is one that will not recover
-// automatically ('disabled' or 'auth_failed'), and it has not been modified
-// for the configured retention period. Each run issues a single DELETE so no
-// row locks are held during iteration and no cross-table transactions are used.
+// deleted (is_active=0), its status is terminal ('disabled'), and it has not
+// been modified for the configured retention period. Legacy statuses
+// ('auth_failed', 'suspended', 'balance_empty') are still recognised during
+// the migration window so rows created before the schema change are not leaked.
+// Each run issues a single DELETE so no row locks are held during iteration and
+// no cross-table transactions are used.
 type LifecycleManager struct {
 	once      sync.Once
 	stopOnce  sync.Once
@@ -86,10 +88,11 @@ func (lm *LifecycleManager) CleanupWithRetention(retention time.Duration) (int64
 
 	var where string
 	args := []any{}
+	terminalStatuses := "'disabled', 'auth_failed', 'suspended', 'balance_empty'"
 	if retention <= 0 {
-		where = `is_active = 0 AND status IN ('disabled', 'auth_failed')`
+		where = `is_active = 0 AND status IN (` + terminalStatuses + `)`
 	} else {
-		where = `is_active = 0 AND status IN ('disabled', 'auth_failed') AND updated_at < unixepoch() - ?`
+		where = `is_active = 0 AND status IN (` + terminalStatuses + `) AND updated_at < unixepoch() - ?`
 		args = append(args, int64(retention.Seconds()))
 	}
 
@@ -135,7 +138,7 @@ func (lm *LifecycleManager) CleanupWithRetention(retention time.Duration) (int64
 	}
 
 	if deleted > 0 {
-		log.Printf("background: deleted %d stale disabled/auth_failed connections", deleted)
+		log.Printf("background: deleted %d stale disabled connections", deleted)
 	}
 	return deleted, nil
 }

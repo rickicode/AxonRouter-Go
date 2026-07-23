@@ -57,6 +57,7 @@ func newTokenRefreshTestDB(t *testing.T) *sql.DB {
 		oauth_expires_at INTEGER,
 		provider_specific_data TEXT,
 		status TEXT,
+		disabled_reason TEXT,
 		updated_at INTEGER
 	)`); err != nil {
 		t.Fatal(err)
@@ -194,8 +195,15 @@ func TestTokenRefreshScheduler_MarksAuthFailedOnUnrecoverableError(t *testing.T)
 	if isActive != 0 {
 		t.Errorf("expected connection disabled, got is_active=%d", isActive)
 	}
-	if status != "auth_failed" {
-		t.Errorf("expected status auth_failed, got %q", status)
+	if status != "disabled" {
+		t.Errorf("expected status disabled, got %q", status)
+	}
+	var reason string
+	if err := database.QueryRow(`SELECT COALESCE(disabled_reason,'') FROM connections WHERE id = ?`, connID).Scan(&reason); err != nil {
+		t.Fatal(err)
+	}
+	if reason != "auth_failed" {
+		t.Errorf("expected disabled_reason auth_failed, got %q", reason)
 	}
 }
 

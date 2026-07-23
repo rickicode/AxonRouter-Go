@@ -326,12 +326,12 @@ func UpdateConnectionQuotaStatus(db *sql.DB, store *connstate.Store, exhaustion 
 			var cur string
 			if err := db.QueryRow(`SELECT status FROM connections WHERE id = ?`, connID).Scan(&cur); err == nil {
 				switch cur {
-				case "disabled", "suspended", "balance_empty":
+				case "disabled":
 					// already in a terminal state; leave it
 				default:
-					if _, derr := db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', updated_at = ? WHERE id = ?`, time.Now().Unix(), connID); derr == nil {
+					if _, derr := db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', disabled_reason = 'auth_failed', updated_at = ? WHERE id = ?`, time.Now().Unix(), connID); derr == nil {
 						if cs := store.Get(connID); cs != nil {
-							cs.SetStatus(connstate.Status("disabled"), connError)
+							cs.SetStatus(connstate.Status("disabled"), "auth_failed")
 						}
 						*changed = true
 						log.Printf("quota: connection %s disabled: %s", connID, connError)
@@ -382,9 +382,8 @@ func UpdateConnectionQuotaStatus(db *sql.DB, store *connstate.Store, exhaustion 
 		return
 	}
 
-	// Skip if connection is in a manual-only state
-	switch currentStatus {
-	case "disabled", "auth_failed", "suspended", "balance_empty":
+	// Skip if connection is in a terminal state
+	if currentStatus == "disabled" {
 		return
 	}
 

@@ -388,8 +388,7 @@ func (h *Handler) getConnectionFallback(ctx context.Context, provider, modelID s
 		if cs.Prefix != provider {
 			return true
 		}
-		switch cs.GetStatus() {
-		case connstate.StatusDisabled, connstate.StatusAuthFailed, connstate.StatusSuspended, connstate.StatusBalanceEmpty:
+		if cs.GetStatus() == connstate.StatusDisabled {
 			return true
 		}
 		candidates = append(candidates, cs)
@@ -737,11 +736,11 @@ func (h *Handler) refreshOAuthToken(ctx context.Context, conn *Connection, provi
 			log.Printf("Unrecoverable refresh error for %s/%s: %v — blocking connection", provider, conn.ID, err)
 			connID := conn.ID
 			h.writeQueue.EnqueueOrBlock(ctx, "refreshOAuth:authFailed", func(d *sql.DB) error {
-				_, err := d.Exec(`UPDATE connections SET is_active = 0, status = 'auth_failed', updated_at = ? WHERE id = ?`,
+				_, err := d.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', disabled_reason = 'auth_failed', updated_at = ? WHERE id = ?`,
 					time.Now().Unix(), connID)
 				return err
 			})
-			h.store.UpdateStatus(conn.ID, connstate.StatusAuthFailed)
+			h.store.UpdateStatus(conn.ID, connstate.StatusDisabled, "auth_failed")
 			h.elig.ScheduleUpdateProvider(provider)
 		}
 		return fmt.Errorf("refresh token: %w", err)
@@ -1743,14 +1742,16 @@ func (h *Handler) persistCooldownScoped(connID string, det connstate.ErrorDetect
 	// Balance-empty is a terminal state (needs manual top-up), and auth failures
 	// are also terminal (invalid credentials). Persist these immediately even when
 	// there is no cooldown horizon so a restart does not resurrect a bad account.
-	if det.CooldownUntil == nil && det.Category != connstate.ErrorBalanceEmpty && det.Category != connstate.ErrorAuth {
-		return
-	}
 	status := string(det.Status)
 	if det.Category == connstate.ErrorQuota {
 		status = string(connstate.StatusQuotaExhausted)
 	}
 	statusVal := status
+	// Only persist terminal failures or cooldown-bearing errors. Transient errors
+	// without a cooldown (e.g. degraded/5xx) are left for the scheduler to heal.
+	if det.CooldownUntil == nil && !connstate.Status(statusVal).IsRoutingTerminal() {
+		return
+	}
 	var cooldownUntil *int64
 	if det.CooldownUntil != nil {
 		u := det.CooldownUntil.Unix()
@@ -1759,8 +1760,15 @@ func (h *Handler) persistCooldownScoped(connID string, det connstate.ErrorDetect
 	// Terminal statuses should also be marked inactive so they stop being routed to
 	// and become eligible for lifecycle garbage collection.
 	isActive := 1
-	if connstate.Status(statusVal).IsRoutingTerminal() || statusVal == string(connstate.StatusBalanceEmpty) {
+	disabledReason := ""
+	if connstate.Status(statusVal).IsRoutingTerminal() {
 		isActive = 0
+		switch det.Category {
+		case connstate.ErrorAuth:
+			disabledReason = "auth_failed"
+		case connstate.ErrorBalanceEmpty:
+			disabledReason = "balance_empty"
+		}
 	}
 	errMsg := det.Message
 	errCode := string(det.Category)
@@ -1770,6 +1778,7 @@ func (h *Handler) persistCooldownScoped(connID string, det connstate.ErrorDetect
 UPDATE connections
 SET is_active = ?,
     status = ?,
+    disabled_reason = ?,
     cooldown_until = ?,
     last_error = ?,
     last_error_code = ?,
@@ -1777,7 +1786,7 @@ SET is_active = ?,
     last_failure_at = ?,
     updated_at = ?
 WHERE id = ?
-`, isActive, statusVal, cooldownUntil, errMsg, errCode, now, now, connID)
+`, isActive, statusVal, disabledReason, cooldownUntil, errMsg, errCode, now, now, connID)
 		return err
 	})
 }

@@ -374,14 +374,18 @@ func TestAll_MarksAuthFailedOnUnrecoverableRefreshError(t *testing.T) {
 
 	var isActive int
 	var status string
-	if err := database.QueryRow(`SELECT is_active, status FROM connections WHERE id = ?`, "conn-bad").Scan(&isActive, &status); err != nil {
+	var reason string
+	if err := database.QueryRow(`SELECT is_active, status, COALESCE(disabled_reason,'') FROM connections WHERE id = ?`, "conn-bad").Scan(&isActive, &status, &reason); err != nil {
 		t.Fatalf("fetch connection status: %v", err)
 	}
 	if isActive != 0 {
 		t.Fatalf("is_active = %d, want 0", isActive)
 	}
-	if status != "auth_failed" {
-		t.Fatalf("status = %q, want auth_failed", status)
+	if status != "disabled" {
+		t.Fatalf("status = %q, want disabled", status)
+	}
+	if reason != "auth_failed" {
+		t.Fatalf("disabled_reason = %q, want auth_failed", reason)
 	}
 }
 

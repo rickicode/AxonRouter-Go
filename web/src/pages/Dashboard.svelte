@@ -59,9 +59,6 @@
     ready: 'bg-green-500',
     rate_limited: 'bg-yellow-500',
     quota_exhausted: 'bg-orange-500',
-    balance_empty: 'bg-red-500',
-    auth_failed: 'bg-rose-600',
-    suspended: 'bg-gray-500',
     disabled: 'bg-zinc-400',
   };
 

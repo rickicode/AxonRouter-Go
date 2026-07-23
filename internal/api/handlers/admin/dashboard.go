@@ -169,6 +169,8 @@ func (h *DashboardHandler) collectSystemMetrics() systemMetrics {
 }
 
 // ProviderSummary returns per-provider connection summaries.
+// The response contains a single "disabled" count plus a per-reason breakdown
+// under "disabled_reasons" so the dashboard can show why accounts are disabled.
 func (h *DashboardHandler) ProviderSummary(c *gin.Context) {
 	rows, err := h.db.Query(`
 		SELECT pt.id, pt.display_name, pt.format,
@@ -176,9 +178,6 @@ func (h *DashboardHandler) ProviderSummary(c *gin.Context) {
 		       SUM(CASE WHEN c.status = 'ready' THEN 1 ELSE 0 END) as ready,
 		       SUM(CASE WHEN c.status = 'rate_limited' THEN 1 ELSE 0 END) as rate_limited,
 		       SUM(CASE WHEN c.status = 'quota_exhausted' THEN 1 ELSE 0 END) as quota_exhausted,
-		       SUM(CASE WHEN c.status = 'balance_empty' THEN 1 ELSE 0 END) as balance_empty,
-		       SUM(CASE WHEN c.status = 'auth_failed' THEN 1 ELSE 0 END) as auth_failed,
-		       SUM(CASE WHEN c.status = 'suspended' THEN 1 ELSE 0 END) as suspended,
 		       SUM(CASE WHEN c.status = 'disabled' THEN 1 ELSE 0 END) as disabled
 		FROM provider_types pt
 		LEFT JOIN connections c ON c.provider_type_id = pt.id AND c.is_active = 1
@@ -191,23 +190,59 @@ func (h *DashboardHandler) ProviderSummary(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	var summary []gin.H
+	type providerSummary struct {
+		id, name, format string
+		total, ready, rl, qe, disabled int
+	}
+
+	providers := []providerSummary{}
 	for rows.Next() {
-		var id, name, format string
-		var total, ready, rl, qe, be, af, sus, dis int
-		rows.Scan(&id, &name, &format, &total, &ready, &rl, &qe, &be, &af, &sus, &dis)
+		var p providerSummary
+		if err := rows.Scan(&p.id, &p.name, &p.format, &p.total, &p.ready, &p.rl, &p.qe, &p.disabled); err != nil {
+			continue
+		}
+		providers = append(providers, p)
+	}
+	rows.Close()
+
+	// Load disabled breakdown per provider.
+	breakdownRows, err := h.db.Query(`
+		SELECT provider_type_id, COALESCE(disabled_reason, 'unknown') as reason, COUNT(*) as n
+		FROM connections
+		WHERE is_active = 0 AND status = 'disabled'
+		GROUP BY provider_type_id, disabled_reason
+	`)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer breakdownRows.Close()
+
+	reasonMap := map[string]map[string]int{}
+	for breakdownRows.Next() {
+		var providerID, reason string
+		var n int
+		if err := breakdownRows.Scan(&providerID, &reason, &n); err != nil {
+			continue
+		}
+		if reasonMap[providerID] == nil {
+			reasonMap[providerID] = map[string]int{}
+		}
+		reasonMap[providerID][reason] = n
+	}
+
+	var summary []gin.H
+	for _, p := range providers {
 		summary = append(summary, gin.H{
-			"id":               id,
-			"display_name":     name,
-			"format":           format,
-			"total":            total,
-			"ready":            ready,
-			"rate_limited":     rl,
-			"quota_exhausted":  qe,
-			"balance_empty":    be,
-			"auth_failed":      af,
-			"suspended":        sus,
-			"disabled":         dis,
+			"id":               p.id,
+			"display_name":     p.name,
+			"format":           p.format,
+			"total":            p.total,
+			"ready":            p.ready,
+			"rate_limited":     p.rl,
+			"quota_exhausted":  p.qe,
+			"disabled":         p.disabled,
+			"disabled_reasons": reasonMap[p.id],
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"data": summary})

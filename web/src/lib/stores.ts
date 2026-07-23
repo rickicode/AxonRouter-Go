@@ -99,9 +99,6 @@ export const providerStatusCounts = derived(providers, ($providers) => {
     ready: 0,
     rate_limited: 0,
     quota_exhausted: 0,
-    balance_empty: 0,
-    auth_failed: 0,
-    suspended: 0,
     disabled: 0,
   };
   
@@ -418,9 +415,6 @@ export function getStatusColor(status: string): string {
     case 'ready': return 'text-green-600 bg-green-50';
     case 'rate_limited': return 'text-yellow-600 bg-yellow-50';
     case 'quota_exhausted': return 'text-orange-600 bg-orange-50';
-    case 'balance_empty': return 'text-red-600 bg-red-50';
-    case 'auth_failed': return 'text-red-600 bg-red-50';
-    case 'suspended': return 'text-gray-600 bg-gray-50';
     case 'disabled': return 'text-gray-600 bg-gray-50';
     default: return 'text-gray-600 bg-gray-50';
   }
@@ -431,9 +425,6 @@ export function getStatusLabel(status: string): string {
     case 'ready': return 'Ready';
     case 'rate_limited': return 'Rate Limited';
     case 'quota_exhausted': return 'Quota Exhausted';
-    case 'balance_empty': return 'Balance Empty';
-    case 'auth_failed': return 'Auth Failed';
-    case 'suspended': return 'Suspended';
     case 'disabled': return 'Disabled';
     default: return status;
   }

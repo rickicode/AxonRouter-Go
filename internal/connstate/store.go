@@ -105,10 +105,15 @@ func (s *Store) RecordFailure(connID string, det ErrorDetection) {
 	}
 }
 
-// UpdateStatus updates the status of a connection.
-func (s *Store) UpdateStatus(connID string, status Status) {
+// UpdateStatus updates the status of a connection. The optional reason is stored
+// when the status becomes StatusDisabled so callers can preserve the cause.
+func (s *Store) UpdateStatus(connID string, status Status, reason ...string) {
+	reasonStr := ""
+	if len(reason) > 0 {
+		reasonStr = reason[0]
+	}
 	cs := s.GetOrCreate(connID)
-	cs.SetStatus(status, "")
+	cs.SetStatus(status, reasonStr)
 }
 
 // UpdateCooldown sets a cooldown for a connection.
@@ -175,10 +180,13 @@ func (s *Store) ClassifyProviderUnavailable(provider string) ErrorCategory {
 		switch status {
 		case StatusQuotaExhausted, StatusCooldown, StatusRateLimited:
 			quota++
-		case StatusAuthFailed, StatusSuspended:
-			auth++
-		case StatusBalanceEmpty, StatusDisabled:
-			balance++
+		case StatusDisabled:
+			switch cs.DisabledReason {
+			case "auth_failed", "suspended":
+				auth++
+			case "balance_empty":
+				balance++
+			}
 		}
 		return true
 	})
@@ -209,12 +217,6 @@ func (s *Store) SeedConnection(connID, prefix, status string, priority int) {
 		st = StatusRateLimited
 	case "quota_exhausted":
 		st = StatusQuotaExhausted
-	case "balance_empty":
-		st = StatusBalanceEmpty
-	case "auth_failed":
-		st = StatusAuthFailed
-	case "suspended":
-		st = StatusSuspended
 	case "disabled":
 		st = StatusDisabled
 	case "degraded":
