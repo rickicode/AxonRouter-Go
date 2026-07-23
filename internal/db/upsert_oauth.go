@@ -25,17 +25,18 @@ func UpsertOAuthConnection(ctx context.Context, db *sql.DB, providerID, accountK
 		}
 		if err == nil {
 			if _, err := db.ExecContext(ctx, `
-				UPDATE connections
-				SET oauth_token = ?,
-				    oauth_refresh_token = ?,
-				    oauth_expires_at = ?,
-				    provider_specific_data = ?,
-				    name = ?,
-				    status = 'ready',
-				    is_active = 1,
-				    updated_at = ?
-				WHERE id = ?
-			`, accessToken, refreshToken, nullInt64(expiresAt), providerSpecificData, connName, now, existingID); err != nil {
+			UPDATE connections
+			SET oauth_token = ?,
+			    oauth_refresh_token = ?,
+			    oauth_expires_at = ?,
+			    provider_specific_data = ?,
+			    name = ?,
+			    status = 'ready',
+			    disabled_reason = NULL,
+			    is_active = 1,
+			    updated_at = ?
+			WHERE id = ?
+		`, accessToken, refreshToken, nullInt64(expiresAt), providerSpecificData, connName, now, existingID); err != nil {
 				return "", false, err
 			}
 			return existingID, false, nil

@@ -690,8 +690,15 @@ func (h *ProviderHandler) AddConnection(c *gin.Context) {
 		apiKey = sql.NullString{String: req.APIKey, Valid: true}
 	}
 	initialStatus := "ready"
+	disabledReason := sql.NullString{}
+	active := 1
 	if req.AuthType == "oauth" {
-		initialStatus = "auth_failed" // not eligible until OAuth completes
+		// Not eligible until OAuth completes. Mark as disabled with a manual
+		// reason so it is excluded from routing and can be enabled by the
+		// OAuth callback flow without ambiguity.
+		initialStatus = "disabled"
+		disabledReason = sql.NullString{String: "manual", Valid: true}
+		active = 0
 	}
 
 	var psdJSON sql.NullString
@@ -705,9 +712,9 @@ func (h *ProviderHandler) AddConnection(c *gin.Context) {
 	}
 
 	_, err := h.db.Exec(`
-		INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, priority, provider_specific_data, status, is_active, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-	`, connID, providerID, req.Name, req.AuthType, apiKey, req.Priority, psdJSON, initialStatus, now, now)
+		INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, priority, provider_specific_data, status, disabled_reason, is_active, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, connID, providerID, req.Name, req.AuthType, apiKey, req.Priority, psdJSON, initialStatus, disabledReason, active, now, now)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -800,8 +807,9 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 	}
 
 	// Sample validation: test up to N accepted, non-empty keys against the provider.
-	// Rows that fail validation are still persisted with status='auth_failed' and
-	// is_active=0 so the lifecycle GC can clean them up later.
+	// Rows that fail validation are still persisted with status='disabled',
+	// disabled_reason='auth_failed', and is_active=0 so the lifecycle GC can
+	// clean them up later.
 	if req.ValidateSampleSize > 0 {
 		sample := make([]*classifiedConn, 0, len(classified))
 		for i := range classified {
@@ -859,14 +867,21 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 					psdJSON = sql.NullString{String: string(b), Valid: true}
 				}
 			}
-			status := "ready"
-			active := 1
-			if item.state == "rejected" || item.state == "duplicate" {
-				status = "auth_failed"
-				active = 0
-			}
-			if _, err := tx.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, priority, provider_specific_data, status, is_active, created_at, updated_at) VALUES (?, ?, ?, 'api_key', ?, ?, ?, ?, ?, ?, ?)`,
-				connID, providerID, item.Name, apiKey, item.Priority, psdJSON, status, active, now, now); err != nil {
+		status := "ready"
+		disabledReason := sql.NullString{}
+		active := 1
+		switch item.state {
+		case "rejected":
+			status = "disabled"
+			disabledReason = sql.NullString{String: "auth_failed", Valid: true}
+			active = 0
+		case "duplicate":
+			status = "disabled"
+			disabledReason = sql.NullString{String: "manual", Valid: true}
+			active = 0
+		}
+		if _, err := tx.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, priority, provider_specific_data, status, disabled_reason, is_active, created_at, updated_at) VALUES (?, ?, ?, 'api_key', ?, ?, ?, ?, ?, ?, ?, ?)`,
+			connID, providerID, item.Name, apiKey, item.Priority, psdJSON, status, disabledReason, active, now, now); err != nil {
 				res.fails = append(res.fails, fmt.Sprintf("connection %q: %s", item.Name, err.Error()))
 				continue
 			}

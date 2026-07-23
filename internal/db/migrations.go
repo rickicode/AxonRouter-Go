@@ -182,13 +182,14 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 	// Collapse legacy terminal statuses into `disabled` with a reason.
 	// Each UPDATE is idempotent because it only touches rows whose status still
 	// matches the legacy value. Re-running after all rows are migrated is a no-op.
+	// All legacy terminal rows are inactive; re-enable requires explicit admin action.
 	if _, err := db.Exec(`UPDATE connections SET status='disabled', disabled_reason='auth_failed', is_active=0 WHERE status='auth_failed'`); err != nil {
 		return err
 	}
-	if _, err := db.Exec(`UPDATE connections SET status='disabled', disabled_reason='suspended' WHERE status='suspended'`); err != nil {
+	if _, err := db.Exec(`UPDATE connections SET status='disabled', disabled_reason='suspended', is_active=0 WHERE status='suspended'`); err != nil {
 		return err
 	}
-	if _, err := db.Exec(`UPDATE connections SET status='disabled', disabled_reason='balance_empty' WHERE status='balance_empty'`); err != nil {
+	if _, err := db.Exec(`UPDATE connections SET status='disabled', disabled_reason='balance_empty', is_active=0 WHERE status='balance_empty'`); err != nil {
 		return err
 	}
 	if _, err := db.Exec(`UPDATE connections SET disabled_reason='unknown' WHERE status='disabled' AND COALESCE(disabled_reason,'')=''`); err != nil {

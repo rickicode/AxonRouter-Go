@@ -1118,9 +1118,9 @@ func TestBulkAddConnections_ValidationAndReporting(t *testing.T) {
 				t.Errorf("ready row should be active, got active=%d", active)
 			}
 			accepted++
-		case "auth_failed":
+		case "disabled":
 			if active != 0 {
-				t.Errorf("auth_failed row should be inactive, got active=%d", active)
+				t.Errorf("disabled row should be inactive, got active=%d", active)
 			}
 			rejected++
 		default:

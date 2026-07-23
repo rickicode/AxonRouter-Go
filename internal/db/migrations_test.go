@@ -170,13 +170,15 @@ func TestConnectionStatusCollapseMigration(t *testing.T) {
 		}
 	}
 
-	// auth_failed rows must also be inactive.
-	var active int
-	if err := d.QueryRow(`SELECT is_active FROM connections WHERE id = 'conn-auth'`).Scan(&active); err != nil {
-		t.Fatal(err)
-	}
-	if active != 0 {
-		t.Fatalf("conn-auth is_active = %d, want 0", active)
+	// All legacy terminal rows must end up inactive.
+	for _, id := range []string{"conn-auth", "conn-suspended", "conn-balance"} {
+		var active int
+		if err := d.QueryRow(`SELECT is_active FROM connections WHERE id = ?`, id).Scan(&active); err != nil {
+			t.Fatal(err)
+		}
+		if active != 0 {
+			t.Fatalf("%s is_active = %d, want 0", id, active)
+		}
 	}
 }
 
