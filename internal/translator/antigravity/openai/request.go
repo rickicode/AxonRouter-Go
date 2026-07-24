@@ -529,7 +529,47 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 		}
 	}
 
-	return AttachDefaultSafetySettings(out, "request.safetySettings")
+	out = AttachDefaultSafetySettings(out, "request.safetySettings")
+
+	// Vertex AI (used by Antigravity for Claude-branded models) rejects a
+	// conversation ending on an assistant turn — "This model does not support
+	// assistant message prefill". Strip trailing model turns so the request ends
+	// on a user turn. Native Gemini models are left untouched.
+	// OmniRoute antigravity.ts:407-423.
+	if strings.Contains(strings.ToLower(modelName), "claude") {
+		out = stripTrailingAntigravityAssistantTurn(out)
+	}
+
+	return out
+}
+
+// stripTrailingAntigravityAssistantTurn removes trailing assistant ("model")
+// turns from an Antigravity request. It preserves at least one content entry so
+// the request never becomes empty.
+func stripTrailingAntigravityAssistantTurn(body []byte) []byte {
+	contents := gjson.GetBytes(body, "request.contents")
+	if !contents.Exists() || !contents.IsArray() {
+		return body
+	}
+	arr := contents.Array()
+	if len(arr) == 0 {
+		return body
+	}
+
+	lastKeep := len(arr) - 1
+	for lastKeep > 0 && arr[lastKeep].Get("role").String() == "model" {
+		lastKeep--
+	}
+	if lastKeep == len(arr)-1 {
+		return body
+	}
+
+	newContents := []byte("[]")
+	for i := 0; i <= lastKeep; i++ {
+		newContents, _ = sjson.SetRawBytes(newContents, "-1", []byte(arr[i].Raw))
+	}
+	out, _ := sjson.SetRawBytes(body, "request.contents", newContents)
+	return out
 }
 
 func mustMarshal(v interface{}) []byte {
