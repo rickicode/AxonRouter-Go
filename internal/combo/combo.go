@@ -713,12 +713,10 @@ func (h *Handler) UpdateCombo(comboID string, input UpdateComboInput) error {
 		add("strategy", input.Strategy)
 	}
 	if input.TimeoutMs != nil {
-		sets = append(sets, "timeout_ms = ?")
-		args = append(args, *input.TimeoutMs)
+		add("timeout_ms", *input.TimeoutMs)
 	}
 	if input.StickyLimit != nil {
-		sets = append(sets, "sticky_limit = ?")
-		args = append(args, *input.StickyLimit)
+		add("sticky_limit", *input.StickyLimit)
 	}
 	if input.IsSmart != nil {
 		add("is_smart", boolToInt(*input.IsSmart))
@@ -729,8 +727,7 @@ func (h *Handler) UpdateCombo(comboID string, input UpdateComboInput) error {
 		if normalized != "" {
 			sg = sql.NullString{String: normalized, Valid: true}
 		}
-		sets = append(sets, "smart_goal = ?")
-		args = append(args, sg)
+		add("smart_goal", sg)
 	}
 	if input.FusionConfig != "" {
 		add("fusion_config", input.FusionConfig)
