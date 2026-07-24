@@ -752,7 +752,14 @@ func antigravityNonStreamURL(base string) string {
 	return u.String()
 }
 
+// AntigravityReadinessTimeoutError is the Antigravity-specific alias for the
+// generic stream readiness timeout. It surfaces as an HTTP 504 Gateway Timeout
+// to the downstream client.
+type AntigravityReadinessTimeoutError = StreamReadinessTimeoutError
+
 // executeStreamSingle performs one streaming Antigravity attempt.
+// The base executor enforces ResponseHeaderTimeout so requests that never
+// receive response headers abort with a 504 instead of hanging indefinitely.
 func (e *AntigravityExecutor) executeStreamSingle(ctx context.Context, req *Request, url string, headers map[string]string, modelID string, useCredits bool) (*StreamResult, error) {
 	body, err := e.buildEnvelope(ctx, req, modelID, useCredits)
 	if err != nil {
