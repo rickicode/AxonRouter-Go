@@ -5,11 +5,9 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 )
@@ -209,56 +207,21 @@ func (h *ComboHandler) Update(c *gin.Context) {
 		}
 	}
 
-	sets := []string{}
-	args := []interface{}{}
-	if req.Name != "" {
-		sets = append(sets, "name = ?")
-		args = append(args, req.Name)
-	}
-	if req.Strategy != "" {
-		sets = append(sets, "strategy = ?")
-		args = append(args, req.Strategy)
-	}
-	if req.TimeoutMs > 0 {
-		sets = append(sets, "timeout_ms = ?")
-		args = append(args, req.TimeoutMs)
-	}
-	if req.StickyLimit != nil && *req.StickyLimit > 0 {
-		sets = append(sets, "sticky_limit = ?")
-		args = append(args, *req.StickyLimit)
-	}
-	if req.IsSmart != nil {
-		sets = append(sets, "is_smart = ?")
-		args = append(args, boolToInt(*req.IsSmart))
-	}
-	if req.SmartGoal != nil {
-		sets = append(sets, "smart_goal = ?")
-		args = append(args, strings.ToLower(strings.TrimSpace(*req.SmartGoal)))
-	}
-	if req.FusionConfig != "" {
-		sets = append(sets, "fusion_config = ?")
-		args = append(args, req.FusionConfig)
-	}
-	if req.IsActive != nil {
-		sets = append(sets, "is_active = ?")
-		args = append(args, boolToInt(*req.IsActive))
-	}
-	if len(sets) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "nothing to update"})
-		return
-	}
-
-	sets = append(sets, "updated_at = ?")
-	args = append(args, time.Now().Unix(), id)
-
-	result, err := h.db.Exec("UPDATE combos SET "+joinStrings(sets, ", ")+" WHERE id = ?", args...)
-	if err != nil {
+	if err := h.handler.UpdateCombo(id, combo.UpdateComboInput{
+		Name:         req.Name,
+		Strategy:     req.Strategy,
+		TimeoutMs:    req.TimeoutMs,
+		StickyLimit:  req.StickyLimit,
+		IsSmart:      req.IsSmart,
+		SmartGoal:    req.SmartGoal,
+		FusionConfig: req.FusionConfig,
+		IsActive:     req.IsActive,
+	}); err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "combo not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "combo not found"})
 		return
 	}
 
@@ -266,7 +229,6 @@ func (h *ComboHandler) Update(c *gin.Context) {
 		h.handler.ResetRotationCounter(id)
 	}
 
-	h.handler.RefreshFromDB()
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -308,45 +270,31 @@ func (h *ComboHandler) AddStep(c *gin.Context) {
 		req.Priority = maxPriority + 1
 	}
 
-	connectionID := req.ConnectionID
-	if connectionID == "" {
-		if picked, ok := h.handler.PickConnection(db.ComboStep{ModelID: req.ModelID}); ok {
-			connectionID = picked
-		}
-	}
-	if connectionID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no eligible connection for model " + req.ModelID})
-		return
-	}
-
-	stepID := uuid.New().String()
-	_, err := h.db.Exec(`
-	INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, stepID, comboID, connectionID, req.ModelID, req.Priority, req.Weight, time.Now().Unix())
+	stepID, err := h.handler.AddComboStep(comboID, combo.AddComboStepInput{
+		ConnectionID: req.ConnectionID,
+		ModelID:      req.ModelID,
+		Priority:     req.Priority,
+		Weight:       req.Weight,
+	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	h.handler.RefreshFromDB()
 	c.JSON(http.StatusCreated, gin.H{"id": stepID, "priority": req.Priority})
 }
 
 // RemoveStep removes a step from a combo.
 func (h *ComboHandler) RemoveStep(c *gin.Context) {
 	stepID := c.Param("stepId")
-	result, err := h.db.Exec(`DELETE FROM combo_steps WHERE id = ?`, stepID)
-	if err != nil {
+	if err := h.handler.RemoveComboStep(stepID); err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "step not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "step not found"})
-		return
-	}
-	h.handler.RefreshFromDB()
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
