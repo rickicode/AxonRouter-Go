@@ -55,6 +55,10 @@ func (h *OptimizationHandler) UpdateCompressionSettings(c *gin.Context) {
 			RemoveRedundantContent bool `json:"remove_redundant_content"`
 			DedupSystemPrompt      bool `json:"dedup_system_prompt"`
 		} `json:"lite"`
+		Output struct {
+			Enabled bool   `json:"enabled"`
+			Level   string `json:"level"`
+		} `json:"output"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -72,9 +76,18 @@ func (h *OptimizationHandler) UpdateCompressionSettings(c *gin.Context) {
 	_ = h.setSetting("compression_lite_dedup", boolStr(req.Lite.DedupSystemPrompt))
 	_ = h.setSetting("compression_lite_redundant", boolStr(req.Lite.RemoveRedundantContent))
 
+	outputLevel := req.Output.Level
+	if outputLevel == "" {
+		outputLevel = "caveman"
+	}
+	_ = h.setSetting("compression_output_enabled", boolStr(req.Output.Enabled))
+	_ = h.setSetting("compression_output_level", outputLevel)
+
 	// NOTE: Changing compression settings invalidates any exact-cache entries
 	// that were computed with the previous configuration.
-	h.cache.Flush()
+	if h.cache != nil {
+		h.cache.Flush()
+	}
 
 	c.JSON(http.StatusOK, h.compressionSettingsMap(mode))
 }
@@ -173,8 +186,9 @@ func (h *OptimizationHandler) PreviewCompression(c *gin.Context) {
 	}
 
 	cfg := compression.Strategy{
-		Mode: mode,
-		Lite: h.liteConfigFromDB(),
+		Mode:   mode,
+		Lite:   h.liteConfigFromDB(),
+		Output: h.outputConfigFromDB(),
 	}
 
 	compressed, stats, _ := compression.Apply(cfg, []byte(req.Body))
@@ -189,6 +203,10 @@ func (h *OptimizationHandler) PreviewCompression(c *gin.Context) {
 }
 
 func (h *OptimizationHandler) compressionSettingsMap(mode string) gin.H {
+	outputLevel := h.getSetting("compression_output_level", "caveman")
+	if outputLevel == "" {
+		outputLevel = "caveman"
+	}
 	return gin.H{
 		"mode": mode,
 		"lite": gin.H{
@@ -196,6 +214,10 @@ func (h *OptimizationHandler) compressionSettingsMap(mode string) gin.H {
 			"replace_image_urls":       parseBool(h.getSetting("compression_lite_image_urls", "true")),
 			"remove_redundant_content": parseBool(h.getSetting("compression_lite_redundant", "false")),
 			"dedup_system_prompt":      parseBool(h.getSetting("compression_lite_dedup", "false")),
+		},
+		"output": gin.H{
+			"enabled": parseBool(h.getSetting("compression_output_enabled", "false")),
+			"level":   outputLevel,
 		},
 	}
 }
@@ -206,6 +228,17 @@ func (h *OptimizationHandler) liteConfigFromDB() compression.LiteConfig {
 		ReplaceImageUrls:       parseBool(h.getSetting("compression_lite_image_urls", "true")),
 		RemoveRedundantContent: parseBool(h.getSetting("compression_lite_redundant", "false")),
 		DedupSystemPrompt:      parseBool(h.getSetting("compression_lite_dedup", "false")),
+	}
+}
+
+func (h *OptimizationHandler) outputConfigFromDB() compression.EngineConfig {
+	level := h.getSetting("compression_output_level", "caveman")
+	if level == "" {
+		level = "caveman"
+	}
+	return compression.EngineConfig{
+		"enabled": parseBool(h.getSetting("compression_output_enabled", "false")),
+		"level":   level,
 	}
 }
 
