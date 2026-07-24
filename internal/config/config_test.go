@@ -70,6 +70,38 @@ func TestResolveDataDir_ExplicitWins(t *testing.T) {
 	}
 }
 
+func TestParseAntigravityObfuscationWords(t *testing.T) {
+	defaultLen := len(defaultAntigravityObfuscationWords)
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"", defaultAntigravityObfuscationWords},
+		{"   ", defaultAntigravityObfuscationWords},
+		{"cursor, opencode", []string{"cursor", "opencode"}},
+		{" Cursor ,  OPENCODE ", []string{"cursor", "opencode"}},
+		{"cursor,,opencode", []string{"cursor", "opencode"}},
+	}
+	for _, c := range cases {
+		got := parseAntigravityObfuscationWords(c.in)
+		if c.in == "" && len(got) != defaultLen {
+			t.Errorf("parseAntigravityObfuscationWords(%q) returned %d words, want defaults", c.in, len(got))
+			continue
+		}
+		if c.in != "" {
+			if len(got) != len(c.want) {
+				t.Errorf("parseAntigravityObfuscationWords(%q) length = %d, want %d", c.in, len(got), len(c.want))
+				continue
+			}
+			for i := range c.want {
+				if got[i] != c.want[i] {
+					t.Errorf("parseAntigravityObfuscationWords(%q)[%d] = %q, want %q", c.in, i, got[i], c.want[i])
+				}
+			}
+		}
+	}
+}
+
 func clearEnv(t *testing.T) {
 	t.Helper()
 	// config.Get uses sync.Once and Init uses sync.Once; for unit tests on the

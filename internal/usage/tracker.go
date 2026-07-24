@@ -25,6 +25,7 @@ type LogEntry struct {
 	ApiKeyID            string
 	ApiType             string // client-facing API format, e.g. openai, claude, embeddings
 	Modality            string
+	Quantity            int64 // modality-specific units/minutes (image/video/audio)
 	InputTokens         int64
 	OutputTokens        int64
 	ReasoningTokens     int64
@@ -90,7 +91,7 @@ func (t *Tracker) Log(entry *LogEntry) {
 		entry.StatusCode = errorcode.FromString(entry.ErrorMessage)
 	}
 	if entry.CostUsd == 0 {
-		entry.CostUsd = EstimateCostWithServiceTier(entry.ModelID, entry.ServiceTier, entry.InputTokens, entry.OutputTokens, entry.ReasoningTokens, entry.CachedTokens, entry.CacheCreationTokens)
+		entry.CostUsd = EstimateCostWithServiceTier(entry.ModelID, entry.Modality, entry.ServiceTier, entry.Quantity, entry.InputTokens, entry.OutputTokens, entry.ReasoningTokens, entry.CachedTokens, entry.CacheCreationTokens)
 	}
 	select {
 	case t.buffer <- entry:

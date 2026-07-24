@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/rickicode/AxonRouter-Go/internal/logging"
+	"github.com/rickicode/AxonRouter-Go/internal/signature"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -78,6 +80,23 @@ var baseClaudeBetas = []string{
 	"token-efficient-tools-2026-03-28",
 }
 
+// sanitizeClaudeBody applies provider-aware signature sanitization so that
+// cross-provider conversation history remains valid for a Claude upstream.
+func sanitizeClaudeBody(body []byte, modelName string) []byte {
+	sanitized, report := signature.SanitizeClaudeMessagesForClaudeUpstream(body, modelName)
+	if total := report.Preserved + report.DroppedBlocks + report.DroppedSignatures + report.ReplacedSignatures; total > 0 {
+		logging.Logger.Debug(
+			"Claude message signature sanitization report",
+			"target_provider", report.TargetProvider,
+			"preserved", report.Preserved,
+			"dropped_blocks", report.DroppedBlocks,
+			"dropped_signatures", report.DroppedSignatures,
+			"replaced_signatures", report.ReplacedSignatures,
+		)
+	}
+	return sanitized
+}
+
 // claudeBetaHeader builds the Anthropic-Beta header value. Base betas are always
 // included; client-provided header betas and body-extracted betas are merged on
 // top and deduplicated.
@@ -127,6 +146,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 	}
 
 	body, betas := prepareClaudeBody(req.Body)
+	body = sanitizeClaudeBody(body, req.Model)
 	// Ensure stream is false
 	body = JSONSet(body, "stream", false)
 
@@ -169,6 +189,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 	}
 
 	body, betas := prepareClaudeBody(req.Body)
+	body = sanitizeClaudeBody(body, req.Model)
 	body = JSONSet(body, "stream", true)
 
 	headers := map[string]string{
@@ -202,6 +223,7 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, req *Request) (*Respon
 	}
 
 	body, betas := prepareClaudeBody(req.Body)
+	body = sanitizeClaudeBody(body, req.Model)
 
 	headers := map[string]string{
 		"Content-Type":      "application/json",

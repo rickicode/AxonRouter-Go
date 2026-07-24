@@ -140,7 +140,7 @@ func writeCostHeaders(c *gin.Context, modelID string, exactCost float64, counts 
 	if !flatRate {
 		cost = exactCost
 		if cost <= 0 {
-			cost = usage.EstimateCost(modelID, counts.InputTokens, counts.OutputTokens, counts.ReasoningTokens, counts.CachedTokens, counts.CacheCreationTokens)
+			cost = usage.EstimateCost(modelID, "chat", 0, counts.InputTokens, counts.OutputTokens, counts.ReasoningTokens, counts.CachedTokens, counts.CacheCreationTokens)
 		}
 	}
 
@@ -162,7 +162,7 @@ func writeCostTrailers(c *gin.Context, modelID string, exactCost float64, counts
 	if !flatRate {
 		cost = exactCost
 		if cost <= 0 {
-			cost = usage.EstimateCost(modelID, counts.InputTokens, counts.OutputTokens, counts.ReasoningTokens, counts.CachedTokens, counts.CacheCreationTokens)
+			cost = usage.EstimateCost(modelID, "chat", 0, counts.InputTokens, counts.OutputTokens, counts.ReasoningTokens, counts.CachedTokens, counts.CacheCreationTokens)
 		}
 	}
 

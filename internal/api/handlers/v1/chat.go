@@ -396,7 +396,7 @@ attemptLoop:
 			}
 			estCost := resp.CostUsd
 			if estCost == 0 {
-				estCost = usage.EstimateCost(modelName, tokenCounts.InputTokens, tokenCounts.OutputTokens, tokenCounts.ReasoningTokens, tokenCounts.CachedTokens, tokenCounts.CacheCreationTokens)
+				estCost = usage.EstimateCost(modelName, "chat", 0, tokenCounts.InputTokens, tokenCounts.OutputTokens, tokenCounts.ReasoningTokens, tokenCounts.CachedTokens, tokenCounts.CacheCreationTokens)
 			}
 			h.logRequest(c, &usage.LogEntry{
 				ApiKeyID:            c.GetString("api_key_id"),
@@ -775,7 +775,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				}
 				estCost := resp.CostUsd
 				if estCost == 0 {
-					estCost = usage.EstimateCost(modelName, tokenCounts.InputTokens, tokenCounts.OutputTokens, tokenCounts.ReasoningTokens, tokenCounts.CachedTokens, tokenCounts.CacheCreationTokens)
+				estCost = usage.EstimateCost(modelName, "chat", 0, tokenCounts.InputTokens, tokenCounts.OutputTokens, tokenCounts.ReasoningTokens, tokenCounts.CachedTokens, tokenCounts.CacheCreationTokens)
 				}
 				h.logRequest(c, &usage.LogEntry{
 					ApiKeyID:            c.GetString("api_key_id"),
