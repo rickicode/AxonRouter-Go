@@ -274,3 +274,86 @@ func TestIsTransientUpstreamError(t *testing.T) {
 		})
 	}
 }
+
+func TestParseRetryAfter(t *testing.T) {
+	future := time.Now().UTC().Add(3 * time.Second).Format(http.TimeFormat)
+	past := time.Now().UTC().Add(-1 * time.Minute).Format(http.TimeFormat)
+
+	tests := []struct {
+		name   string
+		header string
+		want   time.Duration
+		ok     bool
+	}{
+		{"empty", "", 0, false},
+		{"1 second", "1", 1 * time.Second, true},
+		{"5 seconds", "5", 5 * time.Second, true},
+		{"10 seconds", "10", 10 * time.Second, true},
+		{"zero", "0", 0, true},
+		{"negative", "-1", 0, true},
+		{"invalid", "abc", 0, false},
+		{"http-date future", future, 3 * time.Second, true},
+		{"http-date past", past, 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := http.Header{"Retry-After": []string{tt.header}}
+			if tt.header == "" {
+				h = http.Header{}
+			}
+			got, ok := parseRetryAfter(h)
+			if ok != tt.ok {
+				t.Fatalf("parseRetryAfter() ok = %v, want %v", ok, tt.ok)
+			}
+			delta := time.Duration(0)
+			if tt.name == "http-date future" {
+				delta = 2 * time.Second
+			}
+			if diff := got - tt.want; diff < -delta || diff > delta {
+				t.Errorf("parseRetryAfter() = %v, want %v (delta %v)", got, tt.want, delta)
+			}
+		})
+	}
+}
+
+func TestTransientCooldown(t *testing.T) {
+	tests := []struct {
+		name string
+		resp *executor.Response
+		want time.Duration
+	}{
+		{"nil response", nil, defaultTransientCooldown},
+		{"no retry-after", &executor.Response{Headers: http.Header{}}, defaultTransientCooldown},
+		{"retry-after 1", &executor.Response{Headers: http.Header{"Retry-After": []string{"1"}}}, 1 * time.Second},
+		{"retry-after 5", &executor.Response{Headers: http.Header{"Retry-After": []string{"5"}}}, 5 * time.Second},
+		{"retry-after 10 capped", &executor.Response{Headers: http.Header{"Retry-After": []string{"10"}}}, maxTransientCooldown},
+		{"retry-after 0 fallback", &executor.Response{Headers: http.Header{"Retry-After": []string{"0"}}}, defaultTransientCooldown},
+		{"retry-after invalid fallback", &executor.Response{Headers: http.Header{"Retry-After": []string{"xyz"}}}, defaultTransientCooldown},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := transientCooldown(tt.resp); got != tt.want {
+				t.Errorf("transientCooldown() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTransientCooldownResp(t *testing.T) {
+	resp := &executor.Response{StatusCode: http.StatusServiceUnavailable, Headers: http.Header{"Retry-After": []string{"7"}}}
+	if got := transientCooldownResp(resp, nil); got != resp {
+		t.Errorf("transientCooldownResp() = %v, want %v", got, resp)
+	}
+
+	err := &executor.UpstreamError{StatusCode: http.StatusBadGateway, Headers: http.Header{"Retry-After": []string{"3"}}}
+	got := transientCooldownResp(nil, err)
+	if got == nil || got.StatusCode != err.StatusCode || got.Headers.Get("Retry-After") != "3" {
+		t.Errorf("transientCooldownResp() did not fall back to UpstreamError headers")
+	}
+
+	if got := transientCooldownResp(nil, errors.New("boom")); got != nil {
+		t.Errorf("transientCooldownResp() = %v, want nil", got)
+	}
+}

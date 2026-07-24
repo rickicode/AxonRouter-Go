@@ -63,5 +63,11 @@ func (cfg *FusionConfig) Validate(stepCount int) error {
 	if cfg.PanelHardTimeoutMs < 1000 {
 		return fmt.Errorf("panel_hard_timeout_ms must be >= 1000, got %d", cfg.PanelHardTimeoutMs)
 	}
+	if cfg.StragglerGraceMs < 0 {
+		return fmt.Errorf("straggler_grace_ms must be >= 0, got %d", cfg.StragglerGraceMs)
+	}
+	if cfg.StragglerGraceMs >= cfg.PanelHardTimeoutMs {
+		return fmt.Errorf("straggler_grace_ms (%d) must be < panel_hard_timeout_ms (%d)", cfg.StragglerGraceMs, cfg.PanelHardTimeoutMs)
+	}
 	return nil
 }

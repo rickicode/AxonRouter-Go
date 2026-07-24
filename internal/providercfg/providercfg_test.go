@@ -199,3 +199,52 @@ func TestAffinity_Value(t *testing.T) {
 		t.Fatalf("Affinity = %q, want affinity", Affinity)
 	}
 }
+
+func intPtr(n int) *int { return &n }
+
+func TestHoldback_Defaults(t *testing.T) {
+	m := NewManager(t.TempDir())
+	ms, bytes := m.Holdback("openai")
+	if ms != DefaultHoldbackMs {
+		t.Fatalf("Holdback ms = %d, want %d", ms, DefaultHoldbackMs)
+	}
+	if bytes != DefaultHoldbackBytes {
+		t.Fatalf("Holdback bytes = %d, want %d", bytes, DefaultHoldbackBytes)
+	}
+}
+
+func TestHoldback_PerProviderSettings(t *testing.T) {
+	m := NewManager(t.TempDir())
+	if err := m.Save("cx", ProviderSettings{
+		RoutingMode:   RoundRobin,
+		HoldbackMs:    intPtr(50),
+		HoldbackBytes: intPtr(1024),
+	}); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+	ms, bytes := m.Holdback("cx")
+	if ms != 50 {
+		t.Fatalf("Holdback ms = %d, want 50", ms)
+	}
+	if bytes != 1024 {
+		t.Fatalf("Holdback bytes = %d, want 1024", bytes)
+	}
+	// A different provider without overrides should keep defaults.
+	ms, bytes = m.Holdback("openai")
+	if ms != DefaultHoldbackMs || bytes != DefaultHoldbackBytes {
+		t.Fatalf("unconfigured provider holdback = %d/%d, want defaults", ms, bytes)
+	}
+}
+
+func TestHoldback_EnvOverride(t *testing.T) {
+	t.Setenv("AXON_RESPONSES_HOLDBACK_MS", "100")
+	t.Setenv("AXON_RESPONSES_HOLDBACK_BYTES", "2048")
+	m := NewManager(t.TempDir())
+	ms, bytes := m.Holdback("openai")
+	if ms != 100 {
+		t.Fatalf("Holdback ms = %d, want 100", ms)
+	}
+	if bytes != 2048 {
+		t.Fatalf("Holdback bytes = %d, want 2048", bytes)
+	}
+}
