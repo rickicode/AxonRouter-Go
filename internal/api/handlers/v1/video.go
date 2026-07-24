@@ -33,6 +33,9 @@ func (h *Handler) Video(c *gin.Context) {
 	if h.checkTokenBudget(c, body) != nil {
 		return
 	}
+	if h.checkAPIKeyBudget(c) != nil {
+		return
+	}
 
 	provider, modelName := executor.SplitModel(model)
 	if provider == "" {

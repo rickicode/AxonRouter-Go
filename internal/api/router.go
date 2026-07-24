@@ -431,6 +431,7 @@ func New(cfg Config) *Router {
 		// API Keys
 		g.GET("/api-keys", apiKeyH.List)
 		g.POST("/api-keys", apiKeyH.Create)
+		g.GET("/api-keys/:id", apiKeyH.Get)
 		g.DELETE("/api-keys/:id", apiKeyH.Delete)
 		g.PATCH("/api-keys/:id/toggle", apiKeyH.ToggleActive)
 		g.GET("/api-keys/:id/value", apiKeyH.GetValue)

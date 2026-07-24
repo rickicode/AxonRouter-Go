@@ -35,6 +35,9 @@ func (h *Handler) Images(c *gin.Context) {
 	if h.checkTokenBudget(c, body) != nil {
 		return
 	}
+	if h.checkAPIKeyBudget(c) != nil {
+		return
+	}
 
 	// Combo-first routing for image generation.
 	if comboResult, ok := h.combo.ResolveByKind(model, providerpkg.ServiceKindImage); ok {

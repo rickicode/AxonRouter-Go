@@ -143,6 +143,9 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	if h.checkTokenBudget(c, body) != nil {
 		return
 	}
+	if h.checkAPIKeyBudget(c) != nil {
+		return
+	}
 
 	// Combo-first routing
 	if comboResult, ok := h.combo.Resolve(model); ok {

@@ -33,6 +33,9 @@ func (h *Handler) TTS(c *gin.Context) {
 	if h.checkTokenBudget(c, body) != nil {
 		return
 	}
+	if h.checkAPIKeyBudget(c) != nil {
+		return
+	}
 
 	// Combo-first routing for text-to-speech.
 	if comboResult, ok := h.combo.ResolveByKind(model, providerpkg.ServiceKindTTS); ok {

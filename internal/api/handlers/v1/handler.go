@@ -1825,8 +1825,9 @@ func (h *Handler) streamResponse(
 						tokensEstimated = true
 					}
 				}
+				apiKeyID := c.GetString("api_key_id")
 				h.logRequest(c, &usage.LogEntry{
-					ApiKeyID:            c.GetString("api_key_id"),
+					ApiKeyID:            apiKeyID,
 					ConnectionID:        conn.ID,
 					ProviderTypeID:      provider,
 					ModelID:             model,
@@ -1845,7 +1846,8 @@ func (h *Handler) streamResponse(
 					StatusCode:          http.StatusOK,
 					TokensEstimated:     tokensEstimated,
 				})
-				h.incrementAPIKeyUsage(c.GetString("api_key_id"), acc.InputTokens+acc.OutputTokens)
+				h.incrementAPIKeyUsage(apiKeyID, acc.InputTokens+acc.OutputTokens)
+				h.recordAPIKeyCostFromCounts(apiKeyID, model, acc)
 				return nil
 			}
 
@@ -2308,15 +2310,26 @@ func (h *Handler) accumulateAPIKeyUsage(apiKeyID string, reqBody, respBody []byt
 		return
 	}
 	var total int64
-	if counts := ExtractTokensFromBody(respBody); counts.InputTokens > 0 || counts.OutputTokens > 0 {
+	var counts StreamTokenCounts
+	extracted := ExtractTokensFromBody(respBody)
+	if extracted.InputTokens > 0 || extracted.OutputTokens > 0 {
+		counts = extracted
 		total = counts.InputTokens + counts.OutputTokens
 	} else {
 		total = usage.EstimateTokensFromRequest(reqBody)
 		if estimateOutput {
 			total += usage.EstimateTokensFromResponse(respBody)
 		}
+		counts.InputTokens = usage.EstimateTokensFromRequest(reqBody)
+		if estimateOutput {
+			counts.OutputTokens = usage.EstimateTokensFromResponse(respBody)
+		}
 	}
 	h.incrementAPIKeyUsage(apiKeyID, total)
+	if apiKeyID != "" && len(reqBody) > 0 {
+		model := executor.JSONGet(reqBody, "model")
+		h.recordAPIKeyCostFromCounts(apiKeyID, model, counts)
+	}
 }
 
 // scheduleEligibilityUpdate triggers a per-provider eligibility rebuild for the
