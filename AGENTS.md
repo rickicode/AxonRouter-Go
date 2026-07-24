@@ -37,17 +37,30 @@
 When **Serena** is unavailable, fall back to `lsp`, `ast_grep`, and `ast_edit` as the semantic-equivalent tools for code navigation and editing.
 
 ### Serena Configuration (Project-Specific)
+**Serena MCP server has been removed** to save memory. Agents now use **Serena CLI directly** via bash commands. This means:
+- Language servers (`gopls`, `tsserver`) are spawned **on-demand** when a Serena CLI command is executed, and stopped after the command completes.
+- No persistent Serena MCP server process running in the background.
+- Built-in `serena_*` tools in the harness still work (they use CLI internally).
 
 This project uses **Go** for the backend and **Svelte/TypeScript** for the frontend. Before relying on Serena, ensure `/workspaces/AxonRouter-GO/.serena/project.yml` lists both languages:
-
 ```yaml
 languages:
-  - go
-  - svelte
+- go
+- svelte
 ```
-
 If only `svelte` is listed, Go symbol queries will time out because `gopls` is not started.
 
+**Usage example (CLI):**
+```bash
+# Find a symbol
+serena find_symbol --name-path "Handler/getConnection" --relative-path "internal/api/handlers/v1/handler.go"
+
+# Search for pattern
+serena search_for_pattern --substring-pattern "getConnection" --relative-path "."
+
+# Replace symbol body
+serena replace_symbol_body --name-path "Handler/getConnection" --relative-path "internal/api/handlers/v1/handler.go" --body "..."
+```
 ### Serena Scope Limit (CRITICAL)
 
 **Serena ONLY works on files inside the repository.** Do NOT use Serena for:

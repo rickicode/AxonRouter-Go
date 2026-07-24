@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rickicode/AxonRouter-Go/internal/cache"
+	"github.com/rickicode/AxonRouter-Go/internal/config"
+	"github.com/rickicode/AxonRouter-Go/internal/logging"
 )
 
 // Fields that must not reach the Google Antigravity API.
@@ -92,6 +96,75 @@ func resolveAntigravityModelID(modelID string) string {
 		}
 		modelID = v
 	}
+}
+
+// antigravityCreditsMode returns the configured credits mode. It reads the global
+// config so callers in the executor do not need to thread a config pointer.
+func antigravityCreditsMode() config.AntigravityCreditsMode {
+	if antigravityCreditsModeForTest != nil {
+		return antigravityCreditsModeForTest()
+	}
+	return config.Get().AntigravityCredits
+}
+
+// antigravityCreditsModeForTest is swapped by unit tests to avoid depending on
+// global config initialization order.
+var antigravityCreditsModeForTest func() config.AntigravityCreditsMode
+
+// antigravityCreditsEnabledForAuth reports whether credits retry is even possible
+// for the given auth. It is false when the auth has been permanently disabled due
+// to an explicit INSUFFICIENT_G1_CREDITS_BALANCE response.
+func antigravityCreditsEnabledForAuth(authID string) bool {
+	return !cache.IsAntigravityCreditsPermanentlyDisabled(authID)
+}
+
+// isAntigravityQuotaExceeded detects Google API 429 Quota exceeded responses.
+// Mirrors the check CLIProxyAPI uses to decide whether a credits retry is worth
+// attempting.
+func isAntigravityQuotaExceeded(statusCode int, body []byte) bool {
+	if statusCode != http.StatusTooManyRequests {
+		return false
+	}
+	if len(body) == 0 {
+		return true
+	}
+	msg := strings.ToLower(string(body))
+	return strings.Contains(msg, "quota exceeded") ||
+		strings.Contains(msg, "quota") && strings.Contains(msg, "exhausted")
+}
+
+// isAntigravityExplicitCreditsExhausted detects the permanent
+// INSUFFICIENT_G1_CREDITS_BALANCE reason returned by Google when the user's
+// Google One AI balance is empty. Once seen, credits are permanently disabled
+// for the auth.
+func isAntigravityExplicitCreditsExhausted(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+
+	// Fast literal check before parsing JSON.
+	if !strings.Contains(string(body), "INSUFFICIENT_G1_CREDITS_BALANCE") {
+		return false
+	}
+
+	var envelope struct {
+		Error struct {
+			Details []struct {
+				Type   string `json:"@type"`
+				Reason string `json:"reason"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return false
+	}
+	for _, d := range envelope.Error.Details {
+		if d.Type == "type.googleapis.com/google.rpc.ErrorInfo" &&
+			strings.EqualFold(d.Reason, "INSUFFICIENT_G1_CREDITS_BALANCE") {
+			return true
+		}
+	}
+	return false
 }
 
 // antigravityProjectCache memoizes loadCodeAssist results per access token.
@@ -418,11 +491,13 @@ func pickAntigravityProjectID(data map[string]any) string {
 // the executor must NOT wrap it again.
 // Reference: CLIProxyAPI geminiToAntigravity + AntigravityRequestEnvelope.
 func (e *AntigravityExecutor) wrapEnvelope(ctx context.Context, req *Request) ([]byte, error) {
-	return e.buildEnvelope(ctx, req, resolveAntigravityModelID(req.Model))
+	return e.buildEnvelope(ctx, req, resolveAntigravityModelID(req.Model), false)
 }
 
 // buildEnvelope finalizes the Antigravity envelope for a specific upstream model id.
-func (e *AntigravityExecutor) buildEnvelope(ctx context.Context, req *Request, upstreamModelID string) ([]byte, error) {
+// When useCredits is true, the envelope requests Google One AI credits via
+// enabledCreditTypes. This is controlled by the ANTIGRAVITY_CREDITS config mode.
+func (e *AntigravityExecutor) buildEnvelope(ctx context.Context, req *Request, upstreamModelID string, useCredits bool) ([]byte, error) {
 	var envelope map[string]any
 	if err := json.Unmarshal(req.Body, &envelope); err != nil {
 		envelope = map[string]any{
@@ -488,7 +563,9 @@ func (e *AntigravityExecutor) buildEnvelope(ctx context.Context, req *Request, u
 	envelope["model"] = upstreamModelID
 	envelope["userAgent"] = envelopeUserAgent(req)
 	envelope["requestType"] = "agent"
-	envelope["enabledCreditTypes"] = []string{"GOOGLE_ONE_AI"}
+	if useCredits {
+		envelope["enabledCreditTypes"] = []string{"GOOGLE_ONE_AI"}
+	}
 	envelope["requestId"] = generateAntigravityRequestId()
 	// Stable per-conversation session id inside the inner request, matching CLIProxyAPI.
 	envelope["request"] = inner
@@ -543,12 +620,50 @@ func generateAntigravityRequestId() string {
 	return fmt.Sprintf("agent/%d/%s", time.Now().UnixMilli(), hex.EncodeToString(b))
 }
 
+// newAntigravityUpstreamError wraps a failed executor.Response as an UpstreamError
+// with the provider-specific translation applied.
+func (e *AntigravityExecutor) newAntigravityUpstreamError(req *Request, resp *Response) *UpstreamError {
+	upErr := &UpstreamError{
+		StatusCode: resp.StatusCode,
+		Body:       resp.Body,
+		RawBody:    resp.Body,
+		Headers:    resp.Headers,
+	}
+	upErr.TranslateErrorBody(req.Provider)
+	return upErr
+}
+
+// executeSingle performs one non-streaming Antigravity attempt.
+func (e *AntigravityExecutor) executeSingle(ctx context.Context, req *Request, url string, headers map[string]string, modelID string, useCredits bool) (*Response, error) {
+	body, err := e.buildEnvelope(ctx, req, modelID, useCredits)
+	if err != nil {
+		return nil, err
+	}
+	return e.DoRequest(ctx, "POST", url, headers, body)
+}
+
+// handleAntigravityCreditsFailure checks a failed credits attempt for the explicit
+// INSUFFICIENT_G1_CREDITS_BALANCE reason and permanently disables credits for
+// the auth when found. It returns the translated upstream error.
+func (e *AntigravityExecutor) handleAntigravityCreditsFailure(req *Request, resp *Response) *UpstreamError {
+	if isAntigravityExplicitCreditsExhausted(resp.Body) {
+		cache.MarkAntigravityCreditsPermanentlyDisabled(req.ConnectionID)
+		logging.Logger.Info("antigravity credits permanently disabled for auth", "auth_id", req.ConnectionID)
+	}
+	return e.newAntigravityUpstreamError(req, resp)
+}
+
 // Execute performs a non-streaming Antigravity request.
 // Uses generateContent (not streamGenerateContent) so the upstream returns a single
 // JSON response that can be translated to OpenAI Chat Completions format.
 //
 // For Pro-family model IDs, an upstream 400 (commonly caused by an invalid or
 // renamed model id) triggers a per-model fallback chain (OmniRoute #3786).
+//
+// Credits behavior is controlled by ANTIGRAVITY_CREDITS:
+//   - off: never inject enabledCreditTypes
+//   - always: inject enabledCreditTypes on every request
+//   - retry: inject enabledCreditTypes only after a 429 quota_exhausted
 func (e *AntigravityExecutor) Execute(ctx context.Context, req *Request) (*Response, error) {
 	url := antigravityNonStreamURL(req.BaseURL)
 	headers := map[string]string{
@@ -564,32 +679,56 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, req *Request) (*Respo
 		candidates = []string{baseModel}
 	}
 
+	mode := antigravityCreditsMode()
+	creditsAvailable := mode != config.AntigravityCreditsModeOff && antigravityCreditsEnabledForAuth(req.ConnectionID)
+
 	var lastErr error
 	for _, modelID := range candidates {
-		body, err := e.buildEnvelope(ctx, req, modelID)
+		useCreditsFirst := mode == config.AntigravityCreditsModeAlways
+
+		resp, err := e.executeSingle(ctx, req, url, headers, modelID, useCreditsFirst)
 		if err != nil {
 			return nil, err
 		}
-		resp, err := e.DoRequest(ctx, "POST", url, headers, body)
-		if err != nil {
-			return nil, err
+		if resp.StatusCode < 400 {
+			return resp, nil
 		}
-		if resp.StatusCode >= 400 {
-			upErr := &UpstreamError{
-				StatusCode: resp.StatusCode,
-				Body:       resp.Body,
-				RawBody:    resp.Body,
-				Headers:    resp.Headers,
-			}
-			upErr.TranslateErrorBody(req.Provider)
-			lastErr = upErr
+
+		// In "always" mode a permanent credits failure disables retry for this auth.
+		if useCreditsFirst {
+			lastErr = e.handleAntigravityCreditsFailure(req, resp)
 			// Retry 400s only when we have another Pro-family candidate id.
 			if resp.StatusCode == http.StatusBadRequest && len(candidates) > 1 {
 				continue
 			}
-			return nil, upErr
+			return nil, lastErr
 		}
-		return resp, nil
+
+		// In "retry" mode, attempt one credits-backed retry on 429 quota_exhausted.
+		if creditsAvailable && isAntigravityQuotaExceeded(resp.StatusCode, resp.Body) {
+			logging.Logger.Info("antigravity quota exceeded, retrying with credits",
+				"model", modelID, "auth_id", req.ConnectionID)
+			retryResp, retryErr := e.executeSingle(ctx, req, url, headers, modelID, true)
+			if retryErr != nil {
+				return nil, retryErr
+			}
+			if retryResp.StatusCode < 400 {
+				return retryResp, nil
+			}
+			lastErr = e.handleAntigravityCreditsFailure(req, retryResp)
+
+			// Surface 400s from the upstream to the Pro fallback chain, not to the caller.
+			if retryResp.StatusCode == http.StatusBadRequest && len(candidates) > 1 {
+				continue
+			}
+			return nil, lastErr
+		}
+
+		lastErr = e.newAntigravityUpstreamError(req, resp)
+		if resp.StatusCode == http.StatusBadRequest && len(candidates) > 1 {
+			continue
+		}
+		return nil, lastErr
 	}
 	return nil, lastErr
 }
@@ -613,8 +752,22 @@ func antigravityNonStreamURL(base string) string {
 	return u.String()
 }
 
+// executeStreamSingle performs one streaming Antigravity attempt.
+func (e *AntigravityExecutor) executeStreamSingle(ctx context.Context, req *Request, url string, headers map[string]string, modelID string, useCredits bool) (*StreamResult, error) {
+	body, err := e.buildEnvelope(ctx, req, modelID, useCredits)
+	if err != nil {
+		return nil, err
+	}
+	return e.DoStreamRequest(ContextWithProvider(ctx, req.Provider), "POST", url, headers, body)
+}
+
 // ExecuteStream performs a streaming Antigravity request.
 // Similar to Execute, it retries Pro-family model ids on an upstream 400.
+//
+// Credits behavior follows ANTIGRAVITY_CREDITS:
+//   - off: never inject enabledCreditTypes
+//   - always: inject enabledCreditTypes on every request
+//   - retry: inject enabledCreditTypes only after a 429 quota_exhausted
 func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
 	url := req.BaseURL
 	if url == "" {
@@ -635,24 +788,63 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, req *Request) (
 		candidates = []string{baseModel}
 	}
 
+	mode := antigravityCreditsMode()
+	creditsAvailable := mode != config.AntigravityCreditsModeOff && antigravityCreditsEnabledForAuth(req.ConnectionID)
+
 	var lastErr error
 	for _, modelID := range candidates {
-		body, err := e.buildEnvelope(ctx, req, modelID)
-		if err != nil {
+		useCreditsFirst := mode == config.AntigravityCreditsModeAlways
+
+		result, err := e.executeStreamSingle(ctx, req, url, headers, modelID, useCreditsFirst)
+		if err == nil {
+			return result, nil
+		}
+
+		var upErr *UpstreamError
+		isUpstream := errors.As(err, &upErr)
+
+		// In "always" mode, a permanent credits failure disables retry for this auth.
+		if useCreditsFirst {
+			if isUpstream && isAntigravityExplicitCreditsExhausted(upErr.RawBody) {
+				cache.MarkAntigravityCreditsPermanentlyDisabled(req.ConnectionID)
+				logging.Logger.Info("antigravity credits permanently disabled for auth",
+					"auth_id", req.ConnectionID)
+			}
+			lastErr = err
+			// Retry 400s only when we have another Pro-family candidate id.
+			if isUpstream && upErr.StatusCode == http.StatusBadRequest && len(candidates) > 1 {
+				continue
+			}
 			return nil, err
 		}
-		result, err := e.DoStreamRequest(ContextWithProvider(ctx, req.Provider), "POST", url, headers, body)
-		if err != nil {
-			// Network-level errors are not retried here.
-			return nil, err
+
+		// In "retry" mode, attempt one credits-backed retry on 429 quota_exhausted.
+		if creditsAvailable && isUpstream && isAntigravityQuotaExceeded(upErr.StatusCode, upErr.RawBody) {
+			logging.Logger.Info("antigravity stream quota exceeded, retrying with credits",
+				"model", modelID, "auth_id", req.ConnectionID)
+			retryResult, retryErr := e.executeStreamSingle(ctx, req, url, headers, modelID, true)
+			if retryErr == nil {
+				return retryResult, nil
+			}
+			var retryUpErr *UpstreamError
+			if errors.As(retryErr, &retryUpErr) && isAntigravityExplicitCreditsExhausted(retryUpErr.RawBody) {
+				cache.MarkAntigravityCreditsPermanentlyDisabled(req.ConnectionID)
+				logging.Logger.Info("antigravity credits permanently disabled for auth after stream retry",
+					"auth_id", req.ConnectionID)
+			}
+			// Surface 400s from the upstream to the Pro fallback chain.
+			if errors.As(retryErr, &retryUpErr) && retryUpErr.StatusCode == http.StatusBadRequest && len(candidates) > 1 {
+				lastErr = retryErr
+				continue
+			}
+			return nil, retryErr
 		}
-		// If the upstream rejects the model id with 400, attempt the next candidate.
-		// DoStreamRequest surfaces the HTTP status on StreamResult immediately.
-		if result != nil && result.StatusCode == http.StatusBadRequest && len(candidates) > 1 {
-			lastErr = fmt.Errorf("antigravity stream rejected model %s with status %d", modelID, result.StatusCode)
+
+		lastErr = err
+		if isUpstream && upErr.StatusCode == http.StatusBadRequest && len(candidates) > 1 {
 			continue
 		}
-		return result, nil
+		return nil, err
 	}
 	return nil, lastErr
 }
