@@ -7,11 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Fusion panel tool-history flattening** — `stripFusionTools` now flattens tool/function turns and Anthropic-style `tool_use`/`tool_result` content blocks into plain assistant prose for fusion panel requests. Panel models retain conversational context without being able to emit `tool_calls`, matching the 9router reference implementation.
+
 ### Changed
 - **Concurrent provider detail test-all for large providers** — `Test all` on the provider detail page now processes connections sequentially for small lists, but runs with two parallel workers when there are more than 100 accounts. Each row is still refreshed inline after its test completes.
 
 ### Fixed
 - **Security Warning modal respects 24-hour dismissal** — `ChangePasswordModal` is no longer shown for 24 hours after the user dismisses it. Dismissal is stored as a timestamp in `localStorage`/`sessionStorage` and automatically expires after one day. The old boolean dismissal flag is migrated to the new timestamp format on first load.
+- **Fusion streaming judge failure fallback** — `handleFusionRequest` now falls back to the first successful panel response and emits a terminating `data: [DONE]\n\n` frame when the judge model's stream fails mid-way. Previously the handler returned immediately, leaving clients with a truncated SSE stream.
 
 ### Removed
 - **Deprecated `amazon-q` provider** — removed the `amazon-q` (and alias `aq`) built-in provider and its catalog/model entries. It is superseded by the `kiro` provider; existing AWS tokens cached as `amazon-q-auth-token.json` are still usable because the Kiro auto-import flow now checks only `kiro-auth-token.json`.
