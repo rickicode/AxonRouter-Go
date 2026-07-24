@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- **Codex `/v1/responses` parity with CLIProxyAPI** — `CodexExecutor.ExecuteStream` now patches empty `response.output` arrays in the final `response.completed` / `response.done` event using output items collected from preceding `response.output_item.done` events, matching the non-stream path and CLIProxyAPI behavior. Also normalizes native OpenAI Responses requests before forwarding to Codex: coerces string `input` into a user message array, converts `role=system` to `developer`, forces `stream=true`/`store=false`/`parallel_tool_calls=true`/`include=["reasoning.encrypted_content"]`, rewrites `web_search_preview` aliases to `web_search`, and strips unsupported fields while preserving the Codex allow-list.
 - **Fusion panel/judge text extraction now supports Claude, Gemini, and OpenAI Responses** — `extractAssistantContent` in `internal/api/handlers/v1/chat.go` previously only read `choices[0].message.content`, so panels or judge models that reply in Anthropic Claude (`content[].text`), Google Gemini (`candidates[0].content.parts[].text`), or OpenAI Responses (`output[].message.content[].output_text`) were treated as empty and failed fusion. The extractor now parses all four shapes and falls back to `output_text`/`text`, with unit tests covering each format.
 
 
