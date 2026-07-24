@@ -603,7 +603,9 @@ func TestRefreshFromDB_ReflectsExternalChanges(t *testing.T) {
 		t.Fatalf("update combo is_active: %v", err)
 	}
 
-	h.RefreshFromDB()
+	if err := h.RefreshFromDB(); err != nil {
+		t.Fatalf("RefreshFromDB failed: %v", err)
+	}
 
 	if _, ok := h.Resolve("refreshable"); ok {
 		t.Fatalf("Resolve returned true after deactivating combo in DB")
