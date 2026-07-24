@@ -48,6 +48,27 @@ languages:
 
 If only `svelte` is listed, Go symbol queries will time out because `gopls` is not started.
 
+### Serena Scope Limit (CRITICAL)
+
+**Serena ONLY works on files inside the repository.** Do NOT use Serena for:
+- Files in `~/.pi/agent/`, `~/.config/`, `/tmp/`, or any path outside the repo
+- Global config files (AGENTS.md, mcp.json, opencode.jsonc, etc.)
+- Files in other workspaces or repos
+
+For files outside the repo, use `read`, `edit`, `write`, `bash` (grep/cat/sed) instead.
+
+```bash
+# ✅ Correct — Serena for repo files
+serena_find_symbol ...  # (repo files only)
+
+# ✅ Correct — read/edit for external files
+read /home/agent/.pi/agent/AGENTS.md
+edit /home/agent/.config/opencode/profiles/hive/opencode.jsonc
+
+# ❌ Wrong — Serena on external file
+serena_read_file /home/agent/.pi/agent/AGENTS.md  # WILL FAIL
+```
+
 ### Semble — discovery
 
 Use Semble first when the relevant file, symbol, or behavior is not yet known. Use it for:
