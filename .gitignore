@@ -43,6 +43,7 @@ Thumbs.db
 .openlore/analysis/
 .openlore/logs/
 .openlore/serve.log
+.openlore/serve.json
 graphify-out/
 internal/graphify-out/
 .cortexkit/

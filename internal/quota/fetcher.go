@@ -228,6 +228,26 @@ func parseProviderSpecificData(raw sql.NullString) map[string]any {
 	return m
 }
 
+// parseProviderSpecificStrings returns a string-only view of the raw
+// provider_specific_data JSON column. It keeps the same keys but drops
+// non-string values, matching what the auth-manager refresh path expects.
+func parseProviderSpecificStrings(raw sql.NullString) map[string]string {
+	if !raw.Valid || raw.String == "" {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(raw.String), &m); err != nil {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		if s, ok := v.(string); ok {
+			out[k] = s
+		}
+	}
+	return out
+}
+
 // mapStringToAny converts a string-string map to the map[string]any used by fetchers.
 func mapStringToAny(in map[string]string) map[string]any {
 	if in == nil {
@@ -387,12 +407,7 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 		if authMgr != nil {
 			providerType := auth.ProviderType(providerID)
 			if _, ok := authMgr.GetService(providerType); ok {
-				providerSpecific := map[string]string{}
-				for k, v := range psd {
-					if s, ok := v.(string); ok {
-						providerSpecific[k] = s
-					}
-				}
+				providerSpecific := parseProviderSpecificStrings(c.ProviderSpecificData)
 				creds := &auth.Credentials{
 					AccessToken:      token,
 					RefreshToken:     c.OAuthRefreshToken.String,
@@ -555,12 +570,7 @@ func forceRefreshOnQuotaAuthError(c connRow, token string, psd map[string]any, p
 		return "", nil, false
 	}
 
-	providerSpecific := map[string]string{}
-	for k, v := range psd {
-		if s, ok := v.(string); ok {
-			providerSpecific[k] = s
-		}
-	}
+	providerSpecific := parseProviderSpecificStrings(c.ProviderSpecificData)
 
 	creds := &auth.Credentials{
 		AccessToken:      token,

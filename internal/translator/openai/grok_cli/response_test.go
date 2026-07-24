@@ -3,6 +3,7 @@ package grok_cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -17,10 +18,15 @@ func chunk(s string) []byte {
 
 func collectStream(t *testing.T, events ...string) [][]byte {
 	t.Helper()
+	return collectStreamWithReq(t, nil, events...)
+}
+
+func collectStreamWithReq(t *testing.T, originalReq []byte, events ...string) [][]byte {
+	t.Helper()
 	var param any
 	var out [][]byte
 	for _, e := range events {
-		chunks := convertGrokResponseToOpenAIStream(context.Background(), "grok-cli/grok-4.3", nil, nil, chunk(e), &param)
+		chunks := convertGrokResponseToOpenAIStream(context.Background(), "grok-cli/grok-4.3", originalReq, nil, chunk(e), &param)
 		out = append(out, chunks...)
 	}
 	return out
@@ -160,6 +166,92 @@ func TestReverseResponseTranslatorRegistered(t *testing.T) {
 	}
 	if got := gjson.GetBytes(out, "usage.completion_tokens").Int(); got != 2 {
 		t.Fatalf("expected completion_tokens 2, got %d", got)
+	}
+}
+
+func TestStreamInternalXSearchFilter(t *testing.T) {
+	originalReq, _ := json.Marshal(map[string]any{
+		"tools": []any{map[string]any{"type": "function", "name": "get_weather", "parameters": map[string]any{"type": "object"}}},
+	})
+	events := []string{
+		`{"type":"response.created","response":{"id":"resp_1","model":"grok-4.3"}}`,
+		`{"type":"response.output_item.done","output_index":0,"item":{"type":"custom_tool_call","call_id":"xs_call_1","name":"x_user_search","arguments":"{}"}}`,
+		`{"type":"response.function_call_arguments.delta","item_id":"xs_call_1","delta":" ignored "}`,
+		`{"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","call_id":"call_1","name":"get_weather","arguments":"{\"city\":\"LA\"}"}}`,
+		`{"type":"response.completed"}`,
+	}
+	chunks := collectStreamWithReq(t, originalReq, events...)
+	if len(chunks) != 2 {
+		t.Fatalf("expected 2 chunks, got %d: %s", len(chunks), stringify(chunks))
+	}
+	fc := bytes.TrimSpace(chunks[0][5:])
+	if got := gjson.GetBytes(fc, "choices.0.delta.tool_calls.0.function.name").String(); got != "get_weather" {
+		t.Fatalf("expected tool name get_weather, got %s", got)
+	}
+	if got := gjson.GetBytes(fc, "choices.0.delta.tool_calls.0.index").Int(); got != 0 {
+		t.Errorf("expected compact tool index 0, got %d", got)
+	}
+	completed := bytes.TrimSpace(chunks[1][5:])
+	if got := gjson.GetBytes(completed, "choices.0.finish_reason").String(); got != "tool_calls" {
+		t.Fatalf("expected finish_reason tool_calls, got %s", got)
+	}
+}
+
+func TestStreamNamespaceRestoration(t *testing.T) {
+	originalReq, _ := json.Marshal(map[string]any{
+		"tools": []any{
+			map[string]any{
+				"type":      "namespace",
+				"namespace": "mcp__exa",
+				"tools": []any{
+					map[string]any{"type": "function", "name": "search", "parameters": map[string]any{"type": "object"}},
+				},
+			},
+		},
+	})
+	events := []string{
+		`{"type":"response.created","response":{"id":"resp_1","model":"grok-4.3"}}`,
+		`{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"mcp__exa__search","arguments":"{}"}}`,
+		`{"type":"response.completed"}`,
+	}
+	chunks := collectStreamWithReq(t, originalReq, events...)
+	if len(chunks) != 2 {
+		t.Fatalf("expected 2 chunks, got %d: %s", len(chunks), stringify(chunks))
+	}
+	fc := bytes.TrimSpace(chunks[0][5:])
+	if got := gjson.GetBytes(fc, "choices.0.delta.tool_calls.0.function.name").String(); got != "mcp__exa.search" {
+		t.Fatalf("expected namespaced tool name, got %s", got)
+	}
+}
+
+func TestStreamPreservesClientDeclaredInternalName(t *testing.T) {
+	originalReq, _ := json.Marshal(map[string]any{
+		"tools": []any{map[string]any{"type": "function", "name": "x_user_search", "parameters": map[string]any{"type": "object"}}},
+	})
+	events := []string{
+		`{"type":"response.created","response":{"id":"resp_1","model":"grok-4.3"}}`,
+		`{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"x_user_search","arguments":"{}"}}`,
+		`{"type":"response.completed"}`,
+	}
+	chunks := collectStreamWithReq(t, originalReq, events...)
+	if len(chunks) != 2 {
+		t.Fatalf("expected 2 chunks, got %d: %s", len(chunks), stringify(chunks))
+	}
+	fc := bytes.TrimSpace(chunks[0][5:])
+	if got := gjson.GetBytes(fc, "choices.0.delta.tool_calls.0.function.name").String(); got != "x_user_search" {
+		t.Fatalf("expected preserved name x_user_search, got %s", got)
+	}
+}
+
+func TestNonStreamNamespacedFunctionCall(t *testing.T) {
+	resp := []byte(`{"id":"resp_2","model":"grok-4.3","output":[{"type":"function_call","call_id":"call_1","name":"search","namespace":"mcp__exa","arguments":"{\"city\":\"LA\"}"}]}`)
+	out := convertGrokResponseToOpenAINonStream(context.Background(), "grok-cli/grok-4.3", nil, nil, resp, nil)
+
+	if got := gjson.GetBytes(out, "choices.0.finish_reason").String(); got != "tool_calls" {
+		t.Fatalf("expected tool_calls, got %s", got)
+	}
+	if got := gjson.GetBytes(out, "choices.0.message.tool_calls.0.function.name").String(); got != "mcp__exa.search" {
+		t.Fatalf("expected tool name mcp__exa.search, got %s", got)
 	}
 }
 
