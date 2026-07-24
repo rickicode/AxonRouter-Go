@@ -378,6 +378,165 @@ attemptLoop:
 	c.JSON(statusCode, gin.H{"error": gin.H{"message": msg, "type": errType, "detail": detail}})
 }
 
+// comboStepResult is the structured outcome of attempting one combo step.
+// It carries everything the orchestrator needs to either commit a successful
+// response or decide whether to fall through to the next step.
+type comboStepResult struct {
+	step           db.ComboStep
+	connID         string
+	conn           *Connection
+	exec           executor.Executor
+	provider       string
+	modelName      string
+	resp           *executor.Response
+	streamResult   *executor.StreamResult
+	proxyCtx       context.Context
+	translatedBody []byte
+	streamCfg      *executor.StreamConfig
+	latency        int64
+	lastErr        error
+	category       string
+	retryable      bool
+	handled        bool
+	success        bool
+}
+
+// recordComboStepFailure applies the same cooldown/exhaustion side effects for a
+// failed combo connection attempt that handleComboRequest currently applies. It
+// mirrors that path exactly to avoid observable behavior changes.
+func (h *Handler) recordComboStepFailure(comboCtx context.Context, connID, provider, modelName string, det connstate.ErrorDetection, err error) {
+	if det.ModelID != "" && (det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
+		scope := connstate.ModelScope(provider, det.ModelID)
+		h.exhaustion.MarkExhausted(quota.ExhaustKey(connID, scope), quota.TTLFromCooldown(det.CooldownUntil, 5*time.Minute))
+	} else if det.Category == connstate.ErrorRateLimit {
+		h.exhaustion.MarkExhausted(connID, quota.TTLFromCooldown(det.CooldownUntil, quota.DefaultExhaustionTTL))
+	} else if det.Category == connstate.ErrorQuota {
+		ttl := 24 * time.Hour
+		if det.CooldownUntil != nil {
+			ttl = time.Until(*det.CooldownUntil)
+		}
+		h.exhaustion.MarkExhausted(connID, ttl)
+	}
+	h.combo.RecordFailure(connID, det)
+	h.persistCooldownScoped(connID, det)
+	if det.Status != connstate.StatusReady {
+		h.elig.ScheduleUpdateProvider(provider)
+	}
+	if isTransientUpstreamError(err) {
+		cd := transientCooldown()
+		logging.Logger.Info("combo transient error cooldown before next connection",
+			"provider", provider, "model", modelName,
+			"conn", shortID(connID, 8), "status", upstreamHTTPStatus(err),
+			"cooldown_ms", cd.Milliseconds())
+		transientErrorSleep(comboCtx, cd)
+	}
+}
+
+// executeComboStep executes one combo step end-to-end: resolve the executor,
+// pick eligible connections, prepare each one, and call the provider. It
+// classifies failures and applies cooldowns/exhaustion exactly like the inline
+// logic in handleComboRequest so the orchestrator can decide what to do next.
+func (h *Handler) executeComboStep(
+	comboCtx context.Context,
+	c *gin.Context,
+	step db.ComboStep,
+	body []byte,
+	stream bool,
+	clientFormat executor.ProviderFormat,
+	start time.Time,
+) comboStepResult {
+	var result comboStepResult
+	result.step = step
+
+	provider, modelName := executor.SplitModel(step.ModelID)
+	result.provider = provider
+	result.modelName = modelName
+
+	exec, providerFormat, err := h.resolveExecutor(provider, modelName)
+	if err != nil {
+		result.lastErr = err
+		result.category = "executor"
+		result.retryable = true
+		return result
+	}
+	result.exec = exec
+
+	connIDs := h.combo.PickConnections(provider, modelName)
+	for _, connID := range connIDs {
+		if comboCtx.Err() != nil {
+			break
+		}
+		result.connID = connID
+
+		now := time.Now()
+		conn, err := h.prepareConnection(comboCtx, connID, provider, modelName, now)
+		if err != nil {
+			continue
+		}
+		result.conn = conn
+
+		translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+		translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
+		translatedBody = h.applyThinkingOverrideFromContext(c.Request.Context(), translatedBody, string(providerFormat))
+
+		var streamCfg *executor.StreamConfig
+		if stream {
+			adaptiveMs := computeAdaptiveReadiness(body, modelName, 80000)
+			streamCfg = &executor.StreamConfig{
+				StreamReadinessTimeoutMs: adaptiveMs,
+				AdaptiveReadiness:        true,
+			}
+		}
+
+		execCtx := comboCtx
+		if stream {
+			execCtx = c.Request.Context()
+		}
+		proxyCtx, resp, streamResult, err := h.executeProviderCall(execCtx, exec, conn, provider, modelName, translatedBody, stream, streamCfg)
+		if err == nil && !stream && resp != nil && (resp.StatusCode >= 500 || isUpstreamErrorBody(resp.Body)) {
+			err = &executor.UpstreamError{
+				StatusCode: resp.StatusCode,
+				Body:       resp.Body,
+				RawBody:    resp.Body,
+			}
+		}
+		if err != nil {
+			if h.isClientCanceled(c, err) {
+				result.lastErr = err
+				result.retryable = false
+				return result
+			}
+			det := connstate.DetectError(comboCtx, 0, "", err, provider, modelName, nil)
+			result.lastErr = err
+			result.category = string(det.Category)
+
+			if det.Category == connstate.ErrorModelNotFound {
+				result.retryable = false
+				if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
+					result.handled = true
+				}
+				return result
+			}
+
+			result.retryable = true
+			h.recordComboStepFailure(comboCtx, connID, provider, modelName, det, err)
+			continue
+		}
+
+		result.success = true
+		result.resp = resp
+		result.streamResult = streamResult
+		result.proxyCtx = proxyCtx
+		result.translatedBody = translatedBody
+		result.streamCfg = streamCfg
+		result.latency = time.Since(start).Milliseconds()
+		return result
+	}
+
+	result.retryable = true
+	return result
+}
+
 // handleComboRequest handles a request that matched a combo.
 //
 // Semantics: iterate the combo's steps in strategy order. For each step, retry
@@ -927,7 +1086,7 @@ func stripFusionTools(body []byte) []byte {
 }
 
 const (
-	fusionToolCallPrefix  = "[Called tools: "
+	fusionToolCallPrefix   = "[Called tools: "
 	fusionToolResultPrefix = "[Tool result: "
 )
 
