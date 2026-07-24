@@ -144,6 +144,9 @@ func (s *OAuthService) exchangeCode(ctx context.Context, code, redirectURI, code
 	if email == "" && providerSpecific["email"] != "" {
 		email = providerSpecific["email"]
 	}
+	if email != "" {
+		providerSpecific["email"] = email
+	}
 
 	return &auth.Credentials{
 		AccessToken:      tokenResp.AccessToken,

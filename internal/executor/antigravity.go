@@ -60,10 +60,10 @@ var antigravityDiscoveryBaseURLs = []string{
 var antigravityModelAliases = map[string]string{
 	// OmniRoute forward aliases (kept for backward compatibility even after catalog cleanup)
 	"gemini-3-pro-preview":                    "gemini-3.1-pro",
-	"gemini-3-pro-image-preview":                "gemini-3-pro-image",
-	"gemini-2.5-computer-use-preview-10-2025":   "rev19-uic3-1p",
+	"gemini-3-pro-image-preview":              "gemini-3-pro-image",
+	"gemini-2.5-computer-use-preview-10-2025": "rev19-uic3-1p",
 	// Resilience alias: older client configs may still reference the plain Pro ID
-	"gemini-3.1-pro":                            "gemini-pro-agent",
+	"gemini-3.1-pro": "gemini-pro-agent",
 }
 
 // antigravityProFallbackChains provides per-request upstream-id retries for the
@@ -273,6 +273,7 @@ func injectToolConfig(inner map[string]any) {
 // snake-case keys the upstream Antigravity/Gemini API expects.
 //   - parametersJsonSchema -> parameters
 //   - functionDeclarations -> function_declarations
+//
 // The translator uses parametersJsonSchema as an internal representation so it
 // does not collide with OpenAI's tools[].function.parameters. Antigravity
 // expects the Gemini-native "parameters" key under "function_declarations".
@@ -301,19 +302,24 @@ func normalizeAntigravityToolKeys(v any) {
 	}
 }
 
+// isAntigravityEnterpriseAccount reports whether the account is a non-consumer
+// (non-Gmail) Antigravity account. Empty email is treated as consumer.
+// Mirrors OmniRoute isAntigravityEnterpriseAccount (antigravityIdentity.ts:57-62).
+func isAntigravityEnterpriseAccount(email string) bool {
+	email = strings.ToLower(strings.TrimSpace(email))
+	return email != "" && !strings.HasSuffix(email, "@gmail.com") && !strings.HasSuffix(email, "@googlemail.com")
+}
+
 // envelopeUserAgent returns "antigravity" or "jetski" based on account/client profile.
 // Mirrors OmniRoute getAntigravityEnvelopeUserAgent (antigravityIdentity.ts:65-68).
 func envelopeUserAgent(req *Request) string {
-	clientProfile := ""
-	email := ""
-	if req.ProviderSpecificData != nil {
-		clientProfile = strings.ToLower(req.ProviderSpecificData["clientProfile"])
-		email = req.ProviderSpecificData["email"]
+	if req.ProviderSpecificData == nil {
+		return "antigravity"
 	}
-	if clientProfile == "harness" {
+	if strings.ToLower(req.ProviderSpecificData["clientProfile"]) == "harness" {
 		return "jetski"
 	}
-	if email != "" && !strings.HasSuffix(email, "@gmail.com") && !strings.HasSuffix(email, "@googlemail.com") {
+	if isAntigravityEnterpriseAccount(req.ProviderSpecificData["email"]) {
 		return "jetski"
 	}
 	return "antigravity"

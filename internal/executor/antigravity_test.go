@@ -144,6 +144,10 @@ func TestEnvelopeUserAgent(t *testing.T) {
 		{"gmail", map[string]string{"email": "foo@gmail.com"}, "antigravity"},
 		{"googlemail", map[string]string{"email": "foo@googlemail.com"}, "antigravity"},
 		{"enterprise", map[string]string{"email": "foo@corp.com"}, "jetski"},
+		{"gmail-upper", map[string]string{"email": "Foo@GMail.com"}, "antigravity"},
+		{"googlemail-upper", map[string]string{"email": "Foo@GoogleMail.com"}, "antigravity"},
+		{"enterprise-upper", map[string]string{"email": "Foo@CORP.com"}, "jetski"},
+		{"empty", map[string]string{}, "antigravity"},
 		{"harness", map[string]string{"clientProfile": "harness"}, "jetski"},
 	}
 	for _, tc := range cases {
@@ -255,7 +259,7 @@ func TestWrapEnvelope_ResolvesModelAlias(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
 		"contents": []any{
 			map[string]any{
-				"role": "user",
+				"role":  "user",
 				"parts": []any{map[string]any{"text": "hi"}},
 			},
 		},
