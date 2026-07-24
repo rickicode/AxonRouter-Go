@@ -611,3 +611,45 @@ func TestRefreshFromDB_ReflectsExternalChanges(t *testing.T) {
 		t.Fatalf("Resolve returned true after deactivating combo in DB")
 	}
 }
+
+func TestRefreshFromDB_LeavesCacheUnchangedOnStepLoadFailure(t *testing.T) {
+	database := newComboTestDB(t)
+	seedConnectionForCombo(t, database, "conn-1")
+
+	store := connstate.NewStore()
+	cs := &connstate.ConnectionState{ID: "conn-1", Prefix: "openai", Status: connstate.StatusReady}
+	store.Set("conn-1", cs)
+	elig := connstate.NewEligibilityManager(store)
+	elig.RecomputeAll()
+	h := NewHandler(database, store, elig)
+
+	combo, err := h.CreateCombo("cached-combo", "priority", 30000, 1, false, "", "", []CreateStepInput{
+		{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
+	})
+	if err != nil {
+		t.Fatalf("CreateCombo failed: %v", err)
+	}
+
+	if _, ok := h.Resolve("cached-combo"); !ok {
+		t.Fatalf("Resolve before failure returned false")
+	}
+
+	if _, err := database.Exec(`DROP TABLE combo_steps`); err != nil {
+		t.Fatalf("drop combo_steps: %v", err)
+	}
+
+	if err := h.RefreshFromDB(); err == nil {
+		t.Fatalf("RefreshFromDB returned nil error after dropping combo_steps")
+	}
+
+	result, ok := h.Resolve("cached-combo")
+	if !ok {
+		t.Fatalf("Resolve returned false after failed refresh; cache was replaced")
+	}
+	if result.Combo.ID != combo.ID {
+		t.Fatalf("combo ID = %q, want %q", result.Combo.ID, combo.ID)
+	}
+	if len(result.Steps) != 1 {
+		t.Fatalf("len(Steps) = %d, want 1", len(result.Steps))
+	}
+}
