@@ -319,7 +319,7 @@ let totalPages = $derived(Math.max(1, Math.ceil(filtered.length / perPage)));
                 </div>
 
                 <!-- Secondary rates (only if non-zero) -->
-                {#if m.reason_per_1k || m.cached_read_per_1k || m.cached_write_per_1k}
+                {#if m.reason_per_1k || m.cached_read_per_1k || m.cached_write_per_1k || m.image_per_unit || m.audio_per_min || m.video_per_unit}
                   <div class="flex flex-wrap gap-x-4 gap-y-1 text-caption-mono text-muted-foreground">
                     {#if m.reason_per_1k}
                       <span>Reason: {fmtShort(m.reason_per_1k)} /1K</span>
@@ -329,6 +329,15 @@ let totalPages = $derived(Math.max(1, Math.ceil(filtered.length / perPage)));
                     {/if}
                     {#if m.cached_write_per_1k}
                       <span>Cache W: {fmtShort(m.cached_write_per_1k)} /1K</span>
+                    {/if}
+                    {#if m.image_per_unit}
+                      <span>Image: {fmtShort(m.image_per_unit)} /unit</span>
+                    {/if}
+                    {#if m.audio_per_min}
+                      <span>Audio: {fmtShort(m.audio_per_min)} /min</span>
+                    {/if}
+                    {#if m.video_per_unit}
+                      <span>Video: {fmtShort(m.video_per_unit)} /unit</span>
                     {/if}
                   </div>
                 {/if}
