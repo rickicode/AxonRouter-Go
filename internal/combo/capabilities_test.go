@@ -40,6 +40,46 @@ func TestDetectRequiredCapabilities_Tools(t *testing.T) {
 	}
 }
 
+func TestDetectRequiredCapabilities_GeminiContents_Vision(t *testing.T) {
+	body := []byte(`{"contents":[{"role":"user","parts":[{"inlineData":{"mimeType":"image/png","data":"ABC123"}}]}]}`)
+	caps := DetectRequiredCapabilities(body)
+	if !caps.Vision {
+		t.Fatalf("expected vision capability required for Gemini inlineData image")
+	}
+}
+
+func TestDetectRequiredCapabilities_GeminiContents_Audio(t *testing.T) {
+	body := []byte(`{"contents":[{"role":"user","parts":[{"inlineData":{"mimeType":"audio/wav","data":"ABC123"}}]}]}`)
+	caps := DetectRequiredCapabilities(body)
+	if !caps.AudioInput {
+		t.Fatalf("expected audio_input capability required for Gemini inlineData audio")
+	}
+}
+
+func TestDetectRequiredCapabilities_GeminiContents_PDF(t *testing.T) {
+	body := []byte(`{"contents":[{"role":"user","parts":[{"fileData":{"mimeType":"application/pdf","fileUri":"gs://bucket/report.pdf"}}]}]}`)
+	caps := DetectRequiredCapabilities(body)
+	if !caps.PDF {
+		t.Fatalf("expected PDF capability required for Gemini fileData PDF")
+	}
+}
+
+func TestDetectRequiredCapabilities_GeminiContents_TextOnly(t *testing.T) {
+	body := []byte(`{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`)
+	caps := DetectRequiredCapabilities(body)
+	if caps.Vision || caps.AudioInput || caps.VideoInput || caps.PDF || caps.Tools {
+		t.Fatalf("expected no media capability required for text-only Gemini content")
+	}
+}
+
+func TestDetectRequiredCapabilities_AntigravityContents_Vision(t *testing.T) {
+	body := []byte(`{"project":"demo","request":{"contents":[{"role":"user","parts":[{"inlineData":{"mimeType":"image/jpeg","data":"RAWBASE64"}}]}]}}`)
+	caps := DetectRequiredCapabilities(body)
+	if !caps.Vision {
+		t.Fatalf("expected vision capability required for Antigravity request.contents image")
+	}
+}
+
 func TestReorderStepsByCapabilities_PrioritizesVision(t *testing.T) {
 	database := newComboTestDB(t)
 	seedConnectionForCombo(t, database, "conn-1")

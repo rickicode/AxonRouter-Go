@@ -45,7 +45,69 @@ func DetectRequiredCapabilities(body []byte) models.ModelCapabilities {
 		}
 	}
 
+	// Gemini native format uses top-level `contents` with `parts`.
+	if contents, ok := req["contents"].([]any); ok {
+		detectGeminiContents(contents, &caps)
+	}
+
+	// Antigravity native format nests `contents` under `request`.
+	if request, ok := req["request"].(map[string]any); ok {
+		if contents, ok := request["contents"].([]any); ok {
+			detectGeminiContents(contents, &caps)
+		}
+	}
+
 	return caps
+}
+
+func detectGeminiContents(contents []any, caps *models.ModelCapabilities) {
+	for _, item := range contents {
+		content, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if parts, ok := content["parts"].([]any); ok {
+			for _, part := range parts {
+				detectGeminiPart(part, caps)
+			}
+		}
+	}
+}
+
+func detectGeminiPart(part any, caps *models.ModelCapabilities) {
+	m, ok := part.(map[string]any)
+	if !ok {
+		return
+	}
+
+	// Gemini parts use inlineData/fileData blobs with mimeType.
+	if inlineData, ok := m["inlineData"].(map[string]any); ok {
+		detectCapabilityByMimeType(inlineData, caps)
+	}
+	if fileData, ok := m["fileData"].(map[string]any); ok {
+		detectCapabilityByMimeType(fileData, caps)
+	}
+
+	// Fallback to OpenAI-style typed parts when present.
+	detectContentPart(part, caps)
+}
+
+func detectCapabilityByMimeType(m map[string]any, caps *models.ModelCapabilities) {
+	mime, _ := m["mimeType"].(string)
+	if mime == "" {
+		mime, _ = m["mime_type"].(string)
+	}
+	mime = strings.ToLower(mime)
+	switch {
+	case strings.HasPrefix(mime, "image/"):
+		caps.Vision = true
+	case strings.HasPrefix(mime, "audio/"):
+		caps.AudioInput = true
+	case strings.HasPrefix(mime, "video/"):
+		caps.VideoInput = true
+	case strings.Contains(mime, "pdf"):
+		caps.PDF = true
+	}
 }
 
 func detectMessageCapabilities(item any, caps *models.ModelCapabilities) {
