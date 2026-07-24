@@ -1945,7 +1945,13 @@ func (h *Handler) streamResponse(
 			}
 
 			lastChunkTime = time.Now()
-			translatedChunks := registry.Response(ctx, string(clientFormat), string(providerFormat), model, originalReq, translatedReq, chunk.Payload, &streamState)
+			var translatedChunks [][]byte
+			if clientFormat == providerFormat {
+				// Direct SSE passthrough when client and provider share the same native format.
+				translatedChunks = [][]byte{append(chunk.Payload, "\n\n"...)}
+			} else {
+				translatedChunks = registry.Response(ctx, string(clientFormat), string(providerFormat), model, originalReq, translatedReq, chunk.Payload, &streamState)
+			}
 			for _, tc := range translatedChunks {
 				c.Writer.Write(tc)
 				flusher.Flush()

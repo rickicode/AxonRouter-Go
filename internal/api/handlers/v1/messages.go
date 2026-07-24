@@ -90,7 +90,10 @@ func (h *Handler) Messages(c *gin.Context) {
 
 	// Connection failover loop: try up to failoverMaxAttempts connections before giving up.
 	clientFormat := executor.FormatClaude
-	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+	translatedBody := body
+	if clientFormat != providerFormat {
+		translatedBody = registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+	}
 	translatedBody = h.applyThinkingOverrideFromContext(c.Request.Context(), translatedBody, string(providerFormat))
 	translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
 	// NOTE: configurable via failover_max_attempts setting.
@@ -218,7 +221,12 @@ attemptLoop:
 			}
 			return
 		} else {
-			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(clientFormat), string(providerFormat), modelName, body, translatedBody, resp.Body, nil)
+			var translatedResp []byte
+			if clientFormat == providerFormat {
+				translatedResp = resp.Body
+			} else {
+				translatedResp = registry.ResponseNonStream(c.Request.Context(), string(clientFormat), string(providerFormat), modelName, body, translatedBody, resp.Body, nil)
+			}
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			tokensEstimated := false
 			if tokenCounts.InputTokens+tokenCounts.OutputTokens == 0 && resp.StatusCode < 400 {
@@ -243,24 +251,24 @@ attemptLoop:
 				InputTokens:         tokenCounts.InputTokens,
 				OutputTokens:        tokenCounts.OutputTokens,
 				ReasoningTokens:     tokenCounts.ReasoningTokens,
-			CachedTokens:        tokenCounts.CachedTokens,
-			CacheCreationTokens: tokenCounts.CacheCreationTokens,
-			CostUsd:             estCost,
-			LatencyMs:           latency,
-			StatusCode:          resp.StatusCode,
-			TokensEstimated:     tokensEstimated,
-		})
-		h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
-		if resp.StatusCode < 300 {
-			h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
-		}
-		h.writeJSONResponse(c, resp.StatusCode, translatedResp, responseCost{
-			modelID:         modelName,
-			exactCost:       resp.CostUsd,
-			counts:          tokenCounts,
-			tokensEstimated: tokensEstimated,
-			flatRate:        h.isFlatRate(provider),
-		})
+				CachedTokens:        tokenCounts.CachedTokens,
+				CacheCreationTokens: tokenCounts.CacheCreationTokens,
+				CostUsd:             estCost,
+				LatencyMs:           latency,
+				StatusCode:          resp.StatusCode,
+				TokensEstimated:     tokensEstimated,
+			})
+			h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
+			if resp.StatusCode < 300 {
+				h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
+			}
+			h.writeJSONResponse(c, resp.StatusCode, translatedResp, responseCost{
+				modelID:         modelName,
+				exactCost:       resp.CostUsd,
+				counts:          tokenCounts,
+				tokensEstimated: tokensEstimated,
+				flatRate:        h.isFlatRate(provider),
+			})
 		}
 		return
 	}
