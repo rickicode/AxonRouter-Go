@@ -117,14 +117,62 @@ type TokenCounter interface {
 
 // BaseExecutor provides shared HTTP logic for all executors.
 type BaseExecutor struct {
-	Client                 *http.Client
-	Timeout                time.Duration
-	FetchTimeout           time.Duration
-	StreamIdleTimeout      time.Duration
-	StreamReadinessTimeout time.Duration
-	proxyClients           sync.Map // proxyURL -> *http.Client (non-streaming)
-	streamBase             *http.Client
-	streamClients          sync.Map // proxyURL -> *http.Client (streaming, no Timeout)
+	Client                  *http.Client
+	Timeout                 time.Duration
+	FetchTimeout            time.Duration
+	StreamIdleTimeout       time.Duration
+	StreamReadinessTimeout  time.Duration
+	ResponseHeaderTimeout   time.Duration // abort if no response headers arrive within this window
+	proxyClients            sync.Map      // proxyURL -> *http.Client (non-streaming)
+	streamBase              *http.Client
+	streamClients           sync.Map      // proxyURL -> *http.Client (streaming, no Timeout)
+}
+
+// StreamReadinessTimeoutError is returned when an upstream streaming request does
+// not produce response headers within the configured readiness window. It embeds
+// an UpstreamError with StatusCode 504 so handlers surface it as a Gateway
+// Timeout to downstream clients.
+type StreamReadinessTimeoutError struct {
+	*UpstreamError
+	Timeout time.Duration
+	URL     string
+}
+
+func newStreamReadinessTimeoutError(timeout time.Duration, rawURL string) *StreamReadinessTimeoutError {
+	body := gatewayTimeoutBody(fmt.Sprintf("stream readiness timeout after %v waiting for response headers from %s", timeout, rawURL))
+	return &StreamReadinessTimeoutError{
+		UpstreamError: &UpstreamError{
+			StatusCode: http.StatusGatewayTimeout,
+			Body:       body,
+			RawBody:    body,
+		},
+		Timeout: timeout,
+		URL:     rawURL,
+	}
+}
+
+// Is reports whether target is a context deadline error, so readiness timeouts
+// are treated as timeout/category errors by the failover/detection layer.
+func (e *StreamReadinessTimeoutError) Is(target error) bool {
+	return target == context.DeadlineExceeded
+}
+
+func isResponseHeaderTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "timeout awaiting response headers")
+}
+
+// gatewayTimeoutBody returns a stable OpenAI-style error body for 504 responses.
+func gatewayTimeoutBody(message string) []byte {
+	b, _ := json.Marshal(map[string]any{
+		"error": map[string]any{
+			"message": message,
+			"type":    "timeout_error",
+		},
+	})
+	return b
 }
 
 // NewBaseExecutor creates a base executor with default settings.
@@ -132,13 +180,19 @@ type BaseExecutor struct {
 //
 //	FETCH_TIMEOUT_MS=600000 (10m), STREAM_IDLE_TIMEOUT_MS=600000 (10m),
 //	STREAM_READINESS_TIMEOUT_MS=80000 (80s).
-func defaultHTTPTransport() *http.Transport {
+//
+// defaultHTTPTransport returns a transport with ResponseHeaderTimeout set so
+// requests that never receive response headers cannot hang indefinitely.
+// ResponseHeaderTimeout covers only the window until headers arrive; it does
+// not limit body or stream reading once headers have been received.
+func defaultHTTPTransport(responseHeaderTimeout time.Duration) *http.Transport {
 	return &http.Transport{
 		MaxIdleConns:          1000,
 		MaxIdleConnsPerHost:   100,
 		IdleConnTimeout:       30 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: responseHeaderTimeout,
 		ForceAttemptHTTP2:     true,
 		DialContext:           defaultDialContext(),
 	}
@@ -158,20 +212,22 @@ func defaultDialContext() func(ctx context.Context, network, addr string) (net.C
 }
 
 func NewBaseExecutor() *BaseExecutor {
+	responseHeaderTimeout := time.Duration(getEnvInt("STREAM_RESPONSE_HEADER_TIMEOUT_MS", 30000)) * time.Millisecond
 	b := &BaseExecutor{
 		Client: &http.Client{
 			Timeout:   5 * time.Minute,
-			Transport: defaultHTTPTransport(),
+			Transport: defaultHTTPTransport(responseHeaderTimeout),
 		},
 		// Streaming uses a client with no global Timeout; stream lifecycle is
 		// governed by fetch/idle/readiness context timeouts instead.
 		streamBase: &http.Client{
-			Transport: defaultHTTPTransport(),
+			Transport: defaultHTTPTransport(responseHeaderTimeout),
 		},
 		Timeout:                5 * time.Minute,
 		FetchTimeout:           time.Duration(getEnvInt("FETCH_TIMEOUT_MS", 600000)) * time.Millisecond,
 		StreamIdleTimeout:      time.Duration(getEnvInt("STREAM_IDLE_TIMEOUT_MS", 600000)) * time.Millisecond,
 		StreamReadinessTimeout: time.Duration(getEnvInt("STREAM_READINESS_TIMEOUT_MS", 80000)) * time.Millisecond,
+		ResponseHeaderTimeout:  responseHeaderTimeout,
 	}
 	// Periodically drop idle connections so stale proxy/upstream sockets are
 	// not reused after the peer silently closed them (common EOF source).
@@ -445,7 +501,7 @@ func (b *BaseExecutor) proxyClient(proxyURL string) (*http.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid proxy URL: %w", err)
 	}
-	transport := defaultHTTPTransport()
+	transport := defaultHTTPTransport(b.ResponseHeaderTimeout)
 	transport.Proxy = http.ProxyURL(u)
 	// HTTP/2 over an HTTP CONNECT proxy is flaky across providers; keep it off
 	// for proxied traffic to avoid mid-stream EOFs.
@@ -469,7 +525,7 @@ func (b *BaseExecutor) streamClient(proxyURL string) (*http.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid proxy URL: %w", err)
 	}
-	transport := defaultHTTPTransport()
+	transport := defaultHTTPTransport(b.ResponseHeaderTimeout)
 	transport.Proxy = http.ProxyURL(u)
 	transport.ForceAttemptHTTP2 = false
 	c := &http.Client{Transport: transport}
@@ -747,6 +803,7 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 	fetchTimeout := b.FetchTimeout
 	idleTimeout := b.StreamIdleTimeout
 	readinessTimeout := b.StreamReadinessTimeout
+	responseHeaderTimeout := b.ResponseHeaderTimeout
 	stallTimeout := b.StreamIdleTimeout // default: same as idle
 	if cfg != nil {
 		if cfg.FetchTimeoutMs > 0 {
@@ -817,6 +874,9 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 				"error", err,
 			}, clientLogAttrs(ctx)...)...,
 		)
+		if isResponseHeaderTimeout(err) {
+			return nil, newStreamReadinessTimeoutError(responseHeaderTimeout, targetURL)
+		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			return nil, fmt.Errorf("stream fetch timeout (%v): %w", fetchTimeout, err)
 		}
