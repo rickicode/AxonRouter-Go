@@ -399,3 +399,53 @@ func TestValidateSeedPricing(t *testing.T) {
 		t.Fatal("expected $0 free-tier error, got nil")
 	}
 }
+
+// TestPricingSeedPreservesOperatorEdits verifies that model_pricing is seeded
+// on first run, and that re-running migrations leaves operator edits intact.
+func TestPricingSeedPreservesOperatorEdits(t *testing.T) {
+	dir := t.TempDir()
+	d, err := sql.Open("sqlite", filepath.Join(dir, "verify.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	if err := RunMigrations(d); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate an operator editing a seeded row via the admin UI/API.
+	const modelID = "gpt-4o"
+	const editedInput = 9.999
+	if _, err := d.Exec(`UPDATE model_pricing SET input_per_1k = ?, updated_at = ? WHERE model_id = ?`, editedInput, 9999, modelID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Add a custom operator-created row not present in the hardcoded seed.
+	const customID = "custom-operator-model"
+	if _, err := d.Exec(`INSERT INTO model_pricing (model_id, display_name, input_per_1k, output_per_1k, currency, updated_at) VALUES (?, ?, ?, ?, 'USD', ?)`,
+		customID, "Custom Operator Model", 0.123, 0.456, 9999); err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-running migrations must not wipe the edited or custom rows.
+	if err := RunMigrations(d); err != nil {
+		t.Fatal(err)
+	}
+
+	var inPrice float64
+	if err := d.QueryRow(`SELECT input_per_1k FROM model_pricing WHERE model_id = ?`, modelID).Scan(&inPrice); err != nil {
+		t.Fatal(err)
+	}
+	if inPrice != editedInput {
+		t.Errorf("operator-edited price for %s was reset: got %v, want %v", modelID, inPrice, editedInput)
+	}
+
+	var customExists bool
+	if err := d.QueryRow(`SELECT COUNT(*) > 0 FROM model_pricing WHERE model_id = ?`, customID).Scan(&customExists); err != nil {
+		t.Fatal(err)
+	}
+	if !customExists {
+		t.Errorf("operator-created row %s was deleted on migration re-run", customID)
+	}
+}
