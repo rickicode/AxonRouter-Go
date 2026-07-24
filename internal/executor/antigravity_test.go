@@ -10,8 +10,18 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rickicode/AxonRouter-Go/internal/cache"
+	"github.com/rickicode/AxonRouter-Go/internal/config"
 	"github.com/tidwall/gjson"
 )
+
+func setAntigravityCreditsModeForTest(t *testing.T, mode config.AntigravityCreditsMode) {
+		t.Helper()
+		prev := antigravityCreditsModeForTest
+		antigravityCreditsModeForTest = func() config.AntigravityCreditsMode { return mode }
+		t.Cleanup(func() { antigravityCreditsModeForTest = prev })
+	}
+
 
 func TestNormalizeAntigravityContents(t *testing.T) {
 	inner := map[string]any{
@@ -501,5 +511,257 @@ func TestCleanJSONSchemaForAntigravity_FlattensNullableTypeArray(t *testing.T) {
 	}
 	if parsed.Get("required").Exists() {
 		t.Error("expected nullable property to be removed from required")
+	}
+}
+
+func TestBuildEnvelope_CreditsMode_Off(t *testing.T) {
+	setAntigravityCreditsModeForTest(t, config.AntigravityCreditsModeOff)
+	e := NewAntigravityExecutor(NewBaseExecutor())
+	ctx := context.Background()
+
+	body, _ := json.Marshal(map[string]any{
+		"contents": []any{map[string]any{"role": "user", "parts": []any{map[string]any{"text": "hi"}}}},
+	})
+	req := &Request{
+		Model:                "gemini-pro-agent",
+		Body:                 body,
+		ProviderSpecificData: map[string]string{"projectId": "proj-1"},
+	}
+
+	out, err := e.buildEnvelope(ctx, req, "gemini-pro-agent", false)
+	if err != nil {
+		t.Fatalf("buildEnvelope failed: %v", err)
+	}
+	if gjson.GetBytes(out, "enabledCreditTypes").Exists() {
+		t.Error("expected enabledCreditTypes absent in off mode")
+	}
+}
+
+func TestBuildEnvelope_CreditsMode_Always(t *testing.T) {
+	setAntigravityCreditsModeForTest(t, config.AntigravityCreditsModeAlways)
+	e := NewAntigravityExecutor(NewBaseExecutor())
+	ctx := context.Background()
+
+	body, _ := json.Marshal(map[string]any{
+		"contents": []any{map[string]any{"role": "user", "parts": []any{map[string]any{"text": "hi"}}}},
+	})
+	req := &Request{
+		Model:                "gemini-pro-agent",
+		Body:                 body,
+		ProviderSpecificData: map[string]string{"projectId": "proj-1"},
+	}
+
+	out, err := e.buildEnvelope(ctx, req, "gemini-pro-agent", true)
+	if err != nil {
+		t.Fatalf("buildEnvelope failed: %v", err)
+	}
+	arr := gjson.GetBytes(out, "enabledCreditTypes").Array()
+	if len(arr) != 1 || arr[0].String() != "GOOGLE_ONE_AI" {
+		t.Errorf("expected enabledCreditTypes=[GOOGLE_ONE_AI], got %v", arr)
+	}
+}
+
+func TestExecute_CreditsRetry_429ThenSuccess(t *testing.T) {
+	cache.ResetAntigravityCreditsCacheForTest()
+	setAntigravityCreditsModeForTest(t, config.AntigravityCreditsModeRetry)
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		requests++
+		hasCredits := gjson.GetBytes(body, "enabledCreditTypes").Exists()
+		if requests == 1 {
+			if hasCredits {
+				t.Error("first attempt should not include credits")
+			}
+			http.Error(w, `{"error":{"code":429,"message":"Quota exceeded","status":"RESOURCE_EXHAUSTED"}}`, http.StatusTooManyRequests)
+			return
+		}
+		if !hasCredits {
+			t.Error("retry attempt should include credits")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	be := NewBaseExecutor()
+	e := NewAntigravityExecutor(be)
+	req := &Request{
+		Model:                "gemini-pro-agent",
+		BaseURL:              server.URL,
+		Body:                 []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`),
+		AccessToken:          "token",
+		ConnectionID:         "conn-retry-ok",
+		ProviderSpecificData: map[string]string{"projectId": "proj-1"},
+	}
+	resp, err := e.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+	if requests != 2 {
+		t.Errorf("expected 2 requests, got %d", requests)
+	}
+}
+
+func TestExecute_CreditsRetry_PermanentlyDisabled(t *testing.T) {
+	cache.ResetAntigravityCreditsCacheForTest()
+	setAntigravityCreditsModeForTest(t, config.AntigravityCreditsModeRetry)
+
+	exhaustedBody := `{"error":{"code":429,"message":"Quota exceeded","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"INSUFFICIENT_G1_CREDITS_BALANCE"}]}}`
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, exhaustedBody, http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	be := NewBaseExecutor()
+	e := NewAntigravityExecutor(be)
+	req := &Request{
+		Model:                "gemini-pro-agent",
+		BaseURL:              server.URL,
+		Body:                 []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`),
+		AccessToken:          "token",
+		ConnectionID:         "conn-retry-disabled",
+		ProviderSpecificData: map[string]string{"projectId": "proj-1"},
+	}
+	_, err := e.Execute(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if requests != 2 {
+		t.Errorf("expected 2 requests, got %d", requests)
+	}
+	if !cache.IsAntigravityCreditsPermanentlyDisabled("conn-retry-disabled") {
+		t.Error("expected auth to be permanently disabled")
+	}
+}
+
+func TestExecute_CreditsAlways_DisabledAfterExplicitBalanceExhausted(t *testing.T) {
+	cache.ResetAntigravityCreditsCacheForTest()
+	setAntigravityCreditsModeForTest(t, config.AntigravityCreditsModeAlways)
+
+	exhaustedBody := `{"error":{"code":429,"message":"Quota exceeded","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"INSUFFICIENT_G1_CREDITS_BALANCE"}]}}`
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		body, _ := io.ReadAll(r.Body)
+		if !gjson.GetBytes(body, "enabledCreditTypes").Exists() {
+			t.Error("always mode request should include credits")
+		}
+		http.Error(w, exhaustedBody, http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	be := NewBaseExecutor()
+	e := NewAntigravityExecutor(be)
+	req := &Request{
+		Model:                "gemini-pro-agent",
+		BaseURL:              server.URL,
+		Body:                 []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`),
+		AccessToken:          "token",
+		ConnectionID:         "conn-always-disabled",
+		ProviderSpecificData: map[string]string{"projectId": "proj-1"},
+	}
+	_, err := e.Execute(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if requests != 1 {
+		t.Errorf("expected 1 request, got %d", requests)
+	}
+	if !cache.IsAntigravityCreditsPermanentlyDisabled("conn-always-disabled") {
+		t.Error("expected auth to be permanently disabled")
+	}
+}
+
+func TestExecuteStream_CreditsRetry_429ThenSuccess(t *testing.T) {
+	cache.ResetAntigravityCreditsCacheForTest()
+	setAntigravityCreditsModeForTest(t, config.AntigravityCreditsModeRetry)
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		requests++
+		hasCredits := gjson.GetBytes(body, "enabledCreditTypes").Exists()
+		if requests == 1 {
+			if hasCredits {
+				t.Error("first stream attempt should not include credits")
+			}
+			http.Error(w, `{"error":{"code":429,"message":"Quota exceeded","status":"RESOURCE_EXHAUSTED"}}`, http.StatusTooManyRequests)
+			return
+		}
+		if !hasCredits {
+			t.Error("retry stream attempt should include credits")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "data: {}")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}))
+	defer server.Close()
+
+	be := NewBaseExecutor()
+	e := NewAntigravityExecutor(be)
+	req := &Request{
+		Model:                "gemini-pro-agent",
+		BaseURL:              server.URL,
+		Body:                 []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`),
+		AccessToken:          "token",
+		ConnectionID:         "conn-stream-retry-ok",
+		ProviderSpecificData: map[string]string{"projectId": "proj-1"},
+	}
+	result, err := e.ExecuteStream(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ExecuteStream failed: %v", err)
+	}
+	if result.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", result.StatusCode)
+	}
+	if requests != 2 {
+		t.Errorf("expected 2 requests, got %d", requests)
+	}
+	// Drain the channel to avoid leaking the goroutine in tests.
+	for range result.Chunks {
+	}
+}
+
+func TestIsAntigravityQuotaExceeded(t *testing.T) {
+	cases := []struct {
+		status int
+		body   string
+		want   bool
+	}{
+		{http.StatusTooManyRequests, `{"error":{"message":"Quota exceeded"}}`, true},
+		{http.StatusTooManyRequests, `{"error":{"message":"Rate limit"}}`, false},
+		{http.StatusBadRequest, `{"error":{"message":"Quota exceeded"}}`, false},
+		{http.StatusTooManyRequests, "", true},
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("status=%d", tc.status), func(t *testing.T) {
+			if got := isAntigravityQuotaExceeded(tc.status, []byte(tc.body)); got != tc.want {
+				t.Errorf("isAntigravityQuotaExceeded(%d, %q) = %v, want %v", tc.status, tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsAntigravityExplicitCreditsExhausted(t *testing.T) {
+	exhausted := `{"error":{"code":429,"message":"Quota exceeded","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"INSUFFICIENT_G1_CREDITS_BALANCE"}]}}`
+	if !isAntigravityExplicitCreditsExhausted([]byte(exhausted)) {
+		t.Error("expected explicit balance exhausted detection")
+	}
+	if isAntigravityExplicitCreditsExhausted([]byte(`{"error":{"message":"Quota exceeded"}}`)) {
+		t.Error("expected false for quota without reason")
+	}
+	if isAntigravityExplicitCreditsExhausted(nil) {
+		t.Error("expected false for nil body")
 	}
 }
