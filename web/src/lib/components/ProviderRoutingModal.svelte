@@ -3,6 +3,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Label } from '$lib/components/ui/label';
 	import * as Select from '$lib/components/ui/select';
+	import { Switch } from '$lib/components/ui/switch';
 	import { providersApi } from '$lib/api';
 	import { toast } from 'svelte-sonner';
 	import type { RoutingMode } from '$lib/api';
@@ -11,15 +12,18 @@
 		open = $bindable(false),
 		providerId,
 		currentMode,
+		currentFlatRate = false,
 		onSaved,
 	}: {
 		open: boolean;
 		providerId: string;
 		currentMode: RoutingMode;
-		onSaved?: (mode: RoutingMode) => void;
+		currentFlatRate?: boolean;
+		onSaved?: (mode: RoutingMode, flatRate: boolean) => void;
 	} = $props();
 
 	let selectedMode = $state<RoutingMode>("round_robin");
+	let flatRate = $state(false);
 	let submitting = $state(false);
 
 	const modeOptions = [
@@ -32,18 +36,19 @@
 	$effect(() => {
 		if (open) {
 			selectedMode = currentMode;
+			flatRate = currentFlatRate;
 		}
 	});
 
 	async function handleSave() {
 		submitting = true;
 		try {
-			await providersApi.updateSettings(providerId, { routing_mode: selectedMode });
-			toast.success('Routing settings saved');
-			onSaved?.(selectedMode);
+			await providersApi.updateSettings(providerId, { routing_mode: selectedMode, flat_rate: flatRate });
+			toast.success('Provider settings saved');
+			onSaved?.(selectedMode, flatRate);
 			open = false;
 		} catch (err) {
-			toast.error('Failed to save routing settings: ' + (err instanceof Error ? err.message : 'Unknown'));
+			toast.error('Failed to save provider settings: ' + (err instanceof Error ? err.message : 'Unknown'));
 		} finally {
 			submitting = false;
 		}
@@ -72,6 +77,14 @@
 						{/each}
 					</Select.Content>
 				</Select.Root>
+			</div>
+
+			<div class="flex items-center justify-between rounded-md bg-card border border-border p-3">
+				<div class="space-y-0.5">
+					<Label class="text-body-sm">Flat-rate provider</Label>
+					<p class="text-caption text-muted-foreground">Show $0 in dashboard cost analytics while tracking estimated cost internally.</p>
+				</div>
+				<Switch bind:checked={flatRate} />
 			</div>
 
 			<div class="rounded-md bg-accent/50 p-3 space-y-1">

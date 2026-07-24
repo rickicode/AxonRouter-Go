@@ -53,6 +53,11 @@ type ProviderSettings struct {
 	HoldbackMs *int `json:"holdback_ms,omitempty"`
 	// HoldbackBytes overrides the default streaming holdback byte limit.
 	HoldbackBytes *int `json:"holdback_bytes,omitempty"`
+	// FlatRate marks subscription/cookie-web providers that charge a fixed fee
+	// rather than per-token. When true, dashboard cost display and the response
+	// cost header report $0, while the stored cost_usd continues to be estimated
+	// for internal budget/quota tracking.
+	FlatRate bool `json:"flat_rate,omitempty"`
 }
 
 // readFileHook is swapped during tests to count disk reads. In production it
@@ -187,6 +192,16 @@ func (m *Manager) Holdback(providerID string) (ms, bytes int) {
 	}
 
 	return ms, bytes
+}
+
+// FlatRate returns whether the provider is billed as a flat monthly/service
+// subscription rather than per-token. When true, display surfaces report $0.
+func (m *Manager) FlatRate(providerID string) bool {
+	s, err := m.Get(providerID)
+	if err != nil {
+		return false
+	}
+	return s.FlatRate
 }
 
 // Save persists settings for a provider and updates the in-memory cache.

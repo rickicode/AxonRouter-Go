@@ -227,6 +227,7 @@ attemptLoop:
 					tokensEstimated = true
 				}
 			}
+			estCost := usage.EstimateCost(modelName, tokenCounts.InputTokens, tokenCounts.OutputTokens, tokenCounts.ReasoningTokens, tokenCounts.CachedTokens, tokenCounts.CacheCreationTokens)
 			h.logRequest(c, &usage.LogEntry{
 				ApiKeyID:            c.GetString("api_key_id"),
 				ConnectionID:        conn.ID,
@@ -239,23 +240,24 @@ attemptLoop:
 				InputTokens:         tokenCounts.InputTokens,
 				OutputTokens:        tokenCounts.OutputTokens,
 				ReasoningTokens:     tokenCounts.ReasoningTokens,
-				CachedTokens:        tokenCounts.CachedTokens,
-				CacheCreationTokens: tokenCounts.CacheCreationTokens,
-				CostUsd:             resp.CostUsd,
-				LatencyMs:           latency,
-				StatusCode:          resp.StatusCode,
-				TokensEstimated:     tokensEstimated,
-			})
-			h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
-			if resp.StatusCode < 300 {
-				h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
-			}
-			h.writeJSONResponse(c, resp.StatusCode, translatedResp, responseCost{
-				modelID:         modelName,
-				exactCost:       resp.CostUsd,
-				counts:          tokenCounts,
-				tokensEstimated: tokensEstimated,
-			})
+			CachedTokens:        tokenCounts.CachedTokens,
+			CacheCreationTokens: tokenCounts.CacheCreationTokens,
+			CostUsd:             estCost,
+			LatencyMs:           latency,
+			StatusCode:          resp.StatusCode,
+			TokensEstimated:     tokensEstimated,
+		})
+		h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
+		if resp.StatusCode < 300 {
+			h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
+		}
+		h.writeJSONResponse(c, resp.StatusCode, translatedResp, responseCost{
+			modelID:         modelName,
+			exactCost:       resp.CostUsd,
+			counts:          tokenCounts,
+			tokensEstimated: tokensEstimated,
+			flatRate:        h.isFlatRate(provider),
+		})
 		}
 		return
 	}

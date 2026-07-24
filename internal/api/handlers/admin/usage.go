@@ -197,7 +197,7 @@ func (h *UsageHandler) summary(ctx context.Context, f usageFilters) (usageSummar
 			COALESCE(SUM(rl.output_tokens), 0),
 			COALESCE(SUM(rl.reasoning_tokens), 0),
 			COALESCE(SUM(rl.input_tokens + rl.output_tokens + rl.reasoning_tokens), 0),
-			COALESCE(SUM(rl.cost_usd), 0),
+			COALESCE(SUM(CASE WHEN rl.flat_rate = 1 THEN 0 ELSE rl.cost_usd END), 0),
 			COALESCE(SUM(CASE WHEN rl.status_code >= 400 OR rl.error_message IS NOT NULL THEN 1 ELSE 0 END), 0),
 			COALESCE(AVG(rl.latency_ms), 0)
 		FROM request_logs rl
@@ -229,7 +229,7 @@ func (h *UsageHandler) byAPIKey(ctx context.Context, f usageFilters) ([]usageBre
 			COALESCE(SUM(rl.output_tokens), 0),
 			COALESCE(SUM(rl.reasoning_tokens), 0),
 			COALESCE(SUM(rl.input_tokens + rl.output_tokens + rl.reasoning_tokens), 0),
-			COALESCE(SUM(rl.cost_usd), 0),
+			COALESCE(SUM(CASE WHEN rl.flat_rate = 1 THEN 0 ELSE rl.cost_usd END), 0),
 			COALESCE(SUM(CASE WHEN rl.status_code >= 400 OR rl.error_message IS NOT NULL THEN 1 ELSE 0 END), 0),
 			COALESCE(AVG(rl.latency_ms), 0),
 			MIN(rl.timestamp),
@@ -257,7 +257,7 @@ func (h *UsageHandler) byModel(ctx context.Context, f usageFilters) ([]usageBrea
 			COALESCE(SUM(rl.output_tokens), 0),
 			COALESCE(SUM(rl.reasoning_tokens), 0),
 			COALESCE(SUM(rl.input_tokens + rl.output_tokens + rl.reasoning_tokens), 0),
-			COALESCE(SUM(rl.cost_usd), 0),
+			COALESCE(SUM(CASE WHEN rl.flat_rate = 1 THEN 0 ELSE rl.cost_usd END), 0),
 			COALESCE(SUM(CASE WHEN rl.status_code >= 400 OR rl.error_message IS NOT NULL THEN 1 ELSE 0 END), 0),
 			COALESCE(AVG(rl.latency_ms), 0),
 			MIN(rl.timestamp),
@@ -285,7 +285,7 @@ func (h *UsageHandler) byProvider(ctx context.Context, f usageFilters) ([]usageB
 			COALESCE(SUM(rl.output_tokens), 0),
 			COALESCE(SUM(rl.reasoning_tokens), 0),
 			COALESCE(SUM(rl.input_tokens + rl.output_tokens + rl.reasoning_tokens), 0),
-			COALESCE(SUM(rl.cost_usd), 0),
+			COALESCE(SUM(CASE WHEN rl.flat_rate = 1 THEN 0 ELSE rl.cost_usd END), 0),
 			COALESCE(SUM(CASE WHEN rl.status_code >= 400 OR rl.error_message IS NOT NULL THEN 1 ELSE 0 END), 0),
 			COALESCE(AVG(rl.latency_ms), 0),
 			MIN(rl.timestamp),
@@ -313,7 +313,7 @@ func (h *UsageHandler) byModality(ctx context.Context, f usageFilters) ([]usageB
 			COALESCE(SUM(rl.output_tokens), 0),
 			COALESCE(SUM(rl.reasoning_tokens), 0),
 			COALESCE(SUM(rl.input_tokens + rl.output_tokens + rl.reasoning_tokens), 0),
-			COALESCE(SUM(rl.cost_usd), 0),
+			COALESCE(SUM(CASE WHEN rl.flat_rate = 1 THEN 0 ELSE rl.cost_usd END), 0),
 			COALESCE(SUM(CASE WHEN rl.status_code >= 400 OR rl.error_message IS NOT NULL THEN 1 ELSE 0 END), 0),
 			COALESCE(AVG(rl.latency_ms), 0),
 			MIN(rl.timestamp),
@@ -340,7 +340,7 @@ func (h *UsageHandler) byStatus(ctx context.Context, f usageFilters) ([]usageBre
 			COALESCE(SUM(rl.output_tokens), 0),
 			COALESCE(SUM(rl.reasoning_tokens), 0),
 			COALESCE(SUM(rl.input_tokens + rl.output_tokens + rl.reasoning_tokens), 0),
-			COALESCE(SUM(rl.cost_usd), 0),
+			COALESCE(SUM(CASE WHEN rl.flat_rate = 1 THEN 0 ELSE rl.cost_usd END), 0),
 			COALESCE(SUM(CASE WHEN rl.status_code >= 400 OR rl.error_message IS NOT NULL THEN 1 ELSE 0 END), 0),
 			COALESCE(AVG(rl.latency_ms), 0),
 			MIN(rl.timestamp),
@@ -394,7 +394,7 @@ func (h *UsageHandler) byTime(ctx context.Context, f usageFilters) ([]timeBucket
 			COALESCE(SUM(rl.output_tokens), 0),
 			COALESCE(SUM(rl.reasoning_tokens), 0),
 			COALESCE(SUM(rl.input_tokens + rl.output_tokens + rl.reasoning_tokens), 0),
-			COALESCE(SUM(rl.cost_usd), 0)
+			COALESCE(SUM(CASE WHEN rl.flat_rate = 1 THEN 0 ELSE rl.cost_usd END), 0)
 		FROM request_logs rl
 		%s
 		GROUP BY bucket
@@ -549,11 +549,11 @@ func (h *UsageHandler) Summary(c *gin.Context) {
 	resets, _ := quota.NextProviderResets(h.db)
 	c.JSON(http.StatusOK, gin.H{
 		"data": gin.H{
-			"today":               today,
-			"yesterday":           yesterday,
-			"month_to_date":       month,
+			"today":                today,
+			"yesterday":            yesterday,
+			"month_to_date":        month,
 			"projected_month_cost": projected,
-			"next_quota_reset":    earliestReset(resets),
+			"next_quota_reset":     earliestReset(resets),
 		},
 	})
 }
@@ -600,7 +600,7 @@ func (h *UsageHandler) activity(ctx context.Context, f usageFilters) ([]activity
 			date(rl.timestamp / 1000, 'unixepoch') AS day,
 			COUNT(*),
 			COALESCE(SUM(rl.input_tokens + rl.output_tokens + rl.reasoning_tokens), 0),
-			COALESCE(SUM(rl.cost_usd), 0)
+			COALESCE(SUM(CASE WHEN rl.flat_rate = 1 THEN 0 ELSE rl.cost_usd END), 0)
 		FROM request_logs rl
 		%s
 		GROUP BY day

@@ -37,6 +37,7 @@ type LogEntry struct {
 	Stream              bool
 	TokensEstimated     bool
 	ServiceTier         string
+	FlatRate            bool
 	ClientIP            string
 	UserAgent           string
 }
@@ -177,9 +178,9 @@ func (t *Tracker) writeBatchDirect(database *sql.DB, batch []*LogEntry) error {
 	stmt, err := tx.Prepare(`INSERT INTO request_logs
   (id, timestamp, connection_id, provider_type_id, model_id, combo_id, proxy_pool_id,
   api_key_id, api_type, modality, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_creation_tokens,
-  stream, tokens_estimated,
-  latency_ms, status_code, error_message, cost_usd, service_tier, client_ip, user_agent, created_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+  stream, tokens_estimated, flat_rate, service_tier,
+  latency_ms, status_code, error_message, cost_usd, client_ip, user_agent, created_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		tx.Rollback()
 		return fmt.Errorf("usage: prepare: %w", err)
@@ -199,10 +200,10 @@ func (t *Tracker) writeBatchDirect(database *sql.DB, batch []*LogEntry) error {
 		statusCode := sql.NullInt64{Int64: int64(e.StatusCode), Valid: e.StatusCode > 0}
 		errMsg := toNullString(e.ErrorMessage)
 
-		if _, err := stmt.Exec(uuid.New().String(), e.Timestamp, connID, providerID, modelID, comboID, proxyPoolID,
-			apiKeyID, apiType, e.Modality, e.InputTokens, e.OutputTokens, e.ReasoningTokens, e.CachedTokens, e.CacheCreationTokens,
-			e.Stream, e.TokensEstimated,
-			latency, statusCode, errMsg, e.CostUsd, e.ServiceTier, e.ClientIP, e.UserAgent, now); err != nil {
+	if _, err := stmt.Exec(uuid.New().String(), e.Timestamp, connID, providerID, modelID, comboID, proxyPoolID,
+		apiKeyID, apiType, e.Modality, e.InputTokens, e.OutputTokens, e.ReasoningTokens, e.CachedTokens, e.CacheCreationTokens,
+		e.Stream, e.TokensEstimated, e.FlatRate, e.ServiceTier,
+		latency, statusCode, errMsg, e.CostUsd, e.ClientIP, e.UserAgent, now); err != nil {
 			log.Printf("usage: exec: %v", err)
 		}
 	}

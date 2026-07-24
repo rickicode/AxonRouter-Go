@@ -75,7 +75,8 @@ func (h *Handler) serveCacheHit(c *gin.Context, body []byte, entry cache.CacheEn
 
 	cachedModel := executor.JSONGet(entry.Body, "model")
 	counts := ExtractTokensFromBody(entry.Body)
-	writeCostHeaders(c, cachedModel, 0, counts, false)
+	provider, _ := executor.SplitModel(cachedModel)
+	writeCostHeaders(c, cachedModel, 0, counts, false, h.isFlatRate(provider))
 
 	c.Header("Content-Type", entry.ContentType)
 	c.Header("X-Cache-Status", "HIT")
@@ -105,6 +106,7 @@ type responseCost struct {
 	exactCost       float64
 	counts          StreamTokenCounts
 	tokensEstimated bool
+	flatRate        bool
 }
 
 // writeJSONResponse writes a JSON response, marks it as a cache miss, and
@@ -113,7 +115,7 @@ func (h *Handler) writeJSONResponse(c *gin.Context, statusCode int, body []byte,
 	c.Header("Content-Type", "application/json")
 	c.Header("X-Cache-Status", "MISS")
 	if len(cost) > 0 {
-		writeCostHeaders(c, cost[0].modelID, cost[0].exactCost, cost[0].counts, cost[0].tokensEstimated)
+		writeCostHeaders(c, cost[0].modelID, cost[0].exactCost, cost[0].counts, cost[0].tokensEstimated, cost[0].flatRate)
 	}
 	c.Status(statusCode)
 	c.Writer.Write(body)
@@ -129,11 +131,17 @@ const (
 
 // writeCostHeaders sets the standard cost-related response headers. exactCost
 // should be the provider-reported cost (e.g., Grok CLI) when available; when it
-// is zero the cost is estimated from the model pricing and token counts.
-func writeCostHeaders(c *gin.Context, modelID string, exactCost float64, counts StreamTokenCounts, tokensEstimated bool) {
-	cost := exactCost
-	if cost <= 0 {
-		cost = usage.EstimateCost(modelID, counts.InputTokens, counts.OutputTokens, counts.ReasoningTokens, counts.CachedTokens, counts.CacheCreationTokens)
+// is zero the cost is estimated from the model pricing and token counts. When
+// flatRate is true the cost is always reported as $0 so subscription/cookie-web
+// providers do not inflate dashboard analytics, while request_logs.cost_usd
+// continues to store the estimated cost for internal budget/quota tracking.
+func writeCostHeaders(c *gin.Context, modelID string, exactCost float64, counts StreamTokenCounts, tokensEstimated, flatRate bool) {
+	cost := 0.0
+	if !flatRate {
+		cost = exactCost
+		if cost <= 0 {
+			cost = usage.EstimateCost(modelID, counts.InputTokens, counts.OutputTokens, counts.ReasoningTokens, counts.CachedTokens, counts.CacheCreationTokens)
+		}
 	}
 
 	c.Header(costHeader, strconv.FormatFloat(cost, 'f', -1, 64))
@@ -141,7 +149,7 @@ func writeCostHeaders(c *gin.Context, modelID string, exactCost float64, counts 
 	c.Header(tokensOutHeader, strconv.FormatInt(counts.OutputTokens, 10))
 
 	estimated := "false"
-	if exactCost <= 0 && (counts.InputTokens > 0 || counts.OutputTokens > 0 || tokensEstimated) {
+	if !flatRate && exactCost <= 0 && (counts.InputTokens > 0 || counts.OutputTokens > 0 || tokensEstimated) {
 		estimated = "true"
 	}
 	c.Header(costEstimatedHeader, estimated)
@@ -149,10 +157,13 @@ func writeCostHeaders(c *gin.Context, modelID string, exactCost float64, counts 
 
 // writeCostTrailers declares and writes the cost trailers for streaming
 // responses. Callers must invoke this after the SSE stream body has finished.
-func writeCostTrailers(c *gin.Context, modelID string, exactCost float64, counts StreamTokenCounts, tokensEstimated bool) {
-	cost := exactCost
-	if cost <= 0 {
-		cost = usage.EstimateCost(modelID, counts.InputTokens, counts.OutputTokens, counts.ReasoningTokens, counts.CachedTokens, counts.CacheCreationTokens)
+func writeCostTrailers(c *gin.Context, modelID string, exactCost float64, counts StreamTokenCounts, tokensEstimated, flatRate bool) {
+	cost := 0.0
+	if !flatRate {
+		cost = exactCost
+		if cost <= 0 {
+			cost = usage.EstimateCost(modelID, counts.InputTokens, counts.OutputTokens, counts.ReasoningTokens, counts.CachedTokens, counts.CacheCreationTokens)
+		}
 	}
 
 	c.Writer.Header().Set(costHeader, strconv.FormatFloat(cost, 'f', -1, 64))
@@ -160,7 +171,7 @@ func writeCostTrailers(c *gin.Context, modelID string, exactCost float64, counts
 	c.Writer.Header().Set(tokensOutHeader, strconv.FormatInt(counts.OutputTokens, 10))
 
 	estimated := "false"
-	if exactCost <= 0 && (counts.InputTokens > 0 || counts.OutputTokens > 0 || tokensEstimated) {
+	if !flatRate && exactCost <= 0 && (counts.InputTokens > 0 || counts.OutputTokens > 0 || tokensEstimated) {
 		estimated = "true"
 	}
 	c.Writer.Header().Set(costEstimatedHeader, estimated)

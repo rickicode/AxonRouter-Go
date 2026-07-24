@@ -394,6 +394,10 @@ attemptLoop:
 					tokensEstimated = true
 				}
 			}
+			estCost := resp.CostUsd
+			if estCost == 0 {
+				estCost = usage.EstimateCost(modelName, tokenCounts.InputTokens, tokenCounts.OutputTokens, tokenCounts.ReasoningTokens, tokenCounts.CachedTokens, tokenCounts.CacheCreationTokens)
+			}
 			h.logRequest(c, &usage.LogEntry{
 				ApiKeyID:            c.GetString("api_key_id"),
 				ConnectionID:        conn.ID,
@@ -408,7 +412,7 @@ attemptLoop:
 				ReasoningTokens:     tokenCounts.ReasoningTokens,
 				CachedTokens:        tokenCounts.CachedTokens,
 				CacheCreationTokens: tokenCounts.CacheCreationTokens,
-				CostUsd:             resp.CostUsd,
+				CostUsd:             estCost,
 				LatencyMs:           latency,
 				StatusCode:          resp.StatusCode,
 				TokensEstimated:     tokensEstimated,
@@ -416,13 +420,14 @@ attemptLoop:
 			if resp.StatusCode < 300 {
 				h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
 			}
-			h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
-			h.writeJSONResponse(c, resp.StatusCode, translatedResp, responseCost{
-				modelID:         modelName,
-				exactCost:       resp.CostUsd,
-				counts:          tokenCounts,
-				tokensEstimated: tokensEstimated,
-			})
+h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
+h.writeJSONResponse(c, resp.StatusCode, translatedResp, responseCost{
+	modelID:         modelName,
+	exactCost:       resp.CostUsd,
+	counts:          tokenCounts,
+	tokensEstimated: tokensEstimated,
+	flatRate:        h.isFlatRate(provider),
+})
 		}
 		return
 	}
@@ -768,6 +773,10 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 						tokensEstimated = true
 					}
 				}
+				estCost := resp.CostUsd
+				if estCost == 0 {
+					estCost = usage.EstimateCost(modelName, tokenCounts.InputTokens, tokenCounts.OutputTokens, tokenCounts.ReasoningTokens, tokenCounts.CachedTokens, tokenCounts.CacheCreationTokens)
+				}
 				h.logRequest(c, &usage.LogEntry{
 					ApiKeyID:            c.GetString("api_key_id"),
 					ConnectionID:        connID,
@@ -783,16 +792,16 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 					ReasoningTokens:     tokenCounts.ReasoningTokens,
 					CachedTokens:        tokenCounts.CachedTokens,
 					CacheCreationTokens: tokenCounts.CacheCreationTokens,
-					CostUsd:             resp.CostUsd,
-					LatencyMs:           latency,
-					StatusCode:          resp.StatusCode,
-					TokensEstimated:     tokensEstimated,
-				})
-				c.Header("Content-Type", "application/json")
-				writeCostHeaders(c, modelName, resp.CostUsd, tokenCounts, tokensEstimated)
-				h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
-				c.Status(resp.StatusCode)
-				c.Writer.Write(translatedResp)
+			CostUsd:             estCost,
+			LatencyMs:           latency,
+			StatusCode:          resp.StatusCode,
+			TokensEstimated:     tokensEstimated,
+		})
+		c.Header("Content-Type", "application/json")
+		writeCostHeaders(c, modelName, estCost, tokenCounts, tokensEstimated, h.isFlatRate(provider))
+		h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
+		c.Status(resp.StatusCode)
+		c.Writer.Write(translatedResp)
 			}
 			return
 		}

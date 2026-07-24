@@ -38,6 +38,7 @@ export type RoutingMode = "first_eligible" | "round_robin" | "random" | "affinit
 export interface ProviderSettings {
   provider_id: string;
   routing_mode: RoutingMode;
+  flat_rate?: boolean;
 }
 
 export interface Connection {
