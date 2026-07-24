@@ -71,7 +71,7 @@ func TestDevinQoderProviderTypesSeeded(t *testing.T) {
 			DisplayName:  "Qoder",
 			Format:       "qoder",
 			BaseURL:      "https://dashscope.aliyuncs.com/compatible-mode/v1",
-			Category:     "apikey",
+			Category:     "oauth",
 			ServiceKinds: []string{"llm"},
 		},
 	}

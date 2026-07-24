@@ -18,9 +18,27 @@ describe('provider-catalog', () => {
     );
   });
 
+  it('includes qoder with dual-mode OAuth and API key metadata', () => {
+    const meta = getProviderMeta('qoder');
+    expect(meta).toBeDefined();
+    expect(meta!.id).toBe('qoder');
+    expect(meta!.displayName).toBe('Qoder');
+    expect(meta!.prefix).toBe('qoder/');
+    expect(meta!.format).toBe('qoder');
+    expect(meta!.authType).toBe('oauth');
+    expect(meta!.category).toBe('oauth');
+    expect(meta!.authModes).toEqual(['oauth', 'apikey']);
+    expect(meta!.isBuiltIn).toBe(true);
+    expect(meta!.serviceKinds).toEqual(['llm']);
+  });
+
+  it('has a unique qoder entry in the catalog', () => {
+    const matches = PROVIDER_CATALOG.filter((p) => p.id === 'qoder');
+    expect(matches).toHaveLength(1);
+  });
+
   it('has a unique qwencloud entry in the catalog', () => {
     const matches = PROVIDER_CATALOG.filter((p) => p.id === 'qwencloud');
     expect(matches).toHaveLength(1);
   });
-
 });

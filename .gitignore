@@ -38,6 +38,13 @@ Thumbs.db
 
 # AI tools
 .claude/
+.pi-subagents/
+.pi-tasks/
+.openlore/analysis/
+.openlore/logs/
+.openlore/serve.log
+graphify-out/
+internal/graphify-out/
 .cortexkit/
 .rpiv/
 .serena/

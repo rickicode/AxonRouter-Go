@@ -15,11 +15,19 @@ func TestProviderGrokCliConstant(t *testing.T) {
 	}
 }
 
+// TestProviderQoderConstant proves the qoder provider type identifier exists
+// and is wired consistently across auth and routing layers.
+func TestProviderQoderConstant(t *testing.T) {
+	if ProviderQoder != "qoder" {
+		t.Fatalf("ProviderQoder = %q, want %q", ProviderQoder, "qoder")
+	}
+}
+
 type fakeRefreshOAuthService struct {
-	called int
-	creds  *Credentials
+	called      int
+	creds       *Credentials
 	returnCreds *Credentials
-	err    error
+	err         error
 }
 
 func (f *fakeRefreshOAuthService) GenerateAuthURL(ctx context.Context, state string) (string, error) {

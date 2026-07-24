@@ -23,6 +23,7 @@ const (
 	ProviderGitHub      ProviderType = "copilot"
 	ProviderGrokCli     ProviderType = "grok-cli"
 	ProviderCodeBuddy   ProviderType = "codebuddy"
+ProviderQoder       ProviderType = "qoder"
 )
 
 // Credentials holds authentication tokens for a connection.

@@ -79,6 +79,7 @@ var knownProviders = map[string]providerMeta{
 	"copilot":   {DisplayName: "GitHub Copilot", Color: "#24292E", IconFile: "copilot.png"},
 	"grok-cli":  {DisplayName: "Grok CLI (Grok Build)", Color: "#000000", IconFile: "grok-cli.png"},
 	"codebuddy": {DisplayName: "CodeBuddy", Color: "#5b21b6", IconFile: "codebuddy.png"},
+	"qoder":     {DisplayName: "Qoder", Color: "#000000", IconFile: "qoder.svg"},
 }
 
 // ProviderMeta returns display metadata for a provider type, if known.
@@ -398,13 +399,13 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 					ExpiresAt:        time.Unix(c.OAuthExpiresAt, 0),
 					ProviderSpecific: providerSpecific,
 				}
-			newCreds, err := authMgr.RefreshTokenForConnection(context.Background(), c.ID, providerType, creds)
-			if err == nil {
-				newToken = newCreds.AccessToken
-				newProviderSpecific = newCreds.ProviderSpecific
-				refreshed = true
-				proactiveRefreshDone = true
-			} else {
+				newCreds, err := authMgr.RefreshTokenForConnection(context.Background(), c.ID, providerType, creds)
+				if err == nil {
+					newToken = newCreds.AccessToken
+					newProviderSpecific = newCreds.ProviderSpecific
+					refreshed = true
+					proactiveRefreshDone = true
+				} else {
 					log.Printf("quota: auth manager token refresh failed for %s (%s): %v", c.ID, c.Name, err)
 					// If the current access token is still valid, keep using it for the quota
 					// fetch instead of failing the whole quota check. Refresh will be retried on
@@ -416,29 +417,29 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 						cq.Error = fmt.Sprintf("token refresh failed: %v", err)
 						if isUnrecoverableRefreshError(err) && db != nil {
 							now := time.Now().Unix()
-						if _, derr := db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', disabled_reason = 'auth_failed', updated_at = ? WHERE id = ?`, now, c.ID); derr == nil {
-							log.Printf("quota: connection %s disabled due to unrecoverable refresh error", c.ID)
+							if _, derr := db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', disabled_reason = 'auth_failed', updated_at = ? WHERE id = ?`, now, c.ID); derr == nil {
+								log.Printf("quota: connection %s disabled due to unrecoverable refresh error", c.ID)
+							}
 						}
+						return cq
 					}
-					return cq
 				}
 			}
 		}
-	}
 
-	// Raw fallback for Antigravity and Kiro when auth manager is unavailable/failed.
-	if !refreshed && !authMgrAttempted && (providerID == "ag" || providerID == "kiro") {
-		var err error
-		newToken, _, _, err = refreshOAuthToken(providerID, c.OAuthRefreshToken.String)
-		if err != nil {
-			log.Printf("quota: raw token refresh failed for %s (%s): %v", c.ID, c.Name, err)
-			cq.Error = fmt.Sprintf("token refresh failed: %v", err)
-			if isUnrecoverableRefreshError(err) && db != nil {
-				now := time.Now().Unix()
-				if _, derr := db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', disabled_reason = 'auth_failed', updated_at = ? WHERE id = ?`, now, c.ID); derr == nil {
-					log.Printf("quota: connection %s disabled due to unrecoverable refresh error", c.ID)
+		// Raw fallback for Antigravity and Kiro when auth manager is unavailable/failed.
+		if !refreshed && !authMgrAttempted && (providerID == "ag" || providerID == "kiro") {
+			var err error
+			newToken, _, _, err = refreshOAuthToken(providerID, c.OAuthRefreshToken.String)
+			if err != nil {
+				log.Printf("quota: raw token refresh failed for %s (%s): %v", c.ID, c.Name, err)
+				cq.Error = fmt.Sprintf("token refresh failed: %v", err)
+				if isUnrecoverableRefreshError(err) && db != nil {
+					now := time.Now().Unix()
+					if _, derr := db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', disabled_reason = 'auth_failed', updated_at = ? WHERE id = ?`, now, c.ID); derr == nil {
+						log.Printf("quota: connection %s disabled due to unrecoverable refresh error", c.ID)
+					}
 				}
-			}
 				return cq
 			}
 			refreshed = true
@@ -487,6 +488,8 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 				}
 			case "codebuddy":
 				r.quotas, r.plan, r.err = fetchCodeBuddyQuota(tok, psd)
+			case "qoder":
+				r.quotas, r.plan, r.err = fetchQoderQuota(tok, psd)
 			default:
 				if _, known := knownProviders[providerID]; known {
 					// A provider in knownProviders must have a fetcher; fail loudly so it

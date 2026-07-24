@@ -2,8 +2,10 @@ package admin
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -410,5 +412,202 @@ func TestList_IncludesDisabledConnections(t *testing.T) {
 	}
 	if !ids["conn-disabled"] {
 		t.Fatal("missing conn-disabled")
+	}
+}
+
+// qoderMockExecutor records whether ExecuteStream was called and returns a
+// trivial successful stream so the connection test can complete after validation.
+type qoderMockExecutor struct {
+	called bool
+}
+
+func (m *qoderMockExecutor) Execute(ctx context.Context, req *executor.Request) (*executor.Response, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *qoderMockExecutor) ExecuteStream(ctx context.Context, req *executor.Request) (*executor.StreamResult, error) {
+	m.called = true
+	ch := make(chan executor.StreamChunk, 1)
+	ch <- executor.StreamChunk{Payload: []byte(`{"ok":true}`)}
+	close(ch)
+	return &executor.StreamResult{Chunks: ch, StatusCode: http.StatusOK}, nil
+}
+
+func registerQoderMockExecutor(t *testing.T, mock *qoderMockExecutor) {
+	t.Helper()
+	reg := executor.GetRegistry()
+	origExec, origFormat, _ := reg.Get("qoder")
+	reg.Register("qoder", executor.FormatQoder, mock)
+	t.Cleanup(func() {
+		if origExec != nil {
+			reg.Register("qoder", origFormat, origExec)
+		}
+	})
+}
+
+func seedQoderConnection(t *testing.T, database *sql.DB, id, authType, apiKey, accessToken, psd string) {
+	t.Helper()
+	now := time.Now().Unix()
+	if _, err := database.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('qoder','Qoder','qoder','',?)`, now); err != nil {
+		t.Fatalf("seed provider_type qoder: %v", err)
+	}
+	psdValue := psd
+	if psdValue == "" {
+		psdValue = "{}"
+	}
+	if _, err := database.Exec(`
+		INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, oauth_token, provider_specific_data, status, is_active, created_at, updated_at)
+		VALUES (?, 'qoder', ?, ?, ?, ?, ?, 'ready', 1, ?, ?)
+	`, id, id, authType, apiKey, accessToken, psdValue, now, now); err != nil {
+		t.Fatalf("seed qoder connection: %v", err)
+	}
+}
+
+func qoderValidationTestServer(t *testing.T, exchangeStatus, apiStatus int, exchangeCalled *bool) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/jobToken/exchange":
+			if exchangeCalled != nil {
+				*exchangeCalled = true
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if exchangeStatus != http.StatusOK {
+				w.WriteHeader(exchangeStatus)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"job_token": "jt-exchanged"})
+		case "/compatible-mode/v1/models":
+			w.Header().Set("Content-Type", "application/json")
+			if apiStatus != http.StatusOK {
+				w.WriteHeader(apiStatus)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": []any{}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+// TestTestConnection_QoderValidation covers Qoder-specific pre-flight checks:
+// PAT exchange, API token DashScope validation, auth failures, and provider errors.
+func TestTestConnection_QoderValidation(t *testing.T) {
+	quota.ClearQoderJobTokenCache()
+	t.Cleanup(quota.ClearQoderJobTokenCache)
+
+	cases := []struct {
+		name        string
+		apiKey      string
+		wantStatus  string
+		wantReason  string
+		wantMockHit bool
+		exchangeSC  int
+		apiSC       int
+	}{
+		{
+			name:        "pat_exchange_success",
+			apiKey:      "pt-good-token",
+			wantStatus:  "ok",
+			wantMockHit: true,
+			exchangeSC:  http.StatusOK,
+		},
+		{
+			name:        "pat_exchange_401_marks_auth_failed",
+			apiKey:      "pt-bad-token",
+			wantStatus:  "failed",
+			wantReason:  "auth_failed",
+			wantMockHit: false,
+			exchangeSC:  http.StatusUnauthorized,
+		},
+		{
+			name:        "api_token_models_success",
+			apiKey:      "ak-good-token",
+			wantStatus:  "ok",
+			wantMockHit: true,
+			apiSC:       http.StatusOK,
+		},
+		{
+			name:        "api_token_403_marks_auth_failed",
+			apiKey:      "ak-bad-token",
+			wantStatus:  "failed",
+			wantReason:  "auth_failed",
+			wantMockHit: false,
+			apiSC:       http.StatusForbidden,
+		},
+		{
+			name:        "api_token_503_marks_provider_error",
+			apiKey:      "ak-err-token",
+			wantStatus:  "failed",
+			wantReason:  "provider_error",
+			wantMockHit: false,
+			apiSC:       http.StatusServiceUnavailable,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var exchangeCalled bool
+			ts := qoderValidationTestServer(t, tc.exchangeSC, tc.apiSC, &exchangeCalled)
+			defer ts.Close()
+			t.Setenv("QODER_JOB_TOKEN_EXCHANGE_URL", ts.URL+"/api/v1/jobToken/exchange")
+			t.Setenv("QODER_MODELS_VALIDATION_URL", ts.URL+"/compatible-mode/v1/models")
+
+			database := newConnectionHandlerTestDB(t)
+			mock := &qoderMockExecutor{}
+			registerQoderMockExecutor(t, mock)
+			h := newConnectionHandlerForTest(t, database, executor.GetRegistry())
+
+			connID := "qoder-conn-" + tc.name
+			seedQoderConnection(t, database, connID, "api_key", tc.apiKey, "", "{}")
+
+			gin.SetMode(gin.TestMode)
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, "/admin/connections/"+connID+"/test", nil)
+			c.Params = gin.Params{{Key: "id", Value: connID}}
+			h.TestConnection(c)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("status=%d, body=%s", w.Code, w.Body.String())
+			}
+			var resp map[string]any
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if resp["status"] != tc.wantStatus {
+				t.Errorf("response status=%v, want %v", resp["status"], tc.wantStatus)
+			}
+			if mock.called != tc.wantMockHit {
+				t.Errorf("executor called=%v, want %v", mock.called, tc.wantMockHit)
+			}
+
+			var status, reason string
+			row := database.QueryRow(`SELECT status, COALESCE(disabled_reason,'') FROM connections WHERE id = ?`, connID)
+			if err := row.Scan(&status, &reason); err != nil {
+				t.Fatalf("scan db status: %v", err)
+			}
+			if tc.wantStatus == "ok" && status != "ready" {
+				t.Errorf("db status=%q, want ready", status)
+			}
+			if tc.wantStatus == "failed" {
+				if status != "disabled" {
+					t.Errorf("db status=%q, want disabled", status)
+				}
+				if reason != tc.wantReason {
+					t.Errorf("disabled_reason=%q, want %q", reason, tc.wantReason)
+				}
+				// Token must never leak into error responses.
+				body := w.Body.String()
+				if strings.Contains(body, tc.apiKey) {
+					t.Errorf("response body leaked token: %s", body)
+				}
+			}
+			if strings.HasPrefix(tc.apiKey, "pt-") && tc.exchangeSC != 0 {
+				if !exchangeCalled {
+					t.Errorf("PAT exchange endpoint was not called")
+				}
+			}
+		})
 	}
 }

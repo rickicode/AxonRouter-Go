@@ -185,6 +185,18 @@ func TestOAuthServices_IncludeGrokCli(t *testing.T) {
 	}
 }
 
+// TestOAuthServices_IncludeQoder proves the router registers the Qoder OAuth
+// service during initialization so the dual-mode provider can start OAuth flows.
+func TestOAuthServices_IncludeQoder(t *testing.T) {
+	router, srv := newTestRouter(t)
+	defer srv.Close()
+	defer router.Shutdown()
+
+	if _, ok := router.authMgr.GetService(auth.ProviderQoder); !ok {
+		t.Fatalf("qoder OAuth service not registered in auth manager")
+	}
+}
+
 // stubOAuthService implements auth.OAuthService without making network calls.
 type stubOAuthService struct{}
 

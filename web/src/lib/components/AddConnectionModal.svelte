@@ -32,9 +32,11 @@ import { KIRO_METHODS, KIRO_STARTING_METHOD, getKiroMethodLabel, type KiroMethod
 
   type Step = 'form' | 'oauth-waiting' | 'done' | 'error';
   type Mode = 'single' | 'bulk';
+  type AuthMode = 'oauth' | 'apikey' | 'none' | 'custom';
 
   let step = $state<Step>('form');
   let mode = $state<Mode>('single');
+  let authMode = $state<AuthMode>('oauth');
   let connectionName = $state('');
   let apiKey = $state('');
   let showKey = $state(false);
@@ -203,9 +205,11 @@ async function submitBulkChunked() {
 }
 
   const authType = $derived(meta?.authType ?? 'apikey');
-  const isOAuth = $derived(authType === 'oauth');
-  const isNoAuth = $derived(authType === 'none');
-  const isApiKey = $derived(authType === 'apikey' || authType === 'custom');
+  const authModes = $derived(meta?.authModes ?? [authType]);
+  const effectiveAuthType = $derived(authModes.includes(authMode) ? authMode : authModes[0]);
+  const isOAuth = $derived(effectiveAuthType === 'oauth');
+  const isNoAuth = $derived(effectiveAuthType === 'none');
+  const isApiKey = $derived(effectiveAuthType === 'apikey' || effectiveAuthType === 'custom');
 const supportsBulk = $derived(isApiKey);
 const isOCProvider = $derived(providerId === 'oc');
 const isMimocodeProvider = $derived(providerId === 'mimocode');
@@ -227,6 +231,7 @@ const filteredPools = $derived(filterProxyPools(proxyPools, poolSearch));
 function reset() {
   step = 'form';
   mode = 'single';
+  authMode = authModes.includes('oauth') ? 'oauth' : (authModes[0] ?? 'apikey');
   connectionName = '';
   apiKey = '';
   bulkText = '';
@@ -302,6 +307,11 @@ $effect(() => {
 $effect(() => {
   if (open && step === 'form' && meta?.regionOptions?.length && selectedRegion === '') {
     selectedRegion = meta.defaultRegion ?? meta.regionOptions[0] ?? '';
+  }
+});
+$effect(() => {
+  if (!authModes.includes(authMode)) {
+    authMode = authModes.includes('oauth') ? 'oauth' : (authModes[0] ?? 'apikey');
   }
 });
 
@@ -876,6 +886,24 @@ $effect(() => {
       </Dialog.Header>
 
       <div class="flex flex-col gap-4 py-2">
+        {#if authModes.length > 1}
+          <div class="grid grid-cols-2 gap-2 rounded-lg border border-border/50 bg-muted/20 p-1">
+            <button
+              type="button"
+              class="rounded-md px-3 py-2 text-sm transition-colors {authMode === 'oauth' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}"
+              onclick={() => authMode = 'oauth'}
+            >
+              OAuth
+            </button>
+            <button
+              type="button"
+              class="rounded-md px-3 py-2 text-sm transition-colors {authMode === 'apikey' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}"
+              onclick={() => authMode = 'apikey'}
+            >
+              API key / PAT
+            </button>
+          </div>
+        {/if}
         {#if isKiro}
           <div class="flex flex-col gap-3">
             <p class="text-body-sm text-muted-foreground">Choose how to authenticate with Kiro.</p>

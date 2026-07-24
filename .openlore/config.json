@@ -1,0 +1,21 @@
+{
+  "version": "1.0.0",
+  "projectType": "go",
+  "openspecPath": "./openspec",
+  "analysis": {
+    "maxFiles": 100000,
+    "includePatterns": [],
+    "excludePatterns": []
+  },
+  "generation": {
+    "model": "cf/moonshotai/kimi-k2.6",
+    "domains": "auto",
+    "provider": "openai-compat",
+    "openaiCompatBaseUrl": "http://192.168.90.101:3777/v1"
+  },
+  "panicResponse": {
+    "mode": "off"
+  },
+  "createdAt": "2026-07-23T16:13:44.545Z",
+  "lastRun": null
+}

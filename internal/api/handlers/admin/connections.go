@@ -135,7 +135,7 @@ func (h *ConnectionHandler) Get(c *gin.Context) {
 	id := c.Param("id")
 	conn := db.Connection{}
 	var psd sql.NullString
-		err := h.db.QueryRow(`
+	err := h.db.QueryRow(`
 		SELECT id, provider_type_id, name, auth_type, status,
 		       cooldown_until, last_error, last_error_code,
 		       last_success_at, last_failure_at, failure_count,
@@ -386,6 +386,39 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 		Model:                model,
 		ProviderSpecificData: psdMap,
 	}
+	// Qoder-specific lightweight validation before the expensive executor test.
+	if conn.ProviderTypeID == "qoder" {
+		if token := executor.EffectiveQoderToken(req); token != "" {
+			valLatency, code, valErr := h.validateQoderToken(ctx, token)
+			if valErr != nil {
+				var det connstate.ErrorDetection
+				if code == http.StatusUnauthorized || code == http.StatusForbidden {
+					det = connstate.ErrorDetection{
+						Category:       connstate.ErrorAuth,
+						Message:        "Qoder token rejected",
+						Status:         connstate.StatusDisabled,
+						DisabledReason: "auth_failed",
+					}
+				} else {
+					det = connstate.ErrorDetection{
+						Category:       connstate.ErrorServer,
+						Message:        "Qoder token validation failed",
+						Status:         connstate.StatusDisabled,
+						DisabledReason: "provider_error",
+					}
+				}
+				h.recordTestFailure(id, det)
+				c.JSON(http.StatusOK, gin.H{
+					"connection_id": id,
+					"status":        "failed",
+					"error":         det.Message,
+					"latency_ms":    valLatency,
+				})
+				return
+			}
+		}
+	}
+
 	latency, statusCode, testErr := h.runTestAttempt(ctx, exec, req)
 	if testErr == nil {
 		h.recordTestSuccess(id)
@@ -492,6 +525,20 @@ func (h *ConnectionHandler) runTestAttempt(ctx context.Context, exec executor.Ex
 	return latency, streamResult.StatusCode, nil
 }
 
+// validateQoderToken performs a cheap upstream credential check before the
+// executor test. PAT tokens (pt-*) are exchanged for a short-lived job token;
+// API/OAuth-derived tokens are checked against the DashScope models endpoint.
+// It returns the latency, HTTP status code, and a token-safe error.
+func (h *ConnectionHandler) validateQoderToken(ctx context.Context, token string) (int64, int, error) {
+	start := time.Now()
+	if executor.IsQoderPAT(token) {
+		_, code, err := quota.ResolveQoderJobToken(token)
+		return time.Since(start).Milliseconds(), code, err
+	}
+	code, err := quota.CheckQoderAPIToken(ctx, token)
+	return time.Since(start).Milliseconds(), code, err
+}
+
 // grokCLITestSoftSuccess reports whether a Grok CLI connection test error is an
 // HTTP 402 indicating valid authentication but exhausted credits/quota. This is
 // intentionally limited to grok-cli: other providers treat 402 as a hard
@@ -545,17 +592,19 @@ func (h *ConnectionHandler) recordTestFailure(connID string, det connstate.Error
 		status = connstate.StatusQuotaExhausted
 	}
 
-	disabledReason := ""
+	disabledReason := det.DisabledReason
 	isActive := 1
 	if status == connstate.StatusDisabled {
 		isActive = 0
-		switch det.Category {
-		case connstate.ErrorAuth:
-			disabledReason = "auth_failed"
-		case connstate.ErrorBalanceEmpty:
-			disabledReason = "balance_empty"
-		default:
-			disabledReason = "manual"
+		if disabledReason == "" {
+			switch det.Category {
+			case connstate.ErrorAuth:
+				disabledReason = "auth_failed"
+			case connstate.ErrorBalanceEmpty:
+				disabledReason = "balance_empty"
+			default:
+				disabledReason = "manual"
+			}
 		}
 	}
 
@@ -854,8 +903,9 @@ func (h *ConnectionHandler) RefreshToken(c *gin.Context) {
 // POST /api/admin/system/connection-cleanup
 //
 // Query params:
-//   grace_days - optional retention window in days; defaults to the manager's
-//                configured retention. Use 0 to delete every eligible row.
+//
+//	grace_days - optional retention window in days; defaults to the manager's
+//	             configured retention. Use 0 to delete every eligible row.
 func (h *ConnectionHandler) CleanupConnections(c *gin.Context) {
 	if h.lifecycleMgr == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "lifecycle manager not configured"})

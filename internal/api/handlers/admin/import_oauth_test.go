@@ -41,6 +41,7 @@ func newOAuthImportTestDeps(t *testing.T) (*OAuthHandler, *sql.DB) {
 	elig := connstate.NewEligibilityManager(store)
 	authMgr := auth.NewManager()
 	authMgr.RegisterService(auth.ProviderGrokCli, stubOAuthService{})
+	authMgr.RegisterService(auth.ProviderQoder, stubOAuthService{})
 	return NewOAuthHandler(database, authMgr, store, elig), database
 }
 
@@ -127,6 +128,57 @@ func TestImportToken_Success(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected connection %s in grok-cli eligible list", resp.ID)
+	}
+}
+
+func TestImportToken_Qoder(t *testing.T) {
+	h, database := newOAuthImportTestDeps(t)
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := `{
+"provider": "qoder",
+"access_token": "access-123",
+"refresh_token": "refresh-456",
+"expires_at": 1893456000,
+"email": "qoder@example.com",
+"provider_specific_data": {"api_key": "ak-qoder"}
+}`
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/oauth/import-token", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	h.ImportToken(c)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		ID     string `json:"id"`
+		Name   string `json:"name"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Status != "ready" {
+		t.Fatalf("status = %q, want ready", resp.Status)
+	}
+	var authType string
+	var psdRaw string
+	err := database.QueryRow(`SELECT auth_type, COALESCE(provider_specific_data,'') FROM connections WHERE id = ?`, resp.ID).Scan(&authType, &psdRaw)
+	if err != nil {
+		t.Fatalf("fetch connection: %v", err)
+	}
+	if authType != "oauth" {
+		t.Errorf("auth_type = %q, want oauth", authType)
+	}
+	var psd map[string]string
+	if err := json.Unmarshal([]byte(psdRaw), &psd); err != nil {
+		t.Fatalf("psd unmarshal: %v", err)
+	}
+	if psd["api_key"] != "ak-qoder" {
+		t.Errorf("api_key = %q, want ak-qoder", psd["api_key"])
+	}
+	if cs := h.store.Get(resp.ID); cs == nil || cs.Prefix != "qoder" {
+		t.Fatalf("expected connection prefix qoder, got cs=%v", cs)
 	}
 }
 

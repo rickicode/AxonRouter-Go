@@ -18,6 +18,7 @@ export interface ProviderMeta {
   description: string;
   format: string;
   authType: 'none' | 'apikey' | 'oauth' | 'custom';
+  authModes?: ('none' | 'apikey' | 'oauth' | 'custom')[];
   prefix: string;
   aliases?: string[];
   isBuiltIn: boolean;
@@ -707,17 +708,18 @@ export const PROVIDER_CATALOG: ProviderMeta[] = [
   icon: 'water_drop',
   textIcon: 'QD',
   iconFile: '/providers/qoder.png',
-  category: 'apikey',
-  description: 'Qoder dual-mode provider: DashScope API key for HTTP transport, or Qoder PAT (pt-...) for local qodercli transport.',
+  category: 'oauth',
+  description: 'Qoder dual-mode provider: OAuth account login, DashScope API key for HTTP transport, or Qoder PAT (pt-...) for local qodercli transport.',
   format: 'qoder',
-  authType: 'apikey',
+  authType: 'oauth',
+  authModes: ['oauth', 'apikey'],
   prefix: 'qoder/',
   isBuiltIn: true,
   website: 'https://qoder.com',
   color: '#6366f1',
   serviceKinds: ['llm'],
   hasFree: true,
-  authHint: 'DashScope API key or Qoder PAT (pt-...) for CLI transport.',
+  authHint: 'OAuth, DashScope API key, or Qoder PAT (pt-...) for CLI transport.',
 },
 ];
 

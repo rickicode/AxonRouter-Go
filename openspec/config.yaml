@@ -1,0 +1,27 @@
+schema: spec-driven
+openlore:
+  version: 1.0.0
+  generatedAt: 2026-07-23T18:29:53.025Z
+  domains:
+    - provider
+    - model
+    - auth
+    - connection
+    - combo
+    - quota
+    - cache
+    - compression
+    - proxy
+    - usage
+    - backup
+    - log
+  confidence: 0.92
+context: >-
+  # Auto-detected by openlore
+
+  Tech stack: Go, Gin, Svelte, Vitest
+
+  Architecture: Layered (routes → controllers → services → repositories)
+
+  Domains: provider, model, auth, connection, combo, quota, cache, compression, proxy, usage,
+  backup, log

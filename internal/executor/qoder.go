@@ -46,9 +46,21 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, req *Request) (*Strea
 }
 
 func effectiveQoderToken(req *Request) string {
+	// PAT tokens always route through the local qodercli subprocess.
 	for _, v := range []string{req.APIKey, req.AccessToken} {
-		if v = strings.TrimSpace(v); v != "" {
-			return v
+		if t := strings.TrimSpace(v); isQoderPAT(t) {
+			return t
+		}
+	}
+	// OAuth-backed connections store the upstream API key in ProviderSpecific.
+	if req.ProviderSpecificData != nil {
+		if apiKey := strings.TrimSpace(req.ProviderSpecificData["api_key"]); apiKey != "" {
+			return apiKey
+		}
+	}
+	for _, v := range []string{req.AccessToken, req.APIKey} {
+		if t := strings.TrimSpace(v); t != "" {
+			return t
 		}
 	}
 	return strings.TrimSpace(os.Getenv("QODER_PERSONAL_ACCESS_TOKEN"))
@@ -56,6 +68,20 @@ func effectiveQoderToken(req *Request) string {
 
 func isQoderPAT(token string) bool {
 	return strings.HasPrefix(token, "pt-")
+}
+
+// NOTE: touched to expose Qoder token helpers for the admin validation path.
+// EffectiveQoderToken returns the token that will actually be used by Qoder,
+// mirroring the executor's resolution order (PAT precedence, OAuth API key, then
+// environment fallback). Useful for callers that need to validate credentials
+// before the executor runs.
+func EffectiveQoderToken(req *Request) string {
+	return effectiveQoderToken(req)
+}
+
+// IsQoderPAT reports whether the token is a Qoder Personal Access Token (pt-*).
+func IsQoderPAT(token string) bool {
+	return isQoderPAT(token)
 }
 
 func (e *QoderExecutor) executeViaQoderCli(ctx context.Context, req *Request, token string, stream bool) (*Response, error) {
@@ -73,8 +99,8 @@ func (e *QoderExecutor) executeViaQoderCli(ctx context.Context, req *Request, to
 		"created": time.Now().Unix(),
 		"model":   model,
 		"choices": []map[string]any{{
-			"index":   0,
-			"message": map[string]any{"role": "assistant", "content": result},
+			"index":         0,
+			"message":       map[string]any{"role": "assistant", "content": result},
 			"finish_reason": "stop",
 		}},
 		"usage": map[string]any{"estimated": true},

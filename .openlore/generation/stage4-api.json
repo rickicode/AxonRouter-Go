@@ -1,0 +1,2468 @@
+{
+  "stage": "api",
+  "success": true,
+  "data": [
+    {
+      "authentication": "Bearer JWT",
+      "method": "POST",
+      "path": "/v1/messages",
+      "purpose": "Handles chat completion requests in Anthropic Claude format, supporting both streaming and non-streaming responses with model routing, caching, failover, token budget enforcement, and usage tracking.",
+      "relatedEntity": "Message",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Request body is parsed and validated",
+            "Model is checked against allowlist",
+            "Token budget is verified",
+            "Cache is checked for exact hits",
+            "Connection is selected from pool with failover support",
+            "Streaming responses use SSE format",
+            "Non-streaming responses return complete JSON",
+            "Usage is accumulated for billing",
+            "Request/response may be compressed"
+          ],
+          "given": "Authenticated user with valid API key and allowed model access",
+          "name": "Streaming chat completion",
+          "then": "Returns SSE stream with Claude-format message deltas or full message response",
+          "when": "POST /v1/messages with Anthropic-compatible request body including stream:true"
+        },
+        {
+          "and": [
+            "Request body is parsed and validated",
+            "Model is checked against allowlist",
+            "Token budget is verified",
+            "Cache is checked for exact hits",
+            "Connection is selected from pool with failover support",
+            "Full response is collected before returning",
+            "Usage is accumulated for billing"
+          ],
+          "given": "Authenticated user with valid API key and allowed model access",
+          "name": "Non-streaming chat completion",
+          "then": "Returns 200 OK with complete Claude-format message object",
+          "when": "POST /v1/messages with Anthropic-compatible request body including stream:false or omitted"
+        },
+        {
+          "and": [
+            "Request body exceeds size limit",
+            "Or request contains invalid JSON",
+            "Or model is not in allowed list",
+            "Or token budget is exceeded"
+          ],
+          "given": "Any client making a request",
+          "name": "Request validation failure",
+          "then": "Returns 400 Bad Request with claudeError JSON detailing the failure",
+          "when": "POST /v1/messages with invalid or disallowed parameters"
+        },
+        {
+          "and": [
+            "All connections in pool are in cooldown",
+            "Or all connections fail health checks",
+            "Or provider returns persistent errors"
+          ],
+          "given": "Authenticated user with valid request",
+          "name": "Failover exhaustion",
+          "then": "Returns 503 Service Unavailable or builds failover error response with retry guidance",
+          "when": "POST /v1/messages when no healthy connections available after failover attempts"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "POST",
+      "path": "/v1/messages/count_tokens",
+      "purpose": "Counts tokens for a given Anthropic-format message request using the provider's native token counting endpoint, returning token usage without generating a completion.",
+      "relatedEntity": "Message",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Request body is parsed and validated",
+            "Model is checked against allowlist",
+            "Executor is resolved for the model",
+            "Connection is obtained from pool",
+            "Provider's CountTokens is called",
+            "Result is returned with proper headers"
+          ],
+          "given": "Authenticated user with valid API key and allowed model access",
+          "name": "Successful token count",
+          "then": "Returns 200 OK with token count in Anthropic-compatible format",
+          "when": "POST /v1/messages/count_tokens with valid message request body"
+        },
+        {
+          "and": [
+            "Request body is invalid",
+            "Or model is not allowed",
+            "Or executor resolution fails",
+            "Or no connection available"
+          ],
+          "given": "Any client making a request",
+          "name": "Token count failure",
+          "then": "Returns 400 Bad Request with claudeError JSON",
+          "when": "POST /v1/messages/count_tokens with invalid parameters"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "POST",
+      "path": "/v1/embeddings",
+      "purpose": "Generate vector embeddings for input text using a specified AI model. Routes to appropriate provider (OpenAI-compatible), validates model permissions, checks token budgets, and returns embedding vectors.",
+      "relatedEntity": "Embedding",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response includes embedding vectors in OpenAI-compatible format",
+            "Usage metrics are accumulated for the API key"
+          ],
+          "given": "Authenticated user with valid API key and allowed model access",
+          "name": "Successful embedding generation",
+          "then": "200 OK with embedding vectors array",
+          "when": "POST /v1/embeddings with valid model and input text"
+        },
+        {
+          "and": [
+            "Error type is 'invalid_request_error'"
+          ],
+          "given": "Any request to embeddings endpoint",
+          "name": "Missing model field",
+          "then": "400 Bad Request with 'model is required' error",
+          "when": "POST /v1/embeddings without 'model' in request body"
+        },
+        {
+          "and": [
+            "Error type is 'invalid_request_error'"
+          ],
+          "given": "Authenticated user with restricted model access",
+          "name": "Model not allowed",
+          "then": "403 Forbidden with 'model not allowed for this API key' error",
+          "when": "POST /v1/embeddings with model not in allowed list"
+        },
+        {
+          "and": [
+            "Token budget check fails"
+          ],
+          "given": "Authenticated user with exceeded or invalid token budget",
+          "name": "Token budget exceeded",
+          "then": "429 or appropriate error status with budget exceeded message",
+          "when": "POST /v1/embeddings when token budget is depleted"
+        },
+        {
+          "and": [
+            "Error type is 'invalid_request_error'"
+          ],
+          "given": "Provider configuration exists but lacks embedding support",
+          "name": "Provider missing embedding service kind",
+          "then": "400 Bad Request with 'provider does not support embeddings' error",
+          "when": "POST /v1/embeddings with provider not configured for embeddings"
+        },
+        {
+          "and": [
+            "Error type is 'invalid_request_error'"
+          ],
+          "given": "Provider has modality restrictions configured",
+          "name": "Model not available for embeddings on provider",
+          "then": "400 Bad Request with model availability error for specific provider",
+          "when": "POST /v1/embeddings with model not in provider's embedding modality list"
+        },
+        {
+          "and": [
+            "Error type is 'server_error'"
+          ],
+          "given": "No healthy connections available for provider",
+          "name": "No available connection",
+          "then": "503 Service Unavailable with 'no available connection' error",
+          "when": "POST /v1/embeddings when all provider connections are down"
+        },
+        {
+          "and": [
+            "Error type is 'invalid_request_error'"
+          ],
+          "given": "Resolved executor does not implement EmbeddingsExecutor interface",
+          "name": "Non-OpenAI compatible provider",
+          "then": "400 Bad Request with 'embeddings only supported for OpenAI-compatible providers' error",
+          "when": "POST /v1/embeddings with provider that doesn't support OpenAI-compatible embeddings"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "POST",
+      "path": "/v1/images/generations",
+      "purpose": "Generate images from text prompts using AI model providers. Handles request validation, model permission checks, token budget enforcement, provider resolution, and streaming/non-streaming execution through the executor framework.",
+      "relatedEntity": "Image",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Request body is parsed and validated",
+            "Model is checked against allowed models list",
+            "Token budget is validated for the requesting organization",
+            "Provider alias is resolved to concrete service",
+            "Executor is created with appropriate configuration",
+            "Request is executed with retry logic",
+            "API usage is accumulated for billing",
+            "Response is proxied back to client with appropriate headers"
+          ],
+          "given": "Authenticated user with valid API key and sufficient token budget",
+          "name": "Successful image generation",
+          "then": "200 OK with generated image data in response body",
+          "when": "POST /v1/images/generations with valid prompt and model"
+        },
+        {
+          "and": [
+            "Error response is written with appropriate status code",
+            "Usage may still be accumulated if applicable"
+          ],
+          "given": "Request with invalid JSON body or missing required fields",
+          "name": "Invalid request body",
+          "then": "400 Bad Request with error details",
+          "when": "POST /v1/images/generations with malformed JSON"
+        },
+        {
+          "and": [
+            "Request is aborted before reaching executor",
+            "Error is logged for monitoring"
+          ],
+          "given": "Authenticated user requesting disallowed model",
+          "name": "Model not allowed",
+          "then": "403 Forbidden or 400 Bad Request with model access error",
+          "when": "POST /v1/images/generations with unauthorized model ID"
+        },
+        {
+          "and": [
+            "Request is aborted with JSON error response",
+            "No executor is created or invoked"
+          ],
+          "given": "Organization with exhausted or insufficient token budget",
+          "name": "Token budget exceeded",
+          "then": "429 Too Many Requests or 402 Payment Required with budget error",
+          "when": "POST /v1/images/generations when token budget is depleted"
+        },
+        {
+          "and": [
+            "Retry logic may be attempted depending on error type",
+            "Upstream error is proxied to client with appropriate wrapping"
+          ],
+          "given": "Valid request but upstream provider failure",
+          "name": "Upstream provider error",
+          "then": "502 Bad Gateway or 503 Service Unavailable with provider error details",
+          "when": "POST /v1/images/generations when provider service fails"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "POST",
+      "path": "/v1/audio/transcriptions",
+      "purpose": "Handles speech-to-text transcription requests by receiving multipart audio uploads, validating model permissions, checking token budgets, routing to appropriate STT executor with connection pooling and retry logic, and accumulating API usage metrics.",
+      "relatedEntity": "STT",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Request Content-Type header is parsed for multipart boundary",
+            "Audio file is extracted from multipart form data",
+            "Model ID is validated against allowed models from context",
+            "Token budget is checked for the requesting organization",
+            "Connection is selected from pool with health/cooldown checks",
+            "Request is forwarded to upstream STT provider with retry logic",
+            "API usage is accumulated for billing/metrics",
+            "Response is streamed back to client with appropriate headers"
+          ],
+          "given": "Authenticated user with valid JWT, allowed model access, and sufficient token budget",
+          "name": "Successful STT transcription",
+          "then": "200 OK with transcription result from upstream provider",
+          "when": "POST /v1/audio/transcriptions with multipart audio file and model parameter"
+        },
+        {
+          "and": [
+            "Model ID is checked against allowed models list from context",
+            "Request is rejected before processing audio data"
+          ],
+          "given": "Authenticated user with valid JWT but requesting disallowed model",
+          "name": "Model not allowed",
+          "then": "Error response indicating model is not permitted",
+          "when": "POST /v1/audio/transcriptions with unauthorized model ID"
+        },
+        {
+          "and": [
+            "Organization ID extracted from context",
+            "Token budget retrieved and compared against usage",
+            "Request is rejected if budget exceeded"
+          ],
+          "given": "Authenticated user whose organization has exceeded token budget",
+          "name": "Token budget exceeded",
+          "then": "Error response indicating insufficient token budget",
+          "when": "POST /v1/audio/transcriptions when organization quota is depleted"
+        },
+        {
+          "and": [
+            "Connection pool is exhausted or all connections in cooldown",
+            "Fallback logic attempts older connection selection",
+            "Request fails if no viable connection found"
+          ],
+          "given": "All STT provider connections are unhealthy or in cooldown",
+          "name": "No available connections",
+          "then": "Error response indicating no available upstream connection",
+          "when": "POST /v1/audio/transcriptions when connection pool has no healthy endpoints"
+        },
+        {
+          "and": [
+            "Multipart body is read and preserved for forwarding",
+            "Content-Type with boundary is maintained for upstream request",
+            "File handles are properly closed after reading"
+          ],
+          "given": "Valid multipart request with audio file attachment",
+          "name": "Multipart body forwarding",
+          "then": "Audio data successfully forwarded to upstream STT provider",
+          "when": "POST /v1/audio/transcriptions with multipart/form-data content"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "POST",
+      "path": "/v1/audio/speech",
+      "purpose": "Convert text to speech using a specified model and voice, returning synthesized audio content. Validates model permissions, checks token budgets, manages provider connection selection with fallback, and tracks API usage.",
+      "relatedEntity": "TTS",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response includes Content-Type header matching requested audio format",
+            "X-Request-ID header is set with unique trace identifier",
+            "API usage is accumulated for billing"
+          ],
+          "given": "Authenticated user with valid JWT, allowed model access, and sufficient token budget",
+          "name": "Successful TTS generation",
+          "then": "200 OK with audio/mpeg or requested audio format stream",
+          "when": "POST /v1/audio/speech with valid TTS request body containing model, input text, and voice"
+        },
+        {
+          "and": [
+            "Error response follows standard error format with code and message"
+          ],
+          "given": "Authenticated user with disallowed model in request",
+          "name": "Model not allowed",
+          "then": "400 Bad Request with model access denied error",
+          "when": "POST /v1/audio/speech with model not in user's allowed models list"
+        },
+        {
+          "and": [
+            "Request is aborted before upstream call"
+          ],
+          "given": "Authenticated user with insufficient token budget for requested input",
+          "name": "Token budget exceeded",
+          "then": "429 Too Many Requests or 400 Bad Request with budget exceeded error",
+          "when": "POST /v1/audio/speech with input exceeding configured token budget"
+        },
+        {
+          "and": [
+            "Error is logged for observability",
+            "Client receives sanitized error without upstream details"
+          ],
+          "given": "Valid request but all provider connections fail",
+          "name": "Provider connection failure",
+          "then": "502 Bad Gateway or 503 Service Unavailable with upstream connection error",
+          "when": "POST /v1/audio/speech and getConnection exhausts all provider fallbacks"
+        },
+        {
+          "and": [
+            "Request body size limit is enforced via http.MaxBytesReader"
+          ],
+          "given": "Request with body exceeding maximum allowed size",
+          "name": "Request body too large",
+          "then": "413 Payload Too Large or 400 Bad Request with body read error",
+          "when": "POST /v1/audio/speech with request body larger than configured max bytes"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "POST",
+      "path": "/v1/unified",
+      "purpose": "Unified endpoint that dispatches to the appropriate handler based on request mode. Supports chat completions, images, and video generation modes by inspecting the request body and routing to the corresponding internal handler.",
+      "relatedEntity": "UnifiedRequest",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Request body contains valid mode field",
+            "Model is allowed for the authenticated user",
+            "Token budget is sufficient"
+          ],
+          "given": "Authenticated user with valid JWT token and request within size limits",
+          "name": "Chat completions mode",
+          "then": "Request is dispatched to ChatCompletions handler with streaming or non-streaming response based on stream flag",
+          "when": "POST /v1/unified with mode=chat or inferred chat completion request"
+        },
+        {
+          "and": [
+            "Request body contains image generation parameters",
+            "Model is allowed for the authenticated user"
+          ],
+          "given": "Authenticated user with valid JWT token",
+          "name": "Images generation mode",
+          "then": "Request is dispatched to Images handler for image generation",
+          "when": "POST /v1/unified with mode=images or inferred image generation request"
+        },
+        {
+          "and": [
+            "Request body contains video generation parameters",
+            "Model is allowed for the authenticated user"
+          ],
+          "given": "Authenticated user with valid JWT token",
+          "name": "Video generation mode",
+          "then": "Request is dispatched to Video handler for video generation",
+          "when": "POST /v1/unified with mode=video or inferred video generation request"
+        },
+        {
+          "and": [
+            "Request body exceeds maximum size limit"
+          ],
+          "given": "Any request with body larger than configured max bytes",
+          "name": "Request body too large",
+          "then": "413 Payload Too Large with read body error details",
+          "when": "POST /v1/unified with oversized request body"
+        },
+        {
+          "and": [
+            "User has exceeded token budget or model is not allowed"
+          ],
+          "given": "Authenticated user with exhausted token budget or unauthorized model",
+          "name": "Budget or permission denied",
+          "then": "403 Forbidden or appropriate error response with budget/permission details",
+          "when": "POST /v1/unified with disallowed model or exceeded budget"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "POST",
+      "path": "/v1/unified (chat completions dispatch)",
+      "purpose": "Handle chat completion requests including streaming and non-streaming responses. Supports model fusion, combo requests, caching, failover between providers, token usage tracking, and rate limit handling.",
+      "relatedEntity": "ChatCompletion",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Model is allowed via modelIDAllowed check",
+            "Token budget sufficient via checkTokenBudget",
+            "Optional fusion/combo detection for multi-model requests",
+            "Cache lookup for exact match",
+            "Provider resolution and proxy candidate selection"
+          ],
+          "given": "Authenticated user with valid request",
+          "name": "Non-streaming chat completion",
+          "then": "200 OK with JSON completion response including usage statistics, cached or from upstream provider",
+          "when": "POST /v1/unified dispatched to ChatCompletions with stream=false or no stream flag"
+        },
+        {
+          "and": [
+            "Streaming enabled via stream=true or stream options",
+            "Model supports streaming",
+            "Provider connection established"
+          ],
+          "given": "Authenticated user requesting streaming response",
+          "name": "Streaming chat completion",
+          "then": "200 OK with text/event-stream or NDJSON chunked response, with proper cancellation handling and failover on errors",
+          "when": "POST /v1/unified dispatched to ChatCompletions with stream=true"
+        },
+        {
+          "and": [
+            "Fusion mode detected via combo.DetectRequiredCapabilities",
+            "Multiple models required for request"
+          ],
+          "given": "Authenticated user with complex multi-model requirement",
+          "name": "Fusion request handling",
+          "then": "Request processed through handleFusionRequest combining multiple model capabilities",
+          "when": "POST /v1/unified with fusion-capable model configuration"
+        },
+        {
+          "and": [
+            "Exact cache key match found",
+            "Cache entry is fresh"
+          ],
+          "given": "Authenticated user with previously cached identical request",
+          "name": "Cache hit serving",
+          "then": "200 OK with cached response body, skipping upstream provider call",
+          "when": "POST /v1/unified with exactCacheKey matching stored entry"
+        },
+        {
+          "and": [
+            "Primary provider fails with eligible error",
+            "Failover candidates available",
+            "Ban count allows retry"
+          ],
+          "given": "Authenticated user with failing primary provider",
+          "name": "Provider failover",
+          "then": "Request retried with next available provider, exponential backoff applied, ban count tracked",
+          "when": "POST /v1/unified where primary provider returns failover-eligible error"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "POST",
+      "path": "/v1/unified (images dispatch)",
+      "purpose": "Handle image generation requests by dispatching to the Images handler. Converts request to appropriate format for image generation providers.",
+      "relatedEntity": "Image",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Model is allowed for image generation",
+            "Request contains valid image generation parameters"
+          ],
+          "given": "Authenticated user with image generation request",
+          "name": "Image generation",
+          "then": "200 OK with generated image data or URL in response format matching OpenAI images API",
+          "when": "POST /v1/unified dispatched to Images handler"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "POST",
+      "path": "/v1/unified (video dispatch)",
+      "purpose": "Handle video generation requests by dispatching to the Video handler. Converts request to appropriate format for video generation providers.",
+      "relatedEntity": "Video",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Model is allowed for video generation",
+            "Request contains valid video generation parameters"
+          ],
+          "given": "Authenticated user with video generation request",
+          "name": "Video generation",
+          "then": "200 OK with video generation task status or result",
+          "when": "POST /v1/unified dispatched to Video handler"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "POST",
+      "path": "/v1/video/generations",
+      "purpose": "Generate a video from a text prompt or image input using AI models. Handles model validation, token budget checking, connection pooling to upstream providers, request proxying with retry logic, and usage accumulation.",
+      "relatedEntity": "VideoGeneration",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Upstream provider returns 200 with video generation result",
+            "API key usage is accumulated for billing"
+          ],
+          "given": "Authenticated user with valid JWT, allowed model ID, and sufficient token budget",
+          "name": "Successful video generation",
+          "then": "200 OK with generated video content proxied from upstream provider",
+          "when": "POST /v1/video/generations is called with valid request body containing model and prompt"
+        },
+        {
+          "and": [
+            "Error response indicates model not allowed"
+          ],
+          "given": "Authenticated user with disallowed model ID in request",
+          "name": "Model not allowed",
+          "then": "400 Bad Request with error indicating model is not allowed",
+          "when": "POST /v1/video/generations is called with unauthorized model ID"
+        },
+        {
+          "and": [
+            "Error response indicates insufficient budget"
+          ],
+          "given": "Authenticated user with exceeded token budget",
+          "name": "Token budget exceeded",
+          "then": "429 Too Many Requests or 403 Forbidden with budget exceeded error",
+          "when": "POST /v1/video/generations is called when token budget is depleted"
+        },
+        {
+          "and": [
+            "Retry logic may attempt fallback connections",
+            "Error is logged for observability"
+          ],
+          "given": "Valid request but all upstream connections fail",
+          "name": "Upstream connection failure",
+          "then": "502 Bad Gateway or 503 Service Unavailable with upstream error details",
+          "when": "POST /v1/video/generations is called and no healthy upstream provider is available"
+        },
+        {
+          "and": [
+            "Request body size is limited by http.MaxBytesReader"
+          ],
+          "given": "Request with excessively large body",
+          "name": "Request body too large",
+          "then": "413 Payload Too Large with body read error",
+          "when": "POST /v1/video/generations is called with request body exceeding size limit"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "POST",
+      "path": "/v1/responses",
+      "purpose": "Handle OpenAI Responses API format requests with support for streaming, model routing, caching, failover, compression, token budgeting, and quota management",
+      "relatedEntity": "Response",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Request body is read and optionally compressed",
+            "Model is validated against allowlist",
+            "Token budget is checked",
+            "Exact cache is checked for hits",
+            "Capabilities are detected for routing"
+          ],
+          "given": "Authenticated user with valid API key and request body in OpenAI Responses format",
+          "name": "Non-streaming successful response",
+          "then": "200 OK with JSON response body containing output, usage, and id",
+          "when": "POST /v1/responses with stream: false"
+        },
+        {
+          "and": [
+            "Request body is read and optionally compressed",
+            "Model is validated against allowlist",
+            "Token budget is checked",
+            "Exact cache is checked for hits",
+            "Streaming executor is resolved and executed"
+          ],
+          "given": "Authenticated user with valid API key and request body in OpenAI Responses format",
+          "name": "Streaming successful response",
+          "then": "200 OK with chunked SSE stream containing response deltas",
+          "when": "POST /v1/responses with stream: true"
+        },
+        {
+          "and": [
+            "Request body is read and optionally compressed",
+            "Model is validated against allowlist",
+            "Token budget is checked"
+          ],
+          "given": "Authenticated user with valid API key",
+          "name": "Token budget exceeded",
+          "then": "429 Too Many Requests or 400 Bad Request with error about token budget",
+          "when": "POST /v1/responses with request exceeding configured token budget"
+        },
+        {
+          "and": [
+            "Request body is read and optionally compressed",
+            "Model validation fails"
+          ],
+          "given": "Authenticated user with valid API key",
+          "name": "Model not allowed",
+          "then": "400 Bad Request with error about disallowed model",
+          "when": "POST /v1/responses with model not in allowlist"
+        },
+        {
+          "and": [
+            "Request body read fails due to size limit"
+          ],
+          "given": "Any client request",
+          "name": "Request body too large",
+          "then": "413 Payload Too Large with error message",
+          "when": "POST /v1/responses with body exceeding MaxBytesReader limit"
+        },
+        {
+          "and": [
+            "Exact cache key matches previous request"
+          ],
+          "given": "Authenticated user with identical previous request",
+          "name": "Exact cache hit",
+          "then": "200 OK with cached response body, skipping upstream call",
+          "when": "POST /v1/responses with matching cache key"
+        },
+        {
+          "and": [
+            "Primary upstream fails with eligible error",
+            "Failover is configured"
+          ],
+          "given": "Authenticated user with failing primary upstream",
+          "name": "Failover to secondary upstream",
+          "then": "200 OK with response from failover upstream, or aggregated error if all fail",
+          "when": "POST /v1/responses during upstream outage"
+        },
+        {
+          "and": [
+            "Quota exhaustion detected for model scope"
+          ],
+          "given": "Authenticated user with exhausted quota",
+          "name": "Quota cooldown applied",
+          "then": "Response with cooldown headers, quota exhaustion persisted to cache",
+          "when": "POST /v1/responses for model in cooldown period"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "POST",
+      "path": "/api/proxy-pools/vercel-deploy",
+      "purpose": "Deploy a relay edge function to Vercel's edge network, creating a new proxy pool entry with generated authentication and testing the deployed endpoint before saving.",
+      "relatedEntity": "ProxyPool",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Polls Vercel deployment status until ready",
+            "Tests the deployed relay URL for health",
+            "Saves the new proxy pool to database with active status"
+          ],
+          "given": "Authenticated admin with valid Vercel deployment credentials and relay configuration",
+          "name": "Successful Vercel deployment",
+          "then": "Returns 200 OK with deployment details and saved pool information",
+          "when": "POST /api/proxy-pools/vercel-deploy is called with deployment parameters"
+        },
+        {
+          "and": [
+            "Returns parsed Vercel error message from response body"
+          ],
+          "given": "Vercel API returns non-2xx status during deployment creation",
+          "name": "Vercel API error",
+          "then": "Returns 500 Internal Server Error with descriptive error message",
+          "when": "POST /api/proxy-pools/vercel-deploy is called"
+        },
+        {
+          "and": [
+            "Deployment polling exceeds configured timeout duration"
+          ],
+          "given": "Vercel deployment creation succeeds but deployment never reaches ready state",
+          "name": "Vercel deployment timeout",
+          "then": "Returns 500 Internal Server Error with timeout error message",
+          "when": "POST /api/proxy-pools/vercel-deploy is called"
+        },
+        {
+          "and": [
+            "Relay health check fails after successful deployment"
+          ],
+          "given": "Vercel deployment succeeds but deployed relay endpoint fails health check",
+          "name": "Relay health check failure",
+          "then": "Returns 500 Internal Server Error with relay test failure details",
+          "when": "POST /api/proxy-pools/vercel-deploy is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "POST",
+      "path": "/api/proxy-pools/deno-deploy",
+      "purpose": "Deploy a relay edge function to Deno Deploy's edge network, creating a new proxy pool entry with generated authentication and testing the deployed endpoint before saving.",
+      "relatedEntity": "ProxyPool",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Polls Deno deployment revision status until ready",
+            "Tests the deployed relay URL for health",
+            "Saves the new proxy pool to database with active status"
+          ],
+          "given": "Authenticated admin with valid Deno Deploy token and relay configuration",
+          "name": "Successful Deno deployment",
+          "then": "Returns 200 OK with deployment details and saved pool information",
+          "when": "POST /api/proxy-pools/deno-deploy is called with deployment parameters"
+        },
+        {
+          "and": [
+            "Returns parsed Deno error message from response body"
+          ],
+          "given": "Deno Deploy API returns non-2xx status during deployment",
+          "name": "Deno API error",
+          "then": "Returns 500 Internal Server Error with descriptive error message",
+          "when": "POST /api/proxy-pools/deno-deploy is called"
+        },
+        {
+          "and": [
+            "Revision polling exceeds configured timeout duration"
+          ],
+          "given": "Deno deployment succeeds but revision never reaches ready state",
+          "name": "Deno revision timeout",
+          "then": "Returns 500 Internal Server Error with timeout error message",
+          "when": "POST /api/proxy-pools/deno-deploy is called"
+        },
+        {
+          "and": [
+            "Organization slug is normalized from project identifier"
+          ],
+          "given": "Deno project identifier includes organization prefix or trailing slash",
+          "name": "Organization slug normalization",
+          "then": "Correctly extracts and formats organization slug for API calls",
+          "when": "POST /api/proxy-pools/deno-deploy is called with org-prefixed project"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "POST",
+      "path": "/api/proxy-pools/cloudflare-deploy",
+      "purpose": "Deploy a relay edge function to Cloudflare Workers, creating a new proxy pool entry with generated authentication and testing the deployed endpoint before saving.",
+      "relatedEntity": "ProxyPool",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Uploads worker script to Cloudflare",
+            "Deploys worker to edge",
+            "Tests the deployed relay URL for health",
+            "Saves the new proxy pool to database with active status"
+          ],
+          "given": "Authenticated admin with valid Cloudflare API credentials and relay configuration",
+          "name": "Successful Cloudflare deployment",
+          "then": "Returns 200 OK with deployment details and saved pool information",
+          "when": "POST /api/proxy-pools/cloudflare-deploy is called with deployment parameters"
+        },
+        {
+          "and": [
+            "Returns parsed Cloudflare error message from response body"
+          ],
+          "given": "Cloudflare API returns non-2xx status during script upload or deployment",
+          "name": "Cloudflare API error",
+          "then": "Returns 500 Internal Server Error with descriptive error message",
+          "when": "POST /api/proxy-pools/cloudflare-deploy is called"
+        },
+        {
+          "and": [
+            "Deployment status polling indicates failure"
+          ],
+          "given": "Cloudflare script upload succeeds but deployment fails",
+          "name": "Cloudflare deployment failure",
+          "then": "Returns 500 Internal Server Error with deployment failure details",
+          "when": "POST /api/proxy-pools/cloudflare-deploy is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "POST",
+      "path": "/api/proxy-pools/generate-source",
+      "purpose": "Generate the edge function source code for a specified relay type without deploying, returning the complete runnable edge function code that can be manually deployed.",
+      "relatedEntity": "ProxyPool",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Replaces template variables with generated values",
+            "Returns complete edge function source as string"
+          ],
+          "given": "Authenticated admin with valid relay type specification",
+          "name": "Generate edge function source",
+          "then": "Returns 200 OK with generated source code in response body",
+          "when": "POST /api/proxy-pools/generate-source is called with relay type parameter"
+        },
+        {
+          "and": [
+            "Relay type must be one of supported edge platforms"
+          ],
+          "given": "Invalid or unsupported relay type requested",
+          "name": "Invalid relay type",
+          "then": "Returns 400 Bad Request with validation error",
+          "when": "POST /api/proxy-pools/generate-source is called with unknown relay type"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "GET",
+      "path": "/api/admin/proxy-groups",
+      "purpose": "List all proxy groups with optional filtering and pagination.",
+      "relatedEntity": "ProxyGroup",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Supports pagination via query parameters",
+            "Supports filtering by active status"
+          ],
+          "given": "Admin user is authenticated",
+          "name": "List proxy groups",
+          "then": "Returns a paginated list of proxy groups",
+          "when": "GET /api/admin/proxy-groups is called with optional query parameters"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "GET",
+      "path": "/api/admin/proxy-groups/:id",
+      "purpose": "Get a single proxy group by its ID.",
+      "relatedEntity": "ProxyGroup",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Returns 404 if proxy group does not exist"
+          ],
+          "given": "Admin user is authenticated and proxy group ID exists",
+          "name": "Get proxy group",
+          "then": "Returns the proxy group details",
+          "when": "GET /api/admin/proxy-groups/:id is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "POST",
+      "path": "/api/admin/proxy-groups",
+      "purpose": "Create a new proxy group with associated proxy pools.",
+      "relatedEntity": "ProxyGroup",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Validates required fields",
+            "Processes pool IDs from request",
+            "Generates UUID for new group"
+          ],
+          "given": "Admin user is authenticated with valid proxy group data",
+          "name": "Create proxy group",
+          "then": "Creates and returns the new proxy group",
+          "when": "POST /api/admin/proxy-groups is called with valid JSON body"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "PUT",
+      "path": "/api/admin/proxy-groups/:id",
+      "purpose": "Update an existing proxy group's configuration and associated pools.",
+      "relatedEntity": "ProxyGroup",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Validates proxy group exists before update",
+            "Processes pool IDs from request",
+            "Updates timestamp on modification"
+          ],
+          "given": "Admin user is authenticated and proxy group ID exists",
+          "name": "Update proxy group",
+          "then": "Updates and returns the modified proxy group",
+          "when": "PUT /api/admin/proxy-groups/:id is called with valid JSON body"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "DELETE",
+      "path": "/api/admin/proxy-groups/:id",
+      "purpose": "Delete a proxy group and clean up all references to it.",
+      "relatedEntity": "ProxyGroup",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Calls cleanGroupReferences to remove all references before deletion",
+            "Returns 404 if proxy group does not exist"
+          ],
+          "given": "Admin user is authenticated and proxy group ID exists",
+          "name": "Delete proxy group",
+          "then": "Deletes the proxy group and returns success",
+          "when": "DELETE /api/admin/proxy-groups/:id is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "GET",
+      "path": "/admin/api/v1/master-key",
+      "purpose": "Returns the current master key, its prefix, the admin base URL, and when the key was created.",
+      "relatedEntity": "MasterKey",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response body contains key, prefix, base_url, and created_at fields"
+          ],
+          "given": "Authenticated admin user with valid master key",
+          "name": "Retrieve master key metadata",
+          "then": "200 OK with master key metadata in response body",
+          "when": "GET /admin/api/v1/master-key is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "POST",
+      "path": "/admin/api/v1/master-key/regenerate",
+      "purpose": "Rotates the master key and returns the new metadata.",
+      "relatedEntity": "MasterKey",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "New master key is persisted",
+            "Response contains new key, prefix, base_url, and created_at"
+          ],
+          "given": "Authenticated admin user with valid master key",
+          "name": "Regenerate master key successfully",
+          "then": "200 OK with new master key metadata in response body",
+          "when": "POST /admin/api/v1/master-key/regenerate is called"
+        },
+        {
+          "and": [
+            "Response contains error message and code 'master_key_regenerate_failed'"
+          ],
+          "given": "Authenticated admin user",
+          "name": "Regenerate master key fails",
+          "then": "500 Internal Server Error with error details in response body",
+          "when": "POST /admin/api/v1/master-key/regenerate is called and key manager regeneration fails"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "GET",
+      "path": "/admin/optimization/compression",
+      "purpose": "Returns current compression configuration including mode and lite settings",
+      "relatedEntity": "Optimization",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response includes mode and lite configuration object"
+          ],
+          "given": "Admin user is authenticated",
+          "name": "Retrieve compression settings",
+          "then": "200 OK with compression configuration JSON",
+          "when": "GET /admin/optimization/compression is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "PUT",
+      "path": "/admin/optimization/compression",
+      "purpose": "Persists compression configuration and flushes cache when settings change",
+      "relatedEntity": "Optimization",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Cache is flushed to invalidate entries computed with previous configuration",
+            "Returns updated compression settings"
+          ],
+          "given": "Admin user provides valid compression configuration",
+          "name": "Update compression settings",
+          "then": "200 OK with updated compression configuration",
+          "when": "PUT /admin/optimization/compression is called with mode and lite settings"
+        },
+        {
+          "and": [
+            "Error details returned in response"
+          ],
+          "given": "Admin user provides invalid JSON payload",
+          "name": "Invalid compression settings",
+          "then": "400 Bad Request with error message",
+          "when": "PUT /admin/optimization/compression is called with malformed request"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "GET",
+      "path": "/admin/optimization/cache/stats",
+      "purpose": "Returns current cache statistics including hits, misses, size and hit rate",
+      "relatedEntity": "Optimization",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response includes hits, misses, size and calculated hit_rate"
+          ],
+          "given": "Admin user is authenticated",
+          "name": "Retrieve cache statistics",
+          "then": "200 OK with cache statistics JSON",
+          "when": "GET /admin/optimization/cache/stats is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "POST",
+      "path": "/admin/optimization/cache/flush",
+      "purpose": "Clears all cached responses from the cache storage",
+      "relatedEntity": "Optimization",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "All cache entries are removed",
+            "Confirmation flag returned"
+          ],
+          "given": "Admin user is authenticated",
+          "name": "Flush cache",
+          "then": "200 OK with flushed confirmation",
+          "when": "POST /admin/optimization/cache/flush is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "GET",
+      "path": "/admin/optimization/compression/metrics",
+      "purpose": "Returns aggregate compression statistics per mode and totals from database",
+      "relatedEntity": "Optimization",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response includes per-mode breakdown with tokens_saved and savings_percent",
+            "Totals calculated across all modes"
+          ],
+          "given": "Admin user is authenticated and metrics exist in database",
+          "name": "Retrieve compression metrics",
+          "then": "200 OK with compression metrics JSON",
+          "when": "GET /admin/optimization/compression/metrics is called"
+        },
+        {
+          "and": [
+            "Error details returned in response"
+          ],
+          "given": "Database query fails",
+          "name": "Database error retrieving metrics",
+          "then": "500 Internal Server Error with error message",
+          "when": "GET /admin/optimization/compression/metrics encounters database error"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "POST",
+      "path": "/admin/optimization/compression/preview",
+      "purpose": "Runs compression on a sample body and returns compression statistics without persisting",
+      "relatedEntity": "Optimization",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Uses current DB lite configuration when mode is lite",
+            "Returns compressed text and token statistics"
+          ],
+          "given": "Admin user provides sample body text",
+          "name": "Preview compression on sample",
+          "then": "200 OK with compression preview results",
+          "when": "POST /admin/optimization/compression/preview is called with body and optional mode"
+        },
+        {
+          "and": [
+            "Error details returned in response"
+          ],
+          "given": "Admin user omits required body field",
+          "name": "Missing body in preview request",
+          "then": "400 Bad Request with error message",
+          "when": "POST /admin/optimization/compression/preview is called without body"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "GET",
+      "path": "/api/admin/quota",
+      "purpose": "List quotas with filtering by provider, search term, and status, with pagination support.",
+      "relatedEntity": "Quota",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response includes paginated list of quotas"
+          ],
+          "given": "Admin user is authenticated",
+          "name": "List quotas with default pagination",
+          "then": "200 OK with list of quotas",
+          "when": "GET /api/admin/quota is called with no query parameters"
+        },
+        {
+          "and": [
+            "Only quotas matching filters are returned",
+            "Pagination metadata is included"
+          ],
+          "given": "Admin user is authenticated and quotas exist for provider 'aws'",
+          "name": "List quotas with provider filter",
+          "then": "200 OK with filtered quota list",
+          "when": "GET /api/admin/quota?provider=aws is called"
+        },
+        {
+          "and": [
+            "Results are limited to specified page size"
+          ],
+          "given": "Admin user is authenticated and many quotas exist",
+          "name": "List quotas with custom pagination",
+          "then": "200 OK with paginated results",
+          "when": "GET /api/admin/quota?page=2&per_page=25 is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "GET",
+      "path": "/api/admin/quota/summary",
+      "purpose": "Get summary of quota information including next reset dates and current month costs across all providers.",
+      "relatedEntity": "Quota",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Summary includes next reset dates from quota.NextProviderResets",
+            "Summary includes current month costs from usage.CostThisMonth",
+            "Summary includes provider metadata from quota.ProviderMeta"
+          ],
+          "given": "Admin user is authenticated and quota data exists",
+          "name": "Get quota summary",
+          "then": "200 OK with summary containing resets and spent amounts",
+          "when": "GET /api/admin/quota/summary is called"
+        },
+        {
+          "and": [
+            "earliestReset function parses reset dates with time.Parse",
+            "Earliest reset date is determined using t.Before comparison"
+          ],
+          "given": "Multiple providers with different reset schedules",
+          "name": "Summary calculates earliest reset correctly",
+          "then": "200 OK with correct earliest reset date in summary",
+          "when": "GET /api/admin/quota/summary is called with multiple providers"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "POST",
+      "path": "/api/admin/quota/:connId/refresh",
+      "purpose": "Refresh quota data for a specific connection by ID.",
+      "relatedEntity": "Quota",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Quota data is refreshed from external provider"
+          ],
+          "given": "Admin user is authenticated and connection exists",
+          "name": "Refresh quota for valid connection",
+          "then": "200 OK with refreshed quota data",
+          "when": "POST /api/admin/quota/conn-123/refresh is called"
+        },
+        {
+          "and": [
+            "Error is returned if connection not found"
+          ],
+          "given": "Admin user is authenticated but connection does not exist",
+          "name": "Refresh quota for invalid connection",
+          "then": "404 Not Found or error response",
+          "when": "POST /api/admin/quota/invalid-id/refresh is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "GET",
+      "path": "/api/admin/tls",
+      "purpose": "Returns the current TLS/HTTPS configuration including validity flag, certificate cache directory, and whether the HTTPS server is currently active.",
+      "relatedEntity": "TLS",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response body contains data object with enabled, domain, email, acceptTOS, staging, certCache, valid, certDir, and active fields."
+          ],
+          "given": "Admin user is authenticated and TLS configuration exists in data directory.",
+          "name": "Retrieve current TLS configuration",
+          "then": "200 OK with TLS configuration details in response body.",
+          "when": "GET /api/admin/tls is called."
+        },
+        {
+          "and": [
+            "Response body contains error message."
+          ],
+          "given": "Admin user is authenticated but TLS configuration file is corrupted or unreadable.",
+          "name": "Failed to load TLS configuration",
+          "then": "500 Internal Server Error.",
+          "when": "GET /api/admin/tls is called."
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "PUT",
+      "path": "/api/admin/tls",
+      "purpose": "Validates and persists a new TLS/HTTPS configuration. If enabled, logs that a restart is required to activate HTTPS on port 443.",
+      "relatedEntity": "TLS",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "If enabled, logs message indicating restart required to activate on :443.",
+            "If certCache is empty in request, defaults to 'certs'."
+          ],
+          "given": "Admin user is authenticated and provides valid TLS configuration payload.",
+          "name": "Update TLS configuration successfully",
+          "then": "200 OK with ok: true in response body.",
+          "when": "PUT /api/admin/tls is called with valid JSON body."
+        },
+        {
+          "and": [
+            "Response body contains validation error message."
+          ],
+          "given": "Admin user is authenticated but provides invalid TLS configuration (e.g., missing domain when enabled).",
+          "name": "Validation failure on TLS config",
+          "then": "400 Bad Request.",
+          "when": "PUT /api/admin/tls is called with invalid configuration."
+        },
+        {
+          "and": [
+            "Response body contains error message from JSON binding."
+          ],
+          "given": "Admin user is authenticated but sends malformed JSON or wrong types.",
+          "name": "Malformed request body",
+          "then": "400 Bad Request.",
+          "when": "PUT /api/admin/tls is called with malformed JSON."
+        },
+        {
+          "and": [
+            "Response body contains error message from file system operation."
+          ],
+          "given": "Admin user is authenticated but server fails to write configuration to disk.",
+          "name": "Persist failure",
+          "then": "500 Internal Server Error.",
+          "when": "PUT /api/admin/tls is called and SaveHTTPSConfig fails."
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "GET",
+      "path": "/api/admin/tls/public-ip",
+      "purpose": "Returns the host's public IPv4 address as discovered via external service.",
+      "relatedEntity": "TLS",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response body contains data object with ip field."
+          ],
+          "given": "Admin user is authenticated and external IP discovery service is reachable.",
+          "name": "Retrieve public IP successfully",
+          "then": "200 OK with public IP address in response body.",
+          "when": "GET /api/admin/tls/public-ip is called."
+        },
+        {
+          "and": [
+            "Response body contains error message from network operation."
+          ],
+          "given": "Admin user is authenticated but external IP discovery service is unreachable.",
+          "name": "Public IP discovery failure",
+          "then": "502 Bad Gateway.",
+          "when": "GET /api/admin/tls/public-ip is called."
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "GET",
+      "path": "/api/admin/tls/check-dns",
+      "purpose": "Resolves the requested domain and reports whether it points to the host's public IP address.",
+      "relatedEntity": "TLS",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response body contains data object with domain, publicIP, resolvedIP, and matches fields.",
+            "matches is true when resolvedIP equals publicIP and resolvedIP is not empty."
+          ],
+          "given": "Admin user is authenticated, provides domain query parameter, and DNS resolution succeeds.",
+          "name": "Check DNS resolution matches public IP",
+          "then": "200 OK with DNS check results in response body.",
+          "when": "GET /api/admin/tls/check-dns?domain=example.com is called."
+        },
+        {
+          "and": [
+            "Response body contains error message indicating domain parameter is required."
+          ],
+          "given": "Admin user is authenticated but omits domain query parameter.",
+          "name": "Missing domain parameter",
+          "then": "400 Bad Request.",
+          "when": "GET /api/admin/tls/check-dns is called without domain query parameter."
+        },
+        {
+          "and": [
+            "Response body contains error message from network operation.",
+            "resolvedIP will be empty string in successful response if DNS lookup fails."
+          ],
+          "given": "Admin user is authenticated but external IP discovery service is unreachable.",
+          "name": "Public IP discovery failure during DNS check",
+          "then": "502 Bad Gateway.",
+          "when": "GET /api/admin/tls/check-dns?domain=example.com is called."
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "POST",
+      "path": "/api/admin/backup/download",
+      "purpose": "Download a backup of the database as an NDJSON stream.",
+      "relatedEntity": "Backup",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response headers include Content-Type: application/x-ndjson",
+            "Response headers include Content-Disposition: attachment; filename=\"axonrouter-backup.ndjson\"",
+            "Response body is a chunked NDJSON stream of backup data"
+          ],
+          "given": "Authenticated admin user",
+          "name": "Download backup",
+          "then": "200 OK with NDJSON stream of backup data",
+          "when": "POST /api/admin/backup/download is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "POST",
+      "path": "/api/admin/backup/restore",
+      "purpose": "Restore the database from a backup file upload.",
+      "relatedEntity": "Backup",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "If restore is successful, the onRestoreRestart callback is invoked after a 2-second delay"
+          ],
+          "given": "Authenticated admin user with a valid backup file",
+          "name": "Restore from backup",
+          "then": "200 OK with restore result data",
+          "when": "POST /api/admin/backup/restore is called with multipart form data containing backup file and optional password"
+        },
+        {
+          "and": [
+            "Error response contains specific error message"
+          ],
+          "given": "Authenticated admin user without a backup file",
+          "name": "Restore missing file",
+          "then": "400 Bad Request with error 'backup file is required'",
+          "when": "POST /api/admin/backup/restore is called without backup file"
+        },
+        {
+          "and": [
+            "Error response contains specific error message"
+          ],
+          "given": "Authenticated admin user with an invalid backup file",
+          "name": "Restore invalid file",
+          "then": "400 Bad Request with error details",
+          "when": "POST /api/admin/backup/restore is called with corrupted or invalid backup file"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "GET",
+      "path": "/api/admin/logs",
+      "purpose": "Returns paginated request logs with optional filters for provider, connection, model, combo, modality, status, date range, and search.",
+      "relatedEntity": "RequestLog",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "page defaults to 1",
+            "per_page defaults to 100"
+          ],
+          "given": "Authenticated admin user",
+          "name": "List logs with default pagination",
+          "then": "200 OK with paginated list of request logs",
+          "when": "GET /api/admin/logs is called without query parameters"
+        },
+        {
+          "and": [
+            "Filters applied: provider_id, connection_id, model_id, combo_id, modality, status, search, start_date/end_date or since/until"
+          ],
+          "given": "Authenticated admin user",
+          "name": "List logs with filters",
+          "then": "200 OK with filtered paginated list of request logs",
+          "when": "GET /api/admin/logs?provider_id=xyz&start_date=2024-01-01 is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "DELETE",
+      "path": "/api/admin/logs",
+      "purpose": "Deletes request logs older than a specified retention window (7, 30, or 90 days).",
+      "relatedEntity": "RequestLog",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "older_than_days must be 7, 30, or 90"
+          ],
+          "given": "Authenticated admin user",
+          "name": "Clear old logs successfully",
+          "then": "200 OK with count of deleted rows",
+          "when": "DELETE /api/admin/logs with body {\"older_than_days\": 30}"
+        },
+        {
+          "and": [
+            "Validation error returned"
+          ],
+          "given": "Authenticated admin user",
+          "name": "Clear logs with invalid retention days",
+          "then": "400 Bad Request with error message",
+          "when": "DELETE /api/admin/logs with body {\"older_than_days\": 15}"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "GET",
+      "path": "/api/admin/logs/active",
+      "purpose": "Returns currently in-flight proxied requests for the live in-flight panel.",
+      "relatedEntity": "RequestLog",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Data sourced from active request tracking system"
+          ],
+          "given": "Authenticated admin user",
+          "name": "Get active requests",
+          "then": "200 OK with list of active/in-flight requests",
+          "when": "GET /api/admin/logs/active is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "GET",
+      "path": "/api/admin/logs/:id",
+      "purpose": "Returns a single request log entry by ID with full details including tokens, latency, cost, and metadata.",
+      "relatedEntity": "RequestLog",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Includes all token types, latency, status code, error message, cost, client IP, user agent"
+          ],
+          "given": "Authenticated admin user",
+          "name": "Get existing log",
+          "then": "200 OK with log details",
+          "when": "GET /api/admin/logs/123 is called"
+        },
+        {
+          "and": [
+            "Log ID does not exist in database"
+          ],
+          "given": "Authenticated admin user",
+          "name": "Get non-existent log",
+          "then": "404 Not Found with error message",
+          "when": "GET /api/admin/logs/999 is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "GET",
+      "path": "/api/admin/logs/stats",
+      "purpose": "Returns aggregated log statistics including provider usage, model usage, and daily usage trends.",
+      "relatedEntity": "RequestLog",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "hours defaults to 24",
+            "daily usage always returns 30 days"
+          ],
+          "given": "Authenticated admin user",
+          "name": "Get stats with default hours",
+          "then": "200 OK with provider_usage, model_usage, and daily_usage",
+          "when": "GET /api/admin/logs/stats is called"
+        },
+        {
+          "and": [
+            "Custom time window for provider and model usage"
+          ],
+          "given": "Authenticated admin user",
+          "name": "Get stats with custom hours",
+          "then": "200 OK with aggregated stats for specified hours",
+          "when": "GET /api/admin/logs/stats?hours=48 is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "GET",
+      "path": "/api/admin/combos",
+      "purpose": "List returns all combos.",
+      "relatedEntity": "Combo",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response contains array of all combo entities"
+          ],
+          "given": "Admin user is authenticated",
+          "name": "List all combos",
+          "then": "200 OK with list of combos",
+          "when": "GET /api/admin/combos is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "GET",
+      "path": "/api/admin/combos/:id",
+      "purpose": "Get returns a single combo with its steps.",
+      "relatedEntity": "Combo",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response includes combo details and associated steps"
+          ],
+          "given": "Admin user is authenticated and combo exists",
+          "name": "Get combo by ID",
+          "then": "200 OK with combo and steps",
+          "when": "GET /api/admin/combos/:id is called with valid ID"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "POST",
+      "path": "/api/admin/combos",
+      "purpose": "Create creates a new combo with steps.",
+      "relatedEntity": "Combo",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Combo is persisted with associated steps",
+            "Validation checks strategy and fusion config"
+          ],
+          "given": "Admin user is authenticated with valid combo data",
+          "name": "Create new combo",
+          "then": "201 Created with new combo",
+          "when": "POST /api/admin/combos is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "PUT",
+      "path": "/api/admin/combos/:id",
+      "purpose": "Update modifies a combo.",
+      "relatedEntity": "Combo",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Validates strategy via isValidComboStrategy",
+            "Parses and validates fusion config",
+            "Normalizes strategy to lowercase trimmed"
+          ],
+          "given": "Admin user is authenticated with valid update data",
+          "name": "Update existing combo",
+          "then": "200 OK with updated combo",
+          "when": "PUT /api/admin/combos/:id is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "DELETE",
+      "path": "/api/admin/combos/:id",
+      "purpose": "Delete removes a combo.",
+      "relatedEntity": "Combo",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Associated steps may be cascade deleted"
+          ],
+          "given": "Admin user is authenticated and combo exists",
+          "name": "Delete combo",
+          "then": "204 No Content",
+          "when": "DELETE /api/admin/combos/:id is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "POST",
+      "path": "/api/admin/combos/:id/steps",
+      "purpose": "AddStep adds a step to a combo.",
+      "relatedEntity": "ComboStep",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Step is appended to combo's step sequence"
+          ],
+          "given": "Admin user is authenticated with valid step data",
+          "name": "Add step to combo",
+          "then": "201 Created with new step",
+          "when": "POST /api/admin/combos/:id/steps is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "DELETE",
+      "path": "/api/admin/combos/:id/steps/:stepId",
+      "purpose": "RemoveStep removes a step from a combo.",
+      "relatedEntity": "ComboStep",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Step is removed from combo's step sequence"
+          ],
+          "given": "Admin user is authenticated and step exists",
+          "name": "Remove step from combo",
+          "then": "204 No Content",
+          "when": "DELETE /api/admin/combos/:id/steps/:stepId is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "GET",
+      "path": "/api/admin/combos/metrics",
+      "purpose": "Query param `window` is the lookback window in seconds (default 86400, max 2592000).",
+      "relatedEntity": "ComboMetric",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Default window is 86400 seconds (1 day)",
+            "Maximum allowed window is 2592000 seconds (30 days)",
+            "Metrics aggregated from request logs"
+          ],
+          "given": "Admin user is authenticated",
+          "name": "Get combo metrics",
+          "then": "200 OK with aggregated metrics",
+          "when": "GET /api/admin/combos/metrics is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "POST",
+      "path": "/api/admin/combos/seed-defaults",
+      "purpose": "SeedDefaults seeds default combos.",
+      "relatedEntity": "Combo",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Default combos are created if they don't exist",
+            "Idempotent operation"
+          ],
+          "given": "Admin user is authenticated",
+          "name": "Seed default combos",
+          "then": "200 OK with seeding results",
+          "when": "POST /api/admin/combos/seed-defaults is called"
+        }
+      ]
+    },
+    {
+      "authentication": "none",
+      "method": "GET",
+      "path": "/health",
+      "purpose": "Returns a simple liveness check for load balancers and dashboards. Reports ok/degraded/error based on in-memory store and usage-tracker health, never blocks on DB access. Includes version info and password-change flag.",
+      "relatedEntity": "SystemHealth",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response body contains status, db, version, latest_version, update_available, must_change_password fields"
+          ],
+          "given": "Application is running with valid store and tracker",
+          "name": "Healthy system",
+          "then": "200 OK with status 'ok'",
+          "when": "GET /health is called without authentication"
+        },
+        {
+          "and": [
+            "Response body contains status 'degraded' and db 'degraded'"
+          ],
+          "given": "Usage tracker has dropped events indicating write pipeline saturation",
+          "name": "Degraded system",
+          "then": "200 OK with status 'degraded'",
+          "when": "GET /health is called without authentication"
+        },
+        {
+          "and": [
+            "Response body contains status 'error' and db 'error'"
+          ],
+          "given": "Store or tracker is nil",
+          "name": "Unhealthy system",
+          "then": "503 Service Unavailable with status 'error'",
+          "when": "GET /health is called without authentication"
+        },
+        {
+          "and": [
+            "must_change_password is true when admin_password_changed flag is missing but password hash exists",
+            "must_change_password is false when admin_password_changed is 'true'"
+          ],
+          "given": "Database has admin password settings",
+          "name": "Password change required flag",
+          "then": "Response includes must_change_password boolean based on settings flags",
+          "when": "GET /health is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "GET",
+      "path": "/admin/check-update",
+      "purpose": "Forces a fresh fetch of the latest GitHub release and returns current version, latest version, and whether an update is available.",
+      "relatedEntity": "Version",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response contains version, latest_version, update_available fields"
+          ],
+          "given": "Version checker is initialized and GitHub API is reachable",
+          "name": "Successful update check",
+          "then": "200 OK with version comparison info",
+          "when": "GET /admin/check-update is called by admin"
+        },
+        {
+          "and": [
+            "Response contains error message"
+          ],
+          "given": "Version checker is nil",
+          "name": "Checker unavailable",
+          "then": "503 Service Unavailable",
+          "when": "GET /admin/check-update is called"
+        },
+        {
+          "and": [
+            "Response contains error message from GitHub API"
+          ],
+          "given": "Version checker is initialized but GitHub API call fails",
+          "name": "GitHub API failure",
+          "then": "502 Bad Gateway with error details",
+          "when": "GET /admin/check-update is called by admin"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "GET",
+      "path": "/admin/changelog",
+      "purpose": "Returns the project's CHANGELOG markdown via the version checker. Used by dashboard to avoid CORS and ad-blocker issues from fetching raw.githubusercontent.com directly.",
+      "relatedEntity": "Version",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response contains markdown field with CHANGELOG content"
+          ],
+          "given": "Version checker is initialized and changelog is available",
+          "name": "Successful changelog retrieval",
+          "then": "200 OK with markdown string",
+          "when": "GET /admin/changelog is called by admin"
+        },
+        {
+          "and": [
+            "Response contains error message"
+          ],
+          "given": "Version checker is nil",
+          "name": "Checker unavailable",
+          "then": "503 Service Unavailable",
+          "when": "GET /admin/changelog is called"
+        },
+        {
+          "and": [
+            "Response contains error message from changelog fetch"
+          ],
+          "given": "Version checker is initialized but changelog fetch fails",
+          "name": "Changelog fetch failure",
+          "then": "502 Bad Gateway with error details",
+          "when": "GET /admin/changelog is called by admin"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "GET",
+      "path": "/admin/metrics",
+      "purpose": "Returns operational counters for observability including connection health, usage buffer state, rate-limited/quota-exhausted connection counts, and today's aggregated usage statistics.",
+      "relatedEntity": "Metrics",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response contains buffer_length, healthy_connections, dropped_usage_events, rate_limited, quota_exhausted, requests_today, tokens_today, cost_today"
+          ],
+          "given": "Database is accessible and store/tracker are initialized",
+          "name": "Successful metrics retrieval",
+          "then": "200 OK with operational counters",
+          "when": "GET /admin/metrics is called by admin"
+        },
+        {
+          "and": [
+            "rate_limited and quota_exhausted are counts of active connections with those statuses",
+            "requests_today, tokens_today, cost_today are aggregated from usage data"
+          ],
+          "given": "Database has connection and usage data",
+          "name": "Metrics with active connections",
+          "then": "200 OK with accurate counts and aggregates",
+          "when": "GET /admin/metrics is called by admin"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "GET",
+      "path": "/admin/devices/:id",
+      "purpose": "Returns the key name and masked device list for the given API key.",
+      "relatedEntity": "Device",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response body contains keyId, name, count, and devices array"
+          ],
+          "given": "Admin is authenticated and API key with ID exists",
+          "name": "Retrieve devices for existing API key",
+          "then": "200 OK with key metadata and device list",
+          "when": "GET /admin/devices/:id is called with valid key ID"
+        },
+        {
+          "and": [
+            "Response body contains error message"
+          ],
+          "given": "Admin is authenticated and API key with ID does not exist",
+          "name": "API key not found",
+          "then": "404 Not Found",
+          "when": "GET /admin/devices/:id is called with invalid key ID"
+        },
+        {
+          "and": [
+            "Response body contains error message"
+          ],
+          "given": "Database error occurs during query",
+          "name": "Database error",
+          "then": "500 Internal Server Error",
+          "when": "GET /admin/devices/:id is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "GET",
+      "path": "/api/admin/dashboard/stats",
+      "purpose": "Returns aggregated dashboard statistics including today summary and system metrics.",
+      "relatedEntity": "Dashboard",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response body contains today summary from usage aggregator",
+            "Response body contains system metrics (CPU, memory, disk usage)"
+          ],
+          "given": "Authenticated admin user with valid database connection and usage tracker",
+          "name": "Retrieve dashboard stats",
+          "then": "200 OK with JSON containing today summary and system metrics",
+          "when": "GET /api/admin/dashboard/stats is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "GET",
+      "path": "/api/admin/dashboard/provider-summary",
+      "purpose": "Returns provider summary including disabled reasons so the dashboard can show why accounts are disabled.",
+      "relatedEntity": "Provider",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response includes disabled_reasons field for each provider"
+          ],
+          "given": "Authenticated admin user",
+          "name": "Retrieve provider summary",
+          "then": "200 OK with JSON array of provider summaries including disabled reasons",
+          "when": "GET /api/admin/dashboard/provider-summary is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "GET",
+      "path": "/api/admin/dashboard/recent-logs",
+      "purpose": "Returns the last N log entries for the dashboard.",
+      "relatedEntity": "Log",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Default limit is applied if N not specified",
+            "Logs are ordered by timestamp descending"
+          ],
+          "given": "Authenticated admin user",
+          "name": "Retrieve recent logs",
+          "then": "200 OK with JSON array of last N log entries",
+          "when": "GET /api/admin/dashboard/recent-logs is called with optional ?limit=N parameter"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "POST",
+      "path": "/api/admin/upgrade",
+      "purpose": "Downloads the latest release binary, verifies its SHA256 checksum, and replaces the current binary with the new version.",
+      "relatedEntity": "System",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response contains restart instructions with command and hint",
+            "New binary is written to temporary path and atomically swapped"
+          ],
+          "given": "Admin user is authenticated and version checker has latest release info",
+          "name": "Successful upgrade",
+          "then": "200 OK with restart instructions in response body",
+          "when": "POST /api/admin/upgrade is called"
+        },
+        {
+          "and": [
+            "Error message indicates checksum verification failed"
+          ],
+          "given": "Admin user is authenticated but downloaded binary has invalid checksum",
+          "name": "Upgrade with invalid checksum",
+          "then": "500 Internal Server Error",
+          "when": "POST /api/admin/upgrade is called"
+        },
+        {
+          "and": [
+            "Error message indicates download failure"
+          ],
+          "given": "Admin user is authenticated but release download fails",
+          "name": "Upgrade download failure",
+          "then": "500 Internal Server Error",
+          "when": "POST /api/admin/upgrade is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "POST",
+      "path": "/api/admin/restart",
+      "purpose": "Restarts the systemd service to apply a binary upgrade by delegating to a system-scoped unit.",
+      "relatedEntity": "System",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Service restart is triggered via system-scoped systemd unit"
+          ],
+          "given": "Admin user is authenticated and binary has been upgraded",
+          "name": "Successful restart",
+          "then": "200 OK with restart initiated",
+          "when": "POST /api/admin/restart is called"
+        },
+        {
+          "and": [
+            "Error message indicates systemd command failure"
+          ],
+          "given": "Admin user is authenticated but systemd restart command fails",
+          "name": "Restart failure",
+          "then": "500 Internal Server Error",
+          "when": "POST /api/admin/restart is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Admin",
+      "method": "GET",
+      "path": "/admin/console-logs",
+      "purpose": "Read the log file from the end and return up to maxConsoleLines lines of the console log for admin monitoring.",
+      "relatedEntity": "ConsoleLog",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response body contains Lines array and Path string"
+          ],
+          "given": "Admin user is authenticated and console log file exists at /tmp/axonrouter.log with content",
+          "name": "Retrieve console logs successfully",
+          "then": "200 OK with JSON body containing up to 500 lines and the file path",
+          "when": "GET /admin/console-logs is called"
+        },
+        {
+          "and": [
+            "Response body contains empty Lines array and Path string"
+          ],
+          "given": "Admin user is authenticated and console log file does not exist at /tmp/axonrouter.log",
+          "name": "Console log file missing",
+          "then": "200 OK with JSON body containing empty Lines array and the file path",
+          "when": "GET /admin/console-logs is called"
+        },
+        {
+          "and": [
+            "Response body contains error message"
+          ],
+          "given": "Admin user is authenticated and console log file exists but is unreadable due to permissions",
+          "name": "Console log file unreadable",
+          "then": "500 Internal Server Error with JSON error body",
+          "when": "GET /admin/console-logs is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Bearer JWT",
+      "method": "POST",
+      "path": "/api/orders",
+      "purpose": "Create a new order from the current cart.",
+      "relatedEntity": "Order",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "201 Created with orderId in response body"
+          ],
+          "given": "Authenticated user with valid cart",
+          "name": "Create order",
+          "then": "201 Created with orderId in response body",
+          "when": "POST /api/orders is called"
+        }
+      ]
+    },
+    {
+      "authentication": "Master API Key",
+      "method": "POST",
+      "path": "/admin/api/v1/change-password",
+      "purpose": "Change the admin password. Restricted from master API key authentication to prevent unauthorized password changes if the master key is leaked.",
+      "relatedEntity": "Admin",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response contains error code 'master_action_forbidden'",
+            "HTTP status is 403 Forbidden"
+          ],
+          "given": "Request is authenticated with master API key",
+          "name": "Master key blocked from password change",
+          "then": "Request is rejected with 403 Forbidden",
+          "when": "POST /admin/api/v1/change-password is called with master key auth"
+        },
+        {
+          "and": [
+            "Request proceeds to handler"
+          ],
+          "given": "Request is authenticated with session-based dashboard auth",
+          "name": "Session auth allowed for password change",
+          "then": "Request is allowed to proceed",
+          "when": "POST /admin/api/v1/change-password is called with session auth"
+        }
+      ]
+    },
+    {
+      "authentication": "Master API Key",
+      "method": "POST",
+      "path": "/admin/api/v1/defer-password-change",
+      "purpose": "Defer a required password change. Restricted from master API key authentication to prevent bypassing security policies if the master key is leaked.",
+      "relatedEntity": "Admin",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response contains error code 'master_action_forbidden'",
+            "HTTP status is 403 Forbidden"
+          ],
+          "given": "Request is authenticated with master API key",
+          "name": "Master key blocked from deferring password change",
+          "then": "Request is rejected with 403 Forbidden",
+          "when": "POST /admin/api/v1/defer-password-change is called with master key auth"
+        },
+        {
+          "and": [
+            "Request proceeds to handler"
+          ],
+          "given": "Request is authenticated with session-based dashboard auth",
+          "name": "Session auth allowed to defer password change",
+          "then": "Request is allowed to proceed",
+          "when": "POST /admin/api/v1/defer-password-change is called with session auth"
+        }
+      ]
+    },
+    {
+      "authentication": "Master API Key",
+      "method": "GET",
+      "path": "/admin/api/v1/developers/master-key",
+      "purpose": "Retrieve the master API key. Restricted from master API key authentication to prevent key exposure if the master key is leaked.",
+      "relatedEntity": "MasterKey",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response contains error code 'master_action_forbidden'",
+            "HTTP status is 403 Forbidden"
+          ],
+          "given": "Request is authenticated with master API key",
+          "name": "Master key blocked from retrieving master key",
+          "then": "Request is rejected with 403 Forbidden",
+          "when": "GET /admin/api/v1/developers/master-key is called with master key auth"
+        },
+        {
+          "and": [
+            "Request proceeds to handler"
+          ],
+          "given": "Request is authenticated with session-based dashboard auth",
+          "name": "Session auth allowed to retrieve master key",
+          "then": "Request is allowed to proceed",
+          "when": "GET /admin/api/v1/developers/master-key is called with session auth"
+        }
+      ]
+    },
+    {
+      "authentication": "Master API Key",
+      "method": "POST",
+      "path": "/admin/api/v1/developers/master-key/regenerate",
+      "purpose": "Regenerate the master API key. Restricted from master API key authentication to prevent unauthorized key rotation if the master key is leaked.",
+      "relatedEntity": "MasterKey",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response contains error code 'master_action_forbidden'",
+            "HTTP status is 403 Forbidden"
+          ],
+          "given": "Request is authenticated with master API key",
+          "name": "Master key blocked from regenerating master key",
+          "then": "Request is rejected with 403 Forbidden",
+          "when": "POST /admin/api/v1/developers/master-key/regenerate is called with master key auth"
+        },
+        {
+          "and": [
+            "Request proceeds to handler"
+          ],
+          "given": "Request is authenticated with session-based dashboard auth",
+          "name": "Session auth allowed to regenerate master key",
+          "then": "Request is allowed to proceed",
+          "when": "POST /admin/api/v1/developers/master-key/regenerate is called with session auth"
+        }
+      ]
+    },
+    {
+      "authentication": "Master API Key",
+      "method": "POST",
+      "path": "/admin/api/v1/upgrade",
+      "purpose": "Trigger a system upgrade. Restricted from master API key authentication to prevent unauthorized system modifications if the master key is leaked.",
+      "relatedEntity": "System",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response contains error code 'master_action_forbidden'",
+            "HTTP status is 403 Forbidden"
+          ],
+          "given": "Request is authenticated with master API key",
+          "name": "Master key blocked from system upgrade",
+          "then": "Request is rejected with 403 Forbidden",
+          "when": "POST /admin/api/v1/upgrade is called with master key auth"
+        },
+        {
+          "and": [
+            "Request proceeds to handler"
+          ],
+          "given": "Request is authenticated with session-based dashboard auth",
+          "name": "Session auth allowed for system upgrade",
+          "then": "Request is allowed to proceed",
+          "when": "POST /admin/api/v1/upgrade is called with session auth"
+        }
+      ]
+    },
+    {
+      "authentication": "Master API Key",
+      "method": "POST",
+      "path": "/admin/api/v1/restart",
+      "purpose": "Restart the system. Restricted from master API key authentication to prevent unauthorized system restart if the master key is leaked.",
+      "relatedEntity": "System",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response contains error code 'master_action_forbidden'",
+            "HTTP status is 403 Forbidden"
+          ],
+          "given": "Request is authenticated with master API key",
+          "name": "Master key blocked from system restart",
+          "then": "Request is rejected with 403 Forbidden",
+          "when": "POST /admin/api/v1/restart is called with master key auth"
+        },
+        {
+          "and": [
+            "Request proceeds to handler"
+          ],
+          "given": "Request is authenticated with session-based dashboard auth",
+          "name": "Session auth allowed for system restart",
+          "then": "Request is allowed to proceed",
+          "when": "POST /admin/api/v1/restart is called with session auth"
+        }
+      ]
+    },
+    {
+      "authentication": "Master API Key",
+      "method": "POST",
+      "path": "/admin/api/v1/backup/download",
+      "purpose": "Download a system backup. Restricted from master API key authentication to prevent data exfiltration if the master key is leaked.",
+      "relatedEntity": "Backup",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response contains error code 'master_action_forbidden'",
+            "HTTP status is 403 Forbidden"
+          ],
+          "given": "Request is authenticated with master API key",
+          "name": "Master key blocked from backup download",
+          "then": "Request is rejected with 403 Forbidden",
+          "when": "POST /admin/api/v1/backup/download is called with master key auth"
+        },
+        {
+          "and": [
+            "Request proceeds to handler"
+          ],
+          "given": "Request is authenticated with session-based dashboard auth",
+          "name": "Session auth allowed for backup download",
+          "then": "Request is allowed to proceed",
+          "when": "POST /admin/api/v1/backup/download is called with session auth"
+        }
+      ]
+    },
+    {
+      "authentication": "Master API Key",
+      "method": "POST",
+      "path": "/admin/api/v1/backup/restore",
+      "purpose": "Restore a system backup. Restricted from master API key authentication to prevent unauthorized data restoration if the master key is leaked.",
+      "relatedEntity": "Backup",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response contains error code 'master_action_forbidden'",
+            "HTTP status is 403 Forbidden"
+          ],
+          "given": "Request is authenticated with master API key",
+          "name": "Master key blocked from backup restore",
+          "then": "Request is rejected with 403 Forbidden",
+          "when": "POST /admin/api/v1/backup/restore is called with master key auth"
+        },
+        {
+          "and": [
+            "Request proceeds to handler"
+          ],
+          "given": "Request is authenticated with session-based dashboard auth",
+          "name": "Session auth allowed for backup restore",
+          "then": "Request is allowed to proceed",
+          "when": "POST /admin/api/v1/backup/restore is called with session auth"
+        }
+      ]
+    },
+    {
+      "authentication": "Master API Key",
+      "method": "PUT",
+      "path": "/admin/api/v1/tls-config",
+      "purpose": "Update TLS configuration. Restricted from master API key authentication to prevent unauthorized security configuration changes if the master key is leaked.",
+      "relatedEntity": "TLSConfig",
+      "requestSchema": {},
+      "responseSchema": {},
+      "scenarios": [
+        {
+          "and": [
+            "Response contains error code 'master_action_forbidden'",
+            "HTTP status is 403 Forbidden"
+          ],
+          "given": "Request is authenticated with master API key",
+          "name": "Master key blocked from TLS config update",
+          "then": "Request is rejected with 403 Forbidden",
+          "when": "PUT /admin/api/v1/tls-config is called with master key auth"
+        },
+        {
+          "and": [
+            "Request proceeds to handler"
+          ],
+          "given": "Request is authenticated with session-based dashboard auth",
+          "name": "Session auth allowed for TLS config update",
+          "then": "Request is allowed to proceed",
+          "when": "PUT /admin/api/v1/tls-config is called with session auth"
+        }
+      ]
+    }
+  ],
+  "tokens": 515438,
+  "duration": 352924
+}

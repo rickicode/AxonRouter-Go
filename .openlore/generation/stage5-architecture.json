@@ -1,0 +1,100 @@
+{
+  "stage": "architecture",
+  "success": true,
+  "data": {
+    "systemPurpose": "An AI API gateway and router that aggregates multiple LLM providers (OpenAI, Claude, Gemini, etc.) behind a unified interface. It handles request translation between formats, authentication, caching, rate limiting, and usage tracking, with a web dashboard for operational management.",
+    "architectureStyle": "Layered architecture with clear separation between API handlers, business services, and infrastructure concerns. The system uses an executor framework for provider abstraction, with dedicated translators for cross-format request/response conversion. This layering enables provider-agnostic routing while maintaining format-specific endpoint compatibility.",
+    "layerMap": [
+      {
+        "name": "API/Transport",
+        "purpose": "HTTP routing, request parsing, and response formatting for all external-facing endpoints",
+        "components": [
+          "internal/api/router.go",
+          "internal/api/handlers/v1/messages.go",
+          "internal/api/handlers/v1/embeddings.go",
+          "internal/api/handlers/v1/images.go",
+          "internal/api/handlers/v1/audio.go",
+          "internal/api/handlers/v1/unified.go",
+          "internal/api/handlers/v1/video.go",
+          "internal/api/handlers/v1/responses.go",
+          "internal/api/handlers/admin/*.go"
+        ]
+      },
+      {
+        "name": "Executor",
+        "purpose": "Provider-agnostic request execution framework with streaming, retry, and failover logic",
+        "components": [
+          "internal/executor/base.go",
+          "internal/executor/openai.go",
+          "internal/executor/kiro_eventstream.go"
+        ]
+      },
+      {
+        "name": "Translation",
+        "purpose": "Cross-format request/response conversion between provider APIs (OpenAI, Claude, Gemini, Antigravity)",
+        "components": [
+          "internal/translator/openai/claude/",
+          "internal/translator/openai/gemini/",
+          "internal/translator/claude/openai/",
+          "internal/translator/claude/gemini/",
+          "internal/translator/gemini/openai/",
+          "internal/translator/gemini/claude/",
+          "internal/translator/antigravity/openai/",
+          "internal/translator/antigravity/gemini/"
+        ]
+      },
+      {
+        "name": "Service/Business Logic",
+        "purpose": "Domain-specific business operations: auth, quota, cache, optimization, health monitoring",
+        "components": [
+          "SystemServiceManager",
+          "ProviderSettingsManager",
+          "AuthManager",
+          "KeyManager",
+          "RequestOptimizationService",
+          "StreamTokenExtractor",
+          "BodyTokenExtractor",
+          "HealthService",
+          "ConnectionStateStore"
+        ]
+      },
+      {
+        "name": "Infrastructure/Persistence",
+        "purpose": "Data persistence, backup/restore, logging, and system-level operations",
+        "components": [
+          "RestoreService",
+          "BackupHandler",
+          "LogHandler",
+          "FileUtility",
+          "ClipboardService"
+        ]
+      }
+    ],
+    "dataFlow": "HTTP request → API router → format-specific handler → request validation (auth, quota, model permissions) → optional cache lookup → executor framework → provider connection selection → request translation to target format → upstream provider API → response translation → optional response caching → usage tracking and logging → client response; async: health checks, quota refresh, backup operations run via background goroutines",
+    "integrations": [
+      "OpenAI API",
+      "Anthropic Claude API",
+      "Google Gemini API",
+      "Grok API",
+      "Cloudflare Workers AI",
+      "Vercel Edge Network",
+      "Deno Deploy",
+      "Cloudflare Workers",
+      "GitHub Releases (for upgrades)",
+      "External DNS/IP discovery services",
+      "systemd (for service management)"
+    ],
+    "securityModel": "Dual authentication system: (1) OAuth 2.0 for end-user provider connections with token refresh and singleflight deduplication, stored via CAS pattern; (2) Master admin API key for dashboard/admin API access with cryptographic randomness. Critical admin operations (password change, key regeneration, upgrade, restart, backup/restore, TLS config) are explicitly restricted from master key authentication to prevent lateral movement if the master key is compromised. Connection-scoped credential isolation.",
+    "keyDecisions": [
+      "Use an executor framework (BaseExecutor/OpenAIExecutor) to abstract provider-specific execution logic and enable unified streaming, retry, and failover handling",
+      "Implement bidirectional translators between all major formats (OpenAI, Claude, Gemini, Antigravity) rather than forcing a single internal canonical format",
+      "Employ file-backed settings with in-memory caching and sync.Map for high-concurrency connection state to avoid database write contention on hot routing paths",
+      "Restrict sensitive admin operations from master key authentication as a defense-in-depth measure against key compromise",
+      "Use singleflight deduplication for OAuth token refresh to prevent thundering herd against provider token endpoints",
+      "Implement NDJSON streaming backup format with encryption support for database portability and disaster recovery",
+      "Deploy edge relay functions to serverless platforms (Vercel, Deno, Cloudflare) for distributed proxy infrastructure"
+    ]
+  },
+  "tokens": 521066,
+  "duration": 20103
+}

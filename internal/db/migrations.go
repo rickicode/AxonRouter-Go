@@ -254,7 +254,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		{"grok-cli", "Grok CLI (Grok Build)", "grok-cli", "https://cli-chat-proxy.grok.com/v1/responses", "oauth", []string{"llm"}},
 
 		{"devin", "Devin CLI", "devin-cli", "", "apikey", []string{"llm"}},
-		{"qoder", "Qoder", "qoder", "https://dashscope.aliyuncs.com/compatible-mode/v1", "apikey", []string{"llm"}},
+		{"qoder", "Qoder", "qoder", "https://dashscope.aliyuncs.com/compatible-mode/v1", "oauth", []string{"llm"}},
 		{"qwencloud", "Qwen Cloud", "openai-responses", "https://dashscope-intl.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1/responses", "apikey", []string{"llm"}},
 
 		{"codebuddy", "CodeBuddy", "openai", "https://www.codebuddy.ai/v2/chat/completions", "oauth", []string{"llm"}},

@@ -295,3 +295,45 @@ func TestIsQoderPAT(t *testing.T) {
 		t.Error("expected sk-abc not to be PAT")
 	}
 }
+func TestEffectiveQoderToken_ProviderSpecificAPIKeyPriority(t *testing.T) {
+	t.Setenv("QODER_PERSONAL_ACCESS_TOKEN", "")
+	req := &Request{
+		AccessToken:          "at-http",
+		APIKey:               "ak-http",
+		ProviderSpecificData: map[string]string{"api_key": "ak-oauth"},
+	}
+	if got := effectiveQoderToken(req); got != "ak-oauth" {
+		t.Errorf("expected ProviderSpecific api_key priority, got %q", got)
+	}
+}
+
+func TestEffectiveQoderToken_AccessTokenBeforeAPIKeyForNonPAT(t *testing.T) {
+	t.Setenv("QODER_PERSONAL_ACCESS_TOKEN", "")
+	req := &Request{
+		AccessToken: "at-http",
+		APIKey:      "ak-http",
+	}
+	if got := effectiveQoderToken(req); got != "at-http" {
+		t.Errorf("expected AccessToken before APIKey, got %q", got)
+	}
+}
+
+func TestEffectiveQoderToken_PATOverridesProviderSpecific(t *testing.T) {
+	t.Setenv("QODER_PERSONAL_ACCESS_TOKEN", "")
+	req := &Request{
+		APIKey:               "pt-abc",
+		AccessToken:          "at-http",
+		ProviderSpecificData: map[string]string{"api_key": "ak-oauth"},
+	}
+	if got := effectiveQoderToken(req); got != "pt-abc" {
+		t.Errorf("expected PAT to override ProviderSpecific, got %q", got)
+	}
+}
+
+func TestEffectiveQoderToken_EnvFallback(t *testing.T) {
+	t.Setenv("QODER_PERSONAL_ACCESS_TOKEN", "pt-env")
+	req := &Request{}
+	if got := effectiveQoderToken(req); got != "pt-env" {
+		t.Errorf("expected env fallback, got %q", got)
+	}
+}
