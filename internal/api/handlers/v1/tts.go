@@ -109,6 +109,7 @@ func (h *Handler) TTS(c *gin.Context) {
 		ProxyPoolID:    executor.ProxyPoolIDFromContext(proxyCtx),
 		ApiType:        apiTypeFromPath(c.Request.URL.Path),
 		Modality:       "audio",
+		Quantity:       quantityForModality("audio", body),
 		Stream:         false,
 		LatencyMs:      time.Since(start).Milliseconds(),
 		StatusCode:     resp.StatusCode})

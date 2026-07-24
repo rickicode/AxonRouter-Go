@@ -460,13 +460,19 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 	reason_per_1k REAL NOT NULL DEFAULT 0,
 	cached_read_per_1k REAL NOT NULL DEFAULT 0,
 	cached_write_per_1k REAL NOT NULL DEFAULT 0,
-	image_per_unit REAL NOT NULL DEFAULT 0,
-	audio_per_min REAL NOT NULL DEFAULT 0,
-	currency TEXT NOT NULL DEFAULT 'USD',
+		image_per_unit REAL NOT NULL DEFAULT 0,
+		audio_per_min REAL NOT NULL DEFAULT 0,
+		video_per_unit REAL NOT NULL DEFAULT 0,
+		currency TEXT NOT NULL DEFAULT 'USD',
 	updated_at INTEGER NOT NULL DEFAULT 0
 );
 `); err != nil {
 		return err
+	}
+	if _, err := db.Exec(`ALTER TABLE model_pricing ADD COLUMN video_per_unit REAL NOT NULL DEFAULT 0`); err != nil {
+		if !isDuplicateColumnError(err) {
+			return err
+		}
 	}
 
 	// User-added custom models for custom providers.

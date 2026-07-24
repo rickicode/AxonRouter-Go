@@ -1295,6 +1295,7 @@ func (h *Handler) handleMediaCombo(
 				ProxyPoolID:    executor.ProxyPoolIDFromContext(proxyCtx),
 				ApiType:        apiTypeFromPath(c.Request.URL.Path),
 				Modality:       modality,
+				Quantity:       quantityForModality(modality, body),
 				Stream:         false,
 				LatencyMs:      latency,
 				StatusCode:     resp.StatusCode,

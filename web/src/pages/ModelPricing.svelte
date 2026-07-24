@@ -41,6 +41,7 @@
     cached_write_per_1k: 0,
     image_per_unit: 0,
     audio_per_min: 0,
+    video_per_unit: 0,
     currency: 'USD',
     updated_at: 0,
   });
@@ -148,7 +149,7 @@ let totalPages = $derived(Math.max(1, Math.ceil(filtered.length / perPage)));
     }
     const rateFields = [
       'input_per_1k', 'output_per_1k', 'reason_per_1k',
-      'cached_read_per_1k', 'cached_write_per_1k', 'image_per_unit', 'audio_per_min',
+      'cached_read_per_1k', 'cached_write_per_1k', 'image_per_unit', 'audio_per_min', 'video_per_unit',
     ] as const;
     for (const f of rateFields) {
       const v = form[f];
@@ -411,6 +412,10 @@ let totalPages = $derived(Math.max(1, Math.ceil(filtered.length / perPage)));
       <div class="flex flex-col gap-1.5">
         <Label class="text-sm font-medium">Audio $/min</Label>
         <Input type="number" step="0.000001" min="0" bind:value={form.audio_per_min} class="h-9 text-body-sm" />
+      </div>
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-sm font-medium">Video $/unit</Label>
+        <Input type="number" step="0.000001" min="0" bind:value={form.video_per_unit} class="h-9 text-body-sm" />
       </div>
     </div>
 

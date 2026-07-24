@@ -15,6 +15,7 @@ type Pricing struct {
 	ReasonPer1K      float64
 	ImagePerUnit     float64
 	AudioPerMin      float64
+	VideoPerUnit     float64
 	CachedReadPer1K  float64
 	CachedWritePer1K float64
 }
@@ -31,6 +32,7 @@ type ModelPricingRow struct {
 	CachedWritePer1K float64 `json:"cached_write_per_1k"`
 	ImagePerUnit float64 `json:"image_per_unit"`
 	AudioPerMin float64 `json:"audio_per_min"`
+	VideoPerUnit float64 `json:"video_per_unit"`
 	Currency string `json:"currency"`
 	UpdatedAt int64 `json:"updated_at"`
 	// ServiceKinds is populated from the model catalog for display; not persisted.
@@ -54,7 +56,7 @@ func ReloadPricing() {
 	if pricingDB == nil {
 		return
 	}
-	rows, err := pricingDB.Query(`SELECT model_id, display_name, input_per_1k, output_per_1k, reason_per_1k, cached_read_per_1k, cached_write_per_1k, image_per_unit, audio_per_min, currency, updated_at FROM model_pricing`)
+	rows, err := pricingDB.Query(`SELECT model_id, display_name, input_per_1k, output_per_1k, reason_per_1k, cached_read_per_1k, cached_write_per_1k, image_per_unit, audio_per_min, video_per_unit, currency, updated_at FROM model_pricing`)
 	if err != nil {
 		return
 	}
@@ -64,7 +66,7 @@ func ReloadPricing() {
 		var r ModelPricingRow
 		if err := rows.Scan(
 			&r.ModelID, &r.DisplayName, &r.InputPer1K, &r.OutputPer1K, &r.ReasonPer1K,
-			&r.CachedReadPer1K, &r.CachedWritePer1K, &r.ImagePerUnit, &r.AudioPerMin,
+			&r.CachedReadPer1K, &r.CachedWritePer1K, &r.ImagePerUnit, &r.AudioPerMin, &r.VideoPerUnit,
 			&r.Currency, &r.UpdatedAt,
 		); err != nil {
 			continue
@@ -118,6 +120,7 @@ func GetPricing(modelID string) Pricing {
 			ReasonPer1K:      r.ReasonPer1K,
 			ImagePerUnit:     r.ImagePerUnit,
 			AudioPerMin:      r.AudioPerMin,
+			VideoPerUnit:     r.VideoPerUnit,
 			CachedReadPer1K:  r.CachedReadPer1K,
 			CachedWritePer1K: r.CachedWritePer1K,
 		}
@@ -144,6 +147,7 @@ func GetPricing(modelID string) Pricing {
 			ReasonPer1K:      r.ReasonPer1K,
 			ImagePerUnit:     r.ImagePerUnit,
 			AudioPerMin:      r.AudioPerMin,
+			VideoPerUnit:     r.VideoPerUnit,
 			CachedReadPer1K:  r.CachedReadPer1K,
 			CachedWritePer1K: r.CachedWritePer1K,
 		}
@@ -156,8 +160,37 @@ func GetPricing(modelID string) Pricing {
 // matching the per-provider usage reports after extraction. Cache-read tokens are billed at the
 // read rate and cache-creation tokens at the write rate (falling back to the input rate when no
 // dedicated write rate is configured). This mirrors OmniRoute's computeCostFromPricing.
-func EstimateCost(modelID string, inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheCreationTokens int64) float64 {
+//
+// For non-text modalities, cost is driven by Quantity:
+//   - image: quantity * image_per_unit
+//   - audio/stt/tts: quantity * audio_per_min
+//   - video: quantity * video_per_unit
+//   - embedding: input_tokens * input_per_1k / 1000
+func EstimateCost(modelID, modality string, quantity, inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheCreationTokens int64) float64 {
 	p := GetPricing(modelID)
+	switch modality {
+	case "image":
+		if quantity > 0 && p.ImagePerUnit > 0 {
+			return float64(quantity) * p.ImagePerUnit
+		}
+		return 0
+	case "audio", "stt", "tts":
+		if quantity > 0 && p.AudioPerMin > 0 {
+			return float64(quantity) * p.AudioPerMin
+		}
+		return 0
+	case "video":
+		if quantity > 0 && p.VideoPerUnit > 0 {
+			return float64(quantity) * p.VideoPerUnit
+		}
+		return 0
+	case "embedding":
+		if inputTokens > 0 && p.InputPer1K > 0 {
+			return float64(inputTokens) / 1000.0 * p.InputPer1K
+		}
+		return 0
+	}
+
 	nonCached := inputTokens - cachedTokens - cacheCreationTokens
 	if nonCached < 0 {
 		nonCached = 0
@@ -179,7 +212,7 @@ func ListPricing() []ModelPricingRow {
 	if pricingDB == nil {
 		return nil
 	}
-	rows, err := pricingDB.Query(`SELECT model_id, display_name, input_per_1k, output_per_1k, reason_per_1k, cached_read_per_1k, cached_write_per_1k, image_per_unit, audio_per_min, currency, updated_at FROM model_pricing ORDER BY model_id`)
+	rows, err := pricingDB.Query(`SELECT model_id, display_name, input_per_1k, output_per_1k, reason_per_1k, cached_read_per_1k, cached_write_per_1k, image_per_unit, audio_per_min, video_per_unit, currency, updated_at FROM model_pricing ORDER BY model_id`)
 	if err != nil {
 		return nil
 	}
@@ -189,7 +222,7 @@ func ListPricing() []ModelPricingRow {
 		var r ModelPricingRow
 		if err := rows.Scan(
 			&r.ModelID, &r.DisplayName, &r.InputPer1K, &r.OutputPer1K, &r.ReasonPer1K,
-			&r.CachedReadPer1K, &r.CachedWritePer1K, &r.ImagePerUnit, &r.AudioPerMin,
+			&r.CachedReadPer1K, &r.CachedWritePer1K, &r.ImagePerUnit, &r.AudioPerMin, &r.VideoPerUnit,
 			&r.Currency, &r.UpdatedAt,
 		); err != nil {
 			continue
@@ -212,8 +245,8 @@ func UpsertPricing(row ModelPricingRow) error {
 	}
 	_, err := pricingDB.Exec(
 		`
-INSERT INTO model_pricing (model_id, display_name, input_per_1k, output_per_1k, reason_per_1k, cached_read_per_1k, cached_write_per_1k, image_per_unit, audio_per_min, currency, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO model_pricing (model_id, display_name, input_per_1k, output_per_1k, reason_per_1k, cached_read_per_1k, cached_write_per_1k, image_per_unit, audio_per_min, video_per_unit, currency, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(model_id) DO UPDATE SET
 display_name = excluded.display_name,
 input_per_1k = excluded.input_per_1k,
@@ -223,10 +256,11 @@ cached_read_per_1k = excluded.cached_read_per_1k,
 cached_write_per_1k = excluded.cached_write_per_1k,
 image_per_unit = excluded.image_per_unit,
 audio_per_min = excluded.audio_per_min,
+video_per_unit = excluded.video_per_unit,
 currency = excluded.currency,
 updated_at = excluded.updated_at`,
 		row.ModelID, row.DisplayName, row.InputPer1K, row.OutputPer1K, row.ReasonPer1K,
-		row.CachedReadPer1K, row.CachedWritePer1K, row.ImagePerUnit, row.AudioPerMin,
+		row.CachedReadPer1K, row.CachedWritePer1K, row.ImagePerUnit, row.AudioPerMin, row.VideoPerUnit,
 		row.Currency, row.UpdatedAt,
 	)
 	if err != nil {
