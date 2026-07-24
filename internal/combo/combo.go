@@ -34,6 +34,9 @@ var ValidStrategies = map[string]bool{
 	"fusion":      true,
 }
 
+// ErrNoEligibleConnection is returned when no eligible connection exists for a requested model.
+var ErrNoEligibleConnection = fmt.Errorf("no eligible connection")
+
 // IsValidStrategy reports whether a combo strategy name is supported.
 func IsValidStrategy(s string) bool { return ValidStrategies[s] }
 
@@ -138,11 +141,53 @@ func (h *Handler) snapshotFromDB() (map[string]*db.Combo, map[string]*db.Combo, 
 		log.Printf("WARN: combo rows iteration error: %v", err)
 	}
 
-	for comboID := range combos {
-		steps[comboID] = h.loadStepsForCombo(comboID)
-	}
+	steps = h.loadAllSteps(combos)
 
 	return combos, byName, smartCombos, steps
+}
+
+// loadAllSteps fetches all combo steps in a single query and buckets them by comboID.
+func (h *Handler) loadAllSteps(combos map[string]*db.Combo) map[string][]db.ComboStep {
+	steps := make(map[string][]db.ComboStep, len(combos))
+	if len(combos) == 0 {
+		return steps
+	}
+
+	ids := make([]string, 0, len(combos))
+	for id := range combos {
+		ids = append(ids, id)
+	}
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+
+	rows, err := h.db.Query(`
+		SELECT id, combo_id, connection_id, model_id, priority, weight, created_at
+		FROM combo_steps WHERE combo_id IN (`+placeholders+`) ORDER BY priority ASC
+	`, args...)
+	if err != nil {
+		log.Printf("WARN: failed to bulk-load combo steps: %v", err)
+		return steps
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		s := db.ComboStep{}
+		if err := rows.Scan(&s.ID, &s.ComboID, &s.ConnectionID, &s.ModelID,
+			&s.Priority, &s.Weight, &s.CreatedAt); err != nil {
+			log.Printf("WARN: failed to scan combo_step row: %v", err)
+			continue
+		}
+		steps[s.ComboID] = append(steps[s.ComboID], s)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("WARN: combo_step bulk iteration error: %v", err)
+	}
+	return steps
 }
 
 // loadStepsForCombo loads steps for a combo from DB without touching h.mu.
@@ -443,7 +488,7 @@ func (h *Handler) CreateCombo(name, strategy string, timeoutMs, stickyLimit int,
 			}
 		}
 		if connID == "" {
-			return nil, fmt.Errorf("no eligible connection for model %s", s.ModelID)
+			return nil, fmt.Errorf("%w for model %s", ErrNoEligibleConnection, s.ModelID)
 		}
 		inserts = append(inserts, stepInsert{
 			stepID:       uuid.New().String(),
@@ -546,7 +591,7 @@ func (h *Handler) DeleteCombo(comboID string) error {
 type UpdateComboInput struct {
 	Name         string
 	Strategy     string
-	TimeoutMs    int
+	TimeoutMs    *int
 	StickyLimit  *int
 	IsSmart      *bool
 	SmartGoal    *string
@@ -566,11 +611,11 @@ func (h *Handler) UpdateCombo(comboID string, input UpdateComboInput) error {
 		sets = append(sets, "strategy = ?")
 		args = append(args, input.Strategy)
 	}
-	if input.TimeoutMs > 0 {
+	if input.TimeoutMs != nil {
 		sets = append(sets, "timeout_ms = ?")
-		args = append(args, input.TimeoutMs)
+		args = append(args, *input.TimeoutMs)
 	}
-	if input.StickyLimit != nil && *input.StickyLimit > 0 {
+	if input.StickyLimit != nil {
 		sets = append(sets, "sticky_limit = ?")
 		args = append(args, *input.StickyLimit)
 	}
@@ -579,8 +624,13 @@ func (h *Handler) UpdateCombo(comboID string, input UpdateComboInput) error {
 		args = append(args, boolToInt(*input.IsSmart))
 	}
 	if input.SmartGoal != nil {
+		normalized := normalizeSmartGoal(*input.SmartGoal)
+		sg := sql.NullString{}
+		if normalized != "" {
+			sg = sql.NullString{String: normalized, Valid: true}
+		}
 		sets = append(sets, "smart_goal = ?")
-		args = append(args, strings.ToLower(strings.TrimSpace(*input.SmartGoal)))
+		args = append(args, sg)
 	}
 	if input.FusionConfig != "" {
 		sets = append(sets, "fusion_config = ?")
@@ -626,17 +676,17 @@ func (h *Handler) UpdateCombo(comboID string, input UpdateComboInput) error {
 	if input.Strategy != "" {
 		c.Strategy = input.Strategy
 	}
-	if input.TimeoutMs > 0 {
-		c.TimeoutMs = input.TimeoutMs
+	if input.TimeoutMs != nil {
+		c.TimeoutMs = *input.TimeoutMs
 	}
-	if input.StickyLimit != nil && *input.StickyLimit > 0 {
+	if input.StickyLimit != nil {
 		c.StickyLimit = *input.StickyLimit
 	}
 	if input.IsSmart != nil {
 		c.IsSmart = *input.IsSmart
 	}
 	if input.SmartGoal != nil {
-		goal := strings.ToLower(strings.TrimSpace(*input.SmartGoal))
+		goal := normalizeSmartGoal(*input.SmartGoal)
 		if goal == "" {
 			c.SmartGoal = sql.NullString{}
 		} else {
@@ -678,7 +728,7 @@ func (h *Handler) AddComboStep(comboID string, input AddComboStepInput) (string,
 		}
 	}
 	if connectionID == "" {
-		return "", fmt.Errorf("no eligible connection for model %s", input.ModelID)
+		return "", fmt.Errorf("%w for model %s", ErrNoEligibleConnection, input.ModelID)
 	}
 
 	stepID := uuid.New().String()
