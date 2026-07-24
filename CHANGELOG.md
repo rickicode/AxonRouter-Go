@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Concurrent provider detail test-all for large providers** — `Test all` on the provider detail page now processes connections sequentially for small lists, but runs with two parallel workers when there are more than 100 accounts. Each row is still refreshed inline after its test completes.
 
 ### Fixed
+- **Combo step load failures now propagate errors** — `internal/combo/loadAllSteps()` now returns `(map[string][]db.ComboStep, error)` instead of silently logging and returning an empty map. `snapshotFromDB()` propagates the error, so `RefreshFromDB()` no longer replaces the in-memory cache with combos that are missing their steps. Added a regression test verifying the cache is left unchanged when the `combo_steps` query fails.
 - **Security Warning modal respects 24-hour dismissal** — `ChangePasswordModal` is no longer shown for 24 hours after the user dismisses it. Dismissal is stored as a timestamp in `localStorage`/`sessionStorage` and automatically expires after one day. The old boolean dismissal flag is migrated to the new timestamp format on first load.
 
 ### Removed
