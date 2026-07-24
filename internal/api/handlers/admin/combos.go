@@ -40,7 +40,7 @@ func (h *ComboHandler) List(c *gin.Context) {
 
 	offset := (page - 1) * perPage
 	rows, err := h.db.Query(`
-	SELECT id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal,
+	SELECT id, name, kind, strategy, sticky_limit, timeout_ms, is_smart, smart_goal,
 	fusion_config, is_active, created_at, updated_at
 	FROM combos WHERE is_active = 1
 	ORDER BY created_at DESC
@@ -56,11 +56,17 @@ func (h *ComboHandler) List(c *gin.Context) {
 	for rows.Next() {
 		cb := db.Combo{}
 		var fusionConfig sql.NullString
-		if err := rows.Scan(&cb.ID, &cb.Name, &cb.Strategy, &cb.StickyLimit,
+		var kind sql.NullString
+		if err := rows.Scan(&cb.ID, &cb.Name, &kind, &cb.Strategy, &cb.StickyLimit,
 			&cb.TimeoutMs, &cb.IsSmart, &cb.SmartGoal, &fusionConfig,
 			&cb.IsActive, &cb.CreatedAt, &cb.UpdatedAt); err != nil {
 			log.Printf("WARN: failed to scan combo row in admin list: %v", err)
 			continue
+		}
+		if kind.Valid && kind.String != "" {
+			cb.Kind = kind.String
+		} else {
+			cb.Kind = "llm"
 		}
 		cb.FusionConfig = fusionConfig.String
 		combos = append(combos, cb)
@@ -97,6 +103,7 @@ func (h *ComboHandler) Get(c *gin.Context) {
 func (h *ComboHandler) Create(c *gin.Context) {
 	var req struct {
 		Name         string `json:"name" binding:"required"`
+		Kind         string `json:"kind"`
 		Strategy     string `json:"strategy"`
 		TimeoutMs    int    `json:"timeout_ms"`
 		StickyLimit  int    `json:"sticky_limit"`
@@ -160,7 +167,7 @@ func (h *ComboHandler) Create(c *gin.Context) {
 		}
 	}
 
-	result, err := h.handler.CreateCombo(req.Name, req.Strategy, req.TimeoutMs, req.StickyLimit, req.IsSmart, req.SmartGoal, req.FusionConfig, steps)
+	result, err := h.handler.CreateComboWithKind(req.Name, req.Strategy, req.Kind, req.TimeoutMs, req.StickyLimit, req.IsSmart, req.SmartGoal, req.FusionConfig, steps)
 	if err != nil {
 		if errors.Is(err, combo.ErrNoEligibleConnection) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -177,6 +184,7 @@ func (h *ComboHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
 		Name         string  `json:"name"`
+		Kind         string  `json:"kind"`
 		Strategy     string  `json:"strategy"`
 		TimeoutMs    *int    `json:"timeout_ms"`
 		StickyLimit  *int    `json:"sticky_limit"`
@@ -214,6 +222,7 @@ func (h *ComboHandler) Update(c *gin.Context) {
 
 	if err := h.handler.UpdateCombo(id, combo.UpdateComboInput{
 		Name:         req.Name,
+		Kind:         req.Kind,
 		Strategy:     req.Strategy,
 		TimeoutMs:    req.TimeoutMs,
 		StickyLimit:  req.StickyLimit,
