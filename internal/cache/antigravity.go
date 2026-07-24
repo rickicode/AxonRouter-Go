@@ -6,6 +6,7 @@ package cache
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"strings"
 	"sync"
 	"time"
 )
@@ -222,4 +223,121 @@ func PurgeExpiredReplayEntries() {
 			delete(replayEntries, k)
 		}
 	}
+}
+
+// ── Antigravity Credits Balance Cache ───────────────────────────────────────
+
+const (
+	// AntigravityCreditsBalanceTTL is how long a probed Google One AI credit
+	// balance remains valid before re-probing.
+	AntigravityCreditsBalanceTTL = 5 * time.Minute
+)
+
+// AntigravityCreditsBalance tracks a snapshot of the Google One AI balance.
+type AntigravityCreditsBalance struct {
+	RemainingCredits float64
+	ProbedAt         time.Time
+}
+
+var (
+	antigravityCreditsBalanceMu    sync.RWMutex
+	antigravityCreditsBalanceCache map[string]AntigravityCreditsBalance // keyed by authID
+
+	antigravityCreditsFailureMu    sync.RWMutex
+	antigravityCreditsFailureCache map[string]antigravityCreditsFailure // keyed by authID
+)
+
+type antigravityCreditsFailure struct {
+	PermanentlyDisabled      bool
+	ExplicitBalanceExhausted bool
+	RecordedAt               time.Time
+}
+
+func init() {
+	antigravityCreditsBalanceCache = make(map[string]AntigravityCreditsBalance)
+	antigravityCreditsFailureCache = make(map[string]antigravityCreditsFailure)
+}
+
+func antigravityAuthKey(authID string) string {
+	return strings.TrimSpace(authID)
+}
+
+// SetAntigravityCreditsBalance caches a Google One AI credit balance for an auth.
+func SetAntigravityCreditsBalance(authID string, balance AntigravityCreditsBalance) {
+	key := antigravityAuthKey(authID)
+	if key == "" {
+		return
+	}
+	antigravityCreditsBalanceMu.Lock()
+	defer antigravityCreditsBalanceMu.Unlock()
+	if antigravityCreditsBalanceCache == nil {
+		antigravityCreditsBalanceCache = make(map[string]AntigravityCreditsBalance)
+	}
+	antigravityCreditsBalanceCache[key] = balance
+}
+
+// GetAntigravityCreditsBalance returns a cached balance if it exists and is not expired.
+func GetAntigravityCreditsBalance(authID string) (AntigravityCreditsBalance, bool) {
+	key := antigravityAuthKey(authID)
+	if key == "" {
+		return AntigravityCreditsBalance{}, false
+	}
+	antigravityCreditsBalanceMu.RLock()
+	balance, ok := antigravityCreditsBalanceCache[key]
+	antigravityCreditsBalanceMu.RUnlock()
+	if !ok {
+		return AntigravityCreditsBalance{}, false
+	}
+	if time.Since(balance.ProbedAt) > AntigravityCreditsBalanceTTL {
+		// Best-effort delete without retry; next write will overwrite.
+		antigravityCreditsBalanceMu.Lock()
+		delete(antigravityCreditsBalanceCache, key)
+		antigravityCreditsBalanceMu.Unlock()
+		return AntigravityCreditsBalance{}, false
+	}
+	return balance, true
+}
+
+// MarkAntigravityCreditsPermanentlyDisabled marks an auth as permanently ineligible
+// for Google One AI credits. This is used when Antigravity returns an explicit
+// INSUFFICIENT_G1_CREDITS_BALANCE reason.
+func MarkAntigravityCreditsPermanentlyDisabled(authID string) {
+	key := antigravityAuthKey(authID)
+	if key == "" {
+		return
+	}
+	antigravityCreditsFailureMu.Lock()
+	defer antigravityCreditsFailureMu.Unlock()
+	if antigravityCreditsFailureCache == nil {
+		antigravityCreditsFailureCache = make(map[string]antigravityCreditsFailure)
+	}
+	antigravityCreditsFailureCache[key] = antigravityCreditsFailure{
+		PermanentlyDisabled:      true,
+		ExplicitBalanceExhausted: true,
+		RecordedAt:                 time.Now(),
+	}
+}
+
+// IsAntigravityCreditsPermanentlyDisabled reports whether credits are permanently
+// disabled for the given auth.
+func IsAntigravityCreditsPermanentlyDisabled(authID string) bool {
+	key := antigravityAuthKey(authID)
+	if key == "" {
+		return false
+	}
+	antigravityCreditsFailureMu.RLock()
+	defer antigravityCreditsFailureMu.RUnlock()
+	state, ok := antigravityCreditsFailureCache[key]
+	return ok && state.PermanentlyDisabled
+}
+
+// ResetAntigravityCreditsCacheForTest clears all credits caches. Used only in tests.
+func ResetAntigravityCreditsCacheForTest() {
+	antigravityCreditsBalanceMu.Lock()
+	antigravityCreditsBalanceCache = make(map[string]AntigravityCreditsBalance)
+	antigravityCreditsBalanceMu.Unlock()
+
+	antigravityCreditsFailureMu.Lock()
+	antigravityCreditsFailureCache = make(map[string]antigravityCreditsFailure)
+	antigravityCreditsFailureMu.Unlock()
 }

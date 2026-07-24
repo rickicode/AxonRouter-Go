@@ -196,10 +196,10 @@ func TestQoderExecutor_Execute_ViaHTTP(t *testing.T) {
 	})
 
 	resp, err := qoder.Execute(context.Background(), &Request{
-		Model:       "qoder/qwen3.5-plus",
-		APIKey:      "sk-not-pat",
-		BaseURL:     ts.URL + "/v1/chat/completions",
-		Body:        body,
+		Model:   "qoder/qwen3.5-plus",
+		APIKey:  "sk-not-pat",
+		BaseURL: ts.URL + "/v1/chat/completions",
+		Body:    body,
 	})
 	if err != nil {
 		t.Fatalf("Execute error: %v", err)
@@ -238,10 +238,10 @@ func TestQoderExecutor_ExecuteStream_ViaHTTP(t *testing.T) {
 	})
 
 	_, err := qoder.ExecuteStream(context.Background(), &Request{
-		Model:          "qoder/vision-model",
-		AccessToken:    "dashscope-token",
-		BaseURL:        ts.URL + "/v1/chat/completions",
-		Body:           body,
+		Model:       "qoder/vision-model",
+		AccessToken: "dashscope-token",
+		BaseURL:     ts.URL + "/v1/chat/completions",
+		Body:        body,
 	})
 	if err != nil {
 		t.Fatalf("ExecuteStream error: %v", err)

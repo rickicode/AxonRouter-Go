@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
+	"github.com/rickicode/AxonRouter-Go/internal/config"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/antigravity"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -101,6 +102,7 @@ func AttachDefaultSafetySettings(rawJSON []byte, path string) []byte {
 // convertOpenAIRequestToAntigravity converts OpenAI Chat Completions requests to Antigravity format.
 func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ bool) []byte {
 	rawJSON := inputRawJSON
+	obfuscationWords := config.Get().AntigravityObfuscationWords
 	out := []byte(`{"project":"","request":{"contents":[]},"model":"gemini-2.5-pro"}`)
 	out, _ = sjson.SetBytes(out, "model", modelName)
 
@@ -228,8 +230,13 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 				}
 			} else if role == "user" || ((role == "system" || role == "developer") && len(arr) == 1) {
 				node := []byte(`{"role":"user","parts":[]}`)
+				isUser := role == "user"
 				if content.Type == gjson.String {
-					node, _ = sjson.SetBytes(node, "parts.0.text", content.String())
+					text := content.String()
+					if isUser {
+						text = antigravity.Obfuscate(text, obfuscationWords)
+					}
+					node, _ = sjson.SetBytes(node, "parts.0.text", text)
 				} else if content.IsArray() {
 					items := content.Array()
 					p := 0
@@ -238,6 +245,9 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 						case "text":
 							text := item.Get("text").String()
 							if text != "" {
+								if isUser {
+									text = antigravity.Obfuscate(text, obfuscationWords)
+								}
 								node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".text", text)
 								p++
 							}

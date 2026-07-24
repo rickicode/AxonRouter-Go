@@ -400,3 +400,66 @@ func TestCodexRequestBody_LeavesChatCompletionsAlone(t *testing.T) {
 		t.Fatal("expected stream=true")
 	}
 }
+
+func TestCodexExecutor_ExecuteStream_PatchesEmptyCompleted(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		fmt.Fprintln(w, `data: {"type":"response.created","response":{"id":"r1","model":"gpt-5.4","created_at":1700000000}}`)
+		flusher.Flush()
+		fmt.Fprintln(w, `data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello from stream"}]}}`)
+		flusher.Flush()
+		fmt.Fprintln(w, `data: {"type":"response.completed","response":{"id":"r1","status":"completed","output":[]}}`)
+		flusher.Flush()
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	base.StreamIdleTimeout = 200 * time.Millisecond
+	cx := NewCodexExecutor(base)
+	req := &Request{
+		Provider:    "cx",
+		Model:       "cx/gpt-5.4",
+		BaseURL:     ts.URL,
+		Body:        []byte(`{"input":[{"role":"user","content":"hi"}]}`),
+		AccessToken: "test-token",
+		StreamConfig: &StreamConfig{
+			FetchTimeoutMs:           5000,
+			StreamIdleTimeoutMs:      5000,
+			StreamReadinessTimeoutMs: 5000,
+		},
+	}
+	res, err := cx.ExecuteStream(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ExecuteStream error: %v", err)
+	}
+
+	var completedPayload []byte
+	for chunk := range res.Chunks {
+		if chunk.Err != nil {
+			t.Fatalf("unexpected chunk error: %v", chunk.Err)
+		}
+		if chunk.Payload == nil {
+			continue
+		}
+		if strings.Contains(string(chunk.Payload), `"type":"response.completed"`) {
+			completedPayload = chunk.Payload
+		}
+	}
+	if completedPayload == nil {
+		t.Fatal("response.completed chunk not found")
+	}
+	data, _ := parseCodexEvent(completedPayload)
+	output := gjson.GetBytes(data, "response.output").Array()
+	if len(output) != 1 {
+		t.Fatalf("expected 1 patched output item, got %d", len(output))
+	}
+	if got := output[0].Get("role").String(); got != "assistant" {
+		t.Fatalf("expected patched assistant role, got %s", got)
+	}
+	if got := output[0].Get("content.0.text").String(); got != "hello from stream" {
+		t.Fatalf("expected patched output text, got %s", got)
+	}
+}

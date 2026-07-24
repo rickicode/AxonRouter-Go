@@ -156,7 +156,7 @@ func (h *Handler) recordAPIKeyCost(apiKeyID, modelID string, inputTokens, output
 
 	cost := responseCostUsd
 	if cost <= 0 {
-		cost = usage.EstimateCost(modelID, inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheCreationTokens)
+		cost = usage.EstimateCost(modelID, "chat", 0, inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheCreationTokens)
 	}
 	if cost <= 0 {
 		return

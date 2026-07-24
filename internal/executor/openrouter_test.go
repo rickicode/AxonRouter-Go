@@ -56,11 +56,11 @@ func TestOpenRouterExecutor_AddsAttributionHeadersToUpstream(t *testing.T) {
 	base := NewBaseExecutor()
 	exec := NewOpenRouterExecutor(base)
 	_, _ = exec.Execute(context.Background(), &Request{
-		Provider:        "openrouter",
-		BaseURL:         ts.URL,
-		APIKey:          "sk-test",
+		Provider:             "openrouter",
+		BaseURL:              ts.URL,
+		APIKey:               "sk-test",
 		ProviderSpecificData: map[string]string{"x_title": "Test Gateway"},
-		Body:            []byte(`{"model":"openrouter/openai/gpt-4o","messages":[]}`),
+		Body:                 []byte(`{"model":"openrouter/openai/gpt-4o","messages":[]}`),
 	})
 
 	if got.Get("HTTP-Referer") != "https://endpoint-proxy.local" {

@@ -35,6 +35,8 @@ let saving = $state(false);
   let liteImageUrls = $state(true);
   let liteRedundant = $state(false);
   let liteDedup = $state(false);
+  let outputEnabled = $state(false);
+  let outputLevel = $state<'caveman' | 'ponytail'>('caveman');
 
 onMount(async () => {
 	document.title = 'Optimization — AxonRouter';
@@ -50,6 +52,8 @@ onMount(async () => {
         liteRedundant = compression.lite.remove_redundant_content ?? false;
         liteDedup = compression.lite.dedup_system_prompt ?? false;
       }
+      outputEnabled = compression.output?.enabled ?? false;
+      outputLevel = compression.output?.level ?? 'caveman';
     } catch { /* keep defaults */ }
   }
 
@@ -75,6 +79,10 @@ async function saveCompression() {
           replace_image_urls: liteImageUrls,
           remove_redundant_content: liteRedundant,
           dedup_system_prompt: liteDedup,
+        },
+        output: {
+          enabled: outputEnabled,
+          level: outputLevel,
         },
       });
       toast.success('Compression settings saved');
@@ -115,6 +123,11 @@ const modes = [
   { value: 'lite', label: 'Lite' },
   { value: 'standard', label: 'Standard' },
   { value: 'rtk', label: 'RTK' },
+];
+
+const outputLevels = [
+  { value: 'caveman', label: 'Caveman — terse responses' },
+  { value: 'ponytail', label: 'Ponytail — minimal code' },
 ];
 </script>
 
@@ -181,6 +194,15 @@ const modes = [
 {:else}
 <XIcon class="size-4 text-muted-foreground" />
 <span class="text-muted-foreground">Deduplicate system prompts</span>
+{/if}
+</div>
+<div class="flex items-center gap-2">
+{#if outputEnabled}
+<CheckIcon class="size-4 text-emerald-500" />
+<span>Output-side compression ({outputLevel})</span>
+{:else}
+<XIcon class="size-4 text-muted-foreground" />
+<span class="text-muted-foreground">Output-side compression</span>
 {/if}
 </div>
 </div>
@@ -332,6 +354,34 @@ const modes = [
 			<Label for="dedup" class="cursor-pointer">Deduplicate system prompts</Label>
 			<Switch id="dedup" checked={liteDedup} onCheckedChange={(v) => (liteDedup = v)} />
 		</div>
+        </CardContent>
+      </Card>
+
+      <Card class="shadow-card">
+        <CardHeader class="pb-3">
+          <CardTitle class="text-base">Output-side Compression</CardTitle>
+          <CardDescription class="text-xs">
+            Injects a system prompt that asks the model to respond more compactly. Applies to all modes except Off.
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <div class="flex items-center justify-between">
+            <Label for="output-enabled" class="cursor-pointer">Enable output-side compression</Label>
+            <Switch id="output-enabled" checked={outputEnabled} onCheckedChange={(v) => (outputEnabled = v)} />
+          </div>
+          <div class="grid gap-2">
+            <Label for="output-level">Level</Label>
+            <Select.Root type="single" bind:value={outputLevel}>
+              <Select.Trigger class="w-full" id="output-level">
+                {outputLevels.find((l) => l.value === outputLevel)?.label ?? 'Select level'}
+              </Select.Trigger>
+              <Select.Content>
+                {#each outputLevels as level}
+                  <Select.Item value={level.value}>{level.label}</Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+          </div>
           <div class="pt-2">
             <Button onclick={saveCompression} disabled={saving}>
               {saving ? 'Saving...' : 'Save Settings'}

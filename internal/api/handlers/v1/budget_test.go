@@ -115,7 +115,7 @@ func TestRecordAPIKeyCost_InsertsSpendHistory(t *testing.T) {
 	if err := h.db.QueryRow(`SELECT COALESCE(SUM(cost_usd), 0) FROM api_key_spend_history WHERE api_key_id = ?`, "key-cost").Scan(&total); err != nil {
 		t.Fatalf("sum spend history: %v", err)
 	}
-	expected := 2 * usage.EstimateCost("gpt-4o", 1000, 500, 0, 0, 0)
+	expected := 2 * usage.EstimateCost("gpt-4o", "chat", 0, 1000, 500, 0, 0, 0)
 	if total <= 0 || total != expected {
 		t.Fatalf("expected total cost %v, got %v", expected, total)
 	}

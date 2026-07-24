@@ -426,7 +426,9 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 	}, nil
 }
 
-// ExecuteStream performs a streaming Codex Responses API call.
+// ExecuteStream performs a streaming Codex Responses API call. It patches the
+// final response.completed / response.done event with any output items emitted
+// by preceding response.output_item.done events, mirroring the non-stream path.
 func (e *CodexExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
 	url := codexURL(req)
 	body := codexRequestBody(req.Body)
@@ -443,7 +445,43 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, req *Request) (*Strea
 		}
 		return nil, err
 	}
-	return result, nil
+
+	// Patch empty response.output in the final completed event using preceding
+	// output_item.done items, matching CLIProxyAPI Codex behavior.
+	out := &StreamResult{
+		StatusCode: result.StatusCode,
+		Headers:    result.Headers,
+		Chunks:     make(chan StreamChunk),
+	}
+	go func() {
+		defer close(out.Chunks)
+		outputItemsByIndex := make(map[int64][]byte)
+		var outputItemsFallback [][]byte
+		for chunk := range result.Chunks {
+			if chunk.Payload != nil {
+				eventData, eventType := parseCodexEvent(chunk.Payload)
+				switch eventType {
+				case "response.output_item.done":
+					if item := gjson.GetBytes(eventData, "item"); item.Exists() && item.Type == gjson.JSON {
+						idx := gjson.GetBytes(eventData, "output_index").Int()
+						if gjson.GetBytes(eventData, "output_index").Exists() {
+							outputItemsByIndex[idx] = []byte(item.Raw)
+						} else {
+							outputItemsFallback = append(outputItemsFallback, []byte(item.Raw))
+						}
+					}
+				case "response.completed", "response.done":
+					chunk.Payload = patchCodexCompletedOutput(chunk.Payload, outputItemsByIndex, outputItemsFallback)
+				}
+			}
+			select {
+			case out.Chunks <- chunk:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out, nil
 }
 
 // ToMap returns the usage as a map suitable for the Response.Usage field.
