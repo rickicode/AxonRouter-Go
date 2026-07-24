@@ -137,7 +137,8 @@ func (h *Handler) ReorderStepsByCapabilities(steps []db.ComboStep, required mode
 		tier int
 	}, len(steps))
 	for i, s := range steps {
-		caps := models.GetCapabilities(s.ModelID)
+		modelID := strings.TrimPrefix(s.ModelID, "@")
+		caps := models.GetCapabilities(modelID)
 		typed[i] = struct {
 			step db.ComboStep
 			tier int
