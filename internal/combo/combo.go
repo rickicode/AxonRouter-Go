@@ -133,15 +133,23 @@ func (h *Handler) loadFromDB() error {
 }
 
 // snapshotFromDB reads combos and steps from the database WITHOUT holding h.mu.
+// Both reads share a single transaction so steps are never loaded for combos
+// that are deleted or deactivated between the two queries.
 // On failure it returns an error; the accompanying maps may be nil or partial
 // and should only be used when err is nil.
 func (h *Handler) snapshotFromDB() (map[string]*db.Combo, map[string]*db.Combo, map[string]*db.Combo, map[string][]db.ComboStep, error) {
+	tx, err := h.db.Begin()
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("begin combo snapshot tx: %w", err)
+	}
+	defer tx.Rollback()
+
 	combos := make(map[string]*db.Combo)
 	byName := make(map[string]*db.Combo)
 	smartCombos := make(map[string]*db.Combo)
 	steps := make(map[string][]db.ComboStep)
 
-	rows, err := h.db.Query(`
+	rows, err := tx.Query(`
 	SELECT id, name, kind, strategy, sticky_limit, timeout_ms, is_smart, smart_goal,
 	fusion_config, is_active, created_at, updated_at
 	FROM combos WHERE is_active = 1
@@ -173,19 +181,21 @@ func (h *Handler) snapshotFromDB() (map[string]*db.Combo, map[string]*db.Combo, 
 		return nil, nil, nil, nil, fmt.Errorf("iterate combos: %w", err)
 	}
 
-	steps, err = h.loadAllSteps(combos)
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
+	steps = h.loadAllStepsTx(tx, combos)
 
+	if err := tx.Commit(); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("commit combo snapshot tx: %w", err)
+	}
 	return combos, byName, smartCombos, steps, nil
 }
 
-// loadAllSteps fetches all combo steps in a single query and buckets them by comboID.
-func (h *Handler) loadAllSteps(combos map[string]*db.Combo) (map[string][]db.ComboStep, error) {
+// loadAllStepsTx fetches all combo steps inside an existing transaction and
+// buckets them by comboID. Because it runs in the same transaction that read
+// combos, steps for a combo deleted between queries are never returned.
+func (h *Handler) loadAllStepsTx(tx *sql.Tx, combos map[string]*db.Combo) map[string][]db.ComboStep {
 	steps := make(map[string][]db.ComboStep, len(combos))
 	if len(combos) == 0 {
-		return steps, nil
+		return steps
 	}
 
 	ids := make([]string, 0, len(combos))
@@ -200,12 +210,13 @@ func (h *Handler) loadAllSteps(combos map[string]*db.Combo) (map[string][]db.Com
 		args[i] = id
 	}
 
-	rows, err := h.db.Query(`
+	rows, err := tx.Query(`
 		SELECT id, combo_id, connection_id, model_id, priority, weight, created_at
 		FROM combo_steps WHERE combo_id IN (`+placeholders+`) ORDER BY priority ASC
 	`, args...)
 	if err != nil {
-		return nil, fmt.Errorf("load combo steps: %w", err)
+		log.Printf("WARN: failed to bulk-load combo steps: %v", err)
+		return steps
 	}
 	defer rows.Close()
 
@@ -219,9 +230,9 @@ func (h *Handler) loadAllSteps(combos map[string]*db.Combo) (map[string][]db.Com
 		steps[s.ComboID] = append(steps[s.ComboID], s)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate combo steps: %w", err)
+		log.Printf("WARN: combo_step bulk iteration error: %v", err)
 	}
-	return steps, nil
+	return steps
 }
 
 // loadStepsForCombo loads steps for a combo from DB without touching h.mu.

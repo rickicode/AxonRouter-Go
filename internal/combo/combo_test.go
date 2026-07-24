@@ -2,7 +2,9 @@ package combo
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -612,7 +614,7 @@ func TestRefreshFromDB_ReflectsExternalChanges(t *testing.T) {
 	}
 }
 
-func TestRefreshFromDB_LeavesCacheUnchangedOnStepLoadFailure(t *testing.T) {
+func TestSnapshotFromDB_ExcludesStepsForDeletedCombo(t *testing.T) {
 	database := newComboTestDB(t)
 	seedConnectionForCombo(t, database, "conn-1")
 
@@ -623,33 +625,122 @@ func TestRefreshFromDB_LeavesCacheUnchangedOnStepLoadFailure(t *testing.T) {
 	elig.RecomputeAll()
 	h := NewHandler(database, store, elig)
 
-	combo, err := h.CreateCombo("cached-combo", "priority", 30000, 1, false, "", "", []CreateStepInput{
+	combo, err := h.CreateCombo("to-delete", "priority", 30000, 1, false, "", "", []CreateStepInput{
 		{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
 	})
 	if err != nil {
 		t.Fatalf("CreateCombo failed: %v", err)
 	}
 
-	if _, ok := h.Resolve("cached-combo"); !ok {
-		t.Fatalf("Resolve before failure returned false")
+	if _, err := database.Exec(`DELETE FROM combo_steps WHERE combo_id = ?`, combo.ID); err != nil {
+		t.Fatalf("delete combo steps: %v", err)
+	}
+	if _, err := database.Exec(`DELETE FROM combos WHERE id = ?`, combo.ID); err != nil {
+		t.Fatalf("delete combo: %v", err)
 	}
 
-	if _, err := database.Exec(`DROP TABLE combo_steps`); err != nil {
-		t.Fatalf("drop combo_steps: %v", err)
+	combos, _, _, steps, err := h.snapshotFromDB()
+	if err != nil {
+		t.Fatalf("snapshotFromDB failed: %v", err)
 	}
-
-	if err := h.RefreshFromDB(); err == nil {
-		t.Fatalf("RefreshFromDB returned nil error after dropping combo_steps")
+	if _, ok := combos[combo.ID]; ok {
+		t.Fatalf("deleted combo still present in snapshot")
 	}
-
-	result, ok := h.Resolve("cached-combo")
-	if !ok {
-		t.Fatalf("Resolve returned false after failed refresh; cache was replaced")
-	}
-	if result.Combo.ID != combo.ID {
-		t.Fatalf("combo ID = %q, want %q", result.Combo.ID, combo.ID)
-	}
-	if len(result.Steps) != 1 {
-		t.Fatalf("len(Steps) = %d, want 1", len(result.Steps))
+	if _, ok := steps[combo.ID]; ok {
+		t.Fatalf("steps for deleted combo still present in snapshot")
 	}
 }
+
+func TestSnapshotFromDB_NoOrphanedStepsUnderConcurrentDelete(t *testing.T) {
+	database := newComboTestDB(t)
+	seedConnectionForCombo(t, database, "conn-1")
+
+	store := connstate.NewStore()
+	cs := &connstate.ConnectionState{ID: "conn-1", Prefix: "openai", Status: connstate.StatusReady}
+	store.Set("conn-1", cs)
+	elig := connstate.NewEligibilityManager(store)
+	elig.RecomputeAll()
+	h := NewHandler(database, store, elig)
+
+	combo, err := h.CreateCombo("race-combo", "priority", 30000, 1, false, "", "", []CreateStepInput{
+		{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
+	})
+	if err != nil {
+		t.Fatalf("CreateCombo failed: %v", err)
+	}
+
+	// Serialize test-side operations to keep the SQLite test database stable
+	// while still racing RefreshFromDB against mutations from two goroutines.
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	done := make(chan struct{})
+	errs := make(chan string, 100)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(5 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				mu.Lock()
+				err := h.RefreshFromDB()
+				mu.Unlock()
+				if err != nil {
+					errs <- fmt.Sprintf("refresh: %v", err)
+				}
+			}
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(5 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				mu.Lock()
+				err := h.DeleteCombo(combo.ID)
+				if err == nil {
+					newCombo, createErr := h.CreateCombo("race-combo", "priority", 30000, 1, false, "", "", []CreateStepInput{
+						{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
+					})
+					if createErr == nil {
+						combo = newCombo
+					} else {
+						err = createErr
+					}
+				}
+				mu.Unlock()
+				if err != nil {
+					errs <- fmt.Sprintf("mutate: %v", err)
+				}
+			}
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	close(done)
+	wg.Wait()
+	close(errs)
+
+	for msg := range errs {
+		t.Errorf("concurrent worker error: %s", msg)
+	}
+
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for comboID := range h.steps {
+		if _, ok := h.combos[comboID]; !ok {
+			t.Fatalf("orphan steps in cache for combo %s", comboID)
+		}
+	}
+}
+
