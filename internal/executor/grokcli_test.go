@@ -80,24 +80,24 @@ func TestGrokCLIExecutor_Headers(t *testing.T) {
 	}
 
 	mustEqual := map[string]string{
-		"Authorization": "Bearer grok-at-123",
-		"X-Xai-Token-Auth": "xai-grok-cli",
-		"x-grok-client-version": "0.2.99",
-		"User-Agent": "grok-shell/0.2.99 (linux; x86_64)",
+		"Authorization":            "Bearer grok-at-123",
+		"X-Xai-Token-Auth":         "xai-grok-cli",
+		"x-grok-client-version":    "0.2.99",
+		"User-Agent":               "grok-shell/0.2.99 (linux; x86_64)",
 		"x-grok-client-identifier": "grok-shell",
-		"x-grok-client-mode": "headless",
-		"x-email": "user@example.com",
-		"x-userid": "grok-sub-abc",
-		"x-grok-model-override": "grok-4.5",
-		"x-grok-turn-idx": "0",
-		"Connection": "Keep-Alive",
+		"x-grok-client-mode":       "headless",
+		"x-email":                  "user@example.com",
+		"x-userid":                 "grok-sub-abc",
+		"x-grok-model-override":    "grok-4.5",
+		"x-grok-turn-idx":          "0",
+		"Connection":               "Keep-Alive",
 	}
 	for name, want := range mustEqual {
 		if got := gotHeaders.Get(name); got != want {
 			t.Errorf("%s=%q, want %q", name, got, want)
 		}
 	}
-	
+
 	needPresent := []string{"x-grok-session-id", "x-grok-conv-id", "x-grok-req-id", "x-grok-agent-id", "x-grok-client-identifier", "x-grok-client-mode"}
 	for _, name := range needPresent {
 		if got := gotHeaders.Get(name); got == "" {
@@ -639,10 +639,10 @@ func TestGrokCLIExecutor_ReasoningModelGatingAndMaxMapping(t *testing.T) {
 	}
 
 	cases := []struct {
-		model          string
-		effort         string
-		wantReasoning  bool
-		wantEffort     string
+		model         string
+		effort        string
+		wantReasoning bool
+		wantEffort    string
 	}{
 		{"grok-cli/grok-4.5", "max", true, "xhigh"},
 		{"grok-cli/grok-build-0.1", "high", false, ""},
@@ -691,7 +691,7 @@ func TestGrokCLIExecutor_HostedToolsPreserved(t *testing.T) {
 	base := NewBaseExecutor()
 	exec := NewGrokCLIExecutor(base)
 	body, _ := json.Marshal(map[string]any{
-		"model": "grok-cli/grok-4.5",
+		"model":    "grok-cli/grok-4.5",
 		"messages": []any{map[string]any{"role": "user", "content": "find"}},
 		"tools": []any{
 			map[string]any{"type": "web_search"},
@@ -779,9 +779,9 @@ func TestTranslateGrokCLI(t *testing.T) {
 			if got := gjson.GetBytes(out, "error.type").String(); got != tc.wantType {
 				t.Errorf("type=%q, want %q", got, tc.wantType)
 			}
-		if got := gjson.GetBytes(out, "error.code").String(); got != tc.wantCode {
-			t.Errorf("code=%q, want %q", got, tc.wantCode)
-		}
+			if got := gjson.GetBytes(out, "error.code").String(); got != tc.wantCode {
+				t.Errorf("code=%q, want %q", got, tc.wantCode)
+			}
 		})
 	}
 }
@@ -808,11 +808,11 @@ func TestGrokCLIExecutor_Retry_429ThenSuccess(t *testing.T) {
 	exec := NewGrokCLIExecutor(base)
 	body, _ := json.Marshal(map[string]any{"input": []any{}})
 	req := &Request{
-		Provider: "grok-cli",
-		Model: "grok-cli/grok-4.5",
-		BaseURL: ts.URL,
-		AccessToken: "grok-at-123",
-		Body: body,
+		Provider:     "grok-cli",
+		Model:        "grok-cli/grok-4.5",
+		BaseURL:      ts.URL,
+		AccessToken:  "grok-at-123",
+		Body:         body,
 		StreamConfig: &StreamConfig{FetchTimeoutMs: 5000, StreamIdleTimeoutMs: 5000, StreamReadinessTimeoutMs: 5000},
 	}
 
@@ -852,11 +852,11 @@ func TestGrokCLIExecutor_Retry_502ThenSuccess(t *testing.T) {
 	exec := NewGrokCLIExecutor(base)
 	body, _ := json.Marshal(map[string]any{"input": []any{}})
 	req := &Request{
-		Provider: "grok-cli",
-		Model: "grok-cli/grok-4.5",
-		BaseURL: ts.URL,
-		AccessToken: "grok-at-123",
-		Body: body,
+		Provider:     "grok-cli",
+		Model:        "grok-cli/grok-4.5",
+		BaseURL:      ts.URL,
+		AccessToken:  "grok-at-123",
+		Body:         body,
 		StreamConfig: &StreamConfig{FetchTimeoutMs: 5000, StreamIdleTimeoutMs: 5000, StreamReadinessTimeoutMs: 5000},
 	}
 
@@ -888,11 +888,11 @@ func TestGrokCLIExecutor_Retry_429MaxAttempts(t *testing.T) {
 	exec := NewGrokCLIExecutor(base)
 	body, _ := json.Marshal(map[string]any{"input": []any{}})
 	req := &Request{
-		Provider: "grok-cli",
-		Model: "grok-cli/grok-4.5",
-		BaseURL: ts.URL,
-		AccessToken: "grok-at-123",
-		Body: body,
+		Provider:     "grok-cli",
+		Model:        "grok-cli/grok-4.5",
+		BaseURL:      ts.URL,
+		AccessToken:  "grok-at-123",
+		Body:         body,
 		StreamConfig: &StreamConfig{FetchTimeoutMs: 5000, StreamIdleTimeoutMs: 5000, StreamReadinessTimeoutMs: 5000},
 	}
 
@@ -923,11 +923,11 @@ func TestGrokCLIExecutor_Retry_NoRetryOnAuth(t *testing.T) {
 	exec := NewGrokCLIExecutor(base)
 	body, _ := json.Marshal(map[string]any{"input": []any{}})
 	req := &Request{
-		Provider: "grok-cli",
-		Model: "grok-cli/grok-4.5",
-		BaseURL: ts.URL,
-		AccessToken: "grok-at-123",
-		Body: body,
+		Provider:     "grok-cli",
+		Model:        "grok-cli/grok-4.5",
+		BaseURL:      ts.URL,
+		AccessToken:  "grok-at-123",
+		Body:         body,
 		StreamConfig: &StreamConfig{FetchTimeoutMs: 5000, StreamIdleTimeoutMs: 5000, StreamReadinessTimeoutMs: 5000},
 	}
 
@@ -1050,9 +1050,9 @@ func TestGrokCLI_FlattenNamespaceTools(t *testing.T) {
 		t.Fatalf("expected 5 tools, got %d: %s", len(tools), gjson.GetBytes(flat, "tools").Raw)
 	}
 	cases := []struct {
-		idx  int
-		typ  string
-		name string
+		idx       int
+		typ       string
+		name      string
 		hasParams bool
 	}{
 		{0, "function", "ns1__tool_a", true},
@@ -1245,8 +1245,8 @@ func TestGrokCLI_NormalizeToolChoice(t *testing.T) {
 
 func TestGrokCLI_NormalizeToolChoice_DropsEmpty(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
-		"tools":             []any{map[string]any{"type": "function", "name": "a"}},
-		"tool_choice":       map[string]any{"type": "allowed_tools", "tools": []any{map[string]any{"type": "function", "name": "missing"}}},
+		"tools":               []any{map[string]any{"type": "function", "name": "a"}},
+		"tool_choice":         map[string]any{"type": "allowed_tools", "tools": []any{map[string]any{"type": "function", "name": "missing"}}},
 		"parallel_tool_calls": true,
 	})
 	out := grokcliNormalizeToolChoice(body, grokcliCollectUpstreamToolNames(body))
