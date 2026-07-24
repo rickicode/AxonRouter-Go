@@ -691,6 +691,7 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, req *Request) (*Respo
 			return nil, err
 		}
 		if resp.StatusCode < 400 {
+			resp.Body = e.resolveGroundingInResponse(ctx, resp.Body)
 			return resp, nil
 		}
 
@@ -797,6 +798,7 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, req *Request) (
 
 		result, err := e.executeStreamSingle(ctx, req, url, headers, modelID, useCreditsFirst)
 		if err == nil {
+			result.Chunks = e.resolveGroundingURLsWithChannel(ctx, result.Chunks)
 			return result, nil
 		}
 

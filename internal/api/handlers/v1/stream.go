@@ -12,6 +12,7 @@ type StreamTokenCounts struct {
 	InputTokens         int64
 	OutputTokens        int64
 	ReasoningTokens     int64
+	TotalTokens         int64
 	CachedTokens        int64 // cache READ only
 	CacheCreationTokens int64 // cache WRITE (new)
 	CostUsd             float64
@@ -84,13 +85,15 @@ func ExtractTokensFromBody(body []byte) StreamTokenCounts {
 			CandidatesTokenCount    int64 `json:"candidatesTokenCount"`
 			CachedContentTokenCount int64 `json:"cachedContentTokenCount"`
 			ThoughtsTokenCount      int64 `json:"thoughtsTokenCount"`
+			TotalTokenCount         int64 `json:"totalTokenCount"`
 		} `json:"usageMetadata"`
 	}
-	if err := json.Unmarshal(body, &gemini); err == nil && gemini.UsageMetadata != nil && gemini.UsageMetadata.PromptTokenCount > 0 {
+	if err := json.Unmarshal(body, &gemini); err == nil && gemini.UsageMetadata != nil && (gemini.UsageMetadata.PromptTokenCount > 0 || gemini.UsageMetadata.TotalTokenCount > 0) {
 		counts.InputTokens = gemini.UsageMetadata.PromptTokenCount
 		counts.OutputTokens = gemini.UsageMetadata.CandidatesTokenCount
 		counts.CachedTokens = gemini.UsageMetadata.CachedContentTokenCount
 		counts.ReasoningTokens = gemini.UsageMetadata.ThoughtsTokenCount
+		counts.TotalTokens = gemini.UsageMetadata.TotalTokenCount
 		return counts
 	}
 
@@ -199,13 +202,15 @@ func ExtractTokensFromSSEChunk(line []byte) (StreamTokenCounts, bool) {
 			CandidatesTokenCount    int64 `json:"candidatesTokenCount"`
 			CachedContentTokenCount int64 `json:"cachedContentTokenCount"`
 			ThoughtsTokenCount      int64 `json:"thoughtsTokenCount"`
+			TotalTokenCount         int64 `json:"totalTokenCount"`
 		} `json:"usageMetadata"`
 	}
-	if err := json.Unmarshal(chunk, &gemini); err == nil && gemini.UsageMetadata != nil && gemini.UsageMetadata.PromptTokenCount > 0 {
+	if err := json.Unmarshal(chunk, &gemini); err == nil && gemini.UsageMetadata != nil && (gemini.UsageMetadata.PromptTokenCount > 0 || gemini.UsageMetadata.TotalTokenCount > 0) {
 		counts.InputTokens = gemini.UsageMetadata.PromptTokenCount
 		counts.OutputTokens = gemini.UsageMetadata.CandidatesTokenCount
 		counts.CachedTokens = gemini.UsageMetadata.CachedContentTokenCount
 		counts.ReasoningTokens = gemini.UsageMetadata.ThoughtsTokenCount
+		counts.TotalTokens = gemini.UsageMetadata.TotalTokenCount
 		return counts, true
 	}
 
@@ -284,6 +289,9 @@ func MergeTokenCounts(dst, src *StreamTokenCounts) {
 	}
 	if src.ReasoningTokens > 0 {
 		dst.ReasoningTokens = src.ReasoningTokens
+	}
+	if src.TotalTokens > 0 {
+		dst.TotalTokens = src.TotalTokens
 	}
 	if src.CachedTokens > 0 {
 		dst.CachedTokens = src.CachedTokens
