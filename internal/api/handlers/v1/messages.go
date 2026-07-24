@@ -241,6 +241,7 @@ attemptLoop:
 				ReasoningTokens:     tokenCounts.ReasoningTokens,
 				CachedTokens:        tokenCounts.CachedTokens,
 				CacheCreationTokens: tokenCounts.CacheCreationTokens,
+				CostUsd:             resp.CostUsd,
 				LatencyMs:           latency,
 				StatusCode:          resp.StatusCode,
 				TokensEstimated:     tokensEstimated,
@@ -249,7 +250,12 @@ attemptLoop:
 			if resp.StatusCode < 300 {
 				h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
 			}
-			h.writeJSONResponse(c, resp.StatusCode, translatedResp)
+			h.writeJSONResponse(c, resp.StatusCode, translatedResp, responseCost{
+				modelID:         modelName,
+				exactCost:       resp.CostUsd,
+				counts:          tokenCounts,
+				tokensEstimated: tokensEstimated,
+			})
 		}
 		return
 	}
