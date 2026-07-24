@@ -126,6 +126,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	}
 
 	h.trackDevice(c)
+	c.Set("service_tier", extractServiceTier(body))
 
 	// Apply compression (fail-open); skip if the request uses prompt-cache markers.
 	body = h.compressRequestBody(body)

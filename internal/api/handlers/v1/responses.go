@@ -28,6 +28,7 @@ func (h *Handler) Responses(c *gin.Context) {
 
 	// Apply compression (fail-open); skip if the request uses prompt-cache markers.
 	body = h.compressRequestBody(body)
+	c.Set("service_tier", extractServiceTier(body))
 
 	body, model, _ := h.parseThinkingSuffixFromBody(c, body)
 	if model == "" {

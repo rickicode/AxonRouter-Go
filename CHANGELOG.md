@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Google One AI credits retry for Antigravity provider** — new `ANTIGRAVITY_CREDITS` config supports three modes: `off` (default, no `enabledCreditTypes` injection), `always` (inject `enabledCreditTypes: ["GOOGLE_ONE_AI"]` on every request), and `retry` (inject only after a 429 `quota_exhausted`). On explicit `INSUFFICIENT_G1_CREDITS_BALANCE` the auth is permanently disabled from credits retry. Includes an in-memory credits-balance cache with 5-minute TTL (`internal/cache/antigravity.go`) and unit tests for config parsing, cache behavior, and executor retry logic.
+- **Codex tier cost multipliers** — `service_tier` is now detected from `/v1/chat/completions` and `/v1/responses` request bodies and persisted on `request_logs.service_tier`. Estimated costs apply tier multipliers: `flex` 0.5×, `priority` 1.5×, `fast` 2.5×, with `standard`/unknown/default as 1.0×. Multipliers are configurable per model via new `model_pricing.tier_flex_multiplier`, `tier_priority_multiplier`, and `tier_fast_multiplier` columns, surfaced through the admin model-pricing API. Existing upstream-reported costs are preserved unchanged.
 - **Fusion panel tool-history flattening** — `stripFusionTools` now flattens tool/function turns and Anthropic-style `tool_use`/`tool_result` content blocks into plain assistant prose for fusion panel requests. Panel models retain conversational context without being able to emit `tool_calls`, matching the 9router reference implementation.
 
 ### Changed
