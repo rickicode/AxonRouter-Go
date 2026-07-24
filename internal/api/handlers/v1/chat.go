@@ -60,11 +60,58 @@ func isTransientUpstreamError(err error) bool {
 	return false
 }
 
+// parseRetryAfter parses a Retry-After header value, accepting either a delay
+// in seconds or an HTTP-date. Values in the past (or non-numeric/zero) are
+// reported as 0 with ok=true so callers can decide whether to fall back.
+func parseRetryAfter(h http.Header) (time.Duration, bool) {
+	v := strings.TrimSpace(h.Get("Retry-After"))
+	if v == "" {
+		return 0, false
+	}
+	if secs, err := strconv.Atoi(v); err == nil {
+		if secs < 0 {
+			return 0, true
+		}
+		return time.Duration(secs) * time.Second, true
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		d := time.Until(t)
+		if d < 0 {
+			d = 0
+		}
+		return d, true
+	}
+	return 0, false
+}
+
+// transientCooldownResp resolves the response whose headers should be inspected
+// for Retry-After. When no explicit executor response is available, it falls
+// back to an UpstreamError's headers so transient errors returned directly by
+// an executor still respect the upstream cooldown request.
+func transientCooldownResp(resp *executor.Response, err error) *executor.Response {
+	if resp != nil {
+		return resp
+	}
+	var upErr *executor.UpstreamError
+	if errors.As(err, &upErr) {
+		return &executor.Response{StatusCode: upErr.StatusCode, Headers: upErr.Headers}
+	}
+	return nil
+}
+
 // transientCooldown returns the cooldown to apply before the next combo
-// connection is tried. It clamps the value to maxTransientCooldown.
-func transientCooldown() time.Duration {
-	if maxTransientCooldown > 0 && defaultTransientCooldown > maxTransientCooldown {
-		return maxTransientCooldown
+// connection is tried. It respects an upstream Retry-After header and clamps
+// the resulting duration to maxTransientCooldown.
+func transientCooldown(resp *executor.Response) time.Duration {
+	if resp != nil {
+		if d, ok := parseRetryAfter(resp.Headers); ok {
+			if d > maxTransientCooldown {
+				return maxTransientCooldown
+			}
+			if d > 0 {
+				return d
+			}
+		}
 	}
 	return defaultTransientCooldown
 }
@@ -404,7 +451,7 @@ type comboStepResult struct {
 // recordComboStepFailure applies the same cooldown/exhaustion side effects for a
 // failed combo connection attempt that handleComboRequest currently applies. It
 // mirrors that path exactly to avoid observable behavior changes.
-func (h *Handler) recordComboStepFailure(comboCtx context.Context, connID, provider, modelName string, det connstate.ErrorDetection, err error) {
+func (h *Handler) recordComboStepFailure(comboCtx context.Context, connID, provider, modelName string, det connstate.ErrorDetection, err error, resp *executor.Response) {
 	if det.ModelID != "" && (det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
 		scope := connstate.ModelScope(provider, det.ModelID)
 		h.exhaustion.MarkExhausted(quota.ExhaustKey(connID, scope), quota.TTLFromCooldown(det.CooldownUntil, 5*time.Minute))
@@ -423,7 +470,7 @@ func (h *Handler) recordComboStepFailure(comboCtx context.Context, connID, provi
 		h.elig.ScheduleUpdateProvider(provider)
 	}
 	if isTransientUpstreamError(err) {
-		cd := transientCooldown()
+		cd := transientCooldown(transientCooldownResp(resp, err))
 		logging.Logger.Info("combo transient error cooldown before next connection",
 			"provider", provider, "model", modelName,
 			"conn", shortID(connID, 8), "status", upstreamHTTPStatus(err),
@@ -498,6 +545,7 @@ func (h *Handler) executeComboStep(
 				StatusCode: resp.StatusCode,
 				Body:       resp.Body,
 				RawBody:    resp.Body,
+				Headers:    resp.Headers,
 			}
 		}
 		if err != nil {
@@ -519,7 +567,7 @@ func (h *Handler) executeComboStep(
 			}
 
 			result.retryable = true
-			h.recordComboStepFailure(comboCtx, connID, provider, modelName, det, err)
+			h.recordComboStepFailure(comboCtx, connID, provider, modelName, det, err, resp)
 			continue
 		}
 
@@ -629,6 +677,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 					StatusCode: resp.StatusCode,
 					Body:       resp.Body,
 					RawBody:    resp.Body,
+					Headers:    resp.Headers,
 				}
 			}
 			if err != nil {
@@ -669,7 +718,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				lastErr = err
 				lastErrCategory = string(det.Category)
 				if isTransientUpstreamError(err) {
-					cd := transientCooldown()
+					cd := transientCooldown(transientCooldownResp(resp, err))
 					logging.Logger.Info("combo transient error cooldown before next connection",
 						"provider", provider, "model", modelName,
 						"conn", shortID(connID, 8), "status", upstreamHTTPStatus(err),
