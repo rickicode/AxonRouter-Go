@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		`ALTER TABLE request_logs ADD COLUMN client_ip TEXT`,
 		`ALTER TABLE request_logs ADD COLUMN user_agent TEXT`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id, timestamp DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_combo_steps_combo_id ON combo_steps(combo_id)`,
 		`ALTER TABLE provider_types ADD COLUMN category TEXT DEFAULT 'apikey'`,
 		`ALTER TABLE provider_types ADD COLUMN skip_key_validation INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE provider_types ADD COLUMN service_kinds TEXT DEFAULT '["llm"]'`,
