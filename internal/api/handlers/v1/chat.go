@@ -1280,23 +1280,40 @@ func extractAssistantContent(respBody []byte) string {
 }
 
 // buildFusionJudgeBody builds a new request body for the judge model.
+// It preserves the original conversation history and appends the judge
+// directive as a new user turn so the judge has full context.
 func buildFusionJudgeBody(originalReq []byte, panels []fusionPanel, anonymize bool) []byte {
-	userQuestion := extractUserQuestion(originalReq)
+	var req map[string]any
+	if err := json.Unmarshal(originalReq, &req); err != nil {
+		return originalReq
+	}
+
 	prompt := "You are a synthesis assistant. Multiple expert panel models answered the user's question. Review the answers below and produce a single, concise, accurate answer that best addresses the user's original question.\n\n"
+
+	userQuestion := extractUserQuestion(originalReq)
 	prompt += "User question: " + userQuestion + "\n\n"
 	for i, p := range panels {
 		label := fmt.Sprintf("Source %d", i+1)
 		if !anonymize {
 			label = fmt.Sprintf("Source %s", p.modelID)
 		}
-		prompt += fmt.Sprintf("%s (%s):\n%s\n\n", label, p.modelID, p.content)
+		if anonymize {
+			prompt += fmt.Sprintf("%s:\n%s\n\n", label, p.content)
+		} else {
+			prompt += fmt.Sprintf("%s (%s):\n%s\n\n", label, p.modelID, p.content)
+		}
 	}
 	prompt += "Synthesize the best answer."
 
-	return executor.JSONSet(originalReq, "messages", []map[string]any{
-		{"role": "system", "content": prompt},
-		{"role": "user", "content": userQuestion},
-	})
+	messages, _ := req["messages"].([]any)
+	judgeMsg := map[string]any{"role": "user", "content": prompt}
+	req["messages"] = append(messages, judgeMsg)
+
+	result, err := json.Marshal(req)
+	if err != nil {
+		return originalReq
+	}
+	return result
 }
 
 // extractUserQuestion returns the content of the last user message from a request body.
