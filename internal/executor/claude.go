@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // ClaudeExecutor handles Anthropic Claude API.
@@ -20,46 +23,28 @@ func NewClaudeExecutor(base *BaseExecutor) *ClaudeExecutor {
 // prepareClaudeBody applies Anthropic-specific body defaults and constraints.
 // Returns the modified body and any betas extracted from it.
 // (matches CLIProxyAPI: ensureModelMaxTokens, disableThinkingIfToolChoiceForced,
-// normalizeClaudeTemperatureForThinking, extractAndRemoveBetas)
+// normalizeClaudeSamplingForUpstream, ensureClaudeThinkingDisplay, extractAndRemoveBetas)
 func prepareClaudeBody(body []byte) ([]byte, []string) {
+	// 1. Default max_tokens to 1024 if not set (Anthropic API requires it)
+	if !gjson.GetBytes(body, "max_tokens").Exists() {
+		body, _ = sjson.SetBytes(body, "max_tokens", 1024)
+	}
+
+	// 2. Disable thinking on forced tool_choice (any/tool) before any other
+	// thinking-related normalization. Anthropic rejects thinking + forced tool_choice.
+	body = disableThinkingIfToolChoiceForced(body)
+
+	// 3. Remove sampling params that conflict with thinking-enabled requests.
+	body = normalizeClaudeSamplingForUpstream(body)
+
+	// 4. Default thinking.display to "summarized" so thinking text is visible.
+	body = ensureClaudeThinkingDisplay(body)
+
+	// 5. Extract and remove betas from body (will be sent as anthropic-beta header)
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
 		return body, nil
 	}
-
-	// 1. Default max_tokens to 1024 if not set (Anthropic API requires it)
-	if _, ok := m["max_tokens"]; !ok {
-		m["max_tokens"] = 1024
-	}
-
-	// 2. Disable thinking on forced tool_choice (any/tool)
-	// Anthropic rejects thinking + forced tool_choice
-	if tc, ok := m["tool_choice"].(map[string]any); ok {
-		if t, ok := tc["type"].(string); ok && (t == "any" || t == "tool") {
-			delete(m, "thinking")
-			if oc, ok := m["output_config"].(map[string]any); ok {
-				delete(oc, "effort")
-				if len(oc) == 0 {
-					delete(m, "output_config")
-				}
-			}
-		}
-	}
-
-	// 3. Normalize temperature to 1 when thinking is enabled
-	// Anthropic rejects temperatures other than 1 with thinking
-	if thinking, ok := m["thinking"].(map[string]any); ok {
-		if t, ok := thinking["type"].(string); ok {
-			switch strings.ToLower(strings.TrimSpace(t)) {
-			case "enabled", "adaptive", "auto":
-				if temp, ok := m["temperature"].(float64); !ok || temp != 1 {
-					m["temperature"] = 1
-				}
-			}
-		}
-	}
-
-	// 4. Extract and remove betas from body (will be sent as anthropic-beta header)
 	var betas []string
 	if raw, ok := m["betas"]; ok {
 		delete(m, "betas")

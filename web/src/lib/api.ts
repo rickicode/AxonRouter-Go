@@ -38,6 +38,7 @@ export type RoutingMode = "first_eligible" | "round_robin" | "random" | "affinit
 export interface ProviderSettings {
   provider_id: string;
   routing_mode: RoutingMode;
+  flat_rate?: boolean;
 }
 
 export interface Connection {
@@ -922,12 +923,35 @@ export const modelPricingApi = {
 };
 
 // Console Logs API
-export interface ConsoleLogsResponse {
-	lines: string[];
-	path: string;
+export interface ConsoleLogEntry {
+	ts: string;
+	level: string;
+	msg: string;
+	component?: string;
+	request_id?: string;
+	provider?: string;
+	model?: string;
+	conn?: string;
+	error?: string;
+	extra?: Record<string, unknown>;
 }
 
-export const getConsoleLogs = () => fetchApi<ConsoleLogsResponse>("/console-logs");
+export interface ConsoleLogsResponse {
+	entries: ConsoleLogEntry[];
+	path: string;
+	total: number;
+}
+
+export const getConsoleLogs = (params?: {
+	level?: string;
+	search?: string;
+}) => {
+	const query = new URLSearchParams();
+	if (params?.level) query.set('level', params.level);
+	if (params?.search) query.set('search', params.search);
+	const qs = query.toString();
+	return fetchApi<ConsoleLogsResponse>(`/console-logs${qs ? '?' + qs : ''}`);
+};
 
 // Logs API
 export const logsApi = {

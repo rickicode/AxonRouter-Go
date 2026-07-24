@@ -392,51 +392,53 @@ const columns: ColumnDef[] = [
 	</Card>
 
 	{#if $activeRequests.length > 0}
-		<Card class="shadow-card overflow-hidden">
-			<CardContent class="p-0 flex justify-center bg-gradient-to-b from-background to-card">
-				<ActiveOctopus requests={$activeRequests} />
-			</CardContent>
-		</Card>
-
-		<Card class="shadow-card border-l-4 border-l-amber-500">
-			<CardHeader class="pb-3 flex flex-row items-center justify-between space-y-0">
-				<div class="flex items-center gap-2">
-					<ActivityIcon class="size-4 text-amber-500" />
-					<CardTitle class="text-body-md-strong">In-flight requests</CardTitle>
-				</div>
-				<p class="text-caption text-muted-foreground">{$activeRequests.length} active</p>
-			</CardHeader>
-			<CardContent class="p-0">
-				<div class="overflow-x-auto">
-					<table class="w-full text-left border-collapse">
-						<thead>
-							<tr class="border-b border-border bg-muted/30">
-								<th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-4">Started</th>
-								<th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-4">Provider</th>
-								<th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-4">Account</th>
-								<th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-4">Model</th>
-								<th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-4">Type</th>
-							</tr>
-						</thead>
-						<tbody class="divide-y divide-border/60">
-							{#each $activeRequests as ar}
-								<tr class="transition-colors hover:bg-accent/20">
-									<td class="py-2 px-4 text-body-sm text-muted-foreground">{formatDurationMs(ar.started_at)}</td>
-<td class="py-2 px-4 text-body-sm-strong">{inflightProviderName(ar)}</td>
-									<td class="py-2 px-4 text-body-sm text-foreground">{ar.connection_name || ar.connection_id || '-'}</td>
-									<td class="py-2 px-4 text-code text-foreground truncate max-w-[220px]" title={ar.model_id}>{ar.model_id}</td>
-									<td class="py-2 px-4">
-										<Badge variant={ar.stream ? 'default' : 'secondary'} class="text-caption-mono rounded-sm py-0.5">
-											{ar.stream ? 'stream' : 'json'}
-										</Badge>
-									</td>
+		<div class="grid grid-cols-1 gap-6 md:grid-cols-2">
+			<Card class="shadow-card border-l-4 border-l-amber-500">
+				<CardHeader class="pb-3 flex flex-row items-center justify-between space-y-0">
+					<div class="flex items-center gap-2">
+						<ActivityIcon class="size-4 text-amber-500" />
+						<CardTitle class="text-body-md-strong">In-flight requests</CardTitle>
+					</div>
+					<p class="text-caption text-muted-foreground">{$activeRequests.length} active</p>
+				</CardHeader>
+				<CardContent class="p-0">
+					<div class="overflow-x-auto">
+						<table class="w-full text-left border-collapse">
+							<thead>
+								<tr class="border-b border-border bg-muted/30">
+									<th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-4">Started</th>
+									<th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-4">Provider</th>
+									<th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-4">Account</th>
+									<th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-4">Model</th>
+									<th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-4">Type</th>
 								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
-			</CardContent>
-		</Card>
+							</thead>
+							<tbody class="divide-y divide-border/60">
+								{#each $activeRequests as ar}
+									<tr class="transition-colors hover:bg-accent/20">
+										<td class="py-2 px-4 text-body-sm text-muted-foreground">{formatDurationMs(ar.started_at)}</td>
+										<td class="py-2 px-4 text-body-sm-strong">{inflightProviderName(ar)}</td>
+										<td class="py-2 px-4 text-body-sm text-foreground">{ar.connection_name || ar.connection_id || '-'}</td>
+										<td class="py-2 px-4 text-code text-foreground truncate max-w-[220px]" title={ar.model_id}>{ar.model_id}</td>
+										<td class="py-2 px-4">
+											<Badge variant={ar.stream ? 'default' : 'secondary'} class="text-caption-mono rounded-sm py-0.5">
+												{ar.stream ? 'stream' : 'json'}
+											</Badge>
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				</CardContent>
+			</Card>
+
+			<Card class="shadow-card overflow-hidden">
+				<CardContent class="p-0 flex justify-center bg-gradient-to-b from-background to-card">
+					<ActiveOctopus requests={$activeRequests} maxRenderedItems={15} />
+				</CardContent>
+			</Card>
+		</div>
 	{/if}
 
 	{#if $isLoading}

@@ -6,6 +6,27 @@ import (
 	"testing"
 )
 
+func TestParseAntigravityCreditsMode(t *testing.T) {
+	cases := []struct {
+		in   string
+		want AntigravityCreditsMode
+	}{
+		{"off", AntigravityCreditsModeOff},
+		{"OFF", AntigravityCreditsModeOff},
+		{"", AntigravityCreditsModeOff},
+		{"retry", AntigravityCreditsModeRetry},
+		{"RETRY", AntigravityCreditsModeRetry},
+		{"always", AntigravityCreditsModeAlways},
+		{"ALWAYS", AntigravityCreditsModeAlways},
+		{"invalid", AntigravityCreditsModeOff},
+	}
+	for _, c := range cases {
+		if got := parseAntigravityCreditsMode(c.in); got != c.want {
+			t.Errorf("parseAntigravityCreditsMode(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestResolveDataDir_Default(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {

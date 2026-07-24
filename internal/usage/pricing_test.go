@@ -186,3 +186,60 @@ func TestEstimateCostByModality(t *testing.T) {
 		t.Fatalf("zero-quantity image cost = %.6f, want 0", got)
 	}
 }
+
+func TestEstimateCostServiceTierMultipliers(t *testing.T) {
+	database := newTestPricingDB(t)
+	InitPricing(database)
+
+	// gpt-4o seeded: in 0.0025, out 0.01.
+	base := EstimateCost("gpt-4o", "chat", 0, 1000, 1000, 0, 0, 0)
+
+	cases := []struct {
+		tier string
+		mult float64
+	}{
+		{"", 1.0},
+		{"standard", 1.0},
+		{"default", 1.0},
+		{"flex", 0.5},
+		{"priority", 1.5},
+		{"fast", 2.5},
+		{"FAST", 2.5}, // case-insensitive
+	}
+	for _, tc := range cases {
+		got := EstimateCostWithServiceTier("gpt-4o", "chat", tc.tier, 0, 1000, 1000, 0, 0, 0)
+		want := base * tc.mult
+		if math.Abs(got-want) > 1e-9 {
+			t.Fatalf("tier %q: got %.6f, want %.6f", tc.tier, got, want)
+		}
+	}
+}
+
+func TestEstimateCostConfigurableTierMultiplier(t *testing.T) {
+	database := newTestPricingDB(t)
+	InitPricing(database)
+
+	// Configure a custom fast multiplier for this model.
+	if err := UpsertPricing(ModelPricingRow{
+		ModelID:                "tiered-model",
+		DisplayName:            "Tiered",
+		InputPer1K:             0.001,
+		OutputPer1K:            0.002,
+		TierFastMultiplier:     3.0,
+		TierPriorityMultiplier: 1.5,
+		TierFlexMultiplier:     0.5,
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	base := EstimateCost("tiered-model", "chat", 0, 1000, 1000, 0, 0, 0)
+	fast := EstimateCostWithServiceTier("tiered-model", "chat", "fast", 0, 1000, 1000, 0, 0, 0)
+	if math.Abs(fast-base*3.0) > 1e-9 {
+		t.Fatalf("custom fast multiplier = %.6f, want %.6f", fast, base*3.0)
+	}
+
+	flex := EstimateCostWithServiceTier("tiered-model", "chat", "flex", 0, 1000, 1000, 0, 0, 0)
+	if math.Abs(flex-base*0.5) > 1e-9 {
+		t.Fatalf("custom flex multiplier = %.6f, want %.6f", flex, base*0.5)
+	}
+}

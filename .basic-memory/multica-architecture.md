@@ -1,6 +1,10 @@
 ---
 type: note
-tags: [multica, architecture, workflow]
+tags:
+- multica
+- architecture
+- workflow
+permalink: axonrouter-go/multica-architecture
 ---
 
 # Multica Architecture & Workflow

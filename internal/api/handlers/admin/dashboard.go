@@ -20,14 +20,14 @@ import (
 
 // systemMetrics holds raw and percentage system resource readings.
 type systemMetrics struct {
-	CPUCores     int
-	CPUPercent   float64
-	MemUsed      uint64
-	MemTotal     uint64
-	MemPercent   float64
-	DiskUsed     uint64
-	DiskTotal    uint64
-	DiskPercent  float64
+	CPUCores    int
+	CPUPercent  float64
+	MemUsed     uint64
+	MemTotal    uint64
+	MemPercent  float64
+	DiskUsed    uint64
+	DiskTotal   uint64
+	DiskPercent float64
 }
 
 // DashboardHandler handles dashboard statistics.
@@ -87,27 +87,27 @@ func (h *DashboardHandler) Stats(c *gin.Context) {
 	bufferLen := h.tracker.Buffered()
 
 	c.JSON(http.StatusOK, gin.H{
-		"total_providers":        totalProviders,
-		"total_connections":      totalConns,
-		"total_combos":           totalCombos,
-		"status_counts":          statusCounts,
-		"requests_today":         todaySummary.Requests,
-		"tokens_today":           todaySummary.Tokens,
-		"cost_today":             todaySummary.CostUsd,
-		"errors_today":           todaySummary.Errors,
-		"avg_latency_ms_today":   todaySummary.AvgLatencyMs,
-		"cpu_percent":            sys.CPUPercent,
-		"cpu_cores":              sys.CPUCores,
-		"memory_used_bytes":      sys.MemUsed,
-		"memory_total_bytes":     sys.MemTotal,
-		"memory_percent":         sys.MemPercent,
-		"disk_used_bytes":        sys.DiskUsed,
-		"disk_total_bytes":       sys.DiskTotal,
-		"disk_percent":           sys.DiskPercent,
-		"uptime_seconds":         int(time.Since(h.startAt).Seconds()),
-		"buffer_length":          bufferLen,
-		"healthy_connections":    h.store.HealthyCount(),
-		"dropped_usage_events":   h.tracker.Dropped(),
+		"total_providers":      totalProviders,
+		"total_connections":    totalConns,
+		"total_combos":         totalCombos,
+		"status_counts":        statusCounts,
+		"requests_today":       todaySummary.Requests,
+		"tokens_today":         todaySummary.Tokens,
+		"cost_today":           todaySummary.CostUsd,
+		"errors_today":         todaySummary.Errors,
+		"avg_latency_ms_today": todaySummary.AvgLatencyMs,
+		"cpu_percent":          sys.CPUPercent,
+		"cpu_cores":            sys.CPUCores,
+		"memory_used_bytes":    sys.MemUsed,
+		"memory_total_bytes":   sys.MemTotal,
+		"memory_percent":       sys.MemPercent,
+		"disk_used_bytes":      sys.DiskUsed,
+		"disk_total_bytes":     sys.DiskTotal,
+		"disk_percent":         sys.DiskPercent,
+		"uptime_seconds":       int(time.Since(h.startAt).Seconds()),
+		"buffer_length":        bufferLen,
+		"healthy_connections":  h.store.HealthyCount(),
+		"dropped_usage_events": h.tracker.Dropped(),
 	})
 }
 
@@ -191,7 +191,7 @@ func (h *DashboardHandler) ProviderSummary(c *gin.Context) {
 	defer rows.Close()
 
 	type providerSummary struct {
-		id, name, format string
+		id, name, format               string
 		total, ready, rl, qe, disabled int
 	}
 
@@ -252,7 +252,7 @@ func (h *DashboardHandler) ProviderSummary(c *gin.Context) {
 func (h *DashboardHandler) RecentLogs(c *gin.Context) {
 	rows, err := h.db.Query(`
 		SELECT id, timestamp, provider_type_id, model_id, modality,
-		       latency_ms, status_code, error_message, cost_usd
+		       latency_ms, status_code, error_message, cost_usd, flat_rate
 		FROM request_logs
 		ORDER BY timestamp DESC
 		LIMIT 20
@@ -267,7 +267,7 @@ func (h *DashboardHandler) RecentLogs(c *gin.Context) {
 	for rows.Next() {
 		l := db.RequestLog{}
 		rows.Scan(&l.ID, &l.Timestamp, &l.ProviderTypeID, &l.ModelID,
-			&l.Modality, &l.LatencyMs, &l.StatusCode, &l.ErrorMessage, &l.CostUsd)
+			&l.Modality, &l.LatencyMs, &l.StatusCode, &l.ErrorMessage, &l.CostUsd, &l.FlatRate)
 		logs = append(logs, l)
 	}
 	c.JSON(http.StatusOK, gin.H{"data": logs})

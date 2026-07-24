@@ -2,6 +2,7 @@ package usage
 
 import (
 	"database/sql"
+	"math"
 	"path/filepath"
 	"testing"
 	"time"
@@ -110,7 +111,7 @@ func TestTracker_NonTextCostPersisted(t *testing.T) {
 	defer tracker.Stop()
 
 	tracker.Log(&LogEntry{
-		ConnectionID: "image-conn",
+		ConnectionID:   "image-conn",
 		ProviderTypeID: "openai",
 		ModelID:        "dall-e-3",
 		Modality:       "image",
@@ -129,5 +130,41 @@ func TestTracker_NonTextCostPersisted(t *testing.T) {
 	}
 	if cost != 0.08 {
 		t.Fatalf("expected cost_usd 0.08, got %f", cost)
+	}
+}
+
+func TestTracker_PersistServiceTierAndMultiplier(t *testing.T) {
+	database := openTestDB(t)
+	InitPricing(database)
+
+	tracker := NewTracker(database)
+	defer tracker.Stop()
+
+	tracker.Log(&LogEntry{
+		ConnectionID:   "conn-tier",
+		ProviderTypeID: "cx",
+		ModelID:        "openai/gpt-5-codex",
+		ServiceTier:    "fast",
+		InputTokens:    1000,
+		OutputTokens:   1000,
+		Modality:       "chat",
+	})
+
+	time.Sleep(6 * time.Second)
+
+	var serviceTier string
+	var cost float64
+	if err := database.QueryRow(`SELECT service_tier, cost_usd FROM request_logs WHERE connection_id = ?`, "conn-tier").Scan(&serviceTier, &cost); err != nil {
+		t.Fatalf("query service_tier: %v", err)
+	}
+	if serviceTier != "fast" {
+		t.Errorf("expected service_tier fast, got %q", serviceTier)
+	}
+
+	p := GetPricing("gpt-5-codex")
+	base := float64(1000)/1000*p.InputPer1K + float64(1000)/1000*p.OutputPer1K
+	want := base * p.TierFastMultiplier
+	if math.Abs(cost-want) > 1e-9 {
+		t.Errorf("cost = %.6f, want %.6f", cost, want)
 	}
 }

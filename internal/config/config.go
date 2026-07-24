@@ -4,7 +4,18 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
+)
+
+// AntigravityCreditsMode controls whether Antigravity requests include
+// Google One AI credits via enabledCreditTypes.
+type AntigravityCreditsMode string
+
+const (
+	AntigravityCreditsModeOff    AntigravityCreditsMode = "off"
+	AntigravityCreditsModeRetry  AntigravityCreditsMode = "retry"
+	AntigravityCreditsModeAlways AntigravityCreditsMode = "always"
 )
 
 type Config struct {
@@ -20,6 +31,7 @@ type Config struct {
 	DeviceTrackerTTLMs     int
 	DeviceTrackerMaxPerKey int
 	DeviceTrackerMaxTotal  int
+	AntigravityCredits     AntigravityCreditsMode
 }
 
 var (
@@ -79,6 +91,7 @@ func Get() Config {
 			DeviceTrackerTTLMs:     getIntEnv("DEVICE_TRACKER_TTL_MS", 30*60*1000),
 			DeviceTrackerMaxPerKey: getIntEnv("DEVICE_TRACKER_MAX_PER_KEY", 1000),
 			DeviceTrackerMaxTotal:  getIntEnv("DEVICE_TRACKER_MAX_TOTAL_DEVICES", 10000),
+			AntigravityCredits:     parseAntigravityCreditsMode(getEnv("ANTIGRAVITY_CREDITS", "")),
 		}
 		os.MkdirAll(dataDir, 0o755)
 		os.MkdirAll(global.LogDir, 0o755)
@@ -91,6 +104,17 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func parseAntigravityCreditsMode(v string) AntigravityCreditsMode {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "retry":
+		return AntigravityCreditsModeRetry
+	case "always":
+		return AntigravityCreditsModeAlways
+	default:
+		return AntigravityCreditsModeOff
+	}
 }
 
 func getIntEnv(key string, fallback int) int {
