@@ -11,6 +11,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
+	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
@@ -183,11 +184,10 @@ attemptLoop:
 				return b
 			}
 
-			// Holdback buffer: wait 750ms/64KB before committing to this connection.
-			// If the stream errors during holdback, retry the next connection
-			// transparently. Matches OmniRoute holdback behavior.
-			holdbackMs := 750
-			holdbackBytes := 64 * 1024
+			// Holdback buffer: wait for the configured window before committing to
+			// this connection. If the stream errors during holdback, retry the next
+			// connection transparently. Matches OmniRoute holdback behavior.
+			holdbackMs, holdbackBytes := h.holdbackConfig(provider)
 			streamCtx, cancelStream := context.WithCancel(c.Request.Context())
 			defer cancelStream()
 			holdbackChunks, holdbackErrCh := executor.WrapWithHoldback(streamCtx, streamResult.Chunks, holdbackMs, holdbackBytes)
@@ -331,4 +331,12 @@ attemptLoop:
 		return
 	}
 	c.JSON(statusCode, gin.H{"error": gin.H{"message": msg, "type": errType, "detail": detail}})
+}
+
+// holdbackConfig returns the streaming holdback window for a provider.
+func (h *Handler) holdbackConfig(provider string) (int, int) {
+	if h.providerCfg != nil {
+		return h.providerCfg.Holdback(provider)
+	}
+	return providercfg.DefaultHoldbackMs, providercfg.DefaultHoldbackBytes
 }
