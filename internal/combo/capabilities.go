@@ -26,6 +26,7 @@ func DetectRequiredCapabilities(body []byte) models.ModelCapabilities {
 	if err := json.Unmarshal(body, &req); err != nil {
 		return models.ModelCapabilities{}
 	}
+
 	var caps models.ModelCapabilities
 
 	// Tools are a soft capability (preferred but not blocking).
@@ -42,6 +43,18 @@ func DetectRequiredCapabilities(body []byte) models.ModelCapabilities {
 	if input, ok := req["input"].([]any); ok {
 		for _, item := range trailingUserItems(input) {
 			detectMessageCapabilities(item, &caps)
+		}
+	}
+
+	// Gemini native format uses top-level `contents` with `parts`.
+	if contents, ok := req["contents"].([]any); ok {
+		detectGeminiContents(contents, &caps)
+	}
+
+	// Antigravity native format nests `contents` under `request`.
+	if request, ok := req["request"].(map[string]any); ok {
+		if contents, ok := request["contents"].([]any); ok {
+			detectGeminiContents(contents, &caps)
 		}
 	}
 
@@ -63,6 +76,56 @@ func trailingUserItems(items []any) []any {
 		}
 	}
 	return items
+}
+
+func detectGeminiContents(contents []any, caps *models.ModelCapabilities) {
+	for _, item := range contents {
+		content, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if parts, ok := content["parts"].([]any); ok {
+			for _, part := range parts {
+				detectGeminiPart(part, caps)
+			}
+		}
+	}
+}
+
+func detectGeminiPart(part any, caps *models.ModelCapabilities) {
+	m, ok := part.(map[string]any)
+	if !ok {
+		return
+	}
+
+	// Gemini parts use inlineData/fileData blobs with mimeType.
+	if inlineData, ok := m["inlineData"].(map[string]any); ok {
+		detectCapabilityByMimeType(inlineData, caps)
+	}
+	if fileData, ok := m["fileData"].(map[string]any); ok {
+		detectCapabilityByMimeType(fileData, caps)
+	}
+
+	// Fallback to OpenAI-style typed parts when present.
+	detectContentPart(part, caps)
+}
+
+func detectCapabilityByMimeType(m map[string]any, caps *models.ModelCapabilities) {
+	mime, _ := m["mimeType"].(string)
+	if mime == "" {
+		mime, _ = m["mime_type"].(string)
+	}
+	mime = strings.ToLower(mime)
+	switch {
+	case strings.HasPrefix(mime, "image/"):
+		caps.Vision = true
+	case strings.HasPrefix(mime, "audio/"):
+		caps.AudioInput = true
+	case strings.HasPrefix(mime, "video/"):
+		caps.VideoInput = true
+	case strings.Contains(mime, "pdf"):
+		caps.PDF = true
+	}
 }
 
 func detectMessageCapabilities(item any, caps *models.ModelCapabilities) {
@@ -159,7 +222,6 @@ func (h *Handler) ReorderStepsByCapabilities(steps []db.ComboStep, required mode
 		logging.Logger.Warn("capability reorder produced unexpected length; using original order")
 		return steps
 	}
-
 	return out
 }
 
@@ -186,6 +248,7 @@ func capabilityTier(caps, required models.ModelCapabilities) int {
 	if !hardOk {
 		return 2
 	}
+
 	softOk := true
 	if required.Tools && !caps.Tools {
 		softOk = false
