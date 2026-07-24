@@ -2,6 +2,7 @@ package admin
 
 import (
 	"database/sql"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -161,7 +162,11 @@ func (h *ComboHandler) Create(c *gin.Context) {
 
 	result, err := h.handler.CreateCombo(req.Name, req.Strategy, req.TimeoutMs, req.StickyLimit, req.IsSmart, req.SmartGoal, req.FusionConfig, steps)
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		if errors.Is(err, combo.ErrNoEligibleConnection) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		}
 		return
 	}
 	c.JSON(http.StatusCreated, result)
@@ -173,7 +178,7 @@ func (h *ComboHandler) Update(c *gin.Context) {
 	var req struct {
 		Name         string  `json:"name"`
 		Strategy     string  `json:"strategy"`
-		TimeoutMs    int     `json:"timeout_ms"`
+		TimeoutMs    *int    `json:"timeout_ms"`
 		StickyLimit  *int    `json:"sticky_limit"`
 		IsSmart      *bool   `json:"is_smart"`
 		SmartGoal    *string `json:"smart_goal"`
@@ -277,7 +282,11 @@ func (h *ComboHandler) AddStep(c *gin.Context) {
 		Weight:       req.Weight,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		if errors.Is(err, combo.ErrNoEligibleConnection) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
 		return
 	}
 
