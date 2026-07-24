@@ -593,8 +593,14 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 		// ── Alibaba Qwen ──
 		{"qwen3.5-plus", "Qwen 3.5 Plus", 0.0004, 0.0012, 0, 0, 0},
 		{"qwen3.6-plus", "Qwen 3.6 Plus", 0.0004, 0.0012, 0, 0, 0},
-		{"qwen3.7-max", "Qwen 3.7 Max", 0.0008, 0.0024, 0, 0, 0},
-		{"qwen3.7-plus", "Qwen 3.7 Plus", 0.0004, 0.0012, 0, 0, 0},
+		// ── Qoder / DashScope (Qwen Cloud) ──
+		{"qwen3.7-max", "Qwen 3.7 Max", 0.0025, 0.0075, 0, 0, 0},
+		{"qwen3.7-plus", "Qwen 3.7 Plus", 0.0004, 0.0016, 0, 0, 0},
+		{"qwen3.6-flash", "Qwen 3.6 Flash", 0.00025, 0.0015, 0, 0, 0},
+		{"qwen3-vl-plus", "Qwen 3 VL Plus", 0.0002, 0.0016, 0, 0, 0},
+		{"qwen3-coder-plus", "Qwen 3 Coder Plus", 0.001, 0.005, 0, 0, 0},
+		// ultimate is Qoder's qodercli auto-routing tier; currently deepseek-r1 maps to it.
+		{"ultimate", "Qoder Ultimate", 0.00055, 0.00219, 0, 0, 0},
 
 		// ── MiniMax ──
 		{"minimax-m2.5", "MiniMax M2.5", 0.0005, 0.001, 0, 0, 0},
