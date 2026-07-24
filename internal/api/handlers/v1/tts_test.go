@@ -8,9 +8,11 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
+	providerpkg "github.com/rickicode/AxonRouter-Go/internal/provider"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
 
@@ -22,6 +24,44 @@ func (f *fakeTTSExecutor) Execute(ctx context.Context, req *executor.Request) (*
 
 func (f *fakeTTSExecutor) ExecuteStream(ctx context.Context, req *executor.Request) (*executor.StreamResult, error) {
 	return nil, nil
+}
+
+func TestTTS_ComboRoutesToTTSKind(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	h.ttsExecutorFactory = func() executor.Executor { return &fakeTTSExecutor{} }
+	wq := db.NewWriteQueue(h.db)
+	tracker := usage.NewTracker(h.db)
+	tracker.SetWriteQueue(wq)
+	h.tracker = tracker
+	defer func() {
+		tracker.Stop()
+		wq.Stop()
+	}()
+
+	seedProviderAndConnection(t, h, "openai", `["llm","audio"]`, "openai-tts-combo-conn", "http://unused")
+
+	_, err := h.combo.CreateComboWithKind("tts-combo", "priority", providerpkg.ServiceKindTTS, 30000, 1, false, "", "", []combo.CreateStepInput{
+		{ModelID: "openai/tts-1", Priority: 1, Weight: 100},
+	})
+	if err != nil {
+		t.Fatalf("create tts combo: %v", err)
+	}
+
+	body := []byte(`{"model":"tts-combo","input":"hello","voice":"alloy"}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/audio/speech", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.TTS(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "audio/mpeg" {
+		t.Fatalf("expected Content-Type audio/mpeg, got %q", ct)
+	}
 }
 
 func TestTTS_UsageAccumulatesOnSuccess(t *testing.T) {

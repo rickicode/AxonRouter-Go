@@ -87,6 +87,7 @@ export interface BulkCreateConnectionResponse {
 export interface Combo {
 	id: string;
 	name: string;
+	kind: string;
 	strategy: string;
 	sticky_limit: number;
 	timeout_ms: number;

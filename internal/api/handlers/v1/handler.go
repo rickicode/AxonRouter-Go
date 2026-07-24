@@ -1176,6 +1176,150 @@ func (h *Handler) executeWithRetry(
 	return resp, streamResult, err
 }
 
+// handleMediaCombo routes a non-streaming request (image or TTS) through a
+// combo's steps. The caller supplies an executor factory per step. The first
+// successful step response is written to the client; if every step fails, a
+// combo-style 503 error is returned.
+func (h *Handler) handleMediaCombo(
+	c *gin.Context,
+	comboResult *combo.ComboResult,
+	body []byte,
+	model string,
+	start time.Time,
+	modality string,
+	defaultContentType string,
+	accumulateBody bool,
+	execForStep func(provider, modelName string) (executor.Executor, error),
+) {
+	strategy := h.combo.EffectiveStrategy(comboResult.Combo.Name, comboResult.Combo.Strategy)
+	steps := h.combo.RotateSteps(comboResult.Combo.ID, strategy, comboResult.Combo.StickyLimit, comboResult.Steps)
+
+	comboTimeout := 30 * time.Second
+	if comboResult.Combo != nil && comboResult.Combo.TimeoutMs > 0 {
+		comboTimeout = time.Duration(comboResult.Combo.TimeoutMs) * time.Millisecond
+	}
+	comboCtx, cancel := context.WithTimeout(c.Request.Context(), comboTimeout)
+	defer cancel()
+
+	var lastErr error
+	var lastErrCategory string
+	var lastModelName string
+
+	for _, step := range steps {
+		provider, modelName := executor.SplitModel(step.ModelID)
+		if provider == "" {
+			continue
+		}
+		lastModelName = modelName
+
+		stepExec, err := execForStep(provider, modelName)
+		if err != nil {
+			lastErr = err
+			lastErrCategory = "executor"
+			continue
+		}
+
+		connIDs := h.combo.PickConnections(provider, modelName)
+		if len(connIDs) == 0 {
+			continue
+		}
+
+		stepBody := executor.JSONSet(body, "model", modelName)
+		for _, connID := range connIDs {
+			if comboCtx.Err() != nil {
+				break
+			}
+			now := time.Now()
+			conn, err := h.prepareConnection(comboCtx, connID, provider, modelName, now)
+			if err != nil {
+				continue
+			}
+
+			var psdMap map[string]string
+			if conn.ProviderSpecificData != "" {
+				if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
+					logging.Logger.Warn("malformed provider_specific_data", "conn", shortID(conn.ID, 8), "error", err.Error())
+				}
+			}
+
+			req := &executor.Request{
+				Model:                modelName,
+				Body:                 stepBody,
+				APIKey:               conn.APIKey,
+				AccessToken:          conn.AccessToken,
+				BaseURL:              conn.BaseURL,
+				Provider:             provider,
+				ProviderSpecificData: psdMap,
+			}
+			proxyCtx := h.proxyContext(comboCtx, conn)
+			resp, _, err := h.executeWithRetry(proxyCtx, stepExec, req, conn, provider, modelName)
+			latency := time.Since(start).Milliseconds()
+			if err != nil {
+				det := connstate.DetectError(proxyCtx, 0, "", err, provider, modelName, nil)
+				if det.ModelID != "" && (det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
+					scope := connstate.ModelScope(provider, det.ModelID)
+					h.exhaustion.MarkExhausted(quota.ExhaustKey(connID, scope), quota.TTLFromCooldown(det.CooldownUntil, 5*time.Minute))
+				} else if det.Category == connstate.ErrorRateLimit {
+					h.exhaustion.MarkExhausted(connID, quota.TTLFromCooldown(det.CooldownUntil, quota.DefaultExhaustionTTL))
+				} else if det.Category == connstate.ErrorQuota {
+					ttl := 24 * time.Hour
+					if det.CooldownUntil != nil {
+						ttl = time.Until(*det.CooldownUntil)
+					}
+					h.exhaustion.MarkExhausted(connID, ttl)
+				}
+				h.combo.RecordFailure(connID, det)
+				h.persistCooldownScoped(connID, det)
+				if det.Status != connstate.StatusReady {
+					h.elig.ScheduleUpdateProvider(provider)
+				}
+				lastErr = err
+				lastErrCategory = string(det.Category)
+				continue
+			}
+
+			h.resetBanCount(connID)
+			h.persistSuccess(connID)
+			h.combo.RecordSuccess(connID)
+
+			var respBody []byte
+			if accumulateBody {
+				respBody = resp.Body
+			}
+			h.logRequest(c, &usage.LogEntry{
+				ApiKeyID:       c.GetString("api_key_id"),
+				ConnectionID:   connID,
+				ProviderTypeID: provider,
+				ModelID:        modelName,
+				ComboID:        comboResult.Combo.Name,
+				ProxyPoolID:    executor.ProxyPoolIDFromContext(proxyCtx),
+				ApiType:        apiTypeFromPath(c.Request.URL.Path),
+				Modality:       modality,
+				Stream:         false,
+				LatencyMs:      latency,
+				StatusCode:     resp.StatusCode,
+			})
+			h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, respBody, false)
+			contentType := defaultContentType
+			if ct := resp.Headers.Get("Content-Type"); ct != "" {
+				contentType = ct
+			}
+			c.Header("Content-Type", contentType)
+			c.Status(resp.StatusCode)
+			c.Writer.Write(resp.Body)
+			return
+		}
+	}
+
+	msg, statusCode, errType := buildFailoverErrorResponse(lastErrCategory, lastErr, lastModelName)
+	detail := gin.H{"model": model}
+	if lastModelName != "" {
+		detail["attempted_model"] = lastModelName
+	}
+	logging.Logger.Error(msg, "combo", model, "category", lastErrCategory)
+	c.JSON(statusCode, gin.H{"error": gin.H{"message": msg, "type": errType, "detail": detail}})
+}
+
 // isClientCanceled reports whether err is a context cancellation that originated
 // from the inbound request (client disconnect / client timeout), not from a
 // server-side deadline. A plain "context canceled" from client.Do is almost

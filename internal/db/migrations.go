@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
 CREATE TABLE IF NOT EXISTS combos (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
+    kind TEXT DEFAULT 'llm',
     strategy TEXT NOT NULL DEFAULT 'priority',
     sticky_limit INTEGER DEFAULT 1,
     timeout_ms INTEGER DEFAULT 30000,
@@ -158,9 +159,11 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		`ALTER TABLE request_logs ADD COLUMN client_ip TEXT`,
 		`ALTER TABLE request_logs ADD COLUMN user_agent TEXT`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id, timestamp DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_combo_steps_combo_id ON combo_steps(combo_id)`,
 		`ALTER TABLE provider_types ADD COLUMN category TEXT DEFAULT 'apikey'`,
 		`ALTER TABLE provider_types ADD COLUMN skip_key_validation INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE provider_types ADD COLUMN service_kinds TEXT DEFAULT '["llm"]'`,
+		`ALTER TABLE combos ADD COLUMN kind TEXT DEFAULT 'llm'`,
 		`ALTER TABLE combos ADD COLUMN fusion_config TEXT`,
 		`CREATE TABLE IF NOT EXISTS compression_metrics (
     mode TEXT PRIMARY KEY,

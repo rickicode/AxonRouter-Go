@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
+	providerpkg "github.com/rickicode/AxonRouter-Go/internal/provider"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
 
@@ -30,6 +31,17 @@ func (h *Handler) TTS(c *gin.Context) {
 		return
 	}
 	if h.checkTokenBudget(c, body) != nil {
+		return
+	}
+
+	// Combo-first routing for text-to-speech.
+	if comboResult, ok := h.combo.ResolveByKind(model, providerpkg.ServiceKindTTS); ok {
+		h.handleMediaCombo(c, comboResult, body, model, start, "audio", "audio/mpeg", false, func(provider, modelName string) (executor.Executor, error) {
+			if h.ttsExecutorFactory != nil {
+				return h.ttsExecutorFactory(), nil
+			}
+			return executor.NewTTSExecutor(executor.NewBaseExecutor()), nil
+		})
 		return
 	}
 
