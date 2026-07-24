@@ -989,7 +989,67 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 	}
 
 	if len(successes) == 1 {
-		h.writeFusionResponse(c, successes[0].content, model, stream)
+		// Re-run the lone successful panel model with the original request so the
+		// client receives a real provider response (usage, finish_reason, tool_calls)
+		// instead of a stripped synthetic envelope. Fall back to the synthetic
+		// envelope if the re-run cannot be executed.
+		single := successes[0]
+		provider, modelName := executor.SplitModel(single.modelID)
+		now := time.Now()
+		conn, rerunErr := h.prepareConnection(c.Request.Context(), single.connID, provider, modelName, now)
+		if rerunErr == nil {
+			exec, providerFormat, execErr := h.resolveExecutor(provider, modelName)
+			rerunErr = execErr
+			if rerunErr == nil {
+				rerunBody := setRequestModel(body, modelName)
+				translatedBody := registry.Request(string(executor.FormatOpenAI), string(providerFormat), modelName, rerunBody, stream)
+				translatedBody = sanitizeStreamOptions(translatedBody, stream, executor.FormatOpenAI, providerFormat, c.Request.URL.Path)
+				translatedBody = h.applyThinkingOverrideFromContext(ctx, translatedBody, string(providerFormat))
+				var streamCfg *executor.StreamConfig
+				if stream {
+					adaptiveMs := computeAdaptiveReadiness(body, modelName, 80000)
+					streamCfg = &executor.StreamConfig{
+						StreamReadinessTimeoutMs: adaptiveMs,
+						AdaptiveReadiness:        true,
+					}
+				}
+				execCtx := ctx
+				if stream {
+					execCtx = c.Request.Context()
+				}
+				_, resp, streamResult, callErr := h.executeProviderCall(execCtx, exec, conn, provider, modelName, translatedBody, stream, streamCfg)
+				rerunErr = callErr
+				if rerunErr == nil && !stream && resp != nil && (resp.StatusCode >= 500 || isUpstreamErrorBody(resp.Body)) {
+					rerunErr = &executor.UpstreamError{
+						StatusCode: resp.StatusCode,
+						Body:       resp.Body,
+						RawBody:    resp.Body,
+					}
+				}
+				if rerunErr == nil {
+					if stream {
+						streamCtx, cancelStream := context.WithCancel(c.Request.Context())
+						defer cancelStream()
+						streamErr := h.handleStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, rerunBody, comboResult.Combo.Name, true)
+						if streamErr == nil {
+							return
+						}
+						rerunErr = streamErr
+					} else {
+						translatedResp := registry.ResponseNonStream(ctx, string(providerFormat), string(executor.FormatOpenAI), modelName, rerunBody, translatedBody, resp.Body, nil)
+						for k, v := range resp.Headers {
+							c.Writer.Header()[k] = v
+						}
+						c.Data(resp.StatusCode, c.Writer.Header().Get("Content-Type"), translatedResp)
+						return
+					}
+				}
+			}
+		}
+		if rerunErr != nil {
+			logging.Logger.Warn("fusion single-panel re-run failed; falling back to synthetic response", "error", rerunErr.Error(), "model", single.modelID, "combo", comboResult.Combo.Name)
+		}
+		h.writeFusionResponse(c, single.content, model, stream)
 		return
 	}
 
