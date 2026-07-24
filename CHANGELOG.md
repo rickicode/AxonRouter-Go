@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- **Model pricing seed no longer wipes operator edits on restart** — `internal/db/migrations.go` previously ran `DELETE FROM model_pricing` followed by `INSERT OR REPLACE INTO model_pricing` on every startup, deleting any prices edited through `/api/admin/model-pricing` or the Model Pricing UI. The seed now uses `INSERT OR IGNORE` with no delete, so first run populates the full table and later runs only add missing models while preserving operator-created and operator-edited rows. Added a regression test verifying edits survive a migration re-run.
 - **Fusion panel/judge text extraction now supports Claude, Gemini, and OpenAI Responses** — `extractAssistantContent` in `internal/api/handlers/v1/chat.go` previously only read `choices[0].message.content`, so panels or judge models that reply in Anthropic Claude (`content[].text`), Google Gemini (`candidates[0].content.parts[].text`), or OpenAI Responses (`output[].message.content[].output_text`) were treated as empty and failed fusion. The extractor now parses all four shapes and falls back to `output_text`/`text`, with unit tests covering each format.
 
 
