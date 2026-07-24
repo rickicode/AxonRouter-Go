@@ -122,7 +122,7 @@ func TestNormalizeCodeBuddyStreamNoReasoningPassesContent(t *testing.T) {
 
 func TestNormalizeCodeBuddyStreamStripsIntermediateUsage(t *testing.T) {
 	in := make(chan StreamChunk, 3)
-	in <- StreamChunk{Payload: []byte(`data: {"id":"cmb-3","object":"chat.completion.chunk","created":1,"model":"glm-5.2","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":""}],"usage":{"prompt_tokens":1}}`)} // intermediate usage stripped
+	in <- StreamChunk{Payload: []byte(`data: {"id":"cmb-3","object":"chat.completion.chunk","created":1,"model":"glm-5.2","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":""}],"usage":{"prompt_tokens":1}}`)}             // intermediate usage stripped
 	in <- StreamChunk{Payload: []byte(`data: {"id":"cmb-3","object":"chat.completion.chunk","created":1,"model":"glm-5.2","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)} // final usage kept
 	in <- StreamChunk{Payload: []byte("data: [DONE]")}
 	close(in)

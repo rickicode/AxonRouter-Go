@@ -170,15 +170,15 @@ func TestGrokCLIExecutor_ReasoningReplayEndToEnd(t *testing.T) {
 		"input": []any{map[string]any{"type": "message", "role": "user", "content": "hi"}},
 	})
 	req := &Request{
-		Provider:    "grok-cli",
-		Model:       "grok-cli/grok-4.5",
-		BaseURL:     ts.URL,
-		AccessToken: "tok",
-		ConnectionID: "conn-reasoning-e2e",
+		Provider:                    "grok-cli",
+		Model:                       "grok-cli/grok-4.5",
+		BaseURL:                     ts.URL,
+		AccessToken:                 "tok",
+		ConnectionID:                "conn-reasoning-e2e",
 		ProviderSpecificData:        psd,
 		Body:                        body,
 		PersistProviderSpecificData: persist,
-		StreamConfig: &StreamConfig{FetchTimeoutMs: 5000, StreamIdleTimeoutMs: 5000, StreamReadinessTimeoutMs: 5000},
+		StreamConfig:                &StreamConfig{FetchTimeoutMs: 5000, StreamIdleTimeoutMs: 5000, StreamReadinessTimeoutMs: 5000},
 	}
 	if _, err := exec.Execute(context.Background(), req); err != nil {
 		t.Fatalf("first Execute error: %v", err)
@@ -199,7 +199,7 @@ func TestGrokCLIExecutor_ReasoningReplayEndToEnd(t *testing.T) {
 		ProviderSpecificData:        persisted,
 		Body:                        body2,
 		PersistProviderSpecificData: persist,
-		StreamConfig: &StreamConfig{FetchTimeoutMs: 5000, StreamIdleTimeoutMs: 5000, StreamReadinessTimeoutMs: 5000},
+		StreamConfig:                &StreamConfig{FetchTimeoutMs: 5000, StreamIdleTimeoutMs: 5000, StreamReadinessTimeoutMs: 5000},
 	}
 	if _, err := exec.Execute(context.Background(), req2); err != nil {
 		t.Fatalf("second Execute error: %v", err)

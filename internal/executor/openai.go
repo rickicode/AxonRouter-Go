@@ -291,6 +291,7 @@ func sanitizeMessages(messages []any) []any {
 	}
 	return sanitized
 }
+
 // openAIEndpoint resolves the full upstream URL for an OpenAI-compatible provider.
 // When the base URL contains {accountId}, the placeholder is resolved from psd
 // (provider_specific_data), then from the CLOUDFLARE_ACCOUNT_ID env var.

@@ -141,13 +141,13 @@ func (e *CodeBuddyExecutor) ExecuteStream(ctx context.Context, req *Request) (*S
 
 // normalizeCodeBuddyStream rewrites a CodeBuddy SSE stream into a standard
 // OpenAI-compatible stream. It performs three tasks:
-//   1. Aggregates `reasoning_content` deltas that arrive before the first real
-//      content delta into a single reasoning delta. This avoids clients
-//      rendering a separate "Thought: Xms" placeholder for each tiny reasoning
-//      token.
-//   2. Removes CodeBuddy-specific noise (`extra_fields`, null `function_call`,
-//      empty `refusal`, empty `tool_calls`, null `logprobs`).
-//   3. Strips intermediate `usage` rows; only the final usage chunk is kept.
+//  1. Aggregates `reasoning_content` deltas that arrive before the first real
+//     content delta into a single reasoning delta. This avoids clients
+//     rendering a separate "Thought: Xms" placeholder for each tiny reasoning
+//     token.
+//  2. Removes CodeBuddy-specific noise (`extra_fields`, null `function_call`,
+//     empty `refusal`, empty `tool_calls`, null `logprobs`).
+//  3. Strips intermediate `usage` rows; only the final usage chunk is kept.
 func normalizeCodeBuddyStream(in <-chan StreamChunk) chan StreamChunk {
 	out := make(chan StreamChunk)
 	go func() {
