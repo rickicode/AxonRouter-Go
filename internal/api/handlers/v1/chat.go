@@ -308,7 +308,6 @@ attemptLoop:
 			// connections, just like the combo path, so direct-mode streams
 			// don't stop when one upstream connection dies.
 			streamCtx, cancelStream := context.WithCancel(c.Request.Context())
-			defer cancelStream()
 
 			holdbackMs := 750
 			holdbackBytes := 64 * 1024
@@ -331,6 +330,7 @@ attemptLoop:
 					det := connstate.DetectError(proxyCtx, 0, "", holdbackErr, provider, modelName, nil)
 					if !isFailoverEligible(det.Category) {
 						if h.writeUpstreamClientError(proxyCtx, c, holdbackErr, conn, provider, modelName, start, stream) {
+							cancelStream()
 							return
 						}
 					}
@@ -338,19 +338,23 @@ attemptLoop:
 					lastErr = holdbackErr
 					lastErrCategory = cat
 					if !retry {
+						cancelStream()
 						break attemptLoop
 					}
 					if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+						cancelStream()
 						return
 					}
 					continue
 				}
 			case <-streamCtx.Done():
+				cancelStream()
 				return
 			}
 
 			if streamErr := h.handleStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, "", true); streamErr != nil {
 				if h.isClientCanceled(c, streamErr) {
+					cancelStream()
 					return
 				}
 				cancelStream()
@@ -365,13 +369,16 @@ attemptLoop:
 				lastErr = streamErr
 				lastErrCategory = cat
 				if !retry {
+					cancelStream()
 					break
 				}
 				if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+					cancelStream()
 					return
 				}
 				continue
 			}
+			cancelStream()
 			return
 		} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
@@ -760,7 +767,6 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				// client disconnect). Without this, after a mid-stream error the goroutine
 				// leaks blocked on `out <- chunk` with no consumer.
 				streamCtx, cancelStream := context.WithCancel(c.Request.Context())
-				defer cancelStream() // safety net when handleComboRequest returns
 
 				holdbackChunks, holdbackErrCh := executor.WrapWithHoldback(streamCtx, streamResult.Chunks, holdbackMs, holdbackBytes)
 				streamResult.Chunks = holdbackChunks
@@ -826,6 +832,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 					lastErrCategory = "stream-" + string(det.Category)
 					continue
 				}
+				cancelStream()
 				return
 			} else {
 				translatedResp := registry.ResponseNonStream(comboCtx, string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
