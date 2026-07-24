@@ -829,7 +829,8 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 		streamCtx, cancelStream := context.WithCancel(c.Request.Context())
 		defer cancelStream()
 		if err := h.handleStreamResponse(streamCtx, c, streamResult, judgeConn, judgeProvider, judgeModelName, start, translatedJudge, judgeReqBody, comboResult.Combo.Name, true); err != nil {
-			logging.Logger.Warn("fusion judge stream failed", "error", err.Error())
+			logging.Logger.Warn("fusion judge stream failed; falling back to first panel response", "error", err.Error(), "judge_model", judgeModel, "combo", comboResult.Combo.Name)
+			h.writeFusionResponse(c, successes[0].content, model, stream)
 			return
 		}
 		return
@@ -851,7 +852,9 @@ type fusionPanel struct {
 	err     error
 }
 
-// stripFusionTools removes tool-related fields from a request body for fusion panels.
+// stripFusionTools removes tool-related fields from a request body for fusion panels
+// and flattens any tool/function turns into plain prose so panel models keep the
+// context without being able to emit tool_calls.
 func stripFusionTools(body []byte) []byte {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
@@ -859,11 +862,184 @@ func stripFusionTools(body []byte) []byte {
 	}
 	delete(m, "tools")
 	delete(m, "tool_choice")
+	if msgs, ok := m["messages"].([]any); ok {
+		m["messages"] = flattenToolHistory(msgs)
+	}
 	out, err := json.Marshal(m)
 	if err != nil {
 		return body
 	}
 	return out
+}
+
+const (
+	fusionToolCallPrefix  = "[Called tools: "
+	fusionToolResultPrefix = "[Tool result: "
+)
+
+// flattenToolHistory converts tool/function turns in a message list into plain
+// assistant prose so panel models keep the context but can't emit tool_calls.
+// It mirrors 9router's flattenToolHistory behavior for OpenAI-compatible
+// message shapes.
+func flattenToolHistory(messages []any) []any {
+	out := make([]any, 0, len(messages))
+	for _, raw := range messages {
+		if raw == nil {
+			continue
+		}
+		msg, ok := raw.(map[string]any)
+		if !ok {
+			out = append(out, raw)
+			continue
+		}
+
+		role, _ := msg["role"].(string)
+
+		// Tool/function result -> assistant text.
+		if role == "tool" || role == "function" {
+			content := extractToolHistoryContent(msg["content"])
+			out = append(out, map[string]any{
+				"role":    "assistant",
+				"content": fusionToolResultPrefix + content + "]",
+			})
+			continue
+		}
+
+		// Assistant with tool_calls -> strip tool_calls and inline names.
+		if role == "assistant" {
+			if toolCalls, ok := msg["tool_calls"].([]any); ok && len(toolCalls) > 0 {
+				names := make([]string, 0, len(toolCalls))
+				for _, tc := range toolCalls {
+					name := extractToolCallName(tc)
+					if name == "" {
+						name = "tool"
+					}
+					names = append(names, name)
+				}
+				content := extractToolHistoryContent(msg["content"])
+				if content != "" {
+					content += "\n"
+				}
+				content += fusionToolCallPrefix + strings.Join(names, ", ") + "]"
+				clean := map[string]any{
+					"role":    "assistant",
+					"content": content,
+				}
+				for k, v := range msg {
+					if k != "role" && k != "content" && k != "tool_calls" {
+						clean[k] = v
+					}
+				}
+				out = append(out, clean)
+				continue
+			}
+
+			// Array content with tool_use/tool_result blocks (Anthropic-style).
+			if arr, ok := msg["content"].([]any); ok {
+				textParts := []string{}
+				toolNames := []string{}
+				toolResults := []string{}
+				for _, blockRaw := range arr {
+					block, ok := blockRaw.(map[string]any)
+					if !ok {
+						continue
+					}
+					typ, _ := block["type"].(string)
+					switch typ {
+					case "text":
+						if t, ok := block["text"].(string); ok && t != "" {
+							textParts = append(textParts, t)
+						}
+					case "tool_use":
+						name := "tool"
+						if n, ok := block["name"].(string); ok && n != "" {
+							name = n
+						}
+						toolNames = append(toolNames, name)
+					case "tool_result":
+						toolResults = append(toolResults, extractToolHistoryContent(block["content"]))
+					}
+				}
+				if len(toolNames) > 0 || len(toolResults) > 0 {
+					newContent := strings.Join(textParts, "\n")
+					if len(toolNames) > 0 {
+						if newContent != "" {
+							newContent += "\n"
+						}
+						newContent += fusionToolCallPrefix + strings.Join(toolNames, ", ") + "]"
+					}
+					if len(toolResults) > 0 {
+						if newContent != "" {
+							newContent += "\n"
+						}
+						newContent += fusionToolResultPrefix + strings.Join(toolResults, "\n") + "]"
+					}
+					clean := map[string]any{
+						"role":    "assistant",
+						"content": newContent,
+					}
+					for k, v := range msg {
+						if k != "role" && k != "content" {
+							clean[k] = v
+						}
+					}
+					out = append(out, clean)
+					continue
+				}
+			}
+		}
+
+		out = append(out, msg)
+	}
+	return out
+}
+
+func extractToolHistoryContent(v any) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	var parts []string
+	collect := func(item map[string]any) {
+		if typ, _ := item["type"].(string); typ == "text" {
+			if t, ok := item["text"].(string); ok {
+				parts = append(parts, t)
+			}
+		}
+	}
+	if arr, ok := v.([]any); ok {
+		for _, item := range arr {
+			if itemMap, ok := item.(map[string]any); ok {
+				collect(itemMap)
+			}
+		}
+		return strings.Join(parts, "\n")
+	}
+	if arr, ok := v.([]map[string]any); ok {
+		for _, item := range arr {
+			collect(item)
+		}
+		return strings.Join(parts, "\n")
+	}
+	return fmt.Sprint(v)
+}
+
+func extractToolCallName(tc any) string {
+	m, ok := tc.(map[string]any)
+	if !ok {
+		return ""
+	}
+	if fn, ok := m["function"].(map[string]any); ok {
+		if n, ok := fn["name"].(string); ok {
+			return n
+		}
+	}
+	if n, ok := m["name"].(string); ok {
+		return n
+	}
+	return ""
 }
 
 // setRequestModel replaces the model field in a request body.
