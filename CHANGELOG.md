@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Claude cloaking, CCH signing, and OAuth tool-name remapping** — ported from CLIProxyAPI to `internal/executor/claude_cloaking.go`, `internal/executor/claude_signing.go`, and `internal/executor/claude_tools.go`. `ClaudeExecutor` now injects Claude Code-style system prompts and fake user IDs, obfuscates configured sensitive words, signs Anthropic billing headers with xxHash for OAuth traffic, and renames third-party tool names (e.g., `bash` → `Bash`) to match Claude Code conventions. Original tool names are restored on responses using a per-request reverse map. Config flags: `AXON_DISABLE_CLAUDE_CLOAK`, `AXON_CLAUDE_CLOAK_MODE` (`auto`/`always`/`never`), `AXON_CLAUDE_CLOAK_SENSITIVE_WORDS`, and `AXON_CLAUDE_CCH_SIGNING`.
 - **Fusion panel tool-history flattening** — `stripFusionTools` now flattens tool/function turns and Anthropic-style `tool_use`/`tool_result` content blocks into plain assistant prose for fusion panel requests. Panel models retain conversational context without being able to emit `tool_calls`, matching the 9router reference implementation.
 
 ### Changed

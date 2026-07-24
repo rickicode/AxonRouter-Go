@@ -1,10 +1,13 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/rickicode/AxonRouter-Go/internal/config"
 )
 
 // ClaudeExecutor handles Anthropic Claude API.
@@ -104,6 +107,10 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 	}
 
 	body, betas := prepareClaudeBody(req.Body)
+	body, toolReverseMap, err := e.applyClaudeRequestTransforms(ctx, req, body)
+	if err != nil {
+		return nil, err
+	}
 	// Ensure stream is false
 	body = JSONSet(body, "stream", false)
 
@@ -124,6 +131,10 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 		return nil, err
 	}
 
+	if len(toolReverseMap) > 0 && resp != nil {
+		resp.Body = reverseRemapOAuthToolNames(resp.Body, toolReverseMap)
+	}
+
 	if resp.StatusCode >= 400 {
 		upErr := &UpstreamError{
 			StatusCode: resp.StatusCode,
@@ -138,6 +149,58 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 	return resp, nil
 }
 
+// applyClaudeRequestTransforms runs cloaking, CCH signing and OAuth tool-name remapping.
+func (e *ClaudeExecutor) applyClaudeRequestTransforms(ctx context.Context, req *Request, body []byte) ([]byte, map[string]string, error) {
+	cfg := config.Get()
+	apiKey := req.APIKey
+	if apiKey == "" {
+		apiKey = req.AccessToken
+	}
+
+	body, err := applyCloaking(ctx, &cfg, body, req.Model, apiKey)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if isClaudeOAuthToken(apiKey) || cfg.ClaudeExperimentalCCHSigning {
+		body = signAnthropicMessagesBody(body)
+	}
+
+	body, reverseMap := remapOAuthToolNames(body)
+	return body, reverseMap, nil
+}
+
+// restoreOAuthToolNamesInStream wraps a streaming result and rewrites tool names
+// in SSE lines using the reverse map produced by remapOAuthToolNames.
+func (e *ClaudeExecutor) restoreOAuthToolNamesInStream(result *StreamResult, reverseMap map[string]string) *StreamResult {
+	if len(reverseMap) == 0 || result == nil {
+		return result
+	}
+	out := make(chan StreamChunk, 64)
+	go func() {
+		defer close(out)
+		for chunk := range result.Chunks {
+			if chunk.Err != nil || len(chunk.Payload) == 0 {
+				out <- chunk
+				continue
+			}
+			payload := reverseRemapOAuthToolNamesFromStreamLine(chunk.Payload, reverseMap)
+			if !bytes.Equal(payload, chunk.Payload) {
+				chunk.Payload = payload
+			}
+			select {
+			case out <- chunk:
+			}
+		}
+	}()
+	return &StreamResult{
+		Chunks:     out,
+		Headers:    result.Headers,
+		StatusCode: result.StatusCode,
+		CostUsd:    result.CostUsd,
+	}
+}
+
 // ExecuteStream performs a streaming Claude messages request.
 func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
 	url := req.BaseURL
@@ -146,6 +209,10 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 	}
 
 	body, betas := prepareClaudeBody(req.Body)
+	body, toolReverseMap, err := e.applyClaudeRequestTransforms(ctx, req, body)
+	if err != nil {
+		return nil, err
+	}
 	body = JSONSet(body, "stream", true)
 
 	headers := map[string]string{
@@ -167,8 +234,10 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 		if upErr, ok := err.(*UpstreamError); ok {
 			upErr.TranslateErrorBody(req.Provider)
 		}
+		return result, err
 	}
-	return result, err
+
+	return e.restoreOAuthToolNamesInStream(result, toolReverseMap), nil
 }
 
 // CountTokens performs token counting.

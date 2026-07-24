@@ -49,6 +49,51 @@ func TestResolveDataDir_ExplicitWins(t *testing.T) {
 	}
 }
 
+func TestParseCloakMode(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"", "auto"},
+		{"auto", "auto"},
+		{"AUTO", "auto"},
+		{"always", "always"},
+		{"ALWAYS", "always"},
+		{"never", "never"},
+		{"invalid", "auto"},
+	}
+	for _, c := range cases {
+		if got := parseCloakMode(c.in); got != c.want {
+			t.Errorf("parseCloakMode(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestParseStringSliceEnv(t *testing.T) {
+	if got := parseStringSliceEnv(""); got != nil {
+		t.Errorf("parseStringSliceEnv(\"\") = %v, want nil", got)
+	}
+	got := parseStringSliceEnv("foo, bar ,")
+	want := []string{"foo", "bar"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("parseStringSliceEnv(\"foo, bar ,\") = %v, want %v", got, want)
+	}
+}
+
+func TestGetEnvBool(t *testing.T) {
+	if got := getEnvBool("AXON_TEST_BOOL_DEFAULT", true); !got {
+		t.Errorf("getEnvBool missing fallback = %v, want true", got)
+	}
+	t.Setenv("AXON_TEST_BOOL_FALSE", "false")
+	if got := getEnvBool("AXON_TEST_BOOL_FALSE", true); got {
+		t.Errorf("getEnvBool false = %v, want false", got)
+	}
+	t.Setenv("AXON_TEST_BOOL_TRUE", "1")
+	if got := getEnvBool("AXON_TEST_BOOL_TRUE", false); !got {
+		t.Errorf("getEnvBool true = %v, want true", got)
+	}
+}
+
 func clearEnv(t *testing.T) {
 	t.Helper()
 	// config.Get uses sync.Once and Init uses sync.Once; for unit tests on the
