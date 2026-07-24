@@ -99,8 +99,43 @@ func TestTracker_PersistProxyPoolID(t *testing.T) {
 	}
 }
 
+func TestTracker_NonTextCostPersisted(t *testing.T) {
+	database := openTestDB(t)
+	InitPricing(database)
+
+	if err := UpsertPricing(ModelPricingRow{ModelID: "dall-e-3", DisplayName: "DALL-E 3", InputPer1K: 0.001, OutputPer1K: 0.001, ImagePerUnit: 0.04}); err != nil {
+		t.Fatalf("upsert pricing: %v", err)
+	}
+
+	tracker := NewTracker(database)
+	defer tracker.Stop()
+
+	tracker.Log(&LogEntry{
+		ConnectionID:   "image-conn",
+		ProviderTypeID: "openai",
+		ModelID:        "dall-e-3",
+		Modality:       "image",
+		Quantity:       2,
+		StatusCode:     200,
+	})
+
+	time.Sleep(6 * time.Second)
+
+	var cost float64
+	if err := database.QueryRow(`SELECT cost_usd FROM request_logs WHERE connection_id = ?`, "image-conn").Scan(&cost); err != nil {
+		t.Fatalf("query cost_usd: %v", err)
+	}
+	if cost <= 0 {
+		t.Fatalf("expected non-zero cost_usd for image request, got %f", cost)
+	}
+	if cost != 0.08 {
+		t.Fatalf("expected cost_usd 0.08, got %f", cost)
+	}
+}
+
 func TestTracker_PersistServiceTierAndMultiplier(t *testing.T) {
 	database := openTestDB(t)
+	InitPricing(database)
 
 	tracker := NewTracker(database)
 	defer tracker.Stop()

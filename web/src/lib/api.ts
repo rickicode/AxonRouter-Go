@@ -900,6 +900,7 @@ export interface ModelPricing {
   cached_write_per_1k: number;
   image_per_unit: number;
   audio_per_min: number;
+  video_per_unit: number;
   currency: string;
   updated_at: number;
   service_kinds?: string[];
@@ -1359,6 +1360,10 @@ export interface CompressionSettings {
     replace_image_urls: boolean;
     remove_redundant_content: boolean;
     dedup_system_prompt: boolean;
+  };
+  output?: {
+    enabled: boolean;
+    level: "caveman" | "ponytail";
   };
 }
 

@@ -18,20 +18,30 @@ const (
 	AntigravityCreditsModeAlways AntigravityCreditsMode = "always"
 )
 
+// defaultAntigravityObfuscationWords masks competitor/client names before they
+// reach the Google Antigravity API. Matches OmniRoute's DEFAULT_WORDS.
+var defaultAntigravityObfuscationWords = []string{
+	"opencode", "open-code", "cline", "roo-cline", "roo_cline",
+	"cursor", "windsurf", "aider", "continue.dev", "copilot",
+	"avante", "codecompanion", "claude code", "claude-code",
+	"kilo code", "kilocode", "omniroute",
+}
+
 type Config struct {
-	Port                   string
-	DBPath                 string
-	DBURL                  string
-	DBToken                string
-	PIDFile                string
-	LogDir                 string
-	DataDir                string
-	Debug                  bool
-	JWTSecret              string
-	DeviceTrackerTTLMs     int
-	DeviceTrackerMaxPerKey int
-	DeviceTrackerMaxTotal  int
-	AntigravityCredits     AntigravityCreditsMode
+	Port                        string
+	DBPath                      string
+	DBURL                       string
+	DBToken                     string
+	PIDFile                     string
+	LogDir                      string
+	DataDir                     string
+	Debug                       bool
+	JWTSecret                   string
+	DeviceTrackerTTLMs          int
+	DeviceTrackerMaxPerKey      int
+	DeviceTrackerMaxTotal       int
+	AntigravityCredits          AntigravityCreditsMode
+	AntigravityObfuscationWords []string
 	// Claude cloaking / CCH signing controls
 	DisableClaudeCloakMode       bool
 	ClaudeCloakMode              string // "auto" (default), "always", "never"
@@ -97,6 +107,7 @@ func Get() Config {
 			DeviceTrackerMaxPerKey:       getIntEnv("DEVICE_TRACKER_MAX_PER_KEY", 1000),
 			DeviceTrackerMaxTotal:        getIntEnv("DEVICE_TRACKER_MAX_TOTAL_DEVICES", 10000),
 			AntigravityCredits:           parseAntigravityCreditsMode(getEnv("ANTIGRAVITY_CREDITS", "")),
+			AntigravityObfuscationWords:  parseAntigravityObfuscationWords(getEnv("ANTIGRAVITY_OBFUSCATION_WORDS", "")),
 			DisableClaudeCloakMode:       getEnvBool("AXON_DISABLE_CLAUDE_CLOAK", false),
 			ClaudeCloakMode:              parseCloakMode(getEnv("AXON_CLAUDE_CLOAK_MODE", "auto")),
 			ClaudeCloakSensitiveWords:    parseStringSliceEnv(getEnv("AXON_CLAUDE_CLOAK_SENSITIVE_WORDS", "")),
@@ -156,6 +167,31 @@ func parseAntigravityCreditsMode(v string) AntigravityCreditsMode {
 	default:
 		return AntigravityCreditsModeOff
 	}
+}
+
+func parseAntigravityObfuscationWords(v string) []string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return defaultAntigravityObfuscationWords
+	}
+	seen := make(map[string]bool)
+	var out []string
+	for _, raw := range strings.Split(v, ",") {
+		word := strings.TrimSpace(raw)
+		if word == "" {
+			continue
+		}
+		word = strings.ToLower(word)
+		if seen[word] {
+			continue
+		}
+		seen[word] = true
+		out = append(out, word)
+	}
+	if len(out) == 0 {
+		return defaultAntigravityObfuscationWords
+	}
+	return out
 }
 
 func getIntEnv(key string, fallback int) int {

@@ -144,6 +144,7 @@ func (h *Handler) Images(c *gin.Context) {
 		ProxyPoolID:    executor.ProxyPoolIDFromContext(proxyCtx),
 		ApiType:        apiTypeFromPath(c.Request.URL.Path),
 		Modality:       "image",
+		Quantity:       quantityForModality("image", body),
 		Stream:         false,
 		LatencyMs:      time.Since(start).Milliseconds(),
 		StatusCode:     resp.StatusCode})

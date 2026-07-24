@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -25,6 +26,72 @@ func newOptimizationTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("migrate: %v", err)
 	}
 	return database
+}
+
+func TestGetCompressionSettings_IncludesOutputDefaults(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := newOptimizationTestDB(t)
+	h := NewOptimizationHandler(database, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/admin/settings/compression", nil)
+	h.GetCompressionSettings(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	output, ok := resp["output"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected output settings, got %v", resp["output"])
+	}
+	if output["enabled"] != false {
+		t.Fatalf("expected output.enabled false by default, got %v", output["enabled"])
+	}
+	if output["level"] != "caveman" {
+		t.Fatalf("expected output.level caveman by default, got %v", output["level"])
+	}
+}
+
+func TestUpdateCompressionSettings_PersistsOutputSettings(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := newOptimizationTestDB(t)
+	h := NewOptimizationHandler(database, nil)
+
+	body := `{"mode":"standard","lite":{"collapse_whitespace":true,"replace_image_urls":true,"remove_redundant_content":false,"dedup_system_prompt":false},"output":{"enabled":true,"level":"ponytail"}}`
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/admin/settings/compression", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	h.UpdateCompressionSettings(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	output, ok := resp["output"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected output settings in response, got %v", resp["output"])
+	}
+	if output["enabled"] != true {
+		t.Fatalf("expected output.enabled true, got %v", output["enabled"])
+	}
+	if output["level"] != "ponytail" {
+		t.Fatalf("expected output.level ponytail, got %v", output["level"])
+	}
 }
 
 func TestGetCompressionMetrics_AggregatesRows(t *testing.T) {
