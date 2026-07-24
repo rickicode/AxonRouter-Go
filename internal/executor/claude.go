@@ -149,6 +149,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 
 	body, betas := prepareClaudeBody(req.Body)
 	body = sanitizeClaudeBody(body, req.Model)
+	body = applyClaudeCacheControl(body)
 	body, toolReverseMap, err := e.applyClaudeRequestTransforms(ctx, req, body)
 	if err != nil {
 		return nil, err
@@ -252,6 +253,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 
 	body, betas := prepareClaudeBody(req.Body)
 	body = sanitizeClaudeBody(body, req.Model)
+	body = applyClaudeCacheControl(body)
 	body, toolReverseMap, err := e.applyClaudeRequestTransforms(ctx, req, body)
 	if err != nil {
 		return nil, err
@@ -292,6 +294,7 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, req *Request) (*Respon
 
 	body, betas := prepareClaudeBody(req.Body)
 	body = sanitizeClaudeBody(body, req.Model)
+	body = applyClaudeCacheControl(body)
 
 	headers := map[string]string{
 		"Content-Type":      "application/json",
