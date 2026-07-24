@@ -2366,6 +2366,233 @@ func TestFusion_MinPanelThenGrace(t *testing.T) {
 	}
 }
 
+// TestFusion_JudgeStreamFails_FallsBackToFirstPanel verifies that when the
+// judge model's stream fails mid-way, the client still receives a complete SSE
+// stream containing the first panel response and a terminating [DONE] frame.
+func TestFusion_JudgeStreamFails_FallsBackToFirstPanel(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+
+	// Two panel providers plus a separate judge provider.
+	for i, pid := range []string{"fusion1", "fusion2", "judge"} {
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES (?,?, 'openai','http://x',0)`, pid, pid); err != nil {
+			t.Fatalf("seed pt %d: %v", i, err)
+		}
+		cid := fmt.Sprintf("fconn-%d", i)
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?,?, 'c','none','ready',1,0,0)`, cid, pid); err != nil {
+			t.Fatalf("seed conn %d: %v", i, err)
+		}
+		h.store.SeedConnection(cid, pid, "ready", 0)
+	}
+	h.elig.RecomputeAll()
+
+	for _, pid := range []string{"fusion1", "fusion2"} {
+		fe := &fakeExecutor{
+			responses: []struct {
+				resp *executor.Response
+				err  error
+			}{
+				{
+					resp: &executor.Response{
+						StatusCode: http.StatusOK,
+						Body:       []byte(`{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"panel one"}}]}`),
+					},
+				},
+			},
+		}
+		executor.GetRegistry().Register(pid, executor.FormatOpenAI, fe)
+		defer executor.GetRegistry().Unregister(pid)
+	}
+
+	// Judge returns a stream that closes without any content. handleStreamResponse
+	// treats this as a failure and returns an error; the fusion handler must then
+	// fall back to the first panel response. Provide several identical results so
+	// the test is robust to any preflight ExecuteStream calls made by the routing
+	// machinery for the same provider.
+	makeFailingStream := func() *executor.StreamResult {
+		chunks := make(chan executor.StreamChunk)
+		close(chunks)
+		return &executor.StreamResult{
+			Chunks:     chunks,
+			StatusCode: http.StatusOK,
+			Headers:    http.Header{"Content-Type": []string{"text/event-stream"}},
+		}
+	}
+	judgeExec := &fakeExecutor{
+		streamResults: []struct {
+			result *executor.StreamResult
+			err    error
+		}{
+			{result: makeFailingStream()},
+			{result: makeFailingStream()},
+			{result: makeFailingStream()},
+			{result: makeFailingStream()},
+			{result: makeFailingStream()},
+		},
+	}
+	executor.GetRegistry().Register("judge", executor.FormatOpenAI, judgeExec)
+	defer executor.GetRegistry().Unregister("judge")
+
+	now := db.UnixNow()
+	if _, err := h.db.Exec(`INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, fusion_config, is_active, created_at, updated_at) VALUES ('combo-fusion','combo-fusion','fusion',1,30000,'{"min_panel":2,"straggler_grace_ms":100,"judge_model":"judge/m"}',1,?,?)`, now, now); err != nil {
+		t.Fatalf("insert combo: %v", err)
+	}
+	for i, cid := range []string{"fconn-0", "fconn-1", "fconn-2"} {
+		modelID := fmt.Sprintf("fusion%d/m", i+1)
+		if i == 2 {
+			modelID = "judge/m"
+		}
+		if _, err := h.db.Exec(`INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at) VALUES (?,?,?,?,?,?,?)`,
+			fmt.Sprintf("cfs-%d", i), "combo-fusion", cid, modelID, i+1, 100, now); err != nil {
+			t.Fatalf("insert step %d: %v", i, err)
+		}
+	}
+	h.combo = combo.NewHandler(h.db, h.store, h.elig)
+
+	body := []byte(`{"model":"combo-fusion","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.ChatCompletions(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("expected text/event-stream, got %q", ct)
+	}
+	respBody := rec.Body.String()
+	if !strings.Contains(respBody, "panel one") {
+		t.Fatalf("expected fallback to first panel content, got:\n%s", respBody)
+	}
+	if !strings.Contains(respBody, "data: [DONE]") {
+		t.Fatalf("expected terminating [DONE] frame, got:\n%s", respBody)
+	}
+}
+
+func TestStripFusionTools_FlattenToolHistory(t *testing.T) {
+	body := []byte(`{
+		"model": "combo",
+		"stream": true,
+		"tools": [{"type": "function", "function": {"name": "calc"}}],
+		"tool_choice": "auto",
+		"messages": [
+			{"role": "user", "content": "what is 1+1"},
+			{"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "calc"}}]},
+			{"role": "tool", "tool_call_id": "c1", "content": "2"}
+		]
+	}`)
+	got := stripFusionTools(body)
+	var m map[string]any
+	if err := json.Unmarshal(got, &m); err != nil {
+		t.Fatalf("stripFusionTools returned invalid JSON: %v", err)
+	}
+	if _, ok := m["tools"]; ok {
+		t.Error("tools should be stripped")
+	}
+	if _, ok := m["tool_choice"]; ok {
+		t.Error("tool_choice should be stripped")
+	}
+	msgs, ok := m["messages"].([]any)
+	if !ok || len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %v", m["messages"])
+	}
+	want := []struct {
+		role    string
+		content string
+	}{
+		{"user", "what is 1+1"},
+		{"assistant", "[Called tools: calc]"},
+		{"assistant", "[Tool result: 2]"},
+	}
+	for i, want := range want {
+		msg, ok := msgs[i].(map[string]any)
+		if !ok {
+			t.Fatalf("message %d is not an object", i)
+		}
+		if got := msg["role"]; got != want.role {
+			t.Errorf("message %d role = %v, want %v", i, got, want.role)
+		}
+		if got := msg["content"]; got != want.content {
+			t.Errorf("message %d content = %v, want %v", i, got, want.content)
+		}
+	}
+}
+
+func TestFlattenToolHistory(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []any
+		want []map[string]any
+	}{
+		{
+			name: "tool result becomes assistant prose",
+			in: []any{
+				map[string]any{"role": "tool", "content": "42"},
+			},
+			want: []map[string]any{
+				{"role": "assistant", "content": "[Tool result: 42]"},
+			},
+		},
+		{
+			name: "assistant tool_calls inlined",
+			in: []any{
+				map[string]any{"role": "assistant", "content": "calling", "tool_calls": []any{
+					map[string]any{"type": "function", "function": map[string]any{"name": "a"}},
+					map[string]any{"type": "function", "function": map[string]any{"name": "b"}},
+				}},
+			},
+			want: []map[string]any{
+				{"role": "assistant", "content": "calling\n[Called tools: a, b]"},
+			},
+		},
+		{
+			name: "anthropic tool blocks flattened",
+			in: []any{
+				map[string]any{"role": "assistant", "content": []any{
+					map[string]any{"type": "text", "text": "result:"},
+					map[string]any{"type": "tool_result", "content": []map[string]any{{"type": "text", "text": "ok"}}},
+				}},
+			},
+			want: []map[string]any{
+				{"role": "assistant", "content": "result:\n[Tool result: ok]"},
+			},
+		},
+		{
+			name: "regular messages pass through",
+			in: []any{
+				map[string]any{"role": "system", "content": "sys"},
+				map[string]any{"role": "user", "content": "hi"},
+			},
+			want: []map[string]any{
+				{"role": "system", "content": "sys"},
+				{"role": "user", "content": "hi"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := flattenToolHistory(tt.in)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %d messages, want %d", len(got), len(tt.want))
+			}
+			for i, want := range tt.want {
+				msg, ok := got[i].(map[string]any)
+				if !ok {
+					t.Fatalf("message %d is not a map", i)
+				}
+				for k, v := range want {
+					if msg[k] != v {
+						t.Errorf("message %d %q = %v, want %v", i, k, msg[k], v)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestIsModelAllowed(t *testing.T) {
 	h := newTestHandler(t)
 
