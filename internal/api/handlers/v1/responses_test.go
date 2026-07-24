@@ -2,12 +2,17 @@ package v1
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/coder/websocket"
+	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
@@ -230,5 +235,133 @@ func TestResponses_ExactCacheHit(t *testing.T) {
 	}
 	if string(rec.Body.Bytes()) != `{"cached":true}` {
 		t.Errorf("expected cached body, got %s", rec.Body.String())
+	}
+}
+
+func TestResponsesCompact_StreamRejected(t *testing.T) {
+	h, cleanup := setupResponsesTest(t)
+	defer cleanup()
+
+	body := []byte(`{"model":"cx/gpt-5","input":"hi","stream":true}`)
+	rec, c := jsonRequestWithAllowedModels(t, http.MethodPost, "/v1/responses/compact", body, nil)
+	h.ResponsesCompact(c)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "streaming not supported") {
+		t.Errorf("expected streaming rejection, got %s", rec.Body.String())
+	}
+}
+
+func TestResponsesCompact_Success(t *testing.T) {
+	h, cleanup := setupResponsesTest(t)
+	defer cleanup()
+
+	fe := &fakeExecutor{
+		compactResponse: &executor.Response{
+			StatusCode: http.StatusOK,
+			Body:       []byte(`{"response":{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Compacted"}]}]}}`),
+		},
+	}
+	executor.GetRegistry().Register("cx", executor.FormatOpenAIResponses, fe)
+	defer executor.RegisterDefaults()
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('cx','Codex','openai-responses','http://codex',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('cx-conn1','cx','c1','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("cx-conn1", "cx", "ready", 0)
+	h.elig.RecomputeAll()
+
+	body := []byte(`{"model":"cx/gpt-5","input":"hi"}`)
+	rec, c := jsonRequestWithAllowedModels(t, http.MethodPost, "/v1/responses/compact", body, nil)
+	h.ResponsesCompact(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"text":"Compacted"`)) {
+		t.Errorf("expected compacted response, got %s", rec.Body.String())
+	}
+	if fe.callCount != 1 {
+		t.Errorf("expected 1 compact call, got %d", fe.callCount)
+	}
+}
+
+func TestResponsesWebsocket_UpgradeAndRelay(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, cleanup := setupResponsesTest(t)
+	defer cleanup()
+
+	// Upstream Codex websocket server that echoes the first text message back.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		up, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		defer up.Close(websocket.StatusNormalClosure, "done")
+		ctx := r.Context()
+		typ, data, err := up.Read(ctx)
+		if err != nil {
+			return
+		}
+		if err := up.Write(ctx, typ, data); err != nil {
+			return
+		}
+		// Wait for the client to close.
+		for {
+			_, _, err := up.Read(ctx)
+			if err != nil {
+				return
+			}
+		}
+	}))
+	defer upstream.Close()
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('cx','Codex','openai-responses',?,0)`, upstream.URL); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if _, err := h.db.Exec(`UPDATE provider_types SET base_url = ? WHERE id = 'cx'`, upstream.URL); err != nil {
+		t.Fatalf("update provider_type base_url: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('cx-ws-conn','cx','c-ws','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("cx-ws-conn", "cx", "ready", 0)
+	h.elig.RecomputeAll()
+
+	allowed := map[string]struct{}{"cx/gpt-5": {}}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, _ := gin.CreateTestContext(w)
+		c.Request = r.WithContext(context.WithValue(r.Context(), "allowed_models", allowed))
+		h.ResponsesWebsocket(c)
+	}))
+	defer gateway.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	clientConn, _, err := websocket.Dial(ctx, strings.Replace(gateway.URL, "http:", "ws:", 1)+"/v1/responses", nil)
+	if err != nil {
+		t.Fatalf("dial gateway websocket: %v", err)
+	}
+	defer clientConn.Close(websocket.StatusNormalClosure, "done")
+
+	first := []byte(`{"model":"cx/gpt-5","type":"response.create"}`)
+	if err := clientConn.Write(ctx, websocket.MessageText, first); err != nil {
+		t.Fatalf("write first message: %v", err)
+	}
+
+	typ, echo, err := clientConn.Read(ctx)
+	if err != nil {
+		t.Fatalf("read echoed message: %v", err)
+	}
+	if typ != websocket.MessageText {
+		t.Fatalf("expected text message, got %d", typ)
+	}
+	if string(echo) != string(first) {
+		t.Errorf("echo mismatch: got %s, want %s", string(echo), string(first))
 	}
 }

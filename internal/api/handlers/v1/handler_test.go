@@ -68,8 +68,22 @@ type fakeExecutor struct {
 		result *executor.StreamResult
 		err    error
 	}
-	streamErr bool
-	delay     time.Duration
+	streamErr       bool
+	delay           time.Duration
+	compactResponse *executor.Response
+	compactErr      error
+}
+
+func (f *fakeExecutor) ResponsesCompact(ctx context.Context, req *executor.Request) (*executor.Response, error) {
+	f.callCount++
+	if f.delay > 0 {
+		select {
+		case <-time.After(f.delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return f.compactResponse, f.compactErr
 }
 
 func (f *fakeExecutor) Execute(ctx context.Context, req *executor.Request) (*executor.Response, error) {

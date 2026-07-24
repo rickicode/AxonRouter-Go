@@ -94,7 +94,7 @@ func codexHeaders(req *Request) map[string]string {
 		}
 	}
 	if accountID == "" {
-		accountID = codexAccountIDFromToken(req.AccessToken)
+		accountID = CodexAccountIDFromToken(req.AccessToken)
 	}
 	if accountID != "" {
 		headers["Chatgpt-Account-Id"] = accountID
@@ -115,9 +115,9 @@ func codexHeaders(req *Request) map[string]string {
 	return headers
 }
 
-// codexAccountIDFromToken extracts chatgpt_account_id from a Codex access-token
+// CodexAccountIDFromToken extracts chatgpt_account_id from a Codex access-token
 // JWT payload. This matches the claim path used by OpenAI's Auth0 tokens.
-func codexAccountIDFromToken(token string) string {
+func CodexAccountIDFromToken(token string) string {
 	parts := strings.Split(token, ".")
 	if len(parts) < 2 {
 		return ""
@@ -344,6 +344,40 @@ func extractCodexUsage(raw []byte) CodexUsage {
 		CacheCreationTokens: usage.Get("input_tokens_details.cache_creation_tokens").Int(),
 		ReasoningTokens:     usage.Get("output_tokens_details.reasoning_tokens").Int(),
 	}
+}
+
+// ResponsesCompact performs a non-streaming POST to Codex's /responses/compact
+// endpoint. It reuses the shared Codex request normalization, strips the stream
+// field, and returns the compacted JSON response.
+func (e *CodexExecutor) ResponsesCompact(ctx context.Context, req *Request) (*Response, error) {
+	url := codexCompactURL(req)
+	body := normalizeCodexResponsesRequest(req.Body)
+	body, _ = sjson.DeleteBytes(body, "stream")
+
+	headers := codexHeaders(req)
+	headers["Accept"] = "application/json"
+
+	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
+	if err != nil {
+		if upErr, ok := err.(*UpstreamError); ok {
+			upErr.TranslateErrorBody(req.Provider)
+		}
+		return nil, err
+	}
+
+	usage := extractCodexUsage(resp.Body)
+	resp.Usage = usage.ToMap()
+	return resp, nil
+}
+
+func codexCompactURL(req *Request) string {
+	base := codexURL(req)
+	base = strings.TrimSuffix(base, "/")
+	base = strings.TrimSuffix(base, "/responses")
+	if base == "" {
+		base = "https://chatgpt.com/backend-api/codex"
+	}
+	return base + "/responses/compact"
 }
 
 // Execute performs a Codex Responses API call. The upstream always receives
