@@ -62,3 +62,29 @@ func TestReorderStepsByCapabilities_PrioritizesVision(t *testing.T) {
 		t.Fatalf("expected vision-capable model first, got %s", out[0].ModelID)
 	}
 }
+
+func TestReorderStepsByCapabilities_AtPrefixedModel(t *testing.T) {
+	database := newComboTestDB(t)
+	seedConnectionForCombo(t, database, "conn-1")
+
+	steps := []db.ComboStep{
+		{ID: "a", ModelID: "openai/gpt-3.5-turbo", Priority: 1},
+		{ID: "b", ModelID: "@cx/gpt-5.4", Priority: 2},
+	}
+	required := models.ModelCapabilities{Vision: true}
+
+	store := connstate.NewStore()
+	elig := connstate.NewEligibilityManager(store)
+	h := NewHandler(database, store, elig)
+
+	out := h.ReorderStepsByCapabilities(steps, required)
+	if len(out) != 2 {
+		t.Fatalf("expected 2 steps, got %d", len(out))
+	}
+	if out[0].ModelID != "@cx/gpt-5.4" {
+		t.Fatalf("expected @-prefixed vision-capable model first, got %s", out[0].ModelID)
+	}
+	if out[1].ModelID != "openai/gpt-3.5-turbo" {
+		t.Fatalf("expected non-vision model second, got %s", out[1].ModelID)
+	}
+}
