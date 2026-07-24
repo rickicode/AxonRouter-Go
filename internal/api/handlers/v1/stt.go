@@ -64,6 +64,9 @@ func (h *Handler) STT(c *gin.Context) {
 	if h.checkTokenBudget(c, nil) != nil {
 		return
 	}
+	if h.checkAPIKeyBudget(c) != nil {
+		return
+	}
 
 	// Build multipart body
 	filename := header.Filename

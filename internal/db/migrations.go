@@ -216,6 +216,36 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		return err
 	}
 
+	// Per-API-key USD budget limits and warning threshold.
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS api_key_budgets (
+			api_key_id TEXT PRIMARY KEY REFERENCES api_keys(id),
+			daily_limit_usd REAL DEFAULT 0,
+			monthly_limit_usd REAL DEFAULT 0,
+			warning_threshold REAL DEFAULT 0.8,
+			updated_at INTEGER NOT NULL
+		)
+	`); err != nil {
+		return err
+	}
+
+	// Per-request USD spend history, bucketed by UTC day/month for budget aggregation.
+	// Reset is implicit: queries target the current period_start for the day/month.
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS api_key_spend_history (
+			id TEXT PRIMARY KEY,
+			api_key_id TEXT NOT NULL REFERENCES api_keys(id),
+			cost_usd REAL NOT NULL,
+			period_type TEXT NOT NULL,
+			period_start INTEGER NOT NULL,
+			created_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_api_key_spend_history_lookup
+			ON api_key_spend_history(api_key_id, period_type, period_start)
+	`); err != nil {
+		return err
+	}
+
 	if err := migrateRequestLogStatusCodes(db); err != nil {
 		return err
 	}

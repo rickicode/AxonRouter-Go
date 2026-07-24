@@ -25,8 +25,8 @@ func TestExtractTokensFromBody(t *testing.T) {
 		},
 		{
 			name: "gemini usageMetadata",
-			body: `{"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":10,"cachedContentTokenCount":2}}`,
-			want: StreamTokenCounts{InputTokens: 5, OutputTokens: 10, CachedTokens: 2},
+			body: `{"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":10,"cachedContentTokenCount":2,"totalTokenCount":17}}`,
+			want: StreamTokenCounts{InputTokens: 5, OutputTokens: 10, CachedTokens: 2, TotalTokens: 17},
 		},
 		{
 			name: "openai responses api usage input_tokens",
@@ -101,8 +101,8 @@ func TestExtractTokensFromSSEChunk(t *testing.T) {
 		},
 		{
 			name:  "gemini usageMetadata",
-			line:  `data: {"usageMetadata":{"promptTokenCount":9,"candidatesTokenCount":2,"cachedContentTokenCount":5,"thoughtsTokenCount":1}}`,
-			want:  StreamTokenCounts{InputTokens: 9, OutputTokens: 2, CachedTokens: 5, ReasoningTokens: 1},
+			line:  `data: {"usageMetadata":{"promptTokenCount":9,"candidatesTokenCount":2,"cachedContentTokenCount":5,"thoughtsTokenCount":1,"totalTokenCount":17}}`,
+			want:  StreamTokenCounts{InputTokens: 9, OutputTokens: 2, CachedTokens: 5, ReasoningTokens: 1, TotalTokens: 17},
 			found: true,
 		},
 		{
@@ -212,8 +212,8 @@ func TestMergeTokenCounts(t *testing.T) {
 		{
 			name: "merge all non-zero fields",
 			dst:  StreamTokenCounts{},
-			src:  StreamTokenCounts{InputTokens: 10, OutputTokens: 20, ReasoningTokens: 5, CachedTokens: 3, CacheCreationTokens: 1, CostUsd: 1.25},
-			want: StreamTokenCounts{InputTokens: 10, OutputTokens: 20, ReasoningTokens: 5, CachedTokens: 3, CacheCreationTokens: 1, CostUsd: 1.25},
+			src:  StreamTokenCounts{InputTokens: 10, OutputTokens: 20, ReasoningTokens: 5, TotalTokens: 30, CachedTokens: 3, CacheCreationTokens: 1, CostUsd: 1.25},
+			want: StreamTokenCounts{InputTokens: 10, OutputTokens: 20, ReasoningTokens: 5, TotalTokens: 30, CachedTokens: 3, CacheCreationTokens: 1, CostUsd: 1.25},
 		},
 		{
 			name: "non-zero src overwrites dst",

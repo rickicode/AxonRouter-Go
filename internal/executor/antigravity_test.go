@@ -3,12 +3,14 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/config"
@@ -238,6 +240,69 @@ func TestWrapEnvelope_OmniRouteParity(t *testing.T) {
 	// removed by the executor wrapper.
 	if root.Get("request.safetySettings").Exists() {
 		t.Error("expected request.safetySettings to be stripped by wrapEnvelope")
+	}
+}
+
+func TestSanitizeRequest_CapsMaxOutputTokens(t *testing.T) {
+	inner := map[string]any{
+		"generationConfig": map[string]any{
+			"maxOutputTokens": float64(65536),
+		},
+	}
+
+	logs := captureExecutorLogs(t, func() {
+		sanitizeRequest(inner)
+	})
+
+	gc := inner["generationConfig"].(map[string]any)
+	got, ok := toFloat64(gc["maxOutputTokens"])
+	if !ok || got != float64(maxAntigravityOutputTokens) {
+		t.Errorf("expected maxOutputTokens capped to %d, got %v", maxAntigravityOutputTokens, gc["maxOutputTokens"])
+	}
+	if !strings.Contains(logs, "capping maxOutputTokens") {
+		t.Errorf("expected warning log, got %q", logs)
+	}
+}
+
+func TestSanitizeRequest_DoesNotCapBelowMax(t *testing.T) {
+	inner := map[string]any{
+		"generationConfig": map[string]any{
+			"maxOutputTokens": float64(8192),
+		},
+	}
+
+	logs := captureExecutorLogs(t, func() {
+		sanitizeRequest(inner)
+	})
+
+	gc := inner["generationConfig"].(map[string]any)
+	got, ok := toFloat64(gc["maxOutputTokens"])
+	if !ok || got != 8192 {
+		t.Errorf("expected maxOutputTokens unchanged, got %v", gc["maxOutputTokens"])
+	}
+	if strings.Contains(logs, "capping maxOutputTokens") {
+		t.Errorf("expected no warning log, got %q", logs)
+	}
+}
+
+func TestSanitizeRequest_CapsIntegerMaxOutputTokens(t *testing.T) {
+	inner := map[string]any{
+		"generationConfig": map[string]any{
+			"maxOutputTokens": int(65536),
+		},
+	}
+
+	logs := captureExecutorLogs(t, func() {
+		sanitizeRequest(inner)
+	})
+
+	gc := inner["generationConfig"].(map[string]any)
+	got, ok := toFloat64(gc["maxOutputTokens"])
+	if !ok || got != float64(maxAntigravityOutputTokens) {
+		t.Errorf("expected maxOutputTokens capped to %d, got %v", maxAntigravityOutputTokens, gc["maxOutputTokens"])
+	}
+	if !strings.Contains(logs, "capping maxOutputTokens") {
+		t.Errorf("expected warning log, got %q", logs)
 	}
 }
 
@@ -766,5 +831,84 @@ func TestIsAntigravityExplicitCreditsExhausted(t *testing.T) {
 	}
 	if isAntigravityExplicitCreditsExhausted(nil) {
 		t.Error("expected false for nil body")
+	}
+}
+
+func TestExecuteStream_ReadinessTimeout(t *testing.T) {
+	t.Setenv("STREAM_RESPONSE_HEADER_TIMEOUT_MS", "100")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Never write headers; the transport should abort after ResponseHeaderTimeout.
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+	}))
+	defer server.Close()
+
+	be := NewBaseExecutor()
+	e := NewAntigravityExecutor(be)
+	req := &Request{
+		Model:                "gemini-pro-agent",
+		BaseURL:              server.URL,
+		Body:                 []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`),
+		AccessToken:          "token",
+		ConnectionID:         "conn-readiness-timeout",
+		ProviderSpecificData: map[string]string{"projectId": "proj-1"},
+	}
+
+	_, err := e.ExecuteStream(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected readiness timeout error, got nil")
+	}
+
+	var rtErr *AntigravityReadinessTimeoutError
+	if !errors.As(err, &rtErr) {
+		t.Fatalf("expected *AntigravityReadinessTimeoutError, got %T: %v", err, err)
+	}
+	if rtErr.StatusCode != http.StatusGatewayTimeout {
+		t.Errorf("expected status 504, got %d", rtErr.StatusCode)
+	}
+}
+
+func TestExecuteStream_ReadinessTimeout_NotTriggeredOnFastHeaders(t *testing.T) {
+	t.Setenv("STREAM_RESPONSE_HEADER_TIMEOUT_MS", "100")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// Body is delayed beyond the readiness window to prove ResponseHeaderTimeout
+		// does not affect body reading once headers have arrived.
+		time.Sleep(300 * time.Millisecond)
+		fmt.Fprintln(w, "data: {}")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}))
+	defer server.Close()
+
+	be := NewBaseExecutor()
+	e := NewAntigravityExecutor(be)
+	req := &Request{
+		Model:                "gemini-pro-agent",
+		BaseURL:              server.URL,
+		Body:                 []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`),
+		AccessToken:          "token",
+		ConnectionID:         "conn-readiness-ok",
+		ProviderSpecificData: map[string]string{"projectId": "proj-1"},
+	}
+
+	result, err := e.ExecuteStream(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected success when headers arrive quickly, got %v", err)
+	}
+	if result.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", result.StatusCode)
+	}
+	// Drain the channel to avoid leaking the goroutine in tests.
+	for range result.Chunks {
 	}
 }

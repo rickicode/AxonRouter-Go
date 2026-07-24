@@ -622,6 +622,11 @@ export interface APIKeyItem {
   created_at: number;
   expires_at?: number;
   allowed_models?: string[];
+  daily_limit_usd: number;
+  monthly_limit_usd: number;
+  warning_threshold: number;
+  daily_spend_usd: number;
+  monthly_spend_usd: number;
 }
 
 export interface TrackedDevice {
@@ -646,6 +651,9 @@ export interface APIKeyCreateResponse {
   message: string;
   expires_at?: number;
   allowed_models?: string[];
+  daily_limit_usd: number;
+  monthly_limit_usd: number;
+  warning_threshold: number;
 }
 
 export interface UsageBreakdown {
@@ -729,7 +737,7 @@ export interface UsageData {
 export const apiKeysApi = {
   list: () => fetchApi<{ data: APIKeyItem[] }>("/api-keys"),
 
-  create: (name?: string, rateLimit?: number, maxTokens?: number, expiresAt?: number, allowedModels?: string[]) =>
+  create: (name?: string, rateLimit?: number, maxTokens?: number, expiresAt?: number, allowedModels?: string[], dailyLimitUsd?: number, monthlyLimitUsd?: number, warningThreshold?: number) =>
     fetchApi<APIKeyCreateResponse>("/api-keys", {
       method: "POST",
       body: JSON.stringify({
@@ -738,6 +746,9 @@ export const apiKeysApi = {
         max_tokens: maxTokens,
         expires_at: expiresAt,
         ...(allowedModels !== undefined ? { allowed_models: allowedModels } : {}),
+        ...(dailyLimitUsd !== undefined ? { daily_limit_usd: dailyLimitUsd } : {}),
+        ...(monthlyLimitUsd !== undefined ? { monthly_limit_usd: monthlyLimitUsd } : {}),
+        ...(warningThreshold !== undefined ? { warning_threshold: warningThreshold } : {}),
       }),
     }),
 
@@ -746,10 +757,16 @@ export const apiKeysApi = {
       method: "DELETE",
     }),
 
-  toggle: (id: string, isActive: boolean) =>
+  toggle: (id: string, isActive: boolean, maxTokens?: number, dailyLimitUsd?: number, monthlyLimitUsd?: number, warningThreshold?: number) =>
     fetchApi<{ ok: boolean }>(`/api-keys/${id}/toggle`, {
       method: "PATCH",
-      body: JSON.stringify({ is_active: isActive }),
+      body: JSON.stringify({
+        is_active: isActive,
+        ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
+        ...(dailyLimitUsd !== undefined ? { daily_limit_usd: dailyLimitUsd } : {}),
+        ...(monthlyLimitUsd !== undefined ? { monthly_limit_usd: monthlyLimitUsd } : {}),
+        ...(warningThreshold !== undefined ? { warning_threshold: warningThreshold } : {}),
+      }),
     }),
 
   value: (id: string) =>
