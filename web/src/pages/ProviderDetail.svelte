@@ -24,7 +24,8 @@ import StatusBadge from '$lib/components/StatusBadge.svelte';
  let showAddModal = $state(false);
 let showRoutingModal = $state(false);
 let showEditModal = $state(false);
-let routingMode = $state<RoutingMode>('round_robin');
+ let routingMode = $state<RoutingMode>('round_robin');
+let flatRate = $state(false);
 
 const routingModeLabels: Record<RoutingMode, string> = {
  round_robin: 'Round robin',
@@ -113,6 +114,7 @@ let groupedProviderModels = $derived.by(() => {
   loadProxyPools();
   providersApi.getSettings(providerId).then((s) => {
   routingMode = s.routing_mode;
+  flatRate = s.flat_rate ?? false;
   }).catch(() => {
   // keep default
   });
@@ -830,7 +832,7 @@ async function handleBulkAssignProxy() {
  </div>
 
 <AddConnectionModal bind:open={showAddModal} {providerId} {meta} onCreated={() => { refreshConnections(); loadProvider(providerId); loadProviderModels(providerId); }} />
-<ProviderRoutingModal bind:open={showRoutingModal} {providerId} currentMode={routingMode} onSaved={(mode) => (routingMode = mode)} />
+<ProviderRoutingModal bind:open={showRoutingModal} {providerId} currentMode={routingMode} currentFlatRate={flatRate} onSaved={(mode, fr) => { routingMode = mode; flatRate = fr; }} />
 <ProviderEditModal
 	bind:open={showEditModal}
 	{providerId}

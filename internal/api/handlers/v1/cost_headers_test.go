@@ -16,7 +16,7 @@ func TestWriteCostHeaders_EstimatedFromPricing(t *testing.T) {
 	c, _ := gin.CreateTestContext(rec)
 
 	counts := StreamTokenCounts{InputTokens: 10, OutputTokens: 5}
-	writeCostHeaders(c, "openai/gpt-4o", 0, counts, false)
+	writeCostHeaders(c, "openai/gpt-4o", 0, counts, false, false)
 
 	assertEstimatedHeader(t, rec, true)
 	assertHeader(t, rec, tokensInHeader, "10")
@@ -37,7 +37,7 @@ func TestWriteCostHeaders_ExactCostNotEstimated(t *testing.T) {
 	c, _ := gin.CreateTestContext(rec)
 
 	counts := StreamTokenCounts{InputTokens: 10, OutputTokens: 5}
-	writeCostHeaders(c, "openai/gpt-4o", 0.42, counts, false)
+	writeCostHeaders(c, "openai/gpt-4o", 0.42, counts, false, false)
 
 	assertEstimatedHeader(t, rec, false)
 	assertHeader(t, rec, costHeader, "0.42")
@@ -77,7 +77,7 @@ func TestWriteCostTrailers_AfterStream(t *testing.T) {
 	c.Writer.Write([]byte("data: [DONE]\n\n"))
 
 	counts := StreamTokenCounts{InputTokens: 8, OutputTokens: 4}
-	writeCostTrailers(c, "openai/gpt-4o", 0, counts, true)
+	writeCostTrailers(c, "openai/gpt-4o", 0, counts, true, false)
 
 	rec.Flush()
 	resp := rec.Result()

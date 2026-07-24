@@ -156,9 +156,9 @@ func apiTypeFromPath(path string) string {
 	return unifiedSurface(path)
 }
 
-// logRequest enqueues a usage log entry enriched with the client IP and
-// User-Agent from the gin context. It is a single place where all /v1
-// request logging captures request metadata.
+// logRequest enqueues a usage log entry enriched with the client IP,
+// User-Agent, and flat-rate flag from the gin context and provider config.
+// It is a single place where all /v1 request logging captures request metadata.
 func (h *Handler) logRequest(c *gin.Context, entry *usage.LogEntry) {
 	if h.tracker == nil || entry == nil || c == nil {
 		return
@@ -172,6 +172,9 @@ func (h *Handler) logRequest(c *gin.Context, entry *usage.LogEntry) {
 			}
 		}
 	}
+	if h.providerCfg != nil && entry.ProviderTypeID != "" {
+		entry.FlatRate = h.providerCfg.FlatRate(entry.ProviderTypeID)
+	}
 	h.tracker.Log(entry)
 }
 
@@ -183,6 +186,16 @@ func extractServiceTier(body []byte) string {
 		return ""
 	}
 	return gjson.GetBytes(body, "service_tier").String()
+}
+
+// isFlatRate reports whether the named provider is configured as a flat-rate
+// (subscription/cookie-web) provider. It returns false when no provider config
+// manager is available or when the flag has not been set.
+func (h *Handler) isFlatRate(provider string) bool {
+	if h.providerCfg == nil || provider == "" {
+		return false
+	}
+	return h.providerCfg.FlatRate(provider)
 }
 
 // trackDevice records the calling client device for the resolved API key.
@@ -1773,6 +1786,9 @@ func (h *Handler) streamResponse(
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("Trailer", costTrailerNames)
+	if h.isFlatRate(provider) {
+		c.Header(costHeader, "0")
+	}
 	c.Status(http.StatusOK)
 
 	heartbeatInterval := 15 * time.Second
@@ -1863,9 +1879,9 @@ func (h *Handler) streamResponse(
 					StatusCode:          http.StatusOK,
 					TokensEstimated:     tokensEstimated,
 				})
-				h.incrementAPIKeyUsage(c.GetString("api_key_id"), acc.InputTokens+acc.OutputTokens)
-				writeCostTrailers(c, model, acc.CostUsd, acc, tokensEstimated)
-				return nil
+			h.incrementAPIKeyUsage(c.GetString("api_key_id"), acc.InputTokens+acc.OutputTokens)
+			writeCostTrailers(c, model, acc.CostUsd, acc, tokensEstimated, h.isFlatRate(provider))
+			return nil
 			}
 
 			if chunk.Err != nil {

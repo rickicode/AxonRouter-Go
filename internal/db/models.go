@@ -131,6 +131,7 @@ type RequestLog struct {
 	CacheCreationTokens int64          `json:"cache_creation_tokens"`
 	Stream              bool           `json:"stream"`
 	TokensEstimated     bool           `json:"tokens_estimated"`
+	FlatRate            bool           `json:"flat_rate"`
 	LatencyMs           sql.NullInt64  `json:"latency_ms,omitempty"`
 	StatusCode          sql.NullInt64  `json:"status_code,omitempty"`
 	ErrorMessage        sql.NullString `json:"error_message,omitempty"`
@@ -178,6 +179,7 @@ func (r RequestLog) MarshalJSON() ([]byte, error) {
 		CacheCreationTokens int64   `json:"cache_creation_tokens"`
 		Stream              bool    `json:"stream"`
 		TokensEstimated     bool    `json:"tokens_estimated"`
+		FlatRate            bool    `json:"flat_rate"`
 		LatencyMs           int64   `json:"latency_ms,omitempty"`
 		StatusCode          int64   `json:"status_code,omitempty"`
 		ErrorMessage        string  `json:"error_message,omitempty"`
@@ -207,6 +209,7 @@ func (r RequestLog) MarshalJSON() ([]byte, error) {
 		CacheCreationTokens: r.CacheCreationTokens,
 		Stream:              r.Stream,
 		TokensEstimated:     r.TokensEstimated,
+		FlatRate:            r.FlatRate,
 		LatencyMs:           getInt(r.LatencyMs),
 		StatusCode:          getInt(r.StatusCode),
 		ErrorMessage:        getStr(r.ErrorMessage),

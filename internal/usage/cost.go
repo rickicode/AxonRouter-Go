@@ -17,7 +17,7 @@ func CostThisMonth(db *sql.DB) (map[string]float64, float64, error) {
 // grouped by provider_type_id.
 func CostBetween(db *sql.DB, fromMs, toMs int64) (map[string]float64, float64, error) {
 	rows, err := db.Query(`
-		SELECT provider_type_id, COALESCE(SUM(cost_usd), 0)
+		SELECT provider_type_id, COALESCE(SUM(CASE WHEN flat_rate = 1 THEN 0 ELSE cost_usd END), 0)
 		FROM request_logs
 		WHERE timestamp >= ? AND timestamp <= ?
 		GROUP BY provider_type_id

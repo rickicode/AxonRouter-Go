@@ -147,10 +147,8 @@ func (h *Handler) Embeddings(c *gin.Context) {
 		LatencyMs:      time.Since(start).Milliseconds(),
 		StatusCode:     resp.StatusCode})
 	h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, resp.Body, false)
-
 	embedTokenCounts := ExtractTokensFromBody(resp.Body)
-	writeCostHeaders(c, modelName, resp.CostUsd, embedTokenCounts, false)
-
+	writeCostHeaders(c, modelName, resp.CostUsd, embedTokenCounts, false, h.isFlatRate(provider))
 	c.Header("Content-Type", "application/json")
 	c.Status(resp.StatusCode)
 	c.Writer.Write(resp.Body)

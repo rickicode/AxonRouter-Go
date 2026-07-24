@@ -236,6 +236,26 @@ func TestHoldback_PerProviderSettings(t *testing.T) {
 	}
 }
 
+func TestFlatRate_DefaultsToFalse(t *testing.T) {
+	m := NewManager(t.TempDir())
+	if m.FlatRate("any-provider") {
+		t.Fatalf("FlatRate for unconfigured provider = true, want false")
+	}
+}
+
+func TestFlatRate_PersistsAndReads(t *testing.T) {
+	m := NewManager(t.TempDir())
+	if err := m.Save("kimi", ProviderSettings{RoutingMode: RoundRobin, FlatRate: true}); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+	if !m.FlatRate("kimi") {
+		t.Fatalf("FlatRate for kimi = false, want true")
+	}
+	if m.FlatRate("openai") {
+		t.Fatalf("FlatRate for openai = true, want false")
+	}
+}
+
 func TestHoldback_EnvOverride(t *testing.T) {
 	t.Setenv("AXON_RESPONSES_HOLDBACK_MS", "100")
 	t.Setenv("AXON_RESPONSES_HOLDBACK_BYTES", "2048")
