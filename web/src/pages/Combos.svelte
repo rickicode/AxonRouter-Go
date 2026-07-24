@@ -202,7 +202,8 @@ $effect(() => {
 	<!-- Table -->
     {#if $combos.length > 0}
       <Card class="shadow-card overflow-hidden p-0">
-        <table class="w-full text-body-sm">
+        <div class="overflow-auto max-h-96">
+          <table class="w-full text-body-sm">
           <thead>
             <tr class="border-b border-border bg-muted/50">
               <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Name</th>
@@ -288,6 +289,7 @@ $effect(() => {
             {/each}
           </tbody>
         </table>
+        </div>
       </Card>
     {:else}
       <Card class="shadow-card">

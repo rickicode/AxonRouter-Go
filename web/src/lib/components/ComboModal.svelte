@@ -5,6 +5,7 @@ import { Input } from '$lib/components/ui/input';
 import { Label } from '$lib/components/ui/label';
 import { Switch } from '$lib/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
+import { ScrollArea } from '$lib/components/ui/scroll-area';
 import ModelPickerDialog from '$lib/components/ModelPickerDialog.svelte';
 import { combosApi, modelsApi } from '$lib/api';
 import type { Combo, ComboStep, GatewayModel } from '$lib/api';
@@ -367,6 +368,7 @@ async function handleSave() {
 						</Button>
 					</div>
 				</CardHeader>
+				<ScrollArea class="max-h-[40vh]">
 				<CardContent>
 					{#if stepsLoading}
 						<div class="h-20 bg-muted animate-pulse rounded-md"></div>
@@ -425,6 +427,7 @@ async function handleSave() {
 
 					{/if}
 				</CardContent>
+				</ScrollArea>
     </Card>
     </div>
   </div>

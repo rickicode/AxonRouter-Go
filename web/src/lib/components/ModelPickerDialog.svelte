@@ -64,7 +64,7 @@ import type { GatewayModel } from '$lib/api';
 </script>
 
 <Dialog.Root bind:open>
-	<Dialog.Content class="sm:max-w-lg max-h-[80vh] overflow-hidden flex flex-col gap-0 p-0">
+	<Dialog.Content class="sm:max-w-lg max-h-[85vh] overflow-hidden flex flex-col gap-0 p-0">
 		<div class="border-b border-border p-4">
 			<Dialog.Title class="text-body-md-strong">
 				{multi ? 'Select models' : 'Select model'}
@@ -77,7 +77,7 @@ import type { GatewayModel } from '$lib/api';
 				<Input bind:value={modelSearch} placeholder="Search models…" class="text-body-sm" />
 			</div>
 		</div>
-		<ScrollArea class="flex-1 max-h-[50vh]">
+		<ScrollArea class="flex-1">
 			<div class="flex flex-col">
 {#each filteredModels as model (model.id)}
       {@const kinds = model.service_kinds?.length === 1 && model.service_kinds[0] === 'llm' ? [] : (model.service_kinds ?? [])}
