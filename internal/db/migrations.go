@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
   cost_usd REAL DEFAULT 0,
   client_ip TEXT,
   user_agent TEXT,
+  service_tier TEXT,
   created_at INTEGER NOT NULL
 );
 
@@ -158,6 +159,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		`ALTER TABLE request_logs ADD COLUMN api_type TEXT`,
 		`ALTER TABLE request_logs ADD COLUMN client_ip TEXT`,
 		`ALTER TABLE request_logs ADD COLUMN user_agent TEXT`,
+		`ALTER TABLE request_logs ADD COLUMN service_tier TEXT`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id, timestamp DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_combo_steps_combo_id ON combo_steps(combo_id)`,
 		`ALTER TABLE provider_types ADD COLUMN category TEXT DEFAULT 'apikey'`,
@@ -463,10 +465,27 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 	image_per_unit REAL NOT NULL DEFAULT 0,
 	audio_per_min REAL NOT NULL DEFAULT 0,
 	currency TEXT NOT NULL DEFAULT 'USD',
+	tier_flex_multiplier REAL NOT NULL DEFAULT 0.5,
+	tier_priority_multiplier REAL NOT NULL DEFAULT 1.5,
+	tier_fast_multiplier REAL NOT NULL DEFAULT 2.5,
 	updated_at INTEGER NOT NULL DEFAULT 0
 );
 `); err != nil {
 		return err
+	}
+
+	// Incremental migrations for model_pricing columns added after the table was
+	// introduced later in the migration sequence.
+	for _, stmt := range []string{
+		`ALTER TABLE model_pricing ADD COLUMN tier_flex_multiplier REAL NOT NULL DEFAULT 0.5`,
+		`ALTER TABLE model_pricing ADD COLUMN tier_priority_multiplier REAL NOT NULL DEFAULT 1.5`,
+		`ALTER TABLE model_pricing ADD COLUMN tier_fast_multiplier REAL NOT NULL DEFAULT 2.5`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			if !isDuplicateColumnError(err) {
+				return err
+			}
+		}
 	}
 
 	// User-added custom models for custom providers.

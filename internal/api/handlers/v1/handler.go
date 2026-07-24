@@ -165,7 +165,24 @@ func (h *Handler) logRequest(c *gin.Context, entry *usage.LogEntry) {
 	}
 	entry.ClientIP = c.ClientIP()
 	entry.UserAgent = c.Request.UserAgent()
+	if entry.ServiceTier == "" {
+		if v, ok := c.Get("service_tier"); ok {
+			if s, ok := v.(string); ok {
+				entry.ServiceTier = s
+			}
+		}
+	}
 	h.tracker.Log(entry)
+}
+
+// extractServiceTier returns the service_tier value from a request body.
+// Supported values from OpenAI/Codex APIs are "flex", "priority", and "fast";
+// any other value is passed through so the cost estimator can apply defaults.
+func extractServiceTier(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	return gjson.GetBytes(body, "service_tier").String()
 }
 
 // trackDevice records the calling client device for the resolved API key.
