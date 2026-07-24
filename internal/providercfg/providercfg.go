@@ -159,8 +159,9 @@ func (m *Manager) RoutingMode(providerID string) RoutingMode {
 }
 
 // Holdback returns the streaming holdback window (ms) and byte limit for a
-// provider. Per-provider settings take precedence, then environment variables
-// AXON_RESPONSES_HOLDBACK_MS / AXON_RESPONSES_HOLDBACK_BYTES, then defaults.
+// provider. Environment variables AXON_RESPONSES_HOLDBACK_MS and
+// AXON_RESPONSES_HOLDBACK_BYTES take precedence, then per-provider settings
+// holdback_ms / holdback_bytes, then defaults.
 func (m *Manager) Holdback(providerID string) (ms, bytes int) {
 	ms, bytes = DefaultHoldbackMs, DefaultHoldbackBytes
 

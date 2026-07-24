@@ -227,8 +227,13 @@ func extractAccountIDFromPSD(raw string) string {
 
 func extractChatgptAccountIDFromToken(token string) string {
 	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
+	if len(parts) != 3 {
 		return ""
+	}
+	for _, p := range parts {
+		if p == "" {
+			return ""
+		}
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {

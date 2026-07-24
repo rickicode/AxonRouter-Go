@@ -318,6 +318,21 @@ func TestExtractAccountIDFromPSD(t *testing.T) {
 			psd:  `{"account_id":"acc-xyz","workspaceId":"ws-abc"}`,
 			want: "acc-xyz",
 		},
+		{
+			name: "two-part id_token rejected",
+			psd:  `{"id_token":"header.payload"}`,
+			want: "",
+		},
+		{
+			name: "empty segment id_token rejected",
+			psd:  `{"id_token":"header..sig"}`,
+			want: "",
+		},
+		{
+			name: "extra segment id_token rejected",
+			psd:  `{"id_token":"h.p.s.extra"}`,
+			want: "",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
