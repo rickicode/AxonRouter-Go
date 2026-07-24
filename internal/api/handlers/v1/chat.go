@@ -60,11 +60,58 @@ func isTransientUpstreamError(err error) bool {
 	return false
 }
 
+// parseRetryAfter parses a Retry-After header value, accepting either a delay
+// in seconds or an HTTP-date. Values in the past (or non-numeric/zero) are
+// reported as 0 with ok=true so callers can decide whether to fall back.
+func parseRetryAfter(h http.Header) (time.Duration, bool) {
+	v := strings.TrimSpace(h.Get("Retry-After"))
+	if v == "" {
+		return 0, false
+	}
+	if secs, err := strconv.Atoi(v); err == nil {
+		if secs < 0 {
+			return 0, true
+		}
+		return time.Duration(secs) * time.Second, true
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		d := time.Until(t)
+		if d < 0 {
+			d = 0
+		}
+		return d, true
+	}
+	return 0, false
+}
+
+// transientCooldownResp resolves the response whose headers should be inspected
+// for Retry-After. When no explicit executor response is available, it falls
+// back to an UpstreamError's headers so transient errors returned directly by
+// an executor still respect the upstream cooldown request.
+func transientCooldownResp(resp *executor.Response, err error) *executor.Response {
+	if resp != nil {
+		return resp
+	}
+	var upErr *executor.UpstreamError
+	if errors.As(err, &upErr) {
+		return &executor.Response{StatusCode: upErr.StatusCode, Headers: upErr.Headers}
+	}
+	return nil
+}
+
 // transientCooldown returns the cooldown to apply before the next combo
-// connection is tried. It clamps the value to maxTransientCooldown.
-func transientCooldown() time.Duration {
-	if maxTransientCooldown > 0 && defaultTransientCooldown > maxTransientCooldown {
-		return maxTransientCooldown
+// connection is tried. It respects an upstream Retry-After header and clamps
+// the resulting duration to maxTransientCooldown.
+func transientCooldown(resp *executor.Response) time.Duration {
+	if resp != nil {
+		if d, ok := parseRetryAfter(resp.Headers); ok {
+			if d > maxTransientCooldown {
+				return maxTransientCooldown
+			}
+			if d > 0 {
+				return d
+			}
+		}
 	}
 	return defaultTransientCooldown
 }
@@ -261,7 +308,6 @@ attemptLoop:
 			// connections, just like the combo path, so direct-mode streams
 			// don't stop when one upstream connection dies.
 			streamCtx, cancelStream := context.WithCancel(c.Request.Context())
-			defer cancelStream()
 
 			holdbackMs := 750
 			holdbackBytes := 64 * 1024
@@ -284,6 +330,7 @@ attemptLoop:
 					det := connstate.DetectError(proxyCtx, 0, "", holdbackErr, provider, modelName, nil)
 					if !isFailoverEligible(det.Category) {
 						if h.writeUpstreamClientError(proxyCtx, c, holdbackErr, conn, provider, modelName, start, stream) {
+							cancelStream()
 							return
 						}
 					}
@@ -291,19 +338,23 @@ attemptLoop:
 					lastErr = holdbackErr
 					lastErrCategory = cat
 					if !retry {
+						cancelStream()
 						break attemptLoop
 					}
 					if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+						cancelStream()
 						return
 					}
 					continue
 				}
 			case <-streamCtx.Done():
+				cancelStream()
 				return
 			}
 
 			if streamErr := h.handleStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, "", true); streamErr != nil {
 				if h.isClientCanceled(c, streamErr) {
+					cancelStream()
 					return
 				}
 				cancelStream()
@@ -318,13 +369,16 @@ attemptLoop:
 				lastErr = streamErr
 				lastErrCategory = cat
 				if !retry {
+					cancelStream()
 					break
 				}
 				if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+					cancelStream()
 					return
 				}
 				continue
 			}
+			cancelStream()
 			return
 		} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
@@ -404,7 +458,7 @@ type comboStepResult struct {
 // recordComboStepFailure applies the same cooldown/exhaustion side effects for a
 // failed combo connection attempt that handleComboRequest currently applies. It
 // mirrors that path exactly to avoid observable behavior changes.
-func (h *Handler) recordComboStepFailure(comboCtx context.Context, connID, provider, modelName string, det connstate.ErrorDetection, err error) {
+func (h *Handler) recordComboStepFailure(comboCtx context.Context, connID, provider, modelName string, det connstate.ErrorDetection, err error, resp *executor.Response) {
 	if det.ModelID != "" && (det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
 		scope := connstate.ModelScope(provider, det.ModelID)
 		h.exhaustion.MarkExhausted(quota.ExhaustKey(connID, scope), quota.TTLFromCooldown(det.CooldownUntil, 5*time.Minute))
@@ -423,7 +477,7 @@ func (h *Handler) recordComboStepFailure(comboCtx context.Context, connID, provi
 		h.elig.ScheduleUpdateProvider(provider)
 	}
 	if isTransientUpstreamError(err) {
-		cd := transientCooldown()
+		cd := transientCooldown(transientCooldownResp(resp, err))
 		logging.Logger.Info("combo transient error cooldown before next connection",
 			"provider", provider, "model", modelName,
 			"conn", shortID(connID, 8), "status", upstreamHTTPStatus(err),
@@ -498,6 +552,7 @@ func (h *Handler) executeComboStep(
 				StatusCode: resp.StatusCode,
 				Body:       resp.Body,
 				RawBody:    resp.Body,
+				Headers:    resp.Headers,
 			}
 		}
 		if err != nil {
@@ -519,7 +574,7 @@ func (h *Handler) executeComboStep(
 			}
 
 			result.retryable = true
-			h.recordComboStepFailure(comboCtx, connID, provider, modelName, det, err)
+			h.recordComboStepFailure(comboCtx, connID, provider, modelName, det, err, resp)
 			continue
 		}
 
@@ -629,6 +684,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 					StatusCode: resp.StatusCode,
 					Body:       resp.Body,
 					RawBody:    resp.Body,
+					Headers:    resp.Headers,
 				}
 			}
 			if err != nil {
@@ -669,7 +725,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				lastErr = err
 				lastErrCategory = string(det.Category)
 				if isTransientUpstreamError(err) {
-					cd := transientCooldown()
+					cd := transientCooldown(transientCooldownResp(resp, err))
 					logging.Logger.Info("combo transient error cooldown before next connection",
 						"provider", provider, "model", modelName,
 						"conn", shortID(connID, 8), "status", upstreamHTTPStatus(err),
@@ -711,7 +767,6 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				// client disconnect). Without this, after a mid-stream error the goroutine
 				// leaks blocked on `out <- chunk` with no consumer.
 				streamCtx, cancelStream := context.WithCancel(c.Request.Context())
-				defer cancelStream() // safety net when handleComboRequest returns
 
 				holdbackChunks, holdbackErrCh := executor.WrapWithHoldback(streamCtx, streamResult.Chunks, holdbackMs, holdbackBytes)
 				streamResult.Chunks = holdbackChunks
@@ -777,6 +832,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 					lastErrCategory = "stream-" + string(det.Category)
 					continue
 				}
+				cancelStream()
 				return
 			} else {
 				translatedResp := registry.ResponseNonStream(comboCtx, string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
@@ -1265,43 +1321,142 @@ func setRequestModel(body []byte, model string) []byte {
 	return executor.JSONSet(body, "model", model)
 }
 
-// extractAssistantContent extracts the assistant message content from a non-streaming
-// chat completion response body. It supports the standard OpenAI-compatible shape.
+// extractAssistantContent extracts the assistant message content from a
+// non-streaming upstream response body. It recognises OpenAI chat completions,
+// Anthropic Claude messages, Google Gemini generateContent, and OpenAI
+// Responses (e.g. Codex) output envelopes.
 func extractAssistantContent(respBody []byte) string {
-	var out struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(respBody, &out); err != nil {
+	var doc map[string]any
+	if err := json.Unmarshal(respBody, &doc); err != nil {
 		return ""
 	}
-	if len(out.Choices) == 0 {
-		return ""
+
+	// OpenAI chat completions shape: choices[0].message.content
+	if choices, ok := doc["choices"].([]any); ok && len(choices) > 0 {
+		if choice, ok := choices[0].(map[string]any); ok {
+			if msg, ok := choice["message"].(map[string]any); ok {
+				switch v := msg["content"].(type) {
+				case string:
+					return v
+				case []any:
+					return extractTextBlocks(v)
+				}
+			}
+		}
 	}
-	return out.Choices[0].Message.Content
+
+	// Claude messages shape: content [{"type":"text","text":"..."}]
+	if content, ok := doc["content"].([]any); ok {
+		if text := extractTextBlocks(content); text != "" {
+			return text
+		}
+	}
+
+	// Gemini generateContent shape: candidates[0].content.parts [{"text":"..."}]
+	if candidates, ok := doc["candidates"].([]any); ok && len(candidates) > 0 {
+		if cand, ok := candidates[0].(map[string]any); ok {
+			if content, ok := cand["content"].(map[string]any); ok {
+				if parts, ok := content["parts"].([]any); ok {
+					var sb strings.Builder
+					for _, p := range parts {
+						if pm, ok := p.(map[string]any); ok {
+							if text, ok := pm["text"].(string); ok {
+								sb.WriteString(text)
+							}
+						}
+					}
+					return sb.String()
+				}
+			}
+		}
+	}
+
+	// OpenAI Responses shape: output [{"type":"message","content":[{"type":"output_text","text":"..."}]}]
+	if output, ok := doc["output"].([]any); ok {
+		var sb strings.Builder
+		for _, item := range output {
+			if it, ok := item.(map[string]any); ok {
+				if itemType, _ := it["type"].(string); itemType == "message" {
+					if content, ok := it["content"].([]any); ok {
+						for _, c := range content {
+							if cm, ok := c.(map[string]any); ok {
+								if contentType, _ := cm["type"].(string); contentType == "output_text" {
+									if text, ok := cm["text"].(string); ok {
+										sb.WriteString(text)
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		if sb.Len() > 0 {
+			return sb.String()
+		}
+	}
+
+	// Final fallbacks for providers that expose plain text top-level fields.
+	if text, ok := doc["output_text"].(string); ok && text != "" {
+		return text
+	}
+	if text, ok := doc["text"].(string); ok && text != "" {
+		return text
+	}
+
+	return ""
+}
+
+// extractTextBlocks concatenates text found in content arrays whose blocks
+// expose a "text" string field. This covers OpenAI message content parts and
+// Anthropic Claude content blocks.
+func extractTextBlocks(blocks []any) string {
+	var sb strings.Builder
+	for _, b := range blocks {
+		if bm, ok := b.(map[string]any); ok {
+			if text, ok := bm["text"].(string); ok {
+				sb.WriteString(text)
+			}
+		}
+	}
+	return sb.String()
 }
 
 // buildFusionJudgeBody builds a new request body for the judge model.
+// It preserves the original conversation history and appends the judge
+// directive as a new user turn so the judge has full context.
 func buildFusionJudgeBody(originalReq []byte, panels []fusionPanel, anonymize bool) []byte {
-	userQuestion := extractUserQuestion(originalReq)
+	var req map[string]any
+	if err := json.Unmarshal(originalReq, &req); err != nil {
+		return originalReq
+	}
+
 	prompt := "You are a synthesis assistant. Multiple expert panel models answered the user's question. Review the answers below and produce a single, concise, accurate answer that best addresses the user's original question.\n\n"
+
+	userQuestion := extractUserQuestion(originalReq)
 	prompt += "User question: " + userQuestion + "\n\n"
 	for i, p := range panels {
 		label := fmt.Sprintf("Source %d", i+1)
 		if !anonymize {
 			label = fmt.Sprintf("Source %s", p.modelID)
 		}
-		prompt += fmt.Sprintf("%s (%s):\n%s\n\n", label, p.modelID, p.content)
+		if anonymize {
+			prompt += fmt.Sprintf("%s:\n%s\n\n", label, p.content)
+		} else {
+			prompt += fmt.Sprintf("%s (%s):\n%s\n\n", label, p.modelID, p.content)
+		}
 	}
 	prompt += "Synthesize the best answer."
 
-	return executor.JSONSet(originalReq, "messages", []map[string]any{
-		{"role": "system", "content": prompt},
-		{"role": "user", "content": userQuestion},
-	})
+	messages, _ := req["messages"].([]any)
+	judgeMsg := map[string]any{"role": "user", "content": prompt}
+	req["messages"] = append(messages, judgeMsg)
+
+	result, err := json.Marshal(req)
+	if err != nil {
+		return originalReq
+	}
+	return result
 }
 
 // extractUserQuestion returns the content of the last user message from a request body.

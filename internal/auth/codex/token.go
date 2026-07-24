@@ -3,11 +3,15 @@ package codex
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
+	"github.com/tidwall/gjson"
 )
 
 // TokenStore manages Codex OAuth credentials with the connections table as the
@@ -202,7 +206,46 @@ func (ts *TokenStore) readCredentials(ctx context.Context, connID string) (*auth
 }
 
 func extractAccountIDFromPSD(raw string) string {
-	// ProviderSpecificData may contain a JWT id_token or account_id. Try the
-	// simplest JSON path first; token parsing is handled by the JWT helper.
-	return "" // placeholder, real extraction lives in import/JWT helpers
+	root := gjson.Parse(raw)
+
+	// Simple JSON keys that importers may have placed in provider_specific_data.
+	for _, key := range []string{"account_id", "chatgpt_account_id", "accountId", "workspaceId"} {
+		if v := root.Get(key); v.Exists() && v.Type == gjson.String && v.String() != "" {
+			return v.String()
+		}
+	}
+
+	// Fallback: parse a JWT id_token and look for the OpenAI auth claim.
+	if idToken := root.Get("id_token"); idToken.Exists() && idToken.Type == gjson.String {
+		if accountID := extractChatgptAccountIDFromToken(idToken.String()); accountID != "" {
+			return accountID
+		}
+	}
+
+	return ""
+}
+
+func extractChatgptAccountIDFromToken(token string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	for _, p := range parts {
+		if p == "" {
+			return ""
+		}
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var claims struct {
+		Auth struct {
+			ChatgptAccountID string `json:"chatgpt_account_id"`
+		} `json:"https://api.openai.com/auth"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return ""
+	}
+	return claims.Auth.ChatgptAccountID
 }

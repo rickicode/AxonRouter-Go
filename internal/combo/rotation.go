@@ -3,6 +3,7 @@ package combo
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"math/rand/v2"
 	"sort"
 	"strings"
@@ -299,10 +300,12 @@ func (rm *RotationManager) loadCounter(comboID string) int {
 // persistCounter bumps the rotation counter in SQLite.
 func (rm *RotationManager) persistCounter(comboID string, counter int) {
 	now := time.Now().Unix()
-	rm.db.Exec(`
+	if _, err := rm.db.Exec(`
 		INSERT INTO rotation_state (combo_id, counter, updated_at) VALUES (?, ?, ?)
 		ON CONFLICT(combo_id) DO UPDATE SET counter = ?, updated_at = ?
-	`, comboID, counter, now, counter, now)
+	`, comboID, counter, now, counter, now); err != nil {
+		log.Printf("WARN: failed to persist rotation counter for combo %s: %v", comboID, err)
+	}
 }
 
 // ResetCounter resets the rotation counter for a combo in memory and on disk.

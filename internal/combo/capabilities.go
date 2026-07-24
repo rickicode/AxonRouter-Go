@@ -26,6 +26,7 @@ func DetectRequiredCapabilities(body []byte) models.ModelCapabilities {
 	if err := json.Unmarshal(body, &req); err != nil {
 		return models.ModelCapabilities{}
 	}
+
 	var caps models.ModelCapabilities
 
 	// Tools are a soft capability (preferred but not blocking).
@@ -34,13 +35,13 @@ func DetectRequiredCapabilities(body []byte) models.ModelCapabilities {
 	}
 
 	messages, _ := req["messages"].([]any)
-	for _, m := range messages {
+	for _, m := range trailingUserItems(messages) {
 		detectMessageCapabilities(m, &caps)
 	}
 
 	// Responses API format may have `input` instead of `messages`.
 	if input, ok := req["input"].([]any); ok {
-		for _, item := range input {
+		for _, item := range trailingUserItems(input) {
 			detectMessageCapabilities(item, &caps)
 		}
 	}
@@ -58,6 +59,23 @@ func DetectRequiredCapabilities(body []byte) models.ModelCapabilities {
 	}
 
 	return caps
+}
+
+// trailingUserItems returns the current user turn: all non-assistant items
+// after the last assistant message. If no assistant message is present, the
+// entire slice is treated as the trailing turn.
+func trailingUserItems(items []any) []any {
+	for i := len(items) - 1; i >= 0; i-- {
+		m, ok := items[i].(map[string]any)
+		if !ok {
+			continue
+		}
+		role, _ := m["role"].(string)
+		if role == "assistant" {
+			return items[i+1:]
+		}
+	}
+	return items
 }
 
 func detectGeminiContents(contents []any, caps *models.ModelCapabilities) {
@@ -182,7 +200,8 @@ func (h *Handler) ReorderStepsByCapabilities(steps []db.ComboStep, required mode
 		tier int
 	}, len(steps))
 	for i, s := range steps {
-		caps := models.GetCapabilities(s.ModelID)
+		modelID := strings.TrimPrefix(s.ModelID, "@")
+		caps := models.GetCapabilities(modelID)
 		typed[i] = struct {
 			step db.ComboStep
 			tier int
@@ -203,7 +222,6 @@ func (h *Handler) ReorderStepsByCapabilities(steps []db.ComboStep, required mode
 		logging.Logger.Warn("capability reorder produced unexpected length; using original order")
 		return steps
 	}
-
 	return out
 }
 
@@ -230,6 +248,7 @@ func capabilityTier(caps, required models.ModelCapabilities) int {
 	if !hardOk {
 		return 2
 	}
+
 	softOk := true
 	if required.Tools && !caps.Tools {
 		softOk = false

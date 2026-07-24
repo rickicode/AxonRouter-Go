@@ -3,6 +3,7 @@ package combo
 import (
 	"database/sql"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -101,17 +102,20 @@ func (sc *SmartCombo) Resolve(goal SmartGoal, combos []*db.Combo) (*db.Combo, er
 		return nil, nil
 	}
 
-	telemetry := sc.GetTelemetry(sc.config.TelemetryWindowMin)
+	sorted := make([]*db.Combo, len(combos))
+	copy(sorted, combos)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
 
+	telemetry := sc.GetTelemetry(sc.config.TelemetryWindowMin)
 	switch goal {
 	case GoalAuto:
-		return sc.resolveAuto(combos, telemetry), nil
+		return sc.resolveAuto(sorted, telemetry), nil
 	case GoalEconomy:
-		return sc.findByGoalWithFallback(combos, "economy", []string{"balanced", "premium"}), nil
+		return sc.findByGoalWithFallback(sorted, "economy", []string{"balanced", "premium"}), nil
 	case GoalPremium:
-		return sc.findByGoalWithFallback(combos, "premium", []string{"balanced", "economy"}), nil
+		return sc.findByGoalWithFallback(sorted, "premium", []string{"balanced", "economy"}), nil
 	default: // balanced
-		return sc.findByGoalWithFallback(combos, "balanced", []string{"economy", "premium"}), nil
+		return sc.findByGoalWithFallback(sorted, "balanced", []string{"economy", "premium"}), nil
 	}
 }
 
