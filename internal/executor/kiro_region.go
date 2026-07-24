@@ -18,9 +18,9 @@ const (
 var (
 	// AWS region shape: two lowercase letters, hyphen, location, hyphen, digit(s).
 	// Guards against SSRF via region injection into upstream URLs.
-	awsRegionPattern     = regexp.MustCompile(`^[a-z]{2}-[a-z]+-\d{1,2}$`)
-	kiroProfileARNRe     = regexp.MustCompile(`^arn:aws:codewhisperer:([a-z0-9-]+):`)
-	kiroProfileRegions   = map[string]struct{}{
+	awsRegionPattern   = regexp.MustCompile(`^[a-z]{2}-[a-z]+-\d{1,2}$`)
+	kiroProfileARNRe   = regexp.MustCompile(`^arn:aws:codewhisperer:([a-z0-9-]+):`)
+	kiroProfileRegions = map[string]struct{}{
 		"us-east-1":    {},
 		"eu-central-1": {},
 	}
@@ -49,7 +49,7 @@ func regionFromKiroProfileArn(profileArn string) string {
 	return matches[1]
 }
 
-// resolveKiroRuntimeRegion returns the AWS region to use for CodeWhisperer / Amazon Q
+// resolveKiroRuntimeRegion returns the AWS region to use for Kiro
 // runtime calls. Resolution priority:
 //
 //  1. The region embedded in profileArn, when it is a syntactically valid AWS region.
@@ -75,7 +75,7 @@ func resolveKiroRuntimeRegion(psd map[string]string) string {
 	return kiroDefaultRegion
 }
 
-// kiroRuntimeHost returns the regional runtime host for CodeWhisperer / Amazon Q.
+// kiroRuntimeHost returns the regional runtime host for Kiro.
 // us-east-1 keeps the legacy codewhisperer host; all other regions use q.{region}.amazonaws.com.
 func kiroRuntimeHost(region string) string {
 	if region == "us-east-1" {
@@ -93,6 +93,7 @@ func kiroRuntimeHost(region string) string {
 //     so the AWS endpoint is tried first.
 //   - builder-id, social (github), and import tokens are Kiro OIDC/social tokens that the
 //     kiro.dev gateway accepts, so that endpoint is tried first.
+//
 // resolveDefaultKiroProfileArn returns the shared default profileArn for
 // builder-id/social auth. Account-bound methods (api_key/idc/external_idp)
 // must never use this shared ARN because it belongs to another account.

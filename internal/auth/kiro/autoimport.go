@@ -261,7 +261,6 @@ func queryFirstJSON(db *sql.DB, tables, keys []string) (map[string]any, error) {
 	return nil, nil
 }
 
-
 // --- AWS SSO cache JSON fallback --------------------------------------------
 
 func discoverAwsSsoCache(dir string, profilePaths []string) (*AutoImportResult, error) {
@@ -273,7 +272,7 @@ func discoverAwsSsoCache(dir string, profilePaths []string) (*AutoImportResult, 
 		return nil, nil
 	}
 
-	preferred := []string{"kiro-auth-token.json", "amazon-q-auth-token.json"}
+	preferred := []string{"kiro-auth-token.json"}
 	ordered := make([]string, 0, len(entries))
 	for _, name := range preferred {
 		if hasFile(entries, name) {
@@ -501,4 +500,3 @@ func authMethodFromRefreshToken(token string) string {
 func (s *KiroAuthService) AutoImport(ctx context.Context) (*AutoImportResult, error) {
 	return AutoImport(ctx)
 }
-

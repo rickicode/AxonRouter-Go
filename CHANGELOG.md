@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Security Warning modal respects 24-hour dismissal** — `ChangePasswordModal` is no longer shown for 24 hours after the user dismisses it. Dismissal is stored as a timestamp in `localStorage`/`sessionStorage` and automatically expires after one day. The old boolean dismissal flag is migrated to the new timestamp format on first load.
 
+### Removed
+- **Deprecated `amazon-q` provider** — removed the `amazon-q` (and alias `aq`) built-in provider and its catalog/model entries. It is superseded by the `kiro` provider; existing AWS tokens cached as `amazon-q-auth-token.json` are still usable because the Kiro auto-import flow now checks only `kiro-auth-token.json`.
+
 ## [0.3.20] - 2026-07-23
 
 ### Added
