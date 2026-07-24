@@ -93,7 +93,7 @@ type Config struct {
 	WriteQueue                   *db.WriteQueue // centralized async writer (nil → one is created)
 	Port                         string
 	QuotaIntervalMin             int
-	LogRetentionDays               int
+	LogRetentionDays             int
 	ConnectionCleanupIntervalMin int
 	WebFS                        fs.FS // embedded frontend filesystem
 }
@@ -266,7 +266,9 @@ func New(cfg Config) *Router {
 	v1Group.POST("/images/generations", v1H.Images)
 	v1Group.POST("/video/generations", v1H.Video)
 	v1Group.POST("/embeddings", v1H.Embeddings)
+	v1Group.GET("/responses", v1H.ResponsesWebsocket)
 	v1Group.POST("/responses", v1H.Responses)
+	v1Group.POST("/responses/compact", v1H.ResponsesCompact)
 	v1Group.POST("/unified", v1H.Unified)
 	v1Group.POST("/messages/count_tokens", v1H.CountTokens)
 	v1Group.POST("/messages", v1H.Messages)
@@ -289,6 +291,14 @@ func New(cfg Config) *Router {
 	// Health check is reachable without admin auth for sidebar/lb probes.
 	engine.HEAD("/api/admin/health", healthH.Health)
 	engine.GET("/api/admin/health", healthH.Health)
+
+	// Direct Codex-compatible surface aliases (clients hard-coded to the ChatGPT base URL).
+	codexGroup := engine.Group("/backend-api/codex")
+	codexGroup.Use(middleware.Auth(cfg.DB, authCache))
+	codexGroup.Use(middleware.RateLimit(limiter))
+	codexGroup.Use(v1H.TrackActive())
+	codexGroup.POST("/responses", v1H.Responses)
+	codexGroup.POST("/responses/compact", v1H.ResponsesCompact)
 
 	// Public login endpoint (issues a session JWT). Rate-limited per IP to slow brute force.
 	engine.POST("/api/admin/login", middleware.RateLimit(loginLimiter), LoginHandler(cfg.DB))
