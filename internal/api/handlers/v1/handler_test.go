@@ -25,6 +25,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
+	"github.com/rickicode/AxonRouter-Go/internal/compression"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
@@ -158,9 +159,11 @@ func newTestHandler(t testing.TB) *Handler {
 		authMgr:             mgr,
 		exhaustion:          quota.NewExhaustionCache(),
 		providerCfg:         providercfg.NewManager(t.TempDir()),
+		exactCache:          cache.NewExactCache(100),
 		sessions:            connstate.NewSessionCache(),
 		combo:               combo.NewHandler(database, store, elig),
 		registry:            executor.GetRegistry(),
+		compressionStrategy: compression.Strategy{Mode: compression.ModeOff},
 		failoverMaxAttempts: 5,
 	}
 }
