@@ -154,3 +154,66 @@ func TestHandleFusionRequest_JudgeUpstreamErrorBody_FallsBackToFirstPanel(t *tes
 		t.Errorf("expected 3 executor calls (2 panels + judge), got %d", len(fe.calls))
 	}
 }
+
+func TestExtractAssistantContent(t *testing.T) {
+	cases := []struct {
+		name     string
+		body     string
+		expected string
+	}{
+		{
+			name:     "openai string content",
+			body:     `{"choices":[{"message":{"role":"assistant","content":"hello openai"}}]}`,
+			expected: "hello openai",
+		},
+		{
+			name:     "openai content array",
+			body:     `{"choices":[{"message":{"content":[{"type":"text","text":"hello "},{"type":"text","text":"world"}]}}]}`,
+			expected: "hello world",
+		},
+		{
+			name:     "claude messages",
+			body:     `{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"hello claude"},{"type":"thinking","thinking":"hidden"}]}`,
+			expected: "hello claude",
+		},
+		{
+			name:     "gemini generateContent",
+			body:     `{"candidates":[{"content":{"parts":[{"text":"hello gemini"}]}}]}`,
+			expected: "hello gemini",
+		},
+		{
+			name:     "openai responses output_text",
+			body:     `{"id":"resp_1","model":"gpt-test","output":[{"type":"reasoning","summary":[{"type":"summary_text","text":"step 1"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello responses"}]}]}`,
+			expected: "hello responses",
+		},
+		{
+			name:     "fallback output_text",
+			body:     `{"output_text":"plain output text"}`,
+			expected: "plain output text",
+		},
+		{
+			name:     "fallback text",
+			body:     `{"text":"plain text"}`,
+			expected: "plain text",
+		},
+		{
+			name:     "empty choices",
+			body:     `{"choices":[]}`,
+			expected: "",
+		},
+		{
+			name:     "invalid json",
+			body:     `{not json`,
+			expected: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractAssistantContent([]byte(tc.body))
+			if got != tc.expected {
+				t.Errorf("extractAssistantContent() = %q, want %q", got, tc.expected)
+			}
+		})
+	}
+}

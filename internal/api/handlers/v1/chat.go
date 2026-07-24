@@ -1265,23 +1265,105 @@ func setRequestModel(body []byte, model string) []byte {
 	return executor.JSONSet(body, "model", model)
 }
 
-// extractAssistantContent extracts the assistant message content from a non-streaming
-// chat completion response body. It supports the standard OpenAI-compatible shape.
+// extractAssistantContent extracts the assistant message content from a
+// non-streaming upstream response body. It recognises OpenAI chat completions,
+// Anthropic Claude messages, Google Gemini generateContent, and OpenAI
+// Responses (e.g. Codex) output envelopes.
 func extractAssistantContent(respBody []byte) string {
-	var out struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(respBody, &out); err != nil {
+	var doc map[string]any
+	if err := json.Unmarshal(respBody, &doc); err != nil {
 		return ""
 	}
-	if len(out.Choices) == 0 {
-		return ""
+
+	// OpenAI chat completions shape: choices[0].message.content
+	if choices, ok := doc["choices"].([]any); ok && len(choices) > 0 {
+		if choice, ok := choices[0].(map[string]any); ok {
+			if msg, ok := choice["message"].(map[string]any); ok {
+				switch v := msg["content"].(type) {
+				case string:
+					return v
+				case []any:
+					return extractTextBlocks(v)
+				}
+			}
+		}
 	}
-	return out.Choices[0].Message.Content
+
+	// Claude messages shape: content [{"type":"text","text":"..."}]
+	if content, ok := doc["content"].([]any); ok {
+		if text := extractTextBlocks(content); text != "" {
+			return text
+		}
+	}
+
+	// Gemini generateContent shape: candidates[0].content.parts [{"text":"..."}]
+	if candidates, ok := doc["candidates"].([]any); ok && len(candidates) > 0 {
+		if cand, ok := candidates[0].(map[string]any); ok {
+			if content, ok := cand["content"].(map[string]any); ok {
+				if parts, ok := content["parts"].([]any); ok {
+					var sb strings.Builder
+					for _, p := range parts {
+						if pm, ok := p.(map[string]any); ok {
+							if text, ok := pm["text"].(string); ok {
+								sb.WriteString(text)
+							}
+						}
+					}
+					return sb.String()
+				}
+			}
+		}
+	}
+
+	// OpenAI Responses shape: output [{"type":"message","content":[{"type":"output_text","text":"..."}]}]
+	if output, ok := doc["output"].([]any); ok {
+		var sb strings.Builder
+		for _, item := range output {
+			if it, ok := item.(map[string]any); ok {
+				if itemType, _ := it["type"].(string); itemType == "message" {
+					if content, ok := it["content"].([]any); ok {
+						for _, c := range content {
+							if cm, ok := c.(map[string]any); ok {
+								if contentType, _ := cm["type"].(string); contentType == "output_text" {
+									if text, ok := cm["text"].(string); ok {
+										sb.WriteString(text)
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		if sb.Len() > 0 {
+			return sb.String()
+		}
+	}
+
+	// Final fallbacks for providers that expose plain text top-level fields.
+	if text, ok := doc["output_text"].(string); ok && text != "" {
+		return text
+	}
+	if text, ok := doc["text"].(string); ok && text != "" {
+		return text
+	}
+
+	return ""
+}
+
+// extractTextBlocks concatenates text found in content arrays whose blocks
+// expose a "text" string field. This covers OpenAI message content parts and
+// Anthropic Claude content blocks.
+func extractTextBlocks(blocks []any) string {
+	var sb strings.Builder
+	for _, b := range blocks {
+		if bm, ok := b.(map[string]any); ok {
+			if text, ok := bm["text"].(string); ok {
+				sb.WriteString(text)
+			}
+		}
+	}
+	return sb.String()
 }
 
 // buildFusionJudgeBody builds a new request body for the judge model.
