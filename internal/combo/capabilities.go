@@ -34,18 +34,35 @@ func DetectRequiredCapabilities(body []byte) models.ModelCapabilities {
 	}
 
 	messages, _ := req["messages"].([]any)
-	for _, m := range messages {
+	for _, m := range trailingUserItems(messages) {
 		detectMessageCapabilities(m, &caps)
 	}
 
 	// Responses API format may have `input` instead of `messages`.
 	if input, ok := req["input"].([]any); ok {
-		for _, item := range input {
+		for _, item := range trailingUserItems(input) {
 			detectMessageCapabilities(item, &caps)
 		}
 	}
 
 	return caps
+}
+
+// trailingUserItems returns the current user turn: all non-assistant items
+// after the last assistant message. If no assistant message is present, the
+// entire slice is treated as the trailing turn.
+func trailingUserItems(items []any) []any {
+	for i := len(items) - 1; i >= 0; i-- {
+		m, ok := items[i].(map[string]any)
+		if !ok {
+			continue
+		}
+		role, _ := m["role"].(string)
+		if role == "assistant" {
+			return items[i+1:]
+		}
+	}
+	return items
 }
 
 func detectMessageCapabilities(item any, caps *models.ModelCapabilities) {
