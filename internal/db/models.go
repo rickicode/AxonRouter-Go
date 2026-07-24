@@ -7,15 +7,15 @@ import (
 
 // ProviderType represents a provider type (e.g., "openai", "claude", "gemini").
 type ProviderType struct {
-	ID           string         `json:"id"`
-	DisplayName  string         `json:"display_name"`
-	Format       string         `json:"format"`
-	BaseURL      string         `json:"base_url"`
-	IsCustom     bool           `json:"is_custom"`
+	ID            string         `json:"id"`
+	DisplayName   string         `json:"display_name"`
+	Format        string         `json:"format"`
+	BaseURL       string         `json:"base_url"`
+	IsCustom      bool           `json:"is_custom"`
 	CustomHeaders sql.NullString `json:"custom_headers,omitempty"`
-	Category     string         `json:"category"`
-	ServiceKinds []string       `json:"service_kinds"`
-	CreatedAt    int64          `json:"created_at"`
+	Category      string         `json:"category"`
+	ServiceKinds  []string       `json:"service_kinds"`
+	CreatedAt     int64          `json:"created_at"`
 }
 
 // Connection represents a single API key/token instance for a provider.
@@ -83,17 +83,18 @@ func (k APIKey) AllowedModelsList() []string {
 
 // Combo is a named ordered list of model steps with a routing strategy.
 type Combo struct {
-	ID          string         `json:"id"`
-	Name        string         `json:"name"`
-	Strategy    string         `json:"strategy"`
-	StickyLimit int            `json:"sticky_limit"`
-	TimeoutMs   int            `json:"timeout_ms"`
-	IsSmart     bool           `json:"is_smart"`
-	SmartGoal   sql.NullString `json:"smart_goal,omitempty"`
-	FusionConfig string        `json:"fusion_config,omitempty"`
-	IsActive    bool           `json:"is_active"`
-	CreatedAt   int64          `json:"created_at"`
-	UpdatedAt   int64          `json:"updated_at"`
+	ID           string         `json:"id"`
+	Name         string         `json:"name"`
+	Kind         string         `json:"kind"`
+	Strategy     string         `json:"strategy"`
+	StickyLimit  int            `json:"sticky_limit"`
+	TimeoutMs    int            `json:"timeout_ms"`
+	IsSmart      bool           `json:"is_smart"`
+	SmartGoal    sql.NullString `json:"smart_goal,omitempty"`
+	FusionConfig string         `json:"fusion_config,omitempty"`
+	IsActive     bool           `json:"is_active"`
+	CreatedAt    int64          `json:"created_at"`
+	UpdatedAt    int64          `json:"updated_at"`
 }
 
 // ComboStep is a single step inside a combo.
@@ -109,32 +110,32 @@ type ComboStep struct {
 
 // RequestLog is a single request log entry.
 type RequestLog struct {
-	ID              string         `json:"id"`
-	Timestamp       int64          `json:"timestamp"`
-	ConnectionID    sql.NullString `json:"connection_id,omitempty"`
-	ConnectionName  sql.NullString `json:"connection_name,omitempty"`
-	ProviderTypeID  sql.NullString `json:"provider_type_id,omitempty"`
-	ModelID         sql.NullString `json:"model_id,omitempty"`
-	ComboID         sql.NullString `json:"combo_id,omitempty"`
-	ProxyPoolID     sql.NullString `json:"proxy_pool_id,omitempty"`
-	ProxyPoolName   sql.NullString `json:"proxy_pool_name,omitempty"`
-  ApiKey sql.NullString `json:"api_key,omitempty"`
-  ApiType sql.NullString `json:"api_type,omitempty"`
-  ClientIP sql.NullString `json:"client_ip,omitempty"`
-  UserAgent sql.NullString `json:"user_agent,omitempty"`
-  Modality string `json:"modality"`
-	InputTokens     int64          `json:"input_tokens"`
-	OutputTokens    int64          `json:"output_tokens"`
-	ReasoningTokens int64          `json:"reasoning_tokens"`
-	CachedTokens    int64          `json:"cached_tokens"`
-	CacheCreationTokens int64      `json:"cache_creation_tokens"`
-	Stream          bool           `json:"stream"`
-	TokensEstimated bool           `json:"tokens_estimated"`
-	LatencyMs       sql.NullInt64  `json:"latency_ms,omitempty"`
-	StatusCode      sql.NullInt64  `json:"status_code,omitempty"`
-	ErrorMessage    sql.NullString `json:"error_message,omitempty"`
-	CostUsd         float64        `json:"cost_usd"`
-	CreatedAt       int64          `json:"created_at"`
+	ID                  string         `json:"id"`
+	Timestamp           int64          `json:"timestamp"`
+	ConnectionID        sql.NullString `json:"connection_id,omitempty"`
+	ConnectionName      sql.NullString `json:"connection_name,omitempty"`
+	ProviderTypeID      sql.NullString `json:"provider_type_id,omitempty"`
+	ModelID             sql.NullString `json:"model_id,omitempty"`
+	ComboID             sql.NullString `json:"combo_id,omitempty"`
+	ProxyPoolID         sql.NullString `json:"proxy_pool_id,omitempty"`
+	ProxyPoolName       sql.NullString `json:"proxy_pool_name,omitempty"`
+	ApiKey              sql.NullString `json:"api_key,omitempty"`
+	ApiType             sql.NullString `json:"api_type,omitempty"`
+	ClientIP            sql.NullString `json:"client_ip,omitempty"`
+	UserAgent           sql.NullString `json:"user_agent,omitempty"`
+	Modality            string         `json:"modality"`
+	InputTokens         int64          `json:"input_tokens"`
+	OutputTokens        int64          `json:"output_tokens"`
+	ReasoningTokens     int64          `json:"reasoning_tokens"`
+	CachedTokens        int64          `json:"cached_tokens"`
+	CacheCreationTokens int64          `json:"cache_creation_tokens"`
+	Stream              bool           `json:"stream"`
+	TokensEstimated     bool           `json:"tokens_estimated"`
+	LatencyMs           sql.NullInt64  `json:"latency_ms,omitempty"`
+	StatusCode          sql.NullInt64  `json:"status_code,omitempty"`
+	ErrorMessage        sql.NullString `json:"error_message,omitempty"`
+	CostUsd             float64        `json:"cost_usd"`
+	CreatedAt           int64          `json:"created_at"`
 }
 
 // MarshalJSON emits plain strings/numbers instead of database/sql null
@@ -155,60 +156,60 @@ func (r RequestLog) MarshalJSON() ([]byte, error) {
 		return 0
 	}
 	type plain struct {
-		ID              string `json:"id"`
-		Timestamp       int64  `json:"timestamp"`
-		ConnectionID    string `json:"connection_id,omitempty"`
-		ConnectionName  string `json:"connection_name,omitempty"`
-		ProviderTypeID  string `json:"provider_type_id,omitempty"`
-		ModelID         string `json:"model_id,omitempty"`
-		ComboID         string `json:"combo_id,omitempty"`
-		ProxyPoolID     string `json:"proxy_pool_id,omitempty"`
-		ProxyPoolName   string `json:"proxy_pool_name,omitempty"`
-  ApiKey string `json:"api_key,omitempty"`
-  ApiType string `json:"api_type,omitempty"`
-  ClientIP string `json:"client_ip,omitempty"`
-  UserAgent string `json:"user_agent,omitempty"`
-  Modality string `json:"modality"`
-		InputTokens     int64  `json:"input_tokens"`
-		OutputTokens    int64  `json:"output_tokens"`
-		ReasoningTokens int64  `json:"reasoning_tokens"`
-		CachedTokens    int64  `json:"cached_tokens"`
-		CacheCreationTokens int64 `json:"cache_creation_tokens"`
-		Stream          bool   `json:"stream"`
-		TokensEstimated bool   `json:"tokens_estimated"`
-		LatencyMs       int64  `json:"latency_ms,omitempty"`
-		StatusCode      int64  `json:"status_code,omitempty"`
-		ErrorMessage    string `json:"error_message,omitempty"`
-		CostUsd         float64 `json:"cost_usd"`
-		CreatedAt       int64  `json:"created_at"`
+		ID                  string  `json:"id"`
+		Timestamp           int64   `json:"timestamp"`
+		ConnectionID        string  `json:"connection_id,omitempty"`
+		ConnectionName      string  `json:"connection_name,omitempty"`
+		ProviderTypeID      string  `json:"provider_type_id,omitempty"`
+		ModelID             string  `json:"model_id,omitempty"`
+		ComboID             string  `json:"combo_id,omitempty"`
+		ProxyPoolID         string  `json:"proxy_pool_id,omitempty"`
+		ProxyPoolName       string  `json:"proxy_pool_name,omitempty"`
+		ApiKey              string  `json:"api_key,omitempty"`
+		ApiType             string  `json:"api_type,omitempty"`
+		ClientIP            string  `json:"client_ip,omitempty"`
+		UserAgent           string  `json:"user_agent,omitempty"`
+		Modality            string  `json:"modality"`
+		InputTokens         int64   `json:"input_tokens"`
+		OutputTokens        int64   `json:"output_tokens"`
+		ReasoningTokens     int64   `json:"reasoning_tokens"`
+		CachedTokens        int64   `json:"cached_tokens"`
+		CacheCreationTokens int64   `json:"cache_creation_tokens"`
+		Stream              bool    `json:"stream"`
+		TokensEstimated     bool    `json:"tokens_estimated"`
+		LatencyMs           int64   `json:"latency_ms,omitempty"`
+		StatusCode          int64   `json:"status_code,omitempty"`
+		ErrorMessage        string  `json:"error_message,omitempty"`
+		CostUsd             float64 `json:"cost_usd"`
+		CreatedAt           int64   `json:"created_at"`
 	}
 	return json.Marshal(plain{
-		ID:              r.ID,
-		Timestamp:       r.Timestamp,
-		ConnectionID:    getStr(r.ConnectionID),
-		ConnectionName:  getStr(r.ConnectionName),
-		ProviderTypeID:  getStr(r.ProviderTypeID),
-		ModelID:         getStr(r.ModelID),
-		ComboID:         getStr(r.ComboID),
-		ProxyPoolID:     getStr(r.ProxyPoolID),
-		ProxyPoolName:   getStr(r.ProxyPoolName),
-  ApiKey: getStr(r.ApiKey),
-  ApiType: getStr(r.ApiType),
-  ClientIP: getStr(r.ClientIP),
-  UserAgent: getStr(r.UserAgent),
-  Modality: r.Modality,
-		InputTokens:     r.InputTokens,
-		OutputTokens:    r.OutputTokens,
-		ReasoningTokens: r.ReasoningTokens,
-		CachedTokens:    r.CachedTokens,
+		ID:                  r.ID,
+		Timestamp:           r.Timestamp,
+		ConnectionID:        getStr(r.ConnectionID),
+		ConnectionName:      getStr(r.ConnectionName),
+		ProviderTypeID:      getStr(r.ProviderTypeID),
+		ModelID:             getStr(r.ModelID),
+		ComboID:             getStr(r.ComboID),
+		ProxyPoolID:         getStr(r.ProxyPoolID),
+		ProxyPoolName:       getStr(r.ProxyPoolName),
+		ApiKey:              getStr(r.ApiKey),
+		ApiType:             getStr(r.ApiType),
+		ClientIP:            getStr(r.ClientIP),
+		UserAgent:           getStr(r.UserAgent),
+		Modality:            r.Modality,
+		InputTokens:         r.InputTokens,
+		OutputTokens:        r.OutputTokens,
+		ReasoningTokens:     r.ReasoningTokens,
+		CachedTokens:        r.CachedTokens,
 		CacheCreationTokens: r.CacheCreationTokens,
-		Stream:          r.Stream,
-		TokensEstimated: r.TokensEstimated,
-		LatencyMs:       getInt(r.LatencyMs),
-		StatusCode:      getInt(r.StatusCode),
-		ErrorMessage:    getStr(r.ErrorMessage),
-		CostUsd:         r.CostUsd,
-		CreatedAt:       r.CreatedAt,
+		Stream:              r.Stream,
+		TokensEstimated:     r.TokensEstimated,
+		LatencyMs:           getInt(r.LatencyMs),
+		StatusCode:          getInt(r.StatusCode),
+		ErrorMessage:        getStr(r.ErrorMessage),
+		CostUsd:             r.CostUsd,
+		CreatedAt:           r.CreatedAt,
 	})
 }
 
@@ -243,10 +244,10 @@ type PaginatedResponse struct {
 // ProviderWithCounts is a provider type with its connection count breakdown.
 type ProviderWithCounts struct {
 	ProviderType
-	ConnectionCount  int            `json:"connection_count"`
-	StatusCounts     map[string]int `json:"status_counts"`
-	DisabledReasons  map[string]int `json:"disabled_reasons"`
-	Aliases          []string       `json:"aliases"`
+	ConnectionCount int            `json:"connection_count"`
+	StatusCounts    map[string]int `json:"status_counts"`
+	DisabledReasons map[string]int `json:"disabled_reasons"`
+	Aliases         []string       `json:"aliases"`
 }
 
 // ProxyPool represents a proxy endpoint (HTTP proxy or relay).

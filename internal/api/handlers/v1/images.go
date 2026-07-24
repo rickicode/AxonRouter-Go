@@ -36,6 +36,31 @@ func (h *Handler) Images(c *gin.Context) {
 		return
 	}
 
+	// Combo-first routing for image generation.
+	if comboResult, ok := h.combo.ResolveByKind(model, providerpkg.ServiceKindImage); ok {
+		h.handleMediaCombo(c, comboResult, body, model, start, "image", "application/json", true, func(provider, modelName string) (executor.Executor, error) {
+			var serviceKinds string
+			err := h.db.QueryRow(`SELECT COALESCE(service_kinds, '[]') FROM provider_types WHERE id = ?`, provider).Scan(&serviceKinds)
+			if err != nil {
+				return nil, fmt.Errorf("provider not configured for image generation")
+			}
+			var kinds []string
+			if err := json.Unmarshal([]byte(serviceKinds), &kinds); err != nil {
+				kinds = providerpkg.DefaultServiceKinds()
+			}
+			if !providerpkg.HasServiceKind(kinds, providerpkg.ServiceKindImage) {
+				return nil, fmt.Errorf("provider does not support image generation")
+			}
+			if exec, format, err := h.resolveExecutor(provider, modelName); err == nil {
+				if imgGen, ok := exec.(executor.ImageGenerator); ok && format == executor.FormatOpenAI {
+					return &imageGeneratorAdapter{ImageGenerator: imgGen}, nil
+				}
+			}
+			return executor.NewImagesExecutor(executor.NewBaseExecutor()), nil
+		})
+		return
+	}
+
 	provider, modelName := executor.SplitModel(model)
 	if provider == "" {
 		provider = "openai"

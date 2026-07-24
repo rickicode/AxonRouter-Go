@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
+	"github.com/rickicode/AxonRouter-Go/internal/provider"
 )
 
 // ComboResult holds the resolved combo steps to try.
@@ -32,6 +33,26 @@ var ValidStrategies = map[string]bool{
 	"random":      true,
 	"least-used":  true,
 	"fusion":      true,
+}
+
+// ValidKinds is the set of service kinds a combo may represent.
+var ValidKinds = map[string]bool{
+	provider.ServiceKindLLM:       true,
+	provider.ServiceKindWebSearch: true,
+	provider.ServiceKindWebFetch:  true,
+	provider.ServiceKindImage:     true,
+	provider.ServiceKindTTS:       true,
+}
+
+// IsValidKind reports whether a combo kind name is supported.
+func IsValidKind(k string) bool { return ValidKinds[k] }
+
+// normalizeKind returns k if it is a valid kind, otherwise the default LLM kind.
+func normalizeKind(k string) string {
+	if IsValidKind(k) {
+		return k
+	}
+	return provider.ServiceKindLLM
 }
 
 // ErrNoEligibleConnection is returned when no eligible connection exists for a requested model.
@@ -121,7 +142,7 @@ func (h *Handler) snapshotFromDB() (map[string]*db.Combo, map[string]*db.Combo, 
 	steps := make(map[string][]db.ComboStep)
 
 	rows, err := h.db.Query(`
-	SELECT id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal,
+	SELECT id, name, kind, strategy, sticky_limit, timeout_ms, is_smart, smart_goal,
 	fusion_config, is_active, created_at, updated_at
 	FROM combos WHERE is_active = 1
 	`)
@@ -133,12 +154,14 @@ func (h *Handler) snapshotFromDB() (map[string]*db.Combo, map[string]*db.Combo, 
 	for rows.Next() {
 		c := &db.Combo{}
 		var fusionConfig sql.NullString
-		if err := rows.Scan(&c.ID, &c.Name, &c.Strategy, &c.StickyLimit,
+		var kind sql.NullString
+		if err := rows.Scan(&c.ID, &c.Name, &kind, &c.Strategy, &c.StickyLimit,
 			&c.TimeoutMs, &c.IsSmart, &c.SmartGoal, &fusionConfig,
 			&c.IsActive, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			log.Printf("WARN: failed to scan combo row: %v", err)
 			continue
 		}
+		c.Kind = normalizeKind(kind.String)
 		c.FusionConfig = fusionConfig.String
 		combos[c.ID] = c
 		byName[c.Name] = c
@@ -228,9 +251,17 @@ func (h *Handler) loadStepsForCombo(comboID string) []db.ComboStep {
 	return steps
 }
 
-// Resolve resolves a model string to combo steps.
+// Resolve resolves a model string to an LLM combo (the default kind).
 // Returns (combo, steps, true) if it's a combo, or (nil, nil, false) if it's a single model.
 func (h *Handler) Resolve(modelStr string) (*ComboResult, bool) {
+	return h.ResolveByKind(modelStr, provider.ServiceKindLLM)
+}
+
+// ResolveByKind resolves a model string to a combo of the requested service kind.
+// Returns (combo, steps, true) if it's a matching combo, or (nil, nil, false)
+// otherwise. Smart combos are only considered for the LLM kind.
+func (h *Handler) ResolveByKind(modelStr, kind string) (*ComboResult, bool) {
+	kind = normalizeKind(kind)
 	// Check regular combos first so names like "balanced" / "economy" / "premium"
 	// resolve to the combo the user created, not to a smart goal keyword.
 	h.mu.RLock()
@@ -241,6 +272,10 @@ func (h *Handler) Resolve(modelStr string) (*ComboResult, bool) {
 		// concurrent mutations to the shared cache object after Resolve returns.
 		comboCopy := *c
 		h.mu.RUnlock()
+		comboKind := normalizeKind(comboCopy.Kind)
+		if comboKind != kind {
+			return nil, false
+		}
 		if len(steps) == 0 {
 			return nil, false
 		}
@@ -248,9 +283,11 @@ func (h *Handler) Resolve(modelStr string) (*ComboResult, bool) {
 	}
 	h.mu.RUnlock()
 
-	// No regular combo matched; check smart combo goals.
-	if goal, ok := isSmartCombo(modelStr); ok {
-		return h.resolveSmart(goal)
+	// No regular combo matched; check smart combo goals (LLM only).
+	if kind == provider.ServiceKindLLM {
+		if goal, ok := isSmartCombo(modelStr); ok {
+			return h.resolveSmart(goal)
+		}
 	}
 	return nil, false
 }
@@ -459,9 +496,9 @@ func insertComboDB(d *sql.DB, combo *db.Combo, steps []stepInsert) error {
 	defer tx.Rollback()
 
 	_, err = tx.Exec(`
-	INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal, fusion_config, is_active, created_at, updated_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-	`, combo.ID, combo.Name, combo.Strategy, combo.StickyLimit,
+	INSERT INTO combos (id, name, kind, strategy, sticky_limit, timeout_ms, is_smart, smart_goal, fusion_config, is_active, created_at, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+	`, combo.ID, combo.Name, combo.Kind, combo.Strategy, combo.StickyLimit,
 		combo.TimeoutMs, boolToInt(combo.IsSmart), combo.SmartGoal, combo.FusionConfig,
 		combo.CreatedAt, combo.UpdatedAt)
 	if err != nil {
@@ -484,8 +521,13 @@ func insertComboDB(d *sql.DB, combo *db.Combo, steps []stepInsert) error {
 	return nil
 }
 
-// CreateCombo creates a new combo.
+// CreateCombo creates a new LLM combo (backward-compatible shorthand).
 func (h *Handler) CreateCombo(name, strategy string, timeoutMs, stickyLimit int, isSmart bool, smartGoal string, fusionConfig string, steps []CreateStepInput) (*db.Combo, error) {
+	return h.CreateComboWithKind(name, strategy, provider.ServiceKindLLM, timeoutMs, stickyLimit, isSmart, smartGoal, fusionConfig, steps)
+}
+
+// CreateComboWithKind creates a new combo with an explicit service kind.
+func (h *Handler) CreateComboWithKind(name, strategy, kind string, timeoutMs, stickyLimit int, isSmart bool, smartGoal string, fusionConfig string, steps []CreateStepInput) (*db.Combo, error) {
 	comboID := uuid.New().String()
 	now := db.UnixNow()
 
@@ -519,15 +561,16 @@ func (h *Handler) CreateCombo(name, strategy string, timeoutMs, stickyLimit int,
 	combo := &db.Combo{
 		ID:           comboID,
 		Name:         name,
+		Kind:         normalizeKind(kind),
 		Strategy:     strategy,
-		StickyLimit:    stickyLimit,
-		TimeoutMs:      timeoutMs,
-		IsSmart:        isSmart,
-		SmartGoal:      sg,
-		FusionConfig:   fusionConfig,
-		IsActive:       true,
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		StickyLimit:  stickyLimit,
+		TimeoutMs:    timeoutMs,
+		IsSmart:      isSmart,
+		SmartGoal:    sg,
+		FusionConfig: fusionConfig,
+		IsActive:     true,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 
 	if err := h.doWrite("combo.create", func(d *sql.DB) error {
@@ -607,6 +650,7 @@ func (h *Handler) DeleteCombo(comboID string) error {
 // UpdateComboInput holds mutable combo fields for UpdateCombo.
 type UpdateComboInput struct {
 	Name         string
+	Kind         string
 	Strategy     string
 	TimeoutMs    *int
 	StickyLimit  *int
@@ -621,6 +665,7 @@ type UpdateComboInput struct {
 // placeholders so user input is never interpolated into SQL.
 var allowedComboUpdateColumns = map[string]string{
 	"name":          "name = ?",
+	"kind":          "kind = ?",
 	"strategy":      "strategy = ?",
 	"timeout_ms":    "timeout_ms = ?",
 	"sticky_limit":  "sticky_limit = ?",
@@ -657,6 +702,12 @@ func (h *Handler) UpdateCombo(comboID string, input UpdateComboInput) error {
 
 	if input.Name != "" {
 		add("name", input.Name)
+	}
+	if input.Kind != "" {
+		if !IsValidKind(input.Kind) {
+			return fmt.Errorf("invalid kind: %s", input.Kind)
+		}
+		add("kind", input.Kind)
 	}
 	if input.Strategy != "" {
 		add("strategy", input.Strategy)
@@ -720,6 +771,9 @@ func (h *Handler) UpdateCombo(comboID string, input UpdateComboInput) error {
 	oldName := c.Name
 	if input.Name != "" {
 		c.Name = input.Name
+	}
+	if input.Kind != "" {
+		c.Kind = input.Kind
 	}
 	if input.Strategy != "" {
 		c.Strategy = input.Strategy

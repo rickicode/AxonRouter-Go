@@ -25,6 +25,7 @@ let {
 } = $props();
 
 let name = $state('');
+let kind = $state('llm');
 let strategy = $state('priority');
 let timeout = $state(30000);
 let stickyLimit = $state(1);
@@ -44,6 +45,11 @@ let loading = $state(false);
 let stepsLoading = $state(false);
 
 	const strategyOptions = ['priority', 'round-robin', 'weighted', 'random', 'least-used', 'fusion'];
+const kindOptions = [
+	{ value: 'llm', label: 'LLM', desc: 'Chat completion combos' },
+	{ value: 'image', label: 'Image', desc: 'Image generation combos' },
+	{ value: 'tts', label: 'TTS', desc: 'Text-to-speech combos' },
+];
 const smartGoalOptions = [
 	{ value: 'auto', label: 'Auto', desc: 'Dynamic selection based on telemetry' },
 	{ value: 'economy', label: 'Economy', desc: 'Lowest cost routing' },
@@ -72,6 +78,7 @@ function strategyDescription(opt: string) {
 function resetState() {
 	if (combo) {
 		name = combo.name;
+		kind = combo.kind || 'llm';
 		strategy = combo.strategy;
 		timeout = combo.timeout_ms;
 		stickyLimit = combo.sticky_limit;
@@ -81,6 +88,7 @@ function resetState() {
 		loadSteps(combo.id);
 	} else {
 		name = '';
+		kind = 'llm';
 		strategy = 'priority';
 		timeout = 30000;
 		stickyLimit = 1;
@@ -212,13 +220,14 @@ async function handleSave() {
 			if (combo) {
 				await combosApi.update(combo.id, {
 					name: name.trim(),
+					kind,
 					strategy,
 					timeout_ms: timeout,
 					sticky_limit: stickyLimit,
-		is_smart: fusionStrategy ? false : isSmart,
-		smart_goal: fusionStrategy || !isSmart ? null : smartGoal,
-		fusion_config: strategy === 'fusion' ? buildFusionConfig() : undefined,
-		});
+			is_smart: fusionStrategy ? false : isSmart,
+			smart_goal: fusionStrategy || !isSmart ? null : smartGoal,
+			fusion_config: strategy === 'fusion' ? buildFusionConfig() : undefined,
+			});
 		const plan = planStepSync(existingSteps, steps);
 			for (const stepId of plan.toRemove) {
 				await combosApi.removeStep(stepId);
@@ -231,6 +240,7 @@ async function handleSave() {
 			} else {
 				const created = await combosApi.create({
 					name: name.trim(),
+					kind,
 					strategy,
 					timeout_ms: timeout,
 					sticky_limit: stickyLimit,
@@ -264,6 +274,21 @@ async function handleSave() {
 			<div class="space-y-2">
 				<Label class="text-body-sm-strong">Name</Label>
 				<Input bind:value={name} placeholder="e.g. random, premium-rr" class="h-10 text-body-sm" />
+			</div>
+
+			<div class="space-y-2">
+				<Label class="text-body-sm-strong">Kind</Label>
+				<div class="grid grid-cols-3 gap-2">
+					{#each kindOptions as opt}
+						<button
+							class="cursor-pointer flex flex-col items-start gap-0.5 p-2.5 rounded-md border text-left transition-colors {kind === opt.value ? 'border-foreground bg-accent' : 'border-border hover:border-foreground/50'}"
+							onclick={() => (kind = opt.value)}
+						>
+							<span class="text-body-sm-strong">{opt.label}</span>
+							<span class="text-caption text-muted-foreground">{opt.desc}</span>
+						</button>
+					{/each}
+				</div>
 			</div>
 
 			<div class="space-y-2">

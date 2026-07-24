@@ -24,6 +24,16 @@ let metrics = $state<ComboMetric[]>([]);
 let metricsTotals = $state<ComboMetric | null>(null);
 let metricsLoading = $state(false);
 let metricsError = $state<string | null>(null);
+let kindFilter = $state('all');
+
+const kindOptions = [
+	{ value: 'all', label: 'All' },
+	{ value: 'llm', label: 'LLM' },
+	{ value: 'image', label: 'Image' },
+	{ value: 'tts', label: 'TTS' },
+];
+
+const filteredCombos = $derived($combos.filter((c) => kindFilter === 'all' || (c.kind || 'llm') === kindFilter));
 
 onMount(() => {
 	document.title = 'Combos — AxonRouter';
@@ -167,7 +177,21 @@ $effect(() => {
       </Button>
 	</div>
 
-	<!-- Metrics cards -->
+    <!-- Kind filter -->
+    <div class="flex items-center gap-2">
+      {#each kindOptions as opt}
+        <Button
+          variant={kindFilter === opt.value ? 'default' : 'outline'}
+          size="sm"
+          class="text-body-sm rounded-sm"
+          onclick={() => (kindFilter = opt.value)}
+        >
+          {opt.label}
+        </Button>
+      {/each}
+    </div>
+
+    <!-- Metrics cards -->
 	{#if metricsLoading}
 		<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
 			{#each [1, 2, 3, 4] as _}
@@ -199,8 +223,8 @@ $effect(() => {
 		</div>
 	{/if}
 
-	<!-- Table -->
-    {#if $combos.length > 0}
+    <!-- Table -->
+    {#if filteredCombos.length > 0}
       <Card class="shadow-card overflow-hidden p-0 flex flex-col">
         <div class="overflow-auto max-h-[60vh]">
           <table class="w-full text-body-sm">
@@ -216,15 +240,18 @@ $effect(() => {
               </tr>
             </thead>
             <tbody>
-              {#each $combos as combo}
+              {#each filteredCombos as combo}
                 <tr class="border-b border-border hover:bg-muted/50 transition-colors">
                   <td class="px-4 py-2.5">
-                    <button
-                      onclick={() => openEdit(combo)}
-                      class="text-body-sm-strong hover:underline truncate block text-left cursor-pointer"
-                    >
-                      {combo.name}
-                    </button>
+                    <div class="flex items-center gap-2">
+                      <button
+                        onclick={() => openEdit(combo)}
+                        class="text-body-sm-strong hover:underline truncate block text-left cursor-pointer"
+                      >
+                        {combo.name}
+                      </button>
+                      <span class="text-caption-mono uppercase px-1.5 py-0.5 rounded-sm border border-border bg-muted/30 text-muted-foreground">{combo.kind || 'llm'}</span>
+                    </div>
                   </td>
                   <td class="px-4 py-2.5">
                     <span class="inline-flex items-center gap-1 text-caption-mono text-muted-foreground">
