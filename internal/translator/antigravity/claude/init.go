@@ -6,13 +6,16 @@ import (
 )
 
 func init() {
+	// Antigravity → Claude response transform. Used when a Claude-format client
+	// calls an Antigravity provider and the upstream returns Gemini/Antigravity
+	// shaped payloads.
 	registry.Register(
 		types.FormatAntigravity,
 		types.FormatClaude,
-		convertAntigravityRequestToClaude,
+		nil,
 		types.ResponseTransform{
-			Stream:    convertClaudeResponseToAntigravityStream,
-			NonStream: convertClaudeResponseToAntigravityNonStream,
+			Stream:    convertAntigravityResponseToClaudeStream,
+			NonStream: convertAntigravityResponseToClaudeNonStream,
 		},
 	)
 }

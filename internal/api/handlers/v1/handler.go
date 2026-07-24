@@ -1907,7 +1907,7 @@ func (h *Handler) streamResponse(
 			}
 
 			lastChunkTime = time.Now()
-			translatedChunks := registry.Response(ctx, string(clientFormat), string(providerFormat), model, originalReq, translatedReq, chunk.Payload, &streamState)
+			translatedChunks := registry.Response(ctx, string(providerFormat), string(clientFormat), model, originalReq, translatedReq, chunk.Payload, &streamState)
 			for _, tc := range translatedChunks {
 				c.Writer.Write(tc)
 				flusher.Flush()

@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- **Native Claude ↔ Antigravity translation** — new `internal/translator/claude/antigravity` request converter and `internal/translator/antigravity/claude` response converter let Claude-format clients (Kiro, Claude Code) use Antigravity providers directly. Claude `messages`, `system`, tools, `tool_choice`, thinking blocks, and images are mapped to Antigravity's Gemini-compatible envelope; upstream Antigravity responses are translated back into Claude SSE events (`message_start`, `content_block_start/delta/stop`, `message_delta`, `message_stop`). Invalid or unsigned Claude thinking signatures are stripped, trailing empty assistant turns are removed, and tool names are cloaked/uncloaked consistently with the Antigravity conventions.
+- **Claude thinking signature validation helpers** — new `internal/signature` package provides `IsValidClaudeThinkingSignature`, `NormalizeClaudeThinkingSignature`, and `StripInvalidClaudeThinkingBlocks` (E/R prefix + base64-layer validation) for request sanitization and response normalization.
 ### Fixed
 - **Fusion panel/judge text extraction now supports Claude, Gemini, and OpenAI Responses** — `extractAssistantContent` in `internal/api/handlers/v1/chat.go` previously only read `choices[0].message.content`, so panels or judge models that reply in Anthropic Claude (`content[].text`), Google Gemini (`candidates[0].content.parts[].text`), or OpenAI Responses (`output[].message.content[].output_text`) were treated as empty and failed fusion. The extractor now parses all four shapes and falls back to `output_text`/`text`, with unit tests covering each format.
 
