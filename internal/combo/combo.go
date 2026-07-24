@@ -88,23 +88,33 @@ func NewHandler(
 	if len(writeQueue) > 0 {
 		h.writeQueue = writeQueue[0]
 	}
-	h.loadFromDB()
+	if err := h.loadFromDB(); err != nil {
+		log.Printf("WARN: combo handler failed to load combos from DB: %v", err)
+	}
 	return h
 }
 
-// loadFromDB loads all combos into memory.
-func (h *Handler) loadFromDB() {
-	combos, byName, smartCombos, steps := h.snapshotFromDB()
+// loadFromDB loads all combos into memory. If the database read fails, the
+// previously populated maps are left untouched so callers never operate on
+// partially-initialised data.
+func (h *Handler) loadFromDB() error {
+	combos, byName, smartCombos, steps, err := h.snapshotFromDB()
+	if err != nil {
+		return err
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.combos = combos
 	h.byName = byName
 	h.smartCombos = smartCombos
 	h.steps = steps
+	return nil
 }
 
 // snapshotFromDB reads combos and steps from the database WITHOUT holding h.mu.
-func (h *Handler) snapshotFromDB() (map[string]*db.Combo, map[string]*db.Combo, map[string]*db.Combo, map[string][]db.ComboStep) {
+// On failure it returns an error; the accompanying maps may be nil or partial
+// and should only be used when err is nil.
+func (h *Handler) snapshotFromDB() (map[string]*db.Combo, map[string]*db.Combo, map[string]*db.Combo, map[string][]db.ComboStep, error) {
 	combos := make(map[string]*db.Combo)
 	byName := make(map[string]*db.Combo)
 	smartCombos := make(map[string]*db.Combo)
@@ -116,8 +126,7 @@ func (h *Handler) snapshotFromDB() (map[string]*db.Combo, map[string]*db.Combo, 
 	FROM combos WHERE is_active = 1
 	`)
 	if err != nil {
-		log.Printf("WARN: failed to load combos: %v", err)
-		return combos, byName, smartCombos, steps
+		return nil, nil, nil, nil, fmt.Errorf("query combos: %w", err)
 	}
 	defer rows.Close()
 
@@ -138,12 +147,12 @@ func (h *Handler) snapshotFromDB() (map[string]*db.Combo, map[string]*db.Combo, 
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("WARN: combo rows iteration error: %v", err)
+		return nil, nil, nil, nil, fmt.Errorf("iterate combos: %w", err)
 	}
 
 	steps = h.loadAllSteps(combos)
 
-	return combos, byName, smartCombos, steps
+	return combos, byName, smartCombos, steps, nil
 }
 
 // loadAllSteps fetches all combo steps in a single query and buckets them by comboID.
@@ -226,11 +235,14 @@ func (h *Handler) Resolve(modelStr string) (*ComboResult, bool) {
 	c, ok := h.byName[modelStr]
 	if ok {
 		steps := h.steps[c.ID]
+		// Copy the combo value before releasing the lock so callers cannot observe
+		// concurrent mutations to the shared cache object after Resolve returns.
+		comboCopy := *c
 		h.mu.RUnlock()
 		if len(steps) == 0 {
 			return nil, false
 		}
-		return &ComboResult{Combo: c, Steps: steps}, true
+		return &ComboResult{Combo: &comboCopy, Steps: steps}, true
 	}
 	h.mu.RUnlock()
 
@@ -259,12 +271,15 @@ func (h *Handler) resolveSmart(goal SmartGoal) (*ComboResult, bool) {
 
 	h.mu.RLock()
 	steps := h.steps[combo.ID]
+	// Copy the combo value before releasing the lock so callers cannot observe
+	// concurrent mutations to the shared cache object after Resolve returns.
+	comboCopy := *combo
 	h.mu.RUnlock()
 
 	if len(steps) == 0 {
 		return nil, false
 	}
-	return &ComboResult{Combo: combo, Steps: steps}, true
+	return &ComboResult{Combo: &comboCopy, Steps: steps}, true
 }
 
 // loadStrategySettings reads combo_strategy / combo_strategies from DB once
@@ -599,17 +614,50 @@ type UpdateComboInput struct {
 	IsActive     *bool
 }
 
+// allowedComboUpdateColumns is the whitelist of columns that UpdateCombo may
+// mutate. The clause templates contain only hardcoded identifiers and "?"
+// placeholders so user input is never interpolated into SQL.
+var allowedComboUpdateColumns = map[string]string{
+	"name":          "name = ?",
+	"strategy":      "strategy = ?",
+	"timeout_ms":    "timeout_ms = ?",
+	"sticky_limit":  "sticky_limit = ?",
+	"is_smart":      "is_smart = ?",
+	"smart_goal":    "smart_goal = ?",
+	"fusion_config": "fusion_config = ?",
+	"is_active":     "is_active = ?",
+}
+
+// comboUpdateClause returns a safe SET clause for col. It panics for unknown
+// columns; callers must only pass names from allowedComboUpdateColumns.
+func comboUpdateClause(col string) string {
+	if clause, ok := allowedComboUpdateColumns[col]; ok {
+		return clause
+	}
+	panic("invalid combo update column: " + col)
+}
+
 // UpdateCombo updates a combo's mutable fields and refreshes the in-memory cache.
 func (h *Handler) UpdateCombo(comboID string, input UpdateComboInput) error {
-	sets := []string{}
-	args := []interface{}{}
+	if comboID == "" {
+		return fmt.Errorf("combo id required")
+	}
+
+	// Build the SET list from the allowlisted column templates. Values are kept
+	// separate in args and bound via placeholders, so user input never reaches
+	// the SQL string.
+	sets := make([]string, 0, 9)
+	args := make([]interface{}, 0, 10)
+	add := func(col string, value interface{}) {
+		sets = append(sets, comboUpdateClause(col))
+		args = append(args, value)
+	}
+
 	if input.Name != "" {
-		sets = append(sets, "name = ?")
-		args = append(args, input.Name)
+		add("name", input.Name)
 	}
 	if input.Strategy != "" {
-		sets = append(sets, "strategy = ?")
-		args = append(args, input.Strategy)
+		add("strategy", input.Strategy)
 	}
 	if input.TimeoutMs != nil {
 		sets = append(sets, "timeout_ms = ?")
@@ -620,8 +668,7 @@ func (h *Handler) UpdateCombo(comboID string, input UpdateComboInput) error {
 		args = append(args, *input.StickyLimit)
 	}
 	if input.IsSmart != nil {
-		sets = append(sets, "is_smart = ?")
-		args = append(args, boolToInt(*input.IsSmart))
+		add("is_smart", boolToInt(*input.IsSmart))
 	}
 	if input.SmartGoal != nil {
 		normalized := normalizeSmartGoal(*input.SmartGoal)
@@ -633,12 +680,10 @@ func (h *Handler) UpdateCombo(comboID string, input UpdateComboInput) error {
 		args = append(args, sg)
 	}
 	if input.FusionConfig != "" {
-		sets = append(sets, "fusion_config = ?")
-		args = append(args, input.FusionConfig)
+		add("fusion_config", input.FusionConfig)
 	}
 	if input.IsActive != nil {
-		sets = append(sets, "is_active = ?")
-		args = append(args, boolToInt(*input.IsActive))
+		add("is_active", boolToInt(*input.IsActive))
 	}
 	if len(sets) == 0 {
 		return fmt.Errorf("nothing to update")
@@ -649,7 +694,8 @@ func (h *Handler) UpdateCombo(comboID string, input UpdateComboInput) error {
 
 	var rowsAffected int64
 	if err := h.doWrite("combo.update", func(d *sql.DB) error {
-		result, err := d.Exec("UPDATE combos SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...)
+		query := "UPDATE combos SET " + strings.Join(sets, ", ") + " WHERE id = ?"
+		result, err := d.Exec(query, args...)
 		if err != nil {
 			return err
 		}
@@ -773,14 +819,19 @@ func (h *Handler) RemoveComboStep(stepID string) error {
 }
 
 // RefreshFromDB reloads combos from the database without blocking Resolve().
-func (h *Handler) RefreshFromDB() {
-	combos, byName, smartCombos, steps := h.snapshotFromDB()
+// On failure the in-memory cache is left unchanged.
+func (h *Handler) RefreshFromDB() error {
+	combos, byName, smartCombos, steps, err := h.snapshotFromDB()
+	if err != nil {
+		return err
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.combos = combos
 	h.byName = byName
 	h.smartCombos = smartCombos
 	h.steps = steps
+	return nil
 }
 
 // ListCombos returns all active combos with their steps.

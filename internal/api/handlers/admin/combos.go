@@ -396,6 +396,9 @@ func (h *ComboHandler) SeedDefaults(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	h.handler.RefreshFromDB()
+	if err := h.handler.RefreshFromDB(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
