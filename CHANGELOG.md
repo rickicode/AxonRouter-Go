@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- **Fusion panel/judge text extraction now supports Claude, Gemini, and OpenAI Responses** — `extractAssistantContent` in `internal/api/handlers/v1/chat.go` previously only read `choices[0].message.content`, so panels or judge models that reply in Anthropic Claude (`content[].text`), Google Gemini (`candidates[0].content.parts[].text`), or OpenAI Responses (`output[].message.content[].output_text`) were treated as empty and failed fusion. The extractor now parses all four shapes and falls back to `output_text`/`text`, with unit tests covering each format.
+
 
 ### Added
 - **Fusion panel tool-history flattening** — `stripFusionTools` now flattens tool/function turns and Anthropic-style `tool_use`/`tool_result` content blocks into plain assistant prose for fusion panel requests. Panel models retain conversational context without being able to emit `tool_calls`, matching the 9router reference implementation.
@@ -15,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Fusion judge body preserves full conversation history** — `buildFusionJudgeBody` no longer replaces the entire `messages` array with a synthetic system prompt plus the raw user question. It now unmarshals the original request, keeps system instructions, developer messages, tool results, and conversation history, and appends the judge directive as a new user turn. This restores context for the judge model and fixes degraded synthesis quality. Added unit tests covering multi-turn conversation preservation and anonymized source labels.
+- **Capability detection now scans only the trailing user turn** — `internal/combo/capabilities.go::DetectRequiredCapabilities` no longer scans the full message history; it only inspects messages after the last assistant turn. Text-only follow-ups in conversations that previously contained an image no longer force `Vision = true`, preventing unnecessary routing to vision-capable models. Added unit tests for trailing-image detection and text-only follow-ups after an image exchange.
 - **Combo transient-error cooldown before failover** — `internal/api/handlers/v1/chat.go::handleComboRequest` now waits 2 seconds (capped at 5 seconds) before trying the next combo connection when an upstream returns HTTP 502/503/504. Non-transient errors still fail through immediately, preventing retry storms against briefly-overloaded providers. Added unit tests covering 502/503/504 cooldown and 400/401/429/500 no-cooldown paths.
 - **Combo step load failures now propagate errors** — `internal/combo/loadAllSteps()` now returns `(map[string][]db.ComboStep, error)` instead of silently logging and returning an empty map. `snapshotFromDB()` propagates the error, so `RefreshFromDB()` no longer replaces the in-memory cache with combos that are missing their steps. Added a regression test verifying the cache is left unchanged when the `combo_steps` query fails.
 - **Security Warning modal respects 24-hour dismissal** — `ChangePasswordModal` is no longer shown for 24 hours after the user dismisses it. Dismissal is stored as a timestamp in `localStorage`/`sessionStorage` and automatically expires after one day. The old boolean dismissal flag is migrated to the new timestamp format on first load.

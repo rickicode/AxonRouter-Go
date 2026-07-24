@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
+	"github.com/tidwall/gjson"
 )
 
 func init() {
@@ -273,5 +274,129 @@ func TestCodexExecutor_DropNonstandardSSE(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected response.completed chunk, got %v", got)
+	}
+}
+
+func TestCodexRequestBody_NormalizesResponsesRequest(t *testing.T) {
+	req := []byte(`{
+		"model":"cx/gpt-5.4",
+		"input":[{"type":"message","role":"system","content":[{"type":"input_text","text":"sys"}]},{"type":"message","role":"user","content":"hi"}],
+		"instructions":"custom instruction",
+		"tools":[{"type":"web_search_preview"},{"type":"web_search_preview_2025_03_11"},{"type":"function","function":{"name":"fn"}}],
+		"tool_choice":{"type":"web_search_preview"},
+		"temperature":0.5,
+		"max_tokens":100,
+		"top_p":0.9,
+		"metadata":{"key":"value"},
+		"previous_response_id":"prev_1",
+		"service_tier":"fast",
+		"prompt_cache_key":"key123",
+		"client_metadata":{"client":"test"}
+	}`)
+
+	out := codexRequestBody(req)
+
+	if got := gjson.GetBytes(out, "input.0.role").String(); got != "developer" {
+		t.Fatalf("expected system role converted to developer, got %s", got)
+	}
+	if got := gjson.GetBytes(out, "input.1.content").Type; got != gjson.JSON {
+		t.Fatalf("expected user string content converted to array, got %v", got)
+	}
+	if got := gjson.GetBytes(out, "instructions").String(); got != "custom instruction" {
+		t.Fatalf("expected instructions preserved, got %s", got)
+	}
+	for i, want := range []string{"web_search", "web_search", "function"} {
+		if got := gjson.GetBytes(out, fmt.Sprintf("tools.%d.type", i)).String(); got != want {
+			t.Fatalf("expected tools.%d.type=%s, got %s", i, want, got)
+		}
+	}
+	if got := gjson.GetBytes(out, "tool_choice.type").String(); got != "web_search" {
+		t.Fatalf("expected tool_choice.type web_search, got %s", got)
+	}
+
+	stripped := []string{"temperature", "max_tokens", "top_p", "metadata", "previous_response_id", "service_tier"}
+	for _, field := range stripped {
+		if gjson.GetBytes(out, field).Exists() {
+			t.Fatalf("expected %s to be stripped", field)
+		}
+	}
+
+	if got := gjson.GetBytes(out, "prompt_cache_key").String(); got != "key123" {
+		t.Fatalf("expected prompt_cache_key preserved, got %s", got)
+	}
+	if got := gjson.GetBytes(out, "client_metadata.client").String(); got != "test" {
+		t.Fatalf("expected client_metadata preserved, got %s", got)
+	}
+	if !gjson.GetBytes(out, "stream").Bool() {
+		t.Fatal("expected stream=true")
+	}
+	if gjson.GetBytes(out, "store").Bool() {
+		t.Fatal("expected store=false")
+	}
+	if !gjson.GetBytes(out, "parallel_tool_calls").Bool() {
+		t.Fatal("expected parallel_tool_calls=true")
+	}
+	arr := gjson.GetBytes(out, "include").Array()
+	if len(arr) != 1 || arr[0].String() != "reasoning.encrypted_content" {
+		t.Fatalf("expected include=[reasoning.encrypted_content], got %v", arr)
+	}
+}
+
+func TestCodexRequestBody_CoercesStringInput(t *testing.T) {
+	req := []byte(`{"model":"cx/gpt-5.4","input":"hello"}`)
+	out := codexRequestBody(req)
+	if gjson.GetBytes(out, "input").Type != gjson.JSON {
+		t.Fatalf("expected input to be coerced to array")
+	}
+	if got := gjson.GetBytes(out, "input.0.role").String(); got != "user" {
+		t.Fatalf("expected role user, got %s", got)
+	}
+	if got := gjson.GetBytes(out, "input.0.content.0.type").String(); got != "input_text" {
+		t.Fatalf("expected content part input_text, got %s", got)
+	}
+	if got := gjson.GetBytes(out, "input.0.content.0.text").String(); got != "hello" {
+		t.Fatalf("expected text hello, got %s", got)
+	}
+}
+
+func TestCodexRequestBody_DefaultInstructions(t *testing.T) {
+	req := []byte(`{"model":"cx/gpt-5.4","input":"hi"}`)
+	out := codexRequestBody(req)
+	inst := gjson.GetBytes(out, "instructions").String()
+	if !strings.Contains(inst, "You are Codex") {
+		t.Fatalf("expected default Codex instructions, got %q", inst)
+	}
+}
+
+func TestCodexRequestBody_ServiceTierPriorityPreserved(t *testing.T) {
+	req := []byte(`{"model":"cx/gpt-5.4","input":"hi","service_tier":"priority"}`)
+	out := codexRequestBody(req)
+	if got := gjson.GetBytes(out, "service_tier").String(); got != "priority" {
+		t.Fatalf("expected service_tier priority preserved, got %s", got)
+	}
+}
+
+func TestCodexRequestBody_ReasoningPreserved(t *testing.T) {
+	req := []byte(`{"model":"cx/gpt-5.4","input":"hi","reasoning":{"effort":"high","summary":"detailed"}}`)
+	out := codexRequestBody(req)
+	if got := gjson.GetBytes(out, "reasoning.effort").String(); got != "high" {
+		t.Fatalf("expected reasoning.effort preserved, got %s", got)
+	}
+	if got := gjson.GetBytes(out, "reasoning.summary").String(); got != "detailed" {
+		t.Fatalf("expected reasoning.summary preserved, got %s", got)
+	}
+}
+
+func TestCodexRequestBody_LeavesChatCompletionsAlone(t *testing.T) {
+	req := []byte(`{"messages":[{"role":"user","content":"hi"}]}`)
+	out := codexRequestBody(req)
+	if !gjson.GetBytes(out, "messages").Exists() {
+		t.Fatal("expected chat-completions messages to be preserved")
+	}
+	if gjson.GetBytes(out, "input").Exists() {
+		t.Fatal("expected no input field to be introduced for chat-completions body")
+	}
+	if !gjson.GetBytes(out, "stream").Bool() {
+		t.Fatal("expected stream=true")
 	}
 }

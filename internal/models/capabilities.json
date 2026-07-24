@@ -40,5 +40,12 @@
     "audio_input": true,
     "video_input": true,
     "tools": true
+  },
+  "cx/gpt-5.4": {
+    "vision": true,
+    "pdf": true,
+    "audio_input": true,
+    "video_input": false,
+    "tools": true
   }
 }
