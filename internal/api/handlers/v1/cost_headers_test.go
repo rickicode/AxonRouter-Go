@@ -25,7 +25,7 @@ func TestWriteCostHeaders_EstimatedFromPricing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cost header is not numeric: %v", err)
 	}
-	expected := usage.EstimateCost("openai/gpt-4o", 10, 5, 0, 0, 0)
+	expected := usage.EstimateCost("openai/gpt-4o", "chat", 0, 10, 5, 0, 0, 0)
 	if cost != expected {
 		t.Fatalf("cost header = %v, want %v", cost, expected)
 	}

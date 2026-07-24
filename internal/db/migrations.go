@@ -465,6 +465,7 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 	cached_write_per_1k REAL NOT NULL DEFAULT 0,
 	image_per_unit REAL NOT NULL DEFAULT 0,
 	audio_per_min REAL NOT NULL DEFAULT 0,
+	video_per_unit REAL NOT NULL DEFAULT 0,
 	currency TEXT NOT NULL DEFAULT 'USD',
 	tier_flex_multiplier REAL NOT NULL DEFAULT 0.5,
 	tier_priority_multiplier REAL NOT NULL DEFAULT 1.5,
@@ -473,6 +474,11 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 );
 `); err != nil {
 		return err
+	}
+	if _, err := db.Exec(`ALTER TABLE model_pricing ADD COLUMN video_per_unit REAL NOT NULL DEFAULT 0`); err != nil {
+		if !isDuplicateColumnError(err) {
+			return err
+		}
 	}
 
 	// Incremental migrations for model_pricing columns added after the table was

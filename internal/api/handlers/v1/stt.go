@@ -138,6 +138,7 @@ func (h *Handler) STT(c *gin.Context) {
 		ProxyPoolID:    executor.ProxyPoolIDFromContext(proxyCtx),
 		ApiType:        apiTypeFromPath(c.Request.URL.Path),
 		Modality:       "audio",
+		Quantity:       quantityForModality("stt", nil),
 		Stream:         false,
 		LatencyMs:      time.Since(start).Milliseconds(),
 		StatusCode:     resp.StatusCode})
