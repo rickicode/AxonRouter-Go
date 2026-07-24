@@ -268,11 +268,11 @@ attemptLoop:
 	msg, statusCode, errType := buildFailoverErrorResponse(lastErrCategory, lastErr, modelName)
 	logging.Logger.Error(msg, "provider", provider, "model", modelName, "category", lastErrCategory)
 	if stream {
-		// Streaming clients expect an SSE error event and [DONE].
+		// Claude streaming clients expect an Anthropic-compatible SSE error event.
 		errBytes, _ := json.Marshal(claudeError(errType, msg))
-		c.Writer.Write([]byte("data: "))
+		c.Writer.Write([]byte("event: error\ndata: "))
 		c.Writer.Write(errBytes)
-		c.Writer.Write([]byte("\n\ndata: [DONE]\n\n"))
+		c.Writer.Write([]byte("\n\n"))
 		if flusher, ok := c.Writer.(http.Flusher); ok {
 			flusher.Flush()
 		}
@@ -286,7 +286,11 @@ func (h *Handler) handleClaudeStreamResponse(ctx context.Context, c *gin.Context
 	_, providerFormat, _ := h.registry.Get(provider)
 	errFormatter := func(err error) []byte {
 		logging.Logger.Error("upstream streaming error", "provider", provider, "model", model, "error", err)
-		b, _ := json.Marshal(claudeError("api_error", "upstream streaming error"))
+		msg := err.Error()
+		if msg == "" {
+			msg = "upstream streaming error"
+		}
+		b, _ := json.Marshal(claudeError("api_error", msg))
 		return b
 	}
 	return h.streamResponse(ctx, c, result, conn, provider, model, executor.FormatClaude, providerFormat, originalReq, translatedReq, errFormatter, start, comboID, silent)

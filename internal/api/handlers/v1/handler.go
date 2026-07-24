@@ -1755,6 +1755,22 @@ func computeAdaptiveReadiness(body []byte, model string, baseMs int) int {
 	return total
 }
 
+// writeSSEErrorFrame writes a terminal SSE error frame appropriate to the client
+// format. For Claude streams it emits an Anthropic-compatible "event: error"
+// frame; for OpenAI-compatible streams it emits a "data:" error event.
+func writeSSEErrorFrame(w http.ResponseWriter, clientFormat executor.ProviderFormat, errBytes []byte, flusher http.Flusher) {
+	if clientFormat == executor.FormatClaude {
+		w.Write([]byte("event: error\ndata: "))
+	} else {
+		w.Write([]byte("data: "))
+	}
+	w.Write(errBytes)
+	w.Write([]byte("\n\n"))
+	if flusher != nil {
+		flusher.Flush()
+	}
+}
+
 // streamResponse writes a translated SSE stream to the client with heartbeat and
 // client-disconnect detection. Each translated chunk already includes the SSE
 // frame (data: ...\n\n), so the helper writes the bytes as-is and flushes.
@@ -1923,11 +1939,11 @@ func (h *Handler) streamResponse(
 					})
 					return chunk.Err
 				}
-				c.Writer.Write([]byte("data: "))
-				c.Writer.Write(errFormatter(chunk.Err))
-				c.Writer.Write([]byte("\n\n"))
-				c.Writer.Write([]byte("data: [DONE]\n\n"))
-				flusher.Flush()
+				writeSSEErrorFrame(c.Writer, clientFormat, errFormatter(chunk.Err), flusher)
+				if clientFormat != executor.FormatClaude {
+					c.Writer.Write([]byte("data: [DONE]\n\n"))
+					flusher.Flush()
+				}
 				h.logRequest(c, &usage.LogEntry{
 					ApiKeyID:       c.GetString("api_key_id"),
 					ConnectionID:   conn.ID,
@@ -2008,13 +2024,18 @@ func (h *Handler) streamResponse(
 					if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 						errMsg = "stream deadline exceeded"
 					}
-					errBytes, _ := json.Marshal(gin.H{"error": gin.H{"message": errMsg, "type": "server_error"}})
-					c.Writer.Write([]byte("data: "))
-					c.Writer.Write(errBytes)
-					c.Writer.Write([]byte("\n\n"))
+					var errBytes []byte
+					if clientFormat == executor.FormatClaude {
+						errBytes, _ = json.Marshal(claudeError("server_error", errMsg))
+					} else {
+						errBytes, _ = json.Marshal(gin.H{"error": gin.H{"message": errMsg, "type": "server_error"}})
+					}
+					writeSSEErrorFrame(c.Writer, clientFormat, errBytes, flusher)
 				}
-				c.Writer.Write([]byte("data: [DONE]\n\n"))
-				flusher.Flush()
+				if clientFormat != executor.FormatClaude {
+					c.Writer.Write([]byte("data: [DONE]\n\n"))
+					flusher.Flush()
+				}
 			}
 			return ctx.Err()
 		}
