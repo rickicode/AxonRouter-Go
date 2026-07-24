@@ -392,6 +392,197 @@ func TestAPIKeyHandler_ToggleActive_MaxTokensZero_SetsUnlimited(t *testing.T) {
 	}
 }
 
+func TestAPIKeyHandler_Create_IncludesBudget(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	database := newAPIKeyHandlerTestDB(t)
+	h := NewAPIKeyHandler(database, middleware.NewAuthCache(30*time.Second))
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/api-keys", jsonBodyAPIKey(t, map[string]any{
+		"name":              "budget-key",
+		"daily_limit_usd":   5.0,
+		"monthly_limit_usd": 50.0,
+		"warning_threshold": 0.9,
+	}))
+	h.Create(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		ID               string  `json:"id"`
+		DailyLimitUSD    float64 `json:"daily_limit_usd"`
+		MonthlyLimitUSD  float64 `json:"monthly_limit_usd"`
+		WarningThreshold float64 `json:"warning_threshold"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.DailyLimitUSD != 5.0 {
+		t.Errorf("daily_limit_usd = %v, want 5.0", resp.DailyLimitUSD)
+	}
+	if resp.MonthlyLimitUSD != 50.0 {
+		t.Errorf("monthly_limit_usd = %v, want 50.0", resp.MonthlyLimitUSD)
+	}
+	if resp.WarningThreshold != 0.9 {
+		t.Errorf("warning_threshold = %v, want 0.9", resp.WarningThreshold)
+	}
+
+	var stored struct {
+		DailyLimitUSD    float64
+		MonthlyLimitUSD  float64
+		WarningThreshold float64
+	}
+	if err := database.QueryRow(`SELECT daily_limit_usd, monthly_limit_usd, warning_threshold FROM api_key_budgets WHERE api_key_id = ?`, resp.ID).Scan(
+		&stored.DailyLimitUSD, &stored.MonthlyLimitUSD, &stored.WarningThreshold); err != nil {
+		t.Fatalf("query stored budget: %v", err)
+	}
+	if stored.DailyLimitUSD != 5.0 || stored.MonthlyLimitUSD != 50.0 || stored.WarningThreshold != 0.9 {
+		t.Errorf("stored budget = %+v, want 5/50/0.9", stored)
+	}
+}
+
+func TestAPIKeyHandler_List_IncludesBudget(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	database := newAPIKeyHandlerTestDB(t)
+	h := NewAPIKeyHandler(database, middleware.NewAuthCache(30*time.Second))
+
+	_, err := database.Exec(`INSERT INTO api_keys (id, key_hash, key_value, name, rate_limit_per_min, max_tokens, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		"key-budget-list", "hash", "raw", "budget-list", 60, 1000, 1, 1000)
+	if err != nil {
+		t.Fatalf("seed api key: %v", err)
+	}
+	_, err = database.Exec(`INSERT INTO api_key_budgets (api_key_id, daily_limit_usd, monthly_limit_usd, warning_threshold, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		"key-budget-list", 2.5, 25.0, 0.75, time.Now().Unix())
+	if err != nil {
+		t.Fatalf("seed budget: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/admin/api-keys", nil)
+	h.List(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var listResp struct {
+		Data []struct {
+			ID               string  `json:"id"`
+			DailyLimitUSD    float64 `json:"daily_limit_usd"`
+			MonthlyLimitUSD  float64 `json:"monthly_limit_usd"`
+			WarningThreshold float64 `json:"warning_threshold"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(listResp.Data) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(listResp.Data))
+	}
+	item := listResp.Data[0]
+	if item.DailyLimitUSD != 2.5 {
+		t.Errorf("daily_limit_usd = %v, want 2.5", item.DailyLimitUSD)
+	}
+	if item.MonthlyLimitUSD != 25.0 {
+		t.Errorf("monthly_limit_usd = %v, want 25.0", item.MonthlyLimitUSD)
+	}
+	if item.WarningThreshold != 0.75 {
+		t.Errorf("warning_threshold = %v, want 0.75", item.WarningThreshold)
+	}
+}
+
+func TestAPIKeyHandler_Get_IncludesBudget(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	database := newAPIKeyHandlerTestDB(t)
+	h := NewAPIKeyHandler(database, middleware.NewAuthCache(30*time.Second))
+
+	_, err := database.Exec(`INSERT INTO api_keys (id, key_hash, key_value, name, rate_limit_per_min, max_tokens, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		"key-budget-get", "hash", "raw", "budget-get", 60, 1000, 1, 1000)
+	if err != nil {
+		t.Fatalf("seed api key: %v", err)
+	}
+	_, err = database.Exec(`INSERT INTO api_key_budgets (api_key_id, daily_limit_usd, monthly_limit_usd, warning_threshold, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		"key-budget-get", 3.0, 30.0, 0.85, time.Now().Unix())
+	if err != nil {
+		t.Fatalf("seed budget: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/admin/api-keys/key-budget-get", nil)
+	c.Params = gin.Params{{Key: "id", Value: "key-budget-get"}}
+	h.Get(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Data struct {
+			ID               string  `json:"id"`
+			DailyLimitUSD    float64 `json:"daily_limit_usd"`
+			MonthlyLimitUSD  float64 `json:"monthly_limit_usd"`
+			WarningThreshold float64 `json:"warning_threshold"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Data.DailyLimitUSD != 3.0 {
+		t.Errorf("daily_limit_usd = %v, want 3.0", resp.Data.DailyLimitUSD)
+	}
+	if resp.Data.MonthlyLimitUSD != 30.0 {
+		t.Errorf("monthly_limit_usd = %v, want 30.0", resp.Data.MonthlyLimitUSD)
+	}
+	if resp.Data.WarningThreshold != 0.85 {
+		t.Errorf("warning_threshold = %v, want 0.85", resp.Data.WarningThreshold)
+	}
+}
+
+func TestAPIKeyHandler_ToggleActive_UpdatesBudget(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	database := newAPIKeyHandlerTestDB(t)
+	h := NewAPIKeyHandler(database, middleware.NewAuthCache(30*time.Second))
+
+	_, err := database.Exec(`INSERT INTO api_keys (id, key_hash, key_value, name, rate_limit_per_min, max_tokens, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		"key-budget-toggle", "hash", "raw", "budget-toggle", 60, 1000, 1, 1000)
+	if err != nil {
+		t.Fatalf("seed api key: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPatch, "/api/admin/api-keys/key-budget-toggle/toggle", jsonBodyAPIKey(t, map[string]any{
+		"is_active":         false,
+		"daily_limit_usd":   4.0,
+		"monthly_limit_usd": 40.0,
+		"warning_threshold": 0.95,
+	}))
+	c.Params = gin.Params{{Key: "id", Value: "key-budget-toggle"}}
+	h.ToggleActive(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var stored struct {
+		DailyLimitUSD    float64
+		MonthlyLimitUSD  float64
+		WarningThreshold float64
+	}
+	if err := database.QueryRow(`SELECT daily_limit_usd, monthly_limit_usd, warning_threshold FROM api_key_budgets WHERE api_key_id = ?`, "key-budget-toggle").Scan(
+		&stored.DailyLimitUSD, &stored.MonthlyLimitUSD, &stored.WarningThreshold); err != nil {
+		t.Fatalf("query stored budget: %v", err)
+	}
+	if stored.DailyLimitUSD != 4.0 || stored.MonthlyLimitUSD != 40.0 || stored.WarningThreshold != 0.95 {
+		t.Errorf("stored budget = %+v, want 4/40/0.95", stored)
+	}
+}
+
 func TestAPIKeyHandler_Delete_WithUsage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	database := newAPIKeyHandlerTestDB(t)

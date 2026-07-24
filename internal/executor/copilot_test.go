@@ -492,9 +492,9 @@ func TestCopilotExecutor_DropsTrailingAssistantPrefill(t *testing.T) {
 	defer cleanup()
 
 	_, err := exec.Execute(context.Background(), &Request{
-		Provider: "copilot",
+		Provider:    "copilot",
 		AccessToken: "tok",
-		Body: []byte(`{"model":"copilot/gpt-4o","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"prefill"}]}`),
+		Body:        []byte(`{"model":"copilot/gpt-4o","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"prefill"}]}`),
 	})
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
@@ -511,9 +511,9 @@ func TestCopilotExecutor_StripsThinkingForClaude(t *testing.T) {
 
 	for _, model := range []string{"copilot/claude-opus-4.5", "copilot/claude-sonnet-4.5"} {
 		_, err := exec.Execute(context.Background(), &Request{
-			Provider: "copilot",
+			Provider:    "copilot",
 			AccessToken: "tok",
-			Body: []byte(`{"model":"` + model + `","messages":[{"role":"user"}],"thinking":{"type":"adaptive"},"reasoning_effort":"high"}`),
+			Body:        []byte(`{"model":"` + model + `","messages":[{"role":"user"}],"thinking":{"type":"adaptive"},"reasoning_effort":"high"}`),
 		})
 		if err != nil {
 			t.Fatalf("execute failed for %s: %v", model, err)
@@ -532,9 +532,9 @@ func TestCopilotExecutor_KeepsThinkingForClaude46(t *testing.T) {
 	defer cleanup()
 
 	_, err := exec.Execute(context.Background(), &Request{
-		Provider: "copilot",
+		Provider:    "copilot",
 		AccessToken: "tok",
-		Body: []byte(`{"model":"copilot/claude-sonnet-4.6","messages":[{"role":"user"}],"thinking":{"type":"adaptive"},"reasoning_effort":"high"}`),
+		Body:        []byte(`{"model":"copilot/claude-sonnet-4.6","messages":[{"role":"user"}],"thinking":{"type":"adaptive"},"reasoning_effort":"high"}`),
 	})
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
@@ -552,9 +552,9 @@ func TestCopilotExecutor_StripsTemperatureForClaudeOpus4(t *testing.T) {
 	defer cleanup()
 
 	_, err := exec.Execute(context.Background(), &Request{
-		Provider: "copilot",
+		Provider:    "copilot",
 		AccessToken: "tok",
-		Body: []byte(`{"model":"copilot/claude-opus-4.5","messages":[{"role":"user"}],"temperature":0.7}`),
+		Body:        []byte(`{"model":"copilot/claude-opus-4.5","messages":[{"role":"user"}],"temperature":0.7}`),
 	})
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
@@ -569,14 +569,14 @@ func TestCopilotExecutor_InjectsResponseFormatForClaude(t *testing.T) {
 	defer cleanup()
 
 	body, _ := json.Marshal(map[string]any{
-		"model": "copilot/claude-sonnet-4.5",
-		"messages": []map[string]any{{"role": "user", "content": "hi"}},
+		"model":           "copilot/claude-sonnet-4.5",
+		"messages":        []map[string]any{{"role": "user", "content": "hi"}},
 		"response_format": map[string]any{"type": "json_object"},
 	})
 	_, err := exec.Execute(context.Background(), &Request{
-		Provider: "copilot",
+		Provider:    "copilot",
 		AccessToken: "tok",
-		Body: body,
+		Body:        body,
 	})
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)

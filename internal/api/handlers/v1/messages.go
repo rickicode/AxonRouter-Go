@@ -46,6 +46,9 @@ func (h *Handler) Messages(c *gin.Context) {
 	if h.checkTokenBudget(c, body) != nil {
 		return
 	}
+	if h.checkAPIKeyBudget(c) != nil {
+		return
+	}
 
 	// Exact cache check (non-stream, no tools, no cache_control)
 	cacheKey := h.exactCacheKey(body, model, stream)
@@ -227,6 +230,7 @@ attemptLoop:
 					tokensEstimated = true
 				}
 			}
+			estCost := usage.EstimateCost(modelName, "chat", 0, tokenCounts.InputTokens, tokenCounts.OutputTokens, tokenCounts.ReasoningTokens, tokenCounts.CachedTokens, tokenCounts.CacheCreationTokens)
 			h.logRequest(c, &usage.LogEntry{
 				ApiKeyID:            c.GetString("api_key_id"),
 				ConnectionID:        conn.ID,
@@ -239,17 +243,24 @@ attemptLoop:
 				InputTokens:         tokenCounts.InputTokens,
 				OutputTokens:        tokenCounts.OutputTokens,
 				ReasoningTokens:     tokenCounts.ReasoningTokens,
-				CachedTokens:        tokenCounts.CachedTokens,
-				CacheCreationTokens: tokenCounts.CacheCreationTokens,
-				LatencyMs:           latency,
-				StatusCode:          resp.StatusCode,
-				TokensEstimated:     tokensEstimated,
-			})
-			h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
-			if resp.StatusCode < 300 {
-				h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
-			}
-			h.writeJSONResponse(c, resp.StatusCode, translatedResp)
+			CachedTokens:        tokenCounts.CachedTokens,
+			CacheCreationTokens: tokenCounts.CacheCreationTokens,
+			CostUsd:             estCost,
+			LatencyMs:           latency,
+			StatusCode:          resp.StatusCode,
+			TokensEstimated:     tokensEstimated,
+		})
+		h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
+		if resp.StatusCode < 300 {
+			h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
+		}
+		h.writeJSONResponse(c, resp.StatusCode, translatedResp, responseCost{
+			modelID:         modelName,
+			exactCost:       resp.CostUsd,
+			counts:          tokenCounts,
+			tokensEstimated: tokensEstimated,
+			flatRate:        h.isFlatRate(provider),
+		})
 		}
 		return
 	}

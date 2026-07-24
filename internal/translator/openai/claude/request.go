@@ -3,6 +3,7 @@ package claude
 import (
 	"encoding/json"
 
+	"github.com/rickicode/AxonRouter-Go/internal/signature"
 	"github.com/tidwall/gjson"
 )
 
@@ -192,6 +193,7 @@ func convertOpenAIRequestToClaude(modelName string, body []byte, stream bool) []
 	}
 
 	result, _ := json.Marshal(out)
+	result, _ = signature.SanitizeClaudeMessagesForClaudeUpstream(result, modelName)
 	return result
 }
 

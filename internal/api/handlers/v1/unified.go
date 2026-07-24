@@ -28,6 +28,9 @@ func (h *Handler) Unified(c *gin.Context) {
 	if h.checkTokenBudget(c, body) != nil {
 		return
 	}
+	if h.checkAPIKeyBudget(c) != nil {
+		return
+	}
 
 	mode := executor.JSONGet(body, "mode")
 	if mode == "" {

@@ -156,16 +156,46 @@ func apiTypeFromPath(path string) string {
 	return unifiedSurface(path)
 }
 
-// logRequest enqueues a usage log entry enriched with the client IP and
-// User-Agent from the gin context. It is a single place where all /v1
-// request logging captures request metadata.
+// logRequest enqueues a usage log entry enriched with the client IP,
+// User-Agent, and flat-rate flag from the gin context and provider config.
+// It is a single place where all /v1 request logging captures request metadata.
 func (h *Handler) logRequest(c *gin.Context, entry *usage.LogEntry) {
 	if h.tracker == nil || entry == nil || c == nil {
 		return
 	}
 	entry.ClientIP = c.ClientIP()
 	entry.UserAgent = c.Request.UserAgent()
+	if entry.ServiceTier == "" {
+		if v, ok := c.Get("service_tier"); ok {
+			if s, ok := v.(string); ok {
+				entry.ServiceTier = s
+			}
+		}
+	}
+	if h.providerCfg != nil && entry.ProviderTypeID != "" {
+		entry.FlatRate = h.providerCfg.FlatRate(entry.ProviderTypeID)
+	}
 	h.tracker.Log(entry)
+}
+
+// extractServiceTier returns the service_tier value from a request body.
+// Supported values from OpenAI/Codex APIs are "flex", "priority", and "fast";
+// any other value is passed through so the cost estimator can apply defaults.
+func extractServiceTier(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	return gjson.GetBytes(body, "service_tier").String()
+}
+
+// isFlatRate reports whether the named provider is configured as a flat-rate
+// (subscription/cookie-web) provider. It returns false when no provider config
+// manager is available or when the flag has not been set.
+func (h *Handler) isFlatRate(provider string) bool {
+	if h.providerCfg == nil || provider == "" {
+		return false
+	}
+	return h.providerCfg.FlatRate(provider)
 }
 
 // trackDevice records the calling client device for the resolved API key.
@@ -1295,6 +1325,7 @@ func (h *Handler) handleMediaCombo(
 				ProxyPoolID:    executor.ProxyPoolIDFromContext(proxyCtx),
 				ApiType:        apiTypeFromPath(c.Request.URL.Path),
 				Modality:       modality,
+				Quantity:       quantityForModality(modality, body),
 				Stream:         false,
 				LatencyMs:      latency,
 				StatusCode:     resp.StatusCode,
@@ -1755,6 +1786,10 @@ func (h *Handler) streamResponse(
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
+	c.Header("Trailer", costTrailerNames)
+	if h.isFlatRate(provider) {
+		c.Header(costHeader, "0")
+	}
 	c.Status(http.StatusOK)
 
 	heartbeatInterval := 15 * time.Second
@@ -1825,8 +1860,9 @@ func (h *Handler) streamResponse(
 						tokensEstimated = true
 					}
 				}
+				apiKeyID := c.GetString("api_key_id")
 				h.logRequest(c, &usage.LogEntry{
-					ApiKeyID:            c.GetString("api_key_id"),
+					ApiKeyID:            apiKeyID,
 					ConnectionID:        conn.ID,
 					ProviderTypeID:      provider,
 					ModelID:             model,
@@ -1845,7 +1881,9 @@ func (h *Handler) streamResponse(
 					StatusCode:          http.StatusOK,
 					TokensEstimated:     tokensEstimated,
 				})
-				h.incrementAPIKeyUsage(c.GetString("api_key_id"), acc.InputTokens+acc.OutputTokens)
+				h.incrementAPIKeyUsage(apiKeyID, acc.InputTokens+acc.OutputTokens)
+				h.recordAPIKeyCostFromCounts(apiKeyID, model, acc)
+				writeCostTrailers(c, model, acc.CostUsd, acc, tokensEstimated, h.isFlatRate(provider))
 				return nil
 			}
 
@@ -2308,15 +2346,26 @@ func (h *Handler) accumulateAPIKeyUsage(apiKeyID string, reqBody, respBody []byt
 		return
 	}
 	var total int64
-	if counts := ExtractTokensFromBody(respBody); counts.InputTokens > 0 || counts.OutputTokens > 0 {
+	var counts StreamTokenCounts
+	extracted := ExtractTokensFromBody(respBody)
+	if extracted.InputTokens > 0 || extracted.OutputTokens > 0 {
+		counts = extracted
 		total = counts.InputTokens + counts.OutputTokens
 	} else {
 		total = usage.EstimateTokensFromRequest(reqBody)
 		if estimateOutput {
 			total += usage.EstimateTokensFromResponse(respBody)
 		}
+		counts.InputTokens = usage.EstimateTokensFromRequest(reqBody)
+		if estimateOutput {
+			counts.OutputTokens = usage.EstimateTokensFromResponse(respBody)
+		}
 	}
 	h.incrementAPIKeyUsage(apiKeyID, total)
+	if apiKeyID != "" && len(reqBody) > 0 {
+		model := executor.JSONGet(reqBody, "model")
+		h.recordAPIKeyCostFromCounts(apiKeyID, model, counts)
+	}
 }
 
 // scheduleEligibilityUpdate triggers a per-provider eligibility rebuild for the

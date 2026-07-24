@@ -6,6 +6,27 @@ import (
 	"testing"
 )
 
+func TestParseAntigravityCreditsMode(t *testing.T) {
+	cases := []struct {
+		in   string
+		want AntigravityCreditsMode
+	}{
+		{"off", AntigravityCreditsModeOff},
+		{"OFF", AntigravityCreditsModeOff},
+		{"", AntigravityCreditsModeOff},
+		{"retry", AntigravityCreditsModeRetry},
+		{"RETRY", AntigravityCreditsModeRetry},
+		{"always", AntigravityCreditsModeAlways},
+		{"ALWAYS", AntigravityCreditsModeAlways},
+		{"invalid", AntigravityCreditsModeOff},
+	}
+	for _, c := range cases {
+		if got := parseAntigravityCreditsMode(c.in); got != c.want {
+			t.Errorf("parseAntigravityCreditsMode(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestResolveDataDir_Default(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -46,6 +67,38 @@ func TestResolveDataDir_ExplicitWins(t *testing.T) {
 	want := "/tmp/explicit"
 	if got != want {
 		t.Errorf("resolveDataDir() = %q, want %q", got, want)
+	}
+}
+
+func TestParseAntigravityObfuscationWords(t *testing.T) {
+	defaultLen := len(defaultAntigravityObfuscationWords)
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"", defaultAntigravityObfuscationWords},
+		{"   ", defaultAntigravityObfuscationWords},
+		{"cursor, opencode", []string{"cursor", "opencode"}},
+		{" Cursor ,  OPENCODE ", []string{"cursor", "opencode"}},
+		{"cursor,,opencode", []string{"cursor", "opencode"}},
+	}
+	for _, c := range cases {
+		got := parseAntigravityObfuscationWords(c.in)
+		if c.in == "" && len(got) != defaultLen {
+			t.Errorf("parseAntigravityObfuscationWords(%q) returned %d words, want defaults", c.in, len(got))
+			continue
+		}
+		if c.in != "" {
+			if len(got) != len(c.want) {
+				t.Errorf("parseAntigravityObfuscationWords(%q) length = %d, want %d", c.in, len(got), len(c.want))
+				continue
+			}
+			for i := range c.want {
+				if got[i] != c.want[i] {
+					t.Errorf("parseAntigravityObfuscationWords(%q)[%d] = %q, want %q", c.in, i, got[i], c.want[i])
+				}
+			}
+		}
 	}
 }
 

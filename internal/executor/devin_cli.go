@@ -133,10 +133,10 @@ type openAICompletion struct {
 }
 
 type openAIChoice struct {
-	Index        int         `json:"index"`
+	Index        int           `json:"index"`
 	Delta        openAIMessage `json:"delta,omitempty"`
 	Message      openAIMessage `json:"message,omitempty"`
-	FinishReason string      `json:"finish_reason"`
+	FinishReason string        `json:"finish_reason"`
 }
 
 type openAIMessage struct {

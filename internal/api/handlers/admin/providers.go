@@ -1222,6 +1222,7 @@ func (h *ProviderHandler) GetSettings(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"provider_id":  id,
 		"routing_mode": s.RoutingMode,
+		"flat_rate":    s.FlatRate,
 	})
 }
 
@@ -1230,6 +1231,7 @@ func (h *ProviderHandler) UpdateSettings(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
 		RoutingMode providercfg.RoutingMode `json:"routing_mode"`
+		FlatRate    bool                    `json:"flat_rate"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -1246,7 +1248,7 @@ func (h *ProviderHandler) UpdateSettings(c *gin.Context) {
 		return
 	}
 
-	if err := h.providerCfg.Save(id, providercfg.ProviderSettings{RoutingMode: req.RoutingMode}); err != nil {
+	if err := h.providerCfg.Save(id, providercfg.ProviderSettings{RoutingMode: req.RoutingMode, FlatRate: req.FlatRate}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -1254,5 +1256,6 @@ func (h *ProviderHandler) UpdateSettings(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"provider_id":  id,
 		"routing_mode": req.RoutingMode,
+		"flat_rate":    req.FlatRate,
 	})
 }

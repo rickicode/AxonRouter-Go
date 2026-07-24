@@ -43,6 +43,9 @@ func (h *Handler) Embeddings(c *gin.Context) {
 	if h.checkTokenBudget(c, body) != nil {
 		return
 	}
+	if h.checkAPIKeyBudget(c) != nil {
+		return
+	}
 	provider, modelName := executor.SplitModel(model)
 	if provider == "" {
 		provider = "openai"
@@ -135,6 +138,14 @@ func (h *Handler) Embeddings(c *gin.Context) {
 		}
 		return
 	}
+	tokenCounts := ExtractTokensFromBody(resp.Body)
+	tokensEstimated := false
+	if tokenCounts.InputTokens == 0 && resp.StatusCode < 400 {
+		if est := usage.EstimateTokensFromRequest(body); est > 0 {
+			tokenCounts.InputTokens = est
+			tokensEstimated = true
+		}
+	}
 	h.logRequest(c, &usage.LogEntry{
 		ApiKeyID:       c.GetString("api_key_id"),
 		ConnectionID:   conn.ID,
@@ -144,9 +155,14 @@ func (h *Handler) Embeddings(c *gin.Context) {
 		ApiType:        apiTypeFromPath(c.Request.URL.Path),
 		Modality:       "embedding",
 		Stream:         false,
+		InputTokens:    tokenCounts.InputTokens,
 		LatencyMs:      time.Since(start).Milliseconds(),
-		StatusCode:     resp.StatusCode})
+		StatusCode:     resp.StatusCode,
+		TokensEstimated: tokensEstimated,
+	})
 	h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, resp.Body, false)
+	embedTokenCounts := ExtractTokensFromBody(resp.Body)
+	writeCostHeaders(c, modelName, resp.CostUsd, embedTokenCounts, false, h.isFlatRate(provider))
 	c.Header("Content-Type", "application/json")
 	c.Status(resp.StatusCode)
 	c.Writer.Write(resp.Body)

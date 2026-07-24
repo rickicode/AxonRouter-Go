@@ -41,6 +41,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/compression"
 	_ "github.com/rickicode/AxonRouter-Go/internal/compression/engines/caveman"
+	_ "github.com/rickicode/AxonRouter-Go/internal/compression/engines/output"
 	_ "github.com/rickicode/AxonRouter-Go/internal/compression/engines/rtk"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
@@ -199,6 +200,10 @@ func New(cfg Config) *Router {
 			ReplaceImageUrls:       db.GetSetting("compression_lite_image_urls", "true") == "true",
 			RemoveRedundantContent: db.GetSetting("compression_lite_redundant", "false") == "true",
 			DedupSystemPrompt:      db.GetSetting("compression_lite_dedup", "false") == "true",
+		},
+		Output: compression.EngineConfig{
+			"enabled": db.GetSetting("compression_output_enabled", "false") == "true",
+			"level":   db.GetSetting("compression_output_level", "caveman"),
 		},
 	}
 
@@ -431,6 +436,7 @@ func New(cfg Config) *Router {
 		// API Keys
 		g.GET("/api-keys", apiKeyH.List)
 		g.POST("/api-keys", apiKeyH.Create)
+		g.GET("/api-keys/:id", apiKeyH.Get)
 		g.DELETE("/api-keys/:id", apiKeyH.Delete)
 		g.PATCH("/api-keys/:id/toggle", apiKeyH.ToggleActive)
 		g.GET("/api-keys/:id/value", apiKeyH.GetValue)
