@@ -201,93 +201,95 @@ $effect(() => {
 
 	<!-- Table -->
     {#if $combos.length > 0}
-      <Card class="shadow-card overflow-hidden p-0">
-        <table class="w-full text-body-sm">
-          <thead>
-            <tr class="border-b border-border bg-muted/50">
-              <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Name</th>
-              <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Strategy</th>
-              <th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Timeout</th>
-              <th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Smart</th>
-						<th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">State</th>
-						<th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Errors (24h)</th>
-						<th class="text-right text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each $combos as combo}
-              <tr class="border-b border-border hover:bg-muted/50 transition-colors">
-                <td class="px-4 py-2.5">
-                  <button
-                    onclick={() => openEdit(combo)}
-                    class="text-body-sm-strong hover:underline truncate block text-left cursor-pointer"
-                  >
-                    {combo.name}
-                  </button>
-                </td>
-                <td class="px-4 py-2.5">
-                  <span class="inline-flex items-center gap-1 text-caption-mono text-muted-foreground">
-                    {#if combo.strategy === 'priority'}
-                      <svg class="size-3 text-muted-foreground/60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12"/></svg>
-                    {:else}
-                      <svg class="size-3 text-muted-foreground/60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-                    {/if}
-                    {combo.strategy}
-                  </span>
-                </td>
-                <td class="px-4 py-2.5 text-center">
-                  <span class="text-caption-mono text-muted-foreground">{combo.timeout_ms >= 1000 ? (combo.timeout_ms / 1000) + 's' : combo.timeout_ms + 'ms'}</span>
-                </td>
-                <td class="px-4 py-2.5 text-center">
-                  {#if combo.is_smart}
-                    <StatusBadge status="smart" label={unwrapStr(combo.smart_goal) || 'on'} />
-                  {:else}
-                    <span class="text-caption-mono text-muted-foreground">—</span>
-                  {/if}
-                </td>
-						<td class="px-4 py-2.5 text-center">
-							<div class="flex justify-center">
-								<Switch checked={combo.is_active} onCheckedChange={() => toggleCombo(combo)} aria-label={combo.is_active ? 'Disable combo' : 'Enable combo'} />
-							</div>
-						</td>
-						<td class="px-4 py-2.5 text-center">
-							{#if metricsLoading}
-								<span class="text-caption-mono text-muted-foreground">—</span>
-							{:else}
-								{@const m = metricsMap.get(combo.id)}
-								<span class="text-caption-mono font-semibold {m && m.errors > 0 ? 'text-destructive' : 'text-muted-foreground'}">
-									{m ? m.errors : 0}
-								</span>
-							{/if}
-						</td>
-						<td class="px-4 py-2.5 text-right">
-                  <div class="flex gap-1 justify-end">
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      class="size-7 rounded-sm"
-                      onclick={() => openEdit(combo)}
-                      title="Edit combo"
-                      aria-label="Edit combo"
-                    >
-                      <PencilIcon class="size-3.5" />
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      size="icon"
-                      class="size-7 rounded-sm"
-                      onclick={() => confirmDelete(combo)}
-                      title="Delete combo"
-                      aria-label="Delete combo"
-                    >
-                      <Trash2Icon class="size-3.5" />
-                    </Button>
-                  </div>
-                </td>
+      <Card class="shadow-card overflow-hidden p-0 flex flex-col">
+        <div class="overflow-auto max-h-[60vh]">
+          <table class="w-full text-body-sm">
+            <thead>
+              <tr class="border-b border-border bg-muted/50">
+                <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Name</th>
+                <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Strategy</th>
+                <th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Timeout</th>
+                <th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Smart</th>
+							<th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">State</th>
+							<th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Errors (24h)</th>
+							<th class="text-right text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5"></th>
               </tr>
-            {/each}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {#each $combos as combo}
+                <tr class="border-b border-border hover:bg-muted/50 transition-colors">
+                  <td class="px-4 py-2.5">
+                    <button
+                      onclick={() => openEdit(combo)}
+                      class="text-body-sm-strong hover:underline truncate block text-left cursor-pointer"
+                    >
+                      {combo.name}
+                    </button>
+                  </td>
+                  <td class="px-4 py-2.5">
+                    <span class="inline-flex items-center gap-1 text-caption-mono text-muted-foreground">
+                      {#if combo.strategy === 'priority'}
+                        <svg class="size-3 text-muted-foreground/60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12"/></svg>
+                      {:else}
+                        <svg class="size-3 text-muted-foreground/60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                      {/if}
+                      {combo.strategy}
+                    </span>
+                  </td>
+                  <td class="px-4 py-2.5 text-center">
+                    <span class="text-caption-mono text-muted-foreground">{combo.timeout_ms >= 1000 ? (combo.timeout_ms / 1000) + 's' : combo.timeout_ms + 'ms'}</span>
+                  </td>
+                  <td class="px-4 py-2.5 text-center">
+                    {#if combo.is_smart}
+                      <StatusBadge status="smart" label={unwrapStr(combo.smart_goal) || 'on'} />
+                    {:else}
+                      <span class="text-caption-mono text-muted-foreground">—</span>
+                    {/if}
+                  </td>
+							<td class="px-4 py-2.5 text-center">
+								<div class="flex justify-center">
+									<Switch checked={combo.is_active} onCheckedChange={() => toggleCombo(combo)} aria-label={combo.is_active ? 'Disable combo' : 'Enable combo'} />
+								</div>
+							</td>
+							<td class="px-4 py-2.5 text-center">
+								{#if metricsLoading}
+									<span class="text-caption-mono text-muted-foreground">—</span>
+								{:else}
+									{@const m = metricsMap.get(combo.id)}
+									<span class="text-caption-mono font-semibold {m && m.errors > 0 ? 'text-destructive' : 'text-muted-foreground'}">
+										{m ? m.errors : 0}
+									</span>
+								{/if}
+							</td>
+							<td class="px-4 py-2.5 text-right">
+                    <div class="flex gap-1 justify-end">
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        class="size-7 rounded-sm"
+                        onclick={() => openEdit(combo)}
+                        title="Edit combo"
+                        aria-label="Edit combo"
+                      >
+                        <PencilIcon class="size-3.5" />
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="icon"
+                        class="size-7 rounded-sm"
+                        onclick={() => confirmDelete(combo)}
+                        title="Delete combo"
+                        aria-label="Delete combo"
+                      >
+                        <Trash2Icon class="size-3.5" />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
       </Card>
     {:else}
       <Card class="shadow-card">

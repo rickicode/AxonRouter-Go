@@ -113,19 +113,21 @@ func New(cfg Config) *Router {
 	elig := connstate.NewEligibilityManager(store)
 	elig.RecomputeAll()
 
-	// Seed defaults before loading the in-memory combo cache so first-run combos
-	// are immediately routable and visible to the detail/update handlers.
-	combo.SeedDefaultCombos(cfg.DB)
-
-	comboHandler := combo.NewHandler(cfg.DB, store, elig)
 	// Centralized async write queue: all non-critical DB writes (cooldowns, ban
-	// counts, OAuth token persistence) funnel through this single writer goroutine.
-	// SQLite only allows one writer at a time anyway, so serializing at the app
-	// layer avoids write-lock contention reaching the connection pool.
+	// counts, OAuth token persistence, combo mutations) funnel through this single
+	// writer goroutine. SQLite only allows one writer at a time anyway, so
+	// serializing at the app layer avoids write-lock contention reaching the
+	// connection pool.
 	writeQueue := cfg.WriteQueue
 	if writeQueue == nil {
 		writeQueue = db.NewWriteQueue(cfg.DB)
 	}
+
+	// Seed defaults before loading the in-memory combo cache so first-run combos
+	// are immediately routable and visible to the detail/update handlers.
+	combo.SeedDefaultCombos(cfg.DB)
+
+	comboHandler := combo.NewHandler(cfg.DB, store, elig, writeQueue)
 	// Auth cache: eliminates 2 DB queries + bcrypt per request on the hot path.
 	authCache := middleware.NewAuthCache(30 * time.Second)
 	tracker := usage.NewTracker(cfg.DB)

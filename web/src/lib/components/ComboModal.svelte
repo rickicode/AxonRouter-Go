@@ -376,7 +376,7 @@ async function handleSave() {
 							<p class="text-caption text-muted-foreground">Add models to define routing order.</p>
 						</div>
 					{:else}
-            <div class="space-y-2">
+            <div class="overflow-y-auto max-h-[40vh] space-y-2 pr-1">
               {#each steps as step, i (step.id ?? `${step.model_id}-${i}`)}
                 <div class="flex items-center gap-3 p-2.5 border border-border rounded-md bg-card/50">
                   <div class="flex flex-col gap-0.5">
