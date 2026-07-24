@@ -103,6 +103,9 @@ func (h *Handler) Video(c *gin.Context) {
 		StatusCode:     resp.StatusCode})
 
 	h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, resp.Body, false)
+	if h.isFlatRate(provider) {
+		c.Header(costHeader, "0")
+	}
 	c.Header("Content-Type", "application/json")
 	c.Status(resp.StatusCode)
 	c.Writer.Write(resp.Body)
