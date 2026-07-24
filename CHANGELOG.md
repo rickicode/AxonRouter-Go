@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- **Expose per-request cost to API consumers via response headers** — every proxied response now includes `X-AxonRouter-Response-Cost`, `X-AxonRouter-Tokens-In`, `X-AxonRouter-Tokens-Out`, and `X-AxonRouter-Cost-Estimated`. Non-streaming JSON responses attach them as normal headers; streaming responses declare HTTP trailers and emit the same values after the SSE stream completes. Cost values match the estimation logic used for `request_logs.cost_usd`, and `X-AxonRouter-Cost-Estimated` is `true` only when the cost is derived from model pricing rather than provider-reported exact cost.
 ### Fixed
 - **Fusion panel/judge text extraction now supports Claude, Gemini, and OpenAI Responses** — `extractAssistantContent` in `internal/api/handlers/v1/chat.go` previously only read `choices[0].message.content`, so panels or judge models that reply in Anthropic Claude (`content[].text`), Google Gemini (`candidates[0].content.parts[].text`), or OpenAI Responses (`output[].message.content[].output_text`) were treated as empty and failed fusion. The extractor now parses all four shapes and falls back to `output_text`/`text`, with unit tests covering each format.
 
