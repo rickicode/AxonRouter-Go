@@ -190,8 +190,12 @@ func sanitizeRequest(inner map[string]any) {
 
 	// Cap maxOutputTokens (OmniRoute applyAntigravityGenerationDefaults)
 	if gc, ok := inner["generationConfig"].(map[string]any); ok {
-		if v, ok := gc["maxOutputTokens"].(float64); ok && v > maxAntigravityOutputTokens {
+		if v, ok := toFloat64(gc["maxOutputTokens"]); ok && v > maxAntigravityOutputTokens {
 			gc["maxOutputTokens"] = maxAntigravityOutputTokens
+			logging.Logger.Warn("antigravity: capping maxOutputTokens",
+				"requested", v,
+				"capped_to", maxAntigravityOutputTokens,
+			)
 		}
 	}
 
@@ -691,6 +695,7 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, req *Request) (*Respo
 			return nil, err
 		}
 		if resp.StatusCode < 400 {
+			resp.Body = e.resolveGroundingInResponse(ctx, resp.Body)
 			return resp, nil
 		}
 
@@ -804,6 +809,7 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, req *Request) (
 
 		result, err := e.executeStreamSingle(ctx, req, url, headers, modelID, useCreditsFirst)
 		if err == nil {
+			result.Chunks = e.resolveGroundingURLsWithChannel(ctx, result.Chunks)
 			return result, nil
 		}
 

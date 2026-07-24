@@ -71,7 +71,9 @@ func (h *Handler) exactCacheKey(body []byte, model string, stream bool) string {
 // serveCacheHit writes a cached response to the client and accounts for the
 // request tokens against the API key budget before returning.
 func (h *Handler) serveCacheHit(c *gin.Context, body []byte, entry cache.CacheEntry) bool {
-	h.incrementAPIKeyUsage(c.GetString("api_key_id"), usage.EstimateTokensFromRequest(body))
+	apiKeyID := c.GetString("api_key_id")
+	h.incrementAPIKeyUsage(apiKeyID, usage.EstimateTokensFromRequest(body))
+	h.recordAPIKeyCostFromRequest(apiKeyID, body, entry.Body, true)
 
 	cachedModel := executor.JSONGet(entry.Body, "model")
 	counts := ExtractTokensFromBody(entry.Body)

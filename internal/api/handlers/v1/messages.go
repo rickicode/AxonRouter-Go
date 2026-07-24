@@ -46,6 +46,9 @@ func (h *Handler) Messages(c *gin.Context) {
 	if h.checkTokenBudget(c, body) != nil {
 		return
 	}
+	if h.checkAPIKeyBudget(c) != nil {
+		return
+	}
 
 	// Exact cache check (non-stream, no tools, no cache_control)
 	cacheKey := h.exactCacheKey(body, model, stream)

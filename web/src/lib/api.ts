@@ -1361,6 +1361,10 @@ export interface CompressionSettings {
     remove_redundant_content: boolean;
     dedup_system_prompt: boolean;
   };
+  output?: {
+    enabled: boolean;
+    level: "caveman" | "ponytail";
+  };
 }
 
 export interface CacheStats {
