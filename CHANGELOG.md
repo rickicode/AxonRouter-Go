@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ### Added
+- **Google One AI credits retry for Antigravity provider** — new `ANTIGRAVITY_CREDITS` config supports three modes: `off` (default, no `enabledCreditTypes` injection), `always` (inject `enabledCreditTypes: ["GOOGLE_ONE_AI"]` on every request), and `retry` (inject only after a 429 `quota_exhausted`). On explicit `INSUFFICIENT_G1_CREDITS_BALANCE` the auth is permanently disabled from credits retry. Includes an in-memory credits-balance cache with 5-minute TTL (`internal/cache/antigravity.go`) and unit tests for config parsing, cache behavior, and executor retry logic.
 - **Fusion panel tool-history flattening** — `stripFusionTools` now flattens tool/function turns and Anthropic-style `tool_use`/`tool_result` content blocks into plain assistant prose for fusion panel requests. Panel models retain conversational context without being able to emit `tool_calls`, matching the 9router reference implementation.
 
 ### Changed
