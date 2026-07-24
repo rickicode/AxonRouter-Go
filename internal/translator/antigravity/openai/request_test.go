@@ -42,6 +42,72 @@ func TestConvertOpenAIRequestToAntigravity_ObfuscatesUserText(t *testing.T) {
 	}
 }
 
+func TestConvertOpenAIRequestToAntigravity_StripsTrailingAssistantTurnForClaude(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AXONROUTER_DIR", "")
+
+	input := []byte(`{
+		"messages": [
+			{"role": "user", "content": "hi"},
+			{"role": "assistant", "content": "hello"},
+			{"role": "assistant", "content": "how can I help?"}
+		]
+	}`)
+
+	out := convertOpenAIRequestToAntigravity("claude-sonnet-4-6", input, false)
+
+	contents := gjson.GetBytes(out, "request.contents").Array()
+	if len(contents) != 1 {
+		t.Fatalf("expected 1 content, got %d", len(contents))
+	}
+	if contents[0].Get("role").String() != "user" {
+		t.Errorf("expected remaining role=user, got %q", contents[0].Get("role").String())
+	}
+}
+
+func TestConvertOpenAIRequestToAntigravity_KeepsTrailingAssistantForGemini(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AXONROUTER_DIR", "")
+
+	input := []byte(`{
+		"messages": [
+			{"role": "user", "content": "hi"},
+			{"role": "assistant", "content": "hello"}
+		]
+	}`)
+
+	out := convertOpenAIRequestToAntigravity("gemini-2.5-pro", input, false)
+
+	contents := gjson.GetBytes(out, "request.contents").Array()
+	if len(contents) != 2 {
+		t.Fatalf("expected 2 contents, got %d", len(contents))
+	}
+	if contents[1].Get("role").String() != "model" {
+		t.Errorf("expected trailing role=model for Gemini, got %q", contents[1].Get("role").String())
+	}
+}
+
+func TestConvertOpenAIRequestToAntigravity_KeepsLoneAssistantTurn(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AXONROUTER_DIR", "")
+
+	input := []byte(`{
+		"messages": [
+			{"role": "assistant", "content": "hello"}
+		]
+	}`)
+
+	out := convertOpenAIRequestToAntigravity("claude-sonnet-4-6", input, false)
+
+	contents := gjson.GetBytes(out, "request.contents").Array()
+	if len(contents) != 1 {
+		t.Fatalf("expected lone assistant turn kept, got %d", len(contents))
+	}
+	if contents[0].Get("role").String() != "model" {
+		t.Errorf("expected role=model, got %q", contents[0].Get("role").String())
+	}
+}
+
 func TestConvertOpenAIRequestToAntigravity_ObfuscatesUserContentArray(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AXONROUTER_DIR", "")

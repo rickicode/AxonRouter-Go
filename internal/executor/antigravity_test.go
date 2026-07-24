@@ -242,6 +242,48 @@ func TestWrapEnvelope_OmniRouteParity(t *testing.T) {
 	}
 }
 
+func TestSanitizeRequest_CapsMaxOutputTokens(t *testing.T) {
+	inner := map[string]any{
+		"generationConfig": map[string]any{
+			"maxOutputTokens": float64(65536),
+		},
+	}
+
+	logs := captureExecutorLogs(t, func() {
+		sanitizeRequest(inner)
+	})
+
+	gc := inner["generationConfig"].(map[string]any)
+	got, ok := toFloat64(gc["maxOutputTokens"])
+	if !ok || got != float64(maxAntigravityOutputTokens) {
+		t.Errorf("expected maxOutputTokens capped to %d, got %v", maxAntigravityOutputTokens, gc["maxOutputTokens"])
+	}
+	if !strings.Contains(logs, "capping maxOutputTokens") {
+		t.Errorf("expected warning log, got %q", logs)
+	}
+}
+
+func TestSanitizeRequest_DoesNotCapBelowMax(t *testing.T) {
+	inner := map[string]any{
+		"generationConfig": map[string]any{
+			"maxOutputTokens": float64(8192),
+		},
+	}
+
+	logs := captureExecutorLogs(t, func() {
+		sanitizeRequest(inner)
+	})
+
+	gc := inner["generationConfig"].(map[string]any)
+	got, ok := toFloat64(gc["maxOutputTokens"])
+	if !ok || got != 8192 {
+		t.Errorf("expected maxOutputTokens unchanged, got %v", gc["maxOutputTokens"])
+	}
+	if strings.Contains(logs, "capping maxOutputTokens") {
+		t.Errorf("expected no warning log, got %q", logs)
+	}
+}
+
 func TestResolveAntigravityModelID(t *testing.T) {
 	cases := []struct {
 		input    string

@@ -190,8 +190,12 @@ func sanitizeRequest(inner map[string]any) {
 
 	// Cap maxOutputTokens (OmniRoute applyAntigravityGenerationDefaults)
 	if gc, ok := inner["generationConfig"].(map[string]any); ok {
-		if v, ok := gc["maxOutputTokens"].(float64); ok && v > maxAntigravityOutputTokens {
+		if v, ok := toFloat64(gc["maxOutputTokens"]); ok && v > maxAntigravityOutputTokens {
 			gc["maxOutputTokens"] = maxAntigravityOutputTokens
+			logging.Logger.Warn("antigravity: capping maxOutputTokens",
+				"requested", v,
+				"capped_to", maxAntigravityOutputTokens,
+			)
 		}
 	}
 
