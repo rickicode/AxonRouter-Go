@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ### Added
+- **Claude prompt caching support** — new `internal/executor/claude_caching.go` automatically manages Anthropic `cache_control` breakpoints for Claude requests. It injects optimal breakpoints when missing (last tool, last system prompt, second-to-last user turn), enforces Anthropic's 4-breakpoint limit, and normalizes TTL ordering so a `1h` block never follows a `5m` block. Wired into `ClaudeExecutor.Execute`, `ExecuteStream`, and `CountTokens`. Includes unit tests.
 - **Fusion panel tool-history flattening** — `stripFusionTools` now flattens tool/function turns and Anthropic-style `tool_use`/`tool_result` content blocks into plain assistant prose for fusion panel requests. Panel models retain conversational context without being able to emit `tool_calls`, matching the 9router reference implementation.
 
 ### Changed

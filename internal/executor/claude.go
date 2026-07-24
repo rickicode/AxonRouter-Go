@@ -104,6 +104,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 	}
 
 	body, betas := prepareClaudeBody(req.Body)
+	body = applyClaudeCacheControl(body)
 	// Ensure stream is false
 	body = JSONSet(body, "stream", false)
 
@@ -146,6 +147,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 	}
 
 	body, betas := prepareClaudeBody(req.Body)
+	body = applyClaudeCacheControl(body)
 	body = JSONSet(body, "stream", true)
 
 	headers := map[string]string{
@@ -179,6 +181,7 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, req *Request) (*Respon
 	}
 
 	body, betas := prepareClaudeBody(req.Body)
+	body = applyClaudeCacheControl(body)
 
 	headers := map[string]string{
 		"Content-Type":      "application/json",
