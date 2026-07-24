@@ -26,7 +26,7 @@ var benchBodyNonStream = mustJSON(map[string]any{
 		}},
 	},
 	"max_tokens": 10000,
-	"stream": false,
+	"stream":     false,
 })
 
 var benchBodyStream = mustJSON(map[string]any{
@@ -37,7 +37,7 @@ var benchBodyStream = mustJSON(map[string]any{
 		},
 	},
 	"max_tokens": 10000,
-	"stream": true,
+	"stream":     true,
 })
 
 func BenchmarkCloudflareExecutor_Full_NonStream(b *testing.B) {

@@ -16,12 +16,11 @@ import (
 )
 
 func setAntigravityCreditsModeForTest(t *testing.T, mode config.AntigravityCreditsMode) {
-		t.Helper()
-		prev := antigravityCreditsModeForTest
-		antigravityCreditsModeForTest = func() config.AntigravityCreditsMode { return mode }
-		t.Cleanup(func() { antigravityCreditsModeForTest = prev })
-	}
-
+	t.Helper()
+	prev := antigravityCreditsModeForTest
+	antigravityCreditsModeForTest = func() config.AntigravityCreditsMode { return mode }
+	t.Cleanup(func() { antigravityCreditsModeForTest = prev })
+}
 
 func TestNormalizeAntigravityContents(t *testing.T) {
 	inner := map[string]any{

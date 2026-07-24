@@ -96,11 +96,11 @@ func collectGrokCLIClientDeclaredKeys(body []byte) map[string]bool {
 		for _, tool := range tools.Array() {
 			toolType := strings.TrimSpace(tool.Get("type").String())
 			switch toolType {
-		case "namespace":
-			namespaceName := grokCLINamespaceToolName(tool)
-			if namespaceName == "" {
-				continue
-			}
+			case "namespace":
+				namespaceName := grokCLINamespaceToolName(tool)
+				if namespaceName == "" {
+					continue
+				}
 
 				for _, nestedTool := range tool.Get("tools").Array() {
 					nestedType := strings.TrimSpace(nestedTool.Get("type").String())
@@ -154,10 +154,10 @@ func grokcliFlattenNamespaceTools(body []byte, refs map[string]grokCLINamespaceT
 		changed := false
 		for _, tool := range tools.Array() {
 			toolType := strings.TrimSpace(tool.Get("type").String())
-		if toolType == "namespace" {
-			changed = true
-			namespaceName := grokCLINamespaceToolName(tool)
-			for _, nestedTool := range tool.Get("tools").Array() {
+			if toolType == "namespace" {
+				changed = true
+				namespaceName := grokCLINamespaceToolName(tool)
+				for _, nestedTool := range tool.Get("tools").Array() {
 					raw, ok := grokCLIFlattenTool(nestedTool, namespaceName)
 					if !ok {
 						continue
