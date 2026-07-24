@@ -97,10 +97,10 @@ func Get() Config {
 			DeviceTrackerMaxPerKey:       getIntEnv("DEVICE_TRACKER_MAX_PER_KEY", 1000),
 			DeviceTrackerMaxTotal:        getIntEnv("DEVICE_TRACKER_MAX_TOTAL_DEVICES", 10000),
 			AntigravityCredits:           parseAntigravityCreditsMode(getEnv("ANTIGRAVITY_CREDITS", "")),
-			DisableClaudeCloakMode:       getEnvBool("AXON_DISABLE_Claud_CLOAK", false),
-			ClaudeCloakMode:              parseCloakMode(getEnv("AXON_Claud_CLOAK_MODE", "auto")),
-			ClaudeCloakSensitiveWords:    parseStringSliceEnv(getEnv("AXON_Claud_CLOAK_SENSITIVE_WORDS", "")),
-			ClaudeExperimentalCCHSigning: getEnvBool("AXON_Claud_CCH_SIGNING", false),
+			DisableClaudeCloakMode:       getEnvBool("AXON_DISABLE_CLAUDE_CLOAK", false),
+			ClaudeCloakMode:              parseCloakMode(getEnv("AXON_CLAUDE_CLOAK_MODE", "auto")),
+			ClaudeCloakSensitiveWords:    parseStringSliceEnv(getEnv("AXON_CLAUDE_CLOAK_SENSITIVE_WORDS", "")),
+			ClaudeExperimentalCCHSigning: getEnvBool("AXON_CLAUDE_CCH_SIGNING", false),
 		}
 		os.MkdirAll(dataDir, 0o755)
 		os.MkdirAll(global.LogDir, 0o755)
