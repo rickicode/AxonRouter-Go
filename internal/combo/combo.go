@@ -1,6 +1,7 @@
 package combo
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -37,13 +38,14 @@ func IsValidStrategy(s string) bool { return ValidStrategies[s] }
 
 // Handler manages combo resolution and routing.
 type Handler struct {
-	mu       sync.RWMutex
-	db       *sql.DB
-	rotation *RotationManager
-	smart    *SmartCombo
-	fallback *FallbackManager
-	store    *connstate.Store
-	elig     *connstate.EligibilityManager
+	mu         sync.RWMutex
+	db         *sql.DB
+	writeQueue *db.WriteQueue // nil → direct DB writes (queue optional for tests)
+	rotation   *RotationManager
+	smart      *SmartCombo
+	fallback   *FallbackManager
+	store      *connstate.Store
+	elig       *connstate.EligibilityManager
 
 	// In-memory combo cache
 	combos      map[string]*db.Combo
@@ -59,13 +61,17 @@ type Handler struct {
 }
 
 // NewHandler creates a new combo handler.
+// writeQueue may be nil; when nil, combo mutations fall back to direct DB
+// transactions so tests and other callers can run without a queue.
 func NewHandler(
 	database *sql.DB,
+	writeQueue *db.WriteQueue,
 	store *connstate.Store,
 	elig *connstate.EligibilityManager,
 ) *Handler {
 	h := &Handler{
 		db:          database,
+		writeQueue:  writeQueue,
 		rotation:    NewRotationManager(database),
 		smart:       NewSmartCombo(database),
 		fallback:    NewFallbackManager(),
@@ -80,8 +86,14 @@ func NewHandler(
 	return h
 }
 
-// loadFromDB loads all combos into memory.
+// loadFromDB loads all combos into the handler's in-memory maps.
 func (h *Handler) loadFromDB() {
+	h.loadInto(h.combos, h.byName, h.smartCombos, h.steps)
+}
+
+// loadInto reads combos/steps from the DB into the supplied maps. Callers must
+// synchronize access to the maps; this function performs only read-only DB work.
+func (h *Handler) loadInto(combos map[string]*db.Combo, byName map[string]*db.Combo, smartCombos map[string]*db.Combo, steps map[string][]db.ComboStep) {
 	rows, err := h.db.Query(`
 	SELECT id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal,
 	fusion_config, is_active, created_at, updated_at
@@ -102,10 +114,10 @@ func (h *Handler) loadFromDB() {
 			continue
 		}
 		c.FusionConfig = fusionConfig.String
-		h.combos[c.ID] = c
-		h.byName[c.Name] = c
+		combos[c.ID] = c
+		byName[c.Name] = c
 		if c.IsSmart {
-			h.smartCombos[c.ID] = c
+			smartCombos[c.ID] = c
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -113,13 +125,13 @@ func (h *Handler) loadFromDB() {
 	}
 
 	// Load steps
-	for comboID := range h.combos {
-		h.loadSteps(comboID)
+	for comboID := range combos {
+		h.loadStepsInto(comboID, steps)
 	}
 }
 
-// loadSteps loads steps for a combo from DB.
-func (h *Handler) loadSteps(comboID string) {
+// loadStepsInto reads steps for a combo from the DB into the supplied map.
+func (h *Handler) loadStepsInto(comboID string, steps map[string][]db.ComboStep) {
 	rows, err := h.db.Query(`
 		SELECT id, combo_id, connection_id, model_id, priority, weight, created_at
 		FROM combo_steps WHERE combo_id = ? ORDER BY priority ASC
@@ -129,7 +141,7 @@ func (h *Handler) loadSteps(comboID string) {
 	}
 	defer rows.Close()
 
-	var steps []db.ComboStep
+	var comboSteps []db.ComboStep
 	for rows.Next() {
 		s := db.ComboStep{}
 		if err := rows.Scan(&s.ID, &s.ComboID, &s.ConnectionID, &s.ModelID,
@@ -137,12 +149,12 @@ func (h *Handler) loadSteps(comboID string) {
 			log.Printf("WARN: failed to scan combo_step row for combo %s: %v", comboID, err)
 			continue
 		}
-		steps = append(steps, s)
+		comboSteps = append(comboSteps, s)
 	}
 	if err := rows.Err(); err != nil {
 		log.Printf("WARN: combo_step rows iteration error for combo %s: %v", comboID, err)
 	}
-	h.steps[comboID] = steps
+	steps[comboID] = comboSteps
 }
 
 // Resolve resolves a model string to combo steps.
@@ -342,11 +354,51 @@ func (h *Handler) RecordFailure(connID string, det connstate.ErrorDetection) {
 	}
 }
 
+// execWrite runs a DB write through the centralized WriteQueue when one is
+// configured, otherwise executes it directly on the DB. This lets callers run
+// with or without a queue.
+func (h *Handler) execWrite(label string, fn func(*sql.DB) error) error {
+	if h.writeQueue != nil {
+		return h.writeQueue.Do(context.Background(), label, fn)
+	}
+	return fn(h.db)
+}
+
+// insertComboTx inserts a combo and its steps inside a single DB transaction.
+func insertComboTx(database *sql.DB, combo *db.Combo, steps []db.ComboStep) error {
+	tx, err := database.Begin()
+	if err != nil {
+		return fmt.Errorf("begin combo transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
+	INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal, fusion_config, is_active, created_at, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+	`, combo.ID, combo.Name, combo.Strategy, combo.StickyLimit, combo.TimeoutMs,
+		boolToInt(combo.IsSmart), combo.SmartGoal, combo.FusionConfig, combo.CreatedAt, combo.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("create combo: %w", err)
+	}
+
+	for _, s := range steps {
+		_, err := tx.Exec(`
+		INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, s.ID, s.ComboID, s.ConnectionID, s.ModelID, s.Priority, s.Weight, s.CreatedAt)
+		if err != nil {
+			return fmt.Errorf("create combo step: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit combo transaction: %w", err)
+	}
+	return nil
+}
+
 // CreateCombo creates a new combo.
 func (h *Handler) CreateCombo(name, strategy string, timeoutMs, stickyLimit int, isSmart bool, smartGoal string, fusionConfig string, steps []CreateStepInput) (*db.Combo, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
 	comboID := uuid.New().String()
 	now := db.UnixNow()
 
@@ -355,20 +407,8 @@ func (h *Handler) CreateCombo(name, strategy string, timeoutMs, stickyLimit int,
 		sg = sql.NullString{String: normalized, Valid: true}
 	}
 
-	tx, err := h.db.Begin()
-	if err != nil {
-		return nil, fmt.Errorf("begin combo transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	_, err = tx.Exec(`
-	INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal, fusion_config, is_active, created_at, updated_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-	`, comboID, name, strategy, stickyLimit, timeoutMs, boolToInt(isSmart), sg, fusionConfig, now, now)
-	if err != nil {
-		return nil, fmt.Errorf("create combo: %w", err)
-	}
-
+	// Resolve connection IDs before touching the DB. This does not need h.mu.
+	resolvedSteps := make([]db.ComboStep, 0, len(steps))
 	for _, s := range steps {
 		connID := s.ConnectionID
 		if connID == "" {
@@ -379,17 +419,15 @@ func (h *Handler) CreateCombo(name, strategy string, timeoutMs, stickyLimit int,
 		if connID == "" {
 			return nil, fmt.Errorf("no eligible connection for model %s", s.ModelID)
 		}
-		_, err := tx.Exec(`
-		INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, uuid.New().String(), comboID, connID, s.ModelID, s.Priority, s.Weight, now)
-		if err != nil {
-			return nil, fmt.Errorf("create combo step: %w", err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("commit combo transaction: %w", err)
+		resolvedSteps = append(resolvedSteps, db.ComboStep{
+			ID:           uuid.New().String(),
+			ComboID:      comboID,
+			ConnectionID: connID,
+			ModelID:      s.ModelID,
+			Priority:     s.Priority,
+			Weight:       s.Weight,
+			CreatedAt:    now,
+		})
 	}
 
 	combo := &db.Combo{
@@ -405,18 +443,30 @@ func (h *Handler) CreateCombo(name, strategy string, timeoutMs, stickyLimit int,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
+
+	// Run the insert through the WriteQueue if available, otherwise directly.
+	// h.mu is intentionally not held during DB work so Resolve() stays unblocked.
+	if err := h.execWrite("create-combo", func(database *sql.DB) error {
+		return insertComboTx(database, combo, resolvedSteps)
+	}); err != nil {
+		return nil, err
+	}
+
+	h.mu.Lock()
 	h.combos[comboID] = combo
 	h.byName[combo.Name] = combo
 	if isSmart {
 		h.smartCombos[comboID] = combo
 	}
-	h.loadSteps(comboID)
+	h.steps[comboID] = resolvedSteps
+	h.mu.Unlock()
+
 	return combo, nil
 }
 
-// DeleteCombo removes a combo.
-func (h *Handler) DeleteCombo(comboID string) error {
-	tx, err := h.db.Begin()
+// deleteComboTx deletes a combo and its related rows inside a single DB transaction.
+func deleteComboTx(database *sql.DB, comboID string) error {
+	tx, err := database.Begin()
 	if err != nil {
 		return fmt.Errorf("begin delete combo transaction: %w", err)
 	}
@@ -433,6 +483,16 @@ func (h *Handler) DeleteCombo(comboID string) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit delete combo transaction: %w", err)
+	}
+	return nil
+}
+
+// DeleteCombo removes a combo.
+func (h *Handler) DeleteCombo(comboID string) error {
+	if err := h.execWrite("delete-combo", func(database *sql.DB) error {
+		return deleteComboTx(database, comboID)
+	}); err != nil {
+		return err
 	}
 
 	h.mu.Lock()
@@ -538,11 +598,17 @@ func (h *Handler) CleanupBreakers() {
 
 // RefreshFromDB reloads combos from the database.
 func (h *Handler) RefreshFromDB() {
+	// Load into temporary maps first so the DB read does not hold h.mu.
+	combos := make(map[string]*db.Combo)
+	byName := make(map[string]*db.Combo)
+	smartCombos := make(map[string]*db.Combo)
+	steps := make(map[string][]db.ComboStep)
+	h.loadInto(combos, byName, smartCombos, steps)
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.combos = make(map[string]*db.Combo)
-	h.byName = make(map[string]*db.Combo)
-	h.smartCombos = make(map[string]*db.Combo)
-	h.steps = make(map[string][]db.ComboStep)
-	h.loadFromDB()
+	h.combos = combos
+	h.byName = byName
+	h.smartCombos = smartCombos
+	h.steps = steps
 }

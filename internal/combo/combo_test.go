@@ -50,7 +50,7 @@ func TestCreateCombo_AutoPicksConnection(t *testing.T) {
 	store.Set("conn-1", cs)
 	elig := connstate.NewEligibilityManager(store)
 	elig.RecomputeAll()
-	h := NewHandler(database, store, elig)
+	h := NewHandler(database, nil, store, elig)
 
 	combo, err := h.CreateCombo("auto-conn", "priority", 30000, 1, false, "", "", []CreateStepInput{
 		{ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
@@ -75,7 +75,7 @@ func TestCreateCombo_PersistsSmartAndStickyFields(t *testing.T) {
 
 	store := connstate.NewStore()
 	elig := connstate.NewEligibilityManager(store)
-	h := NewHandler(database, store, elig)
+	h := NewHandler(database, nil, store, elig)
 
 	combo, err := h.CreateCombo("premium-smart", "priority", 15000, 3, true, "premium", "", []CreateStepInput{
 		{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
@@ -133,7 +133,7 @@ func TestRoundRobin_StickyLimitZeroDoesNotPanic(t *testing.T) {
 	store.Set("conn-1", cs)
 	elig := connstate.NewEligibilityManager(store)
 	elig.RecomputeAll()
-	h := NewHandler(database, store, elig)
+	h := NewHandler(database, nil, store, elig)
 
 	combo, err := h.CreateCombo("rr-zero", "round-robin", 30000, 0, false, "", "", []CreateStepInput{
 		{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
@@ -168,7 +168,7 @@ func TestResolve_RegularComboShadowsSmartKeyword(t *testing.T) {
 	store.Set("conn-1", cs)
 	elig := connstate.NewEligibilityManager(store)
 	elig.RecomputeAll()
-	h := NewHandler(database, store, elig)
+	h := NewHandler(database, nil, store, elig)
 
 	regular, err := h.CreateCombo("balanced", "priority", 30000, 1, false, "", "", []CreateStepInput{
 		{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
@@ -199,7 +199,7 @@ func TestResolveSmart_DeterministicWhenMultipleCombosShareGoal(t *testing.T) {
 
 	store := connstate.NewStore()
 	elig := connstate.NewEligibilityManager(store)
-	h := NewHandler(database, store, elig)
+	h := NewHandler(database, nil, store, elig)
 
 	_, err := h.CreateCombo("z-economy", "priority", 30000, 1, true, "economy", "", []CreateStepInput{
 		{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
@@ -239,7 +239,7 @@ func TestRandomStrategy_ReturnsPermutation(t *testing.T) {
 
 	store := connstate.NewStore()
 	elig := connstate.NewEligibilityManager(store)
-	h := NewHandler(database, store, elig)
+	h := NewHandler(database, nil, store, elig)
 
 	combo, err := h.CreateCombo("random-combo", "random", 30000, 1, false, "", "", []CreateStepInput{
 		{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
@@ -289,7 +289,7 @@ func TestLeastUsedStrategy_OrdersByRecentUsage(t *testing.T) {
 
 	store := connstate.NewStore()
 	elig := connstate.NewEligibilityManager(store)
-	h := NewHandler(database, store, elig)
+	h := NewHandler(database, nil, store, elig)
 
 	combo, err := h.CreateCombo("least-used-combo", "least-used", 30000, 1, false, "", "", []CreateStepInput{
 		{ConnectionID: "conn-1", ModelID: "combo-test/gpt-4o", Priority: 1, Weight: 100},
@@ -320,7 +320,7 @@ func TestRoundRobin_AdvancesOneStepPerRequest(t *testing.T) {
 
 	store := connstate.NewStore()
 	elig := connstate.NewEligibilityManager(store)
-	h := NewHandler(database, store, elig)
+	h := NewHandler(database, nil, store, elig)
 
 	combo, err := h.CreateCombo("rr-three", "round-robin", 30000, 1, false, "", "", []CreateStepInput{
 		{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
@@ -356,7 +356,7 @@ func TestCreateCombo_RollbackOnStepInsertFailure(t *testing.T) {
 	database := newComboTestDB(t)
 	store := connstate.NewStore()
 	elig := connstate.NewEligibilityManager(store)
-	h := NewHandler(database, store, elig)
+	h := NewHandler(database, nil, store, elig)
 
 	_, err := h.CreateCombo("rollback-combo", "priority", 30000, 1, false, "", "", []CreateStepInput{
 		{ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
@@ -388,7 +388,7 @@ func TestDeleteCombo_RemovesFromMemoryAndDB(t *testing.T) {
 	store.Set("conn-1", cs)
 	elig := connstate.NewEligibilityManager(store)
 	elig.RecomputeAll()
-	h := NewHandler(database, store, elig)
+	h := NewHandler(database, nil, store, elig)
 
 	combo, err := h.CreateCombo("delete-me", "priority", 30000, 1, false, "", "", []CreateStepInput{
 		{ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
@@ -453,7 +453,7 @@ func TestEffectiveStrategy_OverridesAndDefaults(t *testing.T) {
 
 	store := connstate.NewStore()
 	elig := connstate.NewEligibilityManager(store)
-	h := NewHandler(database, store, elig)
+	h := NewHandler(database, nil, store, elig)
 
 	// No settings: returns the combo's own strategy when valid.
 	if got := h.EffectiveStrategy("mycombo", "priority"); got != "priority" {
@@ -514,7 +514,7 @@ func TestPickConnection_EligibleAndBreaker(t *testing.T) {
 	store.Set("conn-1", cs)
 	elig := connstate.NewEligibilityManager(store)
 	elig.RecomputeAll()
-	h := NewHandler(database, store, elig)
+	h := NewHandler(database, nil, store, elig)
 
 	if id, ok := h.PickConnection(db.ComboStep{ModelID: "openai/gpt-4o"}); !ok || id != "conn-1" {
 		t.Fatalf("PickConnection eligible = (%q, %v), want (conn-1, true)", id, ok)
@@ -561,7 +561,7 @@ func TestPickConnections_RespectsCooldown(t *testing.T) {
 
 	elig := connstate.NewEligibilityManager(store)
 	elig.RecomputeAll()
-	h := NewHandler(database, store, elig)
+	h := NewHandler(database, nil, store, elig)
 
 	cb := h.fallback.GetBreaker("conn-e")
 	cb.RecordFailure()
@@ -586,7 +586,7 @@ func TestRefreshFromDB_ReflectsExternalChanges(t *testing.T) {
 	store.Set("conn-1", cs)
 	elig := connstate.NewEligibilityManager(store)
 	elig.RecomputeAll()
-	h := NewHandler(database, store, elig)
+	h := NewHandler(database, nil, store, elig)
 
 	combo, err := h.CreateCombo("refreshable", "priority", 30000, 1, false, "", "", []CreateStepInput{
 		{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
@@ -606,6 +606,125 @@ func TestRefreshFromDB_ReflectsExternalChanges(t *testing.T) {
 	h.RefreshFromDB()
 
 	if _, ok := h.Resolve("refreshable"); ok {
+		t.Fatalf("Resolve returned true after deactivating combo in DB")
+	}
+}
+
+func TestCreateCombo_WithWriteQueue_PersistsAndUpdatesMemory(t *testing.T) {
+	database := newComboTestDB(t)
+	seedConnectionForCombo(t, database, "conn-1")
+
+	store := connstate.NewStore()
+	cs := &connstate.ConnectionState{
+		ID:     "conn-1",
+		Prefix: "openai",
+		Status: connstate.StatusReady,
+	}
+	store.Set("conn-1", cs)
+	elig := connstate.NewEligibilityManager(store)
+	elig.RecomputeAll()
+
+	queue := db.NewWriteQueue(database)
+	defer queue.Stop()
+
+	h := NewHandler(database, queue, store, elig)
+
+	combo, err := h.CreateCombo("queued-combo", "priority", 30000, 1, false, "", "", []CreateStepInput{
+		{ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
+	})
+	if err != nil {
+		t.Fatalf("CreateCombo failed: %v", err)
+	}
+
+	// Because execWrite uses WriteQueue.Do, CreateCombo blocks until the queued
+	// write completes. The combo must be resolvable immediately after return.
+	if _, ok := h.Resolve("queued-combo"); !ok {
+		t.Fatalf("Resolve returned false immediately after CreateCombo returned")
+	}
+
+	var dbCount int
+	row := database.QueryRow(`SELECT COUNT(*) FROM combos WHERE id = ?`, combo.ID)
+	if err := row.Scan(&dbCount); err != nil {
+		t.Fatalf("scan combo count: %v", err)
+	}
+	if dbCount != 1 {
+		t.Fatalf("combos row count = %d, want 1", dbCount)
+	}
+}
+
+func TestDeleteCombo_WithWriteQueue_RemovesFromMemoryAndDB(t *testing.T) {
+	database := newComboTestDB(t)
+	seedConnectionForCombo(t, database, "conn-1")
+
+	store := connstate.NewStore()
+	cs := &connstate.ConnectionState{
+		ID:     "conn-1",
+		Prefix: "openai",
+		Status: connstate.StatusReady,
+	}
+	store.Set("conn-1", cs)
+	elig := connstate.NewEligibilityManager(store)
+	elig.RecomputeAll()
+
+	queue := db.NewWriteQueue(database)
+	defer queue.Stop()
+
+	h := NewHandler(database, queue, store, elig)
+
+	combo, err := h.CreateCombo("queued-delete", "priority", 30000, 1, false, "", "", []CreateStepInput{
+		{ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
+	})
+	if err != nil {
+		t.Fatalf("CreateCombo failed: %v", err)
+	}
+
+	if err := h.DeleteCombo(combo.ID); err != nil {
+		t.Fatalf("DeleteCombo failed: %v", err)
+	}
+
+	if _, ok := h.Resolve("queued-delete"); ok {
+		t.Fatalf("Resolve returned true after delete")
+	}
+
+	var count int
+	row := database.QueryRow(`SELECT COUNT(*) FROM combos WHERE id = ?`, combo.ID)
+	if err := row.Scan(&count); err != nil {
+		t.Fatalf("scan combo count: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("combos row count = %d, want 0", count)
+	}
+}
+
+func TestRefreshFromDB_WithWriteQueue_ReflectsExternalChanges(t *testing.T) {
+	database := newComboTestDB(t)
+	seedConnectionForCombo(t, database, "conn-1")
+
+	store := connstate.NewStore()
+	cs := &connstate.ConnectionState{ID: "conn-1", Prefix: "openai", Status: connstate.StatusReady}
+	store.Set("conn-1", cs)
+	elig := connstate.NewEligibilityManager(store)
+	elig.RecomputeAll()
+
+	queue := db.NewWriteQueue(database)
+	defer queue.Stop()
+
+	h := NewHandler(database, queue, store, elig)
+
+	combo, err := h.CreateCombo("queued-refresh", "priority", 30000, 1, false, "", "", []CreateStepInput{
+		{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
+	})
+	if err != nil {
+		t.Fatalf("CreateCombo failed: %v", err)
+	}
+
+	if _, err := database.Exec(`UPDATE combos SET is_active = 0 WHERE id = ?`, combo.ID); err != nil {
+		t.Fatalf("update combo is_active: %v", err)
+	}
+
+	h.RefreshFromDB()
+
+	if _, ok := h.Resolve("queued-refresh"); ok {
 		t.Fatalf("Resolve returned true after deactivating combo in DB")
 	}
 }

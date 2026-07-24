@@ -52,7 +52,7 @@ func TestReorderStepsByCapabilities_PrioritizesVision(t *testing.T) {
 
 	store := connstate.NewStore()
 	elig := connstate.NewEligibilityManager(store)
-	h := NewHandler(database, store, elig)
+	h := NewHandler(database, nil, store, elig)
 
 	out := h.ReorderStepsByCapabilities(steps, required)
 	if len(out) != 2 {

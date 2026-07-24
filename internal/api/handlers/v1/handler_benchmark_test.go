@@ -78,7 +78,7 @@ func newBenchHandler(b *testing.B, n int) *Handler {
 		exhaustion:          quota.NewExhaustionCache(),
 		providerCfg:         providerCfg,
 		sessions:            connstate.NewSessionCache(),
-		combo:               combo.NewHandler(database, store, elig),
+		combo:               combo.NewHandler(database, nil, store, elig),
 		registry:            executor.GetRegistry(),
 		resolver:            &proxypool.Resolver{},
 		tracker:             &usage.Tracker{},

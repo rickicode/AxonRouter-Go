@@ -92,7 +92,7 @@ type Config struct {
 	WriteQueue                   *db.WriteQueue // centralized async writer (nil → one is created)
 	Port                         string
 	QuotaIntervalMin             int
-	LogRetentionDays               int
+	LogRetentionDays             int
 	ConnectionCleanupIntervalMin int
 	WebFS                        fs.FS // embedded frontend filesystem
 }
@@ -117,7 +117,6 @@ func New(cfg Config) *Router {
 	// are immediately routable and visible to the detail/update handlers.
 	combo.SeedDefaultCombos(cfg.DB)
 
-	comboHandler := combo.NewHandler(cfg.DB, store, elig)
 	// Centralized async write queue: all non-critical DB writes (cooldowns, ban
 	// counts, OAuth token persistence) funnel through this single writer goroutine.
 	// SQLite only allows one writer at a time anyway, so serializing at the app
@@ -126,6 +125,8 @@ func New(cfg Config) *Router {
 	if writeQueue == nil {
 		writeQueue = db.NewWriteQueue(cfg.DB)
 	}
+
+	comboHandler := combo.NewHandler(cfg.DB, writeQueue, store, elig)
 	// Auth cache: eliminates 2 DB queries + bcrypt per request on the hot path.
 	authCache := middleware.NewAuthCache(30 * time.Second)
 	tracker := usage.NewTracker(cfg.DB)
@@ -206,7 +207,7 @@ func New(cfg Config) *Router {
 	}
 	exactCache := cache.NewPersistentCache(cfg.DB, 1000, time.Duration(ttlSec)*time.Second)
 
-	comboH := admin.NewComboHandler(cfg.DB, comboHandler)
+	comboH := admin.NewComboHandler(cfg.DB, writeQueue, comboHandler)
 	logH := admin.NewLogHandler(cfg.DB)
 	settingH := settingHandler
 	dashboardH := admin.NewDashboardHandler(cfg.DB, store, tracker)

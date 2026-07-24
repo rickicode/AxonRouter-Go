@@ -159,7 +159,7 @@ func newTestHandler(t testing.TB) *Handler {
 		exhaustion:          quota.NewExhaustionCache(),
 		providerCfg:         providercfg.NewManager(t.TempDir()),
 		sessions:            connstate.NewSessionCache(),
-		combo:               combo.NewHandler(database, store, elig),
+		combo:               combo.NewHandler(database, nil, store, elig),
 		registry:            executor.GetRegistry(),
 		failoverMaxAttempts: 5,
 	}
@@ -2171,7 +2171,7 @@ func TestComboStream_EmptyCloseFailsOverToNextStep(t *testing.T) {
 	h.store.SeedConnection("comboempty-conn1", "comboempty1", "ready", 0)
 	h.store.SeedConnection("comboempty-conn2", "comboempty2", "ready", 0)
 	h.elig.RecomputeAll()
-	h.combo = combo.NewHandler(h.db, h.store, h.elig)
+	h.combo = combo.NewHandler(h.db, nil, h.store, h.elig)
 
 	body := []byte(`{"model":"combo-empty","messages":[{"role":"user","content":"hi"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -2261,7 +2261,7 @@ func TestCombo_NonStreamingUpstreamErrorBodyFailsOver(t *testing.T) {
 	h.store.SeedConnection("comboerr-conn1", "comboerr1", "ready", 0)
 	h.store.SeedConnection("comboerr-conn2", "comboerr2", "ready", 0)
 	h.elig.RecomputeAll()
-	h.combo = combo.NewHandler(h.db, h.store, h.elig)
+	h.combo = combo.NewHandler(h.db, nil, h.store, h.elig)
 
 	body := []byte(`{"model":"combo-err","messages":[{"role":"user","content":"hi"}]}`)
 	rec := httptest.NewRecorder()
@@ -2345,7 +2345,7 @@ func TestFusion_MinPanelThenGrace(t *testing.T) {
 			t.Fatalf("insert step %d: %v", i, err)
 		}
 	}
-	h.combo = combo.NewHandler(h.db, h.store, h.elig)
+	h.combo = combo.NewHandler(h.db, nil, h.store, h.elig)
 
 	body := []byte(`{"model":"combo-fusion","messages":[{"role":"user","content":"hi"}]}`)
 	rec := httptest.NewRecorder()

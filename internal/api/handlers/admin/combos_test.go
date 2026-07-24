@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
+	"github.com/rickicode/AxonRouter-Go/internal/db"
 )
 
 func newComboHandlerForTest(t *testing.T) (*ComboHandler, *combo.Handler, *connstate.Store, *connstate.EligibilityManager) {
@@ -20,8 +21,8 @@ func newComboHandlerForTest(t *testing.T) (*ComboHandler, *combo.Handler, *conns
 	database := newConnectionHandlerTestDB(t)
 	store := connstate.NewStore()
 	elig := connstate.NewEligibilityManager(store)
-	ch := combo.NewHandler(database, store, elig)
-	return NewComboHandler(database, ch), ch, store, elig
+	ch := combo.NewHandler(database, nil, store, elig)
+	return NewComboHandler(database, nil, ch), ch, store, elig
 }
 
 func seedConnectionForAdminCombo(t *testing.T, database *sql.DB, store *connstate.Store, elig *connstate.EligibilityManager, id, prefix string) {
@@ -294,5 +295,48 @@ func TestComboUpdate_ResetsRotationCounter(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("rotation_state rows = %d, want 0 after strategy update", count)
+	}
+}
+
+func newComboHandlerWithQueueForTest(t *testing.T) (*ComboHandler, *combo.Handler, *connstate.Store, *connstate.EligibilityManager) {
+	t.Helper()
+	database := newConnectionHandlerTestDB(t)
+	queue := db.NewWriteQueue(database)
+	t.Cleanup(func() { queue.Stop() })
+	store := connstate.NewStore()
+	elig := connstate.NewEligibilityManager(store)
+	ch := combo.NewHandler(database, queue, store, elig)
+	return NewComboHandler(database, queue, ch), ch, store, elig
+}
+
+func TestComboCreate_WithWriteQueue_QueueStateConsistent(t *testing.T) {
+	handler, comboH, store, elig := newComboHandlerWithQueueForTest(t)
+	seedConnectionForAdminCombo(t, handler.db, store, elig, "conn-queue", "openai")
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := `{"name":"queue-combo","strategy":"priority","steps":[{"model_id":"openai/gpt-4o"}]}`
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/combos", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.Create(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", w.Code, w.Body.String())
+	}
+
+	// The handler must have waited for the queued write and updated in-memory
+	// state before returning, so the combo resolves immediately.
+	if _, ok := comboH.Resolve("queue-combo"); !ok {
+		t.Fatalf("combo not resolvable immediately after Create returned")
+	}
+
+	var dbCount int
+	if err := handler.db.QueryRow(`SELECT COUNT(*) FROM combos WHERE name = ?`, "queue-combo").Scan(&dbCount); err != nil {
+		t.Fatalf("query combos: %v", err)
+	}
+	if dbCount != 1 {
+		t.Fatalf("combos row count = %d, want 1", dbCount)
 	}
 }

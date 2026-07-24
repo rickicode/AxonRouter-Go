@@ -29,7 +29,7 @@ func TestLeastUsedStrategy_HandlesAtPrefix(t *testing.T) {
 
 	store := connstate.NewStore()
 	elig := connstate.NewEligibilityManager(store)
-	h := NewHandler(database, store, elig)
+	h := NewHandler(database, nil, store, elig)
 
 	combo, err := h.CreateCombo("least-used-at", "least-used", 30000, 1, false, "", "", []CreateStepInput{
 		{ConnectionID: "conn-1", ModelID: "@cx/gpt-5.4", Priority: 1, Weight: 100},

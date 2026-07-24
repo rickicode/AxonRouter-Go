@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"database/sql"
 	"log"
 	"net/http"
@@ -16,13 +17,24 @@ import (
 
 // ComboHandler handles combo CRUD operations.
 type ComboHandler struct {
-	db      *sql.DB
-	handler *combo.Handler
+	db         *sql.DB
+	writeQueue *db.WriteQueue
+	handler    *combo.Handler
 }
 
 // NewComboHandler creates a new combo handler.
-func NewComboHandler(database *sql.DB, handler *combo.Handler) *ComboHandler {
-	return &ComboHandler{db: database, handler: handler}
+// writeQueue may be nil; when nil, admin mutations fall back to direct DB writes.
+func NewComboHandler(database *sql.DB, writeQueue *db.WriteQueue, handler *combo.Handler) *ComboHandler {
+	return &ComboHandler{db: database, writeQueue: writeQueue, handler: handler}
+}
+
+// execWrite runs a DB mutation through the centralized WriteQueue when one is
+// configured, otherwise executes it directly on the DB.
+func (h *ComboHandler) execWrite(label string, fn func(*sql.DB) error) error {
+	if h.writeQueue != nil {
+		return h.writeQueue.Do(context.Background(), label, fn)
+	}
+	return fn(h.db)
 }
 
 // List returns all combos.
@@ -251,13 +263,19 @@ func (h *ComboHandler) Update(c *gin.Context) {
 	sets = append(sets, "updated_at = ?")
 	args = append(args, time.Now().Unix(), id)
 
-	result, err := h.db.Exec("UPDATE combos SET "+joinStrings(sets, ", ")+" WHERE id = ?", args...)
-	if err != nil {
+	var rowsAffected int64
+	if err := h.execWrite("update-combo", func(database *sql.DB) error {
+		result, err := database.Exec("UPDATE combos SET "+joinStrings(sets, ", ")+" WHERE id = ?", args...)
+		if err != nil {
+			return err
+		}
+		rowsAffected, _ = result.RowsAffected()
+		return nil
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
+	if rowsAffected == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "combo not found"})
 		return
 	}
@@ -320,11 +338,13 @@ func (h *ComboHandler) AddStep(c *gin.Context) {
 	}
 
 	stepID := uuid.New().String()
-	_, err := h.db.Exec(`
-	INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, stepID, comboID, connectionID, req.ModelID, req.Priority, req.Weight, time.Now().Unix())
-	if err != nil {
+	if err := h.execWrite("add-combo-step", func(database *sql.DB) error {
+		_, err := database.Exec(`
+		INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, stepID, comboID, connectionID, req.ModelID, req.Priority, req.Weight, time.Now().Unix())
+		return err
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -336,13 +356,19 @@ func (h *ComboHandler) AddStep(c *gin.Context) {
 // RemoveStep removes a step from a combo.
 func (h *ComboHandler) RemoveStep(c *gin.Context) {
 	stepID := c.Param("stepId")
-	result, err := h.db.Exec(`DELETE FROM combo_steps WHERE id = ?`, stepID)
-	if err != nil {
+	var rowsAffected int64
+	if err := h.execWrite("remove-combo-step", func(database *sql.DB) error {
+		result, err := database.Exec(`DELETE FROM combo_steps WHERE id = ?`, stepID)
+		if err != nil {
+			return err
+		}
+		rowsAffected, _ = result.RowsAffected()
+		return nil
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
+	if rowsAffected == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "step not found"})
 		return
 	}
