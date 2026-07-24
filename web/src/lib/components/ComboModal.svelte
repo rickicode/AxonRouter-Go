@@ -369,64 +369,64 @@ async function handleSave() {
 					</div>
 				</CardHeader>
 				<ScrollArea class="max-h-[40vh]">
-				<CardContent>
-					{#if stepsLoading}
-						<div class="h-20 bg-muted animate-pulse rounded-md"></div>
-					{:else if steps.length === 0}
-						<div class="p-6 border border-dashed border-border rounded-md text-center">
-							<p class="text-body-sm text-muted-foreground mb-1">No steps configured yet.</p>
-							<p class="text-caption text-muted-foreground">Add models to define routing order.</p>
-						</div>
-					{:else}
-            <div class="space-y-2">
-              {#each steps as step, i (step.id ?? `${step.model_id}-${i}`)}
-                <div class="flex items-center gap-3 p-2.5 border border-border rounded-md bg-card/50">
-                  <div class="flex flex-col gap-0.5">
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      class="size-7 rounded-sm"
-                      disabled={i === 0}
-                      onclick={() => moveStepUp(i)}
-                      aria-label="Move up"
-                      title="Move up"
-                    >
-                      <ChevronUpIcon class="size-4" />
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      class="size-7 rounded-sm"
-                      disabled={i === steps.length - 1}
-                      onclick={() => moveStepDown(i)}
-                      aria-label="Move down"
-                      title="Move down"
-                    >
-                      <ChevronDownIcon class="size-4" />
-                    </Button>
-                  </div>
-                  <span class="flex-1 min-w-0 text-body-sm font-mono truncate">{step.model_id}</span>
-                  <div class="flex items-center gap-2">
-				<div class="space-y-1">
-					<Label class="text-caption text-muted-foreground">Order</Label>
-					<span class="flex h-8 w-16 items-center justify-center rounded-md border border-border bg-muted/30 text-code font-mono">{i + 1}</span>
-				</div>
-				{#if strategy === 'weighted'}
+					<CardContent>
+						{#if stepsLoading}
+							<div class="h-20 bg-muted animate-pulse rounded-md"></div>
+						{:else if steps.length === 0}
+							<div class="p-6 border border-dashed border-border rounded-md text-center">
+								<p class="text-body-sm text-muted-foreground mb-1">No steps configured yet.</p>
+								<p class="text-caption text-muted-foreground">Add models to define routing order.</p>
+							</div>
+						{:else}
+	            <div class="space-y-2">
+	              {#each steps as step, i (step.id ?? `${step.model_id}-${i}`)}
+	                <div class="flex items-center gap-3 p-2.5 border border-border rounded-md bg-card/50">
+	                  <div class="flex flex-col gap-0.5">
+	                    <Button
+	                      variant="outline"
+	                      size="icon"
+	                      class="size-7 rounded-sm"
+	                      disabled={i === 0}
+	                      onclick={() => moveStepUp(i)}
+	                      aria-label="Move up"
+	                      title="Move up"
+	                    >
+	                      <ChevronUpIcon class="size-4" />
+	                    </Button>
+	                    <Button
+	                      variant="outline"
+	                      size="icon"
+	                      class="size-7 rounded-sm"
+	                      disabled={i === steps.length - 1}
+	                      onclick={() => moveStepDown(i)}
+	                      aria-label="Move down"
+	                      title="Move down"
+	                    >
+	                      <ChevronDownIcon class="size-4" />
+	                    </Button>
+	                  </div>
+	                  <span class="flex-1 min-w-0 text-body-sm font-mono truncate">{step.model_id}</span>
+	                  <div class="flex items-center gap-2">
 					<div class="space-y-1">
-						<Label class="text-caption text-muted-foreground">Weight</Label>
-						<Input type="number" bind:value={step.weight} class="h-8 w-20 text-code font-mono" />
+						<Label class="text-caption text-muted-foreground">Order</Label>
+						<span class="flex h-8 w-16 items-center justify-center rounded-md border border-border bg-muted/30 text-code font-mono">{i + 1}</span>
 					</div>
-				{/if}
-                  </div>
-                  <Button variant="ghost" size="sm" onclick={() => removeStep(i)} class="text-caption-mono text-destructive h-8 px-2 rounded-sm">
-                    Remove
-                  </Button>
-                </div>
-              {/each}
-            </div>
-
+					{#if strategy === 'weighted'}
+						<div class="space-y-1">
+							<Label class="text-caption text-muted-foreground">Weight</Label>
+							<Input type="number" bind:value={step.weight} class="h-8 w-20 text-code font-mono" />
+						</div>
 					{/if}
-				</CardContent>
+	                  </div>
+	                  <Button variant="ghost" size="sm" onclick={() => removeStep(i)} class="text-caption-mono text-destructive h-8 px-2 rounded-sm">
+	                    Remove
+	                  </Button>
+	                </div>
+	              {/each}
+	            </div>
+	
+						{/if}
+					</CardContent>
 				</ScrollArea>
     </Card>
     </div>
