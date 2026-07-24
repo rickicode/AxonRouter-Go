@@ -358,7 +358,7 @@ async function handleSave() {
 				</div>
 			{/if}
 
-			<Card class="shadow-card">
+			<Card class="shadow-card flex flex-col">
 				<CardHeader class="pb-3">
 					<div class="flex items-center justify-between">
 						<CardTitle class="text-body-md-strong">Routing steps</CardTitle>
@@ -367,7 +367,7 @@ async function handleSave() {
 						</Button>
 					</div>
 				</CardHeader>
-				<CardContent>
+				<CardContent class="flex flex-col">
 					{#if stepsLoading}
 						<div class="h-20 bg-muted animate-pulse rounded-md"></div>
 					{:else if steps.length === 0}
@@ -376,7 +376,7 @@ async function handleSave() {
 							<p class="text-caption text-muted-foreground">Add models to define routing order.</p>
 						</div>
 					{:else}
-            <div class="space-y-2">
+						<div class="space-y-2 overflow-y-auto max-h-[24rem]">
               {#each steps as step, i (step.id ?? `${step.model_id}-${i}`)}
                 <div class="flex items-center gap-3 p-2.5 border border-border rounded-md bg-card/50">
                   <div class="flex flex-col gap-0.5">

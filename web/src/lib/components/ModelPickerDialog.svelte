@@ -77,7 +77,7 @@ import type { GatewayModel } from '$lib/api';
 				<Input bind:value={modelSearch} placeholder="Search models…" class="text-body-sm" />
 			</div>
 		</div>
-		<ScrollArea class="flex-1 max-h-[50vh]">
+		<ScrollArea class="flex-1 min-h-0 w-full">
 			<div class="flex flex-col">
 {#each filteredModels as model (model.id)}
       {@const kinds = model.service_kinds?.length === 1 && model.service_kinds[0] === 'llm' ? [] : (model.service_kinds ?? [])}
