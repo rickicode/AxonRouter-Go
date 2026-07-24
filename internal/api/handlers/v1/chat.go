@@ -1037,6 +1037,11 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 		h.writeFusionResponse(c, successes[0].content, model, stream)
 		return
 	}
+	if !stream && (resp.StatusCode >= 500 || isUpstreamErrorBody(resp.Body)) {
+		logging.Logger.Warn("fusion judge returned upstream error; returning first panel response", "status", resp.StatusCode)
+		h.writeFusionResponse(c, successes[0].content, model, stream)
+		return
+	}
 
 	if stream {
 		streamCtx, cancelStream := context.WithCancel(c.Request.Context())
