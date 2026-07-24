@@ -440,6 +440,7 @@ type comboStepResult struct {
 	connID         string
 	conn           *Connection
 	exec           executor.Executor
+	providerFormat executor.ProviderFormat
 	provider       string
 	modelName      string
 	resp           *executor.Response
@@ -514,6 +515,7 @@ func (h *Handler) executeComboStep(
 		return result
 	}
 	result.exec = exec
+	result.providerFormat = providerFormat
 
 	connIDs := h.combo.PickConnections(provider, modelName)
 	for _, connID := range connIDs {
@@ -622,120 +624,33 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 	var lastModelName string
 
 	for _, step := range comboResult.Steps {
-		provider, modelName := executor.SplitModel(step.ModelID)
+		_, modelName := executor.SplitModel(step.ModelID)
 		lastModelName = modelName
 
 		// Replace the model in the request body with this step's unprefixed model so
 		// upstream providers receive the correct model ID (mirrors the direct path).
 		body = executor.JSONSet(body, "model", modelName)
 
-		exec, providerFormat, err := h.resolveExecutor(provider, modelName)
-		if err != nil {
-			// Cannot even build an executor for this model — record and try next step.
-			lastErr = err
-			lastErrCategory = "executor"
-			continue
+		result := h.executeComboStep(comboCtx, c, step, body, stream, clientFormat, start)
+		if result.handled {
+			return
 		}
-
-		connIDs := h.combo.PickConnections(provider, modelName)
-		if len(connIDs) == 0 {
-			// No eligible connection for this step right now; fall through to next step.
-			continue
+		if h.isClientCanceled(c, result.lastErr) {
+			return
 		}
+		if result.success {
+			connID := result.connID
+			conn := result.conn
+			provider := result.provider
+			modelName := result.modelName
+			resp := result.resp
+			streamResult := result.streamResult
+			proxyCtx := result.proxyCtx
+			translatedBody := result.translatedBody
+			streamCfg := result.streamCfg
+			latency := result.latency
+			providerFormat := result.providerFormat
 
-		for _, connID := range connIDs {
-			if comboCtx.Err() != nil {
-				// Overall combo deadline exceeded; stop trying further connections.
-				break
-			}
-			now := time.Now()
-			conn, err := h.prepareConnection(comboCtx, connID, provider, modelName, now)
-			if err != nil {
-				// Preflight rejected (cooldown/exhausted) — try next connection.
-				continue
-			}
-			lastConn = conn
-
-			translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
-			translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
-			translatedBody = h.applyThinkingOverrideFromContext(c.Request.Context(), translatedBody, string(providerFormat))
-			// Adaptive readiness: extend timeout for large/reasoning requests.
-			var streamCfg *executor.StreamConfig
-			if stream {
-				adaptiveMs := computeAdaptiveReadiness(body, modelName, 80000)
-				streamCfg = &executor.StreamConfig{
-					StreamReadinessTimeoutMs: adaptiveMs,
-					AdaptiveReadiness:        true,
-				}
-			}
-			// Use the client's request context for execution to avoid combo timeout
-			// cutting off long-lived streaming responses.
-			execCtx := comboCtx
-			if stream {
-				execCtx = c.Request.Context()
-			}
-			proxyCtx, resp, streamResult, err := h.executeProviderCall(execCtx, exec, conn, provider, modelName, translatedBody, stream, streamCfg)
-			latency := time.Since(start).Milliseconds()
-			// Before declaring success, treat an upstream HTTP error (non-streaming)
-			// as a retryable failure so the combo can failover instead of returning
-			// an error status as if it were a real response.
-			if err == nil && !stream && resp != nil && (resp.StatusCode >= 500 || isUpstreamErrorBody(resp.Body)) {
-				err = &executor.UpstreamError{
-					StatusCode: resp.StatusCode,
-					Body:       resp.Body,
-					RawBody:    resp.Body,
-					Headers:    resp.Headers,
-				}
-			}
-			if err != nil {
-				if h.isClientCanceled(c, err) {
-					return
-				}
-				det := connstate.DetectError(comboCtx, 0, "", err, provider, modelName, nil)
-
-				// Non-retryable: only model-not-found is surfaced directly. Auth and
-				// balance failures now fail over so a sibling connection gets a chance.
-				if det.Category == connstate.ErrorModelNotFound {
-					if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
-						return
-					}
-					lastErr = err
-					lastErrCategory = string(det.Category)
-					break
-				}
-
-				// Retryable: apply model-scoped failover marking like the direct path.
-				if det.ModelID != "" && (det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
-					scope := connstate.ModelScope(provider, det.ModelID)
-					h.exhaustion.MarkExhausted(quota.ExhaustKey(connID, scope), quota.TTLFromCooldown(det.CooldownUntil, 5*time.Minute))
-				} else if det.Category == connstate.ErrorRateLimit {
-					h.exhaustion.MarkExhausted(connID, quota.TTLFromCooldown(det.CooldownUntil, quota.DefaultExhaustionTTL))
-				} else if det.Category == connstate.ErrorQuota {
-					ttl := 24 * time.Hour
-					if det.CooldownUntil != nil {
-						ttl = time.Until(*det.CooldownUntil)
-					}
-					h.exhaustion.MarkExhausted(connID, ttl)
-				}
-				h.combo.RecordFailure(connID, det)
-				h.persistCooldownScoped(connID, det)
-				if det.Status != connstate.StatusReady {
-					h.elig.ScheduleUpdateProvider(provider)
-				}
-				lastErr = err
-				lastErrCategory = string(det.Category)
-				if isTransientUpstreamError(err) {
-					cd := transientCooldown(transientCooldownResp(resp, err))
-					logging.Logger.Info("combo transient error cooldown before next connection",
-						"provider", provider, "model", modelName,
-						"conn", shortID(connID, 8), "status", upstreamHTTPStatus(err),
-						"cooldown_ms", cd.Milliseconds())
-					transientErrorSleep(comboCtx, cd)
-				}
-				continue
-			}
-
-			// Success — write the response and stop.
 			h.resetBanCount(connID)
 			h.persistSuccess(connID)
 			h.combo.RecordSuccess(connID)
@@ -807,7 +722,7 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 					if det.Category == connstate.ErrorModelNotFound {
 						lastErr = streamErr
 						lastErrCategory = string(det.Category)
-						break
+						continue
 					}
 					// Always exhaust at model scope when we know the model, so other
 					// models on the same connection remain routable.
@@ -873,8 +788,17 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 			}
 			return
 		}
+		if result.conn != nil {
+			lastConn = result.conn
+		}
+		if result.lastErr != nil {
+			lastErr = result.lastErr
+			lastErrCategory = result.category
+		}
+		if comboCtx.Err() != nil {
+			break
+		}
 	}
-
 	// Every step exhausted its connections (or had none eligible).
 	msg, statusCode, errType := buildFailoverErrorResponse(lastErrCategory, lastErr, lastModelName)
 	detail := gin.H{"model": model}
