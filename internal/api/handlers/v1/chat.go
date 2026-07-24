@@ -23,6 +23,52 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
 
+// Combo transient-error cooldown prevents a retry storm when a provider
+// returns 502/503/504. Default 2 seconds, capped at 5 seconds.
+const (
+	defaultTransientCooldown = 2 * time.Second
+	maxTransientCooldown     = 5 * time.Second
+)
+
+// transientErrorSleep waits out a transient cooldown while respecting context
+// cancellation. It is overridable in tests to keep cooldown assertions fast.
+var transientErrorSleep = func(ctx context.Context, d time.Duration) {
+	select {
+	case <-ctx.Done():
+	case <-time.After(d):
+	}
+}
+
+// upstreamHTTPStatus extracts the HTTP status code from an executor.UpstreamError,
+// returning 0 when the error is not an upstream HTTP response.
+func upstreamHTTPStatus(err error) int {
+	var upErr *executor.UpstreamError
+	if errors.As(err, &upErr) {
+		return upErr.StatusCode
+	}
+	return 0
+}
+
+// isTransientUpstreamError reports whether err represents a 502/503/504 upstream
+// response. These are the only transient statuses that trigger combo failover
+// cooldown; non-transient errors still fail through immediately.
+func isTransientUpstreamError(err error) bool {
+	switch upstreamHTTPStatus(err) {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	}
+	return false
+}
+
+// transientCooldown returns the cooldown to apply before the next combo
+// connection is tried. It clamps the value to maxTransientCooldown.
+func transientCooldown() time.Duration {
+	if maxTransientCooldown > 0 && defaultTransientCooldown > maxTransientCooldown {
+		return maxTransientCooldown
+	}
+	return defaultTransientCooldown
+}
+
 // ChatCompletions handles POST /v1/chat/completions
 func (h *Handler) ChatCompletions(c *gin.Context) {
 	start := time.Now()
@@ -463,6 +509,14 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				}
 				lastErr = err
 				lastErrCategory = string(det.Category)
+				if isTransientUpstreamError(err) {
+					cd := transientCooldown()
+					logging.Logger.Info("combo transient error cooldown before next connection",
+						"provider", provider, "model", modelName,
+						"conn", shortID(connID, 8), "status", upstreamHTTPStatus(err),
+						"cooldown_ms", cd.Milliseconds())
+					transientErrorSleep(comboCtx, cd)
+				}
 				continue
 			}
 

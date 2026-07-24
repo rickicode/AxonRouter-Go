@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Concurrent provider detail test-all for large providers** — `Test all` on the provider detail page now processes connections sequentially for small lists, but runs with two parallel workers when there are more than 100 accounts. Each row is still refreshed inline after its test completes.
 
 ### Fixed
+- **Combo transient-error cooldown before failover** — `internal/api/handlers/v1/chat.go::handleComboRequest` now waits 2 seconds (capped at 5 seconds) before trying the next combo connection when an upstream returns HTTP 502/503/504. Non-transient errors still fail through immediately, preventing retry storms against briefly-overloaded providers. Added unit tests covering 502/503/504 cooldown and 400/401/429/500 no-cooldown paths.
 - **Security Warning modal respects 24-hour dismissal** — `ChangePasswordModal` is no longer shown for 24 hours after the user dismisses it. Dismissal is stored as a timestamp in `localStorage`/`sessionStorage` and automatically expires after one day. The old boolean dismissal flag is migrated to the new timestamp format on first load.
 
 ### Removed
