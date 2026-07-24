@@ -2,7 +2,6 @@ package executor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -41,44 +40,83 @@ func prepareClaudeBody(body []byte) ([]byte, []string) {
 	body = ensureClaudeThinkingDisplay(body)
 
 	// 5. Extract and remove betas from body (will be sent as anthropic-beta header)
-	var m map[string]any
-	if err := json.Unmarshal(body, &m); err != nil {
-		return body, nil
+	betas, body := extractAndRemoveBetas(body)
+	return body, betas
+}
+
+// extractAndRemoveBetas extracts the "betas" array from the body and removes it.
+// Returns the extracted betas as a string slice and the modified body.
+// Matches CLIProxyAPI internal/runtime/executor/claude_executor.go.
+func extractAndRemoveBetas(body []byte) ([]string, []byte) {
+	betasResult := gjson.GetBytes(body, "betas")
+	if !betasResult.Exists() {
+		return nil, body
 	}
 	var betas []string
-	if raw, ok := m["betas"]; ok {
-		delete(m, "betas")
-		switch v := raw.(type) {
-		case []any:
-			for _, item := range v {
-				if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
-					betas = append(betas, strings.TrimSpace(s))
-				}
-			}
-		case string:
-			if s := strings.TrimSpace(v); s != "" {
+	if betasResult.IsArray() {
+		for _, item := range betasResult.Array() {
+			if s := strings.TrimSpace(item.String()); s != "" {
 				betas = append(betas, s)
+			}
+		}
+	} else if s := strings.TrimSpace(betasResult.String()); s != "" {
+		betas = append(betas, s)
+	}
+	body, _ = sjson.DeleteBytes(body, "betas")
+	return betas, body
+}
+
+// baseClaudeBetas are the experimental Claude betas that are always sent in the
+// Anthropic-Beta header so experimental features stay active upstream.
+// Keep in sync with CLIProxyAPI's base betas list.
+var baseClaudeBetas = []string{
+	"claude-code-20250219",
+	"oauth-2025-04-20",
+	"interleaved-thinking-2025-05-14",
+	"prompt-caching-scope-2026-01-05",
+	"redact-thinking-2026-02-12",
+	"token-efficient-tools-2026-03-28",
+}
+
+// claudeBetaHeader builds the Anthropic-Beta header value. Base betas are always
+// included; client-provided header betas and body-extracted betas are merged on
+// top and deduplicated.
+func claudeBetaHeader(bodyBetas []string, reqHeaders map[string]string) string {
+	seen := make(map[string]struct{}, len(baseClaudeBetas)+len(bodyBetas))
+	var merged []string
+
+	addBeta := func(b string) {
+		b = strings.TrimSpace(b)
+		if b == "" {
+			return
+		}
+		if _, ok := seen[b]; ok {
+			return
+		}
+		seen[b] = struct{}{}
+		merged = append(merged, b)
+	}
+
+	for _, b := range baseClaudeBetas {
+		addBeta(b)
+	}
+
+	if reqHeaders != nil {
+		for _, key := range []string{"anthropic-beta", "Anthropic-Beta"} {
+			for _, b := range strings.Split(reqHeaders[key], ",") {
+				addBeta(b)
 			}
 		}
 	}
 
-	out, _ := json.Marshal(m)
-	return out, betas
-}
+	for _, b := range bodyBetas {
+		addBeta(b)
+	}
 
-// claudeBetaHeader builds the anthropic-beta header value from body-extracted betas
-// and any client-provided header. Client header takes precedence if present.
-func claudeBetaHeader(bodyBetas []string, reqHeaders map[string]string) string {
-	if clientBeta := strings.TrimSpace(reqHeaders["anthropic-beta"]); clientBeta != "" {
-		return clientBeta
+	if len(merged) == 0 {
+		return ""
 	}
-	if clientBeta := strings.TrimSpace(reqHeaders["Anthropic-Beta"]); clientBeta != "" {
-		return clientBeta
-	}
-	if len(bodyBetas) > 0 {
-		return strings.Join(bodyBetas, ",")
-	}
-	return ""
+	return strings.Join(merged, ",")
 }
 
 // Execute performs a non-streaming Claude messages request.
