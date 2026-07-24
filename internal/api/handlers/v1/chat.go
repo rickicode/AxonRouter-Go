@@ -417,7 +417,12 @@ attemptLoop:
 				h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
 			}
 			h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
-			h.writeJSONResponse(c, resp.StatusCode, translatedResp)
+			h.writeJSONResponse(c, resp.StatusCode, translatedResp, responseCost{
+				modelID:         modelName,
+				exactCost:       resp.CostUsd,
+				counts:          tokenCounts,
+				tokensEstimated: tokensEstimated,
+			})
 		}
 		return
 	}
@@ -778,11 +783,13 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 					ReasoningTokens:     tokenCounts.ReasoningTokens,
 					CachedTokens:        tokenCounts.CachedTokens,
 					CacheCreationTokens: tokenCounts.CacheCreationTokens,
+					CostUsd:             resp.CostUsd,
 					LatencyMs:           latency,
 					StatusCode:          resp.StatusCode,
 					TokensEstimated:     tokensEstimated,
 				})
 				c.Header("Content-Type", "application/json")
+				writeCostHeaders(c, modelName, resp.CostUsd, tokenCounts, tokensEstimated)
 				h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
 				c.Status(resp.StatusCode)
 				c.Writer.Write(translatedResp)

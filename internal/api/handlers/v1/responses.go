@@ -307,7 +307,12 @@ attemptLoop:
 			if resp.StatusCode < 300 {
 				h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
 			}
-			h.writeJSONResponse(c, resp.StatusCode, translatedResp)
+			h.writeJSONResponse(c, resp.StatusCode, translatedResp, responseCost{
+				modelID:         modelName,
+				exactCost:       resp.CostUsd,
+				counts:          tokenCounts,
+				tokensEstimated: tokensEstimated,
+			})
 		}
 		return
 	}

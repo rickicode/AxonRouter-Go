@@ -1772,6 +1772,7 @@ func (h *Handler) streamResponse(
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
+	c.Header("Trailer", costTrailerNames)
 	c.Status(http.StatusOK)
 
 	heartbeatInterval := 15 * time.Second
@@ -1863,6 +1864,7 @@ func (h *Handler) streamResponse(
 					TokensEstimated:     tokensEstimated,
 				})
 				h.incrementAPIKeyUsage(c.GetString("api_key_id"), acc.InputTokens+acc.OutputTokens)
+				writeCostTrailers(c, model, acc.CostUsd, acc, tokensEstimated)
 				return nil
 			}
 

@@ -55,12 +55,18 @@ func SetLogger(l *slog.Logger) {
 	Logger.set(l)
 }
 
+// LogFilePath is the default path where structured JSON logs are written.
+var LogFilePath = "/tmp/axonrouter.log"
+
 // Init initialises the global logger. format must be "json", "text", or "compact" (default).
+// If LogFilePath is non-empty, a TeeHandler is installed that also writes structured
+// JSON lines to that file (for the dashboard Console Log Viewer).
 func Init(format string) {
-	var l *slog.Logger
+	var baseHandler slog.Handler
+
 	switch format {
 	case "json":
-		l = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+		baseHandler = slog.NewJSONHandler(os.Stdout, nil)
 	case "text":
 		textOpts := &slog.HandlerOptions{
 			ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
@@ -75,14 +81,26 @@ func Init(format string) {
 				return a
 			},
 		}
-		l = slog.New(slog.NewTextHandler(&ansiWriter{w: os.Stdout}, textOpts))
-
+		baseHandler = slog.NewTextHandler(&ansiWriter{w: os.Stdout}, textOpts)
 	default:
 		h := NewCompactHandler(os.Stdout)
-		l = slog.New(&levelHandler{inner: h, level: slog.LevelDebug})
+		baseHandler = &levelHandler{inner: h, level: slog.LevelDebug}
 	}
+
+	var l *slog.Logger
+	if LogFilePath != "" {
+		tee, err := NewTeeHandler(baseHandler, LogFilePath)
+		if err != nil {
+			log.Printf("WARN: failed to open log file %s: %v (console log viewer will be empty)", LogFilePath, err)
+			l = slog.New(baseHandler)
+		} else {
+			l = slog.New(tee)
+		}
+	} else {
+		l = slog.New(baseHandler)
+	}
+
 	Logger.set(l)
-	// Redirect standard log to slog so log.Printf also uses compact format
 	slog.SetDefault(l)
 	log.SetOutput(&slogWriter{l: l})
 }

@@ -498,7 +498,10 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 		return err
 	}
 
-	// Seed default model pricing (INSERT OR IGNORE — never overwrites operator edits).
+	// Seed default model pricing. On first run the table is empty and all seed
+	// rows are inserted. On subsequent runs use INSERT OR IGNORE so operator
+	// edits made through the admin UI/API survive restarts while any new models
+	// added to the code seed list are still merged in.
 	now = time.Now().Unix()
 	seedPricing := []struct {
 		ID, Name                                 string
@@ -714,14 +717,11 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 	if err := validateSeedPricing(seedPricing); err != nil {
 		return err
 	}
-	// One-time reset: wipe any previously-seeded rows so stale IDs / $0 free-tier
-	// entries from older builds cannot coexist with the new canonical seed.
-	// The pricing table is seed-only (no runtime writes), so this is safe.
-	if _, err := db.Exec(`DELETE FROM model_pricing`); err != nil {
-		return err
-	}
+	// Use INSERT OR IGNORE so we only add missing models. Existing rows keep the
+	// values set by the operator (or a previous first-run seed); they are never
+	// reset on startup.
 	for _, p := range seedPricing {
-		if _, err := db.Exec(`INSERT OR REPLACE INTO model_pricing
+		if _, err := db.Exec(`INSERT OR IGNORE INTO model_pricing
 		(model_id, display_name, input_per_1k, output_per_1k, reason_per_1k, cached_read_per_1k, cached_write_per_1k, currency, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, 'USD', ?)`,
 			p.ID, p.Name, p.In, p.Out, p.Reason, p.CachedRead, p.CachedWrite, now); err != nil {

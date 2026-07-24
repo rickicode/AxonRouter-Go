@@ -2,11 +2,13 @@ package v1
 
 import (
 	"database/sql"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/compression"
+	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
 
@@ -70,6 +72,11 @@ func (h *Handler) exactCacheKey(body []byte, model string, stream bool) string {
 // request tokens against the API key budget before returning.
 func (h *Handler) serveCacheHit(c *gin.Context, body []byte, entry cache.CacheEntry) bool {
 	h.incrementAPIKeyUsage(c.GetString("api_key_id"), usage.EstimateTokensFromRequest(body))
+
+	cachedModel := executor.JSONGet(entry.Body, "model")
+	counts := ExtractTokensFromBody(entry.Body)
+	writeCostHeaders(c, cachedModel, 0, counts, false)
+
 	c.Header("Content-Type", entry.ContentType)
 	c.Header("X-Cache-Status", "HIT")
 	c.Status(entry.StatusCode)
@@ -90,10 +97,71 @@ func (h *Handler) storeExactCache(cacheKey string, body []byte, statusCode int) 
 	})
 }
 
-// writeJSONResponse writes a JSON response and marks it as a cache miss.
-func (h *Handler) writeJSONResponse(c *gin.Context, statusCode int, body []byte) {
+// responseCost carries optional per-response costing metadata so that every
+// proxied JSON response can expose the same values that are persisted in
+// request_logs.cost_usd.
+type responseCost struct {
+	modelID         string
+	exactCost       float64
+	counts          StreamTokenCounts
+	tokensEstimated bool
+}
+
+// writeJSONResponse writes a JSON response, marks it as a cache miss, and
+// attaches the AxonRouter cost headers when cost metadata is supplied.
+func (h *Handler) writeJSONResponse(c *gin.Context, statusCode int, body []byte, cost ...responseCost) {
 	c.Header("Content-Type", "application/json")
 	c.Header("X-Cache-Status", "MISS")
+	if len(cost) > 0 {
+		writeCostHeaders(c, cost[0].modelID, cost[0].exactCost, cost[0].counts, cost[0].tokensEstimated)
+	}
 	c.Status(statusCode)
 	c.Writer.Write(body)
+}
+
+const (
+	costHeader          = "X-AxonRouter-Response-Cost"
+	tokensInHeader      = "X-AxonRouter-Tokens-In"
+	tokensOutHeader     = "X-AxonRouter-Tokens-Out"
+	costEstimatedHeader = "X-AxonRouter-Cost-Estimated"
+	costTrailerNames    = "X-AxonRouter-Response-Cost, X-AxonRouter-Tokens-In, X-AxonRouter-Tokens-Out, X-AxonRouter-Cost-Estimated"
+)
+
+// writeCostHeaders sets the standard cost-related response headers. exactCost
+// should be the provider-reported cost (e.g., Grok CLI) when available; when it
+// is zero the cost is estimated from the model pricing and token counts.
+func writeCostHeaders(c *gin.Context, modelID string, exactCost float64, counts StreamTokenCounts, tokensEstimated bool) {
+	cost := exactCost
+	if cost <= 0 {
+		cost = usage.EstimateCost(modelID, counts.InputTokens, counts.OutputTokens, counts.ReasoningTokens, counts.CachedTokens, counts.CacheCreationTokens)
+	}
+
+	c.Header(costHeader, strconv.FormatFloat(cost, 'f', -1, 64))
+	c.Header(tokensInHeader, strconv.FormatInt(counts.InputTokens, 10))
+	c.Header(tokensOutHeader, strconv.FormatInt(counts.OutputTokens, 10))
+
+	estimated := "false"
+	if exactCost <= 0 && (counts.InputTokens > 0 || counts.OutputTokens > 0 || tokensEstimated) {
+		estimated = "true"
+	}
+	c.Header(costEstimatedHeader, estimated)
+}
+
+// writeCostTrailers declares and writes the cost trailers for streaming
+// responses. Callers must invoke this after the SSE stream body has finished.
+func writeCostTrailers(c *gin.Context, modelID string, exactCost float64, counts StreamTokenCounts, tokensEstimated bool) {
+	cost := exactCost
+	if cost <= 0 {
+		cost = usage.EstimateCost(modelID, counts.InputTokens, counts.OutputTokens, counts.ReasoningTokens, counts.CachedTokens, counts.CacheCreationTokens)
+	}
+
+	c.Writer.Header().Set(costHeader, strconv.FormatFloat(cost, 'f', -1, 64))
+	c.Writer.Header().Set(tokensInHeader, strconv.FormatInt(counts.InputTokens, 10))
+	c.Writer.Header().Set(tokensOutHeader, strconv.FormatInt(counts.OutputTokens, 10))
+
+	estimated := "false"
+	if exactCost <= 0 && (counts.InputTokens > 0 || counts.OutputTokens > 0 || tokensEstimated) {
+		estimated = "true"
+	}
+	c.Writer.Header().Set(costEstimatedHeader, estimated)
 }

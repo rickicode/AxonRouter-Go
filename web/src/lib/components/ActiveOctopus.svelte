@@ -6,11 +6,10 @@ import { combos } from '$lib/stores';
 
 interface Props {
 		requests: ActiveRequest[];
+		maxRenderedItems?: number;
 	}
 
-	let { requests }: Props = $props();
-
-	const INDIVIDUAL_LIMIT = 12;
+	let { requests, maxRenderedItems = 15 }: Props = $props();
 
 	interface DisplayItem {
 		id: string;
@@ -67,7 +66,7 @@ function activeProviderName(item: DisplayItem): string {
 
 
 	function buildItems(active: ActiveRequest[]): DisplayItem[] {
-		if (active.length <= INDIVIDUAL_LIMIT) {
+		if (active.length <= maxRenderedItems) {
 			return active.map((req) => ({
 				id: req.id,
 				provider_type_id: req.provider_type_id,
@@ -91,7 +90,7 @@ function activeProviderName(item: DisplayItem): string {
 				});
 			}
 		}
-		return Array.from(groups.values());
+		return Array.from(groups.values()).slice(0, maxRenderedItems);
 	}
 
 	// Bigger canvas, small brain.
@@ -110,7 +109,7 @@ function activeProviderName(item: DisplayItem): string {
 	}
 
 	let items = $derived<DisplayItem[]>(buildItems(requests));
-	let isGrouped = $derived(requests.length > INDIVIDUAL_LIMIT);
+	let isGrouped = $derived(requests.length > maxRenderedItems);
 
 	function buildTentacles(active: DisplayItem[]): Tentacle[] {
 		const n = active.length;
