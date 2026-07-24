@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/codex/responses"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -71,12 +72,12 @@ func codexHeaders(req *Request) map[string]string {
 	}
 
 	headers := map[string]string{
-		"Content-Type": "application/json",
-		"Accept":       "text/event-stream",
+		"Content-Type":  "application/json",
+		"Accept":        "text/event-stream",
 		"Authorization": "Bearer " + req.AccessToken,
-		"User-Agent":   ua,
-		"Originator":   codexOriginator,
-		"Connection":   "Keep-Alive",
+		"User-Agent":    ua,
+		"Originator":    codexOriginator,
+		"Connection":    "Keep-Alive",
 	}
 	if req.APIKey != "" && req.AccessToken == "" {
 		headers["Authorization"] = "Bearer " + req.APIKey
@@ -140,7 +141,173 @@ func codexURL(req *Request) string {
 	return "https://chatgpt.com/backend-api/codex/responses"
 }
 
+// normalizeCodexResponsesRequest transforms a native OpenAI Responses request
+// into a Codex-compatible Responses request. It is applied only when the inbound
+// body already uses the Responses API shape (has an "input" field).
+func normalizeCodexResponsesRequest(body []byte) []byte {
+	root := gjson.ParseBytes(body)
+	out := []byte(`{}`)
+
+	// input: coerce a string to a single user message array, otherwise normalize
+	// each item and convert system role to developer.
+	if input := root.Get("input"); input.Exists() {
+		if input.Type == gjson.String {
+			out, _ = sjson.SetRawBytes(out, "input", buildCodexInputFromString(input.String()))
+		} else if input.IsArray() {
+			out, _ = sjson.SetRawBytes(out, "input", normalizeCodexInputArray(input))
+		}
+	}
+	if !gjson.GetBytes(out, "input").Exists() {
+		out, _ = sjson.SetRawBytes(out, "input", []byte(`[]`))
+	}
+
+	// model
+	if v := root.Get("model"); v.Exists() {
+		out, _ = sjson.SetBytes(out, "model", v.Value())
+	}
+
+	// instructions: preserve client value, otherwise inject Codex defaults.
+	if v := root.Get("instructions"); v.Exists() && v.Type == gjson.String && v.String() != "" {
+		out, _ = sjson.SetBytes(out, "instructions", v.String())
+	}
+	if !gjson.GetBytes(out, "instructions").Exists() {
+		out, _ = sjson.SetBytes(out, "instructions", responses.DefaultInstructions())
+	}
+
+	// tools: normalize legacy web_search_preview aliases to web_search.
+	if tools := root.Get("tools"); tools.Exists() && tools.IsArray() {
+		out, _ = sjson.SetRawBytes(out, "tools", normalizeCodexTools(tools))
+	}
+
+	// tool_choice: normalize legacy web_search_preview aliases.
+	if tc := root.Get("tool_choice"); tc.Exists() {
+		if normalized, ok := normalizeCodexToolChoice(tc); ok {
+			out, _ = sjson.SetRawBytes(out, "tool_choice", normalized)
+		}
+	}
+
+	// reasoning: keep client value, otherwise provide a minimal default.
+	if v := root.Get("reasoning"); v.Exists() {
+		out, _ = sjson.SetRawBytes(out, "reasoning", []byte(v.Raw))
+	} else {
+		out, _ = sjson.SetBytes(out, "reasoning.effort", "medium")
+		out, _ = sjson.SetBytes(out, "reasoning.summary", "auto")
+	}
+
+	// text settings (responses-format output format) and metadata Codex supports.
+	if v := root.Get("text"); v.Exists() {
+		out, _ = sjson.SetRawBytes(out, "text", []byte(v.Raw))
+	}
+	if v := root.Get("prompt_cache_key"); v.Exists() {
+		out, _ = sjson.SetBytes(out, "prompt_cache_key", v.Value())
+	}
+	if v := root.Get("client_metadata"); v.Exists() {
+		out, _ = sjson.SetRawBytes(out, "client_metadata", []byte(v.Raw))
+	}
+
+	// service_tier is restricted to "priority"; anything else is dropped.
+	if st := root.Get("service_tier"); st.Exists() && st.String() == "priority" {
+		out, _ = sjson.SetBytes(out, "service_tier", "priority")
+	}
+
+	// Required Codex defaults.
+	out, _ = sjson.SetBytes(out, "stream", true)
+	out, _ = sjson.SetBytes(out, "store", false)
+	out, _ = sjson.SetBytes(out, "parallel_tool_calls", true)
+	out, _ = sjson.SetRawBytes(out, "include", []byte(`["reasoning.encrypted_content"]`))
+
+	// Final allowlist ensures unknown top-level fields do not leak upstream.
+	allowed := map[string]struct{}{
+		"model": {}, "input": {}, "instructions": {}, "tools": {},
+		"tool_choice": {}, "stream": {}, "store": {}, "reasoning": {},
+		"parallel_tool_calls": {}, "service_tier": {}, "include": {},
+		"prompt_cache_key": {}, "client_metadata": {}, "text": {},
+	}
+	if parsed := gjson.ParseBytes(out); parsed.IsObject() {
+		parsed.ForEach(func(key, _ gjson.Result) bool {
+			if _, ok := allowed[key.String()]; !ok {
+				out, _ = sjson.DeleteBytes(out, key.String())
+			}
+			return true
+		})
+	}
+
+	return out
+}
+
+func buildCodexInputFromString(s string) []byte {
+	item := []byte(`{}`)
+	item, _ = sjson.SetBytes(item, "type", "message")
+	item, _ = sjson.SetBytes(item, "role", "user")
+	part := []byte(`{}`)
+	part, _ = sjson.SetBytes(part, "type", "input_text")
+	part, _ = sjson.SetBytes(part, "text", s)
+	item, _ = sjson.SetRawBytes(item, "content", []byte(`[`+string(part)+`]`))
+	return []byte(`[` + string(item) + `]`)
+}
+
+func normalizeCodexInputArray(input gjson.Result) []byte {
+	out := []byte(`[]`)
+	for _, it := range input.Array() {
+		item := []byte(it.Raw)
+		if role := it.Get("role"); role.Exists() && role.String() == "system" {
+			item, _ = sjson.SetBytes(item, "role", "developer")
+		}
+		if content := it.Get("content"); content.Exists() && content.Type == gjson.String {
+			partType := "input_text"
+			if r := it.Get("role").String(); r == "assistant" {
+				partType = "output_text"
+			}
+			part := []byte(`{}`)
+			part, _ = sjson.SetBytes(part, "type", partType)
+			part, _ = sjson.SetBytes(part, "text", content.String())
+			item, _ = sjson.SetRawBytes(item, "content", []byte(`[`+string(part)+`]`))
+		}
+		out, _ = sjson.SetRawBytes(out, "-1", item)
+	}
+	return out
+}
+
+func normalizeCodexTools(tools gjson.Result) []byte {
+	out := []byte(`[]`)
+	for _, t := range tools.Array() {
+		item := []byte(t.Raw)
+		if typ := t.Get("type"); typ.Exists() {
+			name := typ.String()
+			if name == "web_search_preview" || name == "web_search_preview_2025_03_11" {
+				item, _ = sjson.SetBytes(item, "type", "web_search")
+			}
+		}
+		out, _ = sjson.SetRawBytes(out, "-1", item)
+	}
+	return out
+}
+
+func normalizeCodexToolChoice(tc gjson.Result) ([]byte, bool) {
+	switch {
+	case tc.Type == gjson.String:
+		return []byte(tc.Raw), true
+	case tc.IsObject():
+		item := []byte(tc.Raw)
+		if typ := tc.Get("type"); typ.Exists() {
+			name := typ.String()
+			if name == "web_search_preview" || name == "web_search_preview_2025_03_11" {
+				item, _ = sjson.SetBytes(item, "type", "web_search")
+			}
+		}
+		return item, true
+	default:
+		return nil, false
+	}
+}
+
 func codexRequestBody(body []byte) []byte {
+	// Only apply Responses-shape normalization when the inbound body uses the
+	// Responses API (has an "input" field). Legacy chat-completions bodies are
+	// left untouched apart from forcing stream/store.
+	if gjson.GetBytes(body, "input").Exists() {
+		body = normalizeCodexResponsesRequest(body)
+	}
 	body = JSONSet(body, "stream", true)
 	body = JSONSet(body, "store", false)
 	return body
@@ -266,7 +433,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, req *Request) (*Strea
 	headers := codexHeaders(req)
 
 	cfg := &StreamConfig{
-		ScannerMaxTokenSize:       codexScannerMax,
+		ScannerMaxTokenSize:     codexScannerMax,
 		DropNonstandardCodexSSE: shouldDropNonstandardCodexSSE(),
 	}
 	result, err := e.DoStreamRequestWithConfig(ctx, "POST", url, headers, body, cfg)

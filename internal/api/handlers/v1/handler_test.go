@@ -25,6 +25,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
+	"github.com/rickicode/AxonRouter-Go/internal/compression"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
@@ -158,9 +159,11 @@ func newTestHandler(t testing.TB) *Handler {
 		authMgr:             mgr,
 		exhaustion:          quota.NewExhaustionCache(),
 		providerCfg:         providercfg.NewManager(t.TempDir()),
+		exactCache:          cache.NewExactCache(100),
 		sessions:            connstate.NewSessionCache(),
 		combo:               combo.NewHandler(database, store, elig),
 		registry:            executor.GetRegistry(),
+		compressionStrategy: compression.Strategy{Mode: compression.ModeOff},
 		failoverMaxAttempts: 5,
 	}
 }
@@ -2469,6 +2472,152 @@ func TestFusion_JudgeStreamFails_FallsBackToFirstPanel(t *testing.T) {
 	}
 	if !strings.Contains(respBody, "data: [DONE]") {
 		t.Fatalf("expected terminating [DONE] frame, got:\n%s", respBody)
+	}
+}
+
+// TestFusion_SinglePanelSuccess_ReRunsModel returns the real provider response
+// (including usage and finish_reason) instead of the synthetic envelope when only
+// one fusion panel succeeds.
+func TestFusion_SinglePanelSuccess_ReRunsModel(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	pid := "fusion1"
+	cid := "fconn-0"
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES (?,?,'openai','http://x',0)`, pid, pid); err != nil {
+		t.Fatalf("seed pt: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?,?,'c','none','ready',1,0,0)`, cid, pid); err != nil {
+		t.Fatalf("seed conn: %v", err)
+	}
+	h.store.SeedConnection(cid, pid, "ready", 0)
+	h.elig.RecomputeAll()
+
+	fe := &fakeExecutor{
+		responses: []struct {
+			resp *executor.Response
+			err  error
+		}{
+			{
+				resp: &executor.Response{
+					StatusCode: http.StatusOK,
+					Body:       []byte(`{"id":"panel","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"panel answer"}}]}`),
+				},
+			},
+			{
+				resp: &executor.Response{
+					StatusCode: http.StatusOK,
+					Body:       []byte(`{"id":"real","object":"chat.completion","model":"fusion1/m","usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5},"choices":[{"index":0,"message":{"role":"assistant","content":"real answer"},"finish_reason":"stop"}]}`),
+				},
+			},
+		},
+	}
+	executor.GetRegistry().Register(pid, executor.FormatOpenAI, fe)
+	defer executor.GetRegistry().Unregister(pid)
+
+	now := db.UnixNow()
+	if _, err := h.db.Exec(`INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, fusion_config, is_active, created_at, updated_at) VALUES ('combo-fusion','combo-fusion','fusion',1,30000,'{"min_panel":1,"straggler_grace_ms":100}',1,?,?)`, now, now); err != nil {
+		t.Fatalf("insert combo: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at) VALUES ('cfs-0','combo-fusion',?, 'fusion1/m',1,100,?)`, cid, now); err != nil {
+		t.Fatalf("insert step: %v", err)
+	}
+	h.combo = combo.NewHandler(h.db, h.store, h.elig)
+
+	body := []byte(`{"model":"combo-fusion","messages":[{"role":"user","content":"hi"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	h.ChatCompletions(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if fe.callCount != 2 {
+		t.Fatalf("expected 2 executor calls (panel + re-run), got %d", fe.callCount)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got["id"] != "real" {
+		t.Fatalf("expected real provider response id, got %v", got["id"])
+	}
+	if _, ok := got["usage"]; !ok {
+		t.Fatalf("expected usage metadata in response, got %s", rec.Body.String())
+	}
+	choices, _ := got["choices"].([]any)
+	if len(choices) == 0 {
+		t.Fatalf("expected choices in response")
+	}
+	choice, _ := choices[0].(map[string]any)
+	if choice["finish_reason"] != "stop" {
+		t.Fatalf("expected finish_reason stop, got %v", choice["finish_reason"])
+	}
+}
+
+// TestFusion_SinglePanelSuccess_ReRunFails_FallsBackToSynthetic verifies that when
+// only one panel succeeds but the real-provider re-run fails, the client still gets
+// the synthetic envelope.
+func TestFusion_SinglePanelSuccess_ReRunFails_FallsBackToSynthetic(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	pid := "fusion1"
+	cid := "fconn-0"
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES (?,?,'openai','http://x',0)`, pid, pid); err != nil {
+		t.Fatalf("seed pt: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?,?,'c','none','ready',1,0,0)`, cid, pid); err != nil {
+		t.Fatalf("seed conn: %v", err)
+	}
+	h.store.SeedConnection(cid, pid, "ready", 0)
+	h.elig.RecomputeAll()
+
+	fe := &fakeExecutor{
+		responses: []struct {
+			resp *executor.Response
+			err  error
+		}{
+			{
+				resp: &executor.Response{
+					StatusCode: http.StatusOK,
+					Body:       []byte(`{"id":"panel","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"panel answer"}}]}`),
+				},
+			},
+			{err: errors.New("rerun failed")},
+		},
+	}
+	executor.GetRegistry().Register(pid, executor.FormatOpenAI, fe)
+	defer executor.GetRegistry().Unregister(pid)
+
+	now := db.UnixNow()
+	if _, err := h.db.Exec(`INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, fusion_config, is_active, created_at, updated_at) VALUES ('combo-fusion','combo-fusion','fusion',1,30000,'{"min_panel":1,"straggler_grace_ms":100}',1,?,?)`, now, now); err != nil {
+		t.Fatalf("insert combo: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at) VALUES ('cfs-0','combo-fusion',?, 'fusion1/m',1,100,?)`, cid, now); err != nil {
+		t.Fatalf("insert step: %v", err)
+	}
+	h.combo = combo.NewHandler(h.db, h.store, h.elig)
+
+	body := []byte(`{"model":"combo-fusion","messages":[{"role":"user","content":"hi"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	h.ChatCompletions(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if fe.callCount != 2 {
+		t.Fatalf("expected 2 executor calls (panel + re-run), got %d", fe.callCount)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !strings.HasPrefix(got["id"].(string), "fusion-") {
+		t.Fatalf("expected synthetic fusion response id, got %v", got["id"])
 	}
 }
 

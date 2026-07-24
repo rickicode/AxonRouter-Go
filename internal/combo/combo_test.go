@@ -744,3 +744,56 @@ func TestSnapshotFromDB_NoOrphanedStepsUnderConcurrentDelete(t *testing.T) {
 	}
 }
 
+func TestRefreshFromDB_KeepsCacheWhenStepQueryFails(t *testing.T) {
+	database := newComboTestDB(t)
+	seedConnectionForCombo(t, database, "conn-1")
+	store := connstate.NewStore()
+	cs := &connstate.ConnectionState{ID: "conn-1", Prefix: "openai", Status: connstate.StatusReady}
+	store.Set("conn-1", cs)
+	elig := connstate.NewEligibilityManager(store)
+	elig.RecomputeAll()
+	h := NewHandler(database, store, elig)
+
+	combo, err := h.CreateCombo("cached-combo", "priority", 30000, 1, false, "", "", []CreateStepInput{
+		{ConnectionID: "conn-1", ModelID: "openai/gpt-4o", Priority: 1, Weight: 100},
+	})
+	if err != nil {
+		t.Fatalf("CreateCombo failed: %v", err)
+	}
+	if _, ok := h.Resolve("cached-combo"); !ok {
+		t.Fatalf("Resolve returned false before simulating failure")
+	}
+
+	// Simulate a transient failure in the combo_steps read path.
+	if _, err := database.Exec(`DROP TABLE combo_steps`); err != nil {
+		t.Fatalf("drop combo_steps: %v", err)
+	}
+
+	if err := h.RefreshFromDB(); err == nil {
+		t.Fatalf("RefreshFromDB should have failed after dropping combo_steps")
+	}
+
+	// Cache must not have been overwritten by the partial/failed snapshot.
+	if _, ok := h.Resolve("cached-combo"); !ok {
+		t.Fatalf("Resolve returned false after failed refresh; cache was overwritten")
+	}
+
+	combos, _, _, steps, err := h.snapshotFromDB()
+	if err == nil {
+		t.Fatalf("snapshotFromDB should have failed after dropping combo_steps")
+	}
+	if len(combos) != 0 || len(steps) != 0 {
+		t.Fatalf("snapshotFromDB returned partial data on error: %d combos, %d step buckets", len(combos), len(steps))
+	}
+
+	// Original combo and steps must remain in the in-memory cache.
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if cached, ok := h.combos[combo.ID]; !ok || cached.Name != "cached-combo" {
+		t.Fatalf("combo disappeared from cache after failed refresh")
+	}
+	if len(h.steps[combo.ID]) != 1 {
+		t.Fatalf("steps overwritten or missing after failed refresh; got %d", len(h.steps[combo.ID]))
+	}
+}
+

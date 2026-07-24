@@ -181,7 +181,10 @@ func (h *Handler) snapshotFromDB() (map[string]*db.Combo, map[string]*db.Combo, 
 		return nil, nil, nil, nil, fmt.Errorf("iterate combos: %w", err)
 	}
 
-	steps = h.loadAllStepsTx(tx, combos)
+	steps, err = h.loadAllStepsTx(tx, combos)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("load combo steps: %w", err)
+	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("commit combo snapshot tx: %w", err)
@@ -192,10 +195,10 @@ func (h *Handler) snapshotFromDB() (map[string]*db.Combo, map[string]*db.Combo, 
 // loadAllStepsTx fetches all combo steps inside an existing transaction and
 // buckets them by comboID. Because it runs in the same transaction that read
 // combos, steps for a combo deleted between queries are never returned.
-func (h *Handler) loadAllStepsTx(tx *sql.Tx, combos map[string]*db.Combo) map[string][]db.ComboStep {
+func (h *Handler) loadAllStepsTx(tx *sql.Tx, combos map[string]*db.Combo) (map[string][]db.ComboStep, error) {
 	steps := make(map[string][]db.ComboStep, len(combos))
 	if len(combos) == 0 {
-		return steps
+		return steps, nil
 	}
 
 	ids := make([]string, 0, len(combos))
@@ -215,8 +218,7 @@ func (h *Handler) loadAllStepsTx(tx *sql.Tx, combos map[string]*db.Combo) map[st
 		FROM combo_steps WHERE combo_id IN (`+placeholders+`) ORDER BY priority ASC
 	`, args...)
 	if err != nil {
-		log.Printf("WARN: failed to bulk-load combo steps: %v", err)
-		return steps
+		return nil, fmt.Errorf("query combo steps: %w", err)
 	}
 	defer rows.Close()
 
@@ -230,9 +232,9 @@ func (h *Handler) loadAllStepsTx(tx *sql.Tx, combos map[string]*db.Combo) map[st
 		steps[s.ComboID] = append(steps[s.ComboID], s)
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("WARN: combo_step bulk iteration error: %v", err)
+		return nil, fmt.Errorf("iterate combo steps: %w", err)
 	}
-	return steps
+	return steps, nil
 }
 
 // loadStepsForCombo loads steps for a combo from DB without touching h.mu.
