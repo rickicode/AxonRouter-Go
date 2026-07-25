@@ -78,6 +78,19 @@ func convertCodexRequestToGemini(modelName string, body []byte, stream bool) []b
 		}
 	}
 
+	// response_format → Gemini structured output / JSON mode.
+	if rf := root.Get("response_format"); rf.Exists() && rf.IsObject() {
+		switch rf.Get("type").String() {
+		case "json_object":
+			out, _ = sjson.SetBytes(out, "generationConfig.responseMimeType", "application/json")
+		case "json_schema":
+			out, _ = sjson.SetBytes(out, "generationConfig.responseMimeType", "application/json")
+			if schema := rf.Get("json_schema.schema"); schema.Exists() {
+				out, _ = sjson.SetRawBytes(out, "generationConfig.responseSchema", []byte(schema.Raw))
+			}
+		}
+	}
+
 	return out
 }
 
