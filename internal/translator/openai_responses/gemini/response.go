@@ -29,6 +29,11 @@ type geminiToResponsesState struct {
 	ToolIndex    int
 	OutputIndex  int
 	DoneSent     bool
+	// Content/reasoning lifecycle flags
+	MessageItemAdded   bool
+	ContentPartAdded   bool
+	ReasoningItemAdded bool
+	ReasoningPartAdded bool
 }
 
 func getGeminiToResponsesState(param *any) *geminiToResponsesState {
@@ -47,32 +52,150 @@ func (s *geminiToResponsesState) nextCallID() string {
 	return fmt.Sprintf("call_%s_%d", s.ResponseID, s.ToolIndex)
 }
 
-func (s *geminiToResponsesState) flushText() map[string]interface{} {
+// ensureMessageItemAdded emits response.output_item.added once for the assistant message.
+func (s *geminiToResponsesState) ensureMessageItemAdded(itemID string, events *[][]byte) {
+	if s.MessageItemAdded {
+		return
+	}
+	s.MessageItemAdded = true
+	item := map[string]interface{}{
+		"type": "message",
+		"role": "assistant",
+		"id":   itemID,
+		"content": []map[string]interface{}{
+			{"type": "output_text", "text": ""},
+		},
+	}
+	*events = append(*events, buildResponsesEvent(s, "response.output_item.added", map[string]interface{}{"item": item}))
+}
+
+// ensureContentPartAdded emits response.content_part.added once for the output_text part.
+func (s *geminiToResponsesState) ensureContentPartAdded(itemID string, events *[][]byte) {
+	if s.ContentPartAdded {
+		return
+	}
+	s.ContentPartAdded = true
+	*events = append(*events, buildResponsesEvent(s, "response.content_part.added", map[string]interface{}{
+		"item_id":       itemID,
+		"output_index":  s.OutputIndex,
+		"content_index": 0,
+		"part": map[string]interface{}{
+			"type": "output_text",
+			"text": "",
+		},
+	}))
+}
+
+// resetMessagePart resets message content part tracking when message is finalized.
+func (s *geminiToResponsesState) resetMessagePart() {
+	s.MessageItemAdded = false
+	s.ContentPartAdded = false
+}
+
+func (s *geminiToResponsesState) flushText() [][]byte {
 	if s.TextAcc.Len() == 0 {
 		return nil
 	}
 	text := s.TextAcc.String()
 	s.TextAcc.Reset()
-	return map[string]interface{}{
+	item := map[string]interface{}{
 		"type":    "message",
 		"role":    "assistant",
 		"content": []map[string]interface{}{{"type": "output_text", "text": text}},
 	}
+	s.appendItem(item)
+	outputIndex := item["output_index"]
+	itemID := fmt.Sprintf("msg_%s", s.ResponseID)
+	var events [][]byte
+	events = append(events, buildResponsesEvent(s, "response.output_text.done", map[string]interface{}{
+		"item_id":       itemID,
+		"output_index":  outputIndex,
+		"content_index": 0,
+		"text":          text,
+	}))
+	events = append(events, buildResponsesEvent(s, "response.content_part.done", map[string]interface{}{
+		"item_id":       itemID,
+		"output_index":  outputIndex,
+		"content_index": 0,
+		"part": map[string]interface{}{
+			"type": "output_text",
+			"text": text,
+		},
+	}))
+	events = append(events, buildResponsesEvent(s, "response.output_item.done", map[string]interface{}{
+		"output_index": outputIndex,
+		"item":         item,
+	}))
+	s.resetMessagePart()
+	return events
 }
 
-func (s *geminiToResponsesState) flushReasoning() map[string]interface{} {
+func (s *geminiToResponsesState) finalizeReasoning() [][]byte {
 	if s.ReasoningAcc.Len() == 0 {
 		return nil
 	}
 	text := s.ReasoningAcc.String()
 	s.ReasoningAcc.Reset()
-	return map[string]interface{}{
+	reasoningItem := map[string]interface{}{
 		"type": "reasoning",
 		"id":   fmt.Sprintf("rs_%s_%d", s.ResponseID, s.OutputIndex),
 		"summary": []map[string]interface{}{
 			{"type": "summary_text", "text": text},
 		},
 	}
+	s.appendItem(reasoningItem)
+	var events [][]byte
+	itemID := reasoningItem["id"].(string)
+	outputIndex := reasoningItem["output_index"]
+	// response.output_item.added
+	events = append(events, buildResponsesEvent(s, "response.output_item.added", map[string]interface{}{"item": reasoningItem}))
+	// response.reasoning_summary_part.added
+	events = append(events, buildReasoningEvent(s, "response.reasoning_summary_part.added", itemID, outputIndex, 0, ""))
+	// response.reasoning_summary_text.delta
+	events = append(events, buildReasoningEvent(s, "response.reasoning_summary_text.delta", itemID, outputIndex, 0, text))
+	// response.reasoning_summary_text.done
+	events = append(events, buildReasoningDoneEvent(s, "response.reasoning_summary_text.done", itemID, outputIndex, 0, text))
+	// response.reasoning_summary_part.done
+	events = append(events, buildReasoningPartDoneEvent(s, "response.reasoning_summary_part.done", itemID, outputIndex, 0))
+	// response.output_item.done
+	events = append(events, buildResponsesEvent(s, "response.output_item.done", map[string]interface{}{"output_index": outputIndex, "item": reasoningItem}))
+	s.ReasoningItemAdded = false
+	s.ReasoningPartAdded = false
+	return events
+}
+
+// ensureReasoningItemAdded emits response.output_item.added once for reasoning.
+func (s *geminiToResponsesState) ensureReasoningItemAdded(itemID string, events *[][]byte) {
+	if s.ReasoningItemAdded {
+		return
+	}
+	s.ReasoningItemAdded = true
+	*events = append(*events, buildResponsesEvent(s, "response.output_item.added", map[string]interface{}{
+		"item": map[string]interface{}{
+			"type":              "reasoning",
+			"id":                itemID,
+			"status":            "in_progress",
+			"encrypted_content": "",
+			"summary":           []interface{}{},
+		},
+	}))
+}
+
+// ensureReasoningPartAdded emits response.reasoning_summary_part.added once.
+func (s *geminiToResponsesState) ensureReasoningPartAdded(itemID string, events *[][]byte) {
+	if s.ReasoningPartAdded {
+		return
+	}
+	s.ReasoningPartAdded = true
+	*events = append(*events, buildResponsesEvent(s, "response.reasoning_summary_part.added", map[string]interface{}{
+		"item_id":       itemID,
+		"output_index":  s.OutputIndex,
+		"summary_index": 0,
+		"part": map[string]interface{}{
+			"type": "summary_text",
+			"text": "",
+		},
+	}))
 }
 
 func (s *geminiToResponsesState) flushToolCall(idx int) map[string]interface{} {
@@ -105,7 +228,8 @@ func (s *geminiToResponsesState) appendItem(item map[string]interface{}) {
 
 func buildResponsesEvent(state *geminiToResponsesState, eventType string, body map[string]interface{}) []byte {
 	event := map[string]interface{}{
-		"type": eventType,
+		"type":            eventType,
+		"sequence_number": 0,
 	}
 	if eventType == "response.completed" {
 		response := map[string]interface{}{
@@ -131,6 +255,86 @@ func buildResponsesEvent(state *geminiToResponsesState, eventType string, body m
 	}
 	b, _ := json.Marshal(event)
 	return []byte(fmt.Sprintf("data: %s\n\n", string(b)))
+}
+
+// buildReasoningEvent builds a reasoning_summary_part.added or reasoning_summary_text.delta event.
+func buildReasoningEvent(state *geminiToResponsesState, eventType, itemID string, outputIndex, summaryIndex interface{}, text string) []byte {
+	event := map[string]interface{}{
+		"type":            eventType,
+		"sequence_number": 0,
+		"item_id":         itemID,
+		"output_index":    outputIndex,
+		"summary_index":   summaryIndex,
+	}
+	if text != "" {
+		event["delta"] = text
+	}
+	if eventType == "response.reasoning_summary_part.added" {
+		event["part"] = map[string]interface{}{"type": "summary_text", "text": ""}
+	}
+	b, _ := json.Marshal(event)
+	return []byte(fmt.Sprintf("data: %s\n\n", string(b)))
+}
+
+// buildReasoningDoneEvent builds a response.reasoning_summary_text.done event.
+func buildReasoningDoneEvent(state *geminiToResponsesState, eventType, itemID string, outputIndex, summaryIndex interface{}, text string) []byte {
+	event := map[string]interface{}{
+		"type":            eventType,
+		"sequence_number": 0,
+		"item_id":         itemID,
+		"output_index":    outputIndex,
+		"summary_index":   summaryIndex,
+		"text":            text,
+	}
+	b, _ := json.Marshal(event)
+	return []byte(fmt.Sprintf("data: %s\n\n", string(b)))
+}
+
+// buildReasoningPartDoneEvent builds a response.reasoning_summary_part.done event.
+func buildReasoningPartDoneEvent(state *geminiToResponsesState, eventType, itemID string, outputIndex, summaryIndex interface{}) []byte {
+	event := map[string]interface{}{
+		"type":            eventType,
+		"sequence_number": 0,
+		"item_id":         itemID,
+		"output_index":    outputIndex,
+		"summary_index":   summaryIndex,
+		"part":            map[string]interface{}{"type": "summary_text", "text": ""},
+	}
+	b, _ := json.Marshal(event)
+	return []byte(fmt.Sprintf("data: %s\n\n", string(b)))
+}
+
+// buildCreatedAndInProgress builds response.created and response.in_progress events.
+func buildCreatedAndInProgress(state *geminiToResponsesState) [][]byte {
+	created := map[string]interface{}{
+		"type":            "response.created",
+		"sequence_number": 0,
+		"response": map[string]interface{}{
+			"id":         state.ResponseID,
+			"object":     "response",
+			"created_at": state.CreatedAt,
+			"model":      state.Model,
+			"status":     "in_progress",
+			"output":     []interface{}{},
+		},
+	}
+	inprog := map[string]interface{}{
+		"type":            "response.in_progress",
+		"sequence_number": 0,
+		"response": map[string]interface{}{
+			"id":         state.ResponseID,
+			"object":     "response",
+			"created_at": state.CreatedAt,
+			"model":      state.Model,
+			"status":     "in_progress",
+		},
+	}
+	cb, _ := json.Marshal(created)
+	ib, _ := json.Marshal(inprog)
+	return [][]byte{
+		[]byte(fmt.Sprintf("data: %s\n\n", string(cb))),
+		[]byte(fmt.Sprintf("data: %s\n\n", string(ib))),
+	}
 }
 
 func buildResponsesCompleted(state *geminiToResponsesState) []byte {
@@ -327,6 +531,10 @@ func convertGeminiResponseToOpenAIResponsesStream(_ context.Context, _ string, _
 	}
 
 	var events [][]byte
+	// Emit response.created and response.in_progress on the first chunk.
+	if !state.DoneSent && len(state.OutputItems) == 0 && state.TextAcc.Len() == 0 && state.ReasoningAcc.Len() == 0 {
+		events = append(events, buildCreatedAndInProgress(state)...)
+	}
 
 	if candidates := root.Get("candidates"); candidates.Exists() && candidates.IsArray() {
 		candidates.ForEach(func(_, candidate gjson.Result) bool {
@@ -334,30 +542,22 @@ func convertGeminiResponseToOpenAIResponsesStream(_ context.Context, _ string, _
 				parts.ForEach(func(_, part gjson.Result) bool {
 					if text := part.Get("text"); text.Exists() {
 						if part.Get("thought").Bool() {
+							rID := fmt.Sprintf("rs_%s_%d", state.ResponseID, state.OutputIndex)
+							state.ensureReasoningItemAdded(rID, &events)
+							state.ensureReasoningPartAdded(rID, &events)
 							state.ReasoningAcc.WriteString(text.String())
 						} else {
 							if state.ReasoningAcc.Len() > 0 {
-								if item := state.flushReasoning(); item != nil {
-									state.appendItem(item)
-									events = append(events, buildResponsesEvent(state, "response.output_item.added", map[string]interface{}{"item": item}))
-									events = append(events, buildResponsesEvent(state, "response.output_item.done", map[string]interface{}{"output_index": item["output_index"], "item": item}))
+								if reasoningEvents := state.finalizeReasoning(); len(reasoningEvents) > 0 {
+									events = append(events, reasoningEvents...)
 								}
 							}
-							if state.TextAcc.Len() == 0 {
-
-								// First text for this message block: announce it.
-								item := map[string]interface{}{
-									"type": "message",
-									"role": "assistant",
-									"content": []map[string]interface{}{
-										{"type": "output_text", "text": ""},
-									},
-								}
-								events = append(events, buildResponsesEvent(state, "response.output_item.added", map[string]interface{}{"item": item}))
-							}
+							itemID := fmt.Sprintf("msg_%s", state.ResponseID)
+							state.ensureMessageItemAdded(itemID, &events)
+							state.ensureContentPartAdded(itemID, &events)
 							state.TextAcc.WriteString(text.String())
 							events = append(events, buildResponsesEvent(state, "response.output_text.delta", map[string]interface{}{
-								"item_id": fmt.Sprintf("msg_%s", state.ResponseID),
+								"item_id": itemID,
 								"delta":   text.String(),
 							}))
 						}
@@ -365,15 +565,13 @@ func convertGeminiResponseToOpenAIResponsesStream(_ context.Context, _ string, _
 
 					if fc := part.Get("functionCall"); fc.Exists() {
 						// Flush any in-progress text/reasoning before emitting the tool call.
-						if textItem := state.flushText(); textItem != nil {
-							state.appendItem(textItem)
-							events = append(events, buildResponsesEvent(state, "response.output_item.added", map[string]interface{}{"item": textItem}))
-							events = append(events, buildResponsesEvent(state, "response.output_item.done", map[string]interface{}{"output_index": textItem["output_index"], "item": textItem}))
+						if textEvents := state.flushText(); len(textEvents) > 0 {
+							events = append(events, textEvents...)
 						}
-						if reasoningItem := state.flushReasoning(); reasoningItem != nil {
-							state.appendItem(reasoningItem)
-							events = append(events, buildResponsesEvent(state, "response.output_item.added", map[string]interface{}{"item": reasoningItem}))
-							events = append(events, buildResponsesEvent(state, "response.output_item.done", map[string]interface{}{"output_index": reasoningItem["output_index"], "item": reasoningItem}))
+						if reasoningEvents := state.finalizeReasoning(); len(reasoningEvents) > 0 {
+
+							events = append(events, reasoningEvents...)
+
 						}
 
 						state.ToolIndex++
@@ -412,20 +610,16 @@ func convertGeminiResponseToOpenAIResponsesStream(_ context.Context, _ string, _
 
 			// Finish reason: flush pending items and emit response.completed.
 			if fr := candidate.Get("finishReason"); fr.Exists() {
-				if reasoningItem := state.flushReasoning(); reasoningItem != nil {
-					state.appendItem(reasoningItem)
-					events = append(events, buildResponsesEvent(state, "response.output_item.added", map[string]interface{}{"item": reasoningItem}))
-					events = append(events, buildResponsesEvent(state, "response.output_item.done", map[string]interface{}{"output_index": reasoningItem["output_index"], "item": reasoningItem}))
+				if reasoningEvents := state.finalizeReasoning(); len(reasoningEvents) > 0 {
+					events = append(events, reasoningEvents...)
 				}
-				if textItem := state.flushText(); textItem != nil {
-					state.appendItem(textItem)
-					events = append(events, buildResponsesEvent(state, "response.output_item.added", map[string]interface{}{"item": textItem}))
-					events = append(events, buildResponsesEvent(state, "response.output_item.done", map[string]interface{}{"output_index": textItem["output_index"], "item": textItem}))
+				if textEvents := state.flushText(); len(textEvents) > 0 {
+					events = append(events, textEvents...)
 				}
-
 				completed := buildResponsesCompleted(state)
 				completed = setUsage(completed, root.Get("usageMetadata"))
 				events = append(events, completed)
+				state.DoneSent = true
 			}
 			return true
 		})
