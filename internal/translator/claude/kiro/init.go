@@ -6,10 +6,16 @@ import (
 )
 
 func init() {
+	// Claude → Kiro request translation. Kiro returns OpenAI-compatible JSON,
+	// so the response path back to Claude Messages lives in translator/kiro/claude
+	// and reuses the OpenAI → Claude response converter.
 	registry.Register(
 		types.FormatClaude,
 		types.FormatKiro,
 		ConvertClaudeRequestToKiro,
-		types.ResponseTransform{},
+		types.ResponseTransform{
+			Stream:    convertKiroResponseToClaudeStream,
+			NonStream: convertKiroResponseToClaudeNonStream,
+		},
 	)
 }

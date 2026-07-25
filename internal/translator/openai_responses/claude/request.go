@@ -91,6 +91,14 @@ func ConvertOpenAIResponsesRequestToClaude(modelName string, inputRawJSON []byte
 	// Stream
 	out, _ = sjson.SetBytes(out, "stream", stream)
 
+	// Sampling parameters: pass through when present so callers can control generation.
+	if temperature := root.Get("temperature"); temperature.Exists() && temperature.Type == gjson.Number {
+		out, _ = sjson.SetBytes(out, "temperature", temperature.Float())
+	}
+	if topP := root.Get("top_p"); topP.Exists() && topP.Type == gjson.Number {
+		out, _ = sjson.SetBytes(out, "top_p", topP.Float())
+	}
+
 	// instructions -> as a leading message (use role user for Claude API compatibility)
 	messageCapacity := root.Get("input.#").Int()
 	if instructions := root.Get("instructions"); instructions.Type == gjson.String && instructions.String() != "" {
@@ -537,6 +545,29 @@ func convertResponsesContentPartToClaude(part gjson.Result) []byte {
 		}
 		contentPart := []byte(`{"type":"image","source":{"type":"url","url":""}}`)
 		contentPart, _ = sjson.SetBytes(contentPart, "source.url", url)
+		return contentPart
+	case "web_search_result", "search_result":
+		var builder strings.Builder
+		if title := part.Get("title").String(); title != "" {
+			builder.WriteString(title)
+		}
+		if url := part.Get("url").String(); url != "" {
+			if builder.Len() > 0 {
+				builder.WriteString("\n")
+			}
+			builder.WriteString(url)
+		}
+		if content := part.Get("content").String(); content != "" {
+			if builder.Len() > 0 {
+				builder.WriteString("\n\n")
+			}
+			builder.WriteString(content)
+		}
+		if builder.Len() == 0 {
+			return nil
+		}
+		contentPart := []byte(`{"type":"text","text":""}`)
+		contentPart, _ = sjson.SetBytes(contentPart, "text", builder.String())
 		return contentPart
 	case "input_file":
 		fileData := part.Get("file_data").String()

@@ -14,8 +14,8 @@ func init() {
 		types.FormatClaude,
 		nil,
 		types.ResponseTransform{
-			Stream:    convertAntigravityResponseToClaudeStream,
-			NonStream: convertAntigravityResponseToClaudeNonStream,
+			Stream:    ConvertAntigravityResponseToClaudeStream,
+			NonStream: ConvertAntigravityResponseToClaudeNonStream,
 		},
 	)
 }

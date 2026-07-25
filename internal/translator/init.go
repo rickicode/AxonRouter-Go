@@ -10,6 +10,12 @@ package translator
 // so that the Responses-specific implementations win for
 // (openai-responses, claude) and (openai-responses, gemini).
 //
+// Documented response mappings:
+//   - Antigravity (Gemini Cloud Code Assist envelopes) -> Claude Messages:
+//     internal/translator/antigravity/claude
+//   - Kiro (OpenAI-compatible chat.completions) -> Claude Messages:
+//     internal/translator/kiro/claude (reuses the OpenAI -> Claude converter)
+//
 // Intentionally omitted: openai/openai_responses. The generic translator would
 // forward fields rejected by the Codex upstream (e.g. max_tokens, temperature);
 // the Codex path uses openai/codex_responses for requests and codex/responses
