@@ -73,11 +73,45 @@ func convertGeminiRequestToClaude(modelName string, body []byte, stream bool) []
 			var contentParts []map[string]interface{}
 			if parts := content.Get("parts"); parts.Exists() && parts.IsArray() {
 				parts.ForEach(func(_, part gjson.Result) bool {
+					if thought := part.Get("thought"); thought.Exists() && thought.Bool() {
+						thinkingBlock := map[string]interface{}{
+							"type":     "thinking",
+							"thinking": part.Get("text").String(),
+						}
+						sig := part.Get("thoughtSignature")
+						if !sig.Exists() {
+							sig = part.Get("thought_signature")
+						}
+						if sig.Exists() && sig.String() != "" {
+							thinkingBlock["signature"] = sig.String()
+						}
+						contentParts = append(contentParts, thinkingBlock)
+						return true
+					}
 					if text := part.Get("text"); text.Exists() {
 						contentParts = append(contentParts, map[string]interface{}{
 							"type": "text",
 							"text": text.String(),
 						})
+					}
+					if inlineData := part.Get("inlineData"); inlineData.Exists() {
+						mimeType := inlineData.Get("mimeType").String()
+						if mimeType == "" {
+							mimeType = inlineData.Get("mime_type").String()
+						}
+						if data := inlineData.Get("data").String(); data != "" && (mimeType == "" || strings.HasPrefix(mimeType, "image/")) {
+							if mimeType == "" {
+								mimeType = "image/jpeg"
+							}
+							contentParts = append(contentParts, map[string]interface{}{
+								"type": "image",
+								"source": map[string]interface{}{
+									"type":       "base64",
+									"media_type": mimeType,
+									"data":       data,
+								},
+							})
+						}
 					}
 					if fc := part.Get("functionCall"); fc.Exists() {
 						name := fc.Get("name").String()
@@ -132,8 +166,8 @@ func convertGeminiRequestToClaude(modelName string, body []byte, stream bool) []
 	}
 
 	// Tools
+	var functionTools []map[string]interface{}
 	if tools := root.Get("tools"); tools.Exists() && tools.IsArray() {
-		var functionTools []map[string]interface{}
 		tools.ForEach(func(_, tool gjson.Result) bool {
 			if decls := tool.Get("functionDeclarations"); decls.Exists() && decls.IsArray() {
 				decls.ForEach(func(_, decl gjson.Result) bool {
@@ -155,9 +189,64 @@ func convertGeminiRequestToClaude(modelName string, body []byte, stream bool) []
 			}
 			return true
 		})
-		if len(functionTools) > 0 {
-			out, _ = sjson.SetRawBytes(out, "tools", mustMarshal(functionTools))
+	}
+
+	// Tool calling config
+	var toolChoice interface{}
+	if toolConfig := root.Get("toolConfig.functionCallingConfig"); toolConfig.Exists() && toolConfig.IsObject() && len(functionTools) > 0 {
+		mode := strings.ToUpper(toolConfig.Get("mode").String())
+
+		var allowedNames []string
+		if allowed := toolConfig.Get("allowedFunctionNames"); allowed.Exists() && allowed.IsArray() {
+			allowed.ForEach(func(_, v gjson.Result) bool {
+				allowedNames = append(allowedNames, v.String())
+				return true
+			})
 		}
+
+		// Restrict the exposed tools for modes that honor allowedFunctionNames.
+		if (mode == "ANY" || mode == "VALIDATED") && len(allowedNames) > 0 {
+			allowedSet := make(map[string]struct{}, len(allowedNames))
+			for _, n := range allowedNames {
+				allowedSet[n] = struct{}{}
+			}
+			filtered := functionTools[:0]
+			for _, ft := range functionTools {
+				fn, ok := ft["function"].(map[string]interface{})
+				if !ok {
+					continue
+				}
+				name, _ := fn["name"].(string)
+				if _, ok := allowedSet[name]; ok {
+					filtered = append(filtered, ft)
+				}
+			}
+			functionTools = filtered
+		}
+
+		switch mode {
+		case "NONE":
+			toolChoice = "none"
+		case "ANY":
+			if len(allowedNames) == 1 {
+				toolChoice = map[string]interface{}{
+					"type": "tool",
+					"name": allowedNames[0],
+				}
+			} else {
+				toolChoice = "any"
+			}
+		default:
+			// AUTO, VALIDATED, and any other mode default to auto.
+			toolChoice = "auto"
+		}
+	}
+
+	if len(functionTools) > 0 {
+		out, _ = sjson.SetRawBytes(out, "tools", mustMarshal(functionTools))
+	}
+	if toolChoice != nil {
+		out, _ = sjson.SetRawBytes(out, "tool_choice", mustMarshal(toolChoice))
 	}
 
 	return out
