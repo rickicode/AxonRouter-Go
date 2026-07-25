@@ -155,3 +155,49 @@ func TestParseInlineImage(t *testing.T) {
 		t.Fatalf("unexpected raw parse: %s / %s", mime, data)
 	}
 }
+
+func TestConvertCodexRequestToGemini_ResponseFormatText(t *testing.T) {
+	body := []byte(`{"input": [], "response_format": {"type": "text"}}`)
+	out := convertCodexRequestToGemini("gemini-test", body, false)
+	if gjson.GetBytes(out, "generationConfig.responseMimeType").Exists() {
+		t.Fatalf("expected no responseMimeType for text format")
+	}
+	if gjson.GetBytes(out, "generationConfig.responseSchema").Exists() {
+		t.Fatalf("expected no responseSchema for text format")
+	}
+}
+
+func TestConvertCodexRequestToGemini_ResponseFormatJSONObject(t *testing.T) {
+	body := []byte(`{"input": [], "response_format": {"type": "json_object"}}`)
+	out := convertCodexRequestToGemini("gemini-test", body, false)
+	if got := gjson.GetBytes(out, "generationConfig.responseMimeType").String(); got != "application/json" {
+		t.Fatalf("unexpected responseMimeType: %s", got)
+	}
+	if gjson.GetBytes(out, "generationConfig.responseSchema").Exists() {
+		t.Fatalf("expected no responseSchema for json_object format")
+	}
+}
+
+func TestConvertCodexRequestToGemini_ResponseFormatJSONSchema(t *testing.T) {
+	body := []byte(`{
+		"input": [],
+		"response_format": {
+			"type": "json_schema",
+			"json_schema": {
+				"name": "answer",
+				"strict": true,
+				"schema": {"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]}
+			}
+		}
+	}`)
+	out := convertCodexRequestToGemini("gemini-test", body, false)
+	if got := gjson.GetBytes(out, "generationConfig.responseMimeType").String(); got != "application/json" {
+		t.Fatalf("unexpected responseMimeType: %s", got)
+	}
+	if got := gjson.GetBytes(out, "generationConfig.responseSchema.type").String(); got != "object" {
+		t.Fatalf("unexpected responseSchema.type: %s", got)
+	}
+	if got := gjson.GetBytes(out, "generationConfig.responseSchema.required.0").String(); got != "answer" {
+		t.Fatalf("unexpected responseSchema.required: %s", got)
+	}
+}
