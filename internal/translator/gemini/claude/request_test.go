@@ -155,3 +155,64 @@ func TestConvertGeminiRequestToClaude_AutoFunctionCallingConfig(t *testing.T) {
 		t.Fatalf("expected tool_choice auto, got %q", got)
 	}
 }
+
+func TestConvertGeminiRequestToClaude_AnyMultiAllowedFiltersTools(t *testing.T) {
+	body := []byte(`{
+		"contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+		"tools": [
+			{"functionDeclarations": [
+				{"name": "get_weather", "description": "weather"},
+				{"name": "get_stock", "description": "stock"}
+			]}
+		],
+		"toolConfig": {"functionCallingConfig": {"mode": "ANY", "allowedFunctionNames": ["get_weather"]}}
+	}`)
+
+	out := convertGeminiRequestToClaude("claude-test", body, false)
+	root := gjson.ParseBytes(out)
+
+	if got := root.Get("tool_choice.type").String(); got != "tool" {
+		t.Fatalf("expected tool_choice.type tool, got %q", got)
+	}
+	if got := root.Get("tool_choice.name").String(); got != "get_weather" {
+		t.Fatalf("expected tool_choice.name get_weather, got %q", got)
+	}
+	if got := root.Get("tools").Array(); len(got) != 1 {
+		t.Fatalf("expected 1 tool after filtering, got %d", len(got))
+	}
+	if got := root.Get("tools.0.function.name").String(); got != "get_weather" {
+		t.Fatalf("expected remaining tool get_weather, got %q", got)
+	}
+}
+
+func TestConvertGeminiRequestToClaude_ValidatedModeFiltersTools(t *testing.T) {
+	body := []byte(`{
+		"contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+		"tools": [
+			{"functionDeclarations": [
+				{"name": "get_weather", "description": "weather"},
+				{"name": "get_stock", "description": "stock"},
+				{"name": "get_news", "description": "news"}
+			]}
+		],
+		"toolConfig": {"functionCallingConfig": {"mode": "VALIDATED", "allowedFunctionNames": ["get_weather", "get_stock"]}}
+	}`)
+
+	out := convertGeminiRequestToClaude("claude-test", body, false)
+	root := gjson.ParseBytes(out)
+
+	if got := root.Get("tool_choice").String(); got != "auto" {
+		t.Fatalf("expected tool_choice auto, got %q", got)
+	}
+	tools := root.Get("tools").Array()
+	if len(tools) != 2 {
+		t.Fatalf("expected 2 tools after filtering, got %d", len(tools))
+	}
+	seen := map[string]bool{}
+	for _, t := range tools {
+		seen[t.Get("function.name").String()] = true
+	}
+	if !seen["get_weather"] || !seen["get_stock"] || seen["get_news"] {
+		t.Fatalf("tools not filtered to expected allowed names: %v", seen)
+	}
+}

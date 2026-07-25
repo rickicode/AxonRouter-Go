@@ -189,32 +189,49 @@ func convertGeminiRequestToClaude(modelName string, body []byte, stream bool) []
 			}
 			return true
 		})
-		if len(functionTools) > 0 {
-			out, _ = sjson.SetRawBytes(out, "tools", mustMarshal(functionTools))
-		}
 	}
 
 	// Tool calling config
+	var toolChoice interface{}
 	if toolConfig := root.Get("toolConfig.functionCallingConfig"); toolConfig.Exists() && toolConfig.IsObject() && len(functionTools) > 0 {
 		mode := strings.ToUpper(toolConfig.Get("mode").String())
-		var toolChoice interface{}
+
+		var allowedNames []string
+		if allowed := toolConfig.Get("allowedFunctionNames"); allowed.Exists() && allowed.IsArray() {
+			allowed.ForEach(func(_, v gjson.Result) bool {
+				allowedNames = append(allowedNames, v.String())
+				return true
+			})
+		}
+
+		// Restrict the exposed tools for modes that honor allowedFunctionNames.
+		if (mode == "ANY" || mode == "VALIDATED") && len(allowedNames) > 0 {
+			allowedSet := make(map[string]struct{}, len(allowedNames))
+			for _, n := range allowedNames {
+				allowedSet[n] = struct{}{}
+			}
+			filtered := functionTools[:0]
+			for _, ft := range functionTools {
+				fn, ok := ft["function"].(map[string]interface{})
+				if !ok {
+					continue
+				}
+				name, _ := fn["name"].(string)
+				if _, ok := allowedSet[name]; ok {
+					filtered = append(filtered, ft)
+				}
+			}
+			functionTools = filtered
+		}
+
 		switch mode {
 		case "NONE":
 			toolChoice = "none"
 		case "ANY":
-			if allowed := toolConfig.Get("allowedFunctionNames"); allowed.Exists() && allowed.IsArray() {
-				var names []string
-				allowed.ForEach(func(_, v gjson.Result) bool {
-					names = append(names, v.String())
-					return true
-				})
-				if len(names) == 1 {
-					toolChoice = map[string]interface{}{
-						"type": "tool",
-						"name": names[0],
-					}
-				} else {
-					toolChoice = "any"
+			if len(allowedNames) == 1 {
+				toolChoice = map[string]interface{}{
+					"type": "tool",
+					"name": allowedNames[0],
 				}
 			} else {
 				toolChoice = "any"
@@ -223,6 +240,12 @@ func convertGeminiRequestToClaude(modelName string, body []byte, stream bool) []
 			// AUTO, VALIDATED, and any other mode default to auto.
 			toolChoice = "auto"
 		}
+	}
+
+	if len(functionTools) > 0 {
+		out, _ = sjson.SetRawBytes(out, "tools", mustMarshal(functionTools))
+	}
+	if toolChoice != nil {
 		out, _ = sjson.SetRawBytes(out, "tool_choice", mustMarshal(toolChoice))
 	}
 
