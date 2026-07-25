@@ -28,7 +28,7 @@ If you suspect a routing bug, the issue must cite **benchmarks, exact latency nu
 - All provider integrations must use documented official HTTP/HTTPS endpoints and explicit API keys.
 
 ## 4. Reference priority for parity checks
-**AxonRouter-GO must always keep these references fresh and compare its current side against them for parity gaps:**
+**AxonRouter-GO must always keep these references fresh and compare its current side against them for parity gaps.** These paths are already listed in `automation/bug-scanner-config.json` under `references`, so switching to them is allowed by the universal scope rule.
 - **CLIProxyAPI** (`/workspaces/CLIProxyAPI`) — primary reference for Go backend, auth, executor, and translator patterns.
 - **9router** (`/workspaces/9router`) — lightweight reference for custom provider behavior, CLI patterns, and modular routing ideas.
 - **OmniRoute** (`/workspaces/OmniRoute`) — secondary, use only for provider/quota/policy patterns that are explicitly applicable.
