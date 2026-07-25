@@ -1,0 +1,58 @@
+{
+  "project_id": "19ad9504-5ba5-4396-954c-8bb815a86fdc",
+  "log_file": "automation/bug-scanner-log.md",
+  "max_objective_issues": 3,
+  "max_parity_issues": 1,
+  "baseline": [
+    "go build ./..."
+  ],
+  "sides": [
+    {
+      "name": "routing",
+      "command": "go test -timeout 10m ./internal/api/... ./internal/connstate/... ./internal/proxypool/..."
+    },
+    {
+      "name": "executor",
+      "command": "go test -timeout 10m ./internal/executor/... ./internal/translator/... ./internal/modalities/... ./internal/thinking/..."
+    },
+    {
+      "name": "provider",
+      "command": "go test -timeout 10m ./internal/provider/... ./internal/providercfg/... ./internal/quota/... ./internal/network/..."
+    },
+    {
+      "name": "auth",
+      "command": "go test -timeout 10m ./internal/auth/... ./internal/signature/..."
+    },
+    {
+      "name": "data",
+      "command": "go test -timeout 10m ./internal/db/... ./internal/cache/... ./internal/backup/... ./internal/background/... ./internal/logging/... ./internal/usage/..."
+    },
+    {
+      "name": "frontend",
+      "command": "cd web && ([ -d node_modules ] || npm install) && timeout 10m npm run build"
+    },
+    {
+      "name": "spec-static",
+      "command": "{ go vet ./...; if command -v openlore >/dev/null 2>&1; then openlore check-spec-drift --failOn=warning; fi; if command -v staticcheck >/dev/null 2>&1; then staticcheck ./...; fi; }"
+    }
+  ],
+  "references": [
+    {
+      "name": "CLIProxyAPI",
+      "url": "https://github.com/router-for-me/CLIProxyAPI",
+      "local_path": "/workspaces/CLIProxyAPI",
+      "branch": "main",
+      "raw_url_template": "https://raw.githubusercontent.com/router-for-me/CLIProxyAPI/refs/heads/main/{path}",
+      "source_url_template": "https://github.com/router-for-me/CLIProxyAPI/blob/main/{path}#L{start}-L{end}"
+    },
+    {
+      "name": "OmniRoute",
+      "url": "https://github.com/diegosouzapw/OmniRoute",
+      "local_path": "/workspaces/OmniRoute",
+      "branch": "main",
+      "raw_url_template": "https://raw.githubusercontent.com/diegosouzapw/OmniRoute/refs/heads/main/{path}",
+      "source_url_template": "https://github.com/diegosouzapw/OmniRoute/blob/main/{path}#L{start}-L{end}",
+      "note": "Use only for proven, production-tested patterns. Do not copy its full 231-provider catalog or dashboard-only features."
+    }
+  ]
+}
