@@ -28,10 +28,15 @@ If you suspect a routing bug, the issue must cite **benchmarks, exact latency nu
 - All provider integrations must use documented official HTTP/HTTPS endpoints and explicit API keys.
 
 ## 4. Reference priority for parity checks
-- **Primary reference:** `CLIProxyAPI` (`/workspaces/CLIProxyAPI`) — use it for Go backend, auth, executor, and translator patterns.
-- **Secondary reference:** `OmniRoute` (`/workspaces/OmniRoute`) — use it only for provider/quota/policy patterns that are explicitly applicable.
+**AxonRouter-GO must always keep these references fresh and compare its current side against them for parity gaps:**
+- **CLIProxyAPI** (`/workspaces/CLIProxyAPI`) — primary reference for Go backend, auth, executor, and translator patterns.
+- **9router** (`/workspaces/9router`) — lightweight reference for custom provider behavior, CLI patterns, and modular routing ideas.
+- **OmniRoute** (`/workspaces/OmniRoute`) — secondary, use only for provider/quota/policy patterns that are explicitly applicable.
+
+Rules:
 - Compare **only the current side** and cite exact source lines or URLs.
-- Do not copy entire subsystems from either reference; only flag gaps where AxonRouter clearly lacks a behavior the reference already implements.
+- A parity issue must ask for something the reference already implements and AxonRouter clearly lacks. **Do not ask for new features that no reference implements.**
+- Do not copy entire subsystems from any reference; only flag concrete, evidence-backed gaps.
 
 ## 5. Versioning and release
 - Canonical version is in `internal/version/VERSION`. Never edit it by hand; use `make set-version v=X.Y.Z`.
@@ -46,3 +51,8 @@ If you suspect a routing bug, the issue must cite **benchmarks, exact latency nu
 - Backend/Go and shared package fixes should include regression tests, but the **scanner must not create tests itself**.
 - Frontend unit tests must **never** be added.
 - If a static check (vet, staticcheck, Go build) surfaces a failure in `internal/api/handlers/v1/handler.go` or `internal/connstate/`, treat it as high-priority product evidence.
+
+## 8. Hard feature-freeze for AxonRouter-GO
+- The scanner may only report **existing** bugs.
+- **Never** propose adding a feature, endpoint, provider, model, UI page, or capability that does not already exist in the codebase, unless a human explicitly confirms.
+- A parity gap is the only exception: if CLIProxyAPI or 9router already has a proven behavior that AxonRouter lacks in the same subsystem, it may be reported as a parity issue with evidence.
