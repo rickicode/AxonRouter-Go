@@ -8,6 +8,12 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+func TestRegistryResponsePathWired(t *testing.T) {
+	if !registry.Default().HasResponseTransformer(types.FormatClaude, types.FormatAntigravity) {
+		t.Fatal("expected (claude, antigravity) response transformer to be registered")
+	}
+}
+
 func TestClaudeToAntigravityIngressWired(t *testing.T) {
 	body := []byte(`{
 "model": "ag/claude-sonnet-4-6",
