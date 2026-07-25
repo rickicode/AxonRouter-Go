@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/codex/responses"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -385,8 +386,13 @@ func codexCompactURL(req *Request) string {
 // non-streaming Response.
 func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, error) {
 	url := codexURL(req)
+	sessionKey := codexReasoningReplaySessionKey(req.Body, req.Headers)
 	body := codexRequestBody(req.Body)
+	body = ensureImageGenerationTool(body, req.Model)
+	body, identityState := applyCodexIdentityConfuseBody(body, req.ConnectionID)
+	body, _ = codexInjectReasoningReplay(body, sessionKey)
 	headers := codexHeaders(req)
+	applyCodexIdentityConfuseHeaders(headers, identityState)
 
 	cfg := &StreamConfig{ScannerMaxTokenSize: codexScannerMax}
 	streamResult, err := e.DoStreamRequestWithConfig(ctx, "POST", url, headers, body, cfg)
@@ -433,6 +439,10 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 		// multi-line SSE dump starting with response.created.
 		if eventType == "response.completed" || eventType == "response.done" {
 			payload = patchCodexCompletedOutput(payload, outputItemsByIndex, outputItemsFallback)
+			payload = applyCodexIdentityConfuseResponsePayload(payload, identityState)
+			if eventType == "response.completed" && sessionKey != "" {
+				codexCacheReasoningReplay(ctx, payload, req.Model, sessionKey)
+			}
 			completedPayload = payload
 			if u := extractCodexUsage(payload); u.TotalTokens > 0 || u.InputTokens > 0 || u.OutputTokens > 0 {
 				usage = u
@@ -441,7 +451,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 	}
 
 	if len(completedPayload) == 0 {
-		return nil, fmt.Errorf("codex stream closed before response.completed")
+		return nil, newCodexIncompleteStreamError()
 	}
 	if streamResult.StatusCode > 0 {
 		statusCode = streamResult.StatusCode
@@ -452,6 +462,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 	// Strip the optional "data: " SSE framing so the downstream non-stream
 	// translator sees a plain JSON object.
 	responseBody, _ := parseCodexEvent(completedPayload)
+	responseBody = applyCodexIdentityExposeResponsePayload(responseBody, identityState)
 	return &Response{
 		StatusCode: statusCode,
 		Body:       responseBody,
@@ -465,8 +476,13 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 // by preceding response.output_item.done events, mirroring the non-stream path.
 func (e *CodexExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
 	url := codexURL(req)
+	sessionKey := codexReasoningReplaySessionKey(req.Body, req.Headers)
 	body := codexRequestBody(req.Body)
+	body = ensureImageGenerationTool(body, req.Model)
+	body, identityState := applyCodexIdentityConfuseBody(body, req.ConnectionID)
+	body, _ = codexInjectReasoningReplay(body, sessionKey)
 	headers := codexHeaders(req)
+	applyCodexIdentityConfuseHeaders(headers, identityState)
 
 	cfg := &StreamConfig{
 		ScannerMaxTokenSize:     codexScannerMax,
@@ -491,9 +507,18 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, req *Request) (*Strea
 		defer close(out.Chunks)
 		outputItemsByIndex := make(map[int64][]byte)
 		var outputItemsFallback [][]byte
+		var sawCompleted bool
 		for chunk := range result.Chunks {
+			if chunk.Err != nil {
+				select {
+				case out.Chunks <- chunk:
+				case <-ctx.Done():
+				}
+				return
+			}
 			if chunk.Payload != nil {
-				eventData, eventType := parseCodexEvent(chunk.Payload)
+				line := applyCodexIdentityConfuseResponsePayload(chunk.Payload, identityState)
+				eventData, eventType := parseCodexEvent(line)
 				switch eventType {
 				case "response.output_item.done":
 					if item := gjson.GetBytes(eventData, "item"); item.Exists() && item.Type == gjson.JSON {
@@ -505,13 +530,24 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, req *Request) (*Strea
 						}
 					}
 				case "response.completed", "response.done":
-					chunk.Payload = patchCodexCompletedOutput(chunk.Payload, outputItemsByIndex, outputItemsFallback)
+					sawCompleted = true
+					line = patchCodexCompletedOutput(line, outputItemsByIndex, outputItemsFallback)
+					if eventType == "response.completed" && sessionKey != "" {
+						codexCacheReasoningReplay(ctx, line, req.Model, sessionKey)
+					}
 				}
+				chunk.Payload = applyCodexIdentityExposeResponsePayload(line, identityState)
 			}
 			select {
 			case out.Chunks <- chunk:
 			case <-ctx.Done():
 				return
+			}
+		}
+		if !sawCompleted {
+			select {
+			case out.Chunks <- StreamChunk{Err: newCodexIncompleteStreamError()}:
+			case <-ctx.Done():
 			}
 		}
 	}()
@@ -589,4 +625,353 @@ func patchCodexCompletedOutput(payload []byte, byIndex map[int64][]byte, fallbac
 	// Re-encode as an SSE data: line so downstream translators see the same
 	// shape as before.
 	return append([]byte("data: "), patched...)
+}
+
+// codexIncompleteStreamMessage is the stable message for a Codex stream that
+// ended before emitting response.completed. It is classified as a transient,
+// request-scoped error so the v1 failover loop retries another connection
+// instead of treating the failure as provider-fatal.
+const codexIncompleteStreamMessage = "codex stream disconnected before completion: stream closed before response.completed"
+
+// CodexIncompleteStreamError indicates the upstream Codex SSE stream finished
+// without a terminal response.completed event.
+type CodexIncompleteStreamError struct {
+	Message string
+}
+
+func (e CodexIncompleteStreamError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return codexIncompleteStreamMessage
+}
+
+// IsRequestScoped reports that this error is scoped to the current request and
+// should be treated as retryable by the generic failover loop.
+func (CodexIncompleteStreamError) IsRequestScoped() bool { return true }
+
+func newCodexIncompleteStreamError() *CodexIncompleteStreamError {
+	return &CodexIncompleteStreamError{Message: codexIncompleteStreamMessage}
+}
+
+var (
+	defaultImageGenTool  = []byte(`{"type":"image_generation","output_format":"png"}`)
+	defaultImageGenTools = []byte(`[{"type":"image_generation","output_format":"png"}]`)
+)
+
+// ensureImageGenerationTool injects the default image generation tool into
+// Codex requests for image-capable models when no tools are present. This
+// mirrors CLIProxyAPI behavior for gpt-image-* style models.
+func ensureImageGenerationTool(body []byte, modelName string) []byte {
+	if !codexModelSupportsImageGeneration(modelName) {
+		return body
+	}
+	tools := gjson.GetBytes(body, "tools")
+	if !tools.Exists() || !tools.IsArray() || len(tools.Array()) == 0 {
+		out, _ := sjson.SetRawBytes(body, "tools", defaultImageGenTools)
+		return out
+	}
+	for _, t := range tools.Array() {
+		if t.Get("type").String() == "image_generation" {
+			return body
+		}
+	}
+	out, _ := sjson.SetRawBytes(body, "tools.-1", defaultImageGenTool)
+	return out
+}
+
+func codexModelSupportsImageGeneration(modelName string) bool {
+	m := strings.ToLower(strings.TrimSpace(modelName))
+	return strings.Contains(m, "gpt-image") || strings.Contains(m, "dall-e") || strings.Contains(m, "image-gen")
+}
+
+// codexReasoningReplayCtxKey carries the original reasoning-replay session key
+// through to the stream goroutine so completed responses can update the cache.
+type codexReasoningReplayCtxKey struct{}
+
+// codexReasoningReplaySessionKey derives a stable continuity key from request
+// body fields (prompt_cache_key, x-codex-window-id, x-codex-turn-metadata) and
+// from matching headers. An empty result means replay is not enabled for this
+// request.
+func codexReasoningReplaySessionKey(body []byte, headers map[string]string) string {
+	if key := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String()); key != "" {
+		return "prompt-cache:" + key
+	}
+	if window := strings.TrimSpace(gjson.GetBytes(body, "client_metadata.x-codex-window-id").String()); window != "" {
+		return "window:" + window
+	}
+	if turn := strings.TrimSpace(gjson.GetBytes(body, "client_metadata.x-codex-turn-metadata").String()); turn != "" {
+		if key := codexReasoningReplaySessionKeyFromTurnMetadata(turn); key != "" {
+			return key
+		}
+	}
+	if headers != nil {
+		if turn := strings.TrimSpace(headerValueCaseInsensitive(headers, "X-Codex-Turn-Metadata")); turn != "" {
+			if key := codexReasoningReplaySessionKeyFromTurnMetadata(turn); key != "" {
+				return key
+			}
+		}
+		if window := strings.TrimSpace(headerValueCaseInsensitive(headers, "X-Codex-Window-Id")); window != "" {
+			return "window:" + window
+		}
+		if conv := strings.TrimSpace(headerValueCaseInsensitive(headers, "Conversation-Id")); conv != "" {
+			return "conversation:" + conv
+		}
+	}
+	if conv := strings.TrimSpace(gjson.GetBytes(body, "conversation_id").String()); conv != "" {
+		return "conversation:" + conv
+	}
+	if prev := strings.TrimSpace(gjson.GetBytes(body, "previous_response_id").String()); prev != "" {
+		return "prev-response:" + prev
+	}
+	return ""
+}
+
+func codexReasoningReplaySessionKeyFromTurnMetadata(raw string) string {
+	if key := strings.TrimSpace(gjson.Get(raw, "prompt_cache_key").String()); key != "" {
+		return "prompt-cache:" + key
+	}
+	if window := strings.TrimSpace(gjson.Get(raw, "window_id").String()); window != "" {
+		return "window:" + window
+	}
+	return ""
+}
+
+// codexInjectReasoningReplay inserts cached reasoning and function_call items
+// into the request input just before the last user message. It filters out
+// items that are already present in the current input.
+func codexInjectReasoningReplay(body []byte, sessionKey string) ([]byte, bool) {
+	if sessionKey == "" {
+		return body, false
+	}
+	modelName := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+	if modelName == "" {
+		return body, false
+	}
+	items, err := cache.GetCodexReasoningReplayItems(context.Background(), modelName, sessionKey)
+	if err != nil || len(items) == 0 {
+		return body, false
+	}
+	input := gjson.GetBytes(body, "input")
+	if !input.IsArray() || len(input.Array()) == 0 {
+		return body, false
+	}
+	inputItems := input.Array()
+
+	filtered := make([][]byte, 0, len(items))
+	for _, it := range items {
+		if !codexReasoningItemInInput(it, inputItems) {
+			filtered = append(filtered, it)
+		}
+	}
+	if len(filtered) == 0 {
+		return body, false
+	}
+
+	idx := codexLastUserMessageIndex(inputItems)
+	parts := make([]string, 0, len(inputItems)+len(filtered))
+	for i, it := range inputItems {
+		if i == idx {
+			for _, replayItem := range filtered {
+				parts = append(parts, string(replayItem))
+			}
+		}
+		parts = append(parts, it.Raw)
+	}
+	if idx == len(inputItems) {
+		for _, replayItem := range filtered {
+			parts = append(parts, string(replayItem))
+		}
+	}
+	updated, err := sjson.SetRawBytes(body, "input", []byte("["+strings.Join(parts, ",")+"]"))
+	if err != nil {
+		return body, false
+	}
+	return updated, true
+}
+
+func codexReasoningItemInInput(item []byte, inputItems []gjson.Result) bool {
+	itemResult := gjson.ParseBytes(item)
+	itemType := strings.TrimSpace(itemResult.Get("type").String())
+	switch itemType {
+	case "reasoning":
+		enc := strings.TrimSpace(itemResult.Get("encrypted_content").String())
+		if enc == "" {
+			return false
+		}
+		for _, inputItem := range inputItems {
+			if strings.TrimSpace(inputItem.Get("type").String()) != "reasoning" {
+				continue
+			}
+			if strings.TrimSpace(inputItem.Get("encrypted_content").String()) == enc {
+				return true
+			}
+		}
+	case "function_call", "custom_tool_call":
+		callID := strings.TrimSpace(itemResult.Get("call_id").String())
+		if callID == "" {
+			return false
+		}
+		for _, inputItem := range inputItems {
+			if strings.TrimSpace(inputItem.Get("call_id").String()) == callID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func codexLastUserMessageIndex(inputItems []gjson.Result) int {
+	idx := len(inputItems)
+	for i, it := range inputItems {
+		if strings.EqualFold(strings.TrimSpace(it.Get("role").String()), "user") {
+			idx = i
+		}
+	}
+	return idx
+}
+
+// codexCacheReasoningReplay stores reasoning and function_call items from a
+// completed Codex response so a subsequent turn can replay them.
+func codexCacheReasoningReplay(ctx context.Context, responseBody []byte, modelName, sessionKey string) {
+	if sessionKey == "" || modelName == "" {
+		return
+	}
+	root := gjson.ParseBytes(responseBody)
+	if r := root.Get("response"); r.Exists() {
+		root = r
+	}
+	output := root.Get("output")
+	if !output.Exists() || !output.IsArray() || len(output.Array()) == 0 {
+		return
+	}
+	var items [][]byte
+	hasReasoning := false
+	for _, it := range output.Array() {
+		typ := strings.TrimSpace(it.Get("type").String())
+		switch typ {
+		case "reasoning":
+			items = append(items, []byte(it.Raw))
+			if strings.TrimSpace(it.Get("encrypted_content").String()) != "" {
+				hasReasoning = true
+			}
+		case "function_call", "custom_tool_call":
+			items = append(items, []byte(it.Raw))
+		}
+	}
+	if !hasReasoning || len(items) == 0 {
+		return
+	}
+	_ = cache.CacheCodexReasoningReplayItems(ctx, modelName, sessionKey, items)
+}
+
+// codexIdentityConfuseState tracks per-request identity confuse/expose state
+// for Codex. It is used to replace client-provided continuity keys with
+// per-connection stable values before sending them upstream, avoiding
+// fingerprinting blocks, and then to restore the original values in responses.
+type codexIdentityConfuseState struct {
+	enabled                bool
+	connID                 string
+	originalPromptCacheKey string
+	promptCacheKey         string
+}
+
+// applyCodexIdentityConfuseBody rewrites continuity keys in the request body
+// to per-connection stable values. The original values are remembered so the
+// response can be restored for the client.
+func applyCodexIdentityConfuseBody(body []byte, connID string) ([]byte, codexIdentityConfuseState) {
+	connID = strings.TrimSpace(connID)
+	if connID == "" || len(body) == 0 {
+		return body, codexIdentityConfuseState{}
+	}
+	state := codexIdentityConfuseState{enabled: true, connID: connID}
+	if key := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String()); key != "" {
+		state.originalPromptCacheKey = key
+		state.promptCacheKey = codexIdentityConfuseUUID(connID, "prompt-cache", key)
+		body, _ = sjson.SetBytes(body, "prompt_cache_key", state.promptCacheKey)
+	}
+	if installationID := strings.TrimSpace(gjson.GetBytes(body, "client_metadata.x-codex-installation-id").String()); installationID != "" {
+		body, _ = sjson.SetBytes(body, "client_metadata.x-codex-installation-id",
+			codexIdentityConfuseUUID(connID, "installation", installationID))
+	}
+	if turnMetadata := strings.TrimSpace(gjson.GetBytes(body, "client_metadata.x-codex-turn-metadata").String()); turnMetadata != "" {
+		body, _ = sjson.SetBytes(body, "client_metadata.x-codex-turn-metadata",
+			applyCodexTurnMetadataIdentityConfuse(turnMetadata, &state))
+	}
+	if state.promptCacheKey != "" {
+		if windowID := strings.TrimSpace(gjson.GetBytes(body, "client_metadata.x-codex-window-id").String()); windowID != "" {
+			body, _ = sjson.SetBytes(body, "client_metadata.x-codex-window-id", state.promptCacheKey+":0")
+		}
+	}
+	return body, state
+}
+
+func applyCodexTurnMetadataIdentityConfuse(raw string, state *codexIdentityConfuseState) string {
+	if state == nil || !state.enabled {
+		return raw
+	}
+	updated := raw
+	if state.promptCacheKey != "" {
+		if gjson.Get(raw, "prompt_cache_key").Exists() {
+			updated, _ = sjson.Set(updated, "prompt_cache_key", state.promptCacheKey)
+		} else if state.originalPromptCacheKey != "" {
+			updated = strings.ReplaceAll(updated, state.originalPromptCacheKey, state.promptCacheKey)
+		}
+	}
+	if windowID := strings.TrimSpace(gjson.Get(raw, "window_id").String()); windowID != "" && state.promptCacheKey != "" {
+		updated, _ = sjson.Set(updated, "window_id", state.promptCacheKey+":0")
+	}
+	return updated
+}
+
+// applyCodexIdentityConfuseHeaders rewrites continuity headers to match the
+// confused body values.
+func applyCodexIdentityConfuseHeaders(headers map[string]string, state codexIdentityConfuseState) {
+	if !state.enabled || state.promptCacheKey == "" || headers == nil {
+		return
+	}
+	headers["Session_id"] = state.promptCacheKey
+	headers["X-Client-Request-Id"] = state.promptCacheKey
+	headers["Thread-Id"] = state.promptCacheKey
+	headers["X-Codex-Window-Id"] = state.promptCacheKey + ":0"
+	if turn := strings.TrimSpace(headerValueCaseInsensitive(headers, "X-Codex-Turn-Metadata")); turn != "" {
+		headers["X-Codex-Turn-Metadata"] = applyCodexTurnMetadataIdentityConfuse(turn, &state)
+	}
+}
+
+// applyCodexIdentityConfuseResponsePayload replaces original continuity values
+// in an upstream response with their confused counterparts before internal
+// caching/logging.
+func applyCodexIdentityConfuseResponsePayload(payload []byte, state codexIdentityConfuseState) []byte {
+	return replaceCodexIdentityInPayload(payload, state.originalPromptCacheKey, state.promptCacheKey)
+}
+
+// applyCodexIdentityExposeResponsePayload restores the original continuity
+// values in the response sent to the client.
+func applyCodexIdentityExposeResponsePayload(payload []byte, state codexIdentityConfuseState) []byte {
+	return replaceCodexIdentityInPayload(payload, state.promptCacheKey, state.originalPromptCacheKey)
+}
+
+func replaceCodexIdentityInPayload(payload []byte, from, to string) []byte {
+	from = strings.TrimSpace(from)
+	to = strings.TrimSpace(to)
+	if len(payload) == 0 || from == "" || to == "" || from == to || !bytes.Contains(payload, []byte(from)) {
+		return payload
+	}
+	return bytes.ReplaceAll(payload, []byte(from), []byte(to))
+}
+
+func codexIdentityConfuseUUID(connID, kind, value string) string {
+	name := "axonrouter:codex:identity-confuse:" + kind + ":" + strings.TrimSpace(connID) + ":" + strings.TrimSpace(value)
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(name)).String()
+}
+
+func headerValueCaseInsensitive(headers map[string]string, name string) string {
+	lower := strings.ToLower(name)
+	for k, v := range headers {
+		if strings.ToLower(k) == lower {
+			return v
+		}
+	}
+	return ""
 }

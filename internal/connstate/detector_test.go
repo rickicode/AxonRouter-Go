@@ -2,6 +2,7 @@ package connstate
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -533,5 +534,40 @@ func TestDetectError_StructuredJSONInsufficientQuota(t *testing.T) {
 	want := time.Now().Add(30 * time.Minute)
 	if det.CooldownUntil == nil || det.CooldownUntil.Before(want.Add(-2*time.Second)) || det.CooldownUntil.After(want.Add(2*time.Second)) {
 		t.Errorf("cooldown=%v, want around %v", det.CooldownUntil, want)
+	}
+}
+
+type fakeRequestScopedError struct {
+	msg string
+}
+
+func (e *fakeRequestScopedError) Error() string { return e.msg }
+func (e *fakeRequestScopedError) IsRequestScoped() bool { return true }
+
+func TestDetectError_RequestScopedError_ForcesNetwork(t *testing.T) {
+	err := &fakeRequestScopedError{msg: "incomplete stream"}
+	det := DetectError(context.Background(), 200, `{"choices":[]}`, err, "cx", "cx/gpt-5.4", nil)
+	if det.Category != ErrorNetwork {
+		t.Errorf("category=%v, want ErrorNetwork", det.Category)
+	}
+	if det.Scope != "connection" {
+		t.Errorf("scope=%v, want connection", det.Scope)
+	}
+	if !det.Retryable {
+		t.Error("expected Retryable=true")
+	}
+	if det.Status != StatusDegraded {
+		t.Errorf("status=%v, want StatusDegraded", det.Status)
+	}
+	if det.CooldownUntil == nil {
+		t.Fatal("expected CooldownUntil")
+	}
+}
+
+func TestDetectError_NonRequestScopedError_DoesNotForceNetwork(t *testing.T) {
+	err := errors.New("some other failure")
+	det := DetectError(context.Background(), 200, `{"choices":[]}`, err, "cx", "cx/gpt-5.4", nil)
+	if det.Category != ErrorUnknown {
+		t.Errorf("category=%v, want ErrorUnknown", det.Category)
 	}
 }

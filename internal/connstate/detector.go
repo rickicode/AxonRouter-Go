@@ -6,6 +6,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -32,6 +33,21 @@ const (
 	ErrorContentFilter ErrorCategory = "content_filter"
 	ErrorUnknown       ErrorCategory = "unknown"
 )
+
+// requestScopedError is implemented by executor errors that are scoped to the
+// current request (e.g., an incomplete Codex stream). They should be retried on
+// another connection without marking the provider as fatally broken.
+type requestScopedError interface {
+	IsRequestScoped() bool
+}
+
+func isRequestScopedError(err error) bool {
+	var rs requestScopedError
+	if errors.As(err, &rs) {
+		return rs.IsRequestScoped()
+	}
+	return false
+}
 
 // ErrorDetection holds the result of error detection.
 type ErrorDetection struct {
@@ -66,6 +82,23 @@ const (
 	rateLimitBaseCooldown = 1 * time.Second
 	rateLimitMaxCooldown  = 30 * time.Minute
 )
+
+// maxRetryAfterWait returns the ceiling for provider-supplied Retry-After hints.
+// It is controlled by STREAMING_BOOTSTRAP_MAX_WAIT_SECONDS and defaults to 24
+// hours. Operators can lower it to keep long upstream cooldowns from starving
+// the streaming bootstrap retry budget.
+func maxRetryAfterWait() time.Duration {
+	const def = 24 * time.Hour
+	v := os.Getenv("STREAMING_BOOTSTRAP_MAX_WAIT_SECONDS")
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return def
+	}
+	return time.Duration(n) * time.Second
+}
 
 // DetectError classifies an error from HTTP status code, response body, and headers.
 // modelID is passed through so callers can identify which model was rate-limited.
@@ -116,6 +149,13 @@ func DetectError(ctx context.Context, statusCode int, body string, err error, pr
 	cat := d.ClassifyFromMessage(sample)
 	if statusCode > 0 {
 		cat = d.ClassifyFromResponse(statusCode, sample)
+	}
+	// Request-scoped executor errors (e.g. CodexIncompleteStreamError) are
+	// transient per-request failures: route them through ErrorNetwork so the
+	// failover loop retries without provider-fatal cooldowns or client-visible
+	// upstream errors.
+	if isRequestScopedError(err) {
+		cat = ErrorNetwork
 	}
 
 	det := ErrorDetection{
@@ -522,10 +562,15 @@ func nextMidnightUTC() time.Time {
 var resetInRe = regexp.MustCompile(`(?i)resets?\s+in\s+(\d+)\s*(hour|h|min|m)`)
 
 func exactCooldown(msg string, headers http.Header, def time.Duration) *time.Time {
+	maxWait := maxRetryAfterWait()
 	if headers != nil {
 		if retryAfter := headers.Get("Retry-After"); retryAfter != "" {
 			if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds > 0 {
-				until := time.Now().Add(time.Duration(seconds) * time.Second)
+				cooldown := time.Duration(seconds) * time.Second
+				if cooldown > maxWait {
+					cooldown = maxWait
+				}
+				until := time.Now().Add(cooldown)
 				return &until
 			}
 		}
@@ -539,7 +584,11 @@ func exactCooldown(msg string, headers http.Header, def time.Duration) *time.Tim
 				case "hour", "h":
 					multiplier = time.Hour
 				}
-				until := time.Now().Add(time.Duration(n) * multiplier)
+				cooldown := time.Duration(n) * multiplier
+				if cooldown > maxWait {
+					cooldown = maxWait
+				}
+				until := time.Now().Add(cooldown)
 				return &until
 			}
 		}

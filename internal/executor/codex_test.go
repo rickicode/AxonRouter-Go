@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/tidwall/gjson"
 )
@@ -461,5 +462,147 @@ func TestCodexExecutor_ExecuteStream_PatchesEmptyCompleted(t *testing.T) {
 	}
 	if got := output[0].Get("content.0.text").String(); got != "hello from stream" {
 		t.Fatalf("expected patched output text, got %s", got)
+	}
+}
+
+func TestEnsureImageGenerationTool_InjectsForImageModels(t *testing.T) {
+	body := []byte(`{"model":"gpt-image-2","input":"draw a cat"}`)
+	out := ensureImageGenerationTool(body, "gpt-image-2")
+	if got := gjson.GetBytes(out, "tools.0.type").String(); got != "image_generation" {
+		t.Fatalf("expected image_generation tool injected, got %q", got)
+	}
+}
+
+func TestEnsureImageGenerationTool_AppendsToExistingTools(t *testing.T) {
+	body := []byte(`{"model":"gpt-image-2","tools":[{"type":"function","function":{"name":"foo"}}]}`)
+	out := ensureImageGenerationTool(body, "gpt-image-2")
+	if got := gjson.GetBytes(out, "tools.1.type").String(); got != "image_generation" {
+		t.Fatalf("expected image_generation appended, got %q; body=%s", got, string(out))
+	}
+}
+
+func TestEnsureImageGenerationTool_SkipsWhenPresent(t *testing.T) {
+	body := []byte(`{"model":"gpt-image-2","tools":[{"type":"image_generation","output_format":"webp"}]}`)
+	out := ensureImageGenerationTool(body, "gpt-image-2")
+	if gjson.GetBytes(out, "tools.#").Int() != 1 {
+		t.Fatalf("expected unchanged tools, got %s", string(out))
+	}
+}
+
+func TestEnsureImageGenerationTool_SkipsNonImageModels(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","input":"hello"}`)
+	out := ensureImageGenerationTool(body, "gpt-5.4")
+	if gjson.GetBytes(out, "tools").Exists() {
+		t.Fatalf("expected no tools injected for non-image model, got %s", string(out))
+	}
+}
+
+func TestCodexIdentityConfuseBodyAndExpose(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","prompt_cache_key":"user-key-123","client_metadata":{"x-codex-window-id":"win-1","x-codex-installation-id":"install-1"}}`)
+	connID := "conn-abc"
+	confused, state := applyCodexIdentityConfuseBody(body, connID)
+	if !state.enabled {
+		t.Fatal("expected identity confuse enabled")
+	}
+	if gjson.GetBytes(confused, "prompt_cache_key").String() == "user-key-123" {
+		t.Fatal("expected prompt_cache_key to be confused")
+	}
+	if got := gjson.GetBytes(confused, "client_metadata.x-codex-window-id").String(); !strings.HasSuffix(got, ":0") {
+		t.Fatalf("expected window id confused with :0 suffix, got %q", got)
+	}
+
+	upstreamResp := []byte(`{"prompt_cache_key":"` + gjson.GetBytes(confused, "prompt_cache_key").String() + `"}`)
+	exposed := applyCodexIdentityExposeResponsePayload(upstreamResp, state)
+	if !strings.Contains(string(exposed), `"user-key-123"`) {
+		t.Fatalf("expected original prompt_cache_key restored in response, got %s", string(exposed))
+	}
+}
+
+func TestCodexReasoningReplayCacheKeyFromBody(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","prompt_cache_key":"pk-1"}`)
+	key := codexReasoningReplaySessionKey(body, nil)
+	if key != "prompt-cache:pk-1" {
+		t.Fatalf("expected prompt-cache:pk-1, got %q", key)
+	}
+}
+
+func TestCodexReasoningReplayCacheKeyFromHeader(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4"}`)
+	headers := map[string]string{"X-Codex-Window-Id": "wnd-9"}
+	key := codexReasoningReplaySessionKey(body, headers)
+	if key != "window:wnd-9" {
+		t.Fatalf("expected window:wnd-9, got %q", key)
+	}
+}
+
+func TestCodexReasoningReplayInjectAndCache(t *testing.T) {
+	cache.ClearCodexReasoningReplayCache()
+	model := "gpt-5.4"
+	sessionKey := "prompt-cache:test"
+
+	reasoning := []byte(`{"type":"reasoning","encrypted_content":"sig-xyz","summary":[],"content":null}`)
+	call := []byte(`{"type":"function_call","call_id":"call-1","name":"fn","arguments":"{}"}`)
+	if err := cache.CacheCodexReasoningReplayItems(context.Background(), model, sessionKey, [][]byte{reasoning, call}); err != nil {
+		t.Fatalf("cache failed: %v", err)
+	}
+
+	body := []byte(`{"model":"gpt-5.4","input":[{"type":"message","role":"user","content":"hi"}]}`)
+	body, ok := codexInjectReasoningReplay(body, sessionKey)
+	if !ok {
+		t.Fatal("expected replay injection")
+	}
+	input := gjson.GetBytes(body, "input").Array()
+	if len(input) != 3 {
+		t.Fatalf("expected 3 input items, got %d: %s", len(input), string(body))
+	}
+	if input[0].Get("type").String() != "reasoning" {
+		t.Fatalf("expected first injected item to be reasoning, got %s", input[0].Get("type").String())
+	}
+	if input[1].Get("type").String() != "function_call" {
+		t.Fatalf("expected second injected item to be function_call, got %s", input[1].Get("type").String())
+	}
+	if input[2].Get("role").String() != "user" {
+		t.Fatalf("expected user message after injected items, got %s", input[2].Get("role").String())
+	}
+
+	// A second request with the same reasoning already present should not duplicate it.
+	cache.ClearCodexReasoningReplayCache()
+	if err := cache.CacheCodexReasoningReplayItems(context.Background(), model, sessionKey, [][]byte{reasoning}); err != nil {
+		t.Fatalf("cache reasoning-only failed: %v", err)
+	}
+	body2 := []byte(`{"model":"gpt-5.4","input":[{"type":"reasoning","encrypted_content":"sig-xyz"},{"type":"message","role":"user","content":"again"}]}`)
+	body2, ok2 := codexInjectReasoningReplay(body2, sessionKey)
+	if ok2 {
+		t.Fatal("expected no replay injection when reasoning already present")
+	}
+	if gjson.GetBytes(body2, "input.#").Int() != 2 {
+		t.Fatalf("expected input unchanged, got %s", string(body2))
+	}
+}
+
+func TestCodexCacheReasoningReplay(t *testing.T) {
+	cache.ClearCodexReasoningReplayCache()
+	model := "gpt-5.4"
+	sessionKey := "prompt-cache:cache-test"
+	response := []byte(`{"type":"response.completed","response":{"output":[{"type":"reasoning","encrypted_content":"sig-abc"},{"type":"message","role":"assistant","content":"hi"},{"type":"function_call","call_id":"c-1","name":"fn","arguments":"{}"}]}}`)
+	codexCacheReasoningReplay(context.Background(), response, model, sessionKey)
+
+	items, err := cache.GetCodexReasoningReplayItems(context.Background(), model, sessionKey)
+	if err != nil {
+		t.Fatalf("get cache failed: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 cached replay items, got %d", len(items))
+	}
+}
+
+func TestCodexIncompleteStreamError_IsRequestScoped(t *testing.T) {
+	err := newCodexIncompleteStreamError()
+	rs, ok := interface{}(err).(interface{ IsRequestScoped() bool })
+	if !ok {
+		t.Fatal("CodexIncompleteStreamError should implement IsRequestScoped")
+	}
+	if !rs.IsRequestScoped() {
+		t.Fatal("expected IsRequestScoped() == true")
 	}
 }
