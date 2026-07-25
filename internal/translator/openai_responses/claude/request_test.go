@@ -1,11 +1,13 @@
 package claude
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/tidwall/gjson"
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 func mustMarshal(t *testing.T, v any) []byte {
@@ -59,6 +61,31 @@ func TestConvertOpenAIResponsesRequestToClaude_Simple(t *testing.T) {
 	}
 }
 
+func TestConvertOpenAIResponsesRequestToClaude_SamplingParams(t *testing.T) {
+	req := mustMarshal(t, map[string]any{
+		"input": []any{
+			map[string]any{
+				"type": "message",
+				"role": "user",
+				"content": []any{
+					map[string]any{"type": "input_text", "text": "Hello"},
+				},
+			},
+		},
+		"temperature": 0.7,
+		"top_p":       0.9,
+	})
+
+	out := ConvertOpenAIResponsesRequestToClaude("claude-opus-4", req, false)
+
+	if got := gjson.GetBytes(out, "temperature").Float(); got != 0.7 {
+		t.Errorf("temperature = %v, want 0.7", got)
+	}
+	if got := gjson.GetBytes(out, "top_p").Float(); got != 0.9 {
+		t.Errorf("top_p = %v, want 0.9", got)
+	}
+}
+
 func TestConvertOpenAIResponsesRequestToClaude_ReasoningEffort(t *testing.T) {
 	cases := []struct {
 		effort       string
@@ -94,6 +121,44 @@ func TestConvertOpenAIResponsesRequestToClaude_ReasoningEffort(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestConvertOpenAIResponsesRequestToClaude_ReasoningSignature(t *testing.T) {
+	// Build a minimal valid strict Claude single-layer thinking signature.
+	channelBlock := protowire.AppendTag(nil, 1, protowire.VarintType)
+	channelBlock = protowire.AppendVarint(channelBlock, 11)
+	container := protowire.AppendTag(nil, 1, protowire.BytesType)
+	container = protowire.AppendBytes(container, channelBlock)
+	payload := protowire.AppendTag(nil, 2, protowire.BytesType)
+	payload = protowire.AppendBytes(payload, container)
+	sig := base64.StdEncoding.EncodeToString(payload)
+
+	req := mustMarshal(t, map[string]any{
+		"input": []any{
+			map[string]any{
+				"type":             "reasoning",
+				"encrypted_content": sig,
+				"summary": []any{
+					map[string]any{"type": "summary_text", "text": "Reasoning summary."},
+				},
+			},
+		},
+	})
+
+	out := ConvertOpenAIResponsesRequestToClaude("claude-opus-4", req, false)
+
+	if got := gjson.GetBytes(out, "messages.0.role").String(); got != "assistant" {
+		t.Errorf("reasoning message role = %q, want assistant", got)
+	}
+	if got := gjson.GetBytes(out, "messages.0.content.0.type").String(); got != "thinking" {
+		t.Errorf("reasoning content type = %q, want thinking", got)
+	}
+	if got := gjson.GetBytes(out, "messages.0.content.0.thinking").String(); got != "Reasoning summary." {
+		t.Errorf("reasoning thinking text = %q, want 'Reasoning summary.'", got)
+	}
+	if got := gjson.GetBytes(out, "messages.0.content.0.signature").String(); got != sig {
+		t.Errorf("reasoning signature not preserved")
 	}
 }
 
