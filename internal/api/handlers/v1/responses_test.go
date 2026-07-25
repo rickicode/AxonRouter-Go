@@ -19,6 +19,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
+	"github.com/tidwall/gjson"
 )
 
 func setupResponsesTest(t *testing.T) (*Handler, func()) {
@@ -363,5 +364,143 @@ func TestResponsesWebsocket_UpgradeAndRelay(t *testing.T) {
 	}
 	if string(echo) != string(first) {
 		t.Errorf("echo mismatch: got %s, want %s", string(echo), string(first))
+	}
+}
+
+// captureExecutor records the last upstream request it receives.
+type captureExecutor struct {
+	fakeExecutor
+	lastReq *executor.Request
+}
+
+func (c *captureExecutor) Execute(ctx context.Context, req *executor.Request) (*executor.Response, error) {
+	c.lastReq = req
+	return c.fakeExecutor.Execute(ctx, req)
+}
+
+func (c *captureExecutor) ExecuteStream(ctx context.Context, req *executor.Request) (*executor.StreamResult, error) {
+	c.lastReq = req
+	return c.fakeExecutor.ExecuteStream(ctx, req)
+}
+
+// setupProviderResponsesTest seeds a provider_type and connection for the given
+// provider ID and format, registers the supplied executor, and returns a cleanup
+// function that restores the original executor.
+func setupProviderResponsesTest(t *testing.T, h *Handler, provider, format string, exec executor.Executor) func() {
+	t.Helper()
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES (?,?,?,'http://x',0)`, provider, provider, format); err != nil {
+		t.Fatalf("seed provider_type %s: %v", provider, err)
+	}
+	connID := provider + "-conn1"
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?,?,'c1','none','ready',1,0,0)`, connID, provider); err != nil {
+		t.Fatalf("seed connection %s: %v", provider, err)
+	}
+	h.store.SeedConnection(connID, provider, "ready", 0)
+	h.elig.RecomputeAll()
+
+	reg := executor.GetRegistry()
+	origExec, origFormat, hadOriginal := reg.Get(provider)
+	reg.Register(provider, executor.ProviderFormat(format), exec)
+	return func() {
+		if hadOriginal {
+			reg.Register(provider, origFormat, origExec)
+		} else {
+			reg.Unregister(provider)
+		}
+	}
+}
+
+func TestResponses_ClaudelPrefix_RoutesAndTranslates(t *testing.T) {
+	h, cleanup := setupResponsesTest(t)
+	defer cleanup()
+
+	fe := &captureExecutor{
+		fakeExecutor: fakeExecutor{
+			responses: []struct {
+				resp *executor.Response
+				err  error
+			}{
+				{
+					resp: &executor.Response{
+						StatusCode: http.StatusOK,
+						Body: []byte(strings.Join([]string{
+							`data: {"type":"message_start","message":{"id":"msg_claude_smoke","usage":{"input_tokens":5,"output_tokens":0}}}`,
+							`data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}`,
+							`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello from Claude"}}`,
+							`data: {"type":"content_block_stop","index":0}`,
+							`data: {"type":"message_delta","usage":{"output_tokens":3}}`,
+							`data: {"type":"message_stop"}`,
+						}, "\n") + "\n"),
+					},
+				},
+			},
+		},
+	}
+	defer setupProviderResponsesTest(t, h, "claude", string(executor.FormatClaude), fe)()
+
+	body := []byte(`{"model":"claude/sonnet-4-20250514","input":"hi"}`)
+	rec, c := jsonRequestWithAllowedModels(t, http.MethodPost, "/v1/responses", body, nil)
+	h.Responses(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if fe.lastReq == nil {
+		t.Fatalf("expected upstream request to be captured")
+	}
+	if !gjson.GetBytes(fe.lastReq.Body, "messages").Exists() {
+		t.Fatalf("expected translated Claude request to contain messages, got %s", fe.lastReq.Body)
+	}
+	if gjson.GetBytes(fe.lastReq.Body, "model").String() != "sonnet-4-20250514" {
+		t.Fatalf("expected model name to be stripped of prefix, got %s", fe.lastReq.Body)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"text":"Hello from Claude"`)) {
+		t.Fatalf("expected OpenAI Responses output, got %s", rec.Body.String())
+	}
+}
+
+func TestResponses_GeminiPrefix_RoutesAndTranslates(t *testing.T) {
+	h, cleanup := setupResponsesTest(t)
+	defer cleanup()
+
+	fe := &captureExecutor{
+		fakeExecutor: fakeExecutor{
+			responses: []struct {
+				resp *executor.Response
+				err  error
+			}{
+				{
+					resp: &executor.Response{
+						StatusCode: http.StatusOK,
+						Body: []byte(`{
+							"modelVersion": "gemini-2.5-pro",
+							"candidates": [{"content": {"role": "model", "parts": [{"text": "Hello from Gemini"}]}, "finishReason": "STOP"}],
+							"usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 3, "totalTokenCount": 8}
+						}`),
+					},
+				},
+			},
+		},
+	}
+	defer setupProviderResponsesTest(t, h, "gemini", string(executor.FormatGemini), fe)()
+
+	body := []byte(`{"model":"gemini/gemini-2.5-pro","input":"hi"}`)
+	rec, c := jsonRequestWithAllowedModels(t, http.MethodPost, "/v1/responses", body, nil)
+	h.Responses(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if fe.lastReq == nil {
+		t.Fatalf("expected upstream request to be captured")
+	}
+	if !gjson.GetBytes(fe.lastReq.Body, "contents").Exists() {
+		t.Fatalf("expected translated Gemini request to contain contents, got %s", fe.lastReq.Body)
+	}
+	if gjson.GetBytes(fe.lastReq.Body, "model").String() != "gemini-2.5-pro" {
+		t.Fatalf("expected model name to be stripped of prefix, got %s", fe.lastReq.Body)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"text":"Hello from Gemini"`)) {
+		t.Fatalf("expected OpenAI Responses output, got %s", rec.Body.String())
 	}
 }
