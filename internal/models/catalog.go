@@ -53,12 +53,21 @@ var providerFreeOnly = map[string]bool{
 	"oc": true,
 }
 
+// modelThinking describes a model's reasoning/thinking configuration range.
+type modelThinking struct {
+	Min         int      `json:"min"`
+	Max         int      `json:"max"`
+	ZeroAllowed bool     `json:"zero_allowed"`
+	Levels      []string `json:"levels,omitempty"`
+}
+
 // modelEntry is a single model definition from models.json.
 type modelEntry struct {
-	ID           string   `json:"id"`
-	DisplayName  string   `json:"display_name"`
-	ServiceKinds []string `json:"service_kinds"`
-	TargetFormat string   `json:"target_format"`
+	ID           string        `json:"id"`
+	DisplayName  string        `json:"display_name"`
+	ServiceKinds []string      `json:"service_kinds"`
+	TargetFormat string        `json:"target_format"`
+	Thinking     modelThinking `json:"thinking,omitempty"`
 }
 
 // catalog is the full models.json structure: provider → []modelEntry.
@@ -447,6 +456,26 @@ func HasServiceKind(providerKey, modelID, kind string) bool {
 		}
 	}
 	return false
+}
+
+// GetModelThinkingLevels returns the thinking effort levels declared for a
+// model ID across all provider keys in the catalog. It returns nil when the
+// model is unknown or does not advertise adaptive thinking levels.
+func GetModelThinkingLevels(modelID string) []string {
+	mu.RLock()
+	defer mu.RUnlock()
+	var result []string
+	for _, entries := range current {
+		for _, e := range entries {
+			if e.ID == modelID && len(e.Thinking.Levels) > 0 {
+				if result == nil {
+					result = make([]string, len(e.Thinking.Levels))
+					copy(result, e.Thinking.Levels)
+				}
+			}
+		}
+	}
+	return result
 }
 
 // StartUpdater starts a background goroutine that refreshes the model catalog
