@@ -7,6 +7,47 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// CopyCacheControlToMap copies a Claude-compatible cache_control object from src onto dst.
+// It returns true when a cache_control object was actually copied. dst is modified in place.
+func CopyCacheControlToMap(dst map[string]any, src gjson.Result) bool {
+	cc := src.Get("cache_control")
+	if !cc.Exists() || cc.Type == gjson.Null || !cc.IsObject() {
+		return false
+	}
+	dst["cache_control"] = cc.Value()
+	return true
+}
+
+// AttachMessageCacheControlToMap applies message-level cache_control from src onto the last
+// content block of msg. Part-level cache_control wins when the last block already has one.
+// String content is promoted to a single-element array so it can carry cache_control.
+// It returns true when a cache_control object was actually applied. msg is modified in place.
+func AttachMessageCacheControlToMap(msg map[string]any, src gjson.Result) bool {
+	cc := src.Get("cache_control")
+	if !cc.Exists() || cc.Type == gjson.Null || !cc.IsObject() {
+		return false
+	}
+
+	content := msg["content"]
+	switch v := content.(type) {
+	case []map[string]any:
+		if len(v) == 0 {
+			return false
+		}
+		lastIdx := len(v) - 1
+		if _, ok := v[lastIdx]["cache_control"]; ok {
+			return false
+		}
+		v[lastIdx]["cache_control"] = cc.Value()
+	case string:
+		msg["content"] = []map[string]any{
+			{"type": "text", "text": v, "cache_control": cc.Value()},
+		}
+	}
+
+	return true
+}
+
 // AttachCacheControl copies a Claude-compatible cache_control object from src onto dst.
 // Returns dst unchanged when cache_control is missing or not an object.
 func AttachCacheControl(dst []byte, src gjson.Result) []byte {
