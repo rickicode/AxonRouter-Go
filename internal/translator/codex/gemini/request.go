@@ -72,9 +72,21 @@ func convertCodexRequestToGemini(modelName string, body []byte, stream bool) []b
 			}
 			return true
 		})
-		if len(functionDeclarations) > 0 {
-			b, _ := json.Marshal(functionDeclarations)
-			out, _ = sjson.SetRawBytes(out, "tools.0.functionDeclarations", b)
+	if len(functionDeclarations) > 0 {
+		b, _ := json.Marshal(functionDeclarations)
+		out, _ = sjson.SetRawBytes(out, "tools.0.functionDeclarations", b)
+	}
+	}
+
+	// Map Codex tool_choice to Gemini functionCallingConfig.
+	if tc := root.Get("tool_choice"); tc.Exists() {
+		mode, allowed := geminiFunctionCallingConfig(tc)
+		if mode != "" {
+			out, _ = sjson.SetBytes(out, "toolConfig.functionCallingConfig.mode", mode)
+			if len(allowed) > 0 {
+				b, _ := json.Marshal(allowed)
+				out, _ = sjson.SetRawBytes(out, "toolConfig.functionCallingConfig.allowedFunctionNames", b)
+			}
 		}
 	}
 
@@ -93,6 +105,35 @@ func convertCodexRequestToGemini(modelName string, body []byte, stream bool) []b
 
 	return out
 }
+
+// geminiFunctionCallingConfig maps a Codex tool_choice value to Gemini
+// functionCallingConfig mode and optional allowedFunctionNames list.
+func geminiFunctionCallingConfig(tc gjson.Result) (string, []string) {
+	switch {
+	case tc.Type == gjson.String:
+		switch tc.String() {
+		case "none":
+			return "NONE", nil
+		case "auto":
+			return "AUTO", nil
+		case "required":
+			return "ANY", nil
+		}
+	case tc.IsObject():
+		if tc.Get("type").String() == "function" {
+			name := tc.Get("function.name").String()
+			if name == "" {
+				name = tc.Get("name").String()
+			}
+			if name != "" {
+				return "ANY", []string{name}
+			}
+			return "ANY", nil
+		}
+	}
+	return "", nil
+}
+
 
 func appendCodexInputItem(out []byte, item, allInput gjson.Result) []byte {
 	itemType := item.Get("type").String()
