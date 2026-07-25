@@ -1,115 +1,139 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
-  import { Button } from '$lib/components/ui/button';
-  import { dashboardApi, type DashboardStats } from '$lib/api';
-  import { formatTokens, formatCount, formatBytes, loadActiveRequests, activeRequests } from '$lib/stores';
-  import { toast } from 'svelte-sonner';
-
-  import ActivityIcon from '@lucide/svelte/icons/activity';
-  import CpuIcon from '@lucide/svelte/icons/cpu';
-  import DollarSignIcon from '@lucide/svelte/icons/dollar-sign';
-  import AlertTriangleIcon from '@lucide/svelte/icons/alert-triangle';
-  import TimerIcon from '@lucide/svelte/icons/timer';
-  import ZapIcon from '@lucide/svelte/icons/zap';
-  import DatabaseIcon from '@lucide/svelte/icons/database';
-  import HardDriveIcon from '@lucide/svelte/icons/hard-drive';
-  import ServerIcon from '@lucide/svelte/icons/server';
-  import BoxesIcon from '@lucide/svelte/icons/boxes';
-  import LayersIcon from '@lucide/svelte/icons/layers';
-  import ClockIcon from '@lucide/svelte/icons/clock';
-  import RadioIcon from '@lucide/svelte/icons/radio';
-
-  let stats = $state<DashboardStats | null>(null);
-  let loading = $state(true);
-  let errorMsg = $state<string | null>(null);
-
-  function fmtInt(n: number): string {
-    return n.toLocaleString();
+import { onMount } from 'svelte';
+import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
+import { Button } from '$lib/components/ui/button';
+import { dashboardApi, apiKeysApi, type DashboardStats, type APIKeyItem } from '$lib/api';
+import { formatTokens, formatCount, formatBytes, loadActiveRequests, activeRequests } from '$lib/stores';
+import { toast } from 'svelte-sonner';
+import ActivityIcon from '@lucide/svelte/icons/activity';
+import CpuIcon from '@lucide/svelte/icons/cpu';
+import DollarSignIcon from '@lucide/svelte/icons/dollar-sign';
+import AlertTriangleIcon from '@lucide/svelte/icons/alert-triangle';
+import TimerIcon from '@lucide/svelte/icons/timer';
+import ZapIcon from '@lucide/svelte/icons/zap';
+import DatabaseIcon from '@lucide/svelte/icons/database';
+import HardDriveIcon from '@lucide/svelte/icons/hard-drive';
+import ServerIcon from '@lucide/svelte/icons/server';
+import BoxesIcon from '@lucide/svelte/icons/boxes';
+import LayersIcon from '@lucide/svelte/icons/layers';
+import ClockIcon from '@lucide/svelte/icons/clock';
+import RadioIcon from '@lucide/svelte/icons/radio';
+import WalletIcon from '@lucide/svelte/icons/wallet';
+import ShieldAlertIcon from '@lucide/svelte/icons/shield-alert';
+let stats = $state<DashboardStats | null>(null);
+let loading = $state(true);
+let errorMsg = $state<string | null>(null);
+let apiKeys = $state<APIKeyItem[]>([]);
+let budgetLoading = $state(false);
+function fmtInt(n: number): string {
+  return n.toLocaleString();
+}
+function fmtPercent(n: number): string {
+  return (n * 100).toFixed(1) + '%';
+}
+function money(n: number): string {
+  return n >= 1 ? '$' + n.toFixed(2) : '$' + n.toFixed(4);
+}
+function formatUSD(value: number): string {
+  if (value <= 0) return '$0.00';
+  if (value < 0.01) return '<$0.01';
+  return `$${value.toFixed(2)}`;
+}
+function getBudgetUtilization(spend: number, limit: number): number {
+  if (!limit || limit <= 0) return 0;
+  return Math.min(100, (spend / limit) * 100);
+}
+function getUtilizationBarColor(utilization: number, threshold: number): string {
+  if (utilization >= 100) return 'bg-destructive';
+  if (utilization >= threshold * 100) return 'bg-amber-500';
+  return 'bg-emerald-500';
+}
+function getUtilizationTextColor(utilization: number, threshold: number): string {
+  if (utilization >= 100) return 'text-destructive';
+  if (utilization >= threshold * 100) return 'text-amber-500';
+  return 'text-muted-foreground';
+}
+function fmtLatency(n: number): string {
+  return n >= 1000 ? (n / 1000).toFixed(2) + 's' : Math.round(n) + 'ms';
+}
+function fmtUptime(seconds: number): string {
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+let streamCount = $derived(($activeRequests || []).length);
+function connectionSub(stats: DashboardStats): string {
+  const total = stats.total_connections ?? 0;
+  const healthy = stats.healthy_connections ?? 0;
+  const unhealthy = total - healthy;
+  if (unhealthy === 0) return 'all healthy';
+  return `${fmtInt(unhealthy)} ${unhealthy === 1 ? 'error' : 'errors'}`;
+}
+const STATUS_COLORS: Record<string, string> = {
+  ready: 'bg-green-500',
+  rate_limited: 'bg-yellow-500',
+  quota_exhausted: 'bg-orange-500',
+  disabled: 'bg-zinc-400',
+};
+function statusDistribution(stats: DashboardStats): { status: string; count: number; color: string }[] {
+  const counts = stats.status_counts ?? {};
+  return Object.entries(counts)
+    .filter(([, count]) => count > 0)
+    .map(([status, count]) => ({ status, count, color: STATUS_COLORS[status] ?? 'bg-zinc-500' }))
+    .sort((a, b) => b.count - a.count);
+}
+async function loadBudgetData() {
+  budgetLoading = true;
+  try {
+    const res = await apiKeysApi.list();
+    apiKeys = (res.data ?? []).filter(k => k.daily_limit_usd > 0 || k.monthly_limit_usd > 0);
+  } catch {
+    // Silently ignore — budget info is supplementary
+  } finally {
+    budgetLoading = false;
   }
-  function fmtPercent(n: number): string {
-    return (n * 100).toFixed(1) + '%';
+}
+async function load() {
+  loading = true;
+  errorMsg = null;
+  try {
+    stats = await dashboardApi.stats();
+  } catch (e) {
+    errorMsg = e instanceof Error ? e.message : 'Failed to load dashboard';
+    toast.error(errorMsg);
+  } finally {
+    loading = false;
   }
-  function money(n: number): string {
-    return n >= 1 ? '$' + n.toFixed(2) : '$' + n.toFixed(4);
+  // Best-effort live stream indicator; don't let it fail the whole dashboard.
+  try {
+    await loadActiveRequests();
+  } catch {
+    // ignored
   }
-  function fmtLatency(n: number): string {
-    return n >= 1000 ? (n / 1000).toFixed(2) + 's' : Math.round(n) + 'ms';
-  }
-  function fmtUptime(seconds: number): string {
-    const d = Math.floor(seconds / 86400);
-    const h = Math.floor((seconds % 86400) / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    if (d > 0) return `${d}d ${h}h ${m}m`;
-    if (h > 0) return `${h}h ${m}m`;
-    return `${m}m`;
-  }
-
-  let streamCount = $derived(($activeRequests || []).length);
-
-  function connectionSub(stats: DashboardStats): string {
-    const total = stats.total_connections ?? 0;
-    const healthy = stats.healthy_connections ?? 0;
-    const unhealthy = total - healthy;
-    if (unhealthy === 0) return 'all healthy';
-    return `${fmtInt(unhealthy)} ${unhealthy === 1 ? 'error' : 'errors'}`;
-  }
-
-  const STATUS_COLORS: Record<string, string> = {
-    ready: 'bg-green-500',
-    rate_limited: 'bg-yellow-500',
-    quota_exhausted: 'bg-orange-500',
-    disabled: 'bg-zinc-400',
+  // Best-effort budget data; don't let it fail the whole dashboard.
+  loadBudgetData();
+}
+let refreshTimer: ReturnType<typeof setInterval> | null = null;
+let activeTimer: ReturnType<typeof setInterval> | null = null;
+onMount(() => {
+  document.title = 'Dashboard — AxonRouter';
+  load();
+  refreshTimer = setInterval(load, 5000);
+  activeTimer = setInterval(loadActiveRequests, 3000);
+  return () => {
+    if (refreshTimer) clearInterval(refreshTimer);
+    if (activeTimer) clearInterval(activeTimer);
   };
-
-  function statusDistribution(stats: DashboardStats): { status: string; count: number; color: string }[] {
-    const counts = stats.status_counts ?? {};
-    return Object.entries(counts)
-      .filter(([, count]) => count > 0)
-      .map(([status, count]) => ({ status, count, color: STATUS_COLORS[status] ?? 'bg-zinc-500' }))
-      .sort((a, b) => b.count - a.count);
-  }
-
-  async function load() {
-    loading = true;
-    errorMsg = null;
-    try {
-      stats = await dashboardApi.stats();
-    } catch (e) {
-      errorMsg = e instanceof Error ? e.message : 'Failed to load dashboard';
-      toast.error(errorMsg);
-    } finally {
-      loading = false;
-    }
-    // Best-effort live stream indicator; don't let it fail the whole dashboard.
-    try {
-      await loadActiveRequests();
-    } catch {
-      // ignored
-    }
-  }
-
-  let refreshTimer: ReturnType<typeof setInterval> | null = null;
-  let activeTimer: ReturnType<typeof setInterval> | null = null;
-
-  onMount(() => {
-    document.title = 'Dashboard — AxonRouter';
-    load();
-    refreshTimer = setInterval(load, 5000);
-    activeTimer = setInterval(loadActiveRequests, 3000);
-    return () => {
-      if (refreshTimer) clearInterval(refreshTimer);
-      if (activeTimer) clearInterval(activeTimer);
-    };
-  });
+});
 </script>
-
 <div class="flex flex-1 flex-col gap-6 p-6">
   <div class="space-y-1">
     <h1 class="text-display-lg">Dashboard.</h1>
     <p class="text-body-sm text-muted-foreground">Auto-refreshing overview of traffic, cost, and system health.</p>
   </div>
-
   {#if loading && !stats}
     <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
       {#each Array(12) as _}
@@ -132,7 +156,6 @@
       {@render kpiCard('Errors', formatCount(stats.errors_today), 'today', AlertTriangleIcon, 'bg-red-500/40', 'text-red-400')}
       {@render kpiCard('Avg latency', fmtLatency(stats.avg_latency_ms_today), 'today', TimerIcon, 'bg-amber-500/40', 'text-amber-400')}
     </div>
-
     <!-- System KPIs -->
     <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
       {@render kpiCard('CPU', fmtPercent(stats.cpu_percent), `${stats.cpu_cores ?? 0} cores`, ZapIcon, 'bg-cyan-500/40', 'text-cyan-400')}
@@ -144,7 +167,6 @@
       {@render kpiCard('Uptime', fmtUptime(stats.uptime_seconds), 'since start', ClockIcon, 'bg-sky-500/40', 'text-sky-400')}
       {@render kpiCard('Active requests', formatCount(streamCount), 'live', RadioIcon, 'bg-teal-500/40', 'text-teal-400')}
     </div>
-
     <!-- Connection status chart -->
     <Card class="shadow-card">
       <CardHeader class="pb-3 border-b border-border">
@@ -176,19 +198,107 @@
         {/if}
       </CardContent>
     </Card>
+    <!-- API Key Budget Utilization -->
+    <Card class="shadow-card">
+      <CardHeader class="pb-3 border-b border-border">
+        <div class="flex items-center gap-2">
+          <WalletIcon class="size-4 text-muted-foreground" />
+          <CardTitle class="text-body-md-strong">API key budget utilization</CardTitle>
+        </div>
+      </CardHeader>
+      <CardContent class="pt-4">
+        {#if budgetLoading && apiKeys.length === 0}
+          <div class="space-y-4">
+            {#each Array(3) as _}
+              <div class="h-16 bg-muted animate-pulse rounded-lg"></div>
+            {/each}
+          </div>
+        {:else if apiKeys.length === 0}
+          <p class="text-body-sm text-muted-foreground py-8 text-center">No API keys with budget limits configured.</p>
+        {:else}
+          <div class="space-y-4">
+            {#each apiKeys as key}
+              {@const dailyUtil = getBudgetUtilization(key.daily_spend_usd, key.daily_limit_usd)}
+              {@const monthlyUtil = getBudgetUtilization(key.monthly_spend_usd, key.monthly_limit_usd)}
+              {@const hasDailyAlert = key.daily_limit_usd > 0 && dailyUtil >= key.warning_threshold * 100}
+              {@const hasMonthlyAlert = key.monthly_limit_usd > 0 && monthlyUtil >= key.warning_threshold * 100}
+              {@const hasAlert = hasDailyAlert || hasMonthlyAlert}
+              <div class="rounded-lg border border-border bg-card p-4 space-y-3 transition-colors {hasAlert ? 'border-amber-500/30 bg-amber-500/5' : ''}">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-2">
+                    <span class="text-body-sm font-medium">{key.name || key.id.slice(0, 8)}</span>
+                    {#if hasAlert}
+                      <ShieldAlertIcon class="size-4 text-amber-500" />
+                    {/if}
+                  </div>
+                  <span class="text-caption text-muted-foreground">Threshold: {(key.warning_threshold * 100).toFixed(0)}%</span>
+                </div>
+                {#if key.daily_limit_usd > 0}
+                  <div class="space-y-1.5">
+                    <div class="flex items-center justify-between text-xs">
+                      <span class="text-muted-foreground">Daily</span>
+                      <span class={getUtilizationTextColor(dailyUtil, key.warning_threshold)}>
+                        {formatUSD(key.daily_spend_usd)} / {formatUSD(key.daily_limit_usd)}
+                        <span class="text-muted-foreground ml-1">({dailyUtil.toFixed(0)}%)</span>
+                      </span>
+                    </div>
+                    <div class="h-2 w-full rounded-full bg-muted overflow-hidden">
+                      <div
+                        class="h-full rounded-full transition-all {getUtilizationBarColor(dailyUtil, key.warning_threshold)}"
+                        style="width: {dailyUtil}%"
+                      ></div>
+                    </div>
+                  </div>
+                {/if}
+                {#if key.monthly_limit_usd > 0}
+                  <div class="space-y-1.5">
+                    <div class="flex items-center justify-between text-xs">
+                      <span class="text-muted-foreground">Monthly</span>
+                      <span class={getUtilizationTextColor(monthlyUtil, key.warning_threshold)}>
+                        {formatUSD(key.monthly_spend_usd)} / {formatUSD(key.monthly_limit_usd)}
+                        <span class="text-muted-foreground ml-1">({monthlyUtil.toFixed(0)}%)</span>
+                      </span>
+                    </div>
+                    <div class="h-2 w-full rounded-full bg-muted overflow-hidden">
+                      <div
+                        class="h-full rounded-full transition-all {getUtilizationBarColor(monthlyUtil, key.warning_threshold)}"
+                        style="width: {monthlyUtil}%"
+                      ></div>
+                    </div>
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          </div>
+          <div class="mt-4 flex flex-wrap gap-4">
+            <div class="flex items-center gap-1.5">
+              <span class="inline-block size-2.5 rounded-full bg-emerald-500"></span>
+              <span class="text-caption text-muted-foreground">Below threshold</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <span class="inline-block size-2.5 rounded-full bg-amber-500"></span>
+              <span class="text-caption text-muted-foreground">At/above threshold</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <span class="inline-block size-2.5 rounded-full bg-destructive"></span>
+              <span class="text-caption text-muted-foreground">Over limit</span>
+            </div>
+          </div>
+        {/if}
+      </CardContent>
+    </Card>
   {/if}
 </div>
-
 {#snippet kpiCard(label: string, value: string, sub: string, Icon: any, borderClass: string, iconClass: string)}
-<Card class="shadow-card relative overflow-hidden">
-  <div class="absolute top-0 left-0 w-full h-0.5 {borderClass}"></div>
-  <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-1 pt-5 px-5">
-    <CardTitle class="text-caption-mono text-muted-foreground uppercase">{label}</CardTitle>
-    <Icon class="size-4 {iconClass}" />
-  </CardHeader>
-  <CardContent class="px-5 pb-5">
-    <div class="text-display-md font-semibold text-foreground tabular-nums">{value}</div>
-    <p class="text-caption text-muted-foreground mt-1">{sub}</p>
-  </CardContent>
-</Card>
+  <Card class="shadow-card relative overflow-hidden">
+    <div class="absolute top-0 left-0 w-full h-0.5 {borderClass}"></div>
+    <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-1 pt-5 px-5">
+      <CardTitle class="text-caption-mono text-muted-foreground uppercase">{label}</CardTitle>
+      <Icon class="size-4 {iconClass}" />
+    </CardHeader>
+    <CardContent class="px-5 pb-5">
+      <div class="text-display-md font-semibold text-foreground tabular-nums">{value}</div>
+      <p class="text-caption text-muted-foreground mt-1">{sub}</p>
+    </CardContent>
+  </Card>
 {/snippet}
