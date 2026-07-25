@@ -2085,7 +2085,7 @@ func (h *Handler) streamResponse(
 				// Direct SSE passthrough when client and provider share the same native format.
 				translatedChunks = [][]byte{append(chunk.Payload, "\n\n"...)}
 			} else {
-				translatedChunks = registry.Response(ctx, string(clientFormat), string(providerFormat), model, originalReq, translatedReq, chunk.Payload, &streamState)
+				translatedChunks = registry.Response(ctx, string(providerFormat), string(clientFormat), model, originalReq, translatedReq, chunk.Payload, &streamState)
 			}
 			for _, tc := range translatedChunks {
 				c.Writer.Write(tc)
