@@ -504,3 +504,93 @@ func TestResponses_GeminiPrefix_RoutesAndTranslates(t *testing.T) {
 		t.Fatalf("expected OpenAI Responses output, got %s", rec.Body.String())
 	}
 }
+
+func TestResponses_OpenAICompatible_RoutesAndTranslates(t *testing.T) {
+	h, cleanup := setupResponsesTest(t)
+	defer cleanup()
+
+	fe := &captureExecutor{
+		fakeExecutor: fakeExecutor{
+			responses: []struct {
+				resp *executor.Response
+				err  error
+			}{
+				{
+					resp: &executor.Response{
+						StatusCode: http.StatusOK,
+						Body: []byte(`{"id":"chatcmpl-abc","object":"chat.completion","created":1234567890,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"Hello via chat"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}}`),
+					},
+				},
+			},
+		},
+	}
+	defer setupProviderResponsesTest(t, h, "openai", string(executor.FormatOpenAI), fe)()
+
+	body := []byte(`{"model":"openai/gpt-4o","input":"Hi there","temperature":0.7}`)
+	rec, c := jsonRequestWithAllowedModels(t, http.MethodPost, "/v1/responses", body, nil)
+	h.Responses(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if fe.lastReq == nil {
+		t.Fatalf("expected upstream request to be captured")
+	}
+	if got := gjson.GetBytes(fe.lastReq.Body, "model").String(); got != "gpt-4o" {
+		t.Errorf("upstream model=%q, want gpt-4o", got)
+	}
+	if !gjson.GetBytes(fe.lastReq.Body, "messages").Exists() {
+		t.Fatalf("upstream body missing messages, got %s", fe.lastReq.Body)
+	}
+	if gjson.GetBytes(fe.lastReq.Body, "input").Exists() {
+		t.Errorf("upstream body still contained Responses API 'input' field")
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"object":"response"`)) {
+		t.Fatalf("client response not Responses API shape, got %s", rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"text":"Hello via chat"`)) {
+		t.Fatalf("client response missing translated text, got %s", rec.Body.String())
+	}
+}
+
+func TestResponses_CustomOpenAI_RoutesAndTranslates(t *testing.T) {
+	h, cleanup := setupResponsesTest(t)
+	defer cleanup()
+
+	fe := &captureExecutor{
+		fakeExecutor: fakeExecutor{
+			responses: []struct {
+				resp *executor.Response
+				err  error
+			}{
+				{
+					resp: &executor.Response{
+						StatusCode: http.StatusOK,
+						Body: []byte(`{"id":"chatcmpl-custom","object":"chat.completion","created":1234567890,"model":"custom-model","choices":[{"index":0,"message":{"role":"assistant","content":"Hello from custom OpenAI"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":4,"total_tokens":9}}`),
+					},
+				},
+			},
+		},
+	}
+	defer setupProviderResponsesTest(t, h, "restestopenai", string(executor.FormatOpenAI), fe)()
+
+	body := []byte(`{"model":"restestopenai/custom-model","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"Hi"}]}]}`)
+	rec, c := jsonRequestWithAllowedModels(t, http.MethodPost, "/v1/responses", body, nil)
+	h.Responses(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if fe.lastReq == nil {
+		t.Fatalf("expected upstream request to be captured")
+	}
+	if got := gjson.GetBytes(fe.lastReq.Body, "model").String(); got != "custom-model" {
+		t.Errorf("upstream model=%q, want custom-model", got)
+	}
+	if !gjson.GetBytes(fe.lastReq.Body, "messages").Exists() {
+		t.Fatalf("upstream body missing messages, got %s", fe.lastReq.Body)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"text":"Hello from custom OpenAI"`)) {
+		t.Fatalf("client response missing translated text, got %s", rec.Body.String())
+	}
+}

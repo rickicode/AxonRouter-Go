@@ -32,6 +32,7 @@ func TestRegistrySanity(t *testing.T) {
 		{types.FormatGemini, types.FormatOpenAI},
 		{types.FormatGemini, types.FormatClaude},
 
+		{types.FormatCodexResponses, types.FormatOpenAI},
 		{types.FormatCodexResponses, types.FormatClaude},
 		{types.FormatCodexResponses, types.FormatGemini},
 
@@ -50,6 +51,8 @@ func TestRegistrySanity(t *testing.T) {
 		{types.FormatOpenAI, types.FormatAntigravity},
 		{types.FormatOpenAI, types.FormatKiro},
 		{types.FormatOpenAI, types.FormatGrokCLI},
+
+		{types.FormatOpenAI, types.FormatCodexResponses},
 
 		{types.FormatClaude, types.FormatOpenAI},
 		{types.FormatClaude, types.FormatGemini},
