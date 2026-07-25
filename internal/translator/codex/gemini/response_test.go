@@ -98,13 +98,26 @@ func TestConvertGeminiResponseToCodexNonStream_UsageMetadata(t *testing.T) {
 }
 
 func TestConvertGeminiResponseToCodexStream_TextDelta(t *testing.T) {
-	resp := []byte(`{"candidates": [{"content": {"parts": [{"text": "Hi"}]}}]}`)
+	resp := []byte(`{"model":"gemini-2.0-flash","createTimeMillis":1700000000000,"candidates":[{"content":{"parts":[{"text":"Hi"}]}}]}`)
 	var state any
 	chunks := convertGeminiResponseToCodexStream(context.Background(), "", nil, nil, resp, &state)
-	if len(chunks) != 1 {
-		t.Fatalf("expected 1 chunk, got %d", len(chunks))
+	if len(chunks) != 2 {
+		t.Fatalf("expected 2 chunks, got %d", len(chunks))
 	}
-	root := gjson.ParseBytes(chunks[0])
+	created := gjson.ParseBytes(chunks[0])
+	if created.Get("type").String() != "response.created" {
+		t.Fatalf("unexpected first event type: %s", created.Get("type").String())
+	}
+	if created.Get("response.id").String() != "resp_1700000000000" {
+		t.Fatalf("unexpected response id: %s", created.Get("response.id").String())
+	}
+	if created.Get("response.created_at").Int() != 1700000000 {
+		t.Fatalf("unexpected created_at: %d", created.Get("response.created_at").Int())
+	}
+	if created.Get("response.model").String() != "gemini-2.0-flash" {
+		t.Fatalf("unexpected model: %s", created.Get("response.model").String())
+	}
+	root := gjson.ParseBytes(chunks[1])
 	if root.Get("type").String() != "response.output_text.delta" {
 		t.Fatalf("unexpected event type: %s", root.Get("type").String())
 	}
@@ -114,13 +127,23 @@ func TestConvertGeminiResponseToCodexStream_TextDelta(t *testing.T) {
 }
 
 func TestConvertGeminiResponseToCodexStream_FunctionCall(t *testing.T) {
-	resp := []byte(`{"candidates": [{"content": {"parts": [{"functionCall": {"name": "get_weather", "args": {"city": "Paris"}}}]}}]}`)
+	resp := []byte(`{"createTimeMillis":1700000001000,"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"city":"Paris"}}}]}}]}`)
 	var state any
 	chunks := convertGeminiResponseToCodexStream(context.Background(), "", nil, nil, resp, &state)
-	if len(chunks) != 1 {
-		t.Fatalf("expected 1 chunk, got %d", len(chunks))
+	if len(chunks) != 2 {
+		t.Fatalf("expected 2 chunks, got %d", len(chunks))
 	}
-	root := gjson.ParseBytes(chunks[0])
+	created := gjson.ParseBytes(chunks[0])
+	if created.Get("type").String() != "response.created" {
+		t.Fatalf("unexpected first event type: %s", created.Get("type").String())
+	}
+	if created.Get("response.id").String() != "resp_1700000001000" {
+		t.Fatalf("unexpected response id: %s", created.Get("response.id").String())
+	}
+	if created.Get("response.created_at").Int() != 1700000001 {
+		t.Fatalf("unexpected created_at: %d", created.Get("response.created_at").Int())
+	}
+	root := gjson.ParseBytes(chunks[1])
 	if root.Get("type").String() != "response.output_item.done" {
 		t.Fatalf("unexpected event type: %s", root.Get("type").String())
 	}
@@ -136,6 +159,12 @@ func TestConvertGeminiResponseToCodexStream_CompletedEvent(t *testing.T) {
 	resp := []byte(`{"candidates": [{"content": {"parts": []}, "finishReason": "STOP"}]}`)
 	var state any
 	chunks := convertGeminiResponseToCodexStream(context.Background(), "", nil, nil, resp, &state)
+	if len(chunks) < 1 {
+		t.Fatalf("expected at least 1 chunk, got %d", len(chunks))
+	}
+	if gjson.ParseBytes(chunks[0]).Get("type").String() != "response.created" {
+		t.Fatalf("expected first event response.created, got: %s", chunks[0])
+	}
 	found := false
 	for _, c := range chunks {
 		if gjson.ParseBytes(c).Get("type").String() == "response.completed" {

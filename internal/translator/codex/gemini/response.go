@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/tidwall/gjson"
 )
@@ -14,6 +15,7 @@ import (
 type codexStreamState struct {
 	MessageID   string
 	Model       string
+	CreatedAt   int64
 	OutputIndex int
 	ToolIndex   int
 	ToolArgsAcc map[int]*strings.Builder
@@ -42,14 +44,43 @@ func convertGeminiResponseToCodexStream(_ context.Context, _ string, _, _ []byte
 
 	root := gjson.ParseBytes(raw)
 
+	isFirst := false
 	if state.MessageID == "" {
-		state.MessageID = root.Get("id").String()
+		if id := root.Get("id").String(); id != "" {
+			state.MessageID = id
+		} else if ctm := root.Get("createTimeMillis"); ctm.Exists() {
+			state.MessageID = "resp_" + ctm.String()
+		} else {
+			state.MessageID = fmt.Sprintf("resp_%d", time.Now().UnixMilli())
+		}
+		isFirst = true
 	}
 	if state.Model == "" {
 		state.Model = root.Get("model").String()
 	}
+	if state.CreatedAt == 0 {
+		if ctm := root.Get("createTimeMillis"); ctm.Exists() {
+			state.CreatedAt = ctm.Int() / 1000
+		} else {
+			state.CreatedAt = time.Now().Unix()
+		}
+	}
 
 	var results [][]byte
+
+	if isFirst {
+		created := map[string]interface{}{
+			"type": "response.created",
+			"response": map[string]interface{}{
+				"id":         state.MessageID,
+				"object":     "response",
+				"created_at": state.CreatedAt,
+				"model":      state.Model,
+			},
+		}
+		b, _ := json.Marshal(created)
+		results = append(results, b)
+	}
 
 	if candidates := root.Get("candidates"); candidates.Exists() && candidates.IsArray() {
 		candidates.ForEach(func(_, candidate gjson.Result) bool {
