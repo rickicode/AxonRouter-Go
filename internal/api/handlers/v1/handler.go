@@ -2,6 +2,8 @@ package v1
 
 import (
 	"bytes"
+	"compress/flate"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -23,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"github.com/klauspost/compress/zstd"
 	"github.com/rickicode/AxonRouter-Go/internal/active"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
@@ -48,9 +51,31 @@ var (
 	errReadBody     = errors.New("failed to read request body")
 )
 
-// readBody reads the request body with a size limit.
+// readBody reads the request body with a size limit and transparently
+// decompresses supported Content-Encoding values (zstd, gzip, deflate).
 // Size-limit violations return errBodyTooLarge; other read failures return errReadBody.
 func readBody(c *gin.Context) ([]byte, error) {
+	raw, err := readRawBody(c)
+	if err != nil {
+		return nil, err
+	}
+	decoded, err := decodeRequestBody(raw, c.Request.Header.Get("Content-Encoding"))
+	if err != nil {
+		// Fail-open for payloads that are already valid JSON: a missing or
+		// mismatched Content-Encoding header should not break valid requests.
+		if json.Valid(raw) {
+			return raw, nil
+		}
+		return nil, errReadBody
+	}
+	if len(decoded) > maxBodySize {
+		return nil, fmt.Errorf("%w (max %d bytes)", errBodyTooLarge, maxBodySize)
+	}
+	return decoded, nil
+}
+
+// readRawBody reads the raw request body capped at maxBodySize.
+func readRawBody(c *gin.Context) ([]byte, error) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodySize)
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -60,6 +85,82 @@ func readBody(c *gin.Context) ([]byte, error) {
 		return nil, errReadBody
 	}
 	return body, nil
+}
+
+// decodeRequestBody applies Content-Encoding decompression in reverse order
+// for chained encodings (e.g., "gzip, zstd"). Unsupported encodings return an
+// error so the caller can fail-open when the payload is valid JSON.
+func decodeRequestBody(raw []byte, encoding string) ([]byte, error) {
+	encoding = strings.TrimSpace(encoding)
+	if encoding == "" || strings.EqualFold(encoding, "identity") {
+		return raw, nil
+	}
+	parts := strings.Split(encoding, ",")
+	body := raw
+	for i := len(parts) - 1; i >= 0; i-- {
+		enc := strings.ToLower(strings.TrimSpace(parts[i]))
+		switch enc {
+		case "", "identity":
+			continue
+		case "zstd":
+			decoded, err := decodeZstdBody(body)
+			if err != nil {
+				return nil, err
+			}
+			body = decoded
+		case "gzip":
+			decoded, err := decodeGzipBody(body)
+			if err != nil {
+				return nil, err
+			}
+			body = decoded
+		case "deflate":
+			decoded, err := decodeDeflateBody(body)
+			if err != nil {
+				return nil, err
+			}
+			body = decoded
+		default:
+			return nil, fmt.Errorf("unsupported request content encoding: %s", enc)
+		}
+	}
+	return body, nil
+}
+
+func decodeZstdBody(raw []byte) ([]byte, error) {
+	decoder, err := zstd.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("zstd decoder: %w", err)
+	}
+	defer decoder.Close()
+	decoded, err := io.ReadAll(decoder)
+	if err != nil {
+		return nil, fmt.Errorf("zstd decode: %w", err)
+	}
+	return decoded, nil
+}
+
+func decodeGzipBody(raw []byte) ([]byte, error) {
+	reader, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("gzip decoder: %w", err)
+	}
+	defer reader.Close()
+	decoded, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("gzip decode: %w", err)
+	}
+	return decoded, nil
+}
+
+func decodeDeflateBody(raw []byte) ([]byte, error) {
+	reader := flate.NewReader(bytes.NewReader(raw))
+	defer reader.Close()
+	decoded, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("deflate decode: %w", err)
+	}
+	return decoded, nil
 }
 
 // TrackActive registers an in-flight request so the dashboard's live
@@ -87,10 +188,9 @@ func (h *Handler) TrackActive() gin.HandlerFunc {
 			}
 		} else {
 			// Enforce max body size here too, before any tracking reads.
-			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodySize)
-			raw, err := io.ReadAll(c.Request.Body)
+			raw, err := readRawBody(c)
 			if err != nil {
-				if strings.Contains(err.Error(), "http: request body too large") {
+				if errors.Is(err, errBodyTooLarge) {
 					c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{
 						"error": gin.H{"message": fmt.Sprintf("request body too large (max %d bytes)", maxBodySize), "type": "invalid_request_error"},
 					})
@@ -100,10 +200,15 @@ func (h *Handler) TrackActive() gin.HandlerFunc {
 				c.Next()
 				return
 			}
-			// Restore body for downstream handlers (readBody reads it again).
+			// Restore the original (possibly compressed) body for downstream handlers
+			// so readBody can apply Content-Encoding decompression itself.
 			c.Request.Body = io.NopCloser(bytes.NewReader(raw))
-			model = executor.JSONGet(raw, "model")
-			stream = executor.IsStreamRequest(raw)
+			body := raw
+			if decoded, err := decodeRequestBody(raw, c.Request.Header.Get("Content-Encoding")); err == nil {
+				body = decoded
+			}
+			model = executor.JSONGet(body, "model")
+			stream = executor.IsStreamRequest(body)
 		}
 
 		if model == "" {

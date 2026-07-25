@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/klauspost/compress/zstd"
 
 	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
@@ -1984,6 +1985,83 @@ func TestBodyPreserved_TrackActiveRestores(t *testing.T) {
 	}
 	if string(got) != string(body) {
 		t.Errorf("body changed after TrackActive; got %q, want %q", got, body)
+	}
+}
+
+func compressZstd(t *testing.T, raw []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	enc, err := zstd.NewWriter(&buf)
+	if err != nil {
+		t.Fatalf("zstd writer: %v", err)
+	}
+	if _, err := enc.Write(raw); err != nil {
+		t.Fatalf("zstd write: %v", err)
+	}
+	if err := enc.Close(); err != nil {
+		t.Fatalf("zstd close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func TestReadBody_DecompressesZstd(t *testing.T) {
+	body := []byte(`{"model":"openai/gpt-4o","messages":[{"role":"user","content":"hi"}]}`)
+	compressed := compressZstd(t, body)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(compressed))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("Content-Encoding", "zstd")
+
+	got, err := readBody(c)
+	if err != nil {
+		t.Fatalf("readBody: %v", err)
+	}
+	if string(got) != string(body) {
+		t.Fatalf("decompressed body mismatch; got %q, want %q", got, body)
+	}
+}
+
+func TestReadBody_ZstdInvalidFallsBackToRawJSON(t *testing.T) {
+	body := []byte(`{"model":"openai/gpt-4o"}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("Content-Encoding", "zstd")
+
+	got, err := readBody(c)
+	if err != nil {
+		t.Fatalf("readBody: %v", err)
+	}
+	if string(got) != string(body) {
+		t.Fatalf("expected raw JSON fallback, got %q", got)
+	}
+}
+
+func TestTrackActive_DecompressesZstd(t *testing.T) {
+	h := newTestHandler(t)
+	body := []byte(`{"model":"openai/gpt-4o","stream":true}`)
+	compressed := compressZstd(t, body)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(compressed))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("Content-Encoding", "zstd")
+
+	h.TrackActive()(c)
+	if rec.Code == http.StatusRequestEntityTooLarge {
+		t.Fatalf("TrackActive rejected compressed body: %s", rec.Body.String())
+	}
+
+	got, err := readBody(c)
+	if err != nil {
+		t.Fatalf("readBody after TrackActive: %v", err)
+	}
+	if string(got) != string(body) {
+		t.Fatalf("body mismatch after TrackActive decompression; got %q, want %q", got, body)
 	}
 }
 
