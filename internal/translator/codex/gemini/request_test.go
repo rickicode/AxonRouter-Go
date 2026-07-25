@@ -71,6 +71,36 @@ func TestConvertCodexRequestToGemini_ImageWithoutPrefixDefaultsToJPEG(t *testing
 	}
 }
 
+func TestConvertCodexRequestToGemini_InputAudioDataURL(t *testing.T) {
+	body := []byte(`{
+		"input": [{"type": "message", "role": "user", "content": [
+			{"type": "input_audio", "data": "data:audio/mpeg;base64,XXX", "format": "wav"}
+		]}]
+	}`)
+	out := convertCodexRequestToGemini("gemini-test", body, false)
+	if got := gjson.GetBytes(out, "contents.0.parts.0.inlineData.mimeType").String(); got != "audio/mpeg" {
+		t.Fatalf("unexpected audio mime: %s", got)
+	}
+	if got := gjson.GetBytes(out, "contents.0.parts.0.inlineData.data").String(); got != "XXX" {
+		t.Fatalf("unexpected audio data: %s", got)
+	}
+}
+
+func TestConvertCodexRequestToGemini_InputAudioFormatFallback(t *testing.T) {
+	body := []byte(`{
+		"input": [{"type": "message", "role": "user", "content": [
+			{"type": "input_audio", "data": "RAWBASE64", "format": "mp3"}
+		]}]
+	}`)
+	out := convertCodexRequestToGemini("gemini-test", body, false)
+	if got := gjson.GetBytes(out, "contents.0.parts.0.inlineData.mimeType").String(); got != "audio/mpeg" {
+		t.Fatalf("unexpected audio mime: %s", got)
+	}
+	if got := gjson.GetBytes(out, "contents.0.parts.0.inlineData.data").String(); got != "RAWBASE64" {
+		t.Fatalf("unexpected audio data: %s", got)
+	}
+}
+
 func TestConvertCodexRequestToGemini_FunctionCallInput(t *testing.T) {
 	body := []byte(`{
 		"input": [{"type": "function_call", "call_id": "call_1", "name": "get_weather", "arguments": "{\"city\":\"Paris\"}"}]
@@ -109,8 +139,8 @@ func TestConvertCodexRequestToGemini_ToolsAsFunctionDeclarations(t *testing.T) {
 		]
 	}`)
 	out := convertCodexRequestToGemini("gemini-test", body, false)
-	if !gjson.GetBytes(out, "tools").Exists() {
-		t.Fatalf("expected tools")
+	if gjson.GetBytes(out, "tools.1.googleSearch").Exists() {
+		t.Fatalf("expected no googleSearch tool for unsupported model")
 	}
 	decls := gjson.GetBytes(out, "tools.0.functionDeclarations").Array()
 	if len(decls) != 1 {
@@ -124,6 +154,36 @@ func TestConvertCodexRequestToGemini_ToolsAsFunctionDeclarations(t *testing.T) {
 	}
 	if !decls[0].Get("strict").Bool() {
 		t.Fatalf("expected strict=true")
+	}
+}
+
+func TestConvertCodexRequestToGemini_WebSearchSupportedModel(t *testing.T) {
+	body := []byte(`{
+		"input": [{"type": "message", "role": "user", "content": "hi"}],
+		"tools": [
+			{"type": "function", "name": "get_weather", "description": "weather"},
+			{"type": "web_search"}
+		]
+	}`)
+	out := convertCodexRequestToGemini("gemini-2.0-flash", body, false)
+	if !gjson.GetBytes(out, "tools.0.functionDeclarations").Exists() {
+		t.Fatalf("expected function declarations")
+	}
+	if !gjson.GetBytes(out, "tools.1.googleSearch").Exists() {
+		t.Fatalf("expected googleSearch tool for supported model")
+	}
+}
+
+func TestConvertCodexRequestToGemini_WebSearchUnsupportedModel(t *testing.T) {
+	body := []byte(`{
+		"input": [{"type": "message", "role": "user", "content": "hi"}],
+		"tools": [
+			{"type": "web_search"}
+		]
+	}`)
+	out := convertCodexRequestToGemini("gemini-1.0-pro", body, false)
+	if gjson.GetBytes(out, "tools").Exists() {
+		t.Fatalf("expected tools to be omitted when web_search is unsupported")
 	}
 }
 
