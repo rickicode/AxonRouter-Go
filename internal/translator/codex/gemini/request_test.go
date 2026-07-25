@@ -127,6 +127,61 @@ func TestConvertCodexRequestToGemini_ToolsAsFunctionDeclarations(t *testing.T) {
 	}
 }
 
+func TestConvertCodexRequestToGemini_ReasoningEffort(t *testing.T) {
+	tests := []struct {
+		name            string
+		effort          string
+		wantLevel       string
+		wantBudget      *int64
+		wantInclude     bool
+		wantIncludePath string
+	}{
+		{
+			name:        "explicit-high",
+			effort:      "high",
+			wantLevel:   "high",
+			wantInclude: true,
+		},
+		{
+			name:            "auto",
+			effort:          "auto",
+			wantBudget:      int64Ptr(-1),
+			wantInclude:     true,
+			wantIncludePath: "generationConfig.thinkingConfig.thinkingBudget",
+		},
+		{
+			name:        "none",
+			effort:      "none",
+			wantInclude: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(`{"input": [], "reasoning": {"effort": "` + tc.effort + `"}}`)
+			out := convertCodexRequestToGemini("gemini-test", body, false)
+
+			if tc.wantLevel != "" {
+				if got := gjson.GetBytes(out, "generationConfig.thinkingConfig.thinkingLevel").String(); got != tc.wantLevel {
+					t.Fatalf("thinkingLevel=%q, want %q", got, tc.wantLevel)
+				}
+			}
+			if tc.wantBudget != nil {
+				if got := gjson.GetBytes(out, tc.wantIncludePath).Int(); got != *tc.wantBudget {
+					t.Fatalf("%s=%d, want %d", tc.wantIncludePath, got, *tc.wantBudget)
+				}
+			}
+			if got := gjson.GetBytes(out, "generationConfig.thinkingConfig.includeThoughts").Bool(); got != tc.wantInclude {
+				t.Fatalf("includeThoughts=%v, want %v", got, tc.wantInclude)
+			}
+		})
+	}
+}
+
+func int64Ptr(v int64) *int64 {
+	return &v
+}
+
 func TestConvertCodexRequestToGemini_MaxTokensAndTemperature(t *testing.T) {
 	body := []byte(`{"max_output_tokens": 1024, "temperature": 0.5, "top_p": 0.9, "input": []}`)
 	out := convertCodexRequestToGemini("gemini-test", body, false)
