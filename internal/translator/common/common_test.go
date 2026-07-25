@@ -132,3 +132,55 @@ func TestNewRawArrayItems(t *testing.T) {
 		t.Errorf("NewRawArrayItems cap = %d, want 3", cap(items))
 	}
 }
+
+func TestCopyCacheControlToMap(t *testing.T) {
+	src := gjson.ParseBytes([]byte(`{"name":"tool","cache_control":{"type":"ephemeral"}}`))
+	dst := map[string]any{"name": "tool"}
+	if !CopyCacheControlToMap(dst, src) {
+		t.Error("CopyCacheControlToMap should return true when cache_control exists")
+	}
+	cc, ok := dst["cache_control"].(map[string]any)
+	if !ok || cc["type"] != "ephemeral" {
+		t.Errorf("cache_control not copied correctly: %v", dst)
+	}
+
+	srcNoCC := gjson.ParseBytes([]byte(`{"name":"tool"}`))
+	dst2 := map[string]any{"name": "tool"}
+	if CopyCacheControlToMap(dst2, srcNoCC) {
+		t.Error("CopyCacheControlToMap should return false when cache_control is missing")
+	}
+}
+
+func TestAttachMessageCacheControlToMap(t *testing.T) {
+	msg := map[string]any{
+		"role":    "user",
+		"content": []map[string]any{{"type": "text", "text": "hello"}},
+	}
+	src := gjson.ParseBytes([]byte(`{"cache_control":{"type":"ephemeral"}}`))
+	if !AttachMessageCacheControlToMap(msg, src) {
+		t.Error("AttachMessageCacheControlToMap should return true when cache_control exists")
+	}
+	parts := msg["content"].([]map[string]any)
+	if parts[0]["cache_control"].(map[string]any)["type"] != "ephemeral" {
+		t.Errorf("cache_control not attached to last content block: %v", msg)
+	}
+
+	// String content is promoted to an array.
+	msg2 := map[string]any{"role": "user", "content": "hello"}
+	if !AttachMessageCacheControlToMap(msg2, src) {
+		t.Error("AttachMessageCacheControlToMap should promote string content")
+	}
+	parts2 := msg2["content"].([]map[string]any)
+	if parts2[0]["text"] != "hello" || parts2[0]["cache_control"].(map[string]any)["type"] != "ephemeral" {
+		t.Errorf("string content not promoted correctly: %v", msg2)
+	}
+
+	// Existing part-level cache_control wins.
+	msg3 := map[string]any{
+		"role":    "user",
+		"content": []map[string]any{{"type": "text", "text": "hello", "cache_control": map[string]any{"type": "long_lived"}}},
+	}
+	if AttachMessageCacheControlToMap(msg3, src) {
+		t.Error("AttachMessageCacheControlToMap should not overwrite existing part-level cache_control")
+	}
+}

@@ -24,6 +24,7 @@ type claudeToResponsesState struct {
 	InFuncBlock        bool
 	MessageOpen        bool
 	ContentPartOpen    bool
+	PendingNonOutputBlock bool
 	MessageOutputIndex int
 	FuncArgsBuf        map[int]*strings.Builder // index -> args
 	// function call bookkeeping for output aggregation
@@ -122,6 +123,16 @@ func applyResponsesFunctionCallNamespaceFields(item []byte, requestRawJSON []byt
 		item, _ = sjson.DeleteBytes(item, namespacePath)
 	}
 	return item
+}
+
+func normalizeClaudeCitation(citation gjson.Result) any {
+	raw := []byte(citation.Raw)
+	if typ := gjson.GetBytes(raw, "type").String(); typ == "" {
+		if gjson.GetBytes(raw, "url").Exists() {
+			raw, _ = sjson.SetBytes(raw, "type", "web_search_result_location")
+		}
+	}
+	return gjson.ParseBytes(raw).Value()
 }
 
 func emitEvent(event string, payload []byte) []byte {
@@ -257,6 +268,7 @@ func ConvertClaudeResponseToOpenAIResponses(ctx context.Context, modelName strin
 			st.InFuncBlock = false
 			st.MessageOpen = false
 			st.ContentPartOpen = false
+			st.PendingNonOutputBlock = false
 			st.CurrentMsgID = ""
 			st.CurrentFCID = ""
 			st.MessageOutputIndex = -1
@@ -305,13 +317,25 @@ func ConvertClaudeResponseToOpenAIResponses(ctx context.Context, modelName strin
 				st.MessageOpen = true
 			}
 			if !st.ContentPartOpen {
-				part := []byte(`{"type":"response.content_part.added","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""}}`)
-				part, _ = sjson.SetBytes(part, "sequence_number", nextSeq())
-				part, _ = sjson.SetBytes(part, "item_id", st.CurrentMsgID)
-				part, _ = sjson.SetBytes(part, "output_index", outputIndex)
-				out = append(out, emitEvent("response.content_part.added", part))
+				// If a non-output web-search block interrupted an existing part, reuse
+				// the part so split text still aggregates under a single output message.
+				skipPartAdded := st.PendingNonOutputBlock && st.MessageOpen
+				if !skipPartAdded {
+					part := []byte(`{"type":"response.content_part.added","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""}}`)
+					part, _ = sjson.SetBytes(part, "sequence_number", nextSeq())
+					part, _ = sjson.SetBytes(part, "item_id", st.CurrentMsgID)
+					part, _ = sjson.SetBytes(part, "output_index", outputIndex)
+					out = append(out, emitEvent("response.content_part.added", part))
+				}
 				st.ContentPartOpen = true
 			}
+			st.PendingNonOutputBlock = false
+		} else if typ == "server_tool_use" || typ == "web_search_tool_result" {
+			// Claude built-in web-search blocks do not map to standalone OpenAI Responses
+			// output items. Keep the current assistant message open so surrounding text
+			// aggregates into a single output message; any citations are captured below.
+			st.PendingNonOutputBlock = true
+			return noSSEOutput(out)
 		} else if typ == "tool_use" {
 			out = append(out, st.finalizeAssistantMessage(nextSeq)...)
 			st.InFuncBlock = true
@@ -412,7 +436,7 @@ func ConvertClaudeResponseToOpenAIResponses(ctx context.Context, modelName strin
 			return [][]byte{}
 		} else if dt == "citations_delta" {
 			if citation := d.Get("citation"); citation.Exists() {
-				st.appendMessageAnnotation(citation.Value())
+				st.appendMessageAnnotation(normalizeClaudeCitation(citation))
 			}
 			return [][]byte{}
 		}
@@ -762,7 +786,7 @@ func ConvertClaudeResponseToOpenAIResponsesNonStream(_ context.Context, _ string
 				}
 			case "citations_delta":
 				if citation := d.Get("citation"); citation.Exists() {
-					annotations = append(annotations, citation.Value())
+					annotations = append(annotations, normalizeClaudeCitation(citation))
 				}
 			}
 

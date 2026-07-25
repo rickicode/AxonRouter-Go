@@ -136,17 +136,150 @@ func TestToolUseBecomesToolCalls(t *testing.T) {
 	}
 }
 
-func TestAssistantThinkingPartDropped(t *testing.T) {
+func TestAssistantThinkingPartPreserved(t *testing.T) {
 	body := []byte(`{
 		"model":"m","messages":[{"role":"assistant","content":[
-			{"type":"thinking","thinking":"hmm"},
+			{"type":"thinking","thinking":"hmm","signature":"abc123"},
 			{"type":"text","text":"ok"}
 		]}]
 	}`)
 	out := ConvertClaudeRequestToOpenAI("m", body, false)
 	root := gjson.ParseBytes(out)
-	// content should be the text only (no thinking mapped)
+	// content should still be the text part, while thinking is preserved as reasoning_content.
 	if root.Get("messages.0.content.0.type").String() != "text" {
 		t.Errorf("expected text part, got %q", root.Get("messages.0.content.0.type").String())
+	}
+	if root.Get("messages.0.reasoning_content").String() != "hmm" {
+		t.Errorf("reasoning_content = %q, want hmm", root.Get("messages.0.reasoning_content").String())
+	}
+}
+
+func TestRedactedThinkingPartPreserved(t *testing.T) {
+	body := []byte(`{
+		"model":"m","messages":[{"role":"assistant","content":[
+			{"type":"redacted_thinking","data":"c2VjcmV0"},
+			{"type":"text","text":"ok"}
+		]}]
+	}`)
+	out := ConvertClaudeRequestToOpenAI("m", body, false)
+	root := gjson.ParseBytes(out)
+	if root.Get("messages.0.content.0.type").String() != "redacted_thinking" {
+		t.Errorf("expected redacted_thinking part, got %q", root.Get("messages.0.content.0.type").String())
+	}
+	if root.Get("messages.0.content.0.data").String() != "c2VjcmV0" {
+		t.Errorf("redacted_thinking data = %q, want c2VjcmV0", root.Get("messages.0.content.0.data").String())
+	}
+}
+
+func TestCacheControlPreserved(t *testing.T) {
+	body := []byte(`{
+		"model":"m",
+		"system":[{"type":"text","text":"sys1","cache_control":{"type":"ephemeral"}}],
+		"messages":[
+			{"role":"user","content":[{"type":"text","text":"hi"}],"cache_control":{"type":"ephemeral"}},
+			{"role":"assistant","content":[{"type":"text","text":"hello","cache_control":{"type":"ephemeral"}}]}
+		],
+		"tools":[{"name":"calc","description":"add","input_schema":{"type":"object"},"cache_control":{"type":"ephemeral"}}]
+	}`)
+	out := ConvertClaudeRequestToOpenAI("m", body, false)
+	root := gjson.ParseBytes(out)
+
+	if root.Get("messages.0.content.0.cache_control.type").String() != "ephemeral" {
+		t.Errorf("system part cache_control = %q, want ephemeral", root.Get("messages.0.content.0.cache_control.type").String())
+	}
+	if root.Get("messages.1.content.0.cache_control.type").String() != "ephemeral" {
+		t.Errorf("user part cache_control = %q, want ephemeral", root.Get("messages.1.content.0.cache_control.type").String())
+	}
+	if root.Get("messages.2.content.0.cache_control.type").String() != "ephemeral" {
+		t.Errorf("assistant part cache_control = %q, want ephemeral", root.Get("messages.2.content.0.cache_control.type").String())
+	}
+	if root.Get("tools.0.cache_control.type").String() != "ephemeral" {
+		t.Errorf("tool cache_control = %q, want ephemeral", root.Get("tools.0.cache_control.type").String())
+	}
+}
+
+func TestResponseFormatPassedThrough(t *testing.T) {
+	body := []byte(`{
+		"model":"m",
+		"messages":[],
+		"response_format":{"type":"json_schema","json_schema":{"name":"answer","strict":true,"schema":{"type":"object"}}}
+	}`)
+	out := ConvertClaudeRequestToOpenAI("m", body, false)
+	root := gjson.ParseBytes(out)
+	if root.Get("response_format.type").String() != "json_schema" {
+		t.Errorf("response_format.type = %q, want json_schema", root.Get("response_format.type").String())
+	}
+	if root.Get("response_format.json_schema.name").String() != "answer" {
+		t.Errorf("response_format.json_schema.name = %q, want answer", root.Get("response_format.json_schema.name").String())
+	}
+}
+
+func TestAssistantThinkingWithToolCalls(t *testing.T) {
+	body := []byte(`{
+		"model":"m","messages":[{"role":"assistant","content":[
+			{"type":"thinking","thinking":"planning...","signature":"sig"},
+			{"type":"tool_use","id":"toolu_x","name":"calc","input":{"a":1}},
+			{"type":"text","text":"done"}
+		]}]
+	}`)
+	out := ConvertClaudeRequestToOpenAI("m", body, false)
+	root := gjson.ParseBytes(out)
+
+	if root.Get("messages.0.role").String() != "assistant" {
+		t.Fatalf("role = %q, want assistant", root.Get("messages.0.role").String())
+	}
+	if root.Get("messages.0.reasoning_content").String() != "planning..." {
+		t.Errorf("reasoning_content = %q, want planning...", root.Get("messages.0.reasoning_content").String())
+	}
+	if root.Get("messages.0.tool_calls.0.function.name").String() != "calc" {
+		t.Errorf("tool_calls.0.function.name = %q, want calc", root.Get("messages.0.tool_calls.0.function.name").String())
+	}
+	if root.Get("messages.0.content.0.type").String() != "text" {
+		t.Errorf("expected text content part, got %q", root.Get("messages.0.content.0.type").String())
+	}
+}
+
+func TestMessageLevelCacheControlOnStringContent(t *testing.T) {
+	body := []byte(`{
+		"model":"m",
+		"messages":[{"role":"user","content":"hello","cache_control":{"type":"ephemeral"}}]
+	}`)
+	out := ConvertClaudeRequestToOpenAI("m", body, false)
+	root := gjson.ParseBytes(out)
+
+	if !root.Get("messages.0.content").IsArray() {
+		t.Fatalf("content = %q, want array", root.Get("messages.0.content").Raw)
+	}
+	if root.Get("messages.0.content.0.cache_control.type").String() != "ephemeral" {
+		t.Errorf("content.0.cache_control.type = %q, want ephemeral", root.Get("messages.0.content.0.cache_control.type").String())
+	}
+}
+
+func TestStringSystemRemainsString(t *testing.T) {
+	body := []byte(`{
+		"model":"m",
+		"system":"You are helpful",
+		"messages":[]
+	}`)
+	out := ConvertClaudeRequestToOpenAI("m", body, false)
+	root := gjson.ParseBytes(out)
+	if root.Get("messages.0.content").Type.String() != "String" {
+		t.Errorf("system content = %q, want string", root.Get("messages.0.content").Raw)
+	}
+}
+
+func TestToolChoiceNone(t *testing.T) {
+	body := []byte(`{"model":"m","messages":[],"tool_choice":"none"}`)
+	out := ConvertClaudeRequestToOpenAI("m", body, false)
+	if v := gjson.ParseBytes(out).Get("tool_choice").String(); v != "none" {
+		t.Errorf("tool_choice none -> %q, want none", v)
+	}
+}
+
+func TestThinkingAdaptiveMapsToReasoningMedium(t *testing.T) {
+	body := []byte(`{"model":"m","messages":[],"thinking":{"type":"adaptive"}}`)
+	out := ConvertClaudeRequestToOpenAI("m", body, false)
+	if v := gjson.ParseBytes(out).Get("reasoning_effort").String(); v != "medium" {
+		t.Errorf("reasoning_effort (adaptive) = %q, want medium", v)
 	}
 }

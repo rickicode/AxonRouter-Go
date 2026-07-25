@@ -6,6 +6,9 @@ import (
 )
 
 func init() {
+	// Kiro → Claude response translation. Kiro responses are OpenAI-compatible,
+	// so reuse the existing OpenAI → Claude converters to emit Claude Messages
+	// SSE events and non-streaming response objects.
 	registry.Register(
 		types.FormatKiro,
 		types.FormatClaude,
