@@ -6,6 +6,14 @@ import (
 )
 
 func init() {
+	// Request: OpenAI Responses API -> OpenAI Chat Completions.
+	registry.Register(
+		types.FormatCodexResponses,
+		types.FormatOpenAI,
+		convertOpenAIResponsesRequestToOpenAI,
+		types.ResponseTransform{},
+	)
+
 	// Response: OpenAI Chat Completions -> OpenAI Responses API.
 	registry.Register(
 		types.FormatOpenAI,
