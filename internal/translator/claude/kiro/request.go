@@ -7,6 +7,12 @@ import (
 	openaikiro "github.com/rickicode/AxonRouter-Go/internal/translator/openai/kiro"
 )
 
+// Package kiro provides Claude ↔ Kiro request/response translation. Kiro's
+// generateAssistantResponse endpoint returns OpenAI-format chat completion
+// JSON, so the response path reuses the existing OpenAI→Claude streaming and
+// non-stream converters (with a fallback for Kiro's assistantResponseEvent
+// envelopes).
+//
 // ConvertClaudeRequestToKiro translates an Anthropic Messages request into a
 // Kiro generateAssistantResponse payload. It reuses the Claude→OpenAI and
 // OpenAI→Kiro translators so that message blocks (text, image, tool_use,

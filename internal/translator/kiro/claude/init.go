@@ -11,7 +11,8 @@ func init() {
 		types.FormatClaude,
 		nil, // request transform lives in translator/claude/kiro
 		types.ResponseTransform{
-			Stream: ConvertKiroResponseToClaudeStream,
+			Stream:    ConvertKiroResponseToClaudeStream,
+			NonStream: ConvertKiroResponseToClaudeNonStream,
 		},
 	)
 }

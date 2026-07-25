@@ -10,6 +10,9 @@ func init() {
 		types.FormatClaude,
 		types.FormatAntigravity,
 		convertClaudeRequestToAntigravity,
-		types.ResponseTransform{},
+		types.ResponseTransform{
+			Stream:    convertAntigravityResponseToClaudeStream,
+			NonStream: convertAntigravityResponseToClaudeNonStream,
+		},
 	)
 }
