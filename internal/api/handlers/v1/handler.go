@@ -1587,21 +1587,35 @@ func (h *Handler) writeUpstreamClientError(
 	start time.Time,
 	stream bool,
 ) bool {
+	var statusCode int
+	var body []byte
+	var errBody []byte
+
 	var upErr *executor.UpstreamError
-	if !errors.As(err, &upErr) {
-		return false
-	}
-	if upErr.StatusCode == http.StatusTooManyRequests || upErr.StatusCode == http.StatusPaymentRequired {
-		return false
-	}
-	c.Header("Content-Type", "application/json")
-	c.Status(upErr.StatusCode)
-	c.Writer.Write(upErr.Body)
-	if h.tracker != nil && conn != nil {
-		errBody := upErr.RawBody
+	if errors.As(err, &upErr) {
+		if upErr.StatusCode == http.StatusTooManyRequests || upErr.StatusCode == http.StatusPaymentRequired {
+			return false
+		}
+		statusCode = upErr.StatusCode
+		body = upErr.Body
+		errBody = upErr.RawBody
 		if len(errBody) == 0 {
 			errBody = upErr.Body
 		}
+	} else {
+		var valErr *executor.ClaudeStreamValidationError
+		if !errors.As(err, &valErr) {
+			return false
+		}
+		statusCode = http.StatusBadGateway
+		body, _ = json.Marshal(gin.H{"error": gin.H{"message": valErr.Error(), "type": "server_error"}})
+		errBody = body
+	}
+
+	c.Header("Content-Type", "application/json")
+	c.Status(statusCode)
+	c.Writer.Write(body)
+	if h.tracker != nil && conn != nil {
 		h.logRequest(c, &usage.LogEntry{
 			ApiKeyID:       c.GetString("api_key_id"),
 			ConnectionID:   conn.ID,
@@ -1612,7 +1626,7 @@ func (h *Handler) writeUpstreamClientError(
 			Modality:       "chat",
 			Stream:         stream,
 			LatencyMs:      time.Since(start).Milliseconds(),
-			StatusCode:     upErr.StatusCode,
+			StatusCode:     statusCode,
 			ErrorMessage:   string(errBody),
 		})
 	}

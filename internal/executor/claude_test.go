@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -148,5 +149,68 @@ func TestPrepareClaudeBody_BetasExtraction(t *testing.T) {
 	}
 	if len(betas) != 1 || betas[0] != "client-beta" {
 		t.Errorf("betas = %v, want [client-beta]", betas)
+	}
+}
+
+func TestValidateClaudeStreamingResponse(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   string
+		wantErr string
+	}{
+		{
+			name:  "valid stream with message_start and message_delta",
+			input: "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\"}}\n\ndata: {\"type\":\"content_block_delta\"}\n\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\ndata: [DONE]",
+		},
+		{
+			name:    "empty stream",
+			input:   "",
+			wantErr: "empty stream",
+		},
+		{
+			name:    "only comments no data events",
+			input:   ": comment\n: another comment",
+			wantErr: "empty stream",
+		},
+		{
+			name:    "missing message_start",
+			input:   "data: {\"type\":\"content_block_delta\"}\n\ndata: {\"type\":\"message_delta\"}",
+			wantErr: "missing message_start",
+		},
+		{
+			name:    "missing message_delta",
+			input:   "data: {\"type\":\"message_start\",\"message\":{}}\n\ndata: {\"type\":\"content_block_start\"}",
+			wantErr: "stream ended before completion",
+		},
+		{
+			name:    "upstream error frame",
+			input:   "data: {\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"overloaded\"}}",
+			wantErr: "upstream error: overloaded",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateClaudeStreamingResponse([]byte(tc.input))
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("expected no error, got %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error %q, got nil", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("error = %q, want %q", err.Error(), tc.wantErr)
+			}
+			var valErr *ClaudeStreamValidationError
+			if !errors.As(err, &valErr) {
+				t.Fatalf("error %T is not a *ClaudeStreamValidationError", err)
+			}
+			if valErr.StatusCode() != 502 {
+				t.Fatalf("status code = %d, want 502", valErr.StatusCode())
+			}
+		})
 	}
 }

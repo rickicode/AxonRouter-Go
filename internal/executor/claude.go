@@ -1,9 +1,11 @@
 package executor
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/rickicode/AxonRouter-Go/internal/config"
@@ -32,17 +34,13 @@ func prepareClaudeBody(body []byte) ([]byte, []string) {
 	if !gjson.GetBytes(body, "max_tokens").Exists() {
 		body, _ = sjson.SetBytes(body, "max_tokens", 1024)
 	}
-
 	// 2. Disable thinking on forced tool_choice (any/tool) before any other
 	// thinking-related normalization. Anthropic rejects thinking + forced tool_choice.
 	body = disableThinkingIfToolChoiceForced(body)
-
 	// 3. Remove sampling params that conflict with thinking-enabled requests.
 	body = normalizeClaudeSamplingForUpstream(body)
-
 	// 4. Default thinking.display to "summarized" so thinking text is visible.
 	body = ensureClaudeThinkingDisplay(body)
-
 	// 5. Extract and remove betas from body (will be sent as anthropic-beta header)
 	betas, body := extractAndRemoveBetas(body)
 	return body, betas
@@ -105,7 +103,6 @@ func sanitizeClaudeBody(body []byte, modelName string) []byte {
 func claudeBetaHeader(bodyBetas []string, reqHeaders map[string]string) string {
 	seen := make(map[string]struct{}, len(baseClaudeBetas)+len(bodyBetas))
 	var merged []string
-
 	addBeta := func(b string) {
 		b = strings.TrimSpace(b)
 		if b == "" {
@@ -117,11 +114,9 @@ func claudeBetaHeader(bodyBetas []string, reqHeaders map[string]string) string {
 		seen[b] = struct{}{}
 		merged = append(merged, b)
 	}
-
 	for _, b := range baseClaudeBetas {
 		addBeta(b)
 	}
-
 	if reqHeaders != nil {
 		for _, key := range []string{"anthropic-beta", "Anthropic-Beta"} {
 			for _, b := range strings.Split(reqHeaders[key], ",") {
@@ -129,11 +124,9 @@ func claudeBetaHeader(bodyBetas []string, reqHeaders map[string]string) string {
 			}
 		}
 	}
-
 	for _, b := range bodyBetas {
 		addBeta(b)
 	}
-
 	if len(merged) == 0 {
 		return ""
 	}
@@ -146,7 +139,6 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 	if url == "" {
 		url = "https://api.anthropic.com/v1/messages"
 	}
-
 	body, betas := prepareClaudeBody(req.Body)
 	body = sanitizeClaudeBody(body, req.Model)
 	body = applyClaudeCacheControl(body)
@@ -156,7 +148,6 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 	}
 	// Ensure stream is false
 	body = JSONSet(body, "stream", false)
-
 	headers := map[string]string{
 		"Content-Type":      "application/json",
 		"anthropic-version": "2023-06-01",
@@ -168,16 +159,13 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 	if beta := claudeBetaHeader(betas, req.Headers); beta != "" {
 		headers["anthropic-beta"] = beta
 	}
-
 	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
 	if err != nil {
 		return nil, err
 	}
-
 	if len(toolReverseMap) > 0 && resp != nil {
 		resp.Body = reverseRemapOAuthToolNames(resp.Body, toolReverseMap)
 	}
-
 	if resp.StatusCode >= 400 {
 		upErr := &UpstreamError{
 			StatusCode: resp.StatusCode,
@@ -188,7 +176,6 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 		upErr.TranslateErrorBody(req.Provider)
 		return nil, upErr
 	}
-
 	return resp, nil
 }
 
@@ -199,16 +186,13 @@ func (e *ClaudeExecutor) applyClaudeRequestTransforms(ctx context.Context, req *
 	if apiKey == "" {
 		apiKey = req.AccessToken
 	}
-
 	body, err := applyCloaking(ctx, &cfg, body, req.Model, apiKey)
 	if err != nil {
 		return nil, nil, err
 	}
-
 	if isClaudeOAuthToken(apiKey) || cfg.ClaudeExperimentalCCHSigning {
 		body = signAnthropicMessagesBody(body)
 	}
-
 	body, reverseMap := remapOAuthToolNames(body)
 	return body, reverseMap, nil
 }
@@ -244,13 +228,114 @@ func (e *ClaudeExecutor) restoreOAuthToolNamesInStream(result *StreamResult, rev
 	}
 }
 
+// ClaudeStreamValidationError indicates a Claude streaming response did not
+// contain the required SSE event shapes. It is reported to the client as an
+// HTTP 502 Bad Gateway.
+type ClaudeStreamValidationError struct {
+	Message string
+}
+
+// Error implements the error interface.
+func (e *ClaudeStreamValidationError) Error() string { return e.Message }
+
+// StatusCode returns the HTTP status code to report to the client.
+func (e *ClaudeStreamValidationError) StatusCode() int { return http.StatusBadGateway }
+
+// validateClaudeStreamingResponse checks that a collected Claude SSE stream
+// contains at least one data event, a message_start event, and a message_delta
+// event. Upstream error frames are surfaced as a 502.
+func validateClaudeStreamingResponse(data []byte) error {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	hasData := false
+	hasMessageStart := false
+	hasMessageDelta := false
+
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+		payload := bytes.TrimSpace(line[len("data:"):])
+		if bytes.Equal(payload, []byte("[DONE]")) {
+			continue
+		}
+		hasData = true
+
+		root := gjson.ParseBytes(payload)
+		switch root.Get("type").String() {
+		case "error":
+			return &ClaudeStreamValidationError{
+				Message: "upstream error: " + root.Get("error.message").String(),
+			}
+		case "message_start":
+			hasMessageStart = true
+		case "message_delta":
+			hasMessageDelta = true
+		}
+	}
+	if !hasData {
+		return &ClaudeStreamValidationError{Message: "empty stream"}
+	}
+	if !hasMessageStart {
+		return &ClaudeStreamValidationError{Message: "missing message_start"}
+	}
+	if !hasMessageDelta {
+		return &ClaudeStreamValidationError{Message: "stream ended before completion"}
+	}
+	return nil
+}
+
+// collectAndValidateClaudeStream drains a Claude SSE stream, validates that it
+// contains the required events, and returns a replayable StreamResult. This
+// keeps broken or incomplete streams from reaching the client.
+func (e *ClaudeExecutor) collectAndValidateClaudeStream(result *StreamResult) (*StreamResult, error) {
+	if result == nil {
+		return nil, nil
+	}
+	var chunks []StreamChunk
+	var totalBytes int
+	for chunk := range result.Chunks {
+		if chunk.Err != nil {
+			return nil, chunk.Err
+		}
+		chunks = append(chunks, StreamChunk{Payload: append([]byte{}, chunk.Payload...)})
+		totalBytes += len(chunk.Payload)
+	}
+
+	data := make([]byte, 0, totalBytes+len(chunks))
+	for i, chunk := range chunks {
+		if i > 0 {
+			data = append(data, '\n')
+		}
+		data = append(data, chunk.Payload...)
+	}
+
+	if err := validateClaudeStreamingResponse(data); err != nil {
+		return nil, err
+	}
+
+	out := make(chan StreamChunk, len(chunks))
+	go func() {
+		defer close(out)
+		for _, chunk := range chunks {
+			out <- chunk
+		}
+	}()
+
+	return &StreamResult{
+		Chunks:     out,
+		Headers:    result.Headers,
+		StatusCode: result.StatusCode,
+		CostUsd:    result.CostUsd,
+	}, nil
+}
+
 // ExecuteStream performs a streaming Claude messages request.
 func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
 	url := req.BaseURL
 	if url == "" {
 		url = "https://api.anthropic.com/v1/messages"
 	}
-
 	body, betas := prepareClaudeBody(req.Body)
 	body = sanitizeClaudeBody(body, req.Model)
 	body = applyClaudeCacheControl(body)
@@ -259,7 +344,6 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 		return nil, err
 	}
 	body = JSONSet(body, "stream", true)
-
 	headers := map[string]string{
 		"Content-Type":      "application/json",
 		"Accept":            "text/event-stream",
@@ -273,7 +357,6 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 	if beta := claudeBetaHeader(betas, req.Headers); beta != "" {
 		headers["anthropic-beta"] = beta
 	}
-
 	result, err := e.DoStreamRequest(ctx, "POST", url, headers, body)
 	if err != nil {
 		if upErr, ok := err.(*UpstreamError); ok {
@@ -281,8 +364,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 		}
 		return result, err
 	}
-
-	return e.restoreOAuthToolNamesInStream(result, toolReverseMap), nil
+	return e.collectAndValidateClaudeStream(e.restoreOAuthToolNamesInStream(result, toolReverseMap))
 }
 
 // CountTokens performs token counting.
@@ -291,11 +373,9 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, req *Request) (*Respon
 	if url == "" {
 		url = "https://api.anthropic.com/v1/messages/count_tokens"
 	}
-
 	body, betas := prepareClaudeBody(req.Body)
 	body = sanitizeClaudeBody(body, req.Model)
 	body = applyClaudeCacheControl(body)
-
 	headers := map[string]string{
 		"Content-Type":      "application/json",
 		"anthropic-version": "2023-06-01",
@@ -307,15 +387,12 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, req *Request) (*Respon
 	if beta := claudeBetaHeader(betas, req.Headers); beta != "" {
 		headers["anthropic-beta"] = beta
 	}
-
 	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
 	if err != nil {
 		return nil, err
 	}
-
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("claude count_tokens error %d: %s", resp.StatusCode, string(resp.Body))
 	}
-
 	return resp, nil
 }
