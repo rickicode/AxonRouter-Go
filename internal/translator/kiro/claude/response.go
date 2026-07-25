@@ -86,6 +86,43 @@ func buildFallbackOpenAIChunk(model, content string) []byte {
 	return b
 }
 
+// ConvertKiroResponseToClaudeNonStream converts a complete Kiro response into a
+// single Claude Messages API response object. Kiro usually returns OpenAI-format
+// chat.completion JSON, so the default path reuses the existing OpenAI→Claude
+// non-stream converter. When the payload is a Kiro assistantResponseEvent, it is
+// first rebuilt into an OpenAI response.
+func ConvertKiroResponseToClaudeNonStream(ctx context.Context, model string, originalReq, translatedReq, rawResponse []byte, param *any) []byte {
+	if !gjson.ValidBytes(rawResponse) {
+		return rawResponse
+	}
+	if event := gjson.ParseBytes(rawResponse).Get("assistantResponseEvent"); event.Exists() {
+		content := event.Get("content").String()
+		rawResponse = buildFallbackOpenAIResponse(model, content)
+	}
+	return claudeopenai.ConvertOpenAIResponseToClaudeNonStream(ctx, model, originalReq, translatedReq, rawResponse, param)
+}
+
+func buildFallbackOpenAIResponse(model, content string) []byte {
+	resp := map[string]any{
+		"id":      "chatcmpl-" + hex.EncodeToString(randBytes(8)),
+		"object":  "chat.completion",
+		"created": time.Now().Unix(),
+		"model":   model,
+		"choices": []any{
+			map[string]any{
+				"index": 0,
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": content,
+				},
+				"finish_reason": "stop",
+			},
+		},
+	}
+	b, _ := json.Marshal(resp)
+	return b
+}
+
 func randBytes(n int) []byte {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)

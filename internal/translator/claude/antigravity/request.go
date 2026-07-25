@@ -1,6 +1,9 @@
-// Package antigravity provides Claude → Antigravity request translation.
-// It ports the core logic from CLIProxyAPI so Kiro / Claude Code clients can
-// talk to an Antigravity (Gemini Cloud Code Assist) backend directly.
+// Package antigravity provides Claude ↔ Antigravity request/response translation.
+// Antigravity returns Gemini-shaped JSON rather than native Claude Messages
+// format, so the response path converts upstream Antigravity generateContent
+// responses back into Claude Messages API SSE or JSON. It ports the core logic
+// from CLIProxyAPI so Kiro / Claude Code clients can talk to an Antigravity
+// (Gemini Cloud Code Assist) backend directly.
 package antigravity
 
 import (

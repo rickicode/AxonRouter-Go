@@ -32,6 +32,13 @@ func convertCodexRequestToGemini(modelName string, body []byte, stream bool) []b
 		out, _ = sjson.SetBytes(out, "generationConfig.topP", topP.Float())
 	}
 
+	// Reasoning: Codex reasoning.effort -> Gemini thinkingConfig.
+	if reasoning := root.Get("reasoning"); reasoning.Exists() && reasoning.IsObject() {
+		if effort := reasoning.Get("effort"); effort.Exists() && effort.Type == gjson.String {
+			out = applyCodexReasoningEffort(out, effort.String())
+		}
+	}
+
 	// System instruction: prefer Codex "instructions", fallback to top-level "system".
 	if sysText := extractSystemText(root); sysText != "" {
 		out, _ = sjson.SetBytes(out, "systemInstruction.role", "user")
@@ -53,9 +60,9 @@ func convertCodexRequestToGemini(modelName string, body []byte, stream bool) []b
 	}
 
 	// Tools
+	hasGoogleSearch := false
 	if tools := root.Get("tools"); tools.Exists() && tools.IsArray() {
 		var functionDeclarations []map[string]interface{}
-		hasGoogleSearch := false
 		tools.ForEach(func(_, tool gjson.Result) bool {
 			tType := tool.Get("type").String()
 			switch tType {
@@ -78,17 +85,72 @@ func convertCodexRequestToGemini(modelName string, body []byte, stream bool) []b
 			}
 			return true
 		})
-		if len(functionDeclarations) > 0 {
-			b, _ := json.Marshal(functionDeclarations)
-			out, _ = sjson.SetRawBytes(out, "tools.0.functionDeclarations", b)
+	if len(functionDeclarations) > 0 {
+		b, _ := json.Marshal(functionDeclarations)
+		out, _ = sjson.SetRawBytes(out, "tools.0.functionDeclarations", b)
+	}
+	}
+
+	// Map Codex tool_choice to Gemini functionCallingConfig.
+	if tc := root.Get("tool_choice"); tc.Exists() {
+		mode, allowed := geminiFunctionCallingConfig(tc)
+		if mode != "" {
+			out, _ = sjson.SetBytes(out, "toolConfig.functionCallingConfig.mode", mode)
+			if len(allowed) > 0 {
+				b, _ := json.Marshal(allowed)
+				out, _ = sjson.SetRawBytes(out, "toolConfig.functionCallingConfig.allowedFunctionNames", b)
+			}
 		}
-		if hasGoogleSearch {
-			out, _ = sjson.SetRawBytes(out, "tools.-1", []byte(`{"googleSearch":{}}`))
+	}
+
+	// response_format → Gemini structured output / JSON mode.
+	if rf := root.Get("response_format"); rf.Exists() && rf.IsObject() {
+		switch rf.Get("type").String() {
+		case "json_object":
+			out, _ = sjson.SetBytes(out, "generationConfig.responseMimeType", "application/json")
+		case "json_schema":
+			out, _ = sjson.SetBytes(out, "generationConfig.responseMimeType", "application/json")
+			if schema := rf.Get("json_schema.schema"); schema.Exists() {
+				out, _ = sjson.SetRawBytes(out, "generationConfig.responseSchema", []byte(schema.Raw))
+			}
 		}
+	}
+
+	if hasGoogleSearch {
+		out, _ = sjson.SetRawBytes(out, "tools.-1", []byte(`{"googleSearch":{}}`))
 	}
 
 	return out
 }
+
+// geminiFunctionCallingConfig maps a Codex tool_choice value to Gemini
+// functionCallingConfig mode and optional allowedFunctionNames list.
+func geminiFunctionCallingConfig(tc gjson.Result) (string, []string) {
+	switch {
+	case tc.Type == gjson.String:
+		switch tc.String() {
+		case "none":
+			return "NONE", nil
+		case "auto":
+			return "AUTO", nil
+		case "required":
+			return "ANY", nil
+		}
+	case tc.IsObject():
+		if tc.Get("type").String() == "function" {
+			name := tc.Get("function.name").String()
+			if name == "" {
+				name = tc.Get("name").String()
+			}
+			if name != "" {
+				return "ANY", []string{name}
+			}
+			return "ANY", nil
+		}
+	}
+	return "", nil
+}
+
 
 func appendCodexInputItem(out []byte, item, allInput gjson.Result) []byte {
 	itemType := item.Get("type").String()
@@ -336,6 +398,25 @@ func argsStringToMap(raw string) map[string]interface{} {
 
 func partKey(index int, field string) string {
 	return fmt.Sprintf("parts.%d.%s", index, field)
+}
+
+func applyCodexReasoningEffort(out []byte, effort string) []byte {
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	if effort == "" {
+		return out
+	}
+	const path = "generationConfig.thinkingConfig"
+	switch effort {
+	case "none":
+		out, _ = sjson.SetBytes(out, path+".includeThoughts", false)
+	case "auto":
+		out, _ = sjson.SetBytes(out, path+".thinkingBudget", -1)
+		out, _ = sjson.SetBytes(out, path+".includeThoughts", true)
+	default:
+		out, _ = sjson.SetBytes(out, path+".thinkingLevel", effort)
+		out, _ = sjson.SetBytes(out, path+".includeThoughts", true)
+	}
+	return out
 }
 
 func unmarshalJSON(raw string) interface{} {
