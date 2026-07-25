@@ -3,11 +3,22 @@ package translator
 // This file imports all translator implementations.
 // Each translator registers itself via init() in its own package.
 // The import uses _ to trigger init() side effects.
+//
+// Documented response mappings:
+//   - Antigravity (Gemini Cloud Code Assist envelopes) -> Claude Messages:
+//     internal/translator/antigravity/claude
+//   - Kiro (OpenAI-compatible chat.completions) -> Claude Messages:
+//     internal/translator/kiro/claude (reuses the OpenAI -> Claude converter)
+//
+// Imports are ordered so that, when two packages register the same
+// (clientFormat, providerFormat) pair, the later import wins. The current
+// ordering has been reviewed and matches the intended translator for each pair.
 
 import (
 	// Existing translators
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/antigravity/openai"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/claude/antigravity"
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/claude/kiro"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/claude/openai"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/gemini/openai"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/kiro/claude"
