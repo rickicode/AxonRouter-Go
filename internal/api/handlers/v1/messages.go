@@ -46,6 +46,9 @@ func (h *Handler) Messages(c *gin.Context) {
 	if h.checkTokenBudget(c, body) != nil {
 		return
 	}
+	if h.checkAPIKeyBudget(c) != nil {
+		return
+	}
 
 	// Exact cache check (non-stream, no tools, no cache_control)
 	cacheKey := h.exactCacheKey(body, model, stream)
@@ -87,7 +90,10 @@ func (h *Handler) Messages(c *gin.Context) {
 
 	// Connection failover loop: try up to failoverMaxAttempts connections before giving up.
 	clientFormat := executor.FormatClaude
-	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+	translatedBody := body
+	if clientFormat != providerFormat {
+		translatedBody = registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+	}
 	translatedBody = h.applyThinkingOverrideFromContext(c.Request.Context(), translatedBody, string(providerFormat))
 	translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
 	// NOTE: configurable via failover_max_attempts setting.
@@ -215,7 +221,12 @@ attemptLoop:
 			}
 			return
 		} else {
-			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
+			var translatedResp []byte
+			if clientFormat == providerFormat {
+				translatedResp = resp.Body
+			} else {
+				translatedResp = registry.ResponseNonStream(c.Request.Context(), string(clientFormat), string(providerFormat), modelName, body, translatedBody, resp.Body, nil)
+			}
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			tokensEstimated := false
 			if tokenCounts.InputTokens+tokenCounts.OutputTokens == 0 && resp.StatusCode < 400 {
@@ -227,6 +238,7 @@ attemptLoop:
 					tokensEstimated = true
 				}
 			}
+			estCost := usage.EstimateCost(modelName, "chat", 0, tokenCounts.InputTokens, tokenCounts.OutputTokens, tokenCounts.ReasoningTokens, tokenCounts.CachedTokens, tokenCounts.CacheCreationTokens)
 			h.logRequest(c, &usage.LogEntry{
 				ApiKeyID:            c.GetString("api_key_id"),
 				ConnectionID:        conn.ID,
@@ -241,6 +253,7 @@ attemptLoop:
 				ReasoningTokens:     tokenCounts.ReasoningTokens,
 				CachedTokens:        tokenCounts.CachedTokens,
 				CacheCreationTokens: tokenCounts.CacheCreationTokens,
+				CostUsd:             estCost,
 				LatencyMs:           latency,
 				StatusCode:          resp.StatusCode,
 				TokensEstimated:     tokensEstimated,
@@ -249,7 +262,13 @@ attemptLoop:
 			if resp.StatusCode < 300 {
 				h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
 			}
-			h.writeJSONResponse(c, resp.StatusCode, translatedResp)
+			h.writeJSONResponse(c, resp.StatusCode, translatedResp, responseCost{
+				modelID:         modelName,
+				exactCost:       resp.CostUsd,
+				counts:          tokenCounts,
+				tokensEstimated: tokensEstimated,
+				flatRate:        h.isFlatRate(provider),
+			})
 		}
 		return
 	}
@@ -257,11 +276,11 @@ attemptLoop:
 	msg, statusCode, errType := buildFailoverErrorResponse(lastErrCategory, lastErr, modelName)
 	logging.Logger.Error(msg, "provider", provider, "model", modelName, "category", lastErrCategory)
 	if stream {
-		// Streaming clients expect an SSE error event and [DONE].
+		// Claude streaming clients expect an Anthropic-compatible SSE error event.
 		errBytes, _ := json.Marshal(claudeError(errType, msg))
-		c.Writer.Write([]byte("data: "))
+		c.Writer.Write([]byte("event: error\ndata: "))
 		c.Writer.Write(errBytes)
-		c.Writer.Write([]byte("\n\ndata: [DONE]\n\n"))
+		c.Writer.Write([]byte("\n\n"))
 		if flusher, ok := c.Writer.(http.Flusher); ok {
 			flusher.Flush()
 		}
@@ -275,7 +294,11 @@ func (h *Handler) handleClaudeStreamResponse(ctx context.Context, c *gin.Context
 	_, providerFormat, _ := h.registry.Get(provider)
 	errFormatter := func(err error) []byte {
 		logging.Logger.Error("upstream streaming error", "provider", provider, "model", model, "error", err)
-		b, _ := json.Marshal(claudeError("api_error", "upstream streaming error"))
+		msg := err.Error()
+		if msg == "" {
+			msg = "upstream streaming error"
+		}
+		b, _ := json.Marshal(claudeError("api_error", msg))
 		return b
 	}
 	return h.streamResponse(ctx, c, result, conn, provider, model, executor.FormatClaude, providerFormat, originalReq, translatedReq, errFormatter, start, comboID, silent)

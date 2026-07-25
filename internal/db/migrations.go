@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
   cost_usd REAL DEFAULT 0,
   client_ip TEXT,
   user_agent TEXT,
+  service_tier TEXT,
   created_at INTEGER NOT NULL
 );
 
@@ -158,6 +159,8 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		`ALTER TABLE request_logs ADD COLUMN api_type TEXT`,
 		`ALTER TABLE request_logs ADD COLUMN client_ip TEXT`,
 		`ALTER TABLE request_logs ADD COLUMN user_agent TEXT`,
+		`ALTER TABLE request_logs ADD COLUMN flat_rate INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE request_logs ADD COLUMN service_tier TEXT`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id, timestamp DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_combo_steps_combo_id ON combo_steps(combo_id)`,
 		`ALTER TABLE provider_types ADD COLUMN category TEXT DEFAULT 'apikey'`,
@@ -209,6 +212,36 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 			total_tokens INTEGER NOT NULL DEFAULT 0,
 			updated_at INTEGER NOT NULL
 		)
+	`); err != nil {
+		return err
+	}
+
+	// Per-API-key USD budget limits and warning threshold.
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS api_key_budgets (
+			api_key_id TEXT PRIMARY KEY REFERENCES api_keys(id),
+			daily_limit_usd REAL DEFAULT 0,
+			monthly_limit_usd REAL DEFAULT 0,
+			warning_threshold REAL DEFAULT 0.8,
+			updated_at INTEGER NOT NULL
+		)
+	`); err != nil {
+		return err
+	}
+
+	// Per-request USD spend history, bucketed by UTC day/month for budget aggregation.
+	// Reset is implicit: queries target the current period_start for the day/month.
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS api_key_spend_history (
+			id TEXT PRIMARY KEY,
+			api_key_id TEXT NOT NULL REFERENCES api_keys(id),
+			cost_usd REAL NOT NULL,
+			period_type TEXT NOT NULL,
+			period_start INTEGER NOT NULL,
+			created_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_api_key_spend_history_lookup
+			ON api_key_spend_history(api_key_id, period_type, period_start)
 	`); err != nil {
 		return err
 	}
@@ -462,11 +495,34 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 	cached_write_per_1k REAL NOT NULL DEFAULT 0,
 	image_per_unit REAL NOT NULL DEFAULT 0,
 	audio_per_min REAL NOT NULL DEFAULT 0,
+	video_per_unit REAL NOT NULL DEFAULT 0,
 	currency TEXT NOT NULL DEFAULT 'USD',
+	tier_flex_multiplier REAL NOT NULL DEFAULT 0.5,
+	tier_priority_multiplier REAL NOT NULL DEFAULT 1.5,
+	tier_fast_multiplier REAL NOT NULL DEFAULT 2.5,
 	updated_at INTEGER NOT NULL DEFAULT 0
 );
 `); err != nil {
 		return err
+	}
+	if _, err := db.Exec(`ALTER TABLE model_pricing ADD COLUMN video_per_unit REAL NOT NULL DEFAULT 0`); err != nil {
+		if !isDuplicateColumnError(err) {
+			return err
+		}
+	}
+
+	// Incremental migrations for model_pricing columns added after the table was
+	// introduced later in the migration sequence.
+	for _, stmt := range []string{
+		`ALTER TABLE model_pricing ADD COLUMN tier_flex_multiplier REAL NOT NULL DEFAULT 0.5`,
+		`ALTER TABLE model_pricing ADD COLUMN tier_priority_multiplier REAL NOT NULL DEFAULT 1.5`,
+		`ALTER TABLE model_pricing ADD COLUMN tier_fast_multiplier REAL NOT NULL DEFAULT 2.5`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			if !isDuplicateColumnError(err) {
+				return err
+			}
+		}
 	}
 
 	// User-added custom models for custom providers.
@@ -479,7 +535,10 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 		return err
 	}
 
-	// Seed default model pricing (INSERT OR IGNORE — never overwrites operator edits).
+	// Seed default model pricing. On first run the table is empty and all seed
+	// rows are inserted. On subsequent runs use INSERT OR IGNORE so operator
+	// edits made through the admin UI/API survive restarts while any new models
+	// added to the code seed list are still merged in.
 	now = time.Now().Unix()
 	seedPricing := []struct {
 		ID, Name                                 string
@@ -695,14 +754,11 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 	if err := validateSeedPricing(seedPricing); err != nil {
 		return err
 	}
-	// One-time reset: wipe any previously-seeded rows so stale IDs / $0 free-tier
-	// entries from older builds cannot coexist with the new canonical seed.
-	// The pricing table is seed-only (no runtime writes), so this is safe.
-	if _, err := db.Exec(`DELETE FROM model_pricing`); err != nil {
-		return err
-	}
+	// Use INSERT OR IGNORE so we only add missing models. Existing rows keep the
+	// values set by the operator (or a previous first-run seed); they are never
+	// reset on startup.
 	for _, p := range seedPricing {
-		if _, err := db.Exec(`INSERT OR REPLACE INTO model_pricing
+		if _, err := db.Exec(`INSERT OR IGNORE INTO model_pricing
 		(model_id, display_name, input_per_1k, output_per_1k, reason_per_1k, cached_read_per_1k, cached_write_per_1k, currency, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, 'USD', ?)`,
 			p.ID, p.Name, p.In, p.Out, p.Reason, p.CachedRead, p.CachedWrite, now); err != nil {

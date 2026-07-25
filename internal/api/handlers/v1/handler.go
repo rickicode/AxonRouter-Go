@@ -2,6 +2,8 @@ package v1
 
 import (
 	"bytes"
+	"compress/flate"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -23,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"github.com/klauspost/compress/zstd"
 	"github.com/rickicode/AxonRouter-Go/internal/active"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
@@ -48,9 +51,31 @@ var (
 	errReadBody     = errors.New("failed to read request body")
 )
 
-// readBody reads the request body with a size limit.
+// readBody reads the request body with a size limit and transparently
+// decompresses supported Content-Encoding values (zstd, gzip, deflate).
 // Size-limit violations return errBodyTooLarge; other read failures return errReadBody.
 func readBody(c *gin.Context) ([]byte, error) {
+	raw, err := readRawBody(c)
+	if err != nil {
+		return nil, err
+	}
+	decoded, err := decodeRequestBody(raw, c.Request.Header.Get("Content-Encoding"))
+	if err != nil {
+		// Fail-open for payloads that are already valid JSON: a missing or
+		// mismatched Content-Encoding header should not break valid requests.
+		if json.Valid(raw) {
+			return raw, nil
+		}
+		return nil, errReadBody
+	}
+	if len(decoded) > maxBodySize {
+		return nil, fmt.Errorf("%w (max %d bytes)", errBodyTooLarge, maxBodySize)
+	}
+	return decoded, nil
+}
+
+// readRawBody reads the raw request body capped at maxBodySize.
+func readRawBody(c *gin.Context) ([]byte, error) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodySize)
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -60,6 +85,82 @@ func readBody(c *gin.Context) ([]byte, error) {
 		return nil, errReadBody
 	}
 	return body, nil
+}
+
+// decodeRequestBody applies Content-Encoding decompression in reverse order
+// for chained encodings (e.g., "gzip, zstd"). Unsupported encodings return an
+// error so the caller can fail-open when the payload is valid JSON.
+func decodeRequestBody(raw []byte, encoding string) ([]byte, error) {
+	encoding = strings.TrimSpace(encoding)
+	if encoding == "" || strings.EqualFold(encoding, "identity") {
+		return raw, nil
+	}
+	parts := strings.Split(encoding, ",")
+	body := raw
+	for i := len(parts) - 1; i >= 0; i-- {
+		enc := strings.ToLower(strings.TrimSpace(parts[i]))
+		switch enc {
+		case "", "identity":
+			continue
+		case "zstd":
+			decoded, err := decodeZstdBody(body)
+			if err != nil {
+				return nil, err
+			}
+			body = decoded
+		case "gzip":
+			decoded, err := decodeGzipBody(body)
+			if err != nil {
+				return nil, err
+			}
+			body = decoded
+		case "deflate":
+			decoded, err := decodeDeflateBody(body)
+			if err != nil {
+				return nil, err
+			}
+			body = decoded
+		default:
+			return nil, fmt.Errorf("unsupported request content encoding: %s", enc)
+		}
+	}
+	return body, nil
+}
+
+func decodeZstdBody(raw []byte) ([]byte, error) {
+	decoder, err := zstd.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("zstd decoder: %w", err)
+	}
+	defer decoder.Close()
+	decoded, err := io.ReadAll(decoder)
+	if err != nil {
+		return nil, fmt.Errorf("zstd decode: %w", err)
+	}
+	return decoded, nil
+}
+
+func decodeGzipBody(raw []byte) ([]byte, error) {
+	reader, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("gzip decoder: %w", err)
+	}
+	defer reader.Close()
+	decoded, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("gzip decode: %w", err)
+	}
+	return decoded, nil
+}
+
+func decodeDeflateBody(raw []byte) ([]byte, error) {
+	reader := flate.NewReader(bytes.NewReader(raw))
+	defer reader.Close()
+	decoded, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("deflate decode: %w", err)
+	}
+	return decoded, nil
 }
 
 // TrackActive registers an in-flight request so the dashboard's live
@@ -87,10 +188,9 @@ func (h *Handler) TrackActive() gin.HandlerFunc {
 			}
 		} else {
 			// Enforce max body size here too, before any tracking reads.
-			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodySize)
-			raw, err := io.ReadAll(c.Request.Body)
+			raw, err := readRawBody(c)
 			if err != nil {
-				if strings.Contains(err.Error(), "http: request body too large") {
+				if errors.Is(err, errBodyTooLarge) {
 					c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{
 						"error": gin.H{"message": fmt.Sprintf("request body too large (max %d bytes)", maxBodySize), "type": "invalid_request_error"},
 					})
@@ -100,10 +200,15 @@ func (h *Handler) TrackActive() gin.HandlerFunc {
 				c.Next()
 				return
 			}
-			// Restore body for downstream handlers (readBody reads it again).
+			// Restore the original (possibly compressed) body for downstream handlers
+			// so readBody can apply Content-Encoding decompression itself.
 			c.Request.Body = io.NopCloser(bytes.NewReader(raw))
-			model = executor.JSONGet(raw, "model")
-			stream = executor.IsStreamRequest(raw)
+			body := raw
+			if decoded, err := decodeRequestBody(raw, c.Request.Header.Get("Content-Encoding")); err == nil {
+				body = decoded
+			}
+			model = executor.JSONGet(body, "model")
+			stream = executor.IsStreamRequest(body)
 		}
 
 		if model == "" {
@@ -156,16 +261,46 @@ func apiTypeFromPath(path string) string {
 	return unifiedSurface(path)
 }
 
-// logRequest enqueues a usage log entry enriched with the client IP and
-// User-Agent from the gin context. It is a single place where all /v1
-// request logging captures request metadata.
+// logRequest enqueues a usage log entry enriched with the client IP,
+// User-Agent, and flat-rate flag from the gin context and provider config.
+// It is a single place where all /v1 request logging captures request metadata.
 func (h *Handler) logRequest(c *gin.Context, entry *usage.LogEntry) {
 	if h.tracker == nil || entry == nil || c == nil {
 		return
 	}
 	entry.ClientIP = c.ClientIP()
 	entry.UserAgent = c.Request.UserAgent()
+	if entry.ServiceTier == "" {
+		if v, ok := c.Get("service_tier"); ok {
+			if s, ok := v.(string); ok {
+				entry.ServiceTier = s
+			}
+		}
+	}
+	if h.providerCfg != nil && entry.ProviderTypeID != "" {
+		entry.FlatRate = h.providerCfg.FlatRate(entry.ProviderTypeID)
+	}
 	h.tracker.Log(entry)
+}
+
+// extractServiceTier returns the service_tier value from a request body.
+// Supported values from OpenAI/Codex APIs are "flex", "priority", and "fast";
+// any other value is passed through so the cost estimator can apply defaults.
+func extractServiceTier(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	return gjson.GetBytes(body, "service_tier").String()
+}
+
+// isFlatRate reports whether the named provider is configured as a flat-rate
+// (subscription/cookie-web) provider. It returns false when no provider config
+// manager is available or when the flag has not been set.
+func (h *Handler) isFlatRate(provider string) bool {
+	if h.providerCfg == nil || provider == "" {
+		return false
+	}
+	return h.providerCfg.FlatRate(provider)
 }
 
 // trackDevice records the calling client device for the resolved API key.
@@ -1295,6 +1430,7 @@ func (h *Handler) handleMediaCombo(
 				ProxyPoolID:    executor.ProxyPoolIDFromContext(proxyCtx),
 				ApiType:        apiTypeFromPath(c.Request.URL.Path),
 				Modality:       modality,
+				Quantity:       quantityForModality(modality, body),
 				Stream:         false,
 				LatencyMs:      latency,
 				StatusCode:     resp.StatusCode,
@@ -1556,21 +1692,35 @@ func (h *Handler) writeUpstreamClientError(
 	start time.Time,
 	stream bool,
 ) bool {
+	var statusCode int
+	var body []byte
+	var errBody []byte
+
 	var upErr *executor.UpstreamError
-	if !errors.As(err, &upErr) {
-		return false
-	}
-	if upErr.StatusCode == http.StatusTooManyRequests || upErr.StatusCode == http.StatusPaymentRequired {
-		return false
-	}
-	c.Header("Content-Type", "application/json")
-	c.Status(upErr.StatusCode)
-	c.Writer.Write(upErr.Body)
-	if h.tracker != nil && conn != nil {
-		errBody := upErr.RawBody
+	if errors.As(err, &upErr) {
+		if upErr.StatusCode == http.StatusTooManyRequests || upErr.StatusCode == http.StatusPaymentRequired {
+			return false
+		}
+		statusCode = upErr.StatusCode
+		body = upErr.Body
+		errBody = upErr.RawBody
 		if len(errBody) == 0 {
 			errBody = upErr.Body
 		}
+	} else {
+		var valErr *executor.ClaudeStreamValidationError
+		if !errors.As(err, &valErr) {
+			return false
+		}
+		statusCode = http.StatusBadGateway
+		body, _ = json.Marshal(gin.H{"error": gin.H{"message": valErr.Error(), "type": "server_error"}})
+		errBody = body
+	}
+
+	c.Header("Content-Type", "application/json")
+	c.Status(statusCode)
+	c.Writer.Write(body)
+	if h.tracker != nil && conn != nil {
 		h.logRequest(c, &usage.LogEntry{
 			ApiKeyID:       c.GetString("api_key_id"),
 			ConnectionID:   conn.ID,
@@ -1581,7 +1731,7 @@ func (h *Handler) writeUpstreamClientError(
 			Modality:       "chat",
 			Stream:         stream,
 			LatencyMs:      time.Since(start).Milliseconds(),
-			StatusCode:     upErr.StatusCode,
+			StatusCode:     statusCode,
 			ErrorMessage:   string(errBody),
 		})
 	}
@@ -1724,6 +1874,22 @@ func computeAdaptiveReadiness(body []byte, model string, baseMs int) int {
 	return total
 }
 
+// writeSSEErrorFrame writes a terminal SSE error frame appropriate to the client
+// format. For Claude streams it emits an Anthropic-compatible "event: error"
+// frame; for OpenAI-compatible streams it emits a "data:" error event.
+func writeSSEErrorFrame(w http.ResponseWriter, clientFormat executor.ProviderFormat, errBytes []byte, flusher http.Flusher) {
+	if clientFormat == executor.FormatClaude {
+		w.Write([]byte("event: error\ndata: "))
+	} else {
+		w.Write([]byte("data: "))
+	}
+	w.Write(errBytes)
+	w.Write([]byte("\n\n"))
+	if flusher != nil {
+		flusher.Flush()
+	}
+}
+
 // streamResponse writes a translated SSE stream to the client with heartbeat and
 // client-disconnect detection. Each translated chunk already includes the SSE
 // frame (data: ...\n\n), so the helper writes the bytes as-is and flushes.
@@ -1755,6 +1921,10 @@ func (h *Handler) streamResponse(
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
+	c.Header("Trailer", costTrailerNames)
+	if h.isFlatRate(provider) {
+		c.Header(costHeader, "0")
+	}
 	c.Status(http.StatusOK)
 
 	heartbeatInterval := 15 * time.Second
@@ -1825,8 +1995,9 @@ func (h *Handler) streamResponse(
 						tokensEstimated = true
 					}
 				}
+				apiKeyID := c.GetString("api_key_id")
 				h.logRequest(c, &usage.LogEntry{
-					ApiKeyID:            c.GetString("api_key_id"),
+					ApiKeyID:            apiKeyID,
 					ConnectionID:        conn.ID,
 					ProviderTypeID:      provider,
 					ModelID:             model,
@@ -1845,7 +2016,9 @@ func (h *Handler) streamResponse(
 					StatusCode:          http.StatusOK,
 					TokensEstimated:     tokensEstimated,
 				})
-				h.incrementAPIKeyUsage(c.GetString("api_key_id"), acc.InputTokens+acc.OutputTokens)
+				h.incrementAPIKeyUsage(apiKeyID, acc.InputTokens+acc.OutputTokens)
+				h.recordAPIKeyCostFromCounts(apiKeyID, model, acc)
+				writeCostTrailers(c, model, acc.CostUsd, acc, tokensEstimated, h.isFlatRate(provider))
 				return nil
 			}
 
@@ -1885,11 +2058,11 @@ func (h *Handler) streamResponse(
 					})
 					return chunk.Err
 				}
-				c.Writer.Write([]byte("data: "))
-				c.Writer.Write(errFormatter(chunk.Err))
-				c.Writer.Write([]byte("\n\n"))
-				c.Writer.Write([]byte("data: [DONE]\n\n"))
-				flusher.Flush()
+				writeSSEErrorFrame(c.Writer, clientFormat, errFormatter(chunk.Err), flusher)
+				if clientFormat != executor.FormatClaude {
+					c.Writer.Write([]byte("data: [DONE]\n\n"))
+					flusher.Flush()
+				}
 				h.logRequest(c, &usage.LogEntry{
 					ApiKeyID:       c.GetString("api_key_id"),
 					ConnectionID:   conn.ID,
@@ -1907,7 +2080,13 @@ func (h *Handler) streamResponse(
 			}
 
 			lastChunkTime = time.Now()
-			translatedChunks := registry.Response(ctx, string(providerFormat), string(clientFormat), model, originalReq, translatedReq, chunk.Payload, &streamState)
+			var translatedChunks [][]byte
+			if clientFormat == providerFormat {
+				// Direct SSE passthrough when client and provider share the same native format.
+				translatedChunks = [][]byte{append(chunk.Payload, "\n\n"...)}
+			} else {
+				translatedChunks = registry.Response(ctx, string(providerFormat), string(clientFormat), model, originalReq, translatedReq, chunk.Payload, &streamState)
+			}
 			for _, tc := range translatedChunks {
 				c.Writer.Write(tc)
 				flusher.Flush()
@@ -1970,13 +2149,18 @@ func (h *Handler) streamResponse(
 					if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 						errMsg = "stream deadline exceeded"
 					}
-					errBytes, _ := json.Marshal(gin.H{"error": gin.H{"message": errMsg, "type": "server_error"}})
-					c.Writer.Write([]byte("data: "))
-					c.Writer.Write(errBytes)
-					c.Writer.Write([]byte("\n\n"))
+					var errBytes []byte
+					if clientFormat == executor.FormatClaude {
+						errBytes, _ = json.Marshal(claudeError("server_error", errMsg))
+					} else {
+						errBytes, _ = json.Marshal(gin.H{"error": gin.H{"message": errMsg, "type": "server_error"}})
+					}
+					writeSSEErrorFrame(c.Writer, clientFormat, errBytes, flusher)
 				}
-				c.Writer.Write([]byte("data: [DONE]\n\n"))
-				flusher.Flush()
+				if clientFormat != executor.FormatClaude {
+					c.Writer.Write([]byte("data: [DONE]\n\n"))
+					flusher.Flush()
+				}
 			}
 			return ctx.Err()
 		}
@@ -2308,15 +2492,26 @@ func (h *Handler) accumulateAPIKeyUsage(apiKeyID string, reqBody, respBody []byt
 		return
 	}
 	var total int64
-	if counts := ExtractTokensFromBody(respBody); counts.InputTokens > 0 || counts.OutputTokens > 0 {
+	var counts StreamTokenCounts
+	extracted := ExtractTokensFromBody(respBody)
+	if extracted.InputTokens > 0 || extracted.OutputTokens > 0 {
+		counts = extracted
 		total = counts.InputTokens + counts.OutputTokens
 	} else {
 		total = usage.EstimateTokensFromRequest(reqBody)
 		if estimateOutput {
 			total += usage.EstimateTokensFromResponse(respBody)
 		}
+		counts.InputTokens = usage.EstimateTokensFromRequest(reqBody)
+		if estimateOutput {
+			counts.OutputTokens = usage.EstimateTokensFromResponse(respBody)
+		}
 	}
 	h.incrementAPIKeyUsage(apiKeyID, total)
+	if apiKeyID != "" && len(reqBody) > 0 {
+		model := executor.JSONGet(reqBody, "model")
+		h.recordAPIKeyCostFromCounts(apiKeyID, model, counts)
+	}
 }
 
 // scheduleEligibilityUpdate triggers a per-provider eligibility rebuild for the

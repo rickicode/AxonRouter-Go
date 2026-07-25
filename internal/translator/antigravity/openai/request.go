@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
+	"github.com/rickicode/AxonRouter-Go/internal/config"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/antigravity"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -101,6 +102,7 @@ func AttachDefaultSafetySettings(rawJSON []byte, path string) []byte {
 // convertOpenAIRequestToAntigravity converts OpenAI Chat Completions requests to Antigravity format.
 func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ bool) []byte {
 	rawJSON := inputRawJSON
+	obfuscationWords := config.Get().AntigravityObfuscationWords
 	out := []byte(`{"project":"","request":{"contents":[]},"model":"gemini-2.5-pro"}`)
 	out, _ = sjson.SetBytes(out, "model", modelName)
 
@@ -228,8 +230,13 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 				}
 			} else if role == "user" || ((role == "system" || role == "developer") && len(arr) == 1) {
 				node := []byte(`{"role":"user","parts":[]}`)
+				isUser := role == "user"
 				if content.Type == gjson.String {
-					node, _ = sjson.SetBytes(node, "parts.0.text", content.String())
+					text := content.String()
+					if isUser {
+						text = antigravity.Obfuscate(text, obfuscationWords)
+					}
+					node, _ = sjson.SetBytes(node, "parts.0.text", text)
 				} else if content.IsArray() {
 					items := content.Array()
 					p := 0
@@ -238,6 +245,9 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 						case "text":
 							text := item.Get("text").String()
 							if text != "" {
+								if isUser {
+									text = antigravity.Obfuscate(text, obfuscationWords)
+								}
 								node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".text", text)
 								p++
 							}
@@ -519,7 +529,47 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 		}
 	}
 
-	return AttachDefaultSafetySettings(out, "request.safetySettings")
+	out = AttachDefaultSafetySettings(out, "request.safetySettings")
+
+	// Vertex AI (used by Antigravity for Claude-branded models) rejects a
+	// conversation ending on an assistant turn — "This model does not support
+	// assistant message prefill". Strip trailing model turns so the request ends
+	// on a user turn. Native Gemini models are left untouched.
+	// OmniRoute antigravity.ts:407-423.
+	if strings.Contains(strings.ToLower(modelName), "claude") {
+		out = stripTrailingAntigravityAssistantTurn(out)
+	}
+
+	return out
+}
+
+// stripTrailingAntigravityAssistantTurn removes trailing assistant ("model")
+// turns from an Antigravity request. It preserves at least one content entry so
+// the request never becomes empty.
+func stripTrailingAntigravityAssistantTurn(body []byte) []byte {
+	contents := gjson.GetBytes(body, "request.contents")
+	if !contents.Exists() || !contents.IsArray() {
+		return body
+	}
+	arr := contents.Array()
+	if len(arr) == 0 {
+		return body
+	}
+
+	lastKeep := len(arr) - 1
+	for lastKeep > 0 && arr[lastKeep].Get("role").String() == "model" {
+		lastKeep--
+	}
+	if lastKeep == len(arr)-1 {
+		return body
+	}
+
+	newContents := []byte("[]")
+	for i := 0; i <= lastKeep; i++ {
+		newContents, _ = sjson.SetRawBytes(newContents, "-1", []byte(arr[i].Raw))
+	}
+	out, _ := sjson.SetRawBytes(body, "request.contents", newContents)
+	return out
 }
 
 func mustMarshal(v interface{}) []byte {

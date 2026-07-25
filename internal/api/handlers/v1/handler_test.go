@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/klauspost/compress/zstd"
 
 	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
@@ -68,8 +69,22 @@ type fakeExecutor struct {
 		result *executor.StreamResult
 		err    error
 	}
-	streamErr bool
-	delay     time.Duration
+	streamErr       bool
+	delay           time.Duration
+	compactResponse *executor.Response
+	compactErr      error
+}
+
+func (f *fakeExecutor) ResponsesCompact(ctx context.Context, req *executor.Request) (*executor.Response, error) {
+	f.callCount++
+	if f.delay > 0 {
+		select {
+		case <-time.After(f.delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return f.compactResponse, f.compactErr
 }
 
 func (f *fakeExecutor) Execute(ctx context.Context, req *executor.Request) (*executor.Response, error) {
@@ -1470,6 +1485,84 @@ func TestStreamResponse_ClientCanceledChunkErrDoesNotMarkExhausted(t *testing.T)
 	wq.Stop()
 }
 
+func TestStreamResponse_ClaudeChunkErrorEmitsEventError(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	chunks := make(chan executor.StreamChunk, 2)
+	chunks <- executor.StreamChunk{Payload: []byte(`data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}`)}
+	chunks <- executor.StreamChunk{Err: errors.New("simulated upstream failure")}
+	close(chunks)
+	result := &executor.StreamResult{Chunks: chunks, StatusCode: http.StatusOK}
+
+	conn := &Connection{ID: "conn-claude-err"}
+	h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
+		executor.FormatClaude, executor.FormatClaude,
+		[]byte(`{}`), []byte(`{}`),
+		func(err error) []byte {
+			msg := err.Error()
+			if msg == "" {
+				msg = "upstream streaming error"
+			}
+			b, _ := json.Marshal(claudeError("api_error", msg))
+			return b
+		},
+		time.Now(), "", false,
+	)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: error\n") {
+		t.Errorf("expected Claude SSE error event, got:\n%s", body)
+	}
+	if !strings.Contains(body, `"type":"error"`) {
+		t.Errorf("expected error payload with type error, got:\n%s", body)
+	}
+	if !strings.Contains(body, "simulated upstream failure") {
+		t.Errorf("expected human-readable error message, got:\n%s", body)
+	}
+	if strings.Contains(body, "data: [DONE]") {
+		t.Errorf("Claude error stream should not emit data: [DONE], got:\n%s", body)
+	}
+}
+
+func TestStreamResponse_OpenAIChunkErrorPreservesDataErrorDone(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	chunks := make(chan executor.StreamChunk, 2)
+	chunks <- executor.StreamChunk{Payload: []byte(`data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"}}]}`)}
+	chunks <- executor.StreamChunk{Err: errors.New("simulated upstream failure")}
+	close(chunks)
+	result := &executor.StreamResult{Chunks: chunks, StatusCode: http.StatusOK}
+
+	conn := &Connection{ID: "conn-openai-err"}
+	h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
+		executor.FormatOpenAI, executor.FormatOpenAI,
+		[]byte(`{}`), []byte(`{}`),
+		func(err error) []byte { return []byte(`{"error":"upstream"}`) },
+		time.Now(), "", false,
+	)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "data: {\"error\":\"upstream\"}") {
+		t.Errorf("expected OpenAI-style data error, got:\n%s", body)
+	}
+	if !strings.Contains(body, "data: [DONE]") {
+		t.Errorf("expected [DONE] after OpenAI error, got:\n%s", body)
+	}
+	if strings.Contains(body, "event: error") {
+		t.Errorf("OpenAI stream should not emit event:error, got:\n%s", body)
+	}
+}
+
 // TestFallbackUsage verifies that fallback estimation is applied when token
 // extraction yields zero tokens but the request was successful, and that it
 // is NOT applied on error responses or when tokens are already present.
@@ -1970,6 +2063,83 @@ func TestBodyPreserved_TrackActiveRestores(t *testing.T) {
 	}
 	if string(got) != string(body) {
 		t.Errorf("body changed after TrackActive; got %q, want %q", got, body)
+	}
+}
+
+func compressZstd(t *testing.T, raw []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	enc, err := zstd.NewWriter(&buf)
+	if err != nil {
+		t.Fatalf("zstd writer: %v", err)
+	}
+	if _, err := enc.Write(raw); err != nil {
+		t.Fatalf("zstd write: %v", err)
+	}
+	if err := enc.Close(); err != nil {
+		t.Fatalf("zstd close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func TestReadBody_DecompressesZstd(t *testing.T) {
+	body := []byte(`{"model":"openai/gpt-4o","messages":[{"role":"user","content":"hi"}]}`)
+	compressed := compressZstd(t, body)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(compressed))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("Content-Encoding", "zstd")
+
+	got, err := readBody(c)
+	if err != nil {
+		t.Fatalf("readBody: %v", err)
+	}
+	if string(got) != string(body) {
+		t.Fatalf("decompressed body mismatch; got %q, want %q", got, body)
+	}
+}
+
+func TestReadBody_ZstdInvalidFallsBackToRawJSON(t *testing.T) {
+	body := []byte(`{"model":"openai/gpt-4o"}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("Content-Encoding", "zstd")
+
+	got, err := readBody(c)
+	if err != nil {
+		t.Fatalf("readBody: %v", err)
+	}
+	if string(got) != string(body) {
+		t.Fatalf("expected raw JSON fallback, got %q", got)
+	}
+}
+
+func TestTrackActive_DecompressesZstd(t *testing.T) {
+	h := newTestHandler(t)
+	body := []byte(`{"model":"openai/gpt-4o","stream":true}`)
+	compressed := compressZstd(t, body)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(compressed))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("Content-Encoding", "zstd")
+
+	h.TrackActive()(c)
+	if rec.Code == http.StatusRequestEntityTooLarge {
+		t.Fatalf("TrackActive rejected compressed body: %s", rec.Body.String())
+	}
+
+	got, err := readBody(c)
+	if err != nil {
+		t.Fatalf("readBody after TrackActive: %v", err)
+	}
+	if string(got) != string(body) {
+		t.Fatalf("body mismatch after TrackActive decompression; got %q, want %q", got, body)
 	}
 }
 

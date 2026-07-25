@@ -33,6 +33,9 @@ func (h *Handler) TTS(c *gin.Context) {
 	if h.checkTokenBudget(c, body) != nil {
 		return
 	}
+	if h.checkAPIKeyBudget(c) != nil {
+		return
+	}
 
 	// Combo-first routing for text-to-speech.
 	if comboResult, ok := h.combo.ResolveByKind(model, providerpkg.ServiceKindTTS); ok {
@@ -109,11 +112,15 @@ func (h *Handler) TTS(c *gin.Context) {
 		ProxyPoolID:    executor.ProxyPoolIDFromContext(proxyCtx),
 		ApiType:        apiTypeFromPath(c.Request.URL.Path),
 		Modality:       "audio",
+		Quantity:       quantityForModality("audio", body),
 		Stream:         false,
 		LatencyMs:      time.Since(start).Milliseconds(),
 		StatusCode:     resp.StatusCode})
 
 	h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, nil, false)
+	if h.isFlatRate(provider) {
+		c.Header(costHeader, "0")
+	}
 	// Return audio bytes
 	c.Header("Content-Type", "audio/mpeg")
 	if ct := resp.Headers.Get("Content-Type"); ct != "" {

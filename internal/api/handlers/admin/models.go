@@ -632,6 +632,11 @@ func defaultTestModel(providerID string) string {
 			// Kiro's "auto" model is a stable, capability-agnostic upstream id.
 			return "auto"
 		}
+		if providerID == "zenmux" {
+			return pickModel(ids,
+				func(id string) bool { return id == "openai/gpt-5.6-luna" },
+			)
+		}
 		if providerID == "zenmux-free" {
 			return pickModel(ids,
 				func(id string) bool { return strings.Contains(id, "inclusionai/ling-3.0-flash") },

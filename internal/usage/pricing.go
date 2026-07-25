@@ -10,29 +10,37 @@ import (
 )
 
 type Pricing struct {
-	InputPer1K       float64
-	OutputPer1K      float64
-	ReasonPer1K      float64
-	ImagePerUnit     float64
-	AudioPerMin      float64
-	CachedReadPer1K  float64
-	CachedWritePer1K float64
+	InputPer1K             float64
+	OutputPer1K            float64
+	ReasonPer1K            float64
+	ImagePerUnit           float64
+	AudioPerMin            float64
+	VideoPerUnit           float64
+	CachedReadPer1K        float64
+	CachedWritePer1K       float64
+	TierFlexMultiplier     float64
+	TierPriorityMultiplier float64
+	TierFastMultiplier     float64
 }
 
-var defaultPricing = Pricing{InputPer1K: 0.001, OutputPer1K: 0.002}
+var defaultPricing = Pricing{InputPer1K: 0.001, OutputPer1K: 0.002, TierFlexMultiplier: 0.5, TierPriorityMultiplier: 1.5, TierFastMultiplier: 2.5}
 
 type ModelPricingRow struct {
-	ModelID string `json:"model_id"`
-	DisplayName string `json:"display_name"`
-	InputPer1K float64 `json:"input_per_1k"`
-	OutputPer1K float64 `json:"output_per_1k"`
-	ReasonPer1K float64 `json:"reason_per_1k"`
-	CachedReadPer1K float64 `json:"cached_read_per_1k"`
-	CachedWritePer1K float64 `json:"cached_write_per_1k"`
-	ImagePerUnit float64 `json:"image_per_unit"`
-	AudioPerMin float64 `json:"audio_per_min"`
-	Currency string `json:"currency"`
-	UpdatedAt int64 `json:"updated_at"`
+	ModelID                string  `json:"model_id"`
+	DisplayName            string  `json:"display_name"`
+	InputPer1K             float64 `json:"input_per_1k"`
+	OutputPer1K            float64 `json:"output_per_1k"`
+	ReasonPer1K            float64 `json:"reason_per_1k"`
+	CachedReadPer1K        float64 `json:"cached_read_per_1k"`
+	CachedWritePer1K       float64 `json:"cached_write_per_1k"`
+	ImagePerUnit           float64 `json:"image_per_unit"`
+	AudioPerMin            float64 `json:"audio_per_min"`
+	VideoPerUnit           float64 `json:"video_per_unit"`
+	Currency               string  `json:"currency"`
+	TierFlexMultiplier     float64 `json:"tier_flex_multiplier"`
+	TierPriorityMultiplier float64 `json:"tier_priority_multiplier"`
+	TierFastMultiplier     float64 `json:"tier_fast_multiplier"`
+	UpdatedAt              int64   `json:"updated_at"`
 	// ServiceKinds is populated from the model catalog for display; not persisted.
 	ServiceKinds []string `json:"service_kinds,omitempty"`
 }
@@ -54,7 +62,7 @@ func ReloadPricing() {
 	if pricingDB == nil {
 		return
 	}
-	rows, err := pricingDB.Query(`SELECT model_id, display_name, input_per_1k, output_per_1k, reason_per_1k, cached_read_per_1k, cached_write_per_1k, image_per_unit, audio_per_min, currency, updated_at FROM model_pricing`)
+	rows, err := pricingDB.Query(`SELECT model_id, display_name, input_per_1k, output_per_1k, reason_per_1k, cached_read_per_1k, cached_write_per_1k, image_per_unit, audio_per_min, video_per_unit, currency, tier_flex_multiplier, tier_priority_multiplier, tier_fast_multiplier, updated_at FROM model_pricing`)
 	if err != nil {
 		return
 	}
@@ -64,8 +72,8 @@ func ReloadPricing() {
 		var r ModelPricingRow
 		if err := rows.Scan(
 			&r.ModelID, &r.DisplayName, &r.InputPer1K, &r.OutputPer1K, &r.ReasonPer1K,
-			&r.CachedReadPer1K, &r.CachedWritePer1K, &r.ImagePerUnit, &r.AudioPerMin,
-			&r.Currency, &r.UpdatedAt,
+			&r.CachedReadPer1K, &r.CachedWritePer1K, &r.ImagePerUnit, &r.AudioPerMin, &r.VideoPerUnit,
+			&r.Currency, &r.TierFlexMultiplier, &r.TierPriorityMultiplier, &r.TierFastMultiplier, &r.UpdatedAt,
 		); err != nil {
 			continue
 		}
@@ -93,6 +101,13 @@ func StartPeriodicReload(ctx context.Context, interval time.Duration) {
 	}()
 }
 
+func defaultIfZero(v, fallback float64) float64 {
+	if v == 0 {
+		return fallback
+	}
+	return v
+}
+
 func splitModel(s string) (string, string) {
 	for i, c := range s {
 		if c == '/' {
@@ -113,13 +128,17 @@ func GetPricing(modelID string) Pricing {
 
 	if r, ok := rows[model]; ok {
 		return Pricing{
-			InputPer1K:       r.InputPer1K,
-			OutputPer1K:      r.OutputPer1K,
-			ReasonPer1K:      r.ReasonPer1K,
-			ImagePerUnit:     r.ImagePerUnit,
-			AudioPerMin:      r.AudioPerMin,
-			CachedReadPer1K:  r.CachedReadPer1K,
-			CachedWritePer1K: r.CachedWritePer1K,
+			InputPer1K:             r.InputPer1K,
+			OutputPer1K:            r.OutputPer1K,
+			ReasonPer1K:            r.ReasonPer1K,
+			ImagePerUnit:           r.ImagePerUnit,
+			AudioPerMin:            r.AudioPerMin,
+			VideoPerUnit:           r.VideoPerUnit,
+			CachedReadPer1K:        r.CachedReadPer1K,
+			CachedWritePer1K:       r.CachedWritePer1K,
+			TierFlexMultiplier:     defaultIfZero(r.TierFlexMultiplier, defaultPricing.TierFlexMultiplier),
+			TierPriorityMultiplier: defaultIfZero(r.TierPriorityMultiplier, defaultPricing.TierPriorityMultiplier),
+			TierFastMultiplier:     defaultIfZero(r.TierFastMultiplier, defaultPricing.TierFastMultiplier),
 		}
 	}
 
@@ -139,39 +158,98 @@ func GetPricing(modelID string) Pricing {
 		})
 		r := rows[matches[0]]
 		return Pricing{
-			InputPer1K:       r.InputPer1K,
-			OutputPer1K:      r.OutputPer1K,
-			ReasonPer1K:      r.ReasonPer1K,
-			ImagePerUnit:     r.ImagePerUnit,
-			AudioPerMin:      r.AudioPerMin,
-			CachedReadPer1K:  r.CachedReadPer1K,
-			CachedWritePer1K: r.CachedWritePer1K,
+			InputPer1K:             r.InputPer1K,
+			OutputPer1K:            r.OutputPer1K,
+			ReasonPer1K:            r.ReasonPer1K,
+			ImagePerUnit:           r.ImagePerUnit,
+			AudioPerMin:            r.AudioPerMin,
+			VideoPerUnit:           r.VideoPerUnit,
+			CachedReadPer1K:        r.CachedReadPer1K,
+			CachedWritePer1K:       r.CachedWritePer1K,
+			TierFlexMultiplier:     defaultIfZero(r.TierFlexMultiplier, defaultPricing.TierFlexMultiplier),
+			TierPriorityMultiplier: defaultIfZero(r.TierPriorityMultiplier, defaultPricing.TierPriorityMultiplier),
+			TierFastMultiplier:     defaultIfZero(r.TierFastMultiplier, defaultPricing.TierFastMultiplier),
 		}
 	}
 	return defaultPricing
 }
 
-// EstimateCost returns the estimated cost in USD.
+// EstimateCost returns the estimated cost in USD using the standard service tier.
 // Token convention: inputTokens is cache-inclusive (input + cache_read + cache_creation),
 // matching the per-provider usage reports after extraction. Cache-read tokens are billed at the
 // read rate and cache-creation tokens at the write rate (falling back to the input rate when no
 // dedicated write rate is configured). This mirrors OmniRoute's computeCostFromPricing.
-func EstimateCost(modelID string, inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheCreationTokens int64) float64 {
+//
+// For non-text modalities, cost is driven by Quantity:
+//   - image: quantity * image_per_unit
+//   - audio/stt/tts: quantity * audio_per_min
+//   - video: quantity * video_per_unit
+//   - embedding: input_tokens * input_per_1k / 1000
+func EstimateCost(modelID, modality string, quantity, inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheCreationTokens int64) float64 {
+	return EstimateCostWithServiceTier(modelID, modality, "", quantity, inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheCreationTokens)
+}
+
+// EstimateCostWithServiceTier returns the estimated cost in USD with a tier multiplier applied.
+// Supported tiers: flex (0.5x), priority (1.5x), fast (2.5x). Empty/unknown tiers default to
+// standard (1.0x). Multipliers are configurable per model via model_pricing.
+func EstimateCostWithServiceTier(modelID, modality, serviceTier string, quantity, inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheCreationTokens int64) float64 {
 	p := GetPricing(modelID)
-	nonCached := inputTokens - cachedTokens - cacheCreationTokens
-	if nonCached < 0 {
-		nonCached = 0
+
+	var cost float64
+	switch modality {
+	case "image":
+		if quantity > 0 && p.ImagePerUnit > 0 {
+			cost = float64(quantity) * p.ImagePerUnit
+		} else {
+			return 0
+		}
+	case "audio", "stt", "tts":
+		if quantity > 0 && p.AudioPerMin > 0 {
+			cost = float64(quantity) * p.AudioPerMin
+		} else {
+			return 0
+		}
+	case "video":
+		if quantity > 0 && p.VideoPerUnit > 0 {
+			cost = float64(quantity) * p.VideoPerUnit
+		} else {
+			return 0
+		}
+	case "embedding":
+		if inputTokens > 0 && p.InputPer1K > 0 {
+			cost = float64(inputTokens) / 1000.0 * p.InputPer1K
+		} else {
+			return 0
+		}
+	default:
+		nonCached := inputTokens - cachedTokens - cacheCreationTokens
+		if nonCached < 0 {
+			nonCached = 0
+		}
+		writeRate := p.CachedWritePer1K
+		if writeRate == 0 {
+			writeRate = p.InputPer1K
+		}
+		cost = float64(nonCached) / 1000.0 * p.InputPer1K
+		cost += float64(cachedTokens) / 1000.0 * p.CachedReadPer1K
+		cost += float64(cacheCreationTokens) / 1000.0 * writeRate
+		cost += float64(outputTokens) / 1000.0 * p.OutputPer1K
+		cost += float64(reasoningTokens) / 1000.0 * p.ReasonPer1K
 	}
-	writeRate := p.CachedWritePer1K
-	if writeRate == 0 {
-		writeRate = p.InputPer1K
+
+	multiplier := 1.0
+	switch strings.ToLower(serviceTier) {
+	case "flex":
+		multiplier = p.TierFlexMultiplier
+	case "priority":
+		multiplier = p.TierPriorityMultiplier
+	case "fast":
+		multiplier = p.TierFastMultiplier
 	}
-	cost := float64(nonCached) / 1000.0 * p.InputPer1K
-	cost += float64(cachedTokens) / 1000.0 * p.CachedReadPer1K
-	cost += float64(cacheCreationTokens) / 1000.0 * writeRate
-	cost += float64(outputTokens) / 1000.0 * p.OutputPer1K
-	cost += float64(reasoningTokens) / 1000.0 * p.ReasonPer1K
-	return cost
+	if multiplier == 0 {
+		multiplier = 1.0
+	}
+	return cost * multiplier
 }
 
 // ListPricing returns all rows from DB.
@@ -179,7 +257,7 @@ func ListPricing() []ModelPricingRow {
 	if pricingDB == nil {
 		return nil
 	}
-	rows, err := pricingDB.Query(`SELECT model_id, display_name, input_per_1k, output_per_1k, reason_per_1k, cached_read_per_1k, cached_write_per_1k, image_per_unit, audio_per_min, currency, updated_at FROM model_pricing ORDER BY model_id`)
+	rows, err := pricingDB.Query(`SELECT model_id, display_name, input_per_1k, output_per_1k, reason_per_1k, cached_read_per_1k, cached_write_per_1k, image_per_unit, audio_per_min, video_per_unit, currency, tier_flex_multiplier, tier_priority_multiplier, tier_fast_multiplier, updated_at FROM model_pricing ORDER BY model_id`)
 	if err != nil {
 		return nil
 	}
@@ -189,8 +267,8 @@ func ListPricing() []ModelPricingRow {
 		var r ModelPricingRow
 		if err := rows.Scan(
 			&r.ModelID, &r.DisplayName, &r.InputPer1K, &r.OutputPer1K, &r.ReasonPer1K,
-			&r.CachedReadPer1K, &r.CachedWritePer1K, &r.ImagePerUnit, &r.AudioPerMin,
-			&r.Currency, &r.UpdatedAt,
+			&r.CachedReadPer1K, &r.CachedWritePer1K, &r.ImagePerUnit, &r.AudioPerMin, &r.VideoPerUnit,
+			&r.Currency, &r.TierFlexMultiplier, &r.TierPriorityMultiplier, &r.TierFastMultiplier, &r.UpdatedAt,
 		); err != nil {
 			continue
 		}
@@ -207,13 +285,22 @@ func UpsertPricing(row ModelPricingRow) error {
 	if row.Currency == "" {
 		row.Currency = "USD"
 	}
+	if row.TierFlexMultiplier == 0 {
+		row.TierFlexMultiplier = defaultPricing.TierFlexMultiplier
+	}
+	if row.TierPriorityMultiplier == 0 {
+		row.TierPriorityMultiplier = defaultPricing.TierPriorityMultiplier
+	}
+	if row.TierFastMultiplier == 0 {
+		row.TierFastMultiplier = defaultPricing.TierFastMultiplier
+	}
 	if row.UpdatedAt == 0 {
 		row.UpdatedAt = time.Now().Unix()
 	}
 	_, err := pricingDB.Exec(
 		`
-INSERT INTO model_pricing (model_id, display_name, input_per_1k, output_per_1k, reason_per_1k, cached_read_per_1k, cached_write_per_1k, image_per_unit, audio_per_min, currency, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO model_pricing (model_id, display_name, input_per_1k, output_per_1k, reason_per_1k, cached_read_per_1k, cached_write_per_1k, image_per_unit, audio_per_min, video_per_unit, currency, tier_flex_multiplier, tier_priority_multiplier, tier_fast_multiplier, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(model_id) DO UPDATE SET
 display_name = excluded.display_name,
 input_per_1k = excluded.input_per_1k,
@@ -223,11 +310,15 @@ cached_read_per_1k = excluded.cached_read_per_1k,
 cached_write_per_1k = excluded.cached_write_per_1k,
 image_per_unit = excluded.image_per_unit,
 audio_per_min = excluded.audio_per_min,
+video_per_unit = excluded.video_per_unit,
 currency = excluded.currency,
+tier_flex_multiplier = excluded.tier_flex_multiplier,
+tier_priority_multiplier = excluded.tier_priority_multiplier,
+tier_fast_multiplier = excluded.tier_fast_multiplier,
 updated_at = excluded.updated_at`,
 		row.ModelID, row.DisplayName, row.InputPer1K, row.OutputPer1K, row.ReasonPer1K,
-		row.CachedReadPer1K, row.CachedWritePer1K, row.ImagePerUnit, row.AudioPerMin,
-		row.Currency, row.UpdatedAt,
+		row.CachedReadPer1K, row.CachedWritePer1K, row.ImagePerUnit, row.AudioPerMin, row.VideoPerUnit,
+		row.Currency, row.TierFlexMultiplier, row.TierPriorityMultiplier, row.TierFastMultiplier, row.UpdatedAt,
 	)
 	if err != nil {
 		return err

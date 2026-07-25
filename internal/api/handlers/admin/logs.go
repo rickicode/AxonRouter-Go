@@ -141,6 +141,7 @@ func (h *LogHandler) Get(c *gin.Context) {
 		CachedTokens        int64   `json:"cached_tokens"`
 		CacheCreationTokens int64   `json:"cache_creation_tokens"`
 		TokensEstimated     bool    `json:"tokens_estimated"`
+		FlatRate            bool    `json:"flat_rate"`
 		LatencyMs           *int64  `json:"latency_ms"`
 		StatusCode          *int64  `json:"status_code"`
 		ErrorMessage        *string `json:"error_message"`
@@ -153,13 +154,13 @@ func (h *LogHandler) Get(c *gin.Context) {
 	err := h.db.QueryRow(`
 		SELECT id, timestamp, connection_id, provider_type_id, model_id, combo_id,
 		modality, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_creation_tokens,
-  tokens_estimated,
+  tokens_estimated, flat_rate,
   latency_ms, status_code, error_message, cost_usd, client_ip, user_agent, created_at
   FROM request_logs WHERE id = ?
- `, id).Scan(&l.ID, &l.Timestamp, &l.ConnectionID, &l.ProviderTypeID,
+  `, id).Scan(&l.ID, &l.Timestamp, &l.ConnectionID, &l.ProviderTypeID,
 		&l.ModelID, &l.ComboID, &l.Modality,
 		&l.InputTokens, &l.OutputTokens, &l.ReasoningTokens, &l.CachedTokens, &l.CacheCreationTokens,
-		&l.TokensEstimated,
+		&l.TokensEstimated, &l.FlatRate,
 		&l.LatencyMs, &l.StatusCode, &l.ErrorMessage,
 		&l.CostUsd, &l.ClientIP, &l.UserAgent, &l.CreatedAt)
 	if err == sql.ErrNoRows {

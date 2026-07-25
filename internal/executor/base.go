@@ -117,14 +117,62 @@ type TokenCounter interface {
 
 // BaseExecutor provides shared HTTP logic for all executors.
 type BaseExecutor struct {
-	Client                 *http.Client
-	Timeout                time.Duration
-	FetchTimeout           time.Duration
-	StreamIdleTimeout      time.Duration
-	StreamReadinessTimeout time.Duration
-	proxyClients           sync.Map // proxyURL -> *http.Client (non-streaming)
-	streamBase             *http.Client
-	streamClients          sync.Map // proxyURL -> *http.Client (streaming, no Timeout)
+	Client                  *http.Client
+	Timeout                 time.Duration
+	FetchTimeout            time.Duration
+	StreamIdleTimeout       time.Duration
+	StreamReadinessTimeout  time.Duration
+	ResponseHeaderTimeout   time.Duration // abort if no response headers arrive within this window
+	proxyClients            sync.Map      // proxyURL -> *http.Client (non-streaming)
+	streamBase              *http.Client
+	streamClients           sync.Map      // proxyURL -> *http.Client (streaming, no Timeout)
+}
+
+// StreamReadinessTimeoutError is returned when an upstream streaming request does
+// not produce response headers within the configured readiness window. It embeds
+// an UpstreamError with StatusCode 504 so handlers surface it as a Gateway
+// Timeout to downstream clients.
+type StreamReadinessTimeoutError struct {
+	*UpstreamError
+	Timeout time.Duration
+	URL     string
+}
+
+func newStreamReadinessTimeoutError(timeout time.Duration, rawURL string) *StreamReadinessTimeoutError {
+	body := gatewayTimeoutBody(fmt.Sprintf("stream readiness timeout after %v waiting for response headers from %s", timeout, rawURL))
+	return &StreamReadinessTimeoutError{
+		UpstreamError: &UpstreamError{
+			StatusCode: http.StatusGatewayTimeout,
+			Body:       body,
+			RawBody:    body,
+		},
+		Timeout: timeout,
+		URL:     rawURL,
+	}
+}
+
+// Is reports whether target is a context deadline error, so readiness timeouts
+// are treated as timeout/category errors by the failover/detection layer.
+func (e *StreamReadinessTimeoutError) Is(target error) bool {
+	return target == context.DeadlineExceeded
+}
+
+func isResponseHeaderTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "timeout awaiting response headers")
+}
+
+// gatewayTimeoutBody returns a stable OpenAI-style error body for 504 responses.
+func gatewayTimeoutBody(message string) []byte {
+	b, _ := json.Marshal(map[string]any{
+		"error": map[string]any{
+			"message": message,
+			"type":    "timeout_error",
+		},
+	})
+	return b
 }
 
 // NewBaseExecutor creates a base executor with default settings.
@@ -132,13 +180,19 @@ type BaseExecutor struct {
 //
 //	FETCH_TIMEOUT_MS=600000 (10m), STREAM_IDLE_TIMEOUT_MS=600000 (10m),
 //	STREAM_READINESS_TIMEOUT_MS=80000 (80s).
-func defaultHTTPTransport() *http.Transport {
+//
+// defaultHTTPTransport returns a transport with ResponseHeaderTimeout set so
+// requests that never receive response headers cannot hang indefinitely.
+// ResponseHeaderTimeout covers only the window until headers arrive; it does
+// not limit body or stream reading once headers have been received.
+func defaultHTTPTransport(responseHeaderTimeout time.Duration) *http.Transport {
 	return &http.Transport{
 		MaxIdleConns:          1000,
 		MaxIdleConnsPerHost:   100,
 		IdleConnTimeout:       30 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: responseHeaderTimeout,
 		ForceAttemptHTTP2:     true,
 		DialContext:           defaultDialContext(),
 	}
@@ -158,20 +212,22 @@ func defaultDialContext() func(ctx context.Context, network, addr string) (net.C
 }
 
 func NewBaseExecutor() *BaseExecutor {
+	responseHeaderTimeout := time.Duration(getEnvInt("STREAM_RESPONSE_HEADER_TIMEOUT_MS", 30000)) * time.Millisecond
 	b := &BaseExecutor{
 		Client: &http.Client{
 			Timeout:   5 * time.Minute,
-			Transport: defaultHTTPTransport(),
+			Transport: defaultHTTPTransport(responseHeaderTimeout),
 		},
 		// Streaming uses a client with no global Timeout; stream lifecycle is
 		// governed by fetch/idle/readiness context timeouts instead.
 		streamBase: &http.Client{
-			Transport: defaultHTTPTransport(),
+			Transport: defaultHTTPTransport(responseHeaderTimeout),
 		},
-		Timeout: 5 * time.Minute,
-		FetchTimeout: time.Duration(getEnvInt("FETCH_TIMEOUT_MS", 600000)) * time.Millisecond,
-		StreamIdleTimeout: time.Duration(getEnvInt("STREAM_IDLE_TIMEOUT_MS", 600000)) * time.Millisecond,
+		Timeout:                5 * time.Minute,
+		FetchTimeout:           time.Duration(getEnvInt("FETCH_TIMEOUT_MS", 600000)) * time.Millisecond,
+		StreamIdleTimeout:      time.Duration(getEnvInt("STREAM_IDLE_TIMEOUT_MS", 600000)) * time.Millisecond,
 		StreamReadinessTimeout: time.Duration(getEnvInt("STREAM_READINESS_TIMEOUT_MS", 80000)) * time.Millisecond,
+		ResponseHeaderTimeout:  responseHeaderTimeout,
 	}
 	// Periodically drop idle connections so stale proxy/upstream sockets are
 	// not reused after the peer silently closed them (common EOF source).
@@ -445,7 +501,7 @@ func (b *BaseExecutor) proxyClient(proxyURL string) (*http.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid proxy URL: %w", err)
 	}
-	transport := defaultHTTPTransport()
+	transport := defaultHTTPTransport(b.ResponseHeaderTimeout)
 	transport.Proxy = http.ProxyURL(u)
 	// HTTP/2 over an HTTP CONNECT proxy is flaky across providers; keep it off
 	// for proxied traffic to avoid mid-stream EOFs.
@@ -469,7 +525,7 @@ func (b *BaseExecutor) streamClient(proxyURL string) (*http.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid proxy URL: %w", err)
 	}
-	transport := defaultHTTPTransport()
+	transport := defaultHTTPTransport(b.ResponseHeaderTimeout)
 	transport.Proxy = http.ProxyURL(u)
 	transport.ForceAttemptHTTP2 = false
 	c := &http.Client{Transport: transport}
@@ -747,6 +803,7 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 	fetchTimeout := b.FetchTimeout
 	idleTimeout := b.StreamIdleTimeout
 	readinessTimeout := b.StreamReadinessTimeout
+	responseHeaderTimeout := b.ResponseHeaderTimeout
 	stallTimeout := b.StreamIdleTimeout // default: same as idle
 	if cfg != nil {
 		if cfg.FetchTimeoutMs > 0 {
@@ -817,6 +874,9 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 				"error", err,
 			}, clientLogAttrs(ctx)...)...,
 		)
+		if isResponseHeaderTimeout(err) {
+			return nil, newStreamReadinessTimeoutError(responseHeaderTimeout, targetURL)
+		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			return nil, fmt.Errorf("stream fetch timeout (%v): %w", fetchTimeout, err)
 		}
@@ -924,13 +984,13 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 					}
 					return
 				}
-			if len(line) == 0 {
-				continue
-			}
-			if ((cfg != nil && cfg.DropNonstandardCodexSSE) || shouldDropNonstandardCodexSSE()) && isNonstandardCodexSSELine(line) {
-				continue
-			}
-			if !sawFirst {
+				if len(line) == 0 {
+					continue
+				}
+				if ((cfg != nil && cfg.DropNonstandardCodexSSE) || shouldDropNonstandardCodexSSE()) && isNonstandardCodexSSELine(line) {
+					continue
+				}
+				if !sawFirst {
 					sawFirst = true
 					if !readinessTimer.Stop() {
 						select {
@@ -958,24 +1018,24 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 					return
 				}
 
-		case <-stallBytes:
-			// Raw bytes arrived from upstream - reset stall timer.
-			// This fires independently of SSE line boundaries so reasoning
-			// models that send partial frames or keepalive pings do not
-			// false-positive as stalled.
-			// Skip before first chunk: the readiness timer governs that
-			// window. Arming the stall timer early with a custom
-			// StallTimeoutMs < StreamReadinessTimeoutMs would false-positive.
-			if !sawFirst {
-				continue
-			}
-			if !stallTimer.Stop() {
-				select {
-				case <-stallTimer.C:
-				default:
+			case <-stallBytes:
+				// Raw bytes arrived from upstream - reset stall timer.
+				// This fires independently of SSE line boundaries so reasoning
+				// models that send partial frames or keepalive pings do not
+				// false-positive as stalled.
+				// Skip before first chunk: the readiness timer governs that
+				// window. Arming the stall timer early with a custom
+				// StallTimeoutMs < StreamReadinessTimeoutMs would false-positive.
+				if !sawFirst {
+					continue
 				}
-			}
-			stallTimer.Reset(stallTimeout)
+				if !stallTimer.Stop() {
+					select {
+					case <-stallTimer.C:
+					default:
+					}
+				}
+				stallTimer.Reset(stallTimeout)
 
 			case <-readinessTimer.C:
 				chunks <- StreamChunk{Err: fmt.Errorf("stream readiness timeout after %v: %w", readinessTimeout, context.DeadlineExceeded)}
@@ -1032,73 +1092,73 @@ func WrapWithHoldback(ctx context.Context, chunks chan StreamChunk, holdbackMs i
 		holdbackTimer := time.NewTimer(time.Duration(holdbackMs) * time.Millisecond)
 		defer holdbackTimer.Stop()
 
-	// Phase 1: collect into buffer until timer fires or buffer is full.
-	for {
-		select {
-		case chunk, ok := <-chunks:
-			if !ok {
-				// Stream ended during holdback — signal nil then flush buffer.
-				// IMPORTANT: send to errCh FIRST so the caller unblocks and
-				// starts reading out. Sending to out before errCh would
-				// deadlock when buf exceeds out's channel buffer (64).
-				errCh <- nil
-				for _, c := range buf {
-					out <- c
+		// Phase 1: collect into buffer until timer fires or buffer is full.
+		for {
+			select {
+			case chunk, ok := <-chunks:
+				if !ok {
+					// Stream ended during holdback — signal nil then flush buffer.
+					// IMPORTANT: send to errCh FIRST so the caller unblocks and
+					// starts reading out. Sending to out before errCh would
+					// deadlock when buf exceeds out's channel buffer (64).
+					errCh <- nil
+					for _, c := range buf {
+						out <- c
+					}
+					return
+				}
+				if chunk.Err != nil {
+					// Error during holdback — signal caller to retry.
+					errCh <- chunk.Err
+					return
+				}
+				buf = append(buf, chunk)
+				bufBytes += len(chunk.Payload)
+				if bufBytes >= holdbackBytes {
+					// Buffer full — commit immediately.
+					goto commit
+				}
+
+			case <-holdbackTimer.C:
+				goto commit
+
+			case <-ctx.Done():
+				// Client disconnect during holdback — abort cleanly.
+				// The caller has already returned; closing out lets any
+				// late reader see end-of-stream.
+				select {
+				case errCh <- nil: // best-effort signal in case caller still listening
+				default:
 				}
 				return
 			}
-			if chunk.Err != nil {
-				// Error during holdback — signal caller to retry.
-				errCh <- chunk.Err
-				return
-			}
-			buf = append(buf, chunk)
-			bufBytes += len(chunk.Payload)
-			if bufBytes >= holdbackBytes {
-				// Buffer full — commit immediately.
-				goto commit
-			}
-
-		case <-holdbackTimer.C:
-			goto commit
-
-		case <-ctx.Done():
-			// Client disconnect during holdback — abort cleanly.
-			// The caller has already returned; closing out lets any
-			// late reader see end-of-stream.
-			select {
-			case errCh <- nil: // best-effort signal in case caller still listening
-			default:
-			}
-			return
 		}
-	}
 
-commit:
-	// Phase 2: flush buffer, then relay live chunks.
-	errCh <- nil // holdback committed successfully
-	for _, c := range buf {
-		select {
-		case out <- c:
-		case <-ctx.Done():
-			return
-		}
-	}
-	for {
-		select {
-		case chunk, ok := <-chunks:
-			if !ok {
-				return
-			}
+	commit:
+		// Phase 2: flush buffer, then relay live chunks.
+		errCh <- nil // holdback committed successfully
+		for _, c := range buf {
 			select {
-			case out <- chunk:
+			case out <- c:
 			case <-ctx.Done():
 				return
 			}
-		case <-ctx.Done():
-			return
 		}
-	}
+		for {
+			select {
+			case chunk, ok := <-chunks:
+				if !ok {
+					return
+				}
+				select {
+				case out <- chunk:
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
 	}()
 
 	return out, errCh
@@ -1280,4 +1340,4 @@ type gzipErrorReader struct {
 }
 
 func (g *gzipErrorReader) Read([]byte) (int, error) { return 0, g.err }
-func (g *gzipErrorReader) Close() error               { return g.underlying.Close() }
+func (g *gzipErrorReader) Close() error             { return g.underlying.Close() }

@@ -56,8 +56,8 @@ func TestCloudflareExecutor_SanitizesAndRoutesCorrectly(t *testing.T) {
 		}),
 		Stream: true,
 		StreamConfig: &StreamConfig{
-			FetchTimeoutMs:       5000,
-			StreamIdleTimeoutMs:  5000,
+			FetchTimeoutMs:           5000,
+			StreamIdleTimeoutMs:      5000,
 			StreamReadinessTimeoutMs: 5000,
 		},
 	}
@@ -167,10 +167,10 @@ func TestCloudflareExecutor_RoutesImagesAwayFromChatURL(t *testing.T) {
 
 func TestCloudflareExecutor_SanitizesReasoningEffort(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		wantKey  bool
-		wantVal  string
+		name    string
+		input   string
+		wantKey bool
+		wantVal string
 	}{
 		{"invalid minimal", "minimal", false, ""},
 		{"invalid auto", "auto", false, ""},
@@ -196,9 +196,9 @@ func TestCloudflareExecutor_SanitizesReasoningEffort(t *testing.T) {
 				Model:   "@cf/meta/llama-3.2-1b-instruct",
 				BaseURL: ts.URL + "/v1/chat/completions",
 				Body: mustJSON(map[string]any{
-					"model":             "@cf/meta/llama-3.2-1b-instruct",
-					"messages":          []any{map[string]any{"role": "user", "content": "hi"}},
-					"reasoning_effort":  tt.input,
+					"model":            "@cf/meta/llama-3.2-1b-instruct",
+					"messages":         []any{map[string]any{"role": "user", "content": "hi"}},
+					"reasoning_effort": tt.input,
 				}),
 			}
 

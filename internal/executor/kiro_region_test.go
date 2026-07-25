@@ -251,7 +251,7 @@ func TestKiroHeaders_AuthMethodConditionals(t *testing.T) {
 			name: "api_key sets tokentype and bearer from accessToken",
 			req: &Request{
 				ProviderSpecificData: map[string]string{"authMethod": "api_key"},
-				AccessToken:            "my-api-key",
+				AccessToken:          "my-api-key",
 			},
 			wantAuthz:      "Bearer my-api-key",
 			wantTokentype:  "API_KEY",
@@ -261,7 +261,7 @@ func TestKiroHeaders_AuthMethodConditionals(t *testing.T) {
 			name: "api_key falls back to APIKey field",
 			req: &Request{
 				ProviderSpecificData: map[string]string{"authMethod": "api_key"},
-				APIKey:                 "my-api-key-2",
+				APIKey:               "my-api-key-2",
 			},
 			wantAuthz:      "Bearer my-api-key-2",
 			wantTokentype:  "API_KEY",
@@ -271,7 +271,7 @@ func TestKiroHeaders_AuthMethodConditionals(t *testing.T) {
 			name: "external_idp sets TokenType and bearer",
 			req: &Request{
 				ProviderSpecificData: map[string]string{"authMethod": "external_idp"},
-				AccessToken:            "ent-token",
+				AccessToken:          "ent-token",
 			},
 			wantAuthz:      "Bearer ent-token",
 			wantTokenType:  "EXTERNAL_IDP",
@@ -281,7 +281,7 @@ func TestKiroHeaders_AuthMethodConditionals(t *testing.T) {
 			name: "builder-id only sets bearer and X-Amz-Target",
 			req: &Request{
 				ProviderSpecificData: map[string]string{"authMethod": "builder-id"},
-				AccessToken:            "builder-token",
+				AccessToken:          "builder-token",
 			},
 			wantAuthz:        "Bearer builder-token",
 			wantXAmzTarget:   "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
@@ -292,7 +292,7 @@ func TestKiroHeaders_AuthMethodConditionals(t *testing.T) {
 			name: "import neither tokentype nor TokenType",
 			req: &Request{
 				ProviderSpecificData: map[string]string{"authMethod": "import"},
-				AccessToken:            "import-token",
+				AccessToken:          "import-token",
 			},
 			wantAuthz:        "Bearer import-token",
 			wantXAmzTarget:   "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",

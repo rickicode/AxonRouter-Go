@@ -97,7 +97,7 @@ func TestUsageSummaryHandler(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	todayMs := now.Truncate(24 * time.Hour).Add(2 * time.Hour).UnixMilli()
+	todayMs := now.Truncate(24 * time.Hour).UnixMilli()
 	yesterdayMs := now.Truncate(24 * time.Hour).Add(-2 * time.Hour).UnixMilli()
 	monthStartMs := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).UnixMilli()
 
