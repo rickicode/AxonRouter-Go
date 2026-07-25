@@ -71,6 +71,49 @@ func TestConvertClaudeResponseToOpenAIResponses_Stream(t *testing.T) {
 	}
 }
 
+func TestConvertClaudeResponseToOpenAIResponses_WebSearchBlocks(t *testing.T) {
+	lines := [][]byte{
+		sseLine(`{"type":"message_start","message":{"id":"msg_123","usage":{"input_tokens":10,"output_tokens":0}}}`),
+		sseLine(`{"type":"content_block_start","index":0,"content_block":{"type":"text"}}`),
+		sseLine(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**Compare competitors**\n- "}}`),
+		sseLine(`{"type":"content_block_stop","index":0}`),
+		sseLine(`{"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srv_123","name":"web_search","input":{}}}`),
+		sseLine(`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"Qwen3\"}"}}`),
+		sseLine(`{"type":"content_block_stop","index":1}`),
+		sseLine(`{"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","tool_use_id":"srv_123","content":[{"type":"web_search_result","title":"Example","url":"https://example.com"}]}}`),
+		sseLine(`{"type":"content_block_stop","index":2}`),
+		sseLine(`{"type":"content_block_delta","index":1,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","cited_text":"Qwen 3.7 Max","url":"https://example.com","title":"Example"}}}`),
+		sseLine(`{"type":"content_block_start","index":3,"content_block":{"type":"text"}}`),
+		sseLine(`{"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"Qwen 3.7 Max leads."}}`),
+		sseLine(`{"type":"content_block_stop","index":3}`),
+		sseLine(`{"type":"message_delta","usage":{"output_tokens":12}}`),
+		sseLine(`{"type":"message_stop"}`),
+	}
+
+	var param any
+	var events []string
+	for _, line := range lines {
+		for _, ev := range ConvertClaudeResponseToOpenAIResponses(context.Background(), "claude-opus-4", nil, nil, line, &param) {
+			events = append(events, string(ev))
+		}
+	}
+
+	joined := strings.Join(events, "")
+
+	if strings.Contains(joined, `"type":"function_call"`) {
+		t.Errorf("web-search server tool use should not emit a function_call item")
+	}
+	if !strings.Contains(joined, `"text":"**Compare competitors**\n- Qwen 3.7 Max leads."`) {
+		t.Errorf("text before and after web-search block should aggregate into one message")
+	}
+	if !strings.Contains(joined, `"type":"web_search_result_location"`) {
+		t.Errorf("web-search citation annotation missing")
+	}
+	if !strings.Contains(joined, `"annotations":[{`) {
+		t.Errorf("citation annotation not attached to output text")
+	}
+}
+
 func TestConvertClaudeResponseToOpenAIResponsesNonStream(t *testing.T) {
 	var raw []byte
 	for _, line := range []string{
