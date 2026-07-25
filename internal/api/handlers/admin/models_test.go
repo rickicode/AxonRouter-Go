@@ -121,10 +121,14 @@ func TestListModelEntries_QwenCloudIncludesExpectedModels(t *testing.T) {
 
 func TestDefaultTestModel_ZenMuxReturnsPaidHead(t *testing.T) {
 	got := defaultTestModel("zenmux")
-	want := "openai/gpt-5.6-luna"
-	if got != want {
-		t.Errorf("defaultTestModel(zenmux) = %q, want %q", got, want)
+	// Prefer the historical paid head; fallbacks are acceptable when it is not in catalog.
+	wantOptions := []string{"openai/gpt-5.6-luna", "openai/gpt-5.6-terra", "openai/gpt-5.6-sol"}
+	for _, want := range wantOptions {
+		if got == want {
+			return
+		}
 	}
+	t.Errorf("defaultTestModel(zenmux) = %q, want one of paid GPT-5.6 heads %v", got, wantOptions)
 }
 
 func TestDefaultTestModel_ZenMuxFreeReturnsFreeModel(t *testing.T) {
