@@ -32,6 +32,13 @@ func convertCodexRequestToGemini(modelName string, body []byte, stream bool) []b
 		out, _ = sjson.SetBytes(out, "generationConfig.topP", topP.Float())
 	}
 
+	// Reasoning: Codex reasoning.effort -> Gemini thinkingConfig.
+	if reasoning := root.Get("reasoning"); reasoning.Exists() && reasoning.IsObject() {
+		if effort := reasoning.Get("effort"); effort.Exists() && effort.Type == gjson.String {
+			out = applyCodexReasoningEffort(out, effort.String())
+		}
+	}
+
 	// System instruction: prefer Codex "instructions", fallback to top-level "system".
 	if sysText := extractSystemText(root); sysText != "" {
 		out, _ = sjson.SetBytes(out, "systemInstruction.role", "user")
@@ -266,6 +273,25 @@ func argsStringToMap(raw string) map[string]interface{} {
 
 func partKey(index int, field string) string {
 	return fmt.Sprintf("parts.%d.%s", index, field)
+}
+
+func applyCodexReasoningEffort(out []byte, effort string) []byte {
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	if effort == "" {
+		return out
+	}
+	const path = "generationConfig.thinkingConfig"
+	switch effort {
+	case "none":
+		out, _ = sjson.SetBytes(out, path+".includeThoughts", false)
+	case "auto":
+		out, _ = sjson.SetBytes(out, path+".thinkingBudget", -1)
+		out, _ = sjson.SetBytes(out, path+".includeThoughts", true)
+	default:
+		out, _ = sjson.SetBytes(out, path+".thinkingLevel", effort)
+		out, _ = sjson.SetBytes(out, path+".includeThoughts", true)
+	}
+	return out
 }
 
 func unmarshalJSON(raw string) interface{} {
