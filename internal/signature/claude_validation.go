@@ -133,12 +133,32 @@ func NormalizeClaudeThinkingSignature(rawSignature string, opts ...ClaudeSignatu
 		}
 		return sig, nil
 	case 'E':
-		if err := validateClaudeSingleLayerSignature(sig, opt); err != nil {
-			return "", err
+		// First, try interpreting 'E' as a prefix: decode sig[1:] as base64.
+		if err := validateClaudeSingleLayerSignatureContent(sig[1:], 1, opt); err == nil {
+			return "R" + base64.StdEncoding.EncodeToString([]byte(sig)), nil
 		}
-		return base64.StdEncoding.EncodeToString([]byte(sig)), nil
+		// 'E' might be part of base64 encoding, not a prefix.
+		// Try decoding the whole string as raw base64 Claude protobuf.
+		decoded, err := base64.StdEncoding.DecodeString(sig)
+		if err != nil {
+			return "", fmt.Errorf("invalid signature: 'E' prefix decode failed and whole-string base64 decode failed: %w", err)
+		}
+		if len(decoded) == 0 || decoded[0] != 0x12 {
+			return "", fmt.Errorf("invalid signature: neither 'E'-prefixed nor valid Claude protobuf base64")
+		}
+		// Valid unprefixed Claude protobuf: wrap in E-form.
+		return "E" + sig, nil
 	default:
-		return "", fmt.Errorf("invalid signature: expected 'E' or 'R' prefix, got %q", string(sig[0]))
+		// No E/R prefix: try decoding as raw base64 Claude protobuf.
+		decoded, err := base64.StdEncoding.DecodeString(sig)
+		if err != nil {
+			return "", fmt.Errorf("invalid signature: expected 'E' or 'R' prefix or decodable base64, got %q", string(sig[0]))
+		}
+		if len(decoded) == 0 || decoded[0] != 0x12 {
+			return "", fmt.Errorf("invalid signature: expected 'E' or 'R' prefix, got %q", string(sig[0]))
+		}
+		// Valid unprefixed Claude protobuf: wrap in E-form.
+		return "E" + sig, nil
 	}
 }
 
