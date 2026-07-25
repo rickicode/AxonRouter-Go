@@ -10,19 +10,18 @@ func init() {
 	registry.Register(
 		types.FormatCodexResponses,
 		types.FormatOpenAI,
-		convertResponsesRequestToOpenAI,
+		convertOpenAIResponsesRequestToOpenAI,
 		types.ResponseTransform{},
 	)
 
 	// Response: OpenAI Chat Completions -> OpenAI Responses API.
-	resp := types.ResponseTransform{
-		Stream:    convertOpenAIStreamToResponses,
-		NonStream: convertOpenAINonStreamToResponses,
-	}
 	registry.Register(
 		types.FormatOpenAI,
 		types.FormatCodexResponses,
 		nil,
-		resp,
+		types.ResponseTransform{
+			Stream:    convertOpenAIChatToOpenAIResponsesStream,
+			NonStream: convertOpenAIChatToOpenAIResponsesNonStream,
+		},
 	)
 }
