@@ -50,9 +50,10 @@ import (
 	// Codex (Responses API): request transform in openai/codex_responses,
 	// response transform in codex/responses. The generic openai/openai_responses
 	// translator is intentionally omitted because it is not Codex-compatible.
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/codex/responses"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai/codex_responses"
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai/grok_cli"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai_responses/claude"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai_responses/gemini"
-	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai/grok_cli"
-	_ "github.com/rickicode/AxonRouter-Go/internal/translator/codex/responses"
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai_responses/openai"
 )
