@@ -55,9 +55,15 @@ func convertCodexRequestToGemini(modelName string, body []byte, stream bool) []b
 	// Tools
 	if tools := root.Get("tools"); tools.Exists() && tools.IsArray() {
 		var functionDeclarations []map[string]interface{}
+		hasGoogleSearch := false
 		tools.ForEach(func(_, tool gjson.Result) bool {
 			tType := tool.Get("type").String()
-			if tType == "function" {
+			switch tType {
+			case "web_search":
+				if modelSupportsWebSearch(modelName) {
+					hasGoogleSearch = true
+				}
+			case "function":
 				decl := map[string]interface{}{
 					"name":        tool.Get("name").String(),
 					"description": tool.Get("description").String(),
@@ -75,6 +81,9 @@ func convertCodexRequestToGemini(modelName string, body []byte, stream bool) []b
 		if len(functionDeclarations) > 0 {
 			b, _ := json.Marshal(functionDeclarations)
 			out, _ = sjson.SetRawBytes(out, "tools.0.functionDeclarations", b)
+		}
+		if hasGoogleSearch {
+			out, _ = sjson.SetRawBytes(out, "tools.-1", []byte(`{"googleSearch":{}}`))
 		}
 	}
 
@@ -126,9 +135,13 @@ func appendCodexInputItem(out []byte, item, allInput gjson.Result) []byte {
 						p++
 					}
 				case "input_audio":
-					if data := part.Get("data"); data.Exists() {
-						node, _ = sjson.SetBytes(node, partKey(p, "inlineData.mimeType"), "audio/wav")
-						node, _ = sjson.SetBytes(node, partKey(p, "inlineData.data"), data.String())
+					if dataVal := part.Get("data"); dataVal.Exists() {
+						mime, data := parseInlineData(dataVal.String())
+						if mime == "" {
+							mime = audioMimeType(part.Get("format").String())
+						}
+						node, _ = sjson.SetBytes(node, partKey(p, "inlineData.mimeType"), mime)
+						node, _ = sjson.SetBytes(node, partKey(p, "inlineData.data"), data)
 						p++
 					}
 				}
@@ -202,6 +215,63 @@ func textFromStringOrTextParts(v gjson.Result) string {
 		return strings.Join(parts, "\n")
 	}
 	return ""
+}
+
+// parseInlineData parses a data URL (data:[<mime>][;base64],<data>) and returns
+// the MIME type and data payload. Non-data URLs are returned with an empty MIME.
+func parseInlineData(s string) (string, string) {
+	s = strings.TrimSpace(s)
+	const prefix = "data:"
+	if !strings.HasPrefix(s, prefix) {
+		return "", s
+	}
+	rest := s[len(prefix):]
+	idx := strings.Index(rest, ",")
+	if idx < 0 {
+		return "", s
+	}
+	meta := rest[:idx]
+	data := rest[idx+1:]
+
+	mime := ""
+	if p := strings.Index(meta, ";"); p >= 0 {
+		mime = meta[:p]
+	} else if meta != "" {
+		mime = meta
+	}
+	return mime, data
+}
+
+func audioMimeType(format string) string {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "mp3":
+		return "audio/mpeg"
+	case "wav":
+		return "audio/wav"
+	case "ogg":
+		return "audio/ogg"
+	case "flac":
+		return "audio/flac"
+	case "aac":
+		return "audio/aac"
+	case "webm":
+		return "audio/webm"
+	default:
+		return "audio/wav"
+	}
+}
+
+func modelSupportsWebSearch(modelName string) bool {
+	m := strings.ToLower(strings.TrimSpace(modelName))
+	switch {
+	case strings.Contains(m, "gemini-1.5"):
+		return true
+	case strings.Contains(m, "gemini-2"):
+		return true
+	case strings.Contains(m, "gemini-3"):
+		return true
+	}
+	return false
 }
 
 func parseInlineImage(s string) (string, string) {
