@@ -1,7 +1,6 @@
 package claude
 
 import (
-	claudeopenai "github.com/rickicode/AxonRouter-Go/internal/translator/claude/openai"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/types"
 )
@@ -16,7 +15,7 @@ func init() {
 		nil, // request transform lives in translator/claude/kiro
 		types.ResponseTransform{
 			Stream:    ConvertKiroResponseToClaudeStream,
-			NonStream: claudeopenai.ConvertOpenAIResponseToClaudeNonStream,
+			NonStream: ConvertKiroResponseToClaudeNonStream,
 		},
 	)
 }

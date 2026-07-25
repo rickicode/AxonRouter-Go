@@ -51,9 +51,9 @@ func getState(param *any) *streamState {
 	return (*param).(*streamState)
 }
 
-// convertAntigravityResponseToClaudeStream translates one upstream Antigravity SSE
+// ConvertAntigravityResponseToClaudeStream translates one upstream Antigravity SSE
 // chunk into zero or more Claude SSE events.
-func convertAntigravityResponseToClaudeStream(_ context.Context, _ string, originalRequestRawJSON, _ []byte, rawChunk []byte, param *any) [][]byte {
+func ConvertAntigravityResponseToClaudeStream(_ context.Context, _ string, originalRequestRawJSON, _ []byte, rawChunk []byte, param *any) [][]byte {
 	state := getState(param)
 	if state.ToolNameMap == nil {
 		state.ToolNameMap = buildToolNameMap(originalRequestRawJSON)
@@ -195,9 +195,9 @@ func convertAntigravityResponseToClaudeStream(_ context.Context, _ string, origi
 	return [][]byte{output}
 }
 
-// convertAntigravityResponseToClaudeNonStream converts a complete Antigravity
+// ConvertAntigravityResponseToClaudeNonStream converts a complete Antigravity
 // generateContent response into a single Claude Messages response object.
-func convertAntigravityResponseToClaudeNonStream(_ context.Context, _ string, originalRequestRawJSON, _ []byte, rawJSON []byte, _ *any) []byte {
+func ConvertAntigravityResponseToClaudeNonStream(_ context.Context, _ string, originalRequestRawJSON, _ []byte, rawJSON []byte, _ *any) []byte {
 	root := gjson.ParseBytes(rawJSON)
 	modelName := root.Get("response.modelVersion").String()
 

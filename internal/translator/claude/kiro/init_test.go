@@ -8,6 +8,12 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/translator/types"
 )
 
+func TestRegistryResponsePathWired(t *testing.T) {
+	if !registry.Default().HasResponseTransformer(types.FormatClaude, types.FormatKiro) {
+		t.Fatal("expected (claude, kiro) response transformer to be registered")
+	}
+}
+
 func TestClaudeToKiroIngressWired(t *testing.T) {
 	body := []byte(`{
 		"model": "claude-sonnet-4-6",
