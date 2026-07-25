@@ -141,6 +141,67 @@ func TestConvertCodexRequestToGemini_MaxTokensAndTemperature(t *testing.T) {
 	}
 }
 
+func TestConvertCodexRequestToGemini_ToolChoiceNone(t *testing.T) {
+	body := []byte(`{
+		"input": [{"type": "message", "role": "user", "content": "hi"}],
+		"tools": [{"type": "function", "name": "get_weather", "description": "weather", "parameters": {"type":"object"}}],
+		"tool_choice": "none"
+	}`)
+	out := convertCodexRequestToGemini("gemini-test", body, false)
+	if got := gjson.GetBytes(out, "toolConfig.functionCallingConfig.mode").String(); got != "NONE" {
+		t.Fatalf("expected toolConfig mode NONE, got %s", got)
+	}
+	if gjson.GetBytes(out, "toolConfig.functionCallingConfig.allowedFunctionNames").Exists() {
+		t.Fatalf("expected no allowedFunctionNames for tool_choice none")
+	}
+}
+
+func TestConvertCodexRequestToGemini_ToolChoiceAuto(t *testing.T) {
+	body := []byte(`{
+		"input": [{"type": "message", "role": "user", "content": "hi"}],
+		"tools": [{"type": "function", "name": "get_weather", "description": "weather", "parameters": {"type":"object"}}],
+		"tool_choice": "auto"
+	}`)
+	out := convertCodexRequestToGemini("gemini-test", body, false)
+	if got := gjson.GetBytes(out, "toolConfig.functionCallingConfig.mode").String(); got != "AUTO" {
+		t.Fatalf("expected toolConfig mode AUTO, got %s", got)
+	}
+	if gjson.GetBytes(out, "toolConfig.functionCallingConfig.allowedFunctionNames").Exists() {
+		t.Fatalf("expected no allowedFunctionNames for tool_choice auto")
+	}
+}
+
+func TestConvertCodexRequestToGemini_ToolChoiceRequired(t *testing.T) {
+	body := []byte(`{
+		"input": [{"type": "message", "role": "user", "content": "hi"}],
+		"tools": [{"type": "function", "name": "get_weather", "description": "weather", "parameters": {"type":"object"}}],
+		"tool_choice": "required"
+	}`)
+	out := convertCodexRequestToGemini("gemini-test", body, false)
+	if got := gjson.GetBytes(out, "toolConfig.functionCallingConfig.mode").String(); got != "ANY" {
+		t.Fatalf("expected toolConfig mode ANY for required, got %s", got)
+	}
+	if gjson.GetBytes(out, "toolConfig.functionCallingConfig.allowedFunctionNames").Exists() {
+		t.Fatalf("expected no allowedFunctionNames for tool_choice required")
+	}
+}
+
+func TestConvertCodexRequestToGemini_ToolChoiceFunctionObject(t *testing.T) {
+	body := []byte(`{
+		"input": [{"type": "message", "role": "user", "content": "hi"}],
+		"tools": [{"type": "function", "name": "get_weather", "description": "weather", "parameters": {"type":"object"}}],
+		"tool_choice": {"type":"function","function":{"name":"get_weather"}}
+	}`)
+	out := convertCodexRequestToGemini("gemini-test", body, false)
+	if got := gjson.GetBytes(out, "toolConfig.functionCallingConfig.mode").String(); got != "ANY" {
+		t.Fatalf("expected toolConfig mode ANY for object tool_choice, got %s", got)
+	}
+	allowed := gjson.GetBytes(out, "toolConfig.functionCallingConfig.allowedFunctionNames").Array()
+	if len(allowed) != 1 || allowed[0].String() != "get_weather" {
+		t.Fatalf("expected allowedFunctionNames [get_weather], got %s", gjson.GetBytes(out, "toolConfig.functionCallingConfig.allowedFunctionNames").Raw)
+	}
+}
+
 func TestParseInlineImage(t *testing.T) {
 	mime, data := parseInlineImage("data:image/webp;base64,ZZZ")
 	if mime != "image/webp" || data != "ZZZ" {
