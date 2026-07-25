@@ -8,6 +8,7 @@ import (
 	// Existing translators
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/antigravity/openai"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/claude/antigravity"
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/claude/kiro"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/claude/openai"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/gemini/openai"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/kiro/claude"
