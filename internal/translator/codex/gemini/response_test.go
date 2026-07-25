@@ -97,6 +97,62 @@ func TestConvertGeminiResponseToCodexNonStream_UsageMetadata(t *testing.T) {
 	}
 }
 
+func TestConvertGeminiResponseToCodexNonStream_ReasoningParts(t *testing.T) {
+	resp := []byte(`{
+		"id": "resp_1",
+		"model": "gemini-2.0-flash",
+		"candidates": [{"content": {"parts": [
+			{"text": "thinking...", "thought": true},
+			{"text": "Hello"}
+		]}}],
+		"usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 4, "totalTokenCount": 9}
+	}`)
+	out := convertGeminiResponseToCodexNonStream(context.Background(), "", nil, nil, resp, nil)
+	root := gjson.ParseBytes(out)
+	if root.Get("output.0.type").String() != "reasoning" {
+		t.Fatalf("expected reasoning output item, got %s", root.Get("output.0.type").String())
+	}
+	if got := root.Get("output.0.summary.0.text").String(); got != "thinking..." {
+		t.Fatalf("unexpected reasoning summary text: %s", got)
+	}
+	if root.Get("output.1.type").String() != "message" {
+		t.Fatalf("expected message output item, got %s", root.Get("output.1.type").String())
+	}
+	if got := root.Get("output.1.content.0.text").String(); got != "Hello" {
+		t.Fatalf("unexpected message text: %s", got)
+	}
+	if root.Get("output.0.id").String() == "" {
+		t.Fatalf("expected reasoning item id")
+	}
+}
+
+func TestConvertGeminiResponseToCodexStream_ReasoningParts(t *testing.T) {
+	resp := []byte(`{"candidates": [{"content": {"parts": [{"text": "thinking...", "thought": true}]}, "finishReason": "STOP"}]}`)
+	var state any
+	chunks := convertGeminiResponseToCodexStream(context.Background(), "", nil, nil, resp, &state)
+
+	var hasAdded, hasDelta, hasTextDone, hasPartDone, hasItemDone bool
+	for _, c := range chunks {
+		data := gjson.ParseBytes(c)
+		switch data.Get("type").String() {
+		case "response.reasoning_summary_part.added":
+			hasAdded = true
+		case "response.reasoning_summary_text.delta":
+			hasDelta = true
+		case "response.reasoning_summary_text.done":
+			hasTextDone = true
+		case "response.reasoning_summary_part.done":
+			hasPartDone = true
+		case "response.output_item.done":
+			hasItemDone = true
+		}
+	}
+	if !hasAdded || !hasDelta || !hasTextDone || !hasPartDone || !hasItemDone {
+		t.Fatalf("missing expected reasoning events: added=%v delta=%v textDone=%v partDone=%v itemDone=%v",
+			hasAdded, hasDelta, hasTextDone, hasPartDone, hasItemDone)
+	}
+}
+
 func TestConvertGeminiResponseToCodexStream_TextDelta(t *testing.T) {
 	resp := []byte(`{"model":"gemini-2.0-flash","createTimeMillis":1700000000000,"candidates":[{"content":{"parts":[{"text":"Hi"}]}}]}`)
 	var state any

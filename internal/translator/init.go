@@ -4,15 +4,22 @@ package translator
 // Each translator registers itself via init() in its own package.
 // The import uses _ to trigger init() side effects.
 //
+// Import order matters: registry.Register is last-write-wins, so later imports
+// override earlier ones for the same (from, to) pair. Keep the more specific
+// Responses API translators (openai_responses/...) after the legacy codex/* ones
+// so that the Responses-specific implementations win for
+// (openai-responses, claude) and (openai-responses, gemini).
+//
 // Documented response mappings:
 //   - Antigravity (Gemini Cloud Code Assist envelopes) -> Claude Messages:
 //     internal/translator/antigravity/claude
 //   - Kiro (OpenAI-compatible chat.completions) -> Claude Messages:
 //     internal/translator/kiro/claude (reuses the OpenAI -> Claude converter)
 //
-// Imports are ordered so that, when two packages register the same
-// (clientFormat, providerFormat) pair, the later import wins. The current
-// ordering has been reviewed and matches the intended translator for each pair.
+// Intentionally omitted: openai/openai_responses. The generic translator would
+// forward fields rejected by the Codex upstream (e.g. max_tokens, temperature);
+// the Codex path uses openai/codex_responses for requests and codex/responses
+// for responses instead.
 
 import (
 	// Existing translators
@@ -29,7 +36,10 @@ import (
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai/kiro"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai/openai"
 
-	// NEW — 7 additional translator pairs
+	// NEW — 7 additional translator pairs. These are ordered so that the
+	// openai_responses/claude and openai_responses/gemini registrations below
+	// take precedence over the legacy codex/claude and codex/gemini packages for
+	// the Responses API surface.
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/antigravity/claude"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/antigravity/gemini"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/claude/gemini"

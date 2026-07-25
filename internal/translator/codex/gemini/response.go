@@ -13,14 +13,16 @@ import (
 
 // codexStreamState holds state for Gemini→Codex Responses streaming.
 type codexStreamState struct {
-	MessageID   string
-	Model       string
-	CreatedAt   int64
-	OutputIndex int
-	ToolIndex   int
-	ToolArgsAcc map[int]*strings.Builder
-	ToolNames   map[int]string
-	ContentAcc  strings.Builder
+	MessageID     string
+	Model         string
+	CreatedAt     int64
+	OutputIndex   int
+	ToolIndex     int
+	ToolArgsAcc   map[int]*strings.Builder
+	ToolNames     map[int]string
+	ContentAcc    strings.Builder
+	ReasoningOpen bool
+	ReasoningAcc  strings.Builder
 }
 
 func getCodexState(param *any) *codexStreamState {
@@ -31,6 +33,69 @@ func getCodexState(param *any) *codexStreamState {
 		}
 	}
 	return (*param).(*codexStreamState)
+}
+
+func (s *codexStreamState) reasoningItemID() string {
+	if s.MessageID != "" {
+		return "rs_" + s.MessageID
+	}
+	return "rs_gemini"
+}
+
+func (s *codexStreamState) finalizeReasoning() [][]byte {
+	if !s.ReasoningOpen {
+		return nil
+	}
+	text := s.ReasoningAcc.String()
+	s.ReasoningAcc.Reset()
+	s.ReasoningOpen = false
+
+	itemID := s.reasoningItemID()
+	outputIndex := s.OutputIndex
+	s.OutputIndex++
+
+	item := map[string]interface{}{
+		"type": "reasoning",
+		"id":   itemID,
+		"summary": []map[string]interface{}{
+			{"type": "summary_text", "text": text},
+		},
+	}
+
+	var results [][]byte
+
+	textDone := map[string]interface{}{
+		"type":          "response.reasoning_summary_text.done",
+		"item_id":       itemID,
+		"output_index":  outputIndex,
+		"summary_index": 0,
+		"text":          text,
+	}
+	b, _ := json.Marshal(textDone)
+	results = append(results, b)
+
+	partDone := map[string]interface{}{
+		"type":          "response.reasoning_summary_part.done",
+		"item_id":       itemID,
+		"output_index":  outputIndex,
+		"summary_index": 0,
+		"part": map[string]interface{}{
+			"type": "summary_text",
+			"text": text,
+		},
+	}
+	b, _ = json.Marshal(partDone)
+	results = append(results, b)
+
+	outputItemDone := map[string]interface{}{
+		"type":         "response.output_item.done",
+		"output_index": outputIndex,
+		"item":         item,
+	}
+	b, _ = json.Marshal(outputItemDone)
+	results = append(results, b)
+
+	return results
 }
 
 // convertGeminiResponseToCodexStream converts Gemini streaming to Codex Responses format.
@@ -87,6 +152,39 @@ func convertGeminiResponseToCodexStream(_ context.Context, _ string, _, _ []byte
 			if parts := candidate.Get("content.parts"); parts.Exists() && parts.IsArray() {
 				parts.ForEach(func(_, part gjson.Result) bool {
 					if text := part.Get("text"); text.Exists() {
+						if part.Get("thought").Bool() {
+							if !state.ReasoningOpen {
+								state.ReasoningOpen = true
+								itemID := state.reasoningItemID()
+								added := map[string]interface{}{
+									"type":          "response.reasoning_summary_part.added",
+									"item_id":       itemID,
+									"output_index":  state.OutputIndex,
+									"summary_index": 0,
+									"part": map[string]interface{}{
+										"type": "summary_text",
+										"text": "",
+									},
+								}
+								b, _ := json.Marshal(added)
+								results = append(results, b)
+							}
+							state.ReasoningAcc.WriteString(text.String())
+							delta := map[string]interface{}{
+								"type":          "response.reasoning_summary_text.delta",
+								"item_id":       state.reasoningItemID(),
+								"output_index":  state.OutputIndex,
+								"summary_index": 0,
+								"delta":         text.String(),
+							}
+							b, _ := json.Marshal(delta)
+							results = append(results, b)
+							return true
+						}
+
+						if reasoningEvents := state.finalizeReasoning(); len(reasoningEvents) > 0 {
+							results = append(results, reasoningEvents...)
+						}
 						state.ContentAcc.WriteString(text.String())
 						out := map[string]interface{}{
 							"type":  "response.output_text.delta",
@@ -98,6 +196,9 @@ func convertGeminiResponseToCodexStream(_ context.Context, _ string, _, _ []byte
 					}
 
 					if fc := part.Get("functionCall"); fc.Exists() {
+						if reasoningEvents := state.finalizeReasoning(); len(reasoningEvents) > 0 {
+							results = append(results, reasoningEvents...)
+						}
 						name := fc.Get("name").String()
 						callID := fc.Get("id").String()
 						if callID == "" {
@@ -134,6 +235,9 @@ func convertGeminiResponseToCodexStream(_ context.Context, _ string, _, _ []byte
 
 	// Check if done
 	if root.Get("candidates.0.finishReason").String() != "" {
+		if reasoningEvents := state.finalizeReasoning(); len(reasoningEvents) > 0 {
+			results = append(results, reasoningEvents...)
+		}
 		completed := map[string]interface{}{
 			"type": "response.completed",
 		}
@@ -156,29 +260,60 @@ func convertGeminiResponseToCodexNonStream(_ context.Context, _ string, _, _ []b
 	out["object"] = "response"
 	out["model"] = root.Get("model").String()
 
+	responseID := root.Get("id").String()
+	if responseID == "" {
+		responseID = "gemini"
+	}
+
 	var outputItems []map[string]interface{}
 	var textParts []string
+	var reasoningParts []string
 	toolIdx := 0
+
+	flushText := func() {
+		if len(textParts) == 0 {
+			return
+		}
+		outputItems = append(outputItems, map[string]interface{}{
+			"type": "message",
+			"content": []map[string]interface{}{{
+				"type": "output_text",
+				"text": strings.Join(textParts, ""),
+			}},
+		})
+		textParts = nil
+	}
+	flushReasoning := func() {
+		if len(reasoningParts) == 0 {
+			return
+		}
+		outputItems = append(outputItems, map[string]interface{}{
+			"type": "reasoning",
+			"id":   fmt.Sprintf("rs_%s_%d", responseID, len(outputItems)),
+			"summary": []map[string]interface{}{{
+				"type": "summary_text",
+				"text": strings.Join(reasoningParts, ""),
+			}},
+		})
+		reasoningParts = nil
+	}
 
 	if candidates := root.Get("candidates"); candidates.Exists() && candidates.IsArray() {
 		candidates.ForEach(func(_, candidate gjson.Result) bool {
 			if parts := candidate.Get("content.parts"); parts.Exists() && parts.IsArray() {
 				parts.ForEach(func(_, part gjson.Result) bool {
 					if text := part.Get("text"); text.Exists() {
-						textParts = append(textParts, text.String())
+						if part.Get("thought").Bool() {
+							flushText()
+							reasoningParts = append(reasoningParts, text.String())
+						} else {
+							flushReasoning()
+							textParts = append(textParts, text.String())
+						}
 					}
 					if fc := part.Get("functionCall"); fc.Exists() {
-						// Flush any buffered text as a message item before this tool call.
-						if len(textParts) > 0 {
-							outputItems = append(outputItems, map[string]interface{}{
-								"type": "message",
-								"content": []map[string]interface{}{{
-									"type": "output_text",
-									"text": strings.Join(textParts, ""),
-								}},
-							})
-							textParts = nil
-						}
+						flushText()
+						flushReasoning()
 						name := fc.Get("name").String()
 						callID := fc.Get("id").String()
 						if callID == "" {
@@ -205,15 +340,8 @@ func convertGeminiResponseToCodexNonStream(_ context.Context, _ string, _, _ []b
 		})
 	}
 
-	if len(textParts) > 0 {
-		outputItems = append(outputItems, map[string]interface{}{
-			"type": "message",
-			"content": []map[string]interface{}{{
-				"type": "output_text",
-				"text": strings.Join(textParts, ""),
-			}},
-		})
-	}
+	flushText()
+	flushReasoning()
 
 	out["output"] = outputItems
 

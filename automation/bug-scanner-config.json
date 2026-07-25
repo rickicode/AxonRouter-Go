@@ -8,6 +8,16 @@
   ],
   "sides": [
     {
+      "name": "spec-static",
+      "command": "{ go vet ./...; if command -v openlore >/dev/null 2>&1; then openlore check-spec-drift --failOn=warning; fi; if command -v staticcheck >/dev/null 2>&1; then staticcheck ./...; fi; }",
+      "parity_focus": "go vet, openlore spec drift, and staticcheck"
+    },
+    {
+      "name": "frontend",
+      "command": "cd web && ([ -d node_modules ] || npm install) && timeout 10m npm run build",
+      "parity_focus": "Svelte dashboard build only (CLIProxyAPI has no frontend)"
+    },
+    {
       "name": "routing",
       "command": "go test -timeout 10m ./internal/api/... ./internal/connstate/... ./internal/proxypool/...",
       "parity_focus": "routing, connection selection, proxy pool, and API handler behavior vs CLIProxyAPI internal/api and OmniRoute routing/policy modules"
@@ -31,16 +41,6 @@
       "name": "data",
       "command": "go test -timeout 10m ./internal/db/... ./internal/cache/... ./internal/backup/... ./internal/background/... ./internal/logging/... ./internal/usage/...",
       "parity_focus": "data layer, cache, background jobs, logging, and usage tracking vs CLIProxyAPI internal/store/cache/logging and OmniRoute usage tracking"
-    },
-    {
-      "name": "frontend",
-      "command": "cd web && ([ -d node_modules ] || npm install) && timeout 10m npm run build",
-      "parity_focus": "Svelte dashboard build only (CLIProxyAPI has no frontend)"
-    },
-    {
-      "name": "spec-static",
-      "command": "{ go vet ./...; if command -v openlore >/dev/null 2>&1; then openlore check-spec-drift --failOn=warning; fi; if command -v staticcheck >/dev/null 2>&1; then staticcheck ./...; fi; }",
-      "parity_focus": "go vet, openlore spec drift, and staticcheck"
     }
   ],
   "references": [
@@ -60,6 +60,15 @@
       "raw_url_template": "https://raw.githubusercontent.com/diegosouzapw/OmniRoute/refs/heads/main/{path}",
       "source_url_template": "https://github.com/diegosouzapw/OmniRoute/blob/main/{path}#L{start}-L{end}",
       "note": "Use only for proven, production-tested patterns. Do not copy its full 231-provider catalog or dashboard-only features."
+    },
+    {
+      "name": "9router",
+      "url": "https://github.com/decolua/9router",
+      "local_path": "/workspaces/9router",
+      "branch": "master",
+      "raw_url_template": "https://raw.githubusercontent.com/decolua/9router/refs/heads/master/{path}",
+      "source_url_template": "https://github.com/decolua/9router/blob/master/{path}#L{start}-L{end}",
+      "note": "Use as a lightweight reference for custom provider behavior, CLI patterns, and modular routing ideas. Compare only current side."
     }
   ]
 }
