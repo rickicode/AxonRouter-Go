@@ -9,31 +9,38 @@
   "sides": [
     {
       "name": "routing",
-      "command": "go test -timeout 10m ./internal/api/... ./internal/connstate/... ./internal/proxypool/..."
+      "command": "go test -timeout 10m ./internal/api/... ./internal/connstate/... ./internal/proxypool/...",
+      "parity_focus": "routing, connection selection, proxy pool, and API handler behavior vs CLIProxyAPI internal/api and OmniRoute routing/policy modules"
     },
     {
       "name": "executor",
-      "command": "go test -timeout 10m ./internal/executor/... ./internal/translator/... ./internal/modalities/... ./internal/thinking/..."
+      "command": "go test -timeout 10m ./internal/executor/... ./internal/translator/... ./internal/modalities/... ./internal/thinking/...",
+      "parity_focus": "executor and translator behavior, especially Codex/Claude Code request/response handling vs CLIProxyAPI internal/executor and internal/translator"
     },
     {
       "name": "provider",
-      "command": "go test -timeout 10m ./internal/provider/... ./internal/providercfg/... ./internal/quota/... ./internal/network/..."
+      "command": "go test -timeout 10m ./internal/provider/... ./internal/providercfg/... ./internal/quota/... ./internal/network/...",
+      "parity_focus": "provider config, quota, and network handling vs CLIProxyAPI provider/quota and OmniRoute quota cache / policy engine"
     },
     {
       "name": "auth",
-      "command": "go test -timeout 10m ./internal/auth/... ./internal/signature/..."
+      "command": "go test -timeout 10m ./internal/auth/... ./internal/signature/...",
+      "parity_focus": "auth and signature/token flows vs CLIProxyAPI internal/auth and internal/signature"
     },
     {
       "name": "data",
-      "command": "go test -timeout 10m ./internal/db/... ./internal/cache/... ./internal/backup/... ./internal/background/... ./internal/logging/... ./internal/usage/..."
+      "command": "go test -timeout 10m ./internal/db/... ./internal/cache/... ./internal/backup/... ./internal/background/... ./internal/logging/... ./internal/usage/...",
+      "parity_focus": "data layer, cache, background jobs, logging, and usage tracking vs CLIProxyAPI internal/store/cache/logging and OmniRoute usage tracking"
     },
     {
       "name": "frontend",
-      "command": "cd web && ([ -d node_modules ] || npm install) && timeout 10m npm run build"
+      "command": "cd web && ([ -d node_modules ] || npm install) && timeout 10m npm run build",
+      "parity_focus": "Svelte dashboard build only (CLIProxyAPI has no frontend)"
     },
     {
       "name": "spec-static",
-      "command": "{ go vet ./...; if command -v openlore >/dev/null 2>&1; then openlore check-spec-drift --failOn=warning; fi; if command -v staticcheck >/dev/null 2>&1; then staticcheck ./...; fi; }"
+      "command": "{ go vet ./...; if command -v openlore >/dev/null 2>&1; then openlore check-spec-drift --failOn=warning; fi; if command -v staticcheck >/dev/null 2>&1; then staticcheck ./...; fi; }",
+      "parity_focus": "go vet, openlore spec drift, and staticcheck"
     }
   ],
   "references": [
