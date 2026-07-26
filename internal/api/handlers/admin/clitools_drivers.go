@@ -42,6 +42,7 @@ var toolDrivers = map[string]cliToolDriver{
 	"jcode":          &jcodeDriver{},
 	"copilot":        &copilotDriver{},
 	"cowork":         &coworkDriver{},
+	"grok-build":     &grokBuildDriver{},
 }
 
 // ---------------------------------------------------------------------------
@@ -2008,4 +2009,133 @@ func (d coworkDriver) reset(ctx context.Context) error {
 	}
 	delete(cfg, "deploymentMode")
 	return writeJSONPretty(path, cfg)
+}
+
+// ---------------------------------------------------------------------------
+// Grok Build
+// xAI Grok Build uses ~/.grok/config.toml for custom model entries.
+// Docs: https://docs.x.ai/build/overview
+// ---------------------------------------------------------------------------
+
+type grokBuildDriver struct{}
+
+func (d grokBuildDriver) configPath() string {
+	return filepath.Join(userHomeDir(), ".grok", "config.toml")
+}
+
+func (d grokBuildDriver) detect(ctx context.Context) (bool, bool, map[string]any, error) {
+	path := d.configPath()
+	if !lookPath("grok") && !fileExists(path) {
+		return false, false, nil, nil
+	}
+
+	cfg := map[string]any{}
+	if b, err := os.ReadFile(path); err == nil {
+		_ = toml.Unmarshal(b, &cfg)
+	}
+
+	model := ""
+	base := ""
+	if models := getMap(cfg, "model"); models != nil {
+		if entry, ok := models["9router"].(map[string]any); ok {
+			model, _ = entry["model"].(string)
+			base, _ = entry["base_url"].(string)
+		}
+	}
+
+	hasUs := model != "" && isLocalOr9Router(base)
+	state := map[string]any{
+		"config":     cfg,
+		"configPath": path,
+		"model":      model,
+		"baseUrl":    base,
+	}
+	return true, hasUs, state, nil
+}
+
+func (d grokBuildDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey string) (CLIToolConfig, error) {
+	path := d.configPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return CLIToolConfig{}, err
+	}
+
+	model := firstNonEmpty(modelAliasesFromSelection(sel, findTool("grok-build"))["grok-build"], sel.Model)
+	if model == "" {
+		model = "grok-cli/grok-build"
+	}
+	base := normalizeBaseV1(sel.BaseURL)
+	key := firstNonEmpty(apiKey, "__YOUR_AXONROUTER_API_KEY__")
+	const envKey = "AXONROUTER_API_KEY"
+
+	cfg := map[string]any{}
+	if b, err := os.ReadFile(path); err == nil {
+		_ = toml.Unmarshal(b, &cfg)
+	}
+
+	models := ensureMap(cfg, "model")
+	models["9router"] = map[string]any{
+		"model":    model,
+		"base_url": base,
+		"name":     "9Router (AxonRouter)",
+		"env_key":  envKey,
+	}
+
+	defaults := ensureMap(cfg, "models")
+	defaults["default"] = "9router"
+
+	content, err := toml.Marshal(cfg)
+	if err != nil {
+		return CLIToolConfig{}, err
+	}
+
+	backup, _ := backupExistingFile(path)
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		restoreBackup(path, backup)
+		return CLIToolConfig{}, err
+	}
+
+	envBlock := fmt.Sprintf("export %s=%q\n", envKey, key)
+	return CLIToolConfig{
+		ConfigPath:    path,
+		BackupPath:    backup,
+		ConfigContent: string(content),
+		EnvBlock:      envBlock,
+		RunCommand:    "grok -m 9router",
+	}, nil
+}
+
+func (d grokBuildDriver) reset(ctx context.Context) error {
+	path := d.configPath()
+	cfg := map[string]any{}
+	if b, err := os.ReadFile(path); err == nil {
+		_ = toml.Unmarshal(b, &cfg)
+	} else if os.IsNotExist(err) {
+		return nil
+	} else {
+		return err
+	}
+
+	if models := getMap(cfg, "model"); models != nil {
+		delete(models, "9router")
+		if len(models) == 0 {
+			delete(cfg, "model")
+		}
+	}
+	if defaults := getMap(cfg, "models"); defaults != nil {
+		if def, _ := defaults["default"].(string); def == "9router" {
+			delete(defaults, "default")
+		}
+		if len(defaults) == 0 {
+			delete(cfg, "models")
+		}
+	}
+
+	content, err := toml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	if len(cfg) == 0 {
+		return os.WriteFile(path, []byte(""), 0o644)
+	}
+	return os.WriteFile(path, content, 0o644)
 }

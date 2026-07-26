@@ -1,4 +1,0 @@
-# Placeholder so that `//go:embed all:build` resolves on a fresh checkout.
-# The real frontend build artifacts are generated into this directory by
-# `cd web && npm run build` and are gitignored; this file is intentionally
-# tracked to keep the embedded filesystem non-empty for `go build ./...`.
