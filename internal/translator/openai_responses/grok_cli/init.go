@@ -36,20 +36,33 @@ func convertOpenAIResponsesRequestToGrokCLI(_ string, body []byte, _ bool) []byt
 	return body
 }
 
+// streamState holds the per-stream state for both the Grok CLI -> OpenAI
+// Chat Completions stage and the Chat Completions -> OpenAI Responses API stage.
+type streamState struct {
+	inner any
+	oai   any
+}
+
+func getStreamState(param *any) *streamState {
+	if *param == nil {
+		*param = &streamState{}
+	}
+	return (*param).(*streamState)
+}
+
 // convertGrokCLIResponseToOpenAIResponsesStream chains the registered
 // Grok CLI -> OpenAI Chat Completions response translator with the
 // OpenAI Chat Completions -> OpenAI Responses API translator.
 func convertGrokCLIResponseToOpenAIResponsesStream(ctx context.Context, model string, originalReq, translatedReq, rawChunk []byte, param *any) [][]byte {
-	var inner any
-	chatChunks := registry.Response(ctx, string(types.FormatGrokCLI), string(types.FormatOpenAI), model, originalReq, translatedReq, rawChunk, &inner)
+	state := getStreamState(param)
+	chatChunks := registry.Response(ctx, string(types.FormatGrokCLI), string(types.FormatOpenAI), model, originalReq, translatedReq, rawChunk, &state.inner)
 	if len(chatChunks) == 0 {
 		return nil
 	}
 
-	var oaiParam any
 	var out [][]byte
 	for _, chatChunk := range chatChunks {
-		out = append(out, openai.ConvertOpenAIChatToOpenAIResponsesStream(ctx, model, originalReq, translatedReq, chatChunk, &oaiParam)...)
+		out = append(out, openai.ConvertOpenAIChatToOpenAIResponsesStream(ctx, model, originalReq, translatedReq, chatChunk, &state.oai)...)
 	}
 	return out
 }
