@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **Generic `/v1/responses/compact` passthrough for OpenAI-compatible providers** — `ResponsesCompact` no longer rejects non-Codex providers. `OpenAIExecutor.ResponsesCompact` forwards non-streaming requests to the upstream `/responses/compact` endpoint, strips the `stream` field, and returns the compacted Responses-shape JSON. Existing Codex compact behavior is preserved. Added handler tests for generic OpenAI-compatible provider success and streaming rejection.
+
 - **ZenMux model passthrough defaults and regression tests** — `internal/providercfg/compatibility.go` now seeds `StripProviderPrefix: "zenmux/"` and `"zenmux-free/"` defaults for `zenmux` and `zenmux-free`, and `internal/executor/registry.go` already routes both prefixes through the OpenAI executor. Added regression tests confirming registry model splitting, compatibility prefix stripping, upstream model IDs are not double-prefixed, free-tier models are accepted with a free connection, and paid-tier models are rejected when no paid ZenMux connection exists.
 
 - **Log-directory size enforcement** — new `AXON_LOGS_MAX_TOTAL_SIZE_MB` config variable (`LogsMaxTotalSizeMB`) limits the total size of files in the configured log directory. A background cleaner removes the oldest `.log`/`.log.gz` files when the directory exceeds the cap, leaving the currently active `axonrouter.log` untouched. Wired from `cmd/server/main.go` with regression tests in `internal/logging/log_dir_cleaner_test.go`.

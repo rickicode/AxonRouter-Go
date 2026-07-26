@@ -556,3 +556,41 @@ func (e *OpenAIExecutor) ResponsesStream(ctx context.Context, req *Request) (*St
 
 	return e.DoStreamRequestWithConfig(ContextWithProvider(ctx, req.Provider), "POST", url, headers, body, req.StreamConfig)
 }
+
+// ResponsesCompact performs a non-streaming POST to the upstream
+// /responses/compact endpoint for generic OpenAI-compatible providers. It strips
+// the stream field and returns the compacted JSON response.
+func (e *OpenAIExecutor) ResponsesCompact(ctx context.Context, req *Request) (*Response, error) {
+	url, err := openAIEndpoint(req.BaseURL, "responses/compact", req.ProviderSpecificData)
+	if err != nil {
+		return nil, err
+	}
+
+	body := req.Body
+	body = JSONSet(body, "stream", false)
+	body, _ = sjson.DeleteBytes(body, "stream")
+
+	headers := map[string]string{
+		"Content-Type": "application/json",
+	}
+	SetAuthHeader(headers, req.APIKey, req.AccessToken)
+	openRouterHeaders(headers, req.Provider, req.ProviderSpecificData)
+
+	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode >= 400 {
+		upErr := &UpstreamError{
+			StatusCode: resp.StatusCode,
+			Body:       resp.Body,
+			RawBody:    resp.Body,
+			Headers:    resp.Headers,
+		}
+		upErr.TranslateErrorBody(req.Provider)
+		return nil, upErr
+	}
+
+	return resp, nil
+}
