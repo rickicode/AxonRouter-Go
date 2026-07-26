@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/gin-gonic/gin"
 	kardianos "github.com/kardianos/service"
@@ -302,10 +303,10 @@ func main() {
 		fmt.Println()
 		fmt.Println("Usage:")
 		fmt.Println(" axonrouter Start the server")
-	fmt.Println(" axonrouter --tray Start the server with a system tray icon")
-	fmt.Println(" (requires build tag: tray)")
-	fmt.Println(" axonrouter --no-tray Start the server without the system tray icon")
-	fmt.Println(" (tray builds only)")
+		fmt.Println(" axonrouter --tray Start the server with a system tray icon")
+		fmt.Println(" (requires build tag: tray)")
+		fmt.Println(" axonrouter --no-tray Start the server without the system tray icon")
+		fmt.Println(" (tray builds only)")
 		fmt.Println(" axonrouter --service install Install systemd service")
 		fmt.Println(" (root=system service, user=user service+linger)")
 		fmt.Println(" axonrouter --service {status|start|stop|restart|uninstall}")
@@ -370,8 +371,12 @@ func main() {
 		log.Fatalf("Failed to open database: %v", err)
 	}
 
-	// Initialise compact logger (switch to json/text via log_format setting)
+	// Initialise compact logger (switch to json/text via log_format setting).
+	// Structured log file lives inside the configured log directory, and a
+	// background cleaner enforces LogsMaxTotalSizeMB by removing oldest files.
+	logging.LogFilePath = filepath.Join(cfg.LogDir, "axonrouter.log")
 	logging.Init(db.GetSetting("log_format", "compact"))
+	logging.StartLogDirCleaner(cfg.LogDir, cfg.LogsMaxTotalSizeMB, logging.LogFilePath)
 
 	// Create router with all routes and background goroutines
 	router := api.New(api.Config{

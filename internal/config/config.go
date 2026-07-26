@@ -34,6 +34,7 @@ type Config struct {
 	DBToken                     string
 	PIDFile                     string
 	LogDir                      string
+	LogsMaxTotalSizeMB          int
 	DataDir                     string
 	Debug                       bool
 	JWTSecret                   string
@@ -102,6 +103,7 @@ func Get() Config {
 			DBToken:                      getEnv("AXON_DB_TOKEN", ""),
 			PIDFile:                      filepath.Join(dataDir, "axonrouter.pid"),
 			LogDir:                       filepath.Join(dataDir, "logs"),
+			LogsMaxTotalSizeMB:           getIntEnv("AXON_LOGS_MAX_TOTAL_SIZE_MB", 0),
 			DataDir:                      dataDir,
 			DeviceTrackerTTLMs:           getIntEnv("DEVICE_TRACKER_TTL_MS", 30*60*1000),
 			DeviceTrackerMaxPerKey:       getIntEnv("DEVICE_TRACKER_MAX_PER_KEY", 1000),
