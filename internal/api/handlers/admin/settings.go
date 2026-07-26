@@ -117,6 +117,7 @@ var DefaultSettings = map[string]string{
 	"compression_lite_dedup":      "false",
 	"combo_strategy":              "priority",
 	"combo_strategies":            "{}",
+	"cc_filter_naming":            "false",
 }
 
 // SeedDefaults inserts default settings if they don't exist.

@@ -4,17 +4,27 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
+	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
+
+// ccFilterNamingEnabled reports whether Claude Code topic-naming requests
+// should be filtered. It is a variable so tests can override the setting source.
+var ccFilterNamingEnabled = func() bool {
+	return db.GetSetting("cc_filter_naming", "false") == "true"
+}
 
 // Messages handles POST /v1/messages (Anthropic format)
 func (h *Handler) Messages(c *gin.Context) {
@@ -39,6 +49,14 @@ func (h *Handler) Messages(c *gin.Context) {
 	}
 	if !h.isModelAllowed(c.Request.Context(), model) {
 		c.JSON(http.StatusForbidden, claudeError("invalid_request_error", "model not allowed for this API key"))
+		return
+	}
+
+	// Stack-safe filter for Claude Code's background topic/title requests.
+	// Detects the well-known system prompts and returns a local JSON/SSE response
+	// without forwarding to any upstream provider (no MITM / interception).
+	if ccFilterNamingEnabled() && isClaudeTopicNamingRequest(body) {
+		h.writeFakeClaudeTopicNamingResponse(c, body, model)
 		return
 	}
 
@@ -366,6 +384,63 @@ func (h *Handler) CountTokens(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusBadRequest, claudeError("invalid_request_error", "token counting only supported for Claude models"))
+}
+
+// isClaudeTopicNamingRequest detects Claude Code's background topic/title
+// generation requests using safe, literal pattern matching against the request
+// body. It does not inspect TLS, terminate connections, or intercept traffic.
+func isClaudeTopicNamingRequest(body []byte) bool {
+	s := string(body)
+	return strings.Contains(s, `Generate a concise, sentence-case title`) ||
+		strings.Contains(s, `Analyze if this message indicates a new conversation topic`) ||
+		strings.Contains(s, `Return JSON with a single "title" field`)
+}
+
+// writeFakeClaudeTopicNamingResponse returns a synthetic Anthropic Messages API
+// response for Claude Code's topic-naming request. This avoids forwarding the
+// request to a provider and therefore saves the upstream tokens.
+func (h *Handler) writeFakeClaudeTopicNamingResponse(c *gin.Context, body []byte, model string) {
+	stream := executor.IsStreamRequest(body)
+	titleJSON := `{"isNewTopic":true,"title":"New conversation"}`
+	msgID := "msg_axon_topic_filter_" + strconv.FormatInt(time.Now().UnixNano(), 10)
+
+	if stream {
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Status(http.StatusOK)
+
+		events := [][2]string{
+			{"message_start", fmt.Sprintf(`{"type":"message_start","message":{"id":%q,"type":"message","role":"assistant","model":%q,"content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}}`, msgID, model)},
+			{"content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`},
+			{"content_block_delta", fmt.Sprintf(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":%q}}`, titleJSON)},
+			{"content_block_stop", `{"type":"content_block_stop","index":0}`},
+			{"message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":4}}`},
+			{"message_stop", `{"type":"message_stop"}`},
+		}
+		for _, ev := range events {
+			c.Writer.Write([]byte("event: " + ev[0] + "\ndata: " + ev[1] + "\n\n"))
+		}
+		if flusher, ok := c.Writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		return
+	}
+
+	resp := map[string]any{
+		"id":            msgID,
+		"type":          "message",
+		"role":          "assistant",
+		"model":         model,
+		"content":       []map[string]string{{"type": "text", "text": titleJSON}},
+		"stop_reason":   "end_turn",
+		"stop_sequence": nil,
+		"usage": map[string]int{
+			"input_tokens":  0,
+			"output_tokens": 4,
+		},
+	}
+	respBytes, _ := json.Marshal(resp)
+	h.writeJSONResponse(c, http.StatusOK, respBytes)
 }
 
 func claudeError(errType, message string) gin.H {

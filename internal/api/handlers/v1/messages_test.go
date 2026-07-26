@@ -13,8 +13,8 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
-	"github.com/tidwall/gjson"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator"
+	"github.com/tidwall/gjson"
 )
 
 func setupMessagesTest(t *testing.T) *Handler {
@@ -432,5 +432,120 @@ func TestMessages_ModelNotAllowed_ReturnsForbidden(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "model not allowed for this API key") {
 		t.Errorf("expected forbidden message, got %s", rec.Body.String())
+	}
+}
+
+func TestIsClaudeTopicNamingRequest(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{
+			name: "new title generator prompt",
+			body: `{"model":"claude/haiku","system":"Generate a concise, sentence-case title (3-7 words) that captures the main topic or goal of this coding session... Return JSON with a single \"title\" field.","messages":[{"role":"user","content":"hello"}]}`,
+			want: true,
+		},
+		{
+			name: "old topic detection prompt",
+			body: `{"model":"claude/haiku","system":"Analyze if this message indicates a new conversation topic. If it does, extract a 2-3 word title...","messages":[{"role":"user","content":"hello"}]}`,
+			want: true,
+		},
+		{
+			name: "regular chat request",
+			body: `{"model":"claude/sonnet-4-20250514","messages":[{"role":"user","content":"hi"}]}`,
+			want: false,
+		},
+		{
+			name: "empty body",
+			body: `{}`,
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isClaudeTopicNamingRequest([]byte(tc.body))
+			if got != tc.want {
+				t.Errorf("isClaudeTopicNamingRequest(%q) = %v, want %v", tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMessages_TopicNamingFilterEnabled_NonStream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupMessagesTest(t)
+
+	old := ccFilterNamingEnabled
+	ccFilterNamingEnabled = func() bool { return true }
+	defer func() { ccFilterNamingEnabled = old }()
+
+	h := newTestHandler(t)
+	body := []byte(`{"model":"claude/haiku","system":"Generate a concise, sentence-case title... Return JSON with a single \"title\" field.","messages":[{"role":"user","content":"hello"}]}`)
+	rec, c := jsonRequestWithAllowedModels(t, http.MethodPost, "/v1/messages", body, nil)
+	h.Messages(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type=%q, want application/json", ct)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"text":"{\"isNewTopic\":true,\"title\":\"New conversation\"}"`)) {
+		t.Errorf("expected fake title response, got %s", rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"stop_reason":"end_turn"`)) {
+		t.Errorf("expected end_turn stop_reason, got %s", rec.Body.String())
+	}
+}
+
+func TestMessages_TopicNamingFilterEnabled_Stream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupMessagesTest(t)
+
+	old := ccFilterNamingEnabled
+	ccFilterNamingEnabled = func() bool { return true }
+	defer func() { ccFilterNamingEnabled = old }()
+
+	h := newTestHandler(t)
+	body := []byte(`{"model":"claude/haiku","stream":true,"system":"Generate a concise, sentence-case title... Return JSON with a single \"title\" field.","messages":[{"role":"user","content":"hello"}]}`)
+	rec, c := jsonRequestWithAllowedModels(t, http.MethodPost, "/v1/messages", body, nil)
+	h.Messages(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("Content-Type=%q, want text/event-stream", ct)
+	}
+	bodyStr := rec.Body.String()
+	if !strings.Contains(bodyStr, "event: content_block_delta") {
+		t.Errorf("expected content_block_delta event, got %s", bodyStr)
+	}
+	if !strings.Contains(bodyStr, `\"isNewTopic\":true,\"title\":\"New conversation\"`) {
+		t.Errorf("expected fake title in stream, got %s", bodyStr)
+	}
+	if !strings.Contains(bodyStr, "event: message_stop") {
+		t.Errorf("expected message_stop event, got %s", bodyStr)
+	}
+}
+
+func TestMessages_TopicNamingFilterDisabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupMessagesTest(t)
+
+	old := ccFilterNamingEnabled
+	ccFilterNamingEnabled = func() bool { return false }
+	defer func() { ccFilterNamingEnabled = old }()
+
+	h := newTestHandler(t)
+	body := []byte(`{"model":"claude/haiku","system":"Generate a concise, sentence-case title... Return JSON with a single \"title\" field.","messages":[{"role":"user","content":"hello"}]}`)
+	rec, c := jsonRequestWithAllowedModels(t, http.MethodPost, "/v1/messages", body, nil)
+	h.Messages(c)
+
+	// With the filter disabled and no upstream connection configured, the request
+	// should fail while trying to route, not return the fake response.
+	if rec.Code == http.StatusOK && bytes.Contains(rec.Body.Bytes(), []byte(`"New conversation"`)) {
+		t.Errorf("filter should be disabled; got fake response: %s", rec.Body.String())
 	}
 }

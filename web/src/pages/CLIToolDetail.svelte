@@ -18,7 +18,7 @@ import XCircleIcon from '@lucide/svelte/icons/x-circle';
 import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
 import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
 import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
-import { cliToolsApi, gatewayModelsApi, apiKeysApi } from '$lib/api';
+import { cliToolsApi, gatewayModelsApi, apiKeysApi, settingsApi } from '$lib/api';
 import ModelPickerDialog from '$lib/components/ModelPickerDialog.svelte';
 import { CLIConfigOutput } from '$lib/components/cli-tools';
 import type {
@@ -60,6 +60,10 @@ let generating = $state(false);
 let resetting = $state(false);
 let copiedField = $state<string | null>(null);
 let modelAliases = $state<Record<string, string>>({});
+
+// Claude-specific gateway setting: suppress background topic-naming requests.
+let ccFilterNaming = $state(false);
+let ccFilterNamingLoading = $state(false);
 
 // Model picker
 let modelPickerOpen = $state(false);
@@ -113,6 +117,16 @@ async function loadAll() {
 				if (!modelAliases[dm.alias] && dm.defaultValue) {
 					modelAliases[dm.alias] = dm.defaultValue;
 				}
+			}
+		}
+		// Load Claude-specific setting: topic-naming filter.
+		ccFilterNaming = false;
+		if (tool?.id === 'claude') {
+			try {
+				const res = await settingsApi.get('cc_filter_naming');
+				ccFilterNaming = res.value === 'true';
+			} catch {
+				ccFilterNaming = false;
 			}
 		}
 	} catch (err) {
@@ -294,6 +308,20 @@ function showsActiveModel(t: CLITool | null): boolean {
 
 function goBack() {
 	router.navigate('/cli-tools');
+}
+
+async function toggleCCFilterNaming(next: boolean) {
+	if (!tool || tool.id !== 'claude' || ccFilterNamingLoading) return;
+	ccFilterNamingLoading = true;
+	try {
+		await settingsApi.update('cc_filter_naming', next ? 'true' : 'false');
+		ccFilterNaming = next;
+		toast.success(`Topic-naming filter ${next ? 'enabled' : 'disabled'}`);
+	} catch (err) {
+		toast.error(err instanceof Error ? err.message : 'Failed to update topic-naming filter');
+	} finally {
+		ccFilterNamingLoading = false;
+	}
 }
 </script>
 
@@ -614,13 +642,31 @@ function goBack() {
 								{/each}
 							</Select.Content>
 						</Select.Root>
-						<p class="text-caption text-muted-foreground">
-							The real key is pulled from this selection automatically — no need to paste it.
-						</p>
-					</div>
+					<p class="text-caption text-muted-foreground">
+						The real key is pulled from this selection automatically — no need to paste it.
+					</p>
+				</div>
 
-					<div class="flex flex-col gap-2">
-						<Button variant="default" class="cursor-pointer" onclick={applyConfig} disabled={generating}>
+				<!-- Claude: topic-naming filter toggle -->
+				{#if tool?.id === 'claude'}
+					<div class="flex items-start gap-3 rounded-lg border border-border bg-background/50 p-3">
+						<div class="flex flex-1 flex-col gap-1">
+							<Label for="cc-filter-naming" class="text-body-sm-strong">Filter topic-naming requests</Label>
+							<p class="text-caption text-muted-foreground">
+								Suppress Claude Code's background title-generation calls with a local response, saving upstream tokens.
+							</p>
+						</div>
+						<Switch
+							id="cc-filter-naming"
+							checked={ccFilterNaming}
+							onCheckedChange={toggleCCFilterNaming}
+							disabled={ccFilterNamingLoading}
+						/>
+					</div>
+				{/if}
+
+				<div class="flex flex-col gap-2">
+					<Button variant="default" class="cursor-pointer" onclick={applyConfig} disabled={generating}>
 							{generating ? 'Generating…' : 'Generate config'}
 						</Button>
 						<Button
