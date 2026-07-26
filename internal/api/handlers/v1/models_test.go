@@ -1,13 +1,16 @@
 package v1
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/models"
 )
 
 func TestGetProviderModels_CFIncludesServiceKinds(t *testing.T) {
@@ -263,4 +266,82 @@ func kindsOf(m map[string]any) []string {
 		return out
 	}
 	return nil
+}
+
+// TestGetProviderModels_ZenMuxVsZenMuxFree verifies that /v1/models (via
+// getProviderModels) exposes the full ZenMux catalog under the zenmux prefix
+// and only zero-priced / "-free" models under zenmux-free.
+func TestGetProviderModels_ZenMuxVsZenMuxFree(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{
+					"id": "paid-model",
+					"pricings": map[string]any{
+						"prompt":     []map[string]any{{"value": 5, "unit": "perMTokens"}},
+						"completion": []map[string]any{{"value": 10, "unit": "perMTokens"}},
+					},
+				},
+				{
+					"id": "free-model",
+					"pricings": map[string]any{
+						"prompt":     []map[string]any{{"value": 0, "unit": "perMTokens"}},
+						"completion": []map[string]any{{"value": 0, "unit": "perMTokens"}},
+					},
+				},
+				{
+					// Kept by the "-free" suffix fallback.
+					"id": "fallback-free",
+				},
+			},
+		})
+	}))
+	defer upstream.Close()
+
+	origEndpoints := models.ProviderEndpoints()
+	origFreeOnly := models.ProviderFreeOnly()
+	defer func() {
+		models.SetProviderEndpoints(origEndpoints)
+		models.SetProviderFreeOnly(origFreeOnly)
+	}()
+
+	models.SetProviderEndpoints(map[string]string{
+		"zenmux":      upstream.URL,
+		"zenmux-free": upstream.URL,
+	})
+	models.SetProviderFreeOnly(map[string]bool{
+		"zenmux-free": true,
+	})
+
+	models.SyncNow(context.Background())
+
+	h := newTestHandler(t)
+	full := modelIDs(h.getProviderModels("zenmux"))
+	free := modelIDs(h.getProviderModels("zenmux-free"))
+
+	wantFull := []string{"zenmux/fallback-free", "zenmux/free-model", "zenmux/paid-model"}
+	slices.Sort(full)
+	if !slices.Equal(full, wantFull) {
+		t.Errorf("zenmux models = %v, want %v", full, wantFull)
+	}
+
+	wantFree := []string{"zenmux-free/fallback-free", "zenmux-free/free-model"}
+	slices.Sort(free)
+	if !slices.Equal(free, wantFree) {
+		t.Errorf("zenmux-free models = %v, want %v", free, wantFree)
+	}
+
+	if slices.Equal(full, free) {
+		t.Error("zenmux and zenmux-free returned identical model lists")
+	}
+}
+
+func modelIDs(models []gin.H) []string {
+	ids := make([]string, 0, len(models))
+	for _, m := range models {
+		if id, ok := m["id"].(string); ok {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }

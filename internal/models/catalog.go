@@ -45,12 +45,50 @@ var providerEndpoints = map[string]string{
 	"oc": "https://opencode.ai/zen/v1/models",
 	// ZenMux publishes an unauthenticated /v1/models endpoint; sync the full catalog daily.
 	"zenmux": "https://zenmux.ai/api/v1/models",
+	// ZenMux Free uses the same upstream endpoint as the paid tier but is filtered
+	// to zero-priced models in tryFetchProviders.
+	"zenmux-free": "https://zenmux.ai/api/v1/models",
 }
 
-// providerFreeOnly filters models to only include those with "-free" suffix.
-// Used for free-tier providers where the upstream returns all models (free + paid).
+// ProviderEndpoints returns a copy of the current provider endpoint map.
+// Exposed for tests.
+func ProviderEndpoints() map[string]string {
+	copy := make(map[string]string, len(providerEndpoints))
+	for k, v := range providerEndpoints {
+		copy[k] = v
+	}
+	return copy
+}
+
+// SetProviderEndpoints replaces the provider endpoint map. Exposed for tests.
+func SetProviderEndpoints(m map[string]string) {
+	providerEndpoints = m
+}
+
+// ProviderFreeOnly returns a copy of the current free-only provider map.
+// Exposed for tests.
+func ProviderFreeOnly() map[string]bool {
+	copy := make(map[string]bool, len(providerFreeOnly))
+	for k, v := range providerFreeOnly {
+		copy[k] = v
+	}
+	return copy
+}
+
+// SetProviderFreeOnly replaces the free-only provider map. Exposed for tests.
+func SetProviderFreeOnly(m map[string]bool) {
+	providerFreeOnly = m
+}
+
+// providerFreeOnly filters free-tier providers to only include models that are
+// advertised as free. For most providers this falls back to the "-free" suffix
+// heuristic, because their /v1/models endpoint does not expose a free flag.
+// ZenMux's endpoint exposes per-model pricing, so zenmux-free filters to models
+// whose prompt + completion price is zero; the suffix heuristic is kept as a
+// safe fallback when pricing metadata is missing.
 var providerFreeOnly = map[string]bool{
-	"oc": true,
+	"oc":          true,
+	"zenmux-free": true,
 }
 
 // modelThinking describes a model's reasoning/thinking configuration range.
@@ -681,6 +719,62 @@ func mergeProviderEntries(existing, fetched []modelEntry) []modelEntry {
 	return out
 }
 
+// providerModel is a single model returned by an OpenAI-compatible /v1/models endpoint.
+// Free is populated when the upstream exposes pricing metadata (ZenMux); otherwise
+// it remains false and callers fall back to the "-free" suffix heuristic.
+type providerModel struct {
+	ID   string
+	Free bool
+}
+
+// providerPricingEntry is one price point in a provider's pricings object.
+type providerPricingEntry struct {
+	Value    float64 `json:"value"`
+	Unit     string  `json:"unit"`
+	Currency string  `json:"currency"`
+}
+
+// isProviderModelFree checks whether the upstream pricings object advertises this
+// model as free. It returns true only when both prompt and completion pricing
+// arrays are present and every value is zero. If pricing metadata is missing or
+// incomplete, it returns false so callers can fall back to the "-free" suffix.
+func isProviderModelFree(pricings json.RawMessage) bool {
+	if len(pricings) == 0 {
+		return false
+	}
+	var p struct {
+		Prompt     []providerPricingEntry `json:"prompt"`
+		Completion []providerPricingEntry `json:"completion"`
+	}
+	if err := json.Unmarshal(pricings, &p); err != nil {
+		return false
+	}
+	if len(p.Prompt) == 0 || len(p.Completion) == 0 {
+		return false
+	}
+	for _, e := range p.Prompt {
+		if e.Value != 0 {
+			return false
+		}
+	}
+	for _, e := range p.Completion {
+		if e.Value != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// keepFreeModel decides whether a model should be included for a free-only provider.
+// It prefers upstream free metadata when available and falls back to the "-free"
+// suffix heuristic when no free flag can be derived from the response.
+func keepFreeModel(m providerModel) bool {
+	if m.Free {
+		return true
+	}
+	return strings.HasSuffix(m.ID, "-free")
+}
+
 // tryFetchProviders fetches models from per-provider upstream endpoints
 // and merges them into the in-memory catalog. This keeps no-auth provider
 // models (like opencode) up-to-date even without stored connections.
@@ -695,12 +789,13 @@ func tryFetchProviders(ctx context.Context) {
 			continue
 		}
 		entries := make([]modelEntry, 0, len(models))
-		for _, id := range models {
-			// Filter: free-only providers only keep models with "-free" suffix
-			if providerFreeOnly[catalogKey] && !strings.HasSuffix(id, "-free") {
+		for _, m := range models {
+			// Filter: free-only providers keep models advertised as free, with a
+			// "-free" suffix fallback for upstreams that do not expose a free flag.
+			if providerFreeOnly[catalogKey] && !keepFreeModel(m) {
 				continue
 			}
-			entries = append(entries, modelEntry{ID: strings.TrimPrefix(id, "@")})
+			entries = append(entries, modelEntry{ID: strings.TrimPrefix(m.ID, "@")})
 		}
 		mu.Lock()
 		current[catalogKey] = entries
@@ -709,9 +804,9 @@ func tryFetchProviders(ctx context.Context) {
 	}
 }
 
-// fetchProviderModels fetches model IDs from an OpenAI-compatible /v1/models endpoint.
-// Returns model IDs or an error.
-func fetchProviderModels(ctx context.Context, endpoint string) ([]string, error) {
+// fetchProviderModels fetches model entries from an OpenAI-compatible /v1/models endpoint.
+// It returns the model ID plus any free/pricing metadata exposed by the upstream.
+func fetchProviderModels(ctx context.Context, endpoint string) ([]providerModel, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
 
@@ -736,23 +831,24 @@ func fetchProviderModels(ctx context.Context, endpoint string) ([]string, error)
 		return nil, err
 	}
 
-	// Parse OpenAI-format: {"data": [{"id": "model-name"}, ...]}
+	// Parse OpenAI-format: {"data": [{"id": "model-name", "pricings": {...}}, ...]}
 	var modelsResp struct {
 		Data []struct {
-			ID string `json:"id"`
+			ID       string          `json:"id"`
+			Pricings json.RawMessage `json:"pricings"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(data, &modelsResp); err != nil {
 		return nil, fmt.Errorf("parse error: %w", err)
 	}
 
-	ids := make([]string, 0, len(modelsResp.Data))
+	out := make([]providerModel, 0, len(modelsResp.Data))
 	for _, m := range modelsResp.Data {
 		if m.ID != "" {
-			ids = append(ids, m.ID)
+			out = append(out, providerModel{ID: m.ID, Free: isProviderModelFree(m.Pricings)})
 		}
 	}
-	return ids, nil
+	return out, nil
 }
 
 // fetchCatalog fetches and parses the full catalog from a remote URL.
