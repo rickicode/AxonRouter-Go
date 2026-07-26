@@ -260,12 +260,20 @@ func New(cfg Config) *Router {
 	v1Group.Use(v1H.TrackActive())
 
 	v1Group.POST("/chat/completions", v1H.ChatCompletions)
+	v1Group.POST("/completions", v1H.Completions)
 	v1Group.GET("/models", v1H.Models)
 	v1Group.POST("/audio/speech", v1H.TTS)
 	v1Group.POST("/audio/transcriptions", v1H.STT)
 	v1Group.POST("/images/generations", v1H.Images)
+	v1Group.POST("/images/edits", v1H.ImagesEdits)
 	v1Group.POST("/video/generations", v1H.Video)
+	v1Group.POST("/videos", v1H.VideosCreate)
+	v1Group.POST("/videos/generations", v1H.VideosGenerations)
+	v1Group.POST("/videos/edits", v1H.VideosEdits)
+	v1Group.POST("/videos/extensions", v1H.VideosExtensions)
+	v1Group.GET("/videos/:request_id", v1H.VideosRetrieve)
 	v1Group.POST("/embeddings", v1H.Embeddings)
+	v1Group.POST("/alpha/search", v1H.CodexAlphaSearch)
 	v1Group.GET("/responses", v1H.ResponsesWebsocket)
 	v1Group.POST("/responses", v1H.Responses)
 	v1Group.POST("/responses/compact", v1H.ResponsesCompact)
@@ -317,6 +325,16 @@ func New(cfg Config) *Router {
 	codexGroup.Use(v1H.TrackActive())
 	codexGroup.POST("/responses", v1H.Responses)
 	codexGroup.POST("/responses/compact", v1H.ResponsesCompact)
+	codexGroup.POST("/alpha/search", v1H.CodexAlphaSearch)
+
+	// OpenAI-compatible video surface (some clients use /openai/v1 as a prefix).
+	openaiV1Group := engine.Group("/openai/v1")
+	openaiV1Group.Use(middleware.Auth(cfg.DB, authCache))
+	openaiV1Group.Use(middleware.RateLimit(limiter))
+	openaiV1Group.Use(v1H.TrackActive())
+	openaiV1Group.POST("/videos", v1H.OpenAIVideosCreate)
+	openaiV1Group.GET("/videos/:video_id", v1H.OpenAIVideosRetrieve)
+	openaiV1Group.GET("/videos/:video_id/content", v1H.OpenAIVideosContent)
 
 	// Public login endpoint (issues a session JWT). Rate-limited per IP to slow brute force.
 	engine.POST("/api/admin/login", middleware.RateLimit(loginLimiter), LoginHandler(cfg.DB))

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/models"
@@ -174,13 +175,76 @@ func filterAllowedModels(all []gin.H, allowed map[string]struct{}) []gin.H {
 	return result
 }
 
+// isAnthropicModelsRequest reports whether a /v1/models request should be
+// served in Anthropic format. Anthropic API clients send the Anthropic-Version
+// header; Claude Code additionally uses a claude-cli User-Agent.
+func isAnthropicModelsRequest(c *gin.Context) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	if c.GetHeader("Anthropic-Version") != "" {
+		return true
+	}
+	return strings.HasPrefix(c.GetHeader("User-Agent"), "claude-cli")
+}
+
+// toClaudeModels converts the gateway's OpenAI-style model catalog into the
+// Anthropic /v1/models response format used by Claude Code and other Anthropic
+// SDK clients.
+func toClaudeModels(openai []gin.H) []map[string]any {
+	out := make([]map[string]any, 0, len(openai))
+	for _, m := range openai {
+		id, _ := m["id"].(string)
+		if id == "" {
+			continue
+		}
+		ownedBy, _ := m["owned_by"].(string)
+		displayName := id
+		maxInput := 200000
+		maxOutput := 8192
+		if strings.Contains(id, "claude-3-5") {
+			maxOutput = 8192
+		} else if strings.Contains(id, "claude-3-opus") {
+			maxOutput = 4096
+		} else if strings.Contains(id, "claude-3-haiku") {
+			maxOutput = 4096
+		}
+		entry := map[string]any{
+			"id":               id,
+			"object":           "model",
+			"owned_by":         ownedBy,
+			"type":             "model",
+			"display_name":     displayName,
+			"max_input_tokens": maxInput,
+			"max_tokens":       maxOutput,
+		}
+		if created, ok := m["created"].(int); ok && created > 0 {
+			entry["created_at"] = time.Unix(int64(created), 0).UTC().Format(time.RFC3339)
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
 // Models handles GET /v1/models — includes combos and virtual models.
+// When the request comes from an Anthropic client, the response is rendered in
+// Claude-compatible model-list format instead of the OpenAI format.
 func (h *Handler) Models(c *gin.Context) {
 	allowed, _ := c.Get("allowed_models")
 	allowedSet, _ := allowed.(map[string]struct{})
+	models := filterAllowedModels(h.ListActiveModels(), allowedSet)
+
+	if isAnthropicModelsRequest(c) {
+		c.JSON(http.StatusOK, gin.H{
+			"object": "list",
+			"data":   toClaudeModels(models),
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"object": "list",
-		"data":   filterAllowedModels(h.ListActiveModels(), allowedSet),
+		"data":   models,
 	})
 }
 

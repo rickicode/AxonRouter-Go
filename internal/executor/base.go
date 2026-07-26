@@ -117,15 +117,15 @@ type TokenCounter interface {
 
 // BaseExecutor provides shared HTTP logic for all executors.
 type BaseExecutor struct {
-	Client                  *http.Client
-	Timeout                 time.Duration
-	FetchTimeout            time.Duration
-	StreamIdleTimeout       time.Duration
-	StreamReadinessTimeout  time.Duration
-	ResponseHeaderTimeout   time.Duration // abort if no response headers arrive within this window
-	proxyClients            sync.Map      // proxyURL -> *http.Client (non-streaming)
-	streamBase              *http.Client
-	streamClients           sync.Map      // proxyURL -> *http.Client (streaming, no Timeout)
+	Client                 *http.Client
+	Timeout                time.Duration
+	FetchTimeout           time.Duration
+	StreamIdleTimeout      time.Duration
+	StreamReadinessTimeout time.Duration
+	ResponseHeaderTimeout  time.Duration // abort if no response headers arrive within this window
+	proxyClients           sync.Map      // proxyURL -> *http.Client (non-streaming)
+	streamBase             *http.Client
+	streamClients          sync.Map // proxyURL -> *http.Client (streaming, no Timeout)
 }
 
 // StreamReadinessTimeoutError is returned when an upstream streaming request does
@@ -256,6 +256,7 @@ type (
 	providerCtxKey  struct{}
 	clientIPKey     struct{}
 	userAgentKey    struct{}
+	imagesPathKey   struct{}
 )
 
 // ContextWithProvider attaches the provider prefix to ctx so the base executor
@@ -301,6 +302,19 @@ func ContextWithUserAgent(ctx context.Context, ua string) context.Context {
 func UserAgentFromContext(ctx context.Context) string {
 	ua, _ := ctx.Value(userAgentKey{}).(string)
 	return ua
+}
+
+// ContextWithImagesPath sets an override for the upstream images endpoint path.
+// Used by /v1/images/edits to target /v1/images/edits instead of the default
+// /v1/images/generations.
+func ContextWithImagesPath(ctx context.Context, path string) context.Context {
+	return context.WithValue(ctx, imagesPathKey{}, path)
+}
+
+// ImagesPathFromContext returns the upstream images endpoint path override, if any.
+func ImagesPathFromContext(ctx context.Context) string {
+	path, _ := ctx.Value(imagesPathKey{}).(string)
+	return path
 }
 
 func clientLogAttrs(ctx context.Context) []any {
