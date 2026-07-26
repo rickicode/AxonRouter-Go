@@ -63,4 +63,36 @@ describe('provider-catalog', () => {
     const matches = PROVIDER_CATALOG.filter((p) => p.id === 'commandcode');
     expect(matches).toHaveLength(1);
   });
+
+  it('includes the Phase-1 search providers', () => {
+    const searchIds = ['tavily', 'brave', 'exa', 'serper', 'google-pse', 'searxng'];
+    for (const id of searchIds) {
+      const meta = getProviderMeta(id);
+      expect(meta).toBeDefined();
+      expect(meta!.category).toBe('search');
+      expect(meta!.serviceKinds).toEqual(['search']);
+      expect(meta!.isBuiltIn).toBe(true);
+      expect(meta!.prefix).toBe(`${id}/`);
+      expect(meta!.format).toBe('search');
+    }
+  });
+
+  it('marks tavily, brave, google-pse, and searxng as free-tier capable', () => {
+    for (const id of ['tavily', 'brave', 'google-pse', 'searxng']) {
+      const meta = getProviderMeta(id);
+      expect(meta?.hasFree).toBe(true);
+    }
+  });
+
+  it('uses custom auth for Google PSE and no auth for SearXNG', () => {
+    expect(getProviderMeta('google-pse')?.authType).toBe('custom');
+    expect(getProviderMeta('searxng')?.authType).toBe('none');
+  });
+
+  it('has unique entries for each Phase-1 search provider', () => {
+    for (const id of ['tavily', 'brave', 'exa', 'serper', 'google-pse', 'searxng']) {
+      const matches = PROVIDER_CATALOG.filter((p) => p.id === id);
+      expect(matches).toHaveLength(1);
+    }
+  });
 });

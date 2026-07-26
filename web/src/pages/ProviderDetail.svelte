@@ -87,6 +87,7 @@ const MODEL_KIND_ORDER: [string, string][] = [
 	['llm', 'Chat / Text'],
 	['image', 'Image'],
 	['embedding', 'Embedding'],
+	['search', 'Search'],
 	['tts', 'Text-to-Speech'],
 	['stt', 'Speech-to-Text'],
 	['imageToText', 'Image-to-Text'],

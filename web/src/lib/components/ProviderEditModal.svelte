@@ -33,6 +33,7 @@ const SERVICE_KIND_OPTIONS: { id: string; label: string }[] = [
 	{ id: 'llm', label: 'LLM' },
 	{ id: 'embedding', label: 'Embeddings' },
 	{ id: 'image', label: 'Images' },
+	{ id: 'search', label: 'Search' },
 ];
 
 $effect(() => {
