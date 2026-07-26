@@ -98,6 +98,9 @@ func (h *SettingHandler) Delete(c *gin.Context) {
 // DefaultSettings returns the default settings with their values.
 var DefaultSettings = map[string]string{
 	"quota_check_interval_min":    "30",
+	"claude_auto_ping":            `{"enabled":false,"connections":{}}`,
+	"codex_auto_ping":             `{"enabled":false,"connections":{}}`,
+	"auto_ping_metrics":           `{}`,
 	"port":                        "3777",
 	"rate_limit_per_min":          "600",
 	"log_retention_days":          "30",
