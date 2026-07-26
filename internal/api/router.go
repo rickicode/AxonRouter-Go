@@ -275,6 +275,17 @@ func New(cfg Config) *Router {
 	// Some Anthropic clients append an extra /v1 segment to the base URL.
 	v1Group.POST("/v1/messages", v1H.Messages)
 
+	// ---- /v1beta routes (native Google Gemini surface) ----
+	v1betaGroup := engine.Group("/v1beta")
+	v1betaGroup.Use(middleware.Auth(cfg.DB, authCache))
+	v1betaGroup.Use(middleware.RateLimit(limiter))
+	v1betaGroup.Use(v1H.TrackActive())
+
+	v1betaGroup.GET("/models", v1H.GeminiModels)
+	v1betaGroup.POST("/interactions", v1H.Interactions)
+	v1betaGroup.POST("/models/*action", v1H.GeminiHandler)
+	v1betaGroup.GET("/models/*action", v1H.GeminiGetHandler)
+
 	// CLI Tools model catalog used by both the dashboard and programmatic admin API.
 	modelLister := func() []map[string]string {
 		list := v1H.ListModels()
