@@ -58,6 +58,9 @@ func TestRegistry_GetByModel_NewProviders(t *testing.T) {
 		{"cerebras/gpt-oss-120b", "cerebras", "gpt-oss-120b", FormatOpenAI},
 		{"codebuddy/glm-5.0", "codebuddy", "glm-5.0", FormatOpenAI},
 		{"qwencloud/qwen3.7-plus", "qwencloud", "qwen3.7-plus", FormatOpenAIResponses},
+		{"zenmux/openai/gpt-5.6-luna", "zenmux", "openai/gpt-5.6-luna", FormatOpenAI},
+		{"zenmux/anthropic/claude-opus-5", "zenmux", "anthropic/claude-opus-5", FormatOpenAI},
+		{"zenmux-free/z-ai/glm-5.2", "zenmux-free", "z-ai/glm-5.2", FormatOpenAI},
 	}
 	for _, c := range cases {
 		exec, format, model, err := GetRegistry().GetByModel(c.model)

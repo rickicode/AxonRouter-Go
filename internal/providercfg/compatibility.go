@@ -58,6 +58,12 @@ var defaultCompatibilities = map[string]Compatibility{
 	"bedrock": {
 		StripProviderPrefix: "bedrock/",
 	},
+	"zenmux": {
+		StripProviderPrefix: "zenmux/",
+	},
+	"zenmux-free": {
+		StripProviderPrefix: "zenmux-free/",
+	},
 }
 
 // setCompatibilityManager is called by NewManager so executors can read live
