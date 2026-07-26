@@ -23,6 +23,7 @@ const (
 	FormatGrokCLI         ProviderFormat = "grok-cli"
 	FormatDevinCLI        ProviderFormat = "devin-cli"
 	FormatQoder           ProviderFormat = "qoder"
+	FormatInteractions    ProviderFormat = "interactions"
 )
 
 // Registry maps provider prefixes to executors.
@@ -162,6 +163,12 @@ func RegisterDefaults() {
 	geminiExec := NewGeminiExecutor(base)
 	GetRegistry().Register("gemini", FormatGemini, geminiExec)
 
+	// Gemini native Interactions API
+	geminiInteractionsExec := NewGeminiInteractionsExecutor(base)
+	for _, p := range []string{"gemini-interactions", "aistudio"} {
+		GetRegistry().Register(p, FormatInteractions, geminiInteractionsExec)
+	}
+
 	// Codex (openai-responses format)
 	codexExec := NewCodexExecutor(base)
 	GetRegistry().Register("cx", FormatOpenAIResponses, codexExec)
@@ -204,6 +211,7 @@ func RegisterCustomProviders(db *sql.DB) {
 	openaiResponsesExec := NewOpenAIResponsesExecutor(base)
 	claudeExec := NewClaudeExecutor(base)
 	geminiExec := NewGeminiExecutor(base)
+	geminiInteractionsExec := NewGeminiInteractionsExecutor(base)
 	agExec := NewAntigravityExecutor(base)
 	kiroExec := NewKiroExecutor(base)
 	devinExec := NewDevinCLIExecutor(base)
@@ -219,19 +227,22 @@ func RegisterCustomProviders(db *sql.DB) {
 		if err := rows.Scan(&id, &format); err != nil {
 			continue
 		}
-		registerCustomProvider(reg, openaiExec, openaiResponsesExec, claudeExec, geminiExec, agExec, kiroExec, devinExec, qoderExec, id, format)
+		registerCustomProvider(reg, openaiExec, openaiResponsesExec, claudeExec, geminiExec, geminiInteractionsExec, agExec, kiroExec, devinExec, qoderExec, id, format)
 	}
 }
 
 // registerCustomProvider maps a provider format to the reusable built-in executor
 // and translator so the custom provider routes and translates like a built-in.
-func registerCustomProvider(reg *Registry, openaiExec, openaiResponsesExec, claudeExec, geminiExec, agExec, kiroExec, devinExec, qoderExec Executor, id, format string) {
+func registerCustomProvider(reg *Registry, openaiExec, openaiResponsesExec, claudeExec, geminiExec, geminiInteractionsExec, agExec, kiroExec, devinExec, qoderExec Executor, id, format string) {
 	switch format {
 	case "anthropic", "claude":
 		reg.Register(id, FormatClaude, claudeExec)
 		translator.Register(id, translator.Func(providers.TranslateClaude))
 	case "gemini":
 		reg.Register(id, FormatGemini, geminiExec)
+		translator.Register(id, translator.Func(providers.TranslateGemini))
+	case "interactions", "gemini-interactions":
+		reg.Register(id, FormatInteractions, geminiInteractionsExec)
 		translator.Register(id, translator.Func(providers.TranslateGemini))
 	case "antigravity":
 		reg.Register(id, FormatAntigravity, agExec)

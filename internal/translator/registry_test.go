@@ -23,6 +23,8 @@ func TestRegistrySanity(t *testing.T) {
 		{types.FormatOpenAI, types.FormatAntigravity},
 		{types.FormatOpenAI, types.FormatKiro},
 		{types.FormatOpenAI, types.FormatGrokCLI},
+		{types.FormatOpenAI, types.FormatInteractions},
+		{types.FormatInteractions, types.FormatOpenAI},
 
 		{types.FormatClaude, types.FormatOpenAI},
 		{types.FormatClaude, types.FormatGemini},
@@ -40,6 +42,7 @@ func TestRegistrySanity(t *testing.T) {
 		{types.FormatCodexResponses, types.FormatGrokCLI},
 		{types.FormatCodexResponses, types.FormatDevinCLI},
 		{types.FormatCodexResponses, types.FormatQoder},
+		{types.FormatCodexResponses, types.FormatInteractions},
 
 		{types.FormatAntigravity, types.FormatOpenAI},
 		{types.FormatAntigravity, types.FormatGemini},
@@ -56,6 +59,7 @@ func TestRegistrySanity(t *testing.T) {
 		{types.FormatOpenAI, types.FormatAntigravity},
 		{types.FormatOpenAI, types.FormatKiro},
 		{types.FormatOpenAI, types.FormatGrokCLI},
+		{types.FormatOpenAI, types.FormatInteractions},
 
 		{types.FormatOpenAI, types.FormatCodexResponses},
 
@@ -66,6 +70,9 @@ func TestRegistrySanity(t *testing.T) {
 		{types.FormatGemini, types.FormatOpenAI},
 		{types.FormatGemini, types.FormatClaude},
 		{types.FormatGemini, types.FormatCodexResponses},
+
+		{types.FormatInteractions, types.FormatOpenAI},
+		{types.FormatInteractions, types.FormatCodexResponses},
 
 		{types.FormatCodexResponses, types.FormatOpenAI},
 		{types.FormatCodexResponses, types.FormatClaude},

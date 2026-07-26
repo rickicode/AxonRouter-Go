@@ -33,6 +33,7 @@ import (
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai/antigravity"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai/claude"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai/gemini"
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai/interactions"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai/kiro"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai/openai"
 
@@ -58,6 +59,7 @@ import (
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai_responses/devin"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai_responses/gemini"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai_responses/grok_cli"
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai_responses/interactions"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai_responses/kiro"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai_responses/openai"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai_responses/qoder"
