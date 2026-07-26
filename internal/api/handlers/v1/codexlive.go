@@ -45,7 +45,7 @@ var (
 	codexLiveCallIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 )
 
-var errCodexLiveBodyTooLarge = errors.New("Codex live request body too large")
+var errCodexLiveBodyTooLarge = errors.New("codex live request body too large")
 
 type codexLiveSession struct {
 	callID    string
@@ -344,7 +344,7 @@ func (h *Handler) readCodexLiveBody(c *gin.Context) ([]byte, string, error) {
 
 func normalizeCodexLiveMultipart(raw []byte, boundary string) ([]byte, string, error) {
 	if boundary == "" {
-		return nil, "", errors.New("Codex live multipart boundary is missing")
+		return nil, "", errors.New("codex live multipart boundary is missing")
 	}
 	reader := multipart.NewReader(bytes.NewReader(raw), boundary)
 	var sdp *string
@@ -368,13 +368,13 @@ func normalizeCodexLiveMultipart(raw []byte, boundary string) ([]byte, string, e
 			sdp = &s
 		case "session":
 			if !json.Valid(partBody) {
-				return nil, "", errors.New("Codex live session field must contain valid JSON")
+				return nil, "", errors.New("codex live session field must contain valid JSON")
 			}
 			session = append(json.RawMessage(nil), partBody...)
 		}
 	}
 	if sdp == nil {
-		return nil, "", errors.New("Codex live multipart body requires an sdp field")
+		return nil, "", errors.New("codex live multipart body requires an sdp field")
 	}
 
 	payload := struct {

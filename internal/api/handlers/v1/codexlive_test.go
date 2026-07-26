@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -126,8 +127,7 @@ func TestCodexLive_MultipartBodyRewrittenToJSON(t *testing.T) {
 	var upstreamBody string
 	var upstreamContentType string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b := make([]byte, r.ContentLength)
-		_, _ = r.Body.Read(b)
+		b, _ := io.ReadAll(r.Body)
 		upstreamBody = string(b)
 		upstreamContentType = r.Header.Get("Content-Type")
 		w.Header().Set("Location", "/v1/live/call-multi")
