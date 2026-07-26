@@ -201,6 +201,7 @@ func RegisterCustomProviders(db *sql.DB) {
 	reg := GetRegistry()
 	base := NewBaseExecutor()
 	openaiExec := NewOpenAIExecutor(base)
+	openaiResponsesExec := NewOpenAIResponsesExecutor(base)
 	claudeExec := NewClaudeExecutor(base)
 	geminiExec := NewGeminiExecutor(base)
 	agExec := NewAntigravityExecutor(base)
@@ -218,13 +219,13 @@ func RegisterCustomProviders(db *sql.DB) {
 		if err := rows.Scan(&id, &format); err != nil {
 			continue
 		}
-		registerCustomProvider(reg, openaiExec, claudeExec, geminiExec, agExec, kiroExec, devinExec, qoderExec, id, format)
+		registerCustomProvider(reg, openaiExec, openaiResponsesExec, claudeExec, geminiExec, agExec, kiroExec, devinExec, qoderExec, id, format)
 	}
 }
 
 // registerCustomProvider maps a provider format to the reusable built-in executor
 // and translator so the custom provider routes and translates like a built-in.
-func registerCustomProvider(reg *Registry, openaiExec, claudeExec, geminiExec, agExec, kiroExec, devinExec, qoderExec Executor, id, format string) {
+func registerCustomProvider(reg *Registry, openaiExec, openaiResponsesExec, claudeExec, geminiExec, agExec, kiroExec, devinExec, qoderExec Executor, id, format string) {
 	switch format {
 	case "anthropic", "claude":
 		reg.Register(id, FormatClaude, claudeExec)
@@ -244,7 +245,10 @@ func registerCustomProvider(reg *Registry, openaiExec, claudeExec, geminiExec, a
 	case "qoder":
 		reg.Register(id, FormatQoder, qoderExec)
 		translator.Register(id, translator.Func(providers.TranslateOpenAICompatible))
-	default: // openai, openai-responses, and unknown -> OpenAI-compatible
+	case "openai-responses":
+		reg.Register(id, FormatOpenAIResponses, openaiResponsesExec)
+		translator.Register(id, translator.Func(providers.TranslateOpenAICompatible))
+	default: // openai and unknown -> OpenAI-compatible
 		reg.Register(id, FormatOpenAI, openaiExec)
 		translator.Register(id, translator.Func(providers.TranslateOpenAICompatible))
 	}
