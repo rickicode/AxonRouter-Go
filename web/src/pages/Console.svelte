@@ -4,7 +4,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/car
 import { Button } from '$lib/components/ui/button';
 import { Badge } from '$lib/components/ui/badge';
 import { ScrollArea } from '$lib/components/ui/scroll-area';
-import { getConsoleLogs, type ConsoleLogEntry, type ConsoleLogsResponse } from '$lib/api';
+import {
+	getConsoleLogs,
+	streamConsoleLogs,
+	clearConsoleLogs,
+	type ConsoleLogEntry,
+	type ConsoleLogsResponse,
+} from '$lib/api';
 import { toast } from 'svelte-sonner';
 import TerminalIcon from '@lucide/svelte/icons/terminal';
 import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
@@ -14,12 +20,17 @@ import CopyIcon from '@lucide/svelte/icons/copy';
 import CheckIcon from '@lucide/svelte/icons/check';
 import SearchIcon from '@lucide/svelte/icons/search';
 import FilterIcon from '@lucide/svelte/icons/filter';
+import Trash2Icon from '@lucide/svelte/icons/trash-2';
+
+const MAX_CONSOLE_LINES = 500;
 
 let logs = $state<ConsoleLogsResponse | null>(null);
 let isLoading = $state(false);
 let isPaused = $state(false);
 let logViewport = $state<HTMLPreElement | null>(null);
 let pollTimer = $state<ReturnType<typeof setInterval> | null>(null);
+let eventSource = $state<EventSource | null>(null);
+let connectionMode = $state<'sse' | 'poll'>('sse');
 let lastError = $state<string | null>(null);
 let levelFilter = $state('debug');
 let searchQuery = $state('');
@@ -62,8 +73,10 @@ function scrollToBottom() {
 }
 
 function startPolling() {
-	if (pollTimer) return;
+	if (pollTimer || isPaused) return;
+	connectionMode = 'poll';
 	pollTimer = setInterval(() => fetchLogs(), 3000);
+	fetchLogs(true);
 }
 
 function stopPolling() {
@@ -73,32 +86,147 @@ function stopPolling() {
 	}
 }
 
+function closeSSE() {
+	if (eventSource) {
+		eventSource.close();
+		eventSource = null;
+	}
+}
+
+function safeParse(data: string): unknown {
+	try {
+		return JSON.parse(data);
+	} catch {
+		return null;
+	}
+}
+
+function applySSEEvent(type: 'init' | 'line' | 'clear', data: unknown) {
+	if (type === 'clear') {
+		if (logs) logs.entries = [];
+		return;
+	}
+	if (type === 'init') {
+		const init = data as { entries?: ConsoleLogEntry[]; path?: string; total?: number } | null;
+		const entries = init?.entries ?? [];
+		logs = {
+			entries,
+			path: init?.path ?? logs?.path ?? '',
+			total: init?.total ?? entries.length,
+		};
+		tick().then(scrollToBottom);
+		return;
+	}
+	if (type === 'line') {
+		const entry = data as ConsoleLogEntry | null;
+		if (!entry || !entry.level) return;
+		if (!logs) {
+			logs = { entries: [], path: '', total: 0 };
+		}
+		logs.entries.push(entry);
+		if (logs.entries.length > MAX_CONSOLE_LINES) {
+			logs.entries = logs.entries.slice(-MAX_CONSOLE_LINES);
+		}
+		logs.total = logs.entries.length;
+		tick().then(scrollToBottom);
+	}
+}
+
+function startSSE() {
+	closeSSE();
+	stopPolling();
+	if (isPaused || typeof EventSource === 'undefined') {
+		startPolling();
+		return;
+	}
+	try {
+		const es = streamConsoleLogs({
+			level: levelFilter,
+			search: searchQuery || undefined,
+		});
+		es.onopen = () => {
+			connectionMode = 'sse';
+			lastError = null;
+		};
+		es.addEventListener('init', (e) => {
+			applySSEEvent('init', safeParse(e.data));
+		});
+		es.addEventListener('line', (e) => {
+			applySSEEvent('line', safeParse(e.data));
+		});
+		es.addEventListener('clear', () => {
+			applySSEEvent('clear', null);
+		});
+		es.onerror = () => {
+			closeSSE();
+			if (!isPaused) startPolling();
+		};
+		eventSource = es;
+	} catch (err) {
+		if (!isPaused) startPolling();
+	}
+}
+
 function togglePause() {
 	isPaused = !isPaused;
 	if (isPaused) {
 		stopPolling();
-		toast.info('Console log polling paused');
+		closeSSE();
+		toast.info('Console log streaming paused');
 	} else {
-		startPolling();
-		fetchLogs(true);
-		toast.info('Console log polling resumed');
+		startSSE();
+		toast.info('Console log streaming resumed');
 	}
 }
 
 function handleRefresh() {
-	fetchLogs(true);
+	if (connectionMode === 'sse' && eventSource) {
+		startSSE();
+	} else {
+		fetchLogs(true);
+	}
 }
 
 function handleLevelChange(level: string) {
 	levelFilter = level;
-	fetchLogs(true);
+	if (isPaused) return;
+	if (connectionMode === 'sse') {
+		startSSE();
+	} else {
+		stopPolling();
+		startPolling();
+	}
 }
 
 let searchDebounce: ReturnType<typeof setTimeout> | null = null;
 function handleSearchInput(value: string) {
 	searchQuery = value;
 	if (searchDebounce) clearTimeout(searchDebounce);
-	searchDebounce = setTimeout(() => fetchLogs(true), 300);
+	searchDebounce = setTimeout(() => {
+		if (isPaused) return;
+		if (connectionMode === 'sse') {
+			startSSE();
+		} else {
+			stopPolling();
+			startPolling();
+		}
+	}, 300);
+}
+
+async function handleClearLogs() {
+	const confirmed = window.confirm(
+		'Are you sure you want to clear all console logs? This action cannot be undone.',
+	);
+	if (!confirmed) return;
+	try {
+		await clearConsoleLogs();
+		if (logs) logs.entries = [];
+		lastError = null;
+		toast.success('Console logs cleared');
+	} catch (err) {
+		const message = err instanceof Error ? err.message : 'Unknown error';
+		toast.error('Failed to clear console logs: ' + message);
+	}
 }
 
 async function copyEntry(entry: ConsoleLogEntry, index: number) {
@@ -161,12 +289,16 @@ function formatTimestamp(ts: string): string {
 	try {
 		const d = new Date(ts);
 		if (isNaN(d.getTime())) return ts;
-		return d.toLocaleTimeString('en-US', {
-			hour12: false,
-			hour: '2-digit',
-			minute: '2-digit',
-			second: '2-digit',
-		}) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+		return (
+			d.toLocaleTimeString('en-US', {
+				hour12: false,
+				hour: '2-digit',
+				minute: '2-digit',
+				second: '2-digit',
+			}) +
+			'.' +
+			String(d.getMilliseconds()).padStart(3, '0')
+		);
 	} catch {
 		return ts;
 	}
@@ -178,10 +310,10 @@ function truncateCID(cid: string): string {
 
 onMount(() => {
 	document.title = 'Console — AxonRouter';
-	fetchLogs(true);
-	startPolling();
+	startSSE();
 	return () => {
 		stopPolling();
+		closeSSE();
 		if (searchDebounce) clearTimeout(searchDebounce);
 	};
 });
@@ -197,7 +329,7 @@ onMount(() => {
 		</div>
 		<div class="flex items-center gap-2">
 			<Badge variant={isPaused ? 'secondary' : 'default'} class="text-caption-mono rounded-sm">
-				{isPaused ? 'Paused' : 'Live'}
+				{isPaused ? 'Paused' : connectionMode === 'sse' ? 'Live SSE' : 'Live Poll'}
 			</Badge>
 			<Button
 				onclick={togglePause}
@@ -222,6 +354,15 @@ onMount(() => {
 			>
 				<RefreshCwIcon class="size-3.5 mr-1.5 {isLoading ? 'animate-spin' : ''}" />
 				Refresh
+			</Button>
+			<Button
+				onclick={handleClearLogs}
+				variant="outline"
+				size="sm"
+				class="text-body-sm rounded-sm cursor-pointer text-red-400 hover:text-red-300 hover:bg-red-500/10"
+			>
+				<Trash2Icon class="size-3.5 mr-1.5" />
+				Clear Logs
 			</Button>
 		</div>
 	</div>
@@ -287,7 +428,6 @@ onMount(() => {
 							<div class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></div>
 						{/if}
 					</div>
-
 					{#if !logs || logs.entries.length === 0}
 						<div class="flex flex-col items-center justify-center py-16 text-center">
 							<TerminalIcon class="size-8 text-white/20 mb-3" />
@@ -309,31 +449,26 @@ onMount(() => {
 								<span class="text-caption font-mono text-white/30 whitespace-nowrap min-w-[95px] shrink-0">
 									{formatTimestamp(entry.ts)}
 								</span>
-
 								<!-- Level badge -->
 								<span class="text-caption font-mono min-w-[50px] shrink-0 text-right {getLevelColor(entry.level)}">
 									{entry.level.toUpperCase().padEnd(5)}
 								</span>
-
 								<!-- Component tag -->
 								{#if entry.component}
 									<span class="text-caption font-mono text-purple-400 shrink-0 ml-2">
 										[{entry.component}]
 									</span>
 								{/if}
-
 								<!-- Request ID -->
 								{#if entry.request_id}
 									<span class="text-caption font-mono text-cyan-400/60 shrink-0 ml-2" title={entry.request_id}>
 										cid:{truncateCID(entry.request_id)}
 									</span>
 								{/if}
-
 								<!-- Message -->
 								<span class="text-caption font-mono text-white/80 ml-3 break-words flex-1 min-w-0">
 									{entry.msg}
 								</span>
-
 								<!-- Extra metadata chips -->
 								{#if entry.provider || entry.model || entry.conn}
 									<div class="flex items-center gap-1 ml-3 shrink-0">
@@ -349,7 +484,6 @@ onMount(() => {
 										{/if}
 									</div>
 								{/if}
-
 								<!-- Copy button (hidden until hover) -->
 								<button
 									class="opacity-0 group-hover:opacity-100 transition-opacity ml-2 shrink-0 p-1 rounded hover:bg-white/10"
