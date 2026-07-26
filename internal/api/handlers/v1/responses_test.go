@@ -505,6 +505,48 @@ func TestResponses_GeminiPrefix_RoutesAndTranslates(t *testing.T) {
 	}
 }
 
+func TestResponses_AntigravityPrefix_RoutesAndTranslates(t *testing.T) {
+	h, cleanup := setupResponsesTest(t)
+	defer cleanup()
+
+	fe := &captureExecutor{
+		fakeExecutor: fakeExecutor{
+			responses: []struct {
+				resp *executor.Response
+				err  error
+			}{
+				{
+					resp: &executor.Response{
+						StatusCode: http.StatusOK,
+						Body: []byte(`{"response":{"responseId":"ag-1","modelVersion":"ag-model","candidates":[{"content":{"role":"model","parts":[{"text":"Hello from Antigravity"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":3,"totalTokenCount":8}}}`),
+					},
+				},
+			},
+		},
+	}
+	defer setupProviderResponsesTest(t, h, "ag", string(executor.FormatAntigravity), fe)()
+
+	body := []byte(`{"model":"ag/gemini-2.5-pro","input":"hi"}`)
+	rec, c := jsonRequestWithAllowedModels(t, http.MethodPost, "/v1/responses", body, nil)
+	h.Responses(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if fe.lastReq == nil {
+		t.Fatalf("expected upstream request to be captured")
+	}
+	if !gjson.GetBytes(fe.lastReq.Body, "contents").Exists() {
+		t.Fatalf("expected translated Antigravity request to contain contents, got %s", fe.lastReq.Body)
+	}
+	if gjson.GetBytes(fe.lastReq.Body, "model").String() != "gemini-2.5-pro" {
+		t.Fatalf("expected model name to be stripped of prefix, got %s", fe.lastReq.Body)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"text":"Hello from Antigravity"`)) {
+		t.Fatalf("expected OpenAI Responses output, got %s", rec.Body.String())
+	}
+}
+
 func TestResponses_OpenAICompatible_RoutesAndTranslates(t *testing.T) {
 	h, cleanup := setupResponsesTest(t)
 	defer cleanup()

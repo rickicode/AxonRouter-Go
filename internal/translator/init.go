@@ -53,7 +53,12 @@ import (
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/codex/responses"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai/codex_responses"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai/grok_cli"
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai_responses/antigravity"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai_responses/claude"
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai_responses/devin"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai_responses/gemini"
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai_responses/grok_cli"
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai_responses/kiro"
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai_responses/openai"
+	_ "github.com/rickicode/AxonRouter-Go/internal/translator/openai_responses/qoder"
 )

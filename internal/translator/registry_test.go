@@ -35,6 +35,11 @@ func TestRegistrySanity(t *testing.T) {
 		{types.FormatCodexResponses, types.FormatOpenAI},
 		{types.FormatCodexResponses, types.FormatClaude},
 		{types.FormatCodexResponses, types.FormatGemini},
+		{types.FormatCodexResponses, types.FormatAntigravity},
+		{types.FormatCodexResponses, types.FormatKiro},
+		{types.FormatCodexResponses, types.FormatGrokCLI},
+		{types.FormatCodexResponses, types.FormatDevinCLI},
+		{types.FormatCodexResponses, types.FormatQoder},
 
 		{types.FormatAntigravity, types.FormatOpenAI},
 		{types.FormatAntigravity, types.FormatGemini},
@@ -69,9 +74,17 @@ func TestRegistrySanity(t *testing.T) {
 		{types.FormatAntigravity, types.FormatOpenAI},
 		{types.FormatAntigravity, types.FormatClaude},
 		{types.FormatAntigravity, types.FormatGemini},
+		{types.FormatAntigravity, types.FormatCodexResponses},
 
 		{types.FormatKiro, types.FormatClaude},
+		{types.FormatKiro, types.FormatCodexResponses},
+
 		{types.FormatGrokCLI, types.FormatOpenAI},
+		{types.FormatGrokCLI, types.FormatCodexResponses},
+
+		{types.FormatDevinCLI, types.FormatCodexResponses},
+
+		{types.FormatQoder, types.FormatCodexResponses},
 	}
 
 	r := registry.Default()

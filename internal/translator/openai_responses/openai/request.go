@@ -9,9 +9,9 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// convertOpenAIResponsesRequestToOpenAI transforms an OpenAI Responses API
+// ConvertOpenAIResponsesRequestToOpenAI transforms an OpenAI Responses API
 // request into an OpenAI Chat Completions request body.
-func convertOpenAIResponsesRequestToOpenAI(modelName string, inputRawJSON []byte, stream bool) []byte {
+func ConvertOpenAIResponsesRequestToOpenAI(modelName string, inputRawJSON []byte, stream bool) []byte {
 	rawJSON := inputRawJSON
 	out := []byte(`{"model":"","messages":[],"stream":false}`)
 

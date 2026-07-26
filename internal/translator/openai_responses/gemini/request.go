@@ -11,9 +11,9 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// convertOpenAIResponsesRequestToGemini converts an OpenAI Responses API request
+// ConvertOpenAIResponsesRequestToGemini converts an OpenAI Responses API request
 // into a Gemini generateContent request body.
-func convertOpenAIResponsesRequestToGemini(modelName string, body []byte, stream bool) []byte {
+func ConvertOpenAIResponsesRequestToGemini(modelName string, body []byte, stream bool) []byte {
 	_ = stream
 	root := gjson.ParseBytes(body)
 

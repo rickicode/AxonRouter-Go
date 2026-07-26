@@ -15,6 +15,8 @@ const (
 	FormatAntigravity    Format = "antigravity"
 	FormatKiro           Format = "kiro"
 	FormatGrokCLI        Format = "grok-cli"
+	FormatDevinCLI       Format = "devin-cli"
+	FormatQoder          Format = "qoder"
 )
 
 // TranslateFunc translates a request body from one format to another.
