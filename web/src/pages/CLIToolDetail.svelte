@@ -18,7 +18,7 @@ import XCircleIcon from '@lucide/svelte/icons/x-circle';
 import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
 import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
 import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
-import { cliToolsApi, modelsApi, apiKeysApi } from '$lib/api';
+import { cliToolsApi, gatewayModelsApi, apiKeysApi } from '$lib/api';
 import ModelPickerDialog from '$lib/components/ModelPickerDialog.svelte';
 import { CLIConfigOutput } from '$lib/components/cli-tools';
 import type {
@@ -80,7 +80,7 @@ async function loadAll() {
 	try {
 		const [toolRes, modelsRes, keysRes] = await Promise.all([
 			cliToolsApi.get(id),
-			modelsApi.list(),
+			gatewayModelsApi.list(),
 			apiKeysApi.list(),
 		]);
 		const res = toolRes as CLIToolState;

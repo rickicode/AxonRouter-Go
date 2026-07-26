@@ -1658,3 +1658,123 @@ export const tlsApi = {
       `/tls-config/check-dns?domain=${encodeURIComponent(domain)}`,
     ),
 };
+
+// Smart Router / virtual models
+export const SMART_VIRTUAL_MODEL_IDS = [
+	"smart/auto",
+	"smart/auto-fast",
+	"smart/auto-quality",
+] as const;
+
+export interface SmartVirtualModel {
+	id: string;
+	enabled: boolean;
+	candidates: string[];
+}
+
+export interface SmartRouterConfig {
+	models: SmartVirtualModel[];
+}
+
+export const defaultSmartRouterConfig: SmartRouterConfig = {
+	models: SMART_VIRTUAL_MODEL_IDS.map((id) => ({ id, enabled: true, candidates: [] })),
+};
+
+function migrateSmartRouterConfig(input: SmartRouterConfig): SmartRouterConfig {
+	const byId = new Map<string, SmartVirtualModel>(
+		(input.models || []).map((m) => [m.id, { ...m, candidates: m.candidates || [] }]),
+	);
+	for (const id of SMART_VIRTUAL_MODEL_IDS) {
+		if (!byId.has(id)) {
+			byId.set(id, { id, enabled: false, candidates: [] });
+		}
+	}
+	return { models: SMART_VIRTUAL_MODEL_IDS.map((id) => byId.get(id)!) };
+}
+
+const SMART_ROUTER_CONFIG_KEY = "smart_router_virtual_models";
+
+export const smartRouterApi = {
+	getConfig: async (): Promise<SmartRouterConfig> => {
+		try {
+			const { value } = await settingsApi.get(SMART_ROUTER_CONFIG_KEY);
+			const parsed = JSON.parse(value || "null") as SmartRouterConfig | null;
+			return migrateSmartRouterConfig(parsed || defaultSmartRouterConfig);
+		} catch {
+			return migrateSmartRouterConfig(defaultSmartRouterConfig);
+		}
+	},
+	updateConfig: async (config: SmartRouterConfig): Promise<void> => {
+		await settingsApi.update(
+			SMART_ROUTER_CONFIG_KEY,
+			JSON.stringify(migrateSmartRouterConfig(config)),
+		);
+	},
+};
+
+export interface VirtualModelTelemetry {
+	requests: number;
+	avgLatencyMs: number;
+	successRate: number;
+	costPer1KTokens: number;
+}
+
+export function computeVirtualModelTelemetry(
+	candidates: string[],
+	byModel: {
+		model_id?: string;
+		requests: number;
+		errors: number;
+		avg_latency_ms: number;
+		cost_usd: number;
+		total_tokens: number;
+	}[],
+): VirtualModelTelemetry | null {
+	const candidateSet = new Set(candidates);
+	const rows = byModel.filter((r) => candidateSet.has(r.model_id || ""));
+	const requests = rows.reduce((sum, r) => sum + (r.requests || 0), 0);
+	if (requests === 0) return null;
+	const errors = rows.reduce((sum, r) => sum + (r.errors || 0), 0);
+	const totalTokens = rows.reduce((sum, r) => sum + (r.total_tokens || 0), 0);
+	const totalCost = rows.reduce((sum, r) => sum + (r.cost_usd || 0), 0);
+	const weightedLatency = rows.reduce(
+		(sum, r) => sum + (r.avg_latency_ms || 0) * (r.requests || 0),
+		0,
+	);
+	return {
+		requests,
+		avgLatencyMs: weightedLatency / requests,
+		successRate: ((requests - errors) / requests) * 100,
+		costPer1KTokens: totalTokens > 0 ? (totalCost / totalTokens) * 1000 : 0,
+	};
+}
+
+// Active model catalog used by dashboard pickers. Ensures smart virtual models
+// are present and hides the ones disabled in Smart Router settings.
+export const gatewayModelsApi = {
+	list: async (): Promise<{ data: GatewayModel[] }> => {
+		const [{ data: raw }, config] = await Promise.all([
+			modelsApi.list(),
+			smartRouterApi.getConfig().catch(() => null),
+		]);
+		const data: GatewayModel[] = [...(raw || [])];
+		const ids = new Set(data.map((m) => m.id));
+		for (const id of SMART_VIRTUAL_MODEL_IDS) {
+			if (!ids.has(id)) {
+				data.push({
+					id,
+					object: "model",
+					created: 1700000000,
+					owned_by: "axonrouter",
+				});
+			}
+		}
+		if (config) {
+			const disabled = new Set(
+				config.models.filter((m) => !m.enabled).map((m) => m.id),
+			);
+			return { data: data.filter((m) => !disabled.has(m.id)).sort((a, b) => a.id.localeCompare(b.id)) };
+		}
+		return { data: data.sort((a, b) => a.id.localeCompare(b.id)) };
+	},
+};

@@ -6,7 +6,7 @@ import { Label } from '$lib/components/ui/label';
 import { Switch } from '$lib/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
 import ModelPickerDialog from '$lib/components/ModelPickerDialog.svelte';
-import { combosApi, modelsApi } from '$lib/api';
+import { combosApi, gatewayModelsApi } from '$lib/api';
 import type { Combo, ComboStep, GatewayModel } from '$lib/api';
 import { unwrapStr } from '$lib/utils';
 import { planStepSync, type StepDraft, type ExistingStep } from './combo-modal-helpers';
@@ -137,7 +137,7 @@ function buildFusionConfig(): string {
 async function loadModels() {
 	if (models.length > 0) return;
 	try {
-		const res = await modelsApi.list();
+		const res = await gatewayModelsApi.list();
 		models = res.data || [];
 	} catch (err) {
 		toast.error('Failed to load models: ' + (err instanceof Error ? err.message : 'Unknown'));

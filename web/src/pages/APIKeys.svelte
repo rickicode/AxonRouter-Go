@@ -12,7 +12,7 @@ import { AlertDialog, AlertDialogContent, AlertDialogTitle, AlertDialogDescripti
 import * as Dialog from '$lib/components/ui/dialog';
 import * as Select from '$lib/components/ui/select';
 import { toast } from 'svelte-sonner';
-import { apiKeysApi, providersApi, modelsApi } from '$lib/api';
+import { apiKeysApi, providersApi, gatewayModelsApi } from '$lib/api';
 import { copyToClipboard } from '$lib/copy';
 import AlertTriangleIcon from '@lucide/svelte/icons/alert-triangle';
 import CheckIcon from '@lucide/svelte/icons/check';
@@ -342,7 +342,7 @@ async function loadPickerData() {
   try {
     const [pRes, mRes] = await Promise.all([
       providersApi.list(),
-      modelsApi.list(),
+      gatewayModelsApi.list(),
     ]);
     providers = pRes.data ?? [];
     models = mRes.data ?? [];
@@ -777,7 +777,10 @@ function resetCreateDialog() {
                     <div class="flex flex-col gap-0.5">
                       {#each filteredModels as model}
                         <Button variant="ghost" size="sm" class="w-full justify-between text-body-sm font-normal" onclick={() => toggleModel(model.id)}>
-                          <span class="truncate font-mono text-xs">{model.id}</span>
+                          <span class="truncate font-mono text-xs {model.id.startsWith('smart/') ? 'text-primary' : ''}">{model.id}</span>
+{#if model.id.startsWith('smart/')}
+<Badge variant="secondary" class="ml-1 text-[10px] px-1.5 py-0 rounded-full">Smart</Badge>
+{/if}
                           {#if allowedModels.includes(model.id)}
                             <CheckIcon class="size-4 text-primary shrink-0 ml-2" />
                           {/if}
