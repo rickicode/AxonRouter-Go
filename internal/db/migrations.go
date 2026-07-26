@@ -294,6 +294,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		{"qwencloud", "Qwen Cloud", "openai-responses", "https://dashscope-intl.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1/responses", "apikey", []string{"llm"}},
 
 		{"codebuddy", "CodeBuddy", "openai", "https://www.codebuddy.ai/v2/chat/completions", "oauth", []string{"llm"}},
+		{"cursor", "Cursor IDE", "openai", "https://api2.cursor.sh", "oauth", []string{"llm"}},
 
 		{"vertex", "Google Vertex AI", "openai", "https://aiplatform.googleapis.com/v1/projects/{projectId}/locations/{location}/endpoints/openapi", "service-account", []string{"llm"}},
 		{"bedrock", "Amazon Bedrock Mantle", "openai", "https://bedrock-mantle.{region}.api.aws/v1", "apikey", []string{"llm"}},

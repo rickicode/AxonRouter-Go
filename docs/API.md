@@ -532,6 +532,8 @@ Recent logs.
 | `POST /api/admin/oauth/start` | Start an OAuth flow (PKCE / device code / Google / AWS). |
 | `GET /api/admin/oauth/:sessionId/poll` | Poll OAuth status. |
 | `POST /api/admin/oauth/callback` | Submit OAuth callback code/state. |
+| `POST /api/admin/oauth/import-token` | Import tokens for a supported OAuth provider. |
+| `POST /api/admin/oauth/cursor/import` | Auto-import a Cursor IDE access token from the local VS Code: state file. |
 
 ---
 

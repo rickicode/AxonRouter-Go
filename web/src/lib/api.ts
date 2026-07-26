@@ -610,6 +610,11 @@ export const oauthApi = {
     fetchApi<KiroPollResponse>(`/oauth/kiro/${sessionId}/poll`),
 
   autoImportKiro: () => fetchApi<KiroAutoImportResult>("/oauth/kiro/auto-import"),
+
+  importCursorFromIDE: () =>
+    fetchApi<{ id: string; name: string; status: string; expires_at?: number; email_hash?: string; source?: string }>("/oauth/cursor/import", {
+      method: "POST",
+    }),
 };
 
 export interface APIKeyItem {

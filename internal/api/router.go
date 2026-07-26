@@ -237,6 +237,7 @@ func New(cfg Config) *Router {
 	modelH := admin.NewModelHandler(cfg.DB, executor.GetRegistry(), store, authManager)
 	oauthH := admin.NewOAuthHandler(cfg.DB, authManager, store, elig)
 	kiroAuthH := admin.NewKiroAuthHandler(cfg.DB, kiroAuthSvc, store, elig)
+	cursorImportH := admin.NewCursorImportHandler(cfg.DB, store, elig)
 	quotaH := admin.NewQuotaHandler(cfg.DB)
 	modelPricingH := admin.NewModelPricingHandler()
 	developersH := admin.NewDevelopersHandler(cfg.DB, km, cfg.Port)
@@ -384,6 +385,9 @@ func New(cfg Config) *Router {
 		g.GET("/oauth/:sessionId/poll", oauthH.PollOAuth)
 		g.POST("/oauth/callback", oauthH.SubmitOAuthCallback)
 		g.POST("/oauth/import-token", oauthH.ImportToken)
+
+		// Cursor IDE token auto-import from local VS Code: state file
+		g.POST("/oauth/cursor/import", cursorImportH.ImportCursorToken)
 
 		// Kiro multi-method auth
 		g.POST("/oauth/kiro/builder-id/start", kiroAuthH.StartBuilderID)
