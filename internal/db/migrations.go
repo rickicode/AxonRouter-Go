@@ -262,6 +262,8 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		{"openai", "OpenAI Platform", "openai", "https://api.openai.com/v1", "apikey", []string{"llm", "embedding", "image"}},
 		{"claude", "Anthropic Claude", "anthropic", "https://api.anthropic.com/v1", "apikey", []string{"llm"}},
 		{"gemini", "Gemini", "gemini", "https://generativelanguage.googleapis.com/v1beta", "apikey", []string{"llm"}},
+		{"gemini-interactions", "Gemini Interactions", "interactions", "https://generativelanguage.googleapis.com/v1beta", "apikey", []string{"llm"}},
+		{"aistudio", "AI Studio", "interactions", "https://generativelanguage.googleapis.com/v1beta", "apikey", []string{"llm"}},
 		{"deepseek", "DeepSeek", "openai", "https://api.deepseek.com/v1", "apikey", []string{"llm"}},
 		{"groq", "Groq Cloud", "openai", "https://api.groq.com/openai/v1", "apikey", []string{"llm"}},
 		{"openrouter", "OpenRouter", "openai", "https://openrouter.ai/api/v1", "apikey", []string{"llm"}},
