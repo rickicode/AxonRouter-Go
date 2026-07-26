@@ -969,6 +969,20 @@ export const getConsoleLogs = (params?: {
 	const qs = query.toString();
 	return fetchApi<ConsoleLogsResponse>(`/console-logs${qs ? '?' + qs : ''}`);
 };
+export const streamConsoleLogs = (params?: {
+	level?: string;
+	search?: string;
+}): EventSource => {
+	const query = new URLSearchParams();
+	if (params?.level) query.set('level', params.level);
+	if (params?.search) query.set('search', params.search);
+	const token = getToken();
+	if (token) query.set('token', token);
+	const qs = query.toString();
+	return new EventSource(`${API_BASE}/console-logs/stream${qs ? '?' + qs : ''}`);
+};
+export const clearConsoleLogs = () =>
+	fetchApi<void>('/console-logs', { method: 'DELETE' });
 
 // Logs API
 export const logsApi = {
