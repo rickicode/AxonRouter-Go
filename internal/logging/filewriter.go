@@ -16,14 +16,20 @@ import (
 // JSON lines to a log file. This allows the Console Log Viewer in the dashboard
 // to display rich, filterable log entries instead of raw text.
 type TeeHandler struct {
-	inner slog.Handler
-	mu    sync.Mutex
-	file  *os.File
+	inner  slog.Handler
+	mu     sync.Mutex
+	writer io.WriteCloser
 }
 
 // NewTeeHandler creates a TeeHandler that delegates to inner and also appends
-// JSON lines to the file at logPath. Parent directories are created automatically.
-func NewTeeHandler(inner slog.Handler, logPath string) (*TeeHandler, error) {
+// JSON lines to the provided writer.
+func NewTeeHandler(inner slog.Handler, writer io.WriteCloser) (*TeeHandler, error) {
+	return &TeeHandler{inner: inner, writer: writer}, nil
+}
+
+// NewTeeHandlerWithPath creates a TeeHandler that writes to a plain file at
+// logPath. It is a convenience wrapper for callers that do not need rotation.
+func NewTeeHandlerWithPath(inner slog.Handler, logPath string) (*TeeHandler, error) {
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return nil, err
 	}
@@ -31,10 +37,15 @@ func NewTeeHandler(inner slog.Handler, logPath string) (*TeeHandler, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &TeeHandler{inner: inner, file: f}, nil
+	tee, err := NewTeeHandler(inner, f)
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return tee, nil
 }
 
-// Enabled reports true if either the inner handler or the file writer accepts the level.
+// Enabled reports true if the inner handler accepts the level.
 func (h *TeeHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	return h.inner.Enabled(ctx, level)
 }
@@ -46,16 +57,19 @@ func (h *TeeHandler) Handle(ctx context.Context, r slog.Record) error {
 		return err
 	}
 
+	message, component := extractComponent(r.Message)
+
 	// Build a structured JSON entry for the log file.
 	entry := jsonLogEntry{
 		Timestamp: r.Time.UTC().Format(time.RFC3339Nano),
 		Level:     normalizeLevel(r.Level),
-		Message:   r.Message,
+		Message:   message,
+		Component: component,
 	}
-
 	r.Attrs(func(a slog.Attr) bool {
 		switch a.Key {
 		case "component":
+			// Explicit component attribute wins over prefix extraction.
 			entry.Component = a.Value.String()
 		case "request_id", "cid":
 			entry.RequestID = a.Value.String()
@@ -75,16 +89,14 @@ func (h *TeeHandler) Handle(ctx context.Context, r slog.Record) error {
 		}
 		return true
 	})
-
 	line, err := json.Marshal(entry)
 	if err != nil {
 		return nil // swallow — don't break the app over a log-file write
 	}
 	line = append(line, '\n')
-
 	logFileMu.Lock()
 	defer logFileMu.Unlock()
-	_, writeErr := h.file.Write(line)
+	_, writeErr := h.writer.Write(line)
 	if writeErr == nil {
 		LogBroadcaster.BroadcastLine(string(line))
 	}
@@ -93,22 +105,41 @@ func (h *TeeHandler) Handle(ctx context.Context, r slog.Record) error {
 
 // WithAttrs delegates to the inner handler (attrs are captured at Handle time via r.Attrs).
 func (h *TeeHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &TeeHandler{inner: h.inner.WithAttrs(attrs), file: h.file}
+	return &TeeHandler{inner: h.inner.WithAttrs(attrs), writer: h.writer}
 }
 
 // WithGroup delegates to the inner handler.
 func (h *TeeHandler) WithGroup(name string) slog.Handler {
-	return &TeeHandler{inner: h.inner.WithGroup(name), file: h.file}
+	return &TeeHandler{inner: h.inner.WithGroup(name), writer: h.writer}
 }
 
-// Close closes the underlying log file.
+// Close closes the underlying writer.
 func (h *TeeHandler) Close() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.file != nil {
-		return h.file.Close()
+	if h.writer != nil {
+		return h.writer.Close()
 	}
 	return nil
+}
+
+// extractComponent scans msg for a leading [COMPONENT] prefix. If present it
+// returns the component and the message with the prefix removed.
+func extractComponent(msg string) (message, component string) {
+	msg = strings.TrimSpace(msg)
+	if !strings.HasPrefix(msg, "[") {
+		return msg, ""
+	}
+	end := strings.IndexByte(msg, ']')
+	if end <= 0 {
+		return msg, ""
+	}
+	component = strings.TrimSpace(msg[1:end])
+	if component == "" {
+		return msg, ""
+	}
+	message = strings.TrimSpace(msg[end+1:])
+	return message, component
 }
 
 // jsonLogEntry is the structured shape written to the log file.
