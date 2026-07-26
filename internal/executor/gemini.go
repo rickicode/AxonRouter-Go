@@ -89,3 +89,32 @@ func (e *GeminiExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 	result, err := e.DoStreamRequest(ContextWithProvider(ctx, req.Provider), "POST", url, headers, body)
 	return result, err
 }
+
+// CountTokens performs a Gemini countTokens request.
+func (e *GeminiExecutor) CountTokens(ctx context.Context, req *Request) (*Response, error) {
+	model := ExtractModel(req.Model)
+	url := geminiEndpoint(req.BaseURL, model, "countTokens")
+	headers := geminiHeaders(req.APIKey, req.AccessToken)
+	body := signature.SanitizeGeminiRequestThoughtSignatures(req.Body, "contents")
+
+	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode >= 400 {
+		upErr := &UpstreamError{
+			StatusCode: resp.StatusCode,
+			Body:       resp.Body,
+			RawBody:    resp.Body,
+			Headers:    resp.Headers,
+		}
+		upErr.TranslateErrorBody(req.Provider)
+		return nil, upErr
+	}
+
+	return resp, nil
+}
+
+// Ensure GeminiExecutor implements the TokenCounter interface.
+var _ TokenCounter = (*GeminiExecutor)(nil)

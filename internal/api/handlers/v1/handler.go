@@ -340,6 +340,8 @@ func unifiedSurface(path string) string {
 		return "stt"
 	case strings.Contains(path, "/count_tokens"):
 		return "count_tokens"
+	case strings.Contains(path, "/v1beta"):
+		return "gemini"
 	default:
 		return modalityFromPath(path)
 	}
