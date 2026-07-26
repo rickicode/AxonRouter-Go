@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **ZenMux model passthrough defaults and regression tests** — `internal/providercfg/compatibility.go` now seeds `StripProviderPrefix: "zenmux/"` and `"zenmux-free/"` defaults for `zenmux` and `zenmux-free`, and `internal/executor/registry.go` already routes both prefixes through the OpenAI executor. Added regression tests confirming registry model splitting, compatibility prefix stripping, upstream model IDs are not double-prefixed, free-tier models are accepted with a free connection, and paid-tier models are rejected when no paid ZenMux connection exists.
+
 - **Log-directory size enforcement** — new `AXON_LOGS_MAX_TOTAL_SIZE_MB` config variable (`LogsMaxTotalSizeMB`) limits the total size of files in the configured log directory. A background cleaner removes the oldest `.log`/`.log.gz` files when the directory exceeds the cap, leaving the currently active `axonrouter.log` untouched. Wired from `cmd/server/main.go` with regression tests in `internal/logging/log_dir_cleaner_test.go`.
 
 - **Claude ↔ OpenAI `/v1/responses` translator** — new `internal/translator/openai_responses/claude` package registers bidirectional transforms in the translator registry. OpenAI Responses requests are converted to Claude Messages API format (`instructions` → system message, `input[]` → `messages[]`, `function_call`/`function_call_output` ↔ `tool_use`/`tool_result`, tools → `input_schema`, `reasoning.effort` → `thinking.type` + `budget_tokens`, synthetic `toolu_` IDs). Claude SSE responses are mapped to OpenAI Responses SSE events and a non-streaming final response object with `output` array and usage.

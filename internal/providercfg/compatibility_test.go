@@ -24,6 +24,22 @@ func TestCompatibilityFor_Defaults(t *testing.T) {
 	if bedrock.ModelPrefix != "" {
 		t.Fatalf("bedrock ModelPrefix should be empty, got %q", bedrock.ModelPrefix)
 	}
+
+	zenmux := CompatibilityFor("zenmux")
+	if zenmux.StripProviderPrefix != "zenmux/" {
+		t.Fatalf("zenmux StripProviderPrefix = %q, want zenmux/", zenmux.StripProviderPrefix)
+	}
+	if zenmux.ModelPrefix != "" {
+		t.Fatalf("zenmux ModelPrefix should be empty, got %q", zenmux.ModelPrefix)
+	}
+
+	zenmuxFree := CompatibilityFor("zenmux-free")
+	if zenmuxFree.StripProviderPrefix != "zenmux-free/" {
+		t.Fatalf("zenmux-free StripProviderPrefix = %q, want zenmux-free/", zenmuxFree.StripProviderPrefix)
+	}
+	if zenmuxFree.ModelPrefix != "" {
+		t.Fatalf("zenmux-free ModelPrefix should be empty, got %q", zenmuxFree.ModelPrefix)
+	}
 }
 
 func TestCompatibilityFor_UnknownProvider(t *testing.T) {

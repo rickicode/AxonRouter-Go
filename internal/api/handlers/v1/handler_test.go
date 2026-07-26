@@ -657,6 +657,50 @@ func TestGetConnectionRejectsCooledDownConnection(t *testing.T) {
 	}
 }
 
+func TestGetConnection_ZenMuxFreeAcceptsModel(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if _, err := h.db.Exec(`
+		INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at)
+		VALUES ('conn-zm-free','zenmux-free','zm-free','apikey','ready',1,?,?)
+	`, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-zm-free", "zenmux-free", "ready", 0)
+	h.elig.RecomputeAll()
+
+	conn, err := h.getConnection(context.Background(), "zenmux-free", "z-ai/glm-5.2", "")
+	if err != nil {
+		t.Fatalf("expected free zenmux connection: %v", err)
+	}
+	if conn.ID != "conn-zm-free" {
+		t.Fatalf("expected conn-zm-free, got %s", conn.ID)
+	}
+}
+
+func TestGetConnection_ZenMuxPaidRejectedWithoutPaidConnection(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	// Seed only a free-tier ZenMux connection.
+	if _, err := h.db.Exec(`
+		INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at)
+		VALUES ('conn-zm-free','zenmux-free','zm-free','apikey','ready',1,?,?)
+	`, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-zm-free", "zenmux-free", "ready", 0)
+	h.elig.RecomputeAll()
+
+	_, err := h.getConnection(context.Background(), "zenmux", "openai/gpt-5.6-luna", "")
+	if err == nil {
+		t.Fatal("expected no available paid zenmux connection, got a connection")
+	}
+}
+
 func TestTryPickConnection_RejectsTerminalStatus(t *testing.T) {
 	logging.Init("text")
 	h := newTestHandler(t)
