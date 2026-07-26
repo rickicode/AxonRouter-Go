@@ -240,6 +240,10 @@ func modalityFromPath(path string) string {
 		return "messages"
 	case strings.Contains(path, "responses"):
 		return "responses"
+	case strings.Contains(path, "live"):
+		return "live"
+	case strings.Contains(path, "realtime"):
+		return "realtime"
 	case strings.Contains(path, "embeddings"):
 		return "embeddings"
 	case strings.Contains(path, "images"):
@@ -389,6 +393,7 @@ type Handler struct {
 	exactCache          cache.CacheStorage
 	providerCfg         *providercfg.Manager
 	sessions            *connstate.SessionCache
+	codexLiveSessions   *codexLiveSessionStore
 
 	// failoverMaxAttempts caps how many connections the failover loop tries
 	// before giving up. Loaded once from the failover_max_attempts setting (default 5).
@@ -404,6 +409,11 @@ type Handler struct {
 	ttsExecutorFactory   func() executor.Executor
 	sttExecutorFactory   func() executor.Executor
 	videoExecutorFactory func() executor.Executor
+
+	// test-only overrides for Codex Live upstream calls. Nil/empty means use the
+	// production HTTP client and sideband base URL.
+	codexLiveHTTPClient      *http.Client
+	codexLiveSidebandBaseURL string
 }
 
 // NewHandler creates a new v1 handler with all dependencies.
@@ -438,6 +448,7 @@ func NewHandler(
 		exactCache:          exactCache,
 		providerCfg:         providerCfg,
 		sessions:            connstate.NewSessionCache(),
+		codexLiveSessions:   newCodexLiveSessionStore(),
 		failoverMaxAttempts: loadFailoverMaxAttempts(db),
 	}
 }

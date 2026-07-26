@@ -275,6 +275,13 @@ func New(cfg Config) *Router {
 	// Some Anthropic clients append an extra /v1 segment to the base URL.
 	v1Group.POST("/v1/messages", v1H.Messages)
 
+	// Codex Live / Realtime voice WebRTC bootstrap and sideband routes.
+	v1Group.POST("/live", v1H.CodexLive)
+	v1Group.GET("/live/:call_id", v1H.CodexLiveSideband)
+	v1Group.POST("/realtime/calls", v1H.CodexLive)
+	v1Group.GET("/realtime/calls/:call_id", v1H.CodexLiveSideband)
+	v1Group.GET("/realtime", v1H.CodexLiveSideband)
+
 	// ---- /v1beta routes (native Google Gemini surface) ----
 	v1betaGroup := engine.Group("/v1beta")
 	v1betaGroup.Use(middleware.Auth(cfg.DB, authCache))

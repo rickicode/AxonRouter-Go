@@ -18,7 +18,7 @@ import (
 
 // CLIProxyAPI Codex defaults (internal/runtime/executor/codex_executor.go:37-38).
 const (
-	defaultCodexUserAgent = "codex-tui/0.135.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.135.0)"
+	DefaultCodexUserAgent = "codex-tui/0.135.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.135.0)"
 	codexOriginator       = "codex-tui"
 )
 
@@ -65,7 +65,7 @@ func codexHeaders(req *Request) map[string]string {
 	// CLIProxyAPI forwards the client User-Agent when present, otherwise falls
 	// back to a real Codex-CLI default. This reduces Cloudflare 1010 blocks and
 	// matches the headers the upstream OAuth credential was issued for.
-	ua := defaultCodexUserAgent
+	ua := DefaultCodexUserAgent
 	if req.Headers != nil && req.Headers["User-Agent"] != "" {
 		ua = req.Headers["User-Agent"]
 	} else if req.ProviderSpecificData != nil && req.ProviderSpecificData["userAgent"] != "" {
@@ -118,6 +118,23 @@ func codexHeaders(req *Request) map[string]string {
 
 // CodexAccountIDFromToken extracts chatgpt_account_id from a Codex access-token
 // JWT payload. This matches the claim path used by OpenAI's Auth0 tokens.
+// CodexAccountIDFromConnection extracts the ChatGPT account id from connection
+// metadata or the OAuth access token.
+func CodexAccountIDFromConnection(providerSpecificData, accessToken string) string {
+	if providerSpecificData != "" {
+		if v := gjson.Get(providerSpecificData, "accountId").String(); v != "" {
+			return v
+		}
+		if v := gjson.Get(providerSpecificData, "workspaceId").String(); v != "" {
+			return v
+		}
+	}
+	if accessToken != "" {
+		return CodexAccountIDFromToken(accessToken)
+	}
+	return ""
+}
+
 func CodexAccountIDFromToken(token string) string {
 	parts := strings.Split(token, ".")
 	if len(parts) < 2 {
