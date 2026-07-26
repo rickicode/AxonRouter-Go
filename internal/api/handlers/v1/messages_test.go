@@ -17,6 +17,19 @@ import (
 	_ "github.com/rickicode/AxonRouter-Go/internal/translator"
 )
 
+func setupMessagesTest(t *testing.T) *Handler {
+	t.Helper()
+	logging.Init("text")
+	gin.SetMode(gin.TestMode)
+	h := newTestHandler(t)
+	t.Cleanup(executor.RegisterDefaults)
+	return h
+}
+
+func claudeMessageSSE(eventType, data string) []byte {
+	return []byte("event: " + eventType + "\ndata: " + data + "\n\n")
+}
+
 func TestCountTokens_OpenAICompatible(t *testing.T) {
 	logging.Init("text")
 	gin.SetMode(gin.TestMode)
@@ -93,10 +106,7 @@ func TestCountTokens_UnsupportedProvider(t *testing.T) {
 }
 
 func TestMessages_NonStreamSuccess_NativeClaude(t *testing.T) {
-	logging.Init("text")
-	gin.SetMode(gin.TestMode)
-	h := newTestHandler(t)
-	defer executor.RegisterDefaults()
+	h := setupMessagesTest(t)
 
 	fe := &captureExecutor{
 		fakeExecutor: fakeExecutor{
@@ -140,16 +150,13 @@ func TestMessages_NonStreamSuccess_NativeClaude(t *testing.T) {
 }
 
 func TestMessages_StreamSuccess_NativeClaude(t *testing.T) {
-	logging.Init("text")
-	gin.SetMode(gin.TestMode)
-	h := newTestHandler(t)
-	defer executor.RegisterDefaults()
+	h := setupMessagesTest(t)
 
 	chunks := make(chan executor.StreamChunk, 4)
-	chunks <- executor.StreamChunk{Payload: []byte(`event: message_start\ndata: {"type":"message_start","message":{"id":"msg_stream","usage":{"input_tokens":5,"output_tokens":0}}}`)}
-	chunks <- executor.StreamChunk{Payload: []byte(`event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}`)}
-	chunks <- executor.StreamChunk{Payload: []byte(`event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello from Claude stream"}}`)}
-	chunks <- executor.StreamChunk{Payload: []byte(`event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":4}}`)}
+	chunks <- executor.StreamChunk{Payload: claudeMessageSSE("message_start", `{"type":"message_start","message":{"id":"msg_stream","usage":{"input_tokens":5,"output_tokens":0}}}`)}
+	chunks <- executor.StreamChunk{Payload: claudeMessageSSE("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text"}}`)}
+	chunks <- executor.StreamChunk{Payload: claudeMessageSSE("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello from Claude stream"}}`)}
+	chunks <- executor.StreamChunk{Payload: claudeMessageSSE("message_delta", `{"type":"message_delta","usage":{"output_tokens":4}}`)}
 	close(chunks)
 
 	fe := &fakeExecutor{
@@ -188,10 +195,7 @@ func TestMessages_StreamSuccess_NativeClaude(t *testing.T) {
 }
 
 func TestMessages_OpenAITranslation(t *testing.T) {
-	logging.Init("text")
-	gin.SetMode(gin.TestMode)
-	h := newTestHandler(t)
-	defer executor.RegisterDefaults()
+	h := setupMessagesTest(t)
 
 	fe := &captureExecutor{
 		fakeExecutor: fakeExecutor{
@@ -235,10 +239,7 @@ func TestMessages_OpenAITranslation(t *testing.T) {
 }
 
 func TestMessages_GeminiTranslation(t *testing.T) {
-	logging.Init("text")
-	gin.SetMode(gin.TestMode)
-	h := newTestHandler(t)
-	defer executor.RegisterDefaults()
+	h := setupMessagesTest(t)
 
 	fe := &captureExecutor{
 		fakeExecutor: fakeExecutor{
@@ -283,10 +284,7 @@ func TestMessages_GeminiTranslation(t *testing.T) {
 }
 
 func TestMessages_CF_Translation(t *testing.T) {
-	logging.Init("text")
-	gin.SetMode(gin.TestMode)
-	h := newTestHandler(t)
-	defer executor.RegisterDefaults()
+	h := setupMessagesTest(t)
 
 	fe := &captureExecutor{
 		fakeExecutor: fakeExecutor{
@@ -327,10 +325,7 @@ func TestMessages_CF_Translation(t *testing.T) {
 }
 
 func TestMessages_UpstreamErrorPassedThrough(t *testing.T) {
-	logging.Init("text")
-	gin.SetMode(gin.TestMode)
-	h := newTestHandler(t)
-	defer executor.RegisterDefaults()
+	h := setupMessagesTest(t)
 
 	upBody := []byte(`{"error":{"message":"rate limited","type":"rate_limit_error","code":"rate_limit_exceeded"}}`)
 	fe := &fakeExecutor{
@@ -364,14 +359,11 @@ func TestMessages_UpstreamErrorPassedThrough(t *testing.T) {
 }
 
 func TestMessages_MidStreamError_EmitsEventError(t *testing.T) {
-	logging.Init("text")
-	gin.SetMode(gin.TestMode)
-	h := newTestHandler(t)
-	defer executor.RegisterDefaults()
+	h := setupMessagesTest(t)
 	h.failoverMaxAttempts = 1
 
 	chunks := make(chan executor.StreamChunk, 2)
-	chunks <- executor.StreamChunk{Payload: []byte(`event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}`)}
+	chunks <- executor.StreamChunk{Payload: claudeMessageSSE("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}`)}
 	chunks <- executor.StreamChunk{Err: errors.New("simulated upstream failure")}
 	close(chunks)
 
@@ -402,10 +394,7 @@ func TestMessages_MidStreamError_EmitsEventError(t *testing.T) {
 }
 
 func TestMessages_ExactCacheHit(t *testing.T) {
-	logging.Init("text")
-	gin.SetMode(gin.TestMode)
-	h := newTestHandler(t)
-	defer executor.RegisterDefaults()
+	h := setupMessagesTest(t)
 
 	body := []byte(`{"model":"claude/sonnet-4-20250514","messages":[{"role":"user","content":"cached hi"}],"max_tokens":100}`)
 	key := cache.ComputeKey(body, "claude/sonnet-4-20250514")
