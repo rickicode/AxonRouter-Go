@@ -2,17 +2,16 @@ package admin
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/logging"
 )
 
-const (
-	consoleLogPath = "/tmp/axonrouter.log"
-	maxConsoleLines = 500
-)
+const maxConsoleLines = 500
 
 // ConsoleLogEntry is a single structured log entry parsed from the JSON-lines log file.
 type ConsoleLogEntry struct {
@@ -53,7 +52,7 @@ func (h *ConsoleLogsHandler) Get(c *gin.Context) {
 	search := strings.ToLower(c.Query("search"))
 	limit := maxConsoleLines
 
-	rawLines, err := tailLogLines(consoleLogPath, limit*2) // read more to account for filtering
+	rawLines, err := tailLogLines(logging.LogFilePath, limit*2) // read more to account for filtering
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read console log"})
 		return
@@ -91,9 +90,107 @@ func (h *ConsoleLogsHandler) Get(c *gin.Context) {
 
 	c.JSON(http.StatusOK, ConsoleLogsResponse{
 		Entries: entries,
-		Path:    consoleLogPath,
+		Path:    logging.LogFilePath,
 		Total:   len(entries),
 	})
+}
+
+// Stream serves an SSE endpoint that pushes an initial batch of recent log
+// entries followed by live log lines and clear events.
+func (h *ConsoleLogsHandler) Stream(c *gin.Context) {
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.WriteHeader(http.StatusOK)
+
+	flush := func() {
+		if fl, ok := c.Writer.(http.Flusher); ok {
+			fl.Flush()
+		}
+	}
+
+	send := func(payload string) bool {
+		_, err := fmt.Fprintf(c.Writer, "data: %s\n\n", payload)
+		flush()
+		return err == nil
+	}
+
+	// Send init marker.
+	if !send(`{"type":"init"}`) {
+		return
+	}
+
+	// Replay the most recent lines so the client has context immediately.
+	rawLines, err := tailLogLines(logging.LogFilePath, maxConsoleLines)
+	if err == nil {
+		for _, line := range rawLines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			entry, ok := parseLogLine(line)
+			if !ok {
+				continue
+			}
+			payload, err := json.Marshal(map[string]any{
+				"type":  "line",
+				"entry": entry,
+			})
+			if err != nil {
+				continue
+			}
+			if !send(string(payload)) {
+				return
+			}
+		}
+	}
+
+	// Subscribe to live broadcasts.
+	events := logging.LogBroadcaster.Subscribe()
+	defer logging.LogBroadcaster.Unsubscribe(events)
+
+	ctx := c.Request.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case evt := <-events:
+			switch evt.Type {
+			case logging.EventLine:
+				line := strings.TrimSpace(evt.Line)
+				if line == "" {
+					continue
+				}
+				entry, ok := parseLogLine(line)
+				if !ok {
+					continue
+				}
+				payload, err := json.Marshal(map[string]any{
+					"type":  "line",
+					"entry": entry,
+				})
+				if err != nil {
+					continue
+				}
+				if !send(string(payload)) {
+					return
+				}
+			case logging.EventClear:
+				if !send(`{"type":"clear"}`) {
+					return
+				}
+			}
+		}
+	}
+}
+
+// Clear truncates the console log file and broadcasts a clear event to SSE clients.
+func (h *ConsoleLogsHandler) Clear(c *gin.Context) {
+	if err := logging.ClearLogFile(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to clear console log"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
 // parseLogLine attempts to parse a line as a structured JSON log entry.

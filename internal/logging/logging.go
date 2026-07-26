@@ -58,6 +58,36 @@ func SetLogger(l *slog.Logger) {
 // LogFilePath is the default path where structured JSON logs are written.
 var LogFilePath = "/tmp/axonrouter.log"
 
+// LogBroadcaster fans out new log lines and clear events to SSE subscribers.
+var LogBroadcaster = NewBroadcaster()
+
+// logFileMu coordinates log-file truncation with concurrent writes from
+// TeeHandler. All modifications to the active log file should hold this lock.
+var logFileMu sync.Mutex
+
+// ClearLogFile truncates the active log file and broadcasts a clear event to
+// all registered SSE subscribers. It is safe to call while TeeHandler is writing.
+func ClearLogFile() error {
+	logFileMu.Lock()
+	defer logFileMu.Unlock()
+
+	if LogFilePath == "" {
+		return nil
+	}
+
+	f, err := os.OpenFile(LogFilePath, os.O_WRONLY|os.O_CREATE, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if err := f.Truncate(0); err != nil {
+		return err
+	}
+	LogBroadcaster.BroadcastClear()
+	return nil
+}
+
 // Init initialises the global logger. format must be "json", "text", or "compact" (default).
 // If LogFilePath is non-empty, a TeeHandler is installed that also writes structured
 // JSON lines to that file (for the dashboard Console Log Viewer).
