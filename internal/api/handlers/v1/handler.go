@@ -328,6 +328,8 @@ func unifiedSurface(path string) string {
 	switch {
 	case strings.Contains(path, "/chat/completions"):
 		return "openai"
+	case strings.HasSuffix(path, "/completions"):
+		return "openai"
 	case strings.Contains(path, "/messages"):
 		return "claude"
 	case strings.Contains(path, "/responses"):
@@ -336,7 +338,9 @@ func unifiedSurface(path string) string {
 		return "embeddings"
 	case strings.Contains(path, "/images/generations"):
 		return "images"
-	case strings.Contains(path, "/video/generations"):
+	case strings.Contains(path, "/images/edits"):
+		return "images"
+	case strings.Contains(path, "/video/generations") || strings.Contains(path, "/videos"):
 		return "video"
 	case strings.Contains(path, "/audio/speech"):
 		return "tts"
@@ -344,6 +348,8 @@ func unifiedSurface(path string) string {
 		return "stt"
 	case strings.Contains(path, "/count_tokens"):
 		return "count_tokens"
+	case strings.Contains(path, "/alpha/search"):
+		return "codex_search"
 	case strings.Contains(path, "/v1beta"):
 		return "gemini"
 	default:

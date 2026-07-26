@@ -21,6 +21,9 @@ func (e *ImagesExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 	if url == "" {
 		url = "https://api.openai.com/v1/images/generations"
 	}
+	if path := ImagesPathFromContext(ctx); path != "" {
+		url = "https://api.openai.com" + path
+	}
 
 	body := req.Body
 	body = JSONSet(body, "stream", false)

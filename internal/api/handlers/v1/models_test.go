@@ -64,7 +64,7 @@ func TestGetProviderModels_CodeBuddyIncludesExpectedModels(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"codebuddy/glm-5.0": "tencent",
+		"codebuddy/glm-5.0":   "tencent",
 		"codebuddy/kimi-k2.6": "tencent",
 	}
 	for id, owner := range want {
@@ -98,11 +98,11 @@ func TestGetProviderModels_GrokCLIIncludesExpectedModels(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"grok-cli/grok-build":       "xai",
-		"grok-cli/grok-4.5":         "xai",
-		"grok-cli/grok-4.5-high":    "xai",
-		"grok-cli/grok-4.5-medium":  "xai",
-		"grok-cli/grok-4.5-low":     "xai",
+		"grok-cli/grok-build":      "xai",
+		"grok-cli/grok-4.5":        "xai",
+		"grok-cli/grok-4.5-high":   "xai",
+		"grok-cli/grok-4.5-medium": "xai",
+		"grok-cli/grok-4.5-low":    "xai",
 	}
 	for id, owner := range want {
 		found := false
@@ -170,7 +170,7 @@ func TestFilterAllowedModels(t *testing.T) {
 
 	t.Run("filters by mix of id and prefix", func(t *testing.T) {
 		allowed := map[string]struct{}{
-			"claude":          {},
+			"claude":             {},
 			"openai/gpt-4o-mini": {},
 		}
 		got := filterAllowedModels(all, allowed)
@@ -249,6 +249,67 @@ func TestModels_AllowedModelsContext(t *testing.T) {
 		if !strings.HasPrefix(id, "smart/") {
 			t.Errorf("unexpected model id in filtered response: %q", id)
 		}
+	}
+}
+
+func TestModels_AnthropicFormat(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := newTestHandler(t)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	c.Request.Header.Set("Anthropic-Version", "2023-06-01")
+
+	h.Models(c)
+
+	resp := w.Result()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Data) == 0 {
+		t.Fatal("expected models in anthropic format")
+	}
+	first := body.Data[0]
+	if _, ok := first["max_input_tokens"]; !ok {
+		t.Errorf("expected anthropic model to include max_input_tokens, got %+v", first)
+	}
+	if _, ok := first["display_name"]; !ok {
+		t.Errorf("expected anthropic model to include display_name, got %+v", first)
+	}
+}
+
+func TestModels_ClaudeCLIUserAgent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := newTestHandler(t)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	c.Request.Header.Set("User-Agent", "claude-cli/1.0")
+
+	h.Models(c)
+
+	resp := w.Result()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Data) == 0 {
+		t.Fatal("expected models in anthropic format")
 	}
 }
 
