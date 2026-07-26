@@ -10,7 +10,7 @@ func init() {
 	registry.Register(
 		types.FormatCodexResponses,
 		types.FormatOpenAI,
-		convertOpenAIResponsesRequestToOpenAI,
+		ConvertOpenAIResponsesRequestToOpenAI,
 		types.ResponseTransform{},
 	)
 
@@ -20,8 +20,8 @@ func init() {
 		types.FormatCodexResponses,
 		nil,
 		types.ResponseTransform{
-			Stream:    convertOpenAIChatToOpenAIResponsesStream,
-			NonStream: convertOpenAIChatToOpenAIResponsesNonStream,
+			Stream:    ConvertOpenAIChatToOpenAIResponsesStream,
+			NonStream: ConvertOpenAIChatToOpenAIResponsesNonStream,
 		},
 	)
 }

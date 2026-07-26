@@ -12,7 +12,7 @@ func TestConvertOpenAIResponsesRequestToGemini_SystemInstruction(t *testing.T) {
 		"instructions": "You are a helpful assistant.",
 		"input": [{"type": "message", "role": "user", "content": "hi"}]
 	}`)
-	out := convertOpenAIResponsesRequestToGemini("gemini-2.5-pro", body, false)
+	out := ConvertOpenAIResponsesRequestToGemini("gemini-2.5-pro", body, false)
 	if got := gjson.GetBytes(out, "systemInstruction.parts.0.text").String(); got != "You are a helpful assistant." {
 		t.Fatalf("unexpected system text: %s", got)
 	}
@@ -20,7 +20,7 @@ func TestConvertOpenAIResponsesRequestToGemini_SystemInstruction(t *testing.T) {
 
 func TestConvertOpenAIResponsesRequestToGemini_InputString(t *testing.T) {
 	body := []byte(`{"input": "hello"}`)
-	out := convertOpenAIResponsesRequestToGemini("gemini-test", body, false)
+	out := ConvertOpenAIResponsesRequestToGemini("gemini-test", body, false)
 	if got := gjson.GetBytes(out, "contents.0.parts.0.text").String(); got != "hello" {
 		t.Fatalf("expected input string coerced to user message, got: %s", got)
 	}
@@ -37,7 +37,7 @@ func TestConvertOpenAIResponsesRequestToGemini_InputTextAndImage(t *testing.T) {
 			]
 		}]
 	}`)
-	out := convertOpenAIResponsesRequestToGemini("gemini-test", body, false)
+	out := ConvertOpenAIResponsesRequestToGemini("gemini-test", body, false)
 	if got := gjson.GetBytes(out, "contents.0.parts.0.text").String(); got != "look" {
 		t.Fatalf("unexpected text part: %s", got)
 	}
@@ -57,7 +57,7 @@ func TestConvertOpenAIResponsesRequestToGemini_InputAudio(t *testing.T) {
 			"content": [{"type": "input_audio", "data": "data:audio/wav;base64,XXX", "format": "wav"}]
 		}]
 	}`)
-	out := convertOpenAIResponsesRequestToGemini("gemini-test", body, false)
+	out := ConvertOpenAIResponsesRequestToGemini("gemini-test", body, false)
 	if got := gjson.GetBytes(out, "contents.0.parts.0.inlineData.mimeType").String(); got != "audio/wav" {
 		t.Fatalf("unexpected audio mime: %s", got)
 	}
@@ -74,7 +74,7 @@ func TestConvertOpenAIResponsesRequestToGemini_InputFileDataURL(t *testing.T) {
 			"content": [{"type": "input_file", "file_data": "data:application/pdf;base64,PDFFILE"}]
 		}]
 	}`)
-	out := convertOpenAIResponsesRequestToGemini("gemini-test", body, false)
+	out := ConvertOpenAIResponsesRequestToGemini("gemini-test", body, false)
 	if got := gjson.GetBytes(out, "contents.0.parts.0.inlineData.mimeType").String(); got != "application/pdf" {
 		t.Fatalf("unexpected file mime: %s", got)
 	}
@@ -90,7 +90,7 @@ func TestConvertOpenAIResponsesRequestToGemini_FunctionCallAndOutput(t *testing.
 			{"type": "function_call_output", "call_id": "call_1", "output": "{\"temp\":20}"}
 		]
 	}`)
-	out := convertOpenAIResponsesRequestToGemini("gemini-test", body, false)
+	out := ConvertOpenAIResponsesRequestToGemini("gemini-test", body, false)
 	if got := gjson.GetBytes(out, "contents.0.parts.0.functionCall.name").String(); got != "get_weather" {
 		t.Fatalf("unexpected functionCall name: %s", got)
 	}
@@ -109,7 +109,7 @@ func TestConvertOpenAIResponsesRequestToGemini_ReasoningItem(t *testing.T) {
 	body := []byte(`{
 		"input": [{"type": "reasoning", "summary": [{"type": "summary_text", "text": "thinking..."}]}]
 	}`)
-	out := convertOpenAIResponsesRequestToGemini("gemini-test", body, false)
+	out := ConvertOpenAIResponsesRequestToGemini("gemini-test", body, false)
 	if got := gjson.GetBytes(out, "contents.0.role").String(); got != "model" {
 		t.Fatalf("expected model role for reasoning item, got: %s", got)
 	}
@@ -128,7 +128,7 @@ func TestConvertOpenAIResponsesRequestToGemini_ToolsAsFunctionDeclarations(t *te
 			{"type": "function", "name": "get_weather", "description": "weather", "parameters": {"type":"object","properties":{"city":{"type":"string"}}}, "strict": true}
 		]
 	}`)
-	out := convertOpenAIResponsesRequestToGemini("gemini-test", body, false)
+	out := ConvertOpenAIResponsesRequestToGemini("gemini-test", body, false)
 	decls := gjson.GetBytes(out, "tools.0.functionDeclarations").Array()
 	if len(decls) != 1 {
 		t.Fatalf("expected 1 function declaration, got %d", len(decls))
@@ -149,7 +149,7 @@ func TestConvertOpenAIResponsesRequestToGemini_TextFormatJSONSchema(t *testing.T
 		"input": [],
 		"text": {"format": {"type": "json_schema", "schema": {"type":"object"}}}
 	}`)
-	out := convertOpenAIResponsesRequestToGemini("gemini-test", body, false)
+	out := ConvertOpenAIResponsesRequestToGemini("gemini-test", body, false)
 	if got := gjson.GetBytes(out, "generationConfig.responseMimeType").String(); got != "application/json" {
 		t.Fatalf("unexpected responseMimeType: %s", got)
 	}
@@ -160,7 +160,7 @@ func TestConvertOpenAIResponsesRequestToGemini_TextFormatJSONSchema(t *testing.T
 
 func TestConvertOpenAIResponsesRequestToGemini_ReasoningEffort(t *testing.T) {
 	body := []byte(`{"input": [], "reasoning": {"effort": "high"}}`)
-	out := convertOpenAIResponsesRequestToGemini("gemini-test", body, false)
+	out := ConvertOpenAIResponsesRequestToGemini("gemini-test", body, false)
 	if got := gjson.GetBytes(out, "generationConfig.thinkingConfig.thinkingLevel").String(); got != "high" {
 		t.Fatalf("unexpected thinkingLevel: %s", got)
 	}
@@ -171,7 +171,7 @@ func TestConvertOpenAIResponsesRequestToGemini_ReasoningEffort(t *testing.T) {
 
 func TestConvertOpenAIResponsesRequestToGemini_SafetySettingsAttached(t *testing.T) {
 	body := []byte(`{"input": [{"type": "message", "role": "user", "content": "hi"}]}`)
-	out := convertOpenAIResponsesRequestToGemini("gemini-test", body, false)
+	out := ConvertOpenAIResponsesRequestToGemini("gemini-test", body, false)
 	settings := gjson.GetBytes(out, "safetySettings").Array()
 	if len(settings) == 0 {
 		t.Fatalf("expected safety settings to be attached")

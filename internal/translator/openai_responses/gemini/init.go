@@ -10,7 +10,7 @@ func init() {
 	registry.Register(
 		types.FormatCodexResponses,
 		types.FormatGemini,
-		convertOpenAIResponsesRequestToGemini,
+		ConvertOpenAIResponsesRequestToGemini,
 		types.ResponseTransform{},
 	)
 

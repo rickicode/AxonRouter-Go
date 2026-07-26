@@ -267,9 +267,9 @@ func mapUsage(usage gjson.Result) map[string]interface{} {
 	return usageMap
 }
 
-// convertOpenAIChatToOpenAIResponsesNonStream converts a complete OpenAI Chat
+// ConvertOpenAIChatToOpenAIResponsesNonStream converts a complete OpenAI Chat
 // Completions response to the OpenAI Responses API non-streaming shape.
-func convertOpenAIChatToOpenAIResponsesNonStream(_ context.Context, _ string, _, _ []byte, rawResponse []byte, _ *any) []byte {
+func ConvertOpenAIChatToOpenAIResponsesNonStream(_ context.Context, _ string, _, _ []byte, rawResponse []byte, _ *any) []byte {
 	root := gjson.ParseBytes(rawResponse)
 
 	responseID := deriveResponseID(root.Get("id").String())
@@ -348,9 +348,9 @@ func convertOpenAIChatToOpenAIResponsesNonStream(_ context.Context, _ string, _,
 	return result
 }
 
-// convertOpenAIChatToOpenAIResponsesStream converts OpenAI Chat Completions SSE
+// ConvertOpenAIChatToOpenAIResponsesStream converts OpenAI Chat Completions SSE
 // chunks to OpenAI Responses API streaming events.
-func convertOpenAIChatToOpenAIResponsesStream(_ context.Context, _ string, _, _ []byte, rawChunk []byte, param *any) [][]byte {
+func ConvertOpenAIChatToOpenAIResponsesStream(_ context.Context, _ string, _, _ []byte, rawChunk []byte, param *any) [][]byte {
 	state := getOpenAIState(param)
 
 	raw := bytes.TrimSpace(rawChunk)

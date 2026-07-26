@@ -33,7 +33,7 @@ func TestConvertOpenAIResponsesRequestToOpenAI_Simple(t *testing.T) {
 		"top_p":             0.9,
 	})
 
-	out := convertOpenAIResponsesRequestToOpenAI("gpt-4o", req, true)
+	out := ConvertOpenAIResponsesRequestToOpenAI("gpt-4o", req, true)
 
 	if got := gjson.GetBytes(out, "model").String(); got != "gpt-4o" {
 		t.Errorf("model = %q, want gpt-4o", got)
@@ -76,7 +76,7 @@ func TestConvertOpenAIResponsesRequestToOpenAI_Roles(t *testing.T) {
 		},
 	})
 
-	out := convertOpenAIResponsesRequestToOpenAI("gpt-4o", req, false)
+	out := ConvertOpenAIResponsesRequestToOpenAI("gpt-4o", req, false)
 	msgs := gjson.GetBytes(out, "messages").Array()
 	if len(msgs) != 4 {
 		t.Fatalf("messages length = %d, want 4", len(msgs))
@@ -96,7 +96,7 @@ func TestConvertOpenAIResponsesRequestToOpenAI_InputString(t *testing.T) {
 	req := mustMarshal(t, map[string]any{
 		"input": "tell me a joke",
 	})
-	out := convertOpenAIResponsesRequestToOpenAI("gpt-4o", req, false)
+	out := ConvertOpenAIResponsesRequestToOpenAI("gpt-4o", req, false)
 
 	msgs := gjson.GetBytes(out, "messages").Array()
 	if len(msgs) != 1 {
@@ -134,7 +134,7 @@ func TestConvertOpenAIResponsesRequestToOpenAI_Tools(t *testing.T) {
 		"tool_choice": "auto",
 	})
 
-	out := convertOpenAIResponsesRequestToOpenAI("gpt-4o", req, false)
+	out := ConvertOpenAIResponsesRequestToOpenAI("gpt-4o", req, false)
 
 	tools := gjson.GetBytes(out, "tools").Array()
 	if len(tools) != 1 {
@@ -169,7 +169,7 @@ func TestConvertOpenAIResponsesRequestToOpenAI_ToolChoiceFunction(t *testing.T) 
 		},
 	})
 
-	out := convertOpenAIResponsesRequestToOpenAI("gpt-4o", req, false)
+	out := ConvertOpenAIResponsesRequestToOpenAI("gpt-4o", req, false)
 
 	if got := gjson.GetBytes(out, "tool_choice.type").String(); got != "function" {
 		t.Errorf("tool_choice.type = %q, want function", got)
@@ -196,7 +196,7 @@ func TestConvertOpenAIResponsesRequestToOpenAI_FunctionCall(t *testing.T) {
 		},
 	})
 
-	out := convertOpenAIResponsesRequestToOpenAI("gpt-4o", req, false)
+	out := ConvertOpenAIResponsesRequestToOpenAI("gpt-4o", req, false)
 	msgs := gjson.GetBytes(out, "messages").Array()
 	if len(msgs) != 2 {
 		t.Fatalf("messages length = %d, want 2", len(msgs))
@@ -243,7 +243,7 @@ func TestConvertOpenAIResponsesRequestToOpenAI_ImagePart(t *testing.T) {
 		},
 	})
 
-	out := convertOpenAIResponsesRequestToOpenAI("gpt-4o", req, false)
+	out := ConvertOpenAIResponsesRequestToOpenAI("gpt-4o", req, false)
 	msgs := gjson.GetBytes(out, "messages").Array()
 	if len(msgs) != 1 {
 		t.Fatalf("messages length = %d, want 1", len(msgs))
@@ -276,7 +276,7 @@ func TestConvertOpenAIResponsesRequestToOpenAI_NamespaceTools(t *testing.T) {
 		},
 	})
 
-	out := convertOpenAIResponsesRequestToOpenAI("gpt-4o", req, false)
+	out := ConvertOpenAIResponsesRequestToOpenAI("gpt-4o", req, false)
 	tools := gjson.GetBytes(out, "tools").Array()
 	if len(tools) != 1 {
 		t.Fatalf("tools length = %d, want 1", len(tools))

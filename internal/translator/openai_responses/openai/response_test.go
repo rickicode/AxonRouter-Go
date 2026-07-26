@@ -27,7 +27,7 @@ func TestConvertOpenAIChatToOpenAIResponsesNonStream_Text(t *testing.T) {
 		"usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13}
 	}`)
 
-	out := convertOpenAIChatToOpenAIResponsesNonStream(context.Background(), "", nil, nil, resp, nil)
+	out := ConvertOpenAIChatToOpenAIResponsesNonStream(context.Background(), "", nil, nil, resp, nil)
 	root := gjson.ParseBytes(out)
 	if root.Get("object").String() != "response" {
 		t.Fatalf("expected object=response, got %s", root.Get("object").String())
@@ -74,7 +74,7 @@ func TestConvertOpenAIChatToOpenAIResponsesNonStream_FunctionCall(t *testing.T) 
 		"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
 	}`)
 
-	out := convertOpenAIChatToOpenAIResponsesNonStream(context.Background(), "", nil, nil, resp, nil)
+	out := ConvertOpenAIChatToOpenAIResponsesNonStream(context.Background(), "", nil, nil, resp, nil)
 	root := gjson.ParseBytes(out)
 	if root.Get("output.0.type").String() != "function_call" {
 		t.Fatalf("expected function_call item, got %s", root.Get("output.0.type").String())
@@ -111,7 +111,7 @@ func TestConvertOpenAIChatToOpenAIResponsesNonStream_UsageDetails(t *testing.T) 
 		}
 	}`)
 
-	out := convertOpenAIChatToOpenAIResponsesNonStream(context.Background(), "", nil, nil, resp, nil)
+	out := ConvertOpenAIChatToOpenAIResponsesNonStream(context.Background(), "", nil, nil, resp, nil)
 	root := gjson.ParseBytes(out)
 	if root.Get("usage.input_tokens_details.cached_tokens").Int() != 4 {
 		t.Fatalf("expected cached tokens")
@@ -130,7 +130,7 @@ func TestConvertOpenAIChatToOpenAIResponsesStream_Text(t *testing.T) {
 	var param any
 	var allEvents [][]byte
 	for _, chunk := range chunks {
-		ev := convertOpenAIChatToOpenAIResponsesStream(context.Background(), "", nil, nil, chunk, &param)
+		ev := ConvertOpenAIChatToOpenAIResponsesStream(context.Background(), "", nil, nil, chunk, &param)
 		allEvents = append(allEvents, ev...)
 	}
 
@@ -181,7 +181,7 @@ func TestConvertOpenAIChatToOpenAIResponsesStream_FunctionCall(t *testing.T) {
 	var param any
 	var allEvents [][]byte
 	for _, chunk := range chunks {
-		ev := convertOpenAIChatToOpenAIResponsesStream(context.Background(), "", nil, nil, chunk, &param)
+		ev := ConvertOpenAIChatToOpenAIResponsesStream(context.Background(), "", nil, nil, chunk, &param)
 		allEvents = append(allEvents, ev...)
 	}
 
@@ -212,10 +212,10 @@ func TestConvertOpenAIChatToOpenAIResponsesStream_FunctionCall(t *testing.T) {
 
 func TestConvertOpenAIChatToOpenAIResponsesStream_IgnoresEmptyAndDone(t *testing.T) {
 	var param any
-	if out := convertOpenAIChatToOpenAIResponsesStream(context.Background(), "", nil, nil, []byte("\n"), &param); out != nil {
+	if out := ConvertOpenAIChatToOpenAIResponsesStream(context.Background(), "", nil, nil, []byte("\n"), &param); out != nil {
 		t.Fatalf("expected nil for empty chunk")
 	}
-	if out := convertOpenAIChatToOpenAIResponsesStream(context.Background(), "", nil, nil, []byte("data: [DONE]\n\n"), &param); out != nil {
+	if out := ConvertOpenAIChatToOpenAIResponsesStream(context.Background(), "", nil, nil, []byte("data: [DONE]\n\n"), &param); out != nil {
 		t.Fatalf("expected nil for [DONE]")
 	}
 }
