@@ -46,6 +46,27 @@ func TestGetPricingStripsProviderPrefix(t *testing.T) {
 	}
 }
 
+func TestGetPricingStripsZenMuxProviderPrefix(t *testing.T) {
+	database := newTestPricingDB(t)
+	InitPricing(database)
+
+	bare := GetPricing("deepseek-v3.2")
+	if bare.InputPer1K == 0 || bare.OutputPer1K == 0 {
+		t.Fatalf("bare deepseek-v3.2 pricing invalid: got in=%.6f out=%.6f", bare.InputPer1K, bare.OutputPer1K)
+	}
+
+	// zenmux/ and zenmux-free/ must both resolve to the same row as the bare model ID.
+	prefixed := GetPricing("zenmux/deepseek-v3.2")
+	if prefixed != bare {
+		t.Fatalf("zenmux/deepseek-v3.2 resolved differently from bare: got %+v, want %+v", prefixed, bare)
+	}
+
+	freePrefixed := GetPricing("zenmux-free/deepseek-v3.2")
+	if freePrefixed != bare {
+		t.Fatalf("zenmux-free/deepseek-v3.2 resolved differently from bare: got %+v, want %+v", freePrefixed, bare)
+	}
+}
+
 func TestGetPricingDeterministicPrefix(t *testing.T) {
 	database := newTestPricingDB(t)
 	InitPricing(database)
@@ -241,5 +262,26 @@ func TestEstimateCostConfigurableTierMultiplier(t *testing.T) {
 	flex := EstimateCostWithServiceTier("tiered-model", "chat", "flex", 0, 1000, 1000, 0, 0, 0)
 	if math.Abs(flex-base*0.5) > 1e-9 {
 		t.Fatalf("custom flex multiplier = %.6f, want %.6f", flex, base*0.5)
+	}
+}
+
+func TestPricingSeedRowsAreValid(t *testing.T) {
+	database := newTestPricingDB(t)
+	InitPricing(database)
+
+	rows := ListPricing()
+	if len(rows) == 0 {
+		t.Fatal("expected seeded pricing rows")
+	}
+
+	seen := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		if r.InputPer1K <= 0 || r.OutputPer1K <= 0 {
+			t.Errorf("model %q has zero prices: in=%.6f out=%.6f", r.ModelID, r.InputPer1K, r.OutputPer1K)
+		}
+		if seen[r.ModelID] {
+			t.Errorf("duplicate model ID %q in seeded pricing", r.ModelID)
+		}
+		seen[r.ModelID] = true
 	}
 }
