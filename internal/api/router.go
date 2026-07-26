@@ -74,6 +74,7 @@ type Router struct {
 	// Background goroutines
 	quotaScheduler        *background.QuotaSchedulerDB
 	tokenRefreshScheduler *background.TokenRefreshScheduler
+	autoPingScheduler     *background.AutoPingScheduler
 	usageFlush            *background.UsageFlush
 	cleanup               *background.Cleanup
 	lifecycleManager      *background.LifecycleManager
@@ -161,11 +162,13 @@ func New(cfg Config) *Router {
 	exhaustionCache := quota.NewExhaustionCache()
 	quotaScheduler := background.NewQuotaSchedulerDB(cfg.DB, writeQueue, store, elig, cfg.QuotaIntervalMin, exhaustionCache)
 	tokenRefreshScheduler := background.NewTokenRefreshScheduler(cfg.DB, writeQueue, store, elig, authManager, cfg.QuotaIntervalMin)
+	autoPingScheduler := background.NewAutoPingScheduler(cfg.DB, cfg.QuotaIntervalMin)
 	usageFlush := background.NewUsageFlush(tracker)
 	cleanup := background.NewCleanup(comboHandler, cfg.DB, cfg.LogRetentionDays)
 	lifecycleManager := background.NewLifecycleManager(cfg.DB, cfg.ConnectionCleanupIntervalMin)
 	quotaScheduler.Start(ctx)
 	tokenRefreshScheduler.Start(ctx)
+	autoPingScheduler.Start(ctx)
 	usageFlush.Start(ctx)
 	cleanup.Start(ctx)
 	lifecycleManager.Start(ctx)
@@ -579,6 +582,7 @@ func New(cfg Config) *Router {
 		cleanup:               cleanup,
 		lifecycleManager:      lifecycleManager,
 		tokenRefreshScheduler: tokenRefreshScheduler,
+		autoPingScheduler:     autoPingScheduler,
 		rateLimitProber:       rateLimitProber,
 		versionChecker:        versionChecker,
 	}
@@ -707,6 +711,7 @@ func (r *Router) Shutdown() {
 		r.deviceTracker.Stop()
 		r.quotaScheduler.Stop()
 		r.tokenRefreshScheduler.Stop()
+		r.autoPingScheduler.Stop()
 		r.usageFlush.Stop()
 		r.cleanup.Stop()
 		r.lifecycleManager.Stop()

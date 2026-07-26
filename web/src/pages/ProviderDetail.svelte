@@ -3,12 +3,14 @@
  import { loadProvider, selectedProvider, loadConnections, connections, connectionPagination, connectionFilter, loadProviderModels, providerModels, modelTestResults, testProviderModel, addProviderModel, deleteProviderModel, isLoading, error } from '$lib/stores';
  import { unwrapInt, getTokenExpiry } from '$lib/utils';
 import { copyToClipboard } from '$lib/copy';
- import { connectionsApi, providersApi, proxyPoolsApi } from '$lib/api';
+ import { connectionsApi, providersApi, proxyPoolsApi, settingsApi } from '$lib/api';
 import type { RoutingMode, ProviderModelEntry, ProxyPool, Connection } from '$lib/api';
  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
  import { Button } from '$lib/components/ui/button';
  import { Badge } from '$lib/components/ui/badge';
  import { Input } from '$lib/components/ui/input';
+ import { Label } from '$lib/components/ui/label';
+ import { Switch } from '$lib/components/ui/switch';
  import * as Select from '$lib/components/ui/select';
  import ProviderIcon from '$lib/components/ProviderIcon.svelte';
  import { getProviderMeta, getCategoryById, getStatusDotColor, getStatusVariant, getStatusLabel } from '$lib/provider-catalog';
@@ -50,6 +52,16 @@ let newModel = $state('');
   let proxyPools = $state<ProxyPool[]>([]);
   let selectedProxyPoolId = $state('');
   let bulkAssigning = $state(false);
+
+  // Auto-ping state (Claude + Codex only)
+  interface AutoPingConfig {
+    enabled: boolean;
+    connections: Record<string, boolean>;
+  }
+  let autoPingConfig = $state<AutoPingConfig>({ enabled: false, connections: {} });
+  let autoPingSaving = $state(false);
+  const autoPingKey = $derived(providerId === 'claude' ? 'claude_auto_ping' : providerId === 'cx' ? 'codex_auto_ping' : null);
+  const supportsAutoPing = $derived(!!autoPingKey);
 
   const needsProxyPool = $derived(providerId === 'oc' || providerId === 'mimocode');
   const selectedCount = $derived(selectedConnectionIds.size);
@@ -107,18 +119,20 @@ let groupedProviderModels = $derived.by(() => {
 });
 
  onMount(() => {
-  document.title = `${meta?.displayName ?? 'Provider'} — AxonRouter`;
-  loadProvider(providerId);
-  refreshConnections();
-  loadProviderModels(providerId);
-  loadProxyPools();
-  providersApi.getSettings(providerId).then((s) => {
-  routingMode = s.routing_mode;
-  flatRate = s.flat_rate ?? false;
-  }).catch(() => {
-  // keep default
+   document.title = `${meta?.displayName ?? 'Provider'} — AxonRouter`;
+   loadProvider(providerId);
+   refreshConnections();
+   loadProviderModels(providerId);
+   loadProxyPools();
+   loadAutoPingSettings();
+   providersApi.getSettings(providerId).then((s) => {
+   routingMode = s.routing_mode;
+   flatRate = s.flat_rate ?? false;
+   }).catch(() => {
+   // keep default
+   });
   });
- });
+
 
  function formatCooldown(raw: unknown): string {
  const cooldownUntil = unwrapInt(raw);
@@ -388,6 +402,51 @@ async function loadProxyPools() {
   }
 }
 
+async function loadAutoPingSettings() {
+  if (!autoPingKey) return;
+  try {
+    const res = await settingsApi.get(autoPingKey) as { value: string } | { data: { value: string } };
+    const raw = ('data' in res && res.data ? res.data.value : (res as { value: string }).value) || '{}';
+    const parsed = JSON.parse(raw);
+    autoPingConfig = {
+      enabled: !!parsed.enabled,
+      connections: typeof parsed.connections === 'object' && parsed.connections ? parsed.connections : {},
+    };
+  } catch (err) {
+    autoPingConfig = { enabled: false, connections: {} };
+  }
+}
+
+async function toggleAutoPingEnabled() {
+  if (!autoPingKey || autoPingSaving) return;
+  autoPingSaving = true;
+  try {
+    const next = { ...autoPingConfig, enabled: !autoPingConfig.enabled };
+    await settingsApi.update(autoPingKey, JSON.stringify(next));
+    autoPingConfig = next;
+    toast.success(`Auto-ping ${next.enabled ? 'enabled' : 'disabled'} for ${meta?.displayName ?? providerId}`);
+  } catch (err) {
+    toast.error('Failed to update auto-ping: ' + (err instanceof Error ? err.message : 'Unknown'));
+  } finally {
+    autoPingSaving = false;
+  }
+}
+
+async function toggleAutoPingConnection(connId: string) {
+  if (!autoPingKey || autoPingSaving) return;
+  autoPingSaving = true;
+  try {
+    const nextConnections = { ...autoPingConfig.connections, [connId]: !autoPingConfig.connections[connId] };
+    const next = { ...autoPingConfig, connections: nextConnections };
+    await settingsApi.update(autoPingKey, JSON.stringify(next));
+    autoPingConfig = next;
+  } catch (err) {
+    toast.error('Failed to update auto-ping: ' + (err instanceof Error ? err.message : 'Unknown'));
+  } finally {
+    autoPingSaving = false;
+  }
+}
+
 async function handleBulkAssignProxy() {
   if (!needsProxyPool || selectedCount === 0) return;
   bulkAssigning = true;
@@ -530,6 +589,39 @@ async function handleBulkAssignProxy() {
  </Button>
   </div>
   </div>
+
+  {#if supportsAutoPing && $connections.some((c) => c.auth_type === 'oauth')}
+    <div class="space-y-3 rounded-xl border border-border bg-card shadow-card p-4">
+      <div class="flex items-center justify-between gap-3">
+        <div class="space-y-0.5">
+          <h3 class="text-body-sm-strong">Quota auto-ping.</h3>
+          <p class="text-caption text-muted-foreground">Send a minimal ping after quota resets to keep cached credits warm. No prompts or user data are sent.</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <Label for="auto-ping-master" class="text-body-sm text-muted-foreground">{autoPingConfig.enabled ? 'Enabled' : 'Disabled'}</Label>
+          <Switch id="auto-ping-master" checked={autoPingConfig.enabled} onCheckedChange={toggleAutoPingEnabled} disabled={autoPingSaving} />
+        </div>
+      </div>
+      {#if autoPingConfig.enabled}
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-2 border-t border-border">
+          {#each $connections.filter((c) => c.auth_type === 'oauth') as conn (conn.id)}
+            <div class="flex items-center justify-between gap-3 rounded-lg border border-border bg-background p-3">
+              <div class="min-w-0">
+                <p class="text-body-sm-strong truncate">{conn.name || conn.id}</p>
+                <p class="text-caption text-muted-foreground truncate">{conn.id}</p>
+              </div>
+              <Switch
+                checked={!!autoPingConfig.connections[conn.id]}
+                onCheckedChange={() => toggleAutoPingConnection(conn.id)}
+                disabled={autoPingSaving}
+                aria-label="Auto-ping {conn.name || conn.id}"
+              />
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   {#if needsProxyPool && selectedCount > 0}
     <div class="flex items-center justify-between gap-3 flex-wrap rounded-xl border border-border bg-card shadow-card p-3">
