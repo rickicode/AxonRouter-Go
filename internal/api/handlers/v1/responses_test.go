@@ -293,6 +293,60 @@ func TestResponsesCompact_Success(t *testing.T) {
 	}
 }
 
+func TestResponsesCompact_GenericOpenAIProvider_Success(t *testing.T) {
+	h, cleanup := setupResponsesTest(t)
+	defer cleanup()
+
+	fe := &captureExecutor{
+		fakeExecutor: fakeExecutor{
+			compactResponse: &executor.Response{
+				StatusCode: http.StatusOK,
+				Body:       []byte(`{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Generic compact"}]}]}`),
+			},
+		},
+	}
+	defer setupProviderResponsesTest(t, h, "openai", string(executor.FormatOpenAI), fe)()
+
+	body := []byte(`{"model":"openai/gpt-4o","input":"hi"}`)
+	rec, c := jsonRequestWithAllowedModels(t, http.MethodPost, "/v1/responses/compact", body, nil)
+	h.ResponsesCompact(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"text":"Generic compact"`)) {
+		t.Errorf("expected compacted response, got %s", rec.Body.String())
+	}
+	if fe.callCount != 1 {
+		t.Errorf("expected 1 compact call, got %d", fe.callCount)
+	}
+	if fe.lastReq == nil {
+		t.Fatalf("expected upstream request to be captured")
+	}
+	if gjson.GetBytes(fe.lastReq.Body, "model").String() != "gpt-4o" {
+		t.Errorf("expected model stripped of prefix, got %s", fe.lastReq.Body)
+	}
+	if gjson.GetBytes(fe.lastReq.Body, "stream").Exists() {
+		t.Errorf("expected stream field to be removed, got %s", fe.lastReq.Body)
+	}
+}
+
+func TestResponsesCompact_GenericOpenAIProvider_StreamRejected(t *testing.T) {
+	h, cleanup := setupResponsesTest(t)
+	defer cleanup()
+
+	body := []byte(`{"model":"openai/gpt-4o","input":"hi","stream":true}`)
+	rec, c := jsonRequestWithAllowedModels(t, http.MethodPost, "/v1/responses/compact", body, nil)
+	h.ResponsesCompact(c)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "streaming not supported") {
+		t.Errorf("expected streaming rejection, got %s", rec.Body.String())
+	}
+}
+
 func TestResponsesWebsocket_UpgradeAndRelay(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h, cleanup := setupResponsesTest(t)
@@ -382,6 +436,11 @@ func (c *captureExecutor) Execute(ctx context.Context, req *executor.Request) (*
 func (c *captureExecutor) ExecuteStream(ctx context.Context, req *executor.Request) (*executor.StreamResult, error) {
 	c.lastReq = req
 	return c.fakeExecutor.ExecuteStream(ctx, req)
+}
+
+func (c *captureExecutor) ResponsesCompact(ctx context.Context, req *executor.Request) (*executor.Response, error) {
+	c.lastReq = req
+	return c.fakeExecutor.ResponsesCompact(ctx, req)
 }
 
 // setupProviderResponsesTest seeds a provider_type and connection for the given

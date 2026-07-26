@@ -15,14 +15,14 @@ import (
 )
 
 // compactExecutor is implemented by providers that support the non-streaming
-// /responses/compact Codex endpoint.
+// /responses/compact endpoint.
 type compactExecutor interface {
 	ResponsesCompact(ctx context.Context, req *executor.Request) (*executor.Response, error)
 }
 
 // ResponsesCompact handles POST /v1/responses/compact (and the Codex alias).
 // It rejects streaming requests and forwards a normalized, non-streaming request
-// to Codex's /responses/compact endpoint.
+// to the provider's /responses/compact endpoint.
 func (h *Handler) ResponsesCompact(c *gin.Context) {
 	start := time.Now()
 	body, err := readBody(c)
@@ -57,12 +57,8 @@ func (h *Handler) ResponsesCompact(c *gin.Context) {
 		provider = "cx"
 		modelName = model
 	}
-	if provider != "cx" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "/responses/compact is only supported for Codex models", "type": "invalid_request_error"}})
-		return
-	}
 
-	exec, providerFormat, err := h.resolveExecutor(provider, modelName)
+	exec, _, err := h.resolveExecutor(provider, modelName)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": err.Error(), "type": "invalid_request_error"}})
 		return
@@ -151,9 +147,10 @@ attemptLoop:
 		h.persistSuccess(conn.ID)
 		h.combo.RecordSuccess(conn.ID)
 
-		// The response is already in Codex Responses shape; run it through the
-		// registry in case a provider-specific transform is registered.
-		translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, body, resp.Body, nil)
+		// The upstream /responses/compact endpoint returns an OpenAI Responses
+		// shape regardless of the provider's chat-completion format. Run it through
+		// the registry so provider-specific response transforms can still apply.
+		translatedResp := registry.ResponseNonStream(c.Request.Context(), string(executor.FormatOpenAIResponses), string(clientFormat), modelName, body, body, resp.Body, nil)
 		tokenCounts := ExtractTokensFromBody(translatedResp)
 		tokensEstimated := false
 		if tokenCounts.InputTokens+tokenCounts.OutputTokens == 0 && resp.StatusCode < 400 {
