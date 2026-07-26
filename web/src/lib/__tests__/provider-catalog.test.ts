@@ -70,7 +70,7 @@ describe('provider-catalog', () => {
       const meta = getProviderMeta(id);
       expect(meta).toBeDefined();
       expect(meta!.category).toBe('search');
-      expect(meta!.serviceKinds).toEqual(['search']);
+      expect(meta!.serviceKinds).toEqual(['webSearch']);
       expect(meta!.isBuiltIn).toBe(true);
       expect(meta!.prefix).toBe(`${id}/`);
       expect(meta!.format).toBe('search');
