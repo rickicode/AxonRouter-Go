@@ -214,8 +214,9 @@ const supportsBulk = $derived(isApiKey);
 const isOCProvider = $derived(providerId === 'oc');
 const isMimocodeProvider = $derived(providerId === 'mimocode');
 const needsProxyPool = $derived(isOCProvider || isMimocodeProvider);
-const showImportMode = $derived(providerId === 'grok-cli' || providerId === 'kiro');
+const showImportMode = $derived(providerId === 'grok-cli' || providerId === 'kiro' || providerId === 'cursor');
 const isKiro = $derived(providerId === 'kiro');
+const isCursor = $derived(providerId === 'cursor');
 let autoImportedPsd = $state<Record<string, string> | undefined>(undefined);
 const existingPoolIds = $derived(
   new Set(
@@ -643,6 +644,23 @@ async function handleAutoImportKiro() {
     kiroMethod = 'import';
   } catch (err) {
     toast.error(err instanceof Error ? err.message : 'Auto-import failed');
+  }
+}
+
+async function handleAutoImportCursor() {
+  errorMsg = '';
+  submitting = true;
+  try {
+    const res = await oauthApi.importCursorFromIDE();
+    toast.success(`Cursor connected: ${res.name}`);
+    step = 'done';
+    onCreated?.();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Cursor IDE import failed';
+    errorMsg = msg;
+    toast.error(msg);
+  } finally {
+    submitting = false;
   }
 }
 
@@ -1243,6 +1261,18 @@ $effect(() => {
               <Button variant="outline" class="w-full text-sm" onclick={handleAutoImportKiro}>
                 Auto-import from kiro-cli
               </Button>
+              <div class="flex items-center gap-3">
+                <div class="h-px flex-1 bg-border"></div>
+                <span class="text-[11px] uppercase tracking-wide text-muted-foreground">or manual</span>
+                <div class="h-px flex-1 bg-border"></div>
+              </div>
+            {:else if providerId === 'cursor'}
+              <Button variant="outline" class="w-full text-sm cursor-pointer" disabled={submitting} onclick={handleAutoImportCursor}>
+                {submitting ? 'Importing...' : 'Import from Cursor IDE'}
+              </Button>
+              <p class="text-[11px] text-muted-foreground">
+                Reads <span class="font-mono">cursorAuth/accessToken</span> from the local Cursor VS Code: state file and validates it with Cursor's upstream API.
+              </p>
               <div class="flex items-center gap-3">
                 <div class="h-px flex-1 bg-border"></div>
                 <span class="text-[11px] uppercase tracking-wide text-muted-foreground">or manual</span>
