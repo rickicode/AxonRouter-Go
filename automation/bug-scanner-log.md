@@ -45,3 +45,14 @@ The next run derives its side from the last `- Run side:` line.
 - Parity gap: CLIProxyAPI `internal/signature/gemini_sanitize.go` implements `SanitizeGeminiRequestThoughtSignatures`; AxonRouter-GO lacks equivalent Gemini request thought-signature sanitization → `HIJ-266`
 - Issues created: `HIJ-266`
 - Notes: Go binary was not on `PATH`; used `/usr/local/go/bin/go`. References updated (`/workspaces/CLIProxyAPI`, `/workspaces/OmniRoute`), and `/workspaces/9router` was cloned fresh. Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied for routing hot-path invariants and reference priority.
+
+## 2026-07-26 04:08 UTC
+- Run side: data
+- Baseline: `export PATH=$PATH:/usr/local/go/bin && go build ./...`
+- Deep check: `export PATH=$PATH:/usr/local/go/bin && go test -timeout 10m ./internal/db/... ./internal/cache/... ./internal/backup/... ./internal/background/... ./internal/logging/... ./internal/usage/...`
+- Objective result: all passed
+- Failure details:
+  - none
+- Parity gap: CLIProxyAPI `internal/logging/log_dir_cleaner.go` enforces a max total log-directory size cap; AxonRouter-GO defines `Config.LogDir` but has no size cap or periodic cleaner → `HIJ-267`
+- Issues created: `HIJ-267`
+- Notes: References updated; OmniRoute fast-forwarded from `4053e23` to `f60c9fe`. Frontend build was not required because `web/build` was already present in this checkout.
