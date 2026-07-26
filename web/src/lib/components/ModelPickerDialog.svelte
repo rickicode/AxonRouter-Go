@@ -85,8 +85,11 @@ import type { GatewayModel } from '$lib/api';
         class="flex items-center justify-between border-b border-border/50 px-4 py-2.5 text-left text-body-sm font-mono hover:bg-card/50 transition-colors cursor-pointer {localSelection.has(model.id) ? 'bg-primary/5 text-primary' : ''}"
         onclick={() => toggle(model.id)}
       >
-        <span class="truncate">{model.id}</span>
+        <span class="truncate {model.id.startsWith('smart/') ? 'text-primary' : ''}">{model.id}</span>
         <div class="flex items-center gap-2">
+          {#if model.id.startsWith('smart/')}
+            <Badge variant="secondary" class="shrink-0 text-[10px] px-1.5 py-0 rounded-full">Smart</Badge>
+          {/if}
           {#if kinds.length > 0}
             {#each kinds as kind (kind)}
               <Badge variant="outline" class="shrink-0 text-[10px] px-1.5 py-0 rounded-full">{kind}</Badge>
