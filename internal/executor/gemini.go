@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/rickicode/AxonRouter-Go/internal/signature"
 )
 
 // GeminiExecutor handles Google Gemini API.
@@ -54,8 +56,9 @@ func (e *GeminiExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 	model := ExtractModel(req.Model)
 	url := geminiEndpoint(req.BaseURL, model, "generateContent")
 	headers := geminiHeaders(req.APIKey, req.AccessToken)
+	body := signature.SanitizeGeminiRequestThoughtSignatures(req.Body, "contents")
 
-	resp, err := e.DoRequest(ctx, "POST", url, headers, req.Body)
+	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +84,8 @@ func (e *GeminiExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 	headers := geminiHeaders(req.APIKey, req.AccessToken)
 	headers["Accept"] = "text/event-stream"
 	headers["Cache-Control"] = "no-cache"
+	body := signature.SanitizeGeminiRequestThoughtSignatures(req.Body, "contents")
 
-	result, err := e.DoStreamRequest(ContextWithProvider(ctx, req.Provider), "POST", url, headers, req.Body)
+	result, err := e.DoStreamRequest(ContextWithProvider(ctx, req.Provider), "POST", url, headers, body)
 	return result, err
 }

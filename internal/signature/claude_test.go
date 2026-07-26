@@ -28,7 +28,7 @@ func TestHasClaudeThinkingSignaturePrefix(t *testing.T) {
 func TestNormalizeClaudeThinkingSignature(t *testing.T) {
 	// Build a valid single-layer E signature: decoded starts with 0x12.
 	inner := append([]byte{0x12, 0x01, 0x02}, []byte("payload")...)
-	sig := "E" + base64.StdEncoding.EncodeToString(inner)
+	sig := base64.StdEncoding.EncodeToString(inner)
 	normalized, err := NormalizeClaudeThinkingSignature(sig)
 	if err != nil {
 		t.Fatalf("normalize failed: %v", err)
