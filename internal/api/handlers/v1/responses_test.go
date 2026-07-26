@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -566,7 +567,7 @@ func TestResponses_CustomOpenAI_RoutesAndTranslates(t *testing.T) {
 				{
 					resp: &executor.Response{
 						StatusCode: http.StatusOK,
-						Body: []byte(`{"id":"chatcmpl-custom","object":"chat.completion","created":1234567890,"model":"custom-model","choices":[{"index":0,"message":{"role":"assistant","content":"Hello from custom OpenAI"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":4,"total_tokens":9}}`),
+						Body:       []byte(`{"id":"chatcmpl-custom","object":"chat.completion","created":1234567890,"model":"custom-model","choices":[{"index":0,"message":{"role":"assistant","content":"Hello from custom OpenAI"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":4,"total_tokens":9}}`),
 					},
 				},
 			},
@@ -591,6 +592,77 @@ func TestResponses_CustomOpenAI_RoutesAndTranslates(t *testing.T) {
 		t.Fatalf("upstream body missing messages, got %s", fe.lastReq.Body)
 	}
 	if !bytes.Contains(rec.Body.Bytes(), []byte(`"text":"Hello from custom OpenAI"`)) {
+		t.Fatalf("client response missing translated text, got %s", rec.Body.String())
+	}
+}
+
+// TestResponses_CustomOpenAIResponses_RoutesToNativeResponses verifies that a
+// custom provider created with format "openai-responses" is registered as a
+// native Responses API executor and forwards /v1/responses client requests
+// unchanged to the upstream /v1/responses endpoint.
+func TestResponses_CustomOpenAIResponses_RoutesToNativeResponses(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := newTestHandler(t)
+
+	restore := executor.SetValidateURLForTest(func(string) error { return nil })
+	defer restore()
+
+	providerID := "restestnative"
+	var gotPath string
+	var gotBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"resp_custom_123","object":"response","created_at":1234567890,"model":"custom-model","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello from native responses"}]}]}`))
+	}))
+	defer upstream.Close()
+
+	if _, err := h.db.Exec(
+		`INSERT INTO provider_types (id, display_name, format, base_url, is_custom, created_at) VALUES (?, ?, ?, ?, 1, 0)`,
+		providerID, "ResTest Native", "openai-responses", upstream.URL+"/v1/responses",
+	); err != nil {
+		t.Fatalf("seed custom provider_type: %v", err)
+	}
+	connID := providerID + "-conn1"
+	if _, err := h.db.Exec(
+		`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?, ?, 'c1', 'none', 'ready', 1, 0, 0)`,
+		connID, providerID,
+	); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection(connID, providerID, "ready", 0)
+	h.elig.RecomputeAll()
+
+	executor.RegisterDefaults()
+	executor.RegisterCustomProviders(h.db)
+	defer executor.GetRegistry().Unregister(providerID)
+
+	body := []byte(`{"model":"` + providerID + `/custom-model","input":"Hi there","temperature":0.7}`)
+	allowed := map[string]struct{}{providerID + "/custom-model": {}}
+	rec, c := jsonRequestWithAllowedModels(t, http.MethodPost, "/v1/responses", body, allowed)
+	h.Responses(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if gotPath != "/v1/responses" {
+		t.Errorf("upstream path=%q, want /v1/responses", gotPath)
+	}
+	if !gjson.GetBytes(gotBody, "input").Exists() {
+		t.Errorf("expected upstream request to retain Responses API 'input', got %s", gotBody)
+	}
+	if gjson.GetBytes(gotBody, "messages").Exists() {
+		t.Errorf("upstream request was translated to chat completions; got messages in %s", gotBody)
+	}
+	if got := gjson.GetBytes(gotBody, "model").String(); got != "custom-model" {
+		t.Errorf("upstream model=%q, want custom-model", got)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"object":"response"`)) {
+		t.Fatalf("client response not Responses API shape, got %s", rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"text":"Hello from native responses"`)) {
 		t.Fatalf("client response missing translated text, got %s", rec.Body.String())
 	}
 }
