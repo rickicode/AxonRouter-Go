@@ -34,3 +34,14 @@ The next run derives its side from the last `- Run side:` line.
 - Parity gap: none
 - Issues created: none
 - Notes: Frontend was rebuilt (`cd web && npm install && npm run build`) before baseline because `web/build/` is gitignored.
+
+## 2026-07-26 00:03 UTC
+- Run side: auth
+- Baseline: `export PATH=$PATH:/usr/local/go/bin && go build ./...`
+- Deep check: `export PATH=$PATH:/usr/local/go/bin && go test -timeout 10m ./internal/auth/... ./internal/signature/...`
+- Objective result: all passed
+- Failure details:
+  - none
+- Parity gap: CLIProxyAPI `internal/signature/gemini_sanitize.go` implements `SanitizeGeminiRequestThoughtSignatures`; AxonRouter-GO lacks equivalent Gemini request thought-signature sanitization → `HIJ-266`
+- Issues created: `HIJ-266`
+- Notes: Go binary was not on `PATH`; used `/usr/local/go/bin/go`. References updated (`/workspaces/CLIProxyAPI`, `/workspaces/OmniRoute`), and `/workspaces/9router` was cloned fresh. Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied for routing hot-path invariants and reference priority.
