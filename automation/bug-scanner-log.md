@@ -67,3 +67,14 @@ The next run derives its side from the last `- Run side:` line.
 - Parity gap: none
 - Issues created: none
 - Notes: Go binary was not on `PATH`; used `/usr/local/go/bin/go`. `openlore` and `staticcheck` are not installed in this environment, so the deep check effectively ran only `go vet ./...`, which passed with no output. Project `Makefile` `lint` target also uses `go vet ./...`. References updated (`/workspaces/CLIProxyAPI`, `/workspaces/OmniRoute`, `/workspaces/9router`). Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied.
+
+## 2026-07-26 20:00 UTC
+- Run side: frontend
+- Baseline: `export PATH=$PATH:/usr/local/go/bin && go build ./...`
+- Deep check: `cd web && ([ -d node_modules ] || npm install) && timeout 10m npm run build`
+- Objective result: all passed
+- Failure details:
+  - none
+- Parity gap: none (CLIProxyAPI has no frontend; OmniRoute and 9router do not have a Svelte dashboard equivalent, so no reference-backed gap to report for this side)
+- Issues created: none
+- Notes: Go binary was not on `PATH`; used `/usr/local/go/bin/go`. Frontend build completed successfully (`vite build`) with no errors. `npm audit` reported dependency vulnerabilities, but these were not treated as product failures under the scanner's evidence rules. References updated (`/workspaces/CLIProxyAPI`, `/workspaces/OmniRoute`, `/workspaces/9router`). Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied.
