@@ -173,18 +173,7 @@ func codexWebsocketHeaders(r *http.Request, conn *Connection) http.Header {
 // codexAccountIDFromConnection extracts the ChatGPT account id from connection
 // metadata or the OAuth access token.
 func codexAccountIDFromConnection(conn *Connection) string {
-	if psd := conn.ProviderSpecificData; psd != "" {
-		if v := gjson.Get(psd, "accountId").String(); v != "" {
-			return v
-		}
-		if v := gjson.Get(psd, "workspaceId").String(); v != "" {
-			return v
-		}
-	}
-	if conn.AccessToken != "" {
-		return executor.CodexAccountIDFromToken(conn.AccessToken)
-	}
-	return ""
+	return executor.CodexAccountIDFromConnection(conn.ProviderSpecificData, conn.AccessToken)
 }
 
 // relayWebsocketMessages copies messages from src to dst until an error or
