@@ -276,6 +276,50 @@ func TestCopilotDriverApplyReset(t *testing.T) {
 	}
 }
 
+func TestGrokBuildDriverApplyReset(t *testing.T) {
+	setTempHome(t)
+	d := grokBuildDriver{}
+	sel := CLIToolSelection{
+		Model:       "grok-cli/grok-build",
+		BaseURL:     "http://localhost:3777/v1",
+		ModelAliases: map[string]string{"grok-build": "grok-cli/grok-build"},
+	}
+	cfg, err := d.apply(ctxDone(t), sel, "sk_test")
+	if err != nil {
+		t.Fatalf("apply err: %v", err)
+	}
+	if cfg.ConfigPath == "" {
+		t.Fatalf("config path empty")
+	}
+	content := cfg.ConfigContent
+	if !strings.Contains(content, "[model.9router]") {
+		t.Fatalf("missing [model.9router]: %s", content)
+	}
+	if !strings.Contains(content, "grok-cli/grok-build") {
+		t.Fatalf("model not set: %s", content)
+	}
+	if !strings.Contains(content, "http://localhost:3777/v1") {
+		t.Fatalf("base_url not set: %s", content)
+	}
+	if !strings.Contains(content, `[models]`) || !strings.Contains(content, "9router") {
+		t.Fatalf("default model not set: %s", content)
+	}
+	if !strings.Contains(cfg.EnvBlock, `AXONROUTER_API_KEY="sk_test"`) {
+		t.Fatalf("env block missing key: %s", cfg.EnvBlock)
+	}
+	inst, has, _, _ := d.detect(ctxDone(t))
+	if !inst || !has {
+		t.Fatalf("detect mismatch: inst=%v has=%v", inst, has)
+	}
+	if err := d.reset(ctxDone(t)); err != nil {
+		t.Fatalf("reset err: %v", err)
+	}
+	bs, _ := os.ReadFile(d.configPath())
+	if strings.Contains(string(bs), "9router") {
+		t.Fatalf("reset incomplete: %s", bs)
+	}
+}
+
 func TestCLIToolStatusShape(t *testing.T) {
 	st := CLIToolStatus{Configured: true, Installed: true, HasRouter: true}
 	if st.Configured != true || st.Installed != true || st.HasRouter != true {

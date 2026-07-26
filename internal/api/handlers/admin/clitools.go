@@ -714,6 +714,20 @@ var cliToolCatalog = []CLIToolStatic{
 			{Type: "info", Text: "OMP auto-discovers models via /v1/models, so no manual model list is needed."},
 		},
 	},
+
+	// ─── Grok Build ─────────────────────────────────────────────────
+	{
+		ID:          "grok-build",
+		Name:        "Grok Build",
+		Description: "xAI Grok Build coding agent CLI.",
+		Image:       "/providers/grok-cli.png",
+		Color:       "#000000",
+		ConfigType:  "custom",
+		DocsURL:     "https://docs.x.ai/build/overview",
+		DefaultModels: []DefaultModel{
+			{ID: "grok-build", Name: "Grok Build", Alias: "grok-build", DefaultValue: "grok-cli/grok-build"},
+		},
+	},
 }
 
 // --- Config generators ---
