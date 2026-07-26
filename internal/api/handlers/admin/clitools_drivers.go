@@ -41,6 +41,7 @@ var toolDrivers = map[string]cliToolDriver{
 	"deepseek-tui":   &deepseekTuiDriver{},
 	"jcode":          &jcodeDriver{},
 	"copilot":        &copilotDriver{},
+	"cowork":         &coworkDriver{},
 }
 
 // ---------------------------------------------------------------------------
@@ -1884,4 +1885,127 @@ func (d copilotDriver) reset(ctx context.Context) error {
 		return err
 	}
 	return os.WriteFile(path, bs, 0o644)
+}
+
+// ---------------------------------------------------------------------------
+// Cowork (Claude Desktop 3P)
+// Writes Claude Desktop's per-user managed config for Cowork on 3P.
+// Reference: https://claude.com/docs/cowork/3p/configuration
+// ---------------------------------------------------------------------------
+
+type coworkDriver struct{}
+
+func (coworkDriver) configPath() string {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(os.Getenv("APPDATA"), "Claude-3p", "claude_desktop_config.json")
+	}
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(userHomeDir(), "Library", "Application Support", "Claude-3p", "claude_desktop_config.json")
+	}
+	return filepath.Join(userHomeDir(), ".config", "Claude-3p", "claude_desktop_config.json")
+}
+
+func (d coworkDriver) detect(ctx context.Context) (bool, bool, map[string]any, error) {
+	if !lookPath("claude") && !fileExists(d.configPath()) {
+		return false, false, nil, nil
+	}
+	cfg := map[string]any{}
+	if !readJSONC(d.configPath(), &cfg) {
+		cfg = map[string]any{}
+	}
+	hasUs := false
+	if ec, ok := cfg["enterpriseConfig"].(map[string]any); ok {
+		if provider, _ := ec["inferenceProvider"].(string); provider == "gateway" {
+			if base, _ := ec["inferenceGatewayBaseUrl"].(string); base != "" {
+				hasUs = isLocalOr9Router(base)
+			}
+		}
+	}
+	state := map[string]any{
+		"config":     cfg,
+		"configPath": d.configPath(),
+	}
+	return true, hasUs, state, nil
+}
+
+func (d coworkDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey string) (CLIToolConfig, error) {
+	path := d.configPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return CLIToolConfig{}, err
+	}
+
+	cfg := map[string]any{}
+	_ = readJSONC(path, &cfg)
+	if cfg == nil {
+		cfg = map[string]any{}
+	}
+
+	// Cowork appends /v1/messages and /v1/models to the gateway base URL.
+	base := normalizeBaseNoV1(sel.BaseURL)
+	key := firstNonEmpty(apiKey, "sk_9router")
+
+	cfg["deploymentMode"] = "3p"
+	ec := ensureMap(cfg, "enterpriseConfig")
+	ec["inferenceProvider"] = "gateway"
+	ec["inferenceGatewayBaseUrl"] = base
+	ec["inferenceGatewayApiKey"] = key
+	ec["inferenceGatewayAuthScheme"] = "bearer"
+	ec["deploymentOrganizationUuid"] = "00000000-0000-0000-0000-000000000000"
+	ec["disableDeploymentModeChooser"] = true
+
+	// Pin models when the user selected them; otherwise rely on gateway discovery.
+	models := collectModels(sel)
+	if len(models) > 0 && models[0] != "provider/model-id" {
+		inferenceModels := make([]map[string]any, 0, len(models))
+		for _, m := range models {
+			inferenceModels = append(inferenceModels, map[string]any{"name": m})
+		}
+		ec["inferenceModels"] = inferenceModels
+	} else {
+		delete(ec, "inferenceModels")
+	}
+
+	bs, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return CLIToolConfig{}, err
+	}
+
+	backup, _ := backupExistingFile(path)
+	if err := os.WriteFile(path, bs, 0o644); err != nil {
+		restoreBackup(path, backup)
+		return CLIToolConfig{}, err
+	}
+
+	return CLIToolConfig{
+		ConfigPath:    path,
+		BackupPath:    backup,
+		ConfigContent: string(bs),
+		RunCommand:    "Claude Desktop (Cowork 3P mode)",
+	}, nil
+}
+
+func (d coworkDriver) reset(ctx context.Context) error {
+	path := d.configPath()
+	cfg := map[string]any{}
+	if !readJSONC(path, &cfg) {
+		return nil
+	}
+	if ec, ok := cfg["enterpriseConfig"].(map[string]any); ok {
+		for _, k := range []string{
+			"inferenceProvider",
+			"inferenceGatewayBaseUrl",
+			"inferenceGatewayApiKey",
+			"inferenceGatewayAuthScheme",
+			"deploymentOrganizationUuid",
+			"disableDeploymentModeChooser",
+			"inferenceModels",
+		} {
+			delete(ec, k)
+		}
+		if len(ec) == 0 {
+			delete(cfg, "enterpriseConfig")
+		}
+	}
+	delete(cfg, "deploymentMode")
+	return writeJSONPretty(path, cfg)
 }

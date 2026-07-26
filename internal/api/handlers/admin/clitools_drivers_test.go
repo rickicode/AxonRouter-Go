@@ -282,3 +282,45 @@ func TestCLIToolStatusShape(t *testing.T) {
 		t.Fatalf("status shape wrong: %+v", st)
 	}
 }
+
+func TestCoworkDriverApplyReset(t *testing.T) {
+	setTempHome(t)
+	d := coworkDriver{}
+	sel := CLIToolSelection{
+		Models:  []string{"cc/claude-sonnet-5"},
+		BaseURL: "http://localhost:3777/v1",
+	}
+	cfg, err := d.apply(ctxDone(t), sel, "sk_test")
+	if err != nil {
+		t.Fatalf("apply err: %v", err)
+	}
+	if cfg.ConfigPath != d.configPath() {
+		t.Fatalf("config path mismatch: %s", cfg.ConfigPath)
+	}
+	if !strings.Contains(cfg.ConfigContent, `"deploymentMode": "3p"`) {
+		t.Fatalf("deploymentMode missing: %s", cfg.ConfigContent)
+	}
+	if !strings.Contains(cfg.ConfigContent, `"inferenceProvider": "gateway"`) {
+		t.Fatalf("inferenceProvider missing: %s", cfg.ConfigContent)
+	}
+	if !strings.Contains(cfg.ConfigContent, `"inferenceGatewayBaseUrl": "http://localhost:3777"`) {
+		t.Fatalf("base URL should not include /v1: %s", cfg.ConfigContent)
+	}
+	if !strings.Contains(cfg.ConfigContent, `"inferenceGatewayApiKey": "sk_test"`) {
+		t.Fatalf("api key missing: %s", cfg.ConfigContent)
+	}
+	if !strings.Contains(cfg.ConfigContent, `"name": "cc/claude-sonnet-5"`) {
+		t.Fatalf("inferenceModels missing selected model: %s", cfg.ConfigContent)
+	}
+	inst, has, _, err := d.detect(ctxDone(t))
+	if err != nil || !inst || !has {
+		t.Fatalf("detect mismatch: inst=%v has=%v err=%v", inst, has, err)
+	}
+	if err := d.reset(ctxDone(t)); err != nil {
+		t.Fatalf("reset err: %v", err)
+	}
+	bs, _ := os.ReadFile(d.configPath())
+	if strings.Contains(string(bs), "inferenceGatewayBaseUrl") || strings.Contains(string(bs), "deploymentMode") {
+		t.Fatalf("reset incomplete: %s", bs)
+	}
+}
