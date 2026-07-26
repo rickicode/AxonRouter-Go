@@ -633,6 +633,24 @@ var cliToolCatalog = []CLIToolStatic{
 		ID: "generic", Name: "Generic OpenAI-compatible", Description: "Any CLI that accepts OPENAI_BASE_URL + OPENAI_API_KEY.",
 		Image: "/providers/openai.png", Color: "#10A37F", ConfigType: "env",
 	},
+
+	// ─── Cowork (Claude Desktop 3P) ────────────────────────────────
+	{
+		ID:          "cowork",
+		Name:        "Cowork (Claude Desktop 3P)",
+		Description: "Third-party inference client for Claude Desktop (Cowork on 3P / enterprise mode).",
+		Image:       "/providers/claude.png",
+		Color:       "#D97757",
+		ConfigType:  "custom",
+		DocsURL:     "https://claude.com/docs/cowork/3p/overview",
+		SupportsDiscovery: true,
+		MultiModel:        true,
+		Notes: []Note{
+			{Type: "info", Text: "Cowork on 3P launches Claude Desktop in third-party mode and routes inference through this gateway's Anthropic-compatible /v1/messages endpoint."},
+			{Type: "warning", Text: "Config path: macOS ~/Library/Application Support/Claude-3p/claude_desktop_config.json • Windows %APPDATA%\\Claude-3p\\claude_desktop_config.json • Linux ~/.config/Claude-3p/claude_desktop_config.json"},
+		},
+	},
+
 	// ─── PI Coding Agent ───────────────────────────────────────────
 	{
 		ID:                "pi",
