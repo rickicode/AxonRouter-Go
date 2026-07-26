@@ -167,15 +167,15 @@ func convertCompletionsRequestToChatCompletions(raw []byte) []byte {
 	}
 	out, _ = sjson.SetBytes(out, "messages.0.content", prompt)
 
-	copyNumber(raw, out, "max_tokens", root)
-	copyNumber(raw, out, "temperature", root)
-	copyNumber(raw, out, "top_p", root)
-	copyNumber(raw, out, "frequency_penalty", root)
-	copyNumber(raw, out, "presence_penalty", root)
-	copyBool(raw, out, "stream", root)
-	copyBool(raw, out, "logprobs", root)
-	copyInt(raw, out, "top_logprobs", root)
-	copyBool(raw, out, "echo", root)
+	out = copyNumber(raw, out, "max_tokens", root)
+	out = copyNumber(raw, out, "temperature", root)
+	out = copyNumber(raw, out, "top_p", root)
+	out = copyNumber(raw, out, "frequency_penalty", root)
+	out = copyNumber(raw, out, "presence_penalty", root)
+	out = copyBool(raw, out, "stream", root)
+	out = copyBool(raw, out, "logprobs", root)
+	out = copyInt(raw, out, "top_logprobs", root)
+	out = copyBool(raw, out, "echo", root)
 
 	if stop := root.Get("stop"); stop.Exists() {
 		out, _ = sjson.SetRawBytes(out, "stop", []byte(stop.Raw))
