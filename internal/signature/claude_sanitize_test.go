@@ -64,7 +64,8 @@ func TestSanitizeClaudeMessagesForClaudeUpstream_NormalizesClaudeSignature(t *te
 	payload := protowire.AppendTag(nil, 2, protowire.BytesType)
 	payload = protowire.AppendBytes(payload, container)
 	// Ensure the decoded payload starts with the Claude marker byte 0x12, which
-	// AppendTag already wrote for field 2.
+	// AppendTag already wrote for field 2. The resulting base64 string
+	// naturally starts with the E-prefix character.
 	if payload[0] != 0x12 {
 		t.Fatalf("payload does not start with Claude marker: 0x%02x", payload[0])
 	}

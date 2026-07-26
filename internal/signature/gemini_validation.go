@@ -244,7 +244,7 @@ func inspectGeminiField1Envelope(decoded []byte) (geminiEnvelopeInfo, bool) {
 
 func inspectGeminiField2Envelope(decoded []byte) (geminiEnvelopeInfo, bool) {
 	value, ok := consumeGeminiField2Field1Value(decoded)
-	if !ok || !isLikelyGeminiOpaquePayload(value) {
+	if !ok || (!isLikelyGeminiOpaquePayload(value) && !isASCIIUUIDBytes(value)) {
 		return geminiEnvelopeInfo{}, false
 	}
 	return geminiEnvelopeInfo{

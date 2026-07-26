@@ -19,6 +19,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/config"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
+	"github.com/rickicode/AxonRouter-Go/internal/signature"
 )
 
 // Fields that must not reach the Google Antigravity API.
@@ -502,8 +503,13 @@ func (e *AntigravityExecutor) wrapEnvelope(ctx context.Context, req *Request) ([
 // When useCredits is true, the envelope requests Google One AI credits via
 // enabledCreditTypes. This is controlled by the ANTIGRAVITY_CREDITS config mode.
 func (e *AntigravityExecutor) buildEnvelope(ctx context.Context, req *Request, upstreamModelID string, useCredits bool) ([]byte, error) {
+	// Sanitize Gemini thought signatures in the Antigravity Gemini request
+	// envelope before further normalization. The translator emits contents under
+	// the inner "request" key.
+	sanitizedBody := signature.SanitizeGeminiRequestThoughtSignatures(req.Body, "request.contents")
+
 	var envelope map[string]any
-	if err := json.Unmarshal(req.Body, &envelope); err != nil {
+	if err := json.Unmarshal(sanitizedBody, &envelope); err != nil {
 		envelope = map[string]any{
 			"request": map[string]any{
 				"contents": []map[string]any{
