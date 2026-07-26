@@ -452,6 +452,8 @@ func New(cfg Config) *Router {
 
 		// Console logs (rotating file in /tmp)
 		g.GET("/console-logs", consoleLogsH.Get)
+		g.DELETE("/console-logs", consoleLogsH.Clear)
+		g.GET("/console-logs/stream", consoleLogsH.Stream)
 
 		// Quota
 		g.GET("/quota", quotaH.List)

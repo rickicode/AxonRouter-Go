@@ -82,9 +82,12 @@ func (h *TeeHandler) Handle(ctx context.Context, r slog.Record) error {
 	}
 	line = append(line, '\n')
 
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	logFileMu.Lock()
+	defer logFileMu.Unlock()
 	_, writeErr := h.file.Write(line)
+	if writeErr == nil {
+		LogBroadcaster.BroadcastLine(string(line))
+	}
 	return writeErr
 }
 
