@@ -31,7 +31,8 @@ import { Button } from '$lib/components/ui/button';
   import ProxyPoolDetail from './pages/ProxyPoolDetail.svelte';
   import APIKeys from './pages/APIKeys.svelte';
 import Optimization from './pages/Optimization.svelte';
-import CLITools from './pages/CLITools.svelte';
+import CLIToolsList from './pages/CLIToolsList.svelte';
+import CLIToolDetail from './pages/CLIToolDetail.svelte';
 	import ModelPricing from './pages/ModelPricing.svelte';
 	import Developers from './pages/Developers.svelte';
 import Usage from './pages/Usage.svelte';
@@ -115,8 +116,10 @@ const labels: Record<string, string> = {
   // /optimization → Optimization
   if (segments[0] === 'optimization' && segments.length === 1) return { component: Optimization, params: {} };
 
-// /cli-tools → CLI Tools
-  if (segments[0] === 'cli-tools' && segments.length === 1) return { component: CLITools, params: {} };
+  // /cli-tools/:id → CLIToolDetail
+if (segments[0] === 'cli-tools' && segments.length === 2) return { component: CLIToolDetail, params: { id: segments[1] } };
+// /cli-tools → CLI Tools list
+if (segments[0] === 'cli-tools' && segments.length === 1) return { component: CLIToolsList, params: {} };
 
 	// /usage → Usage
 	if (segments[0] === 'usage' && segments.length === 1) return { component: Usage, params: {} };
