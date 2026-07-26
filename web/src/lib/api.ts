@@ -1394,6 +1394,7 @@ enabled: boolean;
 endpoint?: string;
 timeout_ms?: number;
 max_payload_bytes?: number;
+status?: "running" | "stopped" | "error";
 }
 export interface CompressionSettings {
   mode: "off" | "lite" | "standard" | "rtk" | "aggressive" | "ultra";
@@ -1447,15 +1448,9 @@ export interface CompressionMetrics {
   tokens_saved: number;
   savings_percent: number;
   modes: CompressionModeMetric[];
-  headroom?: HeadroomMetrics;
-  headroom_status?: "running" | "stopped" | "error";
-  headroom_endpoint?: string;
-}
-
-export interface HeadroomMetrics {
-  total: number;
-  bytes_saved: number;
-  errors: number;
+  headroom_total?: number;
+  headroom_bytes_saved?: number;
+  headroom_errors?: number;
 }
 
 export const compressionApi = {

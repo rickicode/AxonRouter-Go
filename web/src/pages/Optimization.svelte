@@ -223,7 +223,7 @@ const outputLevels = [
 <div class="flex items-center gap-2">
 {#if headroomEnabled}
 <CheckIcon class="size-4 text-emerald-500" />
-<span>Headroom external compression ({metrics.headroom_status ?? 'unknown'})</span>
+<span>Headroom external compression ({compression.headroom?.status ?? 'unknown'})</span>
 {:else}
 <XIcon class="size-4 text-muted-foreground" />
 <span class="text-muted-foreground">Headroom external compression</span>
@@ -427,14 +427,14 @@ const outputLevels = [
             <Switch id="headroom-enabled" checked={headroomEnabled} onCheckedChange={(v) => (headroomEnabled = v)} />
           </div>
 
-          {#if metrics.headroom_status}
+          {#if compression.headroom?.status}
             <div class="flex items-center gap-2 rounded-lg bg-muted p-3 text-body-sm">
               <span class="text-muted-foreground">Status</span>
-              <Badge variant={metrics.headroom_status === 'running' ? 'default' : metrics.headroom_status === 'error' ? 'destructive' : 'secondary'}>
-                {metrics.headroom_status}
+              <Badge variant={compression.headroom.status === 'running' ? 'default' : compression.headroom.status === 'error' ? 'destructive' : 'secondary'}>
+                {compression.headroom.status}
               </Badge>
-              {#if metrics.headroom_endpoint}
-                <span class="text-muted-foreground truncate" title={metrics.headroom_endpoint}>{metrics.headroom_endpoint}</span>
+              {#if compression.headroom.endpoint}
+                <span class="text-muted-foreground truncate" title={compression.headroom.endpoint}>{compression.headroom.endpoint}</span>
               {/if}
             </div>
           {/if}
@@ -457,19 +457,19 @@ const outputLevels = [
             </div>
           {/if}
 
-          {#if metrics.headroom}
+          {#if metrics.headroom_total !== undefined}
             <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
               <div class="bg-card rounded-xl shadow-card p-4">
                 <p class="text-caption-mono text-muted-foreground uppercase">Headroom calls</p>
-                <p class="text-display-md font-semibold mt-1">{metrics.headroom.total.toLocaleString()}</p>
+                <p class="text-display-md font-semibold mt-1">{(metrics.headroom_total ?? 0).toLocaleString()}</p>
               </div>
               <div class="bg-card rounded-xl shadow-card p-4">
                 <p class="text-caption-mono text-muted-foreground uppercase">Bytes saved</p>
-                <p class="text-display-md font-semibold mt-1">{metrics.headroom.bytes_saved.toLocaleString()}</p>
+                <p class="text-display-md font-semibold mt-1">{(metrics.headroom_bytes_saved ?? 0).toLocaleString()}</p>
               </div>
               <div class="bg-card rounded-xl shadow-card p-4">
                 <p class="text-caption-mono text-muted-foreground uppercase">Errors</p>
-                <p class="text-display-md font-semibold mt-1">{metrics.headroom.errors.toLocaleString()}</p>
+                <p class="text-display-md font-semibold mt-1">{(metrics.headroom_errors ?? 0).toLocaleString()}</p>
               </div>
             </div>
           {/if}
