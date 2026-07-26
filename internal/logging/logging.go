@@ -55,7 +55,9 @@ func SetLogger(l *slog.Logger) {
 	Logger.set(l)
 }
 
-// LogFilePath is the default path where structured JSON logs are written.
+// LogFilePath is the path where structured JSON logs are written.  Callers may
+// set this before Init(); after that it is updated from AXON_LOG_FILE_PATH when
+// present and from LoadRotationConfig otherwise.
 var LogFilePath = "/tmp/axonrouter.log"
 
 // LogBroadcaster fans out new log lines and clear events to SSE subscribers.
@@ -70,17 +72,21 @@ var logFileMu sync.Mutex
 func ClearLogFile() error {
 	logFileMu.Lock()
 	defer logFileMu.Unlock()
-
+	if logWriter != nil {
+		if err := logWriter.Truncate(); err != nil {
+			return err
+		}
+		LogBroadcaster.BroadcastClear()
+		return nil
+	}
 	if LogFilePath == "" {
 		return nil
 	}
-
 	f, err := os.OpenFile(LogFilePath, os.O_WRONLY|os.O_CREATE, 0o644)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-
 	if err := f.Truncate(0); err != nil {
 		return err
 	}
@@ -89,11 +95,13 @@ func ClearLogFile() error {
 }
 
 // Init initialises the global logger. format must be "json", "text", or "compact" (default).
-// If LogFilePath is non-empty, a TeeHandler is installed that also writes structured
-// JSON lines to that file (for the dashboard Console Log Viewer).
+// If a log file path is configured (via LogFilePath or AXON_LOG_FILE_PATH), a RotatingFileWriter
+// and TeeHandler are installed; the log directory is created and rotation/cleanup is started.
 func Init(format string) {
-	var baseHandler slog.Handler
+	cfg := LoadRotationConfig()
+	LogFilePath = cfg.LogFilePath
 
+	var baseHandler slog.Handler
 	switch format {
 	case "json":
 		baseHandler = slog.NewJSONHandler(os.Stdout, nil)
@@ -118,13 +126,21 @@ func Init(format string) {
 	}
 
 	var l *slog.Logger
-	if LogFilePath != "" {
-		tee, err := NewTeeHandler(baseHandler, LogFilePath)
+	if cfg.LogFilePath != "" {
+		var err error
+		logWriter, err = NewRotatingFileWriter(cfg.LogFilePath, cfg.MaxSizeBytes, cfg.MaxFiles, cfg.RetentionDays)
 		if err != nil {
-			log.Printf("WARN: failed to open log file %s: %v (console log viewer will be empty)", LogFilePath, err)
+			log.Printf("WARN: failed to open log file %s: %v (console log viewer will be empty)", cfg.LogFilePath, err)
 			l = slog.New(baseHandler)
 		} else {
-			l = slog.New(tee)
+			tee, err := NewTeeHandler(baseHandler, logWriter)
+			if err != nil {
+				log.Printf("WARN: failed to build tee handler: %v (console log viewer will be empty)", err)
+				l = slog.New(baseHandler)
+			} else {
+				StartLogRotation(cfg)
+				l = slog.New(tee)
+			}
 		}
 	} else {
 		l = slog.New(baseHandler)
