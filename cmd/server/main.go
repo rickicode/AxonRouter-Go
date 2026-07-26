@@ -320,6 +320,7 @@ func main() {
 		fmt.Println(" AXONROUTER_DIR Data directory (default: ~/axonrouter)")
 		fmt.Println(" AXON_DB_URL Turso/libsql remote database URL (optional)")
 		fmt.Println(" AXON_DB_TOKEN Turso/libsql auth token (used when AXON_DB_URL is set)")
+		fmt.Println(" AXON_LOGS_MAX_TOTAL_SIZE_MB Max total log directory size in MB (0 = disabled)")
 		os.Exit(0)
 	}
 

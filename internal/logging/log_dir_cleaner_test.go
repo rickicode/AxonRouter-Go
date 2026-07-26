@@ -13,14 +13,19 @@ func writeFile(t *testing.T, path string, size int64, modTime time.Time) {
 	if err != nil {
 		t.Fatalf("create %s: %v", path, err)
 	}
+	var writeErr error
 	if size > 0 {
-		if _, err := f.Write(make([]byte, size)); err != nil {
-			f.Close()
-			t.Fatalf("write %s: %v", path, err)
-		}
+		_, writeErr = f.Write(make([]byte, size))
 	}
-	if err := f.Close(); err != nil {
-		t.Fatalf("close %s: %v", path, err)
+	closeErr := f.Close()
+	if writeErr != nil {
+		if closeErr != nil {
+			t.Fatalf("write %s: %v (close: %v)", path, writeErr, closeErr)
+		}
+		t.Fatalf("write %s: %v", path, writeErr)
+	}
+	if closeErr != nil {
+		t.Fatalf("close %s: %v", path, closeErr)
 	}
 	if err := os.Chtimes(path, modTime, modTime); err != nil {
 		t.Fatalf("chtimes %s: %v", path, err)
