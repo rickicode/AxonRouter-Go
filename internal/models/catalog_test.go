@@ -252,20 +252,20 @@ func TestTryFetchProviders_ZenMuxFreeFiltering(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	origEndpoints := providerEndpoints
-	origFreeOnly := providerFreeOnly
+	origEndpoints := ProviderEndpoints()
+	origFreeOnly := ProviderFreeOnly()
 	defer func() {
-		providerEndpoints = origEndpoints
-		providerFreeOnly = origFreeOnly
+		SetProviderEndpoints(origEndpoints)
+		SetProviderFreeOnly(origFreeOnly)
 	}()
 
-	providerEndpoints = map[string]string{
+	SetProviderEndpoints(map[string]string{
 		"zenmux":      upstream.URL,
 		"zenmux-free": upstream.URL,
-	}
-	providerFreeOnly = map[string]bool{
+	})
+	SetProviderFreeOnly(map[string]bool{
 		"zenmux-free": true,
-	}
+	})
 
 	tryFetchProviders(t.Context())
 
