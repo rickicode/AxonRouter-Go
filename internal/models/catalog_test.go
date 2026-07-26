@@ -217,3 +217,82 @@ func (t *cfTestTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	return http.DefaultTransport.RoundTrip(req)
 }
+
+// TestTryFetchProviders_ZenMuxFreeFiltering verifies that zenmux-free sync keeps
+// only models whose prompt + completion pricing is zero, falling back to the
+// "-free" suffix when pricing metadata is missing.
+func TestTryFetchProviders_ZenMuxFreeFiltering(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{
+					"id": "paid-model",
+					"pricings": map[string]any{
+						"prompt":     []map[string]any{{"value": 5, "unit": "perMTokens", "currency": "USD"}},
+						"completion": []map[string]any{{"value": 10, "unit": "perMTokens", "currency": "USD"}},
+					},
+				},
+				{
+					"id": "free-model",
+					"pricings": map[string]any{
+						"prompt":     []map[string]any{{"value": 0, "unit": "perMTokens", "currency": "USD"}},
+						"completion": []map[string]any{{"value": 0, "unit": "perMTokens", "currency": "USD"}},
+					},
+				},
+				{
+					// No pricing metadata: should be kept only by the "-free" suffix fallback.
+					"id": "fallback-free",
+				},
+				{
+					// No pricing metadata and no "-free" suffix: should be dropped.
+					"id": "unknown-model",
+				},
+			},
+		})
+	}))
+	defer upstream.Close()
+
+	origEndpoints := ProviderEndpoints()
+	origFreeOnly := ProviderFreeOnly()
+	defer func() {
+		SetProviderEndpoints(origEndpoints)
+		SetProviderFreeOnly(origFreeOnly)
+	}()
+
+	SetProviderEndpoints(map[string]string{
+		"zenmux":      upstream.URL,
+		"zenmux-free": upstream.URL,
+	})
+	SetProviderFreeOnly(map[string]bool{
+		"zenmux-free": true,
+	})
+
+	tryFetchProviders(t.Context())
+
+	paid := getCurrentModelIDs("zenmux")
+	free := getCurrentModelIDs("zenmux-free")
+
+	wantPaid := []string{"fallback-free", "free-model", "paid-model", "unknown-model"}
+	slices.Sort(paid)
+	if !slices.Equal(paid, wantPaid) {
+		t.Errorf("zenmux full list = %v, want %v", paid, wantPaid)
+	}
+
+	wantFree := []string{"fallback-free", "free-model"}
+	if !slices.Equal(free, wantFree) {
+		t.Errorf("zenmux-free filtered list = %v, want %v", free, wantFree)
+	}
+}
+
+// getCurrentModelIDs returns the in-memory model IDs for a provider key.
+func getCurrentModelIDs(key string) []string {
+	mu.RLock()
+	defer mu.RUnlock()
+	entries := current[key]
+	ids := make([]string, 0, len(entries))
+	for _, e := range entries {
+		ids = append(ids, e.ID)
+	}
+	slices.Sort(ids)
+	return ids
+}
