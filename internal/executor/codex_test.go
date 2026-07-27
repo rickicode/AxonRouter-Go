@@ -606,3 +606,65 @@ func TestCodexIncompleteStreamError_IsRequestScoped(t *testing.T) {
 		t.Fatal("expected IsRequestScoped() == true")
 	}
 }
+
+// TestCodexReasoningReplay_MultiTurnIdentityConfuse verifies that reasoning-replay
+// cache hits work across turns when identity confusion is enabled. The replay
+// session key is derived after confusion is applied, so the original continuity
+// value does not affect cache lookup on the second turn.
+func TestCodexReasoningReplay_MultiTurnIdentityConfuse(t *testing.T) {
+	cache.ClearCodexReasoningReplayCache()
+	connID := "conn-xyz"
+	model := "gpt-5.4"
+
+	// Simulate a first turn that produces reasoning and a function_call.
+	turn1Req := []byte(`{"model":"gpt-5.4","prompt_cache_key":"real-user-key","input":[{"type":"message","role":"user","content":"hello"}]}`)
+	turn1Body := codexRequestBody(turn1Req)
+	turn1Body = ensureImageGenerationTool(turn1Body, model)
+	turn1Body, _ = applyCodexIdentityConfuseBody(turn1Body, connID)
+	turn1Key := codexReasoningReplaySessionKey(turn1Body, nil)
+	if turn1Key == "prompt-cache:real-user-key" {
+		t.Fatal("expected session key to use confused value, not original")
+	}
+
+	reasoning := []byte(`{"type":"reasoning","encrypted_content":"sig-turn-1","summary":[],"content":null}`)
+	call := []byte(`{"type":"function_call","call_id":"call-1","name":"fn","arguments":"{}"}`)
+	_ = cache.CacheCodexReasoningReplayItems(context.Background(), model, turn1Key, [][]byte{reasoning, call})
+
+	// Second turn arrives with the same original continuity key. With identity
+	// confusion applied first, cache lookup should hit using the confused key.
+	turn2Req := []byte(`{"model":"gpt-5.4","prompt_cache_key":"real-user-key","input":[{"type":"message","role":"user","content":"again"}]}`)
+	turn2Body := codexRequestBody(turn2Req)
+	turn2Body = ensureImageGenerationTool(turn2Body, model)
+	turn2Body, _ = applyCodexIdentityConfuseBody(turn2Body, connID)
+	turn2Key := codexReasoningReplaySessionKey(turn2Body, nil)
+	if turn2Key != turn1Key {
+		t.Fatalf("expected same confused session key across turns; got %q != %q", turn2Key, turn1Key)
+	}
+
+	turn2Body, ok := codexInjectReasoningReplay(turn2Body, turn2Key)
+	if !ok {
+		t.Fatal("expected replay injection on second turn")
+	}
+	input := gjson.GetBytes(turn2Body, "input").Array()
+	if len(input) != 3 {
+		t.Fatalf("expected 3 input items (reasoning, function_call, user), got %d: %s", len(input), string(turn2Body))
+	}
+	if got := input[0].Get("type").String(); got != "reasoning" {
+		t.Fatalf("expected injected reasoning, got %q", got)
+	}
+	if got := input[0].Get("encrypted_content").String(); got != "sig-turn-1" {
+		t.Fatalf("expected reasoning from turn 1 cache, got %q", got)
+	}
+	if got := input[1].Get("type").String(); got != "function_call" {
+		t.Fatalf("expected injected function_call, got %q", got)
+	}
+	if got := input[2].Get("role").String(); got != "user" {
+		t.Fatalf("expected user message last, got role %q", got)
+	}
+
+	// The confused prompt_cache_key should be present in the outgoing body.
+	confusedCacheKey := gjson.GetBytes(turn2Body, "prompt_cache_key").String()
+	if confusedCacheKey == "real-user-key" || confusedCacheKey == "" {
+		t.Fatalf("expected confused prompt_cache_key in outgoing body, got %q", confusedCacheKey)
+	}
+}
