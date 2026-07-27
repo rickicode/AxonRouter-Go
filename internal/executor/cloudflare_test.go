@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -490,4 +491,161 @@ func collectStreamChunks(ch <-chan StreamChunk) []string {
 func mustJSON(v any) []byte {
 	b, _ := json.Marshal(v)
 	return b
+}
+
+func TestCloudflareVisionModelDetection(t *testing.T) {
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{"@cf/meta/llama-3.2-11b-vision-instruct", true},
+		{"cf/meta/llama-3.2-11b-vision-instruct", true},
+		{"meta/llama-3.2-11b-vision-instruct", true},
+		{"@cf/llava-hf/llava-1.5-7b-hf", true},
+		{"cf/llava-hf/llava-1.5-7b-hf", true},
+		{"@cf/meta/llama-3.2-1b-instruct", false},
+		{"cf/meta/llama-3.2-1b-instruct", false},
+		{"openai/gpt-4o", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			if got := isCloudflareVisionModel(tt.model); got != tt.want {
+				t.Fatalf("isCloudflareVisionModel(%q)=%v, want %v", tt.model, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTranslateImageContent_Base64(t *testing.T) {
+	body := mustJSON(map[string]any{
+		"model": "cf/meta/llama-3.2-11b-vision-instruct",
+		"messages": []any{
+			map[string]any{
+				"role": "user",
+				"content": []any{
+					map[string]any{"type": "text", "text": "describe"},
+					map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="}},
+				},
+			},
+		},
+	})
+	out, err := translateImageContent(body)
+	if err != nil {
+		t.Fatalf("translateImageContent error: %v", err)
+	}
+	got := gjson.GetBytes(out, "messages.0.content.1.type").String()
+	if got != "image" {
+		t.Fatalf("expected image block, got %s", got)
+	}
+	encoded := gjson.GetBytes(out, "messages.0.content.1.image").String()
+	if encoded == "" {
+		t.Fatal("expected base64 image payload")
+	}
+}
+
+func TestTranslateImageContent_RemoteURL(t *testing.T) {
+	img := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="
+	dec, _ := base64.StdEncoding.DecodeString(img)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(dec)
+	}))
+	defer ts.Close()
+
+	body := mustJSON(map[string]any{
+		"model": "cf/meta/llama-3.2-11b-vision-instruct",
+		"messages": []any{
+			map[string]any{
+				"role": "user",
+				"content": []any{
+					map[string]any{"type": "text", "text": "describe"},
+					map[string]any{"type": "image_url", "image_url": map[string]any{"url": ts.URL + "/img.png"}},
+				},
+			},
+		},
+	})
+	out, err := translateImageContent(body)
+	if err != nil {
+		t.Fatalf("translateImageContent error: %v", err)
+	}
+	if got := gjson.GetBytes(out, "messages.0.content.1.type").String(); got != "image" {
+		t.Fatalf("expected image block, got %s", got)
+	}
+	encoded := gjson.GetBytes(out, "messages.0.content.1.image").String()
+	if encoded == "" {
+		t.Fatal("expected base64 image payload")
+	}
+}
+
+func TestNormalizeCloudflareVisionResponse_ResponseString(t *testing.T) {
+	body := []byte(`{"result":{"response":"A red square"},"success":true}`)
+	out := normalizeCloudflareVisionResponse(body, "@cf/meta/llama-3.2-11b-vision-instruct")
+	if gjson.GetBytes(out, "object").String() != "chat.completion" {
+		t.Fatalf("expected chat.completion, got %s", string(out))
+	}
+	if got := gjson.GetBytes(out, "choices.0.message.content").String(); got != "A red square" {
+		t.Fatalf("expected content 'A red square', got %q", got)
+	}
+}
+
+func TestCloudflareExecutor_VisionNativeEndpoint(t *testing.T) {
+	var calledPath string
+	var receivedBody []byte
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledPath = r.URL.Path
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, `{"result":{"response":"desc"},"success":true}`)
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	cf := NewCloudflareExecutor(NewOpenAIExecutor(base))
+	req := &Request{
+		Model:   "meta/llama-3.2-11b-vision-instruct",
+		BaseURL: ts.URL,
+		APIKey:  "key",
+		ProviderSpecificData: map[string]string{"accountId": "test-account"},
+		Body: mustJSON(map[string]any{
+			"model": "cf/meta/llama-3.2-11b-vision-instruct",
+			"messages": []any{
+				map[string]any{
+					"role": "user",
+					"content": []any{
+						map[string]any{"type": "text", "text": "describe"},
+						map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="}},
+					},
+				},
+			},
+		}),
+	}
+	resp, err := cf.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	wantPath := "/accounts/test-account/ai/run/@cf/meta/llama-3.2-11b-vision-instruct"
+	if calledPath != wantPath {
+		t.Fatalf("expected path %s, got %s", wantPath, calledPath)
+	}
+	if gjson.GetBytes(receivedBody, "messages.0.content.1.type").String() != "image" {
+		t.Fatalf("expected native image block, body: %s", string(receivedBody))
+	}
+	if gjson.GetBytes(resp.Body, "choices.0.message.content").String() != "desc" {
+		t.Fatalf("expected normalized description, got %s", string(resp.Body))
+	}
+}
+
+func TestCloudflareExecutor_VisionRequiresAccountID(t *testing.T) {
+	base := NewBaseExecutor()
+	cf := NewCloudflareExecutor(NewOpenAIExecutor(base))
+	req := &Request{
+		Model:   "cf/meta/llama-3.2-11b-vision-instruct",
+		BaseURL: "https://api.cloudflare.com/client/v4/ai/v1",
+		Body:    mustJSON(map[string]any{"model": "cf/meta/llama-3.2-11b-vision-instruct", "messages": []any{map[string]any{"role": "user", "content": "hi"}}}),
+	}
+	_, err := cf.Execute(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "Account ID") {
+		t.Fatalf("expected Account ID error, got %v", err)
+	}
 }
