@@ -11,7 +11,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -138,8 +137,7 @@ func (f *fakeOAuthService) StartLocalServer(ctx context.Context, state string) (
 
 func openTestDB(t testing.TB) *sql.DB {
 	t.Helper()
-	tmp := filepath.Join(t.TempDir(), "handler-test.db")
-	database, err := sql.Open("sqlite", tmp)
+	database, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

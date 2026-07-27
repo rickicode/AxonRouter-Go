@@ -491,3 +491,195 @@ func mustJSON(v any) []byte {
 	b, _ := json.Marshal(v)
 	return b
 }
+
+func TestCloudflareTranslation_SimplifiedShape(t *testing.T) {
+	var calledPath string
+	var receivedBody []byte
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledPath = r.URL.Path
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, `{"result":{"translated_text":"Hola","source_language":"en"}}`)
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	cf := NewCloudflareExecutor(NewOpenAIExecutor(base))
+	req := &Request{
+		Model:                "meta/m2m100-1.2b",
+		BaseURL:              ts.URL + "/accounts/{accountId}/ai/v1/chat/completions",
+		APIKey:               "test-token",
+		Provider:             "cf",
+		ProviderSpecificData: map[string]string{"accountId": "abc123"},
+		Body: mustJSON(map[string]any{
+			"model":           "meta/m2m100-1.2b",
+			"text":            "Hello",
+			"target_language": "es",
+		}),
+	}
+	resp, err := cf.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if calledPath != "/accounts/abc123/ai/run/@cf/meta/m2m100-1.2b" {
+		t.Fatalf("expected native run path, got %s", calledPath)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(receivedBody, &got); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	if got["text"] != "Hello" || got["target_language"] != "es" {
+		t.Fatalf("unexpected native payload: %s", string(receivedBody))
+	}
+	content := gjson.GetBytes(resp.Body, "choices.0.message.content").String()
+	if content != "Hola" {
+		t.Fatalf("expected Hola, got %s", content)
+	}
+	if gjson.GetBytes(resp.Body, "object").String() != "chat.completion" {
+		t.Fatalf("expected chat.completion object, got %s", resp.Body)
+	}
+}
+
+func TestCloudflareTranslation_ChatShape(t *testing.T) {
+	var calledPath string
+	var receivedBody []byte
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledPath = r.URL.Path
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, `{"result":{"translated_text":"Bonjour"}}`)
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	cf := NewCloudflareExecutor(NewOpenAIExecutor(base))
+	req := &Request{
+		Model:                "cf/meta/m2m100-1.2b",
+		BaseURL:              ts.URL + "/accounts/{accountId}/ai/v1/chat/completions",
+		APIKey:               "test-token",
+		Provider:             "cf",
+		ProviderSpecificData: map[string]string{"accountId": "abc123"},
+		Body: mustJSON(map[string]any{
+			"model": "cf/meta/m2m100-1.2b",
+			"messages": []any{
+				map[string]any{"role": "system", "content": "Translate"},
+				map[string]any{"role": "user", "content": "Hello"},
+			},
+			"target_language": "fr",
+		}),
+	}
+	resp, err := cf.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if calledPath != "/accounts/abc123/ai/run/@cf/meta/m2m100-1.2b" {
+		t.Fatalf("expected native run path, got %s", calledPath)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(receivedBody, &got); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	if got["text"] != "Hello" || got["target_language"] != "fr" {
+		t.Fatalf("unexpected native payload: %s", string(receivedBody))
+	}
+	if gjson.GetBytes(resp.Body, "choices.0.message.content").String() != "Bonjour" {
+		t.Fatalf("unexpected response body: %s", resp.Body)
+	}
+}
+
+func TestCloudflareTranslation_ResponseFallbacks(t *testing.T) {
+	tests := []struct {
+		name     string
+		upstream string
+		want     string
+	}{
+		{"translated_text envelope", `{"result":{"translated_text":"Hola"}}`, "Hola"},
+		{"plain string result", `{"result":"Hola"}`, "Hola"},
+		{"translation field", `{"translation":"Hola"}`, "Hola"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				fmt.Fprintln(w, tt.upstream)
+			}))
+			defer ts.Close()
+			base := NewBaseExecutor()
+			cf := NewCloudflareExecutor(NewOpenAIExecutor(base))
+			req := &Request{
+				Model:                "meta/m2m100-1.2b",
+				BaseURL:              ts.URL + "/accounts/{accountId}/ai/v1/chat/completions",
+				APIKey:               "test-token",
+				Provider:             "cf",
+				ProviderSpecificData: map[string]string{"accountId": "acc"},
+				Body:                 mustJSON(map[string]any{"model": "meta/m2m100-1.2b", "text": "Hello", "target_language": "es"}),
+			}
+			resp, err := cf.Execute(context.Background(), req)
+			if err != nil {
+				t.Fatalf("Execute error: %v", err)
+			}
+			if gjson.GetBytes(resp.Body, "choices.0.message.content").String() != tt.want {
+				t.Fatalf("want %q, got %s", tt.want, resp.Body)
+			}
+		})
+	}
+}
+
+func TestCloudflareTranslation_MissingFields(t *testing.T) {
+	base := NewBaseExecutor()
+	cf := NewCloudflareExecutor(NewOpenAIExecutor(base))
+	req := &Request{
+		Model:    "meta/m2m100-1.2b",
+		BaseURL:  "http://example.com/accounts/{accountId}/ai/v1/chat/completions",
+		APIKey:   "test-token",
+		Provider: "cf",
+		ProviderSpecificData: map[string]string{"accountId": "acc"},
+		Body:     mustJSON(map[string]any{"model": "meta/m2m100-1.2b"}),
+	}
+	if _, err := cf.Execute(context.Background(), req); err == nil {
+		t.Fatal("expected error for missing translation fields")
+	}
+}
+
+func TestCloudflareTranslation_StripStreamFlag(t *testing.T) {
+	var calledPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, `{"result":{"translated_text":"Hola"}}`)
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	cf := NewCloudflareExecutor(NewOpenAIExecutor(base))
+	req := &Request{
+		Model:                "meta/m2m100-1.2b",
+		BaseURL:              ts.URL + "/accounts/{accountId}/ai/v1/chat/completions",
+		APIKey:               "test-token",
+		Provider:             "cf",
+		ProviderSpecificData: map[string]string{"accountId": "abc123"},
+		Body:                 mustJSON(map[string]any{"model": "meta/m2m100-1.2b", "text": "Hello", "target_language": "es", "stream": true}),
+		Stream:               true,
+	}
+	res, err := cf.ExecuteStream(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ExecuteStream error: %v", err)
+	}
+	if calledPath != "/accounts/abc123/ai/run/@cf/meta/m2m100-1.2b" {
+		t.Fatalf("expected native run path, got %s", calledPath)
+	}
+	var chunks int
+	for chunk := range res.Chunks {
+		if chunk.Err != nil {
+			t.Fatalf("unexpected chunk error: %v", chunk.Err)
+		}
+		chunks++
+	}
+	if chunks == 0 {
+		t.Fatal("expected at least one synthetic chunk")
+	}
+}

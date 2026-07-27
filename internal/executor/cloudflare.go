@@ -31,6 +31,9 @@ func cloneRequest(req *Request) *Request {
 // Execute sanitizes the request using the provider's compatibility config and
 // delegates to the underlying OpenAI executor.
 func (e *CloudflareExecutor) Execute(ctx context.Context, req *Request) (*Response, error) {
+	if isCloudflareTranslationRequest(req.Body) {
+		return e.Translate(ctx, req)
+	}
 	cp := cloneRequest(req)
 	provider := req.Provider
 	if provider == "" {
@@ -53,6 +56,13 @@ func (e *CloudflareExecutor) Execute(ctx context.Context, req *Request) (*Respon
 // that Cloudflare's non-standard `delta.reasoning` field is rewritten to the
 // OpenAI-compatible `delta.reasoning_content` field.
 func (e *CloudflareExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
+	if isCloudflareTranslationRequest(req.Body) {
+		resp, err := e.Translate(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return cfStreamTranslationResponse(resp), nil
+	}
 	cp := cloneRequest(req)
 	provider := req.Provider
 	if provider == "" {

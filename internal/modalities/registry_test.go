@@ -7,7 +7,7 @@ import (
 
 func TestServiceKinds_CF(t *testing.T) {
 	kinds := ServiceKinds("cf")
-	want := []string{"llm", "embedding", "image"}
+	want := []string{"llm", "embedding", "image", "translation"}
 	if len(kinds) != len(want) {
 		t.Fatalf("ServiceKinds(cf) = %v, want %v", kinds, want)
 	}
@@ -68,5 +68,15 @@ func TestSupportsModel_CF(t *testing.T) {
 func TestSupportsModel_UnknownProvider(t *testing.T) {
 	if SupportsModel("not-real", "embedding", "@cf/baai/bge-base-en-v1.5") {
 		t.Error("SupportsModel(not-real, ...) = true, want false")
+	}
+}
+
+func TestModels_CFTranslation(t *testing.T) {
+	models := Models("cf", "translation")
+	if !slices.Contains(models, "@cf/meta/m2m100-1.2b") {
+		t.Errorf("Models(cf, translation) missing @cf/meta/m2m100-1.2b; got %v", models)
+	}
+	if !slices.Contains(models, "@cf/ai4bharat/indictrans2-en-indic-1B") {
+		t.Errorf("Models(cf, translation) missing @cf/ai4bharat/indictrans2-en-indic-1B; got %v", models)
 	}
 }

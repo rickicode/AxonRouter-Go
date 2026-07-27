@@ -634,7 +634,7 @@ var CFTaskServiceKinds = map[string][]string{
 	"Speech-to-Text":               {"stt"},
 	"Automatic Speech Recognition": {"stt"},
 	"Text-to-Speech":               {"tts"},
-	"Translation":                  {"llm"},
+	"Translation":                  {"translation"},
 	"Text Classification":          {"llm"},
 }
 
