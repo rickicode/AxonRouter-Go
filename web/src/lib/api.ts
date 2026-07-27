@@ -775,7 +775,7 @@ export const apiKeysApi = {
     }),
 
   value: (id: string) =>
-    fetchApi<{ id: string; key: string }>(`/api-keys/${id}/value`),
+    fetchApi<{ id: string; key: string; value: string }>(`/api-keys/${id}/value`),
 
   getDevices: (id: string) =>
     fetchApi<KeyDevicesResponse>(`/keys/${id}/devices`),
@@ -1559,6 +1559,7 @@ export interface CLIToolState {
   state?: unknown;
   configured: boolean;
   config?: CLIToolConfig;
+  actualConfig?: { path?: string; content?: string };
 }
 
 export interface CLIToolSelection {
@@ -1571,6 +1572,12 @@ export interface CLIToolSelection {
   activeModel?: string;
   subagentModel?: string;
   agentModels?: Record<string, string>;
+  reasoningEffort?: string;
+}
+
+export interface CLIToolExtraFile {
+  path: string;
+  content: string;
 }
 
 export interface CLIToolConfig {
@@ -1579,6 +1586,7 @@ export interface CLIToolConfig {
   configContent: string;
   runCommand: string;
   backupPath?: string;
+  extraFiles?: CLIToolExtraFile[];
 }
 
 export interface CLIToolSavedResponse {

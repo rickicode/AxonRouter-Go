@@ -16,7 +16,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-// cliToolDriver mirrors 9router's per-tool settings route (detect/apply/reset).
+// cliToolDriver mirrors axonrouter's per-tool settings route (detect/apply/reset).
 type cliToolDriver interface {
 	// detect checks whether the CLI tool is installed and whether it already
 	// points at AxonRouter. It returns driver-specific state.
@@ -30,19 +30,19 @@ type cliToolDriver interface {
 }
 
 var toolDrivers = map[string]cliToolDriver{
-	"claude":         &claudeDriver{},
-	"codex":          &codexDriver{},
-	"opencode":       &opencodeDriver{},
-	"openclaw":       &openclawDriver{},
-	"cline":          &clineDriver{},
-	"kilo":           &kiloDriver{},
-	"droid":          &droidDriver{},
-	"hermes":         &hermesDriver{},
-	"deepseek-tui":   &deepseekTuiDriver{},
-	"jcode":          &jcodeDriver{},
-	"copilot":        &copilotDriver{},
-	"cowork":         &coworkDriver{},
-	"grok-build":     &grokBuildDriver{},
+	"claude":       &claudeDriver{},
+	"codex":        &codexDriver{},
+	"opencode":     &opencodeDriver{},
+	"openclaw":     &openclawDriver{},
+	"cline":        &clineDriver{},
+	"kilo":         &kiloDriver{},
+	"droid":        &droidDriver{},
+	"hermes":       &hermesDriver{},
+	"deepseek-tui": &deepseekTuiDriver{},
+	"jcode":        &jcodeDriver{},
+	"copilot":      &copilotDriver{},
+	"cowork":       &coworkDriver{},
+	"grok-build":   &grokBuildDriver{},
 }
 
 // ---------------------------------------------------------------------------
@@ -56,7 +56,6 @@ func userHomeDir() string {
 	}
 	return h
 }
-
 
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
@@ -188,7 +187,7 @@ func defaultEnvBlock(keys ...string) string {
 }
 
 // setEnvModelAliases fills env with ANTHROPIC-style default model env keys,
-// matching 9router's claude/openclaw behavior.
+// matching axonrouter's claude/openclaw behavior.
 func setEnvModelAliases(env map[string]string, sel CLIToolSelection, tool *CLIToolStatic) {
 	if tool == nil {
 		return
@@ -233,7 +232,7 @@ func sortedKeys(m map[string]string) []string {
 
 // ---------------------------------------------------------------------------
 // Claude Code
-// 9router: src/app/api/cli-tools/claude-settings/route.js
+// axonrouter: src/app/api/cli-tools/claude-settings/route.js
 // ---------------------------------------------------------------------------
 
 type claudeDriver struct{}
@@ -275,7 +274,7 @@ func (d claudeDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey st
 
 	env := ensureMap(settings, "env")
 	env["ANTHROPIC_BASE_URL"] = normalizeBaseV1(sel.BaseURL)
-	env["ANTHROPIC_AUTH_TOKEN"] = firstNonEmpty(apiKey, "sk_9router")
+	env["ANTHROPIC_AUTH_TOKEN"] = firstNonEmpty(apiKey, "ax-0000000000000000")
 	env["API_TIMEOUT_MS"] = "600000"
 
 	tool := findTool("claude")
@@ -386,13 +385,13 @@ func restoreBackup(path, backup string) {
 
 // ---------------------------------------------------------------------------
 // Codex CLI
-// 9router: src/app/api/cli-tools/codex-settings/route.js
+// axonrouter: src/app/api/cli-tools/codex-settings/route.js
 // ---------------------------------------------------------------------------
 
 type codexDriver struct{}
 
-func (codexDriver) configPath() string  { return filepath.Join(userHomeDir(), ".codex", "config.toml") }
-func (codexDriver) authPath() string    { return filepath.Join(userHomeDir(), ".codex", "auth.json") }
+func (codexDriver) configPath() string { return filepath.Join(userHomeDir(), ".codex", "config.toml") }
+func (codexDriver) authPath() string   { return filepath.Join(userHomeDir(), ".codex", "auth.json") }
 
 func (d codexDriver) detect(ctx context.Context) (bool, bool, map[string]any, error) {
 	if !lookPath("codex") && !fileExists(d.configPath()) {
@@ -402,8 +401,8 @@ func (d codexDriver) detect(ctx context.Context) (bool, bool, map[string]any, er
 	if b, err := os.ReadFile(d.configPath()); err == nil {
 		content = string(b)
 	}
-	hasUs := strings.Contains(content, `model_provider = "9router"`) ||
-		strings.Contains(content, `[model_providers.9router]`)
+	hasUs := strings.Contains(content, `model_provider = "axonrouter"`) ||
+		strings.Contains(content, `[model_providers.axonrouter]`)
 	state := map[string]any{
 		"config":     content,
 		"configPath": d.configPath(),
@@ -432,15 +431,23 @@ func (d codexDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey str
 	}
 
 	parsed["model"] = model
-	parsed["model_provider"] = "9router"
+	parsed["model_provider"] = "axonrouter"
+	effort := firstNonEmpty(sel.ReasoningEffort, "high")
+	parsed["model_reasoning_effort"] = effort
 	mp := ensureMap(parsed, "model_providers")
-	mp["9router"] = map[string]any{
-		"name":     "9Router",
-		"base_url": base,
-		"wire_api": "responses",
+	mp["axonrouter"] = map[string]any{
+		"name":                    "AxonRouter",
+		"base_url":                base,
+		"wire_api":                "responses",
+		"supports_websockets":     false,
+		"requires_openai_auth":    false,
 	}
+	delete(mp, "9router")
 	agents := ensureMap(parsed, "agents")
-	agents["subagent"] = map[string]any{"model": subagent}
+	agents["subagent"] = map[string]any{
+		"model":       subagent,
+		"description": "Subagent delegated by the main model for task-specific work",
+	}
 
 	cfgContent, err := toml.Marshal(parsed)
 	if err != nil {
@@ -457,21 +464,94 @@ func (d codexDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey str
 	if b, err := os.ReadFile(d.authPath()); err == nil {
 		_ = json.Unmarshal(stripJSONC(b), &auth)
 	}
-	auth["OPENAI_API_KEY"] = firstNonEmpty(apiKey, "sk_9router")
+	auth["OPENAI_API_KEY"] = firstNonEmpty(apiKey, "ax-0000000000000000")
 	auth["auth_mode"] = "apikey"
 	_ = writeJSONPretty(d.authPath(), auth)
 
+	// Codex CLI needs a local model catalog entry for non-OpenAI models to
+	// suppress the "Model metadata ... not found" fallback warning.
+	catalogPath := filepath.Join(filepath.Dir(d.configPath()), "model-catalog-axonrouter.json")
+	reasoningLevels := []map[string]any{
+		{"effort": "low", "description": "Fast responses with lighter reasoning"},
+		{"effort": "medium", "description": "Balanced speed and reasoning"},
+		{"effort": "high", "description": "Deeper reasoning"},
+		{"effort": "xhigh", "description": "Maximum reasoning"},
+	}
+	truncation := map[string]any{"mode": "tokens", "limit": 10000}
+	newModelEntry := func(slug string, prio int, defaultEffort string) map[string]any {
+		return map[string]any{
+			"slug":                          slug,
+			"display_name":                    slug,
+			"description":                     fmt.Sprintf("AxonRouter model: %s", slug),
+			"provider":                        "axonrouter",
+			"default_reasoning_level":         defaultEffort,
+			"supported_reasoning_levels":      reasoningLevels,
+			"supports_reasoning_summaries":    false,
+			"default_reasoning_summary":       "none",
+			"support_verbosity":               false,
+			"default_verbosity":               nil,
+			"shell_type":                      "shell_command",
+			"apply_patch_tool_type":           "freeform",
+			"web_search_tool_type":            "text",
+			"supports_parallel_tool_calls":    false,
+			"supports_image_detail_original":  false,
+			"visibility":                      "list",
+			"supported_in_api":                true,
+			"priority":                        prio,
+			"availability_nux":                nil,
+			"upgrade":                         nil,
+			"additional_speed_tiers":          []any{},
+			"service_tiers":                   []any{},
+			"default_service_tier":            nil,
+			"context_window":                  262000,
+			"max_context_window":              262000,
+			"effective_context_window_percent": 95,
+			"auto_compact_token_limit":        nil,
+			"truncation_policy":               truncation,
+			"experimental_supported_tools":    []any{},
+			"input_modalities":                []string{"text"},
+			"supports_search_tool":            false,
+			"base_instructions":               "You are Codex, a coding agent. Help the user modify, understand, test, and improve code in the current workspace.",
+			"model_messages":                  nil,
+			"use_responses_lite":              false,
+		}
+	}
+	catalog := map[string]any{"models": []map[string]any{newModelEntry(model, 1, effort)}}
+	if subagent != model {
+		catalog["models"] = append(catalog["models"].([]map[string]any), newModelEntry(subagent, 2, effort))
+	}
+	if err := writeJSONPretty(catalogPath, catalog); err != nil {
+		return CLIToolConfig{}, err
+	}
+	parsed["model_catalog_json"] = catalogPath
+
+	// Re-marshal because we added model_catalog_json after the first marshal.
+	cfgContent, err = toml.Marshal(parsed)
+	if err != nil {
+		return CLIToolConfig{}, err
+	}
+	if err := os.WriteFile(d.configPath(), cfgContent, 0o644); err != nil {
+		restoreBackup(d.configPath(), backup)
+		return CLIToolConfig{}, err
+	}
+
+	authBs, _ := os.ReadFile(d.authPath())
+	catalogBs, _ := os.ReadFile(catalogPath)
 	return CLIToolConfig{
 		ConfigPath:    d.configPath(),
 		BackupPath:    backup,
 		ConfigContent: string(cfgContent),
 		RunCommand:    fmt.Sprintf("codex --model %q", model),
+		ExtraFiles: []CLIToolExtraFile{
+			{Path: d.authPath(), Content: string(authBs)},
+			{Path: catalogPath, Content: string(catalogBs)},
+		},
 	}, nil
 }
 
 // ---------------------------------------------------------------------------
 // OpenCode
-// 9router: src/app/api/cli-tools/opencode-settings/route.js
+// axonrouter: src/app/api/cli-tools/opencode-settings/route.js
 // ---------------------------------------------------------------------------
 
 type opencodeDriver struct{}
@@ -491,7 +571,7 @@ func (d opencodeDriver) detect(ctx context.Context) (bool, bool, map[string]any,
 	if !readJSONC(d.configPath(), &config) {
 		config = map[string]any{}
 	}
-	provider := getMap(getMap(config, "provider"), "9router")
+	provider := getMap(getMap(config, "provider"), "axonrouter")
 	hasUs := provider != nil
 	state := map[string]any{
 		"config":     config,
@@ -499,8 +579,8 @@ func (d opencodeDriver) detect(ctx context.Context) (bool, bool, map[string]any,
 	}
 	if provider != nil {
 		active := ""
-		if model, ok := config["model"].(string); ok && strings.HasPrefix(model, "9router/") {
-			active = strings.TrimPrefix(model, "9router/")
+		if model, ok := config["model"].(string); ok && strings.HasPrefix(model, "axonrouter/") {
+			active = strings.TrimPrefix(model, "axonrouter/")
 		}
 		baseURL := ""
 		if opts := getMap(provider, "options"); opts != nil {
@@ -529,7 +609,7 @@ func (d opencodeDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey 
 	}
 
 	base := normalizeBaseV1(sel.BaseURL)
-	key := firstNonEmpty(apiKey, "sk_9router")
+	key := firstNonEmpty(apiKey, "ax-0000000000000000")
 
 	models := []string{}
 	if len(sel.Models) > 0 {
@@ -546,7 +626,7 @@ func (d opencodeDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey 
 		return CLIToolConfig{}, fmt.Errorf("at least one model is required")
 	}
 
-	provider := ensureMap(ensureMap(config, "provider"), "9router")
+	provider := ensureMap(ensureMap(config, "provider"), "axonrouter")
 	if provider["options"] == nil {
 		provider["options"] = map[string]any{}
 	}
@@ -566,14 +646,14 @@ func (d opencodeDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey 
 
 	active := firstNonEmpty(sel.ActiveModel, models[0])
 	if active != "" {
-		config["model"] = "9router/" + active
+		config["model"] = "axonrouter/" + active
 	}
 
 	agents := ensureMap(config, "agent")
 	agents["explorer"] = map[string]any{
 		"description": "Fast explorer subagent for codebase exploration",
 		"mode":        "subagent",
-		"model":       "9router/" + firstNonEmpty(sel.SubagentModel, models[0]),
+		"model":       "axonrouter/" + firstNonEmpty(sel.SubagentModel, models[0]),
 	}
 
 	if err := writeJSONPretty(path, config); err != nil {
@@ -593,17 +673,17 @@ func (d opencodeDriver) reset(ctx context.Context) error {
 		return nil
 	}
 	if provider := getMap(config, "provider"); provider != nil {
-		delete(provider, "9router")
+		delete(provider, "axonrouter")
 		if len(provider) == 0 {
 			delete(config, "provider")
 		}
 	}
-	if model, ok := config["model"].(string); ok && strings.HasPrefix(model, "9router/") {
+	if model, ok := config["model"].(string); ok && strings.HasPrefix(model, "axonrouter/") {
 		delete(config, "model")
 	}
 	if agent := getMap(config, "agent"); agent != nil {
 		if explorer := getMap(agent, "explorer"); explorer != nil {
-			if model, ok := explorer["model"].(string); ok && strings.HasPrefix(model, "9router/") {
+			if model, ok := explorer["model"].(string); ok && strings.HasPrefix(model, "axonrouter/") {
 				delete(agent, "explorer")
 			}
 		}
@@ -624,12 +704,12 @@ func (d codexDriver) reset(ctx context.Context) error {
 		return err
 	}
 
-	if mp, ok := parsed["model_provider"].(string); ok && mp == "9router" {
+	if mp, ok := parsed["model_provider"].(string); ok && mp == "axonrouter" {
 		delete(parsed, "model")
 		delete(parsed, "model_provider")
 	}
 	if mps := getMap(parsed, "model_providers"); mps != nil {
-		delete(mps, "9router")
+		delete(mps, "axonrouter")
 		if len(mps) == 0 {
 			delete(parsed, "model_providers")
 		}
@@ -664,8 +744,9 @@ func (d codexDriver) reset(ctx context.Context) error {
 	}
 	return nil
 }
+
 // resolveAgentModel normalizes an OpenClaw agent.model value (plain string or
-// {primary, fallbacks} object) to its string id, matching 9router's behavior.
+// {primary, fallbacks} object) to its string id, matching axonrouter's behavior.
 func resolveAgentModel(v any) string {
 	if s, ok := v.(string); ok {
 		return s
@@ -678,17 +759,17 @@ func resolveAgentModel(v any) string {
 	return ""
 }
 
-// isLocalOr9Router reports whether base points at localhost/127.0.0.1/9router.
-func isLocalOr9Router(base string) bool {
+// isLocalOrAxonRouter reports whether base points at localhost/127.0.0.1/axonrouter.
+func isLocalOrAxonRouter(base string) bool {
 	return strings.Contains(base, "localhost") ||
 		strings.Contains(base, "127.0.0.1") ||
-		strings.Contains(base, "9router")
+		strings.Contains(base, "axonrouter")
 }
 
-// isLocalOr9RouterWide is like isLocalOr9Router but also matches 0.0.0.0
+// isLocalOrAxonRouterWide is like isLocalOrAxonRouter but also matches 0.0.0.0
 // (used by hermes, which explicitly allows 0.0.0.0 bindings).
-func isLocalOr9RouterWide(base string) bool {
-	return isLocalOr9Router(base) || strings.Contains(base, "0.0.0.0")
+func isLocalOrAxonRouterWide(base string) bool {
+	return isLocalOrAxonRouter(base) || strings.Contains(base, "0.0.0.0")
 }
 
 func lastPathSegment(s string) string {
@@ -700,7 +781,7 @@ func lastPathSegment(s string) string {
 
 // ---------------------------------------------------------------------------
 // OpenClaw
-// 9router: src/app/api/cli-tools/openclaw-settings/route.js
+// axonrouter: src/app/api/cli-tools/openclaw-settings/route.js
 // ---------------------------------------------------------------------------
 type openclawDriver struct{}
 
@@ -739,14 +820,14 @@ func (d openclawDriver) detect(ctx context.Context) (bool, bool, map[string]any,
 	hasUs := false
 	if models := getMap(settings, "models"); models != nil {
 		if providers := getMap(models, "providers"); providers != nil {
-			if _, ok := providers["9router"]; ok {
+			if _, ok := providers["axonrouter"]; ok {
 				hasUs = true
 			}
 		}
 	}
 	state := map[string]any{
-		"settings":    settings,
-		"agents":      enriched,
+		"settings":     settings,
+		"agents":       enriched,
 		"settingsPath": d.settingsPath(),
 	}
 	return true, hasUs, state, nil
@@ -765,7 +846,7 @@ func (openclawDriver) readAgentModel(agentDir string) (string, error) {
 	if providers == nil {
 		return "", nil
 	}
-	router := getMap(providers, "9router")
+	router := getMap(providers, "axonrouter")
 	if router == nil {
 		return "", nil
 	}
@@ -793,7 +874,7 @@ func (d openclawDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey 
 	}
 	base := normalizeBaseV1(sel.BaseURL)
 	key := firstNonEmpty(apiKey, "your_api_key")
-	fullModelId := "9router/" + model
+	fullModelId := "axonrouter/" + model
 
 	agents := ensureMap(settings, "agents")
 	defaults := ensureMap(agents, "defaults")
@@ -801,9 +882,9 @@ func (d openclawDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey 
 	allowlist := ensureMap(defaults, "models")
 	modelsRoot := ensureMap(ensureMap(settings, "models"), "providers")
 
-	// Remove stale 9router/* allowlist entries.
+	// Remove stale axonrouter/* allowlist entries.
 	for k := range allowlist {
-		if strings.HasPrefix(k, "9router/") {
+		if strings.HasPrefix(k, "axonrouter/") {
 			delete(allowlist, k)
 		}
 	}
@@ -816,12 +897,12 @@ func (d openclawDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey 
 		}
 	}
 	for m := range allIDs {
-		allowlist["9router/"+m] = map[string]any{}
+		allowlist["axonrouter/"+m] = map[string]any{}
 	}
 
 	modelDef["primary"] = fullModelId
 
-	// Strip old 9router models from the agents.list entries.
+	// Strip old axonrouter models from the agents.list entries.
 	listRaw, _ := agents["list"].([]any)
 	for _, a := range listRaw {
 		agent, ok := a.(map[string]any)
@@ -829,12 +910,12 @@ func (d openclawDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey 
 			continue
 		}
 		if rm := resolveAgentModel(agent["model"]); rm != "" &&
-			strings.HasPrefix(rm, "9router/") {
+			strings.HasPrefix(rm, "axonrouter/") {
 			delete(agent, "model")
 		}
 	}
 
-	// Build the provider models list (raw ids, no 9router/ prefix).
+	// Build the provider models list (raw ids, no axonrouter/ prefix).
 	providerModels := make([]map[string]any, 0, len(allIDs))
 	for m := range allIDs {
 		providerModels = append(providerModels, map[string]any{
@@ -842,7 +923,7 @@ func (d openclawDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey 
 			"name": lastPathSegment(m),
 		})
 	}
-	modelsRoot["9router"] = map[string]any{
+	modelsRoot["axonrouter"] = map[string]any{
 		"baseUrl": base,
 		"apiKey":  key,
 		"api":     "openai-completions",
@@ -858,7 +939,7 @@ func (d openclawDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey 
 			}
 			id, _ := agent["id"].(string)
 			if override, ok := sel.AgentModels[id]; ok && override != "" {
-				agent["model"] = "9router/" + override
+				agent["model"] = "axonrouter/" + override
 			}
 			if agentDir, _ := agent["agentDir"].(string); agentDir != "" {
 				modelToWrite := firstNonEmpty(sel.AgentModels[id], model)
@@ -895,7 +976,7 @@ func (d openclawDriver) writeAgentModels(agentDir, model, base, apiKey string) e
 	existing := map[string]any{}
 	_ = readJSONC(modelsPath, &existing)
 	providers := ensureMap(existing, "providers")
-	providers["9router"] = map[string]any{
+	providers["axonrouter"] = map[string]any{
 		"baseUrl": base,
 		"apiKey":  firstNonEmpty(apiKey, "your_api_key"),
 		"api":     "openai-completions",
@@ -914,7 +995,7 @@ func (d openclawDriver) reset(ctx context.Context) error {
 	}
 	if models := getMap(settings, "models"); models != nil {
 		if providers := getMap(models, "providers"); providers != nil {
-			delete(providers, "9router")
+			delete(providers, "axonrouter")
 			if len(providers) == 0 {
 				delete(models, "providers")
 			}
@@ -924,7 +1005,7 @@ func (d openclawDriver) reset(ctx context.Context) error {
 		if defaults := getMap(agents, "defaults"); defaults != nil {
 			if allowlist := getMap(defaults, "models"); allowlist != nil {
 				for k := range allowlist {
-					if strings.HasPrefix(k, "9router/") {
+					if strings.HasPrefix(k, "axonrouter/") {
 						delete(allowlist, k)
 					}
 				}
@@ -933,7 +1014,7 @@ func (d openclawDriver) reset(ctx context.Context) error {
 				}
 			}
 			if modelDef := getMap(defaults, "model"); modelDef != nil {
-				if primary, _ := modelDef["primary"].(string); strings.HasPrefix(primary, "9router/") {
+				if primary, _ := modelDef["primary"].(string); strings.HasPrefix(primary, "axonrouter/") {
 					delete(modelDef, "primary")
 				}
 				if len(modelDef) == 0 {
@@ -941,14 +1022,14 @@ func (d openclawDriver) reset(ctx context.Context) error {
 				}
 			}
 		}
-		// Strip per-agent 9router model overrides.
+		// Strip per-agent axonrouter model overrides.
 		if list, ok := agents["list"].([]any); ok {
 			for _, a := range list {
 				agent, ok := a.(map[string]any)
 				if !ok {
 					continue
 				}
-				if rm := resolveAgentModel(agent["model"]); strings.HasPrefix(rm, "9router/") {
+				if rm := resolveAgentModel(agent["model"]); strings.HasPrefix(rm, "axonrouter/") {
 					delete(agent, "model")
 				}
 			}
@@ -959,7 +1040,7 @@ func (d openclawDriver) reset(ctx context.Context) error {
 
 // ---------------------------------------------------------------------------
 // Cline
-// 9router: src/app/api/cli-tools/cline-settings/route.js
+// axonrouter: src/app/api/cli-tools/cline-settings/route.js
 // ---------------------------------------------------------------------------
 type clineDriver struct{}
 
@@ -983,9 +1064,9 @@ func (d clineDriver) detect(ctx context.Context) (bool, bool, map[string]any, er
 	_ = readJSONC(d.globalStatePath(), &global)
 	hasUs := false
 	if provider, _ := global["actModeApiProvider"].(string); provider == "openai" {
-		hasUs = isLocalOr9Router(fmt.Sprintf("%v", global["openAiBaseUrl"]))
+		hasUs = isLocalOrAxonRouter(fmt.Sprintf("%v", global["openAiBaseUrl"]))
 	} else if provider, _ := global["planModeApiProvider"].(string); provider == "openai" {
-		hasUs = isLocalOr9Router(fmt.Sprintf("%v", global["openAiBaseUrl"]))
+		hasUs = isLocalOrAxonRouter(fmt.Sprintf("%v", global["openAiBaseUrl"]))
 	}
 	state := map[string]any{
 		"actModeApiProvider":  global["actModeApiProvider"],
@@ -1021,7 +1102,7 @@ func (d clineDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey str
 	}
 	secrets := map[string]any{}
 	_ = readJSONC(d.secretsPath(), &secrets)
-	secrets["openAiApiKey"] = firstNonEmpty(apiKey, "sk_9router")
+	secrets["openAiApiKey"] = firstNonEmpty(apiKey, "ax-0000000000000000")
 	_ = writeJSONPretty(d.secretsPath(), secrets)
 
 	bs, _ := json.MarshalIndent(global, "", " ")
@@ -1057,7 +1138,7 @@ func (d clineDriver) reset(ctx context.Context) error {
 
 // ---------------------------------------------------------------------------
 // Kilo Code
-// 9router: src/app/api/cli-tools/kilo-settings/route.js
+// axonrouter: src/app/api/cli-tools/kilo-settings/route.js
 // ---------------------------------------------------------------------------
 type kiloDriver struct{}
 
@@ -1086,7 +1167,7 @@ func (d kiloDriver) detect(ctx context.Context) (bool, bool, map[string]any, err
 	var entry map[string]any
 	if e, ok := auth["openai-compatible"].(map[string]any); ok {
 		entry = e
-	} else if e, ok := auth["9router"].(map[string]any); ok {
+	} else if e, ok := auth["axonrouter"].(map[string]any); ok {
 		entry = e
 	}
 	if entry != nil {
@@ -1094,7 +1175,7 @@ func (d kiloDriver) detect(ctx context.Context) (bool, bool, map[string]any, err
 		if base == "" {
 			base, _ = entry["baseURL"].(string)
 		}
-		hasUs = isLocalOr9Router(base)
+		hasUs = isLocalOrAxonRouter(base)
 	}
 	keys := make([]string, 0, len(auth))
 	for k := range auth {
@@ -1102,8 +1183,8 @@ func (d kiloDriver) detect(ctx context.Context) (bool, bool, map[string]any, err
 	}
 	sort.Strings(keys)
 	state := map[string]any{
-		"auth":       keys,
-		"authPath":   d.authPath(),
+		"auth":     keys,
+		"authPath": d.authPath(),
 	}
 	return true, hasUs, state, nil
 }
@@ -1118,7 +1199,7 @@ func (d kiloDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey stri
 		return CLIToolConfig{}, fmt.Errorf("model is required")
 	}
 	base := normalizeBaseV1(sel.BaseURL)
-	key := firstNonEmpty(apiKey, "sk_9router")
+	key := firstNonEmpty(apiKey, "ax-0000000000000000")
 	auth := map[string]any{}
 	_ = readJSONC(path, &auth)
 	auth["openai-compatible"] = map[string]any{
@@ -1138,7 +1219,7 @@ func (d kiloDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey stri
 		vs := map[string]any{}
 		if readJSONC(vpath, &vs) {
 			vs["kilocode.customProvider"] = map[string]any{
-				"name":    "9Router",
+				"name":    "AxonRouter",
 				"baseURL": base,
 				"apiKey":  key,
 			}
@@ -1163,7 +1244,7 @@ func (d kiloDriver) reset(ctx context.Context) error {
 		return nil
 	}
 	delete(auth, "openai-compatible")
-	delete(auth, "9router")
+	delete(auth, "axonrouter")
 	if err := writeJSONPretty(path, auth); err != nil {
 		return err
 	}
@@ -1180,7 +1261,7 @@ func (d kiloDriver) reset(ctx context.Context) error {
 
 // ---------------------------------------------------------------------------
 // Factory Droid
-// 9router: src/app/api/cli-tools/droid-settings/route.js
+// axonrouter: src/app/api/cli-tools/droid-settings/route.js
 // ---------------------------------------------------------------------------
 type droidDriver struct{}
 
@@ -1202,7 +1283,7 @@ func (d droidDriver) detect(ctx context.Context) (bool, bool, map[string]any, er
 	if list, ok := settings["customModels"].([]any); ok {
 		for _, m := range list {
 			if mm, ok := m.(map[string]any); ok {
-				if id, _ := mm["id"].(string); strings.HasPrefix(id, "custom:9Router") {
+				if id, _ := mm["id"].(string); strings.HasPrefix(id, "custom:AxonRouter") {
 					hasUs = true
 					break
 				}
@@ -1210,7 +1291,7 @@ func (d droidDriver) detect(ctx context.Context) (bool, bool, map[string]any, er
 		}
 	}
 	state := map[string]any{
-		"settings":    settings,
+		"settings":     settings,
 		"settingsPath": d.settingsPath(),
 	}
 	return true, hasUs, state, nil
@@ -1249,11 +1330,11 @@ func (d droidDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey str
 	if !ok {
 		list = []any{}
 	}
-	// Drop existing 9Router entries.
+	// Drop existing AxonRouter entries.
 	kept := make([]any, 0, len(list))
 	for _, m := range list {
 		if mm, ok := m.(map[string]any); ok {
-			if id, _ := mm["id"].(string); strings.HasPrefix(id, "custom:9Router") {
+			if id, _ := mm["id"].(string); strings.HasPrefix(id, "custom:AxonRouter") {
 				continue
 			}
 		}
@@ -1282,15 +1363,15 @@ func (d droidDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey str
 
 	for i, m := range modelsArray {
 		list = append(list, map[string]any{
-			"model":             m,
-			"id":                fmt.Sprintf("custom:9Router-%d", i),
-			"index":             i,
-			"baseUrl":           base,
-			"apiKey":            key,
-			"displayName":       m,
-			"maxOutputTokens":   131072,
-			"noImageSupport":    false,
-			"provider":          "openai",
+			"model":           m,
+			"id":              fmt.Sprintf("custom:AxonRouter-%d", i),
+			"index":           i,
+			"baseUrl":         base,
+			"apiKey":          key,
+			"displayName":     m,
+			"maxOutputTokens": 131072,
+			"noImageSupport":  false,
+			"provider":        "openai",
 		})
 	}
 
@@ -1336,7 +1417,7 @@ func (d droidDriver) reset(ctx context.Context) error {
 		kept := make([]any, 0, len(list))
 		for _, m := range list {
 			if mm, ok := m.(map[string]any); ok {
-				if id, _ := mm["id"].(string); strings.HasPrefix(id, "custom:9Router") {
+				if id, _ := mm["id"].(string); strings.HasPrefix(id, "custom:AxonRouter") {
 					continue
 				}
 			}
@@ -1353,7 +1434,7 @@ func (d droidDriver) reset(ctx context.Context) error {
 
 // ---------------------------------------------------------------------------
 // Hermes Agent
-// 9router: src/app/api/cli-tools/hermes-settings/route.js
+// axonrouter: src/app/api/cli-tools/hermes-settings/route.js
 // ---------------------------------------------------------------------------
 type hermesDriver struct{}
 
@@ -1433,11 +1514,11 @@ func (d hermesDriver) detect(ctx context.Context) (bool, bool, map[string]any, e
 	model := parseHermesModelBlock(yaml)
 	hasUs := false
 	if model != nil && model["provider"] == "custom" {
-		hasUs = isLocalOr9RouterWide(model["base_url"])
+		hasUs = isLocalOrAxonRouterWide(model["base_url"])
 	}
 	state := map[string]any{
-		"model":       model,
-		"configPath":  d.configPath(),
+		"model":      model,
+		"configPath": d.configPath(),
 	}
 	return true, hasUs, state, nil
 }
@@ -1504,7 +1585,7 @@ func (d hermesDriver) reset(ctx context.Context) error {
 
 // ---------------------------------------------------------------------------
 // DeepSeek TUI
-// 9router: src/app/api/cli-tools/deepseek-tui-settings/route.js
+// axonrouter: src/app/api/cli-tools/deepseek-tui-settings/route.js
 // ---------------------------------------------------------------------------
 type deepseekTuiDriver struct{}
 
@@ -1530,7 +1611,7 @@ func deepseekHasUs(cfg map[string]any) bool {
 		return false
 	}
 	base, _ := openai["base_url"].(string)
-	return isLocalOr9Router(base) || strings.Contains(base, "0.0.0.0")
+	return isLocalOrAxonRouter(base) || strings.Contains(base, "0.0.0.0")
 }
 
 func (d deepseekTuiDriver) detect(ctx context.Context) (bool, bool, map[string]any, error) {
@@ -1560,7 +1641,7 @@ func (d deepseekTuiDriver) apply(ctx context.Context, sel CLIToolSelection, apiK
 	}
 	base := normalizeBaseV1(sel.BaseURL)
 	content := fmt.Sprintf("provider = \"openai\"\n[providers.openai]\nbase_url = %q\napi_key = %q\nmodel = %q\n",
-		base, firstNonEmpty(apiKey, "sk_9router"), model)
+		base, firstNonEmpty(apiKey, "ax-0000000000000000"), model)
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return CLIToolConfig{}, err
 	}
@@ -1581,7 +1662,7 @@ func (d deepseekTuiDriver) reset(ctx context.Context) error {
 
 // ---------------------------------------------------------------------------
 // jcode
-// 9router: src/app/api/cli-tools/jcode-settings/route.js
+// axonrouter: src/app/api/cli-tools/jcode-settings/route.js
 // ---------------------------------------------------------------------------
 type jcodeDriver struct{}
 
@@ -1598,7 +1679,7 @@ func (jcodeDriver) envPath() string {
 	if xdg == "" {
 		xdg = filepath.Join(userHomeDir(), ".config")
 	}
-	return filepath.Join(xdg, "jcode", "provider-9router.env")
+	return filepath.Join(xdg, "jcode", "provider-axonrouter.env")
 }
 
 func (d jcodeDriver) detect(ctx context.Context) (bool, bool, map[string]any, error) {
@@ -1615,7 +1696,7 @@ func (d jcodeDriver) detect(ctx context.Context) (bool, bool, map[string]any, er
 	hasUs := false
 	providers, ok := cfg["providers"].(map[string]any)
 	if ok {
-		if _, exists := providers["9router"]; exists {
+		if _, exists := providers["axonrouter"]; exists {
 			hasUs = true
 		} else {
 			for _, pv := range providers {
@@ -1645,7 +1726,7 @@ func (d jcodeDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey str
 		models = []string{"cc/claude-opus-4-7"}
 	}
 	base := normalizeBaseV1(sel.BaseURL)
-	key := firstNonEmpty(apiKey, "sk_9router")
+	key := firstNonEmpty(apiKey, "ax-0000000000000000")
 
 	cfg := map[string]any{}
 	if b, err := os.ReadFile(path); err == nil {
@@ -1655,12 +1736,12 @@ func (d jcodeDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey str
 		cfg["providers"] = map[string]any{}
 	}
 	providers := cfg["providers"].(map[string]any)
-	providers["9router"] = map[string]any{
+	providers["axonrouter"] = map[string]any{
 		"type":             "openai-compatible",
 		"base_url":         base,
 		"auth":             "bearer",
-		"api_key_env":      "JCODE_9ROUTER_API_KEY",
-		"env_file":         "provider-9router.env",
+		"api_key_env":      "JCODE_AXONROUTER_API_KEY",
+		"env_file":         "provider-axonrouter.env",
 		"default_model":    models[0],
 		"requires_api_key": true,
 	}
@@ -1682,13 +1763,13 @@ func (d jcodeDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey str
 				continue
 			}
 			if eq := strings.Index(t, "="); eq > 0 {
-				if strings.TrimSpace(t[:eq]) != "JCODE_9ROUTER_API_KEY" {
+				if strings.TrimSpace(t[:eq]) != "JCODE_AXONROUTER_API_KEY" {
 					envLines = append(envLines, line)
 				}
 			}
 		}
 	}
-	envLines = append(envLines, fmt.Sprintf(`JCODE_9ROUTER_API_KEY="%s"`, key))
+	envLines = append(envLines, fmt.Sprintf(`JCODE_AXONROUTER_API_KEY="%s"`, key))
 	if err := os.MkdirAll(filepath.Dir(envPath), 0o755); err != nil {
 		return CLIToolConfig{}, err
 	}
@@ -1699,7 +1780,7 @@ func (d jcodeDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey str
 	return CLIToolConfig{
 		ConfigPath:    path,
 		ConfigContent: string(cfgBytes),
-		RunCommand:    "jcode --provider-profile 9router",
+		RunCommand:    "jcode --provider-profile axonrouter",
 	}, nil
 }
 
@@ -1714,7 +1795,7 @@ func (d jcodeDriver) reset(ctx context.Context) error {
 		return err
 	}
 	if providers, ok := cfg["providers"].(map[string]any); ok {
-		delete(providers, "9router")
+		delete(providers, "axonrouter")
 		if len(providers) == 0 {
 			delete(cfg, "providers")
 		}
@@ -1737,7 +1818,7 @@ func (d jcodeDriver) reset(ctx context.Context) error {
 				continue
 			}
 			if eq := strings.Index(t, "="); eq > 0 {
-				if strings.TrimSpace(t[:eq]) == "JCODE_9ROUTER_API_KEY" {
+				if strings.TrimSpace(t[:eq]) == "JCODE_AXONROUTER_API_KEY" {
 					continue
 				}
 			}
@@ -1750,7 +1831,7 @@ func (d jcodeDriver) reset(ctx context.Context) error {
 
 // ---------------------------------------------------------------------------
 // GitHub Copilot (VS Code chatLanguageModels.json)
-// 9router: src/app/api/cli-tools/copilot-settings/route.js
+// axonrouter: src/app/api/cli-tools/copilot-settings/route.js
 // ---------------------------------------------------------------------------
 type copilotDriver struct{}
 
@@ -1776,7 +1857,7 @@ func (d copilotDriver) detect(ctx context.Context) (bool, bool, map[string]any, 
 		if !ok {
 			continue
 		}
-		if name, _ := entry["name"].(string); name == "9Router" {
+		if name, _ := entry["name"].(string); name == "AxonRouter" {
 			hasUs = true
 			if models, ok := entry["models"].([]any); ok && len(models) > 0 {
 				if m, ok := models[0].(map[string]any); ok {
@@ -1811,11 +1892,11 @@ func (d copilotDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey s
 		models = []string{"cc/claude-sonnet-5"}
 	}
 	base := normalizeBaseV1(sel.BaseURL)
-	key := firstNonEmpty(apiKey, "sk_9router")
+	key := firstNonEmpty(apiKey, "ax-0000000000000000")
 	endpointURL := base + "/chat/completions#models.ai.azure.com"
 
 	entry := map[string]any{
-		"name":   "9Router",
+		"name":   "AxonRouter",
 		"vendor": "azure",
 		"apiKey": key,
 		"models": make([]map[string]any, 0, len(models)),
@@ -1823,13 +1904,13 @@ func (d copilotDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey s
 	modelList := entry["models"].([]map[string]any)
 	for _, id := range models {
 		modelList = append(modelList, map[string]any{
-			"id":               id,
-			"name":             id,
-			"url":              endpointURL,
-			"toolCalling":      true,
-			"vision":           false,
-			"maxInputTokens":   128000,
-			"maxOutputTokens":  16000,
+			"id":              id,
+			"name":            id,
+			"url":             endpointURL,
+			"toolCalling":     true,
+			"vision":          false,
+			"maxInputTokens":  128000,
+			"maxOutputTokens": 16000,
 		})
 	}
 	entry["models"] = modelList
@@ -1839,7 +1920,7 @@ func (d copilotDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey s
 	idx := -1
 	for i, e := range config {
 		if entryMap, ok := e.(map[string]any); ok {
-			if name, _ := entryMap["name"].(string); name == "9Router" {
+			if name, _ := entryMap["name"].(string); name == "AxonRouter" {
 				idx = i
 				break
 			}
@@ -1875,7 +1956,7 @@ func (d copilotDriver) reset(ctx context.Context) error {
 	kept := make([]any, 0, len(config))
 	for _, e := range config {
 		if entry, ok := e.(map[string]any); ok {
-			if name, _ := entry["name"].(string); name == "9Router" {
+			if name, _ := entry["name"].(string); name == "AxonRouter" {
 				continue
 			}
 		}
@@ -1918,7 +1999,7 @@ func (d coworkDriver) detect(ctx context.Context) (bool, bool, map[string]any, e
 	if ec, ok := cfg["enterpriseConfig"].(map[string]any); ok {
 		if provider, _ := ec["inferenceProvider"].(string); provider == "gateway" {
 			if base, _ := ec["inferenceGatewayBaseUrl"].(string); base != "" {
-				hasUs = isLocalOr9Router(base)
+				hasUs = isLocalOrAxonRouter(base)
 			}
 		}
 	}
@@ -1943,7 +2024,7 @@ func (d coworkDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey st
 
 	// Cowork appends /v1/messages and /v1/models to the gateway base URL.
 	base := normalizeBaseNoV1(sel.BaseURL)
-	key := firstNonEmpty(apiKey, "sk_9router")
+	key := firstNonEmpty(apiKey, "ax-0000000000000000")
 
 	cfg["deploymentMode"] = "3p"
 	ec := ensureMap(cfg, "enterpriseConfig")
@@ -2037,13 +2118,13 @@ func (d grokBuildDriver) detect(ctx context.Context) (bool, bool, map[string]any
 	model := ""
 	base := ""
 	if models := getMap(cfg, "model"); models != nil {
-		if entry, ok := models["9router"].(map[string]any); ok {
+		if entry, ok := models["axonrouter"].(map[string]any); ok {
 			model, _ = entry["model"].(string)
 			base, _ = entry["base_url"].(string)
 		}
 	}
 
-	hasUs := model != "" && isLocalOr9Router(base)
+	hasUs := model != "" && isLocalOrAxonRouter(base)
 	state := map[string]any{
 		"config":     cfg,
 		"configPath": path,
@@ -2073,15 +2154,15 @@ func (d grokBuildDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey
 	}
 
 	models := ensureMap(cfg, "model")
-	models["9router"] = map[string]any{
+	models["axonrouter"] = map[string]any{
 		"model":    model,
 		"base_url": base,
-		"name":     "9Router (AxonRouter)",
+		"name":     "AxonRouter (AxonRouter)",
 		"env_key":  envKey,
 	}
 
 	defaults := ensureMap(cfg, "models")
-	defaults["default"] = "9router"
+	defaults["default"] = "axonrouter"
 
 	content, err := toml.Marshal(cfg)
 	if err != nil {
@@ -2100,7 +2181,7 @@ func (d grokBuildDriver) apply(ctx context.Context, sel CLIToolSelection, apiKey
 		BackupPath:    backup,
 		ConfigContent: string(content),
 		EnvBlock:      envBlock,
-		RunCommand:    "grok -m 9router",
+		RunCommand:    "grok -m axonrouter",
 	}, nil
 }
 
@@ -2116,13 +2197,13 @@ func (d grokBuildDriver) reset(ctx context.Context) error {
 	}
 
 	if models := getMap(cfg, "model"); models != nil {
-		delete(models, "9router")
+		delete(models, "axonrouter")
 		if len(models) == 0 {
 			delete(cfg, "model")
 		}
 	}
 	if defaults := getMap(cfg, "models"); defaults != nil {
-		if def, _ := defaults["default"].(string); def == "9router" {
+		if def, _ := defaults["default"].(string); def == "axonrouter" {
 			delete(defaults, "default")
 		}
 		if len(defaults) == 0 {

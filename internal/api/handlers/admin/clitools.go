@@ -82,15 +82,25 @@ type CLIToolSelection struct {
 	// AgentModels maps an agent id to a gateway model id for per-agent overrides
 	// (e.g. openclaw's per-agent model selection).
 	AgentModels map[string]string `json:"agentModels,omitempty"`
+	// ReasoningEffort controls the model reasoning level for tools that expose it
+	// (e.g. codex via model_reasoning_effort / supported_reasoning_levels).
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
+}
+
+// CLIToolExtraFile is one additional file the driver wrote (e.g. auth.json).
+type CLIToolExtraFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
 }
 
 // CLIToolConfig is the tool-specific output shown to the user.
 type CLIToolConfig struct {
-	EnvBlock      string `json:"envBlock"`
-	ConfigPath    string `json:"configPath"`
-	ConfigContent string `json:"configContent"`
-	RunCommand    string `json:"runCommand"`
-	BackupPath    string `json:"backupPath,omitempty"`
+	EnvBlock      string             `json:"envBlock"`
+	ConfigPath    string             `json:"configPath"`
+	ConfigContent string             `json:"configContent"`
+	RunCommand    string             `json:"runCommand"`
+	BackupPath    string             `json:"backupPath,omitempty"`
+	ExtraFiles    []CLIToolExtraFile `json:"extraFiles,omitempty"`
 }
 
 // CLIToolStatus reports the per-tool status returned by AllStatuses.
@@ -174,6 +184,48 @@ func (h *CLIToolsHandler) GetConfig(c *gin.Context) {
 		}
 	}
 
+	// If the persisted generated config is empty but the driver reports it has
+	// our router, surface the live on-disk config content so the dashboard can
+	// always show what AxonRouter injected.
+	if savedCfg.ConfigContent == "" && hasRouter && state != nil {
+		if cfgStr, ok := state["config"].(string); ok && cfgStr != "" {
+			savedCfg.ConfigContent = cfgStr
+			if p, ok := state["configPath"].(string); ok {
+				savedCfg.ConfigPath = p
+			}
+		}
+	}
+
+	// If the config is still empty but a selection was persisted, reconstruct
+	// the generated config on-the-fly using the stored API key. This is needed
+	// when the target CLI runs on a different machine so the operator can still
+	// see/copy the required files.
+	if savedCfg.ConfigContent == "" && raw != "" {
+		if driver, ok := toolDrivers[toolID]; ok {
+			reconKey := ""
+			if sel.APIKeyID != "" {
+				if v, err := h.rawAPIKeyValue(sel.APIKeyID); err == nil {
+					reconKey = v
+				}
+			}
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+			defer cancel()
+			if recon, err := driver.apply(ctx, sel, reconKey); err == nil {
+				savedCfg = recon
+			}
+		}
+	}
+
+	actualConfig := map[string]string{}
+	if state != nil {
+		if cfgStr, ok := state["config"].(string); ok && cfgStr != "" {
+			actualConfig["content"] = cfgStr
+			if p, ok := state["configPath"].(string); ok {
+				actualConfig["path"] = p
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"tool":           findTool(toolID),
 		"selection":      sel,
@@ -183,6 +235,7 @@ func (h *CLIToolsHandler) GetConfig(c *gin.Context) {
 		"hasRouter":      hasRouter,
 		"state":          state,
 		"config":         savedCfg,
+		"actualConfig":   actualConfig,
 	})
 }
 

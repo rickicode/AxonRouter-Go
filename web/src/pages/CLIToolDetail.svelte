@@ -49,12 +49,14 @@ let sel = $state<CLIToolSelection>({
 	activeModel: '',
 	subagentModel: '',
 	agentModels: {},
+	reasoningEffort: 'high'
 });
 let detailInstalled = $state(false);
 let detailHasRouter = $state(false);
 let detailState = $state<unknown>(null);
 let detailConfigured = $state(false);
 let detailConfig = $state<CLIToolConfig | null>(null);
+let actualConfig = $state<{ path?: string; content?: string } | null>(null);
 let generated = $state<CLIToolConfig | null>(null);
 let generating = $state(false);
 let resetting = $state(false);
@@ -97,6 +99,7 @@ async function loadAll() {
 		detailState = res.state ?? null;
 		detailConfigured = res.configured ?? false;
 		detailConfig = res.config ?? null;
+		actualConfig = res.actualConfig ?? null;
 		sel = {
 			model: s.model ?? '',
 			apiKeyId: s.apiKeyId ?? '',
@@ -141,8 +144,18 @@ async function applyConfig() {
 	if (!tool) return;
 	generating = true;
 	try {
+		let apiKeyValue: string | undefined;
+		if (sel.apiKeyId) {
+			try {
+				const v = await apiKeysApi.value(sel.apiKeyId);
+				apiKeyValue = v.value;
+			} catch (e) {
+				console.warn('failed to fetch api key value', e);
+			}
+		}
 		const res = await cliToolsApi.save(tool.id, {
 			...sel,
+			apiKeyValue,
 			modelAliases: Object.keys(modelAliases).length > 0 ? modelAliases : undefined,
 		});
 		sel = res.selection;
@@ -249,6 +262,16 @@ function replaceVars(text: string): string {
 function getFirstAliasModel(): string {
 	const vals = Object.values(modelAliases).filter(Boolean);
 	return vals.length > 0 ? vals[0] : '';
+}
+
+function keyPreview(k: APIKeyItem | undefined): string {
+	if (!k?.key) return 'no preview';
+	if (k.key.length <= 12) return k.key;
+	return `${k.key.slice(0, 8)}…${k.key.slice(-4)}`;
+}
+
+function renderConfigSource(): CLIToolConfig | null {
+	return generated ?? detailConfig;
 }
 
 function getEffectiveModel(): string {
@@ -610,13 +633,9 @@ async function toggleCCFilterNaming(next: boolean) {
 					/>
 				</div>
 
-				<!-- Generated output (full-width below form on mobile, right column on lg) -->
-				<div class="lg:hidden">
-					<CLIConfigOutput {generated} {copiedField} onCopy={copyText} />
-				</div>
 			</div>
 
-			<!-- Sticky side panel: actions + generated config on desktop -->
+			<!-- Actions side panel -->
 			<div class="flex flex-col gap-4">
 				<div class="sticky top-4 flex flex-col gap-4 rounded-xl border border-border bg-card p-4 shadow-card">
 					<!-- API Key -->
@@ -630,43 +649,70 @@ async function toggleCCFilterNaming(next: boolean) {
 							<Select.Trigger class="w-full h-10 text-body-sm">
 								{@const selectedKey = keys.find((k) => k.id === sel.apiKeyId)}
 								{selectedKey
-									? `${selectedKey.name || 'Untitled'} (${selectedKey.key_preview})`
+									? `${selectedKey.name || 'Untitled'} (${keyPreview(selectedKey)})`
 									: '— Select API key —'}
 							</Select.Trigger>
 							<Select.Content>
 								<Select.Item value="">— Select API key —</Select.Item>
 								{#each keys as key}
 									<Select.Item value={key.id}>
-										{key.name || 'Untitled'} ({key.key_preview})
+										{key.name || 'Untitled'} ({keyPreview(key)})
 									</Select.Item>
 								{/each}
 							</Select.Content>
 						</Select.Root>
-					<p class="text-caption text-muted-foreground">
-						The real key is pulled from this selection automatically — no need to paste it.
-					</p>
-				</div>
-
-				<!-- Claude: topic-naming filter toggle -->
-				{#if tool?.id === 'claude'}
-					<div class="flex items-start gap-3 rounded-lg border border-border bg-background/50 p-3">
-						<div class="flex flex-1 flex-col gap-1">
-							<Label for="cc-filter-naming" class="text-body-sm-strong">Filter topic-naming requests</Label>
-							<p class="text-caption text-muted-foreground">
-								Suppress Claude Code's background title-generation calls with a local response, saving upstream tokens.
-							</p>
-						</div>
-						<Switch
-							id="cc-filter-naming"
-							checked={ccFilterNaming}
-							onCheckedChange={toggleCCFilterNaming}
-							disabled={ccFilterNamingLoading}
-						/>
+						<p class="text-caption text-muted-foreground">
+							The real key is pulled from this selection automatically — no need to paste it.
+						</p>
 					</div>
-				{/if}
 
-				<div class="flex flex-col gap-2">
-					<Button variant="default" class="cursor-pointer" onclick={applyConfig} disabled={generating}>
+					<!-- Claude: topic-naming filter toggle -->
+					{#if tool?.id === 'claude'}
+						<div class="flex items-start gap-3 rounded-lg border border-border bg-background/50 p-3">
+							<div class="flex flex-1 flex-col gap-1">
+								<Label for="cc-filter-naming" class="text-body-sm-strong">Filter topic-naming requests</Label>
+								<p class="text-caption text-muted-foreground">
+									Suppress Claude Code's background title-generation calls with a local response, saving upstream tokens.
+								</p>
+							</div>
+							<Switch
+								id="cc-filter-naming"
+								checked={ccFilterNaming}
+								onCheckedChange={toggleCCFilterNaming}
+								disabled={ccFilterNamingLoading}
+							/>
+						</div>
+					{/if}
+
+					<!-- Codex: reasoning effort -->
+					{#if tool?.id === 'codex'}
+						<div class="space-y-2">
+							<Label class="text-caption-mono uppercase text-muted-foreground">Reasoning effort</Label>
+							<Select.Root
+								type="single"
+								value={sel.reasoningEffort || 'high'}
+								onValueChange={(v: string) => (sel.reasoningEffort = v)}
+							>
+								<Select.Trigger class="w-full h-10 text-body-sm">
+									{sel.reasoningEffort
+										? sel.reasoningEffort
+											.charAt(0)
+											.toUpperCase() + sel.reasoningEffort.slice(1)
+										: 'High'}
+								</Select.Trigger>
+								<Select.Content>
+									<Select.Item value="low">Low</Select.Item>
+									<Select.Item value="medium">Medium</Select.Item>
+									<Select.Item value="high">High</Select.Item>
+									<Select.Item value="xhigh">Xhigh</Select.Item>
+								</Select.Content>
+							</Select.Root>
+							<p class="text-caption text-muted-foreground">Sets model_reasoning_effort in the generated Codex config.</p>
+						</div>
+					{/if}
+
+					<div class="flex flex-col gap-2">
+						<Button variant="default" class="cursor-pointer" onclick={applyConfig} disabled={generating}>
 							{generating ? 'Generating…' : 'Generate config'}
 						</Button>
 						<Button
@@ -679,13 +725,37 @@ async function toggleCCFilterNaming(next: boolean) {
 							{resetting ? 'Resetting…' : 'Reset'}
 						</Button>
 					</div>
-
-					<div class="hidden lg:block">
-						<CLIConfigOutput {generated} {copiedField} onCopy={copyText} />
-					</div>
 				</div>
 			</div>
 		</div>
+
+		<!-- Generated config: full-width below form -->
+		{#if renderConfigSource()}
+			<div id="generated-section" class="space-y-4">
+				<div class="flex items-center justify-between">
+					<h3 class="text-body-md-strong">Generated config</h3>
+				</div>
+				<CLIConfigOutput config={renderConfigSource()} {copiedField} onCopy={copyText} />
+			</div>
+		{/if}
+
+		<!-- Actual file on disk (if available) -->
+		{#if actualConfig?.content}
+			<div id="actual-section" class="space-y-4">
+				<div class="flex items-center justify-between">
+					<h3 class="text-body-md-strong">Actual config on disk</h3>
+					{#if actualConfig.path}
+						<span class="text-caption text-muted-foreground">{actualConfig.path}</span>
+					{/if}
+				</div>
+				<Textarea
+					readonly
+					value={actualConfig.content}
+					rows={Math.min(20, actualConfig.content.split('\n').length)}
+					class="font-mono text-body-sm bg-background"
+				/>
+			</div>
+		{/if}
 	{/if}
 
 	<ModelPickerDialog

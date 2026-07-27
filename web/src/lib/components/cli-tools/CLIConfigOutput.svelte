@@ -46,23 +46,54 @@ let { config, copiedField, onCopy }: Props = $props();
 		{#if config.configContent}
 			<div class="space-y-2">
 				<div class="flex items-center justify-between">
-					<Label class="text-caption-mono text-muted-foreground">
-						Config file {#if config.configPath}
-							<span class="text-muted-foreground/70"> · {config.configPath}</span>
+					<div class="flex flex-col gap-1">
+						<Label class="text-caption-mono text-muted-foreground">Config file path</Label>
+						{#if config.configPath}
+							<div class="flex items-center gap-2">
+								<code class="text-body-sm font-mono text-muted-foreground">{config.configPath}</code>
+								<Button
+									variant="ghost"
+									size="sm"
+									class="h-7 gap-1.5 text-caption"
+									onclick={() => onCopy(config.configPath, 'path')}
+								>
+									{#if copiedField === 'path'}
+										<Check class="size-3.5" /> Copied
+									{:else}
+										<Copy class="size-3.5" /> Copy path
+									{/if}
+								</Button>
+							</div>
 						{/if}
-					</Label>
-					<Button
-						variant="ghost"
-						size="sm"
-						class="h-7 gap-1.5 text-caption"
-						onclick={() => onCopy(config.configContent, 'config')}
-					>
-						{#if copiedField === 'config'}
-							<Check class="size-3.5" /> Copied
-						{:else}
-							<Copy class="size-3.5" /> Copy
+					</div>
+					<div class="flex items-center gap-1">
+						{#if config.configPath}
+							<Button
+								variant="ghost"
+								size="sm"
+								class="h-7 gap-1.5 text-caption"
+								onclick={() => config.configPath && onCopy(config.configPath, 'path')}
+							>
+								{#if copiedField === 'path'}
+									<Check class="size-3.5" /> Copied path
+								{:else}
+									<Copy class="size-3.5" /> Copy path
+								{/if}
+							</Button>
 						{/if}
-					</Button>
+						<Button
+							variant="ghost"
+							size="sm"
+							class="h-7 gap-1.5 text-caption"
+							onclick={() => onCopy(config.configContent, 'config')}
+						>
+							{#if copiedField === 'config'}
+								<Check class="size-3.5" /> Copied
+							{:else}
+								<Copy class="size-3.5" /> Copy
+							{/if}
+						</Button>
+					</div>
 				</div>
 				<Textarea
 					readonly
@@ -83,6 +114,42 @@ let { config, copiedField, onCopy }: Props = $props();
 				<div class="rounded-md border border-border bg-background px-3 py-2 font-mono text-body-sm">
 					{config.runCommand}
 				</div>
+			</div>
+		{/if}
+		{#if config.extraFiles && config.extraFiles.length > 0}
+			<div class="space-y-3">
+				<h4 class="text-body-sm-strong">Additional files</h4>
+				{#each config.extraFiles as file}
+					<div class="space-y-2">
+						<div class="flex items-center justify-between">
+							<Label class="text-caption-mono text-muted-foreground">
+								{#if file.path}
+									<span class="text-muted-foreground/70">{file.path}</span>
+								{:else}
+									Extra file
+								{/if}
+							</Label>
+							<Button
+								variant="ghost"
+								size="sm"
+								class="h-7 gap-1.5 text-caption"
+								onclick={() => onCopy(file.content, `extra-${file.path}`)}
+							>
+								{#if copiedField === `extra-${file.path}`}
+									<Check class="size-3.5" /> Copied
+								{:else}
+									<Copy class="size-3.5" /> Copy
+								{/if}
+							</Button>
+						</div>
+						<Textarea
+							readonly
+							value={file.content}
+							rows={Math.min(10, file.content.split('\n').length)}
+							class="font-mono text-body-sm bg-background"
+						/>
+					</div>
+				{/each}
 			</div>
 		{/if}
 	</div>
