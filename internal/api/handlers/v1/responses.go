@@ -40,6 +40,13 @@ func (h *Handler) Responses(c *gin.Context) {
 		return
 	}
 
+	// Smart virtual model routing resolves smart/* ids to a concrete model
+	// before cache/combo/direct routing. On failure it falls through.
+	if resolved, updated, ok := h.resolveVirtualModel(c.Request.Context(), model, body); ok {
+		model = resolved
+		body = updated
+	}
+
 	stream := executor.IsStreamRequest(body)
 	if h.checkTokenBudget(c, body) != nil {
 		return

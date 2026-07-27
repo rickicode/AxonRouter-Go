@@ -140,6 +140,14 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"message": "model not allowed for this API key", "type": "invalid_request_error"}})
 		return
 	}
+
+	// Smart virtual model routing resolves smart/* ids to a concrete model
+	// before combos or direct routing run. On failure it falls through.
+	if resolved, updated, ok := h.resolveVirtualModel(c.Request.Context(), model, body); ok {
+		model = resolved
+		body = updated
+	}
+
 	stream := executor.IsStreamRequest(body)
 	if h.checkTokenBudget(c, body) != nil {
 		return

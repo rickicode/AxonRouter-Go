@@ -39,6 +39,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
+	"github.com/rickicode/AxonRouter-Go/internal/smart"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 	"github.com/tidwall/gjson"
@@ -389,6 +390,7 @@ type Handler struct {
 	store               *connstate.Store
 	elig                *connstate.EligibilityManager
 	combo               *combo.Handler
+	smartRouter         *smart.Router
 	tracker             *usage.Tracker
 	deviceTracker       *usage.DeviceTracker
 	authMgr             *auth.Manager
@@ -429,6 +431,7 @@ func NewHandler(
 	store *connstate.Store,
 	elig *connstate.EligibilityManager,
 	comboHandler *combo.Handler,
+	smartRouter *smart.Router,
 	tracker *usage.Tracker,
 	deviceTracker *usage.DeviceTracker,
 	authManager *auth.Manager,
@@ -445,6 +448,7 @@ func NewHandler(
 		store:               store,
 		elig:                elig,
 		combo:               comboHandler,
+		smartRouter:         smartRouter,
 		tracker:             tracker,
 		deviceTracker:       deviceTracker,
 		authMgr:             authManager,
@@ -482,6 +486,25 @@ func (h *Handler) failoverAttempts() int {
 		return 5
 	}
 	return h.failoverMaxAttempts
+}
+
+// resolveVirtualModel intercepts smart/* virtual model ids, resolves them to
+// a concrete provider/model, and updates both the model string and request body.
+// If the virtual model is disabled or has no eligible candidates, it returns
+// false and lets the caller fall back to normal resolution.
+func (h *Handler) resolveVirtualModel(ctx context.Context, model string, body []byte) (string, []byte, bool) {
+	if !strings.HasPrefix(model, "smart/") || h.smartRouter == nil {
+		return model, body, false
+	}
+	resolved, err := h.smartRouter.Resolve(ctx, model, body, allowedModelsFromContext(ctx))
+	if err != nil {
+		return model, body, false
+	}
+	if resolved == "" {
+		return model, body, false
+	}
+	body = executor.JSONSet(body, "model", resolved)
+	return resolved, body, true
 }
 
 // resolveExecutor finds the executor for a provider/model.
