@@ -373,9 +373,13 @@ func main() {
 	}
 
 	// Initialise compact logger (switch to json/text via log_format setting).
-	// Structured log file lives inside the configured log directory, and a
-	// background cleaner enforces LogsMaxTotalSizeMB by removing oldest files.
-	logging.LogFilePath = filepath.Join(cfg.LogDir, "axonrouter.log")
+	// The log path defaults to <LogDir>/axonrouter.log unless overridden by
+	// AXON_LOG_FILE_PATH.  Per-file rotation (size/retention/max-files) is
+	// started by Init(); a separate background cleaner enforces
+	// LogsMaxTotalSizeMB by removing oldest files.
+	if os.Getenv("AXON_LOG_FILE_PATH") == "" {
+		logging.LogFilePath = filepath.Join(cfg.LogDir, "axonrouter.log")
+	}
 	logging.Init(db.GetSetting("log_format", "compact"))
 	logging.StartLogDirCleaner(cfg.LogDir, cfg.LogsMaxTotalSizeMB, logging.LogFilePath)
 

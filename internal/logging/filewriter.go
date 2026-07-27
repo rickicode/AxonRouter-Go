@@ -5,10 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -16,22 +13,14 @@ import (
 // JSON lines to a log file. This allows the Console Log Viewer in the dashboard
 // to display rich, filterable log entries instead of raw text.
 type TeeHandler struct {
-	inner slog.Handler
-	mu    sync.Mutex
-	file  *os.File
+	inner  slog.Handler
+	writer *RotatingFileWriter
 }
 
 // NewTeeHandler creates a TeeHandler that delegates to inner and also appends
-// JSON lines to the file at logPath. Parent directories are created automatically.
-func NewTeeHandler(inner slog.Handler, logPath string) (*TeeHandler, error) {
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-		return nil, err
-	}
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return nil, err
-	}
-	return &TeeHandler{inner: inner, file: f}, nil
+// structured JSON lines via writer.
+func NewTeeHandler(inner slog.Handler, writer *RotatingFileWriter) (*TeeHandler, error) {
+	return &TeeHandler{inner: inner, writer: writer}, nil
 }
 
 // Enabled reports true if either the inner handler or the file writer accepts the level.
@@ -41,8 +30,23 @@ func (h *TeeHandler) Enabled(ctx context.Context, level slog.Level) bool {
 
 // Handle writes the record to the inner handler AND appends a JSON line to the file.
 func (h *TeeHandler) Handle(ctx context.Context, r slog.Record) error {
-	// Always delegate to the inner handler (compact text → stdout).
-	if err := h.inner.Handle(ctx, r); err != nil {
+	// Extract an inline [COMPONENT] prefix from the message.  If the log also
+	// carries an explicit "component" attribute, that attribute wins.
+	component, message := extractComponent(r.Message)
+
+	// Clone the record with the cleaned message so the compact/text handler does
+	// not emit the redundant [COMPONENT] token.
+	clone := slog.NewRecord(r.Time, r.Level, message, r.PC)
+	r.Attrs(func(a slog.Attr) bool {
+		clone.AddAttrs(a)
+		return true
+	})
+	if component != "" && !recordHasAttr(clone, "component") {
+		clone.AddAttrs(slog.String("component", component))
+	}
+
+	// Always delegate to the inner handler (compact text -> stdout).
+	if err := h.inner.Handle(ctx, clone); err != nil {
 		return err
 	}
 
@@ -50,10 +54,9 @@ func (h *TeeHandler) Handle(ctx context.Context, r slog.Record) error {
 	entry := jsonLogEntry{
 		Timestamp: r.Time.UTC().Format(time.RFC3339Nano),
 		Level:     normalizeLevel(r.Level),
-		Message:   r.Message,
+		Message:   message,
 	}
-
-	r.Attrs(func(a slog.Attr) bool {
+	clone.Attrs(func(a slog.Attr) bool {
 		switch a.Key {
 		case "component":
 			entry.Component = a.Value.String()
@@ -75,6 +78,9 @@ func (h *TeeHandler) Handle(ctx context.Context, r slog.Record) error {
 		}
 		return true
 	})
+	if entry.Component == "" && component != "" {
+		entry.Component = component
+	}
 
 	line, err := json.Marshal(entry)
 	if err != nil {
@@ -84,29 +90,41 @@ func (h *TeeHandler) Handle(ctx context.Context, r slog.Record) error {
 
 	logFileMu.Lock()
 	defer logFileMu.Unlock()
-	_, writeErr := h.file.Write(line)
+	_, writeErr := h.writer.Write(line)
 	if writeErr == nil {
 		LogBroadcaster.BroadcastLine(string(line))
 	}
 	return writeErr
 }
 
+// recordHasAttr reports whether a slog.Record contains an attribute with the
+// given key.
+func recordHasAttr(r slog.Record, key string) bool {
+	found := false
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == key {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
 // WithAttrs delegates to the inner handler (attrs are captured at Handle time via r.Attrs).
 func (h *TeeHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &TeeHandler{inner: h.inner.WithAttrs(attrs), file: h.file}
+	return &TeeHandler{inner: h.inner.WithAttrs(attrs), writer: h.writer}
 }
 
 // WithGroup delegates to the inner handler.
 func (h *TeeHandler) WithGroup(name string) slog.Handler {
-	return &TeeHandler{inner: h.inner.WithGroup(name), file: h.file}
+	return &TeeHandler{inner: h.inner.WithGroup(name), writer: h.writer}
 }
 
 // Close closes the underlying log file.
 func (h *TeeHandler) Close() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.file != nil {
-		return h.file.Close()
+	if h.writer != nil {
+		return h.writer.Close()
 	}
 	return nil
 }
