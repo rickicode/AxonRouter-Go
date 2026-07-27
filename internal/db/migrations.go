@@ -246,6 +246,27 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		return err
 	}
 
+	// MCP stdio-SSE bridge server registrations.
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS mcp_servers (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL UNIQUE,
+			command TEXT NOT NULL,
+			args TEXT NOT NULL DEFAULT '[]',
+			env TEXT NOT NULL DEFAULT '{}',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			restart_policy TEXT NOT NULL DEFAULT 'on-failure',
+			max_clients INTEGER NOT NULL DEFAULT 4,
+			max_idle_sec INTEGER NOT NULL DEFAULT 60,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_mcp_servers_name ON mcp_servers(name);
+		CREATE INDEX IF NOT EXISTS idx_mcp_servers_enabled ON mcp_servers(enabled)
+	`); err != nil {
+		return err
+	}
+
 	if err := migrateRequestLogStatusCodes(db); err != nil {
 		return err
 	}

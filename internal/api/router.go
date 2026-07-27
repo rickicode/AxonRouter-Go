@@ -46,6 +46,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/mcp"
 	"github.com/rickicode/AxonRouter-Go/internal/models"
 	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
@@ -80,6 +81,7 @@ type Router struct {
 	cleanup               *background.Cleanup
 	lifecycleManager      *background.LifecycleManager
 	rateLimitProber       *background.RateLimitProber
+	mcpHandler            *mcp.Handler
 
 	// versionChecker polls GitHub Releases for update notifications.
 	versionChecker *version.Checker
@@ -226,6 +228,7 @@ func New(cfg Config) *Router {
 	upgradeH := admin.NewUpgradeHandler(versionChecker)
 	restartH := admin.NewRestartHandler()
 	consoleLogsH := admin.NewConsoleLogsHandler()
+	mcpH := mcp.NewHandler(cfg.DB)
 	proxyPoolH := admin.NewProxyPoolHandler(cfg.DB, proxyHealth, proxyResolver, writeQueue)
 	proxyGroupH := admin.NewProxyGroupHandler(cfg.DB, proxyResolver)
 	proxyDeployH := admin.NewProxyDeployHandler(cfg.DB, proxyHealth, proxyResolver)
@@ -504,6 +507,16 @@ func New(cfg Config) *Router {
 		g.GET("/usage/summary", usageH.Summary)
 		g.GET("/usage/activity", usageH.Activity)
 
+		// MCP stdio-SSE bridge
+		g.GET("/mcp", mcpH.ListAdmin)
+		g.POST("/mcp", mcpH.CreateAdmin)
+		g.PATCH("/mcp/:id", mcpH.UpdateAdmin)
+		g.DELETE("/mcp/:id", mcpH.DeleteAdmin)
+		g.POST("/mcp/:id/test", mcpH.TestAdmin)
+		g.GET("/mcp/:id/tools", mcpH.ToolsAdmin)
+		g.GET("/mcp/:id/sse", mcp.AuthTokenFromQuery(), mcpH.SSEAdmin)
+		g.POST("/mcp/:id/message", mcp.AuthTokenFromQuery(), mcpH.MessageAdmin)
+
 		// CLI Tools — unified model catalog for dashboard pickers + per-tool config generation
 		g.GET("/models", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"data": v1H.ListActiveModels()})
@@ -583,6 +596,7 @@ func New(cfg Config) *Router {
 		authMgr:               authManager,
 		quotaScheduler:        quotaScheduler,
 		usageFlush:            usageFlush,
+		mcpHandler:            mcpH,
 		cleanup:               cleanup,
 		lifecycleManager:      lifecycleManager,
 		tokenRefreshScheduler: tokenRefreshScheduler,
@@ -724,6 +738,7 @@ func (r *Router) Shutdown() {
 		if r.versionChecker != nil {
 			r.versionChecker.Stop()
 		}
+		r.mcpHandler.Stop(ctx)
 	})
 }
 

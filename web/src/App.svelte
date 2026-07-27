@@ -33,6 +33,7 @@ import { Button } from '$lib/components/ui/button';
 import Optimization from './pages/Optimization.svelte';
 import CLIToolsList from './pages/CLIToolsList.svelte';
 import CLIToolDetail from './pages/CLIToolDetail.svelte';
+import MCP from './pages/MCP.svelte';
 	import ModelPricing from './pages/ModelPricing.svelte';
 	import Developers from './pages/Developers.svelte';
 import Usage from './pages/Usage.svelte';
@@ -66,6 +67,7 @@ const labels: Record<string, string> = {
 		'cli-tools': 'CLI Tools',
 		'model-pricing': 'Model Pricing',
 'developers': 'Developers',
+		'mcp': 'MCP',
 		'backup-restore': 'Backup & Restore',
 		'console': 'Console',
 		'about': 'About',
@@ -129,6 +131,9 @@ if (segments[0] === 'cli-tools' && segments.length === 1) return { component: CL
 
 // /developers → Developers
 if (segments[0] === 'developers' && segments.length === 1) return { component: Developers, params: {} };
+
+// /mcp → MCP
+if (segments[0] === 'mcp' && segments.length === 1) return { component: MCP, params: {} };
 
 // /backup-restore → BackupRestore
 if (segments[0] === 'backup-restore' && segments.length === 1) return { component: BackupRestore, params: {} };
