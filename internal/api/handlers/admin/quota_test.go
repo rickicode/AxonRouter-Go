@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	_ "modernc.org/sqlite"
+	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
@@ -51,7 +52,7 @@ func TestSummary_IncludesResetAndSpent(t *testing.T) {
 	db.Exec(`INSERT INTO request_logs (id, timestamp, provider_type_id, model_id, modality, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_creation_tokens, cost_usd, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		"log-1", now.UnixMilli(), "cx", "cx/gpt-4o", "chat", 1000, 0, 0, 1000, 0, 0.00125, nowSec)
 
-	h := NewQuotaHandler(db)
+	h := NewQuotaHandler(db, connstate.NewStore())
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodGet, "/api/admin/quota/summary", nil)
