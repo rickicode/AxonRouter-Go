@@ -194,10 +194,18 @@ func (h *ConsoleLogsHandler) Clear(c *gin.Context) {
 }
 
 // parseLogLine attempts to parse a line as a structured JSON log entry.
-// Falls back to a synthetic entry for raw text lines.
+// Falls back to a synthetic entry for raw text lines, inferring the level
+// from the message text when no explicit level is present.
 func parseLogLine(line string) (ConsoleLogEntry, bool) {
 	var entry ConsoleLogEntry
-	if err := json.Unmarshal([]byte(line), &entry); err == nil && entry.Level != "" {
+	if err := json.Unmarshal([]byte(line), &entry); err == nil {
+		if entry.Level == "" {
+			text := entry.Message
+			if entry.Error != "" {
+				text += " " + entry.Error
+			}
+			entry.Level = inferLevelFromText(text)
+		}
 		return entry, true
 	}
 
@@ -262,10 +270,35 @@ func matchesSearch(e ConsoleLogEntry, search string) bool {
 }
 
 // inferLevelFromText tries to guess the level from raw text lines (for backward compat).
+// Specific errors are detected first, then warnings, then generic keywords.
 func inferLevelFromText(line string) string {
 	lower := strings.ToLower(line)
+
+	errorPatterns := []string{
+		"database is locked",
+		"sqlite_busy",
+		"error response",
+		"failed",
+	}
+	for _, p := range errorPatterns {
+		if strings.Contains(lower, p) {
+			return "error"
+		}
+	}
+
+	warnPatterns := []string{
+		"quota exhausted",
+		"try next",
+		"upstream error",
+	}
+	for _, p := range warnPatterns {
+		if strings.Contains(lower, p) {
+			return "warn"
+		}
+	}
+
 	switch {
-	case strings.Contains(lower, "error") || strings.Contains(lower, "failed"):
+	case strings.Contains(lower, "error"):
 		return "error"
 	case strings.Contains(lower, "warn"):
 		return "warn"
