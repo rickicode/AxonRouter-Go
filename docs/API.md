@@ -85,6 +85,35 @@ Response: SSE stream dengan `data: {...}` chunks, diakhiri `data: [DONE]`
 
 ---
 
+### Smart Virtual Models
+
+AxonRouter supports three virtual model ids that automatically pick a concrete upstream model from a configurable candidate pool:
+
+| Virtual model | Goal | Use case |
+|---------------|------|----------|
+| `smart/auto` | Balance cost, latency, and quality | Default for most requests |
+| `smart/auto-fast` | Minimize latency and cost | Quick, low-cost responses |
+| `smart/auto-quality` | Maximize quality and success rate | Complex or high-stakes requests |
+
+**Request example:**
+```json
+{
+  "model": "smart/auto",
+  "messages": [{"role": "user", "content": "Hello"}]
+}
+```
+
+The gateway chooses a candidate using:
+- Estimated request complexity (tokens, modalities, tools, reasoning)
+- Required capabilities (vision, audio, video, PDF, tools)
+- API-key allowlist restrictions
+- Live provider availability from the eligibility snapshot
+- Recent telemetry from `request_logs` (success rate, average latency, cost per 1K tokens)
+
+Candidates are configured in **Dashboard → Settings → Smart Router** or by reading/writing the `smart_router_virtual_models` setting. If smart routing cannot find an eligible candidate, the request falls back to normal combo/direct routing.
+
+---
+
 ### POST /v1/messages
 
 Anthropic Claude Messages format.

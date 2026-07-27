@@ -51,6 +51,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
+	"github.com/rickicode/AxonRouter-Go/internal/smart"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 	"github.com/rickicode/AxonRouter-Go/internal/version"
 	"github.com/rickicode/AxonRouter-Go/web"
@@ -259,7 +260,8 @@ func New(cfg Config) *Router {
 	limiter := middleware.NewRateLimiter(600)
 	loginLimiter := middleware.NewRateLimiter(10)
 	// Create v1 handler with all dependencies (must exist before wiring routes)
-	v1H := v1.NewHandler(cfg.DB, writeQueue, store, elig, comboHandler, tracker, deviceTracker, authManager, proxyResolver, exhaustionCache, compStrategy, exactCache, providerCfg)
+	smartRouter := smart.NewRouter(cfg.DB, store, elig)
+	v1H := v1.NewHandler(cfg.DB, writeQueue, store, elig, comboHandler, smartRouter, tracker, deviceTracker, authManager, proxyResolver, exhaustionCache, compStrategy, exactCache, providerCfg)
 	// ---- /v1 routes (proxy) ----
 	v1Group := engine.Group("/v1")
 	v1Group.Use(middleware.Auth(cfg.DB, authCache))

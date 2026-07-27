@@ -1201,6 +1201,7 @@ export interface ProxyPool {
   name: string;
   type: string; // http, vercel, deno, cloudflare
   proxyUrl: string;
+  proxyUsername?: string;
   noProxy: string;
   relayAuth: string;
   isActive: boolean;

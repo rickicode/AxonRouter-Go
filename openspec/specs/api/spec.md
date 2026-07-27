@@ -1584,9 +1584,20 @@ The API SHALL support `PUT /admin/api/v1/tls-config` to update tls configuration
 - **THEN** Request is allowed to proceed
 - **AND** Request proceeds to handler
 
-### Requirement: MCPRegistry
+### Requirement: SmartVirtualModels
 
-The API SHALL support CRUD operations for MCP stdio-SSE bridge server registrations under `/api/admin/mcp`. accessible from both session JWT and master API key authentication.
+The API SHALL support smart virtual model ids (`smart/auto`, `smart/auto-fast`, `smart/auto-quality`) on LLM endpoints (`/v1/chat/completions`, `/v1/messages`, `/v1/responses`). The gateway SHALL resolve a virtual model to a concrete `provider/model-id` from the configured candidate list before combo or direct routing runs, using request features, live telemetry from `request_logs`, provider availability, capability requirements, and API-key allowlists. If resolution fails, normal routing SHALL continue unchanged.
+
+#### Scenario: ResolveSmartAutoOnChatCompletions
+- **GIVEN** A valid virtual model id and enabled candidates
+- **WHEN** POST /v1/chat/completions is called with `model: smart/auto`
+- **THEN** The request model is replaced with the selected concrete model id
+- **AND** The request is routed using that concrete model
+
+#### Scenario: SmartRouterDisabledFallback
+- **GIVEN** A smart virtual model id that is disabled or has no eligible candidates
+- **WHEN** Any LLM endpoint receives the id
+- **THEN** Normal combo/direct routing proceeds with the original model id
 
 #### Scenario: ListMCPServers
 - **GIVEN** Authenticated admin user
