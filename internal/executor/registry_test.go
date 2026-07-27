@@ -2,6 +2,56 @@ package executor
 
 import "testing"
 
+func TestRegistry_SearchProviders(t *testing.T) {
+	RegisterDefaults()
+	want := []string{"tavily", "brave", "exa", "jina", "google-pse", "firecrawl"}
+	for _, prefix := range want {
+		exec, format, ok := GetRegistry().Get(prefix)
+		if !ok {
+			t.Errorf("provider %q not registered", prefix)
+			continue
+		}
+		if format != FormatOpenAI {
+			t.Errorf("provider %q format = %q, want %q", prefix, format, FormatOpenAI)
+		}
+		if exec == nil {
+			t.Errorf("provider %q has nil executor", prefix)
+		}
+	}
+	cases := []struct {
+		model      string
+		wantPrefix string
+		wantModel  string
+		wantFormat ProviderFormat
+	}{
+		{"tavily/tavily-search", "tavily", "tavily-search", FormatOpenAI},
+		{"brave/brave-web", "brave", "brave-web", FormatOpenAI},
+		{"exa/exa-search", "exa", "exa-search", FormatOpenAI},
+		{"jina/jina-search", "jina", "jina-search", FormatOpenAI},
+		{"google-pse/google-pse", "google-pse", "google-pse", FormatOpenAI},
+		{"firecrawl/firecrawl-search", "firecrawl", "firecrawl-search", FormatOpenAI},
+	}
+	for _, c := range cases {
+		exec, format, model, err := GetRegistry().GetByModel(c.model)
+		if err != nil {
+			t.Errorf("GetByModel(%q) unexpected error: %v", c.model, err)
+			continue
+		}
+		if exec == nil {
+			t.Errorf("GetByModel(%q) returned nil executor", c.model)
+		}
+		if format != c.wantFormat {
+			t.Errorf("GetByModel(%q) format = %q, want %q", c.model, format, c.wantFormat)
+		}
+		if model != c.wantModel {
+			t.Errorf("GetByModel(%q) model = %q, want %q", c.model, model, c.wantModel)
+		}
+		if _, _, _, err := GetRegistry().GetByModel("unknown-search/model"); err == nil {
+			t.Error("GetByModel(unknown-search/model) expected error, got nil")
+		}
+	}
+}
+
 func TestRegistry_NewOpenAICompatibleProviders(t *testing.T) {
 	RegisterDefaults()
 	want := []string{

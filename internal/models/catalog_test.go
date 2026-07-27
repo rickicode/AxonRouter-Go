@@ -296,3 +296,33 @@ func getCurrentModelIDs(key string) []string {
 	slices.Sort(ids)
 	return ids
 }
+
+func TestGetModelIDs_SearchProviders(t *testing.T) {
+	want := map[string][]string{
+		"tavily":      {"tavily-search"},
+		"brave":       {"brave-web"},
+		"exa":         {"exa-search"},
+		"jina":        {"jina-search"},
+		"google-pse":  {"google-pse"},
+		"firecrawl":   {"firecrawl-search"},
+	}
+	for key, ids := range want {
+		got := GetModelIDs(key)
+		if len(got) == 0 {
+			t.Errorf("GetModelIDs(%q) returned empty", key)
+			continue
+		}
+		for _, id := range ids {
+			if !slices.Contains(got, id) {
+				t.Errorf("GetModelIDs(%q) missing %q; got %v", key, id, got)
+			}
+		}
+		for _, id := range got {
+			kinds := GetModelServiceKinds(key, id)
+			if !slices.Contains(kinds, "search") {
+				t.Errorf("GetModelServiceKinds(%q, %q) = %v, want search", key, id, kinds)
+			}
+		}
+	}
+}
+

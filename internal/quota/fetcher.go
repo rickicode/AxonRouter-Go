@@ -80,6 +80,12 @@ var knownProviders = map[string]providerMeta{
 	"grok-cli":  {DisplayName: "Grok CLI (Grok Build)", Color: "#000000", IconFile: "grok-cli.png"},
 	"codebuddy": {DisplayName: "CodeBuddy", Color: "#5b21b6", IconFile: "codebuddy.png"},
 	"qoder":     {DisplayName: "Qoder", Color: "#000000", IconFile: "qoder.svg"},
+	"tavily":    {DisplayName: "Tavily", Color: "#ff6f61", IconFile: ""},
+	"brave":     {DisplayName: "Brave Search", Color: "#fb542b", IconFile: ""},
+	"exa":       {DisplayName: "Exa", Color: "#1f2937", IconFile: ""},
+	"jina":      {DisplayName: "Jina AI", Color: "#009999", IconFile: ""},
+	"google-pse":{DisplayName: "Google PSE", Color: "#4285f4", IconFile: ""},
+	"firecrawl": {DisplayName: "Firecrawl", Color: "#e85d04", IconFile: ""},
 }
 
 // ProviderMeta returns display metadata for a provider type, if known.

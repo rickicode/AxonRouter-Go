@@ -192,6 +192,12 @@ See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) and the dashboard **CLI Tools**
 | GitHub Copilot | `copilot/` | openai | OAuth |
 | CodeBuddy | `codebuddy/` | openai | OAuth |
 | Qoder | `qoder/` | openai | OAuth |
+| Tavily | `tavily/` | openai | API key |
+| Brave Search | `brave/` | openai | API key |
+| Exa | `exa/` | openai | API key |
+| Jina AI | `jina/` | openai | API key |
+| Google PSE | `google-pse/` | openai | API key |
+| Firecrawl | `firecrawl/` | openai | API key |
 
 Setup details for each provider are in [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
 

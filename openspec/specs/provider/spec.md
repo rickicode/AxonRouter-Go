@@ -1489,3 +1489,44 @@ The system SHALL the system shall display an informational toast notification to
 ## Technical Notes
 
 - **Dependencies**: model, auth, connection, executor, proxy, usage, log, version.Checker, toast
+
+## Supported Provider Prefixes
+The following built-in provider prefixes are recognized by the executor registry and alias resolver. Custom providers registered at runtime extend this set.
+
+| Provider | Prefix | Format | Auth |
+|----------|--------|--------|------|
+| OpenAI | `openai` | openai | API key |
+| Claude | `claude` | anthropic | API key / OAuth PKCE |
+| Gemini | `gemini` | gemini | API key |
+| Codex | `cx` | openai-responses | OAuth device code |
+| Antigravity | `ag` | antigravity | OAuth Google |
+| Kiro | `kiro` | kiro | OAuth AWS |
+| Z.ai | `zai` | claude | API key |
+| DeepSeek | `deepseek` | openai | API key |
+| Groq | `groq` | openai | API key |
+| MiMoCode | `mimocode` | openai | none (free) |
+| MiMoCode Free | `mimocode-free` | openai | none (free) |
+| MiMo Token Plan | `mimo-tp` | openai | API key |
+| OpenRouter | `openrouter` | openai | API key |
+| OpenCode Free | `oc` | openai | none (free) |
+| OpenCode Zen | `oc-zen` | openai | API key |
+| OpenCode Go | `oc-go` | openai | API key |
+| Cloudflare Workers AI | `cf` | openai | API key |
+| ElevenLabs | `elevenlabs` | openai | API key |
+| Deepgram | `deepgram` | openai | API key |
+| Cursor | `cursor` | openai | OAuth (imported) |
+| ZenMux | `zenmux` | openai | API key |
+| ZenMux Free | `zenmux-free` | openai | API key |
+| Grok CLI | `grok-cli` | grok-cli | OAuth |
+| GitHub Copilot | `copilot` | openai | OAuth |
+| CodeBuddy | `codebuddy` | openai | OAuth |
+| Qoder | `qoder` | openai | OAuth |
+| Tavily | `tavily` | openai | API key |
+| Brave Search | `brave` | openai | API key |
+| Exa | `exa` | openai | API key |
+| Jina AI | `jina` | openai | API key |
+| Google PSE | `google-pse` | openai | API key |
+| Firecrawl | `firecrawl` | openai | API key |
+
+Model strings use the form `<prefix>/<model-id>`, e.g. `tavily/tavily-search`. Prefixes are normalized through `internal/provider/aliases.go` before executor lookup.
+

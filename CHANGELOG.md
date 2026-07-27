@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **Search providers** — added built-in support for Tavily (`tavily/`), Brave Search (`brave/`), Exa (`exa/`), Jina AI (`jina/`), Google Programmable Search Engine (`google-pse/`), and Firecrawl (`firecrawl/`). All six prefixes are registered in `internal/executor/registry.go` as OpenAI-compatible providers, have canonical entries in `internal/provider/aliases.go`, catalog models in `internal/models/models.json`, quota display metadata in `internal/quota/fetcher.go`, and coverage in registry/catalog tests. Auth is API-key based (Google PSE requires both key and CX). Search models are exposed as `service_kinds: ["search"]` so they can be targeted via provider-prefixed model IDs.
 - **Smart-router virtual models (`smart/auto`, `smart/auto-fast`, `smart/auto-quality`)** — new `internal/smart` package resolves virtual model ids to concrete `provider/model-id` candidates based on request complexity, live telemetry from `request_logs`, provider availability, capability requirements, and API-key allowlists. Virtual model registry is persisted in settings as `smart_router_virtual_models` and consumed by the dashboard Smart Router settings page. Smart routing runs before combo resolution for `/v1/chat/completions`, `/v1/messages`, and `/v1/responses`, with transparent fallback to normal resolution when no eligible candidate is found. Includes `internal/smart/features_test.go` and `internal/smart/router_test.go`.
 
 ### Added

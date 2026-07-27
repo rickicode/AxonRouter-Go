@@ -2239,7 +2239,7 @@
       "type": "xai",
       "display_name": "Grok Build 0.1",
       "name": "grok-build-0.1",
-      "description": "Grok Build 0.1 is xAI\u2019s fast coding model trained specifically for agentic software engineering workflows.",
+      "description": "Grok Build 0.1 is xAI’s fast coding model trained specifically for agentic software engineering workflows.",
       "context_length": 256000,
       "max_completion_tokens": 256000
     },
@@ -6252,6 +6252,84 @@
       "display_name": "moonshotai/kimi-k3-free",
       "service_kinds": [
         "llm"
+      ]
+    }
+  ],
+  "tavily": [
+    {
+      "id": "tavily-search",
+      "object": "model",
+      "created": 1700000000,
+      "owned_by": "tavily",
+      "type": "id",
+      "display_name": "Tavily Search",
+      "service_kinds": [
+        "search"
+      ]
+    }
+  ],
+  "brave": [
+    {
+      "id": "brave-web",
+      "object": "model",
+      "created": 1700000000,
+      "owned_by": "brave",
+      "type": "id",
+      "display_name": "Brave Search",
+      "service_kinds": [
+        "search"
+      ]
+    }
+  ],
+  "exa": [
+    {
+      "id": "exa-search",
+      "object": "model",
+      "created": 1700000000,
+      "owned_by": "exa",
+      "type": "id",
+      "display_name": "Exa Search",
+      "service_kinds": [
+        "search"
+      ]
+    }
+  ],
+  "jina": [
+    {
+      "id": "jina-search",
+      "object": "model",
+      "created": 1700000000,
+      "owned_by": "jina",
+      "type": "id",
+      "display_name": "Jina AI Search",
+      "service_kinds": [
+        "search"
+      ]
+    }
+  ],
+  "google-pse": [
+    {
+      "id": "google-pse",
+      "object": "model",
+      "created": 1700000000,
+      "owned_by": "google-pse",
+      "type": "id",
+      "display_name": "Google Programmable Search Engine",
+      "service_kinds": [
+        "search"
+      ]
+    }
+  ],
+  "firecrawl": [
+    {
+      "id": "firecrawl-search",
+      "object": "model",
+      "created": 1700000000,
+      "owned_by": "firecrawl",
+      "type": "id",
+      "display_name": "Firecrawl Search",
+      "service_kinds": [
+        "search"
       ]
     }
   ]
