@@ -1604,6 +1604,11 @@ export const cliToolsApi = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  saveConfigContent: (toolId: string, content: string) =>
+    fetchApi<CLIToolSavedResponse>(`/cli-tools/${toolId}`, {
+      method: "POST",
+      body: JSON.stringify({ configContentOverride: content }),
+    }),
   delete: (toolId: string) =>
     fetchApi<{ success: boolean }>(`/cli-tools/${toolId}`, {
       method: "DELETE",

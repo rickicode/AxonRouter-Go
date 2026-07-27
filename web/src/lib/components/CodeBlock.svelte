@@ -40,5 +40,5 @@
       Copy
     {/if}
   </Button>
-  <pre class="whitespace-pre-wrap break-all rounded-sm bg-muted p-4 pr-14 text-caption-mono"><code>{code}</code></pre>
+  <pre class="whitespace-pre-wrap break-all rounded-sm bg-surface-code p-4 pr-14 text-caption-mono"><code>{code}</code></pre>
 </div>

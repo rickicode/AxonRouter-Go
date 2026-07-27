@@ -265,10 +265,30 @@ func (h *CLIToolsHandler) SaveConfig(c *gin.Context) {
 
 	var req struct {
 		CLIToolSelection
-		APIKeyValue string `json:"apiKeyValue"`
+		APIKeyValue             string `json:"apiKeyValue"`
+		ConfigContentOverride   string `json:"configContentOverride,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Allow the operator to edit the generated config content without re-running
+	// the driver. This preserves the selection and updates only the stored config.
+	if req.ConfigContentOverride != "" {
+		var cfg CLIToolConfig
+		if cfgRaw := db.GetSetting(cliToolConfigKeyPrefix+toolID, ""); cfgRaw != "" {
+			_ = json.Unmarshal([]byte(cfgRaw), &cfg)
+		}
+		cfg.ConfigContent = req.ConfigContentOverride
+		if cfgJSON, jerr := json.Marshal(cfg); jerr == nil {
+			_ = db.SetSetting(cliToolConfigKeyPrefix+toolID, string(cfgJSON))
+		}
+		var sel CLIToolSelection
+		if raw := db.GetSetting(cliToolKeyPrefix+toolID, ""); raw != "" {
+			_ = json.Unmarshal([]byte(raw), &sel)
+		}
+		c.JSON(http.StatusOK, gin.H{"selection": sel, "config": cfg})
 		return
 	}
 

@@ -21,6 +21,8 @@ import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
 import { cliToolsApi, gatewayModelsApi, apiKeysApi, settingsApi } from '$lib/api';
 import ModelPickerDialog from '$lib/components/ModelPickerDialog.svelte';
 import { CLIConfigOutput } from '$lib/components/cli-tools';
+import CodeBlock from '$lib/components/CodeBlock.svelte';
+import * as Card from '$lib/components/ui/card';
 import type {
 	CLITool,
 	GatewayModel,
@@ -186,6 +188,18 @@ async function applyConfig() {
 		toast.error(err instanceof Error ? err.message : 'Failed to generate config');
 	} finally {
 		generating = false;
+	}
+}
+
+async function saveConfigContent(content: string) {
+	if (!tool) return;
+	try {
+		const res = await cliToolsApi.saveConfigContent(tool.id, content);
+		generated = res.config;
+		detailConfig = res.config;
+		toast.success(`Saved ${tool.name} config content`);
+	} catch (err) {
+		toast.error(err instanceof Error ? err.message : 'Failed to save config content');
 	}
 }
 
@@ -534,7 +548,7 @@ async function toggleCCFilterNaming(next: boolean) {
 							readonly
 							value={replaceVars(tool.codeBlock.code)}
 							rows={Math.min(16, tool.codeBlock.code.split('\n').length)}
-							class="font-mono text-body-sm bg-background"
+							class="font-mono text-body-sm bg-surface-code"
 						/>
 					</div>
 				{/if}
@@ -738,32 +752,25 @@ async function toggleCCFilterNaming(next: boolean) {
 			</div>
 		</div>
 
-		<!-- Generated config: full-width below form -->
 		{#if renderConfigSource()}
-			<div id="generated-section" class="space-y-4">
-				<div class="flex items-center justify-between">
-					<h3 class="text-body-md-strong">Generated config</h3>
-				</div>
-				<CLIConfigOutput config={renderConfigSource()} {copiedField} onCopy={copyText} />
-			</div>
+			<CLIConfigOutput config={renderConfigSource()} {copiedField} onCopy={copyText} onSave={saveConfigContent} />
 		{/if}
 
 		<!-- Actual file on disk (if available) -->
 		{#if actualConfig?.content}
-			<div id="actual-section" class="space-y-4">
-				<div class="flex items-center justify-between">
-					<h3 class="text-body-md-strong">Actual config on disk</h3>
-					{#if actualConfig.path}
-						<span class="text-caption text-muted-foreground">{actualConfig.path}</span>
-					{/if}
-				</div>
-				<Textarea
-					readonly
-					value={actualConfig.content}
-					rows={Math.min(20, actualConfig.content.split('\n').length)}
-					class="font-mono text-body-sm bg-background"
-				/>
-			</div>
+			<Card.Root class="shadow-card" id="actual-section">
+				<Card.Header>
+					<div class="flex items-center justify-between">
+						<Card.Title class="text-display-md">Actual config on disk</Card.Title>
+						{#if actualConfig.path}
+							<span class="text-caption text-muted-foreground">{actualConfig.path}</span>
+						{/if}
+					</div>
+				</Card.Header>
+				<Card.Content>
+					<CodeBlock code={actualConfig.content} label="Actual config on disk" />
+				</Card.Content>
+			</Card.Root>
 		{/if}
 	{/if}
 
