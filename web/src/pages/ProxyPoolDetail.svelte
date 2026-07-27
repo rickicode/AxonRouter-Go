@@ -23,7 +23,44 @@ let showDeleteConfirm = $state(false);
   // Edit form
   let editName = $state('');
   let editUrl = $state('');
+  let editUsername = $state('');
+  let editPassword = $state('');
   let editNoProxy = $state('');
+
+  function parseProxyUrl(urlValue: string): { url: string; username: string; password: string } {
+    const empty = { url: urlValue ?? '', username: '', password: '' };
+    if (!urlValue) return empty;
+    try {
+      const url = new URL(urlValue);
+      const username = url.username ? decodeURIComponent(url.username) : '';
+      const password = url.password ? decodeURIComponent(url.password) : '';
+      if (username || password) {
+        url.username = '';
+        url.password = '';
+        return { url: url.toString(), username, password };
+      }
+    } catch {
+      // fall through to inline parsing for non-standard URLs
+    }
+    const atIndex = urlValue.lastIndexOf('@');
+    if (atIndex <= 0) return empty;
+    const prefix = urlValue.slice(0, atIndex);
+    const rest = urlValue.slice(atIndex + 1);
+    let authPart = prefix;
+    const schemeEnd = prefix.indexOf('://');
+    if (schemeEnd >= 0) authPart = prefix.slice(schemeEnd + 3);
+    let username = '';
+    let password = '';
+    if (authPart.includes(':')) {
+      const colonIdx = authPart.indexOf(':');
+      username = authPart.slice(0, colonIdx);
+      password = authPart.slice(colonIdx + 1);
+    } else {
+      username = authPart;
+    }
+    let url = (schemeEnd >= 0 ? prefix.slice(0, schemeEnd + 3) : '') + rest;
+    return { url: url.trim(), username: username.trim(), password: password.trim() };
+  }
 
   onMount(() => {
     document.title = 'Proxy Pool — AxonRouter';
@@ -37,7 +74,10 @@ let showDeleteConfirm = $state(false);
       const res = await proxyPoolsApi.get(id);
       pool = res.data;
       editName = pool.name;
-      editUrl = pool.proxyUrl;
+      const parsed = parseProxyUrl(pool.proxyUrl);
+      editUrl = parsed.url;
+      editUsername = (pool as any).proxyUsername ?? parsed.username;
+      editPassword = (pool as any).proxyPassword ?? parsed.password;
       editNoProxy = pool.noProxy ?? '';
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to load';
@@ -53,6 +93,8 @@ let showDeleteConfirm = $state(false);
       await proxyPoolsApi.update(pool.id, {
         name: editName.trim(),
         proxyUrl: editUrl.trim(),
+        proxyUsername: editUsername.trim(),
+        proxyPassword: editPassword.trim(),
         noProxy: editNoProxy.trim(),
       });
       editing = false;
@@ -188,7 +230,17 @@ function formatTimestamp(ts: string | null): string {
           {#if editing}
             <div class="space-y-2">
               <Label class="text-body-sm-strong">Proxy URL</Label>
-              <Input bind:value={editUrl} class="h-9 text-body-sm font-mono" />
+              <Input bind:value={editUrl} placeholder="http://proxy.example.com:8080" class="h-9 text-body-sm font-mono" />
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div class="space-y-2">
+                <Label class="text-body-sm-strong">Username</Label>
+                <Input bind:value={editUsername} placeholder="user" class="h-9 text-body-sm font-mono" />
+              </div>
+              <div class="space-y-2">
+                <Label class="text-body-sm-strong">Password</Label>
+                <Input type="password" bind:value={editPassword} placeholder="••••••" class="h-9 text-body-sm font-mono" />
+              </div>
             </div>
             <div class="space-y-2">
               <Label class="text-body-sm-strong">No Proxy</Label>
@@ -203,6 +255,16 @@ function formatTimestamp(ts: string | null): string {
               <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Proxy URL</p>
               <p class="text-code font-mono break-all">{pool.proxyUrl}</p>
             </div>
+            {#if (pool as any).proxyUsername || (pool as any).proxyPassword}
+              <div class="space-y-1">
+                <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Username</p>
+                <p class="text-code font-mono break-all">{(pool as any).proxyUsername || '—'}</p>
+              </div>
+              <div class="space-y-1">
+                <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Password</p>
+                <p class="text-code font-mono">{(pool as any).proxyPassword ? '••••••••' : '—'}</p>
+              </div>
+            {/if}
             {#if pool.noProxy}
               <div class="space-y-1">
                 <p class="text-caption-mono text-muted-foreground uppercase font-semibold">No Proxy</p>
