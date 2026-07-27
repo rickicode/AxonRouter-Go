@@ -45,4 +45,16 @@ func TestLoggingIncludesClientInfo(t *testing.T) {
 	if !strings.Contains(out, `"user_agent":"axon-test/1.0"`) {
 		t.Fatalf("missing user_agent in log output:\n%s", out)
 	}
+	if !strings.Contains(out, `"status":201`) {
+		t.Fatalf("missing status in log output:\n%s", out)
+	}
+	if !strings.Contains(out, `"method":"GET"`) {
+		t.Fatalf("missing method in log output:\n%s", out)
+	}
+	if !strings.Contains(out, `"path":"/test?x=1"`) {
+		t.Fatalf("missing path in log output:\n%s", out)
+	}
+	if !strings.Contains(out, `"lat":`) {
+		t.Fatalf("missing latency in log output:\n%s", out)
+	}
 }
