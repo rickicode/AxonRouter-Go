@@ -92,3 +92,14 @@ The next run derives its side from the last `- Run side:` line.
 - Parity gap: none (Codex multi-agent v2 optimizer and WebSocket Responses executor gaps are already tracked as HIJ-438 / HIJ-449 / HIJ-445)
 - Issues created: none
 - Notes: Go binary was not on PATH; used /usr/local/go/bin/go. Baseline and executor/translator/modalities/thinking tests passed. References updated (CLIProxyAPI, OmniRoute, 9router). Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied. Spurious Biome diagnostics appeared in the captured output but did not affect the exit code; no Go test failure was produced.
+
+## 2026-07-27 20:08 UTC
+- Run side: provider
+- Baseline: `export PATH=$PATH:/usr/local/go/bin && go build ./...`
+- Deep check: `export PATH=$PATH:/usr/local/go/bin && go test -timeout 10m ./internal/provider/... ./internal/providercfg/... ./internal/quota/... ./internal/network/...`
+- Objective result: all passed
+- Failure details:
+  - none
+- Parity gap: CLIProxyAPI exposes `POST /reset-quota` (`internal/api/server_management.go:77` / `internal/api/handlers/management/quota.go:26-58`) to clear quota/cooldown state for one auth index; AxonRouter-GO admin quota handler only has list, summary, and refresh endpoints, with no reset equivalent → `HIJ-911`
+- Issues created: `HIJ-911`
+- Notes: Go binary was not on `PATH`; used `/usr/local/go/bin/go`. Frontend already built (`web/build` present). References updated (`/workspaces/CLIProxyAPI`, `/workspaces/OmniRoute`, `/workspaces/9router`). Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied.
