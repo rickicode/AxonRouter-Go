@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -604,5 +605,158 @@ func TestCodexIncompleteStreamError_IsRequestScoped(t *testing.T) {
 	}
 	if !rs.IsRequestScoped() {
 		t.Fatal("expected IsRequestScoped() == true")
+	}
+}
+
+func TestCodexHeaders_BlocklistStripsDangerousHeaders(t *testing.T) {
+	req := &Request{
+		AccessToken: "test-token",
+		Headers: map[string]string{
+			"User-Agent":        "test-agent/1.0",
+			"Cookie":            "session=secret",
+			"Referer":           "https://example.com",
+			"Authorization":     "Bearer client-token",
+			"X-Forwarded-For":   "1.2.3.4",
+			"X-Forwarded-Proto": "https",
+			"X-Custom":          "keep-me",
+		},
+	}
+	headers := codexHeaders(req)
+
+	// Required/default Codex headers remain.
+	if got := headers["Content-Type"]; got != "application/json" {
+		t.Errorf("Content-Type=%q, want application/json", got)
+	}
+	if got := headers["Accept"]; got != "text/event-stream" {
+		t.Errorf("Accept=%q, want text/event-stream", got)
+	}
+	if got := headers["Originator"]; got != "codex-tui" {
+		t.Errorf("Originator=%q, want codex-tui", got)
+	}
+	// Authorization must come from the executor's own credential, not the client.
+	if got := headers["Authorization"]; got != "Bearer test-token" {
+		t.Errorf("Authorization=%q, want Bearer test-token", got)
+	}
+
+	// Blocklisted headers are never forwarded upstream.
+	for _, k := range []string{"Cookie", "Referer", "X-Forwarded-For", "X-Forwarded-Proto"} {
+		if _, ok := headers[k]; ok {
+			t.Errorf("expected %s to be stripped", k)
+		}
+	}
+	// Allowed custom headers are preserved.
+	if got := headers["X-Custom"]; got != "keep-me" {
+		t.Errorf("X-Custom=%q, want keep-me", got)
+	}
+}
+
+func TestCodexHeaders_RespectsCaseInsensitiveBlocklist(t *testing.T) {
+	req := &Request{
+		AccessToken: "test-token",
+		Headers: map[string]string{
+			"cookie":            "session=secret",
+			"x-forwarded-host":  "evil.com",
+			"authorization":     "Bearer client-token",
+		},
+	}
+	headers := codexHeaders(req)
+	for _, k := range []string{"cookie", "x-forwarded-host"} {
+		if _, ok := headers[k]; ok {
+			t.Errorf("expected %s to be stripped (case-insensitive)", k)
+		}
+	}
+}
+
+func TestCodexCompactTimeout_Default(t *testing.T) {
+	t.Setenv("CODEX_RESPONSES_COMPACT_TIMEOUT_MS", "")
+	if got := codexCompactTimeout(); got != defaultCodexCompactTimeout {
+		t.Errorf("codexCompactTimeout()=%v, want %v", got, defaultCodexCompactTimeout)
+	}
+}
+
+func TestCodexCompactTimeout_EnvironmentOverride(t *testing.T) {
+	t.Setenv("CODEX_RESPONSES_COMPACT_TIMEOUT_MS", "12345")
+	if got := codexCompactTimeout(); got != 12345*time.Millisecond {
+		t.Errorf("codexCompactTimeout()=%v, want 12345ms", got)
+	}
+}
+
+func TestCodexCompactTimeout_RejectsInvalidEnv(t *testing.T) {
+	for _, v := range []string{"not-a-number", "-1", "0"} {
+		t.Run(v, func(t *testing.T) {
+			t.Setenv("CODEX_RESPONSES_COMPACT_TIMEOUT_MS", v)
+			if got := codexCompactTimeout(); got != defaultCodexCompactTimeout {
+				t.Errorf("codexCompactTimeout()=%v, want default %v", got, defaultCodexCompactTimeout)
+			}
+		})
+	}
+}
+
+func TestResponsesCompact_Timeout(t *testing.T) {
+	// Use a slow server so the compact timeout fires before the response arrives.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(500 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, `{}`)
+	}))
+	defer ts.Close()
+
+	t.Setenv("CODEX_RESPONSES_COMPACT_TIMEOUT_MS", "50")
+	base := NewBaseExecutor()
+	cx := NewCodexExecutor(base)
+	req := &Request{
+		Provider:    "cx",
+		Model:       "gpt-5.4",
+		BaseURL:     ts.URL,
+		Body:        []byte(`{"input":[{"role":"user","content":"hi"}]}`),
+		AccessToken: "test-token",
+	}
+
+	start := time.Now()
+	_, err := cx.ResponsesCompact(context.Background(), req)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got %T: %v", err, err)
+	}
+	if elapsed > 400*time.Millisecond {
+		t.Fatalf("timeout took too long: %v", elapsed)
+	}
+}
+
+func TestParseCodexEvent_JSONType(t *testing.T) {
+	line := []byte(`data: {"type":"response.completed","response":{"id":"r1"}}`)
+	data, eventType := parseCodexEvent(line)
+	if string(data) != `{"type":"response.completed","response":{"id":"r1"}}` {
+		t.Fatalf("unexpected data: %s", string(data))
+	}
+	if eventType != "response.completed" {
+		t.Fatalf("eventType=%q, want response.completed", eventType)
+	}
+}
+
+func TestParseCodexEvent_SSEEventFallback(t *testing.T) {
+	// Upstream emits a typed event without a JSON type field.
+	line := []byte("event: response.in_progress\ndata: {}")
+	data, eventType := parseCodexEvent(line)
+	if string(data) != `{}` {
+		t.Fatalf("unexpected data: %s", string(data))
+	}
+	if eventType != "response.in_progress" {
+		t.Fatalf("eventType=%q, want response.in_progress", eventType)
+	}
+}
+
+func TestParseCodexEvent_NoTypeNoEvent(t *testing.T) {
+	line := []byte(`data: {"foo":"bar"}`)
+	data, eventType := parseCodexEvent(line)
+	if string(data) != `{"foo":"bar"}` {
+		t.Fatalf("unexpected data: %s", string(data))
+	}
+	if eventType != "" {
+		t.Fatalf("eventType=%q, want empty", eventType)
 	}
 }

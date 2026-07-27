@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
@@ -20,7 +23,24 @@ import (
 const (
 	DefaultCodexUserAgent = "codex-tui/0.135.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.135.0)"
 	codexOriginator       = "codex-tui"
+
+	// defaultCodexCompactTimeout is the default request timeout for Codex
+	// /responses/compact non-streaming calls. Override via
+	// CODEX_RESPONSES_COMPACT_TIMEOUT_MS (milliseconds).
+	defaultCodexCompactTimeout = 5 * time.Minute
 )
+
+// codexCompactTimeout returns the effective timeout for ResponsesCompact.
+// It honors CODEX_RESPONSES_COMPACT_TIMEOUT_MS when set to a positive value,
+// otherwise returns defaultCodexCompactTimeout.
+func codexCompactTimeout() time.Duration {
+	if v := os.Getenv("CODEX_RESPONSES_COMPACT_TIMEOUT_MS"); v != "" {
+		if ms, err := strconv.ParseInt(v, 10, 64); err == nil && ms > 0 {
+			return time.Duration(ms) * time.Millisecond
+		}
+	}
+	return defaultCodexCompactTimeout
+}
 
 // codexScannerMax is the per-line buffer size for Codex Responses SSE streams.
 // Codex can emit single data: lines containing full outputs/images (>64 KB).
@@ -107,9 +127,12 @@ func codexHeaders(req *Request) map[string]string {
 		headers["Session_id"] = uuid.NewString()
 	}
 
-	// Forward any remaining client headers that are not already set.
+	// Forward any remaining client headers that are not already set and are
+	// not on the upstream blocklist. We never forward browser-sensitive or
+	// internal headers such as Cookie, Referer, duplicate Authorization, or
+	// X-Forwarded-*; the executor supplies its own normalized values.
 	for k, v := range req.Headers {
-		if _, ok := headers[k]; !ok && v != "" {
+		if _, ok := headers[k]; !ok && v != "" && !isCodexUpstreamHeaderBlocked(k) {
 			headers[k] = v
 		}
 	}
@@ -120,6 +143,19 @@ func codexHeaders(req *Request) map[string]string {
 // JWT payload. This matches the claim path used by OpenAI's Auth0 tokens.
 // CodexAccountIDFromConnection extracts the ChatGPT account id from connection
 // metadata or the OAuth access token.
+
+// isCodexUpstreamHeaderBlocked reports whether a client header should be
+// stripped before it is forwarded upstream to Codex.
+func isCodexUpstreamHeaderBlocked(name string) bool {
+	lower := strings.ToLower(name)
+	switch lower {
+	case "cookie", "referer", "authorization":
+		return true
+	default:
+		return strings.HasPrefix(lower, "x-forwarded-")
+	}
+}
+
 func CodexAccountIDFromConnection(providerSpecificData, accessToken string) string {
 	if providerSpecificData != "" {
 		if v := gjson.Get(providerSpecificData, "accountId").String(); v != "" {
@@ -375,7 +411,12 @@ func (e *CodexExecutor) ResponsesCompact(ctx context.Context, req *Request) (*Re
 	headers := codexHeaders(req)
 	headers["Accept"] = "application/json"
 
-	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
+	// Guard the non-streaming compact call with a bounded timeout. The upstream
+	// can hang on large context summarization, so a dedicated deadline prevents
+	// the request from pinning the handler indefinitely.
+	compactCtx, cancel := context.WithTimeout(ctx, codexCompactTimeout())
+	defer cancel()
+	resp, err := e.DoRequest(compactCtx, "POST", url, headers, body)
 	if err != nil {
 		if upErr, ok := err.(*UpstreamError); ok {
 			upErr.TranslateErrorBody(req.Provider)
@@ -598,16 +639,46 @@ func isNonstandardCodexSSELine(line []byte) bool {
 }
 
 // parseCodexEvent extracts the JSON payload and event type from a single SSE
-// line. It strips the optional "data:" prefix if present.
+// line or frame. If the frame starts with "data:" that payload is used;
+// otherwise the payload is extracted from any "data:" line inside the frame.
+// If the JSON payload does not contain a "type" field, it falls back to the
+// explicit SSE "event:" line so upstreams that emit typed events without a JSON
+// type still parse correctly.
 func parseCodexEvent(line []byte) ([]byte, string) {
-	data := bytes.TrimSpace(line)
-	if bytes.HasPrefix(data, []byte("data:")) {
-		data = bytes.TrimSpace(data[5:])
+	trimmed := bytes.TrimSpace(line)
+	var data []byte
+	if bytes.HasPrefix(trimmed, []byte("data:")) {
+		data = bytes.TrimSpace(trimmed[5:])
+	} else {
+		// Multi-line frame or event-only line: locate the data payload.
+		for _, l := range bytes.Split(trimmed, []byte("\n")) {
+			l = bytes.TrimSpace(l)
+			if bytes.HasPrefix(l, []byte("data:")) {
+				data = bytes.TrimSpace(l[5:])
+				break
+			}
+		}
 	}
 	if len(data) == 0 {
-		return nil, ""
+		return nil, extractCodexSSEEventName(line)
 	}
-	return data, gjson.GetBytes(data, "type").String()
+	eventType := gjson.GetBytes(data, "type").String()
+	if eventType == "" {
+		eventType = extractCodexSSEEventName(line)
+	}
+	return data, eventType
+}
+
+// extractCodexSSEEventName parses the explicit "event: <name>" line from an
+// SSE frame. It returns the empty string when no event line is present.
+func extractCodexSSEEventName(line []byte) string {
+	for _, l := range bytes.Split(line, []byte("\n")) {
+		l = bytes.TrimSpace(l)
+		if bytes.HasPrefix(l, []byte("event:")) {
+			return string(bytes.TrimSpace(l[6:]))
+		}
+	}
+	return ""
 }
 
 // patchCodexCompletedOutput reconstructs response.output from collected
