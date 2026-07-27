@@ -8,6 +8,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 	"github.com/rickicode/AxonRouter-Go/internal/version"
+	"github.com/rickicode/AxonRouter-Go/internal/telemetry"
 )
 
 // HealthHandler exposes liveness and operational metrics.
@@ -140,15 +141,20 @@ func (h *HealthHandler) Metrics(c *gin.Context) {
 
 	agg := usage.NewAggregator(h.db)
 	requestsToday, tokensToday, costToday, _ := agg.GetTodayStats()
+	codex := telemetry.GetCodexMetrics()
 
 	c.JSON(http.StatusOK, gin.H{
-		"buffer_length":        h.tracker.Buffered(),
-		"healthy_connections":  h.store.HealthyCount(),
-		"dropped_usage_events": h.tracker.Dropped(),
-		"rate_limited":         rateLimited,
-		"quota_exhausted":      quotaExhausted,
-		"requests_today":       requestsToday,
-		"tokens_today":         tokensToday,
-		"cost_today":           costToday,
+		"buffer_length":                     h.tracker.Buffered(),
+		"healthy_connections":               h.store.HealthyCount(),
+		"dropped_usage_events":              h.tracker.Dropped(),
+		"rate_limited":                      rateLimited,
+		"quota_exhausted":                   quotaExhausted,
+		"requests_today":                    requestsToday,
+		"tokens_today":                      tokensToday,
+		"cost_today":                        costToday,
+	"codex_requests_total":              codex.RequestsTotal.Load(),
+	"codex_incomplete_streams_total":    codex.IncompleteStreamsTotal.Load(),
+	"codex_replay_hits_total":           codex.ReplayHitsTotal.Load(),
+	"codex_identity_confuse_total":      codex.IdentityConfuseTotal.Load(),
 	})
 }

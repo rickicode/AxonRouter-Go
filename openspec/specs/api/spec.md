@@ -1670,3 +1670,25 @@ The API SHALL expose the expanded built-in provider catalog through `/api/admin/
 - **GIVEN** A configured regional or developer provider connection (`qwen`, `alicode`, `kimi-coding`, `iflow`, `volcengine-ark`, `hunyuan`, `nanobanana`, `topaz`, `puter`, or `comfyui`)
 - **WHEN** A client requests a model under that provider prefix
 - **THEN** The request is forwarded using the OpenAI-compatible executor
+
+### Requirement: CodexOAuthConfiguration
+The API SHALL support environment variable `AXON_CODEX_OAUTH_CLIENT_ID` to override the default Codex OAuth client ID used during authorization-code, device-code, and refresh-token flows. When unset, the built-in default remains `app_EMoamEEZ73f0CkXaXp7hrann`.
+#### Scenario: DefaultClientID
+- **GIVEN** The `AXON_CODEX_OAUTH_CLIENT_ID` environment variable is unset
+- **WHEN** The server initiates or refreshes a Codex OAuth flow
+- **THEN** The built-in default client ID is used
+#### Scenario: OverrideClientID
+- **GIVEN** The `AXON_CODEX_OAUTH_CLIENT_ID` environment variable is set to a non-empty value
+- **WHEN** The server initiates or refreshes a Codex OAuth flow
+- **THEN** The configured client ID is used instead of the default
+
+### Requirement: CodexTelemetry
+The API SHALL expose Codex-specific telemetry counters through the existing `GET /admin/metrics` endpoint.
+#### Scenario: MetricsIncludeCodexCounters
+- **GIVEN** The server is running and has processed Codex requests
+- **WHEN** `GET /admin/metrics` is called by an admin
+- **THEN** The response includes the following counters:
+  - `codex_requests_total` — total Codex requests initiated
+  - `codex_incomplete_streams_total` — Codex streams that ended without a completed event
+  - `codex_replay_hits_total` — Codex requests that injected cached reasoning/function_call replay items
+  - `codex_identity_confuse_total` — Codex requests that applied identity confusion

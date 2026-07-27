@@ -13,6 +13,7 @@ import (
 
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
+	"github.com/rickicode/AxonRouter-Go/internal/telemetry"
 	"github.com/tidwall/gjson"
 )
 
@@ -820,5 +821,142 @@ func TestParseCodexEvent_NoTypeNoEvent(t *testing.T) {
 	}
 	if eventType != "" {
 		t.Fatalf("eventType=%q, want empty", eventType)
+	}
+}
+
+func TestCodexTelemetry_ExecuteIncrementsRequests(t *testing.T) {
+	telemetry.ResetCodexCounters()
+	defer telemetry.ResetCodexCounters()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, `data: {"type":"response.completed","response":{"id":"r1","status":"completed","output":[]}}`)
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+	base := NewBaseExecutor()
+	cx := NewCodexExecutor(base)
+	req := &Request{
+		Provider:    "cx",
+		Model:       "cx/gpt-5.4",
+		BaseURL:     ts.URL,
+		Body:        []byte(`{"messages":[{"role":"user","content":"hi"}]}`),
+		AccessToken: "test-token",
+		StreamConfig: &StreamConfig{
+			FetchTimeoutMs:           5000,
+			StreamIdleTimeoutMs:      5000,
+			StreamReadinessTimeoutMs: 5000,
+		},
+	}
+	if _, err := cx.Execute(context.Background(), req); err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if got := telemetry.GetCodexMetrics().RequestsTotal.Load(); got != 1 {
+		t.Errorf("RequestsTotal=%d, want 1", got)
+	}
+}
+
+func TestCodexTelemetry_ExecuteStreamIncomplete(t *testing.T) {
+	telemetry.ResetCodexCounters()
+	defer telemetry.ResetCodexCounters()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, `data: {"type":"response.created","response":{"id":"r1"}}`)
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+	base := NewBaseExecutor()
+	cx := NewCodexExecutor(base)
+	req := &Request{
+		Provider:    "cx",
+		Model:       "cx/gpt-5.4",
+		BaseURL:     ts.URL,
+		Body:        []byte(`{"messages":[{"role":"user","content":"hi"}]}`),
+		AccessToken: "test-token",
+		StreamConfig: &StreamConfig{
+			FetchTimeoutMs:           5000,
+			StreamIdleTimeoutMs:      5000,
+			StreamReadinessTimeoutMs: 5000,
+		},
+	}
+	res, err := cx.ExecuteStream(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ExecuteStream error: %v", err)
+	}
+	drainStreamErrors(res)
+	if got := telemetry.GetCodexMetrics().RequestsTotal.Load(); got != 1 {
+		t.Errorf("RequestsTotal=%d, want 1", got)
+	}
+	if got := telemetry.GetCodexMetrics().IncompleteStreamsTotal.Load(); got != 1 {
+		t.Errorf("IncompleteStreamsTotal=%d, want 1", got)
+	}
+}
+
+func TestCodexTelemetry_ReplayHitAndIdentityConfuse(t *testing.T) {
+	telemetry.ResetCodexCounters()
+	defer telemetry.ResetCodexCounters()
+	cache.ClearCodexReasoningReplayCache()
+	defer cache.ClearCodexReasoningReplayCache()
+
+	modelName := "cx/gpt-5.4"
+	originalKey := "original-pck"
+	connID := "conn-telemetry"
+
+	// Build the exact confused body so we can derive the session key the executor will use.
+	body := []byte(`{"model":"cx/gpt-5.4","prompt_cache_key":"` + originalKey + `","input":[{"type":"message","role":"user","content":"hi"}]}`)
+	body = codexRequestBody(body)
+	body, _ = applyCodexIdentityConfuseBody(body, connID)
+	sessionKey := codexReasoningReplaySessionKey(body, nil)
+
+	items := [][]byte{[]byte(`{"type":"reasoning","encrypted_content":"abc123"}`)}
+	if err := cache.CacheCodexReasoningReplayItems(context.Background(), modelName, sessionKey, items); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+
+	var gotReplayInBody bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotReplayInBody = strings.Contains(string(body), "encrypted_content")
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, `data: {"type":"response.completed","response":{"id":"r1","status":"completed","output":[]}}`)
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+	base := NewBaseExecutor()
+	cx := NewCodexExecutor(base)
+	req := &Request{
+		Provider:     "cx",
+		Model:        modelName,
+		BaseURL:      ts.URL,
+		ConnectionID: connID,
+		Body:         []byte(`{"model":"cx/gpt-5.4","prompt_cache_key":"` + originalKey + `","input":[{"type":"message","role":"user","content":"hi"}]}`),
+		AccessToken:  "test-token",
+		StreamConfig: &StreamConfig{
+			FetchTimeoutMs:           5000,
+			StreamIdleTimeoutMs:      5000,
+			StreamReadinessTimeoutMs: 5000,
+		},
+	}
+	if _, err := cx.Execute(context.Background(), req); err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if !gotReplayInBody {
+		t.Error("expected replay item in upstream body")
+	}
+	if got := telemetry.GetCodexMetrics().ReplayHitsTotal.Load(); got != 1 {
+		t.Errorf("ReplayHitsTotal=%d, want 1", got)
+	}
+	if got := telemetry.GetCodexMetrics().IdentityConfuseTotal.Load(); got != 1 {
+		t.Errorf("IdentityConfuseTotal=%d, want 1", got)
+	}
+}
+
+func drainStreamErrors(res *StreamResult) {
+	if res == nil || res.Chunks == nil {
+		return
+	}
+	for range res.Chunks {
 	}
 }

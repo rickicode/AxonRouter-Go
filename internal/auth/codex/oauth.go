@@ -11,12 +11,23 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 )
+
+// codexClientID returns the effective OAuth client ID for Codex.
+// It honors the AXON_CODEX_OAUTH_CLIENT_ID environment variable when set,
+// otherwise falling back to the built-in default ClientID.
+func codexClientID() string {
+	if v := os.Getenv("AXON_CODEX_OAUTH_CLIENT_ID"); v != "" {
+		return v
+	}
+	return ClientID
+}
 
 // OAuth configuration constants for OpenAI Codex
 const (
@@ -117,7 +128,7 @@ func (s *OAuthService) GenerateAuthURL(ctx context.Context, state string) (strin
 	redirectURI := fmt.Sprintf(RedirectURI, port)
 
 	params := url.Values{
-		"client_id":                  {ClientID},
+		"client_id":                  {codexClientID()},
 		"response_type":              {"code"},
 		"redirect_uri":               {redirectURI},
 		"scope":                      {"openid profile email offline_access"},
@@ -141,7 +152,7 @@ func (s *OAuthService) ExchangeCode(ctx context.Context, code string) (*auth.Cre
 func (s *OAuthService) exchangeCode(ctx context.Context, code, redirectURI, codeVerifier string) (*auth.Credentials, error) {
 	data := url.Values{
 		"grant_type":   {"authorization_code"},
-		"client_id":    {ClientID},
+		"client_id":    {codexClientID()},
 		"code":         {code},
 		"redirect_uri": {redirectURI},
 	}
@@ -203,7 +214,7 @@ func (s *OAuthService) RefreshToken(ctx context.Context, creds *auth.Credentials
 
 	data := url.Values{
 		"grant_type":    {"refresh_token"},
-		"client_id":     {ClientID},
+		"client_id":     {codexClientID()},
 		"refresh_token": {creds.RefreshToken},
 	}
 

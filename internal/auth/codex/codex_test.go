@@ -1,18 +1,19 @@
 package codex
 
 import (
-	"context"
-	"database/sql"
-	"encoding/base64"
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"strings"
-	"testing"
-	"time"
+"context"
+"database/sql"
+"encoding/base64"
+"encoding/json"
+"fmt"
+"net/http"
+"net/http/httptest"
+"net/url"
+"strings"
+"testing"
+"time"
 
-	"github.com/rickicode/AxonRouter-Go/internal/auth"
+"github.com/rickicode/AxonRouter-Go/internal/auth"
 	dbpkg "github.com/rickicode/AxonRouter-Go/internal/db"
 )
 
@@ -373,3 +374,34 @@ func TestDeviceFlow_PollExpires(t *testing.T) {
 	}
 }
 
+
+func TestCodexClientID_Default(t *testing.T) {
+	t.Setenv("AXON_CODEX_OAUTH_CLIENT_ID", "")
+	if got := codexClientID(); got != ClientID {
+		t.Errorf("codexClientID() = %q, want default %q", got, ClientID)
+	}
+}
+
+func TestCodexClientID_Override(t *testing.T) {
+	t.Setenv("AXON_CODEX_OAUTH_CLIENT_ID", "app_override_123")
+	if got := codexClientID(); got != "app_override_123" {
+		t.Errorf("codexClientID() = %q, want app_override_123", got)
+	}
+}
+
+func TestOAuthService_GenerateAuthURL_UsesOverrideClientID(t *testing.T) {
+	want := "app_authurl_456"
+	t.Setenv("AXON_CODEX_OAUTH_CLIENT_ID", want)
+	svc := NewOAuthService(nil)
+	urlStr, err := svc.GenerateAuthURL(context.Background(), "test-state:1455")
+	if err != nil {
+		t.Fatalf("GenerateAuthURL error: %v", err)
+	}
+	parsed, err := url.Parse(urlStr)
+	if err != nil {
+		t.Fatalf("parse url: %v", err)
+	}
+	if got := parsed.Query().Get("client_id"); got != want {
+		t.Errorf("client_id = %q, want %q", got, want)
+	}
+}

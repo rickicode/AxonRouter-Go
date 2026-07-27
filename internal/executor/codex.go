@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
+	"github.com/rickicode/AxonRouter-Go/internal/telemetry"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/codex/responses"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -453,8 +454,15 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 	body := codexRequestBody(req.Body)
 	body = ensureImageGenerationTool(body, req.Model)
 	body, identityState := applyCodexIdentityConfuseBody(body, req.ConnectionID)
+	if identityState.enabled {
+		telemetry.GetCodexMetrics().IdentityConfuseTotal.Add(1)
+	}
+	telemetry.GetCodexMetrics().RequestsTotal.Add(1)
 	sessionKey := codexReasoningReplaySessionKey(body, req.Headers)
-	body, _ = codexInjectReasoningReplay(body, sessionKey)
+	body, replayHit := codexInjectReasoningReplay(body, sessionKey)
+	if replayHit {
+		telemetry.GetCodexMetrics().ReplayHitsTotal.Add(1)
+	}
 	headers := codexHeaders(req)
 	applyCodexIdentityConfuseHeaders(headers, identityState)
 
@@ -515,6 +523,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 	}
 
 	if len(completedPayload) == 0 {
+		telemetry.GetCodexMetrics().IncompleteStreamsTotal.Add(1)
 		return nil, newCodexIncompleteStreamError()
 	}
 	if streamResult.StatusCode > 0 {
@@ -549,8 +558,15 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, req *Request) (*Strea
 	body := codexRequestBody(req.Body)
 	body = ensureImageGenerationTool(body, req.Model)
 	body, identityState := applyCodexIdentityConfuseBody(body, req.ConnectionID)
+	if identityState.enabled {
+		telemetry.GetCodexMetrics().IdentityConfuseTotal.Add(1)
+	}
+	telemetry.GetCodexMetrics().RequestsTotal.Add(1)
 	sessionKey := codexReasoningReplaySessionKey(body, req.Headers)
-	body, _ = codexInjectReasoningReplay(body, sessionKey)
+	body, replayHit := codexInjectReasoningReplay(body, sessionKey)
+	if replayHit {
+		telemetry.GetCodexMetrics().ReplayHitsTotal.Add(1)
+	}
 	headers := codexHeaders(req)
 	applyCodexIdentityConfuseHeaders(headers, identityState)
 
@@ -615,6 +631,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, req *Request) (*Strea
 			}
 		}
 		if !sawCompleted {
+		telemetry.GetCodexMetrics().IncompleteStreamsTotal.Add(1)
 			select {
 			case out.Chunks <- StreamChunk{Err: newCodexIncompleteStreamError()}:
 			case <-ctx.Done():

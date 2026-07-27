@@ -1,12 +1,13 @@
 # Changelog
-
 All notable changes to AxonRouter-Go will be documented in this file.
-
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
 ## [Unreleased]
 ### Added
+- **Codex telemetry and configurable OAuth client ID (`HIJ-420`)** — `internal/auth/codex/oauth.go` now reads `AXON_CODEX_OAUTH_CLIENT_ID` to override the default Codex OAuth client ID (`app_EMoamEEZ73f0CkXaXp7hrann`) while preserving the built-in default when unset. New `internal/telemetry` package exposes atomic counters for `codex_requests_total`, `codex_incomplete_streams_total`, `codex_replay_hits_total`, and `codex_identity_confuse_total`; these are incremented by `CodexExecutor.Execute`/`ExecuteStream` and surfaced through the existing `GET /admin/metrics` endpoint.
+
 - **Provider registry expansion (search, media, Chinese/regional, developer/niche)** — added 22 new built-in provider prefixes to close coverage gaps vs. 9Router/OmniRoute:
 - Search: `brave`, `tavily`, `exa`, `jina`, `google-pse`, `firecrawl` (webSearch/webFetch service kinds).
 - Media: `fal`, `black-forest-labs`, `assemblyai`, `cartesia`, `edge-tts` (image/video/tts/stt).
