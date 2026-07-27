@@ -7,7 +7,7 @@
   <a href="https://github.com/rickicode/AxonRouter-Go/actions/workflows/release.yml">
     <img src="https://img.shields.io/github/actions/workflow/status/rickicode/AxonRouter-Go/release.yml?style=flat-square&label=release%20build" alt="Release Build">
   </a>
-  <img src="https://img.shields.io/badge/Go-1.23%2B-blue?style=flat-square" alt="Go 1.23+">
+  <img src="https://img.shields.io/badge/Go-1.26%2B-blue?style=flat-square" alt="Go 1.26+">
   <img src="https://img.shields.io/badge/Svelte-5%2B-ff3e00?style=flat-square" alt="Svelte 5+">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License">
 </p>
@@ -148,11 +148,15 @@ Server starts on port **3777** by default. Dashboard: **http://localhost:3777**.
 | **Roo Code** | Same model override as Cline |
 | **OpenClaw** | OpenAI-compatible endpoint |
 | **Kiro** | OAuth-managed connection in dashboard |
+| **Grok Build** | Configure via dashboard CLI tools page |
 | **OpenCode** | Free and paid OpenCode prefix support |
+| **Cowork** | Claude Desktop 3P / enterprise inference mode |
+| **PI Coding Agent** | OpenAI-compatible provider registration |
+| **OMP (Oh My Pi)** | OpenAI-compatible provider registration |
 
 > **Any OpenAI-compatible client works.** Point it at `http://localhost:3777/v1` and use provider-prefixed model names.
 
-See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) for per-tool copy-paste settings.
+See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) and the dashboard **CLI Tools** page for per-tool copy-paste settings.
 
 ---
 
@@ -181,6 +185,13 @@ See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) for per-tool copy-paste setting
 | Deepgram | `deepgram/` | openai | API key |
 | Custom OpenAI | `<your-name>/` | openai | API key |
 | Custom Claude | `<your-name>/` | claude | API key |
+| Cursor | `cursor/` | openai | OAuth (imported from IDE) |
+| ZenMux | `zenmux/` | openai | API key |
+| ZenMux Free | `zenmux-free/` | openai | API key |
+| Grok CLI | `grok-cli/` | grok-cli | OAuth |
+| GitHub Copilot | `copilot/` | openai | OAuth |
+| CodeBuddy | `codebuddy/` | openai | OAuth |
+| Qoder | `qoder/` | openai | OAuth |
 
 Setup details for each provider are in [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
 
@@ -325,13 +336,20 @@ Quick links:
 Proxy endpoints:
 
 - `POST /v1/chat/completions`
+- `POST /v1/completions`
 - `POST /v1/messages`
 - `POST /v1/responses`
+- `POST /v1/responses/compact`
+- `POST /v1/live`
+- `POST /v1/realtime/calls`
+- `POST /v1/videos`
+- `POST /v1/videos/generations`
 - `GET /v1/models`
 - `POST /v1/audio/speech`
 - `POST /v1/audio/transcriptions`
 - `POST /v1/images/generations`
-- `POST /v1/video/generations`
+- `POST /v1/images/edits`
+- `POST /v1beta/models/{model}:{generateContent,countTokens,streamGenerateContent}`
 - `POST /v1/embeddings`
 - `POST /v1/unified`
 

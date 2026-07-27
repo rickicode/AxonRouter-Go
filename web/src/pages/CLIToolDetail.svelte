@@ -55,6 +55,7 @@ let sel = $state<CLIToolSelection>({
 let detailInstalled = $state(false);
 let detailState = $state<unknown>(null);
 let detailConfigured = $state(false);
+let detailHasRouter = $state(false);
 let detailConfig = $state<CLIToolConfig | null>(null);
 let actualConfig = $state<{ path?: string; content?: string } | null>(null);
 let generated = $state<CLIToolConfig | null>(null);
