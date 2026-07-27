@@ -183,6 +183,27 @@ See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) and the dashboard **CLI Tools**
 | Cloudflare Workers AI | `cf/` | openai | API key |
 | ElevenLabs | `elevenlabs/` | openai | API key |
 | Deepgram | `deepgram/` | openai | API key |
+| Tavily | `tavily/` | openai | API key |
+| Brave Search | `brave/` | openai | API key |
+| Exa | `exa/` | openai | API key |
+| Jina AI | `jina/` | openai | API key |
+| Google PSE | `google-pse/` | openai | API key |
+| Firecrawl | `firecrawl/` | openai | API key |
+| Fal.ai | `fal/` | openai | API key |
+| Black Forest Labs | `black-forest-labs/` | openai | API key |
+| AssemblyAI | `assemblyai/` | openai | API key |
+| Cartesia | `cartesia/` | openai | API key |
+| Edge TTS | `edge-tts/` | openai | none (local) |
+| Qwen | `qwen/` | openai | API key |
+| AliCode | `alicode/` | openai | API key |
+| Kimi Coding | `kimi-coding/` | openai | API key |
+| iFlow | `iflow/` | openai | API key |
+| Volcengine Ark | `volcengine-ark/` | openai | API key |
+| Hunyuan | `hunyuan/` | openai | API key |
+| Nanobanana | `nanobanana/` | openai | API key |
+| Topaz | `topaz/` | openai | API key |
+| Puter | `puter/` | openai | API key |
+| ComfyUI | `comfyui/` | openai | none (local) |
 | Custom OpenAI | `<your-name>/` | openai | API key |
 | Custom Claude | `<your-name>/` | claude | API key |
 | Cursor | `cursor/` | openai | OAuth (imported from IDE) |

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **Provider registry expansion (search, media, Chinese/regional, developer/niche)** — added 22 new built-in provider prefixes to close coverage gaps vs. 9Router/OmniRoute:
+  - Search: `brave`, `tavily`, `exa`, `jina`, `google-pse`, `firecrawl` (webSearch/webFetch service kinds).
+  - Media: `fal`, `black-forest-labs`, `assemblyai`, `cartesia`, `edge-tts` (image/video/tts/stt).
+  - Chinese/regional: `qwen`, `alicode`, `kimi-coding`, `iflow`, `volcengine-ark`, `hunyuan` (LLM).
+  - Developer/niche: `nanobanana`, `topaz`, `puter`, `comfyui` (image/LLM).
+  Each provider is seeded in `provider_types` with format `openai`, appropriate base URLs, categories, and service kinds; registered in the OpenAI executor and OpenAI-compatible error translator; aliases added to `provider.Registry`; starter model catalogs appended to `internal/models/models.json`; and STT/TTS executors updated for `assemblyai`, `cartesia`, and `edge-tts`.
 - **Smart-router virtual models (`smart/auto`, `smart/auto-fast`, `smart/auto-quality`)** — new `internal/smart` package resolves virtual model ids to concrete `provider/model-id` candidates based on request complexity, live telemetry from `request_logs`, provider availability, capability requirements, and API-key allowlists. Virtual model registry is persisted in settings as `smart_router_virtual_models` and consumed by the dashboard Smart Router settings page. Smart routing runs before combo resolution for `/v1/chat/completions`, `/v1/messages`, and `/v1/responses`, with transparent fallback to normal resolution when no eligible candidate is found. Includes `internal/smart/features_test.go` and `internal/smart/router_test.go`.
 
 ### Added

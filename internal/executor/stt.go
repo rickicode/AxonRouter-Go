@@ -105,6 +105,8 @@ func (e *STTExecutor) resolveURL(req *Request) string {
 	switch req.Provider {
 	case "deepgram":
 		return "https://api.deepgram.com/v1/listen"
+	case "assemblyai":
+		return "https://api.assemblyai.com/v2/transcript"
 	default:
 		return "https://api.openai.com/v1/audio/transcriptions"
 	}
