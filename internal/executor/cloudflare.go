@@ -260,3 +260,11 @@ func translateIfCloudflare(err error) {
 	}
 	upErr.TranslateErrorBody("cf")
 }
+
+// Images implements ImageGenerator for Cloudflare Workers AI image models.
+// It routes text-to-image requests through the native /ai/run/{model} endpoint
+// and returns an OpenAI-compatible images/generations response.
+func (e *CloudflareExecutor) Images(ctx context.Context, req *Request) (*Response, error) {
+	gen := NewCloudflareImageGenerator(e.BaseExecutor)
+	return gen.Images(ctx, req)
+}
