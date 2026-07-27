@@ -34,11 +34,17 @@ func TestGetModelTargetFormat_UnknownProvider(t *testing.T) {
 
 func TestGetModelIDs_NewOpenAICompatibleProviders(t *testing.T) {
 	want := map[string][]string{
-		"glm":       {"glm-4", "glm-5"},
-		"minimax":   {"minimax-m2.1", "minimax-m2.5"},
-		"kimi":      {"kimi-k2"},
-		"mistral":   {"mistral-large-latest", "codestral-latest"},
-		"codebuddy": {"glm-5.0", "glm-5.2"},
+		"glm":            {"glm-4", "glm-5"},
+		"minimax":        {"minimax-m2.1", "minimax-m2.5", "minimax-text-01"},
+		"kimi":           {"kimi-k2", "kimi-k2.7-coder"},
+		"kimi-coding":    {"kimi-k2.7-code", "kimi-k2.7-coder"},
+		"mistral":        {"mistral-large-latest", "codestral-latest"},
+		"codebuddy":      {"glm-5.0", "glm-5.2"},
+		"qwen":           {"qwen-3-235b-a22b", "qwen-3-coder"},
+		"alicode":        {"qwen-coder-plus"},
+		"iflow":          {"iflow-default"},
+		"volcengine-ark": {"doubao-pro"},
+		"hunyuan":        {"hunyuan-large", "hunyuan-vision"},
 	}
 	for key, ids := range want {
 		got := GetModelIDs(key)
@@ -295,4 +301,26 @@ func getCurrentModelIDs(key string) []string {
 	}
 	slices.Sort(ids)
 	return ids
+}
+func TestGetModelIDs_ChineseRegionalProviders(t *testing.T) {
+	want := map[string][]string{
+		"qwen":           {"qwen-3-235b-a22b", "qwen-3-coder", "qwen3-235b-a22b-2507", "qwen3-coder-plus"},
+		"alicode":        {"qwen-coder-plus"},
+		"kimi-coding":    {"kimi-k2.7-code", "kimi-k2.7-coder"},
+		"iflow":          {"iflow-default"},
+		"volcengine-ark": {"doubao-pro"},
+		"hunyuan":        {"hunyuan-large", "hunyuan-vision"},
+	}
+	for key, ids := range want {
+		got := GetModelIDs(key)
+		if len(got) == 0 {
+			t.Errorf("GetModelIDs(%q) returned empty", key)
+			continue
+		}
+		for _, id := range ids {
+			if !slices.Contains(got, id) {
+				t.Errorf("GetModelIDs(%q) missing %q; got %v", key, id, got)
+			}
+		}
+	}
 }

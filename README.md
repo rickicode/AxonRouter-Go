@@ -180,6 +180,13 @@ See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) and the dashboard **CLI Tools**
 | OpenCode Free | `oc/` | openai | none (free) |
 | OpenCode Zen | `oc-zen/` | openai | API key |
 | OpenCode Go | `oc-go/` | openai | API key |
+| Qwen / Alibaba Qwen | `qwen/` | openai | API key |
+| AliCode | `alicode/` | openai | API key |
+| Kimi Coding | `kimi-coding/` | openai | API key |
+| iFlow | `iflow/` | openai | API key |
+| Volcengine Ark | `volcengine-ark/` | openai | API key |
+| MiniMax | `minimax/` | openai | API key |
+| Hunyuan | `hunyuan/` | openai | API key |
 | Cloudflare Workers AI | `cf/` | openai | API key |
 | ElevenLabs | `elevenlabs/` | openai | API key |
 | Deepgram | `deepgram/` | openai | API key |

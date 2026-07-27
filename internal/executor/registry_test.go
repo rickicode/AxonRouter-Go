@@ -5,8 +5,10 @@ import "testing"
 func TestRegistry_NewOpenAICompatibleProviders(t *testing.T) {
 	RegisterDefaults()
 	want := []string{
-		"glm", "minimax", "kimi", "mistral",
+		"glm", "minimax", "kimi", "kimi-coding", "mistral",
 		"cerebras", "together", "fireworks",
+		"qwen", "alicode", "iflow",
+		"volcengine-ark", "hunyuan",
 		"novita", "lambda", "pollinations",
 		"codebuddy",
 	}
@@ -54,6 +56,13 @@ func TestRegistry_GetByModel_NewProviders(t *testing.T) {
 		{"glm/glm-4", "glm", "glm-4", FormatOpenAI},
 		{"minimax/minimax-m2.5", "minimax", "minimax-m2.5", FormatOpenAI},
 		{"kimi/kimi-k2", "kimi", "kimi-k2", FormatOpenAI},
+		{"kimi-coding/kimi-k2.7-coder", "kimi-coding", "kimi-k2.7-coder", FormatOpenAI},
+		{"qwen/qwen-3-235b-a22b", "qwen", "qwen-3-235b-a22b", FormatOpenAI},
+		{"alicode/qwen-coder-plus", "alicode", "qwen-coder-plus", FormatOpenAI},
+		{"iflow/iflow-default", "iflow", "iflow-default", FormatOpenAI},
+		{"volcengine-ark/doubao-pro", "volcengine-ark", "doubao-pro", FormatOpenAI},
+		{"hunyuan/hunyuan-large", "hunyuan", "hunyuan-large", FormatOpenAI},
+		{"minimax/minimax-text-01", "minimax", "minimax-text-01", FormatOpenAI},
 		{"mistral/mistral-large-latest", "mistral", "mistral-large-latest", FormatOpenAI},
 		{"cerebras/gpt-oss-120b", "cerebras", "gpt-oss-120b", FormatOpenAI},
 		{"codebuddy/glm-5.0", "codebuddy", "glm-5.0", FormatOpenAI},

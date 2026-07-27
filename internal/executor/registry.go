@@ -116,7 +116,7 @@ func RegisterDefaults() {
 
 	// OpenAI-compatible providers
 	openaiExec := NewOpenAIExecutor(base)
-	for _, p := range []string{"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp", "elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras", "together", "fireworks", "novita", "lambda", "pollinations", "zenmux", "zenmux-free", "cursor"} {
+	for _, p := range []string{"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp", "elevenlabs", "deepgram", "glm", "minimax", "kimi", "kimi-coding", "mistral", "cerebras", "together", "fireworks", "novita", "lambda", "pollinations", "zenmux", "zenmux-free", "cursor", "qwen", "alicode", "iflow", "volcengine-ark", "hunyuan"} {
 		GetRegistry().Register(p, FormatOpenAI, openaiExec)
 	}
 	// CodeBuddy uses an OpenAI-compatible endpoint but requires a leading system
@@ -145,10 +145,10 @@ func RegisterDefaults() {
 	// OpenAI codes and provider-specific synonyms like Bedrock's validation_error.
 	for _, p := range []string{
 		"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp",
-		"elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras",
+		"elevenlabs", "deepgram", "glm", "minimax", "kimi", "kimi-coding", "mistral", "cerebras",
 		"together", "fireworks", "novita", "lambda", "pollinations", "zenmux", "zenmux-free",
 		"mimocode", "openrouter", "copilot", "vertex", "bedrock", "codebuddy",
-		"qwencloud", "cursor",
+		"qwencloud", "cursor", "qwen", "alicode", "iflow", "volcengine-ark", "hunyuan",
 	} {
 		translator.Register(p, translator.Func(providers.TranslateOpenAICompatible))
 	}

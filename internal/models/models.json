@@ -1880,6 +1880,20 @@
           "high"
         ]
       }
+    },
+    {
+      "id": "kimi-k2.7-coder",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "kimi",
+      "type": "openai",
+      "display_name": "Kimi K2.7 Coder",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 256000,
+      "max_completion_tokens": 8192
     }
   ],
   "kiro": [
@@ -3776,6 +3790,34 @@
     },
     {
       "id": "minimax-m3"
+    },
+    {
+      "id": "minimax-text-01",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "minimax",
+      "type": "openai",
+      "display_name": "MiniMax Text 01",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 256000,
+      "max_completion_tokens": 8192
+    },
+    {
+      "id": "minimax-vision",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "minimax",
+      "type": "openai",
+      "display_name": "MiniMax Vision",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 256000,
+      "max_completion_tokens": 8192
     }
   ],
   "mistral": [
@@ -6253,6 +6295,214 @@
       "service_kinds": [
         "llm"
       ]
+    }
+  ],
+  "qwen": [
+    {
+      "id": "qwen-3-235b-a22b",
+      "object": "model",
+      "created": 1755489358,
+      "owned_by": "qwen",
+      "type": "openai",
+      "display_name": "Qwen 3 235B A22B",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 256000,
+      "max_completion_tokens": 8192
+    },
+    {
+      "id": "qwen-3-coder",
+      "object": "model",
+      "created": 1755506104,
+      "owned_by": "qwen",
+      "type": "openai",
+      "display_name": "Qwen 3 Coder",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 256000,
+      "max_completion_tokens": 8192
+    },
+    {
+      "id": "qwen3-235b-a22b-2507",
+      "object": "model",
+      "created": 1755489358,
+      "owned_by": "qwen",
+      "type": "openai",
+      "display_name": "Qwen3 235B A22B 2507",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 256000,
+      "max_completion_tokens": 8192
+    },
+    {
+      "id": "qwen3-coder-plus",
+      "object": "model",
+      "created": 1757508303,
+      "owned_by": "qwen",
+      "type": "openai",
+      "display_name": "Qwen3 Coder Plus",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 256000,
+      "max_completion_tokens": 8192
+    },
+    {
+      "id": "qwen3-max",
+      "object": "model",
+      "created": 1755489358,
+      "owned_by": "qwen",
+      "type": "openai",
+      "display_name": "Qwen3 Max",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 256000,
+      "max_completion_tokens": 8192
+    },
+    {
+      "id": "qwen3-plus",
+      "object": "model",
+      "created": 1755489358,
+      "owned_by": "qwen",
+      "type": "openai",
+      "display_name": "Qwen3 Plus",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 256000,
+      "max_completion_tokens": 8192
+    },
+    {
+      "id": "qwen3-turbo",
+      "object": "model",
+      "created": 1755489358,
+      "owned_by": "qwen",
+      "type": "openai",
+      "display_name": "Qwen3 Turbo",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 256000,
+      "max_completion_tokens": 8192
+    }
+  ],
+  "alicode": [
+    {
+      "id": "qwen-coder-plus",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "alicode",
+      "type": "openai",
+      "display_name": "Qwen Coder Plus",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 256000,
+      "max_completion_tokens": 8192
+    }
+  ],
+  "kimi-coding": [
+    {
+      "id": "kimi-k2.7-code",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "kimi",
+      "type": "openai",
+      "display_name": "Kimi K2.7 Code",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 256000,
+      "max_completion_tokens": 8192
+    },
+    {
+      "id": "kimi-k2.7-coder",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "kimi",
+      "type": "openai",
+      "display_name": "Kimi K2.7 Coder",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 256000,
+      "max_completion_tokens": 8192
+    }
+  ],
+  "iflow": [
+    {
+      "id": "iflow-default",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "iflow",
+      "type": "openai",
+      "display_name": "iFlow Default",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 128000,
+      "max_completion_tokens": 8192
+    }
+  ],
+  "volcengine-ark": [
+    {
+      "id": "doubao-pro",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "volcengine",
+      "type": "openai",
+      "display_name": "Doubao Pro",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 128000,
+      "max_completion_tokens": 8192
+    }
+  ],
+  "hunyuan": [
+    {
+      "id": "hunyuan-large",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "hunyuan",
+      "type": "openai",
+      "display_name": "Hunyuan Large",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 128000,
+      "max_completion_tokens": 8192
+    },
+    {
+      "id": "hunyuan-vision",
+      "object": "model",
+      "created": 1759276800,
+      "owned_by": "hunyuan",
+      "type": "openai",
+      "display_name": "Hunyuan Vision",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai",
+      "context_length": 128000,
+      "max_completion_tokens": 8192
     }
   ]
 }

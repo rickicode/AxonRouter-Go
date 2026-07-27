@@ -1489,3 +1489,18 @@ The system SHALL the system shall display an informational toast notification to
 ## Technical Notes
 
 - **Dependencies**: model, auth, connection, executor, proxy, usage, log, version.Checker, toast
+## Supported OpenAI-compatible providers
+
+The executor registry routes the following built-in provider prefixes using the shared OpenAI executor and the default OpenAI-compatible error translator:
+
+| Provider | Prefix | Format | Auth |
+|----------|--------|--------|------|
+| Qwen / Alibaba Qwen | `qwen/` | openai | API key |
+| AliCode | `alicode/` | openai | API key |
+| Kimi Coding | `kimi-coding/` | openai | API key |
+| iFlow | `iflow/` | openai | API key |
+| Volcengine Ark | `volcengine-ark/` | openai | API key |
+| MiniMax | `minimax/` | openai | API key |
+| Hunyuan | `hunyuan/` | openai | API key |
+
+These providers extend the existing `minimax` and `kimi` catalogs rather than duplicating them. `kimi-coding` is a distinct prefix for the Kimi coding endpoint.
