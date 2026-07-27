@@ -1516,6 +1516,47 @@ The API SHALL support `GET /admin/console-logs` to read the log file from the en
 - **THEN** 500 Internal Server Error with JSON error body
 - **AND** Response body contains error message
 
+### Requirement: GETConsoleLogStream
+
+The API SHALL support `GET /api/admin/console-logs/stream` to open a Server-Sent Events (SSE) stream that replays the most recent structured log entries and then pushes new lines and clear events live to dashboard clients.
+
+#### Scenario: ConsoleLogSSEStream
+- **GIVEN** Admin user is authenticated and SSE-compatible client
+- **WHEN** GET /api/admin/console-logs/stream is called
+- **THEN** 200 OK with `Content-Type: text/event-stream` and `Connection: keep-alive`
+- **AND** An initial `{"type":"init"}` event is sent
+- **AND** Up to the configured max recent log lines are replayed as `{"type":"line","entry":...}` events
+- **AND** New JSON log lines written after the connection opens are broadcast as `{"type":"line","entry":...}` events
+- **AND** A `{"type":"clear"}` event is sent when the log file is truncated
+- **AND** The stream remains open until the client disconnects or the request context is cancelled
+
+#### Scenario: ConsoleLogSSEDisconnect
+<!-- openlore-test: tags=regression (auto) -->
+- **GIVEN** Admin user has an active console-logs SSE connection
+- **WHEN** The client closes the connection
+- **THEN** The server unsubscribes from the log broadcaster and releases resources
+- **AND** The broadcast channel is closed and removed from the subscriber set
+
+### Requirement: DELETEConsoleLog
+
+The API SHALL support `DELETE /api/admin/console-logs` to truncate the active structured log file and broadcast a clear event to all connected SSE clients.
+
+#### Scenario: ClearConsoleLogsSuccessfully
+<!-- openlore-test: tags=smoke (auto) -->
+- **GIVEN** Admin user is authenticated and the active log file exists
+- **WHEN** DELETE /api/admin/console-logs is called
+- **THEN** 200 OK with JSON body `{ "success": true }`
+- **AND** The active log file is truncated to zero bytes
+- **AND** A clear event is broadcast to all connected console-logs SSE clients
+- **AND** Rotation metadata is preserved (current writer remains attached)
+
+#### Scenario: ClearConsoleLogsFailure
+<!-- openlore-test: tags=regression (auto) -->
+- **GIVEN** Admin user is authenticated and the log file cannot be truncated
+- **WHEN** DELETE /api/admin/console-logs is called
+- **THEN** 500 Internal Server Error with JSON error body
+- **AND** Response body contains the error message from the underlying truncate operation
+
 ### Requirement: POSTOrder
 
 The API SHALL support `POST /api/orders` to create a new order from the current cart.

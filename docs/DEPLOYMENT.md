@@ -239,6 +239,31 @@ Deprecated variables:
 
 - `AXON_DATA_DIR` — no longer read. Use `AXONROUTER_DIR` to override the data directory or `HOME` to relocate it.
 
+### Console Logs
+
+The dashboard Console page and the `/api/admin/console-logs` endpoints tail a structured JSON log file written by the backend. Rotation and retention are controlled by the following environment variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `AXON_LOG_FILE_PATH` | `/tmp/axonrouter.log` | Absolute path to the active structured log file. `AXONROUTER_DIR` is not applied here; set this explicitly if you want logs inside the data directory. |
+| `AXON_LOG_MAX_SIZE` | `50MB` | Maximum size of the active log file before rotation. Supports byte counts (`2097152`) or human-readable units (`10MB`, `1gb`). |
+| `AXON_LOG_RETENTION_DAYS` | `7` | Delete rotated log files older than this many days. Set to `0` to disable age-based cleanup. |
+| `AXON_LOG_MAX_FILES` | `20` | Keep at most this many rotated files; oldest files are removed first. Set to `0` to disable count-based cleanup. |
+| `AXON_LOGS_MAX_TOTAL_SIZE_MB` | (disabled) | Optional ceiling on the total size of the log directory. When set, the oldest `.log`/`.log.gz` files are removed until the directory is under the cap. The active log file is never deleted. |
+
+Example for a systemd unit that keeps 30 days of logs and caps the directory at 1 GB:
+
+```ini
+[Service]
+Environment="AXON_LOG_FILE_PATH=/var/log/axonrouter/axonrouter.log"
+Environment="AXON_LOG_MAX_SIZE=100MB"
+Environment="AXON_LOG_RETENTION_DAYS=30"
+Environment="AXON_LOG_MAX_FILES=50"
+Environment="AXON_LOGS_MAX_TOTAL_SIZE_MB=1024"
+```
+
+Make sure the directory exists and is writable by the service user. `AXON_LOG_FILE_PATH` can be freely used alongside `AXONROUTER_DIR` because the two locations are independent.
+
 ### Data directory
 
 By default the binary creates and uses `~/axonrouter`:

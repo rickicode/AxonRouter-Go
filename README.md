@@ -325,6 +325,7 @@ Quick links:
 
 [Integrations](docs/INTEGRATIONS.md)
 [Deployment Guide](docs/DEPLOYMENT.md)
+[Console Logs & Environment Variables](docs/DEPLOYMENT.md#console-logs)
 [API Reference](docs/API.md)
 [Architecture](docs/ARCHITECTURE.md)
 [Changelog](CHANGELOG.md)

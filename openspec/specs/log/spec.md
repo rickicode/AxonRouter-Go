@@ -375,6 +375,65 @@ The system SHALL close the underlying database connection and release associated
 - **THEN** SHALL return an error or nil based on implementation
 - **AND** connection already closed
 
+### Requirement: ConfigureConsoleLogRotation
+
+> `internal/logging/rotation.go`, `internal/logging/logging.go`
+
+The system SHALL support environment-variable based configuration of the structured console log file path, maximum file size, retention period, and maximum rotated-file count.
+
+#### Scenario: LoadDefaultRotationConfig
+- **GIVEN** No AXON_LOG_* environment variables are set
+- **WHEN** the application starts
+- **THEN** logging uses `/tmp/axonrouter.log` as the default log file path
+- **AND** max file size defaults to 50 MB
+- **AND** retention defaults to 7 days
+- **AND** max rotated files defaults to 20
+
+#### Scenario: OverrideRotationConfigFromEnvironment
+- **GIVEN** Environment variables `AXON_LOG_FILE_PATH`, `AXON_LOG_MAX_SIZE`, `AXON_LOG_RETENTION_DAYS`, and `AXON_LOG_MAX_FILES` are set
+- **WHEN** the application starts
+- **THEN** the active log file path, max size, retention days, and max rotated files are loaded from those variables
+- **AND** byte-size strings such as `100MB`, `1gb`, or `2048` are parsed correctly
+
+### Requirement: RotateConsoleLogFile
+
+> `internal/logging/rotation.go`
+
+The system SHALL rotate the active log file when its size would exceed the configured maximum and remove rotated files that are older than the retention period or exceed the maximum rotated-file count.
+
+#### Scenario: RotateOnSizeOverflow
+- **GIVEN** The active log file is approaching the configured max size
+- **WHEN** a new log record would push the file past the limit
+- **THEN** the current file is renamed with a UTC timestamp suffix
+- **AND** a new active log file is created
+- **AND** the currently active writer continues writing to the new file
+
+#### Scenario: PruneOldRotatedFiles
+- **GIVEN** Multiple rotated log files exist in the log directory
+- **WHEN** rotation or the periodic cleanup timer runs
+- **THEN** files older than the configured retention days are deleted
+- **AND** if more than the configured max rotated files remain, the oldest excess files are deleted
+- **AND** the currently active `axonrouter.log` is never deleted
+
+### Requirement: LimitLogDirectorySize
+
+> `internal/logging/log_dir_cleaner.go`
+
+The system SHALL optionally enforce a maximum total size for the log directory by deleting the oldest `.log`/`.log.gz` files when the directory exceeds the configured cap.
+
+#### Scenario: EnforceMaxTotalSize
+- **GIVEN** `AXON_LOGS_MAX_TOTAL_SIZE_MB` is set to a positive value
+- **WHEN** the directory containing log files exceeds the configured cap
+- **THEN** the oldest rotated `.log` or `.log.gz` files are removed until the directory is within the cap
+- **AND** the active log file is skipped so live log writes are not interrupted
+
+#### Scenario: DisableSizeEnforcement
+- **GIVEN** `AXON_LOGS_MAX_TOTAL_SIZE_MB` is unset, zero, or negative
+- **WHEN** the log directory grows beyond any implicit cap
+- **THEN** no files are removed by the directory cleaner
+- **AND** rotation and retention cleanup continue to run independently
+
 ## Technical Notes
 
 - **Dependencies**: usage.QueryLogs, usage.LogFilter, active.List, usage.NewAggregator
+- **Environment variables**: `AXON_LOG_FILE_PATH`, `AXON_LOG_MAX_SIZE`, `AXON_LOG_RETENTION_DAYS`, `AXON_LOG_MAX_FILES`, `AXON_LOGS_MAX_TOTAL_SIZE_MB`
