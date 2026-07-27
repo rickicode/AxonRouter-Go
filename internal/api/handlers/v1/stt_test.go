@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"encoding/json"
 	"bytes"
 	"context"
 	"mime/multipart"
@@ -144,5 +145,57 @@ func TestSTT_UsageAccumulatesOnSuccess(t *testing.T) {
 	}
 	if total != 7 {
 		t.Errorf("total_tokens = %d, want 7", total)
+	}
+}
+
+// fakeCloudflareSTTExecutor simulates a Cloudflare STT executor that returns
+// a normalized transcription JSON.
+type fakeCloudflareSTTExecutor struct{}
+
+func (f *fakeCloudflareSTTExecutor) Execute(ctx context.Context, req *executor.Request) (*executor.Response, error) {
+	return &executor.Response{
+		StatusCode: http.StatusOK,
+		Body:       []byte(`{"text":"hello from cf"}`),
+		Headers:    http.Header{"Content-Type": []string{"application/json"}},
+	}, nil
+}
+
+func (f *fakeCloudflareSTTExecutor) ExecuteStream(ctx context.Context, req *executor.Request) (*executor.StreamResult, error) {
+	return nil, nil
+}
+
+func TestSTT_CFRoutesToNativeExecutor(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	h.sttExecutorFactory = func() executor.Executor { return &fakeCloudflareSTTExecutor{} }
+	seedProviderAndConnection(t, h, "cf", `["llm","tts","stt"]`, "cf-stt-conn", "http://unused")
+
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	_ = writer.WriteField("model", "cf/openai/whisper")
+	_ = writer.WriteField("language", "en")
+	part, _ := writer.CreateFormFile("file", "audio.mp3")
+	_, _ = part.Write([]byte("fake audio"))
+	writer.Close()
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", &buf)
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	h.STT(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	ct := rec.Header().Get("Content-Type")
+	if ct != "application/json" {
+		t.Fatalf("expected Content-Type application/json, got %q", ct)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("invalid body: %v", err)
+	}
+	if got["text"] != "hello from cf" {
+		t.Fatalf("text = %v, want hello from cf", got["text"])
 	}
 }

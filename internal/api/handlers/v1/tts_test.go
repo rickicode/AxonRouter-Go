@@ -108,3 +108,42 @@ func TestTTS_UsageAccumulatesOnSuccess(t *testing.T) {
 		t.Errorf("expected non-zero total_tokens for TTS request input, got 0")
 	}
 }
+
+// fakeCloudflareTTSExecutor simulates a Cloudflare TTS executor that returns raw audio bytes.
+type fakeCloudflareTTSExecutor struct{}
+
+func (f *fakeCloudflareTTSExecutor) Execute(ctx context.Context, req *executor.Request) (*executor.Response, error) {
+	return &executor.Response{
+		StatusCode: http.StatusOK,
+		Body:       []byte("cf tts audio"),
+		Headers:    http.Header{"Content-Type": []string{"audio/mpeg"}},
+	}, nil
+}
+
+func (f *fakeCloudflareTTSExecutor) ExecuteStream(ctx context.Context, req *executor.Request) (*executor.StreamResult, error) {
+	return nil, nil
+}
+
+func TestTTS_CFRoutesToNativeExecutor(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	h.ttsExecutorFactory = func() executor.Executor { return &fakeCloudflareTTSExecutor{} }
+	seedProviderAndConnection(t, h, "cf", `["llm","tts","stt"]`, "cf-tts-conn", "http://unused")
+
+	body := []byte(`{"model":"cf/myshell-ai/melotts","input":"hello","voice":"en"}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/audio/speech", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	h.TTS(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "audio/mpeg" {
+		t.Fatalf("expected Content-Type audio/mpeg, got %q", ct)
+	}
+	if got := rec.Body.String(); got != "cf tts audio" {
+		t.Fatalf("body = %q, want cf tts audio", got)
+	}
+}
