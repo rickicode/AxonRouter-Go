@@ -6155,6 +6155,62 @@
       "max_completion_tokens": 8192
     }
   ],
+  "comfyui": [
+    {
+      "id": "comfyui-workflow",
+      "object": "model",
+      "created": 1774032000,
+      "owned_by": "comfyui",
+      "type": "openai",
+      "display_name": "ComfyUI Workflow",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "nanobanana": [
+    {
+      "id": "nanobanana-default",
+      "object": "model",
+      "created": 1774032000,
+      "owned_by": "nanobanana",
+      "type": "openai",
+      "display_name": "Nanobanana Default",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "puter": [
+    {
+      "id": "puter-default",
+      "object": "model",
+      "created": 1774032000,
+      "owned_by": "puter",
+      "type": "openai",
+      "display_name": "Puter Default",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "topaz": [
+    {
+      "id": "topaz-default",
+      "object": "model",
+      "created": 1774032000,
+      "owned_by": "topaz",
+      "type": "openai",
+      "display_name": "Topaz Default",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    }
+  ],
   "qwencloud": [
     {
       "id": "qwen3.7-plus"

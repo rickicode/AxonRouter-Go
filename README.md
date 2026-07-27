@@ -192,6 +192,11 @@ See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) and the dashboard **CLI Tools**
 | GitHub Copilot | `copilot/` | openai | OAuth |
 | CodeBuddy | `codebuddy/` | openai | OAuth |
 | Qoder | `qoder/` | openai | OAuth |
+| Devin | `devin/` | devin-cli | OAuth |
+| Nanobanana | `nanobanana/` | openai | API key |
+| Topaz | `topaz/` | openai | API key |
+| Puter | `puter/` | openai | API key |
+| ComfyUI | `comfyui/` | openai | API key |
 
 Setup details for each provider are in [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
 

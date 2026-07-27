@@ -8,7 +8,7 @@ func TestRegistry_NewOpenAICompatibleProviders(t *testing.T) {
 		"glm", "minimax", "kimi", "mistral",
 		"cerebras", "together", "fireworks",
 		"novita", "lambda", "pollinations",
-		"codebuddy",
+		"codebuddy", "nanobanana", "topaz", "puter", "comfyui",
 	}
 	for _, prefix := range want {
 		exec, format, ok := GetRegistry().Get(prefix)
@@ -61,6 +61,10 @@ func TestRegistry_GetByModel_NewProviders(t *testing.T) {
 		{"zenmux/openai/gpt-5.6-luna", "zenmux", "openai/gpt-5.6-luna", FormatOpenAI},
 		{"zenmux/anthropic/claude-opus-5", "zenmux", "anthropic/claude-opus-5", FormatOpenAI},
 		{"zenmux-free/z-ai/glm-5.2", "zenmux-free", "z-ai/glm-5.2", FormatOpenAI},
+		{"nanobanana/nanobanana-default", "nanobanana", "nanobanana-default", FormatOpenAI},
+		{"topaz/topaz-default", "topaz", "topaz-default", FormatOpenAI},
+		{"puter/puter-default", "puter", "puter-default", FormatOpenAI},
+		{"comfyui/comfyui-workflow", "comfyui", "comfyui-workflow", FormatOpenAI},
 	}
 	for _, c := range cases {
 		exec, format, model, err := GetRegistry().GetByModel(c.model)

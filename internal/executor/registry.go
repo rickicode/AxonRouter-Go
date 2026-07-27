@@ -116,9 +116,10 @@ func RegisterDefaults() {
 
 	// OpenAI-compatible providers
 	openaiExec := NewOpenAIExecutor(base)
-	for _, p := range []string{"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp", "elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras", "together", "fireworks", "novita", "lambda", "pollinations", "zenmux", "zenmux-free", "cursor"} {
+	for _, p := range []string{"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp", "elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras", "together", "fireworks", "novita", "lambda", "pollinations", "zenmux", "zenmux-free", "cursor", "nanobanana", "topaz", "puter"} {
 		GetRegistry().Register(p, FormatOpenAI, openaiExec)
 	}
+
 	// CodeBuddy uses an OpenAI-compatible endpoint but requires a leading system
 	// message and only supports streaming chat completions upstream.
 	GetRegistry().Register("codebuddy", FormatOpenAI, NewCodeBuddyExecutor(base))
@@ -127,6 +128,9 @@ func RegisterDefaults() {
 	GetRegistry().Register("copilot", FormatOpenAI, NewCopilotExecutor(base))
 	GetRegistry().Register("vertex", FormatOpenAI, NewVertexExecutor(base))
 	GetRegistry().Register("bedrock", FormatOpenAI, NewBedrockExecutor(base))
+
+	// New developer/niche OpenAI-compatible providers.
+	GetRegistry().Register("comfyui", FormatOpenAI, openaiExec)
 
 	// Cloudflare Workers AI uses dedicated executor for sanitization.
 	cfExec := NewCloudflareExecutor(openaiExec)
@@ -148,7 +152,7 @@ func RegisterDefaults() {
 		"elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras",
 		"together", "fireworks", "novita", "lambda", "pollinations", "zenmux", "zenmux-free",
 		"mimocode", "openrouter", "copilot", "vertex", "bedrock", "codebuddy",
-		"qwencloud", "cursor",
+		"qwencloud", "cursor", "nanobanana", "topaz", "puter", "comfyui",
 	} {
 		translator.Register(p, translator.Func(providers.TranslateOpenAICompatible))
 	}
@@ -222,6 +226,7 @@ func RegisterCustomProviders(db *sql.DB) {
 		return
 	}
 	defer rows.Close()
+
 	for rows.Next() {
 		var id, format string
 		if err := rows.Scan(&id, &format); err != nil {

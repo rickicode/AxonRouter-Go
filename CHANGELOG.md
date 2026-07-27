@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **Developer/niche provider registry expansion** — registered `nanobanana`, `topaz`, `puter`, and `comfyui` as OpenAI-compatible providers in `internal/executor/registry.go`, added canonical/alias entries in `internal/provider/aliases.go`, and seeded default model catalog entries (`nanobanana-default`, `topaz-default`, `puter-default`, `comfyui-workflow`) in `internal/models/models.json`. Existing providers (`codebuddy`, `qoder`, and `devin`) were verified and remain registered via their dedicated executors. Added display metadata and graceful quota-fetch fallbacks for the new providers in `internal/quota/fetcher.go`, plus expanded registry and catalog tests.
+
+### Added
 - **Smart-router virtual models (`smart/auto`, `smart/auto-fast`, `smart/auto-quality`)** — new `internal/smart` package resolves virtual model ids to concrete `provider/model-id` candidates based on request complexity, live telemetry from `request_logs`, provider availability, capability requirements, and API-key allowlists. Virtual model registry is persisted in settings as `smart_router_virtual_models` and consumed by the dashboard Smart Router settings page. Smart routing runs before combo resolution for `/v1/chat/completions`, `/v1/messages`, and `/v1/responses`, with transparent fallback to normal resolution when no eligible candidate is found. Includes `internal/smart/features_test.go` and `internal/smart/router_test.go`.
 
 ### Added
