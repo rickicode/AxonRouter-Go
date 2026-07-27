@@ -176,6 +176,7 @@ See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) and the dashboard **CLI Tools**
 | MiMoCode | `mimocode/` | openai | none (free) |
 | MiMoCode Free | `mimocode-free/` | openai | none (free) |
 | MiMo Token Plan | `mimo-tp/` | openai | API key |
+| Leonardo AI | `leonardo/`, `leo/` | openai | API key |
 | OpenRouter | `openrouter/` | openai | API key |
 | OpenCode Free | `oc/` | openai | none (free) |
 | OpenCode Zen | `oc-zen/` | openai | API key |

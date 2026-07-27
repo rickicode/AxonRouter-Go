@@ -296,3 +296,24 @@ func getCurrentModelIDs(key string) []string {
 	slices.Sort(ids)
 	return ids
 }
+
+func TestGetModelIDs_Leonardo(t *testing.T) {
+	ids := GetModelIDs("leonardo")
+	want := []string{"phoenix", "sdxl"}
+	for _, id := range want {
+		if !slices.Contains(ids, id) {
+			t.Errorf("GetModelIDs(leonardo) missing %q; got %v", id, ids)
+		}
+	}
+}
+
+func TestGetModelServiceKinds_LeonardoImage(t *testing.T) {
+	kinds := GetModelServiceKinds("leonardo", "phoenix")
+	if len(kinds) != 1 || kinds[0] != "image" {
+		t.Errorf("GetModelServiceKinds(leonardo, phoenix) = %v, want [image]", kinds)
+	}
+	kinds = GetModelServiceKinds("leonardo", "sdxl")
+	if len(kinds) != 1 || kinds[0] != "image" {
+		t.Errorf("GetModelServiceKinds(leonardo, sdxl) = %v, want [image]", kinds)
+	}
+}

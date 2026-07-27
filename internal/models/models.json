@@ -6254,5 +6254,29 @@
         "llm"
       ]
     }
+  ],
+  "leonardo": [
+    {
+      "id": "phoenix",
+      "object": "model",
+      "created": 1700000000,
+      "owned_by": "leonardo",
+      "type": "openai",
+      "display_name": "Phoenix",
+      "service_kinds": [
+        "image"
+      ]
+    },
+    {
+      "id": "sdxl",
+      "object": "model",
+      "created": 1700000000,
+      "owned_by": "leonardo",
+      "type": "openai",
+      "display_name": "SDXL",
+      "service_kinds": [
+        "image"
+      ]
+    }
   ]
 }

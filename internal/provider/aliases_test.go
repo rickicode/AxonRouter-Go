@@ -37,3 +37,24 @@ func TestResolveAlias_QwenCloud(t *testing.T) {
 		t.Errorf("ResolveAlias(%q) = %q, want %q", "qwencloud", got, "qwencloud")
 	}
 }
+
+func TestRegistryHasLeonardo(t *testing.T) {
+	info, ok := Registry["leonardo"]
+	if !ok {
+		t.Fatalf("Registry missing entry for %q", "leonardo")
+	}
+	if info.DisplayName == "" {
+		t.Errorf("Registry[%q].DisplayName is empty", "leonardo")
+	}
+	if len(info.Aliases) != 1 || info.Aliases[0] != "leo" {
+		t.Errorf("Registry[%q].Aliases = %v, want [leo]", "leonardo", info.Aliases)
+	}
+}
+
+func TestResolveAlias_Leonardo(t *testing.T) {
+	for _, id := range []string{"leonardo", "leo"} {
+		if got := ResolveAlias(id); got != "leonardo" {
+			t.Errorf("ResolveAlias(%q) = %q, want %q", id, got, "leonardo")
+		}
+	}
+}

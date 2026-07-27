@@ -406,3 +406,65 @@ func modelIDs(models []gin.H) []string {
 	}
 	return ids
 }
+
+func TestGetProviderModels_LeonardoIncludesExpectedModels(t *testing.T) {
+	h := newTestHandler(t)
+	models := h.getProviderModels("leonardo")
+	if len(models) == 0 {
+		t.Fatal("expected leonardo models from catalog")
+	}
+	want := map[string]string{
+		"leonardo/phoenix": "leonardo",
+		"leonardo/sdxl":    "leonardo",
+	}
+	for id, owner := range want {
+		found := false
+		for _, m := range models {
+			gotID, ok := m["id"].(string)
+			if !ok || gotID != id {
+				continue
+			}
+			found = true
+			if gotOwner, _ := m["owned_by"].(string); gotOwner != owner {
+				t.Errorf("model %q owned_by = %q, want %q", id, gotOwner, owner)
+			}
+			if kinds := kindsOf(m); len(kinds) != 1 || kinds[0] != "image" {
+				t.Errorf("model %q service_kinds = %v, want [image]", id, kinds)
+			}
+		}
+		if !found {
+			t.Errorf("missing leonardo model %q", id)
+		}
+	}
+}
+
+func TestGetProviderModels_LeoAliasIncludesExpectedModels(t *testing.T) {
+	h := newTestHandler(t)
+	models := h.getProviderModels("leo")
+	if len(models) == 0 {
+		t.Fatal("expected leo alias models from catalog")
+	}
+	want := map[string]string{
+		"leo/phoenix": "leonardo",
+		"leo/sdxl":    "leonardo",
+	}
+	for id, owner := range want {
+		found := false
+		for _, m := range models {
+			gotID, ok := m["id"].(string)
+			if !ok || gotID != id {
+				continue
+			}
+			found = true
+			if gotOwner, _ := m["owned_by"].(string); gotOwner != owner {
+				t.Errorf("model %q owned_by = %q, want %q", id, gotOwner, owner)
+			}
+			if kinds := kindsOf(m); len(kinds) != 1 || kinds[0] != "image" {
+				t.Errorf("model %q service_kinds = %v, want [image]", id, kinds)
+			}
+		}
+		if !found {
+			t.Errorf("missing leo model %q", id)
+		}
+	}
+}

@@ -7,9 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **Leonardo AI provider** — new built-in provider `leonardo` (alias `leo`) ported from OmniRoute. Registered as an OpenAI-compatible image provider with base URL `https://cloud.leonardo.ai/api/rest/v1`, API-key authentication, and catalog models `phoenix` and `sdxl`. Added backend registry entries (`internal/executor/registry.go`, `internal/provider/aliases.go`, `internal/db/migrations.go`), static model catalog entries (`internal/models/models.json`), frontend catalog entry (`web/src/lib/provider-catalog.ts`), and placeholder SVG logo (`web/public/providers/leonardo.svg`). Added unit tests covering model resolution, alias resolution, DB seed, and executor registry lookup.
+
 - **Smart-router virtual models (`smart/auto`, `smart/auto-fast`, `smart/auto-quality`)** — new `internal/smart` package resolves virtual model ids to concrete `provider/model-id` candidates based on request complexity, live telemetry from `request_logs`, provider availability, capability requirements, and API-key allowlists. Virtual model registry is persisted in settings as `smart_router_virtual_models` and consumed by the dashboard Smart Router settings page. Smart routing runs before combo resolution for `/v1/chat/completions`, `/v1/messages`, and `/v1/responses`, with transparent fallback to normal resolution when no eligible candidate is found. Includes `internal/smart/features_test.go` and `internal/smart/router_test.go`.
 
-### Added
 - **MCP stdio-SSE bridge for local tool servers** — new `internal/mcp` package registers local MCP servers in an SQLite `mcp_servers` table and exposes them to remote clients via a stdio-SSE bridge. Admin CRUD endpoints (`GET/POST/PATCH/DELETE /api/admin/mcp`, `POST /api/admin/mcp/:id/test`, `GET /api/admin/mcp/:id/tools`) are wired for both session JWT and master API key auth. The SSE endpoint `GET /api/admin/mcp/:id/sse` spawns a per-session subprocess and implements the Anthropic MCP SSE contract (`endpoint` event + `message` events); client messages are delivered via `POST /api/admin/mcp/:id/message?sessionId=xxx`. Subprocesses are reaped by max idle time or disconnect, with restart policies (`always`, `on-failure`, `never`) and a configurable max concurrent clients cap. Command/args are validated to block shell metacharacters; stderr is logged only and never forwarded to clients. A new dashboard page at `/mcp` lists servers, supports add/edit/delete, tests connections, discovers tools, and copies the SSE URL. Added `internal/mcp/mcp_test.go` with CRUD, validation, parsing, and subprocess integration tests. Updated `openspec/specs/api/spec.md` and added `docs/mcp-setup.md`.
 
 ## [0.3.21] - 2026-07-27
@@ -131,7 +132,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.17] - 2026-07-20
 
-### Added
 - **Console log file rotation and dashboard Console page** — application logs are now written to a rotating on-disk file (`/tmp/axonrouter.log`) via `internal/logging/file.go` (2 MB max, 3 backups). A new `GET /api/admin/console-logs` endpoint tails up to 500 lines for the dashboard, and the new Console page under System shows live, auto-polling log output in the sidebar.
 - **Recency-aware connection rotation** — tracks an in-memory `lastUsedAt` timestamp per connection and uses it as a secondary sort key when building the eligibility snapshot and fallback candidate order, spreading simultaneous requests across siblings instead of concentrating them on the same freshly-selected connection.
 - **In-product upgrade, logs, and restart flow** — `POST /api/admin/upgrade` now returns per-step upgrade logs, and `POST /api/admin/restart` restarts the service; the About page and update-available modal show live logs and a restart prompt after upgrade completes.
@@ -297,7 +297,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Admin "Test all" now refreshes expired/near-expiry OAuth tokens automatically.** For OAuth providers (`cx`, `ag`, `kiro`, `copilot`), each connection's token is refreshed via `auth.Manager` before testing if it is expired or within the provider's lead time. Test results are recorded with the fresh token, and unrecoverable refresh errors disable the connection as `auth_failed`.
 - Docker image now defaults `HOME=/app/data` so the `/app/data` volume is used without manual environment overrides; added GitHub Actions workflow to build and push the container to GHCR on pushes to `master` and version tags.
 
-### Changed
 - Improved `Test all` concurrency for providers with thousands of connections: replaced fixed-batch waiting with a semaphore worker pool capped at 10 concurrent streams, plus a 30-second per-connection timeout, so a single slow connection no longer stalls the entire batch.
 - **Quota refresh and scheduler now refresh expired OAuth tokens automatically**, including Codex (`cx`) through `auth.Manager`. Previously Codex was skipped, causing quota fetches to fail once the access token expired.
 
@@ -316,7 +315,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.7] - 2026-07-16
 
-### Fixed
 - Admin handlers now use request context instead of `context.Background()`, allowing client cancellation to propagate to background operations (connection testing, provider testing, model sync, proxy pool deletion).
 - Startup banner now logs warnings for database query failures instead of silently ignoring them.
 - OpenAI-format provider errors are now normalized to canonical OpenAI error codes (`context_length_exceeded`, `rate_limit_exceeded`, etc.) via a default translator. This fixes Bedrock `validation_error` and other provider-specific synonyms so CLI tools like Claude Code and OpenCode correctly trigger auto-compact.
@@ -373,7 +371,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.4] - 2026-07-15
 
-### Added
 - Vertex AI provider (`vertex/` prefix) using Google service-account JSON keys; signs a JWT locally, exchanges it for a Google access token, resolves `{projectId}`/`{location}` base_url placeholders, and proxies OpenAI-compatible `/chat/completions` to Vertex AI's OpenAI endpoint.
 - GitHub Copilot provider (`copilot/` prefix) with OAuth-token → Copilot-token exchange, token caching, and the Copilot-specific request headers needed for its OpenAI-compatible `/chat/completions` endpoint.
 - System tray mode behind the `tray` build tag. When built with `-tags tray`, `axonrouter --tray` shows a tray icon with menu items to open the dashboard, start/stop the server, and exit. Makefile gains a `build-tray` target; the default build remains headless with no GUI dependencies.

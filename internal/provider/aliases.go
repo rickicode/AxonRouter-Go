@@ -35,6 +35,7 @@ var Registry = map[string]CanonicalInfo{
 	"qwencloud":   {DisplayName: "Qwen Cloud", Aliases: nil},
 	"codebuddy":   {DisplayName: "CodeBuddy", Aliases: []string{"codebuddy-cn"}},
 	"zenmux-free": {DisplayName: "ZenMux Free", Aliases: []string{"zxfree"}},
+	"leonardo":    {DisplayName: "Leonardo AI", Aliases: []string{"leo"}},
 }
 
 // aliasToCanonical is the flattened reverse lookup (built once at init).

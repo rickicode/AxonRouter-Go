@@ -129,3 +129,38 @@ func slicesEqual(a, b []string) bool {
 	}
 	return true
 }
+
+func TestProviderTypeLeonardoSeed(t *testing.T) {
+	dir := t.TempDir()
+	d, err := sql.Open("sqlite", filepath.Join(dir, "verify.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if err := RunMigrations(d); err != nil {
+		t.Fatal(err)
+	}
+	var category, displayName, format, baseURL, serviceKinds string
+	if err := d.QueryRow("SELECT display_name, format, base_url, category, service_kinds FROM provider_types WHERE id = 'leonardo'").Scan(&displayName, &format, &baseURL, &category, &serviceKinds); err != nil {
+		t.Fatalf("leonardo provider not seeded: %v", err)
+	}
+	if displayName != "Leonardo AI" {
+		t.Errorf("display_name = %q, want %q", displayName, "Leonardo AI")
+	}
+	if format != "openai" {
+		t.Errorf("format = %q, want %q", format, "openai")
+	}
+	if baseURL != "https://cloud.leonardo.ai/api/rest/v1" {
+		t.Errorf("base_url = %q, want %q", baseURL, "https://cloud.leonardo.ai/api/rest/v1")
+	}
+	if category != "apikey" {
+		t.Errorf("category = %q, want %q", category, "apikey")
+	}
+	var kinds []string
+	if err := json.Unmarshal([]byte(serviceKinds), &kinds); err != nil {
+		t.Fatalf("service_kinds is not valid JSON: %v", err)
+	}
+	if !slicesEqual(kinds, []string{"image"}) {
+		t.Errorf("service_kinds = %v, want [image]", kinds)
+	}
+}

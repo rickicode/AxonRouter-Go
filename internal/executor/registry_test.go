@@ -79,3 +79,52 @@ func TestRegistry_GetByModel_NewProviders(t *testing.T) {
 		}
 	}
 }
+
+func TestRegistry_Leonardo(t *testing.T) {
+	RegisterDefaults()
+	for _, prefix := range []string{"leonardo", "leo"} {
+		exec, format, ok := GetRegistry().Get(prefix)
+		if !ok {
+			t.Errorf("provider %q not registered", prefix)
+			continue
+		}
+		if format != FormatOpenAI {
+			t.Errorf("provider %q format = %q, want %q", prefix, format, FormatOpenAI)
+		}
+		if exec == nil {
+			t.Errorf("provider %q has nil executor", prefix)
+		}
+	}
+}
+
+func TestRegistry_GetByModel_Leonardo(t *testing.T) {
+	RegisterDefaults()
+	cases := []struct {
+		model      string
+		wantPrefix string
+		wantModel  string
+	}{
+		{"leonardo/phoenix", "leonardo", "phoenix"},
+		{"leo/sdxl", "leo", "sdxl"},
+	}
+	for _, c := range cases {
+		prefix, model := SplitModel(c.model)
+		if prefix != c.wantPrefix {
+			t.Errorf("SplitModel(%q) prefix = %q, want %q", c.model, prefix, c.wantPrefix)
+		}
+		if model != c.wantModel {
+			t.Errorf("SplitModel(%q) model = %q, want %q", c.model, model, c.wantModel)
+		}
+		_, format, gotModel, err := GetRegistry().GetByModel(c.model)
+		if err != nil {
+			t.Errorf("GetByModel(%q) unexpected error: %v", c.model, err)
+			continue
+		}
+		if format != FormatOpenAI {
+			t.Errorf("GetByModel(%q) format = %q, want %q", c.model, format, FormatOpenAI)
+		}
+		if gotModel != c.wantModel {
+			t.Errorf("GetByModel(%q) model = %q, want %q", c.model, gotModel, c.wantModel)
+		}
+	}
+}
