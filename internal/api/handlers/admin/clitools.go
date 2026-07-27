@@ -218,11 +218,27 @@ func (h *CLIToolsHandler) GetConfig(c *gin.Context) {
 
 	actualConfig := map[string]string{}
 	if state != nil {
+		content := ""
+		path := ""
 		if cfgStr, ok := state["config"].(string); ok && cfgStr != "" {
-			actualConfig["content"] = cfgStr
-			if p, ok := state["configPath"].(string); ok {
-				actualConfig["path"] = p
+			content = cfgStr
+			path, _ = state["configPath"].(string)
+		} else {
+			for _, key := range []string{"configPath", "settingsPath", "authPath", "globalStatePath"} {
+				if p, ok := state[key].(string); ok && p != "" {
+					path = p
+					if b, err := os.ReadFile(path); err == nil {
+						content = string(b)
+					}
+					break
+				}
 			}
+		}
+		if content != "" {
+			actualConfig["content"] = content
+		}
+		if path != "" {
+			actualConfig["path"] = path
 		}
 	}
 

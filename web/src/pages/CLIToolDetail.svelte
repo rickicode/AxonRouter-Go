@@ -51,8 +51,8 @@ let sel = $state<CLIToolSelection>({
 	agentModels: {},
 	reasoningEffort: 'high'
 });
+
 let detailInstalled = $state(false);
-let detailHasRouter = $state(false);
 let detailState = $state<unknown>(null);
 let detailConfigured = $state(false);
 let detailConfig = $state<CLIToolConfig | null>(null);
@@ -109,11 +109,19 @@ async function loadAll() {
 			activeModel: s.activeModel ?? '',
 			subagentModel: s.subagentModel ?? '',
 			agentModels: s.agentModels ?? {},
+			reasoningEffort: s.reasoningEffort ?? 'high',
 		};
 		if (s.modelAliases) {
 			modelAliases = { ...s.modelAliases };
 		}
 		generated = res.config ?? null;
+
+		// Auto-generate config on load when the tool is already configured but the
+		// backend did not return a rendered config. This makes all tools behave like Codex.
+		if (detailConfigured && !generated && !loading) {
+			setTimeout(() => applyConfig(), 0);
+		}
+
 		// Initialize alias defaults for tools with defaultModels
 		if (tool?.defaultModels) {
 			for (const dm of tool.defaultModels) {
