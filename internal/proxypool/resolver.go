@@ -60,25 +60,29 @@ func GenerateRelayAuth() string {
 }
 
 type Config struct {
-	Source      string
-	ProxyPoolID string
-	Enabled     bool
-	ProxyURL    string
-	NoProxy     string
-	StrictProxy bool
-	RelayURL    string
-	RelayAuth   string
-	RelayType   string
+	Source        string
+	ProxyPoolID   string
+	Enabled       bool
+	ProxyURL      string
+	ProxyUsername string
+	ProxyPassword string
+	NoProxy       string
+	StrictProxy   bool
+	RelayURL      string
+	RelayAuth     string
+	RelayType     string
 }
 
 type pool struct {
-	ID         string
-	Type       string
-	ProxyURL   string
-	NoProxy    string
-	RelayAuth  string
-	IsActive   bool
-	TestStatus string
+	ID            string
+	Type          string
+	ProxyURL      string
+	ProxyUsername string
+	ProxyPassword string
+	NoProxy       string
+	RelayAuth     string
+	IsActive      bool
+	TestStatus    string
 }
 
 type stickyState struct {
@@ -271,7 +275,7 @@ func (r *Resolver) resolvePool(id, source string, strict bool) (Config, bool) {
 		return Config{Source: source}, true
 	}
 
-	cfg := Config{Source: source, ProxyPoolID: p.ID, Enabled: true, ProxyURL: p.ProxyURL, NoProxy: p.NoProxy, StrictProxy: strict}
+	cfg := Config{Source: source, ProxyPoolID: p.ID, Enabled: true, ProxyURL: p.ProxyURL, ProxyUsername: p.ProxyUsername, ProxyPassword: p.ProxyPassword, NoProxy: p.NoProxy, StrictProxy: strict}
 	if IsRelayType(p.Type) {
 		cfg.RelayURL, cfg.RelayAuth, cfg.RelayType = p.ProxyURL, p.RelayAuth, p.Type
 	}
@@ -361,8 +365,8 @@ func (r *Resolver) getPool(id string) (pool, bool) {
 
 	var p pool
 	var active int
-	err := r.db.QueryRow("SELECT id, type, proxy_url, no_proxy, relay_auth, is_active, test_status FROM proxy_pools WHERE id = ?", id).Scan(
-		&p.ID, &p.Type, &p.ProxyURL, &p.NoProxy, &p.RelayAuth, &active, &p.TestStatus,
+	err := r.db.QueryRow("SELECT id, type, proxy_url, proxy_username, proxy_password, no_proxy, relay_auth, is_active, test_status FROM proxy_pools WHERE id = ?", id).Scan(
+		&p.ID, &p.Type, &p.ProxyURL, &p.ProxyUsername, &p.ProxyPassword, &p.NoProxy, &p.RelayAuth, &active, &p.TestStatus,
 	)
 	p.IsActive = active != 0
 	if err != nil {

@@ -8,6 +8,33 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// TestProxyPoolAuthColumns verifies the proxy_pools.proxy_username and
+// proxy_pools.proxy_password migrations are applied and idempotent.
+func TestProxyPoolAuthColumns(t *testing.T) {
+	dir := t.TempDir()
+	d, err := sql.Open("sqlite", filepath.Join(dir, "verify.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	if err := RunMigrations(d); err != nil {
+		t.Fatal(err)
+	}
+
+	if !hasColumn(t, d, "proxy_pools", "proxy_username") {
+		t.Fatal("proxy_pools table missing proxy_username column after migration")
+	}
+	if !hasColumn(t, d, "proxy_pools", "proxy_password") {
+		t.Fatal("proxy_pools table missing proxy_password column after migration")
+	}
+
+	// Re-running must be idempotent (duplicate column error is ignored).
+	if err := RunMigrations(d); err != nil {
+		t.Fatalf("re-run migrations failed: %v", err)
+	}
+}
+
 // TestAPIKeysExpiresAtColumn verifies the api_keys.expires_at migration is
 // applied and that re-running migrations is idempotent.
 func TestAPIKeysExpiresAtColumn(t *testing.T) {

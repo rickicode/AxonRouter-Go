@@ -45,6 +45,189 @@ func noopTestProxy(_ string, _ string, _ string) proxypool.TestResult {
 	return proxypool.TestResult{OK: true, StatusCode: 200, Country: "US", Org: "TestOrg", ElapsedMs: 0}
 }
 
+func TestProxyPoolCreateAcceptsSameHostDifferentCredentials(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
+	h.testProxy = noopTestProxy
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools", jsonBodyProxyPool(t, map[string]any{
+		"name": "pool-a", "proxyUrl": "http://shared.example:8080", "proxyUsername": "user-a", "proxyPassword": "pass-a", "type": "http",
+	}))
+	h.Create(c)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("first create status = %d, body=%s", w.Code, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools", jsonBodyProxyPool(t, map[string]any{
+		"name": "pool-b", "proxyUrl": "http://user-b:pass-b@shared.example:8080", "type": "http",
+	}))
+	h.Create(c)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("second create status = %d, body=%s", w.Code, w.Body.String())
+	}
+
+	var count int
+	if err := database.QueryRow("SELECT COUNT(*) FROM proxy_pools").Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected 2 pools with same host but different credentials, got %d", count)
+	}
+
+	var storedUser, storedPass string
+	err := database.QueryRow("SELECT proxy_username, proxy_password FROM proxy_pools WHERE name = ?", "pool-b").Scan(&storedUser, &storedPass)
+	if err != nil {
+		t.Fatalf("find pool: %v", err)
+	}
+	if storedUser != "user-b" || storedPass != "pass-b" {
+		t.Fatalf("expected inline credentials extracted, got user=%s pass=%s", storedUser, storedPass)
+	}
+}
+
+func TestProxyPoolCreateRejectsSameCanonicalNoCredentials(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
+	h.testProxy = noopTestProxy
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools", jsonBodyProxyPool(t, map[string]any{
+		"name": "pool-a", "proxyUrl": "http://shared.example:8080", "type": "http",
+	}))
+	h.Create(c)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("first create status = %d, body=%s", w.Code, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools", jsonBodyProxyPool(t, map[string]any{
+		"name": "pool-b", "proxyUrl": "http://shared.example:8080", "type": "http",
+	}))
+	h.Create(c)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected conflict for duplicate canonical URL, got status = %d, body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestProxyPoolUpdateStoresInlineCredentials(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
+	h.testProxy = noopTestProxy
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools", jsonBodyProxyPool(t, map[string]any{
+		"name": "pool-a", "proxyUrl": "http://shared.example:8080", "type": "http",
+	}))
+	h.Create(c)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var createResp struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("unmarshal create response: %v", err)
+	}
+
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPut, "/proxy-pools/"+createResp.Data.ID, jsonBodyProxyPool(t, map[string]any{
+		"proxyUrl": "http://user-a:pass-a@shared.example:8080",
+	}))
+	c.Params = gin.Params{{Key: "id", Value: createResp.Data.ID}}
+	h.Update(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update status = %d, body=%s", w.Code, w.Body.String())
+	}
+
+	var storedUser, storedPass, storedURL string
+	err := database.QueryRow("SELECT proxy_username, proxy_password, proxy_url FROM proxy_pools WHERE id = ?", createResp.Data.ID).Scan(&storedUser, &storedPass, &storedURL)
+	if err != nil {
+		t.Fatalf("find pool: %v", err)
+	}
+	if storedUser != "user-a" || storedPass != "pass-a" {
+		t.Fatalf("expected inline credentials extracted, got user=%s pass=%s", storedUser, storedPass)
+	}
+	if storedURL != "http://shared.example:8080" {
+		t.Fatalf("expected canonical URL without credentials, got %s", storedURL)
+	}
+
+	var updateResp struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &updateResp); err != nil {
+		t.Fatalf("unmarshal update response: %v", err)
+	}
+	if _, ok := updateResp.Data["proxyPassword"]; ok {
+		t.Fatalf("response must not expose proxyPassword")
+	}
+}
+
+func TestProxyPoolCreatePreservesRelayPath(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
+	h.testProxy = noopTestProxy
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools", jsonBodyProxyPool(t, map[string]any{
+		"name": "relay-a", "proxyUrl": "https://myrelay.vercel.app/api/proxy?foo=bar", "type": "vercel",
+	}))
+	h.Create(c)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body=%s", w.Code, w.Body.String())
+	}
+
+	var storedURL string
+	err := database.QueryRow("SELECT proxy_url FROM proxy_pools WHERE name = ?", "relay-a").Scan(&storedURL)
+	if err != nil {
+		t.Fatalf("find pool: %v", err)
+	}
+	if storedURL != "https://myrelay.vercel.app/api/proxy?foo=bar" {
+		t.Fatalf("expected relay path and query preserved, got %s", storedURL)
+	}
+}
+
+func TestProxyPoolCreateRejectsInvalidProxyURL(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
+	h.testProxy = noopTestProxy
+
+	for _, tc := range []struct {
+		name     string
+		proxyURL string
+	}{
+		{"missing scheme", "//missing-scheme.example:8080"},
+		{"missing host", "http://"},
+		{"unsupported scheme", "ftp://ftp.example:8080"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools", jsonBodyProxyPool(t, map[string]any{
+				"name": tc.name, "proxyUrl": tc.proxyURL, "type": "http",
+			}))
+			h.Create(c)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected bad request for %s, got status = %d, body=%s", tc.name, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
 func TestProxyPoolCreateRejectsUnhealthy(t *testing.T) {
 	database := newProxyPoolTestDB(t)
 	gin.SetMode(gin.TestMode)
@@ -134,9 +317,9 @@ func TestProxyPoolBulkCreate(t *testing.T) {
 			"http://proxy2.example:8080",
 			map[string]any{"name": "custom-pool", "proxyUrl": "http://proxy3.example:8080", "type": "http"},
 		},
-		"namePrefix": "bulk",
+		"namePrefix":  "bulk",
 		"defaultType": "http",
-		"isActive": true,
+		"isActive":    true,
 	}))
 	h.BulkCreate(c)
 
@@ -146,7 +329,7 @@ func TestProxyPoolBulkCreate(t *testing.T) {
 	var resp struct {
 		Created int `json:"created"`
 		Skipped int `json:"skipped"`
-		Errors int `json:"errors"`
+		Errors  int `json:"errors"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -162,8 +345,8 @@ func TestProxyPoolBulkCreate(t *testing.T) {
 	w = httptest.NewRecorder()
 	c, _ = gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk", jsonBodyProxyPool(t, map[string]any{
-		"items": []any{"http://proxy1.example:8080", "http://proxy4.example:8080"},
-		"namePrefix": "bulk",
+		"items":       []any{"http://proxy1.example:8080", "http://proxy4.example:8080"},
+		"namePrefix":  "bulk",
 		"defaultType": "http",
 	}))
 	h.BulkCreate(c)
@@ -187,8 +370,8 @@ func TestProxyPoolBulkCreateNamePipe(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk", jsonBodyProxyPool(t, map[string]any{
-		"items": []any{"us-proxy|http://proxy-us.example:8080", "http://proxy-eu.example:8080"},
-		"namePrefix": "bulk",
+		"items":       []any{"us-proxy|http://proxy-us.example:8080", "http://proxy-eu.example:8080"},
+		"namePrefix":  "bulk",
 		"defaultType": "http",
 	}))
 	h.BulkCreate(c)
@@ -216,8 +399,8 @@ func TestProxyPoolBulkCreateDetectsRelayType(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk", jsonBodyProxyPool(t, map[string]any{
-		"items": []any{"https://myrelay.vercel.app"},
-		"namePrefix": "relay",
+		"items":       []any{"https://myrelay.vercel.app"},
+		"namePrefix":  "relay",
 		"defaultType": "http",
 	}))
 	h.BulkCreate(c)
@@ -658,9 +841,9 @@ func TestProxyPoolBulkCreateGeoNames(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk", jsonBodyProxyPool(t, map[string]any{
-		"items":         []any{"http://geo1.example:8080"},
-		"defaultType":   "http",
-		"isActive":      true,
+		"items":          []any{"http://geo1.example:8080"},
+		"defaultType":    "http",
+		"isActive":       true,
 		"requireHealthy": true,
 	}))
 	h.BulkCreate(c)

@@ -1780,14 +1780,16 @@ func (h *Handler) proxyCandidates(conn *Connection) []executor.ProxyConfig {
 	out := make([]executor.ProxyConfig, 0, len(cfgs))
 	for _, c := range cfgs {
 		out = append(out, executor.ProxyConfig{
-			Enabled:     c.Enabled,
-			ProxyPoolID: c.ProxyPoolID,
-			ProxyURL:    c.ProxyURL,
-			NoProxy:     c.NoProxy,
-			RelayURL:    c.RelayURL,
-			RelayAuth:   c.RelayAuth,
-			RelayType:   c.RelayType,
-			StrictProxy: c.StrictProxy,
+			Enabled:       c.Enabled,
+			ProxyPoolID:   c.ProxyPoolID,
+			ProxyURL:      c.ProxyURL,
+			ProxyUsername: c.ProxyUsername,
+			ProxyPassword: c.ProxyPassword,
+			NoProxy:       c.NoProxy,
+			RelayURL:      c.RelayURL,
+			RelayAuth:     c.RelayAuth,
+			RelayType:     c.RelayType,
+			StrictProxy:   c.StrictProxy,
 		})
 	}
 	return out

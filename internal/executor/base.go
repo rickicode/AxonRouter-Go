@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -330,14 +332,69 @@ func clientLogAttrs(ctx context.Context) []any {
 
 // ProxyConfig is attached to request contexts by v1 handlers.
 type ProxyConfig struct {
-	Enabled     bool
-	ProxyPoolID string
-	ProxyURL    string
-	NoProxy     string
-	RelayURL    string
-	RelayAuth   string
-	RelayType   string
-	StrictProxy bool
+	Enabled       bool
+	ProxyPoolID   string
+	ProxyURL      string
+	ProxyUsername string
+	ProxyPassword string
+	NoProxy       string
+	RelayURL      string
+	RelayAuth     string
+	RelayType     string
+	StrictProxy   bool
+	Version       string // opaque version/timestamp; changes invalidate cached clients
+}
+
+// proxyURLWithCredentials builds the final proxy URL, re-attaching separate
+// credentials or preserving legacy inline credentials.
+func (c ProxyConfig) proxyURLWithCredentials() string {
+	if c.ProxyURL == "" {
+		return ""
+	}
+	u, err := url.Parse(c.ProxyURL)
+	if err != nil {
+		return c.ProxyURL
+	}
+	if c.ProxyUsername != "" {
+		pass := c.ProxyPassword
+		u.User = url.UserPassword(c.ProxyUsername, pass)
+	}
+	return u.String()
+}
+
+// canonicalProxyURL returns the proxy URL without credentials for cache keys.
+func (c ProxyConfig) canonicalProxyURL() string {
+	if c.ProxyURL == "" {
+		return ""
+	}
+	u, err := url.Parse(c.ProxyURL)
+	if err != nil {
+		return c.ProxyURL
+	}
+	u.User = nil
+	return u.String()
+}
+
+// proxyCacheKey returns a cache key composed of the canonical proxy identity
+// plus an opaque version. Credential rotation changes the version and therefore
+// invalidates the cached client. Legacy inline-credential URLs are parsed to
+// derive the version when separate fields are empty.
+func (c ProxyConfig) proxyCacheKey() string {
+	version := c.Version
+	if version == "" {
+		user, pass := c.ProxyUsername, c.ProxyPassword
+		if user == "" && pass == "" && c.ProxyURL != "" {
+			if u, err := url.Parse(c.ProxyURL); err == nil && u.User != nil {
+				user = u.User.Username()
+				pass, _ = u.User.Password()
+			}
+		}
+		if user != "" || pass != "" {
+			h := sha256.Sum256([]byte(user + "\x00" + pass))
+			version = hex.EncodeToString(h[:])
+		}
+	}
+	return c.canonicalProxyURL() + "#" + version
 }
 
 // ProxyLabel returns a human-readable proxy description for logging.
@@ -350,7 +407,7 @@ func (c ProxyConfig) ProxyLabel() string {
 		return "relay/" + c.RelayType + " " + host
 	}
 	if c.ProxyURL != "" {
-		return "http " + c.ProxyURL
+		return "http " + c.canonicalProxyURL()
 	}
 	return "direct"
 }
@@ -505,10 +562,16 @@ func resolveTargetURL(rawURL string, cfg ProxyConfig) (string, map[string]string
 	return cfg.RelayURL, extra
 }
 
-// proxyClient returns an http.Client that routes through the given proxy URL.
-// ponytail: cached per proxy URL, avoids creating a new transport per request.
-func (b *BaseExecutor) proxyClient(proxyURL string) (*http.Client, error) {
-	if v, ok := b.proxyClients.Load(proxyURL); ok {
+// proxyClient returns an http.Client that routes through the proxy described by cfg.
+// Clients are cached by canonical proxy identity plus version, so credential
+// rotation produces a fresh client while sharing clients when credentials are stable.
+func (b *BaseExecutor) proxyClient(cfg ProxyConfig) (*http.Client, error) {
+	proxyURL := cfg.proxyURLWithCredentials()
+	if proxyURL == "" {
+		return b.Client, nil
+	}
+	key := cfg.proxyCacheKey()
+	if v, ok := b.proxyClients.Load(key); ok {
 		return v.(*http.Client), nil
 	}
 	u, err := url.Parse(proxyURL)
@@ -521,18 +584,20 @@ func (b *BaseExecutor) proxyClient(proxyURL string) (*http.Client, error) {
 	// for proxied traffic to avoid mid-stream EOFs.
 	transport.ForceAttemptHTTP2 = false
 	c := &http.Client{Timeout: b.Timeout, Transport: transport}
-	b.proxyClients.Store(proxyURL, c)
+	b.proxyClients.Store(key, c)
 	return c, nil
 }
 
-// streamClient returns an http.Client for streaming through the given proxy.
+// streamClient returns an http.Client for streaming through the proxy described by cfg.
 // It has no global Timeout so long-lived SSE streams are not cut at 5 minutes;
 // stream timeouts are enforced via context instead.
-func (b *BaseExecutor) streamClient(proxyURL string) (*http.Client, error) {
+func (b *BaseExecutor) streamClient(cfg ProxyConfig) (*http.Client, error) {
+	proxyURL := cfg.proxyURLWithCredentials()
 	if proxyURL == "" {
 		return b.streamBase, nil
 	}
-	if v, ok := b.streamClients.Load(proxyURL); ok {
+	key := cfg.proxyCacheKey()
+	if v, ok := b.streamClients.Load(key); ok {
 		return v.(*http.Client), nil
 	}
 	u, err := url.Parse(proxyURL)
@@ -543,7 +608,7 @@ func (b *BaseExecutor) streamClient(proxyURL string) (*http.Client, error) {
 	transport.Proxy = http.ProxyURL(u)
 	transport.ForceAttemptHTTP2 = false
 	c := &http.Client{Transport: transport}
-	b.streamClients.Store(proxyURL, c)
+	b.streamClients.Store(key, c)
 	return c, nil
 }
 
@@ -636,9 +701,9 @@ func (b *BaseExecutor) selectClient(ctx context.Context, rawURL string, headers 
 		err error
 	)
 	if stream {
-		c, err = b.streamClient(cfg.ProxyURL)
+		c, err = b.streamClient(cfg)
 	} else {
-		c, err = b.proxyClient(cfg.ProxyURL)
+		c, err = b.proxyClient(cfg)
 	}
 	if err != nil {
 		if cfg.StrictProxy {
