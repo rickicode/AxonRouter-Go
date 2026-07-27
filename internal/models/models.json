@@ -6254,5 +6254,117 @@
         "llm"
       ]
     }
+  ],
+  "fal": [
+    {
+      "id": "fal-fast-image",
+      "display_name": "FAL Fast Image",
+      "service_kinds": [
+        "image"
+      ]
+    },
+    {
+      "id": "fal-video",
+      "display_name": "FAL Video",
+      "service_kinds": [
+        "video"
+      ]
+    },
+    {
+      "id": "fal-flux-pro",
+      "display_name": "FAL Flux Pro",
+      "service_kinds": [
+        "image"
+      ]
+    }
+  ],
+  "black-forest-labs": [
+    {
+      "id": "flux-pro",
+      "display_name": "FLUX Pro",
+      "service_kinds": [
+        "image"
+      ]
+    }
+  ],
+  "elevenlabs": [
+    {
+      "id": "eleven-multilingual-v2",
+      "display_name": "Eleven Multilingual v2",
+      "service_kinds": [
+        "tts"
+      ]
+    },
+    {
+      "id": "eleven-flash-v2",
+      "display_name": "Eleven Flash v2",
+      "service_kinds": [
+        "tts"
+      ]
+    },
+    {
+      "id": "eleven-flash-v2-5",
+      "display_name": "Eleven Flash v2.5",
+      "service_kinds": [
+        "tts"
+      ]
+    },
+    {
+      "id": "eleven-english-sts-v2",
+      "display_name": "Eleven English STS v2",
+      "service_kinds": [
+        "stt"
+      ]
+    }
+  ],
+  "assemblyai": [
+    {
+      "id": "assemblyai-stt",
+      "display_name": "AssemblyAI Speech-to-Text",
+      "service_kinds": [
+        "stt"
+      ]
+    }
+  ],
+  "deepgram": [
+    {
+      "id": "deepgram-stt",
+      "display_name": "DeepGram Speech-to-Text",
+      "service_kinds": [
+        "stt"
+      ]
+    },
+    {
+      "id": "deepgram-tts",
+      "display_name": "DeepGram Text-to-Speech",
+      "service_kinds": [
+        "tts"
+      ]
+    }
+  ],
+  "edge-tts": [
+    {
+      "id": "edge-tts",
+      "display_name": "Edge TTS",
+      "service_kinds": [
+        "tts"
+      ]
+    }
+  ],
+  "cartesia": [
+    {
+      "id": "sonic-2",
+      "display_name": "Cartesia Sonic 2",
+      "service_kinds": [
+        "tts"
+      ]
+    },
+    {
+      "id": "sonic-2-tts",
+      "display_name": "Cartesia Sonic 2 TTS",
+      "service_kinds": [
+        "tts"
+      ]
+    }
   ]
 }

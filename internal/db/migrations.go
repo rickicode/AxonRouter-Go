@@ -321,6 +321,13 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 
 		{"vertex", "Google Vertex AI", "openai", "https://aiplatform.googleapis.com/v1/projects/{projectId}/locations/{location}/endpoints/openapi", "service-account", []string{"llm"}},
 		{"bedrock", "Amazon Bedrock Mantle", "openai", "https://bedrock-mantle.{region}.api.aws/v1", "apikey", []string{"llm"}},
+		{"elevenlabs", "ElevenLabs", "openai", "https://api.elevenlabs.io/v1", "apikey", []string{"tts", "stt"}},
+		{"deepgram", "DeepGram", "openai", "https://api.deepgram.com/v1", "apikey", []string{"stt", "tts"}},
+		{"fal", "FAL AI", "openai", "https://fal.ai/api/v1", "apikey", []string{"image", "video"}},
+		{"black-forest-labs", "Black Forest Labs", "openai", "https://api.bfl.ai/v1", "apikey", []string{"image"}},
+		{"assemblyai", "AssemblyAI", "openai", "https://api.assemblyai.com/v1", "apikey", []string{"stt"}},
+		{"edge-tts", "Edge TTS", "openai", "https://speech.platform.bing.com/consumer/speech/synthesize/read-aloud-edge", "no-auth", []string{"tts"}},
+		{"cartesia", "Cartesia", "openai", "https://api.cartesia.ai/v1", "apikey", []string{"tts"}},
 	}
 	for _, p := range providers {
 		serviceKindsJSON, _ := json.Marshal(p.ServiceKinds)

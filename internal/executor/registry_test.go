@@ -79,3 +79,66 @@ func TestRegistry_GetByModel_NewProviders(t *testing.T) {
 		}
 	}
 }
+
+func TestRegistry_MediaProviders(t *testing.T) {
+	RegisterDefaults()
+	want := []struct {
+		prefix string
+		format ProviderFormat
+	}{
+		{"fal", FormatOpenAI},
+		{"black-forest-labs", FormatOpenAI},
+		{"assemblyai", FormatOpenAI},
+		{"edge-tts", FormatOpenAI},
+		{"cartesia", FormatOpenAI},
+		{"elevenlabs", FormatOpenAI},
+		{"deepgram", FormatOpenAI},
+	}
+	for _, c := range want {
+		exec, format, ok := GetRegistry().Get(c.prefix)
+		if !ok {
+			t.Errorf("provider %q not registered", c.prefix)
+			continue
+		}
+		if format != c.format {
+			t.Errorf("provider %q format = %q, want %q", c.prefix, format, c.format)
+		}
+		if exec == nil {
+			t.Errorf("provider %q has nil executor", c.prefix)
+		}
+	}
+}
+
+func TestRegistry_GetByModel_MediaProviders(t *testing.T) {
+	RegisterDefaults()
+	cases := []struct {
+		model      string
+		wantPrefix string
+		wantModel  string
+		wantFormat ProviderFormat
+	}{
+		{"fal/fal-fast-image", "fal", "fal-fast-image", FormatOpenAI},
+		{"black-forest-labs/flux-pro", "black-forest-labs", "flux-pro", FormatOpenAI},
+		{"elevenlabs/eleven-multilingual-v2", "elevenlabs", "eleven-multilingual-v2", FormatOpenAI},
+		{"assemblyai/assemblyai-stt", "assemblyai", "assemblyai-stt", FormatOpenAI},
+		{"deepgram/deepgram-stt", "deepgram", "deepgram-stt", FormatOpenAI},
+		{"edge-tts/edge-tts", "edge-tts", "edge-tts", FormatOpenAI},
+		{"cartesia/sonic-2", "cartesia", "sonic-2", FormatOpenAI},
+	}
+	for _, c := range cases {
+		exec, format, model, err := GetRegistry().GetByModel(c.model)
+		if err != nil {
+			t.Errorf("GetByModel(%q) unexpected error: %v", c.model, err)
+			continue
+		}
+		if exec == nil {
+			t.Errorf("GetByModel(%q) returned nil executor", c.model)
+		}
+		if format != c.wantFormat {
+			t.Errorf("GetByModel(%q) format = %q, want %q", c.model, format, c.wantFormat)
+		}
+		if model != c.wantModel {
+			t.Errorf("GetByModel(%q) model = %q, want %q", c.model, model, c.wantModel)
+		}
+	}
+}

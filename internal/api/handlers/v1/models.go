@@ -53,6 +53,14 @@ var v1ProviderCatalog = map[string]struct {
 	"cf":        {keys: []string{"cf"}, ownedBy: "cloudflare"},
 	"grok-cli":  {keys: []string{"grok-cli"}, ownedBy: "xai"},
 	"codebuddy": {keys: []string{"codebuddy"}, ownedBy: "tencent"},
+
+	"fal":               {keys: []string{"fal"}, ownedBy: "fal"},
+	"black-forest-labs": {keys: []string{"black-forest-labs"}, ownedBy: "black-forest-labs"},
+	"elevenlabs":        {keys: []string{"elevenlabs"}, ownedBy: "elevenlabs"},
+	"assemblyai":        {keys: []string{"assemblyai"}, ownedBy: "assemblyai"},
+	"deepgram":          {keys: []string{"deepgram"}, ownedBy: "deepgram"},
+	"edge-tts":          {keys: []string{"edge-tts"}, ownedBy: "microsoft"},
+	"cartesia":          {keys: []string{"cartesia"}, ownedBy: "cartesia"},
 }
 
 // buildModelList returns the unified gateway model catalog: registered providers,

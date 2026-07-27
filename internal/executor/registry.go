@@ -116,7 +116,7 @@ func RegisterDefaults() {
 
 	// OpenAI-compatible providers
 	openaiExec := NewOpenAIExecutor(base)
-	for _, p := range []string{"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp", "elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras", "together", "fireworks", "novita", "lambda", "pollinations", "zenmux", "zenmux-free", "cursor"} {
+	for _, p := range []string{"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp", "elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras", "together", "fireworks", "novita", "lambda", "pollinations", "zenmux", "zenmux-free", "cursor", "fal", "black-forest-labs", "assemblyai", "edge-tts", "cartesia"} {
 		GetRegistry().Register(p, FormatOpenAI, openaiExec)
 	}
 	// CodeBuddy uses an OpenAI-compatible endpoint but requires a leading system
@@ -148,8 +148,9 @@ func RegisterDefaults() {
 		"elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras",
 		"together", "fireworks", "novita", "lambda", "pollinations", "zenmux", "zenmux-free",
 		"mimocode", "openrouter", "copilot", "vertex", "bedrock", "codebuddy",
-		"qwencloud", "cursor",
+		"qwencloud", "cursor", "fal", "black-forest-labs", "assemblyai", "edge-tts", "cartesia",
 	} {
+
 		translator.Register(p, translator.Func(providers.TranslateOpenAICompatible))
 	}
 

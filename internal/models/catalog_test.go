@@ -296,3 +296,27 @@ func getCurrentModelIDs(key string) []string {
 	slices.Sort(ids)
 	return ids
 }
+
+func TestGetModelIDs_MediaProviders(t *testing.T) {
+	want := map[string][]string{
+		"fal":               {"fal-fast-image", "fal-video", "fal-flux-pro"},
+		"black-forest-labs": {"flux-pro"},
+		"elevenlabs":        {"eleven-multilingual-v2", "eleven-flash-v2"},
+		"assemblyai":        {"assemblyai-stt"},
+		"deepgram":          {"deepgram-stt", "deepgram-tts"},
+		"edge-tts":          {"edge-tts"},
+		"cartesia":          {"sonic-2", "sonic-2-tts"},
+	}
+	for key, ids := range want {
+		got := GetModelIDs(key)
+		if len(got) == 0 {
+			t.Errorf("GetModelIDs(%q) returned empty", key)
+			continue
+		}
+		for _, id := range ids {
+			if !slices.Contains(got, id) {
+				t.Errorf("GetModelIDs(%q) missing %q; got %v", key, id, got)
+			}
+		}
+	}
+}

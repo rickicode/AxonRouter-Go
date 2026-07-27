@@ -8,6 +8,27 @@ Manages per-provider runtime configuration including routing mode selection and 
 indexing. Provides file-backed settings storage with in-memory caching and concurrent-safe access to
 avoid database write contention on hot routing paths.
 
+
+## Supported Built-in Providers
+The gateway ships built-in provider metadata in `internal/provider/aliases.go` (canonical IDs and
+legacy aliases) and seeds rows in the `provider_types` table via `internal/db/migrations.go`. Text
+providers include OpenAI, Claude, Gemini, DeepSeek, Groq, OpenRouter, and the OpenCode/MiMo/ZenMux
+families. Media providers include:
+
+| Provider | Prefix | Format | Auth | Service kinds |
+|----------|--------|--------|------|---------------|
+| FAL AI | `fal` | openai | API key | image, video |
+| Black Forest Labs | `black-forest-labs` | openai | API key | image |
+| ElevenLabs | `elevenlabs` | openai | API key | tts, stt |
+| AssemblyAI | `assemblyai` | openai | API key | stt |
+| DeepGram | `deepgram` | openai | API key | stt, tts |
+| Edge TTS | `edge-tts` | openai | none | tts |
+| Cartesia | `cartesia` | openai | API key | tts |
+
+Media prefixes route through the OpenAI-compatible executor and rely on `internal/models/models.json`
+and the catalog keys in `internal/api/handlers/v1/models.go` and
+`internal/api/handlers/admin/models.go` for model discovery.
+
 ## Requirements
 
 > `internal/providercfg/providercfg.go`

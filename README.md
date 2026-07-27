@@ -183,6 +183,11 @@ See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) and the dashboard **CLI Tools**
 | Cloudflare Workers AI | `cf/` | openai | API key |
 | ElevenLabs | `elevenlabs/` | openai | API key |
 | Deepgram | `deepgram/` | openai | API key |
+| FAL AI | `fal/` | openai | API key |
+| Black Forest Labs | `black-forest-labs/` | openai | API key |
+| AssemblyAI | `assemblyai/` | openai | API key |
+| Edge TTS | `edge-tts/` | openai | none |
+| Cartesia | `cartesia/` | openai | API key |
 | Custom OpenAI | `<your-name>/` | openai | API key |
 | Custom Claude | `<your-name>/` | claude | API key |
 | Cursor | `cursor/` | openai | OAuth (imported from IDE) |
