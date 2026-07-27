@@ -296,3 +296,24 @@ func getCurrentModelIDs(key string) []string {
 	slices.Sort(ids)
 	return ids
 }
+
+func TestGetModelIDs_CommandCodeContainsExpectedModels(t *testing.T) {
+	want := []string{
+		"claude-opus-4-7",
+		"deepseek/deepseek-v4-pro",
+		"moonshotai/Kimi-K2.6",
+		"zai-org/GLM-5.1",
+		"MiniMaxAI/MiniMax-M2.7",
+		"Qwen/Qwen3.6-Max-Preview",
+	}
+	got := GetModelIDs("commandcode")
+	if len(got) == 0 {
+		t.Fatal("GetModelIDs(commandcode) returned empty")
+	}
+	for _, id := range want {
+		if !slices.Contains(got, id) {
+			t.Errorf("GetModelIDs(commandcode) missing %q; got %v", id, got)
+		}
+	}
+}
+

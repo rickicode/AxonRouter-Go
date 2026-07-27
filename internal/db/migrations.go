@@ -342,6 +342,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 
 		{"vertex", "Google Vertex AI", "openai", "https://aiplatform.googleapis.com/v1/projects/{projectId}/locations/{location}/endpoints/openapi", "service-account", []string{"llm"}},
 		{"bedrock", "Amazon Bedrock Mantle", "openai", "https://bedrock-mantle.{region}.api.aws/v1", "apikey", []string{"llm"}},
+	{"commandcode", "CommandCode AI", "openai", "https://api.commandcode.ai", "apikey", []string{"llm"}},
 	}
 	for _, p := range providers {
 		serviceKindsJSON, _ := json.Marshal(p.ServiceKinds)

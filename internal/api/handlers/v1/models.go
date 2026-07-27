@@ -49,10 +49,11 @@ var v1ProviderCatalog = map[string]struct {
 	"zenmux-free":   {keys: []string{"zenmux-free"}, ownedBy: "zenmux"},
 	"bedrock":       {keys: []string{"bedrock"}, ownedBy: "amazon"},
 
-	"zai":       {keys: []string{"claude"}, ownedBy: "zai"},
-	"cf":        {keys: []string{"cf"}, ownedBy: "cloudflare"},
-	"grok-cli":  {keys: []string{"grok-cli"}, ownedBy: "xai"},
-	"codebuddy": {keys: []string{"codebuddy"}, ownedBy: "tencent"},
+	"zai":         {keys: []string{"claude"}, ownedBy: "zai"},
+	"cf":          {keys: []string{"cf"}, ownedBy: "cloudflare"},
+	"grok-cli":    {keys: []string{"grok-cli"}, ownedBy: "xai"},
+	"codebuddy":   {keys: []string{"codebuddy"}, ownedBy: "tencent"},
+	"commandcode": {keys: []string{"commandcode"}, ownedBy: "commandcode"},
 }
 
 // buildModelList returns the unified gateway model catalog: registered providers,
