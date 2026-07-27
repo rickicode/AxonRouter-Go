@@ -2239,7 +2239,7 @@
       "type": "xai",
       "display_name": "Grok Build 0.1",
       "name": "grok-build-0.1",
-      "description": "Grok Build 0.1 is xAI\u2019s fast coding model trained specifically for agentic software engineering workflows.",
+      "description": "Grok Build 0.1 is xAI’s fast coding model trained specifically for agentic software engineering workflows.",
       "context_length": 256000,
       "max_completion_tokens": 256000
     },
@@ -6253,6 +6253,409 @@
       "service_kinds": [
         "llm"
       ]
+    }
+  ],
+  "tavily": [
+    {
+      "id": "tavily-search",
+      "display_name": "Tavily Search",
+      "service_kinds": [
+        "webSearch",
+        "webFetch"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "tavily-answer",
+      "display_name": "Tavily Answer",
+      "service_kinds": [
+        "webSearch",
+        "webFetch"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "brave": [
+    {
+      "id": "brave-search",
+      "display_name": "Brave Search",
+      "service_kinds": [
+        "webSearch"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "exa": [
+    {
+      "id": "exa-search",
+      "display_name": "Exa Search",
+      "service_kinds": [
+        "webSearch",
+        "webFetch"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "exa-answer",
+      "display_name": "Exa Answer",
+      "service_kinds": [
+        "webSearch",
+        "webFetch"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "jina": [
+    {
+      "id": "jina-search",
+      "display_name": "Jina AI Search",
+      "service_kinds": [
+        "webSearch"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "jina-reader",
+      "display_name": "Jina Reader",
+      "service_kinds": [
+        "webFetch"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "google-pse": [
+    {
+      "id": "google-pse",
+      "display_name": "Google Programmable Search Engine",
+      "service_kinds": [
+        "webSearch"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "firecrawl": [
+    {
+      "id": "firecrawl-search",
+      "display_name": "Firecrawl Search",
+      "service_kinds": [
+        "webSearch",
+        "webFetch"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "firecrawl-fetch",
+      "display_name": "Firecrawl Fetch",
+      "service_kinds": [
+        "webFetch"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "fal": [
+    {
+      "id": "fal-flux-schnell",
+      "display_name": "FAL Flux Schnell",
+      "service_kinds": [
+        "image"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "fal-flux-dev",
+      "display_name": "FAL Flux Dev",
+      "service_kinds": [
+        "image"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "fal-fast-sdxl",
+      "display_name": "FAL Fast SDXL",
+      "service_kinds": [
+        "image"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "fal-video",
+      "display_name": "FAL Video",
+      "service_kinds": [
+        "video"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "black-forest-labs": [
+    {
+      "id": "flux-schnell",
+      "display_name": "FLUX Schnell",
+      "service_kinds": [
+        "image"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "flux-dev",
+      "display_name": "FLUX Dev",
+      "service_kinds": [
+        "image"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "flux-pro",
+      "display_name": "FLUX Pro",
+      "service_kinds": [
+        "image"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "elevenlabs": [
+    {
+      "id": "eleven-monolingual-v1",
+      "display_name": "ElevenLabs Monolingual v1",
+      "service_kinds": [
+        "tts"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "eleven-multilingual-v2",
+      "display_name": "ElevenLabs Multilingual v2",
+      "service_kinds": [
+        "tts"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "eleven-flash-v2-5",
+      "display_name": "ElevenLabs Flash v2.5",
+      "service_kinds": [
+        "tts"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "assemblyai": [
+    {
+      "id": "assemblyai-default",
+      "display_name": "AssemblyAI Default",
+      "service_kinds": [
+        "stt"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "deepgram": [
+    {
+      "id": "deepgram-nova-2",
+      "display_name": "DeepGram Nova 2",
+      "service_kinds": [
+        "stt"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "deepgram-whisper",
+      "display_name": "DeepGram Whisper",
+      "service_kinds": [
+        "stt"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "cartesia": [
+    {
+      "id": "cartesia-sonic",
+      "display_name": "Cartesia Sonic",
+      "service_kinds": [
+        "tts"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "edge-tts": [
+    {
+      "id": "edge-tts",
+      "display_name": "Microsoft Edge TTS",
+      "service_kinds": [
+        "tts"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "qwen": [
+    {
+      "id": "qwen3.8-max-preview",
+      "display_name": "Qwen 3.8 Max Preview",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "qwen3.7-max",
+      "display_name": "Qwen 3.7 Max",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "qwen3.7-plus",
+      "display_name": "Qwen 3.7 Plus",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "qwen3-coder-plus",
+      "display_name": "Qwen 3 Coder Plus",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "qwen3-max",
+      "display_name": "Qwen 3 Max",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "alicode": [
+    {
+      "id": "qwen-coder-plus",
+      "display_name": "AliCode Qwen Coder Plus",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "qwen3.8-max-preview",
+      "display_name": "AliCode Qwen 3.8 Max Preview",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "kimi-coding": [
+    {
+      "id": "kimi-k2.7-code",
+      "display_name": "Kimi K2.7 Code",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "kimi-k3",
+      "display_name": "Kimi K3",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "iflow": [
+    {
+      "id": "iflow-default",
+      "display_name": "iFlow Default",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "volcengine-ark": [
+    {
+      "id": "doubao-lite",
+      "display_name": "Doubao Lite",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "doubao-pro",
+      "display_name": "Doubao Pro",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "doubao-vision",
+      "display_name": "Doubao Vision",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "hunyuan": [
+    {
+      "id": "hunyuan-lite",
+      "display_name": "Hunyuan Lite",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    },
+    {
+      "id": "hunyuan-pro",
+      "display_name": "Hunyuan Pro",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "nanobanana": [
+    {
+      "id": "nanobanana-default",
+      "display_name": "Nanobanana",
+      "service_kinds": [
+        "image"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "topaz": [
+    {
+      "id": "topaz-default",
+      "display_name": "Topaz Default",
+      "service_kinds": [
+        "image"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "puter": [
+    {
+      "id": "puter-default",
+      "display_name": "Puter",
+      "service_kinds": [
+        "llm"
+      ],
+      "target_format": "openai"
+    }
+  ],
+  "comfyui": [
+    {
+      "id": "comfyui-default",
+      "display_name": "ComfyUI Workflow",
+      "service_kinds": [
+        "image"
+      ],
+      "target_format": "openai"
     }
   ]
 }

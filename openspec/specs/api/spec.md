@@ -1655,3 +1655,18 @@ The API SHALL expose a stdio-SSE bridge for each registered MCP server at `/api/
 - **WHEN** The client disconnects or the server reaches max_idle_sec
 - **THEN** The subprocess is terminated and the session is removed
 
+
+### Requirement: ExpandedProviderRegistry
+The API SHALL expose the expanded built-in provider catalog through `/api/admin/providers` and `/v1/models`, covering search, media, Chinese/regional, and developer/niche providers. The gateway SHALL route chat-completion, embedding, image, audio, video, webSearch, and webFetch requests for these providers using the OpenAI-compatible executor and standard `provider/model-id` resolution.
+#### Scenario: SearchProviderRouting
+- **GIVEN** A configured search provider connection (`brave`, `tavily`, `exa`, `jina`, `google-pse`, or `firecrawl`)
+- **WHEN** A client requests a webSearch/webFetch-capable model under that provider prefix
+- **THEN** The request is forwarded to the provider's configured base URL using OpenAI-compatible request/response shapes
+#### Scenario: MediaProviderRouting
+- **GIVEN** A configured media provider connection (`fal`, `black-forest-labs`, `assemblyai`, `cartesia`, or `edge-tts`)
+- **WHEN** A client requests an image, video, tts, or stt model under that provider prefix
+- **THEN** The request is dispatched to the appropriate handler and upstream endpoint
+#### Scenario: RegionalAndDeveloperProviderRouting
+- **GIVEN** A configured regional or developer provider connection (`qwen`, `alicode`, `kimi-coding`, `iflow`, `volcengine-ark`, `hunyuan`, `nanobanana`, `topaz`, `puter`, or `comfyui`)
+- **WHEN** A client requests a model under that provider prefix
+- **THEN** The request is forwarded using the OpenAI-compatible executor
