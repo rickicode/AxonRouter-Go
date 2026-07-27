@@ -37,3 +37,21 @@ func TestResolveAlias_QwenCloud(t *testing.T) {
 		t.Errorf("ResolveAlias(%q) = %q, want %q", "qwencloud", got, "qwencloud")
 	}
 }
+func TestRegistryHasCommandCode(t *testing.T) {
+	info, ok := Registry["commandcode"]
+	if !ok {
+		t.Fatalf("Registry missing entry for %q", "commandcode")
+	}
+	if info.DisplayName == "" {
+		t.Errorf("Registry[%q].DisplayName is empty", "commandcode")
+	}
+}
+
+func TestResolveAlias_CommandCodeAndCmd(t *testing.T) {
+	if got := ResolveAlias("commandcode"); got != "commandcode" {
+		t.Errorf("ResolveAlias(%q) = %q, want %q", "commandcode", got, "commandcode")
+	}
+	if got := ResolveAlias("cmd"); got != "commandcode" {
+		t.Errorf("ResolveAlias(%q) = %q, want %q", "cmd", got, "commandcode")
+	}
+}

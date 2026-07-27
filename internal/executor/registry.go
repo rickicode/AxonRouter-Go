@@ -128,6 +128,9 @@ func RegisterDefaults() {
 	GetRegistry().Register("vertex", FormatOpenAI, NewVertexExecutor(base))
 	GetRegistry().Register("bedrock", FormatOpenAI, NewBedrockExecutor(base))
 
+	// CommandCode AI uses dedicated executor for request normalization.
+	GetRegistry().Register("commandcode", FormatOpenAI, NewCommandCodeExecutor(base))
+
 	// Cloudflare Workers AI uses dedicated executor for sanitization.
 	cfExec := NewCloudflareExecutor(openaiExec)
 	GetRegistry().Register("cf", FormatOpenAI, cfExec)
@@ -148,7 +151,7 @@ func RegisterDefaults() {
 		"elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras",
 		"together", "fireworks", "novita", "lambda", "pollinations", "zenmux", "zenmux-free",
 		"mimocode", "openrouter", "copilot", "vertex", "bedrock", "codebuddy",
-		"qwencloud", "cursor", "brave", "tavily", "exa", "jina", "google-pse", "firecrawl", "fal", "black-forest-labs", "assemblyai", "cartesia", "edge-tts", "qwen", "alicode", "kimi-coding", "iflow", "volcengine-ark", "hunyuan", "nanobanana", "topaz", "puter", "comfyui",
+		"qwencloud", "cursor", "brave", "tavily", "exa", "jina", "google-pse", "firecrawl", "fal", "black-forest-labs", "assemblyai", "cartesia", "edge-tts", "qwen", "alicode", "kimi-coding", "iflow", "volcengine-ark", "hunyuan", "nanobanana", "topaz", "puter", "comfyui", "commandcode",
 	} {
 		translator.Register(p, translator.Func(providers.TranslateOpenAICompatible))
 	}

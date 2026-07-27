@@ -309,6 +309,10 @@ Public health check. Returns status, version, `latest_version`, `update_availabl
 List semua providers dengan connection counts.
 
 **Response:**
+
+CommandCode AI is available as a built-in provider (`commandcode`, alias `cmd`) with API-key authentication. Chat completions are routed to `https://api.commandcode.ai/alpha/generate` and the model list is fetched from `https://api.commandcode.ai/provider/v1/models`. See `docs/commandcode-provider.md` for the full model catalog and usage notes.
+
+
 ```json
 {
   "data": [

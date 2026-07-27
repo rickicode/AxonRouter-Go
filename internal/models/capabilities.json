@@ -1,12 +1,5 @@
 {
-  "openai/gpt-4o": {
-    "vision": true,
-    "pdf": true,
-    "audio_input": true,
-    "video_input": false,
-    "tools": true
-  },
-  "openai/gpt-4o-mini": {
+  "anthropic/claude-opus-4-6-20251022": {
     "vision": true,
     "pdf": true,
     "audio_input": false,
@@ -20,10 +13,136 @@
     "video_input": false,
     "tools": true
   },
-  "anthropic/claude-opus-4-6-20251022": {
+  "commandcode/MiniMaxAI/MiniMax-M2.5": {
+    "vision": true,
+    "pdf": false,
+    "audio_input": false,
+    "video_input": false,
+    "tools": true
+  },
+  "commandcode/MiniMaxAI/MiniMax-M2.7": {
+    "vision": true,
+    "pdf": false,
+    "audio_input": false,
+    "video_input": false,
+    "tools": true
+  },
+  "commandcode/Qwen/Qwen3.6-Max-Preview": {
+    "vision": true,
+    "pdf": false,
+    "audio_input": false,
+    "video_input": false,
+    "tools": true
+  },
+  "commandcode/Qwen/Qwen3.6-Plus": {
+    "vision": true,
+    "pdf": false,
+    "audio_input": false,
+    "video_input": false,
+    "tools": true
+  },
+  "commandcode/claude-haiku-4-5-20251001": {
+    "vision": true,
+    "pdf": false,
+    "audio_input": false,
+    "video_input": false,
+    "tools": true
+  },
+  "commandcode/claude-opus-4-6": {
+    "vision": true,
+    "pdf": false,
+    "audio_input": false,
+    "video_input": false,
+    "tools": true
+  },
+  "commandcode/claude-opus-4-7": {
+    "vision": true,
+    "pdf": false,
+    "audio_input": false,
+    "video_input": false,
+    "tools": true
+  },
+  "commandcode/claude-sonnet-4-6": {
+    "vision": true,
+    "pdf": false,
+    "audio_input": false,
+    "video_input": false,
+    "tools": true
+  },
+  "commandcode/deepseek/deepseek-v4-flash": {
+    "vision": true,
+    "pdf": false,
+    "audio_input": false,
+    "video_input": false,
+    "tools": true
+  },
+  "commandcode/deepseek/deepseek-v4-pro": {
+    "vision": true,
+    "pdf": false,
+    "audio_input": false,
+    "video_input": false,
+    "tools": true
+  },
+  "commandcode/gpt-5.3-codex": {
+    "vision": true,
+    "pdf": false,
+    "audio_input": false,
+    "video_input": false,
+    "tools": true
+  },
+  "commandcode/gpt-5.4": {
+    "vision": true,
+    "pdf": false,
+    "audio_input": false,
+    "video_input": false,
+    "tools": true
+  },
+  "commandcode/gpt-5.4-mini": {
+    "vision": true,
+    "pdf": false,
+    "audio_input": false,
+    "video_input": false,
+    "tools": true
+  },
+  "commandcode/gpt-5.5": {
+    "vision": true,
+    "pdf": false,
+    "audio_input": false,
+    "video_input": false,
+    "tools": true
+  },
+  "commandcode/moonshotai/Kimi-K2.5": {
+    "vision": true,
+    "pdf": false,
+    "audio_input": false,
+    "video_input": false,
+    "tools": true
+  },
+  "commandcode/moonshotai/Kimi-K2.6": {
+    "vision": true,
+    "pdf": false,
+    "audio_input": false,
+    "video_input": false,
+    "tools": true
+  },
+  "commandcode/zai-org/GLM-5": {
+    "vision": true,
+    "pdf": false,
+    "audio_input": false,
+    "video_input": false,
+    "tools": true
+  },
+  "commandcode/zai-org/GLM-5.1": {
+    "vision": true,
+    "pdf": false,
+    "audio_input": false,
+    "video_input": false,
+    "tools": true
+  },
+  "cx/gpt-5.4": {
     "vision": true,
     "pdf": true,
-    "audio_input": false,
+    "audio_input": true,
     "video_input": false,
     "tools": true
   },
@@ -41,10 +160,17 @@
     "video_input": true,
     "tools": true
   },
-  "cx/gpt-5.4": {
+  "openai/gpt-4o": {
     "vision": true,
     "pdf": true,
     "audio_input": true,
+    "video_input": false,
+    "tools": true
+  },
+  "openai/gpt-4o-mini": {
+    "vision": true,
+    "pdf": true,
+    "audio_input": false,
     "video_input": false,
     "tools": true
   }

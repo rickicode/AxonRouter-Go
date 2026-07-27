@@ -8,11 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 - **Provider registry expansion (search, media, Chinese/regional, developer/niche)** — added 22 new built-in provider prefixes to close coverage gaps vs. 9Router/OmniRoute:
-  - Search: `brave`, `tavily`, `exa`, `jina`, `google-pse`, `firecrawl` (webSearch/webFetch service kinds).
-  - Media: `fal`, `black-forest-labs`, `assemblyai`, `cartesia`, `edge-tts` (image/video/tts/stt).
-  - Chinese/regional: `qwen`, `alicode`, `kimi-coding`, `iflow`, `volcengine-ark`, `hunyuan` (LLM).
-  - Developer/niche: `nanobanana`, `topaz`, `puter`, `comfyui` (image/LLM).
-  Each provider is seeded in `provider_types` with format `openai`, appropriate base URLs, categories, and service kinds; registered in the OpenAI executor and OpenAI-compatible error translator; aliases added to `provider.Registry`; starter model catalogs appended to `internal/models/models.json`; and STT/TTS executors updated for `assemblyai`, `cartesia`, and `edge-tts`.
+- Search: `brave`, `tavily`, `exa`, `jina`, `google-pse`, `firecrawl` (webSearch/webFetch service kinds).
+- Media: `fal`, `black-forest-labs`, `assemblyai`, `cartesia`, `edge-tts` (image/video/tts/stt).
+- Chinese/regional: `qwen`, `alicode`, `kimi-coding`, `iflow`, `volcengine-ark`, `hunyuan` (LLM).
+- Developer/niche: `nanobanana`, `topaz`, `puter`, `comfyui` (image/LLM).
+Each provider is seeded in `provider_types` with format `openai`, appropriate base URLs, categories, and service kinds; registered in the OpenAI executor and OpenAI-compatible error translator; aliases added to `provider.Registry`; starter model catalogs appended to `internal/models/models.json`; and STT/TTS executors updated for `assemblyai`, `cartesia`, and `edge-tts`.
+- **CommandCode AI provider** — new built-in `commandcode` provider (alias `cmd`) ported from OmniRoute. Adds `internal/executor/commandcode.go` that routes OpenAI-compatible chat completions and streaming to `https://api.commandcode.ai/alpha/generate`, supports the `/provider/v1/models` model list, merges `system`/`developer` messages, clamps `max_tokens` to the upstream ceiling of 200k, and strips empty tool arrays. Registers the provider in `internal/executor/registry.go`, `internal/provider/aliases.go`, `internal/db/migrations.go`, and `internal/api/handlers/v1/models.go`. Seeds 18 CommandCode models in `internal/models/models.json` and capability entries in `internal/models/capabilities.json`. The Svelte frontend catalog and logo were already added in a prior change; this backend completes the integration. Adds `internal/executor/commandcode_test.go`, `internal/provider/aliases_test.go`, and `internal/models/catalog_test.go` coverage.
 - **Smart-router virtual models (`smart/auto`, `smart/auto-fast`, `smart/auto-quality`)** — new `internal/smart` package resolves virtual model ids to concrete `provider/model-id` candidates based on request complexity, live telemetry from `request_logs`, provider availability, capability requirements, and API-key allowlists. Virtual model registry is persisted in settings as `smart_router_virtual_models` and consumed by the dashboard Smart Router settings page. Smart routing runs before combo resolution for `/v1/chat/completions`, `/v1/messages`, and `/v1/responses`, with transparent fallback to normal resolution when no eligible candidate is found. Includes `internal/smart/features_test.go` and `internal/smart/router_test.go`.
 
 ### Added

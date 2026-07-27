@@ -59,7 +59,7 @@ func TestProviderTypeCategoryAndServiceKinds(t *testing.T) {
 		serviceKinds string
 	}
 	got := map[string]row{}
-	r, err := d.Query("SELECT id, category, service_kinds FROM provider_types WHERE id IN ('cf','cx','oc','claude','mimocode','glm','minimax','kimi','mistral','cerebras','together','fireworks','novita','lambda','pollinations','grok-cli','codebuddy','qwencloud')")
+	r, err := d.Query("SELECT id, category, service_kinds FROM provider_types WHERE id IN ('cf','cx','oc','claude','mimocode','glm','minimax','kimi','mistral','cerebras','together','fireworks','novita','lambda','pollinations','grok-cli','codebuddy','qwencloud','commandcode')")
 	if err != nil {
 		t.Fatal(err)
 	}
