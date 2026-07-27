@@ -81,3 +81,14 @@ The next run derives its side from the last `- Run side:` line.
 - Parity gap: none (no concrete reference-backed gap identified; parity comparison against CLIProxyAPI/9router/OmniRoute was not blocked, and none of the timeout-affected routing subsystems show a proven missing behavior)
 - Issues created: none
 - Notes: Go binary was not on `PATH`; used `/usr/local/go/bin/go`. The workspace was cloned fresh into the run directory. Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied. All timeouts share the same stuck goroutine inside `RunMigrations` while inserting seeded `model_pricing` rows; the top of the stack is `modernc.org/libc.Xfsync` / `syscall.Syscall(0x4a, ...)` (fsync), indicating the test DB is blocked on filesystem sync rather than on a product logic bug. This is logged as an environment/runtime issue, not a product issue. References updated (`/workspaces/CLIProxyAPI`, `/workspaces/OmniRoute`, `/workspaces/9router`).
+
+## 2026-07-27 16:07 UTC
+- Run side: executor
+- Baseline: `export PATH=$PATH:/usr/local/go/bin && go build ./...`
+- Deep check: `export PATH=$PATH:/usr/local/go/bin && go test -timeout 10m ./internal/executor/... ./internal/translator/... ./internal/modalities/... ./internal/thinking/...`
+- Objective result: all passed
+- Failure details:
+  - none
+- Parity gap: none (Codex multi-agent v2 optimizer and WebSocket Responses executor gaps are already tracked as HIJ-438 / HIJ-449 / HIJ-445)
+- Issues created: none
+- Notes: Go binary was not on PATH; used /usr/local/go/bin/go. Baseline and executor/translator/modalities/thinking tests passed. References updated (CLIProxyAPI, OmniRoute, 9router). Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied. Spurious Biome diagnostics appeared in the captured output but did not affect the exit code; no Go test failure was produced.
