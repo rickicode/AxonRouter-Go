@@ -7,8 +7,8 @@ import (
 )
 
 const (
-	kiroSessionReplayTTL           = 5 * time.Minute
-	maxKiroSessionReplayEntries    = 5000
+	kiroSessionReplayTTL        = 5 * time.Minute
+	maxKiroSessionReplayEntries = 5000
 )
 
 // replayEntry stores a frozen copy of the first user message for a session.
@@ -98,8 +98,29 @@ func firstRealUserMessage(history []map[string]any, current map[string]any) map[
 
 // applySessionReplay freezes the first user message for a conversation and
 // ensures it is replayed as the first history entry on subsequent turns.
-// Volatile context (such as current timestamps) should only be injected into
-// the current turn, not the replayed message.
+// Volatile context (such as current timestamps or orphaned toolResults) is
+// stripped from the frozen message so it does not destabilize the upstream
+// cache key or reintroduce orphaned tool results on every subsequent turn.
+// stripVolatileToolContext removes userInputMessageContext.toolResults from a
+// frozen replay message. The frozen first turn is only meant to stabilize the
+// conversation start; carrying orphaned toolResults forward would force every
+// subsequent turn to re-reconcile the same orphan.
+func stripVolatileToolContext(m map[string]any) map[string]any {
+	uim, ok := m["userInputMessage"].(map[string]any)
+	if !ok {
+		return m
+	}
+	ctx, ok := uim["userInputMessageContext"].(map[string]any)
+	if !ok {
+		return m
+	}
+	delete(ctx, "toolResults")
+	if len(ctx) == 0 {
+		delete(uim, "userInputMessageContext")
+	}
+	return m
+}
+
 func applySessionReplay(conversationID string, history []map[string]any, currentMessage map[string]any) []map[string]any {
 	if conversationID == "" {
 		return history
@@ -111,7 +132,7 @@ func applySessionReplay(conversationID string, history []map[string]any, current
 		// it to history; the current message already represents this turn.
 		first := firstRealUserMessage(history, currentMessage)
 		if first != nil {
-			setReplayMsg0(conversationID, deepCopyMessage(first))
+			setReplayMsg0(conversationID, stripVolatileToolContext(deepCopyMessage(first)))
 		}
 		return history
 	}

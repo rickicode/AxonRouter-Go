@@ -418,3 +418,122 @@ func TestConvertOpenAIRequestToKiro_Base64ImageStillInImages(t *testing.T) {
 		t.Errorf("base64 image was not placed into images field")
 	}
 }
+
+func TestConvertOpenAIRequestToKiro_NormalToolUseReplay(t *testing.T) {
+	body := []byte(`{
+	"model": "kiro/claude-sonnet-4-6",
+	"messages": [
+		{"role": "user", "content": "What's the weather in Jakarta?"},
+		{"role": "assistant", "content": "", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "get_weather", "arguments": "{\"city\":\"Jakarta\"}"}}]},
+		{"role": "tool", "tool_call_id": "call_1", "content": "Sunny, 32C"},
+		{"role": "user", "content": "Thanks"}
+	],
+	"tools": [
+		{"type": "function", "function": {"name": "get_weather", "description": "weather", "parameters": {"type": "object", "properties": {"city": {"type": "string"}}}}}
+	]
+}`)
+	out := ConvertOpenAIRequestToKiro("kiro/claude-sonnet-4-6", body, false)
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cs := payload["conversationState"].(map[string]any)
+	current := cs["currentMessage"].(map[string]any)
+	uim := current["userInputMessage"].(map[string]any)
+	ctx, _ := uim["userInputMessageContext"].(map[string]any)
+	if ctx == nil {
+		t.Fatalf("current message missing userInputMessageContext")
+	}
+	trs, _ := ctx["toolResults"].([]any)
+	if len(trs) != 1 {
+		t.Fatalf("expected 1 toolResult on current message, got %d", len(trs))
+	}
+	tr := trs[0].(map[string]any)
+	if tr["toolUseId"] != "call_1" {
+		t.Errorf("toolResult toolUseId = %v, want call_1", tr["toolUseId"])
+	}
+	text := tr["content"].([]any)[0].(map[string]any)["text"].(string)
+	if !strings.Contains(text, "Sunny") {
+		t.Errorf("toolResult text missing 'Sunny': %q", text)
+	}
+
+	history, _ := cs["history"].([]any)
+	if len(history) < 1 {
+		t.Fatalf("expected at least one history entry, got %d", len(history))
+	}
+	arm, ok := history[len(history)-1].(map[string]any)["assistantResponseMessage"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected last history entry to be assistantResponseMessage")
+	}
+	uses, _ := arm["toolUses"].([]any)
+	if len(uses) != 1 {
+		t.Fatalf("expected 1 toolUse on assistant history entry, got %d", len(uses))
+	}
+	use := uses[0].(map[string]any)
+	if use["toolUseId"] != "call_1" {
+		t.Errorf("toolUseId = %v, want call_1", use["toolUseId"])
+	}
+	if use["name"] != "get_weather" {
+		t.Errorf("tool name = %v, want get_weather", use["name"])
+	}
+	input := use["input"].(map[string]any)
+	if input["city"] != "Jakarta" {
+		t.Errorf("tool input city = %v, want Jakarta", input["city"])
+	}
+}
+
+func TestConvertOpenAIRequestToKiro_OrphanedToolResultFallback(t *testing.T) {
+	body := []byte(`{
+	"model": "kiro/claude-sonnet-4-6",
+	"messages": [
+		{"role": "user", "content": "Prior result with no assistant tool use."},
+		{"role": "tool", "tool_call_id": "call_orphan", "content": "Orphan result."},
+		{"role": "user", "content": "Continue."}
+	]
+}`)
+	out := ConvertOpenAIRequestToKiro("kiro/claude-sonnet-4-6", body, false)
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cs := payload["conversationState"].(map[string]any)
+	current := cs["currentMessage"].(map[string]any)
+	cuim := current["userInputMessage"].(map[string]any)
+	ccontent := cuim["content"].(string)
+	if !strings.Contains(ccontent, "[Tool Result (call_orphan)]") || !strings.Contains(ccontent, "Orphan result.") {
+		t.Errorf("expected current message content to contain orphaned tool result fallback, got %q", ccontent)
+	}
+	if ctx, _ := cuim["userInputMessageContext"].(map[string]any); ctx != nil {
+		if trs, _ := ctx["toolResults"].([]any); len(trs) > 0 {
+			t.Errorf("current message should not carry orphaned toolResults, found %d", len(trs))
+		}
+	}
+}
+
+func TestConvertOpenAIRequestToKiro_MissingToolCallID(t *testing.T) {
+	body := []byte(`{
+	"model": "kiro/claude-sonnet-4-6",
+	"messages": [
+		{"role": "user", "content": "Result missing id."},
+		{"role": "tool", "content": "Result with no id."},
+		{"role": "user", "content": "OK"}
+	]
+}`)
+	out := ConvertOpenAIRequestToKiro("kiro/claude-sonnet-4-6", body, false)
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cs := payload["conversationState"].(map[string]any)
+	current := cs["currentMessage"].(map[string]any)
+	cuim := current["userInputMessage"].(map[string]any)
+	ccontent := cuim["content"].(string)
+	if !strings.Contains(ccontent, "[Tool Result (missing id)]") || !strings.Contains(ccontent, "Result with no id.") {
+		t.Errorf("expected current message content to contain missing tool_call_id fallback, got %q", ccontent)
+	}
+	if ctx, _ := cuim["userInputMessageContext"].(map[string]any); ctx != nil {
+		if trs, _ := ctx["toolResults"].([]any); len(trs) > 0 {
+			t.Errorf("current message should not carry toolResults for missing tool_call_id, found %d", len(trs))
+		}
+	}
+}

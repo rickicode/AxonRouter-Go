@@ -151,6 +151,11 @@ func ConvertOpenAIRequestToKiro(model string, body []byte, stream bool) []byte {
 	}
 	currentUserInput["content"] = content
 
+	// Orphaned tool results can be promoted into the currentMessage (the last
+	// user turn). Reconcile them there as well so multi-turn tool conversations
+	// that lack a matching assistant tool_use still rebuild state correctly.
+	currentMessage = reconcileCurrentMessageToolResults(currentMessage, history)
+
 	payload := map[string]any{
 		"conversationState": map[string]any{
 			"chatTriggerType": "MANUAL",
@@ -259,11 +264,20 @@ func convertMessages(messages, tools []any, model string, agentic bool) ([]map[s
 
 		if originalRole == "tool" {
 			text := serializeToolResultContent(msg["content"])
-			pendingToolResults = append(pendingToolResults, map[string]any{
-				"toolUseId": msg["tool_call_id"],
-				"status":    "success",
-				"content":   []map[string]any{{"text": text}},
-			})
+			if id, ok := msg["tool_call_id"].(string); ok && id != "" {
+				pendingToolResults = append(pendingToolResults, map[string]any{
+					"toolUseId": id,
+					"status":    "success",
+					"content":   []map[string]any{{"text": text}},
+				})
+			} else {
+				// A tool result without a matching tool_call_id cannot be linked to a
+				// preceding assistant tool_use. Convert it to inline text so it does not
+				// become an orphaned toolResult that Kiro would reject.
+				if text != "" {
+					pendingUser = append(pendingUser, "[Tool Result (missing id)]\n"+text)
+				}
+			}
 			continue
 		}
 
@@ -274,21 +288,21 @@ func convertMessages(messages, tools []any, model string, agentic bool) ([]map[s
 			text = v
 		case []any:
 			text = extractTextFromBlocks(v)
-				if supportsImages {
-					for _, raw := range v {
-						if img, ok := raw.(map[string]any); ok {
-							format, bytes, url := extractImage(img)
-							if bytes != "" {
-								pendingImages = append(pendingImages, map[string]any{
-									"format": format,
-									"source": map[string]any{"bytes": bytes},
-								})
-							} else if url != "" {
-								pendingUser = append(pendingUser, fmt.Sprintf("[Image: %s]", url))
-							}
+			if supportsImages {
+				for _, raw := range v {
+					if img, ok := raw.(map[string]any); ok {
+						format, bytes, url := extractImage(img)
+						if bytes != "" {
+							pendingImages = append(pendingImages, map[string]any{
+								"format": format,
+								"source": map[string]any{"bytes": bytes},
+							})
+						} else if url != "" {
+							pendingUser = append(pendingUser, fmt.Sprintf("[Image: %s]", url))
 						}
 					}
 				}
+			}
 			// Inline tool_result blocks inside content array.
 			for _, raw := range v {
 				if block, ok := raw.(map[string]any); ok && block["type"] == "tool_result" {
@@ -409,6 +423,105 @@ func convertMessages(messages, tools []any, model string, agentic bool) ([]map[s
 	return history, currentMessage
 }
 
+// toolResultsSlice normalizes a toolResults value stored as either []any or
+// []map[string]any (the shape used internally by convertMessages) into a
+// []any slice for uniform processing.
+func toolResultsSlice(v any) []any {
+	switch arr := v.(type) {
+	case []any:
+		return arr
+	case []map[string]any:
+		out := make([]any, len(arr))
+		for i, item := range arr {
+			out[i] = item
+		}
+		return out
+	}
+	return nil
+}
+
+// extractToolResultText extracts display text from a toolResult entry. Tool
+// results created inside this package use []map[string]any, while deserialized
+// values use []any; both shapes are accepted.
+func extractToolResultText(tr map[string]any) string {
+	switch v := tr["content"].(type) {
+	case []any:
+		return extractTextFromBlocks(v)
+	case []map[string]any:
+		var arr []any
+		for _, item := range v {
+			arr = append(arr, item)
+		}
+		return extractTextFromBlocks(arr)
+	}
+	return ""
+}
+
+func hasAssistantToolUses(history []map[string]any) bool {
+	for _, item := range history {
+		arm, ok := item["assistantResponseMessage"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if uses, ok := arm["toolUses"].([]map[string]any); ok && len(uses) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// reconcileCurrentMessageToolResults converts orphaned toolResults inside the
+// current user message to inline text when no assistant tool_use exists in
+// history. If a preceding assistant tool_use is present, the toolResults are
+// preserved so the normal tool-use pairing survives across multi-turn replay.
+func reconcileCurrentMessageToolResults(currentMessage map[string]any, history []map[string]any) map[string]any {
+	if currentMessage == nil {
+		return nil
+	}
+	uim, ok := currentMessage["userInputMessage"].(map[string]any)
+	if !ok {
+		return currentMessage
+	}
+	ctx, ok := uim["userInputMessageContext"].(map[string]any)
+	if !ok {
+		return currentMessage
+	}
+	trs := toolResultsSlice(ctx["toolResults"])
+	if len(trs) == 0 {
+		return currentMessage
+	}
+	if hasAssistantToolUses(history) {
+		return currentMessage
+	}
+	var texts []string
+	for _, raw := range trs {
+		tr, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, _ := tr["toolUseId"].(string)
+		text := extractToolResultText(tr)
+		if id != "" {
+			texts = append(texts, fmt.Sprintf("[Tool Result (%s)]\n%s", id, text))
+		} else {
+			texts = append(texts, fmt.Sprintf("[Tool Result]\n%s", text))
+		}
+	}
+	joined := strings.Join(texts, "\n\n")
+	if joined != "" {
+		if existing := asString(uim["content"]); existing != "" {
+			uim["content"] = existing + "\n\n" + joined
+		} else {
+			uim["content"] = joined
+		}
+	}
+	delete(ctx, "toolResults")
+	if len(ctx) == 0 {
+		delete(uim, "userInputMessageContext")
+	}
+	return currentMessage
+}
+
 func wrapKiroInstructions(text string) string {
 	return "<instructions>\n" + text + "\n</instructions>"
 }
@@ -478,8 +591,8 @@ func extractTextFromBlocks(blocks []any) string {
 		if !ok {
 			continue
 		}
-		if block["type"] == "text" {
-			if t, ok := block["text"].(string); ok {
+		if block["type"] == "text" || block["type"] == nil {
+			if t, ok := block["text"].(string); ok && t != "" {
 				parts = append(parts, t)
 			}
 		}
@@ -827,8 +940,8 @@ func reconcileToolResults(history []map[string]any) []map[string]any {
 		if !ok {
 			continue
 		}
-		trs, ok := ctx["toolResults"].([]any)
-		if !ok || len(trs) == 0 {
+		trs := toolResultsSlice(ctx["toolResults"])
+		if len(trs) == 0 {
 			continue
 		}
 		preceding := false
@@ -849,10 +962,7 @@ func reconcileToolResults(history []map[string]any) []map[string]any {
 				continue
 			}
 			id, _ := tr["toolUseId"].(string)
-			var text string
-			if contents, ok := tr["content"].([]any); ok {
-				text = extractTextFromBlocks(contents)
-			}
+			text := extractToolResultText(tr)
 			if id != "" {
 				texts = append(texts, fmt.Sprintf("[Tool Result (%s)]\n%s", id, text))
 			} else {
