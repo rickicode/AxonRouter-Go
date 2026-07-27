@@ -454,7 +454,7 @@ func NewHandler(
 		exactCache:          exactCache,
 		providerCfg:         providerCfg,
 		sessions:            connstate.NewSessionCache(),
-		codexLiveSessions:   newCodexLiveSessionStore(),
+		codexLiveSessions:   newCodexLiveSessionStoreWithDB(db),
 		failoverMaxAttempts: loadFailoverMaxAttempts(db),
 	}
 }

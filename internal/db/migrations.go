@@ -473,6 +473,21 @@ CREATE TABLE IF NOT EXISTS proxy_groups (
 		}
 	}
 
+	// Codex Live sessions survive process restart when a database is attached.
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS codex_live_sessions (
+    call_id TEXT PRIMARY KEY,
+    conn_id TEXT NOT NULL,
+    conn_token TEXT NOT NULL,
+    model TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_codex_live_sessions_expires ON codex_live_sessions(expires_at);
+`); err != nil {
+		return err
+	}
+
 	// Response cache table (Phase 1: schema ready for Phase 2 persistence)
 	if _, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS response_cache (
