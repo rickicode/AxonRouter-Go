@@ -463,6 +463,8 @@ CREATE TABLE IF NOT EXISTS proxy_groups (
 		`ALTER TABLE proxy_pools ADD COLUMN proxy_country TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE proxy_pools ADD COLUMN proxy_city TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE proxy_pools ADD COLUMN proxy_org TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE proxy_pools ADD COLUMN proxy_username TEXT DEFAULT ''`,
+		`ALTER TABLE proxy_pools ADD COLUMN proxy_password TEXT DEFAULT ''`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			if !isDuplicateColumnError(err) {

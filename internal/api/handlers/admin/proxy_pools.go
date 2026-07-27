@@ -62,7 +62,7 @@ func (h *ProxyPoolHandler) List(c *gin.Context) {
 
 	var total int
 	_ = h.db.QueryRow("SELECT COUNT(*) FROM proxy_pools WHERE "+where, args...).Scan(&total)
-	rows, err := h.db.Query(`SELECT id, name, type, proxy_url, no_proxy, relay_auth, is_active, test_status, last_tested_at, last_error, response_time_ms, proxy_ip, proxy_country, proxy_city, proxy_org, created_at, updated_at FROM proxy_pools WHERE `+where+` ORDER BY created_at DESC LIMIT ? OFFSET ?`, append(args, perPage, (page-1)*perPage)...)
+	rows, err := h.db.Query(`SELECT id, name, type, proxy_url, proxy_username, proxy_password, no_proxy, relay_auth, is_active, test_status, last_tested_at, last_error, response_time_ms, proxy_ip, proxy_country, proxy_city, proxy_org, created_at, updated_at FROM proxy_pools WHERE `+where+` ORDER BY created_at DESC LIMIT ? OFFSET ?`, append(args, perPage, (page-1)*perPage)...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -105,21 +105,39 @@ func (h *ProxyPoolHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "name and proxyUrl are required"})
 		return
 	}
-	typ := proxypool.NormalizeType(asString(req["type"]), proxyURL)
+	canonicalURL, inlineUser, inlinePass, _, _, _, err := normalizeProxyURL(proxyURL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy URL: " + err.Error()})
+		return
+	}
+	typ := proxypool.NormalizeType(asString(req["type"]), canonicalURL)
 	noProxy := asString(req["noProxy"])
 	relayAuth := asString(req["relayAuth"])
 	if proxypool.IsRelayType(typ) && relayAuth == "" {
 		relayAuth = proxypool.GenerateRelayAuth()
 	}
-	// Check for duplicate proxy URL
-	var existingCount int
-	if err := h.db.QueryRow(`SELECT COUNT(*) FROM proxy_pools WHERE proxy_url = ?`, proxyURL).Scan(&existingCount); err == nil && existingCount > 0 {
-		c.JSON(http.StatusConflict, gin.H{"error": "proxy URL already exists", "existing_count": existingCount})
+	proxyUsername := asString(req["proxyUsername"])
+	proxyPassword := asString(req["proxyPassword"])
+	if proxyUsername == "" {
+		proxyUsername = inlineUser
+	}
+	if proxyPassword == "" {
+		proxyPassword = inlinePass
+	}
+
+	// Duplicate detection compares canonical (scheme, host, port, type) plus username when present.
+	isDup, err := findDuplicateByCanonical(h.db, typ, canonicalURL, proxyUsername, "")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if isDup {
+		c.JSON(http.StatusConflict, gin.H{"error": "proxy URL already exists"})
 		return
 	}
 
 	// Mandatory health check before insert.
-	res := h.testProxy(proxyURL, typ, relayAuth)
+	res := h.testProxy(canonicalURL, typ, relayAuth)
 	const defaultMaxResponseTimeMs = 8000
 	if !proxypool.Healthy(res, defaultMaxResponseTimeMs) {
 		reason := res.Error
@@ -140,7 +158,7 @@ func (h *ProxyPoolHandler) Create(c *gin.Context) {
 	now := time.Now().Unix()
 	id := uuid.New().String()
 	testedAt := time.Now().Format(time.RFC3339)
-	_, err := h.db.Exec(`INSERT INTO proxy_pools (id, name, type, proxy_url, no_proxy, relay_auth, is_active, test_status, last_tested_at, last_error, response_time_ms, proxy_ip, proxy_country, proxy_city, proxy_org, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, name, typ, proxyURL, noProxy, relayAuth, boolToInt(active), testedAt, nil, res.ElapsedMs, res.IP, res.Country, res.City, res.Org, now, now)
+	_, err = h.db.Exec(`INSERT INTO proxy_pools (id, name, type, proxy_url, proxy_username, proxy_password, no_proxy, relay_auth, is_active, test_status, last_tested_at, last_error, response_time_ms, proxy_ip, proxy_country, proxy_city, proxy_org, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, name, typ, canonicalURL, proxyUsername, proxyPassword, noProxy, relayAuth, boolToInt(active), testedAt, nil, res.ElapsedMs, res.IP, res.Country, res.City, res.Org, now, now)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -154,33 +172,36 @@ func (h *ProxyPoolHandler) Create(c *gin.Context) {
 
 // insertPoolRow creates a single proxy pool row. It skips duplicates when
 // allowDuplicate is false and returns the new pool id, relay auth, or an error reason.
-func (h *ProxyPoolHandler) insertPoolRow(tx *sql.Tx, name, proxyURL, typ, noProxy, relayAuth string, active bool, allowDuplicate bool) (string, string, string) {
-	proxyURL = strings.TrimSpace(proxyURL)
-	if proxyURL == "" {
+func (h *ProxyPoolHandler) insertPoolRow(tx *sql.Tx, name, canonicalURL, proxyUsername, proxyPassword, typ, noProxy, relayAuth string, active bool, allowDuplicate bool) (string, string, string) {
+	canonicalURL = strings.TrimSpace(canonicalURL)
+	if canonicalURL == "" {
 		return "", "", "proxyUrl is required"
 	}
-	if u, err := url.Parse(proxyURL); err != nil || (u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "socks5") {
+	if u, err := url.Parse(canonicalURL); err != nil || (u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "socks5") {
 		return "", "", "invalid proxy URL"
 	}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		name = "pool-" + time.Now().Format("060102150405")
 	}
-	typ = proxypool.NormalizeType(typ, proxyURL)
+	typ = proxypool.NormalizeType(typ, canonicalURL)
 	if proxypool.IsRelayType(typ) && relayAuth == "" {
 		relayAuth = proxypool.GenerateRelayAuth()
 	}
 	if !allowDuplicate {
-		var existingCount int
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM proxy_pools WHERE proxy_url = ?`, proxyURL).Scan(&existingCount); err == nil && existingCount > 0 {
+		isDup, err := findDuplicateByCanonical(tx, typ, canonicalURL, proxyUsername, "")
+		if err != nil {
+			return "", "", "duplicate check failed: " + err.Error()
+		}
+		if isDup {
 			return "", "", "duplicate"
 		}
 	}
 	now := time.Now().Unix()
 	id := uuid.New().String()
 	_, err := tx.Exec(
-		`INSERT INTO proxy_pools (id, name, type, proxy_url, no_proxy, relay_auth, is_active, test_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'untested', ?, ?)`,
-		id, name, typ, proxyURL, noProxy, relayAuth, boolToInt(active), now, now,
+		`INSERT INTO proxy_pools (id, name, type, proxy_url, proxy_username, proxy_password, no_proxy, relay_auth, is_active, test_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'untested', ?, ?)`,
+		id, name, typ, canonicalURL, proxyUsername, proxyPassword, noProxy, relayAuth, boolToInt(active), now, now,
 	)
 	if err != nil {
 		return "", "", "insert failed: " + err.Error()
@@ -230,16 +251,18 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 	usedNames := map[string]bool{}
 
 	type normalizedItem struct {
-		index     int
-		name      string
-		proxyURL  string
-		typ       string
-		noProxy   string
-		relayAuth string
-		dup       bool
-		needsName bool
+		index         int
+		name          string
+		proxyURL      string
+		canonicalURL  string
+		proxyUsername string
+		proxyPassword string
+		typ           string
+		noProxy       string
+		relayAuth     string
+		dup           bool
+		needsName     bool
 	}
-
 
 	normalized := make([]normalizedItem, 0, len(req.Items))
 
@@ -248,10 +271,12 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 	// network calls on entries that will be skipped anyway.
 	for i, raw := range req.Items {
 		var item struct {
-			Name     string `json:"name"`
-			ProxyURL string `json:"proxyUrl"`
-			Type     string `json:"type"`
-			NoProxy  string `json:"noProxy"`
+			Name          string `json:"name"`
+			ProxyURL      string `json:"proxyUrl"`
+			ProxyUsername string `json:"proxyUsername"`
+			ProxyPassword string `json:"proxyPassword"`
+			Type          string `json:"type"`
+			NoProxy       string `json:"noProxy"`
 		}
 		switch v := raw.(type) {
 		case string:
@@ -272,6 +297,14 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 			if item.ProxyURL == "" {
 				item.ProxyURL = strings.TrimSpace(asString(v["proxy_url"]))
 			}
+			item.ProxyUsername = asString(v["proxyUsername"])
+			if item.ProxyUsername == "" {
+				item.ProxyUsername = asString(v["proxy_username"])
+			}
+			item.ProxyPassword = asString(v["proxyPassword"])
+			if item.ProxyPassword == "" {
+				item.ProxyPassword = asString(v["proxy_password"])
+			}
 			item.Type = asString(v["type"])
 			item.NoProxy = asString(v["noProxy"])
 			if item.NoProxy == "" {
@@ -282,53 +315,75 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 			details = append(details, gin.H{"index": i, "status": "error", "reason": "unsupported item type"})
 			continue
 		}
-	needsName := false
-	if item.Name == "" {
-		// Defer random geo name generation until after the health check so the
-		// suffix can use country and ISP from the test result.
-		needsName = true
-	} else {
-		// Reserve explicit names now so generated names never collide with them.
-		usedNames[item.Name] = true
-	}
-	if item.Type == "" {
-		item.Type = req.DefaultType
-	}
-	// If type is still http, try auto-detecting relay hosts (vercel/deno/cloudflare)
-	// so bulk imports of relay URLs get the correct type by default.
-	if item.Type == "" || item.Type == proxypool.TypeHTTP {
-		if detected := proxypool.DetectRelayType(item.ProxyURL); detected != "" {
-			item.Type = detected
-		} else if item.Type == "" {
-			item.Type = proxypool.TypeHTTP
+		needsName := false
+		if item.Name == "" {
+			// Defer random geo name generation until after the health check so the
+			// suffix can use country and ISP from the test result.
+			needsName = true
+		} else {
+			// Reserve explicit names now so generated names never collide with them.
+			usedNames[item.Name] = true
 		}
-	}
-	noProxy := item.NoProxy
-	if noProxy == "" {
-		noProxy = req.NoProxy
-	}
-	// Generate relay auth before testing so relay health checks and the
-	// eventual insert use the exact same credentials.
-	relayAuth := ""
-	if proxypool.IsRelayType(item.Type) {
-		relayAuth = proxypool.GenerateRelayAuth()
-	}
+		if item.Type == "" {
+			item.Type = req.DefaultType
+		}
 
-	var existingCount int
-	dup := h.db.QueryRow("SELECT COUNT(*) FROM proxy_pools WHERE proxy_url = ?", item.ProxyURL).Scan(&existingCount) == nil && existingCount > 0
+		canonicalURL, inlineUser, inlinePass, _, _, _, err := normalizeProxyURL(item.ProxyURL)
+		if err != nil {
+			errors++
+			details = append(details, gin.H{"index": i, "status": "error", "reason": "invalid proxy URL: " + err.Error()})
+			continue
+		}
+		proxyUsername := item.ProxyUsername
+		proxyPassword := item.ProxyPassword
+		if proxyUsername == "" {
+			proxyUsername = inlineUser
+		}
+		if proxyPassword == "" {
+			proxyPassword = inlinePass
+		}
 
-	normalized = append(normalized, normalizedItem{
-		index:     i,
-		name:      item.Name,
-		proxyURL:  item.ProxyURL,
-		typ:       item.Type,
-		noProxy:   noProxy,
-		relayAuth: relayAuth,
-		dup:       dup,
-		needsName: needsName,
-	})
-}
+		// If type is still http, try auto-detecting relay hosts (vercel/deno/cloudflare)
+		// so bulk imports of relay URLs get the correct type by default.
+		if item.Type == "" || item.Type == proxypool.TypeHTTP {
+			if detected := proxypool.DetectRelayType(canonicalURL); detected != "" {
+				item.Type = detected
+			} else if item.Type == "" {
+				item.Type = proxypool.TypeHTTP
+			}
+		}
+		noProxy := item.NoProxy
+		if noProxy == "" {
+			noProxy = req.NoProxy
+		}
+		// Generate relay auth before testing so relay health checks and the
+		// eventual insert use the exact same credentials.
+		relayAuth := ""
+		if proxypool.IsRelayType(item.Type) {
+			relayAuth = proxypool.GenerateRelayAuth()
+		}
 
+		isDup, err := findDuplicateByCanonical(h.db, item.Type, canonicalURL, proxyUsername, "")
+		if err != nil {
+			errors++
+			details = append(details, gin.H{"index": i, "status": "error", "reason": "duplicate check failed: " + err.Error()})
+			continue
+		}
+
+		normalized = append(normalized, normalizedItem{
+			index:         i,
+			name:          item.Name,
+			proxyURL:      item.ProxyURL,
+			canonicalURL:  canonicalURL,
+			proxyUsername: proxyUsername,
+			proxyPassword: proxyPassword,
+			typ:           item.Type,
+			noProxy:       noProxy,
+			relayAuth:     relayAuth,
+			dup:           isDup,
+			needsName:     needsName,
+		})
+	}
 
 	// Phase 2: test non-duplicate items concurrently with a bounded worker pool.
 	testResults := make([]proxypool.TestResult, len(normalized))
@@ -343,7 +398,7 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 		go func(idx int, it normalizedItem) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			testResults[idx] = h.testProxy(it.proxyURL, it.typ, it.relayAuth)
+			testResults[idx] = h.testProxy(it.canonicalURL, it.typ, it.relayAuth)
 		}(i, it)
 	}
 	wg.Wait()
@@ -405,7 +460,7 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 					_ = tx.Rollback()
 				}
 			}()
-			id, _, reason := h.insertPoolRow(tx, item.name, item.proxyURL, item.typ, item.noProxy, item.relayAuth, active, false)
+			id, _, reason := h.insertPoolRow(tx, item.name, item.canonicalURL, item.proxyUsername, item.proxyPassword, item.typ, item.noProxy, item.relayAuth, active, false)
 			if reason != "" {
 				// Per-item failure: record and let the batch continue.
 				errors++
@@ -515,9 +570,35 @@ func (h *ProxyPoolHandler) Update(c *gin.Context) {
 	if v := strings.TrimSpace(asString(req["name"])); v != "" {
 		add("name", v)
 	}
+
+	// Normalize proxy URL and split credentials when the URL is supplied.
+	var newCanonical, newProxyUsername, newProxyPassword string
 	if _, ok := req["proxyUrl"]; ok {
-		add("proxy_url", strings.TrimSpace(asString(req["proxyUrl"])))
+		rawProxyURL := strings.TrimSpace(asString(req["proxyUrl"]))
+		canonicalURL, inlineUser, inlinePass, _, _, _, err := normalizeProxyURL(rawProxyURL)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy URL: " + err.Error()})
+			return
+		}
+		newCanonical = canonicalURL
+		newProxyUsername = inlineUser
+		newProxyPassword = inlinePass
+		add("proxy_url", canonicalURL)
 	}
+	// Explicit credential fields override inline credentials.
+	if _, ok := req["proxyUsername"]; ok {
+		newProxyUsername = asString(req["proxyUsername"])
+	}
+	if _, ok := req["proxyPassword"]; ok {
+		newProxyPassword = asString(req["proxyPassword"])
+	}
+	if _, ok := req["proxyUsername"]; ok {
+		add("proxy_username", newProxyUsername)
+	}
+	if _, ok := req["proxyPassword"]; ok {
+		add("proxy_password", newProxyPassword)
+	}
+
 	if _, ok := req["noProxy"]; ok {
 		add("no_proxy", asString(req["noProxy"]))
 	}
@@ -531,12 +612,37 @@ func (h *ProxyPoolHandler) Update(c *gin.Context) {
 		add("test_status", asString(req["testStatus"]))
 	}
 	if _, ok := req["type"]; ok {
-		add("type", proxypool.NormalizeType(asString(req["type"]), asString(req["proxyUrl"])))
+		proxyURL := newCanonical
+		if proxyURL == "" {
+			proxyURL = asString(req["proxyUrl"])
+		}
+		add("type", proxypool.NormalizeType(asString(req["type"]), proxyURL))
 	}
 	if len(sets) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no fields to update"})
 		return
 	}
+
+	// Duplicate check against other pools by canonical (scheme, host, port, type),
+	// ignoring the pool being updated.
+	if newCanonical != "" {
+		var typ string
+		if _, ok := req["type"]; ok {
+			typ = proxypool.NormalizeType(asString(req["type"]), newCanonical)
+		} else {
+			_ = h.db.QueryRow("SELECT type FROM proxy_pools WHERE id = ?", id).Scan(&typ)
+		}
+	isDup, err := findDuplicateByCanonical(h.db, typ, newCanonical, newProxyUsername, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if isDup {
+		c.JSON(http.StatusConflict, gin.H{"error": "proxy URL already exists"})
+			return
+		}
+	}
+
 	sets = append(sets, "updated_at = ?")
 	args = append(args, time.Now().Unix(), id)
 	_, err := h.db.Exec("UPDATE proxy_pools SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...)
@@ -594,7 +700,7 @@ func (h *ProxyPoolHandler) HealthRun(c *gin.Context) {
 }
 
 func (h *ProxyPoolHandler) get(id string) (db.ProxyPool, bool) {
-	row := h.db.QueryRow(`SELECT id, name, type, proxy_url, no_proxy, relay_auth, is_active, test_status, last_tested_at, last_error, response_time_ms, proxy_ip, proxy_country, proxy_city, proxy_org, created_at, updated_at FROM proxy_pools WHERE id = ?`, id)
+	row := h.db.QueryRow(`SELECT id, name, type, proxy_url, proxy_username, proxy_password, no_proxy, relay_auth, is_active, test_status, last_tested_at, last_error, response_time_ms, proxy_ip, proxy_country, proxy_city, proxy_org, created_at, updated_at FROM proxy_pools WHERE id = ?`, id)
 	p, ok := scanPool(row)
 	return p, ok
 }
@@ -604,7 +710,7 @@ type rowScanner interface{ Scan(dest ...any) error }
 func scanPool(row rowScanner) (db.ProxyPool, bool) {
 	var p db.ProxyPool
 	var active int
-	if err := row.Scan(&p.ID, &p.Name, &p.Type, &p.ProxyURL, &p.NoProxy, &p.RelayAuth, &active, &p.TestStatus, &p.LastTestedAt, &p.LastError, &p.ResponseTimeMs, &p.ProxyIP, &p.ProxyCountry, &p.ProxyCity, &p.ProxyOrg, &p.CreatedAt, &p.UpdatedAt); err != nil {
+	if err := row.Scan(&p.ID, &p.Name, &p.Type, &p.ProxyURL, &p.ProxyUsername, &p.ProxyPassword, &p.NoProxy, &p.RelayAuth, &active, &p.TestStatus, &p.LastTestedAt, &p.LastError, &p.ResponseTimeMs, &p.ProxyIP, &p.ProxyCountry, &p.ProxyCity, &p.ProxyOrg, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return p, false
 	}
 	p.IsActive = active != 0
@@ -612,7 +718,7 @@ func scanPool(row rowScanner) (db.ProxyPool, bool) {
 }
 
 func poolJSON(p db.ProxyPool) gin.H {
-	return gin.H{"id": p.ID, "name": p.Name, "type": p.Type, "proxyUrl": p.ProxyURL, "noProxy": p.NoProxy, "relayAuth": p.RelayAuth, "isActive": p.IsActive, "testStatus": p.TestStatus, "lastTestedAt": nullString(p.LastTestedAt), "lastError": nullString(p.LastError), "responseTimeMs": nullInt(p.ResponseTimeMs), "proxyIp": p.ProxyIP, "proxyCountry": p.ProxyCountry, "proxyCity": p.ProxyCity, "proxyOrg": p.ProxyOrg, "createdAt": p.CreatedAt, "updatedAt": p.UpdatedAt}
+	return gin.H{"id": p.ID, "name": p.Name, "type": p.Type, "proxyUrl": p.ProxyURL, "proxyUsername": p.ProxyUsername, "proxyPassword": p.ProxyPassword, "noProxy": p.NoProxy, "relayAuth": p.RelayAuth, "isActive": p.IsActive, "testStatus": p.TestStatus, "lastTestedAt": nullString(p.LastTestedAt), "lastError": nullString(p.LastError), "responseTimeMs": nullInt(p.ResponseTimeMs), "proxyIp": p.ProxyIP, "proxyCountry": p.ProxyCountry, "proxyCity": p.ProxyCity, "proxyOrg": p.ProxyOrg, "createdAt": p.CreatedAt, "updatedAt": p.UpdatedAt}
 }
 
 func nullString(v sql.NullString) any {
@@ -717,6 +823,96 @@ func pronounceableName(length int) string {
 		consonant = !consonant
 	}
 	return b.String()
+}
+
+// normalizeProxyURL parses a proxy URL, strips inline credentials, and returns a
+// canonical URL (scheme://host:port with default ports omitted) together with
+// the extracted username/password and the normalized scheme/host/port tuple.
+func normalizeProxyURL(rawURL string) (canonical, username, password, scheme, host, port string, err error) {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return "", "", "", "", "", "", err
+	}
+	scheme = strings.ToLower(u.Scheme)
+	host = strings.ToLower(u.Hostname())
+	port = u.Port()
+	if port == "" {
+		port = defaultPortForScheme(scheme)
+	}
+	if u.User != nil {
+		username = u.User.Username()
+		password, _ = u.User.Password()
+	}
+	canonical = scheme + "://" + host
+	if port != defaultPortForScheme(scheme) {
+		canonical += ":" + port
+	}
+	return canonical, username, password, scheme, host, port, nil
+}
+
+func defaultPortForScheme(scheme string) string {
+	switch scheme {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	case "socks5":
+		return "1080"
+	default:
+		return ""
+	}
+}
+
+// proxyDuplicateKey returns the key used for duplicate detection. The tuple is
+// (scheme, host, port, type) when no username is present; when a username is
+// present the key includes it so different accounts on the same endpoint can
+// coexist.
+func proxyDuplicateKey(canonical, username string) string {
+	if username != "" {
+		return canonical + "#" + username
+	}
+	return canonical
+}
+
+// findDuplicateByCanonical reports whether an active proxy pool already exists
+// with the same canonical (scheme, host, port, type) and, when present, username.
+// Existing inline-credential URLs are canonicalized for comparison. If excludeID
+// is non-empty, that pool is ignored (used during updates).
+func findDuplicateByCanonical(q querier, typ, canonical, username, excludeID string) (bool, error) {
+	query := "SELECT id, proxy_url, proxy_username FROM proxy_pools WHERE type = ?"
+	args := []any{typ}
+	if excludeID != "" {
+		query += " AND id != ?"
+		args = append(args, excludeID)
+	}
+	rows, err := q.Query(query, args...)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	incomingKey := proxyDuplicateKey(canonical, username)
+	for rows.Next() {
+		var existingID, existing, existingUsername string
+		if err := rows.Scan(&existingID, &existing, &existingUsername); err != nil {
+			continue
+		}
+		existingCanonical, inlineUser, _, _, _, _, err := normalizeProxyURL(existing)
+		if err != nil {
+			continue
+		}
+		if existingUsername == "" {
+			existingUsername = inlineUser
+		}
+		if proxyDuplicateKey(existingCanonical, existingUsername) == incomingKey {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+// querier abstracts *sql.DB / *sql.Tx for duplicate checks.
+type querier interface {
+	Query(query string, args ...any) (*sql.Rows, error)
 }
 
 // likeEscape escapes SQL LIKE wildcard characters so an ID containing '%' or

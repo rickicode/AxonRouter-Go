@@ -262,6 +262,8 @@ type ProxyPool struct {
 	Name           string         `json:"name"`
 	Type           string         `json:"type"` // http, vercel, deno, cloudflare
 	ProxyURL       string         `json:"proxyUrl"`
+	ProxyUsername  string         `json:"proxyUsername"`
+	ProxyPassword  string         `json:"proxyPassword"`
 	NoProxy        string         `json:"noProxy"`
 	RelayAuth      string         `json:"relayAuth"` // auth token for relay types
 	IsActive       bool           `json:"isActive"`

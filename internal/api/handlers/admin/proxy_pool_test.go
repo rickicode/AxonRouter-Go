@@ -45,6 +45,77 @@ func noopTestProxy(_ string, _ string, _ string) proxypool.TestResult {
 	return proxypool.TestResult{OK: true, StatusCode: 200, Country: "US", Org: "TestOrg", ElapsedMs: 0}
 }
 
+func TestProxyPoolCreateAcceptsSameHostDifferentCredentials(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
+	h.testProxy = noopTestProxy
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools", jsonBodyProxyPool(t, map[string]any{
+		"name": "pool-a", "proxyUrl": "http://shared.example:8080", "proxyUsername": "user-a", "proxyPassword": "pass-a", "type": "http",
+	}))
+	h.Create(c)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("first create status = %d, body=%s", w.Code, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools", jsonBodyProxyPool(t, map[string]any{
+		"name": "pool-b", "proxyUrl": "http://user-b:pass-b@shared.example:8080", "type": "http",
+	}))
+	h.Create(c)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("second create status = %d, body=%s", w.Code, w.Body.String())
+	}
+
+	var count int
+	if err := database.QueryRow("SELECT COUNT(*) FROM proxy_pools").Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected 2 pools with same host but different credentials, got %d", count)
+	}
+
+	var storedUser, storedPass string
+	err := database.QueryRow("SELECT proxy_username, proxy_password FROM proxy_pools WHERE name = ?", "pool-b").Scan(&storedUser, &storedPass)
+	if err != nil {
+		t.Fatalf("find pool: %v", err)
+	}
+	if storedUser != "user-b" || storedPass != "pass-b" {
+		t.Fatalf("expected inline credentials extracted, got user=%s pass=%s", storedUser, storedPass)
+	}
+}
+
+func TestProxyPoolCreateRejectsSameCanonicalNoCredentials(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
+	h.testProxy = noopTestProxy
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools", jsonBodyProxyPool(t, map[string]any{
+		"name": "pool-a", "proxyUrl": "http://shared.example:8080", "type": "http",
+	}))
+	h.Create(c)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("first create status = %d, body=%s", w.Code, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools", jsonBodyProxyPool(t, map[string]any{
+		"name": "pool-b", "proxyUrl": "http://shared.example:8080", "type": "http",
+	}))
+	h.Create(c)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected conflict for duplicate canonical URL, got status = %d, body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestProxyPoolCreateRejectsUnhealthy(t *testing.T) {
 	database := newProxyPoolTestDB(t)
 	gin.SetMode(gin.TestMode)
