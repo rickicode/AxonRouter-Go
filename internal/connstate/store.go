@@ -276,3 +276,15 @@ func (s *Store) RangeActive() map[string]bool {
 	})
 	return active
 }
+
+// ResetQuota clears quota/cooldown routing state for the connection with the
+// given ID. It returns the updated connection (or nil if the connection is not
+// known) and the list of model identifiers that had active cooldowns before the
+// reset. This is equivalent to CLIProxyAPI's auth.Manager.ResetQuota.
+func (s *Store) ResetQuota(connID string) (*ConnectionState, []string, error) {
+	cs := s.Get(connID)
+	if cs == nil {
+		return nil, nil, nil
+	}
+	return cs.ResetQuota()
+}

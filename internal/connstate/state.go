@@ -351,3 +351,38 @@ func (mls *ModelLimitState) SetRPMRemaining(n int64) {
 	defer mls.mu.Unlock()
 	mls.RPMRemaining = n
 }
+
+// ResetQuota clears quota/cooldown routing state for a single connection and
+// returns the updated connection along with any model IDs that were in cooldown
+// before the reset. It is the AxonRouter-Go equivalent of CLIProxyAPI's
+// auth.Manager.ResetQuota and is safe for concurrent use.
+func (cs *ConnectionState) ResetQuota() (*ConnectionState, []string, error) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
+	affectedModels := make([]string, 0)
+	now := time.Now()
+	cs.ModelLimits.Range(func(key, value any) bool {
+		modelID := key.(string)
+		mls := value.(*ModelLimitState)
+		mls.mu.RLock()
+		inCooldown := mls.CooldownUntil != nil && now.Before(*mls.CooldownUntil)
+		mls.mu.RUnlock()
+		if inCooldown {
+			affectedModels = append(affectedModels, modelID)
+			mls.ClearCooldown()
+		}
+		return true
+	})
+
+	if cs.Status.IsHealable() {
+		cs.Status = StatusReady
+	}
+	cs.CooldownUntil = nil
+	cs.LastError = ""
+	cs.FailCount = 0
+	cs.BanCount = 0
+	cs.LastCheckAt = time.Now()
+
+	return cs, affectedModels, nil
+}
