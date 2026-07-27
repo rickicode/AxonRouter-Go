@@ -37,6 +37,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	provideralias "github.com/rickicode/AxonRouter-Go/internal/provider"
 	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
+	"github.com/rickicode/AxonRouter-Go/internal/smart"
 	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
@@ -403,6 +404,8 @@ type Handler struct {
 
 	// failoverMaxAttempts caps how many connections the failover loop tries
 	// before giving up. Loaded once from the failover_max_attempts setting (default 5).
+	smartRouter     *smart.Router
+	smartRegistry   *smart.Registry
 	failoverMaxAttempts int
 
 	// usageAccumulator is a test-only hook for asserting accumulateAPIKeyUsage
@@ -429,6 +432,8 @@ func NewHandler(
 	store *connstate.Store,
 	elig *connstate.EligibilityManager,
 	comboHandler *combo.Handler,
+	smartRouter *smart.Router,
+	smartRegistry *smart.Registry,
 	tracker *usage.Tracker,
 	deviceTracker *usage.DeviceTracker,
 	authManager *auth.Manager,
@@ -445,6 +450,8 @@ func NewHandler(
 		store:               store,
 		elig:                elig,
 		combo:               comboHandler,
+		smartRouter:         smartRouter,
+		smartRegistry:       smartRegistry,
 		tracker:             tracker,
 		deviceTracker:       deviceTracker,
 		authMgr:             authManager,

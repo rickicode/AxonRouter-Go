@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- **Smart-router virtual models (`smart/auto`, `smart/auto-fast`, `smart/auto-quality`)** — new `internal/smart` package introduces a per-request virtual model routing layer. Virtual model configuration (enable toggles, candidate list, strategy) is persisted in SQLite settings via `smart_virtual_models` and exposed through admin endpoints `GET /api/admin/virtual-models`, `GET /api/admin/virtual-models/:id`, and `PATCH /api/admin/virtual-models/:id`. `internal/smart/features.go` extracts request complexity features (tokens, messages, image/audio/video/PDF, tools, reasoning effort, code hints) and drives `internal/smart/router.go`, which scores eligible provider/model candidates by telemetry and strategy: `auto` balances cost, quality and latency; `auto-fast` minimizes latency; `auto-quality` maximizes capability. `internal/smart/telemetry.go` reuses `request_logs` to compute `avg_latency_ms`, `success_rate`, and `cost_per_1k_tokens` with a 60-second in-memory cache. The router hooks into `ChatCompletions` before combo resolution; on failure it falls back to normal combo/direct routing. Added `internal/smart/features_test.go`, `internal/smart/router_test.go`, and `internal/api/handlers/v1/chat_smart_test.go`.
+
 
 ## [0.3.21] - 2026-07-27
 ### Added

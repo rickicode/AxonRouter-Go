@@ -142,3 +142,14 @@ The system SHALL the system shall populate the database with predefined default 
 ## Technical Notes
 
 - **Dependencies**: combo.Handler, database/sql
+
+### Requirement: VirtualModelAdmin
+The system SHALL expose CRUD/lifecycle endpoints for virtual models (`smart/auto`, `smart/auto-fast`, `smart/auto-quality`) under `/api/admin/virtual-models`.
+#### Scenario: ListVirtualModels
+- **GIVEN** Defaults are seeded
+- **WHEN** `GET /api/admin/virtual-models` is invoked
+- **THEN** All virtual models are returned with enable toggle, candidate list, and strategy
+#### Scenario: UpdateVirtualModelCandidates
+- **GIVEN** A virtual model exists
+- **WHEN** `PATCH /api/admin/virtual-models/:id` updates `candidates` or `enabled`
+- **THEN** The change is persisted to settings and reflected in subsequent requests

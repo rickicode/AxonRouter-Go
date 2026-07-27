@@ -1583,3 +1583,19 @@ The API SHALL support `PUT /admin/api/v1/tls-config` to update tls configuration
 - **WHEN** PUT /admin/api/v1/tls-config is called with session auth
 - **THEN** Request is allowed to proceed
 - **AND** Request proceeds to handler
+
+### Requirement: SmartVirtualModelRouting
+The API SHALL support requests to model IDs `smart/auto`, `smart/auto-fast`, and `smart/auto-quality` on `POST /v1/chat/completions` by selecting a concrete provider/model before normal combo resolution.
+#### Scenario: SmartAutoRoutesToConcreteModel
+- **GIVEN** A request with `model: "smart/auto"` and a configured candidate list
+- **WHEN** `POST /v1/chat/completions` is invoked
+- **THEN** The gateway resolves the virtual model to a concrete `provider/model-id`
+- **AND** Falls back to normal combo/direct routing if smart routing fails
+#### Scenario: SmartAutoFast
+- **GIVEN** A request with `model: "smart/auto-fast"`
+- **WHEN** The router evaluates candidates
+- **THEN** The router prefers low-latency, cost-efficient models
+#### Scenario: SmartAutoQuality
+- **GIVEN** A request with `model: "smart/auto-quality"` requiring tools or reasoning
+- **WHEN** The router evaluates candidates
+- **THEN** The router prefers high-capability models

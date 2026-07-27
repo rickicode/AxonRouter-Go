@@ -18,6 +18,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	provideralias "github.com/rickicode/AxonRouter-Go/internal/provider"
+	"github.com/rickicode/AxonRouter-Go/internal/smart"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
@@ -148,6 +149,18 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
+	// Smart virtual model routing (smart/*) runs before combo resolution.
+	if smart.IsVirtualModel(model) && h.smartRouter != nil {
+		concreteModel, updatedBody, err := smart.RewriteVirtualModel(model, body, h.smartRouter)
+		if err == nil {
+			logging.Logger.Info("smart router resolved virtual model",
+				"virtual", model, "model", concreteModel)
+			model = concreteModel
+			body = updatedBody
+		} else {
+			logging.Logger.Warn("smart router failed, falling back", "virtual", model, "error", err.Error())
+		}
+	}
 	// Combo-first routing
 	if comboResult, ok := h.combo.Resolve(model); ok {
 		strategy := h.combo.EffectiveStrategy(comboResult.Combo.Name, comboResult.Combo.Strategy)

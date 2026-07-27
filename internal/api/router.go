@@ -50,6 +50,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
+	"github.com/rickicode/AxonRouter-Go/internal/smart"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 	"github.com/rickicode/AxonRouter-Go/internal/version"
 	"github.com/rickicode/AxonRouter-Go/web"
@@ -130,6 +131,10 @@ func New(cfg Config) *Router {
 	combo.SeedDefaultCombos(cfg.DB)
 
 	comboHandler := combo.NewHandler(cfg.DB, store, elig, writeQueue)
+	smartRegistry := smart.NewRegistry(cfg.DB)
+	smartTelemetry := smart.NewTelemetryStore(cfg.DB)
+	smartRouter := smart.NewRouter(smartRegistry, smartTelemetry, store, elig)
+	smartHandler := smart.NewVirtualModelHandler(smartRegistry)
 	// Auth cache: eliminates 2 DB queries + bcrypt per request on the hot path.
 	authCache := middleware.NewAuthCache(30 * time.Second)
 	tracker := usage.NewTracker(cfg.DB)
@@ -256,7 +261,7 @@ func New(cfg Config) *Router {
 	limiter := middleware.NewRateLimiter(600)
 	loginLimiter := middleware.NewRateLimiter(10)
 	// Create v1 handler with all dependencies (must exist before wiring routes)
-	v1H := v1.NewHandler(cfg.DB, writeQueue, store, elig, comboHandler, tracker, deviceTracker, authManager, proxyResolver, exhaustionCache, compStrategy, exactCache, providerCfg)
+	v1H := v1.NewHandler(cfg.DB, writeQueue, store, elig, comboHandler, smartRouter, smartRegistry, tracker, deviceTracker, authManager, proxyResolver, exhaustionCache, compStrategy, exactCache, providerCfg)
 	// ---- /v1 routes (proxy) ----
 	v1Group := engine.Group("/v1")
 	v1Group.Use(middleware.Auth(cfg.DB, authCache))
@@ -347,7 +352,7 @@ func New(cfg Config) *Router {
 	adminGroup := engine.Group("/api/admin")
 	adminGroup.Use(SessionAuth(cfg.DB))
 
-	registerAdminRoutes := func(g *gin.RouterGroup) {
+	registerAdminRoutes := func(g *gin.RouterGroup, smartH *smart.VirtualModelHandler) {
 		// Auth / security
 		g.POST("/change-password", ChangePasswordHandler(cfg.DB))
 		g.POST("/defer-password-change", DeferPasswordChangeHandler(cfg.DB))
@@ -415,6 +420,10 @@ func New(cfg Config) *Router {
 		g.POST("/combos/:id/steps", comboH.AddStep)
 		g.DELETE("/combos/steps/:stepId", comboH.RemoveStep)
 		g.POST("/combos/seed-defaults", comboH.SeedDefaults)
+	// Virtual Models
+	g.GET("/virtual-models", smartH.List)
+	g.GET("/virtual-models/:id", smartH.Get)
+	g.PATCH("/virtual-models/:id", smartH.Update)
 
 		// Logs
 		g.GET("/logs", logH.List)
@@ -529,14 +538,14 @@ func New(cfg Config) *Router {
 		g.POST("/developers/master-key/regenerate", developersH.RegenerateMasterKey)
 	}
 
-	registerAdminRoutes(adminGroup)
+	registerAdminRoutes(adminGroup, smartHandler)
 
 	// ---- /admin/api/v1 routes (master key protected) ----
 	masterGroup := engine.Group("/admin/api/v1")
 	masterGroup.Use(middleware.MasterAuth(km))
 	masterGroup.Use(admin.ProgrammaticResponseWrapper())
 	masterGroup.Use(middleware.MasterRestrict())
-	registerAdminRoutes(masterGroup)
+	registerAdminRoutes(masterGroup, smartHandler)
 
 	// ---- Static frontend (SPA) ----
 	fsys := web.GetBuildFS()
