@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Added
+- **Kiro live catalog consolidation** — live model catalog fetching, caching, fallback, and variant expansion now live alongside the static catalog in `internal/provider/kiro/catalog.go`, matching the 9Router `kiroModels.js` behavior previously split across `catalog.go` and `models.go`. The helper file `models.go` was removed; live fetch helpers moved into `catalog.go` with the same 5-minute TTL cache and static-catalog fallback. Upstream models are expanded into base / `-thinking` / `-agentic` / `-thinking-agentic` variants with human-readable display names, `rateMultiplier`, and `contextLength`. Curated metadata (Vision/Reasoning/Search capabilities, content strip lists, descriptions) is merged on top of live responses so known models keep their flags. Adds regression tests in `internal/provider/kiro/catalog_test.go` and `models_test.go` for fetch success + cache hit, fallback on failure, and variant expansion.
 ### Added
 - **Provider registry expansion (search, media, Chinese/regional, developer/niche)** — added 22 new built-in provider prefixes to close coverage gaps vs. 9Router/OmniRoute:
 - Search: `brave`, `tavily`, `exa`, `jina`, `google-pse`, `firecrawl` (webSearch/webFetch service kinds).

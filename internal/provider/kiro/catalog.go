@@ -1,5 +1,5 @@
-// Package kiro exposes the static Kiro model catalog and synthetic variant
-// generator used by discovery and routing.
+// Package kiro exposes the live and static Kiro model catalog, synthetic
+// variant expansion, and local caching used by discovery and routing.
 package kiro
 
 // Capabilities flags a model variant as thinking / agentic / vision / reasoning / search.
