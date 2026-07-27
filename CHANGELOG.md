@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- **Smart-router virtual models (`smart/auto`, `smart/auto-fast`, `smart/auto-quality`)** — new `internal/smart` package resolves virtual model ids to concrete `provider/model-id` candidates based on request complexity, live telemetry from `request_logs`, provider availability, capability requirements, and API-key allowlists. Virtual model registry is persisted in settings as `smart_router_virtual_models` and consumed by the dashboard Smart Router settings page. Smart routing runs before combo resolution for `/v1/chat/completions`, `/v1/messages`, and `/v1/responses`, with transparent fallback to normal resolution when no eligible candidate is found. Includes `internal/smart/features_test.go` and `internal/smart/router_test.go`.
+
+### Added
+- **MCP stdio-SSE bridge for local tool servers** — new `internal/mcp` package registers local MCP servers in an SQLite `mcp_servers` table and exposes them to remote clients via a stdio-SSE bridge. Admin CRUD endpoints (`GET/POST/PATCH/DELETE /api/admin/mcp`, `POST /api/admin/mcp/:id/test`, `GET /api/admin/mcp/:id/tools`) are wired for both session JWT and master API key auth. The SSE endpoint `GET /api/admin/mcp/:id/sse` spawns a per-session subprocess and implements the Anthropic MCP SSE contract (`endpoint` event + `message` events); client messages are delivered via `POST /api/admin/mcp/:id/message?sessionId=xxx`. Subprocesses are reaped by max idle time or disconnect, with restart policies (`always`, `on-failure`, `never`) and a configurable max concurrent clients cap. Command/args are validated to block shell metacharacters; stderr is logged only and never forwarded to clients. A new dashboard page at `/mcp` lists servers, supports add/edit/delete, tests connections, discovers tools, and copies the SSE URL. Added `internal/mcp/mcp_test.go` with CRUD, validation, parsing, and subprocess integration tests. Updated `openspec/specs/api/spec.md` and added `docs/mcp-setup.md`.
 
 ## [0.3.21] - 2026-07-27
 ### Added

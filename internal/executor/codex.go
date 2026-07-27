@@ -444,10 +444,16 @@ func codexCompactURL(req *Request) string {
 // non-streaming Response.
 func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, error) {
 	url := codexURL(req)
-	sessionKey := codexReasoningReplaySessionKey(req.Body, req.Headers)
+	// Reasoning-replay session key must be derived from the same request
+	// representation used when the cache is populated. Identity confusion rewrites
+	// continuity keys (prompt_cache_key, x-codex-window-id, x-codex-turn-metadata) to
+	// per-connection stable values before the upstream sees them; the replay cache
+	// therefore keys off those confused values so that multi-turn replay survives both
+	// confused and exposed client continuity values.
 	body := codexRequestBody(req.Body)
 	body = ensureImageGenerationTool(body, req.Model)
 	body, identityState := applyCodexIdentityConfuseBody(body, req.ConnectionID)
+	sessionKey := codexReasoningReplaySessionKey(body, req.Headers)
 	body, _ = codexInjectReasoningReplay(body, sessionKey)
 	headers := codexHeaders(req)
 	applyCodexIdentityConfuseHeaders(headers, identityState)
@@ -534,10 +540,16 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 // by preceding response.output_item.done events, mirroring the non-stream path.
 func (e *CodexExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
 	url := codexURL(req)
-	sessionKey := codexReasoningReplaySessionKey(req.Body, req.Headers)
+	// Reasoning-replay session key must be derived from the same request
+	// representation used when the cache is populated. Identity confusion rewrites
+	// continuity keys (prompt_cache_key, x-codex-window-id, x-codex-turn-metadata) to
+	// per-connection stable values before the upstream sees them; the replay cache
+	// therefore keys off those confused values so that multi-turn replay survives both
+	// confused and exposed client continuity values.
 	body := codexRequestBody(req.Body)
 	body = ensureImageGenerationTool(body, req.Model)
 	body, identityState := applyCodexIdentityConfuseBody(body, req.ConnectionID)
+	sessionKey := codexReasoningReplaySessionKey(body, req.Headers)
 	body, _ = codexInjectReasoningReplay(body, sessionKey)
 	headers := codexHeaders(req)
 	applyCodexIdentityConfuseHeaders(headers, identityState)

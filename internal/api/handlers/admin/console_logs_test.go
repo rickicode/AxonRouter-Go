@@ -187,6 +187,41 @@ func TestParseLogLine_RawErrorInference(t *testing.T) {
 	}
 }
 
+func TestParseLogLine_InferLevelFromJSONWithoutLevel(t *testing.T) {
+	line := `{"ts":"2026-01-01T00:00:00Z","msg":"database is locked","component":"sqlite"}`
+	entry, ok := parseLogLine(line)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if entry.Level != "error" {
+		t.Errorf("level = %q, want error", entry.Level)
+	}
+	if entry.Component != "sqlite" {
+		t.Errorf("component = %q, want sqlite", entry.Component)
+	}
+}
+
+func TestParseLogLine_InferWarn(t *testing.T) {
+	cases := []struct {
+		msg   string
+		level string
+	}{
+		{"quota exhausted for provider openai", "warn"},
+		{"upstream error, will try next", "warn"},
+		{"SQLITE_BUSY: database is locked", "error"},
+		{"error response from upstream", "error"},
+		{"request started", "info"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.msg, func(t *testing.T) {
+			entry, _ := parseLogLine(tc.msg)
+			if entry.Level != tc.level {
+				t.Errorf("level = %q, want %q", entry.Level, tc.level)
+			}
+		})
+	}
+}
+
 func TestLevelGTE(t *testing.T) {
 	tests := []struct {
 		level, min string

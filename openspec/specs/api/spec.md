@@ -1583,3 +1583,75 @@ The API SHALL support `PUT /admin/api/v1/tls-config` to update tls configuration
 - **WHEN** PUT /admin/api/v1/tls-config is called with session auth
 - **THEN** Request is allowed to proceed
 - **AND** Request proceeds to handler
+
+### Requirement: SmartVirtualModels
+
+The API SHALL support smart virtual model ids (`smart/auto`, `smart/auto-fast`, `smart/auto-quality`) on LLM endpoints (`/v1/chat/completions`, `/v1/messages`, `/v1/responses`). The gateway SHALL resolve a virtual model to a concrete `provider/model-id` from the configured candidate list before combo or direct routing runs, using request features, live telemetry from `request_logs`, provider availability, capability requirements, and API-key allowlists. If resolution fails, normal routing SHALL continue unchanged.
+
+#### Scenario: ResolveSmartAutoOnChatCompletions
+- **GIVEN** A valid virtual model id and enabled candidates
+- **WHEN** POST /v1/chat/completions is called with `model: smart/auto`
+- **THEN** The request model is replaced with the selected concrete model id
+- **AND** The request is routed using that concrete model
+
+#### Scenario: SmartRouterDisabledFallback
+- **GIVEN** A smart virtual model id that is disabled or has no eligible candidates
+- **WHEN** Any LLM endpoint receives the id
+- **THEN** Normal combo/direct routing proceeds with the original model id
+
+#### Scenario: ListMCPServers
+- **GIVEN** Authenticated admin user
+- **WHEN** GET /api/admin/mcp is called
+- **THEN** 200 OK with JSON body containing an array of registered servers including status
+
+#### Scenario: CreateMCPServer
+- **GIVEN** Authenticated admin user with valid server payload
+- **WHEN** POST /api/admin/mcp is called with name, command, args (JSON array), env (JSON object), enabled, restart_policy, max_clients, max_idle_sec
+- **THEN** 201 Created with the created server object
+- **AND** Forbidden shell metacharacters in command/args are rejected with 400 Bad Request
+
+#### Scenario: UpdateMCPServer
+- **GIVEN** Authenticated admin user and existing server ID
+- **WHEN** PATCH /api/admin/mcp/:id is called with updated fields
+- **THEN** 200 OK with updated server object
+- **AND** 404 Not Found if server does not exist
+
+#### Scenario: DeleteMCPServer
+- **GIVEN** Authenticated admin user and existing server ID
+- **WHEN** DELETE /api/admin/mcp/:id is called
+- **THEN** 200 OK with success flag
+- **AND** 404 Not Found if server does not exist
+
+#### Scenario: TestMCPServer
+- **GIVEN** Authenticated admin user and existing server ID
+- **WHEN** POST /api/admin/mcp/:id/test is called
+- **THEN** 200 OK if the server command can be spawned
+- **AND** 400 Bad Request if spawn fails
+
+#### Scenario: ListMCPTools
+- **GIVEN** Authenticated admin user, existing enabled server that supports tools/list
+- **WHEN** GET /api/admin/mcp/:id/tools is called
+- **THEN** 200 OK with JSON array of discovered tools
+
+### Requirement: MCPBridge
+
+The API SHALL expose a stdio-SSE bridge for each registered MCP server at `/api/admin/mcp/:id/sse` and accept client messages at `/api/admin/mcp/:id/message`.
+
+#### Scenario: OpenSSESession
+- **GIVEN** Authenticated client via session JWT (header or `?token=` query param for EventSource)
+- **WHEN** GET /api/admin/mcp/:id/sse is opened
+- **THEN** A subprocess for the registered command is spawned
+- **AND** An `endpoint` SSE event is sent containing the POST URL for this session
+- **AND** Subsequent subprocess stdout frames are forwarded as `message` SSE events
+
+#### Scenario: SendClientMessage
+- **GIVEN** Active SSE session with known sessionId
+- **WHEN** POST /api/admin/mcp/:id/message?sessionId=xxx is called with a JSON-RPC message
+- **THEN** The message is written to the subprocess stdin followed by a newline
+- **AND** 202 Accepted is returned
+
+#### Scenario: SessionCleanup
+- **GIVEN** Active SSE session with no connected clients
+- **WHEN** The client disconnects or the server reaches max_idle_sec
+- **THEN** The subprocess is terminated and the session is removed
+

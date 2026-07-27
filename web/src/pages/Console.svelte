@@ -3,7 +3,14 @@ import { onMount, tick } from 'svelte';
 import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
 import { Button } from '$lib/components/ui/button';
 import { Badge } from '$lib/components/ui/badge';
-import { ScrollArea } from '$lib/components/ui/scroll-area';
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from '$lib/components/ui/table';
 import {
 	getConsoleLogs,
 	streamConsoleLogs,
@@ -24,10 +31,10 @@ import Trash2Icon from '@lucide/svelte/icons/trash-2';
 
 const MAX_CONSOLE_LINES = 500;
 
-let logs = $state<ConsoleLogsResponse | null>(null);
+let logs = $state<ConsoleLogsResponse>({ entries: [], path: '', total: 0 });
 let isLoading = $state(false);
 let isPaused = $state(false);
-let logViewport = $state<HTMLPreElement | null>(null);
+let logContainer = $state<HTMLDivElement | null>(null);
 let pollTimer = $state<ReturnType<typeof setInterval> | null>(null);
 let eventSource = $state<EventSource | null>(null);
 let connectionMode = $state<'sse' | 'poll'>('sse');
@@ -35,6 +42,7 @@ let lastError = $state<string | null>(null);
 let levelFilter = $state('debug');
 let searchQuery = $state('');
 let copiedIndex = $state<number | null>(null);
+let isAtLiveEdge = $state(true);
 
 const levels = [
 	{ value: 'debug', label: 'All', color: 'text-muted-foreground' },
@@ -42,6 +50,72 @@ const levels = [
 	{ value: 'warn', label: 'Warn+', color: 'text-amber-400' },
 	{ value: 'error', label: 'Error+', color: 'text-red-400' },
 ];
+
+type ColumnDef = { key: string; label: string; subLabel?: string; class?: string };
+const columns: ColumnDef[] = [
+	{ key: 'ts', label: 'Time' },
+	{ key: 'level', label: 'Level' },
+	{ key: 'component', label: 'Component' },
+	{ key: 'source', label: 'Source', subLabel: 'Provider / Model' },
+	{ key: 'request_id', label: 'Request' },
+	{ key: 'message', label: 'Message' },
+	{ key: 'details', label: 'Details', subLabel: 'HTTP / Extras' },
+];
+
+function entryKey(entry: ConsoleLogEntry): string {
+	const parts = [
+		entry.ts ?? '',
+		entry.level ?? '',
+		entry.component ?? '',
+		entry.msg ?? '',
+		entry.request_id ?? '',
+		entry.provider ?? '',
+		entry.model ?? '',
+	];
+	return parts.join('|');
+}
+
+function normalizeHttpStatus(value: unknown): number | null {
+	if (value === null || value === undefined) return null;
+	const n = typeof value === 'string' ? parseInt(value, 10) : Number(value);
+	return Number.isFinite(n) ? n : null;
+}
+
+function getHttpStatusVariant(status: number | null): 'default' | 'secondary' | 'destructive' | 'outline' {
+	if (status === null) return 'outline';
+	if (status >= 200 && status < 300) return 'default';
+	if (status >= 400 && status < 500) return 'secondary';
+	if (status >= 500) return 'destructive';
+	return 'outline';
+}
+
+function isHttpEntry(entry: ConsoleLogEntry): boolean {
+	return entry.component?.toLowerCase() === 'http';
+}
+
+function mergeEntries(incoming: ConsoleLogEntry[]): boolean {
+	// API returns oldest-first; the UI renders newest-first.
+	const newestFirst = incoming.slice().reverse();
+	if (logs.entries.length === 0) {
+		logs.entries = newestFirst.slice(0, MAX_CONSOLE_LINES);
+		logs.total = logs.entries.length;
+		return newestFirst.length > 0;
+	}
+	const existingKeys = new Set(logs.entries.map(entryKey));
+	const fresh = newestFirst.filter((e) => !existingKeys.has(entryKey(e)));
+	if (fresh.length === 0) return false;
+	logs.entries = [...fresh, ...logs.entries].slice(0, MAX_CONSOLE_LINES);
+	logs.total = logs.entries.length;
+	return true;
+}
+
+function appendEntry(entry: ConsoleLogEntry): boolean {
+	const key = entryKey(entry);
+	if (logs.entries.some((e) => entryKey(e) === key)) return false;
+	logs.entries = [entry, ...logs.entries].slice(0, MAX_CONSOLE_LINES);
+	logs.total = logs.entries.length;
+	return true;
+}
 
 async function fetchLogs(immediate = false) {
 	if (isLoading && !immediate) return;
@@ -51,10 +125,14 @@ async function fetchLogs(immediate = false) {
 			level: levelFilter,
 			search: searchQuery || undefined,
 		});
-		logs = result;
+		logContainer ??= null;
+		const changed = mergeEntries(result.entries);
+		logs.path = result.path;
 		lastError = null;
-		await tick();
-		scrollToBottom();
+		if (changed) {
+			await tick();
+			if (isAtLiveEdge) scrollToLiveEdge();
+		}
 	} catch (err) {
 		const message = err instanceof Error ? err.message : 'Unknown error';
 		if (lastError !== message) {
@@ -66,10 +144,16 @@ async function fetchLogs(immediate = false) {
 	}
 }
 
-function scrollToBottom() {
-	if (logViewport) {
-		logViewport.scrollTop = logViewport.scrollHeight;
+function scrollToLiveEdge() {
+	if (logContainer) {
+		logContainer.scrollTop = 0;
 	}
+}
+
+function handleScroll() {
+	if (!logContainer) return;
+	const threshold = 50;
+	isAtLiveEdge = logContainer.scrollTop <= threshold;
 }
 
 function startPolling() {
@@ -103,32 +187,28 @@ function safeParse(data: string): unknown {
 
 function applySSEEvent(type: 'init' | 'line' | 'clear', data: unknown) {
 	if (type === 'clear') {
-		if (logs) logs.entries = [];
+		logs.entries = [];
+		logs.total = 0;
 		return;
 	}
 	if (type === 'init') {
 		const init = data as { entries?: ConsoleLogEntry[]; path?: string; total?: number } | null;
 		const entries = init?.entries ?? [];
-		logs = {
-			entries,
-			path: init?.path ?? logs?.path ?? '',
-			total: init?.total ?? entries.length,
-		};
-		tick().then(scrollToBottom);
+		mergeEntries(entries);
+		logs.path = init?.path ?? logs.path;
+		tick().then(() => {
+			if (isAtLiveEdge) scrollToLiveEdge();
+		});
 		return;
 	}
 	if (type === 'line') {
 		const entry = data as ConsoleLogEntry | null;
 		if (!entry || !entry.level) return;
-		if (!logs) {
-			logs = { entries: [], path: '', total: 0 };
+		if (appendEntry(entry)) {
+			tick().then(() => {
+				if (isAtLiveEdge) scrollToLiveEdge();
+			});
 		}
-		logs.entries.push(entry);
-		if (logs.entries.length > MAX_CONSOLE_LINES) {
-			logs.entries = logs.entries.slice(-MAX_CONSOLE_LINES);
-		}
-		logs.total = logs.entries.length;
-		tick().then(scrollToBottom);
 	}
 }
 
@@ -220,7 +300,8 @@ async function handleClearLogs() {
 	if (!confirmed) return;
 	try {
 		await clearConsoleLogs();
-		if (logs) logs.entries = [];
+		logs.entries = [];
+		logs.total = 0;
 		lastError = null;
 		toast.success('Console logs cleared');
 	} catch (err) {
@@ -253,23 +334,6 @@ function getLevelColor(level: string): string {
 			return 'text-red-500 font-bold';
 		default:
 			return 'text-muted-foreground';
-	}
-}
-
-function getLevelBg(level: string): string {
-	switch (level) {
-		case 'debug':
-			return 'bg-slate-500/10';
-		case 'info':
-			return 'bg-blue-500/10';
-		case 'warn':
-			return 'bg-amber-500/10';
-		case 'error':
-			return 'bg-red-500/10';
-		case 'fatal':
-			return 'bg-red-500/20';
-		default:
-			return '';
 	}
 }
 
@@ -308,6 +372,13 @@ function truncateCID(cid: string): string {
 	return cid.length > 8 ? cid.slice(0, 8) : cid;
 }
 
+function formatExtraChips(entry: ConsoleLogEntry): string[] {
+	if (!entry.extra) return [];
+	return Object.entries(entry.extra)
+		.filter(([k]) => !isHttpEntry(entry) || !['status', 'method', 'path', 'lat', 'client_ip', 'user_agent'].includes(k))
+		.map(([k, v]) => `${k}=${String(v).slice(0, 60)}`);
+}
+
 onMount(() => {
 	document.title = 'Console — AxonRouter';
 	startSSE();
@@ -324,7 +395,7 @@ onMount(() => {
 		<div class="space-y-1">
 			<h1 class="text-display-lg">Console.</h1>
 			<p class="text-body-sm text-muted-foreground">
-				Structured application log viewer{logs?.path ? ` — ${logs.path}` : ''}.
+				Structured application log viewer{logs.path ? ` — ${logs.path}` : ''}.
 			</p>
 		</div>
 		<div class="flex items-center gap-2">
@@ -374,7 +445,7 @@ onMount(() => {
 				<FilterIcon class="size-4 text-muted-foreground" />
 				<CardTitle class="text-body-md-strong">Filters</CardTitle>
 			</div>
-			<div class="flex items-center gap-1.5">
+			<div class="flex items-center gap-1.5 overflow-x-auto">
 				{#each levels as level}
 					<button
 						class="rounded-sm px-3 py-1 text-caption-mono transition-colors {levelFilter === level.value
@@ -401,106 +472,135 @@ onMount(() => {
 		</CardContent>
 	</Card>
 
-	<!-- Log entries -->
-	<Card class="shadow-card flex flex-1 min-h-0">
+	<!-- Log table -->
+	<Card class="shadow-card flex flex-1 min-h-0 overflow-hidden">
 		<CardHeader class="pb-3 border-b border-border flex flex-row items-center justify-between space-y-0 shrink-0">
 			<div class="flex items-center gap-2">
 				<TerminalIcon class="size-4 text-muted-foreground" />
 				<CardTitle class="text-body-md-strong">Application log</CardTitle>
 			</div>
-			{#if logs}
-				<p class="text-caption text-muted-foreground">
-					{logs.total} entr{logs.total === 1 ? 'y' : 'ies'}
-				</p>
-			{/if}
+			<p class="text-caption text-muted-foreground">
+				{logs.total} entr{logs.total === 1 ? 'y' : 'ies'}
+			</p>
 		</CardHeader>
 		<CardContent class="flex-1 p-0 min-h-0">
-			<ScrollArea class="h-full">
-				<div class="min-h-full" style="background: #0d1117;">
-					<!-- Terminal header -->
-					<div class="flex items-center gap-1.5 px-4 py-2 border-b border-white/5">
-						<div class="w-2.5 h-2.5 rounded-full bg-red-500/80"></div>
-						<div class="w-2.5 h-2.5 rounded-full bg-amber-500/80"></div>
-						<div class="w-2.5 h-2.5 rounded-full bg-green-500/80"></div>
-						<span class="ml-2 text-caption text-white/30 font-mono">console</span>
-						<div class="flex-1"></div>
-						{#if !isPaused}
-							<div class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></div>
+			{#if logs.entries.length === 0}
+				<div class="flex flex-col items-center justify-center py-16 text-center">
+					<TerminalIcon class="size-8 text-muted-foreground mb-3" />
+					<p class="text-foreground font-semibold text-body-sm mb-1">No log entries found.</p>
+					<p class="text-muted-foreground text-body-sm">
+						{#if searchQuery || levelFilter !== 'debug'}
+							Try adjusting filters.
+						{:else}
+							Logs will appear here once the application starts logging.
 						{/if}
-					</div>
-					{#if !logs || logs.entries.length === 0}
-						<div class="flex flex-col items-center justify-center py-16 text-center">
-							<TerminalIcon class="size-8 text-white/20 mb-3" />
-							<p class="text-white/40 text-body-sm">No log entries found.</p>
-							<p class="text-white/20 text-caption mt-1">
-								{#if searchQuery || levelFilter !== 'debug'}
-									Try adjusting filters.
-								{:else}
-									Logs will appear here once the application starts logging.
-								{/if}
-							</p>
-						</div>
-					{:else}
-						{#each logs.entries as entry, i}
-							<div
-								class="group flex items-start gap-0 px-4 py-1.5 border-b border-white/5 hover:bg-white/5 transition-colors {getLevelBg(entry.level)}"
-							>
-								<!-- Timestamp -->
-								<span class="text-caption font-mono text-white/30 whitespace-nowrap min-w-[95px] shrink-0">
-									{formatTimestamp(entry.ts)}
-								</span>
-								<!-- Level badge -->
-								<span class="text-caption font-mono min-w-[50px] shrink-0 text-right {getLevelColor(entry.level)}">
-									{entry.level.toUpperCase().padEnd(5)}
-								</span>
-								<!-- Component tag -->
-								{#if entry.component}
-									<span class="text-caption font-mono text-purple-400 shrink-0 ml-2">
-										[{entry.component}]
-									</span>
-								{/if}
-								<!-- Request ID -->
-								{#if entry.request_id}
-									<span class="text-caption font-mono text-cyan-400/60 shrink-0 ml-2" title={entry.request_id}>
-										cid:{truncateCID(entry.request_id)}
-									</span>
-								{/if}
-								<!-- Message -->
-								<span class="text-caption font-mono text-white/80 ml-3 break-words flex-1 min-w-0">
-									{entry.msg}
-								</span>
-								<!-- Extra metadata chips -->
-								{#if entry.provider || entry.model || entry.conn}
-									<div class="flex items-center gap-1 ml-3 shrink-0">
-										{#if entry.provider}
-											<span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/5 text-white/40">
-												{entry.provider}
-											</span>
-										{/if}
-										{#if entry.model}
-											<span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/5 text-amber-400/60">
-												{entry.model}
-											</span>
-										{/if}
-									</div>
-								{/if}
-								<!-- Copy button (hidden until hover) -->
-								<button
-									class="opacity-0 group-hover:opacity-100 transition-opacity ml-2 shrink-0 p-1 rounded hover:bg-white/10"
-									onclick={() => copyEntry(entry, i)}
-									title="Copy entry as JSON"
-								>
-									{#if copiedIndex === i}
-										<CheckIcon class="size-3 text-green-400" />
-									{:else}
-										<CopyIcon class="size-3 text-white/30" />
-									{/if}
-								</button>
-							</div>
-						{/each}
-					{/if}
+					</p>
 				</div>
-			</ScrollArea>
+			{:else}
+				<div
+					bind:this={logContainer}
+					onscroll={handleScroll}
+					class="h-full overflow-auto"
+				>
+					<Table>
+						<TableHeader>
+							<TableRow class="hover:bg-transparent">
+								{#each columns as column}
+									<TableHead class="{column.class ?? ''} {column.key === 'ts' ? 'min-w-[120px]' : ''} {column.key === 'level' ? 'w-[80px]' : ''} {column.key === 'component' ? 'min-w-[100px]' : ''} {column.key === 'source' ? 'min-w-[140px] md:min-w-[180px]' : ''} {column.key === 'request_id' ? 'min-w-[100px]' : ''} {column.key === 'message' ? 'min-w-[200px] md:min-w-[280px]' : ''} {column.key === 'details' ? 'min-w-[180px] md:min-w-[220px]' : ''}">
+										<div class="flex flex-col leading-none">
+											<span>{column.label}</span>
+											{#if column.subLabel}
+												<span class="text-[10px] normal-case text-muted-foreground/70">{column.subLabel}</span>
+											{/if}
+										</div>
+									</TableHead>
+								{/each}
+								<TableHead class="w-[50px]"></TableHead>
+							</TableRow>
+						</TableHeader>
+						<TableBody>
+							{#each logs.entries as entry, i (entryKey(entry))}
+								{@const http = isHttpEntry(entry)}
+								{@const status = http ? normalizeHttpStatus(entry.extra?.status) : null}
+								<TableRow class="group font-mono">
+									<TableCell class="text-caption text-muted-foreground whitespace-nowrap">{formatTimestamp(entry.ts)}</TableCell>
+									<TableCell>
+										<Badge variant={getLevelBadgeVariant(entry.level)} class="text-caption-mono rounded-sm">
+											{entry.level.toUpperCase()}
+										</Badge>
+									</TableCell>
+									<TableCell class="text-caption {getLevelColor(entry.level)}">
+										{entry.component ?? '—'}
+									</TableCell>
+									<TableCell>
+										<div class="flex flex-col">
+											<span class="text-body-sm text-foreground truncate max-w-[160px] md:max-w-[220px]" title={entry.provider || ''}>
+												{entry.provider || '—'}
+											</span>
+											<span class="text-code text-muted-foreground truncate max-w-[160px] md:max-w-[220px]" title={entry.model || ''}>
+												{entry.model || (entry.conn ? `conn:${entry.conn}` : '—')}
+											</span>
+										</div>
+									</TableCell>
+									<TableCell class="text-caption-mono text-cyan-400/70 whitespace-nowrap" title={entry.request_id || ''}>
+										{entry.request_id ? `cid:${truncateCID(entry.request_id)}` : '—'}
+									</TableCell>
+									<TableCell>
+										{#if http}
+											<div class="flex items-center gap-2 flex-wrap">
+												<Badge variant={getHttpStatusVariant(status)} class="text-caption-mono rounded-sm">
+													{status ?? '—'}
+												</Badge>
+												<span class="text-caption-mono text-muted-foreground">{String(entry.extra?.method ?? '—')}</span>
+												<span class="text-caption text-foreground truncate max-w-[180px] md:max-w-[260px]" title={String(entry.extra?.path ?? '')}>
+													{String(entry.extra?.path ?? '—')}
+												</span>
+												<span class="text-caption-mono text-muted-foreground">{String(entry.extra?.lat ?? '—')}</span>
+											</div>
+										{:else}
+											<span class="text-caption text-foreground truncate max-w-[200px] md:max-w-[320px]" title={entry.msg}>{entry.msg}</span>
+										{/if}
+									</TableCell>
+									<TableCell>
+										{#if http}
+											<div class="flex flex-col">
+												<code class="text-caption-mono text-muted-foreground whitespace-nowrap">{String(entry.extra?.client_ip ?? '—')}</code>
+												<span class="text-caption text-muted-foreground truncate max-w-[140px] md:max-w-[200px]" title={String(entry.extra?.user_agent ?? '')}>
+													{String(entry.extra?.user_agent ?? '—')}
+												</span>
+											</div>
+										{:else}
+											<div class="flex flex-wrap gap-1">
+												{#if entry.error}
+													<span class="text-caption text-destructive truncate max-w-[200px] md:max-w-[300px]" title={entry.error}>{entry.error}</span>
+												{/if}
+												{#if entry.extra}
+													{#each formatExtraChips(entry) as chip}
+														<Badge variant="outline" class="text-[10px] font-mono rounded-sm py-0 text-muted-foreground border-border">{chip}</Badge>
+													{/each}
+												{/if}
+											</div>
+										{/if}
+									</TableCell>
+									<TableCell class="w-[50px]">
+										<button
+											class="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-accent"
+											onclick={() => copyEntry(entry, i)}
+											title="Copy entry as JSON"
+										>
+											{#if copiedIndex === i}
+												<CheckIcon class="size-3 text-green-400" />
+											{:else}
+												<CopyIcon class="size-3 text-muted-foreground" />
+											{/if}
+										</button>
+									</TableCell>
+								</TableRow>
+							{/each}
+						</TableBody>
+					</Table>
+				</div>
+			{/if}
 		</CardContent>
 	</Card>
 </div>

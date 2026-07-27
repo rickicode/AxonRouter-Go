@@ -139,6 +139,20 @@ The system SHALL the system shall populate the database with predefined default 
 - **THEN** Default combos are inserted into database
 - **AND** HTTP 200 status
 
+### Requirement: SmartVirtualModels
+
+The system SHALL support smart virtual models as a routing layer that complements combos. Virtual models (`smart/auto`, `smart/auto-fast`, `smart/auto-quality`) SHALL be stored in settings under `smart_router_virtual_models` with a candidate list per virtual model. They SHALL be resolved before combo resolution and SHALL fall back to normal combo/direct routing when disabled or unmatched.
+
+#### Scenario: VirtualModelRegistryStoredInSettings
+- **GIVEN** A valid `smart_router_virtual_models` settings payload
+- **WHEN** The dashboard reads or writes the setting
+- **THEN** The registry is persisted and returned as JSON
+
+#### Scenario: VirtualModelFallsBackToCombo
+- **GIVEN** A request with a smart virtual model id
+- **WHEN** The smart router has no eligible candidates
+- **THEN** Normal combo resolution is attempted with the original model id
+
 ## Technical Notes
 
 - **Dependencies**: combo.Handler, database/sql
