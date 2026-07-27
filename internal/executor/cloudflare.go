@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 
 	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
@@ -40,6 +41,19 @@ func (e *CloudflareExecutor) Execute(ctx context.Context, req *Request) (*Respon
 	cp.Provider = provider
 	cp.Body = sanitizeRequestWithCompatibility(cp.Body, c)
 	cp.Body = cfInjectReasoningControl(cp.Body)
+
+	model := gjson.GetBytes(cp.Body, "model").String()
+	if task, ok := detectCFTask(model, cp.Body); ok {
+		switch task {
+		case "text-classification":
+			return e.cfClassifyClassifier(ctx, cp)
+		case "rerank":
+			return e.cfRerank(ctx, cp)
+		case "image-classification":
+			return e.cfImageClassification(ctx, cp)
+		}
+	}
+
 	resp, err := e.OpenAIExecutor.Execute(ctx, cp)
 	translateIfCloudflare(err)
 	if resp != nil {
@@ -62,6 +76,13 @@ func (e *CloudflareExecutor) ExecuteStream(ctx context.Context, req *Request) (*
 	cp.Provider = provider
 	cp.Body = sanitizeRequestWithCompatibility(cp.Body, c)
 	cp.Body = cfInjectReasoningControl(cp.Body)
+
+	model := gjson.GetBytes(cp.Body, "model").String()
+	if _, ok := detectCFTask(model, cp.Body); ok {
+		resp, err := e.Execute(ctx, cp)
+		return cfResponseToStreamResult(resp, err), nil
+	}
+
 	result, err := e.OpenAIExecutor.ExecuteStream(ctx, cp)
 	translateIfCloudflare(err)
 	if err != nil {
@@ -74,6 +95,38 @@ func (e *CloudflareExecutor) ExecuteStream(ctx context.Context, req *Request) (*
 	}, nil
 }
 
+// cfResponseToStreamResult converts a non-streaming native-run response into a
+// single-chunk SSE stream so the chat handler can return it uniformly.
+func cfResponseToStreamResult(resp *Response, err error) *StreamResult {
+	out := make(chan StreamChunk, 2)
+	if err != nil {
+		go func() {
+			defer close(out)
+			out <- StreamChunk{Err: err}
+		}()
+		return &StreamResult{Chunks: out, StatusCode: httpStatusFromError(err)}
+	}
+	go func() {
+		defer close(out)
+		if len(resp.Body) > 0 {
+			out <- StreamChunk{Payload: append([]byte("data: "), resp.Body...)}
+		}
+		out <- StreamChunk{Payload: []byte("data: [DONE]")}
+	}()
+	return &StreamResult{
+		StatusCode: resp.StatusCode,
+		Headers:    resp.Headers,
+		Chunks:     out,
+	}
+}
+
+func httpStatusFromError(err error) int {
+	if upErr, ok := err.(*UpstreamError); ok {
+		return upErr.StatusCode
+	}
+	return http.StatusInternalServerError
+}
+
 // normalizeCloudflareStream rewrites Cloudflare Workers AI streaming chunks
 // into the standard OpenAI shape. It aggregates multiple `reasoning` deltas that
 // arrive before the first content delta into a single `reasoning_content`
@@ -83,7 +136,6 @@ func normalizeCloudflareStream(in <-chan StreamChunk) chan StreamChunk {
 	out := make(chan StreamChunk)
 	go func() {
 		defer close(out)
-
 		var reasoning strings.Builder
 		var meta struct {
 			id, model string
@@ -91,7 +143,6 @@ func normalizeCloudflareStream(in <-chan StreamChunk) chan StreamChunk {
 			set       bool
 		}
 		reasoningFlushed := false
-
 		flushReasoning := func() *StreamChunk {
 			if reasoning.Len() == 0 {
 				return nil
@@ -112,13 +163,11 @@ func normalizeCloudflareStream(in <-chan StreamChunk) chan StreamChunk {
 			b, _ := json.Marshal(chunk)
 			return &StreamChunk{Payload: append([]byte("data: "), b...)}
 		}
-
 		for chunk := range in {
 			if chunk.Err != nil || len(chunk.Payload) == 0 {
 				out <- chunk
 				continue
 			}
-
 			line := bytes.TrimSpace(chunk.Payload)
 			if len(line) == 0 || !bytes.HasPrefix(line, []byte("data:")) {
 				out <- chunk
@@ -129,13 +178,11 @@ func normalizeCloudflareStream(in <-chan StreamChunk) chan StreamChunk {
 				out <- chunk
 				continue
 			}
-
 			var parsed map[string]any
 			if err := json.Unmarshal(data, &parsed); err != nil {
 				out <- chunk
 				continue
 			}
-
 			if !meta.set {
 				if v, ok := parsed["id"].(string); ok {
 					meta.id = v
@@ -148,7 +195,6 @@ func normalizeCloudflareStream(in <-chan StreamChunk) chan StreamChunk {
 				}
 				meta.set = true
 			}
-
 			choices, ok := parsed["choices"].([]any)
 			if !ok || len(choices) == 0 {
 				out <- chunk
@@ -164,10 +210,8 @@ func normalizeCloudflareStream(in <-chan StreamChunk) chan StreamChunk {
 				out <- chunk
 				continue
 			}
-
 			content, hasContent := delta["content"].(string)
 			reasoningText, hasReasoning := delta["reasoning"].(string)
-
 			// Empty reasoning fields should be left untouched, matching the
 			// upstream contract.
 			if hasReasoning && reasoningText == "" {
@@ -179,21 +223,18 @@ func normalizeCloudflareStream(in <-chan StreamChunk) chan StreamChunk {
 				out <- chunk
 				continue
 			}
-
 			if hasReasoning && reasoningText != "" {
 				// Buffer the reasoning text until we see the first real content delta.
 				if content == "" && !reasoningFlushed {
 					reasoning.WriteString(reasoningText)
 					continue
 				}
-
 				// Flush any buffered reasoning before emitting the current chunk.
 				if reasoning.Len() > 0 && !reasoningFlushed {
 					if flushed := flushReasoning(); flushed != nil {
 						out <- *flushed
 					}
 				}
-
 				// Rewrite the upstream field to the OpenAI-compatible one.
 				delete(delta, "reasoning")
 				delta["reasoning_content"] = reasoningText
@@ -204,7 +245,6 @@ func normalizeCloudflareStream(in <-chan StreamChunk) chan StreamChunk {
 					out <- *flushed
 				}
 			}
-
 			// We only need to remarshal when reasoning was rewritten.
 			if hasReasoning && reasoningText != "" {
 				b, err := json.Marshal(parsed)
@@ -215,10 +255,8 @@ func normalizeCloudflareStream(in <-chan StreamChunk) chan StreamChunk {
 				out <- StreamChunk{Payload: append([]byte("data: "), b...)}
 				continue
 			}
-
 			out <- chunk
 		}
-
 		if reasoning.Len() > 0 && !reasoningFlushed {
 			if flushed := flushReasoning(); flushed != nil {
 				out <- *flushed

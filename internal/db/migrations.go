@@ -315,7 +315,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		{"mimocode", "MiMoCode Free", "openai", "https://api.xiaomimimo.com/api/free-ai/openai", "no-auth", []string{"llm"}},
 		{"mimo", "Xiaomi MiMo PAYG", "openai", "https://api.xiaomimimo.com/v1", "apikey", []string{"llm"}},
 		{"mimo-tp", "MiMo Token Plan", "openai", "https://api.xiaomimimo.com/v1", "apikey", []string{"llm"}},
-		{"cf", "Cloudflare Workers AI", "openai", "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/v1/chat/completions", "apikey", []string{"llm", "embedding", "image"}},
+		{"cf", "Cloudflare Workers AI", "openai", "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/v1/chat/completions", "apikey", []string{"llm", "embedding", "image", "classification", "rerank", "imageClassification"}},
 		{"glm", "Zhipu GLM", "openai", "https://api.z.ai/api/paas/v4", "apikey", []string{"llm"}},
 		{"minimax", "MiniMax", "openai", "https://api.minimax.io/v1", "apikey", []string{"llm"}},
 		{"kimi", "Kimi", "openai", "https://api.moonshot.ai/v1", "apikey", []string{"llm"}},
