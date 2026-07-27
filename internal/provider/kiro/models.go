@@ -1,7 +1,6 @@
 package kiro
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,14 +12,6 @@ import (
 	"sync"
 	"time"
 )
-
-func genUUID() string {
-	var b [16]byte
-	_, _ = rand.Read(b[:])
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-}
 
 const (
 	kiroRuntimeSDKVersion = "1.0.0"
@@ -36,11 +27,11 @@ var (
 	kiroProfileARNRe   = regexp.MustCompile(`^arn:aws:codewhisperer:([a-z0-9-]+):`)
 	kiroProfileRegions = map[string]struct{}{"us-east-1": {}, "eu-central-1": {}}
 
-	liveModelCacheTTL       = 5 * time.Minute
-	liveModelCacheMu        sync.Mutex
-	liveModelCache          = map[string]liveModelCacheEntry{}
-	liveCatalogHTTPClient   = &http.Client{Timeout: 15 * time.Second}
-	liveModelsEndpointBase  = "" // test override; when set, used instead of AWS URLs
+	liveModelCacheTTL      = 5 * time.Minute
+	liveModelCacheMu       sync.Mutex
+	liveModelCache         = map[string]liveModelCacheEntry{}
+	liveCatalogHTTPClient  = &http.Client{Timeout: 15 * time.Second}
+	liveModelsEndpointBase = "" // test override; when set, used instead of AWS URLs
 )
 
 type liveModelCacheEntry struct {
@@ -149,13 +140,13 @@ func buildKiroFingerprintHeaders(psd map[string]any, accessToken string) map[str
 		kiroRuntimeSDKVersion, kiroAgentOS, kiroAgentOSVersion, kiroNodeVersion, kiroRuntimeSDKVersion, kiroIDEVersion, machineID,
 	)
 	return map[string]string{
-		"User-Agent":                 userAgent,
-		"x-amz-user-agent":           fmt.Sprintf("aws-sdk-js/%s KiroIDE-%s-%s", kiroRuntimeSDKVersion, kiroIDEVersion, machineID),
-		"x-amzn-kiro-agent-mode":     "vibe",
+		"User-Agent":                  userAgent,
+		"x-amz-user-agent":            fmt.Sprintf("aws-sdk-js/%s KiroIDE-%s-%s", kiroRuntimeSDKVersion, kiroIDEVersion, machineID),
+		"x-amzn-kiro-agent-mode":      "vibe",
 		"x-amzn-codewhisperer-optout": "true",
-		"amz-sdk-request":            "attempt=1; max=1",
-		"amz-sdk-invocation-id":      genUUID(),
-		"Accept":                     "application/json",
+		"amz-sdk-request":             "attempt=1; max=1",
+		"amz-sdk-invocation-id":       genUUID(),
+		"Accept":                      "application/json",
 	}
 }
 
@@ -203,6 +194,7 @@ func expandLiveModels(data map[string]any) []Model {
 	} else if m, ok := data["availableModels"].([]any); ok {
 		rawItems = m
 	}
+
 	seen := make(map[string]struct{})
 	var expanded []Model
 	for _, v := range rawItems {
@@ -220,6 +212,7 @@ func expandLiveModels(data map[string]any) []Model {
 		if upstreamID == "" {
 			continue
 		}
+
 		displayName := formatDisplayName(item["modelName"], upstreamID, item["rateMultiplier"])
 		tokenLimits, _ := item["tokenLimits"].(map[string]any)
 		contextLength := 200000
@@ -229,6 +222,14 @@ func expandLiveModels(data map[string]any) []Model {
 		rateMultiplier := 1.0
 		if rm, ok := item["rateMultiplier"].(float64); ok && rm > 0 {
 			rateMultiplier = rm
+		}
+
+		// Preserve manually-curated metadata for known upstream IDs when available.
+		caps := baseCapabilities(upstreamID)
+		strip := baseStrip(upstreamID)
+		desc := baseDescription(upstreamID)
+		if desc == "" {
+			desc = toNonEmptyString(item["description"])
 		}
 
 		variants := buildLiveVariants(upstreamID, displayName)
@@ -241,11 +242,24 @@ func expandLiveModels(data map[string]any) []Model {
 			variant.RateMultiplier = rateMultiplier
 			variant.UpstreamModelID = upstreamID
 			variant.OwnedBy = "kiro"
-			variant.Description = toNonEmptyString(item["description"])
+			variant.Description = desc
+			// Merge base capabilities into variant capabilities. Live variants already
+			// set Thinking/Agentic; we overlay Vision/Reasoning/Search from curation.
+			variant.Capabilities = mergeCapabilities(variant.Capabilities, caps)
+			variant.Strip = strip
 			expanded = append(expanded, variant)
 		}
 	}
 	return expanded
+}
+
+// mergeCapabilities copies base-level Vision/Reasoning/Search flags into the
+// variant capability set while preserving synthetic Thinking/Agentic flags.
+func mergeCapabilities(variant Capabilities, base Capabilities) Capabilities {
+	variant.Vision = variant.Vision || base.Vision
+	variant.Reasoning = variant.Reasoning || base.Reasoning
+	variant.Search = variant.Search || base.Search
+	return variant
 }
 
 func stripSyntheticSuffixes(id string) string {
@@ -285,8 +299,8 @@ func buildLiveVariants(upstream, displayName string) []Model {
 			ID:          safe,
 			DisplayName: displayName,
 		},
-		Capabilities: Capabilities{},
-		VariantSuffix:  "",
+		Capabilities:  Capabilities{},
+		VariantSuffix: "",
 	}
 	variants := []Model{base}
 	variants = append(variants, Model{
@@ -294,8 +308,8 @@ func buildLiveVariants(upstream, displayName string) []Model {
 			ID:          safe + "-thinking",
 			DisplayName: displayName + " (Thinking)",
 		},
-		Capabilities: Capabilities{Thinking: true},
-		VariantSuffix:  "thinking",
+		Capabilities:  Capabilities{Thinking: true},
+		VariantSuffix: "thinking",
 	})
 	if !isAuto {
 		variants = append(variants, Model{
@@ -303,15 +317,15 @@ func buildLiveVariants(upstream, displayName string) []Model {
 				ID:          safe + "-agentic",
 				DisplayName: displayName + " (Agentic)",
 			},
-			Capabilities: Capabilities{Agentic: true},
-			VariantSuffix:  "agentic",
+			Capabilities:  Capabilities{Agentic: true},
+			VariantSuffix: "agentic",
 		}, Model{
 			BaseModel: BaseModel{
 				ID:          safe + "-thinking-agentic",
 				DisplayName: displayName + " (Thinking + Agentic)",
 			},
-			Capabilities: Capabilities{Thinking: true, Agentic: true},
-			VariantSuffix:  "thinking-agentic",
+			Capabilities:  Capabilities{Thinking: true, Agentic: true},
+			VariantSuffix: "thinking-agentic",
 		})
 	}
 	return variants
