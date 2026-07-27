@@ -1807,3 +1807,55 @@ export const gatewayModelsApi = {
 		return { data: data.sort((a, b) => a.id.localeCompare(b.id)) };
 	},
 };
+
+// MCP stdio-SSE bridge
+export interface MCPServer {
+	id: string;
+	name: string;
+	command: string;
+	args: string[];
+	env: Record<string, string>;
+	enabled: boolean;
+	restart_policy: "always" | "on-failure" | "never";
+	max_clients: number;
+	max_idle_sec: number;
+	status?: "running" | "stopped" | "error";
+	created_at: number;
+	updated_at: number;
+}
+
+export interface MCPTool {
+	name: string;
+	description?: string;
+	inputSchema?: unknown;
+}
+
+export const mcpApi = {
+	list: () => fetchApi<{ data: MCPServer[] }>("/mcp"),
+
+	create: (data: Partial<MCPServer>) =>
+		fetchApi<{ data: MCPServer }>("/mcp", {
+			method: "POST",
+			body: JSON.stringify(data),
+		}),
+
+	update: (id: string, data: Partial<MCPServer>) =>
+		fetchApi<{ data: MCPServer }>(`/mcp/${id}`, {
+			method: "PATCH",
+			body: JSON.stringify(data),
+		}),
+
+	delete: (id: string) =>
+		fetchApi<{ success: boolean }>(`/mcp/${id}`, {
+			method: "DELETE",
+		}),
+
+	test: (id: string) =>
+		fetchApi<{ success: boolean; message?: string; error?: string }>(`/mcp/${id}/test`, {
+			method: "POST",
+		}),
+
+	tools: (id: string) => fetchApi<{ data: MCPTool[] }>(`/mcp/${id}/tools`),
+
+	sseUrl: (id: string, token: string) => `${window.location.origin}/api/admin/mcp/${encodeURIComponent(id)}/sse?token=${encodeURIComponent(token)}`,
+};
