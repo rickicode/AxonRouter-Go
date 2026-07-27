@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -375,26 +376,34 @@ func (c ProxyConfig) canonicalProxyURL() string {
 	return u.String()
 }
 
-// proxyCacheKey returns a cache key composed of the canonical proxy identity
-// plus an opaque version. Credential rotation changes the version and therefore
-// invalidates the cached client. Legacy inline-credential URLs are parsed to
-// derive the version when separate fields are empty.
-func (c ProxyConfig) proxyCacheKey() string {
+// proxyVersion returns a stable version token derived from credentials so that
+// credential rotations produce a different cache key. Legacy inline
+// credentials are parsed when separate username/password fields are empty.
+func (c ProxyConfig) proxyVersion() string {
 	version := c.Version
 	if version == "" {
-		user, pass := c.ProxyUsername, c.ProxyPassword
-		if user == "" && pass == "" && c.ProxyURL != "" {
-			if u, err := url.Parse(c.ProxyURL); err == nil && u.User != nil {
-				user = u.User.Username()
-				pass, _ = u.User.Password()
-			}
-		}
+		user, pass := credPair(c)
 		if user != "" || pass != "" {
 			h := sha256.Sum256([]byte(user + "\x00" + pass))
 			version = hex.EncodeToString(h[:])
 		}
 	}
-	return c.canonicalProxyURL() + "#" + version
+	return version
+}
+
+// proxyCacheKey returns a cache key composed of the canonical proxy identity
+// plus an opaque version. Credential rotation changes the version and therefore
+// invalidates the cached client.
+func (c ProxyConfig) proxyCacheKey() string {
+	return c.canonicalProxyURL() + "#" + c.proxyVersion()
+}
+
+// proxyAuthHeader builds the Proxy-Authorization header value when credentials
+// are present. It is applied explicitly to ProxyConnectHeader so HTTPS CONNECT
+// tunnels work for proxies where the stdlib's auto-derived auth is insufficient.
+func (c ProxyConfig) proxyAuthHeader() string {
+	user, pass := credPair(c)
+	return "Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+pass))
 }
 
 // ProxyLabel returns a human-readable proxy description for logging.
@@ -562,6 +571,34 @@ func resolveTargetURL(rawURL string, cfg ProxyConfig) (string, map[string]string
 	return cfg.RelayURL, extra
 }
 
+// buildProxyTransport returns an *http.Transport configured for the proxy.
+// It wires: explicit Proxy-Authorization for CONNECT, noProxy bypass, and
+// disables HTTP/2 because many HTTP CONNECT proxies mishandle H2 tunneled
+// streams.
+func (b *BaseExecutor) buildProxyTransport(cfg ProxyConfig) (*http.Transport, error) {
+	u, err := url.Parse(cfg.proxyURLWithCredentials())
+	if err != nil {
+		return nil, fmt.Errorf("invalid proxy URL: %w", err)
+	}
+	authHeader := cfg.proxyAuthHeader()
+	noProxy := cfg.NoProxy
+	transport := defaultHTTPTransport(b.ResponseHeaderTimeout)
+	transport.ForceAttemptHTTP2 = false
+	transport.Proxy = func(req *http.Request) (*url.URL, error) {
+		if noProxy != "" && noProxyMatch(req.URL.Hostname(), noProxy) {
+			return nil, nil
+		}
+		return u, nil
+	}
+	if authHeader != "" {
+		if transport.ProxyConnectHeader == nil {
+			transport.ProxyConnectHeader = http.Header{}
+		}
+		transport.ProxyConnectHeader.Set("Proxy-Authorization", authHeader)
+	}
+	return transport, nil
+}
+
 // proxyClient returns an http.Client that routes through the proxy described by cfg.
 // Clients are cached by canonical proxy identity plus version, so credential
 // rotation produces a fresh client while sharing clients when credentials are stable.
@@ -574,15 +611,10 @@ func (b *BaseExecutor) proxyClient(cfg ProxyConfig) (*http.Client, error) {
 	if v, ok := b.proxyClients.Load(key); ok {
 		return v.(*http.Client), nil
 	}
-	u, err := url.Parse(proxyURL)
+	transport, err := b.buildProxyTransport(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("invalid proxy URL: %w", err)
+		return nil, err
 	}
-	transport := defaultHTTPTransport(b.ResponseHeaderTimeout)
-	transport.Proxy = http.ProxyURL(u)
-	// HTTP/2 over an HTTP CONNECT proxy is flaky across providers; keep it off
-	// for proxied traffic to avoid mid-stream EOFs.
-	transport.ForceAttemptHTTP2 = false
 	c := &http.Client{Timeout: b.Timeout, Transport: transport}
 	b.proxyClients.Store(key, c)
 	return c, nil
@@ -600,13 +632,10 @@ func (b *BaseExecutor) streamClient(cfg ProxyConfig) (*http.Client, error) {
 	if v, ok := b.streamClients.Load(key); ok {
 		return v.(*http.Client), nil
 	}
-	u, err := url.Parse(proxyURL)
+	transport, err := b.buildProxyTransport(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("invalid proxy URL: %w", err)
+		return nil, err
 	}
-	transport := defaultHTTPTransport(b.ResponseHeaderTimeout)
-	transport.Proxy = http.ProxyURL(u)
-	transport.ForceAttemptHTTP2 = false
 	c := &http.Client{Transport: transport}
 	b.streamClients.Store(key, c)
 	return c, nil
@@ -639,7 +668,7 @@ func (b *BaseExecutor) CloseIdleConnections() {
 // noProxyMatch checks if a hostname matches any entry in a comma-separated no_proxy list.
 // Matches exact host or suffix (e.g. "example.com" matches ".example.com").
 func noProxyMatch(host, noProxy string) bool {
-	if noProxy == "" {
+	if noProxy == "" || host == "" {
 		return false
 	}
 	host = strings.ToLower(host)
@@ -648,10 +677,15 @@ func noProxyMatch(host, noProxy string) bool {
 		if entry == "" {
 			continue
 		}
-		if host == entry {
+		// Strip leading wildcard.
+		match := entry
+		if strings.HasPrefix(match, ".") {
+			match = match[1:]
+		}
+		if host == match {
 			return true
 		}
-		if strings.HasPrefix(entry, ".") && (strings.HasSuffix(host, entry) || host == entry[1:]) {
+		if strings.HasSuffix(host, "."+match) {
 			return true
 		}
 	}
@@ -1420,3 +1454,16 @@ type gzipErrorReader struct {
 
 func (g *gzipErrorReader) Read([]byte) (int, error) { return 0, g.err }
 func (g *gzipErrorReader) Close() error             { return g.underlying.Close() }
+
+// credPair extracts the username and password from explicit ProxyConfig
+// fields or from inline credentials in the legacy ProxyURL.
+func credPair(c ProxyConfig) (string, string) {
+	user, pass := c.ProxyUsername, c.ProxyPassword
+	if user == "" && pass == "" && c.ProxyURL != "" {
+		if u, err := url.Parse(c.ProxyURL); err == nil && u.User != nil {
+			user = u.User.Username()
+			pass, _ = u.User.Password()
+		}
+	}
+	return user, pass
+}
