@@ -174,3 +174,40 @@ func TestClassifyProviderUnavailable(t *testing.T) {
 		})
 	}
 }
+
+func TestStore_ResetQuota(t *testing.T) {
+	store := NewStore()
+	store.SeedConnection("conn-1", "openai", "ready", 0)
+	cs := store.Get("conn-1")
+	future := time.Now().Add(time.Hour)
+	cs.SetCooldown(future)
+	cs.SetModelCooldown("gpt-4o", future)
+
+	updated, affected, err := store.ResetQuota("conn-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updated == nil {
+		t.Fatal("expected updated connection, got nil")
+	}
+	if len(affected) != 1 || affected[0] != "gpt-4o" {
+		t.Errorf("expected gpt-4o affected, got %v", affected)
+	}
+	if updated.GetStatus() != StatusReady {
+		t.Errorf("expected status ready, got %s", updated.GetStatus())
+	}
+}
+
+func TestStore_ResetQuota_UnknownConnection(t *testing.T) {
+	store := NewStore()
+	updated, affected, err := store.ResetQuota("missing")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updated != nil {
+		t.Errorf("expected nil for unknown connection, got %v", updated)
+	}
+	if len(affected) != 0 {
+		t.Errorf("expected empty affected list, got %v", affected)
+	}
+}
