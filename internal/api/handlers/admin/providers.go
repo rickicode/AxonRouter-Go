@@ -624,7 +624,7 @@ func (h *ProviderHandler) AddConnection(c *gin.Context) {
 		return
 	}
 
-	// Validate CF connections require an Account ID
+	// Validate CF connections require an Account ID with valid format
 	if providerID == "cf" {
 		accountID := req.ProviderSpecificData["accountId"]
 		if accountID == "" {
@@ -633,6 +633,17 @@ func (h *ProviderHandler) AddConnection(c *gin.Context) {
 		if accountID == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Cloudflare Workers AI requires an Account ID. Add it in provider_specific_data.accountId or set CLOUDFLARE_ACCOUNT_ID env var."})
 			return
+		}
+		// Validate accountId is 32-char hex
+		if len(accountID) != 32 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Account ID format (must be 32-char hex, got " + fmt.Sprintf("%d", len(accountID)) + " chars). Find it at: https://dash.cloudflare.com (right sidebar)"})
+			return
+		}
+		for _, ch := range accountID {
+			if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Account ID format (must be hex, got '" + accountID[:4] + "...'). Find it at: https://dash.cloudflare.com (right sidebar)"})
+				return
+			}
 		}
 	}
 
@@ -781,7 +792,7 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 		return
 	}
 
-	// Validate CF connections require Account ID (fail fast before any inserts).
+	// Validate CF connections require Account ID with valid format (fail fast before any inserts).
 	if providerID == "cf" {
 		for i, conn := range req.Connections {
 			accountID := conn.ProviderSpecificData["accountId"]
@@ -791,6 +802,17 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 			if accountID == "" {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "connection #" + fmt.Sprintf("%d", i+1) + ": Cloudflare Workers AI requires an Account ID"})
 				return
+			}
+			// Validate accountId is 32-char hex (Cloudflare account ID format)
+			if len(accountID) != 32 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "connection #" + fmt.Sprintf("%d", i+1) + ": invalid Account ID format (must be 32-char hex, got " + fmt.Sprintf("%d", len(accountID)) + " chars)"})
+				return
+			}
+			for _, ch := range accountID {
+				if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "connection #" + fmt.Sprintf("%d", i+1) + ": invalid Account ID format (must be hex, got '" + accountID[:4] + "...')"})
+					return
+				}
 			}
 		}
 	}

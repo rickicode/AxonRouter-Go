@@ -99,11 +99,21 @@ function parseConnectionLines(text: string) {
     let conn: { name: string; api_key: string; priority?: number; provider_specific_data?: Record<string, string> } | null = null;
     if (meta?.inputFormat === 'pipe') {
       const parts = line.split('|').map((p) => p.trim());
-      if (parts.length < 3) {
-        warnings.push(`Line ${index + 1}: expected email|accountId|apiToken, got "${line}"`);
+      if (parts.length !== 3) {
+        warnings.push(`Line ${index + 1}: expected email|accountId|apiToken (3 parts), got ${parts.length} part(s): "${line}"`);
       } else {
         const [email, accountId, apiToken] = parts;
-        conn = { name: email || `Connection ${index + 1}`, api_key: apiToken, provider_specific_data: { accountId } };
+        // Validate email format
+        if (!email.includes('@')) {
+          warnings.push(`Line ${index + 1}: invalid email "${email}"`);
+        }
+        // Validate accountId is 32-char hex (Cloudflare account ID)
+        else if (!/^[0-9a-f]{32}$/i.test(accountId)) {
+          warnings.push(`Line ${index + 1}: invalid accountId "${accountId}" (must be 32-char hex)`);
+        }
+        else {
+          conn = { name: email, api_key: apiToken, provider_specific_data: { accountId } };
+        }
       }
     } else {
       const match = line.match(/^([^,:\t|]+)[,:\t|](.+)$/);
@@ -353,10 +363,12 @@ async function fetchProxyPools() {
         .filter(Boolean)
         .map((line, index) => {
           const parts = line.split('|').map((p) => p.trim());
-          if (parts.length < 3) return null;
+          if (parts.length !== 3) return null;
           const [email, accountId, apiToken] = parts;
+          // Validate email has @ and accountId is 32-char hex
+          if (!email.includes('@') || !/^[0-9a-f]{32}$/i.test(accountId)) return null;
           return {
-            name: email || defaultName(index + 1),
+            name: email,
             api_key: apiToken,
             provider_specific_data: { accountId },
           };
