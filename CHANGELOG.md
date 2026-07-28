@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Version check rate limit** — changed version check URL from `api.github.com` to `raw.githubusercontent.com` to avoid GitHub API rate limit (60/hr unauthenticated). Resolves "Check update failed: github api returned status 403" error.
+
 ## [0.3.23] - 2026-07-28
 
 ### Fixed
