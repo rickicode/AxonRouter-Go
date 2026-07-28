@@ -1697,6 +1697,12 @@ The API SHALL expose Codex executor operational settings through environment var
 - **WHEN** The admin `/metrics` endpoint is called
 - **THEN** The response includes `codex_requests_total`, `codex_incomplete_streams_total`, `codex_replay_hits_total`, and `codex_identity_confuse_total`
 
+#### Scenario: CodexSSEEventFallback
+- **GIVEN** The Codex executor receives an SSE frame whose JSON payload does not contain a `type` field
+- **WHEN** The frame is parsed for event routing and patching
+- **THEN** The event type is derived from the explicit `event:` line when present
+- **AND** Parsing continues correctly when the JSON type field is absent
+
 #### Scenario: CodexResponsesCompactTimeout
 - **GIVEN** The environment variable `CODEX_RESPONSES_COMPACT_TIMEOUT_MS` is set to a positive integer
 - **WHEN** A non-streaming `/v1/responses/compact` request is forwarded to Codex upstream

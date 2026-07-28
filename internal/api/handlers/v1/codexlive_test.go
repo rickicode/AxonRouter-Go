@@ -18,6 +18,7 @@ import (
 func setupCodexLiveTest(t *testing.T) *Handler {
 	t.Helper()
 	h := newTestHandler(t)
+	h.codexLiveSessions = newCodexLiveSessionStore().withDB(h.db)
 	now := time.Now().Unix()
 	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('cx','Codex','openai-responses','https://chatgpt.com/backend-api/codex',?)`, now); err != nil {
 		t.Fatalf("seed provider_type: %v", err)
@@ -318,13 +319,13 @@ func TestCodexLiveSessionStore_PersistenceSurvivesRestart(t *testing.T) {
 	h := setupCodexLiveTest(t)
 
 	// Simulate storing a live session as CodexLive does.
-	h.codexLiveSessions.put("call-persist", "cx-live-conn", "live-access-token", "cx/gpt-live-1-codex")
+	h.codexLiveSessions.put("call_persist", "cx-live-conn", "live-access-token", "cx/gpt-live-1-codex")
 
 	// Create a brand-new store instance attached to the same DB. This mirrors
 	// an AxonRouter process restart: the in-memory map is empty on creation but
 	// durable rows are loaded.
 	newStore := newCodexLiveSessionStore().withDB(h.db)
-	sess, ok := newStore.get("call-persist")
+	sess, ok := newStore.get("call_persist")
 	if !ok {
 		t.Fatal("expected persisted session to be found after store recreation")
 	}
@@ -339,8 +340,8 @@ func TestCodexLiveSessionStore_PersistenceSurvivesRestart(t *testing.T) {
 	}
 
 	// Deletion must also remove the durable row.
-	newStore.delete("call-persist")
-	if _, ok := newStore.get("call-persist"); ok {
+	newStore.delete("call_persist")
+	if _, ok := newStore.get("call_persist"); ok {
 		t.Fatal("expected session to be deleted from persistence")
 	}
 }
