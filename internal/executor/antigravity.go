@@ -3,7 +3,7 @@ package executor
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,14 @@ var antigravityStripFields = []string{
 // maxAntigravityOutputTokens is the hard ceiling on generationConfig.maxOutputTokens.
 // OmniRoute MAX_ANTIGRAVITY_OUTPUT_TOKENS (antigravity.ts:527).
 const maxAntigravityOutputTokens = 16384
+
+// Antigravity IDE Desktop 2.1.1 fingerprint captured from official traffic.
+const (
+	antigravityIDEVersion            = "2.1.1"
+	antigravityIDEUserAgent          = "antigravity/ide/" + antigravityIDEVersion + " darwin/arm64"
+	antigravityIDEClientMetadata     = `{"ideType":9,"platform":2,"pluginType":2}`
+	antigravityGenericClientMetadata = `{"ideType":"ANTIGRAVITY"}`
+)
 
 // defaultSafetySettings turns off all Google content safety filters to prevent
 // false-positive blocks on benign technical prompts.
@@ -111,6 +120,13 @@ func antigravityCreditsMode() config.AntigravityCreditsMode {
 // antigravityCreditsModeForTest is swapped by unit tests to avoid depending on
 // global config initialization order.
 var antigravityCreditsModeForTest func() config.AntigravityCreditsMode
+
+// antigravityIDERequestIDRe honors client-provided request IDs already in the
+// IDE shape agent/<conversation>/<ts>/<trajectory>/<step>.
+var antigravityIDERequestIDRe = regexp.MustCompile(`^agent/[^/]+/\d+/[^/]+/\d+$`)
+
+// antigravityNowMs is swappable for deterministic request-id tests.
+var antigravityNowMs = func() int64 { return time.Now().UnixMilli() }
 
 // antigravityCreditsEnabledForAuth reports whether credits retry is even possible
 // for the given auth. It is false when the auth has been permanently disabled due
@@ -388,9 +404,10 @@ func isAntigravityEnterpriseAccount(email string) bool {
 	return email != "" && !strings.HasSuffix(email, "@gmail.com") && !strings.HasSuffix(email, "@googlemail.com")
 }
 
-// envelopeUserAgent returns "antigravity" or "jetski" based on account/client profile.
-// Mirrors OmniRoute getAntigravityEnvelopeUserAgent (antigravityIdentity.ts:65-68).
-func envelopeUserAgent(req *Request) string {
+// envelopeProfile returns the envelope-level userAgent value ("antigravity" or
+// "jetski") based on account/client profile. This is the value placed in the
+// Antigravity envelope body, distinct from the HTTP User-Agent header.
+func envelopeProfile(req *Request) string {
 	if req.ProviderSpecificData == nil {
 		return "antigravity"
 	}
@@ -401,6 +418,59 @@ func envelopeUserAgent(req *Request) string {
 		return "jetski"
 	}
 	return "antigravity"
+}
+
+// antigravityUserAgent returns the IDE Desktop 2.1.1 User-Agent for normal
+// requests. The harness profile keeps the legacy "antigravity" override.
+func antigravityUserAgent(clientProfile string) string {
+	if strings.ToLower(clientProfile) == "harness" {
+		return "antigravity"
+	}
+	return antigravityIDEUserAgent
+}
+
+// antigravityClientMetadata returns the IDE Desktop 2.1.1 Client-Metadata for
+// normal requests, falling back to the generic metadata for the harness profile.
+func antigravityClientMetadata(clientProfile string) string {
+	if strings.ToLower(clientProfile) == "harness" {
+		return antigravityGenericClientMetadata
+	}
+	return antigravityIDEClientMetadata
+}
+
+// uuidFromSeed derives a deterministic v5-ish UUID from a seed string.
+// Matches the upstream Antigravity IDE binary implementation.
+func uuidFromSeed(seed string) string {
+	if seed == "" {
+		seed = "antigravity"
+	}
+	sum := sha256.Sum256([]byte(seed))
+	b := sum[:16]
+	b[6] = (b[6] & 0x0f) | 0x50
+	b[8] = (b[8] & 0x3f) | 0x80
+	h := hex.EncodeToString(b)
+	return fmt.Sprintf("%s-%s-%s-%s-%s", h[0:8], h[8:12], h[12:16], h[16:20], h[20:])
+}
+
+// buildIdeRequestID builds an IDE-shaped request ID. It honors a client-provided
+// IDE-shaped ID, otherwise it returns a deterministic value for repeated inputs.
+func buildIdeRequestID(clientRequestID, sessionID, modelID, requestType string, contentCount int) string {
+	if antigravityIDERequestIDRe.MatchString(clientRequestID) {
+		return clientRequestID
+	}
+	if sessionID == "" {
+		sessionID = "anonymous"
+	}
+	conversationID := uuidFromSeed("antigravity:conversation:" + sessionID)
+	trajectoryID := uuidFromSeed(fmt.Sprintf("antigravity:trajectory:%s:%s:%s", sessionID, modelID, requestType))
+	if contentCount < 1 {
+		contentCount = 1
+	}
+	step := contentCount*2 - 1
+	if step < 1 {
+		step = 1
+	}
+	return fmt.Sprintf("agent/%s/%d/%s/%d", conversationID, antigravityNowMs(), trajectoryID, step)
 }
 
 // discoverProjectID auto-discovers the Google Cloud project via loadCodeAssist.
@@ -416,13 +486,11 @@ func (e *AntigravityExecutor) discoverProjectID(ctx context.Context, accessToken
 		return v.(string), nil
 	}
 
+	clientProfileLower := strings.ToLower(clientProfile)
 	headers := map[string]string{
 		"Content-Type":    "application/json",
-		"User-Agent":      "vscode/1.X.X (Antigravity/4.2.0)",
-		"Client-Metadata": `{"ideType":"ANTIGRAVITY"}`,
-	}
-	if clientProfile == "harness" {
-		headers["User-Agent"] = "antigravity"
+		"User-Agent":      antigravityUserAgent(clientProfileLower),
+		"Client-Metadata": antigravityClientMetadata(clientProfileLower),
 	}
 
 	body := []byte(`{"metadata":{"ideType":"ANTIGRAVITY"}}`)
@@ -568,15 +636,34 @@ func (e *AntigravityExecutor) buildEnvelope(ctx context.Context, req *Request, u
 		}
 	}
 
+	// Build the IDE-shaped request id deterministically from conversation
+	// identity, model, request type, and the current turn contents.
+	sessionID := req.ConnectionID
+	if sessionID == "" && req.ProviderSpecificData != nil {
+		sessionID = req.ProviderSpecificData["email"]
+	}
+	var clientRequestID string
+	if top, err := parseTopLevelRequestID(req.Body); err == nil {
+		clientRequestID = top
+	}
+	requestType := "agent"
+	if rt, ok := envelope["requestType"].(string); ok && rt != "" {
+		requestType = rt
+	}
+	contentCount := 1
+	if contents, ok := inner["contents"].([]any); ok {
+		contentCount = len(contents)
+	}
+
 	// Finalize the envelope. The translator already built the outer shape.
 	envelope["project"] = projectID
 	envelope["model"] = upstreamModelID
-	envelope["userAgent"] = envelopeUserAgent(req)
-	envelope["requestType"] = "agent"
+	envelope["userAgent"] = envelopeProfile(req)
+	envelope["requestType"] = requestType
 	if useCredits {
 		envelope["enabledCreditTypes"] = []string{"GOOGLE_ONE_AI"}
 	}
-	envelope["requestId"] = generateAntigravityRequestId()
+	envelope["requestId"] = buildIdeRequestID(clientRequestID, sessionID, upstreamModelID, requestType, contentCount)
 	// Stable per-conversation session id inside the inner request, matching CLIProxyAPI.
 	envelope["request"] = inner
 	if contents, ok := inner["contents"].([]any); ok && len(contents) > 0 {
@@ -624,10 +711,14 @@ func generateStableAntigravitySessionID(text string) string {
 	return "-" + text[:min(len(text), 16)]
 }
 
-func generateAntigravityRequestId() string {
-	b := make([]byte, 4)
-	rand.Read(b)
-	return fmt.Sprintf("agent/%d/%s", time.Now().UnixMilli(), hex.EncodeToString(b))
+func parseTopLevelRequestID(body []byte) (string, error) {
+	var wrapper struct {
+		RequestID string `json:"requestId"`
+	}
+	if err := json.Unmarshal(body, &wrapper); err != nil {
+		return "", err
+	}
+	return wrapper.RequestID, nil
 }
 
 // newAntigravityUpstreamError wraps a failed executor.Response as an UpstreamError
@@ -676,10 +767,14 @@ func (e *AntigravityExecutor) handleAntigravityCreditsFailure(req *Request, resp
 //   - retry: inject enabledCreditTypes only after a 429 quota_exhausted
 func (e *AntigravityExecutor) Execute(ctx context.Context, req *Request) (*Response, error) {
 	url := antigravityNonStreamURL(req.BaseURL)
+	clientProfile := ""
+	if req.ProviderSpecificData != nil {
+		clientProfile = strings.ToLower(req.ProviderSpecificData["clientProfile"])
+	}
 	headers := map[string]string{
 		"Content-Type":   "application/json",
 		"Authorization":  "Bearer " + req.AccessToken,
-		"User-Agent":     envelopeUserAgent(req),
+		"User-Agent":     antigravityUserAgent(clientProfile),
 		"X-Goog-Api-Key": req.APIKey,
 	}
 
@@ -791,12 +886,16 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, req *Request) (
 	if url == "" {
 		url = "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
 	}
+	clientProfile := ""
+	if req.ProviderSpecificData != nil {
+		clientProfile = strings.ToLower(req.ProviderSpecificData["clientProfile"])
+	}
 	headers := map[string]string{
 		"Content-Type":   "application/json",
 		"Accept":         "text/event-stream",
 		"Cache-Control":  "no-cache",
 		"Authorization":  "Bearer " + req.AccessToken,
-		"User-Agent":     envelopeUserAgent(req),
+		"User-Agent":     antigravityUserAgent(clientProfile),
 		"X-Goog-Api-Key": req.APIKey,
 	}
 

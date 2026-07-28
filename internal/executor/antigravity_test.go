@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -146,7 +147,7 @@ func TestInjectToolConfig_NoTools(t *testing.T) {
 	}
 }
 
-func TestEnvelopeUserAgent(t *testing.T) {
+func TestEnvelopeProfile(t *testing.T) {
 	cases := []struct {
 		name     string
 		data     map[string]string
@@ -164,10 +165,173 @@ func TestEnvelopeUserAgent(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := &Request{ProviderSpecificData: tc.data}
-			if got := envelopeUserAgent(req); got != tc.expected {
+			if got := envelopeProfile(req); got != tc.expected {
 				t.Errorf("expected %q, got %q", tc.expected, got)
 			}
 		})
+	}
+}
+
+func TestAntigravityUserAgent(t *testing.T) {
+	cases := []struct {
+		clientProfile string
+		expected      string
+	}{
+		{"", antigravityIDEUserAgent},
+		{"ide", antigravityIDEUserAgent},
+		{"harness", "antigravity"},
+		{"HARNESS", "antigravity"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.clientProfile, func(t *testing.T) {
+			if got := antigravityUserAgent(tc.clientProfile); got != tc.expected {
+				t.Errorf("expected %q, got %q", tc.expected, got)
+			}
+		})
+	}
+}
+
+func TestAntigravityClientMetadata(t *testing.T) {
+	cases := []struct {
+		clientProfile string
+		expected      string
+	}{
+		{"", antigravityIDEClientMetadata},
+		{"ide", antigravityIDEClientMetadata},
+		{"harness", antigravityGenericClientMetadata},
+	}
+	for _, tc := range cases {
+		t.Run(tc.clientProfile, func(t *testing.T) {
+			if got := antigravityClientMetadata(tc.clientProfile); got != tc.expected {
+				t.Errorf("expected %q, got %q", tc.expected, got)
+			}
+		})
+	}
+}
+
+func TestDiscoverProjectID_IDEDesktopFingerprint(t *testing.T) {
+	var gotUA, gotCM string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1internal:loadCodeAssist" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		gotUA = r.Header.Get("User-Agent")
+		gotCM = r.Header.Get("Client-Metadata")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"cloudaicompanionProject":"proj-discovery"}`))
+	}))
+	defer server.Close()
+
+	origURLs := antigravityDiscoveryBaseURLs
+	antigravityDiscoveryBaseURLs = []string{server.URL}
+	t.Cleanup(func() { antigravityDiscoveryBaseURLs = origURLs })
+
+	e := NewAntigravityExecutor(NewBaseExecutor())
+	projectID, err := e.discoverProjectID(context.Background(), "tok", "")
+	if err != nil {
+		t.Fatalf("discoverProjectID failed: %v", err)
+	}
+	if projectID != "proj-discovery" {
+		t.Errorf("expected projectId proj-discovery, got %q", projectID)
+	}
+	if gotUA != antigravityIDEUserAgent {
+		t.Errorf("expected User-Agent %q, got %q", antigravityIDEUserAgent, gotUA)
+	}
+	if gotCM != antigravityIDEClientMetadata {
+		t.Errorf("expected Client-Metadata %q, got %q", antigravityIDEClientMetadata, gotCM)
+	}
+}
+
+func TestDiscoverProjectID_HarnessOverride(t *testing.T) {
+	var gotUA, gotCM string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		gotCM = r.Header.Get("Client-Metadata")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"cloudaicompanionProject":"proj-harness"}`))
+	}))
+	defer server.Close()
+
+	origURLs := antigravityDiscoveryBaseURLs
+	antigravityDiscoveryBaseURLs = []string{server.URL}
+	t.Cleanup(func() { antigravityDiscoveryBaseURLs = origURLs })
+
+	e := NewAntigravityExecutor(NewBaseExecutor())
+	_, err := e.discoverProjectID(context.Background(), "tok", "harness")
+	if err != nil {
+		t.Fatalf("discoverProjectID failed: %v", err)
+	}
+	if gotUA != "antigravity" {
+		t.Errorf("expected harness User-Agent %q, got %q", "antigravity", gotUA)
+	}
+	if gotCM != antigravityGenericClientMetadata {
+		t.Errorf("expected harness Client-Metadata %q, got %q", antigravityGenericClientMetadata, gotCM)
+	}
+}
+
+func TestBuildIdeRequestID_Determinism(t *testing.T) {
+	prev := antigravityNowMs
+	antigravityNowMs = func() int64 { return 1234567890123 }
+	t.Cleanup(func() { antigravityNowMs = prev })
+
+	got1 := buildIdeRequestID("", "session-1", "gemini-pro-agent", "agent", 2)
+	got2 := buildIdeRequestID("", "session-1", "gemini-pro-agent", "agent", 2)
+	if got1 != got2 {
+		t.Fatalf("expected deterministic requestId for identical inputs, got %q and %q", got1, got2)
+	}
+	if !strings.HasPrefix(got1, "agent/") {
+		t.Fatalf("expected IDE requestId shape, got %q", got1)
+	}
+}
+
+func TestBuildIdeRequestID_UniquenessAcrossTurns(t *testing.T) {
+	prev := antigravityNowMs
+	antigravityNowMs = func() int64 { return 1234567890123 }
+	t.Cleanup(func() { antigravityNowMs = prev })
+
+	id1 := buildIdeRequestID("", "session-1", "gemini-pro-agent", "agent", 1)
+	id2 := buildIdeRequestID("", "session-1", "gemini-pro-agent", "agent", 2)
+	if id1 == id2 {
+		t.Fatalf("expected different requestIds for different content counts, got %q", id1)
+	}
+
+	id3 := buildIdeRequestID("", "session-2", "gemini-pro-agent", "agent", 1)
+	if id1 == id3 {
+		t.Fatalf("expected different requestIds for different sessions, got %q", id1)
+	}
+}
+
+func TestBuildIdeRequestID_HonorsClientProvidedID(t *testing.T) {
+	clientID := "agent/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/1234567890123/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb/3"
+	if got := buildIdeRequestID(clientID, "session-1", "model", "agent", 1); got != clientID {
+		t.Errorf("expected client requestId to be preserved, got %q", got)
+	}
+}
+
+func TestBuildIdeRequestID_RequestIdFormat(t *testing.T) {
+	e := NewAntigravityExecutor(NewBaseExecutor())
+	ctx := context.Background()
+
+	body, _ := json.Marshal(map[string]any{
+		"contents": []any{map[string]any{"role": "user", "parts": []any{map[string]any{"text": "hi"}}}},
+	})
+	req := &Request{
+		Model:                "gemini-pro-agent",
+		Body:                 body,
+		ConnectionID:         "conn-fmt",
+		ProviderSpecificData: map[string]string{"projectId": "proj-1"},
+	}
+
+	out, err := e.buildEnvelope(ctx, req, "gemini-pro-agent", false)
+	if err != nil {
+		t.Fatalf("buildEnvelope failed: %v", err)
+	}
+	requestID := gjson.GetBytes(out, "requestId").String()
+	if !regexp.MustCompile(`^agent/[0-9a-f-]{36}/\d{13}/[0-9a-f-]{36}/\d+$`).MatchString(requestID) {
+		t.Errorf("unexpected requestId format: %q", requestID)
 	}
 }
 
