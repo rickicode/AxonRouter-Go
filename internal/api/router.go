@@ -531,6 +531,7 @@ func New(cfg Config) *Router {
 		g.GET("/settings/compression", optimizationH.GetCompressionSettings)
 		g.PUT("/settings/compression", optimizationH.UpdateCompressionSettings)
 		g.GET("/compression/metrics", optimizationH.GetCompressionMetrics)
+		g.GET("/headroom/status", optimizationH.GetHeadroomStatus)
 		g.GET("/cache/stats", optimizationH.GetCacheStats)
 		g.POST("/cache/flush", optimizationH.FlushCache)
 		g.POST("/optimization/preview", optimizationH.PreviewCompression)
