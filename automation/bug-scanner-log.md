@@ -147,3 +147,29 @@ The next run derives its side from the last `- Run side:` line.
 - Parity gap: none
 - Issues created: none
 - Notes: Go binary was not on `PATH`; used `/usr/local/go/bin/go`. Fresh checkout lacks `web/build/` because it is gitignored, so the initial `go build ./...` failed with `web/embed.go:9:12: pattern all:build: no matching files found`. After running the deep-check frontend build (`npm install && npm run build`), the retry of `go build ./...` passed. References updated (`/workspaces/CLIProxyAPI`, `/workspaces/OmniRoute`, `/workspaces/9router`). CLIProxyAPI has no frontend equivalent, so no reference-backed parity gap was reported for the Svelte dashboard build. Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied.
+
+## 2026-07-28 21:12 UTC
+- Run side: routing
+- Baseline: `export PATH=$PATH:/usr/local/go/bin && go build ./...`
+- Deep check: `export PATH=$PATH:/usr/local/go/bin && go test -timeout 10m ./internal/api/... ./internal/connstate/... ./internal/proxypool/...`
+- Objective result: environment issue; test-outdated
+- Failure details:
+  - `[routing/admin-health]` `./internal/api/handlers/admin/health_test.go:TestHealth_IncludesVersionInfo/TestHealth_CurrentVersion_NoUpdate` → `test-outdated`
+  - `[routing]` `go test -timeout 10m ./internal/api/... ./internal/connstate/... ./internal/proxypool/...` → `environment`
+- Parity gap: none
+- Issues created: none
+- Notes: |
+    Baseline (`go build ./...`) passed after rebuilding the gitignored `web/build` directory.
+    The combined routing-side `go test` timed out after 15 minutes even with `-p 1` and `GOMAXPROCS=1`,
+    only completing `internal/api` (~156–228 s) and `internal/connstate` before the tool timeout.
+    The same packages pass when run individually (`internal/api` ~125–188 s, `internal/connstate` ~0.2 s,
+    `internal/proxypool` ~85–99 s), so the hang is a multi-package concurrency/runtime symptom rather
+    than a deterministic product failure. The prior run already attributed this to SQLite fsync latency
+    during `db.RunMigrations`; this run confirms the same behavior.
+    Separately, `internal/api/handlers/admin/health_test.go` fails when run by itself because its mock
+    server returns a full GitHub release JSON object, while `internal/version/upgrade.go:checkLatest`
+    now reads `raw.githubusercontent.com/.../VERSION` and stores the whole response body as the version
+    string. The health handler itself is correct for the production data source; the test mock is stale.
+    Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied for routing hot-path
+    invariants and reference priority. References updated (`/workspaces/CLIProxyAPI`,
+    `/workspaces/OmniRoute`, `/workspaces/9router`). No reference-backed routing gap identified.
