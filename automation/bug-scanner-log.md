@@ -103,3 +103,14 @@ The next run derives its side from the last `- Run side:` line.
 - Parity gap: CLIProxyAPI exposes `POST /reset-quota` (`internal/api/server_management.go:77` / `internal/api/handlers/management/quota.go:26-58`) to clear quota/cooldown state for one auth index; AxonRouter-GO admin quota handler only has list, summary, and refresh endpoints, with no reset equivalent → `HIJ-911`
 - Issues created: `HIJ-911`
 - Notes: Go binary was not on `PATH`; used `/usr/local/go/bin/go`. Frontend already built (`web/build` present). References updated (`/workspaces/CLIProxyAPI`, `/workspaces/OmniRoute`, `/workspaces/9router`). Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied.
+
+## 2026-07-28 00:07 UTC
+- Run side: auth
+- Baseline: `export PATH=$PATH:/usr/local/go/bin && go build ./...`
+- Deep check: `export PATH=$PATH:/usr/local/go/bin && go test -timeout 10m ./internal/auth/... ./internal/signature/...`
+- Objective result: all passed
+- Failure details:
+  - none
+- Parity gap: CLIProxyAPI exposes Claude/Gemini thinking-signature validators (`ValidateClaudeThinkingSignatures`, `InspectClaudeDoubleLayerSignature`, `InspectClaudeSingleLayerSignature`, `ValidateGeminiThoughtSignatures`, `ValidateGeminiFunctionCallPairing`) in `internal/signature` that AxonRouter-Go lacks → `HIJ-924`
+- Issues created: `HIJ-924`
+- Notes: Go binary was not on `PATH`; used `/usr/local/go/bin/go`. Frontend already built (`web/build` present). References updated (`/workspaces/CLIProxyAPI`, `/workspaces/OmniRoute`, `/workspaces/9router`). Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied. Deep check ran clean with `-count=1` (prior cached run also passed).
