@@ -179,7 +179,7 @@ func newTestHandler(t testing.TB) *Handler {
 		combo:               combo.NewHandler(database, store, elig),
 		registry:            executor.GetRegistry(),
 		compressionStrategy: compression.Strategy{Mode: compression.ModeOff},
-		codexLiveSessions:   newCodexLiveSessionStore(),
+		codexLiveSessions:   newCodexLiveSessionStore().withDB(database),
 		failoverMaxAttempts: 5,
 	}
 }

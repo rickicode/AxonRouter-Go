@@ -271,6 +271,22 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		return err
 	}
 
+	// Persistent Codex Live/realtime call session storage.
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS codex_live_sessions (
+			call_id TEXT PRIMARY KEY,
+			conn_id TEXT NOT NULL,
+			conn_token TEXT NOT NULL,
+			model TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_codex_live_sessions_expires
+			ON codex_live_sessions(expires_at);
+	`); err != nil {
+		return err
+	}
+
 	// Fix provider_types defaults (idempotent upserts)
 	now := time.Now().Unix()
 	providers := []struct {
