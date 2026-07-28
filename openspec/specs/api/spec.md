@@ -1670,3 +1670,39 @@ The API SHALL expose the expanded built-in provider catalog through `/api/admin/
 - **GIVEN** A configured regional or developer provider connection (`qwen`, `alicode`, `kimi-coding`, `iflow`, `volcengine-ark`, `hunyuan`, `nanobanana`, `topaz`, `puter`, or `comfyui`)
 - **WHEN** A client requests a model under that provider prefix
 - **THEN** The request is forwarded using the OpenAI-compatible executor
+
+### Requirement: CodexOperationalConfig
+The API SHALL expose Codex executor operational settings through environment variables and administrative metrics endpoints. The gateway SHALL support configurable OAuth client ID, reasoning replay cache memory cap, live session persistence, and Codex-specific telemetry counters.
+
+#### Scenario: CodexOAuthClientIDOverride
+- **GIVEN** The environment variable `AXON_CODEX_OAUTH_CLIENT_ID` is set to a non-empty value
+- **WHEN** The Codex OAuth service builds authorization, token exchange, or refresh requests
+- **THEN** The configured custom client ID is used instead of the built-in default
+- **AND** When the variable is unset, the original default client ID is used
+
+#### Scenario: CodexReasoningCacheMemoryCap
+- **GIVEN** The environment variable `AXON_CODEX_REASONING_MAX_BYTES` is set to a positive integer
+- **WHEN** Codex reasoning replay items are cached
+- **THEN** Cache writes evict oldest entries if total live cache bytes would exceed the configured cap
+
+#### Scenario: CodexLiveSessionPersistence
+- **GIVEN** A Codex live call completes the bootstrap POST and the gateway database is available
+- **WHEN** The live session is stored
+- **THEN** The session is written to the durable `codex_live_sessions` table with an explicit expiration timestamp
+- **AND** A new process can load active sessions from the database on startup
+- **AND** Expired sessions are purged on store initialization and ignored on lookup
+
+#### Scenario: CodexTelemetryMetrics
+- **GIVEN** Codex requests are processed through the executor
+- **WHEN** The admin `/metrics` endpoint is called
+- **THEN** The response includes `codex_requests_total`, `codex_incomplete_streams_total`, `codex_replay_hits_total`, and `codex_identity_confuse_total`
+
+#### Scenario: CodexResponsesCompactTimeout
+- **GIVEN** The environment variable `CODEX_RESPONSES_COMPACT_TIMEOUT_MS` is set to a positive integer
+- **WHEN** A non-streaming `/v1/responses/compact` request is forwarded to Codex upstream
+- **THEN** The request is bounded by a context timeout equal to the configured millisecond value
+
+#### Scenario: CodexUpstreamHeaderBlocklist
+- **GIVEN** A client request to a Codex endpoint includes `Cookie`, `Referer`, a duplicate `Authorization`, or an `X-Forwarded-*` header
+- **WHEN** The request is forwarded upstream
+- **THEN** Those headers are stripped and replaced with values supplied by the gateway

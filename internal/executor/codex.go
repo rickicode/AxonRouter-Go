@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
+	"github.com/rickicode/AxonRouter-Go/internal/telemetry"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/codex/responses"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -443,6 +444,7 @@ func codexCompactURL(req *Request) string {
 // stream:true; the SSE response is collected and returned as a single
 // non-streaming Response.
 func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, error) {
+	telemetry.DefaultCodexCounters.RequestsTotal.Add(1)
 	url := codexURL(req)
 	// Reasoning-replay session key must be derived from the same request
 	// representation used when the cache is populated. Identity confusion rewrites
@@ -515,6 +517,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 	}
 
 	if len(completedPayload) == 0 {
+		telemetry.DefaultCodexCounters.IncompleteStreamsTotal.Add(1)
 		return nil, newCodexIncompleteStreamError()
 	}
 	if streamResult.StatusCode > 0 {
@@ -539,6 +542,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 // final response.completed / response.done event with any output items emitted
 // by preceding response.output_item.done events, mirroring the non-stream path.
 func (e *CodexExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
+	telemetry.DefaultCodexCounters.RequestsTotal.Add(1)
 	url := codexURL(req)
 	// Reasoning-replay session key must be derived from the same request
 	// representation used when the cache is populated. Identity confusion rewrites
@@ -867,6 +871,7 @@ func codexInjectReasoningReplay(body []byte, sessionKey string) ([]byte, bool) {
 	if len(filtered) == 0 {
 		return body, false
 	}
+	telemetry.DefaultCodexCounters.ReplayHitsTotal.Add(1)
 
 	idx := codexLastUserMessageIndex(inputItems)
 	parts := make([]string, 0, len(inputItems)+len(filtered))
@@ -984,6 +989,7 @@ func applyCodexIdentityConfuseBody(body []byte, connID string) ([]byte, codexIde
 	if connID == "" || len(body) == 0 {
 		return body, codexIdentityConfuseState{}
 	}
+	telemetry.DefaultCodexCounters.IdentityConfuseTotal.Add(1)
 	state := codexIdentityConfuseState{enabled: true, connID: connID}
 	if key := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String()); key != "" {
 		state.originalPromptCacheKey = key

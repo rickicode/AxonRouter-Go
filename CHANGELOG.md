@@ -1,3 +1,9 @@
+- **Codex parity hardening (HIJ-377)** — improved stability, observability, and parity vs. CLIProxyAPI:
+  - Codex Live call sessions (`internal/api/handlers/v1/codexlive.go`) are now mirrored to a durable SQLite table (`codex_live_sessions`) when a database is attached, surviving process restarts with an explicit one-hour TTL and background expiry cleanup on store creation.
+  - The Codex reasoning replay cache (`internal/cache/codex_reasoning.go`) now enforces a global max-byte cap (default 128 MB, override via `AXON_CODEX_REASONING_MAX_BYTES`) and evicts oldest entries by total size in addition to the existing entry-count limit.
+  - Codex request telemetry is now collected in `internal/telemetry/codex.go` and exposed through the existing admin `/metrics` endpoint: `codex_requests_total`, `codex_incomplete_streams_total`, `codex_replay_hits_total`, and `codex_identity_confuse_total`.
+  - The Codex OAuth client ID (`internal/auth/codex/oauth.go`) can be overridden via `AXON_CODEX_OAUTH_CLIENT_ID`; the hardcoded value remains the default.
+  - Existing hardening verified/enforced: header blocklist strips `Cookie`, `Referer`, duplicate `Authorization`, and `X-Forwarded-*` before forwarding upstream; `ResponsesCompact` uses a bounded context timeout via `CODEX_RESPONSES_COMPACT_TIMEOUT_MS`; SSE parsing falls back to the `event:` line when JSON lacks `type`; and reasoning-replay session keys are derived after identity confusion so multi-turn replay stays consistent. Added/updated unit tests for each behavior.
 # Changelog
 
 All notable changes to AxonRouter-Go will be documented in this file.
