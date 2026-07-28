@@ -125,3 +125,14 @@ The next run derives its side from the last `- Run side:` line.
 - Parity gap: none (data/cache/background/logging/usage subsystems compared against CLIProxyAPI internal/store/cache/logging and OmniRoute usage tracking; no new concrete, reference-backed gap identified)
 - Issues created: none
 - Notes: Go binary was not on `PATH`; used `/usr/local/go/bin/go`. Frontend already built (`web/build` present). References updated (`/workspaces/CLIProxyAPI`, `/workspaces/OmniRoute`, `/workspaces/9router`). Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied. Data-side test packages completed: `internal/db` (159.105s), `internal/cache` (0.452s), `internal/backup` (50.367s), `internal/background` (11.953s), `internal/logging` (0.011s), `internal/usage` (188.696s).
+
+## 2026-07-28 08:04 UTC
+- Run side: spec-static
+- Baseline: `export PATH=$PATH:/usr/local/go/bin && go build ./...`
+- Deep check: `{ go vet ./...; if command -v openlore >/dev/null 2>&1; then openlore check-spec-drift --failOn=warning; fi; if command -v staticcheck >/dev/null 2>&1; then staticcheck ./...; fi; }`
+- Objective result: all passed
+- Failure details:
+  - none
+- Parity gap: none
+- Issues created: none
+- Notes: Go binary was not on `PATH`; used `/usr/local/go/bin/go`. `openlore` and `staticcheck` are not installed in this environment, so the deep check effectively ran only `go vet ./...`, which produced no output and exited 0. CLIProxyAPI `make lint` also uses only `go vet` (`Makefile:117-119`), so there is no reference-backed gap for openlore/staticcheck tooling. References updated (`/workspaces/CLIProxyAPI`, `/workspaces/OmniRoute`, `/workspaces/9router`). Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied.
