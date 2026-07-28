@@ -24,9 +24,11 @@ import (
 	"golang.org/x/crypto/acme/autocert"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"github.com/rickicode/AxonRouter-Go/internal/adminapi"
 	"github.com/rickicode/AxonRouter-Go/internal/api/handlers/admin"
 	v1 "github.com/rickicode/AxonRouter-Go/internal/api/handlers/v1"
+	"github.com/rickicode/AxonRouter-Go/internal/api/handlers/v1/codexlivestore"
 	"github.com/rickicode/AxonRouter-Go/internal/api/middleware"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/antigravity"
@@ -261,7 +263,13 @@ func New(cfg Config) *Router {
 	loginLimiter := middleware.NewRateLimiter(10)
 	// Create v1 handler with all dependencies (must exist before wiring routes)
 	smartRouter := smart.NewRouter(cfg.DB, store, elig)
-	v1H := v1.NewHandler(cfg.DB, writeQueue, store, elig, comboHandler, smartRouter, tracker, deviceTracker, authManager, proxyResolver, exhaustionCache, compStrategy, exactCache, providerCfg)
+
+	// Codex Live session store (memory/sqlite/redis). Memory is the default;
+	// SQLite uses the main application DB when configured.
+	cfgLive := config.Get()
+	liveStore := newCodexLiveStore(cfgLive, cfg.DB)
+
+	v1H := v1.NewHandler(cfg.DB, writeQueue, store, elig, comboHandler, smartRouter, tracker, deviceTracker, authManager, proxyResolver, exhaustionCache, compStrategy, exactCache, providerCfg, liveStore)
 	// ---- /v1 routes (proxy) ----
 	v1Group := engine.Group("/v1")
 	v1Group.Use(middleware.Auth(cfg.DB, authCache))
@@ -816,4 +824,42 @@ func seedConnectionsFromDB(db *sql.DB, store *connstate.Store) {
 	if count > 0 {
 		log.Printf("Seeded %d connections into eligibility store", count)
 	}
+}
+
+// newCodexLiveStore builds a Codex Live session store from configuration.
+// The default in-memory store survives only for the process lifetime; for
+// persistence across restarts set CODEX_LIVE_STORE_PROVIDER=sqlite or redis.
+func newCodexLiveStore(cfg config.Config, database *sql.DB) codexlivestore.Store {
+	provider := strings.ToLower(strings.TrimSpace(cfg.CodexLiveStoreProvider))
+	ttl := time.Duration(cfg.CodexLiveStoreTTLMs) * time.Millisecond
+	if ttl <= 0 {
+		ttl = time.Hour
+	}
+
+	opts := codexlivestore.Options{Provider: provider, TTL: ttl}
+	if provider == "redis" {
+		opts.RedisClient = newCodexLiveRedisClient(cfg)
+	}
+	if provider == codexlivestore.ProviderSQLite {
+		opts.DB = database
+	}
+
+	store, err := codexlivestore.New(opts)
+	if err != nil {
+		log.Printf("codex live store provider %q failed, falling back to memory: %v", provider, err)
+		store = codexlivestore.Memory(ttl)
+	} else if provider == "memory" || provider == "" {
+		log.Printf("codex live store: in-memory (sessions will be lost on restart)")
+	} else {
+		log.Printf("codex live store: %s (ttl=%s)", provider, ttl)
+	}
+	return store
+}
+
+func newCodexLiveRedisClient(cfg config.Config) *redis.Client {
+	return redis.NewClient(&redis.Options{
+		Addr:     cfg.CodexLiveRedisAddr,
+		Password: cfg.CodexLiveRedisPassword,
+		DB:       cfg.CodexLiveRedisDB,
+	})
 }

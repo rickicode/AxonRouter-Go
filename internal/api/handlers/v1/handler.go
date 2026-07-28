@@ -27,6 +27,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/klauspost/compress/zstd"
 	"github.com/rickicode/AxonRouter-Go/internal/active"
+	"github.com/rickicode/AxonRouter-Go/internal/api/handlers/v1/codexlivestore"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
@@ -401,7 +402,7 @@ type Handler struct {
 	exactCache          cache.CacheStorage
 	providerCfg         *providercfg.Manager
 	sessions            *connstate.SessionCache
-	codexLiveSessions   *codexLiveSessionStore
+	codexLiveSessions   codexlivestore.Store
 
 	// failoverMaxAttempts caps how many connections the failover loop tries
 	// before giving up. Loaded once from the failover_max_attempts setting (default 5).
@@ -440,6 +441,7 @@ func NewHandler(
 	compressionStrategy compression.Strategy,
 	exactCache cache.CacheStorage,
 	providerCfg *providercfg.Manager,
+	codexLiveStore ...codexlivestore.Store,
 ) *Handler {
 	return &Handler{
 		db:                  db,
@@ -458,9 +460,17 @@ func NewHandler(
 		exactCache:          exactCache,
 		providerCfg:         providerCfg,
 		sessions:            connstate.NewSessionCache(),
-		codexLiveSessions:   newCodexLiveSessionStore(),
+		codexLiveSessions:   defaultCodexLiveStore(codexLiveStore...),
 		failoverMaxAttempts: loadFailoverMaxAttempts(db),
 	}
+}
+
+// defaultCodexLiveStore returns the first optional store or a new in-memory store.
+func defaultCodexLiveStore(stores ...codexlivestore.Store) codexlivestore.Store {
+	if len(stores) > 0 && stores[0] != nil {
+		return stores[0]
+	}
+	return newCodexLiveSessionStore()
 }
 
 // loadFailoverMaxAttempts reads the failover_max_attempts setting (default 5).

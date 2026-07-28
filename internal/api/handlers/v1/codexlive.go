@@ -13,12 +13,12 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/rickicode/AxonRouter-Go/internal/api/handlers/v1/codexlivestore"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
@@ -47,58 +47,12 @@ var (
 
 var errCodexLiveBodyTooLarge = errors.New("codex live request body too large")
 
-type codexLiveSession struct {
-	callID    string
-	connID    string
-	connToken string
-	model     string
-	createdAt time.Time
-}
+// codexLiveSession aliases the store package's Session so surrounding code keeps
+// the same shape while the actual persistence logic lives in codexlivestore.
+type codexLiveSession = codexlivestore.Session
 
-type codexLiveSessionStore struct {
-	mu       sync.RWMutex
-	sessions map[string]codexLiveSession
-}
-
-func newCodexLiveSessionStore() *codexLiveSessionStore {
-	return &codexLiveSessionStore{sessions: make(map[string]codexLiveSession)}
-}
-
-func (s *codexLiveSessionStore) get(callID string) (codexLiveSession, bool) {
-	if s == nil || !codexLiveCallIDPattern.MatchString(callID) {
-		return codexLiveSession{}, false
-	}
-	s.mu.RLock()
-	sess, ok := s.sessions[callID]
-	s.mu.RUnlock()
-	if !ok || time.Since(sess.createdAt) > codexLiveSessionTTL {
-		return codexLiveSession{}, false
-	}
-	return sess, true
-}
-
-func (s *codexLiveSessionStore) put(callID, connID, connToken, model string) {
-	if s == nil || !codexLiveCallIDPattern.MatchString(callID) {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.sessions[callID] = codexLiveSession{
-		callID:    callID,
-		connID:    connID,
-		connToken: connToken,
-		model:     model,
-		createdAt: time.Now(),
-	}
-}
-
-func (s *codexLiveSessionStore) delete(callID string) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.sessions, callID)
+func newCodexLiveSessionStore() codexlivestore.Store {
+	return codexlivestore.Memory(codexLiveSessionTTL)
 }
 
 // CodexLive handles POST /v1/live and POST /v1/realtime/calls. It forwards the
@@ -194,7 +148,7 @@ func (h *Handler) CodexLive(c *gin.Context) {
 		if token == "" {
 			token = conn.APIKey
 		}
-		h.codexLiveSessions.put(callID, conn.ID, token, model)
+		h.codexLiveSessions.Put(c.Request.Context(), codexlivestore.Session{CallID: callID, ConnID: conn.ID, ConnToken: token, Model: model})
 	}
 
 	for _, name := range []string{"Content-Type", "Location"} {
@@ -225,7 +179,11 @@ func (h *Handler) CodexLiveSideband(c *gin.Context) {
 		return
 	}
 
-	sess, ok := h.codexLiveSessions.get(callID)
+	sess, ok, err := h.codexLiveSessions.Get(c.Request.Context(), callID)
+	if err != nil {
+		logging.Logger.Warn("codex live session get failed", "error", err.Error())
+		ok = false
+	}
 	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{
 			"message": "Codex live session not found",
@@ -234,19 +192,19 @@ func (h *Handler) CodexLiveSideband(c *gin.Context) {
 		return
 	}
 
-	provider, _ := executor.SplitModel(sess.model)
+	provider, _ := executor.SplitModel(sess.Model)
 	if provider == "" {
 		provider = "cx"
 	}
 	conn, err := h.getConnection(c.Request.Context(), provider, "", "")
 	if err != nil {
-		token := sess.connToken
+		token := sess.ConnToken
 		if token == "" {
-			logUnavailable(c, "Codex live session connection unavailable", sess.model)
+			logUnavailable(c, "Codex live session connection unavailable", sess.Model)
 			return
 		}
 		conn = &Connection{
-			ID:          sess.connID,
+			ID:          sess.ConnID,
 			Provider:    "cx",
 			AccessToken: token,
 			APIKey:      "",
@@ -288,7 +246,9 @@ func (h *Handler) CodexLiveSideband(c *gin.Context) {
 	if err := h.relayCodexLiveSideband(ctx, clientConn, upConn); err != nil {
 		logging.Logger.Debug("codex live sideband relay closed", "error", err.Error())
 	}
-	h.codexLiveSessions.delete(callID)
+	if err := h.codexLiveSessions.Delete(c.Request.Context(), callID); err != nil {
+		logging.Logger.Debug("codex live session delete failed", "error", err.Error())
+	}
 }
 
 func (h *Handler) relayCodexLiveSideband(ctx context.Context, clientConn, upConn *websocket.Conn) error {

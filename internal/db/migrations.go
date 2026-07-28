@@ -125,6 +125,17 @@ CREATE TABLE IF NOT EXISTS request_logs (
 	CREATE INDEX IF NOT EXISTS idx_connections_provider ON connections(provider_type_id, status);
 CREATE INDEX IF NOT EXISTS idx_connections_status ON connections(status);
 
+CREATE TABLE IF NOT EXISTS codex_live_sessions (
+	call_id TEXT PRIMARY KEY,
+	conn_id TEXT NOT NULL,
+	conn_token TEXT NOT NULL,
+	model TEXT NOT NULL,
+	created_at INTEGER NOT NULL,
+	expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_codex_live_sessions_expires_at
+	ON codex_live_sessions(expires_at);
+
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -342,7 +353,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 
 		{"vertex", "Google Vertex AI", "openai", "https://aiplatform.googleapis.com/v1/projects/{projectId}/locations/{location}/endpoints/openapi", "service-account", []string{"llm"}},
 		{"bedrock", "Amazon Bedrock Mantle", "openai", "https://bedrock-mantle.{region}.api.aws/v1", "apikey", []string{"llm"}},
-	{"commandcode", "CommandCode AI", "openai", "https://api.commandcode.ai", "apikey", []string{"llm"}},
+		{"commandcode", "CommandCode AI", "openai", "https://api.commandcode.ai", "apikey", []string{"llm"}},
 	}
 	for _, p := range providers {
 		serviceKindsJSON, _ := json.Marshal(p.ServiceKinds)

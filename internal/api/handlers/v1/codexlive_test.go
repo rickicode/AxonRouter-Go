@@ -11,6 +11,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/api/handlers/v1/codexlivestore"
 )
 
 // setupCodexLiveTest seeds a Codex connection and returns a handler with a live
@@ -83,7 +84,7 @@ func TestCodexLive_ForwardsToUpstreamAndStoresSession(t *testing.T) {
 	if loc := rec.Header().Get("Location"); loc != "/v1/live/call-abc123" {
 		t.Errorf("Location = %q", loc)
 	}
-	if _, ok := h.codexLiveSessions.get("call-abc123"); !ok {
+	if _, ok, _ := h.codexLiveSessions.Get(context.Background(), "call-abc123"); !ok {
 		t.Fatal("live session was not stored")
 	}
 }
@@ -220,7 +221,7 @@ func TestCodexLiveSideband_RelaysBidirectionally(t *testing.T) {
 
 	sidebandBase := "ws" + strings.TrimPrefix(upstream.URL, "http") + "/v1"
 	h.codexLiveSidebandBaseURL = sidebandBase
-	h.codexLiveSessions.put("call-relay", "cx-live-conn", "live-access-token", "cx/gpt-live-1-codex")
+	h.codexLiveSessions.Put(context.Background(), codexlivestore.Session{CallID: "call-relay", ConnID: "cx-live-conn", ConnToken: "live-access-token", Model: "cx/gpt-live-1-codex"})
 
 	ginEngine := gin.New()
 	ginEngine.GET("/v1/live/:call_id", h.CodexLiveSideband)
@@ -257,7 +258,7 @@ func TestCodexLiveSideband_RelaysBidirectionally(t *testing.T) {
 
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		if _, ok := h.codexLiveSessions.get("call-relay"); !ok {
+		if _, ok, _ := h.codexLiveSessions.Get(context.Background(), "call-relay"); !ok {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -311,4 +312,107 @@ func (t *codexLiveTestTransport) RoundTrip(req *http.Request) (*http.Response, e
 	req.URL.Scheme = "http"
 	req.URL.Host = strings.TrimPrefix(t.base, "http://")
 	return http.DefaultTransport.RoundTrip(req)
+}
+
+func TestCodexLiveSideband_PersistentSQLiteSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := setupCodexLiveTest(t)
+
+	// Replace in-memory store with SQLite persistence using the test DB.
+	dbStore, err := codexlivestore.New(codexlivestore.Options{Provider: codexlivestore.ProviderSQLite, TTL: 5 * time.Minute, DB: h.db})
+	if err != nil {
+		t.Fatalf("create sqlite store: %v", err)
+	}
+	h.codexLiveSessions = dbStore
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upgrader := websocket.AcceptOptions{InsecureSkipVerify: true}
+		conn, err := websocket.Accept(w, r, &upgrader)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "done") }()
+		ctx := context.Background()
+		typ, data, err := conn.Read(ctx)
+		if err != nil {
+			return
+		}
+		_ = conn.Write(ctx, typ, append([]byte("echo:"), data...))
+	}))
+	defer upstream.Close()
+
+	sidebandBase := "ws" + strings.TrimPrefix(upstream.URL, "http") + "/v1"
+	h.codexLiveSidebandBaseURL = sidebandBase
+	if err := dbStore.Put(context.Background(), codexlivestore.Session{CallID: "call-persist", ConnID: "cx-live-conn", ConnToken: "live-access-token", Model: "cx/gpt-live-1-codex"}); err != nil {
+		t.Fatalf("put persistent session: %v", err)
+	}
+
+	ginEngine := gin.New()
+	ginEngine.GET("/v1/live/:call_id", h.CodexLiveSideband)
+	downstream := httptest.NewServer(ginEngine)
+	defer downstream.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(downstream.URL, "http") + "/v1/live/call-persist"
+	client, resp, err := websocket.Dial(context.Background(), wsURL, &websocket.DialOptions{})
+	if err != nil {
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		t.Fatalf("dial sideband: %v", err)
+	}
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
+	ctx := context.Background()
+	if err := client.Write(ctx, websocket.MessageText, []byte("ping")); err != nil {
+		_ = client.Close(websocket.StatusInternalError, "write failed")
+		t.Fatalf("write: %v", err)
+	}
+	typ, data, err := client.Read(ctx)
+	if err != nil {
+		_ = client.Close(websocket.StatusInternalError, "read failed")
+		t.Fatalf("read: %v", err)
+	}
+	if typ != websocket.MessageText || string(data) != "echo:ping" {
+		t.Fatalf("message = %q %q", typ, string(data))
+	}
+	_ = client.Close(websocket.StatusNormalClosure, "done")
+}
+
+func TestCodexLive_StoresSessionInSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := setupCodexLiveTest(t)
+	dbStore, err := codexlivestore.New(codexlivestore.Options{Provider: codexlivestore.ProviderSQLite, TTL: 5 * time.Minute, DB: h.db})
+	if err != nil {
+		t.Fatalf("create sqlite store: %v", err)
+	}
+	h.codexLiveSessions = dbStore
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "/v1/live/call-db")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte("v=0"))
+	}))
+	defer upstream.Close()
+	h.codexLiveHTTPClient = upstream.Client()
+	h.codexLiveHTTPClient.Transport = &codexLiveTestTransport{base: upstream.URL}
+
+	body := []byte(`{"model":"cx/gpt-live-1-codex","sdp":"v=0"}`)
+	req := httptest.NewRequest(http.MethodPost, upstream.URL+"/v1/live", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+	h.CodexLive(c)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	got, ok, err := dbStore.Get(context.Background(), "call-db")
+	if err != nil {
+		t.Fatalf("get from sqlite: %v", err)
+	}
+	if !ok || got.ConnID != "cx-live-conn" {
+		t.Fatalf("expected persisted session connID=cx-live-conn, got ok=%v connID=%q", ok, got.ConnID)
+	}
 }

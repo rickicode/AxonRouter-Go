@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // AntigravityCreditsMode controls whether Antigravity requests include
@@ -48,6 +49,12 @@ type Config struct {
 	ClaudeCloakMode              string // "auto" (default), "always", "never"
 	ClaudeCloakSensitiveWords    []string
 	ClaudeExperimentalCCHSigning bool
+	// Codex Live session store
+	CodexLiveStoreProvider string
+	CodexLiveStoreTTLMs    int
+	CodexLiveRedisAddr     string
+	CodexLiveRedisPassword string
+	CodexLiveRedisDB       int
 }
 
 var (
@@ -114,6 +121,11 @@ func Get() Config {
 			ClaudeCloakMode:              parseCloakMode(getEnv("AXON_CLAUDE_CLOAK_MODE", "auto")),
 			ClaudeCloakSensitiveWords:    parseStringSliceEnv(getEnv("AXON_CLAUDE_CLOAK_SENSITIVE_WORDS", "")),
 			ClaudeExperimentalCCHSigning: getEnvBool("AXON_CLAUDE_CCH_SIGNING", false),
+			CodexLiveStoreProvider:       getEnv("CODEX_LIVE_STORE_PROVIDER", "memory"),
+			CodexLiveStoreTTLMs:          getIntEnv("CODEX_LIVE_STORE_TTL_MS", int(time.Hour/time.Millisecond)),
+			CodexLiveRedisAddr:           getEnv("CODEX_LIVE_REDIS_ADDR", "localhost:6379"),
+			CodexLiveRedisPassword:       getEnv("CODEX_LIVE_REDIS_PASSWORD", ""),
+			CodexLiveRedisDB:             getIntEnv("CODEX_LIVE_REDIS_DB", 0),
 		}
 		os.MkdirAll(dataDir, 0o755)
 		os.MkdirAll(global.LogDir, 0o755)
