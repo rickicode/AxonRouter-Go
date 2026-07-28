@@ -5,12 +5,16 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/rickicode/AxonRouter-Go/internal/headroom"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/common"
 	"github.com/tidwall/gjson"
+
 	"github.com/tidwall/sjson"
 )
 
 // convertCodexRequestToGemini transforms a Codex Responses API request to Gemini generateContent format.
 func convertCodexRequestToGemini(modelName string, body []byte, stream bool) []byte {
+	body = common.CompressToolBlocks(body, headroom.GlobalToolCompressor(), headroom.DefaultToolThreshold)
 	_ = stream
 	root := gjson.ParseBytes(body)
 
@@ -85,10 +89,10 @@ func convertCodexRequestToGemini(modelName string, body []byte, stream bool) []b
 			}
 			return true
 		})
-	if len(functionDeclarations) > 0 {
-		b, _ := json.Marshal(functionDeclarations)
-		out, _ = sjson.SetRawBytes(out, "tools.0.functionDeclarations", b)
-	}
+		if len(functionDeclarations) > 0 {
+			b, _ := json.Marshal(functionDeclarations)
+			out, _ = sjson.SetRawBytes(out, "tools.0.functionDeclarations", b)
+		}
 	}
 
 	// Map Codex tool_choice to Gemini functionCallingConfig.
@@ -150,7 +154,6 @@ func geminiFunctionCallingConfig(tc gjson.Result) (string, []string) {
 	}
 	return "", nil
 }
-
 
 func appendCodexInputItem(out []byte, item, allInput gjson.Result) []byte {
 	itemType := item.Get("type").String()

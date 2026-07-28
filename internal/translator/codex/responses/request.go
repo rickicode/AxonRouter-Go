@@ -258,14 +258,14 @@ func ConvertOpenAIRequestToCodex(modelName string, inputRawJSON []byte, stream b
 		for i := 0; i < len(arr); i++ {
 			t := arr[i]
 			toolType := t.Get("type").String()
-	// Pass through hosted tools Codex executes server-side, plus custom passthrough tools.
-		if toolType != "" && toolType != "function" && t.IsObject() {
-			_, hosted := codexHostedToolTypes[toolType]
-			if hosted || toolType == "custom" {
-				out, _ = sjson.SetRawBytes(out, "tools.-1", []byte(t.Raw))
+			// Pass through hosted tools Codex executes server-side, plus custom passthrough tools.
+			if toolType != "" && toolType != "function" && t.IsObject() {
+				_, hosted := codexHostedToolTypes[toolType]
+				if hosted || toolType == "custom" {
+					out, _ = sjson.SetRawBytes(out, "tools.-1", []byte(t.Raw))
+				}
+				continue
 			}
-			continue
-		}
 			if toolType == "function" {
 				item := []byte(`{}`)
 				item, _ = sjson.SetBytes(item, "type", "function")
