@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.23] - 2026-07-28
+
 ### Fixed
 - **Cloudflare bulk add validation** — frontend and backend now validate the `email|accountId|apiToken` pipe format for Cloudflare bulk imports. Frontend checks: exactly 3 parts, email contains `@`, accountId is 32-char hex. Backend checks: accountId is 32-char hex (both single and bulk add). Invalid lines are rejected with clear error messages instead of silently creating broken connections.
 
