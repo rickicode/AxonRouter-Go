@@ -71,6 +71,11 @@ func (c *Client) CompressWithKind(data []byte, hint Kind) (*Output, error) {
 	return c.compressLocal(data, hint)
 }
 
+// Config returns the client configuration.
+func (c *Client) Config() Config {
+	return c.cfg
+}
+
 func (c *Client) callRemote(data []byte, hint Kind) (*Output, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(c.cfg.TimeoutMs)*time.Millisecond)
 	defer cancel()
