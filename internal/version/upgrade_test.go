@@ -1,7 +1,6 @@
 package version
 
 import (
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,19 +8,11 @@ import (
 	"time"
 )
 
-func githubJSON(tag string, published string, htmlURL string) string {
-	return fmt.Sprintf(`{
-		"tag_name": %q,
-		"published_at": %q,
-		"html_url": %q
-	}`, tag, published, htmlURL)
-}
-
 func TestCheckLatest_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(githubJSON("v0.3.2", "2026-07-14T00:00:00Z", "https://github.com/rickicode/AxonRouter-Go/releases/tag/v0.3.2")))
+		w.Write([]byte("0.3.2"))
 	}))
 	defer server.Close()
 
@@ -39,9 +30,6 @@ func TestCheckLatest_Success(t *testing.T) {
 	}
 	if info.Version != "0.3.2" {
 		t.Errorf("Version = %q, want 0.3.2", info.Version)
-	}
-	if info.PublishedAt != "2026-07-14T00:00:00Z" {
-		t.Errorf("PublishedAt = %q, want 2026-07-14T00:00:00Z", info.PublishedAt)
 	}
 	if !strings.Contains(info.HTMLURL, "/releases/tag/v0.3.2") {
 		t.Errorf("HTMLURL = %q, want release tag URL", info.HTMLURL)
@@ -65,13 +53,52 @@ func TestCheckLatest_NonOK(t *testing.T) {
 	}
 }
 
+func TestCheckLatest_EmptyBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(""))
+	}))
+	defer server.Close()
+
+	client := server.Client()
+	oldURL := githubLatestURL
+	githubLatestURL = server.URL
+	defer func() { githubLatestURL = oldURL }()
+
+	_, err := CheckLatest(client)
+	if err == nil {
+		t.Fatalf("expected error for empty body")
+	}
+}
+
+func TestCheckLatest_WhitespaceVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("  0.3.5  \n"))
+	}))
+	defer server.Close()
+
+	client := server.Client()
+	oldURL := githubLatestURL
+	githubLatestURL = server.URL
+	defer func() { githubLatestURL = oldURL }()
+
+	info, err := CheckLatest(client)
+	if err != nil {
+		t.Fatalf("CheckLatest returned error: %v", err)
+	}
+	if info.Version != "0.3.5" {
+		t.Errorf("Version = %q, want 0.3.5", info.Version)
+	}
+}
+
 func TestCachedChecker_LatestVersion_Caches(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(githubJSON("v0.3.2", "2026-07-14T00:00:00Z", "https://example.com/v0.3.2")))
+		w.Write([]byte("0.3.2"))
 	}))
 	defer server.Close()
 
@@ -111,9 +138,9 @@ func TestCachedChecker_LatestVersion_NeverBlocksOnNetwork(t *testing.T) {
 	block := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-block
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(githubJSON("v0.3.2", "2026-07-14T00:00:00Z", "https://example.com/v0.3.2")))
+		w.Write([]byte("0.3.2"))
 	}))
 	defer server.Close()
 
@@ -213,5 +240,52 @@ func TestUpdateAvailable_ShorterVersion(t *testing.T) {
 
 	if !checker.UpdateAvailable() {
 		t.Fatalf("expected update available when latest is 0.4 vs current 0.3.3")
+	}
+}
+
+func TestCheckLatest_UsesRawGitHubURL(t *testing.T) {
+	// Verify the default URL points to raw.githubusercontent.com (no rate limit).
+	if !strings.Contains(githubLatestURL, "raw.githubusercontent.com") {
+		t.Errorf("githubLatestURL = %q, want raw.githubusercontent.com", githubLatestURL)
+	}
+}
+
+func TestCachedChecker_LatestVersion_NoPublishedAt(t *testing.T) {
+	// raw.githubusercontent.com VERSION format has no PublishedAt field.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("0.3.5"))
+	}))
+	defer server.Close()
+
+	oldURL := githubLatestURL
+	githubLatestURL = server.URL
+	defer func() { githubLatestURL = oldURL }()
+
+	checker := NewChecker(server.Client())
+	defer checker.Stop()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := checker.LatestVersion(); ok {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	info, ok := checker.LatestVersion()
+	if !ok {
+		t.Fatalf("LatestVersion returned !ok")
+	}
+	if info.Version != "0.3.5" {
+		t.Errorf("Version = %q, want 0.3.5", info.Version)
+	}
+	if info.Tag != "v0.3.5" {
+		t.Errorf("Tag = %q, want v0.3.5", info.Tag)
+	}
+	if info.PublishedAt != "" {
+		t.Errorf("PublishedAt = %q, want empty (raw VERSION has no published_at)", info.PublishedAt)
+	}
+	if !strings.Contains(info.HTMLURL, "/releases/tag/v0.3.5") {
+		t.Errorf("HTMLURL = %q, want release tag URL", info.HTMLURL)
 	}
 }
