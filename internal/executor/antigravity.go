@@ -11,6 +11,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +51,32 @@ var defaultSafetySettings = []map[string]string{
 	{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF"},
 	{"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "OFF"},
 }
+
+const (
+	antigravityMaxRequestsPerModel = 3
+	antigravityRetryBase           = 1 * time.Second
+	antigravityRetryCap            = 30 * time.Second
+	antigravityRetryJitter         = 200 * time.Millisecond
+)
+
+// transientAntigravityPhrases is used to detect transient upstream messages
+// when Google returns a non-429/503 status but the body hints at a temporary
+// failure (e.g. "try again", "rate limit", "quota"). Must stay lowercase.
+var transientAntigravityPhrases = []string{
+	"rate limit",
+	"quota exceeded",
+	"quota exhausted",
+	"too many requests",
+	"try again",
+	"temporary",
+	"overload",
+	"server error",
+	"unavailable",
+	"internal error",
+}
+
+// antigravityRetryAfterPattern matches integer seconds in Retry-After headers.
+var antigravityRetryAfterPattern = regexp.MustCompile(`^\s*(\d+)\s*$`)
 
 // antigravityDiscoveryBaseURLs mirrors the OAuth-time loadCodeAssist endpoints.
 // Order matches OmniRoute ANTIGRAVITY_BASE_URLS for the same fallback behavior.
@@ -108,6 +136,10 @@ func antigravityCreditsMode() config.AntigravityCreditsMode {
 	return config.Get().AntigravityCredits
 }
 
+// antigravityRetryJitterSource allows deterministic jitter in tests.
+// Production keeps it nil so computeRetryDelay uses crypto/rand.
+var antigravityRetryJitterSource io.Reader
+
 // antigravityCreditsModeForTest is swapped by unit tests to avoid depending on
 // global config initialization order.
 var antigravityCreditsModeForTest func() config.AntigravityCreditsMode
@@ -138,6 +170,95 @@ func isAntigravityQuotaExceeded(statusCode int, body []byte) bool {
 // INSUFFICIENT_G1_CREDITS_BALANCE reason returned by Google when the user's
 // Google One AI balance is empty. Once seen, credits are permanently disabled
 // for the auth.
+// parseRetryHeaders extracts an explicit Retry-After delay from response headers.
+// It supports both integer seconds and RFC1123/HTTP date strings. A zero
+// duration with false means no usable Retry-After header was present.
+//
+// Note: callers combine this with computeRetryDelay, which caps any Retry-After
+// value at antigravityRetryCap (30 s) to avoid unbounded client waits.
+func parseRetryHeaders(headers http.Header) (time.Duration, bool) {
+	if headers == nil {
+		return 0, false
+	}
+	raw := strings.TrimSpace(headers.Get("Retry-After"))
+	if raw == "" {
+		return 0, false
+	}
+	if m := antigravityRetryAfterPattern.FindStringSubmatch(raw); m != nil {
+		secs, err := strconv.Atoi(m[1])
+		if err == nil && secs >= 0 {
+			return time.Duration(secs) * time.Second, true
+		}
+	}
+	if t, err := http.ParseTime(raw); err == nil {
+		delay := time.Until(t)
+		if delay < 0 {
+			delay = 0
+		}
+		return delay, true
+	}
+	return 0, false
+}
+
+// parseRetryFromErrorMessage scans the raw upstream body for transient phrases.
+// It returns a suggested base delay when a transient indicator is found and the
+// status code looks retryable. The actual back-off is computed by computeRetryDelay.
+func parseRetryFromErrorMessage(statusCode int, body []byte) (time.Duration, bool) {
+	switch statusCode {
+	case http.StatusTooManyRequests, http.StatusServiceUnavailable, http.StatusBadGateway:
+		// well-known retryable status codes
+	default:
+		return 0, false
+	}
+	if len(body) == 0 {
+		return antigravityRetryBase, true
+	}
+	msg := strings.ToLower(string(body))
+	for _, p := range transientAntigravityPhrases {
+		if strings.Contains(msg, p) {
+			return antigravityRetryBase, true
+		}
+	}
+	return 0, false
+}
+
+// computeRetryDelay returns the wait duration for a transient retry attempt.
+// It prefers an explicit Retry-After header, then falls back to exponential
+// backoff with jitter. Both Retry-After and computed backoff are capped at
+// antigravityRetryCap. jitterSrc may be nil for production (crypto/rand is
+// used); tests override it for determinism.
+func computeRetryDelay(attempt int, retryAfter time.Duration, retryAfterOK bool, baseDelay time.Duration, jitterSrc io.Reader) time.Duration {
+	if retryAfterOK && retryAfter > 0 {
+		if retryAfter > antigravityRetryCap {
+			return antigravityRetryCap
+		}
+		return retryAfter
+	}
+	if baseDelay <= 0 {
+		baseDelay = antigravityRetryBase
+	}
+	delay := baseDelay * time.Duration(1<<min(attempt, 6))
+	if delay > antigravityRetryCap {
+		delay = antigravityRetryCap
+	}
+	jitter := time.Duration(0)
+	if jitterSrc != nil {
+		b := make([]byte, 1)
+		if n, err := jitterSrc.Read(b); n == 1 && err == nil {
+			// Scale byte 0..255 to +/- jitter
+			scale := (int64(b[0]) - 128) * int64(antigravityRetryJitter) / 128
+			jitter = time.Duration(scale)
+		}
+	} else {
+		b := make([]byte, 1)
+		if _, err := rand.Read(b); err == nil {
+			scale := (int64(b[0]) - 128) * int64(antigravityRetryJitter) / 128
+			jitter = time.Duration(scale)
+		}
+	}
+	return delay + jitter
+}
+
 func isAntigravityExplicitCreditsExhausted(body []byte) bool {
 	if len(body) == 0 {
 		return false
@@ -644,6 +765,16 @@ func (e *AntigravityExecutor) newAntigravityUpstreamError(req *Request, resp *Re
 }
 
 // executeSingle performs one non-streaming Antigravity attempt.
+// waitWithContext sleeps for delay unless the context is cancelled first.
+func waitWithContext(ctx context.Context, delay time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(delay):
+		return nil
+	}
+}
+
 func (e *AntigravityExecutor) executeSingle(ctx context.Context, req *Request, url string, headers map[string]string, modelID string, useCredits bool) (*Response, error) {
 	body, err := e.buildEnvelope(ctx, req, modelID, useCredits)
 	if err != nil {
@@ -661,6 +792,38 @@ func (e *AntigravityExecutor) handleAntigravityCreditsFailure(req *Request, resp
 		logging.Logger.Info("antigravity credits permanently disabled for auth", "auth_id", req.ConnectionID)
 	}
 	return e.newAntigravityUpstreamError(req, resp)
+}
+
+// knownTransientAntigravityStatuses are the 5xx codes we treat as retryable even
+// when the body does not explicitly mention a transient phrase.
+var knownTransientAntigravityStatuses = map[int]bool{
+	http.StatusBadGateway:         true,
+	http.StatusServiceUnavailable: true,
+	http.StatusGatewayTimeout:     true,
+}
+
+// antigravityShouldTransientRetry reports whether a non-credits failure is
+// retryable. Known transient 5xx codes (502/503/504) are retried; other 5xx
+// codes are retried only when the body contains a transient phrase.
+func (e *AntigravityExecutor) antigravityShouldTransientRetry(statusCode int, body []byte) bool {
+	if knownTransientAntigravityStatuses[statusCode] {
+		return true
+	}
+	_, ok := parseRetryFromErrorMessage(statusCode, body)
+	return ok
+}
+
+// antigravityComputeTransientDelay returns the wait duration for a transient
+// failure. It honors Retry-After headers first, then falls back to exponential
+// backoff based on the parsed transient message.
+func (e *AntigravityExecutor) antigravityComputeTransientDelay(headers http.Header, statusCode int, body []byte, attempt int) time.Duration {
+	retryAfter, retryAfterOK := parseRetryHeaders(headers)
+	_, bodyOK := parseRetryFromErrorMessage(statusCode, body)
+	baseDelay := antigravityRetryBase
+	if bodyOK {
+		baseDelay, _ = parseRetryFromErrorMessage(statusCode, body)
+	}
+	return computeRetryDelay(attempt, retryAfter, retryAfterOK, baseDelay, antigravityRetryJitterSource)
 }
 
 // Execute performs a non-streaming Antigravity request.
@@ -682,64 +845,70 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, req *Request) (*Respo
 		"User-Agent":     envelopeUserAgent(req),
 		"X-Goog-Api-Key": req.APIKey,
 	}
-
 	baseModel := resolveAntigravityModelID(req.Model)
 	candidates := antigravityProFallbackChains[baseModel]
 	if len(candidates) == 0 {
 		candidates = []string{baseModel}
 	}
-
 	mode := antigravityCreditsMode()
 	creditsAvailable := mode != config.AntigravityCreditsModeOff && antigravityCreditsEnabledForAuth(req.ConnectionID)
-
 	var lastErr error
 	for _, modelID := range candidates {
 		useCreditsFirst := mode == config.AntigravityCreditsModeAlways
-
-		resp, err := e.executeSingle(ctx, req, url, headers, modelID, useCreditsFirst)
-		if err != nil {
-			return nil, err
-		}
-		if resp.StatusCode < 400 {
-			resp.Body = e.resolveGroundingInResponse(ctx, resp.Body)
-			return resp, nil
-		}
-
-		// In "always" mode a permanent credits failure disables retry for this auth.
-		if useCreditsFirst {
-			lastErr = e.handleAntigravityCreditsFailure(req, resp)
-			// Retry 400s only when we have another Pro-family candidate id.
+		for attempt := 0; attempt < antigravityMaxRequestsPerModel; attempt++ {
+			resp, err := e.executeSingle(ctx, req, url, headers, modelID, useCreditsFirst)
+			if err != nil {
+				return nil, err
+			}
+			if resp.StatusCode < 400 {
+				resp.Body = e.resolveGroundingInResponse(ctx, resp.Body)
+				return resp, nil
+			}
+			// In "always" mode a permanent credits failure disables retry for this auth.
+			if useCreditsFirst {
+				lastErr = e.handleAntigravityCreditsFailure(req, resp)
+				// Retry 400s only when we have another Pro-family candidate id.
+				if resp.StatusCode == http.StatusBadRequest && len(candidates) > 1 {
+					break
+				}
+				return nil, lastErr
+			}
+			// In "retry" mode, attempt one credits-backed retry on 429 quota_exhausted.
+			if creditsAvailable && isAntigravityQuotaExceeded(resp.StatusCode, resp.Body) {
+				logging.Logger.Info("antigravity quota exceeded, retrying with credits",
+					"model", modelID, "auth_id", req.ConnectionID)
+				retryResp, retryErr := e.executeSingle(ctx, req, url, headers, modelID, true)
+				if retryErr != nil {
+					return nil, retryErr
+				}
+				if retryResp.StatusCode < 400 {
+					return retryResp, nil
+				}
+				// Surface 400s from the upstream to the Pro fallback chain.
+				if retryResp.StatusCode == http.StatusBadRequest && len(candidates) > 1 {
+					lastErr = e.handleAntigravityCreditsFailure(req, retryResp)
+					break
+				}
+				lastErr = e.handleAntigravityCreditsFailure(req, retryResp)
+				return nil, lastErr
+			}
+			// Transient retry path: 429/503/known transient bodies and Retry-After.
+			if attempt+1 < antigravityMaxRequestsPerModel && e.antigravityShouldTransientRetry(resp.StatusCode, resp.Body) {
+				delay := e.antigravityComputeTransientDelay(resp.Headers, resp.StatusCode, resp.Body, attempt)
+				logging.Logger.Info("antigravity transient retry waiting",
+					"model", modelID, "auth_id", req.ConnectionID,
+					"attempt", attempt+1, "delay_ms", delay.Milliseconds())
+				if err := waitWithContext(ctx, delay); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			lastErr = e.newAntigravityUpstreamError(req, resp)
 			if resp.StatusCode == http.StatusBadRequest && len(candidates) > 1 {
-				continue
+				break
 			}
 			return nil, lastErr
 		}
-
-		// In "retry" mode, attempt one credits-backed retry on 429 quota_exhausted.
-		if creditsAvailable && isAntigravityQuotaExceeded(resp.StatusCode, resp.Body) {
-			logging.Logger.Info("antigravity quota exceeded, retrying with credits",
-				"model", modelID, "auth_id", req.ConnectionID)
-			retryResp, retryErr := e.executeSingle(ctx, req, url, headers, modelID, true)
-			if retryErr != nil {
-				return nil, retryErr
-			}
-			if retryResp.StatusCode < 400 {
-				return retryResp, nil
-			}
-			lastErr = e.handleAntigravityCreditsFailure(req, retryResp)
-
-			// Surface 400s from the upstream to the Pro fallback chain, not to the caller.
-			if retryResp.StatusCode == http.StatusBadRequest && len(candidates) > 1 {
-				continue
-			}
-			return nil, lastErr
-		}
-
-		lastErr = e.newAntigravityUpstreamError(req, resp)
-		if resp.StatusCode == http.StatusBadRequest && len(candidates) > 1 {
-			continue
-		}
-		return nil, lastErr
 	}
 	return nil, lastErr
 }
@@ -799,71 +968,76 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, req *Request) (
 		"User-Agent":     envelopeUserAgent(req),
 		"X-Goog-Api-Key": req.APIKey,
 	}
-
 	baseModel := resolveAntigravityModelID(req.Model)
 	candidates := antigravityProFallbackChains[baseModel]
 	if len(candidates) == 0 {
 		candidates = []string{baseModel}
 	}
-
 	mode := antigravityCreditsMode()
 	creditsAvailable := mode != config.AntigravityCreditsModeOff && antigravityCreditsEnabledForAuth(req.ConnectionID)
-
 	var lastErr error
 	for _, modelID := range candidates {
 		useCreditsFirst := mode == config.AntigravityCreditsModeAlways
-
-		result, err := e.executeStreamSingle(ctx, req, url, headers, modelID, useCreditsFirst)
-		if err == nil {
-			result.Chunks = e.resolveGroundingURLsWithChannel(ctx, result.Chunks)
-			return result, nil
-		}
-
-		var upErr *UpstreamError
-		isUpstream := errors.As(err, &upErr)
-
-		// In "always" mode, a permanent credits failure disables retry for this auth.
-		if useCreditsFirst {
-			if isUpstream && isAntigravityExplicitCreditsExhausted(upErr.RawBody) {
-				cache.MarkAntigravityCreditsPermanentlyDisabled(req.ConnectionID)
-				logging.Logger.Info("antigravity credits permanently disabled for auth",
-					"auth_id", req.ConnectionID)
+		for attempt := 0; attempt < antigravityMaxRequestsPerModel; attempt++ {
+			result, err := e.executeStreamSingle(ctx, req, url, headers, modelID, useCreditsFirst)
+			if err == nil {
+				result.Chunks = e.resolveGroundingURLsWithChannel(ctx, result.Chunks)
+				return result, nil
+			}
+			var upErr *UpstreamError
+			isUpstream := errors.As(err, &upErr)
+			// In "always" mode, a permanent credits failure disables retry for this auth.
+			if useCreditsFirst {
+				if isUpstream && isAntigravityExplicitCreditsExhausted(upErr.RawBody) {
+					cache.MarkAntigravityCreditsPermanentlyDisabled(req.ConnectionID)
+					logging.Logger.Info("antigravity credits permanently disabled for auth",
+						"auth_id", req.ConnectionID)
+				}
+				lastErr = err
+				// Retry 400s only when we have another Pro-family candidate id.
+				if isUpstream && upErr.StatusCode == http.StatusBadRequest && len(candidates) > 1 {
+					break
+				}
+				return nil, err
+			}
+			// In "retry" mode, attempt one credits-backed retry on 429 quota_exhausted.
+			if creditsAvailable && isUpstream && isAntigravityQuotaExceeded(upErr.StatusCode, upErr.RawBody) {
+				logging.Logger.Info("antigravity stream quota exceeded, retrying with credits",
+					"model", modelID, "auth_id", req.ConnectionID)
+				retryResult, retryErr := e.executeStreamSingle(ctx, req, url, headers, modelID, true)
+				if retryErr == nil {
+					return retryResult, nil
+				}
+				var retryUpErr *UpstreamError
+				if errors.As(retryErr, &retryUpErr) && isAntigravityExplicitCreditsExhausted(retryUpErr.RawBody) {
+					cache.MarkAntigravityCreditsPermanentlyDisabled(req.ConnectionID)
+					logging.Logger.Info("antigravity credits permanently disabled for auth after stream retry",
+						"auth_id", req.ConnectionID)
+				}
+				// Surface 400s from the upstream to the Pro fallback chain.
+				if errors.As(retryErr, &retryUpErr) && retryUpErr.StatusCode == http.StatusBadRequest && len(candidates) > 1 {
+					lastErr = retryErr
+					break
+				}
+				return nil, retryErr
+			}
+			// Transient retry path: 429/503/known transient bodies and Retry-After.
+			if attempt+1 < antigravityMaxRequestsPerModel && isUpstream && e.antigravityShouldTransientRetry(upErr.StatusCode, upErr.RawBody) {
+				delay := e.antigravityComputeTransientDelay(upErr.Headers, upErr.StatusCode, upErr.RawBody, attempt)
+				logging.Logger.Info("antigravity stream transient retry waiting",
+					"model", modelID, "auth_id", req.ConnectionID,
+					"attempt", attempt+1, "delay_ms", delay.Milliseconds())
+				if err := waitWithContext(ctx, delay); err != nil {
+					return nil, err
+				}
+				continue
 			}
 			lastErr = err
-			// Retry 400s only when we have another Pro-family candidate id.
 			if isUpstream && upErr.StatusCode == http.StatusBadRequest && len(candidates) > 1 {
-				continue
+				break
 			}
 			return nil, err
 		}
-
-		// In "retry" mode, attempt one credits-backed retry on 429 quota_exhausted.
-		if creditsAvailable && isUpstream && isAntigravityQuotaExceeded(upErr.StatusCode, upErr.RawBody) {
-			logging.Logger.Info("antigravity stream quota exceeded, retrying with credits",
-				"model", modelID, "auth_id", req.ConnectionID)
-			retryResult, retryErr := e.executeStreamSingle(ctx, req, url, headers, modelID, true)
-			if retryErr == nil {
-				return retryResult, nil
-			}
-			var retryUpErr *UpstreamError
-			if errors.As(retryErr, &retryUpErr) && isAntigravityExplicitCreditsExhausted(retryUpErr.RawBody) {
-				cache.MarkAntigravityCreditsPermanentlyDisabled(req.ConnectionID)
-				logging.Logger.Info("antigravity credits permanently disabled for auth after stream retry",
-					"auth_id", req.ConnectionID)
-			}
-			// Surface 400s from the upstream to the Pro fallback chain.
-			if errors.As(retryErr, &retryUpErr) && retryUpErr.StatusCode == http.StatusBadRequest && len(candidates) > 1 {
-				lastErr = retryErr
-				continue
-			}
-			return nil, retryErr
-		}
-
-		lastErr = err
-		if isUpstream && upErr.StatusCode == http.StatusBadRequest && len(candidates) > 1 {
-			continue
-		}
-		return nil, err
 	}
 	return nil, lastErr
 }

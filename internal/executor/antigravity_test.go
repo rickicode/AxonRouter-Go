@@ -912,3 +912,341 @@ func TestExecuteStream_ReadinessTimeout_NotTriggeredOnFastHeaders(t *testing.T) 
 	for range result.Chunks {
 	}
 }
+
+// deterministicJitterSource returns a byte slice so computeRetryDelay jitter is predictable.
+type deterministicJitterSource []byte
+
+func (d deterministicJitterSource) Read(p []byte) (int, error) {
+	n := copy(p, d)
+	if n == 0 {
+		return 0, io.EOF
+	}
+	return n, nil
+}
+
+func TestParseRetryHeaders_IntegerSeconds(t *testing.T) {
+	h := http.Header{"Retry-After": []string{"5"}}
+	d, ok := parseRetryHeaders(h)
+	if !ok || d != 5*time.Second {
+		t.Errorf("expected 5s, got %v, ok=%v", d, ok)
+	}
+}
+
+func TestParseRetryHeaders_WhitespaceSeconds(t *testing.T) {
+	h := http.Header{"Retry-After": []string{"  7  "}}
+	d, ok := parseRetryHeaders(h)
+	if !ok || d != 7*time.Second {
+		t.Errorf("expected 7s, got %v, ok=%v", d, ok)
+	}
+}
+
+func TestParseRetryHeaders_HTTPDate(t *testing.T) {
+	future := time.Now().Add(10 * time.Second)
+	h := http.Header{"Retry-After": []string{future.UTC().Format(http.TimeFormat)}}
+	d, ok := parseRetryHeaders(h)
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if d < 9*time.Second || d > 11*time.Second {
+		t.Errorf("expected ~10s, got %v", d)
+	}
+}
+
+func TestParseRetryHeaders_Missing(t *testing.T) {
+	if _, ok := parseRetryHeaders(http.Header{}); ok {
+		t.Error("expected no Retry-After")
+	}
+	if _, ok := parseRetryHeaders(nil); ok {
+		t.Error("expected no Retry-After for nil header")
+	}
+}
+
+func TestParseRetryFromErrorMessage_TransientPhrases(t *testing.T) {
+	cases := []struct {
+		status int
+		body   string
+		want   bool
+	}{
+		{http.StatusTooManyRequests, `{"error":{"message":"rate limit hit"}}`, true},
+		{http.StatusServiceUnavailable, `{"error":{"message":"service unavailable"}}`, true},
+		{http.StatusBadGateway, `{"error":{"message":"temporary error"}}`, true},
+		{http.StatusTooManyRequests, `{"error":{"message":"quota"}}`, false},
+		{http.StatusBadRequest, `{"error":{"message":"rate limit hit"}}`, false},
+		{http.StatusTooManyRequests, "", true},
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("status=%d/%s", tc.status, tc.body), func(t *testing.T) {
+			_, ok := parseRetryFromErrorMessage(tc.status, []byte(tc.body))
+			if ok != tc.want {
+				t.Errorf("parseRetryFromErrorMessage(%d, %q) ok=%v, want %v", tc.status, tc.body, ok, tc.want)
+			}
+		})
+	}
+}
+
+func TestComputeRetryDelay_HeaderPreferred(t *testing.T) {
+	got := computeRetryDelay(0, 5*time.Second, true, antigravityRetryBase, nil)
+	if got != 5*time.Second {
+		t.Errorf("expected Retry-After=5s, got %v", got)
+	}
+}
+
+func TestComputeRetryDelay_HeaderCapped(t *testing.T) {
+	got := computeRetryDelay(0, 120*time.Second, true, antigravityRetryBase, nil)
+	if got != antigravityRetryCap {
+		t.Errorf("expected cap %v, got %v", antigravityRetryCap, got)
+	}
+}
+
+func TestComputeRetryDelay_ExponentialNoHeader(t *testing.T) {
+	prev := antigravityRetryJitterSource
+	antigravityRetryJitterSource = deterministicJitterSource{128} // zero jitter
+	t.Cleanup(func() { antigravityRetryJitterSource = prev })
+
+	for attempt, want := range []time.Duration{1 * time.Second, 2 * time.Second, 4 * time.Second} {
+		got := computeRetryDelay(attempt, 0, false, antigravityRetryBase, antigravityRetryJitterSource)
+		if got != want {
+			t.Errorf("attempt %d: expected %v, got %v", attempt, want, got)
+		}
+	}
+}
+
+func TestExecute_Transient429RetryAfterThenSuccess(t *testing.T) {
+	cache.ResetAntigravityCreditsCacheForTest()
+	setAntigravityCreditsModeForTest(t, config.AntigravityCreditsModeOff)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte(`{"error":{"message":"rate limit"}}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	be := NewBaseExecutor()
+	e := NewAntigravityExecutor(be)
+	req := &Request{
+		Model:                "gemini-pro-agent",
+		BaseURL:              server.URL,
+		Body:                 []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`),
+		AccessToken:          "token",
+		ConnectionID:         "conn-transient-429",
+		ProviderSpecificData: map[string]string{"projectId": "proj-1"},
+	}
+	resp, err := e.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+	if requests != 2 {
+		t.Errorf("expected 2 requests, got %d", requests)
+	}
+}
+
+func TestExecute_Transient503RetryThenFailure(t *testing.T) {
+	cache.ResetAntigravityCreditsCacheForTest()
+	setAntigravityCreditsModeForTest(t, config.AntigravityCreditsModeOff)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"error":{"message":"server error"}}`))
+	}))
+	defer server.Close()
+
+	prev := antigravityRetryJitterSource
+	antigravityRetryJitterSource = deterministicJitterSource{128}
+	defer func() { antigravityRetryJitterSource = prev }()
+
+	setAntigravityCreditsModeForTest(t, config.AntigravityCreditsModeOff)
+	be := NewBaseExecutor()
+	e := NewAntigravityExecutor(be)
+	req := &Request{
+		Model:                "gemini-pro-agent",
+		BaseURL:              server.URL,
+		Body:                 []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`),
+		AccessToken:          "token",
+		ConnectionID:         "conn-transient-503",
+		ProviderSpecificData: map[string]string{"projectId": "proj-1"},
+	}
+	_, err := e.Execute(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if requests != 3 {
+		t.Errorf("expected %d attempts, got %d", 3, requests)
+	}
+}
+
+func TestExecute_TransientDoesNotRetry400(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":{"message":"invalid request"}}`))
+	}))
+	defer server.Close()
+
+	be := NewBaseExecutor()
+	e := NewAntigravityExecutor(be)
+	req := &Request{
+		Model:                "gemini-pro-agent",
+		BaseURL:              server.URL,
+		Body:                 []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`),
+		AccessToken:          "token",
+		ProviderSpecificData: map[string]string{"projectId": "proj-1"},
+	}
+	_, err := e.Execute(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if requests != 1 {
+		t.Errorf("expected 1 request for 400, got %d", requests)
+	}
+}
+
+func TestExecuteStream_TransientRetryAfterThenSuccess(t *testing.T) {
+	cache.ResetAntigravityCreditsCacheForTest()
+	setAntigravityCreditsModeForTest(t, config.AntigravityCreditsModeOff)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte(`{"error":{"message":"rate limit"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "data: {}")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}))
+	defer server.Close()
+
+	be := NewBaseExecutor()
+	e := NewAntigravityExecutor(be)
+	req := &Request{
+		Model:                "gemini-pro-agent",
+		BaseURL:              server.URL,
+		Body:                 []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`),
+		AccessToken:          "token",
+		ConnectionID:         "conn-stream-transient",
+		ProviderSpecificData: map[string]string{"projectId": "proj-1"},
+	}
+	result, err := e.ExecuteStream(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ExecuteStream failed: %v", err)
+	}
+	if result.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", result.StatusCode)
+	}
+	if requests != 2 {
+		t.Errorf("expected 2 requests, got %d", requests)
+	}
+	for range result.Chunks {
+	}
+}
+
+func TestExecute_CreditsRetryStillWorksWithTransient(t *testing.T) {
+	cache.ResetAntigravityCreditsCacheForTest()
+	setAntigravityCreditsModeForTest(t, config.AntigravityCreditsModeRetry)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		hasCredits := gjson.GetBytes(body, "enabledCreditTypes").Exists()
+		requests++
+		if requests == 1 && !hasCredits {
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte(`{"error":{"message":"Quota exceeded"}}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	be := NewBaseExecutor()
+	e := NewAntigravityExecutor(be)
+	req := &Request{
+		Model:                "gemini-pro-agent",
+		BaseURL:              server.URL,
+		Body:                 []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`),
+		AccessToken:          "token",
+		ConnectionID:         "conn-credits-transient",
+		ProviderSpecificData: map[string]string{"projectId": "proj-1"},
+	}
+	resp, err := e.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+	if requests != 2 {
+		t.Errorf("expected 2 requests, got %d", requests)
+	}
+}
+
+func TestExecute_MaxRequestsPerModel_RespectedWithCreditsAndTransient(t *testing.T) {
+	cache.ResetAntigravityCreditsCacheForTest()
+	setAntigravityCreditsModeForTest(t, config.AntigravityCreditsModeRetry)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		hasCredits := gjson.GetBytes(body, "enabledCreditTypes").Exists()
+		requests++
+		switch requests {
+		case 1:
+			if hasCredits {
+				t.Error("first attempt should not include credits")
+			}
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte(`{"error":{"message":"Quota exceeded"}}`))
+		case 2:
+			if !hasCredits {
+				t.Error("credits retry attempt should include credits")
+			}
+			// Credits-backed attempt returns a transient 503, which should still
+			// consume the per-model request budget and not issue more calls.
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"error":{"message":"temporary overload"}}`))
+		default:
+			t.Errorf("unexpected extra request %d with credits=%v", requests, hasCredits)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	prev := antigravityRetryJitterSource
+	antigravityRetryJitterSource = deterministicJitterSource{128}
+	defer func() { antigravityRetryJitterSource = prev }()
+
+	be := NewBaseExecutor()
+	e := NewAntigravityExecutor(be)
+	req := &Request{
+		Model:                "gemini-pro-agent",
+		BaseURL:              server.URL,
+		Body:                 []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`),
+		AccessToken:          "token",
+		ConnectionID:         "conn-max-requests",
+		ProviderSpecificData: map[string]string{"projectId": "proj-1"},
+	}
+	_, err := e.Execute(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	// First plain 429 + credits-backed 503 + transient retries up to budget.
+	if requests > antigravityMaxRequestsPerModel {
+		t.Errorf("expected at most %d requests, got %d", antigravityMaxRequestsPerModel, requests)
+	}
+}
