@@ -10,7 +10,7 @@ import (
 // CodexAutoExecutor routes Codex requests between the HTTP CodexExecutor and
 // the WebSocket CodexWebsocketsExecutor based on request characteristics. It
 // selects the WebSocket executor when the downstream transport is WebSocket
-// AND the auth/connection enables websockets; otherwise it falls back to the
+// OR the auth/connection enables websockets; otherwise it falls back to the
 // HTTP executor. This mirrors CLIProxyAPI's CodexAutoExecutor semantics.
 type CodexAutoExecutor struct {
 	httpExec *CodexExecutor
