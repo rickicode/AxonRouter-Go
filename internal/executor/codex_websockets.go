@@ -498,6 +498,35 @@ func (e *CodexWebsocketsExecutor) CloseExecutionSession(sessionID string) {
 	}
 }
 
+// invalidateSessionConn closes the websocket connection for a session and
+// clears it from the session so the next turn will dial a fresh upstream
+// socket. The session incremental input state is preserved.
+func (e *CodexWebsocketsExecutor) invalidateSessionConn(sessionID string) {
+	sessionID = strings.TrimSpace(sessionID)
+	if e == nil || sessionID == "" {
+		return
+	}
+	store := e.store
+	if store == nil {
+		store = globalCodexWebsocketSessionStore
+	}
+	store.mu.Lock()
+	sess := store.sessions[sessionID]
+	store.mu.Unlock()
+	if sess == nil {
+		return
+	}
+	sess.mu.Lock()
+	closer := sess.closer
+	sess.conn = nil
+	sess.closer = nil
+	sess.mu.Unlock()
+	if closer != nil {
+		_ = closer.Close()
+	}
+}
+
+
 // Close closes every tracked websocket session. It is safe to call during
 // process shutdown.
 func (e *CodexWebsocketsExecutor) Close() error {
@@ -543,6 +572,17 @@ func executionSessionID(req *Request) string {
 	}
 	return strings.TrimSpace(req.ConnectionID)
 }
+
+// codexAuthID returns a stable identifier for the request's credentials so that
+// session reuse only happens when the same credential is used across turns.
+func codexAuthID(req *Request) string {
+	if req == nil {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(req.AccessToken + "\x00" + req.APIKey))
+	return hex.EncodeToString(sum[:])
+}
+
 
 // isCodexResponsesLiteRequest reports whether the client requested the
 // responses_websocket_lite mode, either via the dedicated header or via the
@@ -718,21 +758,23 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, req *Request) (*R
 	}
 
 	upstreamBody, reqType, reset := e.prepareCodexWebsocketPayload(req, req.Body)
+	identityState := codexIdentityConfuseStateFromBody(upstreamBody, req.ConnectionID)
 	headers := codexWebsocketHeaders(req)
-	codexApplyIdentityConfuseHeaders(headers, codexIdentityConfuseStateFromBody(upstreamBody, req.ConnectionID))
+	codexApplyIdentityConfuseHeaders(headers, identityState)
 
-	res, err := e.dialWebsocket(ctx, "", "", wsURL, headers)
+	sessionID := executionSessionID(req)
+	conn, _, err := e.ensureSessionConn(ctx, sessionID, codexAuthID(req), wsURL, headers)
 	if err != nil {
 		return nil, err
 	}
-	conn := res.Conn
+
 
 	if err := conn.Write(ctx, websocket.MessageText, upstreamBody); err != nil {
-		_ = conn.Close(websocket.StatusInternalError, "write_error")
+		e.invalidateSessionConn(sessionID)
 		return nil, fmt.Errorf("codex websockets write: %w", err)
 	}
 
-	session := e.getOrCreateSession(executionSessionID(req))
+	session := e.getOrCreateSession(sessionID)
 	if session != nil && session.inputState != nil {
 		session.inputState.recordRequest(upstreamBody, reset)
 	}
@@ -746,13 +788,13 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, req *Request) (*R
 readLoop:
 	for {
 		if err := ctx.Err(); err != nil {
-			_ = conn.Close(websocket.StatusGoingAway, "context_done")
+			e.invalidateSessionConn(sessionID)
 			return nil, err
 		}
 		conn.SetReadLimit(codexWebsocketReadLimit)
 		msgType, payload, err := conn.Read(ctx)
 		if err != nil {
-			_ = conn.Close(websocket.StatusInternalError, "read_error")
+			e.invalidateSessionConn(sessionID)
 			return nil, fmt.Errorf("codex websockets read: %w", err)
 		}
 		if msgType != websocket.MessageText {
@@ -764,7 +806,7 @@ readLoop:
 		}
 
 		payload = normalizeCodexWebsocketResponse(payload)
-		payload = applyCodexIdentityExposeResponsePayload(payload, codexIdentityConfuseStateFromBody(upstreamBody, req.ConnectionID))
+		payload = applyCodexIdentityExposeResponsePayload(payload, identityState)
 
 		eventData, eventType := parseCodexEvent(encodeCodexWebsocketAsSSE(payload))
 		switch eventType {
@@ -799,13 +841,12 @@ readLoop:
 			if status <= 0 {
 				status = http.StatusInternalServerError
 			}
-			_ = conn.Close(websocket.StatusNormalClosure, "upstream_error")
+			e.invalidateSessionConn(sessionID)
 			bodyErr := buildCodexWebsocketErrorPayload(payload, status)
 			return nil, &UpstreamError{StatusCode: status, Body: bodyErr, RawBody: bodyErr, Headers: http.Header{}}
 		}
 	}
 
-	_ = conn.Close(websocket.StatusNormalClosure, "completed")
 	if session != nil && reqType == "response.create" {
 		// The upstream response id becomes the next turn's previous_response_id.
 		if data, _ := parseCodexEvent(completedPayload); len(data) > 0 {
@@ -818,7 +859,7 @@ readLoop:
 	}
 
 	responseBody, _ := parseCodexEvent(completedPayload)
-	responseBody = applyCodexIdentityExposeResponsePayload(responseBody, codexIdentityConfuseStateFromBody(upstreamBody, req.ConnectionID))
+	responseBody = applyCodexIdentityExposeResponsePayload(responseBody, identityState)
 	if statusCode <= 0 {
 		statusCode = http.StatusOK
 	}
@@ -853,19 +894,19 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, req *Reques
 	headers := codexWebsocketHeaders(req)
 	codexApplyIdentityConfuseHeaders(headers, identityState)
 
-	session := e.getOrCreateSession(executionSessionID(req))
+	sessionID := executionSessionID(req)
+	session := e.getOrCreateSession(sessionID)
 	if session != nil && session.inputState != nil {
 		session.inputState.recordRequest(upstreamBody, reset)
 	}
 
-	res, err := e.dialWebsocket(ctx, "", "", wsURL, headers)
+	conn, _, err := e.ensureSessionConn(ctx, sessionID, codexAuthID(req), wsURL, headers)
 	if err != nil {
 		return nil, err
 	}
-	conn := res.Conn
 
 	if err := conn.Write(ctx, websocket.MessageText, upstreamBody); err != nil {
-		_ = conn.Close(websocket.StatusInternalError, "write_error")
+		e.invalidateSessionConn(sessionID)
 		return nil, fmt.Errorf("codex websockets write: %w", err)
 	}
 
@@ -876,15 +917,13 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, req *Reques
 	}
 	go func() {
 		defer close(out.Chunks)
-		defer func() {
-			_ = conn.Close(websocket.StatusNormalClosure, "completed")
-		}()
 
 		outputItemsByIndex := make(map[int64][]byte)
 		var outputItemsFallback [][]byte
 		var sawCompleted bool
 		for {
 			if err := ctx.Err(); err != nil {
+				e.invalidateSessionConn(sessionID)
 				select {
 				case out.Chunks <- StreamChunk{Err: ctx.Err()}:
 				default:
@@ -894,6 +933,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, req *Reques
 			conn.SetReadLimit(codexWebsocketReadLimit)
 			msgType, payload, err := conn.Read(ctx)
 			if err != nil {
+				e.invalidateSessionConn(sessionID)
 				if !sawCompleted {
 					select {
 					case out.Chunks <- StreamChunk{Err: newCodexIncompleteStreamError()}:
@@ -947,6 +987,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, req *Reques
 				if status <= 0 {
 					status = http.StatusInternalServerError
 				}
+				e.invalidateSessionConn(sessionID)
 				bodyErr := buildCodexWebsocketErrorPayload(payload, status)
 				select {
 				case out.Chunks <- StreamChunk{Err: &UpstreamError{StatusCode: status, Body: bodyErr, RawBody: bodyErr, Headers: http.Header{}}}:

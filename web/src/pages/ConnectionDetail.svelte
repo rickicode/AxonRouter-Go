@@ -11,6 +11,7 @@ import * as Select from '$lib/components/ui/select';
 import { Label } from '$lib/components/ui/label';
 import * as AlertDialog from '$lib/components/ui/alert-dialog';
   import { Input } from '$lib/components/ui/input';
+import { Switch } from '$lib/components/ui/switch';
   import { router } from '$lib/router';
   import { getProviderMeta, getStatusDotColor, getStatusVariant, getStatusLabel } from '$lib/provider-catalog';
 import { toast } from 'svelte-sonner';
@@ -33,6 +34,8 @@ let { id = '', connId = '' }: { id?: string; connId?: string } = $props();
   let editAccountLabel = $state('');
   let editingAccountLabel = $state(false);
   let accountSaving = $state(false);
+  let useWebsockets = $state(false);
+  let websocketSaving = $state(false);
   let showDeleteConfirm = $state(false);
 
   onMount(async () => {
@@ -41,20 +44,28 @@ let { id = '', connId = '' }: { id?: string; connId?: string } = $props();
     loadProxyData();
   });
 
+  function currentPsd(): Record<string, string> {
+    if (!$selectedConnection?.provider_specific_data) return {};
+    try {
+      const parsed = JSON.parse($selectedConnection.provider_specific_data);
+      if (parsed && typeof parsed === 'object') {
+        return Object.fromEntries(Object.entries(parsed).map(([k, v]) => [k, String(v ?? '')]));
+      }
+    } catch { /* ignore */ }
+    return {};
+  }
+
   async function loadProxyData() {
     try {
       const [poolsRes, groupsRes] = await Promise.all([proxyPoolsApi.list(), proxyGroupsApi.list()]);
       pools = poolsRes.data ?? [];
       groups = groupsRes.data ?? [];
       // Read current assignments from provider_specific_data
-      if ($selectedConnection?.provider_specific_data) {
-        try {
-          const psd = JSON.parse($selectedConnection.provider_specific_data);
-          selectedPoolId = psd.proxyPoolId ?? '';
-          selectedGroupId = psd.proxyGroupId ?? '';
-          editAccountLabel = psd.accountLabel ?? '';
-        } catch { /* ignore */ }
-      }
+      const psd = currentPsd();
+      selectedPoolId = psd.proxyPoolId ?? '';
+      selectedGroupId = psd.proxyGroupId ?? '';
+      editAccountLabel = psd.accountLabel ?? '';
+      useWebsockets = psd.websockets === 'true';
     } catch { /* ignore */ }
   }
 
@@ -62,9 +73,9 @@ let { id = '', connId = '' }: { id?: string; connId?: string } = $props();
     if (!$selectedConnection) return;
     proxySaving = true;
     try {
-      const psd: Record<string, string> = {};
-      if (selectedGroupId) psd.proxyGroupId = selectedGroupId;
-      if (selectedPoolId) psd.proxyPoolId = selectedPoolId;
+      const psd = currentPsd();
+      if (selectedGroupId) psd.proxyGroupId = selectedGroupId; else delete psd.proxyGroupId;
+      if (selectedPoolId) psd.proxyPoolId = selectedPoolId; else delete psd.proxyPoolId;
       await connectionsApi.update(connectionId, { provider_specific_data: JSON.stringify(psd) });
       await loadConnection(connectionId);
       toast.success('Proxy assignment saved');
@@ -72,6 +83,22 @@ let { id = '', connId = '' }: { id?: string; connId?: string } = $props();
       toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown'));
     } finally {
       proxySaving = false;
+    }
+  }
+
+  async function saveWebsockets() {
+    if (!$selectedConnection) return;
+    websocketSaving = true;
+    try {
+      const psd = currentPsd();
+      psd.websockets = useWebsockets ? 'true' : 'false';
+      await connectionsApi.update(connectionId, { provider_specific_data: JSON.stringify(psd) });
+      await loadConnection(connectionId);
+      toast.success('WebSocket transport setting saved');
+    } catch (err) {
+      toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+    } finally {
+      websocketSaving = false;
     }
   }
   function formatCooldown(raw: unknown): string {
@@ -406,6 +433,23 @@ async function handleSaveAccountLabel() {
         {/if}
       </CardContent>
     </Card>
+
+    {#if $selectedConnection.provider_type_id === 'cx'}
+    <Card class="shadow-card">
+      <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Codex transport</CardTitle></CardHeader>
+      <CardContent class="space-y-4">
+        <p class="text-body-sm text-muted-foreground">Route Codex /responses over a persistent WebSocket transport instead of HTTP.</p>
+        <div class="flex items-center justify-between rounded-lg border border-border/50 bg-muted/30 p-3">
+          <div class="space-y-0.5">
+            <Label class="text-body-sm-strong">WebSocket transport</Label>
+            <p class="text-xs text-muted-foreground">When enabled, Codex /responses is routed over a persistent upstream WebSocket.</p>
+          </div>
+          <Switch bind:checked={useWebsockets} aria-label="Use WebSocket transport" />
+        </div>
+        <Button onclick={saveWebsockets} disabled={websocketSaving} class="text-body-sm rounded-sm">{websocketSaving ? 'Saving...' : 'Save transport setting'}</Button>
+      </CardContent>
+    </Card>
+    {/if}
 
     <Card class="shadow-card">
       <CardHeader class="pb-3"><CardTitle class="text-body-md-strong">Actions</CardTitle></CardHeader>

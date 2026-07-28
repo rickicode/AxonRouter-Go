@@ -4,6 +4,7 @@ import * as Select from '$lib/components/ui/select';
 import { Button } from '$lib/components/ui/button';
 import { Input } from '$lib/components/ui/input';
 import { Label } from '$lib/components/ui/label';
+import { Switch } from '$lib/components/ui/switch';
 import { Textarea } from '$lib/components/ui/textarea';
 import { Badge } from '$lib/components/ui/badge';
 import { connectionsApi, providersApi, oauthApi, proxyPoolsApi } from '$lib/api';
@@ -44,6 +45,7 @@ import { KIRO_METHODS, KIRO_STARTING_METHOD, getKiroMethodLabel, type KiroMethod
   let connectionPriority = $state('1');
 let customFields = $state<Record<string, string>>({});
 let selectedRegion = $state('');
+let useWebsockets = $state(false);
 let submitting = $state(false);
 let errorMsg = $state('');
 let oauthPolling = $state(false);
@@ -238,6 +240,7 @@ function reset() {
   bulkText = '';
   customFields = {};
   selectedRegion = meta?.defaultRegion ?? '';
+  useWebsockets = false;
   connectionPriority = '1';
   errorMsg = '';
   validating = false;
@@ -602,6 +605,9 @@ async function handleImportSubmit() {
     const psd: Record<string, string> = {};
     if (autoImportedPsd) Object.assign(psd, autoImportedPsd);
     if (deviceId.trim()) psd.deviceId = deviceId.trim();
+    if (providerId === 'cx') {
+      psd.websockets = useWebsockets ? 'true' : 'false';
+    }
     const name = connectionName.trim() || email.trim() || defaultName();
     await oauthApi.importToken({
       provider: providerId,
@@ -1299,6 +1305,15 @@ $effect(() => {
               <Label class="text-sm font-medium">Device ID <span class="text-muted-foreground font-normal">(optional)</span></Label>
               <Input bind:value={deviceId} placeholder="device identifier" class="h-9 text-sm font-mono" />
             </div>
+            {#if providerId === 'cx'}
+              <div class="flex items-center justify-between rounded-lg border border-border/50 bg-muted/30 p-3">
+                <div class="space-y-0.5">
+                  <Label class="text-sm font-medium">WebSocket transport</Label>
+                  <p class="text-[11px] text-muted-foreground">Route Codex /responses over a persistent WebSocket transport.</p>
+                </div>
+                <Switch bind:checked={useWebsockets} aria-label="Use WebSocket transport" />
+              </div>
+            {/if}
           {:else}
             <div class="rounded-lg border border-border/50 bg-muted/30 p-3 text-sm text-muted-foreground">
               <p>Click <strong>Connect</strong> to open a small browser window and complete OAuth login. This modal waits up to 5 minutes for the callback.</p>

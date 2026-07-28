@@ -172,6 +172,14 @@ async function copyModelName(id: string) {
   } catch { return undefined; }
   }
 
+  function isWebsocketsEnabled(conn: any): boolean {
+    if (!conn.provider_specific_data) return false;
+    try {
+      const psd = typeof conn.provider_specific_data === 'string' ? JSON.parse(conn.provider_specific_data) : conn.provider_specific_data;
+      return psd?.websockets === 'true' || psd?.websockets === true;
+    } catch { return false; }
+  }
+
   function getKiroAuthMethod(conn: any): string | undefined {
   if (providerId !== 'kiro' || !conn.provider_specific_data) return undefined;
   try {
@@ -473,12 +481,16 @@ async function handleBulkAssignProxy() {
   {@const isDefault = isDefaultDirect(row)}
   {@const isOAuth = row.auth_type === 'oauth'}
   {@const expiry = isOAuth ? getTokenExpiry(row.oauth_expires_at) : null}
+  {@const wsEnabled = isWebsocketsEnabled(row)}
   <span class="inline-flex flex-wrap items-center gap-1">
     {#if isDefault}
       <StatusBadge status="default" label="Default" />
     {/if}
     {#if !isDefault && getAccountLabel(row)}
       <StatusBadge status="smart" label={getAccountLabel(row)} />
+    {/if}
+    {#if wsEnabled}
+      <StatusBadge status="active" label="WS" />
     {/if}
     {#if expiry}
       <StatusBadge status={expiry.status === 'expired' ? 'error' : expiry.status === 'expiring' ? 'testing' : 'active'} label={expiry.text} />

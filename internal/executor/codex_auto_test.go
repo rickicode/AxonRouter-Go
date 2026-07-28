@@ -229,14 +229,38 @@ func TestCodexAutoExecutor_ExecuteStreamRoutesToHTTP(t *testing.T) {
 	}
 }
 
-func TestCodexAutoExecutor_ExecuteStreamFlagReturnsNotImplemented(t *testing.T) {
+func TestCodexAutoExecutor_ExecuteStreamFlagRoutesToWebsockets(t *testing.T) {
+	upgrader := websocket.AcceptOptions{InsecureSkipVerify: true}
+	created := []byte(`{"type":"response.created","response":{"id":"resp-stream","output":[]}}`)
+	itemDone := []byte(`{"type":"response.output_item.done","output_index":0,"item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"streamed"}]}}`)
+	completed := []byte(`{"type":"response.completed","response":{"id":"resp-stream","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &upgrader)
+		if err != nil {
+			t.Errorf("websocket accept failed: %v", err)
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+		if _, _, err := conn.Reader(context.Background()); err != nil {
+			t.Errorf("reader failed: %v", err)
+			return
+		}
+		for _, msg := range [][]byte{created, itemDone, completed} {
+			if err := conn.Write(context.Background(), websocket.MessageText, msg); err != nil {
+				t.Errorf("write failed: %v", err)
+				return
+			}
+		}
+	}))
+	defer server.Close()
+
 	base := NewBaseExecutor()
 	base.StreamIdleTimeout = 200 * time.Millisecond
 	exec := NewCodexAutoExecutor(base)
 	req := &Request{
 		Provider:    "cx",
 		Model:       "cx/gpt-5.4",
-		BaseURL:     "http://127.0.0.1:1",
+		BaseURL:     server.URL,
 		AccessToken: "test-token",
 		ProviderSpecificData: map[string]string{
 			"websockets": "true",
@@ -249,12 +273,24 @@ func TestCodexAutoExecutor_ExecuteStreamFlagReturnsNotImplemented(t *testing.T) 
 		},
 	}
 
-	_, err := exec.ExecuteStream(context.Background(), req)
-	if err == nil {
-		t.Fatal("expected error from unimplemented websocket streaming")
+	res, err := exec.ExecuteStream(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ExecuteStream error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "ExecuteStream is not implemented") {
-		t.Fatalf("expected not implemented error, got %v", err)
+	if res == nil {
+		t.Fatal("expected stream result, got nil")
+	}
+	var sawCompleted bool
+	for chunk := range res.Chunks {
+		if chunk.Err != nil {
+			t.Fatalf("unexpected chunk error: %v", chunk.Err)
+		}
+		if chunk.Payload != nil && strings.Contains(string(chunk.Payload), `"type":"response.completed"`) {
+			sawCompleted = true
+		}
+	}
+	if !sawCompleted {
+		t.Fatal("expected response.completed chunk from websocket stream")
 	}
 }
 
