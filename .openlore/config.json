@@ -5,13 +5,31 @@
   "analysis": {
     "maxFiles": 100000,
     "includePatterns": [],
-    "excludePatterns": []
+    "excludePatterns": [
+      "**/*.test.ts",
+      "**/*.test.js",
+      "**/*.spec.ts",
+      "**/*.spec.js",
+      "**/__tests__/**",
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/.next/**",
+      "**/.svelte-kit/**",
+      "**/.nuxt/**",
+      "**/*.min.js",
+      "**/*.min.css",
+      "**/coverage/**",
+      "**/playwright-report/**",
+      "**/storybook-static/**"
+    ]
   },
   "generation": {
     "model": "cf/moonshotai/kimi-k2.6",
     "domains": "auto",
     "provider": "openai-compat",
-    "openaiCompatBaseUrl": "http://192.168.90.101:3777/v1"
+    "openaiCompatBaseUrl": "http://192.168.90.101:3777/v1",
+    "disableResponseFormat": true
   },
   "panicResponse": {
     "mode": "off"
