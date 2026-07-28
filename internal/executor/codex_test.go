@@ -859,3 +859,78 @@ func TestCodexTelemetry_CountersIncrement(t *testing.T) {
 		t.Error("expected ReplayHitsTotal to increment")
 	}
 }
+
+func TestCodexTelemetry_RequestsTotal(t *testing.T) {
+	telemetry.DefaultCodexCounters.RequestsTotal.Store(0)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, `data: {"type":"response.completed","response":{"id":"r1","status":"completed","output":[]}}`)
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	cx := NewCodexExecutor(base)
+	req := &Request{
+		Provider:    "cx",
+		Model:       "cx/gpt-5.4",
+		BaseURL:     ts.URL,
+		Body:        []byte(`{"messages":[{"role":"user","content":"hi"}]}`),
+		AccessToken: "test-token",
+		StreamConfig: &StreamConfig{
+			FetchTimeoutMs:           5000,
+			StreamIdleTimeoutMs:      5000,
+			StreamReadinessTimeoutMs: 5000,
+		},
+	}
+	if _, err := cx.Execute(context.Background(), req); err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	if got := telemetry.DefaultCodexCounters.RequestsTotal.Load(); got != 1 {
+		t.Errorf("RequestsTotal = %d, want 1", got)
+	}
+}
+
+func TestCodexTelemetry_IncompleteStreamCounter(t *testing.T) {
+	telemetry.DefaultCodexCounters.RequestsTotal.Store(0)
+	telemetry.DefaultCodexCounters.IncompleteStreamsTotal.Store(0)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, `data: {"type":"response.created","response":{"id":"r1"}}`)
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	cx := NewCodexExecutor(base)
+	req := &Request{
+		Provider:    "cx",
+		Model:       "cx/gpt-5.4",
+		BaseURL:     ts.URL,
+		Body:        []byte(`{"messages":[{"role":"user","content":"hi"}]}`),
+		AccessToken: "test-token",
+		StreamConfig: &StreamConfig{
+			FetchTimeoutMs:           5000,
+			StreamIdleTimeoutMs:      5000,
+			StreamReadinessTimeoutMs: 5000,
+		},
+	}
+	_, err := cx.Execute(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected incomplete stream error")
+	}
+	var incomplete *CodexIncompleteStreamError
+	if !errors.As(err, &incomplete) {
+		t.Fatalf("expected *CodexIncompleteStreamError, got %T: %v", err, err)
+	}
+
+	if got := telemetry.DefaultCodexCounters.RequestsTotal.Load(); got != 1 {
+		t.Errorf("RequestsTotal = %d, want 1", got)
+	}
+	if got := telemetry.DefaultCodexCounters.IncompleteStreamsTotal.Load(); got != 1 {
+		t.Errorf("IncompleteStreamsTotal = %d, want 1", got)
+	}
+}
