@@ -51,6 +51,7 @@ internal/graphify-out/
 .rpiv/
 .serena/
 .playwright-mcp/
+.codebase-memory/
 
 # Logs
 *.log

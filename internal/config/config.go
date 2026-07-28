@@ -35,6 +35,14 @@ type HeadroomConfig struct {
 	MaxPayloadBytes int
 }
 
+// CodexConfig groups Codex-specific behavior flags.
+type CodexConfig struct {
+	// OptimizeMultiAgentV2 rewrites spawn_agent tool descriptions and strips
+	// encrypted agent_message content so official Codex clients can be routed
+	// through non-Codex upstreams.
+	OptimizeMultiAgentV2 bool
+}
+
 type Config struct {
 	Port                        string
 	DBPath                      string
@@ -57,6 +65,8 @@ type Config struct {
 	ClaudeCloakSensitiveWords    []string
 	ClaudeExperimentalCCHSigning bool
 	Headroom                     HeadroomConfig
+	// Codex multi-agent optimization toggles.
+	Codex CodexConfig
 }
 
 var (
@@ -129,6 +139,7 @@ func Get() Config {
 			TimeoutMs:       getIntEnv("AXON_HEADROOM_TIMEOUT_MS", 30000),
 			MaxPayloadBytes: getIntEnv("AXON_HEADROOM_MAX_PAYLOAD_BYTES", 524288),
 		},
+	Codex:                        CodexConfig{OptimizeMultiAgentV2: getEnvBool("AXON_CODEX_OPTIMIZE_MULTI_AGENT_V2", false)},
 		}
 		os.MkdirAll(dataDir, 0o755)
 		os.MkdirAll(global.LogDir, 0o755)

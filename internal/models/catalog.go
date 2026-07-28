@@ -463,6 +463,42 @@ func GetModelDisplayNames(providerKey string) map[string]string {
 	return names
 }
 
+// ModelSummary is a lightweight, provider-agnostic view of a model entry.
+// Exposed for consumers such as the Codex multi-agent optimizer that need to
+// enumerate the full catalog without importing the embedded JSON themselves.
+type ModelSummary struct {
+	ID          string
+	DisplayName string
+	Levels      []string
+}
+
+// AllModelSummaries returns a de-duplicated summary of every model in the
+// current catalog across all provider keys.
+func AllModelSummaries() []ModelSummary {
+	mu.RLock()
+	defer mu.RUnlock()
+	seen := make(map[string]struct{})
+	var out []ModelSummary
+	for _, entries := range current {
+		for _, e := range entries {
+			if e.ID == "" {
+				continue
+			}
+			if _, ok := seen[e.ID]; ok {
+				continue
+			}
+			seen[e.ID] = struct{}{}
+			summary := ModelSummary{ID: e.ID, DisplayName: e.DisplayName}
+			if len(e.Thinking.Levels) > 0 {
+				summary.Levels = make([]string, len(e.Thinking.Levels))
+				copy(summary.Levels, e.Thinking.Levels)
+			}
+			out = append(out, summary)
+		}
+	}
+	return out
+}
+
 // GetModelTargetFormat returns the target_format for a model ID under a provider key.
 // Returns an empty string when no target format is configured.
 func GetModelTargetFormat(providerKey, modelID string) string {
