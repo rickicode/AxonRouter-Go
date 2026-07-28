@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"time"
-
-	"github.com/gin-gonic/gin"
 )
 
 // Service is an HTTP server that exposes the /compress endpoint.
@@ -30,11 +28,11 @@ func NewService(cfg Config, detector Detector, compressor Compressor, metrics *M
 	if metrics == nil {
 		metrics = NewMetrics()
 	}
-	router := gin.New()
+	mux := http.NewServeMux()
 	svc := &Service{
 		server: &http.Server{
 			Addr:              cfg.Endpoint,
-			Handler:           router,
+			Handler:           mux,
 			ReadHeaderTimeout: 5 * time.Second,
 		},
 		detector:   detector,
@@ -42,9 +40,17 @@ func NewService(cfg Config, detector Detector, compressor Compressor, metrics *M
 		metrics:    metrics,
 		maxBytes:   cfg.MaxPayloadBytes,
 	}
-	router.POST("/compress", svc.handleCompress)
-	router.GET("/health", svc.handleHealth)
+	mux.HandleFunc("/compress", svc.handleCompress)
+	mux.HandleFunc("/health", svc.handleHealth)
 	return svc
+}
+
+// Addr returns the configured endpoint address.
+func (s *Service) Addr() string {
+	if s == nil || s.server == nil {
+		return ""
+	}
+	return s.server.Addr
 }
 
 // ListenAndServe starts the HTTP service. Blocks until the server is closed.
@@ -57,40 +63,44 @@ func (s *Service) Close() error {
 	return s.server.Close()
 }
 
-func (s *Service) handleHealth(c *gin.Context) {
-	c.Header("Content-Type", "application/json")
-	_ = json.NewEncoder(c.Writer).Encode(map[string]string{"status": "ok"})
+func (s *Service) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-func (s *Service) handleCompress(c *gin.Context) {
+func (s *Service) handleCompress(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		s.metrics.RecordError()
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, int64(s.maxBytes))
 	var in Input
-	if err := c.ShouldBindJSON(&in); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
 		s.metrics.RecordError()
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	out, failed, err := s.compressInput(in)
+	out, err := s.compressInput(in)
 	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		s.metrics.RecordError()
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if failed {
-		s.metrics.RecordError()
-	} else {
-		s.metrics.RecordSuccess(out.OriginalBytes, out.CompressedBytes)
-	}
-	c.Header("Content-Type", "application/json")
-	_ = json.NewEncoder(c.Writer).Encode(out)
+
+	s.metrics.RecordSuccess(out.OriginalBytes, out.CompressedBytes)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
 }
 
-func (s *Service) compressInput(in Input) (*Output, bool, error) {
+func (s *Service) compressInput(in Input) (*Output, error) {
 	if len(in.Data) == 0 {
-		return nil, false, ErrEmptyPayload
+		return nil, ErrEmptyPayload
 	}
 	if len(in.Data) > s.maxBytes {
-		return nil, false, fmt.Errorf("payload exceeds %d byte limit", s.maxBytes)
+		return nil, fmt.Errorf("payload exceeds %d byte limit", s.maxBytes)
 	}
 
 	kind := in.KindHint
@@ -105,27 +115,21 @@ func (s *Service) compressInput(in Input) (*Output, bool, error) {
 	var final []byte
 	if err != nil {
 		if errors.Is(err, ErrKindUnknown) {
-			return nil, false, err
+			return nil, err
 		}
 		// Fail-open: return the original payload on compression errors.
 		final = in.Data
 		kind = KindUnknown
-		return &Output{
-			Data:             final,
-			Kind:             kind,
-			OriginalBytes:    len(in.Data),
-			CompressedBytes:  len(final),
-			OriginalTokens:   TokenEstimate(in.Data),
-			CompressedTokens: TokenEstimate(final),
-		}, true, nil
+	} else {
+		final = compressed
 	}
 
 	return &Output{
-		Data:             compressed,
+		Data:             final,
 		Kind:             kind,
 		OriginalBytes:    len(in.Data),
-		CompressedBytes:  len(compressed),
+		CompressedBytes:  len(final),
 		OriginalTokens:   TokenEstimate(in.Data),
-		CompressedTokens: TokenEstimate(compressed),
-	}, false, nil
+		CompressedTokens: TokenEstimate(final),
+	}, nil
 }

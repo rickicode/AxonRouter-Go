@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -52,23 +53,29 @@ func (c *Client) CompressWithKind(data []byte, hint Kind) (*Output, error) {
 		return nil, ErrEmptyPayload
 	}
 
-	if len(data) > c.cfg.MaxPayloadBytes {
+	if c.cfg.MaxPayloadBytes > 0 && len(data) > c.cfg.MaxPayloadBytes {
 		return nil, fmt.Errorf("payload exceeds %d byte limit", c.cfg.MaxPayloadBytes)
 	}
 
 	if !c.cfg.Enabled {
-		return c.compressLocal(data, hint)
+		out, err := c.compressLocal(data, hint)
+		if err != nil {
+			// Local failure is a true error.
+			c.metrics.RecordError()
+		}
+		return out, err
 	}
 
 	out, err := c.callRemote(data, hint)
-	if err == nil {
-		c.metrics.RecordSuccess(out.OriginalBytes, out.CompressedBytes)
-		return out, nil
+	if err != nil {
+		// Record remote failure, then fall back to local compression.
+		c.metrics.RecordError()
+		return c.compressLocal(data, hint)
 	}
-
-	c.metrics.RecordError()
-	// Fall back to in-process compression.
-	return c.compressLocal(data, hint)
+	// Remote success is already counted by the service's metrics when shared,
+	// but record on the client too for locally-owned metrics instances.
+	c.metrics.RecordSuccess(out.OriginalBytes, out.CompressedBytes)
+	return out, nil
 }
 
 func (c *Client) callRemote(data []byte, hint Kind) (*Output, error) {
@@ -83,8 +90,10 @@ func (c *Client) callRemote(data []byte, hint Kind) (*Output, error) {
 
 	endpoint := c.cfg.Endpoint
 	if endpoint == "" {
-		endpoint = DefaultServiceEndpoint
+		endpoint = DefaultEndpoint
 	}
+	endpoint = strings.TrimPrefix(endpoint, "http://")
+	endpoint = strings.TrimPrefix(endpoint, "https://")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+endpoint+"/compress", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -124,7 +133,7 @@ func (c *Client) compressLocal(data []byte, hint Kind) (*Output, error) {
 	compressed, err := c.compressor.Compress(data, kind)
 	var final []byte
 	if err != nil {
-		c.metrics.RecordError()
+		// Fail-open: return the original payload on compression errors.
 		final = data
 		kind = KindUnknown
 	} else {
@@ -138,9 +147,6 @@ func (c *Client) compressLocal(data []byte, hint Kind) (*Output, error) {
 		CompressedBytes:  len(final),
 		OriginalTokens:   TokenEstimate(data),
 		CompressedTokens: TokenEstimate(final),
-	}
-	if err == nil {
-		c.metrics.RecordSuccess(out.OriginalBytes, out.CompressedBytes)
 	}
 	return out, nil
 }

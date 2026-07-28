@@ -10,6 +10,11 @@ import (
 	"time"
 )
 
+const (
+	readyProbeTimeout  = 100 * time.Millisecond
+	readyProbeInterval = 50 * time.Millisecond
+)
+
 // Process manages the headroom service lifecycle in-process.
 // External process spawning is intentionally out of scope for this stage; the
 // manager starts a goroutine-bound HTTP server and monitors it.
@@ -18,7 +23,6 @@ type Process struct {
 	detector   Detector
 	compressor Compressor
 	metrics    *Metrics
-	service    *Service
 	mu         sync.Mutex
 	cancel     context.CancelFunc
 	running    bool
@@ -33,7 +37,6 @@ func NewProcess(cfg Config, detector Detector, compressor Compressor, metrics *M
 		detector:   detector,
 		compressor: compressor,
 		metrics:    metrics,
-		service:    NewService(cfg, detector, compressor, metrics),
 	}
 }
 
@@ -49,38 +52,65 @@ func (p *Process) Start() error {
 		p.mu.Unlock()
 		return nil
 	}
-	p.service = NewService(p.cfg, p.detector, p.compressor, p.metrics)
+
+	// Build a fresh service for every start so a previous Stop/Close does not
+	// prevent reuse.
+	svc := NewService(p.cfg, p.detector, p.compressor, p.metrics)
 	ctx, cancel := context.WithCancel(context.Background())
 	p.cancel = cancel
 	p.running = true
 	p.lastErr = nil
 	p.mu.Unlock()
 
-	go p.run(ctx)
-	if err := p.waitForReady(time.Duration(p.cfg.TimeoutMs) * time.Millisecond); err != nil {
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- svc.ListenAndServe()
+	}()
+
+	go p.monitor(ctx, svc, errCh)
+
+	if err := p.waitForReady(svc, time.Duration(p.cfg.TimeoutMs)*time.Millisecond); err != nil {
+		cancel()
+		_ = svc.Close()
 		p.mu.Lock()
 		p.running = false
 		p.lastErr = err
+		p.cancel = nil
 		p.mu.Unlock()
 		return fmt.Errorf("headroom process did not become ready: %w", err)
 	}
 	return nil
 }
 
+func (p *Process) monitor(ctx context.Context, svc *Service, errCh <-chan error) {
+	select {
+	case <-ctx.Done():
+		_ = svc.Close()
+	case err := <-errCh:
+		p.mu.Lock()
+		p.running = false
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			p.lastErr = err
+		}
+		p.cancel = nil
+		p.mu.Unlock()
+	}
+}
+
 // Stop shuts down the in-process headroom server.
 func (p *Process) Stop() error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if !p.running {
+		p.mu.Unlock()
 		return nil
 	}
 	if p.cancel != nil {
 		p.cancel()
 	}
-	err := p.service.Close()
 	p.running = false
 	p.cancel = nil
-	return err
+	p.mu.Unlock()
+	return nil
 }
 
 // Restart stops and starts the in-process headroom server.
@@ -105,44 +135,25 @@ func (p *Process) LastError() error {
 	return p.lastErr
 }
 
-func (p *Process) run(ctx context.Context) {
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- p.service.ListenAndServe()
-	}()
-
-	select {
-	case <-ctx.Done():
-		return
-	case err := <-errCh:
-		p.mu.Lock()
-		p.running = false
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			p.lastErr = err
-		}
-		p.mu.Unlock()
-	}
-}
-
-func (p *Process) waitForReady(timeout time.Duration) error {
+func (p *Process) waitForReady(svc *Service, timeout time.Duration) error {
 	if timeout <= 0 {
-		timeout = time.Duration(p.cfg.TimeoutMs) * time.Millisecond
-		if timeout <= 0 {
-			timeout = DefaultTimeoutMs * time.Millisecond
-		}
+		timeout = readyProbeInterval
 	}
 	deadline := time.Now().Add(timeout)
-	addr := p.cfg.Endpoint
+	addr := svc.Addr()
 	if addr == "" {
-		addr = DefaultServiceEndpoint
+		addr = p.cfg.Endpoint
+	}
+	if addr == "" {
+		addr = DefaultEndpoint
 	}
 	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+		conn, err := net.DialTimeout("tcp", addr, readyProbeTimeout)
 		if err == nil {
 			_ = conn.Close()
 			return nil
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(readyProbeInterval)
 	}
 	return errors.New("timeout waiting for headroom listener")
 }

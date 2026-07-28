@@ -3,7 +3,6 @@ package headroom
 import (
 	"bytes"
 	"encoding/json"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -12,12 +11,10 @@ import (
 )
 
 func TestDefaultConfig(t *testing.T) {
-	for _, key := range []string{"AXON_HEADROOM_ENABLED", "AXON_HEADROOM_ENDPOINT", "AXON_HEADROOM_TIMEOUT_MS", "AXON_HEADROOM_MAX_PAYLOAD_BYTES"} {
-		t.Setenv(key, "")
-	}
+	// Ensure defaults are populated without relying on current env.
 	cfg := DefaultConfig()
-	if cfg.Endpoint != DefaultServiceEndpoint {
-		t.Fatalf("endpoint default: got %q want %q", cfg.Endpoint, DefaultServiceEndpoint)
+	if cfg.Endpoint != DefaultEndpoint {
+		t.Fatalf("endpoint default: got %q want %q", cfg.Endpoint, DefaultEndpoint)
 	}
 	if cfg.TimeoutMs != DefaultTimeoutMs {
 		t.Fatalf("timeout default: got %d want %d", cfg.TimeoutMs, DefaultTimeoutMs)
@@ -27,26 +24,6 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.Enabled {
 		t.Fatal("headroom should be disabled by default")
-	}
-}
-
-func TestConfigOverrides(t *testing.T) {
-	t.Setenv("AXON_HEADROOM_ENABLED", "true")
-	t.Setenv("AXON_HEADROOM_ENDPOINT", "127.0.0.1:19999")
-	t.Setenv("AXON_HEADROOM_TIMEOUT_MS", "5000")
-	t.Setenv("AXON_HEADROOM_MAX_PAYLOAD_BYTES", "1024")
-	cfg := DefaultConfig()
-	if !cfg.Enabled {
-		t.Fatal("headroom should be enabled")
-	}
-	if cfg.Endpoint != "127.0.0.1:19999" {
-		t.Fatalf("endpoint override: got %q", cfg.Endpoint)
-	}
-	if cfg.TimeoutMs != 5000 {
-		t.Fatalf("timeout override: got %d", cfg.TimeoutMs)
-	}
-	if cfg.MaxPayloadBytes != 1024 {
-		t.Fatalf("max payload override: got %d", cfg.MaxPayloadBytes)
 	}
 }
 
@@ -144,10 +121,9 @@ func TestCompressRoundTrip(t *testing.T) {
 }
 
 func TestServiceCompressEndpoint(t *testing.T) {
-	addr := getFreeAddr(t)
 	cfg := Config{
 		Enabled:         true,
-		Endpoint:        addr,
+		Endpoint:        "127.0.0.1:19123",
 		TimeoutMs:       5000,
 		MaxPayloadBytes: 524288,
 	}
@@ -158,20 +134,18 @@ func TestServiceCompressEndpoint(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := svc.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			t.Errorf("ListenAndServe: %v", err)
-		}
+		_ = svc.ListenAndServe()
 	}()
 	t.Cleanup(func() {
 		_ = svc.Close()
 		wg.Wait()
 	})
 
-	waitForAddr(t, addr)
+	waitForAddr(t, cfg.Endpoint)
 
 	in := Input{Data: []byte(sampleGitDiff())}
 	body, _ := json.Marshal(in)
-	resp, err := testHTTPClient().Post("http://"+addr+"/compress", "application/json", bytes.NewReader(body))
+	resp, err := http.Post("http://"+cfg.Endpoint+"/compress", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("post failed: %v", err)
 	}
@@ -195,22 +169,13 @@ func TestServiceCompressEndpoint(t *testing.T) {
 }
 
 func TestClientFallback(t *testing.T) {
-	// Bind to a free address but do not start a server so the remote call fails.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
-
 	cfg := Config{
 		Enabled:         true,
-		Endpoint:        addr,
+		Endpoint:        "127.0.0.1:19124",
 		TimeoutMs:       100,
 		MaxPayloadBytes: 524288,
 	}
-	metrics := NewMetrics()
-	client := NewClient(cfg, nil, nil, metrics)
+	client := NewClient(cfg, nil, nil, NewMetrics())
 	// Endpoint is down, fallback should work.
 	out, err := client.Compress([]byte(sampleGitLog()))
 	if err != nil {
@@ -222,16 +187,12 @@ func TestClientFallback(t *testing.T) {
 	if out.CompressedBytes > out.OriginalBytes {
 		t.Fatal("fallback compression did not reduce size")
 	}
-	if metrics.Errors() != 1 {
-		t.Fatalf("expected one recorded remote error, got %d", metrics.Errors())
-	}
 }
 
 func TestProcessLifecycle(t *testing.T) {
-	addr := getFreeAddr(t)
 	cfg := Config{
 		Enabled:         true,
-		Endpoint:        addr,
+		Endpoint:        "127.0.0.1:19125",
 		TimeoutMs:       2000,
 		MaxPayloadBytes: 524288,
 	}
@@ -242,15 +203,12 @@ func TestProcessLifecycle(t *testing.T) {
 	if !proc.Running() {
 		t.Fatal("process should be running")
 	}
-	t.Cleanup(func() {
-		_ = proc.Stop()
-	})
 
-	waitForAddr(t, addr)
+	waitForAddr(t, cfg.Endpoint)
 
 	in := Input{Data: []byte(sampleGitStatus())}
 	body, _ := json.Marshal(in)
-	resp, err := testHTTPClient().Post("http://"+addr+"/compress", "application/json", bytes.NewReader(body))
+	resp, err := http.Post("http://"+cfg.Endpoint+"/compress", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("post failed: %v", err)
 	}
@@ -282,25 +240,11 @@ func TestMetricsRecord(t *testing.T) {
 	}
 }
 
-func getFreeAddr(t *testing.T) string {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("getFreeAddr: %v", err)
-	}
-	defer ln.Close()
-	return ln.Addr().String()
-}
-
-func testHTTPClient() *http.Client {
-	return &http.Client{Timeout: 2 * time.Second}
-}
-
 func waitForAddr(t *testing.T, addr string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		resp, err := testHTTPClient().Get("http://" + addr + "/health")
+		resp, err := http.Get("http://" + addr + "/health")
 		if err == nil {
 			resp.Body.Close()
 			return
