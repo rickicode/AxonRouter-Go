@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Cloudflare bulk add validation** — frontend and backend now validate the `email|accountId|apiToken` pipe format for Cloudflare bulk imports. Frontend checks: exactly 3 parts, email contains `@`, accountId is 32-char hex. Backend checks: accountId is 32-char hex (both single and bulk add). Invalid lines are rejected with clear error messages instead of silently creating broken connections.
+
+### Fixed
+- **Cloudflare connection data cleanup** — swapped `api_key` and `accountId` fields for 6380 Cloudflare connections where the values were reversed during bulk import (accountId contained `cfat_` API tokens, api_key contained hex account IDs). AxonRouter restarted to re-seed connstate from corrected DB.
+
 ## [0.3.22] - 2026-07-28
 
 ### Added
