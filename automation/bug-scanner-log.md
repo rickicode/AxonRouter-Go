@@ -114,3 +114,14 @@ The next run derives its side from the last `- Run side:` line.
 - Parity gap: CLIProxyAPI exposes Claude/Gemini thinking-signature validators (`ValidateClaudeThinkingSignatures`, `InspectClaudeDoubleLayerSignature`, `InspectClaudeSingleLayerSignature`, `ValidateGeminiThoughtSignatures`, `ValidateGeminiFunctionCallPairing`) in `internal/signature` that AxonRouter-Go lacks → `HIJ-924`
 - Issues created: `HIJ-924`
 - Notes: Go binary was not on `PATH`; used `/usr/local/go/bin/go`. Frontend already built (`web/build` present). References updated (`/workspaces/CLIProxyAPI`, `/workspaces/OmniRoute`, `/workspaces/9router`). Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied. Deep check ran clean with `-count=1` (prior cached run also passed).
+
+## 2026-07-28 04:11 UTC
+- Run side: data
+- Baseline: `export PATH=$PATH:/usr/local/go/bin && go build ./...`
+- Deep check: `export PATH=$PATH:/usr/local/go/bin && go test -timeout 10m ./internal/db/... ./internal/cache/... ./internal/backup/... ./internal/background/... ./internal/logging/... ./internal/usage/...`
+- Objective result: all passed
+- Failure details:
+  - none
+- Parity gap: none (data/cache/background/logging/usage subsystems compared against CLIProxyAPI internal/store/cache/logging and OmniRoute usage tracking; no new concrete, reference-backed gap identified)
+- Issues created: none
+- Notes: Go binary was not on `PATH`; used `/usr/local/go/bin/go`. Frontend already built (`web/build` present). References updated (`/workspaces/CLIProxyAPI`, `/workspaces/OmniRoute`, `/workspaces/9router`). Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied. Data-side test packages completed: `internal/db` (159.105s), `internal/cache` (0.452s), `internal/backup` (50.367s), `internal/background` (11.953s), `internal/logging` (0.011s), `internal/usage` (188.696s).
