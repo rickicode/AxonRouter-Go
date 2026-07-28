@@ -134,7 +134,7 @@ func looksLikeFindTree(s string) bool {
 	if nonEmpty == 0 {
 		return false
 	}
-	return float64(pathLike)/float64(nonEmpty) > 0.6
+	return float64(pathLike)/float64(nonEmpty) >= 0.6
 }
 
 func looksLikeBuildLog(s string) bool {

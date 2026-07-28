@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	DefaultEndpoint        = "127.0.0.1:9123"
+	DefaultServiceEndpoint = "127.0.0.1:9123"
 	DefaultTimeoutMs       = 30000
 	DefaultMaxPayloadBytes = 524288
 )
@@ -24,17 +24,18 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		Enabled:         getEnvBool("AXON_HEADROOM_ENABLED", false),
-		Endpoint:        getEnv("AXON_HEADROOM_ENDPOINT", DefaultEndpoint),
+		Endpoint:        getEnv("AXON_HEADROOM_ENDPOINT", DefaultServiceEndpoint),
 		TimeoutMs:       getEnvInt("AXON_HEADROOM_TIMEOUT_MS", DefaultTimeoutMs),
 		MaxPayloadBytes: getEnvInt("AXON_HEADROOM_MAX_PAYLOAD_BYTES", DefaultMaxPayloadBytes),
 	}
 }
 
 func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return strings.TrimSpace(v)
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
 	}
-	return fallback
+	return v
 }
 
 func getEnvBool(key string, fallback bool) bool {

@@ -52,12 +52,12 @@ func (c *Client) CompressWithKind(data []byte, hint Kind) (*Output, error) {
 		return nil, ErrEmptyPayload
 	}
 
-	if !c.cfg.Enabled {
-		return c.compressLocal(data, hint)
-	}
-
 	if len(data) > c.cfg.MaxPayloadBytes {
 		return nil, fmt.Errorf("payload exceeds %d byte limit", c.cfg.MaxPayloadBytes)
+	}
+
+	if !c.cfg.Enabled {
+		return c.compressLocal(data, hint)
 	}
 
 	out, err := c.callRemote(data, hint)
@@ -66,6 +66,7 @@ func (c *Client) CompressWithKind(data []byte, hint Kind) (*Output, error) {
 		return out, nil
 	}
 
+	c.metrics.RecordError()
 	// Fall back to in-process compression.
 	return c.compressLocal(data, hint)
 }
@@ -82,7 +83,7 @@ func (c *Client) callRemote(data []byte, hint Kind) (*Output, error) {
 
 	endpoint := c.cfg.Endpoint
 	if endpoint == "" {
-		endpoint = DefaultEndpoint
+		endpoint = DefaultServiceEndpoint
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+endpoint+"/compress", bytes.NewReader(body))
 	if err != nil {
@@ -123,6 +124,7 @@ func (c *Client) compressLocal(data []byte, hint Kind) (*Output, error) {
 	compressed, err := c.compressor.Compress(data, kind)
 	var final []byte
 	if err != nil {
+		c.metrics.RecordError()
 		final = data
 		kind = KindUnknown
 	} else {
@@ -137,6 +139,8 @@ func (c *Client) compressLocal(data []byte, hint Kind) (*Output, error) {
 		OriginalTokens:   TokenEstimate(data),
 		CompressedTokens: TokenEstimate(final),
 	}
-	c.metrics.RecordSuccess(out.OriginalBytes, out.CompressedBytes)
+	if err == nil {
+		c.metrics.RecordSuccess(out.OriginalBytes, out.CompressedBytes)
+	}
 	return out, nil
 }

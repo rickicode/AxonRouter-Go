@@ -14,20 +14,26 @@ import (
 // External process spawning is intentionally out of scope for this stage; the
 // manager starts a goroutine-bound HTTP server and monitors it.
 type Process struct {
-	cfg     Config
-	service *Service
-	mu      sync.Mutex
-	cancel  context.CancelFunc
-	running bool
-	lastErr error
+	cfg        Config
+	detector   Detector
+	compressor Compressor
+	metrics    *Metrics
+	service    *Service
+	mu         sync.Mutex
+	cancel     context.CancelFunc
+	running    bool
+	lastErr    error
 }
 
 // NewProcess creates a lifecycle manager that hosts the headroom HTTP service
 // in-process.
 func NewProcess(cfg Config, detector Detector, compressor Compressor, metrics *Metrics) *Process {
 	return &Process{
-		cfg:     cfg,
-		service: NewService(cfg, detector, compressor, metrics),
+		cfg:        cfg,
+		detector:   detector,
+		compressor: compressor,
+		metrics:    metrics,
+		service:    NewService(cfg, detector, compressor, metrics),
 	}
 }
 
@@ -39,20 +45,23 @@ func (p *Process) Start() error {
 	}
 
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.running {
+		p.mu.Unlock()
 		return nil
 	}
-
+	p.service = NewService(p.cfg, p.detector, p.compressor, p.metrics)
 	ctx, cancel := context.WithCancel(context.Background())
 	p.cancel = cancel
 	p.running = true
 	p.lastErr = nil
+	p.mu.Unlock()
 
 	go p.run(ctx)
 	if err := p.waitForReady(time.Duration(p.cfg.TimeoutMs) * time.Millisecond); err != nil {
+		p.mu.Lock()
 		p.running = false
 		p.lastErr = err
+		p.mu.Unlock()
 		return fmt.Errorf("headroom process did not become ready: %w", err)
 	}
 	return nil
@@ -116,10 +125,16 @@ func (p *Process) run(ctx context.Context) {
 }
 
 func (p *Process) waitForReady(timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = time.Duration(p.cfg.TimeoutMs) * time.Millisecond
+		if timeout <= 0 {
+			timeout = DefaultTimeoutMs * time.Millisecond
+		}
+	}
 	deadline := time.Now().Add(timeout)
 	addr := p.cfg.Endpoint
 	if addr == "" {
-		addr = DefaultEndpoint
+		addr = DefaultServiceEndpoint
 	}
 	for time.Now().Before(deadline) {
 		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)

@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/rickicode/AxonRouter-Go/internal/compression"
 )
@@ -192,16 +194,20 @@ func compressGrep(s string) string {
 		groups[path] = append(groups[path], ref+":"+text)
 	}
 
+	paths := make([]string, 0, len(groups))
+	for path := range groups {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+
 	var b strings.Builder
-	first := true
-	for path, hits := range groups {
-		if !first {
+	for i, path := range paths {
+		if i > 0 {
 			b.WriteByte('\n')
 		}
-		first = false
 		b.WriteString(path)
 		b.WriteByte('\n')
-		for _, h := range mergeHits(hits) {
+		for _, h := range mergeHits(groups[path]) {
 			b.WriteString("  " + h)
 			b.WriteByte('\n')
 		}
@@ -237,8 +243,16 @@ func compressFindTree(s string) string {
 		// Try to strip leading `find` metadata such as permissions and sizes.
 		fields := strings.Fields(trimmed)
 		path := trimmed
-		if len(fields) >= 9 {
-			path = strings.Join(fields[8:], " ")
+		// Locate the first field that looks like a path.
+		start := -1
+		for i, f := range fields {
+			if looksLikePath(f) {
+				start = i
+				break
+			}
+		}
+		if start >= 0 {
+			path = strings.Join(fields[start:], " ")
 		} else if len(fields) == 1 {
 			path = fields[0]
 		}
@@ -295,12 +309,27 @@ func compressSearchResults(s string) string {
 			continue
 		}
 		if len(trimmed) > 120 {
-			trimmed = trimmed[:117] + "..."
+			trimmed = truncateUTF8(trimmed, 120)
 		}
 		b.WriteString(trimmed)
 		b.WriteByte('\n')
 	}
 	return collapseWhitespace(b.String())
+}
+
+func truncateUTF8(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	// Leave room for the ellipsis.
+	limit := maxBytes - 3
+	if limit <= 0 {
+		limit = maxBytes
+	}
+	for limit > 0 && limit < len(s) && !utf8.RuneStart(s[limit]) {
+		limit--
+	}
+	return s[:limit] + "..."
 }
 
 func collapseWhitespace(s string) string {

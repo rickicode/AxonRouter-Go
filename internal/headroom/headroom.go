@@ -43,10 +43,10 @@ func (s Status) String() string {
 // object through every call site. The API handler reads them safely via
 // LoadCounters.
 var (
-	running    int32
-	total      int64
-	bytesSaved int64
-	errors     int64
+	running     int32
+	total       int64
+	bytesSaved  int64
+	errorsCount int64
 )
 
 // SetEnabled marks Headroom as running/idle. False maps to disabled.
@@ -83,7 +83,7 @@ func AddBytesSaved(n int64) {
 
 // IncErrors increments the Headroom error counter.
 func IncErrors() {
-	atomic.AddInt64(&errors, 1)
+	atomic.AddInt64(&errorsCount, 1)
 }
 
 // Counters is a snapshot of the current Headroom counters.
@@ -100,6 +100,6 @@ func LoadCounters() Counters {
 		Running:    Status(atomic.LoadInt32(&running)),
 		Total:      atomic.LoadInt64(&total),
 		BytesSaved: atomic.LoadInt64(&bytesSaved),
-		Errors:     atomic.LoadInt64(&errors),
+		Errors:     atomic.LoadInt64(&errorsCount),
 	}
 }
