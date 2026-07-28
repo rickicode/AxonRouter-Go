@@ -109,6 +109,22 @@ func injectKiroProfileArn(body []byte, psd map[string]string) ([]byte, error) {
 	return sjson.SetBytes(body, "profileArn", profileArn)
 }
 
+// extractThinkingDisplay reads the internal _thinkingDisplay hint from the translated
+// request body. It returns an empty string when absent, leaving the response path
+// to fall back to included behavior.
+func extractThinkingDisplay(body []byte) string {
+	if !gjson.ValidBytes(body) {
+		return ""
+	}
+	display := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "_thinkingDisplay").String()))
+	switch display {
+	case "summarized", "stripped", "included":
+		return display
+	default:
+		return ""
+	}
+}
+
 // buildKiroUpstreamBody strips non-upstream fields from the translated body
 // and keeps only the fields Kiro accepts.
 func buildKiroUpstreamBody(body []byte) ([]byte, map[string]string, error) {
@@ -148,6 +164,9 @@ type kiroStreamState struct {
 	thinkingExpected bool
 	thinkingMode     bool
 	pendingTag       string
+	// thinkingDisplay controls how reasoning content is surfaced to the client:
+	// "included" (default), "summarized", or "stripped".
+	thinkingDisplay string
 }
 
 func (s *kiroStreamState) toolName(raw string, nameMap map[string]string) string {
@@ -155,6 +174,58 @@ func (s *kiroStreamState) toolName(raw string, nameMap map[string]string) string
 		return orig
 	}
 	return raw
+}
+
+// splitInlineThinkingStripped walks inline <thinking> tags and emits only the
+// non-thinking text segments as content deltas. Reasoning content is discarded.
+// Adjacent text segments are coalesced into a single chunk.
+func (s *kiroStreamState) splitInlineThinkingStripped(content string, model string) [][]byte {
+	text := s.pendingTag + content
+	s.pendingTag = ""
+	const partialMax = 11
+	var combined string
+	for text != "" {
+		idx := strings.Index(text, "<thinking>")
+		if idx == -1 {
+			flushable := text
+			if s.thinkingMode {
+				flushable = ""
+			}
+			combined += flushable
+			break
+		}
+		// Text before the tag is kept when not already inside thinking.
+		if !s.thinkingMode {
+			combined += text[:idx]
+		}
+		s.thinkingMode = true
+		// Find closing tag.
+		endIdx := strings.Index(text[idx:], "</thinking>")
+		if endIdx == -1 {
+			// Tag not closed yet; hold possible partial closing tag tail.
+			holdFrom := len(text)
+			start := len(text) - partialMax
+			if start < 0 {
+				start = 0
+			}
+			for i := start; i < len(text); i++ {
+				tail := text[i:]
+				if tail != "" && strings.HasPrefix("</thinking>", tail) {
+					holdFrom = i
+					break
+				}
+			}
+			s.pendingTag = text[holdFrom:]
+			break
+		}
+		s.thinkingMode = false
+		text = text[idx+endIdx+len("</thinking>"):]
+	}
+	if combined != "" {
+		s.textLen += int64(len(combined))
+		return [][]byte{s.emitChunk(kiroOpenAIDelta{Content: combined}, model)}
+	}
+	return nil
 }
 
 // splitInlineThinking walks one slice of upstream content at a time and routes
@@ -345,6 +416,10 @@ func (s *kiroStreamState) handleEvent(frame *EventFrame, nameMap map[string]stri
 		// Kiro may inline thinking tags inside assistantResponseEvent content when the
 		// reasoningContentEvent frame is not emitted. Split them stream-safely.
 		if s.thinkingExpected {
+			// If reasoning must be stripped, drop inline <thinking> sections and keep text only.
+			if s.thinkingDisplay == "stripped" {
+				return s.splitInlineThinkingStripped(ev.Content, model)
+			}
 			return s.splitInlineThinking(ev.Content, model)
 		}
 		s.textLen += int64(len(ev.Content))
@@ -369,6 +444,9 @@ func (s *kiroStreamState) handleEvent(frame *EventFrame, nameMap map[string]stri
 			}
 		}
 		if text == "" {
+			return nil
+		}
+		if s.thinkingDisplay == "stripped" {
 			return nil
 		}
 		return [][]byte{s.emitChunk(kiroOpenAIDelta{ReasoningContent: text}, model)}
@@ -574,7 +652,8 @@ func (e *KiroExecutor) Execute(ctx context.Context, req *Request) (*Response, er
 		}
 	}
 	// Build a non-streaming chat.completion from the SSE chunks.
-	body, err := assembleKiroNonStream(buf.Bytes())
+	display := extractThinkingDisplay(req.Body)
+	body, err := assembleKiroNonStream(buf.Bytes(), display)
 	if err != nil {
 		return nil, err
 	}
@@ -585,7 +664,7 @@ func (e *KiroExecutor) Execute(ctx context.Context, req *Request) (*Response, er
 	}, nil
 }
 
-func assembleKiroNonStream(sse []byte) ([]byte, error) {
+func assembleKiroNonStream(sse []byte, thinkingDisplay string) ([]byte, error) {
 	var content, reasoning strings.Builder
 	var toolCalls []kiroOpenAIToolCall
 	var usage *kiroOpenAIUsage
@@ -612,7 +691,9 @@ func assembleKiroNonStream(sse []byte) ([]byte, error) {
 		}
 		choice := chunk.Choices[0]
 		content.WriteString(choice.Delta.Content)
-		reasoning.WriteString(choice.Delta.ReasoningContent)
+		if thinkingDisplay != "stripped" {
+			reasoning.WriteString(choice.Delta.ReasoningContent)
+		}
 		if len(choice.Delta.ToolCalls) > 0 {
 			mergeKiroToolCalls(&toolCalls, choice.Delta.ToolCalls)
 		}
@@ -803,6 +884,7 @@ func (e *KiroExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stream
 	}
 
 	thinkingExpected := strings.Contains(string(req.Body), "<thinking_mode>enabled</thinking_mode>")
+	thinkingDisplay := extractThinkingDisplay(req.Body)
 
 	// Capture the original output channel so the caller can safely reassign
 	// streamResult.Chunks (e.g. to a holdback wrapper) without racing the
@@ -818,6 +900,7 @@ func (e *KiroExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stream
 			toolArgsBuf:      make(map[string]string),
 			toolArgsEmitted:  make(map[string]string),
 			thinkingExpected: thinkingExpected,
+			thinkingDisplay:  thinkingDisplay,
 		}
 
 		buf := make([]byte, 32*1024)

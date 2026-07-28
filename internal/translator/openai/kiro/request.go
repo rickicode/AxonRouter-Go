@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rickicode/AxonRouter-Go/internal/provider/kiro"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/types"
 )
@@ -127,8 +128,9 @@ func ConvertOpenAIRequestToKiro(model string, body []byte, stream bool) []byte {
 	// keyed by the deterministic conversation ID.
 	history = applySessionReplay(conversationID, history, currentMessage)
 
+	displayMode := resolveThinkingDisplay(normalizedModel, req)
 	effort := ""
-	if supportsReasoning(normalizedModel) {
+	if supportsReasoning(normalizedModel) && displayMode != string(kiro.ThinkingDisplayStripped) {
 		effort = resolveKiroEffort(req)
 	}
 
@@ -136,7 +138,7 @@ func ConvertOpenAIRequestToKiro(model string, body []byte, stream bool) []byte {
 	var systemPromptParts []string
 	if effort != "" {
 		thinkingLength := capThinkingBudget(normalizedModel, thinkingLengthForEffort(effort))
-		systemPromptParts = append(systemPromptParts, fmt.Sprintf("<thinking_mode>enabled</thinking_mode><max_thinking_length>%d</max_thinking_length>", thinkingLength))
+		systemPromptParts = append(systemPromptParts, buildThinkingDirective(thinkingLength, displayMode))
 	}
 	if isAgenticVariant(normalizedModel) {
 		systemPromptParts = append(systemPromptParts, agenticSystemPrompt)
@@ -158,7 +160,8 @@ func ConvertOpenAIRequestToKiro(model string, body []byte, stream bool) []byte {
 			"currentMessage":  currentMessage,
 			"history":         history,
 		},
-		"_toolNameMap": toolNameMap,
+		"_toolNameMap":     toolNameMap,
+		"_thinkingDisplay": displayMode,
 	}
 	if profileArn != "" {
 		payload["profileArn"] = profileArn
@@ -178,6 +181,60 @@ func ConvertOpenAIRequestToKiro(model string, body []byte, stream bool) []byte {
 	}
 
 	return mustMarshal(payload)
+}
+
+// resolveThinkingDisplay chooses the thinking display mode for this request.
+// It honors an explicit "thinking.display" client preference when provided,
+// otherwise falls back to the curated per-model default.
+func resolveThinkingDisplay(model string, req map[string]any) string {
+	if thinking, ok := req["thinking"].(map[string]any); ok {
+		if d, ok := thinking["display"].(string); ok && strings.TrimSpace(d) != "" {
+			return normalizeThinkingDisplay(d)
+		}
+	}
+	return string(kiroCatalogThinkingDisplay(model))
+}
+
+// kiroCatalogThinkingDisplay returns the catalog default for a normalized Kiro model.
+func kiroCatalogThinkingDisplay(model string) kiro.ThinkingDisplayMode {
+	// Prefer exact match first (handles explicit -thinking variants with included).
+	for _, m := range kiro.AllModels() {
+		if m.ID == model {
+			return kiro.ThinkingDisplayMode(m.ThinkingDisplay)
+		}
+	}
+	// Fall back to the stripped base entry.
+	baseID := kiro.StripSyntheticSuffix(model)
+	for _, m := range kiro.AllModels() {
+		if m.ID == baseID {
+			return kiro.ThinkingDisplayMode(m.ThinkingDisplay)
+		}
+	}
+	return kiro.ThinkingDisplayIncluded
+}
+
+// normalizeThinkingDisplay coerces raw display strings to the canonical set.
+func normalizeThinkingDisplay(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "summarized", "summary":
+		return string(kiro.ThinkingDisplaySummarized)
+	case "stripped", "omit", "omitted", "none":
+		return string(kiro.ThinkingDisplayStripped)
+	case "included", "raw", "":
+		return string(kiro.ThinkingDisplayIncluded)
+	default:
+		return string(kiro.ThinkingDisplayIncluded)
+	}
+}
+
+// buildThinkingDirective constructs the system-prompt thinking instruction based
+// on the requested display mode.
+func buildThinkingDirective(thinkingLength int, displayMode string) string {
+	directive := fmt.Sprintf("<thinking_mode>enabled</thinking_mode><max_thinking_length>%d</max_thinking_length>", thinkingLength)
+	if displayMode == string(kiro.ThinkingDisplaySummarized) {
+		directive += "<thinking_summary>Keep reasoning concise and summarize internal steps inside <thinking> blocks.</thinking_summary>"
+	}
+	return directive
 }
 
 func convertMessages(messages, tools []any, model string, agentic bool) ([]map[string]any, map[string]any) {
@@ -274,21 +331,21 @@ func convertMessages(messages, tools []any, model string, agentic bool) ([]map[s
 			text = v
 		case []any:
 			text = extractTextFromBlocks(v)
-				if supportsImages {
-					for _, raw := range v {
-						if img, ok := raw.(map[string]any); ok {
-							format, bytes, url := extractImage(img)
-							if bytes != "" {
-								pendingImages = append(pendingImages, map[string]any{
-									"format": format,
-									"source": map[string]any{"bytes": bytes},
-								})
-							} else if url != "" {
-								pendingUser = append(pendingUser, fmt.Sprintf("[Image: %s]", url))
-							}
+			if supportsImages {
+				for _, raw := range v {
+					if img, ok := raw.(map[string]any); ok {
+						format, bytes, url := extractImage(img)
+						if bytes != "" {
+							pendingImages = append(pendingImages, map[string]any{
+								"format": format,
+								"source": map[string]any{"bytes": bytes},
+							})
+						} else if url != "" {
+							pendingUser = append(pendingUser, fmt.Sprintf("[Image: %s]", url))
 						}
 					}
 				}
+			}
 			// Inline tool_result blocks inside content array.
 			for _, raw := range v {
 				if block, ok := raw.(map[string]any); ok && block["type"] == "tool_result" {
@@ -988,7 +1045,12 @@ func thinkingLengthForEffort(effort string) int {
 
 func supportsReasoning(model string) bool {
 	m := strings.ToLower(model)
-	_, ok := kiroAdaptiveThinkingModels[m]
+	if _, ok := kiroAdaptiveThinkingModels[m]; ok {
+		return true
+	}
+	// Synthetic variants like claude-sonnet-4.5-thinking inherit base model support.
+	base := strings.TrimSuffix(strings.TrimSuffix(m, "-agentic"), "-thinking")
+	_, ok := kiroAdaptiveThinkingModels[base]
 	return ok
 }
 

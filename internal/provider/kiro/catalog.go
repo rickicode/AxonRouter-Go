@@ -29,6 +29,7 @@ type Model struct {
 	Description     string
 	RateMultiplier  float64
 	Strip           []string
+	ThinkingDisplay string
 }
 
 // baseCapabilities returns the upstream capability flags for a base model ID.
@@ -56,9 +57,32 @@ func baseRateMultiplier(id string) float64 {
 	return 1.0
 }
 
+// ThinkingDisplayMode controls how reasoning/thinking content is surfaced in responses.
+type ThinkingDisplayMode string
+
+const (
+	// ThinkingDisplayIncluded emits raw reasoning content in reasoning_content fields (default).
+	ThinkingDisplayIncluded ThinkingDisplayMode = "included"
+	// ThinkingDisplaySummarized asks the model to summarize reasoning and still exposes it.
+	ThinkingDisplaySummarized ThinkingDisplayMode = "summarized"
+	// ThinkingDisplayStripped disables reasoning exposure in the OpenAI-format client response.
+	ThinkingDisplayStripped ThinkingDisplayMode = "stripped"
+)
+
 // baseDescription returns a short description for known experimental models.
 func baseDescription(id string) string {
 	return ""
+}
+
+// baseThinkingDisplay returns the default thinking display mode for a base model ID.
+// It does not override explicit client model-variant suffixes like -thinking.
+func baseThinkingDisplay(id string) ThinkingDisplayMode {
+	switch id {
+	case "claude-sonnet-4.5", "claude-sonnet-4", "claude-sonnet-4.6", "claude-sonnet-4.7",
+		"claude-opus-4.6", "claude-opus-4.7":
+		return ThinkingDisplaySummarized
+	}
+	return ThinkingDisplayIncluded
 }
 
 // BaseModels lists the verified upstream Kiro models.
@@ -187,6 +211,7 @@ func ExpandVariants(bases []BaseModel) []Model {
 			Description:     desc,
 			RateMultiplier:  rate,
 			Strip:           strip,
+			ThinkingDisplay: string(baseThinkingDisplay(baseID)),
 		})
 		out = append(out, Model{
 			BaseModel:       variantBase(base, "thinking"),
@@ -196,6 +221,7 @@ func ExpandVariants(bases []BaseModel) []Model {
 			Description:     desc,
 			RateMultiplier:  rate,
 			Strip:           strip,
+			ThinkingDisplay: string(ThinkingDisplayIncluded),
 		})
 		out = append(out, Model{
 			BaseModel:       variantBase(base, "agentic"),
@@ -205,6 +231,7 @@ func ExpandVariants(bases []BaseModel) []Model {
 			Description:     desc,
 			RateMultiplier:  rate,
 			Strip:           strip,
+			ThinkingDisplay: string(baseThinkingDisplay(baseID)),
 		})
 		out = append(out, Model{
 			BaseModel:       variantBase(base, "thinking-agentic"),
@@ -214,6 +241,7 @@ func ExpandVariants(bases []BaseModel) []Model {
 			Description:     desc,
 			RateMultiplier:  rate,
 			Strip:           strip,
+			ThinkingDisplay: string(ThinkingDisplayIncluded),
 		})
 	}
 	return out

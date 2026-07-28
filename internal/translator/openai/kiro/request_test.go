@@ -418,3 +418,68 @@ func TestConvertOpenAIRequestToKiro_Base64ImageStillInImages(t *testing.T) {
 		t.Errorf("base64 image was not placed into images field")
 	}
 }
+
+func TestConvertOpenAIRequestToKiro_ThinkingDisplay(t *testing.T) {
+	cases := []struct {
+		name        string
+		model       string
+		body        string
+		wantDisplay string
+		wantEnabled bool
+		wantSummary bool
+	}{
+		{
+			name:        "summarized default for claude-sonnet-4.5",
+			model:       "claude-sonnet-4.5",
+			body:        `{ "messages": [{"role":"user","content":"hi"}], "reasoning_effort": "high" }`,
+			wantDisplay: "summarized",
+			wantEnabled: true,
+			wantSummary: true,
+		},
+		{
+			name:        "explicit stripped overrides default",
+			model:       "claude-sonnet-4.5",
+			body:        `{ "messages": [{"role":"user","content":"hi"}], "reasoning_effort": "high", "thinking": {"display":"stripped"} }`,
+			wantDisplay: "stripped",
+			wantEnabled: false,
+			wantSummary: false,
+		},
+		{
+			name:        "explicit included",
+			model:       "claude-sonnet-4.5",
+			body:        `{ "messages": [{"role":"user","content":"hi"}], "reasoning_effort": "high", "thinking": {"display":"included"} }`,
+			wantDisplay: "included",
+			wantEnabled: true,
+			wantSummary: false,
+		},
+		{
+			name:        "thinking variant forces included",
+			model:       "claude-sonnet-4.5-thinking",
+			body:        `{ "messages": [{"role":"user","content":"hi"}], "reasoning_effort": "high" }`,
+			wantDisplay: "included",
+			wantEnabled: true,
+			wantSummary: false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out := ConvertOpenAIRequestToKiro(c.model, []byte(c.body), true)
+			var payload map[string]any
+			if err := json.Unmarshal(out, &payload); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if got, ok := payload["_thinkingDisplay"].(string); !ok || got != c.wantDisplay {
+				t.Errorf("_thinkingDisplay = %q, want %q", got, c.wantDisplay)
+			}
+			current := payload["conversationState"].(map[string]any)["currentMessage"].(map[string]any)
+			content := current["userInputMessage"].(map[string]any)["content"].(string)
+			hasthinking := strings.Contains(content, "<thinking_mode>enabled</thinking_mode>")
+			if hasthinking != c.wantEnabled {
+				t.Errorf("thinking enabled presence = %v, want %v", hasthinking, c.wantEnabled)
+			}
+			if strings.Contains(content, "<thinking_summary>") != c.wantSummary {
+				t.Errorf("summary hint presence = %v, want %v", strings.Contains(content, "<thinking_summary>"), c.wantSummary)
+			}
+		})
+	}
+}
