@@ -152,13 +152,13 @@ func TestEnvelopeUserAgent(t *testing.T) {
 		data     map[string]string
 		expected string
 	}{
-		{"gmail", map[string]string{"email": "foo@gmail.com"}, "antigravity"},
-		{"googlemail", map[string]string{"email": "foo@googlemail.com"}, "antigravity"},
+		{"gmail", map[string]string{"email": "foo@gmail.com"}, "antigravity/ide/2.1.1 darwin/arm64"},
+		{"googlemail", map[string]string{"email": "foo@googlemail.com"}, "antigravity/ide/2.1.1 darwin/arm64"},
 		{"enterprise", map[string]string{"email": "foo@corp.com"}, "jetski"},
-		{"gmail-upper", map[string]string{"email": "Foo@GMail.com"}, "antigravity"},
-		{"googlemail-upper", map[string]string{"email": "Foo@GoogleMail.com"}, "antigravity"},
+		{"gmail-upper", map[string]string{"email": "Foo@GMail.com"}, "antigravity/ide/2.1.1 darwin/arm64"},
+		{"googlemail-upper", map[string]string{"email": "Foo@GoogleMail.com"}, "antigravity/ide/2.1.1 darwin/arm64"},
 		{"enterprise-upper", map[string]string{"email": "Foo@CORP.com"}, "jetski"},
-		{"empty", map[string]string{}, "antigravity"},
+		{"empty", map[string]string{}, "antigravity/ide/2.1.1 darwin/arm64"},
 		{"harness", map[string]string{"clientProfile": "harness"}, "jetski"},
 	}
 	for _, tc := range cases {
@@ -910,5 +910,149 @@ func TestExecuteStream_ReadinessTimeout_NotTriggeredOnFastHeaders(t *testing.T) 
 	}
 	// Drain the channel to avoid leaking the goroutine in tests.
 	for range result.Chunks {
+	}
+}
+
+func TestEnvelopeUserAgentVersionedIDE(t *testing.T) {
+	req := &Request{ProviderSpecificData: map[string]string{"clientProfile": "ide"}}
+	if got := envelopeUserAgent(req); got != "antigravity/ide/2.1.1 darwin/arm64" {
+		t.Errorf("expected IDE Desktop 2.1.1 userAgent, got %q", got)
+	}
+}
+
+func TestBuildIdeRequestIdDeterministic(t *testing.T) {
+	seed := "conn-abc"
+	session := "-hello"
+	model := "gemini-pro-agent"
+	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
+	first := buildIdeRequestId(seed, session, model, now)
+	second := buildIdeRequestId(seed, session, model, now)
+	if first != second {
+		t.Errorf("expected deterministic request IDs, got %q and %q", first, second)
+	}
+	if !strings.HasPrefix(first, fmt.Sprintf("agent/%d/", now.UnixMilli())) {
+		t.Errorf("expected agent/<ms>/<hash> format, got %q", first)
+	}
+}
+
+func TestBuildIdeRequestIdUniqueAcrossTurns(t *testing.T) {
+	seed := "conn-abc"
+	session := "-hello"
+	model := "gemini-pro-agent"
+	now1 := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
+	now2 := now1.Add(time.Millisecond)
+	id1 := buildIdeRequestId(seed, session, model, now1)
+	id2 := buildIdeRequestId(seed, session, model, now2)
+	if id1 == id2 {
+		t.Errorf("expected unique request IDs across turns, got %q and %q", id1, id2)
+	}
+}
+
+func TestBuildIdeRequestIdUniqueAcrossModels(t *testing.T) {
+	seed := "conn-abc"
+	session := "-hello"
+	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
+	id1 := buildIdeRequestId(seed, session, "gemini-pro-agent", now)
+	id2 := buildIdeRequestId(seed, session, "gemini-3-flash", now)
+	if id1 == id2 {
+		t.Errorf("expected unique request IDs across models, got %q and %q", id1, id2)
+	}
+}
+
+func TestWrapEnvelopeUsesDeterministicRequestId(t *testing.T) {
+	e := NewAntigravityExecutor(NewBaseExecutor())
+	ctx := context.Background()
+	body, _ := json.Marshal(map[string]any{
+		"contents": []any{map[string]any{"role": "user", "parts": []any{map[string]any{"text": "hi"}}}},
+	})
+	req := &Request{
+		Model:                "gemini-pro-agent",
+		Body:                 body,
+		ConnectionID:         "conn-det",
+		ProviderSpecificData: map[string]string{"projectId": "proj-1", "clientProfile": "ide"},
+	}
+	out, err := e.wrapEnvelope(ctx, req)
+	if err != nil {
+		t.Fatalf("wrapEnvelope failed: %v", err)
+	}
+	rid := gjson.GetBytes(out, "requestId").String()
+	if rid == "" {
+		t.Fatalf("expected non-empty requestId")
+	}
+	if !strings.HasPrefix(rid, "agent/") {
+		t.Errorf("expected agent/ prefix, got %q", rid)
+	}
+}
+
+func TestWrapEnvelopeRequestIdChangesAcrossTurns(t *testing.T) {
+	e := NewAntigravityExecutor(NewBaseExecutor())
+	ctx := context.Background()
+	body1, _ := json.Marshal(map[string]any{
+		"contents":       []any{map[string]any{"role": "user", "parts": []any{map[string]any{"text": "hi"}}}},
+		"conversationId": "conv-1",
+	})
+	body2, _ := json.Marshal(map[string]any{
+		"contents":       []any{map[string]any{"role": "user", "parts": []any{map[string]any{"text": "hi"}}}},
+		"conversationId": "conv-2",
+	})
+	req1 := &Request{Model: "gemini-pro-agent", Body: body1, ConnectionID: "conn-1", ProviderSpecificData: map[string]string{"projectId": "proj-1", "clientProfile": "ide"}}
+	req2 := &Request{Model: "gemini-pro-agent", Body: body2, ConnectionID: "conn-1", ProviderSpecificData: map[string]string{"projectId": "proj-1", "clientProfile": "ide"}}
+	out1, _ := e.wrapEnvelope(ctx, req1)
+	out2, _ := e.wrapEnvelope(ctx, req2)
+	rid1 := gjson.GetBytes(out1, "requestId").String()
+	rid2 := gjson.GetBytes(out2, "requestId").String()
+	if rid1 == rid2 {
+		t.Errorf("expected different requestId for different conversation, got %q and %q", rid1, rid2)
+	}
+}
+
+func TestDiscoverProjectIDUsesIDEDesktopFingerprint(t *testing.T) {
+	var captured http.Header
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r.Header
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"cloudaicompanionProject":"proj-fingerprint"}`))
+	}))
+	defer server.Close()
+	be := NewBaseExecutor()
+	e := NewAntigravityExecutor(be)
+	old := antigravityDiscoveryBaseURLs
+	antigravityDiscoveryBaseURLs = []string{server.URL}
+	defer func() { antigravityDiscoveryBaseURLs = old }()
+	antigravityProjectCache.Delete("ide:token")
+	_, err := e.discoverProjectID(context.Background(), "token", "ide")
+	if err != nil {
+		t.Fatalf("discoverProjectID failed: %v", err)
+	}
+	if got := captured.Get("User-Agent"); got != "vscode/1.X.X (Antigravity/2.1.1)" {
+		t.Errorf("expected IDE Desktop loadCodeAssist User-Agent, got %q", got)
+	}
+	if got := captured.Get("Client-Metadata"); got != `{"ideType":"ANTIGRAVITY"}` {
+		t.Errorf("expected IDE Desktop Client-Metadata, got %q", got)
+	}
+}
+
+func TestDiscoverProjectIDHarnessOverridesUserAgent(t *testing.T) {
+	var captured http.Header
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r.Header
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"cloudaicompanionProject":"proj-harness"}`))
+	}))
+	defer server.Close()
+	be := NewBaseExecutor()
+	e := NewAntigravityExecutor(be)
+	old := antigravityDiscoveryBaseURLs
+	antigravityDiscoveryBaseURLs = []string{server.URL}
+	defer func() { antigravityDiscoveryBaseURLs = old }()
+	antigravityProjectCache.Delete("harness:token")
+	_, err := e.discoverProjectID(context.Background(), "token", "harness")
+	if err != nil {
+		t.Fatalf("discoverProjectID failed: %v", err)
+	}
+	if got := captured.Get("User-Agent"); got != "antigravity" {
+		t.Errorf("expected harness User-Agent override, got %q", got)
 	}
 }

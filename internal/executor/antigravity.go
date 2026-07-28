@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"net/http"
 	"net/url"
@@ -38,6 +39,18 @@ var antigravityStripFields = []string{
 // maxAntigravityOutputTokens is the hard ceiling on generationConfig.maxOutputTokens.
 // OmniRoute MAX_ANTIGRAVITY_OUTPUT_TOKENS (antigravity.ts:527).
 const maxAntigravityOutputTokens = 16384
+
+// antigravityVersion is the pinned IDE Desktop version used for the upstream fingerprint.
+const antigravityVersion = "2.1.1"
+
+// antigravityPlatform pins the native macOS desktop client fingerprint.
+const antigravityPlatform = "darwin/arm64"
+
+// antigravityLoadCodeAssistUserAgent is the User-Agent sent during project discovery.
+const antigravityLoadCodeAssistUserAgent = "vscode/1.X.X (Antigravity/" + antigravityVersion + ")"
+
+// antigravityLoadCodeAssistClientMetadata is the Client-Metadata sent during discovery.
+const antigravityLoadCodeAssistClientMetadata = `{"ideType":"ANTIGRAVITY"}`
 
 // defaultSafetySettings turns off all Google content safety filters to prevent
 // false-positive blocks on benign technical prompts.
@@ -388,7 +401,9 @@ func isAntigravityEnterpriseAccount(email string) bool {
 	return email != "" && !strings.HasSuffix(email, "@gmail.com") && !strings.HasSuffix(email, "@googlemail.com")
 }
 
-// envelopeUserAgent returns "antigravity" or "jetski" based on account/client profile.
+// envelopeUserAgent returns the upstream-visible userAgent string.
+// It returns "jetski" for harness profile or non-consumer enterprise accounts,
+// and the version-aware antigravity userAgent otherwise.
 // Mirrors OmniRoute getAntigravityEnvelopeUserAgent (antigravityIdentity.ts:65-68).
 func envelopeUserAgent(req *Request) string {
 	if req.ProviderSpecificData == nil {
@@ -400,7 +415,7 @@ func envelopeUserAgent(req *Request) string {
 	if isAntigravityEnterpriseAccount(req.ProviderSpecificData["email"]) {
 		return "jetski"
 	}
-	return "antigravity"
+	return fmt.Sprintf("antigravity/ide/%s %s", antigravityVersion, antigravityPlatform)
 }
 
 // discoverProjectID auto-discovers the Google Cloud project via loadCodeAssist.
@@ -418,8 +433,8 @@ func (e *AntigravityExecutor) discoverProjectID(ctx context.Context, accessToken
 
 	headers := map[string]string{
 		"Content-Type":    "application/json",
-		"User-Agent":      "vscode/1.X.X (Antigravity/4.2.0)",
-		"Client-Metadata": `{"ideType":"ANTIGRAVITY"}`,
+		"User-Agent":      antigravityLoadCodeAssistUserAgent,
+		"Client-Metadata": antigravityLoadCodeAssistClientMetadata,
 	}
 	if clientProfile == "harness" {
 		headers["User-Agent"] = "antigravity"
@@ -576,25 +591,39 @@ func (e *AntigravityExecutor) buildEnvelope(ctx context.Context, req *Request, u
 	if useCredits {
 		envelope["enabledCreditTypes"] = []string{"GOOGLE_ONE_AI"}
 	}
-	envelope["requestId"] = generateAntigravityRequestId()
 	// Stable per-conversation session id inside the inner request, matching CLIProxyAPI.
 	envelope["request"] = inner
-	if contents, ok := inner["contents"].([]any); ok && len(contents) > 0 {
-		first := normalizeStringMap(contents[0])
-		if first != nil {
-			if text := normalizeStringMapValue(first["parts"]); len(text) > 0 {
-				if t := normalizeStringMap(text[0]); t != nil {
-					if s, _ := t["text"].(string); s != "" {
-						inner["sessionId"] = generateStableAntigravitySessionID(s)
+	if _, ok := inner["sessionId"].(string); !ok {
+		if contents, ok := inner["contents"].([]any); ok && len(contents) > 0 {
+			first := normalizeStringMap(contents[0])
+			if first != nil {
+				if text := normalizeStringMapValue(first["parts"]); len(text) > 0 {
+					if t := normalizeStringMap(text[0]); t != nil {
+						if txt, _ := t["text"].(string); txt != "" {
+							inner["sessionId"] = generateStableAntigravitySessionID(txt)
+						}
 					}
 				}
 			}
 		}
 	}
-	if _, ok := inner["sessionId"].(string); !ok {
-		inner["sessionId"] = uuid.NewString()
+	// Build deterministic request id from stable per-conversation inputs.
+	conversationSeed := req.ConnectionID
+	if conversationSeed == "" && req.ProviderSpecificData != nil {
+		conversationSeed = req.ProviderSpecificData["email"]
 	}
-
+	if conv, ok := inner["conversationId"].(string); ok && conv != "" {
+		conversationSeed = conv
+	}
+	if _, ok := inner["sessionId"].(string); !ok {
+		if conversationSeed != "" {
+			inner["sessionId"] = conversationSeed
+		} else {
+			inner["sessionId"] = uuid.NewString()
+		}
+	}
+	session, _ := inner["sessionId"].(string)
+	envelope["requestId"] = buildIdeRequestId(conversationSeed, session, upstreamModelID, time.Now())
 	b, err := json.Marshal(envelope)
 	if err != nil {
 		return nil, fmt.Errorf("marshal antigravity envelope: %w", err)
@@ -622,6 +651,19 @@ func normalizeStringMapValue(v any) []map[string]any {
 // generateStableAntigravitySessionID mirrors CLIProxyAPI generateStableSessionID.
 func generateStableAntigravitySessionID(text string) string {
 	return "-" + text[:min(len(text), 16)]
+}
+
+// buildIdeRequestId builds a deterministic request ID from conversation/session/model/time seed.
+func buildIdeRequestId(conversationSeed, session, model string, now time.Time) string {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(conversationSeed))
+	_, _ = h.Write([]byte("\x00"))
+	_, _ = h.Write([]byte(session))
+	_, _ = h.Write([]byte("\x00"))
+	_, _ = h.Write([]byte(model))
+	_, _ = h.Write([]byte("\x00"))
+	_, _ = h.Write([]byte(now.UTC().Format(time.RFC3339Nano)))
+	return fmt.Sprintf("agent/%d/%s", now.UnixMilli(), hex.EncodeToString(h.Sum(nil)))
 }
 
 func generateAntigravityRequestId() string {
