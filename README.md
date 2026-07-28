@@ -436,13 +436,10 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.23
+### What's New in v0.3.24
 
 ### Fixed
-- **Cloudflare bulk add validation** — frontend and backend now validate the `email|accountId|apiToken` pipe format for Cloudflare bulk imports. Frontend checks: exactly 3 parts, email contains `@`, accountId is 32-char hex. Backend checks: accountId is 32-char hex (both single and bulk add). Invalid lines are rejected with clear error messages instead of silently creating broken connections.
-
-### Fixed
-- **Cloudflare connection data cleanup** — swapped `api_key` and `accountId` fields for 6380 Cloudflare connections where the values were reversed during bulk import (accountId contained `cfat_` API tokens, api_key contained hex account IDs). AxonRouter restarted to re-seed connstate from corrected DB.
+- **Version check rate limit** — changed version check URL from `api.github.com` to `raw.githubusercontent.com` to avoid GitHub API rate limit (60/hr unauthenticated). Resolves "Check update failed: github api returned status 403" error.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
