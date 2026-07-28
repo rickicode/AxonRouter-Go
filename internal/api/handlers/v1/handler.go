@@ -31,6 +31,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/compression"
+	"github.com/rickicode/AxonRouter-Go/internal/headroom"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
@@ -398,6 +399,7 @@ type Handler struct {
 	exhaustion          *quota.ExhaustionCache
 	conns               sync.Map // connID -> *Connection (write-through credential cache)
 	compressionStrategy compression.Strategy
+	headroomClient      *headroom.Client
 	exactCache          cache.CacheStorage
 	providerCfg         *providercfg.Manager
 	sessions            *connstate.SessionCache
@@ -438,6 +440,7 @@ func NewHandler(
 	resolver *proxypool.Resolver,
 	exhaustionCache *quota.ExhaustionCache,
 	compressionStrategy compression.Strategy,
+	headroomClient *headroom.Client,
 	exactCache cache.CacheStorage,
 	providerCfg *providercfg.Manager,
 ) *Handler {
@@ -455,6 +458,7 @@ func NewHandler(
 		resolver:            resolver,
 		exhaustion:          exhaustionCache,
 		compressionStrategy: compressionStrategy,
+		headroomClient:      headroomClient,
 		exactCache:          exactCache,
 		providerCfg:         providerCfg,
 		sessions:            connstate.NewSessionCache(),

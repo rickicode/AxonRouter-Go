@@ -3,11 +3,13 @@ package admin
 import (
 	"database/sql"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/compression"
+	"github.com/rickicode/AxonRouter-Go/internal/headroom"
 )
 
 // OptimizationHandler handles compression and cache admin endpoints.
@@ -19,6 +21,19 @@ type OptimizationHandler struct {
 // NewOptimizationHandler creates a new optimization handler.
 func NewOptimizationHandler(database *sql.DB, c cache.CacheStorage) *OptimizationHandler {
 	return &OptimizationHandler{db: database, cache: c}
+}
+
+func (h *OptimizationHandler) getIntSetting(key string, def int) int {
+	var value string
+	err := h.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, key).Scan(&value)
+	if err != nil || value == "" {
+		return def
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n <= 0 {
+		return def
+	}
+	return n
 }
 
 func (h *OptimizationHandler) getSetting(key, def string) string {
@@ -59,6 +74,12 @@ func (h *OptimizationHandler) UpdateCompressionSettings(c *gin.Context) {
 			Enabled bool   `json:"enabled"`
 			Level   string `json:"level"`
 		} `json:"output"`
+		Headroom struct {
+			Enabled         bool   `json:"enabled"`
+			Endpoint        string `json:"endpoint"`
+			TimeoutMs       int    `json:"timeout_ms"`
+			MaxPayloadBytes int    `json:"max_payload_bytes"`
+		} `json:"headroom"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -159,14 +180,28 @@ func (h *OptimizationHandler) GetCompressionMetrics(c *gin.Context) {
 		totalSavings = (1.0 - float64(totalCompressed)/float64(totalOriginal)) * 100
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"total_requests":       totalRequests,
 		"original_tokens":      totalOriginal,
 		"compressed_tokens":    totalCompressed,
 		"tokens_saved":         totalSaved,
 		"savings_percent":      totalSavings,
 		"modes":                modes,
-	})
+	}
+	// Headroom metrics are tracked in-memory for the in-process server and
+	// persisted in settings for external endpoints. We report best-effort.
+	resp["headroom_status"] = "stopped"
+	resp["headroom_endpoint"] = ""
+	if enabled := h.getSetting("headroom_enabled", "false"); enabled == "true" {
+		resp["headroom_status"] = "running"
+		resp["headroom_endpoint"] = h.getSetting("headroom_endpoint", headroom.DefaultEndpoint)
+	}
+	resp["headroom"] = gin.H{
+		"total":       h.getIntSetting("headroom_total", 0),
+		"bytes_saved": h.getIntSetting("headroom_bytes_saved", 0),
+		"errors":      h.getIntSetting("headroom_errors", 0),
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // PreviewCompression runs compression on a sample body and returns stats.
@@ -218,6 +253,12 @@ func (h *OptimizationHandler) compressionSettingsMap(mode string) gin.H {
 		"output": gin.H{
 			"enabled": parseBool(h.getSetting("compression_output_enabled", "false")),
 			"level":   outputLevel,
+		},
+		"headroom": gin.H{
+			"enabled":           parseBool(h.getSetting("headroom_enabled", "false")),
+			"endpoint":          h.getSetting("headroom_endpoint", ""),
+			"timeout_ms":        h.getIntSetting("headroom_timeout_ms", headroom.DefaultTimeoutMs),
+			"max_payload_bytes": h.getIntSetting("headroom_max_payload_bytes", headroom.DefaultMaxPayloadBytes),
 		},
 	}
 }

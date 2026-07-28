@@ -207,3 +207,13 @@ func getIntEnv(key string, fallback int) int {
 	}
 	return n
 }
+
+// GetEnv returns the environment value or fallback.
+func GetEnv(key, fallback string) string {
+	return getEnv(key, fallback)
+}
+
+// GetIntEnv returns the parsed integer environment value or fallback.
+func GetIntEnv(key string, fallback int) int {
+	return getIntEnv(key, fallback)
+}

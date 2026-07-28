@@ -40,6 +40,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/compression"
+	"github.com/rickicode/AxonRouter-Go/internal/headroom"
 	_ "github.com/rickicode/AxonRouter-Go/internal/compression/engines/caveman"
 	_ "github.com/rickicode/AxonRouter-Go/internal/compression/engines/output"
 	_ "github.com/rickicode/AxonRouter-Go/internal/compression/engines/rtk"
@@ -82,6 +83,7 @@ type Router struct {
 	lifecycleManager      *background.LifecycleManager
 	rateLimitProber       *background.RateLimitProber
 	mcpHandler            *mcp.Handler
+	headroomManager       *headroom.Manager
 
 	// versionChecker polls GitHub Releases for update notifications.
 	versionChecker *version.Checker
@@ -219,6 +221,37 @@ func New(cfg Config) *Router {
 	}
 	exactCache := cache.NewPersistentCache(cfg.DB, 1000, time.Duration(ttlSec)*time.Second)
 
+	// Headroom external compression service
+	headroomCfg := headroom.Config{
+		Enabled:         config.GetEnv("AXON_HEADROOM_ENABLED", "false") == "true",
+		Endpoint:        config.GetEnv("AXON_HEADROOM_ENDPOINT", ""),
+		TimeoutMs:       config.GetIntEnv("AXON_HEADROOM_TIMEOUT_MS", headroom.DefaultTimeoutMs),
+		MaxPayloadBytes: config.GetIntEnv("AXON_HEADROOM_MAX_PAYLOAD_BYTES", headroom.DefaultMaxPayloadBytes),
+	}
+	if !headroomCfg.Enabled {
+		headroomCfg.Enabled = db.GetSetting("headroom_enabled", "false") == "true"
+		if ep := db.GetSetting("headroom_endpoint", ""); ep != "" {
+			headroomCfg.Endpoint = ep
+		}
+		if v := db.GetSetting("headroom_timeout_ms", ""); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				headroomCfg.TimeoutMs = n
+			}
+		}
+		if v := db.GetSetting("headroom_max_payload_bytes", ""); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				headroomCfg.MaxPayloadBytes = n
+			}
+		}
+	}
+	headroomManager, err := headroom.NewManager(headroomCfg)
+	if err != nil {
+		log.Printf("WARN: headroom init failed: %v", err)
+	}
+	if headroomManager == nil {
+		headroomManager = &headroom.Manager{}
+	}
+
 	comboH := admin.NewComboHandler(cfg.DB, comboHandler)
 	logH := admin.NewLogHandler(cfg.DB)
 	settingH := settingHandler
@@ -261,7 +294,7 @@ func New(cfg Config) *Router {
 	loginLimiter := middleware.NewRateLimiter(10)
 	// Create v1 handler with all dependencies (must exist before wiring routes)
 	smartRouter := smart.NewRouter(cfg.DB, store, elig)
-	v1H := v1.NewHandler(cfg.DB, writeQueue, store, elig, comboHandler, smartRouter, tracker, deviceTracker, authManager, proxyResolver, exhaustionCache, compStrategy, exactCache, providerCfg)
+	v1H := v1.NewHandler(cfg.DB, writeQueue, store, elig, comboHandler, smartRouter, tracker, deviceTracker, authManager, proxyResolver, exhaustionCache, compStrategy, headroomManager.Client(), exactCache, providerCfg)
 	// ---- /v1 routes (proxy) ----
 	v1Group := engine.Group("/v1")
 	v1Group.Use(middleware.Auth(cfg.DB, authCache))
@@ -597,6 +630,7 @@ func New(cfg Config) *Router {
 		quotaScheduler:        quotaScheduler,
 		usageFlush:            usageFlush,
 		mcpHandler:            mcpH,
+		headroomManager:       headroomManager,
 		cleanup:               cleanup,
 		lifecycleManager:      lifecycleManager,
 		tokenRefreshScheduler: tokenRefreshScheduler,
@@ -739,6 +773,9 @@ func (r *Router) Shutdown() {
 			r.versionChecker.Stop()
 		}
 		r.mcpHandler.Stop(ctx)
+if r.headroomManager != nil {
+_ = r.headroomManager.Close()
+}
 	})
 }
 

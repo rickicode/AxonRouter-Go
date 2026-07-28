@@ -1296,3 +1296,33 @@ The system SHALL applies compression to a sample body using specified mode and r
 ## Technical Notes
 
 - **Dependencies**: compression, cache, usage, writeQueue, db, cache.CacheStorage
+
+### Requirement: HeadroomExternalCompression
+> Implementation: `internal/headroom`
+
+The system SHALL provide a Headroom-style external compression proxy that can reduce token input from tool outputs such as git diff, git log, git status, grep output, find/tree listings, build logs, and search results.
+
+#### Scenario: HeadroomEnabledAndInternalServerStarted
+- **GIVEN** `headroom_enabled` is `true` and no explicit endpoint is configured
+- **WHEN** the gateway starts
+- **THEN** an in-process Headroom HTTP server is started on `127.0.0.1:9123` (or an available port)
+- **AND** the `/compression/metrics` endpoint reports `headroom_status` as `running`
+
+#### Scenario: HeadroomCompressesToolResultContent
+- **GIVEN** a request body contains Anthropic-style `tool_result` content blocks
+- **WHEN** the request is processed and Headroom is enabled
+- **THEN** the tool result text is sent to the Headroom endpoint
+- **AND** the original content is replaced only when the compressed result is smaller
+- **AND** failures fall back to the original payload
+
+#### Scenario: HeadroomConfigurationViaDashboard
+- **GIVEN** an admin updates `/api/admin/settings/compression` with `headroom` fields
+- **WHEN** the settings are persisted
+- **THEN** the gateway reconfigures the Headroom service at runtime
+- **AND** metrics reflect the new endpoint, timeout, and max payload limit
+
+#### Scenario: HeadroomMetricsTracked
+- **GIVEN** Headroom compression is active
+- **WHEN** tool output is compressed or an error occurs
+- **THEN** `headroom_total`, `headroom_bytes_saved`, and `headroom_errors` counters are updated
+- **AND** the values are returned by `/compression/metrics`
