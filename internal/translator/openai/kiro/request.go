@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rickicode/AxonRouter-Go/internal/headroom"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/common"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/types"
 )
@@ -49,6 +51,7 @@ Failure to use the chunked-write protocol will result in rejection.
 // ConvertOpenAIRequestToKiro translates an OpenAI Chat Completions request
 // into the AWS CodeWhisperer / Kiro generateAssistantResponse payload shape.
 func ConvertOpenAIRequestToKiro(model string, body []byte, stream bool) []byte {
+	body = common.CompressToolBlocks(body, headroom.GlobalToolCompressor(), headroom.DefaultToolThreshold)
 	if strings.Contains(strings.ToLower(model), kiroUnsupportedSuffix) {
 		return mustMarshal(map[string]any{
 			"error": map[string]any{
@@ -274,21 +277,21 @@ func convertMessages(messages, tools []any, model string, agentic bool) ([]map[s
 			text = v
 		case []any:
 			text = extractTextFromBlocks(v)
-				if supportsImages {
-					for _, raw := range v {
-						if img, ok := raw.(map[string]any); ok {
-							format, bytes, url := extractImage(img)
-							if bytes != "" {
-								pendingImages = append(pendingImages, map[string]any{
-									"format": format,
-									"source": map[string]any{"bytes": bytes},
-								})
-							} else if url != "" {
-								pendingUser = append(pendingUser, fmt.Sprintf("[Image: %s]", url))
-							}
+			if supportsImages {
+				for _, raw := range v {
+					if img, ok := raw.(map[string]any); ok {
+						format, bytes, url := extractImage(img)
+						if bytes != "" {
+							pendingImages = append(pendingImages, map[string]any{
+								"format": format,
+								"source": map[string]any{"bytes": bytes},
+							})
+						} else if url != "" {
+							pendingUser = append(pendingUser, fmt.Sprintf("[Image: %s]", url))
 						}
 					}
 				}
+			}
 			// Inline tool_result blocks inside content array.
 			for _, raw := range v {
 				if block, ok := raw.(map[string]any); ok && block["type"] == "tool_result" {

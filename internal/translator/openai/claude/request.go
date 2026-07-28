@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/rickicode/AxonRouter-Go/internal/headroom"
 	"github.com/rickicode/AxonRouter-Go/internal/models"
 	"github.com/rickicode/AxonRouter-Go/internal/signature"
 	"github.com/rickicode/AxonRouter-Go/internal/thinking"
@@ -34,6 +35,7 @@ func UncloakClaudeToolName(name string) string {
 
 // convertOpenAIRequestToClaude converts an OpenAI Chat Completions request to Anthropic Messages format.
 func convertOpenAIRequestToClaude(modelName string, body []byte, stream bool) []byte {
+	body = common.CompressToolBlocks(body, headroom.GlobalToolCompressor(), headroom.DefaultToolThreshold)
 	root := gjson.ParseBytes(body)
 
 	out := make(map[string]interface{})

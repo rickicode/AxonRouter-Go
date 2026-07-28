@@ -27,6 +27,14 @@ var defaultAntigravityObfuscationWords = []string{
 	"kilo code", "kilocode", "omniroute",
 }
 
+// HeadroomConfig controls the headroom compression service integration.
+type HeadroomConfig struct {
+	Enabled         bool
+	Endpoint        string
+	TimeoutMs       int
+	MaxPayloadBytes int
+}
+
 type Config struct {
 	Port                        string
 	DBPath                      string
@@ -48,6 +56,7 @@ type Config struct {
 	ClaudeCloakMode              string // "auto" (default), "always", "never"
 	ClaudeCloakSensitiveWords    []string
 	ClaudeExperimentalCCHSigning bool
+	Headroom                     HeadroomConfig
 }
 
 var (
@@ -114,6 +123,12 @@ func Get() Config {
 			ClaudeCloakMode:              parseCloakMode(getEnv("AXON_CLAUDE_CLOAK_MODE", "auto")),
 			ClaudeCloakSensitiveWords:    parseStringSliceEnv(getEnv("AXON_CLAUDE_CLOAK_SENSITIVE_WORDS", "")),
 			ClaudeExperimentalCCHSigning: getEnvBool("AXON_CLAUDE_CCH_SIGNING", false),
+		Headroom: HeadroomConfig{
+			Enabled:         getEnvBool("AXON_HEADROOM_ENABLED", false),
+			Endpoint:        getEnv("AXON_HEADROOM_ENDPOINT", "127.0.0.1:9123"),
+			TimeoutMs:       getIntEnv("AXON_HEADROOM_TIMEOUT_MS", 30000),
+			MaxPayloadBytes: getIntEnv("AXON_HEADROOM_MAX_PAYLOAD_BYTES", 524288),
+		},
 		}
 		os.MkdirAll(dataDir, 0o755)
 		os.MkdirAll(global.LogDir, 0o755)

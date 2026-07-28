@@ -4,12 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/rickicode/AxonRouter-Go/internal/headroom"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/common"
 	"github.com/tidwall/gjson"
+
 	"github.com/tidwall/sjson"
 )
 
 // convertClaudeRequestToGemini converts a Claude Messages request to Gemini generateContent format.
 func convertClaudeRequestToGemini(modelName string, body []byte, stream bool) []byte {
+	body = common.CompressToolBlocks(body, headroom.GlobalToolCompressor(), headroom.DefaultToolThreshold)
 	root := gjson.ParseBytes(body)
 
 	out := []byte(`{"contents":[]}`)

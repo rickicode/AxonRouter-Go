@@ -46,6 +46,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/headroom"
 	"github.com/rickicode/AxonRouter-Go/internal/mcp"
 	"github.com/rickicode/AxonRouter-Go/internal/models"
 	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
@@ -156,6 +157,15 @@ func New(cfg Config) *Router {
 	quota.SetAuthManager(authManager)
 	settingHandler := admin.NewSettingHandler(cfg.DB)
 	settingHandler.SeedDefaults()
+	// Initialize headroom tool compressor from environment/config settings.
+	hCFG := headroom.Config{
+		Enabled:         config.Get().Headroom.Enabled,
+		Endpoint:        config.Get().Headroom.Endpoint,
+		TimeoutMs:       config.Get().Headroom.TimeoutMs,
+		MaxPayloadBytes: config.Get().Headroom.MaxPayloadBytes,
+	}
+	headroom.InitGlobalToolCompressor(hCFG)
+	headroom.SetEnabled(hCFG.Enabled)
 	// Bootstrap dashboard login auth (JWT secret + default admin password)
 	InitAuth(cfg.DB)
 

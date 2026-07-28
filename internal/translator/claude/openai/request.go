@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/rickicode/AxonRouter-Go/internal/headroom"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/common"
 	"github.com/tidwall/gjson"
 )
@@ -11,6 +12,7 @@ import (
 // ConvertClaudeRequestToOpenAI converts an Anthropic Messages request to OpenAI Chat Completions format.
 // It builds a single map[string]any and marshals once, avoiding ~12 sjson round-trips.
 func ConvertClaudeRequestToOpenAI(modelName string, body []byte, stream bool) []byte {
+	body = common.CompressToolBlocks(body, headroom.GlobalToolCompressor(), headroom.DefaultToolThreshold)
 	root := gjson.ParseBytes(body)
 
 	out := map[string]any{
