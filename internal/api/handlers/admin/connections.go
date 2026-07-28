@@ -53,7 +53,7 @@ func (h *ConnectionHandler) List(c *gin.Context) {
 	if page < 1 {
 		page = 1
 	}
-	if perPage < 1 || perPage > 200 {
+	if perPage < 1 || perPage > 500 {
 		perPage = 50
 	}
 

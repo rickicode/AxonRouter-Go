@@ -223,7 +223,7 @@ async function loadAllConnections() {
  do {
  const response = await connectionsApi.list(providerId, {
  page: pageNum,
- per_page: 200,
+per_page: 500,
  status: filter.status || undefined,
  search: filter.search || undefined,
  });
@@ -849,7 +849,7 @@ async function handleBulkAssignProxy() {
  totalPages={$connectionPagination.total_pages}
  total={$connectionPagination.total}
  perPage={perPage}
- perPageOptions={[25, 50, 100, { value: 0, label: 'All' }]}
+ perPageOptions={[25, 50, 100, 200, 500, { value: 0, label: 'All' }]}
  onPerPageChange={handlePerPageChange}
  onChange={handlePageChange}
 />
