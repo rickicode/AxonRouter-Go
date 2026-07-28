@@ -554,6 +554,15 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 		}
 	}
 
+	// Persist active Codex quota cooldown to .cds so it survives restarts.
+	if providerID == "cx" {
+		if active, until, reason := CodexQuotaCooldown(cq.Quotas); active {
+			SaveCodexCooldown(c.ID, until, reason)
+		} else {
+			SaveCodexCooldown(c.ID, time.Now(), "")
+		}
+	}
+
 	setCachedQuota(c.ID, cq)
 	return cq
 }

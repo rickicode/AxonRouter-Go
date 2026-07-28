@@ -116,6 +116,11 @@ func New(cfg Config) *Router {
 	seedConnectionsFromDB(cfg.DB, store)
 
 	elig := connstate.NewEligibilityManager(store)
+	// Restore Codex quota cooldowns from .cds files so cooldown state survives
+	// restarts. Applied before eligibility recomputation so restored cooldowns
+	// are immediately visible to routing.
+	quota.SetCodexCooldownDataDir(config.Get().DataDir)
+	quota.RestoreCodexCooldownStates(store)
 	elig.RecomputeAll()
 
 	// Centralized async write queue: all non-critical DB writes (cooldowns, ban
