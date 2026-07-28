@@ -933,6 +933,7 @@ export function getCategoryColor(categoryId: string): string {
 export function getStatusDotColor(status: string): string {
   switch (status) {
     case 'ready': return '#10b981';
+	case 'ready_cooldown': return '#f59e0b';
     case 'rate_limited': return '#f59e0b';
     case 'quota_exhausted': return '#f97316';
     case 'disabled': return '#6b7280';
@@ -943,6 +944,7 @@ export function getStatusDotColor(status: string): string {
 export function getStatusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
   switch (status) {
     case 'ready': return 'default';
+	case 'ready_cooldown': return 'secondary';
     case 'rate_limited': case 'quota_exhausted': return 'secondary';
     case 'disabled': return 'outline';
     default: return 'secondary';
@@ -952,6 +954,7 @@ export function getStatusVariant(status: string): 'default' | 'secondary' | 'des
 export function getStatusLabel(status: string): string {
   switch (status) {
     case 'ready': return 'Ready';
+	case 'ready_cooldown': return 'Ready (cooldown)';
     case 'rate_limited': return 'Rate limited';
     case 'quota_exhausted': return 'Quota exhausted';
     case 'disabled': return 'Disabled';

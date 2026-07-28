@@ -170,7 +170,7 @@ func (qs *QuotaSchedulerDB) check() {
 	// 2. Query DB for connections with cooldown_until in the past
 	rows, err := qs.db.Query(`
 		SELECT id FROM connections
-	WHERE status IN ('rate_limited', 'quota_exhausted', 'cooldown')
+	WHERE status = 'ready'
 		  AND cooldown_until IS NOT NULL
 		  AND cooldown_until <= ?
 	`, now.Unix())

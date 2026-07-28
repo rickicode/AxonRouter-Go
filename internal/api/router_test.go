@@ -321,9 +321,9 @@ func TestSeedConnectionsFromDB_RestoresCooldown(t *testing.T) {
 	if cs == nil {
 		t.Fatal("connection not seeded")
 	}
-	if cs.Status != connstate.StatusCooldown {
+	if cs.Status != connstate.StatusReady {
 		// SetCooldown stores status as "cooldown" in memory, while DB keeps "rate_limited".
-		t.Fatalf("status = %q, want cooldown", cs.Status)
+		t.Fatalf("status = %q, want ready", cs.Status)
 	}
 	if !cs.IsInCooldown() {
 		t.Fatal("expected connection to be in cooldown after seed")

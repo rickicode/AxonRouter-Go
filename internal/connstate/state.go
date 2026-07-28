@@ -25,20 +25,20 @@ const (
 	StatusRateLimited    Status = "rate_limited"
 	StatusQuotaExhausted Status = "quota_exhausted"
 	StatusDisabled       Status = "disabled"
-	StatusDegraded       Status = "degraded"
-	StatusCooldown       Status = "cooldown"
+	
+	
 )
 
 // IsEligible returns true if the status indicates the connection can be used.
 func (s Status) IsEligible() bool {
-	return s == StatusReady || s == StatusDegraded
+	return s == StatusReady
 }
 
 // IsHealable returns true for transient, non-terminal statuses that can be
 // reset to ready when a cooldown expires or a request succeeds.
 func (s Status) IsHealable() bool {
 	switch s {
-	case StatusCooldown, StatusRateLimited, StatusQuotaExhausted, StatusDegraded:
+	case StatusRateLimited, StatusQuotaExhausted:
 		return true
 	}
 	return false
@@ -180,7 +180,7 @@ func (cs *ConnectionState) SetCooldown(until time.Time) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.CooldownUntil = &until
-	cs.Status = StatusCooldown
+	cs.Status = StatusReady
 }
 
 // SetQuotaCooldown sets a quota-exhausted cooldown (midnight UTC recovery).

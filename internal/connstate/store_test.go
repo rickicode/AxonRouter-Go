@@ -150,8 +150,8 @@ func TestClassifyProviderUnavailable(t *testing.T) {
 		want    ErrorCategory
 	}{
 		{"all quota", []Status{StatusQuotaExhausted, StatusQuotaExhausted}, nil, ErrorQuota},
-		{"all cooldown", []Status{StatusCooldown, StatusCooldown}, nil, ErrorQuota},
-		{"mixed quota+cooldown", []Status{StatusQuotaExhausted, StatusCooldown}, nil, ErrorQuota},
+		{"all ready cooldown", []Status{StatusReady, StatusReady}, nil, ErrorUnknown},
+		{"mixed quota+ready cooldown", []Status{StatusQuotaExhausted, StatusReady}, nil, ErrorUnknown},
 		{"all auth", []Status{StatusDisabled, StatusDisabled}, []string{"auth_failed", "auth_failed"}, ErrorAuth},
 		{"all balance empty", []Status{StatusDisabled, StatusDisabled}, []string{"balance_empty", "balance_empty"}, ErrorBalanceEmpty},
 		{"mixed disabled reasons", []Status{StatusDisabled, StatusDisabled}, []string{"auth_failed", "balance_empty"}, ErrorUnknown},

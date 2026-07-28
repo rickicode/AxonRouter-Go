@@ -314,7 +314,7 @@ func (h *Handler) getProviderModels(prefix string) []gin.H {
 // request.
 func (h *Handler) discoverCloudflareModels() {
 	var apiKey, psdJSON string
-	err := h.db.QueryRow(`SELECT COALESCE(api_key,''), COALESCE(provider_specific_data,'') FROM connections WHERE provider_type_id = 'cf' AND status IN ('ready','degraded') AND is_active = 1 LIMIT 1`).Scan(&apiKey, &psdJSON)
+	err := h.db.QueryRow(`SELECT COALESCE(api_key,''), COALESCE(provider_specific_data,'') FROM connections WHERE provider_type_id = 'cf' AND status = 'ready' AND is_active = 1 LIMIT 1`).Scan(&apiKey, &psdJSON)
 	if err != nil || apiKey == "" {
 		return
 	}

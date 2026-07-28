@@ -94,7 +94,7 @@ func (p *RateLimitProber) check() {
 		FROM connections
 		WHERE provider_type_id = 'oc'
 		AND is_active = 1
-		AND status IN ('rate_limited', 'quota_exhausted')
+		AND status IN ('rate_limited','quota_exhausted')
 		AND cooldown_until IS NOT NULL
 		AND cooldown_until <= ?
 	`, now)

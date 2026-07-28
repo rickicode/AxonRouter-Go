@@ -76,7 +76,7 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 	// /accounts/{accountId}/ai/models/search. Match OmniRoute's behavior.
 	if providerID == "cf" && dbErr == nil {
 		var cfAPIKey, cfPSD string
-		err := h.db.QueryRow(`SELECT COALESCE(api_key,''), provider_specific_data FROM connections WHERE provider_type_id = ? AND status IN ('ready','degraded') AND is_active = 1 LIMIT 1`, providerID).Scan(&cfAPIKey, &cfPSD)
+		err := h.db.QueryRow(`SELECT COALESCE(api_key,''), provider_specific_data FROM connections WHERE provider_type_id = ? AND status = 'ready' AND is_active = 1 LIMIT 1`, providerID).Scan(&cfAPIKey, &cfPSD)
 		if err == nil && cfAPIKey != "" {
 			psd := make(map[string]string)
 			if cfPSD != "" {

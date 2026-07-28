@@ -202,6 +202,12 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		return err
 	}
 
+	// Backfill legacy connection statuses into the simplified model.
+	// cooldown/degraded become ready while preserving cooldown_until so existing
+	// cooldown rows recover automatically when the horizon expires.
+	if _, err := db.Exec(`UPDATE connections SET status='ready' WHERE status IN ('cooldown','degraded')`); err != nil {
+		return err
+	}
 	// Backfill status_code for legacy request_logs rows that only recorded the
 	// error message. This is idempotent: rows with a non-zero status_code keep it.
 

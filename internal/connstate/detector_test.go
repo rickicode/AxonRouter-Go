@@ -271,8 +271,8 @@ func TestDetectError_ContextCanceled_IsTimeout(t *testing.T) {
 	if !det.Retryable {
 		t.Error("expected Retryable=true")
 	}
-	if det.Status != StatusDegraded {
-		t.Errorf("status=%v, want StatusDegraded", det.Status)
+	if det.Status != StatusReady {
+		t.Errorf("status=%v, want StatusReady", det.Status)
 	}
 }
 
@@ -492,8 +492,8 @@ func TestDetectError_Upstream5xx_Cooldown(t *testing.T) {
 	if det.Category != ErrorServer {
 		t.Errorf("category=%v, want ErrorServer", det.Category)
 	}
-	if det.Status != StatusDegraded {
-		t.Errorf("status=%v, want StatusDegraded", det.Status)
+	if det.Status != StatusReady {
+		t.Errorf("status=%v, want StatusReady", det.Status)
 	}
 	if !det.Retryable {
 		t.Error("expected Retryable=true")
@@ -509,8 +509,8 @@ func TestDetectError_ContextCanceled_Cooldown(t *testing.T) {
 	if det.Category != ErrorTimeout {
 		t.Errorf("category=%v, want ErrorTimeout", det.Category)
 	}
-	if det.Status != StatusDegraded {
-		t.Errorf("status=%v, want StatusDegraded", det.Status)
+	if det.Status != StatusReady {
+		t.Errorf("status=%v, want StatusReady", det.Status)
 	}
 	if !det.Retryable {
 		t.Error("expected Retryable=true")
@@ -556,8 +556,8 @@ func TestDetectError_RequestScopedError_ForcesNetwork(t *testing.T) {
 	if !det.Retryable {
 		t.Error("expected Retryable=true")
 	}
-	if det.Status != StatusDegraded {
-		t.Errorf("status=%v, want StatusDegraded", det.Status)
+	if det.Status != StatusReady {
+		t.Errorf("status=%v, want StatusReady", det.Status)
 	}
 	if det.CooldownUntil == nil {
 		t.Fatal("expected CooldownUntil")

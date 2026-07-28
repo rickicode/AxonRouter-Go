@@ -123,7 +123,7 @@ func DetectError(ctx context.Context, statusCode int, body string, err error, pr
 			Category:      ErrorTimeout,
 			Retryable:     true,
 			Message:       msg,
-			Status:        StatusDegraded,
+			Status:        StatusReady,
 			CooldownUntil: &until,
 			Scope:         "connection",
 			ModelID:       modelID,
@@ -220,7 +220,7 @@ func DetectError(ctx context.Context, statusCode int, body string, err error, pr
 		det.Scope = "model"
 
 	case ErrorServer, ErrorTimeout, ErrorNetwork:
-		det.Status = StatusDegraded
+		det.Status = StatusReady
 		until := time.Now().Add(serverErrorCooldown)
 		det.CooldownUntil = &until
 	}

@@ -586,10 +586,10 @@ func TestPersistSuccess_ResetsExpiredCooldown(t *testing.T) {
 		t.Fatalf("seed provider_type: %v", err)
 	}
 	past := time.Now().Add(-time.Hour).Unix()
-	if _, err := database.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, cooldown_until, is_active, created_at, updated_at) VALUES ('conn-expired','test2','c2','none','cooldown',?,1,0,0)`, past); err != nil {
+	if _, err := database.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, cooldown_until, is_active, created_at, updated_at) VALUES ('conn-expired','test2','c2','none','ready',?,1,0,0)`, past); err != nil {
 		t.Fatalf("seed connection: %v", err)
 	}
-	h.store.SeedConnection("conn-expired", "test2", "cooldown", 0)
+	h.store.SeedConnection("conn-expired", "test2", "ready", 0)
 
 	// In-memory should also reflect the stale cooldown row.
 	cs := h.store.Get("conn-expired")
@@ -765,8 +765,8 @@ func TestTryPickConnection_HealsExpiredCooldown(t *testing.T) {
 
 	cs := h.store.Get("conn-heal")
 	cs.SetCooldown(time.Now().Add(-time.Hour))
-	if cs.GetStatus() != connstate.StatusCooldown {
-		t.Fatalf("setup: status = %v, want cooldown", cs.GetStatus())
+	if cs.GetStatus() != connstate.StatusReady {
+		t.Fatalf("setup: status = %v, want ready", cs.GetStatus())
 	}
 
 	picked, ok := h.tryPickConnection(context.Background(), cs, "heal", "gpt-4o", time.Now(), providercfg.DefaultRoutingMode)
@@ -834,8 +834,8 @@ func TestTryPickConnection_DoesNotHealActiveCooldown(t *testing.T) {
 	if ok {
 		t.Fatalf("expected active-cooldown connection to be rejected, got %s", picked.ID)
 	}
-	if cs.GetStatus() != connstate.StatusCooldown {
-		t.Fatalf("status = %v, want cooldown to stay active", cs.GetStatus())
+	if cs.GetStatus() != connstate.StatusReady {
+		t.Fatalf("status = %v, want ready to stay active", cs.GetStatus())
 	}
 }
 
