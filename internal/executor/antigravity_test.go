@@ -319,7 +319,7 @@ func TestResolveAntigravityModelID(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.input, func(t *testing.T) {
-			if got := resolveAntigravityModelID(tc.input); got != tc.expected {
+			if got := resolveAntigravityModelID(tc.input, false); got != tc.expected {
 				t.Errorf("resolveAntigravityModelID(%q) = %q, want %q", tc.input, got, tc.expected)
 			}
 		})
