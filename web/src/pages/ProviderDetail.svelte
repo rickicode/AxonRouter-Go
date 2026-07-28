@@ -572,9 +572,22 @@ async function handleBulkAssignProxy() {
  <!-- Connections Section -->
  <div class="space-y-4">
  <div class="flex items-center justify-between gap-3 flex-wrap">
- <div class="flex items-center gap-3">
+ <div class="flex flex-wrap items-center gap-3">
  <h2 class="text-display-sm">Connections.</h2>
- <span class="text-caption-mono text-muted-foreground">{$connectionPagination.total} total</span>
+ {#if $selectedProvider?.status_counts}
+ {@const statusCounts = $selectedProvider.status_counts}
+ {@const totalCount = Object.values(statusCounts).reduce((sum, c) => sum + c, 0)}
+ <div class="flex flex-wrap items-center gap-2">
+ <Badge variant="outline" class="text-caption-mono rounded-sm">{totalCount} total</Badge>
+ {#each ['ready', 'rate_limited', 'quota_exhausted', 'disabled'] as status}
+ {@const count = statusCounts[status] ?? 0}
+ <Badge variant="outline" class="text-caption-mono rounded-sm inline-flex items-center gap-1.5">
+ <span class="size-1.5 rounded-full" style={`background-color: ${getStatusDotColor(status)}`}></span>
+ {getStatusLabel(status)} {count}
+ </Badge>
+ {/each}
+ </div>
+ {/if}
  </div>
  <div class="flex items-center gap-2">
  <Badge variant="outline" class="text-caption-mono rounded-sm">{routingModeLabels[routingMode] ?? routingMode}</Badge>
