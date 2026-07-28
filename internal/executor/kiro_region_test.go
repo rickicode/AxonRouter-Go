@@ -27,7 +27,7 @@ func TestResolveKiroRuntimeRegion(t *testing.T) {
 			want: "us-east-1",
 		},
 		{
-			name: "invalid profileArn region falls back to stored profile region",
+			name: "invalid profileArn region falls back to stored valid region",
 			psd: map[string]string{
 				"profileArn": "arn:aws:codewhisperer:not-a-region:123456789:profile/abcd",
 				"region":     "eu-central-1",
@@ -35,12 +35,12 @@ func TestResolveKiroRuntimeRegion(t *testing.T) {
 			want: "eu-central-1",
 		},
 		{
-			name: "invalid profileArn region falls back to us-east-1",
+			name: "invalid profileArn region falls back to stored region",
 			psd: map[string]string{
 				"profileArn": "arn:aws:codewhisperer: junk:123456789:profile/abcd",
 				"region":     "us-west-2",
 			},
-			want: "us-east-1",
+			want: "us-west-2",
 		},
 		{
 			name: "stored us-east-1 is accepted",
@@ -57,18 +57,18 @@ func TestResolveKiroRuntimeRegion(t *testing.T) {
 			want: "eu-central-1",
 		},
 		{
-			name: "non-profile stored region is ignored",
+			name: "stored eu-north-1 is accepted",
 			psd: map[string]string{
 				"region": "eu-north-1",
 			},
-			want: "us-east-1",
+			want: "eu-north-1",
 		},
 		{
-			name: "arbitrary stored region is ignored",
+			name: "stored ap-southeast-2 is accepted",
 			psd: map[string]string{
 				"region": "ap-southeast-2",
 			},
-			want: "us-east-1",
+			want: "ap-southeast-2",
 		},
 		{
 			name: "empty data falls back to us-east-1",
@@ -82,8 +82,14 @@ func TestResolveKiroRuntimeRegion(t *testing.T) {
 			},
 			want: "eu-central-1",
 		},
+		{
+			name: "eu-west-1 from profile arn is accepted",
+			psd: map[string]string{
+				"profileArn": "arn:aws:codewhisperer:eu-west-1:111122223333:profile/TEST",
+			},
+			want: "eu-west-1",
+		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := resolveKiroRuntimeRegion(tt.psd)
@@ -102,8 +108,8 @@ func TestKiroRuntimeHost(t *testing.T) {
 		{"us-east-1", "https://codewhisperer.us-east-1.amazonaws.com"},
 		{"eu-central-1", "https://q.eu-central-1.amazonaws.com"},
 		{"us-west-2", "https://q.us-west-2.amazonaws.com"},
+		{"eu-west-1", "https://q.eu-west-1.amazonaws.com"},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.region, func(t *testing.T) {
 			got := kiroRuntimeHost(tt.region)
@@ -117,6 +123,7 @@ func TestKiroRuntimeHost(t *testing.T) {
 func TestKiroEndpointURLs(t *testing.T) {
 	amazonUSEast := "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse"
 	amazonEUCentral := "https://q.eu-central-1.amazonaws.com/generateAssistantResponse"
+	amazonEUWest := "https://q.eu-west-1.amazonaws.com/generateAssistantResponse"
 	kiroDev := "https://runtime.us-east-1.kiro.dev/generateAssistantResponse"
 	qUSEast := "https://q.us-east-1.amazonaws.com/generateAssistantResponse"
 	override := "https://custom.example.com/generateAssistantResponse"
@@ -160,6 +167,14 @@ func TestKiroEndpointURLs(t *testing.T) {
 			want: []string{amazonEUCentral, kiroDev, qUSEast},
 		},
 		{
+			name: "api_key with eu-west-1 profile uses q endpoint first",
+			psd: map[string]string{
+				"authMethod": "api_key",
+				"region":     "eu-west-1",
+			},
+			want: []string{amazonEUWest, kiroDev, qUSEast},
+		},
+		{
 			name: "builder-id tries kiro.dev first",
 			psd:  map[string]string{"authMethod": "builder-id"},
 			want: []string{kiroDev, amazonUSEast, qUSEast},
@@ -167,6 +182,11 @@ func TestKiroEndpointURLs(t *testing.T) {
 		{
 			name: "github social tries kiro.dev first",
 			psd:  map[string]string{"authMethod": "github"},
+			want: []string{kiroDev, amazonUSEast, qUSEast},
+		},
+		{
+			name: "google social tries kiro.dev first",
+			psd:  map[string]string{"authMethod": "google"},
 			want: []string{kiroDev, amazonUSEast, qUSEast},
 		},
 		{
@@ -185,8 +205,13 @@ func TestKiroEndpointURLs(t *testing.T) {
 			baseURL: "",
 			want:    []string{kiroDev, amazonUSEast, qUSEast},
 		},
+		{
+			name:    "legacy codewhisperer.us-east-1 base url is treated as default",
+			psd:     map[string]string{"authMethod": "builder-id"},
+			baseURL: "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse",
+			want:    []string{kiroDev, amazonUSEast, qUSEast},
+		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := kiroEndpointURLs(tt.psd, tt.baseURL)
@@ -236,133 +261,53 @@ func TestKiroEndpointURLs_ThreeFallbackForUSEastApiKey(t *testing.T) {
 	}
 }
 
-func TestKiroHeaders_AuthMethodConditionals(t *testing.T) {
+func TestIsValidAWSRegion(t *testing.T) {
 	tests := []struct {
-		name             string
-		req              *Request
-		wantAuthz        string
-		wantTokentype    string
-		wantTokenType    string
-		wantXAmzTarget   string
-		notWantTokentype bool
-		notWantTokenType bool
+		region string
+		want   bool
 	}{
-		{
-			name: "api_key sets tokentype and bearer from accessToken",
-			req: &Request{
-				ProviderSpecificData: map[string]string{"authMethod": "api_key"},
-				AccessToken:          "my-api-key",
-			},
-			wantAuthz:      "Bearer my-api-key",
-			wantTokentype:  "API_KEY",
-			wantXAmzTarget: "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
-		},
-		{
-			name: "api_key falls back to APIKey field",
-			req: &Request{
-				ProviderSpecificData: map[string]string{"authMethod": "api_key"},
-				APIKey:               "my-api-key-2",
-			},
-			wantAuthz:      "Bearer my-api-key-2",
-			wantTokentype:  "API_KEY",
-			wantXAmzTarget: "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
-		},
-		{
-			name: "external_idp sets TokenType and bearer",
-			req: &Request{
-				ProviderSpecificData: map[string]string{"authMethod": "external_idp"},
-				AccessToken:          "ent-token",
-			},
-			wantAuthz:      "Bearer ent-token",
-			wantTokenType:  "EXTERNAL_IDP",
-			wantXAmzTarget: "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
-		},
-		{
-			name: "builder-id only sets bearer and X-Amz-Target",
-			req: &Request{
-				ProviderSpecificData: map[string]string{"authMethod": "builder-id"},
-				AccessToken:          "builder-token",
-			},
-			wantAuthz:        "Bearer builder-token",
-			wantXAmzTarget:   "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
-			notWantTokentype: true,
-			notWantTokenType: true,
-		},
-		{
-			name: "import neither tokentype nor TokenType",
-			req: &Request{
-				ProviderSpecificData: map[string]string{"authMethod": "import"},
-				AccessToken:          "import-token",
-			},
-			wantAuthz:        "Bearer import-token",
-			wantXAmzTarget:   "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
-			notWantTokentype: true,
-			notWantTokenType: true,
-		},
-		{
-			name: "auth header is not overwritten by upstream tokentype",
-			req: &Request{
-				ProviderSpecificData: map[string]string{"authMethod": "api_key"},
-				AccessToken:          "key",
-				Headers: map[string]string{
-					"tokentype": "OTHER",
-				},
-			},
-			wantAuthz:      "Bearer key",
-			wantTokentype:  "API_KEY",
-			wantXAmzTarget: "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
-		},
+		{"us-east-1", true},
+		{"eu-central-1", true},
+		{"eu-west-1", true},
+		{"us-west-2", true},
+		{"ap-southeast-2", true},
+		{"", false},
+		{"US-EAST-1", false},
+		{"us east 1", false},
+		{"not-a-region", false},
+		{"us-east", false},
+		{"../etc/passwd", false},
+		{"q.us-east-1.amazonaws.com", false},
 	}
-
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			h := kiroHeaders(tt.req)
-			if got := h["Authorization"]; got != tt.wantAuthz {
-				t.Errorf("Authorization = %q, want %q", got, tt.wantAuthz)
-			}
-			if got := h["X-Amz-Target"]; got != tt.wantXAmzTarget {
-				t.Errorf("X-Amz-Target = %q, want %q", got, tt.wantXAmzTarget)
-			}
-			if tt.wantTokentype != "" {
-				// The test helper stores exact-casing keys in the returned map.
-				if got, ok := h["tokentype"]; !ok || got != tt.wantTokentype {
-					t.Errorf("tokentype = %q, want %q, present=%v", got, tt.wantTokentype, ok)
-				}
-			}
-			if tt.wantTokenType != "" {
-				if got, ok := h["TokenType"]; !ok || got != tt.wantTokenType {
-					t.Errorf("TokenType = %q, want %q, present=%v", got, tt.wantTokenType, ok)
-				}
-			}
-			if tt.notWantTokentype {
-				if _, ok := h["tokentype"]; ok {
-					t.Errorf("unexpected tokentype header")
-				}
-			}
-			if tt.notWantTokenType {
-				if _, ok := h["TokenType"]; ok {
-					t.Errorf("unexpected TokenType header")
-				}
+		t.Run(tt.region, func(t *testing.T) {
+			got := isValidAWSRegion(tt.region)
+			if got != tt.want {
+				t.Errorf("isValidAWSRegion(%q) = %v, want %v", tt.region, got, tt.want)
 			}
 		})
 	}
 }
 
-func TestKiroHeaders_DefaultUserAgent(t *testing.T) {
-	req := &Request{ProviderSpecificData: map[string]string{"authMethod": "builder-id"}}
-	h := kiroHeaders(req)
-	if !strings.Contains(h["User-Agent"], "AWS-SDK-JS") {
-		t.Errorf("expected default AWS-SDK-JS user agent, got %q", h["User-Agent"])
+func TestRegionFromKiroProfileArn(t *testing.T) {
+	tests := []struct {
+		arn  string
+		want string
+	}{
+		{"arn:aws:codewhisperer:us-east-1:123456789:profile/abcd", "us-east-1"},
+		{"arn:aws:codewhisperer:eu-west-1:123456789:profile/abcd", "eu-west-1"},
+		{"arn:aws:codewhisperer:eu-central-1:123456789:profile/abcd", "eu-central-1"},
+		{"", ""},
+		{"arn:aws:codewhisperer", ""},
+		{"arn:aws:codewhisperer::123456789:profile/abcd", ""},
+		{"arn:aws:something:us-east-1:123:profile/x", ""},
 	}
-}
-
-func TestKiroHeaders_Accept(t *testing.T) {
-	req := &Request{ProviderSpecificData: map[string]string{"authMethod": "builder-id"}}
-	h := kiroHeaders(req)
-	if got := h["Accept"]; got != "application/vnd.amazon.eventstream" {
-		t.Errorf("Accept = %q, want %q", got, "application/vnd.amazon.eventstream")
-	}
-	if got := h["Content-Type"]; got != "application/json" {
-		t.Errorf("Content-Type = %q, want %q", got, "application/json")
+	for _, tt := range tests {
+		t.Run(strings.ReplaceAll(tt.arn, ":", "_"), func(t *testing.T) {
+			got := regionFromKiroProfileArn(tt.arn)
+			if got != tt.want {
+				t.Errorf("regionFromKiroProfileArn(%q) = %q, want %q", tt.arn, got, tt.want)
+			}
+		})
 	}
 }

@@ -214,8 +214,9 @@ func TestResolveKiroRuntimeRegion(t *testing.T) {
 		want string
 	}{
 		{"arn region wins", map[string]string{"profileArn": "arn:aws:codewhisperer:eu-central-1:123:profile/X", "region": "us-east-1"}, "eu-central-1"},
-		{"known stored region", map[string]string{"region": "eu-central-1"}, "eu-central-1"},
-		{"unknown stored region ignored", map[string]string{"region": "eu-north-1"}, "us-east-1"},
+		{"valid stored region", map[string]string{"region": "eu-central-1"}, "eu-central-1"},
+		{"valid non-profile stored region accepted", map[string]string{"region": "eu-north-1"}, "eu-north-1"},
+		{"invalid stored region ignored", map[string]string{"region": "not-a-region"}, "us-east-1"},
 		{"default", map[string]string{}, "us-east-1"},
 	}
 	for _, tc := range cases {
