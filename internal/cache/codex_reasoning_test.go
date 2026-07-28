@@ -66,11 +66,12 @@ func TestCodexReasoningCache_EvictsByTotalSize(t *testing.T) {
 	ClearCodexReasoningReplayCache()
 	defer ClearCodexReasoningReplayCache()
 
-	t.Setenv("AXON_CODEX_REASONING_MAX_BYTES", "500")
+	// Cap fits one ~80-byte entry but not two.
+	t.Setenv("AXON_CODEX_REASONING_MAX_BYTES", "120")
 
-	item1 := []byte(`{"reasoning":"first-item-with-enough-bytes-to-exceed-cap"}`)
-	item2 := []byte(`{"reasoning":"second-item-with-enough-bytes-to-exceed-cap"}`)
-	item3 := []byte(`{"reasoning":"third-item-with-enough-bytes-to-exceed-cap"}`)
+	item1 := []byte(`{"reasoning":"first-item-with-enough-bytes-to-force-eviction-abc"}`)
+	item2 := []byte(`{"reasoning":"second-item-with-enough-bytes-to-force-eviction-xyz"}`)
+	item3 := []byte(`{"reasoning":"third-item-with-enough-bytes-to-force-eviction-123"}`)
 
 	_ = CacheCodexReasoningReplayItems(context.Background(), "m1", "s1", [][]byte{item1})
 	_ = CacheCodexReasoningReplayItems(context.Background(), "m1", "s2", [][]byte{item2})
@@ -80,11 +81,21 @@ func TestCodexReasoningCache_EvictsByTotalSize(t *testing.T) {
 	if size <= 0 {
 		t.Fatal("expected some cached data")
 	}
-	if len(codexReasoningEntries) == 0 {
-		t.Fatal("expected at least one cached entry after eviction")
+	if len(codexReasoningEntries) != 1 {
+		t.Fatalf("expected 1 cached entry after eviction, got %d", len(codexReasoningEntries))
 	}
-	if size > 500 {
-		t.Fatalf("expected cache size <= 500 after eviction, got %d", size)
+	if size > 120 {
+		t.Fatalf("expected cache size <= 120 after eviction, got %d", size)
+	}
+
+	// Oldest entry should be evicted; newest should survive.
+	first, _ := GetCodexReasoningReplayItems(context.Background(), "m1", "s1")
+	if len(first) != 0 {
+		t.Errorf("expected oldest entry evicted, got %d items", len(first))
+	}
+	third, _ := GetCodexReasoningReplayItems(context.Background(), "m1", "s3")
+	if len(third) != 1 || !bytes.Equal(third[0], item3) {
+		t.Errorf("expected newest entry to survive eviction")
 	}
 }
 
