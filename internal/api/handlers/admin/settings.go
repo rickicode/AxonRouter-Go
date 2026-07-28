@@ -118,6 +118,8 @@ var DefaultSettings = map[string]string{
 	"combo_strategy":              "priority",
 	"combo_strategies":            "{}",
 	"cc_filter_naming":            "false",
+	"headroom_enabled":            "false",
+	"headroom_endpoint":           "",
 }
 
 // SeedDefaults inserts default settings if they don't exist.
