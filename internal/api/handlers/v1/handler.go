@@ -2246,6 +2246,13 @@ func (h *Handler) checkAutoDisable(connID, provider string) {
 	}
 	threshold := 3
 	banCount := cs.GetBanCount()
+	// Preserve the existing disabled reason (set by the auth/balance failure that
+	// incremented BanCount). If there is none, use a generic marker so the DB
+	// row is never left with disabled_reason = NULL/unknown.
+	disabledReason := cs.GetDisabledReason()
+	if disabledReason == "" {
+		disabledReason = "auto_disabled"
+	}
 
 	// Persist ban count to DB (async — does not block the request path).
 	banCountCopy := banCount
@@ -2256,8 +2263,10 @@ func (h *Handler) checkAutoDisable(connID, provider string) {
 		}
 		if banCountCopy >= threshold {
 			log.Printf("Auto-disabling connection %s after %d consecutive ban signals", connID, banCountCopy)
-			if _, err := d.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', updated_at = ? WHERE id = ?`,
-				time.Now().Unix(), connID); err != nil {
+			// A terminal disabled status must not carry a leftover cooldown horizon,
+			// otherwise the dashboard shows "disabled + Expired".
+			if _, err := d.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', disabled_reason = ?, cooldown_until = NULL, updated_at = ? WHERE id = ?`,
+				disabledReason, time.Now().Unix(), connID); err != nil {
 				return err
 			}
 		}
@@ -2266,7 +2275,7 @@ func (h *Handler) checkAutoDisable(connID, provider string) {
 
 	// In-memory status update is synchronous (cheap, lock-free sync.Map).
 	if banCount >= threshold {
-		h.store.UpdateStatus(connID, connstate.StatusDisabled)
+		h.store.UpdateStatus(connID, connstate.StatusDisabled, disabledReason)
 		h.scheduleEligibilityUpdate(connID)
 	}
 }

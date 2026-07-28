@@ -107,6 +107,13 @@ func (cs *ConnectionState) GetRemainingPct() float64 {
 	return cs.RemainingPct
 }
 
+// GetDisabledReason returns the disabled reason, if any (thread-safe).
+func (cs *ConnectionState) GetDisabledReason() string {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return cs.DisabledReason
+}
+
 // SetRemainingPct stores the minimum remaining quota percentage (thread-safe).
 func (cs *ConnectionState) SetRemainingPct(pct float64) {
 	cs.mu.Lock()
@@ -178,14 +185,15 @@ func (cs *ConnectionState) SetCooldown(until time.Time) {
 
 // SetQuotaCooldown sets a quota-exhausted cooldown (midnight UTC recovery).
 // Unlike SetCooldown, it preserves StatusQuotaExhausted so the DB recovery
-// path in QuotaScheduler recognises it correctly.
+// path in QuotaScheduler recognises it correctly. Quota exhaustion is recoverable
+// and intentionally does NOT increment BanCount, otherwise free-tier providers
+// would be auto-disabled after a few daily-quota hits.
 func (cs *ConnectionState) SetQuotaCooldown(until time.Time) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.CooldownUntil = &until
 	cs.Status = StatusQuotaExhausted
 	cs.FailCount++
-	cs.BanCount++
 }
 
 // IsInCooldown checks if the connection is in cooldown.

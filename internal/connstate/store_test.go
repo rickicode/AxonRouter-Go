@@ -78,8 +78,10 @@ func TestRecordFailure_QuotaCooldownSetsMidnight(t *testing.T) {
 	if !cs.IsInCooldown() {
 		t.Error("expected connection to be in cooldown")
 	}
-	if cs.BanCount != 1 {
-		t.Errorf("expected ban count 1, got %d", cs.BanCount)
+	// Quota exhaustion must not increase BanCount; it is a recoverable daily
+	// limit, not a permanent credential failure.
+	if cs.BanCount != 0 {
+		t.Errorf("expected ban count 0 after quota failure, got %d", cs.BanCount)
 	}
 }
 
@@ -115,7 +117,7 @@ func TestDetectError_429WithQuotaBody(t *testing.T) {
 	// This must be classified as ErrorQuota, not ErrorRateLimit.
 	cfBody := `{"errors":[{"message":"AiError: AiError: you have used up your daily free allocation of 10,000 neurons, please upgrade to Cloudflare's Workers Paid plan if you would like to continue usage. (de3fabb0-569c-4e72-bec9-fedd0de629b3)","code":4006}],"success":false,"result":{},"messages":[]}`
 
-	det := DetectError(context.Background(),429, cfBody, nil, "cf", "", nil)
+	det := DetectError(context.Background(), 429, cfBody, nil, "cf", "", nil)
 	if det.Category != ErrorQuota {
 		t.Errorf("expected ErrorQuota for 429+neurons body, got %s", det.Category)
 	}
@@ -134,7 +136,7 @@ func TestDetectError_429WithQuotaBody(t *testing.T) {
 
 func TestDetectError_429WithoutQuotaBody(t *testing.T) {
 	// Regular rate limit (e.g. OpenAI) — 429 without quota patterns
-	det := DetectError(context.Background(),429, `{"error":{"message":"rate limit exceeded"}}`, nil, "openai", "", nil)
+	det := DetectError(context.Background(), 429, `{"error":{"message":"rate limit exceeded"}}`, nil, "openai", "", nil)
 	if det.Category != ErrorRateLimit {
 		t.Errorf("expected ErrorRateLimit for plain 429, got %s", det.Category)
 	}
