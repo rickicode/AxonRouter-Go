@@ -9,10 +9,12 @@ import (
 )
 
 const (
-	codexReasoningCacheTTL        = 1 * time.Hour
-	codexReasoningCacheMaxEntries = 10240
-	codexReasoningEvictBatchSize  = 128
-	codexReasoningMaxBytesPerItem = 1 << 20
+	codexReasoningCacheTTL           = 1 * time.Hour
+	codexReasoningCacheMaxEntries    = 10240
+	codexReasoningEvictBatchSize     = 128
+	codexReasoningMaxBytesPerItem    = 1 << 20
+	codexReasoningMaxBytesPerKey     = 16 << 20
+	codexReasoningCacheMaxBytesTotal = 128 << 20
 )
 
 type codexReasoningEntry struct {
@@ -42,6 +44,7 @@ func CacheCodexReasoningReplayItems(ctx context.Context, modelName, sessionKey s
 	if key == "" || len(items) == 0 {
 		return nil
 	}
+
 	copied := make([][]byte, 0, len(items))
 	var total int
 	for _, it := range items {
@@ -51,22 +54,21 @@ func CacheCodexReasoningReplayItems(ctx context.Context, modelName, sessionKey s
 		clone := append([]byte(nil), it...)
 		copied = append(copied, clone)
 		total += len(it)
-		if total > codexReasoningMaxBytesPerItem*16 {
+		if total >= codexReasoningMaxBytesPerKey {
 			break
 		}
 	}
 	if len(copied) == 0 {
 		return nil
 	}
+
 	codexReasoningMu.Lock()
 	defer codexReasoningMu.Unlock()
 	codexReasoningEntries[key] = codexReasoningEntry{
 		Items:     copied,
 		Timestamp: time.Now(),
 	}
-	if len(codexReasoningEntries) > codexReasoningCacheMaxEntries {
-		evictOldestCodexReasoningEntries(codexReasoningEvictBatchSize)
-	}
+	evictCodexReasoningIfNeeded()
 	return nil
 }
 
@@ -78,8 +80,8 @@ func GetCodexReasoningReplayItems(ctx context.Context, modelName, sessionKey str
 	if key == "" {
 		return nil, nil
 	}
-	codexReasoningMu.RLock()
-	defer codexReasoningMu.RUnlock()
+	codexReasoningMu.Lock()
+	defer codexReasoningMu.Unlock()
 	entry, ok := codexReasoningEntries[key]
 	if !ok || time.Since(entry.Timestamp) > codexReasoningCacheTTL {
 		return nil, nil
@@ -97,6 +99,27 @@ func ClearCodexReasoningReplayCache() {
 	codexReasoningMu.Lock()
 	defer codexReasoningMu.Unlock()
 	codexReasoningEntries = make(map[string]codexReasoningEntry)
+}
+
+func evictCodexReasoningIfNeeded() {
+	// Global entry count cap.
+	if len(codexReasoningEntries) > codexReasoningCacheMaxEntries {
+		evictOldestCodexReasoningEntries(codexReasoningEvictBatchSize)
+	}
+	// Global memory cap.
+	for codexReasoningTotalBytes() > codexReasoningCacheMaxBytesTotal {
+		evictOldestCodexReasoningEntries(codexReasoningEvictBatchSize)
+	}
+}
+
+func codexReasoningTotalBytes() int {
+	var total int
+	for _, entry := range codexReasoningEntries {
+		for _, it := range entry.Items {
+			total += len(it)
+		}
+	}
+	return total
 }
 
 func evictOldestCodexReasoningEntries(count int) {

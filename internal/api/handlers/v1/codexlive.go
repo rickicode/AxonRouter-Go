@@ -3,6 +3,7 @@ package v1
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +14,6 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -47,6 +47,7 @@ var (
 
 var errCodexLiveBodyTooLarge = errors.New("codex live request body too large")
 
+// codexLiveSession represents a single live call sideband session.
 type codexLiveSession struct {
 	callID    string
 	connID    string
@@ -55,50 +56,12 @@ type codexLiveSession struct {
 	createdAt time.Time
 }
 
-type codexLiveSessionStore struct {
-	mu       sync.RWMutex
-	sessions map[string]codexLiveSession
-}
-
-func newCodexLiveSessionStore() *codexLiveSessionStore {
-	return &codexLiveSessionStore{sessions: make(map[string]codexLiveSession)}
-}
-
-func (s *codexLiveSessionStore) get(callID string) (codexLiveSession, bool) {
-	if s == nil || !codexLiveCallIDPattern.MatchString(callID) {
-		return codexLiveSession{}, false
-	}
-	s.mu.RLock()
-	sess, ok := s.sessions[callID]
-	s.mu.RUnlock()
-	if !ok || time.Since(sess.createdAt) > codexLiveSessionTTL {
-		return codexLiveSession{}, false
-	}
-	return sess, true
-}
-
-func (s *codexLiveSessionStore) put(callID, connID, connToken, model string) {
-	if s == nil || !codexLiveCallIDPattern.MatchString(callID) {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.sessions[callID] = codexLiveSession{
-		callID:    callID,
-		connID:    connID,
-		connToken: connToken,
-		model:     model,
-		createdAt: time.Now(),
-	}
-}
-
-func (s *codexLiveSessionStore) delete(callID string) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.sessions, callID)
+// newCodexLiveSessionStore creates a session store. The optional database
+// argument is used by NewHandler in production; test helpers keep it nil to
+// remain lightweight. See codexlive_session.go for the persistence-aware store
+// implementation.
+func newCodexLiveSessionStore(database ...*sql.DB) *codexLiveSessionStore {
+	return newCodexLiveSessionStoreImpl(database...)
 }
 
 // CodexLive handles POST /v1/live and POST /v1/realtime/calls. It forwards the
