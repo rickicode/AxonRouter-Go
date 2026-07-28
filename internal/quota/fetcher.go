@@ -559,7 +559,7 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 		if active, until, reason := CodexQuotaCooldown(cq.Quotas); active {
 			SaveCodexCooldown(c.ID, until, reason)
 		} else {
-			SaveCodexCooldown(c.ID, time.Now(), "")
+			ClearCodexCooldown(c.ID)
 		}
 	}
 

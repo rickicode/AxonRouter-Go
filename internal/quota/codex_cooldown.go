@@ -4,23 +4,35 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 )
 
 const codexProviderID = "cx"
-const codexCooldownSubdir = "auths" + string(os.PathSeparator) + codexProviderID
+
+// codexCooldownSubdir is the per-provider directory that holds Codex .cds files.
+// It mirrors CLIProxyAPI's convention of placing cooldown state next to auth files.
+var codexCooldownSubdir = filepath.Join("auths", codexProviderID)
 
 // CodexCooldownState is the persisted runtime cooldown snapshot for one Codex connection.
 // It mirrors CLIProxyAPI's CooldownStateRecord but is scoped to the connection-level
 // Codex quota cooldown calculated by CodexQuotaCooldown.
+//
+// JSON schema (version 1):
+//   - connection_id: connection identifier (required)
+//   - provider_id:   always "cx" for this store
+//   - until:         RFC3339 UTC timestamp when the cooldown expires
+//   - reason:        human-readable cause (may be empty)
+//   - updated_at:    RFC3339 UTC timestamp when this record was last written
 type CodexCooldownState struct {
 	ConnectionID string    `json:"connection_id"`
 	ProviderID   string    `json:"provider_id"`
@@ -33,10 +45,9 @@ type CodexCooldownState struct {
 // (logical) auth file inside the configured data directory.
 // It keeps an in-memory cache and uses the filesystem as the durable default source.
 type codexCooldownStore struct {
-	mu       sync.RWMutex
-	dataDir  string
-	mem      map[string]CodexCooldownState
-	loadOnce sync.Once
+	mu      sync.RWMutex
+	dataDir string
+	mem     map[string]CodexCooldownState
 }
 
 var (
@@ -62,8 +73,8 @@ func codexCooldownDir(dataDir string) string {
 	return filepath.Join(dataDir, codexCooldownSubdir)
 }
 
-// codexCooldownPath returns the .cds file path for a connection when no data directory
-// is configured it returns an empty string and no error.
+// codexCooldownPath returns the .cds file path for a connection. When no data
+// directory is configured it returns an empty string and no error.
 func codexCooldownPathWithDir(dataDir, connID string) (string, error) {
 	if dataDir == "" {
 		return "", nil
@@ -107,6 +118,13 @@ func sanitizeCooldownFileName(name string) string {
 // Errors are logged and swallowed; callers continue with in-memory behaviour.
 func SaveCodexCooldown(connID string, until time.Time, reason string) {
 	globalCodexCooldownStore.save(connID, until, reason)
+}
+
+// ClearCodexCooldown removes the in-memory and persisted cooldown state for a
+// connection. It is a convenience wrapper around SaveCodexCooldown with a zero
+// deadline so that callers can express the "remove" intent explicitly.
+func ClearCodexCooldown(connID string) {
+	globalCodexCooldownStore.save(connID, time.Time{}, "")
 }
 
 func (s *codexCooldownStore) save(connID string, until time.Time, reason string) {
@@ -252,7 +270,42 @@ func (s *codexCooldownStore) load() []CodexCooldownState {
 	if errWalk != nil && !errors.Is(errWalk, os.ErrNotExist) {
 		log.Printf("quota: failed to walk codex cooldown dir %s: %v", dir, errWalk)
 	}
+	pruneEmptyCooldownDirs(dir)
 	return mapToCooldownSlice(merged)
+}
+
+// pruneEmptyCooldownDirs removes empty subdirectories under the cooldown root.
+// The cooldown root itself is preserved. Failures are ignored so cleanup cannot
+// abort loading.
+func pruneEmptyCooldownDirs(root string) {
+	if root == "" {
+		return
+	}
+	var dirs []string
+	errWalk := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		if entry != nil && entry.IsDir() && path != root {
+			dirs = append(dirs, path)
+		}
+		return nil
+	})
+	if errWalk != nil {
+		return
+	}
+	// Remove deepest directories first so parents are re-checked after children.
+	sort.Slice(dirs, func(i, j int) bool { return len(dirs[i]) > len(dirs[j]) })
+	for _, d := range dirs {
+		entries, err := os.ReadDir(d)
+		if err != nil || len(entries) != 0 {
+			continue
+		}
+		_ = os.Remove(d)
+	}
 }
 
 // mapToCooldownSlice returns the values of a connection-id keyed map in a stable
@@ -286,24 +339,32 @@ func readCodexCooldownFile(path string) (CodexCooldownState, error) {
 
 // RestoreCodexCooldownStates loads persisted cooldowns and applies them to the
 // in-memory connection store. Errors are logged, not returned, so startup cannot
-// be aborted by a corrupt .cds file.
+// be aborted by a corrupt .cds file. States that are already expired or belong to
+// connections no longer in the store are dropped (and their .cds files removed).
 func RestoreCodexCooldownStates(store *connstate.Store) {
 	if store == nil {
 		return
 	}
+	known := make(map[string]struct{})
+	store.Range(func(connID string, _ *connstate.ConnectionState) bool {
+		known[connID] = struct{}{}
+		return true
+	})
+	now := time.Now()
 	for _, state := range LoadCodexCooldownStates() {
+		if _, ok := known[state.ConnectionID]; !ok {
+			if path, err := codexCooldownPath(state.ConnectionID); err == nil && path != "" {
+				_ = os.Remove(path)
+			}
+			log.Printf("quota: dropped codex cooldown for unknown connection %s", state.ConnectionID)
+			continue
+		}
+		if !now.Before(state.Until) {
+			continue
+		}
 		store.UpdateCooldown(state.ConnectionID, state.Until)
 		log.Printf("quota: restored codex cooldown for %s until %v", state.ConnectionID, state.Until)
 	}
-}
-
-// CodexCooldownStore exports a thin facade for callers outside this package that need
-// to initialise the data directory or inspect state.
-type CodexCooldownStore struct{}
-
-// NewCodexCooldownStore creates a new in-memory-only cooldown store for tests.
-func NewCodexCooldownStore() *CodexCooldownStore {
-	return &CodexCooldownStore{}
 }
 
 // CodexQuotaCooldown checks whether any quota window is exhausted and returns

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 )
 
 func resetGlobalCooldownStore() {
@@ -200,5 +202,53 @@ func TestCodexCooldown_FileContentLayout(t *testing.T) {
 		if !strings.Contains(string(data), w) {
 			t.Errorf("missing %q in file content:\n%s", w, string(data))
 		}
+	}
+}
+
+func TestCodexCooldown_SanitizeFileNameExtension(t *testing.T) {
+	// Connection IDs that happen to end in .cds should not duplicate the suffix.
+	got := sanitizeCooldownFileName("foo.cds")
+	want := "foo.cds"
+	if got != want {
+		t.Errorf("sanitizeCooldownFileName(\"foo.cds\") = %q, want %q", got, want)
+	}
+}
+
+func TestCodexCooldown_RestoreSkipsUnknownConnection(t *testing.T) {
+	resetGlobalCooldownStore()
+	_ = tempDataDir(t)
+	defer resetGlobalCooldownStore()
+
+	store := connstate.NewStore()
+	knownID := "conn-known"
+	unknownID := "conn-unknown"
+	store.GetOrCreate(knownID)
+
+	SaveCodexCooldown(unknownID, time.Now().Add(time.Hour), "stale")
+	RestoreCodexCooldownStates(store)
+
+	if cs := store.Get(unknownID); cs != nil && cs.IsInCooldown() {
+		t.Fatalf("expected unknown connection to have no cooldown")
+	}
+	path, _ := codexCooldownPath(unknownID)
+	if _, err := os.Stat(path); err == nil {
+		t.Fatalf("expected .cds file for unknown connection to be removed")
+	}
+}
+
+func TestCodexCooldown_RestoreSkipsExpiredState(t *testing.T) {
+	resetGlobalCooldownStore()
+	_ = tempDataDir(t)
+	defer resetGlobalCooldownStore()
+
+	store := connstate.NewStore()
+	knownID := "conn-expired-restore"
+	store.GetOrCreate(knownID)
+
+	SaveCodexCooldown(knownID, time.Now().Add(-time.Hour), "old")
+	RestoreCodexCooldownStates(store)
+
+	if cs := store.Get(knownID); cs != nil && cs.IsInCooldown() {
+		t.Fatalf("expected expired state not to be restored")
 	}
 }
