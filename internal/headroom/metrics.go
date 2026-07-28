@@ -17,6 +17,12 @@ func NewMetrics() *Metrics {
 // RecordSuccess increments total and bytesSaved. Bytes saved is the delta
 // between original and compressed sizes, floored at zero.
 func (m *Metrics) RecordSuccess(original, compressed int) {
+	if m == nil {
+		return
+	}
+	// Keep package-level counters in sync so admin status reflects real usage.
+	IncTotal()
+	AddBytesSaved(int64(original - compressed))
 	m.total.Add(1)
 	saved := original - compressed
 	if saved > 0 {
@@ -26,6 +32,11 @@ func (m *Metrics) RecordSuccess(original, compressed int) {
 
 // RecordError increments the error counter and total.
 func (m *Metrics) RecordError() {
+	if m == nil {
+		return
+	}
+	IncTotal()
+	IncErrors()
 	m.total.Add(1)
 	m.errors.Add(1)
 }

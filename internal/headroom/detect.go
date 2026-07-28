@@ -2,8 +2,13 @@ package headroom
 
 import (
 	"bytes"
+	"regexp"
 	"strings"
 )
+
+var diffHeaderPattern = regexp.MustCompile(`(?m)^[-]{3} `)
+var diffNewPattern = regexp.MustCompile(`(?m)^[+]{3} `)
+var hunkPattern = regexp.MustCompile(`(?m)^@@ `)
 
 // DefaultDetector is the package-level heuristic detector.
 type DefaultDetector struct{}
@@ -42,8 +47,11 @@ func (d *DefaultDetector) Detect(data []byte) Kind {
 }
 
 func looksLikeGitDiff(data []byte) bool {
-	return bytes.Contains(data, []byte("diff --git")) ||
-		bytes.Contains(data, []byte("--- ")) && bytes.Contains(data, []byte("+++ "))
+	// Require either a real diff header or the structural markers plus hunk markers.
+	if bytes.Contains(data, []byte("diff --git")) {
+		return diffHeaderPattern.Match(data) && diffNewPattern.Match(data)
+	}
+	return diffHeaderPattern.Match(data) && diffNewPattern.Match(data) && hunkPattern.Match(data)
 }
 
 func looksLikeGitLog(s string) bool {
@@ -89,7 +97,7 @@ func looksLikeGitStatus(s string) bool {
 	return false
 }
 
-// grepLinePattern matches "path:line:text" or "path:line:col:text" patterns.
+// looksLikeGrep matches path:line:column?:text lines.
 func looksLikeGrep(s string) bool {
 	lines := strings.Split(s, "\n")
 	matches := 0
@@ -101,10 +109,8 @@ func looksLikeGrep(s string) bool {
 		if len(parts) < 2 {
 			continue
 		}
-		if looksLikePath(parts[0]) {
-			if isNumeric(parts[1]) {
-				matches++
-			}
+		if looksLikePath(parts[0]) && isNumeric(parts[1]) {
+			matches++
 		}
 	}
 	return matches >= 2
@@ -112,7 +118,7 @@ func looksLikeGrep(s string) bool {
 
 func looksLikeFindTree(s string) bool {
 	lines := strings.Split(s, "\n")
-	if len(lines) == 0 {
+	if len(lines) < 3 {
 		return false
 	}
 	pathLike := 0
@@ -120,11 +126,10 @@ func looksLikeFindTree(s string) bool {
 		if line == "" {
 			continue
 		}
-		if looksLikePath(line) {
+		if looksLikeRealPath(line) {
 			pathLike++
 		}
 	}
-	// At least 60% of non-empty lines should look like paths.
 	nonEmpty := 0
 	for _, line := range lines {
 		if strings.TrimSpace(line) != "" {
@@ -134,7 +139,8 @@ func looksLikeFindTree(s string) bool {
 	if nonEmpty == 0 {
 		return false
 	}
-	return float64(pathLike)/float64(nonEmpty) >= 0.6
+	// Require a stricter threshold and a minimum number of path-like lines.
+	return pathLike >= 3 && float64(pathLike)/float64(nonEmpty) >= 0.6
 }
 
 func looksLikeBuildLog(s string) bool {
@@ -142,7 +148,6 @@ func looksLikeBuildLog(s string) bool {
 		"[INFO]", "[WARN]", "[WARNING]", "[ERROR]", "[DEBUG]", "[TRACE]",
 		"error:", "Error:", "ERROR:", "warning:", "Warning:", "WARNING:",
 		"Build ", "Compiling", "SUCCESS", "FAILURE", "FAILED", "PASSED",
-		"---", "===", ">>>", "<<<",
 	}
 	lines := strings.Split(s, "\n")
 	hits := 0
@@ -170,7 +175,7 @@ func looksLikeSearchResults(s string) bool {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "1. ") ||
 			strings.HasPrefix(trimmed, "2. ") ||
-			strings.HasPrefix(trimmed, "- ") && strings.Contains(line, "http") {
+			(strings.HasPrefix(trimmed, "- ") && strings.Contains(line, "http")) {
 			numberedHits++
 		}
 	}
@@ -193,7 +198,23 @@ func looksLikePath(s string) bool {
 		strings.HasSuffix(s, ".txt") ||
 		strings.HasSuffix(s, ".json") ||
 		strings.HasSuffix(s, ".yml") ||
-		strings.HasSuffix(s, ".yaml")
+		strings.HasSuffix(s, ".yaml") ||
+		strings.HasSuffix(s, ".rs") ||
+		strings.HasSuffix(s, ".py") ||
+		strings.HasSuffix(s, ".ts") ||
+		strings.HasSuffix(s, ".js")
+}
+
+// looksLikeRealPath is stricter: requires a slash or absolute prefix.
+func looksLikeRealPath(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	return strings.HasPrefix(s, "./") ||
+		strings.HasPrefix(s, "../") ||
+		strings.HasPrefix(s, "/") ||
+		(strings.Contains(s, "/") && strings.ContainsAny(s, "."))
 }
 
 func isNumeric(s string) bool {

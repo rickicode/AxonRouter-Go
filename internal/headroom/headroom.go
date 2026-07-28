@@ -1,16 +1,9 @@
-// Package headroom provides the runtime contract and status helpers used by
-// admin handlers to report Headroom counters. The actual implementation of
-// headroom endpoint calls lives in a separate sub-issue and imports this
-// package for its public API.
+// Package headroom provides runtime status counters used by the admin API.
 package headroom
 
 import (
 	"sync/atomic"
 )
-
-// DefaultEndpoint is the default Headroom API endpoint used when none is
-// configured in settings.
-const DefaultEndpoint = "https://api.headroom.example.com/v1"
 
 // Status describes whether Headroom is active and reachable at runtime.
 type Status int32
@@ -39,14 +32,13 @@ func (s Status) String() string {
 }
 
 // Default runtime counters. These are intentionally package-level variables
-// so that future sub-issues can mutate them without needing to plumb a full
-// object through every call site. The API handler reads them safely via
-// LoadCounters.
+// so that service/client can mutate them without plumbing objects through
+// every call site.
 var (
-	running     int32
-	total       int64
-	bytesSaved  int64
-	errorsCount int64
+	running    int32
+	total      int64
+	bytesSaved int64
+	errCount   int64
 )
 
 // SetEnabled marks Headroom as running/idle. False maps to disabled.
@@ -83,7 +75,7 @@ func AddBytesSaved(n int64) {
 
 // IncErrors increments the Headroom error counter.
 func IncErrors() {
-	atomic.AddInt64(&errorsCount, 1)
+	atomic.AddInt64(&errCount, 1)
 }
 
 // Counters is a snapshot of the current Headroom counters.
@@ -100,6 +92,6 @@ func LoadCounters() Counters {
 		Running:    Status(atomic.LoadInt32(&running)),
 		Total:      atomic.LoadInt64(&total),
 		BytesSaved: atomic.LoadInt64(&bytesSaved),
-		Errors:     atomic.LoadInt64(&errorsCount),
+		Errors:     atomic.LoadInt64(&errCount),
 	}
 }
