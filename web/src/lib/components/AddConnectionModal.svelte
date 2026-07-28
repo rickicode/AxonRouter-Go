@@ -157,6 +157,17 @@ async function submitBulkChunked() {
     toast.error('No connections to import');
     return;
   }
+
+  // Cloudflare requires accountId in provider_specific_data for every connection.
+  if (meta?.inputFormat === 'pipe') {
+    const missing = all.filter((c) => !c.provider_specific_data?.accountId);
+    if (missing.length > 0) {
+      const msg = `${missing.length} connection(s) missing Account ID. Each line must be: email|accountId|apiToken`;
+      toast.error(msg);
+      return;
+    }
+  }
+
   importing = true;
   importProgress = 0;
   importSummary = { created: 0, failed: 0, total: all.length };
