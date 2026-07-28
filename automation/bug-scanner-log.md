@@ -136,3 +136,14 @@ The next run derives its side from the last `- Run side:` line.
 - Parity gap: none
 - Issues created: none
 - Notes: Go binary was not on `PATH`; used `/usr/local/go/bin/go`. `openlore` and `staticcheck` are not installed in this environment, so the deep check effectively ran only `go vet ./...`, which produced no output and exited 0. CLIProxyAPI `make lint` also uses only `go vet` (`Makefile:117-119`), so there is no reference-backed gap for openlore/staticcheck tooling. References updated (`/workspaces/CLIProxyAPI`, `/workspaces/OmniRoute`, `/workspaces/9router`). Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied.
+
+## 2026-07-28 20:05 UTC
+- Run side: frontend
+- Baseline: `export PATH=$PATH:/usr/local/go/bin && go build ./...`
+- Deep check: `cd web && ([ -d node_modules ] || npm install) && timeout 10m npm run build`
+- Objective result: all passed
+- Failure details:
+  - none
+- Parity gap: none
+- Issues created: none
+- Notes: Go binary was not on `PATH`; used `/usr/local/go/bin/go`. Fresh checkout lacks `web/build/` because it is gitignored, so the initial `go build ./...` failed with `web/embed.go:9:12: pattern all:build: no matching files found`. After running the deep-check frontend build (`npm install && npm run build`), the retry of `go build ./...` passed. References updated (`/workspaces/CLIProxyAPI`, `/workspaces/OmniRoute`, `/workspaces/9router`). CLIProxyAPI has no frontend equivalent, so no reference-backed parity gap was reported for the Svelte dashboard build. Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied.
