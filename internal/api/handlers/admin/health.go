@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
+	"github.com/rickicode/AxonRouter-Go/internal/telemetry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 	"github.com/rickicode/AxonRouter-Go/internal/version"
 )
@@ -107,8 +108,8 @@ func (h *HealthHandler) CheckUpdate(c *gin.Context) {
 		latest = info.Version
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"version": version.String(),
-		"latest_version": latest,
+		"version":          version.String(),
+		"latest_version":   latest,
 		"update_available": h.checker.UpdateAvailable(),
 	})
 }
@@ -142,13 +143,17 @@ func (h *HealthHandler) Metrics(c *gin.Context) {
 	requestsToday, tokensToday, costToday, _ := agg.GetTodayStats()
 
 	c.JSON(http.StatusOK, gin.H{
-		"buffer_length":        h.tracker.Buffered(),
-		"healthy_connections":  h.store.HealthyCount(),
-		"dropped_usage_events": h.tracker.Dropped(),
-		"rate_limited":         rateLimited,
-		"quota_exhausted":      quotaExhausted,
-		"requests_today":       requestsToday,
-		"tokens_today":         tokensToday,
-		"cost_today":           costToday,
+		"buffer_length":                  h.tracker.Buffered(),
+		"healthy_connections":            h.store.HealthyCount(),
+		"dropped_usage_events":           h.tracker.Dropped(),
+		"rate_limited":                   rateLimited,
+		"quota_exhausted":                quotaExhausted,
+		"requests_today":                 requestsToday,
+		"tokens_today":                   tokensToday,
+		"cost_today":                     costToday,
+		"codex_requests_total":           telemetry.DefaultCodexCounters.RequestsTotal.Load(),
+		"codex_incomplete_streams_total": telemetry.DefaultCodexCounters.IncompleteStreamsTotal.Load(),
+		"codex_replay_hits_total":        telemetry.DefaultCodexCounters.ReplayHitsTotal.Load(),
+		"codex_identity_confuse_total":   telemetry.DefaultCodexCounters.IdentityConfuseTotal.Load(),
 	})
 }

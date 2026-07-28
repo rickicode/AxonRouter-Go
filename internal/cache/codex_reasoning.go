@@ -2,7 +2,9 @@ package cache
 
 import (
 	"context"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +15,9 @@ const (
 	codexReasoningCacheMaxEntries = 10240
 	codexReasoningEvictBatchSize  = 128
 	codexReasoningMaxBytesPerItem = 1 << 20
+	// defaultCodexReasoningMaxBytes is the cap on total live cache bytes.
+	// Override with AXON_CODEX_REASONING_MAX_BYTES.
+	defaultCodexReasoningMaxBytes = 128 << 20
 )
 
 type codexReasoningEntry struct {
@@ -25,6 +30,17 @@ var (
 	codexReasoningEntries = make(map[string]codexReasoningEntry)
 )
 
+// codexReasoningMaxBytes returns the effective global memory cap for the Codex
+// reasoning replay cache. It honors AXON_CODEX_REASONING_MAX_BYTES.
+func codexReasoningMaxBytes() int64 {
+	if v := os.Getenv("AXON_CODEX_REASONING_MAX_BYTES"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultCodexReasoningMaxBytes
+}
+
 func codexReasoningCacheKey(modelName, sessionKey string) string {
 	modelName = strings.TrimSpace(modelName)
 	sessionKey = strings.TrimSpace(sessionKey)
@@ -32,6 +48,24 @@ func codexReasoningCacheKey(modelName, sessionKey string) string {
 		return ""
 	}
 	return "codex-reasoning-replay:" + modelName + ":" + sessionKey
+}
+
+// entrySize returns the approximate size in bytes of a cached entry.
+func entrySize(e codexReasoningEntry) int64 {
+	var n int64
+	for _, it := range e.Items {
+		n += int64(len(it))
+	}
+	return n
+}
+
+// totalCodexReasoningSize returns the current total byte size of the cache.
+func totalCodexReasoningSize() int64 {
+	var n int64
+	for _, e := range codexReasoningEntries {
+		n += entrySize(e)
+	}
+	return n
 }
 
 // CacheCodexReasoningReplayItems stores reasoning/function_call replay items for
@@ -67,6 +101,7 @@ func CacheCodexReasoningReplayItems(ctx context.Context, modelName, sessionKey s
 	if len(codexReasoningEntries) > codexReasoningCacheMaxEntries {
 		evictOldestCodexReasoningEntries(codexReasoningEvictBatchSize)
 	}
+	evictCodexReasoningBySize()
 	return nil
 }
 
@@ -119,5 +154,14 @@ func evictOldestCodexReasoningEntries(count int) {
 	}
 	for i := 0; i < count; i++ {
 		delete(codexReasoningEntries, all[i].key)
+	}
+}
+
+// evictCodexReasoningBySize removes oldest entries until the cache fits under
+// the configured global max bytes. It runs after every write.
+func evictCodexReasoningBySize() {
+	maxBytes := codexReasoningMaxBytes()
+	for totalCodexReasoningSize() > maxBytes && len(codexReasoningEntries) > 0 {
+		evictOldestCodexReasoningEntries(codexReasoningEvictBatchSize)
 	}
 }

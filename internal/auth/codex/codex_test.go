@@ -345,7 +345,7 @@ func TestExtractAccountIDFromPSD(t *testing.T) {
 
 func testIDTokenWithAccountID(accountID string) string {
 	claims, _ := json.Marshal(map[string]any{
-		"sub": accountID,
+		"sub":                         accountID,
 		"https://api.openai.com/auth": map[string]string{"chatgpt_account_id": accountID},
 	})
 	payload := base64.RawURLEncoding.EncodeToString(claims)
@@ -373,3 +373,16 @@ func TestDeviceFlow_PollExpires(t *testing.T) {
 	}
 }
 
+func TestOAuthClientID_EnvironmentOverride(t *testing.T) {
+	t.Setenv("AXON_CODEX_OAUTH_CLIENT_ID", "custom_client_id")
+	if got := codexOAuthClientID(); got != "custom_client_id" {
+		t.Errorf("codexOAuthClientID() = %q, want custom_client_id", got)
+	}
+}
+
+func TestOAuthClientID_Default(t *testing.T) {
+	t.Setenv("AXON_CODEX_OAUTH_CLIENT_ID", "")
+	if got := codexOAuthClientID(); got != ClientID {
+		t.Errorf("codexOAuthClientID() = %q, want default %q", got, ClientID)
+	}
+}

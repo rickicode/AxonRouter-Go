@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"database/sql"
+
 	"github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -58,10 +60,132 @@ type codexLiveSession struct {
 type codexLiveSessionStore struct {
 	mu       sync.RWMutex
 	sessions map[string]codexLiveSession
+	db       *sql.DB
 }
 
 func newCodexLiveSessionStore() *codexLiveSessionStore {
-	return &codexLiveSessionStore{sessions: make(map[string]codexLiveSession)}
+	return &codexLiveSessionStore{sessions: make(map[string]codexLiveSession), db: nil}
+}
+
+// withDB attaches a SQLite database to the store.
+func (s *codexLiveSessionStore) withDB(db *sql.DB) *codexLiveSessionStore {
+	if s == nil {
+		return nil
+	}
+	s.db = db
+	_ = s.migrate()
+	_ = s.loadIntoMemory()
+	_ = s.purgeExpired()
+	return s
+}
+
+func (s *codexLiveSessionStore) migrate() error {
+	if s.db == nil {
+		return nil
+	}
+	_, err := s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS codex_live_sessions (
+			call_id TEXT PRIMARY KEY,
+			conn_id TEXT NOT NULL,
+			conn_token TEXT NOT NULL,
+			model TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_codex_live_sessions_expires
+			ON codex_live_sessions(expires_at);
+	`)
+	return err
+}
+
+func (s *codexLiveSessionStore) loadIntoMemory() error {
+	if s.db == nil {
+		return nil
+	}
+	rows, err := s.db.Query(`
+		SELECT call_id, conn_id, conn_token, model, created_at
+		FROM codex_live_sessions
+		WHERE expires_at > ?
+	`, time.Now().Unix())
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var callID, connID, connToken, model string
+		var createdAt int64
+		if err := rows.Scan(&callID, &connID, &connToken, &model, &createdAt); err != nil {
+			continue
+		}
+		s.mu.Lock()
+		s.sessions[callID] = codexLiveSession{
+			callID:    callID,
+			connID:    connID,
+			connToken: connToken,
+			model:     model,
+			createdAt: time.Unix(createdAt, 0),
+		}
+		s.mu.Unlock()
+	}
+	return rows.Err()
+}
+
+func (s *codexLiveSessionStore) purgeExpired() error {
+	if s.db == nil {
+		return nil
+	}
+	_, err := s.db.Exec(`DELETE FROM codex_live_sessions WHERE expires_at <= ?`, time.Now().Unix())
+	return err
+}
+
+func (s *codexLiveSessionStore) putPersist(callID, connID, connToken, model string, createdAt time.Time) {
+	if s.db == nil {
+		return
+	}
+	expiresAt := createdAt.Add(codexLiveSessionTTL).Unix()
+	_, _ = s.db.Exec(`
+		INSERT INTO codex_live_sessions (call_id, conn_id, conn_token, model, created_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(call_id) DO UPDATE SET
+			conn_id = excluded.conn_id,
+			conn_token = excluded.conn_token,
+			model = excluded.model,
+			created_at = excluded.created_at,
+			expires_at = excluded.expires_at
+	`, callID, connID, connToken, model, createdAt.Unix(), expiresAt)
+}
+
+func (s *codexLiveSessionStore) getPersist(callID string) (codexLiveSession, bool) {
+	if s.db == nil {
+		return codexLiveSession{}, false
+	}
+	rows, err := s.db.Query(`
+		SELECT conn_id, conn_token, model, created_at
+		FROM codex_live_sessions
+		WHERE call_id = ? AND expires_at > ?
+	`, callID, time.Now().Unix())
+	if err != nil {
+		return codexLiveSession{}, false
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return codexLiveSession{}, false
+	}
+	var sess codexLiveSession
+	var createdAt int64
+	if err := rows.Scan(&sess.connID, &sess.connToken, &sess.model, &createdAt); err != nil {
+		return codexLiveSession{}, false
+	}
+	sess.callID = callID
+	sess.createdAt = time.Unix(createdAt, 0)
+	return sess, true
+}
+
+func (s *codexLiveSessionStore) deletePersist(callID string) {
+	if s.db == nil {
+		return
+	}
+	_, _ = s.db.Exec(`DELETE FROM codex_live_sessions WHERE call_id = ?`, callID)
 }
 
 func (s *codexLiveSessionStore) get(callID string) (codexLiveSession, bool) {
@@ -71,9 +195,27 @@ func (s *codexLiveSessionStore) get(callID string) (codexLiveSession, bool) {
 	s.mu.RLock()
 	sess, ok := s.sessions[callID]
 	s.mu.RUnlock()
-	if !ok || time.Since(sess.createdAt) > codexLiveSessionTTL {
+	isExpired := ok && time.Since(sess.createdAt) > codexLiveSessionTTL
+	if ok && !isExpired {
+		return sess, true
+	}
+	if isExpired {
+		s.delete(callID)
+	}
+	// Cache miss or expired: try durable storage.
+	if s.db == nil {
 		return codexLiveSession{}, false
 	}
+	sess, ok = s.getPersist(callID)
+	if !ok || time.Since(sess.createdAt) > codexLiveSessionTTL {
+		if ok {
+			s.deletePersist(callID)
+		}
+		return codexLiveSession{}, false
+	}
+	s.mu.Lock()
+	s.sessions[callID] = sess
+	s.mu.Unlock()
 	return sess, true
 }
 
@@ -81,15 +223,17 @@ func (s *codexLiveSessionStore) put(callID, connID, connToken, model string) {
 	if s == nil || !codexLiveCallIDPattern.MatchString(callID) {
 		return
 	}
+	createdAt := time.Now()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.sessions[callID] = codexLiveSession{
 		callID:    callID,
 		connID:    connID,
 		connToken: connToken,
 		model:     model,
-		createdAt: time.Now(),
+		createdAt: createdAt,
 	}
+	s.mu.Unlock()
+	s.putPersist(callID, connID, connToken, model, createdAt)
 }
 
 func (s *codexLiveSessionStore) delete(callID string) {
@@ -97,8 +241,9 @@ func (s *codexLiveSessionStore) delete(callID string) {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	delete(s.sessions, callID)
+	s.mu.Unlock()
+	s.deletePersist(callID)
 }
 
 // CodexLive handles POST /v1/live and POST /v1/realtime/calls. It forwards the
