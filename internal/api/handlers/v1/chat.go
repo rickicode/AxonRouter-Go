@@ -209,13 +209,20 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	var lastConn *Connection
 	var lastErr error
 	var lastErrCategory string
+	var lastFailedConnID string // exclude from next getConnection to prevent retrying same connection
 attemptLoop:
 	for attempt := range maxAttempts {
 		if c.Request.Context().Err() != nil {
 			writeContextDone(c)
 			return
 		}
-		conn, err := h.getConnection(c.Request.Context(), provider, modelName, sessionID)
+		var conn *Connection
+		var err error
+		if lastFailedConnID != "" {
+			conn, err = h.getConnection(c.Request.Context(), provider, modelName, sessionID, lastFailedConnID)
+		} else {
+			conn, err = h.getConnection(c.Request.Context(), provider, modelName, sessionID)
+		}
 		if err != nil {
 			if attempt == 0 {
 				logging.Logger.Info("chat: get connection failed", "err", err.Error())
@@ -299,6 +306,7 @@ attemptLoop:
 			retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
 			lastErr = err
 			lastErrCategory = cat
+			lastFailedConnID = conn.ID
 			if !retry {
 				break attemptLoop // non-retryable error, stop failover
 			}
@@ -349,6 +357,7 @@ attemptLoop:
 					retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, holdbackErr, attempt, time.Since(start).Milliseconds(), stream)
 					lastErr = holdbackErr
 					lastErrCategory = cat
+					lastFailedConnID = conn.ID
 					if !retry {
 						cancelStream()
 						break attemptLoop
@@ -380,6 +389,7 @@ attemptLoop:
 				retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, streamErr, attempt, time.Since(start).Milliseconds(), stream)
 				lastErr = streamErr
 				lastErrCategory = cat
+				lastFailedConnID = conn.ID
 				if !retry {
 					cancelStream()
 					break
