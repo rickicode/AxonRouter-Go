@@ -1615,14 +1615,8 @@ func (h *Handler) handleFailoverError(ctx context.Context, c *gin.Context, conn 
 	}
 	h.combo.RecordFailure(conn.ID, det)
 	h.persistCooldownScoped(conn.ID, det)
-	// Update in-memory status so dashboard reflects rate_limited/quota_exhausted immediately.
-	if det.Status != "" {
-		if det.Status == connstate.StatusDisabled && det.DisabledReason != "" {
-			h.store.UpdateStatus(conn.ID, det.Status, det.DisabledReason)
-		} else {
-			h.store.UpdateStatus(conn.ID, det.Status)
-		}
-	}
+	// In-memory state is updated synchronously inside persistCooldownScoped so the
+	// dashboard and routing snapshot reflect the failure immediately.
 	// For providers with API-backed quota (CodeBuddy), refresh quota inline so
 	// the next routing decision uses the latest state instead of stale cache.
 	if provider == "codebuddy" && (det.Category == connstate.ErrorQuota || det.Category == connstate.ErrorRateLimit) {
@@ -2348,6 +2342,27 @@ func (h *Handler) persistCooldownScoped(connID string, det connstate.ErrorDetect
 			disabledReason = "balance_empty"
 		}
 	}
+	// Sync in-memory status immediately so the routing snapshot and dashboard show
+	// the correct state without waiting for the async DB write. Quota exhaustion
+	// uses SetQuotaCooldown so status stays quota_exhausted and CooldownUntil is
+	// populated without incrementing BanCount.
+	switch connstate.Status(statusVal) {
+	case connstate.StatusQuotaExhausted:
+		if cooldownUntil != nil {
+			if cs := h.store.Get(connID); cs != nil {
+				cs.SetQuotaCooldown(time.Unix(*cooldownUntil, 0))
+			}
+		} else {
+			h.store.UpdateStatus(connID, connstate.StatusQuotaExhausted)
+		}
+	case connstate.StatusDisabled:
+		h.store.UpdateStatus(connID, connstate.StatusDisabled, disabledReason)
+	default:
+		if statusVal != "" {
+			h.store.UpdateStatus(connID, connstate.Status(statusVal))
+		}
+	}
+
 	errMsg := det.Message
 	errCode := string(det.Category)
 	h.writeQueue.Enqueue("persistCooldownScoped", func(d *sql.DB) error {

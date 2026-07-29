@@ -119,12 +119,9 @@ func TestDetectError_402InsufficientBalance_Disables(t *testing.T) {
 	if det.Retryable {
 		t.Error("expected Retryable=false")
 	}
-	if det.CooldownUntil == nil {
-		t.Fatal("expected cooldown")
-	}
-	want := time.Now().Add(30 * time.Minute)
-	if det.CooldownUntil.Before(want.Add(-2*time.Second)) || det.CooldownUntil.After(want.Add(2*time.Second)) {
-		t.Errorf("cooldown=%v, want around %v", det.CooldownUntil, want)
+	// Balance empty is permanent — no cooldown.
+	if det.CooldownUntil != nil {
+		t.Errorf("expected no cooldown for balance_empty, got %v", det.CooldownUntil)
 	}
 }
 func TestDetectError_GrokCLI_402SpendingLimit_IsQuota(t *testing.T) {
@@ -157,12 +154,10 @@ func TestDetectError_GrokCLI_402PersonalTeamBlocked_IsBalanceEmpty(t *testing.T)
 	if det.Retryable {
 		t.Error("expected Retryable=false")
 	}
-	if det.CooldownUntil == nil {
-		t.Fatal("expected cooldown")
-	}
-	want := time.Now().Add(30 * time.Minute)
-	if det.CooldownUntil.Before(want.Add(-2*time.Second)) || det.CooldownUntil.After(want.Add(2*time.Second)) {
-		t.Errorf("cooldown=%v, want around %v", det.CooldownUntil, want)
+	// NOTE: non-spending-limit balance_empty is permanent (manual top-up required),
+	// so it must not carry a cooldown horizon.
+	if det.CooldownUntil != nil {
+		t.Errorf("expected no cooldown, got %v", det.CooldownUntil)
 	}
 }
 func TestHasPerModelQuota_GrokCLI_ReturnsFalse(t *testing.T) {
