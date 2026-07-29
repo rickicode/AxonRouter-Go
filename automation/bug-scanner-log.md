@@ -203,3 +203,14 @@ invariants are involved.
 - Parity gap: CLIProxyAPI exposes `quota-exceeded.switch-project` and `quota-exceeded.switch-preview-model` config toggles plus management routes (`/quota-exceeded/switch-project`, `/quota-exceeded/switch-preview-model`) in `internal/config/config_types.go:188-198`, `internal/config/config.go:87-88`, `internal/api/server_management.go:70-76`, and `internal/api/handlers/management/quota.go:12-23`; AxonRouter-GO has no equivalent `QuotaExceeded` config block or admin endpoints → `HIJ-1033`
 - Issues created: `HIJ-1033`
 - Notes: Fresh checkout lacked the gitignored `web/build` directory, so the initial `go build ./...` failed with `web/embed.go:9:12: pattern all:build: no matching files found`. Rebuilt the frontend (`cd web && npm install && npm run build`), after which the baseline passed. The provider-side test run passed (`internal/provider`, `internal/providercfg`, `internal/quota`, `internal/network`). Go binary was not on `PATH`; used `/usr/local/go/bin/go`. References updated (`/workspaces/CLIProxyAPI`, `/workspaces/OmniRoute`, `/workspaces/9router`). Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied. The related reset-quota gap is already tracked in `HIJ-911`/`HIJ-919`/`HIJ-920`/`HIJ-921`; this parity issue covers only the missing switch toggles.
+
+## 2026-07-29 16:08 UTC
+- Run side: auth
+- Baseline: `export PATH=$PATH:/usr/local/go/bin && go build ./...`
+- Deep check: `export PATH=$PATH:/usr/local/go/bin && go test -timeout 10m ./internal/auth/... ./internal/signature/...`
+- Objective result: all passed
+- Failure details:
+- none
+- Parity gap: none (no new concrete reference-backed gap identified; the missing Claude/Gemini thinking-signature validators are already tracked in `HIJ-924`)
+- Issues created: none
+- Notes: Fresh checkout lacked the gitignored `web/build` directory, so the initial `go build ./...` failed with `web/embed.go:9:12: pattern all:build: no matching files found`. Rebuilt the frontend (`cd web && npm install && npm run build`), after which the baseline passed. The auth-side test run passed (`internal/auth`, `internal/auth/codebuddy`, `internal/auth/codex`, `internal/auth/cursor`, `internal/auth/github`, `internal/auth/grokcli`, `internal/auth/kiro`, `internal/auth/qoder`, `internal/signature`). Go binary was not on `PATH`; used `/usr/local/go/bin/go`. References updated (`/workspaces/CLIProxyAPI`, `/workspaces/OmniRoute`, `/workspaces/9router`). Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied for routing hot-path invariants and reference priority.
