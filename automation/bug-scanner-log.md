@@ -192,3 +192,14 @@ Go binary was not on `PATH`; used `/usr/local/go/bin/go`. References updated
 (`/workspaces/CLIProxyAPI`, `/workspaces/OmniRoute`, `/workspaces/9router`).
 Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied; no routing hot-path
 invariants are involved.
+
+## 2026-07-29 12:06 UTC
+- Run side: provider
+- Baseline: `export PATH=$PATH:/usr/local/go/bin && go build ./...`
+- Deep check: `export PATH=$PATH:/usr/local/go/bin && go test -timeout 10m ./internal/provider/... ./internal/providercfg/... ./internal/quota/... ./internal/network/...`
+- Objective result: all passed
+- Failure details:
+  - none
+- Parity gap: CLIProxyAPI exposes `quota-exceeded.switch-project` and `quota-exceeded.switch-preview-model` config toggles plus management routes (`/quota-exceeded/switch-project`, `/quota-exceeded/switch-preview-model`) in `internal/config/config_types.go:188-198`, `internal/config/config.go:87-88`, `internal/api/server_management.go:70-76`, and `internal/api/handlers/management/quota.go:12-23`; AxonRouter-GO has no equivalent `QuotaExceeded` config block or admin endpoints → `HIJ-1033`
+- Issues created: `HIJ-1033`
+- Notes: Fresh checkout lacked the gitignored `web/build` directory, so the initial `go build ./...` failed with `web/embed.go:9:12: pattern all:build: no matching files found`. Rebuilt the frontend (`cd web && npm install && npm run build`), after which the baseline passed. The provider-side test run passed (`internal/provider`, `internal/providercfg`, `internal/quota`, `internal/network`). Go binary was not on `PATH`; used `/usr/local/go/bin/go`. References updated (`/workspaces/CLIProxyAPI`, `/workspaces/OmniRoute`, `/workspaces/9router`). Repo-specific addendum `automation/bug-scanner-instructions.repo.md` applied. The related reset-quota gap is already tracked in `HIJ-911`/`HIJ-919`/`HIJ-920`/`HIJ-921`; this parity issue covers only the missing switch toggles.
