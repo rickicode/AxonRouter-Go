@@ -436,10 +436,10 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.24
+### What's New in v0.3.25
 
 ### Fixed
-- **Version check rate limit** — changed version check URL from `api.github.com` to `raw.githubusercontent.com` to avoid GitHub API rate limit (60/hr unauthenticated). Resolves "Check update failed: github api returned status 403" error.
+- **Cloudflare free-tier daily quota exhaustion** — Cloudflare accounts that hit the daily free neuron allocation are now locked out of the routing pool until the next UTC midnight instead of the generic 30-minute quota cooldown. Also fixes `quota_exhausted` in-memory state to use `SetQuotaCooldown`, preventing free-tier accounts from being auto-disabled after repeated daily quota hits.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
