@@ -541,7 +541,7 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 		}
 	}()
 	if mode == providercfg.Affinity && sessionID != "" {
-		if c, ok := h.tryAffinityConnection(ctx, provider, sessionID, modelID, now, mode); ok {
+		if c, ok := h.tryAffinityConnection(ctx, provider, sessionID, modelID, now, mode, excluded); ok {
 			conn = c
 			return
 		}
@@ -673,12 +673,15 @@ func (h *Handler) tryPickConnectionFallback(ctx context.Context, connID, provide
 // tryAffinityConnection attempts to reuse a cached connection for the
 // provider/session/model combination. The cached connection is validated
 // with the same cooldown/exhaustion checks as normal selection.
-func (h *Handler) tryAffinityConnection(ctx context.Context, provider, sessionID, modelID string, now time.Time, mode providercfg.RoutingMode) (*Connection, bool) {
+func (h *Handler) tryAffinityConnection(ctx context.Context, provider, sessionID, modelID string, now time.Time, mode providercfg.RoutingMode, excludeConnID string) (*Connection, bool) {
 	if h.sessions == nil {
 		return nil, false
 	}
 	cachedID, ok := h.sessions.Get(connstate.SessionKey(provider, sessionID, modelID))
 	if !ok {
+		return nil, false
+	}
+	if excludeConnID != "" && cachedID == excludeConnID {
 		return nil, false
 	}
 	cs := h.store.Get(cachedID)
