@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- **Failover routing hardening** — all request paths (chat, messages, responses, gemini) now exclude the connection that just failed from the next `getConnection` attempt, preventing the same exhausted account from being retried while the eligibility snapshot rebuilds. The emergency fallback also skips `quota_exhausted` connections whose daily cooldown has no benefit from retrying.
+- **Failover routing hardening** — all request paths (chat, messages, responses, responses/compact, gemini) now exclude the connection that just failed from the next `getConnection` attempt, preventing the same exhausted account from being retried while the eligibility snapshot rebuilds. Affinity routing also honors this exclusion. The emergency fallback also skips `quota_exhausted` connections whose daily cooldown has no benefit from retrying.
 
 ## [0.3.25] - 2026-07-29
 
