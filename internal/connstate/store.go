@@ -190,7 +190,7 @@ func (s *Store) ClassifyProviderUnavailable(provider string) ErrorCategory {
 		total++
 		status := cs.GetStatus()
 		switch status {
-		case StatusQuotaExhausted, StatusCooldown, StatusRateLimited:
+		case StatusQuotaExhausted, StatusRateLimited:
 			quota++
 		case StatusDisabled:
 			switch cs.DisabledReason {
@@ -223,16 +223,15 @@ func (s *Store) SeedConnection(connID, prefix, status string, priority int) {
 	// Build status first so the struct is complete before anyone can see it.
 	var st Status
 	switch status {
-	case "ready":
-		st = StatusReady
 	case "rate_limited":
 		st = StatusRateLimited
 	case "quota_exhausted":
 		st = StatusQuotaExhausted
 	case "disabled":
 		st = StatusDisabled
-	case "degraded":
-		st = StatusDegraded
+	
+case "ready":
+		st = StatusReady
 	default:
 		st = StatusUnknown
 	}

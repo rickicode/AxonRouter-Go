@@ -2320,7 +2320,7 @@ func (h *Handler) persistCooldownScoped(connID string, det connstate.ErrorDetect
 	}
 	statusVal := status
 	// Only persist terminal failures or cooldown-bearing errors. Transient errors
-	// without a cooldown (e.g. degraded/5xx) are left for the scheduler to heal.
+	// without a cooldown are left for the scheduler to heal.
 	if det.CooldownUntil == nil && !connstate.Status(statusVal).IsRoutingTerminal() {
 		return
 	}
@@ -2452,13 +2452,13 @@ func (h *Handler) persistSuccess(connID string) {
 		_, err := d.Exec(`
 			UPDATE connections
 			SET status = CASE
-					WHEN status IN ('cooldown','rate_limited','quota_exhausted','degraded')
+					WHEN status IN ('rate_limited','quota_exhausted')
 						 AND (cooldown_until IS NULL OR cooldown_until <= ?)
 					THEN 'ready'
 					ELSE status
 				END,
 				cooldown_until = CASE
-					WHEN status IN ('cooldown','rate_limited','quota_exhausted','degraded')
+					WHEN status IN ('rate_limited','quota_exhausted')
 					     AND (cooldown_until IS NULL OR cooldown_until <= ?)
 					THEN NULL
 					ELSE cooldown_until

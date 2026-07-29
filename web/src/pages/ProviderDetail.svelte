@@ -1,4 +1,9 @@
 <script lang="ts">
+function effectiveConnectionStatus(row: any): string {
+	if (row.status === 'ready' && row.cooldown_until && Date.now() < row.cooldown_until * 1000) return 'ready_cooldown';
+	return row.status;
+}
+
  import { onMount } from 'svelte';
  import { loadProvider, selectedProvider, loadConnections, connections, connectionPagination, connectionFilter, loadProviderModels, providerModels, modelTestResults, testProviderModel, addProviderModel, deleteProviderModel, isLoading, error } from '$lib/stores';
  import { unwrapInt, getTokenExpiry } from '$lib/utils';
@@ -736,15 +741,15 @@ async function handleBulkAssignProxy() {
             <td class="py-3 px-4">
               <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <a href="/providers/{providerId}/{row.id}" class="inline-flex items-center gap-1.5 text-body-sm-strong hover:underline">
-                  <span class="size-2 rounded-full shrink-0" style="background-color: {getStatusDotColor(row.status)}"></span>
+                  <span class="size-2 rounded-full shrink-0" style="background-color: {getStatusDotColor(effectiveConnectionStatus(row))}"></span>
                   {row.name}
                 </a>
                 {@render connectionBadges(row)}
               </div>
             </td>
             <td class="py-3 px-4">
-              <Badge variant={getStatusVariant(row.status)} class="text-caption-mono rounded-sm py-0.5">
-                {getStatusLabel(row.status)}
+              <Badge variant={getStatusVariant(effectiveConnectionStatus(row))} class="text-caption-mono rounded-sm py-0.5">
+                {getStatusLabel(effectiveConnectionStatus(row))}
               </Badge>
             </td>
             <td class="py-3 px-4 text-code font-mono text-muted-foreground">{row.auth_type}</td>
@@ -794,7 +799,7 @@ async function handleBulkAssignProxy() {
           <div class="flex items-start justify-between gap-3">
             <div class="min-w-0 space-y-1">
               <a href="/providers/{providerId}/{row.id}" class="inline-flex items-center gap-1.5 text-body-sm-strong hover:underline break-words">
-                <span class="size-2 rounded-full shrink-0" style="background-color: {getStatusDotColor(row.status)}"></span>
+                <span class="size-2 rounded-full shrink-0" style="background-color: {getStatusDotColor(effectiveConnectionStatus(row))}"></span>
                 <span class="break-words">{row.name}</span>
               </a>
               {@render connectionBadges(row)}
@@ -812,8 +817,8 @@ async function handleBulkAssignProxy() {
           <div class="grid grid-cols-2 gap-3 text-caption-mono text-muted-foreground">
             <div>
               <p class="uppercase font-semibold text-[10px]">Status</p>
-              <Badge variant={getStatusVariant(row.status)} class="mt-1 text-caption-mono rounded-sm py-0.5">
-                {getStatusLabel(row.status)}
+              <Badge variant={getStatusVariant(effectiveConnectionStatus(row))} class="mt-1 text-caption-mono rounded-sm py-0.5">
+                {getStatusLabel(effectiveConnectionStatus(row))}
               </Badge>
             </div>
             <div>
