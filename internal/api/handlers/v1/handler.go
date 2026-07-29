@@ -2367,6 +2367,25 @@ func (h *Handler) persistCooldownScoped(connID string, det connstate.ErrorDetect
 	errCode := string(det.Category)
 	h.writeQueue.Enqueue("persistCooldownScoped", func(d *sql.DB) error {
 		now := time.Now().Unix()
+		// Quota exhaustion resets consecutive_ban_count so transient auth errors
+		// do not accumulate toward auto-disable when the real failure is quota.
+		if connstate.Status(statusVal) == connstate.StatusQuotaExhausted {
+			_, err := d.Exec(`
+UPDATE connections
+SET is_active = ?,
+    status = ?,
+    disabled_reason = ?,
+    cooldown_until = ?,
+    consecutive_ban_count = 0,
+    last_error = ?,
+    last_error_code = ?,
+    failure_count = failure_count + 1,
+    last_failure_at = ?,
+    updated_at = ?
+WHERE id = ?
+`, isActive, statusVal, disabledReason, cooldownUntil, errMsg, errCode, now, now, connID)
+			return err
+		}
 		_, err := d.Exec(`
 UPDATE connections
 SET is_active = ?,

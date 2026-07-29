@@ -129,3 +129,28 @@ func TestConnectionState_ResetQuota_KeepsDisabled(t *testing.T) {
 		t.Errorf("expected no affected models, got %v", affected)
 	}
 }
+
+func TestSetQuotaCooldown_ResetsBanCount(t *testing.T) {
+	cs := &ConnectionState{}
+	until := time.Now().Add(24 * time.Hour)
+
+	// Simulate auth errors incrementing BanCount.
+	cs.SetStatus(StatusDisabled, "auth_failed")
+	cs.SetStatus(StatusDisabled, "auth_failed")
+	cs.SetStatus(StatusDisabled, "auth_failed")
+	if cs.GetBanCount() != 3 {
+		t.Fatalf("expected BanCount=3, got %d", cs.GetBanCount())
+	}
+
+	// Quota exhaustion should reset BanCount.
+	cs.SetQuotaCooldown(until)
+	if cs.GetBanCount() != 0 {
+		t.Errorf("expected BanCount=0 after SetQuotaCooldown, got %d", cs.GetBanCount())
+	}
+	if cs.GetStatus() != StatusQuotaExhausted {
+		t.Errorf("expected StatusQuotaExhausted, got %s", cs.GetStatus())
+	}
+	if cs.CooldownUntil == nil {
+		t.Error("expected CooldownUntil to be set")
+	}
+}

@@ -186,14 +186,16 @@ func (cs *ConnectionState) SetCooldown(until time.Time) {
 // SetQuotaCooldown sets a quota-exhausted cooldown (midnight UTC recovery).
 // Unlike SetCooldown, it preserves StatusQuotaExhausted so the DB recovery
 // path in QuotaScheduler recognises it correctly. Quota exhaustion is recoverable
-// and intentionally does NOT increment BanCount, otherwise free-tier providers
-// would be auto-disabled after a few daily-quota hits.
+// and does NOT increment BanCount. It also resets any existing BanCount so that
+// transient auth errors do not accumulate toward auto-disable when the actual
+// failure mode is quota exhaustion.
 func (cs *ConnectionState) SetQuotaCooldown(until time.Time) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.CooldownUntil = &until
 	cs.Status = StatusQuotaExhausted
 	cs.FailCount++
+	cs.BanCount = 0
 }
 
 // IsInCooldown checks if the connection is in cooldown.
