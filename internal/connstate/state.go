@@ -22,7 +22,7 @@ type Status string
 const (
 	StatusUnknown        Status = "unknown"
 	StatusReady          Status = "ready"
-	StatusRateLimited    Status = "rate_limited"
+	StatusCooldown       Status = "cooldown"
 	StatusQuotaExhausted Status = "quota_exhausted"
 	StatusDisabled       Status = "disabled"
 	
@@ -38,7 +38,7 @@ func (s Status) IsEligible() bool {
 // reset to ready when a cooldown expires or a request succeeds.
 func (s Status) IsHealable() bool {
 	switch s {
-	case StatusRateLimited, StatusQuotaExhausted:
+	case StatusCooldown, StatusQuotaExhausted:
 		return true
 	}
 	return false
@@ -181,6 +181,19 @@ func (cs *ConnectionState) SetCooldown(until time.Time) {
 	defer cs.mu.Unlock()
 	cs.CooldownUntil = &until
 	cs.Status = StatusReady
+}
+
+// SetStatusCooldown sets the connection to the cooldown status with a
+// cooldown horizon. Used by rate-limit detection so the semantic
+// distinction from a ready+cooldown is preserved without incrementing
+// the ban count.
+func (cs *ConnectionState) SetStatusCooldown(err string, until time.Time) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.Status = StatusCooldown
+	cs.LastCheckAt = time.Now()
+	cs.LastError = err
+	cs.CooldownUntil = &until
 }
 
 // SetQuotaCooldown sets a quota-exhausted cooldown (midnight UTC recovery).

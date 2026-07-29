@@ -806,7 +806,7 @@ func seedConnectionsFromDB(db *sql.DB, store *connstate.Store) {
 		// If a cooldown window is still active, reflect it in-memory so
 		// getConnection() does not select the connection right after restart.
 		activeCooldown := cooldownUntil > 0 && now.Before(time.Unix(cooldownUntil, 0))
-		if !activeCooldown && (status == "rate_limited" || status == "quota_exhausted") {
+		if !activeCooldown && (status == "rate_limited" || status == "cooldown" || status == "quota_exhausted") {
 			// Cooldown has expired while we were down; treat connection as ready.
 			status = "ready"
 		}

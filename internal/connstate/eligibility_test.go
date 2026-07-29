@@ -176,3 +176,22 @@ func TestEligibility_ScheduleUpdateProvider_coalesces(t *testing.T) {
 		t.Fatalf("expected 2 provider-x entries after scheduled update, got %v", got)
 	}
 }
+
+func TestEligibility_CooldownStatusExcludedWhileActive(t *testing.T) {
+	store := NewStore()
+	future := time.Now().Add(time.Hour)
+	past := time.Now().Add(-time.Hour)
+	store.SeedConnection("conn-active", "test", string(StatusReady), 0)
+	store.Get("conn-active").SetStatusCooldown("rate limited", future)
+	store.SeedConnection("conn-expired", "test", string(StatusReady), 0)
+	store.Get("conn-expired").SetStatusCooldown("rate limited", past)
+	mgr := NewEligibilityManager(store)
+	mgr.RecomputeAll()
+	ids := mgr.GetByPrefix("test")
+	if len(ids) != 1 || ids[0] != "conn-expired" {
+		t.Fatalf("expected only expired cooldown connection, got %v", ids)
+	}
+	if mgr.IsEligible("conn-active") {
+		t.Fatal("active cooldown connection should not be eligible")
+	}
+}

@@ -136,7 +136,7 @@ func TestRecordTestFailure_RateLimit(t *testing.T) {
 	det := connstate.ErrorDetection{
 		Category:      connstate.ErrorRateLimit,
 		Message:       "Rate limit exceeded",
-		Status:        connstate.StatusRateLimited,
+		Status:        connstate.StatusCooldown,
 		CooldownUntil: &cooldown,
 	}
 	h.recordTestFailure("conn-1", det)
@@ -149,8 +149,8 @@ func TestRecordTestFailure_RateLimit(t *testing.T) {
 	if err := row.Scan(&status, &cooldownU, &lastError, &failureCount); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	if status != "rate_limited" {
-		t.Fatalf("status = %q, want rate_limited", status)
+	if status != "cooldown" {
+		t.Fatalf("status = %q, want cooldown", status)
 	}
 	if !cooldownU.Valid || cooldownU.Int64 == 0 {
 		t.Fatalf("cooldown_until not persisted: %+v", cooldownU)

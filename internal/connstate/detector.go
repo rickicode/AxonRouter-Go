@@ -169,7 +169,7 @@ func DetectError(ctx context.Context, statusCode int, body string, err error, pr
 	lower := strings.ToLower(msg)
 	switch cat {
 	case ErrorRateLimit:
-		det.Status = StatusRateLimited
+		det.Status = StatusCooldown
 		// Free-tier exhaustion is an account-wide quota event, not a per-minute
 		// rate limit. Reclassify before computing the cooldown. A provider Retry-After
 		// hint still takes precedence over the default 24h window.

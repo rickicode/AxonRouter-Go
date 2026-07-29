@@ -154,3 +154,46 @@ func TestSetQuotaCooldown_ResetsBanCount(t *testing.T) {
 		t.Error("expected CooldownUntil to be set")
 	}
 }
+
+func TestStatusHelpers_CooldownIsHealableAndNotTerminal(t *testing.T) {
+	if StatusCooldown.IsEligible() {
+		t.Error("StatusCooldown should not be eligible")
+	}
+	if !StatusCooldown.IsHealable() {
+		t.Error("StatusCooldown should be healable")
+	}
+	if StatusCooldown.IsRoutingTerminal() {
+		t.Error("StatusCooldown should not be routing terminal")
+	}
+}
+
+func TestSetStatusCooldown_PreservesStatusAndCooldown(t *testing.T) {
+	cs := &ConnectionState{}
+	until := time.Now().Add(time.Hour)
+	cs.SetStatusCooldown("rate limited", until)
+	if cs.GetStatus() != StatusCooldown {
+		t.Errorf("expected StatusCooldown, got %s", cs.GetStatus())
+	}
+	if !cs.IsInCooldown() {
+		t.Error("expected connection to be in cooldown")
+	}
+	if cs.LastError != "rate limited" {
+		t.Errorf("last error = %q, want rate limited", cs.LastError)
+	}
+}
+
+func TestResetQuota_HealsCooldownToReady(t *testing.T) {
+	cs := &ConnectionState{ID: "c1"}
+	until := time.Now().Add(time.Hour)
+	cs.SetStatusCooldown("rate limited", until)
+	updated, affected, err := cs.ResetQuota()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updated.GetStatus() != StatusReady {
+		t.Errorf("expected status ready, got %s", updated.GetStatus())
+	}
+	if len(affected) != 0 {
+		t.Errorf("expected no affected models, got %v", affected)
+	}
+}

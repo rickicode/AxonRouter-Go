@@ -14,7 +14,7 @@ func TestRecordFailure_ModelCooldown(t *testing.T) {
 	until := time.Now().Add(time.Minute)
 	det := ErrorDetection{
 		Category:      ErrorRateLimit,
-		Status:        StatusRateLimited,
+		Status:        StatusCooldown,
 		Scope:         "model",
 		ModelID:       "gpt-4o",
 		CooldownUntil: &until,
@@ -40,7 +40,7 @@ func TestRecordFailure_ConnectionCooldown(t *testing.T) {
 	until := time.Now().Add(time.Minute)
 	det := ErrorDetection{
 		Category:      ErrorRateLimit,
-		Status:        StatusRateLimited,
+		Status:        StatusCooldown,
 		Scope:         "connection",
 		CooldownUntil: &until,
 	}

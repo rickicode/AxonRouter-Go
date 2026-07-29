@@ -492,7 +492,7 @@ func TestPersistCooldown_WritesRealColumns(t *testing.T) {
 	det := connstate.ErrorDetection{
 		Category:      connstate.ErrorRateLimit,
 		Message:       "Rate limit exceeded",
-		Status:        connstate.StatusRateLimited,
+		Status:        connstate.StatusCooldown,
 		CooldownUntil: &cooldown,
 	}
 	h.persistCooldown("conn-1", det)
@@ -513,8 +513,8 @@ func TestPersistCooldown_WritesRealColumns(t *testing.T) {
 	if err := row.Scan(&status, &cooldownU, &lastErr, &lastErrCode, &failCount, &lastFail, &lastSucc); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	if status != string(connstate.StatusRateLimited) {
-		t.Fatalf("status = %q, want rate_limited", status)
+	if status != string(connstate.StatusCooldown) {
+		t.Fatalf("status = %q, want cooldown", status)
 	}
 	if !cooldownU.Valid || cooldownU.Int64 == 0 {
 		t.Fatalf("cooldown_until not persisted: %+v", cooldownU)
@@ -796,9 +796,9 @@ func TestTryPickConnection_HealsExpiredRateLimited(t *testing.T) {
 
 	cs := h.store.Get("conn-rl")
 	cs.SetCooldown(time.Now().Add(-time.Hour))
-	cs.SetStatus(connstate.StatusRateLimited, "")
-	if cs.GetStatus() != connstate.StatusRateLimited {
-		t.Fatalf("setup: status = %v, want rate_limited", cs.GetStatus())
+	cs.SetStatus(connstate.StatusCooldown, "")
+	if cs.GetStatus() != connstate.StatusCooldown {
+		t.Fatalf("setup: status = %v, want cooldown", cs.GetStatus())
 	}
 
 	picked, ok := h.tryPickConnection(context.Background(), cs, "rl", "gpt-4o", time.Now(), providercfg.DefaultRoutingMode)

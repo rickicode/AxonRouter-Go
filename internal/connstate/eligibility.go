@@ -66,11 +66,13 @@ func (e *EligibilityManager) Update(store *Store) {
 
 	store.RangeByConnID(func(connID string, cs *ConnectionState) bool {
 		status := cs.GetStatus()
-		// Exclude routing-terminal and non-eligible statuses, plus active cooldowns.
+		// Exclude routing-terminal statuses and non-eligible statuses,
+		// plus active cooldowns. A cooldown status with an expired horizon is
+		// eligible again and will be healed back to ready on the hot path.
 		if status.IsRoutingTerminal() {
 			return true
 		}
-		if status != StatusReady {
+		if status != StatusReady && status != StatusCooldown {
 			return true
 		}
 		if cs.IsInCooldown() {
@@ -127,7 +129,7 @@ func (e *EligibilityManager) UpdateProvider(provider string) {
 			if status.IsRoutingTerminal() {
 				return true
 			}
-			if status != StatusReady {
+			if status != StatusReady && status != StatusCooldown {
 				return true
 			}
 			if cs.IsInCooldown() {

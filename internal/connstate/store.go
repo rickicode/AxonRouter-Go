@@ -105,13 +105,15 @@ func (s *Store) RecordFailure(connID string, det ErrorDetection) {
 		} else {
 			cs.SetStatus(StatusDisabled, reason)
 		}
+	case det.Status == StatusCooldown && det.CooldownUntil != nil:
+		cs.SetStatusCooldown(reason, *det.CooldownUntil)
 	case det.Category == ErrorQuota && det.CooldownUntil != nil:
 		cs.SetQuotaCooldown(*det.CooldownUntil)
 	case det.CooldownUntil != nil:
 		cs.SetCooldown(*det.CooldownUntil)
 	case det.Category == ErrorRateLimit:
 		// Rate limit without explicit CooldownUntil: use default short cooldown
-		cs.SetCooldown(time.Now().Add(60 * time.Second))
+		cs.SetStatusCooldown(reason, time.Now().Add(60 * time.Second))
 	default:
 		cs.SetStatus(det.Status, reason)
 	}
@@ -190,7 +192,7 @@ func (s *Store) ClassifyProviderUnavailable(provider string) ErrorCategory {
 		total++
 		status := cs.GetStatus()
 		switch status {
-		case StatusQuotaExhausted, StatusRateLimited:
+		case StatusQuotaExhausted, StatusCooldown:
 			quota++
 		case StatusDisabled:
 			switch cs.DisabledReason {
@@ -223,8 +225,8 @@ func (s *Store) SeedConnection(connID, prefix, status string, priority int) {
 	// Build status first so the struct is complete before anyone can see it.
 	var st Status
 	switch status {
-	case "rate_limited":
-		st = StatusRateLimited
+	case "rate_limited", "cooldown":
+		st = StatusCooldown
 	case "quota_exhausted":
 		st = StatusQuotaExhausted
 	case "disabled":

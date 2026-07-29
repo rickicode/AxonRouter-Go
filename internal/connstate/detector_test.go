@@ -360,8 +360,8 @@ func TestDetectError_RateLimitExponentialBackoff(t *testing.T) {
 	if det1.Category != ErrorRateLimit {
 		t.Errorf("category=%v, want ErrorRateLimit", det1.Category)
 	}
-	if det1.Status != StatusRateLimited {
-		t.Errorf("status=%v, want StatusRateLimited", det1.Status)
+	if det1.Status != StatusCooldown {
+		t.Errorf("status=%v, want StatusCooldown", det1.Status)
 	}
 	want1 := time.Now().Add(1 * time.Second)
 	if det1.CooldownUntil.Before(want1.Add(-2*time.Second)) || det1.CooldownUntil.After(want1.Add(2*time.Second)) {
