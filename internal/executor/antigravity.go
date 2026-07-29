@@ -39,7 +39,32 @@ var antigravityStripFields = []string{
 
 // maxAntigravityOutputTokens is the hard ceiling on generationConfig.maxOutputTokens.
 // OmniRoute MAX_ANTIGRAVITY_OUTPUT_TOKENS (antigravity.ts:527).
-const maxAntigravityOutputTokens = 16384
+const maxAntigravityOutputTokens = 64000
+
+// antigravityOutputTokenCaps lowers the default cap for specific models that
+// support shorter output contexts. The default remains maxAntigravityOutputTokens.
+var antigravityOutputTokenCaps = map[string]int{
+"gemini-2.0-flash":       8192,
+"gemini-2.0-flash-lite":  8192,
+"gemini-2.5-flash":       16384,
+"gemini-2.5-flash-lite":  16384,
+}
+
+// maxAntigravityOutputTokensForModel returns the output-token cap for the given
+// model ID. It resolves aliases and returns maxAntigravityOutputTokens when no
+// specific cap is configured.
+func maxAntigravityOutputTokensForModel(modelID string) int {
+if modelID == "" {
+return maxAntigravityOutputTokens
+}
+if cap, ok := antigravityOutputTokenCaps[modelID]; ok {
+return cap
+}
+if cap, ok := antigravityOutputTokenCaps[resolveAntigravityModelID(modelID, false)]; ok {
+return cap
+}
+return maxAntigravityOutputTokens
+}
 
 // defaultSafetySettings turns off all Google content safety filters to prevent
 // false-positive blocks on benign technical prompts.
@@ -190,7 +215,8 @@ func NewAntigravityExecutor(base *BaseExecutor) *AntigravityExecutor {
 }
 
 // sanitizeRequest strips fields Google rejects and applies generation defaults.
-func sanitizeRequest(inner map[string]any) {
+// modelID is used to apply model-specific output-token caps.
+func sanitizeRequest(inner map[string]any, modelID string) {
 	// Strip thinking/reasoning and Anthropic-only fields (OmniRoute destructuring)
 	for _, f := range antigravityStripFields {
 		delete(inner, f)
@@ -198,11 +224,13 @@ func sanitizeRequest(inner map[string]any) {
 
 	// Cap maxOutputTokens (OmniRoute applyAntigravityGenerationDefaults)
 	if gc, ok := inner["generationConfig"].(map[string]any); ok {
-		if v, ok := toFloat64(gc["maxOutputTokens"]); ok && v > maxAntigravityOutputTokens {
-			gc["maxOutputTokens"] = maxAntigravityOutputTokens
+		cap := maxAntigravityOutputTokensForModel(modelID)
+		if v, ok := toFloat64(gc["maxOutputTokens"]); ok && v > float64(cap) {
+			gc["maxOutputTokens"] = cap
 			logging.Logger.Warn("antigravity: capping maxOutputTokens",
 				"requested", v,
-				"capped_to", maxAntigravityOutputTokens,
+				"capped_to", cap,
+				"model", modelID,
 			)
 		}
 	}
@@ -538,7 +566,7 @@ func (e *AntigravityExecutor) buildEnvelope(ctx context.Context, req *Request, u
 
 	normalizeAntigravityContents(inner)
 	injectToolConfig(inner)
-	sanitizeRequest(inner)
+	sanitizeRequest(inner, upstreamModelID)
 
 	// CLIProxyAPI removes per-request safety settings from the inner request;
 	// the envelope-level safety handling is implied by the same defaults.
