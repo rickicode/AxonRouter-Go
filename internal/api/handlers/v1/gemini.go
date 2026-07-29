@@ -357,6 +357,11 @@ attemptLoop:
 		}
 		if err != nil {
 			if attempt == 0 {
+				if cat := h.classifyProviderUnavailableForModel(provider, modelName); cat != connstate.ErrorUnknown {
+					msg, statusCode, errType := buildFailoverErrorResponse(string(cat), nil, modelName)
+					c.JSON(statusCode, geminiError(errType, msg))
+					return
+				}
 				c.JSON(http.StatusServiceUnavailable, geminiError("server_error", "no available connection"))
 				return
 			}

@@ -61,3 +61,21 @@ func TestSessionKeyFormat(t *testing.T) {
 		t.Fatalf("SessionKey = %q, want %q", key, want)
 	}
 }
+
+
+func TestSessionCache_Delete(t *testing.T) {
+	sc := NewSessionCacheWithTTL(10 * time.Minute)
+	defer sc.Stop()
+
+	key := SessionKey("openai", "sess-delete", "gpt-4o")
+	sc.Put(key, "conn-d")
+	if _, ok := sc.Get(key); !ok {
+		t.Fatal("expected cache hit before Delete")
+	}
+
+	sc.Delete(key)
+	if _, ok := sc.Get(key); ok {
+		t.Fatal("expected cache miss after Delete")
+	}
+}
+

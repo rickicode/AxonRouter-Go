@@ -519,6 +519,73 @@ func (h *Handler) resolveExecutor(provider, model string) (executor.Executor, ex
 
 const pickMaxAttempts = 10
 
+// classifyProviderUnavailableForModel returns a specific error category when
+// every non-disabled connection for a provider is unavailable for the requested
+// model. Unlike Store.ClassifyProviderUnavailable, it also considers model-scope
+// exhaustion cache entries so a provider whose connections are all exhausted for
+// this model (but still healthy for other models) surfaces a 429 instead of a
+// generic 503.
+func (h *Handler) classifyProviderUnavailableForModel(provider, modelName string) connstate.ErrorCategory {
+	provider = provideralias.ResolveAlias(provider)
+	if h.store == nil {
+		return connstate.ErrorUnknown
+	}
+	var (
+		total   int
+		quota   int
+		auth    int
+		balance int
+	)
+	now := time.Now()
+	scope := connstate.ModelScope(provider, modelName)
+	h.store.Range(func(connID string, cs *connstate.ConnectionState) bool {
+		if cs.Prefix != provider {
+			return true
+		}
+		total++
+		switch cs.GetStatus() {
+		case connstate.StatusQuotaExhausted, connstate.StatusCooldown, connstate.StatusRateLimited:
+			quota++
+		case connstate.StatusDisabled:
+			switch cs.DisabledReason {
+			case "auth_failed", "suspended":
+				auth++
+			case "balance_empty":
+				balance++
+			}
+		default:
+			if modelName != "" && h.exhaustion.IsExhaustedScopeAt(connID, scope, now) {
+				quota++
+			}
+		}
+		return true
+	})
+	if total == 0 {
+		return connstate.ErrorUnknown
+	}
+	switch {
+	case quota == total:
+		return connstate.ErrorQuota
+	case auth == total:
+		return connstate.ErrorAuth
+	case balance == total:
+		return connstate.ErrorBalanceEmpty
+	}
+	return connstate.ErrorUnknown
+}
+
+// clearAffinitySession removes the cached affinity mapping for a
+// provider/session/model so the next request does not immediately reuse a
+// connection that just failed.
+func (h *Handler) clearAffinitySession(provider, sessionID, modelName string) {
+	if h.sessions == nil || sessionID == "" {
+		return
+	}
+	h.sessions.Delete(connstate.SessionKey(provideralias.ResolveAlias(provider), sessionID, modelName))
+}
+
+
+
 // getConnection returns an active connection for a provider using the precomputed
 // eligibility snapshot. The hot path samples up to pickMaxAttempts candidates
 // so routing cost stays bounded regardless of how many eligible connections a

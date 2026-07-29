@@ -93,6 +93,11 @@ attemptLoop:
 		}
 		if err != nil {
 			if attempt == 0 {
+				if cat := h.classifyProviderUnavailableForModel(provider, modelName); cat != connstate.ErrorUnknown {
+					msg, statusCode, errType := buildFailoverErrorResponse(string(cat), nil, modelName)
+					c.JSON(statusCode, gin.H{"error": gin.H{"message": msg, "type": errType}})
+					return
+				}
 				c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
 				return
 			}
@@ -139,6 +144,7 @@ attemptLoop:
 				}
 			}
 			lastFailedConnID = conn.ID
+			h.clearAffinitySession(provider, sessionID, modelName)
 			retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, false)
 			lastErr = err
 			lastErrCategory = cat

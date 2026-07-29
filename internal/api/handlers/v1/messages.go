@@ -141,6 +141,11 @@ attemptLoop:
 		}
 		if err != nil {
 			if attempt == 0 {
+				if cat := h.classifyProviderUnavailableForModel(provider, modelName); cat != connstate.ErrorUnknown {
+					msg, statusCode, errType := buildFailoverErrorResponse(string(cat), nil, modelName)
+					c.JSON(statusCode, claudeError(errType, msg))
+					return
+				}
 				c.JSON(http.StatusServiceUnavailable, claudeError("server_error", "no available connection"))
 				return
 			}
@@ -184,6 +189,7 @@ attemptLoop:
 			lastErr = err
 			lastErrCategory = cat
 			lastFailedConnID = conn.ID
+			h.clearAffinitySession(provider, sessionID, modelName)
 			if !retry {
 				break attemptLoop
 			}
