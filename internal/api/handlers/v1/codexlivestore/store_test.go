@@ -49,13 +49,7 @@ func TestStoreMemory_GetPutDelete(t *testing.T) {
 func TestStoreMemory_TTLExpiration(t *testing.T) {
 	s := Memory(50 * time.Millisecond)
 	ctx := context.Background()
-	sess := Session{
-		CallID:    "call-ttl",
-		ConnID:    "c1",
-		ConnToken: "t1",
-		Model:     "cx/gpt-live-1-codex",
-		ExpiresAt: time.Now().Add(50 * time.Millisecond),
-	}
+	sess := Session{CallID: "call-ttl", ConnID: "c1", ConnToken: "t1", Model: "cx/gpt-live-1-codex"}
 	if err := s.Put(ctx, sess); err != nil {
 		t.Fatalf("put: %v", err)
 	}
@@ -69,6 +63,71 @@ func TestStoreMemory_TTLExpiration(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("expected session expired")
+	}
+}
+
+func TestStoreMemory_TTLBoundsCallerExpiresAt(t *testing.T) {
+	s := Memory(50 * time.Millisecond)
+	ctx := context.Background()
+	sess := Session{
+		CallID:    "call-bounded",
+		ConnID:    "c1",
+		ConnToken: "t1",
+		Model:     "cx/gpt-live-1-codex",
+		ExpiresAt: time.Now().Add(time.Hour),
+	}
+	if err := s.Put(ctx, sess); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if _, ok, _ := s.Get(ctx, "call-bounded"); !ok {
+		t.Fatal("expected session before configured TTL")
+	}
+	time.Sleep(100 * time.Millisecond)
+	_, ok, err := s.Get(ctx, "call-bounded")
+	if err != nil {
+		t.Fatalf("get error: %v", err)
+	}
+	if ok {
+		t.Fatal("expected session expired at configured TTL")
+	}
+}
+
+func TestStoreMemory_ConfiguredTTLOverridesShortExpiresAt(t *testing.T) {
+	s := Memory(time.Hour)
+	ctx := context.Background()
+	sess := Session{
+		CallID:    "call-override",
+		ConnID:    "c1",
+		ConnToken: "t1",
+		Model:     "cx/gpt-live-1-codex",
+		ExpiresAt: time.Now().Add(50 * time.Millisecond),
+	}
+	if err := s.Put(ctx, sess); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	_, ok, err := s.Get(ctx, "call-override")
+	if err != nil {
+		t.Fatalf("get error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected session still alive with configured TTL")
+	}
+}
+
+func TestStoreMemory_Cleanup(t *testing.T) {
+	s := Memory(50 * time.Millisecond)
+	ctx := context.Background()
+	for _, id := range []string{"a", "b"} {
+		sess := Session{CallID: id, ConnID: "c1", ConnToken: "t1", Model: "cx/gpt-live-1-codex"}
+		if err := s.Put(ctx, sess); err != nil {
+			t.Fatalf("put %s: %v", id, err)
+		}
+	}
+	time.Sleep(100 * time.Millisecond)
+	removed := s.(*memoryStore).Cleanup(ctx)
+	if removed != 2 {
+		t.Fatalf("cleanup removed = %d, want 2", removed)
 	}
 }
 

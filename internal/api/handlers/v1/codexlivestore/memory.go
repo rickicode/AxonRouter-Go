@@ -18,20 +18,14 @@ func Memory(ttl time.Duration) Store {
 	}
 	return &memoryStore{
 		ttl:      ttl,
-		sessions: make(map[string]*entry),
+		sessions: make(map[string]Session),
 	}
-}
-
-type entry struct {
-	sess  Session
-	ttl   time.Duration
-	added time.Time
 }
 
 type memoryStore struct {
 	mu       sync.RWMutex
 	ttl      time.Duration
-	sessions map[string]*entry
+	sessions map[string]Session
 }
 
 func (m *memoryStore) Get(ctx context.Context, callID string) (Session, bool, error) {
@@ -40,29 +34,28 @@ func (m *memoryStore) Get(ctx context.Context, callID string) (Session, bool, er
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.evict(time.Now())
-	e, ok := m.sessions[callID]
+	now := time.Now()
+	m.evict(now)
+	sess, ok := m.sessions[callID]
 	if !ok {
 		return Session{}, false, nil
 	}
-	if isExpired(time.Now(), e.sess) {
-		delete(m.sessions, callID)
-		return Session{}, false, nil
-	}
-	return e.sess, true, nil
+	return sess, true, nil
 }
 
 func (m *memoryStore) Put(ctx context.Context, sess Session) error {
 	if sess.CallID == "" {
 		return ErrInvalidCallID
 	}
-	if sess.ExpiresAt.IsZero() {
-		sess.ExpiresAt = time.Now().Add(m.ttl)
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.evict(time.Now())
-	m.sessions[sess.CallID] = &entry{sess: sess, ttl: m.ttl, added: time.Now()}
+	now := time.Now()
+	m.evict(now)
+	sess.ExpiresAt = now.Add(m.ttl)
+	if sess.CreatedAt.IsZero() {
+		sess.CreatedAt = now
+	}
+	m.sessions[sess.CallID] = sess
 	return nil
 }
 
@@ -87,10 +80,8 @@ func (m *memoryStore) Cleanup(ctx context.Context) int {
 
 func (m *memoryStore) evict(now time.Time) int {
 	removed := 0
-	for id, e := range m.sessions {
-		if isExpired(now, e.sess) || time.Since(e.added) > e.ttl*2 {
-			// Be defensive: drop anything that's expired or has lived
-			// more than twice its TTL (protects against clock skew).
+	for id, sess := range m.sessions {
+		if isExpired(now, sess) {
 			delete(m.sessions, id)
 			removed++
 		}
