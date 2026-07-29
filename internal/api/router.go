@@ -83,6 +83,7 @@ type Router struct {
 	lifecycleManager      *background.LifecycleManager
 	rateLimitProber       *background.RateLimitProber
 	mcpHandler            *mcp.Handler
+	mcpAPI                *mcp.API
 
 	// versionChecker polls GitHub Releases for update notifications.
 	versionChecker *version.Checker
@@ -239,6 +240,7 @@ func New(cfg Config) *Router {
 	restartH := admin.NewRestartHandler()
 	consoleLogsH := admin.NewConsoleLogsHandler()
 	mcpH := mcp.NewHandler(cfg.DB)
+	mcpAPI := mcp.NewAPI()
 	proxyPoolH := admin.NewProxyPoolHandler(cfg.DB, proxyHealth, proxyResolver, writeQueue)
 	proxyGroupH := admin.NewProxyGroupHandler(cfg.DB, proxyResolver)
 	proxyDeployH := admin.NewProxyDeployHandler(cfg.DB, proxyHealth, proxyResolver)
@@ -557,6 +559,11 @@ func New(cfg Config) *Router {
 
 	registerAdminRoutes(adminGroup)
 
+	// ---- /mcp routes (API key bearer tokens) ----
+	mcpGroup := engine.Group("/mcp")
+	mcpGroup.Use(middleware.Auth(cfg.DB, authCache))
+	mcpAPI.RegisterRoutes(mcpGroup)
+
 	// ---- /admin/api/v1 routes (master key protected) ----
 	masterGroup := engine.Group("/admin/api/v1")
 	masterGroup.Use(middleware.MasterAuth(km))
@@ -608,6 +615,7 @@ func New(cfg Config) *Router {
 		quotaScheduler:        quotaScheduler,
 		usageFlush:            usageFlush,
 		mcpHandler:            mcpH,
+		mcpAPI:                mcpAPI,
 		cleanup:               cleanup,
 		lifecycleManager:      lifecycleManager,
 		tokenRefreshScheduler: tokenRefreshScheduler,
