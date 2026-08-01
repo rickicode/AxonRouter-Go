@@ -231,7 +231,7 @@ func (s *Store) SeedConnection(connID, prefix, status string, priority int) {
 	case "disabled":
 		st = StatusDisabled
 	
-case "ready":
+	case "ready":
 		st = StatusReady
 	default:
 		st = StatusUnknown
