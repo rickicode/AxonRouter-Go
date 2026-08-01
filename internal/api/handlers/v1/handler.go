@@ -544,7 +544,7 @@ func (h *Handler) classifyProviderUnavailableForModel(provider, modelName string
 		}
 		total++
 		switch cs.GetStatus() {
-		case connstate.StatusQuotaExhausted, connstate.StatusCooldown, connstate.StatusRateLimited:
+		case connstate.StatusQuotaExhausted, connstate.StatusRateLimited:
 			quota++
 		case connstate.StatusDisabled:
 			switch cs.DisabledReason {
@@ -2413,8 +2413,10 @@ func (h *Handler) persistCooldownScoped(connID string, det connstate.ErrorDetect
 		status = string(connstate.StatusQuotaExhausted)
 	}
 	statusVal := status
+
+
 	// Only persist terminal failures or cooldown-bearing errors. Transient errors
-	// without a cooldown are left for the scheduler to heal.
+	// without a cooldown (e.g. 5xx) are left for the scheduler to heal.
 	if det.CooldownUntil == nil && !connstate.Status(statusVal).IsRoutingTerminal() {
 		return
 	}
@@ -2510,6 +2512,7 @@ func (h *Handler) persistCooldown(connID string, det connstate.ErrorDetection) {
 		status = string(connstate.StatusQuotaExhausted)
 	}
 	statusVal := status
+
 	cooldownUntil := det.CooldownUntil.Unix()
 	errMsg := det.Message
 	errCode := string(det.Category)

@@ -105,6 +105,7 @@ func (s *Store) RecordFailure(connID string, det ErrorDetection) {
 		} else {
 			cs.SetStatus(StatusDisabled, reason)
 		}
+
 	case det.Category == ErrorQuota && det.CooldownUntil != nil:
 		cs.SetQuotaCooldown(*det.CooldownUntil)
 	case det.CooldownUntil != nil:
