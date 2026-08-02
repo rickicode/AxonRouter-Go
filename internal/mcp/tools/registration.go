@@ -9,19 +9,15 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/mcp/server"
 )
 
-// toolRegistry holds the registered tools.
 var toolRegistry = make(map[string]ToolHandler)
 
-// ToolHandler is the function signature for MCP tools.
 type ToolHandler func(ctx context.Context, args json.RawMessage) (*protocol.ToolResult, error)
 
-// GetToolHandler retrieves a registered tool handler.
 func GetToolHandler(name string) (ToolHandler, bool) {
 	handler, ok := toolRegistry[name]
 	return handler, ok
 }
 
-// RegisterWebSearchTool registers the axonrouter_web_search tool.
 func RegisterWebSearchTool(srv *server.Server) {
 	inputSchema := `{
 		"type": "object",
@@ -47,7 +43,7 @@ func RegisterWebSearchTool(srv *server.Server) {
 		},
 		"required": ["query"]
 	}`
-	
+
 	handler := func(ctx context.Context, args json.RawMessage) (*protocol.ToolResult, error) {
 		var params struct {
 			Query      string `json:"query"`
@@ -55,7 +51,7 @@ func RegisterWebSearchTool(srv *server.Server) {
 			Provider   string `json:"provider,omitempty"`
 			SearchType string `json:"search_type,omitempty"`
 		}
-		
+
 		if err := json.Unmarshal(args, &params); err != nil {
 			return &protocol.ToolResult{
 				Content: []protocol.ToolContent{
@@ -67,8 +63,7 @@ func RegisterWebSearchTool(srv *server.Server) {
 				IsError: true,
 			}, nil
 		}
-		
-		// Validate required parameters
+
 		if params.Query == "" {
 			return &protocol.ToolResult{
 				Content: []protocol.ToolContent{
@@ -80,16 +75,14 @@ func RegisterWebSearchTool(srv *server.Server) {
 				IsError: true,
 			}, nil
 		}
-		
-		// Use default values for optional parameters
+
 		if params.MaxResults <= 0 {
 			params.MaxResults = 10
 		}
 		if params.SearchType == "" {
 			params.SearchType = "web"
 		}
-		
-		// Call the search service
+
 		results, err := CallSearch(ctx, "", params.Query, params.MaxResults, params.Provider, params.SearchType)
 		if err != nil {
 			return &protocol.ToolResult{
@@ -102,10 +95,10 @@ func RegisterWebSearchTool(srv *server.Server) {
 				IsError: true,
 			}, nil
 		}
-		
+
 		return BuildSearchResponse(results), nil
 	}
-	
+
 	srv.RegisterTool(protocol.Tool{
 		Name:        "axonrouter_web_search",
 		Description: "Perform web search using the AxonRouter internal search service",
@@ -113,7 +106,108 @@ func RegisterWebSearchTool(srv *server.Server) {
 	}, handler)
 }
 
-// GetAllRegisteredTools returns a list of all registered tools with their schemas.
+func RegisterModelListTool(srv *server.Server) {
+	inputSchema := `{
+		"type": "object",
+		"properties": {
+			"provider": {
+				"type": "string",
+				"description": "Optional provider filter (e.g., 'claude', 'gemini', 'codex-pro')"
+			}
+		}
+	}`
+
+	handler := func(ctx context.Context, args json.RawMessage) (*protocol.ToolResult, error) {
+		var params struct {
+			Provider string `json:"provider,omitempty"`
+		}
+
+		if err := json.Unmarshal(args, &params); err != nil {
+			return &protocol.ToolResult{
+				Content: []protocol.ToolContent{
+					{
+						Type:  "text",
+						Text:  fmt.Sprintf("Failed to parse arguments: %v", err),
+					},
+				},
+				IsError: true,
+			}, nil
+		}
+
+		models, err := CallModelList(ctx, params.Provider)
+		if err != nil {
+			return &protocol.ToolResult{
+				Content: []protocol.ToolContent{
+					{
+						Type:  "text",
+						Text:  fmt.Sprintf("Failed to list models: %v", err),
+					},
+				},
+				IsError: true,
+			}, nil
+		}
+
+		return BuildModelListResponse(models), nil
+	}
+
+	srv.RegisterTool(protocol.Tool{
+		Name:        "axonrouter_model_list",
+		Description: "List available models from the AxonRouter model catalog",
+		InputSchema: []byte(inputSchema),
+	}, handler)
+}
+
+func RegisterQuotaStatusTool(srv *server.Server) {
+	inputSchema := `{
+		"type": "object",
+		"properties": {
+			"provider": {
+				"type": "string",
+				"description": "Optional provider filter"
+			}
+		}
+	}`
+
+	handler := func(ctx context.Context, args json.RawMessage) (*protocol.ToolResult, error) {
+		var params struct {
+			Provider string `json:"provider,omitempty"`
+		}
+
+		if err := json.Unmarshal(args, &params); err != nil {
+			return &protocol.ToolResult{
+				Content: []protocol.ToolContent{
+					{
+						Type:  "text",
+						Text:  fmt.Sprintf("Failed to parse arguments: %v", err),
+					},
+				},
+				IsError: true,
+			}, nil
+		}
+
+		statuses, err := CallQuotaStatus(ctx, params.Provider)
+		if err != nil {
+			return &protocol.ToolResult{
+				Content: []protocol.ToolContent{
+					{
+						Type:  "text",
+						Text:  fmt.Sprintf("Failed to get quota status: %v", err),
+					},
+				},
+				IsError: true,
+			}, nil
+		}
+
+		return BuildQuotaStatusResponse(statuses), nil
+	}
+
+	srv.RegisterTool(protocol.Tool{
+		Name:        "axonrouter_quota_status",
+		Description: "Get quota and cooldown status for providers",
+		InputSchema: []byte(inputSchema),
+	}, handler)
+}
+
 func GetAllRegisteredTools() []protocol.Tool {
 	var tools []protocol.Tool
 	for name := range toolRegistry {
