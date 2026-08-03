@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.26] - 2026-08-03
+
 ### Added
 - **OpenCode auto-sync** — `oc-zen` and `oc-go` providers now automatically sync their model lists from upstream endpoints every 24 hours, matching the existing behavior of the `oc` (free) provider. Previously these providers only used the static embedded model list.
 

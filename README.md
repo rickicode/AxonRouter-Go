@@ -436,10 +436,13 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.25
+### What's New in v0.3.26
+
+### Added
+- **OpenCode auto-sync** — `oc-zen` and `oc-go` providers now automatically sync their model lists from upstream endpoints every 24 hours, matching the existing behavior of the `oc` (free) provider. Previously these providers only used the static embedded model list.
 
 ### Fixed
-- **Cloudflare free-tier daily quota exhaustion** — Cloudflare accounts that hit the daily free neuron allocation are now locked out of the routing pool until the next UTC midnight instead of the generic 30-minute quota cooldown. Also fixes `quota_exhausted` in-memory state to use `SetQuotaCooldown`, preventing free-tier accounts from being auto-disabled after repeated daily quota hits.
+- **Failover routing hardening** — all request paths (chat, messages, responses, responses/compact, gemini) now exclude the connection that just failed from the next `getConnection` attempt, preventing the same exhausted account from being retried while the eligibility snapshot rebuilds. Affinity routing also honors this exclusion and the affinity cache is cleared on failover. Provider-unavailability classification is now model-aware so model-scope exhaustion surfaces a 429 instead of a generic 503. The emergency fallback also skips `quota_exhausted` connections whose daily cooldown has no benefit from retrying.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
