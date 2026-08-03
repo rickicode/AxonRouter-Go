@@ -60,13 +60,13 @@ let poolUrl = $state('');
 let poolUsername = $state('');
 let poolPassword = $state('');
 let poolType = $state('http');
-let poolNoProxy = $state('');
+let poolNoProxy = $state('localhost,127.0.0.1');
 let createPoolLoading = $state(false);
 
 // Bulk import form
 let bulkText = $state('');
 let bulkType = $state('http');
-let bulkNoProxy = $state('');
+let bulkNoProxy = $state('localhost,127.0.0.1');
 let bulkActive = $state(true);
 let bulkLoading = $state(false);
 // .txt upload + chunked send (keeps RAM bounded, mirrors provider bulk import).
@@ -357,7 +357,7 @@ async function handleCreatePool() {
 		await proxyPoolsApi.create(payload);
 		toast.success('Proxy pool created');
 		showAddPool = false;
-		poolName = ''; poolUrl = ''; poolUsername = ''; poolPassword = ''; poolNoProxy = '';
+		poolName = ''; poolUrl = ''; poolUsername = ''; poolPassword = ''; poolNoProxy = 'localhost,127.0.0.1';
 		poolPage = 1;
 		await loadAll(true);
 	} catch (err) { toast.error(err instanceof Error ? err.message : 'Unknown error'); }
@@ -370,11 +370,11 @@ function resetAddPoolModal(tab: 'single' | 'bulk') {
   poolUrl = '';
   poolUsername = '';
   poolPassword = '';
-  poolNoProxy = '';
+  poolNoProxy = 'localhost,127.0.0.1';
   poolType = 'http';
   bulkText = '';
   bulkType = 'http';
-  bulkNoProxy = '';
+  bulkNoProxy = 'localhost,127.0.0.1';
   bulkActive = true;
 }
 
