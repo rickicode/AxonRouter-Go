@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Developer role compatibility** — auto-convert `developer` role to `system` for non-OpenAI providers (DeepSeek, Groq, etc.) since `developer` is OpenAI's Responses-API rename that other providers reject.
+- **Proxy pool cascade delete** — connections are now hard-deleted when their proxy pool is removed, instead of just being soft-deleted.
+- **Bulk import list refresh** — proxy pool list now refreshes properly after bulk import; skipped items (duplicates/unhealthy) no longer counted as errors.
+- **Default noProxy** — both single and bulk proxy add now default to `localhost,127.0.0.1`.
+- **CI build order** — frontend is now built before lint to fix `go embed` check failure.
+
 ## [0.3.26] - 2026-08-03
 
 ### Added
