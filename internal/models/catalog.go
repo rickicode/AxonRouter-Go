@@ -22,7 +22,7 @@ var embeddedModelsJSON []byte
 
 const (
 	refreshInterval        = 3 * time.Hour
-	providerSyncInterval   = 24 * time.Hour
+	providerSyncInterval   = 1 * time.Hour // Reduced from 24h for more frequent model updates
 	fetchTimeout           = 15 * time.Second
 	cfDiscoveryTTL         = 5 * time.Minute
 	openRouterDiscoveryTTL = 5 * time.Minute

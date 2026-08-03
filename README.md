@@ -436,14 +436,13 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.27
+### What's New in v0.3.28
 
-### Fixed
-- **Developer role compatibility** — auto-convert `developer` role to `system` for non-OpenAI providers (DeepSeek, Groq, etc.) since `developer` is OpenAI's Responses-API rename that other providers reject.
-- **Proxy pool cascade delete** — connections are now hard-deleted when their proxy pool is removed, instead of just being soft-deleted.
-- **Bulk import list refresh** — proxy pool list now refreshes properly after bulk import; skipped items (duplicates/unhealthy) no longer counted as errors.
-- **Default noProxy** — both single and bulk proxy add now default to `localhost,127.0.0.1`.
-- **CI build order** — frontend is now built before lint to fix `go embed` check failure.
+### Changed
+- **Faster model sync** — reduced provider model sync interval from 24 hours to 1 hour for more frequent updates, especially for OpenCode providers whose models change frequently.
+
+### Added
+- **Manual model sync button** — added a "Sync models" button to the Providers page that triggers an immediate sync of all provider models from upstream endpoints. Shows a loading spinner and success/error toast notifications.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
