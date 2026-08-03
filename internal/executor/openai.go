@@ -375,6 +375,7 @@ func (e *OpenAIExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 	body := req.Body
 	// Ensure stream is false
 	body = JSONSet(body, "stream", false)
+	body = normalizeDeveloperRoles(body)
 
 	headers := map[string]string{
 		"Content-Type": "application/json",
@@ -440,6 +441,7 @@ func (e *OpenAIExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 	body := req.Body
 	// Ensure stream is true
 	body = JSONSet(body, "stream", true)
+	body = normalizeDeveloperRoles(body)
 
 	headers := map[string]string{
 		"Content-Type":  "application/json",
@@ -627,4 +629,32 @@ func (e *OpenAIExecutor) ResponsesCompact(ctx context.Context, req *Request) (*R
 	}
 
 	return resp, nil
+}
+
+// normalizeDeveloperRoles converts all "developer" role messages to "system"
+// using efficient gjson/sjson iteration (no full JSON unmarshal). This is
+// needed because most non-OpenAI providers reject the "developer" role.
+func normalizeDeveloperRoles(body []byte) []byte {
+	messages := gjson.GetBytes(body, "messages")
+	if !messages.Exists() || !messages.IsArray() {
+		return body
+	}
+	hasDeveloper := false
+	messages.ForEach(func(_, msg gjson.Result) bool {
+		if msg.Get("role").String() == "developer" {
+			hasDeveloper = true
+			return false // stop iteration
+		}
+		return true
+	})
+	if !hasDeveloper {
+		return body
+	}
+	for i, msg := range messages.Array() {
+		if msg.Get("role").String() == "developer" {
+			path := fmt.Sprintf("messages.%d.role", i)
+			body, _ = sjson.SetBytes(body, path, "system")
+		}
+	}
+	return body
 }

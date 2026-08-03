@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
+	"github.com/tidwall/gjson"
 )
 
 func TestOpenAIEndpointNormalizesBaseURL(t *testing.T) {
@@ -371,5 +372,55 @@ func TestOpenAIExecutor_Images(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, resp.StatusCode)
+	}
+}
+
+func TestNormalizeDeveloperRoles(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		wantRole string
+	}{
+		{
+			name:     "converts developer to system",
+			body:     `{"model":"deepseek-chat","messages":[{"role":"developer","content":"instructions"},{"role":"user","content":"hi"}]}`,
+			wantRole: "system",
+		},
+		{
+			name:     "no-op when no developer role",
+			body:     `{"model":"deepseek-chat","messages":[{"role":"system","content":"instructions"},{"role":"user","content":"hi"}]}`,
+			wantRole: "system",
+		},
+		{
+			name:     "converts multiple developer messages",
+			body:     `{"model":"deepseek-chat","messages":[{"role":"developer","content":"a"},{"role":"developer","content":"b"},{"role":"user","content":"hi"}]}`,
+			wantRole: "system",
+		},
+		{
+			name:     "no-op when no messages field",
+			body:     `{"model":"deepseek-chat"}`,
+			wantRole: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := normalizeDeveloperRoles([]byte(tt.body))
+			msgs := gjson.GetBytes(out, "messages").Array()
+			if tt.wantRole == "" {
+				if len(msgs) != 0 {
+					t.Errorf("expected no messages, got %d", len(msgs))
+				}
+				return
+			}
+			for i, msg := range msgs {
+				role := msg.Get("role").String()
+				if role == "developer" {
+					t.Errorf("message[%d].role still developer after conversion", i)
+				}
+			}
+			if msgs[0].Get("role").String() != tt.wantRole {
+				t.Errorf("first message role = %s, want %s", msgs[0].Get("role").String(), tt.wantRole)
+			}
+		})
 	}
 }
