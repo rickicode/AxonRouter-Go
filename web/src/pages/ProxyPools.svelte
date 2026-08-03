@@ -159,7 +159,9 @@ async function handleBulkImportChunked() {
         for (const d of res.details ?? []) {
           if (d.status === 'created') {
             bulkCheckSuccess++;
-          } else if (d.status === 'error') {
+          } else if (d.status === 'skipped') {
+            // Skipped items (duplicates, unhealthy) are counted but not errors
+          } else {
             bulkCheckFailed++;
             bulkCheckErrors.push({ index: d.index, url: d.url ?? '', reason: d.reason ?? '' });
           }
@@ -184,6 +186,8 @@ async function handleBulkImportChunked() {
       uploadedPoolFile = '';
       poolParseWarnings = [];
       poolPage = 1;
+      // Small delay to ensure DB writes are committed before refreshing
+      await new Promise(r => setTimeout(r, 200));
       await loadAll(true);
       if (bulkCheckFailed > 0) {
         toast.error('Import finished with failures', { description: `${bulkCheckSuccess} added, ${bulkCheckFailed} failed, ${bulkCheckProcessed} processed` });
