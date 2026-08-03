@@ -1041,7 +1041,7 @@ func (h *ProxyPoolHandler) deletePoolCascadeTx(tx *sql.Tx, poolID string) error 
 		groupRows.Close()
 	}
 
-	// 2. Soft-delete the collected connections (skip the default direct oc connection).
+	// 2. Hard-delete the collected connections (skip the default direct oc connection).
 	for id := range connIDs {
 		var psd string
 		if tx.QueryRow("SELECT COALESCE(provider_specific_data,'') FROM connections WHERE id = ?", id).Scan(&psd) == nil {
@@ -1049,7 +1049,7 @@ func (h *ProxyPoolHandler) deletePoolCascadeTx(tx *sql.Tx, poolID string) error 
 				continue
 			}
 		}
-		if _, e := tx.Exec("UPDATE connections SET is_active = 0, updated_at = ? WHERE id = ?", now, id); e != nil {
+		if _, e := tx.Exec("DELETE FROM connections WHERE id = ?", id); e != nil {
 			return e
 		}
 	}
