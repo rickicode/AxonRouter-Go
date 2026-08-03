@@ -13,13 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.28] - 2026-08-03
-
 ### Changed
 - **Faster model sync** — reduced provider model sync interval from 24 hours to 1 hour for more frequent updates, especially for OpenCode providers whose models change frequently.
 
 ### Added
 - **Manual model sync button** — added a "Sync models" button to the Providers page that triggers an immediate sync of all provider models from upstream endpoints. Shows a loading spinner and success/error toast notifications.
+
+
 
 ## [0.3.27] - 2026-08-03
 
