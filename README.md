@@ -436,10 +436,10 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.29
+### What's New in v0.3.30
 
 ### Fixed
-- **Developer role normalization in OpenAI executor** — `developer` role messages are now converted to `system` at the executor level using efficient gjson/sjson iteration, ensuring compatibility with non-OpenAI providers (DeepSeek, Groq, etc.) even for the non-streaming `Execute` path.
+- **Proxy health check with credentials** — bulk import and single add now correctly include proxy credentials when testing proxy health. Previously, authenticated proxies were tested without credentials, causing them to fail even though they work fine.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
