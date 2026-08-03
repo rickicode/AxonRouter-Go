@@ -89,11 +89,16 @@ func cfInjectReasoningControl(body []byte) []byte {
 // previously hard-coded Cloudflare and Bedrock quirks with values that can be
 // overridden per provider outside the binary.
 func sanitizeRequestWithCompatibility(body []byte, c providercfg.Compatibility) []byte {
+	// Always convert developer role to system — developer is OpenAI's Responses-API
+	// rename of system and is rejected by most non-OpenAI providers (DeepSeek, Groq,
+	// etc.). Converting here ensures universal compatibility.
+
 	// Fast path: if no message has array content and the provider does not
 	// require flattening, avoid the expensive map[string]any round-trip.
 	messages := gjson.GetBytes(body, "messages")
+	needDeveloperConversion := messages.Exists() && messages.IsArray() && messagesNeedDeveloperConversion(messages.Array())
 	needFlatten := c.FlattenContentArrays && messages.Exists() && messages.IsArray() && messagesNeedSanitize(messages.Array())
-	if !needFlatten {
+	if !needFlatten && !needDeveloperConversion {
 		modelNode := gjson.GetBytes(body, "model")
 		model := normalizeModelName(modelNode.String(), c)
 		if model != modelNode.String() {
@@ -157,8 +162,13 @@ func sanitizeRequestWithCompatibility(body []byte, c providercfg.Compatibility) 
 		}
 	}
 
-	if messages, ok := req["messages"].([]any); ok && c.FlattenContentArrays {
-		req["messages"] = sanitizeMessages(messages)
+	if messages, ok := req["messages"].([]any); ok {
+		if needDeveloperConversion {
+			convertDeveloperRoles(messages)
+		}
+		if c.FlattenContentArrays {
+			req["messages"] = sanitizeMessages(messages)
+		}
 	}
 
 	out, err := json.Marshal(req)
@@ -199,6 +209,30 @@ func messagesNeedSanitize(messages []gjson.Result) bool {
 		}
 	}
 	return false
+}
+
+// messagesNeedDeveloperConversion reports whether any message uses the
+// "developer" role, which must be converted to "system" for non-OpenAI providers.
+func messagesNeedDeveloperConversion(messages []gjson.Result) bool {
+	for _, msg := range messages {
+		if msg.Get("role").String() == "developer" {
+			return true
+		}
+	}
+	return false
+}
+
+// convertDeveloperRoles converts all "developer" role messages to "system" in-place.
+// This is safe because "developer" is OpenAI's Responses-API rename of "system";
+// all providers support "system".
+func convertDeveloperRoles(messages []any) {
+	for _, raw := range messages {
+		if msg, ok := raw.(map[string]any); ok {
+			if msg["role"] == "developer" {
+				msg["role"] = "system"
+			}
+		}
+	}
 }
 
 func sanitizeMessages(messages []any) []any {

@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+
+	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 )
 
 func TestOpenAIEndpointNormalizesBaseURL(t *testing.T) {
@@ -254,6 +256,69 @@ func TestSanitizeCFRequest_FiltersContentBlocks(t *testing.T) {
 	second := msgs[1].(map[string]any)
 	if second["role"] != "tool" {
 		t.Errorf("expected role tool, got %v", second["role"])
+	}
+}
+
+func TestSanitizeRequest_ConvertsDeveloperRole(t *testing.T) {
+	tests := []struct {
+		name string
+		role string
+		want string
+	}{
+		{"developer converts to system", "developer", "system"},
+		{"system stays system", "system", "system"},
+		{"user stays user", "user", "user"},
+		{"assistant stays assistant", "assistant", "assistant"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := mustJSON(map[string]any{
+				"model": "deepseek-chat",
+				"messages": []any{
+					map[string]any{"role": tt.role, "content": "You are helpful."},
+					map[string]any{"role": "user", "content": "Hello"},
+				},
+			})
+			out := sanitizeRequestWithCompatibility(body, providercfg.Compatibility{})
+
+			var got map[string]any
+			if err := json.Unmarshal(out, &got); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			msgs := got["messages"].([]any)
+			first := msgs[0].(map[string]any)
+			if first["role"] != tt.want {
+				t.Errorf("role = %v, want %v", first["role"], tt.want)
+			}
+		})
+	}
+}
+
+func TestSanitizeRequest_ConvertsMultipleDeveloperMessages(t *testing.T) {
+	body := mustJSON(map[string]any{
+		"model": "deepseek-chat",
+		"messages": []any{
+			map[string]any{"role": "developer", "content": "System instruction 1"},
+			map[string]any{"role": "developer", "content": "System instruction 2"},
+			map[string]any{"role": "user", "content": "Hello"},
+		},
+	})
+	out := sanitizeRequestWithCompatibility(body, providercfg.Compatibility{})
+
+	var got map[string]any
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	msgs := got["messages"].([]any)
+	for i, raw := range msgs {
+		msg := raw.(map[string]any)
+		if i < 2 && msg["role"] != "system" {
+			t.Errorf("message[%d].role = %v, want system", i, msg["role"])
+		}
+		if i == 2 && msg["role"] != "user" {
+			t.Errorf("message[%d].role = %v, want user", i, msg["role"])
+		}
 	}
 }
 
