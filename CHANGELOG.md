@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.27] - 2026-08-03
+
 ### Fixed
 - **Developer role compatibility** — auto-convert `developer` role to `system` for non-OpenAI providers (DeepSeek, Groq, etc.) since `developer` is OpenAI's Responses-API rename that other providers reject.
 - **Proxy pool cascade delete** — connections are now hard-deleted when their proxy pool is removed, instead of just being soft-deleted.

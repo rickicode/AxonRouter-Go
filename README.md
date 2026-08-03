@@ -436,13 +436,14 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.26
-
-### Added
-- **OpenCode auto-sync** — `oc-zen` and `oc-go` providers now automatically sync their model lists from upstream endpoints every 24 hours, matching the existing behavior of the `oc` (free) provider. Previously these providers only used the static embedded model list.
+### What's New in v0.3.27
 
 ### Fixed
-- **Failover routing hardening** — all request paths (chat, messages, responses, responses/compact, gemini) now exclude the connection that just failed from the next `getConnection` attempt, preventing the same exhausted account from being retried while the eligibility snapshot rebuilds. Affinity routing also honors this exclusion and the affinity cache is cleared on failover. Provider-unavailability classification is now model-aware so model-scope exhaustion surfaces a 429 instead of a generic 503. The emergency fallback also skips `quota_exhausted` connections whose daily cooldown has no benefit from retrying.
+- **Developer role compatibility** — auto-convert `developer` role to `system` for non-OpenAI providers (DeepSeek, Groq, etc.) since `developer` is OpenAI's Responses-API rename that other providers reject.
+- **Proxy pool cascade delete** — connections are now hard-deleted when their proxy pool is removed, instead of just being soft-deleted.
+- **Bulk import list refresh** — proxy pool list now refreshes properly after bulk import; skipped items (duplicates/unhealthy) no longer counted as errors.
+- **Default noProxy** — both single and bulk proxy add now default to `localhost,127.0.0.1`.
+- **CI build order** — frontend is now built before lint to fix `go embed` check failure.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
