@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.29] - 2026-08-03
+
 ### Fixed
 - **Developer role normalization in OpenAI executor** — `developer` role messages are now converted to `system` at the executor level using efficient gjson/sjson iteration, ensuring compatibility with non-OpenAI providers (DeepSeek, Groq, etc.) even for the non-streaming `Execute` path.
 

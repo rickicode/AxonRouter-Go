@@ -436,13 +436,10 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.28
+### What's New in v0.3.29
 
-### Changed
-- **Faster model sync** — reduced provider model sync interval from 24 hours to 1 hour for more frequent updates, especially for OpenCode providers whose models change frequently.
-
-### Added
-- **Manual model sync button** — added a "Sync models" button to the Providers page that triggers an immediate sync of all provider models from upstream endpoints. Shows a loading spinner and success/error toast notifications.
+### Fixed
+- **Developer role normalization in OpenAI executor** — `developer` role messages are now converted to `system` at the executor level using efficient gjson/sjson iteration, ensuring compatibility with non-OpenAI providers (DeepSeek, Groq, etc.) even for the non-streaming `Execute` path.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
