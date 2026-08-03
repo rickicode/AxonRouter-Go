@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **OpenCode auto-sync** — `oc-zen` and `oc-go` providers now automatically sync their model lists from upstream endpoints every 24 hours, matching the existing behavior of the `oc` (free) provider. Previously these providers only used the static embedded model list.
+
 ### Fixed
 - **Failover routing hardening** — all request paths (chat, messages, responses, responses/compact, gemini) now exclude the connection that just failed from the next `getConnection` attempt, preventing the same exhausted account from being retried while the eligibility snapshot rebuilds. Affinity routing also honors this exclusion and the affinity cache is cleared on failover. Provider-unavailability classification is now model-aware so model-scope exhaustion surfaces a 429 instead of a generic 503. The emergency fallback also skips `quota_exhausted` connections whose daily cooldown has no benefit from retrying.
 
