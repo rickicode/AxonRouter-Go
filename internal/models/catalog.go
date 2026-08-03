@@ -48,6 +48,10 @@ var providerMu sync.RWMutex
 var providerEndpoints = map[string]string{
 	// OpenCode Free: filter to -free suffix models only.
 	"oc": "https://opencode.ai/zen/v1/models",
+	// OpenCode Zen: sync all models from the same /v1/models endpoint (no free-only filter).
+	"oc-zen": "https://opencode.ai/zen/v1/models",
+	// OpenCode Go: sync all models from its own /go/v1/models endpoint.
+	"oc-go": "https://opencode.ai/zen/go/v1/models",
 	// ZenMux publishes an unauthenticated /v1/models endpoint; sync the full catalog daily.
 	"zenmux": "https://zenmux.ai/api/v1/models",
 	// ZenMux Free uses the same upstream endpoint as the paid tier but is filtered
