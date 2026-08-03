@@ -424,3 +424,46 @@ func TestNormalizeDeveloperRoles(t *testing.T) {
 		})
 	}
 }
+
+func TestSanitizeDeepSeekThinkingMode(t *testing.T) {
+	tests := []struct {
+		name             string
+		body             string
+		wantReasoningEffort bool
+	}{
+		{
+			name:             "strips reasoning_effort when assistant missing reasoning_content",
+			body:             `{"model":"deepseek-r1","reasoning_effort":"high","messages":[{"role":"system","content":"hi"},{"role":"user","content":"hello"},{"role":"assistant","content":"hey"}]}`,
+			wantReasoningEffort: false,
+		},
+		{
+			name:             "keeps reasoning_effort when assistant has reasoning_content",
+			body:             `{"model":"deepseek-r1","reasoning_effort":"high","messages":[{"role":"system","content":"hi"},{"role":"user","content":"hello"},{"role":"assistant","content":"hey","reasoning_content":"thinking..."}]}`,
+			wantReasoningEffort: true,
+		},
+		{
+			name:             "no-op when no reasoning_effort",
+			body:             `{"model":"deepseek-r1","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"hey"}]}`,
+			wantReasoningEffort: false,
+		},
+		{
+			name:             "no-op when reasoning_effort is none",
+			body:             `{"model":"deepseek-r1","reasoning_effort":"none","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"hey"}]}`,
+			wantReasoningEffort: true,
+		},
+		{
+			name:             "no-op when no assistant messages",
+			body:             `{"model":"deepseek-r1","reasoning_effort":"high","messages":[{"role":"user","content":"hello"}]}`,
+			wantReasoningEffort: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := sanitizeDeepSeekThinkingMode([]byte(tt.body))
+			hasRE := gjson.GetBytes(out, "reasoning_effort").Exists()
+			if hasRE != tt.wantReasoningEffort {
+				t.Errorf("reasoning_effort exists = %v, want %v", hasRE, tt.wantReasoningEffort)
+			}
+		})
+	}
+}

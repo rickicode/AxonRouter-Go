@@ -376,6 +376,7 @@ func (e *OpenAIExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 	// Ensure stream is false
 	body = JSONSet(body, "stream", false)
 	body = normalizeDeveloperRoles(body)
+	body = sanitizeDeepSeekThinkingMode(body)
 
 	headers := map[string]string{
 		"Content-Type": "application/json",
@@ -442,6 +443,7 @@ func (e *OpenAIExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 	// Ensure stream is true
 	body = JSONSet(body, "stream", true)
 	body = normalizeDeveloperRoles(body)
+	body = sanitizeDeepSeekThinkingMode(body)
 
 	headers := map[string]string{
 		"Content-Type":  "application/json",
@@ -655,6 +657,45 @@ func normalizeDeveloperRoles(body []byte) []byte {
 			path := fmt.Sprintf("messages.%d.role", i)
 			body, _ = sjson.SetBytes(body, path, "system")
 		}
+	}
+	return body
+}
+
+// sanitizeDeepSeekThinkingMode prevents DeepSeek's "reasoning_content required"
+// error by stripping reasoning_effort when assistant messages lack reasoning_content.
+// DeepSeek requires reasoning_content to be passed back in multi-turn thinking mode
+// conversations. If the client stripped it (common with many AI harnesses), the
+// request fails. Stripping reasoning_effort downgrades to non-thinking mode which
+// always succeeds.
+func sanitizeDeepSeekThinkingMode(body []byte) []byte {
+	// Only relevant when reasoning_effort is set.
+	reNode := gjson.GetBytes(body, "reasoning_effort")
+	if !reNode.Exists() {
+		return body
+	}
+	re := strings.ToLower(strings.TrimSpace(reNode.String()))
+	if re == "none" || re == "" {
+		return body
+	}
+
+	// Check if any assistant message is missing reasoning_content.
+	messages := gjson.GetBytes(body, "messages")
+	if !messages.Exists() || !messages.IsArray() {
+		return body
+	}
+	needsStrip := false
+	messages.ForEach(func(_, msg gjson.Result) bool {
+		if msg.Get("role").String() == "assistant" {
+			if !msg.Get("reasoning_content").Exists() {
+				needsStrip = true
+				return false // stop iteration
+			}
+		}
+		return true
+	})
+	if needsStrip {
+		result, _ := sjson.DeleteBytes(body, "reasoning_effort")
+		return result
 	}
 	return body
 }
