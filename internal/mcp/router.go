@@ -5,6 +5,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/mcp/server"
 	"github.com/rickicode/AxonRouter-Go/internal/mcp/transport"
+	"github.com/rickicode/AxonRouter-Go/internal/mcp/tools"
 )
 
 // API exposes the MCP server HTTP/SSE surface.
@@ -17,6 +18,10 @@ type API struct {
 // NewAPI creates a new MCP API wired to the provided dependencies.
 func NewAPI() *API {
 	srv := server.NewServer()
+	
+	// Register the axonrouter_web_search tool
+	tools.RegisterWebSearchTool(srv)
+	
 	return &API{
 		server:   srv,
 		sse:      transport.NewSSE(srv, nil),
