@@ -138,7 +138,19 @@ func (h *ProxyPoolHandler) Create(c *gin.Context) {
 	}
 
 	// Mandatory health check before insert.
-	res := h.testProxy(canonicalURL, typ, relayAuth)
+	// Reconstruct URL with credentials for testing (canonicalURL has them stripped)
+	testURL := canonicalURL
+	if proxyUsername != "" {
+		if u, err := url.Parse(canonicalURL); err == nil {
+			if proxyPassword != "" {
+				u.User = url.UserPassword(proxyUsername, proxyPassword)
+			} else {
+				u.User = url.User(proxyUsername)
+			}
+			testURL = u.String()
+		}
+	}
+	res := h.testProxy(testURL, typ, relayAuth)
 	const defaultMaxResponseTimeMs = 8000
 	if !proxypool.Healthy(res, defaultMaxResponseTimeMs) {
 		reason := res.Error
@@ -406,7 +418,20 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 		go func(idx int, it normalizedItem) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			testResults[idx] = h.testProxy(it.canonicalURL, it.typ, it.relayAuth)
+			// Reconstruct URL with credentials for testing (canonicalURL has them stripped)
+			testURL := it.canonicalURL
+			if it.proxyUsername != "" {
+				u, err := url.Parse(it.canonicalURL)
+				if err == nil {
+					if it.proxyPassword != "" {
+						u.User = url.UserPassword(it.proxyUsername, it.proxyPassword)
+					} else {
+						u.User = url.User(it.proxyUsername)
+					}
+					testURL = u.String()
+				}
+			}
+			testResults[idx] = h.testProxy(testURL, it.typ, it.relayAuth)
 		}(i, it)
 	}
 	wg.Wait()
@@ -1041,7 +1066,7 @@ func (h *ProxyPoolHandler) deletePoolCascadeTx(tx *sql.Tx, poolID string) error 
 		groupRows.Close()
 	}
 
-	// 2. Soft-delete the collected connections (skip the default direct oc connection).
+	// 2. Hard-delete the collected connections (skip the default direct oc connection).
 	for id := range connIDs {
 		var psd string
 		if tx.QueryRow("SELECT COALESCE(provider_specific_data,'') FROM connections WHERE id = ?", id).Scan(&psd) == nil {
@@ -1049,7 +1074,7 @@ func (h *ProxyPoolHandler) deletePoolCascadeTx(tx *sql.Tx, poolID string) error 
 				continue
 			}
 		}
-		if _, e := tx.Exec("UPDATE connections SET is_active = 0, updated_at = ? WHERE id = ?", now, id); e != nil {
+		if _, e := tx.Exec("DELETE FROM connections WHERE id = ?", id); e != nil {
 			return e
 		}
 	}

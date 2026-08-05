@@ -354,6 +354,10 @@ deleteModel: (id: string, model: string) =>
  fetchApi<{ data: ProviderModelEntry[] }>(`/providers/${id}/models?model=${encodeURIComponent(model)}`, {
   method: "DELETE",
     }),
+syncModels: () =>
+  fetchApi<{ message: string }>('/models/sync', {
+    method: 'POST',
+  }),
 };
 
 // Connection API

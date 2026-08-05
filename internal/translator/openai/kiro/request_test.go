@@ -120,8 +120,26 @@ func TestConvertOpenAIRequestToKiro_Reasoning(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if _, ok := payload["additionalModelRequestFields"]; ok {
-		t.Errorf("additionalModelRequestFields should not be present in top-level payload")
+	amrf, ok := payload["additionalModelRequestFields"].(map[string]any)
+	if !ok {
+		t.Fatalf("additionalModelRequestFields missing")
+	}
+	thinking, ok := amrf["thinking"].(map[string]any)
+	if !ok {
+		t.Fatalf("additionalModelRequestFields.thinking missing")
+	}
+	if thinking["type"] != "adaptive" {
+		t.Errorf("thinking.type = %v, want adaptive", thinking["type"])
+	}
+	if thinking["display"] != "enabled" {
+		t.Errorf("thinking.display = %v, want enabled", thinking["display"])
+	}
+	outConf, ok := amrf["output_config"].(map[string]any)
+	if !ok {
+		t.Fatalf("additionalModelRequestFields.output_config missing")
+	}
+	if outConf["effort"] != "high" {
+		t.Errorf("output_config.effort = %v, want high", outConf["effort"])
 	}
 
 	current := payload["conversationState"].(map[string]any)["currentMessage"].(map[string]any)
@@ -154,6 +172,28 @@ func TestConvertOpenAIRequestToKiro_UnsupportedSuffix(t *testing.T) {
 		t.Errorf("expected [1m] rejection error, got %v", errObj)
 	}
 }
+
+func TestConvertOpenAIRequestToKiro_NonAllowlistedNoAdaptiveThinking(t *testing.T) {
+	body := []byte(`{
+		"model": "claude-haiku-4.5",
+		"messages": [{"role": "user", "content": "hi"}],
+		"reasoning_effort": "high"
+	}`)
+	out := ConvertOpenAIRequestToKiro("claude-haiku-4.5", body, true)
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := payload["additionalModelRequestFields"]; ok {
+		t.Errorf("additionalModelRequestFields should not be present for non-allowlisted model")
+	}
+	current := payload["conversationState"].(map[string]any)["currentMessage"].(map[string]any)
+	content := current["userInputMessage"].(map[string]any)["content"].(string)
+	if strings.Contains(content, "<thinking_mode>") {
+		t.Errorf("non-allowlisted model should not get thinking directive, got %q", content)
+	}
+}
+
 
 func uimHasTools(uim map[string]any) bool {
 	ctx, _ := uim["userInputMessageContext"].(map[string]any)

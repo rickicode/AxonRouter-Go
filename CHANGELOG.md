@@ -17,6 +17,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 
 ### Fixed
+- **Periodic health check with credentials** — `TestPool` (used by background health checker and single-pool test button) now also reads `proxy_username` and `proxy_password` from DB to reconstruct the full URL with auth before testing.
+
+## [0.3.30] - 2026-08-03
+
+### Fixed
+- **Proxy health check with credentials** — bulk import and single add now correctly include proxy credentials when testing proxy health. Previously, authenticated proxies were tested without credentials, causing them to fail even though they work fine.
+- **Periodic health check with credentials** — background health checker now also reads `proxy_username` and `proxy_password` from DB to reconstruct the full URL with auth before testing.
+
+## [0.3.29] - 2026-08-03
+
+### Fixed
+- **Developer role normalization in OpenAI executor** — `developer` role messages are now converted to `system` at the executor level using efficient gjson/sjson iteration, ensuring compatibility with non-OpenAI providers (DeepSeek, Groq, etc.) even for the non-streaming `Execute` path.
+
+## [0.3.28] - 2026-08-03
+
+### Changed
+- **Faster model sync** — reduced provider model sync interval from 24 hours to 1 hour for more frequent updates, especially for OpenCode providers whose models change frequently.
+
+### Added
+- **Manual model sync button** — added a "Sync models" button to the Providers page that triggers an immediate sync of all provider models from upstream endpoints. Shows a loading spinner and success/error toast notifications.
+
+
+
+## [0.3.27] - 2026-08-03
+
+### Fixed
+- **Developer role compatibility** — auto-convert `developer` role to `system` for non-OpenAI providers (DeepSeek, Groq, etc.) since `developer` is OpenAI's Responses-API rename that other providers reject.
+- **Proxy pool cascade delete** — connections are now hard-deleted when their proxy pool is removed, instead of just being soft-deleted.
+- **Bulk import list refresh** — proxy pool list now refreshes properly after bulk import; skipped items (duplicates/unhealthy) no longer counted as errors.
+- **Default noProxy** — both single and bulk proxy add now default to `localhost,127.0.0.1`.
+- **CI build order** — frontend is now built before lint to fix `go embed` check failure.
+
+## [0.3.26] - 2026-08-03
+
+### Added
+- **OpenCode auto-sync** — `oc-zen` and `oc-go` providers now automatically sync their model lists from upstream endpoints every 24 hours, matching the existing behavior of the `oc` (free) provider. Previously these providers only used the static embedded model list.
+
+### Fixed
 - **Failover routing hardening** — all request paths (chat, messages, responses, responses/compact, gemini) now exclude the connection that just failed from the next `getConnection` attempt, preventing the same exhausted account from being retried while the eligibility snapshot rebuilds. Affinity routing also honors this exclusion and the affinity cache is cleared on failover. Provider-unavailability classification is now model-aware so model-scope exhaustion surfaces a 429 instead of a generic 503. The emergency fallback also skips `quota_exhausted` connections whose daily cooldown has no benefit from retrying.
 
 ## [0.3.25] - 2026-07-29

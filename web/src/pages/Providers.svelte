@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { loadProviders, providers, isLoading, error } from '$lib/stores';
+  import { providersApi } from '$lib/api';
+  import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
@@ -18,6 +20,20 @@ import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
 import type { Provider } from '$lib/api';
   import AddProviderModal from '$lib/components/AddProviderModal.svelte';
   let showAddModal = $state(false);
+  let syncing = $state(false);
+
+  async function syncModels() {
+    syncing = true;
+    try {
+      const res = await providersApi.syncModels();
+      toast.success(res.message || 'Models synced successfully');
+      await loadProviders();
+    } catch (e: any) {
+      toast.error('Sync failed: ' + (e.message || e));
+    } finally {
+      syncing = false;
+    }
+  }
 
   let searchQuery = $state('');
   let activeCategory = $state('');
@@ -247,10 +263,16 @@ function providerColor(provider: Provider): string {
               OmniRoute-style provider catalog with AxonRouter connection health, auth labels, prefixes, and model surface details.
             </p>
           </div>
-          <button onclick={() => showAddModal = true} class="inline-flex items-center gap-2 h-9 rounded-lg bg-foreground px-4 text-sm font-medium text-background transition-all hover:bg-foreground/80 active:scale-[0.98]">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-            Add provider
-          </button>
+          <div class="flex items-center gap-2">
+            <button onclick={syncModels} disabled={syncing} class="inline-flex items-center gap-2 h-9 rounded-lg border border-border bg-background px-4 text-sm font-medium text-foreground transition-all hover:bg-muted active:scale-[0.98] disabled:opacity-50">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class:animate-spin={syncing}><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path><path d="M16 16h5v5"></path></svg>
+              {syncing ? 'Syncing...' : 'Sync models'}
+            </button>
+            <button onclick={() => showAddModal = true} class="inline-flex items-center gap-2 h-9 rounded-lg bg-foreground px-4 text-sm font-medium text-background transition-all hover:bg-foreground/80 active:scale-[0.98]">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              Add provider
+            </button>
+          </div>
         </div>
 
         <div class="relative mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

@@ -22,9 +22,20 @@ type TestResult struct {
 }
 
 func TestPool(db *sql.DB, id string) (TestResult, error) {
-	var typ, proxyURL, relayAuth string
-	if err := db.QueryRow("SELECT type, proxy_url, relay_auth FROM proxy_pools WHERE id = ?", id).Scan(&typ, &proxyURL, &relayAuth); err != nil {
+	var typ, proxyURL, proxyUsername, proxyPassword, relayAuth string
+	if err := db.QueryRow("SELECT type, proxy_url, COALESCE(proxy_username,''), COALESCE(proxy_password,''), relay_auth FROM proxy_pools WHERE id = ?", id).Scan(&typ, &proxyURL, &proxyUsername, &proxyPassword, &relayAuth); err != nil {
 		return TestResult{}, err
+	}
+	// Reconstruct URL with credentials for testing (stored URL has them stripped)
+	if proxyUsername != "" {
+		if u, err := url.Parse(proxyURL); err == nil {
+			if proxyPassword != "" {
+				u.User = url.UserPassword(proxyUsername, proxyPassword)
+			} else {
+				u.User = url.User(proxyUsername)
+			}
+			proxyURL = u.String()
+		}
 	}
 	start := time.Now()
 	var res TestResult
