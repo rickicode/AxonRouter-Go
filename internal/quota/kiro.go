@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 )
@@ -14,11 +13,11 @@ import (
 const kiroDefaultBaseURL = "https://codewhisperer.us-east-1.amazonaws.com"
 
 var (
-	awsRegionPattern      = regexp.MustCompile(`^[a-z]{2}-[a-z]+-\d{1,2}$`)
-	kiroProfileARNRe      = regexp.MustCompile(`^arn:aws:codewhisperer:([a-z0-9-]+):`)
-	kiroProfileRegions    = map[string]struct{}{"us-east-1": {}, "eu-central-1": {}}
 	kiroHTTPClient        = &http.Client{Timeout: 15 * time.Second}
 	kiroCodeWhispererBase = kiroDefaultBaseURL
+
+	awsQHostTemplate        = "q.%s.amazonaws.com"
+	awsCodeWhispererDevHost = "codewhisperer.us-east-1.amazonaws.com"
 
 	// Default CodeWhisperer profile ARNs from 9router. Used when an account
 	// cannot resolve its own profileArn so quota tracking still works.
@@ -62,23 +61,63 @@ func regionFromKiroProfileArn(profileArn string) string {
 	if profileArn == "" {
 		return ""
 	}
-	matches := kiroProfileARNRe.FindStringSubmatch(profileArn)
-	if len(matches) < 2 {
+	prefix := "arn:aws:codewhisperer:"
+	if !strings.HasPrefix(profileArn, prefix) {
 		return ""
 	}
-	return matches[1]
+	rest := profileArn[len(prefix):]
+	idx := strings.Index(rest, ":")
+	if idx <= 0 {
+		return ""
+	}
+	return rest[:idx]
+}
+
+// isValidAWSRegion validates the AWS region shape:
+// two lowercase letters, hyphen, location, hyphen, digit(s).
+func isValidAWSRegion(region string) bool {
+	if region == "" {
+		return false
+	}
+	parts := strings.Split(region, "-")
+	if len(parts) != 3 {
+		return false
+	}
+	if len(parts[0]) != 2 {
+		return false
+	}
+	for _, r := range parts[0] {
+		if r < 'a' || r > 'z' {
+			return false
+		}
+	}
+	if parts[1] == "" {
+		return false
+	}
+	for _, r := range parts[1] {
+		if r < 'a' || r > 'z' {
+			return false
+		}
+	}
+	if parts[2] == "" {
+		return false
+	}
+	for _, r := range parts[2] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func resolveKiroRuntimeRegion(psd map[string]string) string {
 	fromArn := regionFromKiroProfileArn(psd["profileArn"])
-	if fromArn != "" && awsRegionPattern.MatchString(fromArn) {
+	if fromArn != "" && isValidAWSRegion(fromArn) {
 		return fromArn
 	}
 	stored := normalizeRegion(psd["region"])
-	if stored != "" {
-		if _, ok := kiroProfileRegions[stored]; ok {
-			return stored
-		}
+	if stored != "" && isValidAWSRegion(stored) {
+		return stored
 	}
 	return "us-east-1"
 }
@@ -87,19 +126,19 @@ func kiroRuntimeHost(region string) string {
 	if region == "us-east-1" {
 		return kiroCodeWhispererBase
 	}
-	return fmt.Sprintf("https://q.%s.amazonaws.com", region)
+	return fmt.Sprintf("https://"+awsQHostTemplate, region)
 }
 
 func buildKiroProfileDiscoveryRegions(storedRegion string) []string {
 	stored := normalizeRegion(storedRegion)
-	preferEU := regexp.MustCompile(`^(eu|af|me|il)-`).MatchString(stored)
+	preferEU := strings.HasPrefix(stored, "eu-") || strings.HasPrefix(stored, "af-") || strings.HasPrefix(stored, "me-") || strings.HasPrefix(stored, "il-")
 	var regions []string
 	if preferEU {
 		regions = []string{"eu-central-1", "us-east-1"}
 	} else {
 		regions = []string{"us-east-1", "eu-central-1"}
 	}
-	if stored != "" && awsRegionPattern.MatchString(stored) {
+	if stored != "" && isValidAWSRegion(stored) {
 		found := false
 		for _, r := range regions {
 			if r == stored {
@@ -119,7 +158,7 @@ func discoverKiroProfileArnAcrossRegions(accessToken, storedRegion string) strin
 		return ""
 	}
 	for _, region := range buildKiroProfileDiscoveryRegions(storedRegion) {
-		if !awsRegionPattern.MatchString(region) {
+		if !isValidAWSRegion(region) {
 			continue
 		}
 		payload := []byte(`{"maxResults":10}`)
@@ -358,7 +397,7 @@ func fetchKiroQuota(accessToken string, psd map[string]any) ([]QuotaItem, string
 
 	region := resolveKiroRuntimeRegion(psdStr)
 	usageBaseURL := kiroRuntimeHost(region)
-	qBaseURL := fmt.Sprintf("https://q.%s.amazonaws.com", region)
+	qBaseURL := fmt.Sprintf("https://"+awsQHostTemplate, region)
 
 	authHeaders := kiroAuthHeaders(accessToken, psd)
 

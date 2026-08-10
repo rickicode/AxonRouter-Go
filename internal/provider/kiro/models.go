@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -20,13 +19,12 @@ const (
 	kiroNodeVersion       = "22.21.1"
 	kiroIDEVersion        = "0.10.32"
 	kiroDefaultRegion     = "us-east-1"
+
+	awsQHostTemplate        = "q.%s.amazonaws.com"
+	awsCodeWhispererDevHost = "codewhisperer.us-east-1.amazonaws.com"
 )
 
 var (
-	awsRegionPattern   = regexp.MustCompile(`^[a-z]{2}-[a-z]+-\d{1,2}$`)
-	kiroProfileARNRe   = regexp.MustCompile(`^arn:aws:codewhisperer:([a-z0-9-]+):`)
-	kiroProfileRegions = map[string]struct{}{"us-east-1": {}, "eu-central-1": {}}
-
 	liveModelCacheTTL      = 5 * time.Minute
 	liveModelCacheMu       sync.Mutex
 	liveModelCache         = map[string]liveModelCacheEntry{}
@@ -53,23 +51,63 @@ func regionFromKiroProfileArn(profileArn string) string {
 	if profileArn == "" {
 		return ""
 	}
-	matches := kiroProfileARNRe.FindStringSubmatch(profileArn)
-	if len(matches) < 2 {
+	prefix := "arn:aws:codewhisperer:"
+	if !strings.HasPrefix(profileArn, prefix) {
 		return ""
 	}
-	return matches[1]
+	rest := profileArn[len(prefix):]
+	idx := strings.Index(rest, ":")
+	if idx <= 0 {
+		return ""
+	}
+	return rest[:idx]
+}
+
+// isValidAWSRegion validates the AWS region shape:
+// two lowercase letters, hyphen, location, hyphen, digit(s).
+func isValidAWSRegion(region string) bool {
+	if region == "" {
+		return false
+	}
+	parts := strings.Split(region, "-")
+	if len(parts) != 3 {
+		return false
+	}
+	if len(parts[0]) != 2 {
+		return false
+	}
+	for _, r := range parts[0] {
+		if r < 'a' || r > 'z' {
+			return false
+		}
+	}
+	if parts[1] == "" {
+		return false
+	}
+	for _, r := range parts[1] {
+		if r < 'a' || r > 'z' {
+			return false
+		}
+	}
+	if parts[2] == "" {
+		return false
+	}
+	for _, r := range parts[2] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func resolveKiroRuntimeRegion(psd map[string]string) string {
 	fromArn := regionFromKiroProfileArn(psd["profileArn"])
-	if fromArn != "" && awsRegionPattern.MatchString(fromArn) {
+	if fromArn != "" && isValidAWSRegion(fromArn) {
 		return fromArn
 	}
 	stored := normalizeRegion(psd["region"])
-	if stored != "" {
-		if _, ok := kiroProfileRegions[stored]; ok {
-			return stored
-		}
+	if stored != "" && isValidAWSRegion(stored) {
+		return stored
 	}
 	return kiroDefaultRegion
 }
@@ -82,9 +120,9 @@ func buildKiroModelsEndpoints(region string) []string {
 	if normalized == "" {
 		normalized = kiroDefaultRegion
 	}
-	urls := []string{fmt.Sprintf("https://q.%s.amazonaws.com/ListAvailableModels", normalized)}
+	urls := []string{fmt.Sprintf("https://"+awsQHostTemplate+"/ListAvailableModels", normalized)}
 	if normalized != kiroDefaultRegion {
-		urls = append(urls, fmt.Sprintf("https://q.%s.amazonaws.com/ListAvailableModels", kiroDefaultRegion))
+		urls = append(urls, fmt.Sprintf("https://"+awsQHostTemplate+"/ListAvailableModels", kiroDefaultRegion))
 	}
 	return urls
 }
