@@ -40,6 +40,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/smart"
+	multiagentv2 "github.com/rickicode/AxonRouter-Go/internal/translator/codex/optimize_multi_agent_v2"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 	"github.com/tidwall/gjson"
@@ -2215,6 +2216,10 @@ func (h *Handler) streamResponse(
 			}
 
 			lastChunkTime = time.Now()
+			var codexOptimized bool
+			if v, ok := c.Get("codex_multi_agent_v2_optimized"); ok {
+				codexOptimized, _ = v.(bool)
+			}
 			var translatedChunks [][]byte
 			if clientFormat == providerFormat {
 				// Direct SSE passthrough when client and provider share the same native format.
@@ -2222,7 +2227,11 @@ func (h *Handler) streamResponse(
 			} else {
 				translatedChunks = registry.Response(ctx, string(providerFormat), string(clientFormat), model, originalReq, translatedReq, chunk.Payload, &streamState)
 			}
-			for _, tc := range translatedChunks {
+			for i, tc := range translatedChunks {
+				if codexOptimized {
+					tc = multiagentv2.RestoreResponse(tc, true)
+					translatedChunks[i] = tc
+				}
 				c.Writer.Write(tc)
 				flusher.Flush()
 				totalOutputBytes += estimateOutputFromTranslatedChunk(tc)

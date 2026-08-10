@@ -8,11 +8,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
+	"github.com/rickicode/AxonRouter-Go/internal/config"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
+	multiagentv2 "github.com/rickicode/AxonRouter-Go/internal/translator/codex/optimize_multi_agent_v2"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
@@ -93,6 +95,12 @@ func (h *Handler) Responses(c *gin.Context) {
 	}
 	body = executor.JSONSet(body, "model", modelName)
 	clientFormat := executor.FormatOpenAIResponses
+	cfg := config.Get()
+	body, codexOptimized := multiagentv2.OptimizeRequest(c.Request.Context(), c.Request.Header, body, &cfg)
+	c.Set("codex_multi_agent_v2_optimized", codexOptimized)
+	if providerFormat != clientFormat {
+		body = multiagentv2.NormalizeInput(c.Request.Context(), c.Request.Header, body, &cfg)
+	}
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
 	translatedBody = h.applyThinkingOverrideFromContext(c.Request.Context(), translatedBody, string(providerFormat))
 	translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
@@ -297,6 +305,9 @@ attemptLoop:
 			return
 		} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
+			if codexOptimized {
+				translatedResp = multiagentv2.RestoreResponse(translatedResp, true)
+			}
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			tokensEstimated := false
 			if tokenCounts.InputTokens+tokenCounts.OutputTokens == 0 && resp.StatusCode < 400 {
@@ -332,16 +343,16 @@ attemptLoop:
 				TokensEstimated:     tokensEstimated,
 			})
 			h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
-	if resp.StatusCode < 300 {
-		h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
-	}
-	h.writeJSONResponse(c, resp.StatusCode, translatedResp, responseCost{
-		modelID:         modelName,
-		exactCost:       resp.CostUsd,
-		counts:          tokenCounts,
-		tokensEstimated: tokensEstimated,
-		flatRate:        h.isFlatRate(provider),
-	})
+			if resp.StatusCode < 300 {
+				h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
+			}
+			h.writeJSONResponse(c, resp.StatusCode, translatedResp, responseCost{
+				modelID:         modelName,
+				exactCost:       resp.CostUsd,
+				counts:          tokenCounts,
+				tokensEstimated: tokensEstimated,
+				flatRate:        h.isFlatRate(provider),
+			})
 		}
 		return
 	}
