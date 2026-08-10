@@ -183,8 +183,19 @@ func (e *FreebuffExecutor) run(ctx context.Context, req *Request, stream bool) (
 		cands = []ProxyConfig{{}}
 	}
 	var firstBlocked *time.Time
+	sawStrictNoEgress := false
 	for _, cand := range cands {
 		proxyKey := freebuffPoolKey(cand)
+		// A force-strict candidate with no egress is the resolver's
+		// direct-fallback marker: the v1 handler force-sets StrictProxy on it
+		// for freebuff so a dead/error pool can NEVER leak the session claim
+		// to the gateway's real IP (the freebuff tier is per-egress-IP).
+		// Attempting it would be exactly that leak, so skip it; if no other
+		// pool can serve the request it fails with a clear 409 below.
+		if cand.StrictProxy && cand.ProxyURL == "" && cand.RelayURL == "" {
+			sawStrictNoEgress = true
+			continue
+		}
 		if until := e.getCooldown(e.poolLimitCooldowns, proxyKey+"::"+model); until != nil {
 			if firstBlocked == nil {
 				firstBlocked = until
@@ -199,10 +210,23 @@ func (e *FreebuffExecutor) run(ctx context.Context, req *Request, stream bool) (
 		var poolErr *freebuffPoolScopedError
 		if errors.As(err, &poolErr) {
 			// Mark this pool unfit for the model and try the next candidate.
-			e.setCooldown(e.poolLimitCooldowns, proxyKey+"::"+model, time.Now().Add(freebuffPoolLimitedCooldown))
+			until := time.Now().Add(freebuffPoolLimitedCooldown)
+			e.setCooldown(e.poolLimitCooldowns, proxyKey+"::"+model, until)
+			if firstBlocked == nil {
+				firstBlocked = &until
+			}
 			continue
 		}
 		return nil, err
+	}
+	if sawStrictNoEgress && firstBlocked == nil {
+		// Covers both dead-pool (every configured pool is in error status) and
+		// never-configured (no pool assigned to the connection) cases. Freebuff
+		// tiers are per-egress-IP, so going direct would pin the session to the
+		// gateway's real IP — the reference (9router proxyFetch.js) only avoids
+		// this when a proxy was configured; we enforce it unconditionally.
+		return nil, freebuffError(http.StatusConflict,
+			"Freebuff requires a working proxy pool — no working pool is configured or all configured pools are unavailable (test status error). Fix the pool status or assign a different pool; direct connections are disabled for Freebuff.")
 	}
 	if firstBlocked != nil {
 		return nil, freebuffError(http.StatusConflict, fmt.Sprintf(

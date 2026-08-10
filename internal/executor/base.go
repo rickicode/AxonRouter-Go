@@ -690,8 +690,17 @@ func (b *BaseExecutor) selectClient(ctx context.Context, rawURL string, headers 
 		return b.defaultClient(stream), targetURL, nil
 	}
 
-	// No proxy configured
+	// No proxy configured. StrictProxy means "never go direct": a request
+	// marked strict with no usable egress (empty ProxyURL / RelayURL) must
+	// fail hard instead of leaking from the gateway's real IP — matching the
+	// 9router reference (proxyFetch.js throws when strictProxy is true and the
+	// proxy is unavailable). The v1 handler force-sets StrictProxy on the
+	// direct-fallback candidate for Freebuff, so an all-pools-error scenario
+	// surfaces here as an error rather than a direct session claim.
 	if cfg.ProxyURL == "" {
+		if cfg.StrictProxy {
+			return nil, targetURL, fmt.Errorf("strict proxy required but no proxy configured")
+		}
 		return b.defaultClient(stream), targetURL, nil
 	}
 
