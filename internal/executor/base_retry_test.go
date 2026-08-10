@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -66,6 +67,53 @@ func TestDoRequestRetriesAcrossCandidates(t *testing.T) {
 	if string(resp.Body) != "ok" {
 		t.Fatalf("unexpected body: %q", string(resp.Body))
 	}
+}
+
+// TestSelectClientStrictNoProxyErrors guards the strict-proxy contract: a
+// request marked StrictProxy with NO usable egress (empty ProxyURL/RelayURL)
+// must fail instead of silently going direct. This is the anti-leak guarantee
+// for Freebuff — the v1 handler force-sets StrictProxy on the direct-fallback
+// candidate when all configured pools are dead, and that candidate must never
+// claim the session from the gateway's real IP.
+func TestSelectClientStrictNoProxyErrors(t *testing.T) {
+	base := NewBaseExecutor()
+
+	t.Run("strict-no-proxy-errors", func(t *testing.T) {
+		ctx := ContextWithProxy(context.Background(), ProxyConfig{StrictProxy: true})
+		_, _, err := base.clientForContext(ctx, "https://www.codebuff.com/api/v1/chat/completions", map[string]string{})
+		if err == nil {
+			t.Fatal("strict proxy with no egress must error, not go direct")
+		}
+		if !strings.Contains(err.Error(), "strict proxy required") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("non-strict-no-proxy-direct-ok", func(t *testing.T) {
+		ctx := ContextWithProxy(context.Background(), ProxyConfig{})
+		client, _, err := base.clientForContext(ctx, "https://www.codebuff.com/api/v1/chat/completions", map[string]string{})
+		if err != nil {
+			t.Fatalf("non-strict direct must be allowed: %v", err)
+		}
+		if client != base.Client {
+			t.Errorf("expected the default direct client")
+		}
+	})
+
+	t.Run("strict-with-proxy-ok", func(t *testing.T) {
+		ctx := ContextWithProxy(context.Background(), ProxyConfig{ProxyURL: "http://127.0.0.1:1", StrictProxy: true})
+		if _, _, err := base.clientForContext(ctx, "https://www.codebuff.com/api/v1/chat/completions", map[string]string{}); err != nil {
+			t.Fatalf("strict proxy with a ProxyURL must not error: %v", err)
+		}
+	})
+
+	t.Run("strict-relay-ok", func(t *testing.T) {
+		// A relay IS a usable egress (URL-rewrite proxy) — strict is satisfied.
+		ctx := ContextWithProxy(context.Background(), ProxyConfig{RelayURL: "https://relay.example.com", StrictProxy: true})
+		if _, _, err := base.clientForContext(ctx, "https://www.codebuff.com/api/v1/chat/completions", map[string]string{}); err != nil {
+			t.Fatalf("strict relay must not error: %v", err)
+		}
+	})
 }
 
 func TestDoRequestNoRetryOnUpstreamError(t *testing.T) {

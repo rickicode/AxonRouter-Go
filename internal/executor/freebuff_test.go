@@ -823,6 +823,146 @@ func TestFreebuffExecutor_LimitedIPPoolFailover(t *testing.T) {
 	}
 }
 
+// TestFreebuffExecutor_AllPoolsErrorNoDirectLeak is the anti-leak regression
+// for the strict-proxy contract: when every configured proxy pool is dead
+// (test status error), the resolver emits ONLY the direct-fallback marker and
+// the v1 handler force-sets StrictProxy=true on it for freebuff. The executor
+// must refuse to attempt that candidate — a session claim from the gateway's
+// real IP would pin the freebuff tier to that IP — and fail with a clear 409
+// instead. Zero upstream calls proves the claim never leaked.
+func TestFreebuffExecutor_AllPoolsErrorNoDirectLeak(t *testing.T) {
+	var upstreamCalls int32
+	session, _, chat := defaultFreebuffHandlers()
+	ts := newFreebuffTestServer()
+	defer ts.Close()
+	ts.session = func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&upstreamCalls, 1)
+		session(w, r)
+	}
+	ts.runs = func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Action string `json:"action"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Action == "FINISH" {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			return
+		}
+		atomic.AddInt32(&upstreamCalls, 1)
+		writeJSON(w, http.StatusOK, map[string]any{"runId": "run-1"})
+	}
+	ts.chat = func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&upstreamCalls, 1)
+		chat(w, r)
+	}
+
+	base := NewBaseExecutor()
+	exec := NewFreebuffExecutor(base)
+	body, _ := json.Marshal(map[string]any{
+		"model":    "deepseek/deepseek-v4-flash",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	})
+
+	// Exactly what handler.proxyCandidates produces for freebuff when the
+	// resolver finds no usable pool: the direct-fallback marker with
+	// StrictProxy force-set to true.
+	directMarker := []ProxyConfig{{StrictProxy: true}} // direct-fallback marker, force-strict
+	ctx := ContextWithProxy(context.Background(), directMarker[0])
+	ctx = ContextWithProxyCandidates(ctx, directMarker)
+
+	_, err := exec.Execute(ctx, freebuffTestReq(ts, body))
+	if err == nil {
+		t.Fatal("expected a clear error when all pools are dead (no direct fallback)")
+	}
+	upErr, ok := err.(*UpstreamError)
+	if !ok {
+		t.Fatalf("expected UpstreamError, got %T", err)
+	}
+	if upErr.StatusCode != http.StatusConflict {
+		t.Errorf("status=%d, want 409", upErr.StatusCode)
+	}
+	if !strings.Contains(string(upErr.Body), "requires a working proxy pool") {
+		t.Errorf("body should explain the pool requirement: %s", upErr.Body)
+	}
+	if got := atomic.LoadInt32(&upstreamCalls); got != 0 {
+		t.Fatalf("upstream was hit %d times — the session claim leaked to the real IP", got)
+	}
+}
+
+// TestFreebuffExecutor_DeadPoolMarkerSkippedAfterRealPool verifies the
+// direct-fallback marker is skipped even when it follows a real pool in the
+// candidate list: pool-a refuses the model (limited IP, pool-scoped cooldown),
+// and the trailing strict direct marker must NOT receive the failover attempt.
+// The request fails with the pool-cooldown message and every upstream call was
+// routed through the real proxy — none direct.
+func TestFreebuffExecutor_DeadPoolMarkerSkippedAfterRealPool(t *testing.T) {
+	var chatViaPoolA int32
+	var chatDirect int32
+	session, runs, _ := defaultFreebuffHandlers()
+	ts := newFreebuffTestServer()
+	defer ts.Close()
+	ts.session = session
+	ts.runs = runs
+	ts.chat = func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Pool") == "a" {
+			atomic.AddInt32(&chatViaPoolA, 1)
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"status":  "session_model_mismatch",
+				"message": "limited tier: only deepseek-v4-flash allowed",
+			})
+			return
+		}
+		atomic.AddInt32(&chatDirect, 1)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id": "chat-1", "object": "chat.completion",
+			"choices": []any{map[string]any{
+				"index": 0, "message": map[string]any{"role": "assistant", "content": "leaked"},
+				"finish_reason": "stop",
+			}},
+		})
+	}
+
+	proxyA := freebuffForwardProxy(t, ts.ts.URL, "a")
+	defer proxyA.Close()
+
+	base := NewBaseExecutor()
+	exec := NewFreebuffExecutor(base)
+	body, _ := json.Marshal(map[string]any{
+		"model":    "mimo/mimo-v2.5",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	})
+
+	// Real pool first (refuses with a limited-IP gate), then the handler's
+	// force-strict direct-fallback marker.
+	cands := []ProxyConfig{
+		{Enabled: true, ProxyPoolID: "pool-a", ProxyURL: proxyA.URL},
+		{StrictProxy: true}, // direct-fallback marker, force-strict
+	}
+	ctx := ContextWithProxy(context.Background(), cands[0])
+	ctx = ContextWithProxyCandidates(ctx, cands)
+
+	_, err := exec.Execute(ctx, freebuffTestReq(ts, body))
+	if err == nil {
+		t.Fatal("expected 409 after pool-a limited-IP refusal with no usable failover")
+	}
+	upErr, ok := err.(*UpstreamError)
+	if !ok {
+		t.Fatalf("expected UpstreamError, got %T", err)
+	}
+	if upErr.StatusCode != http.StatusConflict {
+		t.Errorf("status=%d, want 409", upErr.StatusCode)
+	}
+	if !strings.Contains(string(upErr.Body), "retry with a full-access proxy") {
+		t.Errorf("body should mention the pool cooldown: %s", upErr.Body)
+	}
+	if got := atomic.LoadInt32(&chatViaPoolA); got != 1 {
+		t.Errorf("chat via pool-a=%d, want 1", got)
+	}
+	if got := atomic.LoadInt32(&chatDirect); got != 0 {
+		t.Fatalf("chat went DIRECT %d times — failover leaked to the real IP", got)
+	}
+}
+
 func TestFreebuffExecutor_429RetryThenSuccess(t *testing.T) {
 	var chatCalls int32
 	var chatBodies [][]byte
