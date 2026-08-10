@@ -550,3 +550,72 @@ func TestCodexWebsocketsExecutor_ExecuteStream_NormalizesAndCompletes(t *testing
 		t.Fatalf("expected response.completed in stream chunks; got %d chunks", len(chunks))
 	}
 }
+
+func TestCodexWebsocketsExecutor_Execute_ReusesUpstreamConnection(t *testing.T) {
+	var connectionCount int
+	var mu sync.Mutex
+	captured := make(chan []byte, 2)
+	completed := []byte(`{"type":"response.completed","response":{"id":"resp-reuse","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		connectionCount++
+		id := connectionCount
+		mu.Unlock()
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			t.Fatalf("upgrade failed: %v", err)
+		}
+		defer c.Close(websocket.StatusNormalClosure, "")
+		for {
+			_, payload, err := c.Read(context.Background())
+			if err != nil {
+				return
+			}
+			if captured != nil {
+				captured <- bytes.Clone(payload)
+			}
+			resp := []byte(`{"type":"response.completed","response":{"id":"resp-reuse-` + fmt.Sprintf("%d", id) + `","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)
+			_ = resp
+			if err := c.Write(context.Background(), websocket.MessageText, completed); err != nil {
+				t.Fatalf("write failed: %v", err)
+			}
+		}
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	exec := NewCodexWebsocketsExecutor(base)
+	ctx := context.Background()
+	sessionID := "session-reuse"
+
+	firstReq := &Request{
+		Provider:     "codex",
+		Model:        "gpt-5.4",
+		BaseURL:      ts.URL,
+		AccessToken:  "test-token",
+		ConnectionID: sessionID,
+		Body:         []byte(`{"model":"gpt-5.4","input":[{"type":"message","role":"user","content":"first"}]}`),
+	}
+	if _, err := exec.Execute(ctx, firstReq); err != nil {
+		t.Fatalf("first Execute() error = %v", err)
+	}
+
+	secondReq := &Request{
+		Provider:     "codex",
+		Model:        "gpt-5.4",
+		BaseURL:      ts.URL,
+		AccessToken:  "test-token",
+		ConnectionID: sessionID,
+		Body:         []byte(`{"model":"gpt-5.4","input":[{"type":"message","role":"user","content":"second"}]}`),
+	}
+	if _, err := exec.Execute(ctx, secondReq); err != nil {
+		t.Fatalf("second Execute() error = %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if connectionCount != 1 {
+		t.Fatalf("expected 1 upstream websocket connection reused, got %d", connectionCount)
+	}
+}
+
