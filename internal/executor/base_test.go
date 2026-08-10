@@ -3,6 +3,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -200,5 +201,124 @@ func TestNewBaseExecutorTransport(t *testing.T) {
 	}
 	if !tr.ForceAttemptHTTP2 {
 		t.Error("ForceAttemptHTTP2 should be true")
+	}
+}
+
+func TestProxyAuthHeaderForInlineCredentials(t *testing.T) {
+	cfg := ProxyConfig{ProxyURL: "http://alice:secret@proxy.example:8080"}
+	got := cfg.proxyAuthHeader()
+	want := "Basic " + base64.StdEncoding.EncodeToString([]byte("alice:secret"))
+	if got != want {
+		t.Fatalf("proxyAuthHeader() = %q, want %q", got, want)
+	}
+}
+
+func TestProxyAuthHeaderForSeparateFields(t *testing.T) {
+	cfg := ProxyConfig{ProxyURL: "http://proxy.example:8080", ProxyUsername: "bob", ProxyPassword: "hunter2"}
+	got := cfg.proxyAuthHeader()
+	want := "Basic " + base64.StdEncoding.EncodeToString([]byte("bob:hunter2"))
+	if got != want {
+		t.Fatalf("proxyAuthHeader() = %q, want %q", got, want)
+	}
+}
+
+func TestNoProxyMatch(t *testing.T) {
+	if !noProxyMatch("api.cloudflare.com", "cloudflare.com,localhost") {
+		t.Fatal("should match suffix/descendant without leading dot")
+	}
+	if !noProxyMatch("api.cloudflare.com", ".cloudflare.com,localhost") {
+		t.Fatal("should match suffix with leading dot")
+	}
+	if !noProxyMatch("cloudflare.com", ".cloudflare.com") {
+		t.Fatal("should match root domain against leading-dot rule")
+	}
+	if !noProxyMatch("localhost", "localhost") {
+		t.Fatal("should match exact hostname")
+	}
+	if noProxyMatch("other.com", "cloudflare.com") {
+		t.Fatal("should not match unrelated host")
+	}
+	if noProxyMatch("subnotcloudflare.com", "cloudflare.com") {
+		t.Fatal("should not match unrelated suffix host")
+	}
+}
+
+func TestProxyClientBypassesProxyForNoProxy(t *testing.T) {
+	exec := NewBaseExecutor()
+	cfg := ProxyConfig{ProxyURL: "http://proxy.example:8080", NoProxy: "cloudflare.com"}
+	// The client should still be a proxy client (not the default), because only
+	// requests to non-matching hosts go through the proxy. The transport itself
+	// is configured to skip the proxy at request time.
+	client, err := exec.proxyClient(cfg)
+	if err != nil {
+		t.Fatalf("proxyClient: %v", err)
+	}
+	tr := client.Transport.(*http.Transport)
+	// Request to cloudflare.com should bypass proxy.
+	req, _ := http.NewRequest("GET", "https://api.cloudflare.com/v1", nil)
+	u, err := tr.Proxy(req)
+	if err != nil {
+		t.Fatalf("Proxy: %v", err)
+	}
+	if u != nil {
+		t.Fatalf("expected proxy bypass for api.cloudflare.com, got %v", u)
+	}
+	// Request to example.com should use proxy.
+	req2, _ := http.NewRequest("GET", "https://example.com/v1", nil)
+	u2, err := tr.Proxy(req2)
+	if err != nil {
+		t.Fatalf("Proxy: %v", err)
+	}
+	if u2 == nil {
+		t.Fatal("expected proxy to be used for example.com")
+	}
+}
+
+func TestProxyConnectHeaderSetExplicitly(t *testing.T) {
+	exec := NewBaseExecutor()
+	cfg := ProxyConfig{ProxyURL: "http://user:pass@proxy.example:8080"}
+	client, err := exec.proxyClient(cfg)
+	if err != nil {
+		t.Fatalf("proxyClient: %v", err)
+	}
+	tr := client.Transport.(*http.Transport)
+	got := tr.ProxyConnectHeader.Get("Proxy-Authorization")
+	want := cfg.proxyAuthHeader()
+	if got != want || got == "" {
+		t.Fatalf("ProxyConnectHeader Proxy-Authorization = %q, want non-empty %q", got, want)
+	}
+}
+
+func TestProxyStreamClientConnectHeaderSetExplicitly(t *testing.T) {
+	exec := NewBaseExecutor()
+	cfg := ProxyConfig{ProxyURL: "http://suser:spass@proxy.example:8080"}
+	client, err := exec.streamClient(cfg)
+	if err != nil {
+		t.Fatalf("streamClient: %v", err)
+	}
+	tr := client.Transport.(*http.Transport)
+	got := tr.ProxyConnectHeader.Get("Proxy-Authorization")
+	want := cfg.proxyAuthHeader()
+	if got != want || got == "" {
+		t.Fatalf("streamClient ProxyConnectHeader Proxy-Authorization = %q, want non-empty %q", got, want)
+	}
+}
+
+func TestProxyClientCacheInvalidatedOnVersionChange(t *testing.T) {
+	exec := NewBaseExecutor()
+	cfgA := ProxyConfig{ProxyURL: "http://proxy.example:8080", ProxyUsername: "user", ProxyPassword: "old", Version: "v1"}
+	cfgB := cfgA
+	cfgB.Version = "v2"
+
+	clientA, err := exec.proxyClient(cfgA)
+	if err != nil {
+		t.Fatalf("proxyClient v1: %v", err)
+	}
+	clientB, err := exec.proxyClient(cfgB)
+	if err != nil {
+		t.Fatalf("proxyClient v2: %v", err)
+	}
+	if clientA == clientB {
+		t.Fatal("expected different clients after version change")
 	}
 }
