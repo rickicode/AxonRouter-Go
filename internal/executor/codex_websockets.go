@@ -625,7 +625,7 @@ func normalizeCodexWebsocketRequest(req *Request, body []byte) (out []byte, reqT
 	}
 	body = JSONSet(body, "stream", true)
 	body = JSONSet(body, "store", false)
-	body = ensureImageGenerationTool(body, req.Model)
+	body = ensureImageGenerationTool(body, req.Model, codexImageGenerationToolModel(req))
 	body, _ = applyCodexIdentityConfuseBody(body, req.ConnectionID)
 
 	// Preserve explicit type from clients so they can send response.append.
