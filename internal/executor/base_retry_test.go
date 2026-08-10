@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestIsRetryableProxyErr(t *testing.T) {
@@ -66,6 +67,34 @@ func TestDoRequestRetriesAcrossCandidates(t *testing.T) {
 	}
 	if string(resp.Body) != "ok" {
 		t.Fatalf("unexpected body: %q", string(resp.Body))
+	}
+}
+
+// TestDoRequestHonorsClientTimeout guards against regressing the non-streaming
+// request path back to the streaming (no-Timeout) client: a hung upstream must
+// be cut off by the client's Timeout instead of hanging the request forever
+// (handlers without a context deadline would otherwise block indefinitely).
+func TestDoRequestHonorsClientTimeout(t *testing.T) {
+	orig := validateURL
+	validateURL = func(string) error { return nil }
+	defer func() { validateURL = orig }()
+
+	// Accepts the connection but never sends a response.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	base := NewBaseExecutor()
+	base.Client.Timeout = 300 * time.Millisecond
+
+	start := time.Now()
+	_, err := base.DoRequest(context.Background(), "GET", server.URL, map[string]string{}, []byte(""))
+	if err == nil {
+		t.Fatal("expected an error from a hung upstream when a client Timeout is set")
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("client Timeout was not applied to non-streaming request; took %v", elapsed)
 	}
 }
 

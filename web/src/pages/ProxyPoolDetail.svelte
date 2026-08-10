@@ -50,14 +50,18 @@ let showDeleteConfirm = $state(false);
     if (!pool || !editName.trim() || !editUrl.trim()) return;
     actionLoading = 'save';
     try {
-      await proxyPoolsApi.update(pool.id, {
+      const res = await proxyPoolsApi.update(pool.id, {
         name: editName.trim(),
         proxyUrl: editUrl.trim(),
         noProxy: editNoProxy.trim(),
       });
       editing = false;
       await loadPool();
-      toast.success('Pool updated');
+      if (res.data?.testStatus === 'error') {
+        toast.warning(`Pool saved — proxy check failed: ${res.data.lastError || 'unreachable'}`);
+      } else {
+        toast.success('Pool updated');
+      }
     } catch (err) {
       toast.error('Save failed: ' + (err instanceof Error ? err.message : 'Unknown'));
     } finally {

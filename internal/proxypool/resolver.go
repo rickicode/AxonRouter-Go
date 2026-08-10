@@ -204,17 +204,36 @@ func (r *Resolver) Resolve(providerSpecificData, providerID string) Config {
 // connection uses a proxy group), and finally a direct fallback (unless a
 // strict proxy was selected). The executor retries across these on transient
 // proxy/network failures.
+//
+// For proxy groups the group's selection mode is honored for the PRIMARY
+// candidate (roundrobin rotates the first pick per request, sticky pins one
+// pool for stickyLimit requests, random picks uniformly); the remaining active
+// pools follow as the ordered failover chain.
+//
+// Note: pick() state (rr/sticky counters) is shared with Resolve(), which the
+// background rate-limit prober also calls — probe requests advance the same
+// counters. Probes are infrequent, so the practical skew is negligible.
 func (r *Resolver) ResolveCandidates(providerSpecificData, providerID string) []Config {
 	var psd map[string]any
 	_ = json.Unmarshal([]byte(providerSpecificData), &psd)
 
 	var cands []Config
+	// A pool pinned by the connection/provider that is currently in error
+	// status (non-strict) resolves to "go direct". It must NOT be emitted as a
+	// phantom candidate (that would make the executor attempt direct twice)
+	// but it must still stop the fallthrough to the next level so the pinned
+	// pool's intent is respected — matching Resolve()'s single-config path.
+	deadPinned := false
+
 	if id := cleanID(psd["proxyGroupId"]); id != "" {
 		if g, ok := r.getGroup(id); ok && g.isActive {
 			active, _ := r.activePools(g.poolIDs)
-			for _, pid := range active {
-				if cfg, ok := r.resolvePool(pid, "connection-group", g.strict); ok {
-					cands = append(cands, cfg)
+			if len(active) > 0 {
+				primary := r.pick(id, g.mode, g.stickyLimit, active)
+				for _, pid := range rotateFrom(active, primary) {
+					if cfg, ok := r.resolvePool(pid, "connection-group", g.strict); ok {
+						cands = append(cands, cfg)
+					}
 				}
 			}
 		}
@@ -222,13 +241,21 @@ func (r *Resolver) ResolveCandidates(providerSpecificData, providerID string) []
 	if len(cands) == 0 {
 		if id := cleanID(psd["proxyPoolId"]); id != "" {
 			if cfg, ok := r.resolvePool(id, "connection-pool", false); ok {
-				cands = append(cands, cfg)
+				if usableProxy(cfg) {
+					cands = append(cands, cfg)
+				} else {
+					deadPinned = true
+				}
 			}
 		}
 	}
-	if len(cands) == 0 && providerID != "" {
+	if len(cands) == 0 && !deadPinned && providerID != "" {
 		if cfg, ok := r.providerDefault(providerID); ok {
-			cands = append(cands, cfg)
+			if usableProxy(cfg) {
+				cands = append(cands, cfg)
+			} else {
+				deadPinned = true
+			}
 		}
 	}
 
@@ -241,6 +268,14 @@ func (r *Resolver) ResolveCandidates(providerSpecificData, providerID string) []
 		cands = append(cands, Config{Source: "direct-fallback"})
 	}
 	return cands
+}
+
+// usableProxy reports whether a resolved Config actually routes through a
+// proxy. Dead non-strict pools resolve to an empty "direct marker" config
+// (a phantom); dropping those from the candidate list avoids a redundant
+// duplicate direct attempt in the executor.
+func usableProxy(cfg Config) bool {
+	return cfg.Enabled || cfg.ProxyURL != "" || cfg.RelayURL != ""
 }
 
 func (r *Resolver) providerDefault(providerID string) (Config, bool) {
@@ -479,4 +514,27 @@ func containsID(ids []string, id string) bool {
 		}
 	}
 	return false
+}
+
+// rotateFrom returns ids rotated so that primary is first, preserving the
+// relative order of the remaining entries. If primary is not present (or ids
+// has fewer than 2 entries) it returns ids unchanged.
+func rotateFrom(ids []string, primary string) []string {
+	if len(ids) <= 1 {
+		return ids
+	}
+	idx := -1
+	for i, id := range ids {
+		if id == primary {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return ids
+	}
+	out := make([]string, 0, len(ids))
+	out = append(out, ids[idx:]...)
+	out = append(out, ids[:idx]...)
+	return out
 }
