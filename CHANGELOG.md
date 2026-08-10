@@ -9,7 +9,10 @@ All notable changes to AxonRouter-Go will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
 ## [Unreleased]
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 
 ### Fixed
 - **Periodic health check with credentials** — `TestPool` (used by background health checker and single-pool test button) now also reads `proxy_username` and `proxy_password` from DB to reconstruct the full URL with auth before testing.
@@ -73,9 +76,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.22] - 2026-07-28
 
 ### Added
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 - **Kiro live catalog consolidation** — live model catalog fetching, caching, fallback, and variant expansion now live alongside the static catalog in `internal/provider/kiro/catalog.go`, matching the 9Router `kiroModels.js` behavior previously split across `catalog.go` and `models.go`. The helper file `models.go` was removed; live fetch helpers moved into `catalog.go` with the same 5-minute TTL cache and static-catalog fallback. Upstream models are expanded into base / `-thinking` / `-agentic` / `-thinking-agentic` variants with human-readable display names, `rateMultiplier`, and `contextLength`. Curated metadata (Vision/Reasoning/Search capabilities, content strip lists, descriptions) is merged on top of live responses so known models keep their flags. Adds regression tests in `internal/provider/kiro/catalog_test.go` and `models_test.go` for fetch success + cache hit, fallback on failure, and variant expansion.
 - **Codex multi-agent v2 request/response optimizer** — ported CLIProxyAPI's `CodexOptimizeMultiAgentV2` optimizer into a new `internal/translator/codex/optimize_multi_agent_v2` package. When `AXON_CODEX_OPTIMIZE_MULTI_AGENT_V2=true` and the client User-Agent is an official Codex client, the optimizer refreshes `spawn_agent` tool descriptions with model metadata, strips the `message` parameter `encrypted` flag, normalizes `encrypted_content` parts to `input_text`, and converts `agent_message` items to plain `user` messages before translating to non-Codex upstreams. The `collaboration` namespace is rewritten to `collaboration-optimize` for Codex upstream requests and restored on Codex responses. Wired into the `/v1/responses` handler with request rewrite, non-streaming response restore, and per-chunk streaming restore. Adds unit tests covering encrypted message normalization, non-Codex upstream translation, spawn_agent model refresh, namespace restore, and disabled/unrelated-client passthrough.
 ### Added
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 - **Provider registry expansion (search, media, Chinese/regional, developer/niche)** — added 22 new built-in provider prefixes to close coverage gaps vs. 9Router/OmniRoute:
 - Search: `brave`, `tavily`, `exa`, `jina`, `google-pse`, `firecrawl` (webSearch/webFetch service kinds).
 - Media: `fal`, `black-forest-labs`, `assemblyai`, `cartesia`, `edge-tts` (image/video/tts/stt).
@@ -86,6 +93,8 @@ Each provider is seeded in `provider_types` with format `openai`, appropriate ba
 - **Smart-router virtual models (`smart/auto`, `smart/auto-fast`, `smart/auto-quality`)** — new `internal/smart` package resolves virtual model ids to concrete `provider/model-id` candidates based on request complexity, live telemetry from `request_logs`, provider availability, capability requirements, and API-key allowlists. Virtual model registry is persisted in settings as `smart_router_virtual_models` and consumed by the dashboard Smart Router settings page. Smart routing runs before combo resolution for `/v1/chat/completions`, `/v1/messages`, and `/v1/responses`, with transparent fallback to normal resolution when no eligible candidate is found. Includes `internal/smart/features_test.go` and `internal/smart/router_test.go`.
 
 ### Added
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 - **MCP stdio-SSE bridge for local tool servers** — new `internal/mcp` package registers local MCP servers in an SQLite `mcp_servers` table and exposes them to remote clients via a stdio-SSE bridge. Admin CRUD endpoints (`GET/POST/PATCH/DELETE /api/admin/mcp`, `POST /api/admin/mcp/:id/test`, `GET /api/admin/mcp/:id/tools`) are wired for both session JWT and master API key auth. The SSE endpoint `GET /api/admin/mcp/:id/sse` spawns a per-session subprocess and implements the Anthropic MCP SSE contract (`endpoint` event + `message` events); client messages are delivered via `POST /api/admin/mcp/:id/message?sessionId=xxx`. Subprocesses are reaped by max idle time or disconnect, with restart policies (`always`, `on-failure`, `never`) and a configurable max concurrent clients cap. Command/args are validated to block shell metacharacters; stderr is logged only and never forwarded to clients. A new dashboard page at `/mcp` lists servers, supports add/edit/delete, tests connections, discovers tools, and copies the SSE URL. Added `internal/mcp/mcp_test.go` with CRUD, validation, parsing, and subprocess integration tests. Updated `openspec/specs/api/spec.md` and added `docs/mcp-setup.md`.
 ### Fixed
 - **Kiro regional endpoint routing now uses explicit host templates** — replaced regex-based region/profile parsing in the Kiro executor with explicit string templates (`q.{region}.amazonaws.com` and the legacy `codewhisperer.us-east-1.amazonaws.com`). Runtime region resolution prefers the region embedded in `profileArn`, falls back to any syntactically valid AWS region stored in PSD, and defaults to `us-east-1`. Legacy built-in Kiro base URLs (`runtime.us-east-1.kiro.dev`, `codewhisperer.us-east-1.amazonaws.com`, `q.us-east-1.amazonaws.com`) are treated as defaults so the executor still builds the regional endpoint list. Updated unit tests cover `us-east-1`, `eu-west-1`, `codewhisperer.us-east-1.amazonaws.com` input, and the dev runtime endpoint. Applies to `internal/executor/kiro_region.go`, `internal/provider/kiro/models.go`, and `internal/quota/kiro.go`.
@@ -97,6 +106,8 @@ Each provider is seeded in `provider_types` with format `openai`, appropriate ba
 ## [0.3.21] - 2026-07-27
 ### Added
 - **Console-logs subsystem: SSE streaming, clear endpoint, rotation, retention, and env-var configuration** — `GET /api/admin/console-logs` returns up to 500 structured JSON log entries with level/search filters; `GET /api/admin/console-logs/stream` opens an SSE connection that replays recent lines and then pushes live lines and clear events from `internal/logging.LogBroadcaster`; `DELETE /api/admin/console-logs` truncates the active log file and broadcasts a clear event. Log rotation is configured via `AXON_LOG_FILE_PATH`, `AXON_LOG_MAX_SIZE`, `AXON_LOG_RETENTION_DAYS`, and `AXON_LOG_MAX_FILES`, with an optional directory-size cap via `AXON_LOGS_MAX_TOTAL_SIZE_MB`. `internal/logging/filewriter.go` writes structured JSON lines via a `TeeHandler`, and `internal/logging/rotation.go` handles size-based rotation plus age/count cleanup. Docs/specs updated in `openspec/specs/api/spec.md`, `openspec/specs/log/spec.md`, and `docs/ENVIRONMENT_VARIABLES.md`. Unit tests added/updated in `internal/api/handlers/admin/console_logs_test.go` and the `internal/logging/*_test.go` packages.
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 - **OAuth quota auto-ping scheduler for Claude and Codex** — new `internal/background/auto_ping.go` runs a lightweight background scheduler that sends a minimal, fail-silent HTTP ping after detected quota reset windows for enabled OAuth connections. Provider-specific configs define ping URLs and headers for `claude` (`/v1/models`) and `cx`/Codex (`/backend-api/wham/usage`). Configuration (`claude_auto_ping`, `codex_auto_ping`) and runtime metrics (`auto_ping_metrics`) are persisted in SQLite settings; per-connection toggles are exposed on the provider detail page for Claude and Codex. The feature is opt-in, uses no user data, and only re-pings after the reset timestamp advances or the fallback interval has elapsed. Added `internal/background/auto_ping_test.go`.
 - **Cursor IDE token auto-import** — new built-in `cursor` provider and `POST /api/admin/oauth/cursor/import` endpoint read `cursorAuth/accessToken` from the Cursor VS Code: SQLite state file (`~/.config/Cursor/User/globalStorage/state.vscdb`, plus macOS and Windows variants), validate it with Cursor's upstream `api2.cursor.sh/auth/usage` API, and create a ready OAuth connection. Logs include only metadata (token and email hashes, user identifiers); the raw token is never logged. If `state.vscdb` is missing or has no token, the endpoint returns 404 with the tried paths so the dashboard can show the manual import guide. The provider detail page adds an "Import from Cursor IDE" button in the token-import tab. Added `internal/auth/cursor` and `internal/api/handlers/admin/cursor_import_test.go` unit tests.
 - **Grok Build CLI tool card and driver** — added `grok-build` to the CLI Tools catalog and implemented `grokBuildDriver` in `internal/api/handlers/admin/clitools_drivers.go`. The driver writes a `[model.9router]` custom model entry to `~/.grok/config.toml`, sets it as the default model, and exposes the generated config and `AXONROUTER_API_KEY` env block in the dashboard.
@@ -134,6 +145,8 @@ Each provider is seeded in `provider_types` with format `openai`, appropriate ba
 - **Antigravity max output tokens cap and Claude conversation fix** — ported from OmniRoute. `internal/executor/antigravity.go::sanitizeRequest` now hard-caps `generationConfig.maxOutputTokens` to `16384` and emits a warning log when capping; previously, requests up to 64K could be rejected by the upstream. `internal/translator/antigravity/openai/request.go::convertOpenAIRequestToAntigravity` now strips trailing assistant ("model") turns from Claude-branded Antigravity requests, because Vertex AI rejects assistant-ending conversations; native Gemini-branded Antigravity requests are left untouched.
 
 ### Added
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 - **Claude prompt caching support** — new `internal/executor/claude_caching.go` automatically manages Anthropic `cache_control` breakpoints for Claude requests. It injects optimal breakpoints when missing (last tool, last system prompt, second-to-last user turn), enforces Anthropic's 4-breakpoint limit, and normalizes TTL ordering so a `1h` block never follows a `5m` block. Wired into `ClaudeExecutor.Execute`, `ExecuteStream`, and `CountTokens`. Includes unit tests.
 - **Signature sanitization for Claude cross-provider conversations** — new `internal/signature` package ports provider-aware thinking/tool signature compatibility from CLIProxyAPI. `SanitizeClaudeMessagesForClaudeUpstream` drops invalid cross-provider thinking blocks, normalizes native Claude signatures to provider-native E-form, drops empty thinking placeholders and empty messages, and strips tool provenance signatures before forwarding to Anthropic. The sanitizer is called from `ClaudeExecutor` and the OpenAI-to-Claude request translator; decisions and counts are logged at debug level.
 - **Claude thinking block management** — new `internal/executor/claude_thinking.go` helpers enforce Anthropic's extended-thinking request rules: `disableThinkingIfToolChoiceForced` removes `thinking` and `output_config.effort` when `tool_choice.type` is `any` or `tool`; `normalizeClaudeSamplingForUpstream` strips `temperature`, `top_p`, and `top_k` for thinking-enabled requests; `ensureClaudeThinkingDisplay` defaults `thinking.display` to `"summarized"` when the client does not set it. Wired into `prepareClaudeBody` so `Execute`, `ExecuteStream`, and `CountTokens` all apply the rules in the required order. Added unit tests covering forced-tool removal, sampling normalization, display defaults, and client-explicit `display: "omitted"` preservation.
@@ -161,6 +174,8 @@ Each provider is seeded in `provider_types` with format `openai`, appropriate ba
 ## [0.3.20] - 2026-07-23
 
 ### Added
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 - **Deduplicate OAuth connections by account** — new `internal/db.UpsertOAuthConnection` helper looks up an existing OAuth row by `provider_type_id` + `oauth_email` and updates its tokens, resets `status='ready'` and `is_active=1`, and returns the existing id instead of creating a duplicate. Added the `connections.oauth_email` column and a partial unique index `idx_connections_oauth_account`. Wired the upsert into the generic OAuth callback, Kiro auth flows, OAuth token import, and Codex CLI credential import.
 
 ### Changed
@@ -176,6 +191,8 @@ Each provider is seeded in `provider_types` with format `openai`, appropriate ba
 ## [0.3.19] - 2026-07-22
 
 ### Added
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 - **Standalone OAuth token refresh scheduler** — `internal/background/token_refresh_scheduler.go` runs independently of the quota scheduler, scans active OAuth connections, refreshes tokens before expiry, and marks connections `auth_failed` on unrecoverable refresh errors.
 - **Forced token refresh retry on quota auth failures** — when a quota fetch fails with an auth error (HTTP 401/403 or equivalent), the quota fetcher performs an unconditional token refresh via `auth.Manager` and retries the fetch once. This applies globally to all OAuth providers.
 - **Bedrock tool schema normalization** — strips unsupported JSON Schema keywords (`additionalProperties`, `anyOf`, `oneOf`, `allOf`, `not`, `$schema`, `$id`, `$ref`, `$defs`, `definitions`) from tool schemas sent to Bedrock and ensures every `function.parameters` object has `type: object` with a `properties` map. Required strings that do not match property keys are filtered out, and nested schemas are normalized recursively.
@@ -207,12 +224,16 @@ Each provider is seeded in `provider_types` with format `openai`, appropriate ba
 - **Pre-materialized eligibility readyView** — `EligibilitySnapshot` now stores sorted `*ConnectionState` pointers per provider prefix so the routing loop avoids repeated `store.Get` map lookups.
 
 ### Added
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 - **Routing hot-path benchmarks** — `internal/api/handlers/v1/handler_benchmark_test.go`, `providercfg_benchmark_test.go`, `modellock_benchmark_test.go`, and `exhaustion_benchmark_test.go` baseline the connection-selection path.
 - **Per-model round-robin cursor** — round-robin counters are now keyed by `provider + "\x00" + modelID` so independent models on the same provider rotate separately and high-traffic models do not steal rotation from siblings.
 
 ## [0.3.17] - 2026-07-20
 
 ### Added
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 - **Console log file rotation and dashboard Console page** — application logs are now written to a rotating on-disk file (`/tmp/axonrouter.log`) via `internal/logging/file.go` (2 MB max, 3 backups). A new `GET /api/admin/console-logs` endpoint tails up to 500 lines for the dashboard, and the new Console page under System shows live, auto-polling log output in the sidebar.
 - **Recency-aware connection rotation** — tracks an in-memory `lastUsedAt` timestamp per connection and uses it as a secondary sort key when building the eligibility snapshot and fallback candidate order, spreading simultaneous requests across siblings instead of concentrating them on the same freshly-selected connection.
 - **In-product upgrade, logs, and restart flow** — `POST /api/admin/upgrade` now returns per-step upgrade logs, and `POST /api/admin/restart` restarts the service; the About page and update-available modal show live logs and a restart prompt after upgrade completes.
@@ -223,6 +244,8 @@ Each provider is seeded in `provider_types` with format `openai`, appropriate ba
 ## [0.3.16] - 2026-07-20
 
 ### Added
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 - **Auto-refresh OAuth tokens during connection test** — expired OAuth tokens are refreshed automatically before `TestConnection` validates the account.
 - Docker image build/push moved into the GitHub Actions release workflow.
 
@@ -233,6 +256,8 @@ Each provider is seeded in `provider_types` with format `openai`, appropriate ba
 ## [0.3.15] - 2026-07-20
 
 ### Added
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 - Dashboard update modal with short changelog shown once per browser session when an update is available.
 - Sidebar badge on the About menu when an update is available.
 - Centralized `web/src/lib/health.ts` store for health/version/update state.
@@ -253,6 +278,8 @@ Each provider is seeded in `provider_types` with format `openai`, appropriate ba
 ## [0.3.14] - 2026-07-20
 
 ### Added
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 - **CodeBuddy executor wrapper** — adds a dedicated executor for the `codebuddy` provider that prepends a required leading `system` message and always calls the upstream streaming endpoint, aggregating SSE chunks back into a single non-streaming response.
 
 ### Fixed
@@ -262,6 +289,8 @@ Each provider is seeded in `provider_types` with format `openai`, appropriate ba
 ## [0.3.13] - 2026-07-20
 
 ### Added
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 - **200-tool cap for `grok-cli`** — flattens and truncates large tool lists to the first 200 entries before sending upstream, with a warn log when truncation occurs.
 - **Transactional provider-account creation with deduplication, auto-priority, and reorder** — `AddConnection` now runs in a SQLite transaction, rejects duplicate `(provider, name)` or OAuth-token accounts with `409`, auto-assigns priority as `max + 1`, and normalizes priority ordering after every add/delete.
 - **Pre-save provider key validation** — backend rejects invalid API keys before persisting the connection; dashboard modal surfaces validation errors inline and blocks submit until the key passes.
@@ -303,6 +332,8 @@ Each provider is seeded in `provider_types` with format `openai`, appropriate ba
 ## [0.3.11] - 2026-07-19
 
 ### Added
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 - **Windows icon + tray launch** — Windows release binary embeds `assets/icon.ico` via `.syso` resources and builds with `-H=windowsgui -tags tray`. Double-clicking `axonrouter-windows-amd64.exe` starts the system tray icon instead of a flashing console.
 - **Devin CLI and Qoder providers** — ported from OmniRoute. Devin routes through the local `devin acp` CLI; Qoder supports dual-mode transport (DashScope HTTP for API keys, `qodercli` for PAT `pt-*` tokens). Includes shared CLI subprocess runtime, provider seeding, static model catalog, frontend catalog entries, and alias registry.
 - **Devin and Qoder provider icons** — added `devin.svg` (from OmniRoute Windsurf/Cognition branding) and `qoder.png` (from 9router) to the dashboard provider catalog.
@@ -317,6 +348,8 @@ Each provider is seeded in `provider_types` with format `openai`, appropriate ba
 ## [0.3.10] - 2026-07-18
 
 ### Added
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 - **Grok CLI session/turn header persistence** — `/v1/chat/completions` and `/v1/responses` calls routed through `grok-cli` now generate stable `x-grok-session-id`, `x-grok-conv-id`, and `x-grok-agent-id` values per connection, a fresh `x-grok-req-id` per request, and a monotonic `x-grok-turn-idx` that advances only by user messages. State is persisted to the connection's `provider_specific_data` and survives restarts.
 - **Grok CLI upstream quota usage** — `grok-cli` connections now display live subscription quota from xAI billing/user endpoints, including monthly included credits, on-demand cap/usage, and prepaid balance. Registered in the quota scheduler alongside Codex, Antigravity, Kiro, and Copilot.
 - **Grok CLI identity header alignment** — bumped client version to `0.2.99`, switched User-Agent to `grok-shell/0.2.99 (linux; x86_64)`, and added `x-grok-client-identifier: grok-shell` plus `x-grok-client-mode: headless` to both chat and quota requests. OAuth scope now includes `conversations:read conversations:write`.
@@ -329,6 +362,8 @@ Each provider is seeded in `provider_types` with format `openai`, appropriate ba
 ## [0.3.9] - 2026-07-18
 
 ### Added
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 - **Grok CLI provider (`grok-cli/`)** — seeded `grok-cli` as a built-in OAuth provider with models `grok-build-0.1`, `grok-4.5`, `grok-4.3`, `grok-3-mini`, and `grok-3-mini-fast`, plus representative pricing. Added the dashboard provider card and a `grokcli` OAuth service implementing xAI OIDC device-code discovery, polling, token refresh, and JWT identity parsing.
 - **Combo strategies `random` and `least-used`** — `random` picks an unweighted random step per request; `least-used` orders steps by recent successful calls from `request_logs` (cached 30s) so the least-used model is tried first.
 - **Combo strategy `fusion`** — parallel panel execution of combo steps followed by a configurable judge model that synthesizes the panel answers. Includes `fusion_config` storage and UI fields for judge model, min panel, straggler grace, hard timeout, and source anonymization.
@@ -416,6 +451,8 @@ Each provider is seeded in `provider_types` with format `openai`, appropriate ba
 ## [0.3.6] - 2026-07-16
 
 ### Added
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 - Request logs now record the client-facing API type (`api_type`) so the `/logs` dashboard shows whether a request came through the OpenAI-compatible surface (`/v1/chat/completions`), Claude surface (`/v1/messages`), responses, embeddings, images, audio, video, or other endpoints.
 - API key expiration with 1/7/30/90 days, custom date, and no expiration options.
 - `AXONROUTER_DIR` environment variable overrides the data directory (default remains `~/axonrouter`). Relative paths resolve against `$HOME`.
@@ -447,6 +484,8 @@ Each provider is seeded in `provider_types` with format `openai`, appropriate ba
 - Proactive OAuth token refresh now refreshes Copilot tokens even though GitHub device-code flow doesn't return a refresh token; the manual admin refresh endpoint also supports Copilot and persists the refreshed Copilot token to `provider_specific_data`.
 
 ### Added
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 - MiMoCode Free provider (`mimocode/` prefix) with dedicated `MimocodeExecutor`: per-device-fingerprint JWT bootstrap, anti-abuse system marker, required `x-mimo-*` headers, one-time 401/403 retry, and proxy-pool selection for non-default connections. Includes a seeded `mimocode-direct-default` connection and backend validation/rules mirroring OpenCode Free.
 - Updated static GitHub Copilot model catalog in `internal/models/models.json` to include newer generally-available models: `claude-opus-4.6`, `gpt-5.4-nano`, `gpt-5.6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gemini-2.5-pro`, and `gemini-3-flash-preview`.
 - Quota dashboard provider summary now returns per-provider color/icon metadata and the provider filter pills use those colors, so Copilot and other providers render with their brand color instead of default gray.
@@ -455,6 +494,8 @@ Each provider is seeded in `provider_types` with format `openai`, appropriate ba
 ## [0.3.4] - 2026-07-15
 
 ### Added
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 - Vertex AI provider (`vertex/` prefix) using Google service-account JSON keys; signs a JWT locally, exchanges it for a Google access token, resolves `{projectId}`/`{location}` base_url placeholders, and proxies OpenAI-compatible `/chat/completions` to Vertex AI's OpenAI endpoint.
 - GitHub Copilot provider (`copilot/` prefix) with OAuth-token → Copilot-token exchange, token caching, and the Copilot-specific request headers needed for its OpenAI-compatible `/chat/completions` endpoint.
 - System tray mode behind the `tray` build tag. When built with `-tags tray`, `axonrouter --tray` shows a tray icon with menu items to open the dashboard, start/stop the server, and exit. Makefile gains a `build-tray` target; the default build remains headless with no GUI dependencies.
@@ -497,6 +538,8 @@ Each provider is seeded in `provider_types` with format `openai`, appropriate ba
 ## [0.3.3] - 2026-07-14
 
 ### Added
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 - Native HTTPS on port 443 via Let's Encrypt (`golang.org/x/crypto/acme/autocert`) configured from the dashboard Settings → HTTPS tab.
 - Admin TLS API endpoints (`/api/admin/tls-config`, `/api/admin/tls-config/public-ip`, `/api/admin/tls-config/check-dns`) for HTTPS setup.
 - `internal/config/https.go` persists HTTPS config to `https.yml` and router starts dual HTTP/HTTPS listeners.
@@ -583,6 +626,8 @@ Each provider is seeded in `provider_types` with format `openai`, appropriate ba
 ## [0.3.1] - 2026-07-13
 
 ### Added
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 - Single-source versioning system using `internal/version/VERSION`.
 - Build-time version embedding via `//go:embed`.
 - Version exposed in startup banner and `/api/admin/health` response.

@@ -1753,3 +1753,91 @@ The API SHALL expose Codex executor operational settings through environment var
 - **GIVEN** A client request to a Codex endpoint includes `Cookie`, `Referer`, a duplicate `Authorization`, or an `X-Forwarded-*` header
 - **WHEN** The request is forwarded upstream
 - **THEN** Those headers are stripped and replaced with values supplied by the gateway
+
+### Requirement: HeadroomCompressionService
+The API SHALL support Headroom compression for tool-output payloads to reduce token usage when forwarding to AI. The Headroom compression service detects payload kinds (git diff, git log, git status, grep, find tree, build log, search results) and compresses them using domain-specific strategies before transmission.
+
+#### Scenario: CompressGitDiff
+- **GIVEN** A payload representing a git diff output
+- **WHEN** POST /compress is called with a request body containing the git diff data and kind_hint: "git_diff" (or auto-detected)
+- **THEN** Returns 200 OK with compressed output containing: data (valid diff structure), kind: "git_diff", original_bytes, compressed_bytes, original_tokens, compressed_tokens
+- **AND** Compressed diff preserves diff headers (e.g., "diff --git"), hunk markers (e.g., "@@ -1,5 +1,7 @@"), and at most 3 lines of context per hunk
+- **AND** Other diff-only lines (file changes, rename metadata, binary markers) are kept unchanged
+
+#### Scenario: CompressGitLog
+- **GIVEN** A payload representing git commit log output
+- **WHEN** POST /compress is called with log data and kind_hint: "git_log" or auto-detected
+- **THEN** Returns 200 OK with compacted log format
+- **AND** Commit hashes are prefixed with "c", merge messages with "m", authors with "a", dates with "d"
+- **AND** Signed-off-by and co-authored-by are prefixed with "t" and kept
+- **AND** Message text is prefixed with "m" after blank-line handling
+
+#### Scenario: CompressBuildLog
+- **GIVEN** A payload representing a build output
+- **WHEN** POST /compress is called with build log data and kind_hint: "build_log" or auto-detected
+- **THEN** Returns 200 OK with condensed log
+- **AND** Progress noise (percentage markers with brackets) is dropped
+- **AND** Consecutive duplicate lines are replaced with a single line followed by " (xN)"
+
+#### Scenario: CompressGrepResults
+- **GIVEN** A payload representing grep output
+- **WHEN** POST /compress is called with grep output and kind_hint: "grep" or auto-detected
+- **THEN** Returns 200 OK with grouped grep hits
+- **AND** Path entries are kept with line:column:text references on separate lines
+- **AND** Duplicate hits within the same file are deduplicated
+
+#### Scenario: CompressSearchResults
+- **GIVEN** A payload representing search results
+- **WHEN** POST /compress is called with search output and kind_hint: "search_results" or auto-detected
+- **THEN** Returns 200 OK with truncated results
+- **AND** HTTP/HTTPS URLs are dropped or removed by default
+- **AND** Truncation caps lines at 117 characters plus "..." ellipsis
+
+#### Scenario: DetectPayloadKind
+- **GIVEN** A raw tool-output payload without kind_hint
+- **WHEN** POST /compress is called with only data
+- **THEN** Returns 200 OK after detector runs
+- **AND** The detected kind determines the compression strategy used
+- **AND** Detection may classify as unknown, applying minimal trimBlankRuns
+
+#### Scenario: EmptyPayload
+- **GIVEN** A request with empty data field
+- **WHEN** POST /compress is called
+- **THEN** Returns 400 Bad Request with error: "headroom: empty payload"
+
+#### Scenario: PayloadTooLarge
+- **GIVEN** A payload exceeding max_payload_bytes configuration
+- **WHEN** POST /compress is called
+- **THEN** Returns 400 Bad Request with error: "payload exceeds N byte limit"
+
+#### Scenario: UnknownKind
+- **GIVEN** A payload with an unsupported kind_hint
+- **WHEN** POST /compress is called
+- **THEN** Returns 400 Bad Request with error: "headroom: unknown kind: QQQ"
+
+#### Scenario: CompressionErrorFailsOpen
+- **GIVEN** A payload with a kind that has a dedicated compressor
+- **WHEN** The compressor fails (unexpected error)
+- **THEN** Returns 200 OK with original data, kind set to "unknown", zero/no savings stats
+- **AND** Original_bytes and compressed_bytes are equal, compression is fail-open to preserve upstream compatibility
+
+#### Scenario: EndpointAvailability
+- **GIVEN** The Headroom compression endpoint is not reachable
+- **WHEN** POST /compress is called and connection fails or times out
+- **THEN** Integration layer (translator or handler) may return error, depending on stage
+- **AND** During stage 3 translator integration, translation may abort or use original body outside throttling
+- **AND** No response is returned directly; the upstream layer handles upper-level errors (503/429, etc.)
+
+#### Environment variables
+The API SHALL support these Headroom configuration environment variables:
+- **AXON_HEADROOM_ENABLED** — enables the Headroom compression service integration (default: false)
+- **AXON_HEADROOM_ENDPOINT** — HTTP endpoint where the Headroom compression service listens (default: "127.0.0.1:9123")
+- **AXON_HEADROOM_TIMEOUT_MS** — request timeout in milliseconds for calls to the Headroom service (default: 30000)
+- **AXON_HEADROOM_MAX_PAYLOAD_BYTES** — maximum input payload size in bytes before rejection (default: 524288)
+
+#### Admin settings fields
+The optimization dashboard MAY expose Headroom configuration as part of optimization settings (stage 2 persistence). Fields may include:
+- **headroom_enabled** — boolean, enables Headroom compression per request
+- **headroom_endpoint** — string, Headroom service URL
+- **headroom_timeout_ms** — integer, request timeout
+- **headroom_max_payload_bytes** — integer, max payload size
