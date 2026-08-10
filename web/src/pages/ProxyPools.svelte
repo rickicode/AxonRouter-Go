@@ -440,13 +440,17 @@ async function handleEditPool() {
 	if (!editPoolId || !editPoolName.trim() || !editPoolUrl.trim()) return;
 	editPoolLoading = true;
 	try {
-		await proxyPoolsApi.update(editPoolId, {
+		const res = await proxyPoolsApi.update(editPoolId, {
 			name: editPoolName.trim(),
 			proxyUrl: editPoolUrl.trim(),
 			type: editPoolType,
 			noProxy: editPoolNoProxy.trim() || undefined,
 		});
-		toast.success('Proxy pool updated');
+		if (res.data?.testStatus === 'error') {
+			toast.warning(`Pool saved — proxy check failed: ${res.data.lastError || 'unreachable'}`);
+		} else {
+			toast.success('Proxy pool updated');
+		}
 		showEditPool = false;
 		await loadAll(true);
 	} catch (err) { toast.error('Update failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
@@ -977,7 +981,7 @@ async function handleBulkImport() {
   </Tabs.Content>
 
       <Tabs.Content value="assignments">
-{#if providers.some(p => p.id !== 'oc') && pools.length > 0}
+{#if providers.some(p => p.id !== 'oc') && allPools.length > 0}
         <Card class="shadow-card overflow-hidden p-0">
           <div class="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/50">
             <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Provider → Proxy Assignment</p>
@@ -1016,11 +1020,11 @@ async function handleBulkImport() {
                   <td class="px-4 py-2.5">
                     <Select.Root type="single" value={proxyDefaults[prov.id]?.proxyPoolId ?? ''} onValueChange={(v: string) => setProxyDefault(prov.id, 'proxyPoolId', v ?? '')}>
                       <Select.Trigger class="h-8 w-full max-w-[200px] text-body-sm rounded-sm">
-                        {pools.find(p => p.id === (proxyDefaults[prov.id]?.proxyPoolId ?? ''))?.name ?? 'None'}
+                        {allPools.find(p => p.id === (proxyDefaults[prov.id]?.proxyPoolId ?? ''))?.name ?? 'None'}
                       </Select.Trigger>
                       <Select.Content>
                         <Select.Item value="" class="text-body-sm">None</Select.Item>
-                        {#each pools as pool}
+                        {#each allPools as pool}
                           <Select.Item value={pool.id} class="text-body-sm">{pool.name}</Select.Item>
                         {/each}
                       </Select.Content>

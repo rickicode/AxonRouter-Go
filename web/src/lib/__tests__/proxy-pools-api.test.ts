@@ -78,3 +78,37 @@ describe('proxyPoolsApi.listAll', () => {
     expect(result).toEqual([]);
   });
 });
+
+describe('proxyPoolsApi long-running test timeouts', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('healthRun, test and update override the 8s default fetch timeout', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => null },
+      json: () => Promise.resolve({ ok: true }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await proxyPoolsApi.healthRun();
+    await proxyPoolsApi.test('pool-1');
+    await proxyPoolsApi.update('pool-1', { name: 'x' });
+
+    const calls = fetchMock.mock.calls as [string, RequestInit][];
+    const health = calls.find(([url]) => url.includes('/health-check'));
+    const test = calls.find(([url]) => url.includes('/test'));
+    const update = calls.find(([url]) => url.endsWith('/pool-1'));
+    expect(health).toBeDefined();
+    expect(test).toBeDefined();
+    expect(update).toBeDefined();
+    // The backend health check runs all active pools with 4 workers and up to
+    // 8s per pool, a relay test can take up to 30s server-side, and an edit
+    // re-tests the proxy synchronously — all must exceed the default 8s client
+    // timeout or the UI aborts before the result.
+    expect((health![1] as Record<string, unknown>).timeout_ms).toBe(300000);
+    expect((test![1] as Record<string, unknown>).timeout_ms).toBe(60000);
+    expect((update![1] as Record<string, unknown>).timeout_ms).toBe(60000);
+  });
+});

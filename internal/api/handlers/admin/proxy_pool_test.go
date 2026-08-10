@@ -134,9 +134,9 @@ func TestProxyPoolBulkCreate(t *testing.T) {
 			"http://proxy2.example:8080",
 			map[string]any{"name": "custom-pool", "proxyUrl": "http://proxy3.example:8080", "type": "http"},
 		},
-		"namePrefix": "bulk",
+		"namePrefix":  "bulk",
 		"defaultType": "http",
-		"isActive": true,
+		"isActive":    true,
 	}))
 	h.BulkCreate(c)
 
@@ -146,7 +146,7 @@ func TestProxyPoolBulkCreate(t *testing.T) {
 	var resp struct {
 		Created int `json:"created"`
 		Skipped int `json:"skipped"`
-		Errors int `json:"errors"`
+		Errors  int `json:"errors"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -162,8 +162,8 @@ func TestProxyPoolBulkCreate(t *testing.T) {
 	w = httptest.NewRecorder()
 	c, _ = gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk", jsonBodyProxyPool(t, map[string]any{
-		"items": []any{"http://proxy1.example:8080", "http://proxy4.example:8080"},
-		"namePrefix": "bulk",
+		"items":       []any{"http://proxy1.example:8080", "http://proxy4.example:8080"},
+		"namePrefix":  "bulk",
 		"defaultType": "http",
 	}))
 	h.BulkCreate(c)
@@ -187,8 +187,8 @@ func TestProxyPoolBulkCreateNamePipe(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk", jsonBodyProxyPool(t, map[string]any{
-		"items": []any{"us-proxy|http://proxy-us.example:8080", "http://proxy-eu.example:8080"},
-		"namePrefix": "bulk",
+		"items":       []any{"us-proxy|http://proxy-us.example:8080", "http://proxy-eu.example:8080"},
+		"namePrefix":  "bulk",
 		"defaultType": "http",
 	}))
 	h.BulkCreate(c)
@@ -216,8 +216,8 @@ func TestProxyPoolBulkCreateDetectsRelayType(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk", jsonBodyProxyPool(t, map[string]any{
-		"items": []any{"https://myrelay.vercel.app"},
-		"namePrefix": "relay",
+		"items":       []any{"https://myrelay.vercel.app"},
+		"namePrefix":  "relay",
 		"defaultType": "http",
 	}))
 	h.BulkCreate(c)
@@ -374,6 +374,131 @@ func TestProxyPoolBulkCreateSkipsSlow(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("expected slow pool to not be inserted, got %d", count)
+	}
+}
+
+func TestProxyPoolUpdateRetestsChangedURL(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
+
+	// Create a pool with a healthy check.
+	h.testProxy = func(_, _, _ string) proxypool.TestResult {
+		return proxypool.TestResult{OK: true, StatusCode: 200, ElapsedMs: 50}
+	}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools", jsonBodyProxyPool(t, map[string]any{
+		"name": "edit-pool", "proxyUrl": "http://old.example:8080", "type": "http",
+	}))
+	h.Create(c)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("Create status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var id string
+	if err := database.QueryRow("SELECT id FROM proxy_pools WHERE proxy_url = ?", "http://old.example:8080").Scan(&id); err != nil {
+		t.Fatalf("find pool: %v", err)
+	}
+
+	// Editing the URL to a dead proxy must flip test_status to error and record it.
+	h.testProxy = func(_, _, _ string) proxypool.TestResult {
+		return proxypool.TestResult{OK: false, Error: "connection refused"}
+	}
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPatch, "/proxy-pools/"+id, jsonBodyProxyPool(t, map[string]any{
+		"proxyUrl": "http://dead.example:8080",
+	}))
+	c.Params = gin.Params{{Key: "id", Value: id}}
+	h.Update(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Update status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var status, lastErr string
+	if err := database.QueryRow("SELECT test_status, COALESCE(last_error,'') FROM proxy_pools WHERE id = ?", id).Scan(&status, &lastErr); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if status != "error" {
+		t.Fatalf("expected test_status=error after editing URL to dead proxy, got %q", status)
+	}
+	if lastErr == "" {
+		t.Fatal("expected last_error to be recorded after failed re-test")
+	}
+
+	// Editing only the name must NOT trigger a re-test.
+	reTested := false
+	h.testProxy = func(_, _, _ string) proxypool.TestResult {
+		reTested = true
+		return proxypool.TestResult{OK: true, StatusCode: 200, ElapsedMs: 10}
+	}
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPatch, "/proxy-pools/"+id, jsonBodyProxyPool(t, map[string]any{
+		"name": "renamed",
+	}))
+	c.Params = gin.Params{{Key: "id", Value: id}}
+	h.Update(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Update status = %d, body=%s", w.Code, w.Body.String())
+	}
+	if reTested {
+		t.Fatal("name-only edit must not re-test the proxy")
+	}
+}
+
+func TestProxyPoolListMasksRelayAuth(t *testing.T) {
+	database := newProxyPoolTestDB(t)
+	gin.SetMode(gin.TestMode)
+	h := NewProxyPoolHandler(database, nil, proxypool.NewResolver(database), nil)
+
+	now := time.Now().Unix()
+	if _, err := database.Exec(`INSERT INTO proxy_pools (id, name, type, proxy_url, no_proxy, relay_auth, is_active, test_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"relay-secret-pool", "Secret Relay", "vercel", "https://relay.vercel.app", "", "super-secret-token", 1, "active", now, now); err != nil {
+		t.Fatalf("insert pool: %v", err)
+	}
+
+	// List must mask the relay secret.
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/proxy-pools", nil)
+	h.List(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("List status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var listResp struct {
+		Data []struct {
+			RelayAuth string `json:"relayAuth"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(listResp.Data) != 1 {
+		t.Fatalf("expected 1 pool in list, got %d", len(listResp.Data))
+	}
+	if listResp.Data[0].RelayAuth != "" {
+		t.Fatalf("list must mask relayAuth, got %q", listResp.Data[0].RelayAuth)
+	}
+
+	// Get (detail) still returns the real secret for the admin to copy.
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/proxy-pools/relay-secret-pool", nil)
+	c.Params = gin.Params{{Key: "id", Value: "relay-secret-pool"}}
+	h.Get(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Get status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var getResp struct {
+		Data struct {
+			RelayAuth string `json:"relayAuth"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &getResp); err != nil {
+		t.Fatalf("decode get: %v", err)
+	}
+	if getResp.Data.RelayAuth != "super-secret-token" {
+		t.Fatalf("detail must return the real relayAuth, got %q", getResp.Data.RelayAuth)
 	}
 }
 
@@ -658,9 +783,9 @@ func TestProxyPoolBulkCreateGeoNames(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/proxy-pools/bulk", jsonBodyProxyPool(t, map[string]any{
-		"items":         []any{"http://geo1.example:8080"},
-		"defaultType":   "http",
-		"isActive":      true,
+		"items":          []any{"http://geo1.example:8080"},
+		"defaultType":    "http",
+		"isActive":       true,
 		"requireHealthy": true,
 	}))
 	h.BulkCreate(c)

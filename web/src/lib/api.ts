@@ -1009,6 +1009,9 @@ bulkCreate: (data: Record<string, unknown>) =>
     fetchApi<{ data: ProxyPool }>(`/proxy-pools/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+      // Editing the URL/type triggers a synchronous re-test server-side (up to
+      // 30s for relays) — must exceed the default 8s client timeout.
+      timeout_ms: 60000,
     }),
 	delete: (id: string) =>
 		fetchApi<{ ok: boolean }>(`/proxy-pools/${id}`, { method: "DELETE" }),
@@ -1027,7 +1030,7 @@ bulkCreate: (data: Record<string, unknown>) =>
       ip?: string;
       country?: string;
       org?: string;
-    }>(`/proxy-pools/${id}/test`, { method: "POST" }),
+    }>(`/proxy-pools/${id}/test`, { method: "POST", timeout_ms: 60000 }),
   healthGet: () => fetchApi<HealthCheckResult>("/proxy-pools/health-check"),
   healthRun: () =>
     fetchApi<{
@@ -1035,7 +1038,7 @@ bulkCreate: (data: Record<string, unknown>) =>
       checkedAt: string;
       results: unknown[];
       skipped: boolean;
-    }>("/proxy-pools/health-check", { method: "POST" }),
+    }>("/proxy-pools/health-check", { method: "POST", timeout_ms: 300000 }),
   listAll: async (perPage = 100) => {
     const out: ProxyPool[] = [];
     let page = 1;

@@ -629,9 +629,12 @@ func (b *BaseExecutor) DoRequest(ctx context.Context, method, rawURL string, hea
 }
 
 // doRequestOnce performs a single non-streaming attempt using the proxy already
-// attached to ctx.
+// attached to ctx. Non-streaming requests must use the timeout-bearing client
+// (b.Client / proxyClient with b.Timeout); using the streaming client here
+// would leave non-streaming calls with no overall deadline when the handler
+// does not attach one, letting a hung proxy/upstream hang the request forever.
 func (b *BaseExecutor) doRequestOnce(ctx context.Context, method, rawURL string, headers map[string]string, body []byte) (*Response, error) {
-	client, targetURL, err := b.clientForContextStream(ctx, rawURL, headers)
+	client, targetURL, err := b.clientForContext(ctx, rawURL, headers)
 	if err != nil {
 		return nil, err
 	}

@@ -19,10 +19,10 @@ import (
 )
 
 type ProxyPoolHandler struct {
-	db *sql.DB
-	health *proxypool.HealthChecker
-	resolver *proxypool.Resolver
-	testProxy func(proxyURL, typ, auth string) proxypool.TestResult
+	db         *sql.DB
+	health     *proxypool.HealthChecker
+	resolver   *proxypool.Resolver
+	testProxy  func(proxyURL, typ, auth string) proxypool.TestResult
 	writeQueue *db.WriteQueue
 }
 
@@ -71,7 +71,10 @@ func (h *ProxyPoolHandler) List(c *gin.Context) {
 	items := []gin.H{}
 	for rows.Next() {
 		if p, ok := scanPool(rows); ok {
-			items = append(items, poolJSON(p))
+			// The list endpoint must never leak relay secrets; the detail
+			// endpoint (Get) and create/update responses still return the real
+			// auth for the admin to copy.
+			items = append(items, poolJSON(p, true))
 		}
 	}
 	pages := total / perPage
@@ -87,7 +90,7 @@ func (h *ProxyPoolHandler) Get(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "proxy pool not found"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": poolJSON(p)})
+	c.JSON(http.StatusOK, gin.H{"data": poolJSON(p, false)})
 }
 
 func (h *ProxyPoolHandler) Create(c *gin.Context) {
@@ -149,7 +152,7 @@ func (h *ProxyPoolHandler) Create(c *gin.Context) {
 		h.resolver.Invalidate()
 	}
 	p, _ := h.get(id)
-	c.JSON(http.StatusCreated, gin.H{"data": poolJSON(p)})
+	c.JSON(http.StatusCreated, gin.H{"data": poolJSON(p, false)})
 }
 
 // insertPoolRow creates a single proxy pool row. It skips duplicates when
@@ -240,7 +243,6 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 		needsName bool
 	}
 
-
 	normalized := make([]normalizedItem, 0, len(req.Items))
 
 	// Phase 1: parse and normalize all items sequentially. Duplicate checks and
@@ -282,53 +284,52 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 			details = append(details, gin.H{"index": i, "status": "error", "reason": "unsupported item type"})
 			continue
 		}
-	needsName := false
-	if item.Name == "" {
-		// Defer random geo name generation until after the health check so the
-		// suffix can use country and ISP from the test result.
-		needsName = true
-	} else {
-		// Reserve explicit names now so generated names never collide with them.
-		usedNames[item.Name] = true
-	}
-	if item.Type == "" {
-		item.Type = req.DefaultType
-	}
-	// If type is still http, try auto-detecting relay hosts (vercel/deno/cloudflare)
-	// so bulk imports of relay URLs get the correct type by default.
-	if item.Type == "" || item.Type == proxypool.TypeHTTP {
-		if detected := proxypool.DetectRelayType(item.ProxyURL); detected != "" {
-			item.Type = detected
-		} else if item.Type == "" {
-			item.Type = proxypool.TypeHTTP
+		needsName := false
+		if item.Name == "" {
+			// Defer random geo name generation until after the health check so the
+			// suffix can use country and ISP from the test result.
+			needsName = true
+		} else {
+			// Reserve explicit names now so generated names never collide with them.
+			usedNames[item.Name] = true
 		}
-	}
-	noProxy := item.NoProxy
-	if noProxy == "" {
-		noProxy = req.NoProxy
-	}
-	// Generate relay auth before testing so relay health checks and the
-	// eventual insert use the exact same credentials.
-	relayAuth := ""
-	if proxypool.IsRelayType(item.Type) {
-		relayAuth = proxypool.GenerateRelayAuth()
-	}
+		if item.Type == "" {
+			item.Type = req.DefaultType
+		}
+		// If type is still http, try auto-detecting relay hosts (vercel/deno/cloudflare)
+		// so bulk imports of relay URLs get the correct type by default.
+		if item.Type == "" || item.Type == proxypool.TypeHTTP {
+			if detected := proxypool.DetectRelayType(item.ProxyURL); detected != "" {
+				item.Type = detected
+			} else if item.Type == "" {
+				item.Type = proxypool.TypeHTTP
+			}
+		}
+		noProxy := item.NoProxy
+		if noProxy == "" {
+			noProxy = req.NoProxy
+		}
+		// Generate relay auth before testing so relay health checks and the
+		// eventual insert use the exact same credentials.
+		relayAuth := ""
+		if proxypool.IsRelayType(item.Type) {
+			relayAuth = proxypool.GenerateRelayAuth()
+		}
 
-	var existingCount int
-	dup := h.db.QueryRow("SELECT COUNT(*) FROM proxy_pools WHERE proxy_url = ?", item.ProxyURL).Scan(&existingCount) == nil && existingCount > 0
+		var existingCount int
+		dup := h.db.QueryRow("SELECT COUNT(*) FROM proxy_pools WHERE proxy_url = ?", item.ProxyURL).Scan(&existingCount) == nil && existingCount > 0
 
-	normalized = append(normalized, normalizedItem{
-		index:     i,
-		name:      item.Name,
-		proxyURL:  item.ProxyURL,
-		typ:       item.Type,
-		noProxy:   noProxy,
-		relayAuth: relayAuth,
-		dup:       dup,
-		needsName: needsName,
-	})
-}
-
+		normalized = append(normalized, normalizedItem{
+			index:     i,
+			name:      item.Name,
+			proxyURL:  item.ProxyURL,
+			typ:       item.Type,
+			noProxy:   noProxy,
+			relayAuth: relayAuth,
+			dup:       dup,
+			needsName: needsName,
+		})
+	}
 
 	// Phase 2: test non-duplicate items concurrently with a bounded worker pool.
 	testResults := make([]proxypool.TestResult, len(normalized))
@@ -380,16 +381,16 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 			continue
 		}
 
-	res := testResults[i]
-	if !proxypool.Healthy(res, req.MaxResponseTimeMs) {
-		reason := res.Error
-		if reason == "" {
-			reason = "proxy too slow"
+		res := testResults[i]
+		if !proxypool.Healthy(res, req.MaxResponseTimeMs) {
+			reason := res.Error
+			if reason == "" {
+				reason = "proxy too slow"
+			}
+			skipped++
+			details = append(details, gin.H{"index": it.index, "url": it.proxyURL, "status": "skipped", "reason": reason})
+			continue
 		}
-		skipped++
-		details = append(details, gin.H{"index": it.index, "url": it.proxyURL, "status": "skipped", "reason": reason})
-		continue
-	}
 
 		// Capture loop vars for the closure (Do blocks until the worker
 		// finishes, so mutating captured counters here is race-free).
@@ -412,20 +413,20 @@ func (h *ProxyPoolHandler) BulkCreate(c *gin.Context) {
 				details = append(details, gin.H{"index": item.index, "url": item.proxyURL, "status": "error", "reason": reason})
 				return nil
 			}
-		created++
-		details = append(details, gin.H{"index": item.index, "url": item.proxyURL, "id": id, "status": "created"})
-		res := testResults[idx]
-		status := "active"
-		var lastErr any = nil
-		if !res.OK {
-			status = "error"
-			lastErr = res.Error
-		}
-		testedAt := time.Now().Format(time.RFC3339)
-		if _, e = tx.Exec("UPDATE proxy_pools SET test_status = ?, last_tested_at = ?, last_error = ?, response_time_ms = ?, proxy_ip = ?, proxy_country = ?, proxy_city = ?, proxy_org = ?, updated_at = ? WHERE id = ?", status, testedAt, lastErr, res.ElapsedMs, res.IP, res.Country, res.City, res.Org, time.Now().Unix(), id); e != nil {
-			return e
-		}
-		return tx.Commit()
+			created++
+			details = append(details, gin.H{"index": item.index, "url": item.proxyURL, "id": id, "status": "created"})
+			res := testResults[idx]
+			status := "active"
+			var lastErr any = nil
+			if !res.OK {
+				status = "error"
+				lastErr = res.Error
+			}
+			testedAt := time.Now().Format(time.RFC3339)
+			if _, e = tx.Exec("UPDATE proxy_pools SET test_status = ?, last_tested_at = ?, last_error = ?, response_time_ms = ?, proxy_ip = ?, proxy_country = ?, proxy_city = ?, proxy_org = ?, updated_at = ? WHERE id = ?", status, testedAt, lastErr, res.ElapsedMs, res.IP, res.Country, res.City, res.Org, time.Now().Unix(), id); e != nil {
+				return e
+			}
+			return tx.Commit()
 		}
 		var doErr error
 		if h.writeQueue == nil {
@@ -500,7 +501,8 @@ func (h *ProxyPoolHandler) BulkDelete(c *gin.Context) {
 
 func (h *ProxyPoolHandler) Update(c *gin.Context) {
 	id := c.Param("id")
-	if _, ok := h.get(id); !ok {
+	p, ok := h.get(id)
+	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{"error": "proxy pool not found"})
 		return
 	}
@@ -530,8 +532,14 @@ func (h *ProxyPoolHandler) Update(c *gin.Context) {
 	if _, ok := req["testStatus"]; ok {
 		add("test_status", asString(req["testStatus"]))
 	}
+	// The type column is normalized from the new type and the (possibly new) URL
+	// so relay hosts are auto-detected, matching the create path.
+	newURL := p.ProxyURL
+	if _, ok := req["proxyUrl"]; ok {
+		newURL = strings.TrimSpace(asString(req["proxyUrl"]))
+	}
 	if _, ok := req["type"]; ok {
-		add("type", proxypool.NormalizeType(asString(req["type"]), asString(req["proxyUrl"])))
+		add("type", proxypool.NormalizeType(asString(req["type"]), newURL))
 	}
 	if len(sets) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no fields to update"})
@@ -539,16 +547,43 @@ func (h *ProxyPoolHandler) Update(c *gin.Context) {
 	}
 	sets = append(sets, "updated_at = ?")
 	args = append(args, time.Now().Unix(), id)
-	_, err := h.db.Exec("UPDATE proxy_pools SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...)
-	if err != nil {
+	if _, err := h.db.Exec("UPDATE proxy_pools SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Re-test whenever the endpoint (proxy_url) or type actually changes so a
+	// stale "active" status can never outlive a dead endpoint edit. The update
+	// is still saved; a failed check simply marks the pool test_status=error
+	// (the resolver then skips it), which is honest and non-blocking.
+	finalType := p.Type
+	if _, ok := req["type"]; ok {
+		finalType = proxypool.NormalizeType(asString(req["type"]), newURL)
+	}
+	if newURL != p.ProxyURL || finalType != p.Type {
+		finalAuth := p.RelayAuth
+		if _, ok := req["relayAuth"]; ok {
+			finalAuth = asString(req["relayAuth"])
+		}
+		res := h.testProxy(newURL, finalType, finalAuth)
+		status := "active"
+		var lastErr any = nil
+		if !res.OK {
+			status = "error"
+			lastErr = res.Error
+		}
+		testedAt := time.Now().Format(time.RFC3339)
+		if _, err := h.db.Exec("UPDATE proxy_pools SET test_status = ?, last_tested_at = ?, last_error = ?, response_time_ms = ?, proxy_ip = ?, proxy_country = ?, proxy_city = ?, proxy_org = ?, updated_at = ? WHERE id = ?",
+			status, testedAt, lastErr, res.ElapsedMs, res.IP, res.Country, res.City, res.Org, time.Now().Unix(), id); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 	}
 	if h.resolver != nil {
 		h.resolver.Invalidate()
 	}
-	p, _ := h.get(id)
-	c.JSON(http.StatusOK, gin.H{"data": poolJSON(p)})
+	p, _ = h.get(id)
+	c.JSON(http.StatusOK, gin.H{"data": poolJSON(p, false)})
 }
 
 func (h *ProxyPoolHandler) Delete(c *gin.Context) {
@@ -611,8 +646,15 @@ func scanPool(row rowScanner) (db.ProxyPool, bool) {
 	return p, true
 }
 
-func poolJSON(p db.ProxyPool) gin.H {
-	return gin.H{"id": p.ID, "name": p.Name, "type": p.Type, "proxyUrl": p.ProxyURL, "noProxy": p.NoProxy, "relayAuth": p.RelayAuth, "isActive": p.IsActive, "testStatus": p.TestStatus, "lastTestedAt": nullString(p.LastTestedAt), "lastError": nullString(p.LastError), "responseTimeMs": nullInt(p.ResponseTimeMs), "proxyIp": p.ProxyIP, "proxyCountry": p.ProxyCountry, "proxyCity": p.ProxyCity, "proxyOrg": p.ProxyOrg, "createdAt": p.CreatedAt, "updatedAt": p.UpdatedAt}
+// poolJSON serializes a proxy pool for the admin API. When maskRelayAuth is
+// true the relay secret is replaced with an empty string so bulk responses
+// never expose every pool's auth token in one payload.
+func poolJSON(p db.ProxyPool, maskRelayAuth bool) gin.H {
+	relayAuth := p.RelayAuth
+	if maskRelayAuth {
+		relayAuth = ""
+	}
+	return gin.H{"id": p.ID, "name": p.Name, "type": p.Type, "proxyUrl": p.ProxyURL, "noProxy": p.NoProxy, "relayAuth": relayAuth, "isActive": p.IsActive, "testStatus": p.TestStatus, "lastTestedAt": nullString(p.LastTestedAt), "lastError": nullString(p.LastError), "responseTimeMs": nullInt(p.ResponseTimeMs), "proxyIp": p.ProxyIP, "proxyCountry": p.ProxyCountry, "proxyCity": p.ProxyCity, "proxyOrg": p.ProxyOrg, "createdAt": p.CreatedAt, "updatedAt": p.UpdatedAt}
 }
 
 func nullString(v sql.NullString) any {
