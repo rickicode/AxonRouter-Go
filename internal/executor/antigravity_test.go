@@ -243,15 +243,21 @@ func TestWrapEnvelope_OmniRouteParity(t *testing.T) {
 	}
 }
 
+func TestMaxAntigravityOutputTokens(t *testing.T) {
+	if maxAntigravityOutputTokens != 64000 {
+		t.Errorf("expected maxAntigravityOutputTokens = 64000, got %d", maxAntigravityOutputTokens)
+	}
+}
+
 func TestSanitizeRequest_CapsMaxOutputTokens(t *testing.T) {
 	inner := map[string]any{
 		"generationConfig": map[string]any{
-			"maxOutputTokens": float64(65536),
+			"maxOutputTokens": float64(128000),
 		},
 	}
 
 	logs := captureExecutorLogs(t, func() {
-		sanitizeRequest(inner)
+		sanitizeRequest(inner, "")
 	})
 
 	gc := inner["generationConfig"].(map[string]any)
@@ -272,7 +278,7 @@ func TestSanitizeRequest_DoesNotCapBelowMax(t *testing.T) {
 	}
 
 	logs := captureExecutorLogs(t, func() {
-		sanitizeRequest(inner)
+		sanitizeRequest(inner, "")
 	})
 
 	gc := inner["generationConfig"].(map[string]any)
@@ -288,12 +294,12 @@ func TestSanitizeRequest_DoesNotCapBelowMax(t *testing.T) {
 func TestSanitizeRequest_CapsIntegerMaxOutputTokens(t *testing.T) {
 	inner := map[string]any{
 		"generationConfig": map[string]any{
-			"maxOutputTokens": int(65536),
+			"maxOutputTokens": int(128000),
 		},
 	}
 
 	logs := captureExecutorLogs(t, func() {
-		sanitizeRequest(inner)
+		sanitizeRequest(inner, "")
 	})
 
 	gc := inner["generationConfig"].(map[string]any)
@@ -303,6 +309,49 @@ func TestSanitizeRequest_CapsIntegerMaxOutputTokens(t *testing.T) {
 	}
 	if !strings.Contains(logs, "capping maxOutputTokens") {
 		t.Errorf("expected warning log, got %q", logs)
+	}
+}
+
+func TestSanitizeRequest_ModelAwareCap(t *testing.T) {
+	cases := []struct {
+		model        string
+		requested    float64
+		want         int
+		shouldLogCap bool
+	}{
+		{"", 128000, 64000, true},
+		{"gemini-2.5-pro", 128000, 64000, true},
+		{"gemini-2.5-flash", 20000, 16384, true},
+		{"gemini-2.5-flash-lite", 20000, 16384, true},
+		{"gemini-2.0-flash", 10000, 8192, true},
+		{"gemini-2.0-flash-lite", 10000, 8192, true},
+		{"gemini-2.5-flash", 8192, 8192, false},
+		{"gemini-2.0-flash-lite", 4096, 4096, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.model, func(t *testing.T) {
+			inner := map[string]any{
+				"generationConfig": map[string]any{
+					"maxOutputTokens": tc.requested,
+				},
+			}
+
+			logs := captureExecutorLogs(t, func() {
+				sanitizeRequest(inner, tc.model)
+			})
+
+			gc := inner["generationConfig"].(map[string]any)
+			got, ok := toFloat64(gc["maxOutputTokens"])
+			if !ok || got != float64(tc.want) {
+				t.Errorf("expected maxOutputTokens = %d, got %v", tc.want, gc["maxOutputTokens"])
+			}
+			if tc.shouldLogCap && !strings.Contains(logs, "capping maxOutputTokens") {
+				t.Errorf("expected warning log, got %q", logs)
+			}
+			if !tc.shouldLogCap && strings.Contains(logs, "capping maxOutputTokens") {
+				t.Errorf("expected no warning log, got %q", logs)
+			}
+		})
 	}
 }
 
