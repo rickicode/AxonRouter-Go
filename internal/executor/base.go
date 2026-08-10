@@ -428,6 +428,14 @@ func ProxyPoolIDFromContext(ctx context.Context) string {
 	return ""
 }
 
+// ProxyConfigFromContext returns the proxy config attached to ctx, if any.
+// Executors use it to derive per-proxy state keys (e.g. Freebuff pool-limit
+// cooldowns scoped to the egress path).
+func ProxyConfigFromContext(ctx context.Context) (ProxyConfig, bool) {
+	cfg, ok := ctx.Value(proxyContextKey{}).(ProxyConfig)
+	return cfg, ok
+}
+
 func ContextWithProxy(ctx context.Context, cfg ProxyConfig) context.Context {
 	return context.WithValue(ctx, proxyContextKey{}, cfg)
 }
