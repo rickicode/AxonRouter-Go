@@ -73,11 +73,12 @@ type providerMeta struct {
 // knownProviders maps provider_type_id to display metadata (colors, icons).
 // Display names are loaded from the DB provider_types table at runtime.
 var knownProviders = map[string]providerMeta{
-	"cx": {DisplayName: "Codex", Color: "#10a37f", IconFile: "codex.svg"},
-	"ag": {DisplayName: "Antigravity", Color: "#4285f4", IconFile: "antigravity.svg"},
-	"kiro": {DisplayName: "Kiro", Color: "#ff9900", IconFile: "kiro.svg"},
-	"copilot": {DisplayName: "GitHub Copilot", Color: "#24292E", IconFile: "copilot.png"},
+	"cx":       {DisplayName: "Codex", Color: "#10a37f", IconFile: "codex.svg"},
+	"ag":       {DisplayName: "Antigravity", Color: "#4285f4", IconFile: "antigravity.svg"},
+	"kiro":     {DisplayName: "Kiro", Color: "#ff9900", IconFile: "kiro.svg"},
+	"copilot":  {DisplayName: "GitHub Copilot", Color: "#24292E", IconFile: "copilot.png"},
 	"grok-cli": {DisplayName: "Grok CLI (Grok Build)", Color: "#000000", IconFile: "grok-cli.png"},
+	"freebuff": {DisplayName: "Freebuff", Color: "#8b5cf6", IconFile: ""},
 }
 
 // ProviderMeta returns display metadata for a provider type, if known.
@@ -307,15 +308,15 @@ func refreshOAuthToken(providerID, refreshToken string) (string, string, int64, 
 
 // unrecoverableOAuthCodes are OAuth error codes that mean the refresh token is permanently dead.
 var unrecoverableOAuthCodes = map[string]bool{
-	"invalid_grant":             true,
-	"invalid_request":           true,
-	"refresh_token_reused":      true,
-	"refresh_token_invalidated": true,
-	"invalid_token":             true,
-	"token_expired":             true,
-	"expired_token":             true,
-	"unauthorized_client":       true,
-	"access_denied":             true,
+	"invalid_grant":               true,
+	"invalid_request":             true,
+	"refresh_token_reused":        true,
+	"refresh_token_invalidated":   true,
+	"invalid_token":               true,
+	"token_expired":               true,
+	"expired_token":               true,
+	"unauthorized_client":         true,
+	"access_denied":               true,
 	"unrecoverable_refresh_error": true,
 }
 
@@ -380,7 +381,7 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 			providerType := auth.ProviderType(providerID)
 			if _, ok := authMgr.GetService(providerType); ok {
 				creds := &auth.Credentials{
-					AccessToken: token,
+					AccessToken:  token,
 					RefreshToken: c.OAuthRefreshToken.String,
 					ExpiresAt:    time.Unix(c.OAuthExpiresAt, 0),
 				}
@@ -393,8 +394,26 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 					}
 					newProviderSpecific = newCreds.ProviderSpecific
 					refreshed = true
-			} else {
-				log.Printf("quota: auth manager token refresh failed for %s (%s): %v", c.ID, c.Name, err)
+				} else {
+					log.Printf("quota: auth manager token refresh failed for %s (%s): %v", c.ID, c.Name, err)
+					cq.Error = fmt.Sprintf("token refresh failed: %v", err)
+					if isUnrecoverableRefreshError(err) && db != nil {
+						now := time.Now().Unix()
+						if _, derr := db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', updated_at = ? WHERE id = ?`, now, c.ID); derr == nil {
+							log.Printf("quota: connection %s disabled due to unrecoverable refresh error", c.ID)
+						}
+					}
+					return cq
+				}
+			}
+		}
+
+		// Raw fallback for Antigravity and Kiro when auth manager is unavailable/failed.
+		if !refreshed && (providerID == "ag" || providerID == "kiro") {
+			var err error
+			newToken, newRefreshToken, newExpiry, err = refreshOAuthToken(providerID, c.OAuthRefreshToken.String)
+			if err != nil {
+				log.Printf("quota: raw token refresh failed for %s (%s): %v", c.ID, c.Name, err)
 				cq.Error = fmt.Sprintf("token refresh failed: %v", err)
 				if isUnrecoverableRefreshError(err) && db != nil {
 					now := time.Now().Unix()
@@ -404,26 +423,8 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 				}
 				return cq
 			}
+			refreshed = true
 		}
-	}
-
-	// Raw fallback for Antigravity and Kiro when auth manager is unavailable/failed.
-		if !refreshed && (providerID == "ag" || providerID == "kiro") {
-			var err error
-			newToken, newRefreshToken, newExpiry, err = refreshOAuthToken(providerID, c.OAuthRefreshToken.String)
-		if err != nil {
-			log.Printf("quota: raw token refresh failed for %s (%s): %v", c.ID, c.Name, err)
-			cq.Error = fmt.Sprintf("token refresh failed: %v", err)
-			if isUnrecoverableRefreshError(err) && db != nil {
-				now := time.Now().Unix()
-				if _, derr := db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', updated_at = ? WHERE id = ?`, now, c.ID); derr == nil {
-					log.Printf("quota: connection %s disabled due to unrecoverable refresh error", c.ID)
-				}
-			}
-			return cq
-		}
-		refreshed = true
-	}
 
 		if refreshed {
 			token = newToken
@@ -457,16 +458,18 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 	ch := make(chan fetchResult, 1)
 	go func() {
 		var r fetchResult
-	switch providerID {
-	case "cx":
-		r.quotas, r.plan, r.headers, r.err = fetchCodexQuota(token, psd)
-	case "ag":
-		r.quotas, r.plan, r.err = fetchAntigravityQuota(token, psd)
-	case "kiro":
-		r.quotas, r.plan, r.err = fetchKiroQuota(token, psd)
-	case "grok-cli":
-		r.quotas, r.plan, r.err = fetchGrokCliQuota(token, psd)
-	case "copilot":
+		switch providerID {
+		case "cx":
+			r.quotas, r.plan, r.headers, r.err = fetchCodexQuota(token, psd)
+		case "ag":
+			r.quotas, r.plan, r.err = fetchAntigravityQuota(token, psd)
+		case "kiro":
+			r.quotas, r.plan, r.err = fetchKiroQuota(token, psd)
+		case "grok-cli":
+			r.quotas, r.plan, r.err = fetchGrokCliQuota(token, psd)
+		case "freebuff":
+			r.quotas, r.plan, r.err = fetchFreebuffQuota(token)
+		case "copilot":
 			// The /user endpoint requires the GitHub OAuth access token, not the
 			// short-lived Copilot token. See OmniRoute open-sse/services/usage.ts:643.
 			r.quotas, r.plan, r.err = fetchCopilotQuota(token)

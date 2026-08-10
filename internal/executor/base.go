@@ -166,9 +166,9 @@ func NewBaseExecutor() *BaseExecutor {
 		streamBase: &http.Client{
 			Transport: defaultHTTPTransport(),
 		},
-		Timeout: 5 * time.Minute,
-		FetchTimeout: time.Duration(getEnvInt("FETCH_TIMEOUT_MS", 600000)) * time.Millisecond,
-		StreamIdleTimeout: time.Duration(getEnvInt("STREAM_IDLE_TIMEOUT_MS", 600000)) * time.Millisecond,
+		Timeout:                5 * time.Minute,
+		FetchTimeout:           time.Duration(getEnvInt("FETCH_TIMEOUT_MS", 600000)) * time.Millisecond,
+		StreamIdleTimeout:      time.Duration(getEnvInt("STREAM_IDLE_TIMEOUT_MS", 600000)) * time.Millisecond,
 		StreamReadinessTimeout: time.Duration(getEnvInt("STREAM_READINESS_TIMEOUT_MS", 80000)) * time.Millisecond,
 	}
 	// Periodically drop idle connections so stale proxy/upstream sockets are
@@ -297,6 +297,14 @@ func ProxyPoolIDFromContext(ctx context.Context) string {
 		return cfg.ProxyPoolID
 	}
 	return ""
+}
+
+// ProxyConfigFromContext returns the proxy config attached to ctx, if any.
+// Executors use it to derive per-proxy state keys (e.g. Freebuff pool-limit
+// cooldowns scoped to the egress path).
+func ProxyConfigFromContext(ctx context.Context) (ProxyConfig, bool) {
+	cfg, ok := ctx.Value(proxyContextKey{}).(ProxyConfig)
+	return cfg, ok
 }
 
 func ContextWithProxy(ctx context.Context, cfg ProxyConfig) context.Context {
@@ -922,13 +930,13 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 					}
 					return
 				}
-			if len(line) == 0 {
-				continue
-			}
-			if ((cfg != nil && cfg.DropNonstandardCodexSSE) || shouldDropNonstandardCodexSSE()) && isNonstandardCodexSSELine(line) {
-				continue
-			}
-			if !sawFirst {
+				if len(line) == 0 {
+					continue
+				}
+				if ((cfg != nil && cfg.DropNonstandardCodexSSE) || shouldDropNonstandardCodexSSE()) && isNonstandardCodexSSELine(line) {
+					continue
+				}
+				if !sawFirst {
 					sawFirst = true
 					if !readinessTimer.Stop() {
 						select {
@@ -956,24 +964,24 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 					return
 				}
 
-		case <-stallBytes:
-			// Raw bytes arrived from upstream - reset stall timer.
-			// This fires independently of SSE line boundaries so reasoning
-			// models that send partial frames or keepalive pings do not
-			// false-positive as stalled.
-			// Skip before first chunk: the readiness timer governs that
-			// window. Arming the stall timer early with a custom
-			// StallTimeoutMs < StreamReadinessTimeoutMs would false-positive.
-			if !sawFirst {
-				continue
-			}
-			if !stallTimer.Stop() {
-				select {
-				case <-stallTimer.C:
-				default:
+			case <-stallBytes:
+				// Raw bytes arrived from upstream - reset stall timer.
+				// This fires independently of SSE line boundaries so reasoning
+				// models that send partial frames or keepalive pings do not
+				// false-positive as stalled.
+				// Skip before first chunk: the readiness timer governs that
+				// window. Arming the stall timer early with a custom
+				// StallTimeoutMs < StreamReadinessTimeoutMs would false-positive.
+				if !sawFirst {
+					continue
 				}
-			}
-			stallTimer.Reset(stallTimeout)
+				if !stallTimer.Stop() {
+					select {
+					case <-stallTimer.C:
+					default:
+					}
+				}
+				stallTimer.Reset(stallTimeout)
 
 			case <-readinessTimer.C:
 				chunks <- StreamChunk{Err: fmt.Errorf("stream readiness timeout after %v: %w", readinessTimeout, context.DeadlineExceeded)}
@@ -1030,73 +1038,73 @@ func WrapWithHoldback(ctx context.Context, chunks chan StreamChunk, holdbackMs i
 		holdbackTimer := time.NewTimer(time.Duration(holdbackMs) * time.Millisecond)
 		defer holdbackTimer.Stop()
 
-	// Phase 1: collect into buffer until timer fires or buffer is full.
-	for {
-		select {
-		case chunk, ok := <-chunks:
-			if !ok {
-				// Stream ended during holdback — signal nil then flush buffer.
-				// IMPORTANT: send to errCh FIRST so the caller unblocks and
-				// starts reading out. Sending to out before errCh would
-				// deadlock when buf exceeds out's channel buffer (64).
-				errCh <- nil
-				for _, c := range buf {
-					out <- c
+		// Phase 1: collect into buffer until timer fires or buffer is full.
+		for {
+			select {
+			case chunk, ok := <-chunks:
+				if !ok {
+					// Stream ended during holdback — signal nil then flush buffer.
+					// IMPORTANT: send to errCh FIRST so the caller unblocks and
+					// starts reading out. Sending to out before errCh would
+					// deadlock when buf exceeds out's channel buffer (64).
+					errCh <- nil
+					for _, c := range buf {
+						out <- c
+					}
+					return
+				}
+				if chunk.Err != nil {
+					// Error during holdback — signal caller to retry.
+					errCh <- chunk.Err
+					return
+				}
+				buf = append(buf, chunk)
+				bufBytes += len(chunk.Payload)
+				if bufBytes >= holdbackBytes {
+					// Buffer full — commit immediately.
+					goto commit
+				}
+
+			case <-holdbackTimer.C:
+				goto commit
+
+			case <-ctx.Done():
+				// Client disconnect during holdback — abort cleanly.
+				// The caller has already returned; closing out lets any
+				// late reader see end-of-stream.
+				select {
+				case errCh <- nil: // best-effort signal in case caller still listening
+				default:
 				}
 				return
 			}
-			if chunk.Err != nil {
-				// Error during holdback — signal caller to retry.
-				errCh <- chunk.Err
-				return
-			}
-			buf = append(buf, chunk)
-			bufBytes += len(chunk.Payload)
-			if bufBytes >= holdbackBytes {
-				// Buffer full — commit immediately.
-				goto commit
-			}
-
-		case <-holdbackTimer.C:
-			goto commit
-
-		case <-ctx.Done():
-			// Client disconnect during holdback — abort cleanly.
-			// The caller has already returned; closing out lets any
-			// late reader see end-of-stream.
-			select {
-			case errCh <- nil: // best-effort signal in case caller still listening
-			default:
-			}
-			return
 		}
-	}
 
-commit:
-	// Phase 2: flush buffer, then relay live chunks.
-	errCh <- nil // holdback committed successfully
-	for _, c := range buf {
-		select {
-		case out <- c:
-		case <-ctx.Done():
-			return
-		}
-	}
-	for {
-		select {
-		case chunk, ok := <-chunks:
-			if !ok {
-				return
-			}
+	commit:
+		// Phase 2: flush buffer, then relay live chunks.
+		errCh <- nil // holdback committed successfully
+		for _, c := range buf {
 			select {
-			case out <- chunk:
+			case out <- c:
 			case <-ctx.Done():
 				return
 			}
-		case <-ctx.Done():
-			return
 		}
-	}
+		for {
+			select {
+			case chunk, ok := <-chunks:
+				if !ok {
+					return
+				}
+				select {
+				case out <- chunk:
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
 	}()
 
 	return out, errCh
@@ -1278,4 +1286,4 @@ type gzipErrorReader struct {
 }
 
 func (g *gzipErrorReader) Read([]byte) (int, error) { return 0, g.err }
-func (g *gzipErrorReader) Close() error               { return g.underlying.Close() }
+func (g *gzipErrorReader) Close() error             { return g.underlying.Close() }

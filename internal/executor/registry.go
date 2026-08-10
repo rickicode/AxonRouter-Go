@@ -21,6 +21,7 @@ const (
 	FormatAntigravity     ProviderFormat = "antigravity"
 	FormatKiro            ProviderFormat = "kiro"
 	FormatGrokCLI         ProviderFormat = "grok-cli"
+	FormatFreebuff        ProviderFormat = "freebuff"
 )
 
 // Registry maps provider prefixes to executors.
@@ -172,6 +173,10 @@ func RegisterDefaults() {
 	grokcliExec := NewGrokCLIExecutor(base)
 	GetRegistry().Register("grok-cli", FormatGrokCLI, grokcliExec)
 	translator.Register("grok-cli", translator.Func(providers.TranslateGrokCLI))
+
+	// Freebuff (Codebuff-compatible OpenAI chat endpoint)
+	GetRegistry().Register("freebuff", FormatFreebuff, NewFreebuffExecutor(base))
+	translator.Register("freebuff", translator.Func(providers.TranslateOpenAICompatible))
 }
 
 // RegisterCustomProviders registers all user-added custom providers from the DB

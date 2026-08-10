@@ -22,6 +22,7 @@ const (
 	ProviderKiro        ProviderType = "kiro"
 	ProviderGitHub      ProviderType = "copilot"
 	ProviderGrokCli     ProviderType = "grok-cli"
+	ProviderFreebuff    ProviderType = "freebuff"
 )
 
 // Credentials holds authentication tokens for a connection.

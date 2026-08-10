@@ -569,9 +569,9 @@ var providerCatalogKeys = map[string][]string{
 	"novita":        {"novita"},
 	"lambda":        {"lambda"},
 	"pollinations":  {"pollinations"},
-	"copilot":    {"copilot"},
-	"bedrock":    {"bedrock"},
-	"grok-cli":   {"grok-cli"},
+	"copilot":       {"copilot"},
+	"bedrock":       {"bedrock"},
+	"grok-cli":      {"grok-cli"},
 }
 
 // staticModels returns model IDs from the auto-updating catalog, stripped of leading "@".
@@ -621,6 +621,8 @@ func defaultTestModel(providerID string) string {
 		return "deepseek-v4-flash-free"
 	case "openrouter":
 		return "openai/gpt-4o"
+	case "freebuff":
+		return "deepseek/deepseek-v4-flash"
 	case "cerebras":
 		return "gpt-oss-120b"
 	case "together":

@@ -153,10 +153,10 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		`ALTER TABLE api_keys ADD COLUMN expires_at INTEGER`,
 		`ALTER TABLE request_logs ADD COLUMN tokens_estimated INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE request_logs ADD COLUMN proxy_pool_id TEXT`,
-    `ALTER TABLE request_logs ADD COLUMN api_type TEXT`,
-    `ALTER TABLE request_logs ADD COLUMN client_ip TEXT`,
-    `ALTER TABLE request_logs ADD COLUMN user_agent TEXT`,
-    `CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id, timestamp DESC)`,
+		`ALTER TABLE request_logs ADD COLUMN api_type TEXT`,
+		`ALTER TABLE request_logs ADD COLUMN client_ip TEXT`,
+		`ALTER TABLE request_logs ADD COLUMN user_agent TEXT`,
+		`CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id, timestamp DESC)`,
 		`ALTER TABLE provider_types ADD COLUMN category TEXT DEFAULT 'apikey'`,
 		`ALTER TABLE provider_types ADD COLUMN service_kinds TEXT DEFAULT '["llm"]'`,
 		`ALTER TABLE combos ADD COLUMN fusion_config TEXT`,
@@ -228,11 +228,12 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		{"pollinations", "Pollinations.AI", "openai", "https://gen.pollinations.ai/v1", "apikey", []string{"llm"}},
 		{"zenmux", "ZenMux", "openai", "https://zenmux.ai/api/v1", "apikey", []string{"llm"}},
 
-	{"copilot", "GitHub Copilot", "openai", "https://api.githubcopilot.com", "oauth", []string{"llm"}},
+		{"copilot", "GitHub Copilot", "openai", "https://api.githubcopilot.com", "oauth", []string{"llm"}},
 
-	{"grok-cli", "Grok CLI (Grok Build)", "grok-cli", "https://cli-chat-proxy.grok.com/v1/responses", "oauth", []string{"llm"}},
+		{"grok-cli", "Grok CLI (Grok Build)", "grok-cli", "https://cli-chat-proxy.grok.com/v1/responses", "oauth", []string{"llm"}},
+		{"freebuff", "Freebuff", "freebuff", "https://www.codebuff.com/api/v1/chat/completions", "oauth", []string{"llm"}},
 
-	{"vertex", "Google Vertex AI", "openai", "https://aiplatform.googleapis.com/v1/projects/{projectId}/locations/{location}/endpoints/openapi", "service-account", []string{"llm"}},
+		{"vertex", "Google Vertex AI", "openai", "https://aiplatform.googleapis.com/v1/projects/{projectId}/locations/{location}/endpoints/openapi", "service-account", []string{"llm"}},
 		{"bedrock", "Amazon Bedrock Mantle", "openai", "https://bedrock-mantle.{region}.api.aws/v1", "apikey", []string{"llm"}},
 	}
 	for _, p := range providers {
@@ -497,12 +498,12 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 		{"llama-4-scout", "Llama 4 Scout", 0.00011, 0.00034, 0, 0, 0},
 		{"llama-4-maverick", "Llama 4 Maverick", 0.0002, 0.0006, 0, 0, 0},
 
-	// ── xAI Grok ──
-	{"grok-build", "Grok Build", 0.0003, 0.0005, 0, 0, 0},
-	{"grok-4.5", "Grok 4.5", 0.005, 0.025, 0, 0, 0},
-	{"grok-4.5-high", "Grok 4.5 (High)", 0.005, 0.025, 0, 0, 0},
-	{"grok-4.5-medium", "Grok 4.5 (Medium)", 0.005, 0.025, 0, 0, 0},
-	{"grok-4.5-low", "Grok 4.5 (Low)", 0.005, 0.025, 0, 0, 0},
+		// ── xAI Grok ──
+		{"grok-build", "Grok Build", 0.0003, 0.0005, 0, 0, 0},
+		{"grok-4.5", "Grok 4.5", 0.005, 0.025, 0, 0, 0},
+		{"grok-4.5-high", "Grok 4.5 (High)", 0.005, 0.025, 0, 0, 0},
+		{"grok-4.5-medium", "Grok 4.5 (Medium)", 0.005, 0.025, 0, 0, 0},
+		{"grok-4.5-low", "Grok 4.5 (Low)", 0.005, 0.025, 0, 0, 0},
 
 		// ── Moonshot Kimi ──
 		{"kimi-k2", "Kimi K2", 0.000559, 0.002378, 0, 0, 0},
@@ -606,7 +607,7 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 
 		// ── Misc ──
 		{"big-pickle", "Big Pickle", 0.0005, 0.001, 0, 0, 0},
-}
+	}
 	// Guard: seed must never contain duplicate model IDs or $0 (free-tier) rows.
 	// Every seeded model must carry a real price; duplicates would surface as
 	// duplicate cards in the UI. Fail the migration loudly if this is violated.
