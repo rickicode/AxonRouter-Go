@@ -12,7 +12,9 @@ import (
 	"github.com/gin-gonic/gin"
 	_ "modernc.org/sqlite"
 
+	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
+	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
 
@@ -61,11 +63,11 @@ func TestSummary_IncludesResetAndSpent(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
 
-		var resp struct {
+	var resp struct {
 		Providers []struct {
 			ProviderID string  `json:"provider_id"`
-			NextReset    string  `json:"next_reset"`
-			SpentUSD     float64 `json:"spent_usd"`
+			NextReset  string  `json:"next_reset"`
+			SpentUSD   float64 `json:"spent_usd"`
 		} `json:"providers"`
 		SpentUSD float64 `json:"spent_usd"`
 	}
@@ -90,5 +92,125 @@ func TestSummary_IncludesResetAndSpent(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("cx provider not in summary: %s", w.Body.String())
+	}
+}
+
+func TestResetQuota_HealsConnection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newQuotaTestDB(t)
+	now := time.Now().Unix()
+
+	// Seed an active OAuth connection stuck in quota_exhausted.
+	db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status,
+		is_active, cooldown_until, last_error, last_error_code, failure_count,
+		consecutive_ban_count, created_at, updated_at)
+		VALUES (?, ?, ?, 'oauth', 'quota_exhausted', 1, ?, 'near limit', 'quota', 5, 2, ?, ?)`,
+		"conn-reset-1", "cx", "Codex Test", now+3600, now, now)
+
+	store := connstate.NewStore()
+	store.SeedConnection("conn-reset-1", "cx", "quota_exhausted", 0)
+	if cs := store.Get("conn-reset-1"); cs != nil {
+		cs.SetQuotaCooldown(time.Now().Add(time.Hour))
+		cs.GetModelLimit("cx/gpt-4o").SetCooldown(time.Now().Add(time.Hour))
+	}
+
+	exhaustion := quota.NewExhaustionCache()
+	exhaustion.MarkExhausted("conn-reset-1", time.Hour)
+	exhaustion.MarkExhausted(quota.ExhaustKey("conn-reset-1", "cx/gpt-4o"), time.Hour)
+
+	elig := connstate.NewEligibilityManager(store)
+	elig.RecomputeAll()
+
+	h := NewQuotaHandlerWithStore(db, store, elig, exhaustion)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/quota/conn-reset-1/reset", nil)
+	c.Params = []gin.Param{{Key: "connId", Value: "conn-reset-1"}}
+	h.Reset(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Status       string   `json:"status"`
+		ConnectionID string   `json:"connection_id"`
+		Provider     string   `json:"provider_type"`
+		Models       []string `json:"models"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != "ok" || resp.ConnectionID != "conn-reset-1" || resp.Provider != "cx" {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	wantModels := map[string]bool{"cx/gpt-4o": true}
+	gotModels := make(map[string]bool, len(resp.Models))
+	for _, m := range resp.Models {
+		gotModels[m] = true
+	}
+	for m := range wantModels {
+		if !gotModels[m] {
+			t.Errorf("expected model %q in response, got %v", m, resp.Models)
+		}
+	}
+
+	// DB row should reflect the reset.
+	var dbStatus string
+	var cooldown sql.NullInt64
+	db.QueryRow(`SELECT status, cooldown_until FROM connections WHERE id = ?`, "conn-reset-1").Scan(&dbStatus, &cooldown)
+	if dbStatus != "ready" {
+		t.Errorf("db status = %q, want ready", dbStatus)
+	}
+	if cooldown.Valid {
+		t.Errorf("cooldown should be cleared, got %v", cooldown.Int64)
+	}
+
+	// In-memory state should be ready and exhaustion/cooldowns cleared.
+	cs := store.Get("conn-reset-1")
+	if cs == nil || cs.GetStatus() != connstate.StatusReady {
+		t.Errorf("store status = %v, want ready", cs)
+	}
+	if exhaustion.IsExhausted("conn-reset-1") {
+		t.Error("connection-wide exhaustion should be cleared")
+	}
+	if exhaustion.IsExhaustedScope("conn-reset-1", "cx/gpt-4o") {
+		t.Error("scoped exhaustion should be cleared")
+	}
+	if cs.IsModelInCooldown("cx/gpt-4o") {
+		t.Error("model cooldown should be cleared")
+	}
+}
+
+func TestResetQuota_ReturnsNotFoundForMissingConnection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newQuotaTestDB(t)
+	h := NewQuotaHandlerWithStore(db, connstate.NewStore(), nil, nil)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/quota/missing/reset", nil)
+	c.Params = []gin.Param{{Key: "connId", Value: "missing"}}
+	h.Reset(c)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+}
+
+func TestResetQuota_RejectsTerminalState(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newQuotaTestDB(t)
+	now := time.Now().Unix()
+	db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status,
+		is_active, disabled_reason, created_at, updated_at)
+		VALUES (?, ?, ?, 'oauth', 'disabled', 0, 'auth_failed', ?, ?)`,
+		"conn-disabled", "cx", "Codex Disabled", now, now)
+
+	h := NewQuotaHandlerWithStore(db, connstate.NewStore(), nil, nil)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/quota/conn-disabled/reset", nil)
+	c.Params = []gin.Param{{Key: "connId", Value: "conn-disabled"}}
+	h.Reset(c)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for terminal state, got %d body=%s", w.Code, w.Body.String())
 	}
 }

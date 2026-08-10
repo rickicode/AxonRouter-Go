@@ -259,7 +259,7 @@ func New(cfg Config) *Router {
 	oauthH := admin.NewOAuthHandler(cfg.DB, authManager, store, elig)
 	kiroAuthH := admin.NewKiroAuthHandler(cfg.DB, kiroAuthSvc, store, elig)
 	cursorImportH := admin.NewCursorImportHandler(cfg.DB, store, elig)
-	quotaH := admin.NewQuotaHandler(cfg.DB)
+	quotaH := admin.NewQuotaHandlerWithStore(cfg.DB, store, elig, exhaustionCache)
 	modelPricingH := admin.NewModelPricingHandler()
 	developersH := admin.NewDevelopersHandler(cfg.DB, km, cfg.Port)
 
@@ -478,6 +478,7 @@ func New(cfg Config) *Router {
 		g.GET("/quota", quotaH.List)
 		g.GET("/quota/summary", quotaH.Summary)
 		g.POST("/quota/:connId/refresh", quotaH.Refresh)
+	g.POST("/quota/:connId/reset", quotaH.Reset)
 		// Model Pricing — single source of truth for per-model cost rates.
 		g.GET("/model-pricing", modelPricingH.List)
 		g.POST("/model-pricing", modelPricingH.Create)
