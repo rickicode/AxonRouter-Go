@@ -4,6 +4,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Label } from '$lib/components/ui/label';
   import { Textarea } from '$lib/components/ui/textarea';
+  import { Input } from '$lib/components/ui/input';
   import { Switch } from '$lib/components/ui/switch';
   import * as Select from '$lib/components/ui/select';
 import * as Tabs from '$lib/components/ui/tabs';
@@ -35,6 +36,12 @@ let saving = $state(false);
   let liteImageUrls = $state(true);
   let liteRedundant = $state(false);
   let liteDedup = $state(false);
+  let outputEnabled = $state(false);
+  let outputLevel = $state<'caveman' | 'ponytail'>('caveman');
+  let headroomEnabled = $state(false);
+  let headroomEndpoint = $state('');
+  let headroomTimeout = $state(30000);
+  let headroomMaxPayload = $state(524288);
 
 onMount(async () => {
 	document.title = 'Optimization — AxonRouter';
@@ -50,6 +57,12 @@ onMount(async () => {
         liteRedundant = compression.lite.remove_redundant_content ?? false;
         liteDedup = compression.lite.dedup_system_prompt ?? false;
       }
+      outputEnabled = compression.output?.enabled ?? false;
+      outputLevel = compression.output?.level ?? 'caveman';
+      headroomEnabled = compression.headroom?.enabled ?? false;
+      headroomEndpoint = compression.headroom?.endpoint ?? '';
+      headroomTimeout = compression.headroom?.timeout_ms ?? 30000;
+      headroomMaxPayload = compression.headroom?.max_payload_bytes ?? 524288;
     } catch { /* keep defaults */ }
   }
 
@@ -75,6 +88,16 @@ async function saveCompression() {
           replace_image_urls: liteImageUrls,
           remove_redundant_content: liteRedundant,
           dedup_system_prompt: liteDedup,
+        },
+        output: {
+          enabled: outputEnabled,
+          level: outputLevel,
+        },
+        headroom: {
+          enabled: headroomEnabled,
+          endpoint: headroomEndpoint.trim() || undefined,
+          timeout_ms: Number(headroomTimeout) || 30000,
+          max_payload_bytes: Number(headroomMaxPayload) || 524288,
         },
       });
       toast.success('Compression settings saved');
@@ -115,6 +138,11 @@ const modes = [
   { value: 'lite', label: 'Lite' },
   { value: 'standard', label: 'Standard' },
   { value: 'rtk', label: 'RTK' },
+];
+
+const outputLevels = [
+  { value: 'caveman', label: 'Caveman — terse responses' },
+  { value: 'ponytail', label: 'Ponytail — minimal code' },
 ];
 </script>
 
@@ -181,6 +209,24 @@ const modes = [
 {:else}
 <XIcon class="size-4 text-muted-foreground" />
 <span class="text-muted-foreground">Deduplicate system prompts</span>
+{/if}
+</div>
+<div class="flex items-center gap-2">
+{#if outputEnabled}
+<CheckIcon class="size-4 text-emerald-500" />
+<span>Output-side compression ({outputLevel})</span>
+{:else}
+<XIcon class="size-4 text-muted-foreground" />
+<span class="text-muted-foreground">Output-side compression</span>
+{/if}
+</div>
+<div class="flex items-center gap-2">
+{#if headroomEnabled}
+<CheckIcon class="size-4 text-emerald-500" />
+<span>Headroom external compression ({metrics.headroom_status ?? 'unknown'})</span>
+{:else}
+<XIcon class="size-4 text-muted-foreground" />
+<span class="text-muted-foreground">Headroom external compression</span>
 {/if}
 </div>
 </div>
@@ -332,6 +378,102 @@ const modes = [
 			<Label for="dedup" class="cursor-pointer">Deduplicate system prompts</Label>
 			<Switch id="dedup" checked={liteDedup} onCheckedChange={(v) => (liteDedup = v)} />
 		</div>
+        </CardContent>
+      </Card>
+
+      <Card class="shadow-card">
+        <CardHeader class="pb-3">
+          <CardTitle class="text-base">Output-side Compression</CardTitle>
+          <CardDescription class="text-xs">
+            Injects a system prompt that asks the model to respond more compactly. Applies to all modes except Off.
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <div class="flex items-center justify-between">
+            <Label for="output-enabled" class="cursor-pointer">Enable output-side compression</Label>
+            <Switch id="output-enabled" checked={outputEnabled} onCheckedChange={(v) => (outputEnabled = v)} />
+          </div>
+          <div class="grid gap-2">
+            <Label for="output-level">Level</Label>
+            <Select.Root type="single" bind:value={outputLevel}>
+              <Select.Trigger class="w-full" id="output-level">
+                {outputLevels.find((l) => l.value === outputLevel)?.label ?? 'Select level'}
+              </Select.Trigger>
+              <Select.Content>
+                {#each outputLevels as level}
+                  <Select.Item value={level.value}>{level.label}</Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+          </div>
+          <div class="pt-2">
+            <Button onclick={saveCompression} disabled={saving}>
+              {saving ? 'Saving...' : 'Save Settings'}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card class="shadow-card">
+        <CardHeader class="pb-3">
+          <CardTitle class="text-base">Headroom external compression</CardTitle>
+          <CardDescription class="text-xs">
+            Offloads token reduction for tool output (git diff, build logs, search results) to a Headroom service before upstream forwarding.
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <div class="flex items-center justify-between">
+            <Label for="headroom-enabled" class="cursor-pointer">Enable Headroom external compression</Label>
+            <Switch id="headroom-enabled" checked={headroomEnabled} onCheckedChange={(v) => (headroomEnabled = v)} />
+          </div>
+
+          {#if metrics.headroom_status}
+            <div class="flex items-center gap-2 rounded-lg bg-muted p-3 text-body-sm">
+              <span class="text-muted-foreground">Status</span>
+              <Badge variant={metrics.headroom_status === 'running' ? 'default' : metrics.headroom_status === 'error' ? 'destructive' : 'secondary'}>
+                {metrics.headroom_status}
+              </Badge>
+              {#if metrics.headroom_endpoint}
+                <span class="text-muted-foreground truncate" title={metrics.headroom_endpoint}>{metrics.headroom_endpoint}</span>
+              {/if}
+            </div>
+          {/if}
+
+          {#if headroomEnabled}
+            <div class="grid gap-2">
+              <Label for="headroom-endpoint">Endpoint</Label>
+              <Input id="headroom-endpoint" bind:value={headroomEndpoint} placeholder="Leave blank to use the internal default" />
+              <p class="text-xs text-muted-foreground">Leave empty to spawn/use the internal Headroom service.</p>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div class="grid gap-2">
+                <Label for="headroom-timeout">Timeout (ms)</Label>
+                <Input id="headroom-timeout" type="number" min={1} bind:value={headroomTimeout} />
+              </div>
+              <div class="grid gap-2">
+                <Label for="headroom-max-payload">Max payload (bytes)</Label>
+                <Input id="headroom-max-payload" type="number" min={1} bind:value={headroomMaxPayload} />
+              </div>
+            </div>
+          {/if}
+
+          {#if metrics.headroom}
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+              <div class="bg-card rounded-xl shadow-card p-4">
+                <p class="text-caption-mono text-muted-foreground uppercase">Headroom calls</p>
+                <p class="text-display-md font-semibold mt-1">{metrics.headroom.total.toLocaleString()}</p>
+              </div>
+              <div class="bg-card rounded-xl shadow-card p-4">
+                <p class="text-caption-mono text-muted-foreground uppercase">Bytes saved</p>
+                <p class="text-display-md font-semibold mt-1">{metrics.headroom.bytes_saved.toLocaleString()}</p>
+              </div>
+              <div class="bg-card rounded-xl shadow-card p-4">
+                <p class="text-caption-mono text-muted-foreground uppercase">Errors</p>
+                <p class="text-display-md font-semibold mt-1">{metrics.headroom.errors.toLocaleString()}</p>
+              </div>
+            </div>
+          {/if}
+
           <div class="pt-2">
             <Button onclick={saveCompression} disabled={saving}>
               {saving ? 'Saving...' : 'Save Settings'}

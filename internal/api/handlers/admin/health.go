@@ -6,9 +6,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
+	"github.com/rickicode/AxonRouter-Go/internal/telemetry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 	"github.com/rickicode/AxonRouter-Go/internal/version"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // HealthHandler exposes liveness and operational metrics.
@@ -32,12 +32,22 @@ func NewHealthHandler(database *sql.DB, store *connstate.Store, tracker *usage.T
 // Health returns a simple liveness check. It is reachable without admin auth
 // so the dashboard and load balancers can use it for online checks.
 func (h *HealthHandler) mustChangePassword() bool {
-	const defaultAdminPassword = "12345677"
-	var hash string
-	if err := h.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, "admin_password_hash").Scan(&hash); err != nil || hash == "" {
-		return false
+	// Use the explicit "admin_password_changed" flag written by
+	// ChangePasswordHandler instead of running bcrypt on every liveness probe.
+	// This keeps the health endpoint cheap and avoids leaking whether the stored
+	// hash matches a known default password on an unauthenticated route.
+	var changed string
+	if err := h.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, "admin_password_changed").Scan(&changed); err != nil || changed == "" {
+		// Fallback for databases created before the flag existed: if a password
+		// hash is present but the flag is missing, assume the default password
+		// is still in use.
+		var hash string
+		if err := h.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, "admin_password_hash").Scan(&hash); err != nil || hash == "" {
+			return false
+		}
+		return true
 	}
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(defaultAdminPassword)) == nil
+	return changed != "true"
 }
 
 func (h *HealthHandler) Health(c *gin.Context) {
@@ -98,8 +108,8 @@ func (h *HealthHandler) CheckUpdate(c *gin.Context) {
 		latest = info.Version
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"version": version.String(),
-		"latest_version": latest,
+		"version":          version.String(),
+		"latest_version":   latest,
 		"update_available": h.checker.UpdateAvailable(),
 	})
 }
@@ -133,13 +143,17 @@ func (h *HealthHandler) Metrics(c *gin.Context) {
 	requestsToday, tokensToday, costToday, _ := agg.GetTodayStats()
 
 	c.JSON(http.StatusOK, gin.H{
-		"buffer_length":        h.tracker.Buffered(),
-		"healthy_connections":  h.store.HealthyCount(),
-		"dropped_usage_events": h.tracker.Dropped(),
-		"rate_limited":         rateLimited,
-		"quota_exhausted":      quotaExhausted,
-		"requests_today":       requestsToday,
-		"tokens_today":         tokensToday,
-		"cost_today":           costToday,
+		"buffer_length":                  h.tracker.Buffered(),
+		"healthy_connections":            h.store.HealthyCount(),
+		"dropped_usage_events":           h.tracker.Dropped(),
+		"rate_limited":                   rateLimited,
+		"quota_exhausted":                quotaExhausted,
+		"requests_today":                 requestsToday,
+		"tokens_today":                   tokensToday,
+		"cost_today":                     costToday,
+		"codex_requests_total":           telemetry.DefaultCodexCounters.RequestsTotal.Load(),
+		"codex_incomplete_streams_total": telemetry.DefaultCodexCounters.IncompleteStreamsTotal.Load(),
+		"codex_replay_hits_total":        telemetry.DefaultCodexCounters.ReplayHitsTotal.Load(),
+		"codex_identity_confuse_total":   telemetry.DefaultCodexCounters.IdentityConfuseTotal.Load(),
 	})
 }

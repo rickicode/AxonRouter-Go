@@ -46,9 +46,13 @@ func (e *TTSExecutor) resolveURL(req *Request) string {
 		return req.BaseURL
 	}
 	switch req.Provider {
+	case "cartesia":
+		return "https://api.cartesia.ai/tts/bytes"
 	case "elevenlabs":
 		model := ExtractModel(req.Model)
 		return fmt.Sprintf("https://api.elevenlabs.io/v1/text-to-speech/%s", model)
+	case "edge-tts":
+		return req.BaseURL
 	default:
 		return "https://api.openai.com/v1/audio/speech"
 	}

@@ -4,12 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/rickicode/AxonRouter-Go/internal/headroom"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/common"
 	"github.com/tidwall/gjson"
+
 	"github.com/tidwall/sjson"
 )
 
 // convertGeminiRequestToOpenAI converts a Gemini generateContent request to OpenAI Chat Completions format.
 func convertGeminiRequestToOpenAI(modelName string, body []byte, stream bool) []byte {
+	body = common.CompressToolBlocks(body, headroom.GlobalToolCompressor(), headroom.DefaultToolThreshold)
 	root := gjson.ParseBytes(body)
 
 	out := []byte(`{"model":"","messages":[]}`)

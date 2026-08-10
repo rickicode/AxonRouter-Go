@@ -82,15 +82,25 @@ type CLIToolSelection struct {
 	// AgentModels maps an agent id to a gateway model id for per-agent overrides
 	// (e.g. openclaw's per-agent model selection).
 	AgentModels map[string]string `json:"agentModels,omitempty"`
+	// ReasoningEffort controls the model reasoning level for tools that expose it
+	// (e.g. codex via model_reasoning_effort / supported_reasoning_levels).
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
+}
+
+// CLIToolExtraFile is one additional file the driver wrote (e.g. auth.json).
+type CLIToolExtraFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
 }
 
 // CLIToolConfig is the tool-specific output shown to the user.
 type CLIToolConfig struct {
-	EnvBlock      string `json:"envBlock"`
-	ConfigPath    string `json:"configPath"`
-	ConfigContent string `json:"configContent"`
-	RunCommand    string `json:"runCommand"`
-	BackupPath    string `json:"backupPath,omitempty"`
+	EnvBlock      string             `json:"envBlock"`
+	ConfigPath    string             `json:"configPath"`
+	ConfigContent string             `json:"configContent"`
+	RunCommand    string             `json:"runCommand"`
+	BackupPath    string             `json:"backupPath,omitempty"`
+	ExtraFiles    []CLIToolExtraFile `json:"extraFiles,omitempty"`
 }
 
 // CLIToolStatus reports the per-tool status returned by AllStatuses.
@@ -174,6 +184,64 @@ func (h *CLIToolsHandler) GetConfig(c *gin.Context) {
 		}
 	}
 
+	// If the persisted generated config is empty but the driver reports it has
+	// our router, surface the live on-disk config content so the dashboard can
+	// always show what AxonRouter injected.
+	if savedCfg.ConfigContent == "" && hasRouter && state != nil {
+		if cfgStr, ok := state["config"].(string); ok && cfgStr != "" {
+			savedCfg.ConfigContent = cfgStr
+			if p, ok := state["configPath"].(string); ok {
+				savedCfg.ConfigPath = p
+			}
+		}
+	}
+
+	// If the config is still empty but a selection was persisted, reconstruct
+	// the generated config on-the-fly using the stored API key. This is needed
+	// when the target CLI runs on a different machine so the operator can still
+	// see/copy the required files.
+	if savedCfg.ConfigContent == "" && raw != "" {
+		if driver, ok := toolDrivers[toolID]; ok {
+			reconKey := ""
+			if sel.APIKeyID != "" {
+				if v, err := h.rawAPIKeyValue(sel.APIKeyID); err == nil {
+					reconKey = v
+				}
+			}
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+			defer cancel()
+			if recon, err := driver.apply(ctx, sel, reconKey); err == nil {
+				savedCfg = recon
+			}
+		}
+	}
+
+	actualConfig := map[string]string{}
+	if state != nil {
+		content := ""
+		path := ""
+		if cfgStr, ok := state["config"].(string); ok && cfgStr != "" {
+			content = cfgStr
+			path, _ = state["configPath"].(string)
+		} else {
+			for _, key := range []string{"configPath", "settingsPath", "authPath", "globalStatePath"} {
+				if p, ok := state[key].(string); ok && p != "" {
+					path = p
+					if b, err := os.ReadFile(path); err == nil {
+						content = string(b)
+					}
+					break
+				}
+			}
+		}
+		if content != "" {
+			actualConfig["content"] = content
+		}
+		if path != "" {
+			actualConfig["path"] = path
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"tool":           findTool(toolID),
 		"selection":      sel,
@@ -183,6 +251,7 @@ func (h *CLIToolsHandler) GetConfig(c *gin.Context) {
 		"hasRouter":      hasRouter,
 		"state":          state,
 		"config":         savedCfg,
+		"actualConfig":   actualConfig,
 	})
 }
 
@@ -196,10 +265,30 @@ func (h *CLIToolsHandler) SaveConfig(c *gin.Context) {
 
 	var req struct {
 		CLIToolSelection
-		APIKeyValue string `json:"apiKeyValue"`
+		APIKeyValue             string `json:"apiKeyValue"`
+		ConfigContentOverride   string `json:"configContentOverride,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Allow the operator to edit the generated config content without re-running
+	// the driver. This preserves the selection and updates only the stored config.
+	if req.ConfigContentOverride != "" {
+		var cfg CLIToolConfig
+		if cfgRaw := db.GetSetting(cliToolConfigKeyPrefix+toolID, ""); cfgRaw != "" {
+			_ = json.Unmarshal([]byte(cfgRaw), &cfg)
+		}
+		cfg.ConfigContent = req.ConfigContentOverride
+		if cfgJSON, jerr := json.Marshal(cfg); jerr == nil {
+			_ = db.SetSetting(cliToolConfigKeyPrefix+toolID, string(cfgJSON))
+		}
+		var sel CLIToolSelection
+		if raw := db.GetSetting(cliToolKeyPrefix+toolID, ""); raw != "" {
+			_ = json.Unmarshal([]byte(raw), &sel)
+		}
+		c.JSON(http.StatusOK, gin.H{"selection": sel, "config": cfg})
 		return
 	}
 
@@ -633,6 +722,24 @@ var cliToolCatalog = []CLIToolStatic{
 		ID: "generic", Name: "Generic OpenAI-compatible", Description: "Any CLI that accepts OPENAI_BASE_URL + OPENAI_API_KEY.",
 		Image: "/providers/openai.png", Color: "#10A37F", ConfigType: "env",
 	},
+
+	// ─── Cowork (Claude Desktop 3P) ────────────────────────────────
+	{
+		ID:          "cowork",
+		Name:        "Cowork (Claude Desktop 3P)",
+		Description: "Third-party inference client for Claude Desktop (Cowork on 3P / enterprise mode).",
+		Image:       "/providers/claude.png",
+		Color:       "#D97757",
+		ConfigType:  "custom",
+		DocsURL:     "https://claude.com/docs/cowork/3p/overview",
+		SupportsDiscovery: true,
+		MultiModel:        true,
+		Notes: []Note{
+			{Type: "info", Text: "Cowork on 3P launches Claude Desktop in third-party mode and routes inference through this gateway's Anthropic-compatible /v1/messages endpoint."},
+			{Type: "warning", Text: "Config path: macOS ~/Library/Application Support/Claude-3p/claude_desktop_config.json • Windows %APPDATA%\\Claude-3p\\claude_desktop_config.json • Linux ~/.config/Claude-3p/claude_desktop_config.json"},
+		},
+	},
+
 	// ─── PI Coding Agent ───────────────────────────────────────────
 	{
 		ID:                "pi",
@@ -694,6 +801,20 @@ var cliToolCatalog = []CLIToolStatic{
 		},
 		Notes: []Note{
 			{Type: "info", Text: "OMP auto-discovers models via /v1/models, so no manual model list is needed."},
+		},
+	},
+
+	// ─── Grok Build ─────────────────────────────────────────────────
+	{
+		ID:          "grok-build",
+		Name:        "Grok Build",
+		Description: "xAI Grok Build coding agent CLI.",
+		Image:       "/providers/grok-cli.png",
+		Color:       "#000000",
+		ConfigType:  "custom",
+		DocsURL:     "https://docs.x.ai/build/overview",
+		DefaultModels: []DefaultModel{
+			{ID: "grok-build", Name: "Grok Build", Alias: "grok-build", DefaultValue: "grok-cli/grok-build"},
 		},
 	},
 }

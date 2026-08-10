@@ -1,0 +1,69 @@
+{
+  "version": "1",
+  "sessionId": "a07ec87b7dd7",
+  "updatedAt": "2026-07-24T04:48:41.512Z",
+  "sequence": 1,
+  "decisions": [
+    {
+      "id": "53daf005",
+      "status": "draft",
+      "scope": "cross-domain",
+      "title": "Implement Qoder provider with both PAT and OAuth support in AxonRouter-GO",
+      "rationale": "User confirmed Qoder must support both personal access token (PAT, current pt-* path via qodercli) and OAuth authorization-code flow. OmniRoute will be the primary reference; 9router's deprecated COSY/WAF signing path will not be ported.",
+      "consequences": "Adds OAuth service skeleton, updates executor to route PAT vs OAuth/apikey tokens, updates provider catalog category to oauth with dual-mode UI, adds PAT import and quota fetcher, and adds tests.",
+      "proposedRequirement": null,
+      "affectedDomains": [
+        "auth",
+        "provider",
+        "api",
+        "quota"
+      ],
+      "affectedFiles": [
+        "internal/auth/qoder/oauth.go",
+        "internal/executor/qoder.go",
+        "internal/db/migrations.go",
+        "internal/provider/aliases.go",
+        "web/src/lib/provider-catalog.ts",
+        "internal/api/handlers/admin/connections.go",
+        "internal/api/handlers/admin/import_oauth.go",
+        "internal/quota/qoder.go"
+      ],
+      "anchors": [
+        {
+          "filePath": "internal/auth/qoder/oauth.go"
+        },
+        {
+          "filePath": "internal/executor/qoder.go",
+          "contentHash": "b423ff6275ab591c"
+        },
+        {
+          "filePath": "internal/db/migrations.go",
+          "contentHash": "47d2bb58c2a657b3"
+        },
+        {
+          "filePath": "internal/provider/aliases.go",
+          "contentHash": "f93b8c12df66482a"
+        },
+        {
+          "filePath": "web/src/lib/provider-catalog.ts",
+          "contentHash": "905db22eb4f9976e"
+        },
+        {
+          "filePath": "internal/api/handlers/admin/connections.go",
+          "contentHash": "04c6eb772733a3cc"
+        },
+        {
+          "filePath": "internal/api/handlers/admin/import_oauth.go",
+          "contentHash": "26f84825eeddef51"
+        },
+        {
+          "filePath": "internal/quota/qoder.go"
+        }
+      ],
+      "sessionId": "a07ec87b7dd7",
+      "recordedAt": "2026-07-24T04:48:41.511Z",
+      "confidence": "medium",
+      "syncedToSpecs": []
+    }
+  ]
+}

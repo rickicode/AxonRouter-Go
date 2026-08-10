@@ -26,7 +26,14 @@ func (h *Handler) Video(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "model is required", "type": "invalid_request_error"}})
 		return
 	}
+	if !h.isModelAllowed(c.Request.Context(), model) {
+		c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"message": "model not allowed for this API key", "type": "invalid_request_error"}})
+		return
+	}
 	if h.checkTokenBudget(c, body) != nil {
+		return
+	}
+	if h.checkAPIKeyBudget(c) != nil {
 		return
 	}
 
@@ -36,6 +43,8 @@ func (h *Handler) Video(c *gin.Context) {
 		return
 	}
 
+	sessionID := h.sessionIDForAffinity(c, provider, modelName, body)
+
 	// Get video executor (test hook overrides the real one).
 	var videoExec executor.Executor
 	if h.videoExecutorFactory != nil {
@@ -44,7 +53,7 @@ func (h *Handler) Video(c *gin.Context) {
 		videoExec = executor.NewVideoExecutor(executor.NewBaseExecutor())
 	}
 
-	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
+	conn, err := h.getConnection(c.Request.Context(), provider, modelName, sessionID)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
 		return
@@ -85,18 +94,22 @@ func (h *Handler) Video(c *gin.Context) {
 	}
 
 	h.logRequest(c, &usage.LogEntry{
-		ApiKeyID: c.GetString("api_key_id"),
-		ConnectionID: conn.ID,
+		ApiKeyID:       c.GetString("api_key_id"),
+		ConnectionID:   conn.ID,
 		ProviderTypeID: provider,
-		ModelID: modelName,
-		ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
-		ApiType: apiTypeFromPath(c.Request.URL.Path),
-		Modality: "video",
-		Stream: false,
-		LatencyMs: time.Since(start).Milliseconds(),
-		StatusCode: resp.StatusCode})
+		ModelID:        modelName,
+		ProxyPoolID:    executor.ProxyPoolIDFromContext(proxyCtx),
+		ApiType:        apiTypeFromPath(c.Request.URL.Path),
+		Modality:       "video",
+		Quantity:       quantityForModality("video", body),
+		Stream:         false,
+		LatencyMs:      time.Since(start).Milliseconds(),
+		StatusCode:     resp.StatusCode})
 
 	h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, resp.Body, false)
+	if h.isFlatRate(provider) {
+		c.Header(costHeader, "0")
+	}
 	c.Header("Content-Type", "application/json")
 	c.Status(resp.StatusCode)
 	c.Writer.Write(resp.Body)

@@ -31,8 +31,9 @@ type OAuthService struct {
 }
 
 type deviceFlowState struct {
-	userCode        string
-	verificationURI string
+	userCode                string
+	verificationURI         string
+	verificationURIComplete string
 }
 
 // NewOAuthService creates a new Grok CLI OAuth service.
@@ -65,8 +66,9 @@ func (s *OAuthService) StartLocalServer(ctx context.Context, state string) (int,
 
 	s.mu.Lock()
 	s.states[stateParam] = &deviceFlowState{
-		userCode:        deviceCode.UserCode,
-		verificationURI: deviceCode.VerificationURI,
+		userCode:                deviceCode.UserCode,
+		verificationURI:         deviceCode.VerificationURI,
+		verificationURIComplete: deviceCode.VerificationURIComplete,
 	}
 	s.mu.Unlock()
 
@@ -96,6 +98,8 @@ func (s *OAuthService) pollAndSend(ctx context.Context, deviceCode *DeviceCodeRe
 }
 
 // GenerateAuthURL returns the verification URI stored by StartLocalServer.
+// For Grok CLI the URL includes the user_code so the user is taken straight to
+// the pre-filled consent page (e.g. https://accounts.x.ai/oauth2/device/consent?user_code=XXXX-XXXX).
 func (s *OAuthService) GenerateAuthURL(ctx context.Context, state string) (string, error) {
 	stateParam := stateParamFromState(state)
 
@@ -105,10 +109,20 @@ func (s *OAuthService) GenerateAuthURL(ctx context.Context, state string) (strin
 	if st == nil {
 		return "", fmt.Errorf("grokcli oauth: no pending device flow for state")
 	}
-	if st.verificationURI == "" {
+	if st.verificationURI == "" && st.verificationURIComplete == "" {
 		return "", fmt.Errorf("grokcli oauth: verification URI not available")
 	}
-	return st.verificationURI, nil
+	if st.verificationURIComplete != "" {
+		return st.verificationURIComplete, nil
+	}
+	u, err := url.Parse(st.verificationURI)
+	if err != nil {
+		return "", fmt.Errorf("grokcli oauth: invalid verification URI: %w", err)
+	}
+	q := u.Query()
+	q.Set("user_code", st.userCode)
+	u.RawQuery = q.Encode()
+	return u.String(), nil
 }
 
 // GetUserCode returns the user code for the dashboard.

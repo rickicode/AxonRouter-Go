@@ -17,10 +17,104 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
+
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
+
+// Combo transient-error cooldown prevents a retry storm when a provider
+// returns 502/503/504. Default 2 seconds, capped at 5 seconds.
+const (
+	defaultTransientCooldown = 2 * time.Second
+	maxTransientCooldown     = 5 * time.Second
+)
+
+// transientErrorSleep waits out a transient cooldown while respecting context
+// cancellation. It is overridable in tests to keep cooldown assertions fast.
+var transientErrorSleep = func(ctx context.Context, d time.Duration) {
+	select {
+	case <-ctx.Done():
+	case <-time.After(d):
+	}
+}
+
+// upstreamHTTPStatus extracts the HTTP status code from an executor.UpstreamError,
+// returning 0 when the error is not an upstream HTTP response.
+func upstreamHTTPStatus(err error) int {
+	var upErr *executor.UpstreamError
+	if errors.As(err, &upErr) {
+		return upErr.StatusCode
+	}
+	return 0
+}
+
+// isTransientUpstreamError reports whether err represents a 502/503/504 upstream
+// response. These are the only transient statuses that trigger combo failover
+// cooldown; non-transient errors still fail through immediately.
+func isTransientUpstreamError(err error) bool {
+	switch upstreamHTTPStatus(err) {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	}
+	return false
+}
+
+// parseRetryAfter parses a Retry-After header value, accepting either a delay
+// in seconds or an HTTP-date. Values in the past (or non-numeric/zero) are
+// reported as 0 with ok=true so callers can decide whether to fall back.
+func parseRetryAfter(h http.Header) (time.Duration, bool) {
+	v := strings.TrimSpace(h.Get("Retry-After"))
+	if v == "" {
+		return 0, false
+	}
+	if secs, err := strconv.Atoi(v); err == nil {
+		if secs < 0 {
+			return 0, true
+		}
+		return time.Duration(secs) * time.Second, true
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		d := time.Until(t)
+		if d < 0 {
+			d = 0
+		}
+		return d, true
+	}
+	return 0, false
+}
+
+// transientCooldownResp resolves the response whose headers should be inspected
+// for Retry-After. When no explicit executor response is available, it falls
+// back to an UpstreamError's headers so transient errors returned directly by
+// an executor still respect the upstream cooldown request.
+func transientCooldownResp(resp *executor.Response, err error) *executor.Response {
+	if resp != nil {
+		return resp
+	}
+	var upErr *executor.UpstreamError
+	if errors.As(err, &upErr) {
+		return &executor.Response{StatusCode: upErr.StatusCode, Headers: upErr.Headers}
+	}
+	return nil
+}
+
+// transientCooldown returns the cooldown to apply before the next combo
+// connection is tried. It respects an upstream Retry-After header and clamps
+// the resulting duration to maxTransientCooldown.
+func transientCooldown(resp *executor.Response) time.Duration {
+	if resp != nil {
+		if d, ok := parseRetryAfter(resp.Headers); ok {
+			if d > maxTransientCooldown {
+				return maxTransientCooldown
+			}
+			if d > 0 {
+				return d
+			}
+		}
+	}
+	return defaultTransientCooldown
+}
 
 // ChatCompletions handles POST /v1/chat/completions
 func (h *Handler) ChatCompletions(c *gin.Context) {
@@ -31,16 +125,34 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
+	h.trackDevice(c)
+	c.Set("service_tier", extractServiceTier(body))
+
 	// Apply compression (fail-open); skip if the request uses prompt-cache markers.
 	body = h.compressRequestBody(body)
 
-	model := executor.JSONGet(body, "model")
+	body, model, _ := h.parseThinkingSuffixFromBody(c, body)
 	if model == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "model is required", "type": "invalid_request_error"}})
 		return
 	}
+	if !h.isModelAllowed(c.Request.Context(), model) {
+		c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"message": "model not allowed for this API key", "type": "invalid_request_error"}})
+		return
+	}
+
+	// Smart virtual model routing resolves smart/* ids to a concrete model
+	// before combos or direct routing run. On failure it falls through.
+	if resolved, updated, ok := h.resolveVirtualModel(c.Request.Context(), model, body); ok {
+		model = resolved
+		body = updated
+	}
+
 	stream := executor.IsStreamRequest(body)
 	if h.checkTokenBudget(c, body) != nil {
+		return
+	}
+	if h.checkAPIKeyBudget(c) != nil {
 		return
 	}
 
@@ -65,6 +177,8 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
+	sessionID := h.sessionIDForAffinity(c, provider, modelName, body)
+
 	// Cache check (exact match, non-stream, no tools, no cache_control)
 	cacheKey := h.exactCacheKey(body, model, stream)
 	if cacheKey != "" {
@@ -83,27 +197,42 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-// Connection failover loop: try up to failoverMaxAttempts connections before giving up.
-// On each failure, mark the connection exhausted/cooldown and update eligibility
-// so the next getConnection call picks a different connection.
+	// Connection failover loop: try up to failoverMaxAttempts connections before giving up.
+	// On each failure, mark the connection exhausted/cooldown and update eligibility
+	// so the next getConnection call picks a different connection.
 	clientFormat := executor.FormatOpenAI
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
 	translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
+	translatedBody = h.applyThinkingOverrideFromContext(c.Request.Context(), translatedBody, string(providerFormat))
 	// NOTE: failover limit now configurable via failover_max_attempts setting.
 	maxAttempts := h.failoverAttempts()
 	var lastConn *Connection
 	var lastErr error
 	var lastErrCategory string
+	var lastFailedConnID string // exclude from next getConnection to prevent retrying same connection
 attemptLoop:
 	for attempt := range maxAttempts {
 		if c.Request.Context().Err() != nil {
 			writeContextDone(c)
 			return
 		}
-		conn, err := h.getConnection(c.Request.Context(), provider, modelName)
+		var conn *Connection
+		var err error
+		if lastFailedConnID != "" {
+			conn, err = h.getConnection(c.Request.Context(), provider, modelName, sessionID, lastFailedConnID)
+		} else {
+			conn, err = h.getConnection(c.Request.Context(), provider, modelName, sessionID)
+		}
 		if err != nil {
 			if attempt == 0 {
 				logging.Logger.Info("chat: get connection failed", "err", err.Error())
+				// If every connection for this provider is in the same failure mode,
+				// surface a precise error instead of a generic 503.
+				if cat := h.classifyProviderUnavailableForModel(provider, modelName); cat != connstate.ErrorUnknown {
+					msg, statusCode, errType := buildFailoverErrorResponse(string(cat), nil, modelName)
+					c.JSON(statusCode, gin.H{"error": gin.H{"message": msg, "type": errType}})
+					return
+				}
 				c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
 				return
 			}
@@ -177,6 +306,8 @@ attemptLoop:
 			retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
 			lastErr = err
 			lastErrCategory = cat
+			lastFailedConnID = conn.ID
+			h.clearAffinitySession(provider, sessionID, modelName)
 			if !retry {
 				break attemptLoop // non-retryable error, stop failover
 			}
@@ -198,7 +329,6 @@ attemptLoop:
 			// connections, just like the combo path, so direct-mode streams
 			// don't stop when one upstream connection dies.
 			streamCtx, cancelStream := context.WithCancel(c.Request.Context())
-			defer cancelStream()
 
 			holdbackMs := 750
 			holdbackBytes := 64 * 1024
@@ -221,26 +351,33 @@ attemptLoop:
 					det := connstate.DetectError(proxyCtx, 0, "", holdbackErr, provider, modelName, nil)
 					if !isFailoverEligible(det.Category) {
 						if h.writeUpstreamClientError(proxyCtx, c, holdbackErr, conn, provider, modelName, start, stream) {
+							cancelStream()
 							return
 						}
 					}
 					retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, holdbackErr, attempt, time.Since(start).Milliseconds(), stream)
 					lastErr = holdbackErr
 					lastErrCategory = cat
-				if !retry {
-					break attemptLoop
+					lastFailedConnID = conn.ID
+					h.clearAffinitySession(provider, sessionID, modelName)
+					if !retry {
+						cancelStream()
+						break attemptLoop
+					}
+					if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+						cancelStream()
+						return
+					}
+					continue
 				}
-				if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
-					return
-				}
-				continue
+			case <-streamCtx.Done():
+				cancelStream()
+				return
 			}
-		case <-streamCtx.Done():
-			return
-		}
 
-		if streamErr := h.handleStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, "", true); streamErr != nil {
+			if streamErr := h.handleStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, "", true); streamErr != nil {
 				if h.isClientCanceled(c, streamErr) {
+					cancelStream()
 					return
 				}
 				cancelStream()
@@ -254,14 +391,19 @@ attemptLoop:
 				retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, streamErr, attempt, time.Since(start).Milliseconds(), stream)
 				lastErr = streamErr
 				lastErrCategory = cat
+				lastFailedConnID = conn.ID
+				h.clearAffinitySession(provider, sessionID, modelName)
 				if !retry {
+					cancelStream()
 					break
 				}
 				if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+					cancelStream()
 					return
 				}
 				continue
 			}
+			cancelStream()
 			return
 		} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
@@ -275,6 +417,10 @@ attemptLoop:
 					tokenCounts.OutputTokens = estOutput
 					tokensEstimated = true
 				}
+			}
+			estCost := resp.CostUsd
+			if estCost == 0 {
+				estCost = usage.EstimateCost(modelName, "chat", 0, tokenCounts.InputTokens, tokenCounts.OutputTokens, tokenCounts.ReasoningTokens, tokenCounts.CachedTokens, tokenCounts.CacheCreationTokens)
 			}
 			h.logRequest(c, &usage.LogEntry{
 				ApiKeyID:            c.GetString("api_key_id"),
@@ -290,6 +436,7 @@ attemptLoop:
 				ReasoningTokens:     tokenCounts.ReasoningTokens,
 				CachedTokens:        tokenCounts.CachedTokens,
 				CacheCreationTokens: tokenCounts.CacheCreationTokens,
+				CostUsd:             estCost,
 				LatencyMs:           latency,
 				StatusCode:          resp.StatusCode,
 				TokensEstimated:     tokensEstimated,
@@ -298,7 +445,13 @@ attemptLoop:
 				h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
 			}
 			h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
-			h.writeJSONResponse(c, resp.StatusCode, translatedResp)
+			h.writeJSONResponse(c, resp.StatusCode, translatedResp, responseCost{
+				modelID:         modelName,
+				exactCost:       resp.CostUsd,
+				counts:          tokenCounts,
+				tokensEstimated: tokensEstimated,
+				flatRate:        h.isFlatRate(provider),
+			})
 		}
 		return
 	}
@@ -312,6 +465,177 @@ attemptLoop:
 	}
 	logging.Logger.Error(msg, "provider", provider, "model", modelName, "category", lastErrCategory)
 	c.JSON(statusCode, gin.H{"error": gin.H{"message": msg, "type": errType, "detail": detail}})
+}
+
+// comboStepResult is the structured outcome of attempting one combo step.
+// It carries everything the orchestrator needs to either commit a successful
+// response or decide whether to fall through to the next step.
+type comboStepResult struct {
+	step           db.ComboStep
+	connID         string
+	conn           *Connection
+	exec           executor.Executor
+	providerFormat executor.ProviderFormat
+	provider       string
+	modelName      string
+	resp           *executor.Response
+	streamResult   *executor.StreamResult
+	proxyCtx       context.Context
+	translatedBody []byte
+	streamCfg      *executor.StreamConfig
+	latency        int64
+	lastErr        error
+	category       string
+	retryable      bool
+	handled        bool
+	success        bool
+}
+
+// recordComboStepFailure applies the same cooldown/exhaustion side effects for a
+// failed combo connection attempt that handleComboRequest currently applies. It
+// mirrors that path exactly to avoid observable behavior changes.
+func (h *Handler) recordComboStepFailure(comboCtx context.Context, connID, provider, modelName string, det connstate.ErrorDetection, err error, resp *executor.Response) {
+	if det.ModelID != "" && (det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
+		scope := connstate.ModelScope(provider, det.ModelID)
+		h.exhaustion.MarkExhausted(quota.ExhaustKey(connID, scope), quota.TTLFromCooldown(det.CooldownUntil, 5*time.Minute))
+	} else if det.Category == connstate.ErrorRateLimit {
+		h.exhaustion.MarkExhausted(connID, quota.TTLFromCooldown(det.CooldownUntil, quota.DefaultExhaustionTTL))
+	} else if det.Category == connstate.ErrorQuota {
+		ttl := 24 * time.Hour
+		if det.CooldownUntil != nil {
+			ttl = time.Until(*det.CooldownUntil)
+		}
+		h.exhaustion.MarkExhausted(connID, ttl)
+	}
+	h.combo.RecordFailure(connID, det)
+	h.persistCooldownScoped(connID, det)
+	if det.Status != connstate.StatusReady {
+		h.elig.ScheduleUpdateProvider(provider)
+	}
+	if isTransientUpstreamError(err) {
+		cd := transientCooldown(transientCooldownResp(resp, err))
+		logging.Logger.Info("combo transient error cooldown before next connection",
+			"provider", provider, "model", modelName,
+			"conn", shortID(connID, 8), "status", upstreamHTTPStatus(err),
+			"cooldown_ms", cd.Milliseconds())
+		transientErrorSleep(comboCtx, cd)
+	}
+}
+
+// executeComboStep executes one combo step end-to-end: resolve the executor,
+// pick eligible connections, prepare each one, and call the provider. It
+// classifies failures and applies cooldowns/exhaustion exactly like the inline
+// logic in handleComboRequest so the orchestrator can decide what to do next.
+func (h *Handler) executeComboStep(
+	comboCtx context.Context,
+	c *gin.Context,
+	step db.ComboStep,
+	body []byte,
+	stream bool,
+	clientFormat executor.ProviderFormat,
+	start time.Time,
+) comboStepResult {
+	var result comboStepResult
+	result.step = step
+
+	provider, modelName := executor.SplitModel(step.ModelID)
+	result.provider = provider
+	result.modelName = modelName
+
+	exec, providerFormat, err := h.resolveExecutor(provider, modelName)
+	if err != nil {
+		result.lastErr = err
+		result.category = "executor"
+		result.retryable = true
+		return result
+	}
+	result.exec = exec
+	result.providerFormat = providerFormat
+
+	connIDs := h.combo.PickConnections(provider, modelName)
+	for _, connID := range connIDs {
+		if comboCtx.Err() != nil {
+			break
+		}
+		result.connID = connID
+
+		now := time.Now()
+		conn, err := h.prepareConnection(comboCtx, connID, provider, modelName, now)
+		if err != nil {
+			continue
+		}
+		result.conn = conn
+
+		translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+		translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
+		translatedBody = h.applyThinkingOverrideFromContext(c.Request.Context(), translatedBody, string(providerFormat))
+
+		var streamCfg *executor.StreamConfig
+		if stream {
+			adaptiveMs := computeAdaptiveReadiness(body, modelName, 80000)
+			streamCfg = &executor.StreamConfig{
+				StreamReadinessTimeoutMs: adaptiveMs,
+				AdaptiveReadiness:        true,
+			}
+		}
+
+		execCtx := comboCtx
+		if stream {
+			execCtx = c.Request.Context()
+		}
+		proxyCtx, resp, streamResult, err := h.executeProviderCall(execCtx, exec, conn, provider, modelName, translatedBody, stream, streamCfg)
+		if err == nil && !stream && resp != nil && (resp.StatusCode >= 500 || isUpstreamErrorBody(resp.Body)) {
+			err = &executor.UpstreamError{
+				StatusCode: resp.StatusCode,
+				Body:       resp.Body,
+				RawBody:    resp.Body,
+				Headers:    resp.Headers,
+			}
+		}
+		if err != nil {
+			if h.isClientCanceled(c, err) {
+				result.lastErr = err
+				result.retryable = false
+				return result
+			}
+			// Stream validation failures for Claude should be surfaced
+			// immediately as a 502 rather than retried across the combo.
+			if _, ok := err.(*executor.ClaudeStreamValidationError); ok {
+				result.retryable = false
+				if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
+					result.handled = true
+				}
+				return result
+			}
+			det := connstate.DetectError(comboCtx, 0, "", err, provider, modelName, nil)
+			result.lastErr = err
+			result.category = string(det.Category)
+
+			if det.Category == connstate.ErrorModelNotFound {
+				result.retryable = false
+				if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
+					result.handled = true
+				}
+				return result
+			}
+
+			result.retryable = true
+			h.recordComboStepFailure(comboCtx, connID, provider, modelName, det, err, resp)
+			continue
+		}
+
+		result.success = true
+		result.resp = resp
+		result.streamResult = streamResult
+		result.proxyCtx = proxyCtx
+		result.translatedBody = translatedBody
+		result.streamCfg = streamCfg
+		result.latency = time.Since(start).Milliseconds()
+		return result
+	}
+
+	result.retryable = true
+	return result
 }
 
 // handleComboRequest handles a request that matched a combo.
@@ -344,100 +668,33 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 	var lastModelName string
 
 	for _, step := range comboResult.Steps {
-		provider, modelName := executor.SplitModel(step.ModelID)
+		_, modelName := executor.SplitModel(step.ModelID)
 		lastModelName = modelName
 
 		// Replace the model in the request body with this step's unprefixed model so
 		// upstream providers receive the correct model ID (mirrors the direct path).
 		body = executor.JSONSet(body, "model", modelName)
 
-		exec, providerFormat, err := h.resolveExecutor(provider, modelName)
-		if err != nil {
-			// Cannot even build an executor for this model — record and try next step.
-			lastErr = err
-			lastErrCategory = "executor"
-			continue
-		}
-
-		connIDs := h.combo.PickConnections(provider, modelName)
-		if len(connIDs) == 0 {
-			// No eligible connection for this step right now; fall through to next step.
-			continue
-		}
-
-		for _, connID := range connIDs {
-			if comboCtx.Err() != nil {
-				// Overall combo deadline exceeded; stop trying further connections.
-				break
-			}
-			conn, err := h.prepareConnection(comboCtx, connID, provider, modelName)
-			if err != nil {
-				// Preflight rejected (cooldown/exhausted) — try next connection.
-				continue
-			}
-		lastConn = conn
-
-		translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
-		translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
-		// Adaptive readiness: extend timeout for large/reasoning requests.
-		var streamCfg *executor.StreamConfig
-		if stream {
-			adaptiveMs := computeAdaptiveReadiness(body, modelName, 80000)
-			streamCfg = &executor.StreamConfig{
-				StreamReadinessTimeoutMs: adaptiveMs,
-				AdaptiveReadiness: true,
-			}
-		}
-		// Use client's request context for execution to avoid 30s combo timeout
-		// cutting off long-lived streaming responses. comboCtx is only for loop control.
-		execCtx := comboCtx
-		if stream {
-			execCtx = c.Request.Context()
-		}
-		proxyCtx, resp, streamResult, err := h.executeProviderCall(execCtx, exec, conn, provider, modelName, translatedBody, stream, streamCfg)
-		latency := time.Since(start).Milliseconds()
-			if err != nil {
-				if h.isClientCanceled(c, err) {
-					return
-				}
-				det := connstate.DetectError(comboCtx, 0, "", err, provider, modelName, nil)
-
-	// Non-retryable: only model-not-found is surfaced directly. Auth and
-	// balance failures now fail over so a sibling connection gets a chance.
-	if det.Category == connstate.ErrorModelNotFound {
-		if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
+		result := h.executeComboStep(comboCtx, c, step, body, stream, clientFormat, start)
+		if result.handled {
 			return
 		}
-		lastErr = err
-		lastErrCategory = string(det.Category)
-		break
-				}
+		if h.isClientCanceled(c, result.lastErr) {
+			return
+		}
+		if result.success {
+			connID := result.connID
+			conn := result.conn
+			provider := result.provider
+			modelName := result.modelName
+			resp := result.resp
+			streamResult := result.streamResult
+			proxyCtx := result.proxyCtx
+			translatedBody := result.translatedBody
+			streamCfg := result.streamCfg
+			latency := result.latency
+			providerFormat := result.providerFormat
 
-				// Retryable: apply the same failover marking as the direct path.
-				if connstate.HasPerModelQuota(provider) && det.ModelID != "" &&
-					(det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
-					scope := connstate.ModelScope(provider, det.ModelID)
-					h.exhaustion.MarkExhausted(quota.ExhaustKey(connID, scope), quota.TTLFromCooldown(det.CooldownUntil, 5*time.Minute))
-				} else if det.Category == connstate.ErrorRateLimit {
-					h.exhaustion.MarkExhausted(connID, quota.TTLFromCooldown(det.CooldownUntil, quota.DefaultExhaustionTTL))
-				} else if det.Category == connstate.ErrorQuota {
-					ttl := 24 * time.Hour
-					if det.CooldownUntil != nil {
-						ttl = time.Until(*det.CooldownUntil)
-					}
-					h.exhaustion.MarkExhausted(connID, ttl)
-				}
-				h.combo.RecordFailure(connID, det)
-				h.persistCooldownScoped(connID, det)
-				if det.Status != connstate.StatusReady {
-					h.elig.ScheduleUpdate()
-				}
-				lastErr = err
-				lastErrCategory = string(det.Category)
-				continue
-			}
-
-			// Success — write the response and stop.
 			h.resetBanCount(connID)
 			h.persistSuccess(connID)
 			h.combo.RecordSuccess(connID)
@@ -445,135 +702,153 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 				h.codexPersistIfCodex(conn, resp, streamResult)
 			}
 
-		if stream {
-			// Use the client's request context (no timeout) for streaming.
-			// The comboCtx timeout is only for orchestration, not for live streams.
-			// Stream lifecycle is governed by StreamIdleTimeout/StreamReadinessTimeout/StallTimeout.
+			if stream {
+				// Use the client's request context (no timeout) for streaming.
+				// The comboCtx timeout is only for orchestration, not for live streams.
+				// Stream lifecycle is governed by StreamIdleTimeout/StreamReadinessTimeout/StallTimeout.
 
-			// Holdback buffer: wait 750ms/64KB before committing to this connection.
-			// If the stream errors during holdback, still retry the next connection
-			// transparently. Matches OmniRoute holdback behavior.
-			holdbackMs := 750
-			holdbackBytes := 64 * 1024
-			if streamCfg != nil {
-				if streamCfg.HoldbackMs > 0 {
-					holdbackMs = streamCfg.HoldbackMs
+				// Holdback buffer: wait 750ms/64KB before committing to this connection.
+				// If the stream errors during holdback, still retry the next connection
+				// transparently. Matches OmniRoute holdback behavior.
+				holdbackMs := 750
+				holdbackBytes := 64 * 1024
+				if streamCfg != nil {
+					if streamCfg.HoldbackMs > 0 {
+						holdbackMs = streamCfg.HoldbackMs
+					}
+					if streamCfg.HoldbackBytes > 0 {
+						holdbackBytes = streamCfg.HoldbackBytes
+					}
 				}
-				if streamCfg.HoldbackBytes > 0 {
-					holdbackBytes = streamCfg.HoldbackBytes
+				// Holdback committed — stream is live, relay to client.
+				// Use a dedicated sub-context so the holdback relay goroutine is cancelled
+				// the moment we stop reading from it (upstream chunk error, normal end, or
+				// client disconnect). Without this, after a mid-stream error the goroutine
+				// leaks blocked on `out <- chunk` with no consumer.
+				streamCtx, cancelStream := context.WithCancel(c.Request.Context())
+
+				holdbackChunks, holdbackErrCh := executor.WrapWithHoldback(streamCtx, streamResult.Chunks, holdbackMs, holdbackBytes)
+				streamResult.Chunks = holdbackChunks
+
+				// Wait for holdback to commit or fail. Read directly from holdbackErrCh
+				// (no forwarding goroutine) so a client disconnect doesn't leak a goroutine.
+				select {
+				case holdbackErr := <-holdbackErrCh:
+					if holdbackErr != nil {
+						// Stream failed during holdback window — kill the relay goroutine
+						// and treat as retryable error so the next connection is tried.
+						cancelStream()
+						logging.Logger.Warn("combo stream failed during holdback",
+							"provider", provider, "model", modelName,
+							"conn", shortID(connID, 8), "error", holdbackErr.Error())
+						det := connstate.DetectError(comboCtx, 0, "", holdbackErr, provider, modelName, nil)
+						h.combo.RecordFailure(connID, det)
+						lastErr = holdbackErr
+						lastErrCategory = "holdback"
+						continue // try next connection
+					}
+					// Holdback committed — stream is live, relay to client.
+				case <-streamCtx.Done():
+					cancelStream()
+					return
 				}
-		}
-		// Holdback committed — stream is live, relay to client.
-	// Use a dedicated sub-context so the holdback relay goroutine is cancelled
-	// the moment we stop reading from it (upstream chunk error, normal end, or
-	// client disconnect). Without this, after a mid-stream error the goroutine
-	// leaks blocked on `out <- chunk` with no consumer.
-	streamCtx, cancelStream := context.WithCancel(c.Request.Context())
-	defer cancelStream() // safety net when handleComboRequest returns
 
-	holdbackChunks, holdbackErrCh := executor.WrapWithHoldback(streamCtx, streamResult.Chunks, holdbackMs, holdbackBytes)
-	streamResult.Chunks = holdbackChunks
-
-	// Wait for holdback to commit or fail. Read directly from holdbackErrCh
-	// (no forwarding goroutine) so a client disconnect doesn't leak a goroutine.
-	select {
-	case holdbackErr := <-holdbackErrCh:
-		if holdbackErr != nil {
-			// Stream failed during holdback window — kill the relay goroutine
-			// and treat as retryable error so the next connection is tried.
-			cancelStream()
-			logging.Logger.Warn("combo stream failed during holdback",
-				"provider", provider, "model", modelName,
-				"conn", shortID(connID, 8), "error", holdbackErr.Error())
-			det := connstate.DetectError(comboCtx, 0, "", holdbackErr, provider, modelName, nil)
-			h.combo.RecordFailure(connID, det)
-			lastErr = holdbackErr
-			lastErrCategory = "holdback"
-			continue // try next connection
-		}
-	case <-streamCtx.Done():
-		return
-	}
-
-			// Holdback committed — stream is live, relay to client.
-			if streamErr := h.handleClientStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, comboResult.Combo.Name, true, clientFormat); streamErr != nil {
-			// Mid-stream failure — failover to next connection/model instead of
-			// stopping the stream. handleStreamResponse already skipped writing
-			// error/DONE to the client when in combo mode.
-			if h.isClientCanceled(c, streamErr) {
+				if streamErr := h.handleClientStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, comboResult.Combo.Name, true, clientFormat); streamErr != nil {
+					// Mid-stream failure — failover to next connection/model instead of
+					// stopping the stream. handleStreamResponse already skipped writing
+					// error/DONE to the client when in combo mode.
+					if h.isClientCanceled(c, streamErr) {
+						cancelStream()
+						return
+					}
+					cancelStream()
+					det := connstate.DetectError(comboCtx, 0, "", streamErr, provider, modelName, nil)
+					if det.Category == connstate.ErrorModelNotFound {
+						lastErr = streamErr
+						lastErrCategory = string(det.Category)
+						continue
+					}
+					// Always exhaust at model scope when we know the model, so other
+					// models on the same connection remain routable.
+					if det.ModelID != "" && (det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
+						scope := connstate.ModelScope(provider, det.ModelID)
+						h.exhaustion.MarkExhausted(quota.ExhaustKey(connID, scope), quota.TTLFromCooldown(det.CooldownUntil, 5*time.Minute))
+					} else if det.Category == connstate.ErrorRateLimit {
+						h.exhaustion.MarkExhausted(connID, quota.TTLFromCooldown(det.CooldownUntil, quota.DefaultExhaustionTTL))
+					} else if det.Category == connstate.ErrorQuota {
+						ttl := 24 * time.Hour
+						if det.CooldownUntil != nil {
+							ttl = time.Until(*det.CooldownUntil)
+						}
+						h.exhaustion.MarkExhausted(connID, ttl)
+					}
+					h.combo.RecordFailure(connID, det)
+					h.persistCooldownScoped(connID, det)
+					if det.Status != connstate.StatusReady {
+						h.elig.ScheduleUpdateProvider(provider)
+					}
+					lastErr = streamErr
+					lastErrCategory = "stream-" + string(det.Category)
+					continue
+				}
+				cancelStream()
 				return
-			}
-			cancelStream()
-			det := connstate.DetectError(comboCtx, 0, "", streamErr, provider, modelName, nil)
-			if det.Category == connstate.ErrorModelNotFound {
-				lastErr = streamErr
-				lastErrCategory = string(det.Category)
-				break
-			}
-			if connstate.HasPerModelQuota(provider) && det.ModelID != "" &&
-				(det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
-				scope := connstate.ModelScope(provider, det.ModelID)
-				h.exhaustion.MarkExhausted(quota.ExhaustKey(connID, scope), quota.TTLFromCooldown(det.CooldownUntil, 5*time.Minute))
-			} else if det.Category == connstate.ErrorRateLimit {
-				h.exhaustion.MarkExhausted(connID, quota.TTLFromCooldown(det.CooldownUntil, quota.DefaultExhaustionTTL))
-			} else if det.Category == connstate.ErrorQuota {
-				ttl := 24 * time.Hour
-				if det.CooldownUntil != nil {
-					ttl = time.Until(*det.CooldownUntil)
+			} else {
+				translatedResp := registry.ResponseNonStream(comboCtx, string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
+				tokenCounts := ExtractTokensFromBody(translatedResp)
+				tokensEstimated := false
+				if tokenCounts.InputTokens+tokenCounts.OutputTokens == 0 && resp.StatusCode < 400 {
+					estInput := usage.EstimateTokensFromRequest(body)
+					estOutput := usage.EstimateTokensFromResponse(translatedResp)
+					if estInput > 0 || estOutput > 0 {
+						tokenCounts.InputTokens = estInput
+						tokenCounts.OutputTokens = estOutput
+						tokensEstimated = true
+					}
 				}
-				h.exhaustion.MarkExhausted(connID, ttl)
-			}
-			h.combo.RecordFailure(connID, det)
-			h.persistCooldownScoped(connID, det)
-			if det.Status != connstate.StatusReady {
-				h.elig.ScheduleUpdate()
-			}
-			lastErr = streamErr
-			lastErrCategory = "stream-" + string(det.Category)
-			continue
-		}
-		return
-		} else {
-			translatedResp := registry.ResponseNonStream(comboCtx, string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
-			tokenCounts := ExtractTokensFromBody(translatedResp)
-			tokensEstimated := false
-			if tokenCounts.InputTokens+tokenCounts.OutputTokens == 0 && resp.StatusCode < 400 {
-				estInput := usage.EstimateTokensFromRequest(body)
-				estOutput := usage.EstimateTokensFromResponse(translatedResp)
-				if estInput > 0 || estOutput > 0 {
-					tokenCounts.InputTokens = estInput
-					tokenCounts.OutputTokens = estOutput
-					tokensEstimated = true
+				estCost := resp.CostUsd
+				if estCost == 0 {
+					estCost = usage.EstimateCost(modelName, "chat", 0, tokenCounts.InputTokens, tokenCounts.OutputTokens, tokenCounts.ReasoningTokens, tokenCounts.CachedTokens, tokenCounts.CacheCreationTokens)
 				}
-			}
-			h.logRequest(c, &usage.LogEntry{
-				ApiKeyID: c.GetString("api_key_id"),
-				ConnectionID: connID,
-				ProviderTypeID: provider,
-				ModelID: modelName,
-				ComboID: comboResult.Combo.Name,
-				ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
-				ApiType:             apiTypeFromPath(c.Request.URL.Path),
-				Modality:            "chat",
-				Stream:              stream,
-				InputTokens:         tokenCounts.InputTokens,
-				OutputTokens:        tokenCounts.OutputTokens,
-				ReasoningTokens:     tokenCounts.ReasoningTokens,
-				CachedTokens:        tokenCounts.CachedTokens,
-				CacheCreationTokens: tokenCounts.CacheCreationTokens,
-				LatencyMs:           latency,
-				StatusCode:          resp.StatusCode,
-				TokensEstimated:     tokensEstimated,
+				h.logRequest(c, &usage.LogEntry{
+					ApiKeyID:            c.GetString("api_key_id"),
+					ConnectionID:        connID,
+					ProviderTypeID:      provider,
+					ModelID:             modelName,
+					ComboID:             comboResult.Combo.Name,
+					ProxyPoolID:         executor.ProxyPoolIDFromContext(proxyCtx),
+					ApiType:             apiTypeFromPath(c.Request.URL.Path),
+					Modality:            "chat",
+					Stream:              stream,
+					InputTokens:         tokenCounts.InputTokens,
+					OutputTokens:        tokenCounts.OutputTokens,
+					ReasoningTokens:     tokenCounts.ReasoningTokens,
+					CachedTokens:        tokenCounts.CachedTokens,
+					CacheCreationTokens: tokenCounts.CacheCreationTokens,
+					CostUsd:             estCost,
+					LatencyMs:           latency,
+					StatusCode:          resp.StatusCode,
+					TokensEstimated:     tokensEstimated,
 				})
-		c.Header("Content-Type", "application/json")
-		h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
-		c.Status(resp.StatusCode)
-		c.Writer.Write(translatedResp)
+				c.Header("Content-Type", "application/json")
+				writeCostHeaders(c, modelName, estCost, tokenCounts, tokensEstimated, h.isFlatRate(provider))
+				h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
+				c.Status(resp.StatusCode)
+				c.Writer.Write(translatedResp)
 			}
 			return
 		}
+		if result.conn != nil {
+			lastConn = result.conn
+		}
+		if result.lastErr != nil {
+			lastErr = result.lastErr
+			lastErrCategory = result.category
+		}
+		if comboCtx.Err() != nil {
+			break
+		}
 	}
-
 	// Every step exhausted its connections (or had none eligible).
 	msg, statusCode, errType := buildFailoverErrorResponse(lastErrCategory, lastErr, lastModelName)
 	detail := gin.H{"model": model}
@@ -631,7 +906,6 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(cfg.PanelHardTimeoutMs)*time.Millisecond)
 	defer cancel()
 
-
 	resultsCh := make(chan fusionPanel, len(comboResult.Steps))
 	var wg sync.WaitGroup
 	for _, step := range comboResult.Steps {
@@ -643,26 +917,31 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 				resultsCh <- fusionPanel{err: errors.New("no eligible connection")}
 				return
 			}
-		provider, modelName := executor.SplitModel(step.ModelID)
-		conn, err := h.prepareConnection(ctx, connID, provider, modelName)
-		if err != nil {
-			resultsCh <- fusionPanel{err: err}
-			return
-		}
-		exec, providerFormat, err := h.resolveExecutor(provider, modelName)
-		if err != nil {
-			resultsCh <- fusionPanel{err: err}
-			return
-		}
-		// Replace the model field with the panel model so OpenAI-compatible passthrough
-		// providers receive the actual upstream model ID instead of "fusion".
-		panelBody := setRequestModel(body, modelName)
-		translatedBody := registry.Request(string(executor.FormatOpenAI), string(providerFormat), modelName, panelBody, false)
-		translatedBody = sanitizeStreamOptions(translatedBody, false, executor.FormatOpenAI, providerFormat, c.Request.URL.Path)
-		translatedBody = stripFusionTools(translatedBody)
+			provider, modelName := executor.SplitModel(step.ModelID)
+			now := time.Now()
+			conn, err := h.prepareConnection(ctx, connID, provider, modelName, now)
+			if err != nil {
+				resultsCh <- fusionPanel{err: err}
+				return
+			}
+			exec, providerFormat, err := h.resolveExecutor(provider, modelName)
+			if err != nil {
+				resultsCh <- fusionPanel{err: err}
+				return
+			}
+			// Replace the model field with the panel model so OpenAI-compatible passthrough
+			// providers receive the actual upstream model ID instead of "fusion".
+			panelBody := setRequestModel(body, modelName)
+			translatedBody := registry.Request(string(executor.FormatOpenAI), string(providerFormat), modelName, panelBody, false)
+			translatedBody = sanitizeStreamOptions(translatedBody, false, executor.FormatOpenAI, providerFormat, c.Request.URL.Path)
+			translatedBody = stripFusionTools(translatedBody)
 			_, resp, _, err := h.executeProviderCall(ctx, exec, conn, provider, modelName, translatedBody, false, nil)
 			if err != nil {
 				resultsCh <- fusionPanel{err: err}
+				return
+			}
+			if resp != nil && (resp.StatusCode >= 500 || isUpstreamErrorBody(resp.Body)) {
+				resultsCh <- fusionPanel{err: fmt.Errorf("panel upstream error: status %d", resp.StatusCode)}
 				return
 			}
 			content := extractAssistantContent(resp.Body)
@@ -680,14 +959,18 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 	}()
 
 	var successes []fusionPanel
+	var failures int
 	hardTimeout := time.NewTimer(time.Duration(cfg.PanelHardTimeoutMs) * time.Millisecond)
 	defer hardTimeout.Stop()
 
-	// Collect until min_panel successes, then start grace timer.
+	// Collect until min_panel successes, then hand off to the grace period.
 	collectResults := func() bool {
 		for {
-			if len(successes) >= len(comboResult.Steps) {
-				return true
+			if len(successes) >= cfg.MinPanel {
+				return false // not done — caller should collect grace
+			}
+			if len(successes)+failures >= len(comboResult.Steps) {
+				return true // all panels reported; no grace needed
 			}
 			select {
 			case r, ok := <-resultsCh:
@@ -696,6 +979,8 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 				}
 				if r.err == nil {
 					successes = append(successes, r)
+				} else {
+					failures++
 				}
 			case <-hardTimeout.C:
 				return true
@@ -734,7 +1019,67 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 	}
 
 	if len(successes) == 1 {
-		h.writeFusionResponse(c, successes[0].content, model, stream)
+		// Re-run the lone successful panel model with the original request so the
+		// client receives a real provider response (usage, finish_reason, tool_calls)
+		// instead of a stripped synthetic envelope. Fall back to the synthetic
+		// envelope if the re-run cannot be executed.
+		single := successes[0]
+		provider, modelName := executor.SplitModel(single.modelID)
+		now := time.Now()
+		conn, rerunErr := h.prepareConnection(c.Request.Context(), single.connID, provider, modelName, now)
+		if rerunErr == nil {
+			exec, providerFormat, execErr := h.resolveExecutor(provider, modelName)
+			rerunErr = execErr
+			if rerunErr == nil {
+				rerunBody := setRequestModel(body, modelName)
+				translatedBody := registry.Request(string(executor.FormatOpenAI), string(providerFormat), modelName, rerunBody, stream)
+				translatedBody = sanitizeStreamOptions(translatedBody, stream, executor.FormatOpenAI, providerFormat, c.Request.URL.Path)
+				translatedBody = h.applyThinkingOverrideFromContext(ctx, translatedBody, string(providerFormat))
+				var streamCfg *executor.StreamConfig
+				if stream {
+					adaptiveMs := computeAdaptiveReadiness(body, modelName, 80000)
+					streamCfg = &executor.StreamConfig{
+						StreamReadinessTimeoutMs: adaptiveMs,
+						AdaptiveReadiness:        true,
+					}
+				}
+				execCtx := ctx
+				if stream {
+					execCtx = c.Request.Context()
+				}
+				_, resp, streamResult, callErr := h.executeProviderCall(execCtx, exec, conn, provider, modelName, translatedBody, stream, streamCfg)
+				rerunErr = callErr
+				if rerunErr == nil && !stream && resp != nil && (resp.StatusCode >= 500 || isUpstreamErrorBody(resp.Body)) {
+					rerunErr = &executor.UpstreamError{
+						StatusCode: resp.StatusCode,
+						Body:       resp.Body,
+						RawBody:    resp.Body,
+					}
+				}
+				if rerunErr == nil {
+					if stream {
+						streamCtx, cancelStream := context.WithCancel(c.Request.Context())
+						defer cancelStream()
+						streamErr := h.handleStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, rerunBody, comboResult.Combo.Name, true)
+						if streamErr == nil {
+							return
+						}
+						rerunErr = streamErr
+					} else {
+						translatedResp := registry.ResponseNonStream(ctx, string(providerFormat), string(executor.FormatOpenAI), modelName, rerunBody, translatedBody, resp.Body, nil)
+						for k, v := range resp.Headers {
+							c.Writer.Header()[k] = v
+						}
+						c.Data(resp.StatusCode, c.Writer.Header().Get("Content-Type"), translatedResp)
+						return
+					}
+				}
+			}
+		}
+		if rerunErr != nil {
+			logging.Logger.Warn("fusion single-panel re-run failed; falling back to synthetic response", "error", rerunErr.Error(), "model", single.modelID, "combo", comboResult.Combo.Name)
+		}
+		h.writeFusionResponse(c, single.content, model, stream)
 		return
 	}
 
@@ -752,7 +1097,8 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 		return
 	}
 	judgeProvider, judgeModelName := executor.SplitModel(judgeModel)
-	judgeConn, err := h.prepareConnection(c.Request.Context(), judgeConnID, judgeProvider, judgeModelName)
+	now := time.Now()
+	judgeConn, err := h.prepareConnection(c.Request.Context(), judgeConnID, judgeProvider, judgeModelName, now)
 	if err != nil {
 		logging.Logger.Warn("fusion judge connection rejected; returning first panel response", "error", err.Error())
 		h.writeFusionResponse(c, successes[0].content, model, stream)
@@ -781,15 +1127,18 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 		h.writeFusionResponse(c, successes[0].content, model, stream)
 		return
 	}
+	if !stream && (resp.StatusCode >= 500 || isUpstreamErrorBody(resp.Body)) {
+		logging.Logger.Warn("fusion judge returned upstream error; returning first panel response", "status", resp.StatusCode)
+		h.writeFusionResponse(c, successes[0].content, model, stream)
+		return
+	}
 
 	if stream {
 		streamCtx, cancelStream := context.WithCancel(c.Request.Context())
 		defer cancelStream()
 		if err := h.handleStreamResponse(streamCtx, c, streamResult, judgeConn, judgeProvider, judgeModelName, start, translatedJudge, judgeReqBody, comboResult.Combo.Name, true); err != nil {
-			logging.Logger.Warn("fusion judge stream failed", "error", err.Error())
-			if !h.isClientCanceled(c, err) {
-				// Stream already started silently; we cannot recover, just stop.
-			}
+			logging.Logger.Warn("fusion judge stream failed; falling back to first panel response", "error", err.Error(), "judge_model", judgeModel, "combo", comboResult.Combo.Name)
+			h.writeFusionResponse(c, successes[0].content, model, stream)
 			return
 		}
 		return
@@ -811,7 +1160,9 @@ type fusionPanel struct {
 	err     error
 }
 
-// stripFusionTools removes tool-related fields from a request body for fusion panels.
+// stripFusionTools removes tool-related fields from a request body for fusion panels
+// and flattens any tool/function turns into plain prose so panel models keep the
+// context without being able to emit tool_calls.
 func stripFusionTools(body []byte) []byte {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
@@ -819,6 +1170,9 @@ func stripFusionTools(body []byte) []byte {
 	}
 	delete(m, "tools")
 	delete(m, "tool_choice")
+	if msgs, ok := m["messages"].([]any); ok {
+		m["messages"] = flattenToolHistory(msgs)
+	}
 	out, err := json.Marshal(m)
 	if err != nil {
 		return body
@@ -826,48 +1180,317 @@ func stripFusionTools(body []byte) []byte {
 	return out
 }
 
+const (
+	fusionToolCallPrefix   = "[Called tools: "
+	fusionToolResultPrefix = "[Tool result: "
+)
+
+// flattenToolHistory converts tool/function turns in a message list into plain
+// assistant prose so panel models keep the context but can't emit tool_calls.
+// It mirrors 9router's flattenToolHistory behavior for OpenAI-compatible
+// message shapes.
+func flattenToolHistory(messages []any) []any {
+	out := make([]any, 0, len(messages))
+	for _, raw := range messages {
+		if raw == nil {
+			continue
+		}
+		msg, ok := raw.(map[string]any)
+		if !ok {
+			out = append(out, raw)
+			continue
+		}
+
+		role, _ := msg["role"].(string)
+
+		// Tool/function result -> assistant text.
+		if role == "tool" || role == "function" {
+			content := extractToolHistoryContent(msg["content"])
+			out = append(out, map[string]any{
+				"role":    "assistant",
+				"content": fusionToolResultPrefix + content + "]",
+			})
+			continue
+		}
+
+		// Assistant with tool_calls -> strip tool_calls and inline names.
+		if role == "assistant" {
+			if toolCalls, ok := msg["tool_calls"].([]any); ok && len(toolCalls) > 0 {
+				names := make([]string, 0, len(toolCalls))
+				for _, tc := range toolCalls {
+					name := extractToolCallName(tc)
+					if name == "" {
+						name = "tool"
+					}
+					names = append(names, name)
+				}
+				content := extractToolHistoryContent(msg["content"])
+				if content != "" {
+					content += "\n"
+				}
+				content += fusionToolCallPrefix + strings.Join(names, ", ") + "]"
+				clean := map[string]any{
+					"role":    "assistant",
+					"content": content,
+				}
+				for k, v := range msg {
+					if k != "role" && k != "content" && k != "tool_calls" {
+						clean[k] = v
+					}
+				}
+				out = append(out, clean)
+				continue
+			}
+
+			// Array content with tool_use/tool_result blocks (Anthropic-style).
+			if arr, ok := msg["content"].([]any); ok {
+				textParts := []string{}
+				toolNames := []string{}
+				toolResults := []string{}
+				for _, blockRaw := range arr {
+					block, ok := blockRaw.(map[string]any)
+					if !ok {
+						continue
+					}
+					typ, _ := block["type"].(string)
+					switch typ {
+					case "text":
+						if t, ok := block["text"].(string); ok && t != "" {
+							textParts = append(textParts, t)
+						}
+					case "tool_use":
+						name := "tool"
+						if n, ok := block["name"].(string); ok && n != "" {
+							name = n
+						}
+						toolNames = append(toolNames, name)
+					case "tool_result":
+						toolResults = append(toolResults, extractToolHistoryContent(block["content"]))
+					}
+				}
+				if len(toolNames) > 0 || len(toolResults) > 0 {
+					newContent := strings.Join(textParts, "\n")
+					if len(toolNames) > 0 {
+						if newContent != "" {
+							newContent += "\n"
+						}
+						newContent += fusionToolCallPrefix + strings.Join(toolNames, ", ") + "]"
+					}
+					if len(toolResults) > 0 {
+						if newContent != "" {
+							newContent += "\n"
+						}
+						newContent += fusionToolResultPrefix + strings.Join(toolResults, "\n") + "]"
+					}
+					clean := map[string]any{
+						"role":    "assistant",
+						"content": newContent,
+					}
+					for k, v := range msg {
+						if k != "role" && k != "content" {
+							clean[k] = v
+						}
+					}
+					out = append(out, clean)
+					continue
+				}
+			}
+		}
+
+		out = append(out, msg)
+	}
+	return out
+}
+
+func extractToolHistoryContent(v any) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	var parts []string
+	collect := func(item map[string]any) {
+		if typ, _ := item["type"].(string); typ == "text" {
+			if t, ok := item["text"].(string); ok {
+				parts = append(parts, t)
+			}
+		}
+	}
+	if arr, ok := v.([]any); ok {
+		for _, item := range arr {
+			if itemMap, ok := item.(map[string]any); ok {
+				collect(itemMap)
+			}
+		}
+		return strings.Join(parts, "\n")
+	}
+	if arr, ok := v.([]map[string]any); ok {
+		for _, item := range arr {
+			collect(item)
+		}
+		return strings.Join(parts, "\n")
+	}
+	return fmt.Sprint(v)
+}
+
+func extractToolCallName(tc any) string {
+	m, ok := tc.(map[string]any)
+	if !ok {
+		return ""
+	}
+	if fn, ok := m["function"].(map[string]any); ok {
+		if n, ok := fn["name"].(string); ok {
+			return n
+		}
+	}
+	if n, ok := m["name"].(string); ok {
+		return n
+	}
+	return ""
+}
+
 // setRequestModel replaces the model field in a request body.
 func setRequestModel(body []byte, model string) []byte {
 	return executor.JSONSet(body, "model", model)
 }
 
-// extractAssistantContent extracts the assistant message content from a non-streaming
-// chat completion response body. It supports the standard OpenAI-compatible shape.
+// extractAssistantContent extracts the assistant message content from a
+// non-streaming upstream response body. It recognises OpenAI chat completions,
+// Anthropic Claude messages, Google Gemini generateContent, and OpenAI
+// Responses (e.g. Codex) output envelopes.
 func extractAssistantContent(respBody []byte) string {
-	var out struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(respBody, &out); err != nil {
+	var doc map[string]any
+	if err := json.Unmarshal(respBody, &doc); err != nil {
 		return ""
 	}
-	if len(out.Choices) == 0 {
-		return ""
+
+	// OpenAI chat completions shape: choices[0].message.content
+	if choices, ok := doc["choices"].([]any); ok && len(choices) > 0 {
+		if choice, ok := choices[0].(map[string]any); ok {
+			if msg, ok := choice["message"].(map[string]any); ok {
+				switch v := msg["content"].(type) {
+				case string:
+					return v
+				case []any:
+					return extractTextBlocks(v)
+				}
+			}
+		}
 	}
-	return out.Choices[0].Message.Content
+
+	// Claude messages shape: content [{"type":"text","text":"..."}]
+	if content, ok := doc["content"].([]any); ok {
+		if text := extractTextBlocks(content); text != "" {
+			return text
+		}
+	}
+
+	// Gemini generateContent shape: candidates[0].content.parts [{"text":"..."}]
+	if candidates, ok := doc["candidates"].([]any); ok && len(candidates) > 0 {
+		if cand, ok := candidates[0].(map[string]any); ok {
+			if content, ok := cand["content"].(map[string]any); ok {
+				if parts, ok := content["parts"].([]any); ok {
+					var sb strings.Builder
+					for _, p := range parts {
+						if pm, ok := p.(map[string]any); ok {
+							if text, ok := pm["text"].(string); ok {
+								sb.WriteString(text)
+							}
+						}
+					}
+					return sb.String()
+				}
+			}
+		}
+	}
+
+	// OpenAI Responses shape: output [{"type":"message","content":[{"type":"output_text","text":"..."}]}]
+	if output, ok := doc["output"].([]any); ok {
+		var sb strings.Builder
+		for _, item := range output {
+			if it, ok := item.(map[string]any); ok {
+				if itemType, _ := it["type"].(string); itemType == "message" {
+					if content, ok := it["content"].([]any); ok {
+						for _, c := range content {
+							if cm, ok := c.(map[string]any); ok {
+								if contentType, _ := cm["type"].(string); contentType == "output_text" {
+									if text, ok := cm["text"].(string); ok {
+										sb.WriteString(text)
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		if sb.Len() > 0 {
+			return sb.String()
+		}
+	}
+
+	// Final fallbacks for providers that expose plain text top-level fields.
+	if text, ok := doc["output_text"].(string); ok && text != "" {
+		return text
+	}
+	if text, ok := doc["text"].(string); ok && text != "" {
+		return text
+	}
+
+	return ""
+}
+
+// extractTextBlocks concatenates text found in content arrays whose blocks
+// expose a "text" string field. This covers OpenAI message content parts and
+// Anthropic Claude content blocks.
+func extractTextBlocks(blocks []any) string {
+	var sb strings.Builder
+	for _, b := range blocks {
+		if bm, ok := b.(map[string]any); ok {
+			if text, ok := bm["text"].(string); ok {
+				sb.WriteString(text)
+			}
+		}
+	}
+	return sb.String()
 }
 
 // buildFusionJudgeBody builds a new request body for the judge model.
+// It preserves the original conversation history and appends the judge
+// directive as a new user turn so the judge has full context.
 func buildFusionJudgeBody(originalReq []byte, panels []fusionPanel, anonymize bool) []byte {
-	userQuestion := extractUserQuestion(originalReq)
+	var req map[string]any
+	if err := json.Unmarshal(originalReq, &req); err != nil {
+		return originalReq
+	}
+
 	prompt := "You are a synthesis assistant. Multiple expert panel models answered the user's question. Review the answers below and produce a single, concise, accurate answer that best addresses the user's original question.\n\n"
+
+	userQuestion := extractUserQuestion(originalReq)
 	prompt += "User question: " + userQuestion + "\n\n"
 	for i, p := range panels {
 		label := fmt.Sprintf("Source %d", i+1)
 		if !anonymize {
 			label = fmt.Sprintf("Source %s", p.modelID)
 		}
-		prompt += fmt.Sprintf("%s (%s):\n%s\n\n", label, p.modelID, p.content)
+		if anonymize {
+			prompt += fmt.Sprintf("%s:\n%s\n\n", label, p.content)
+		} else {
+			prompt += fmt.Sprintf("%s (%s):\n%s\n\n", label, p.modelID, p.content)
+		}
 	}
 	prompt += "Synthesize the best answer."
 
-	return executor.JSONSet(originalReq, "messages", []map[string]any{
-		{"role": "system", "content": prompt},
-		{"role": "user", "content": userQuestion},
-	})
+	messages, _ := req["messages"].([]any)
+	judgeMsg := map[string]any{"role": "user", "content": prompt}
+	req["messages"] = append(messages, judgeMsg)
+
+	result, err := json.Marshal(req)
+	if err != nil {
+		return originalReq
+	}
+	return result
 }
 
 // extractUserQuestion returns the content of the last user message from a request body.
@@ -928,6 +1551,22 @@ func (h *Handler) writeFusionResponse(c *gin.Context, content, model string, str
 	})
 }
 
+// isUpstreamErrorBody reports whether a non-streaming response body is clearly
+// an error envelope (e.g. OpenAI's {"error":{...}}). Used by the combo path to
+// promote a 200-status error body to a retryable upstream error.
+func isUpstreamErrorBody(body []byte) bool {
+	var envelope struct {
+		Error *struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return false
+	}
+	return envelope.Error != nil && (envelope.Error.Message != "" || envelope.Error.Type != "")
+}
+
 // handleClientStreamResponse dispatches to the correct stream handler based on
 // the client-facing API format. It is used by both the direct and combo paths.
 func (h *Handler) handleClientStreamResponse(ctx context.Context, c *gin.Context, result *executor.StreamResult, conn *Connection, provider, model string, start time.Time, translatedReq, originalReq []byte, comboID string, silent bool, clientFormat executor.ProviderFormat) error {
@@ -953,4 +1592,3 @@ func (h *Handler) handleStreamResponse(ctx context.Context, c *gin.Context, resu
 	}
 	return h.streamResponse(ctx, c, result, conn, provider, model, executor.FormatOpenAI, providerFormat, originalReq, translatedReq, errFormatter, start, comboID, silent)
 }
-

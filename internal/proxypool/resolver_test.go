@@ -26,6 +26,10 @@ func newTestDB(t *testing.T) *sql.DB {
 }
 
 func insertPool(t *testing.T, database *sql.DB, id, name, typ, proxyURL, noProxy, relayAuth string, active bool, testStatus string) {
+	insertPoolWithAuth(t, database, id, name, typ, proxyURL, "", "", noProxy, relayAuth, active, testStatus)
+}
+
+func insertPoolWithAuth(t *testing.T, database *sql.DB, id, name, typ, proxyURL, proxyUsername, proxyPassword, noProxy, relayAuth string, active bool, testStatus string) {
 	t.Helper()
 	now := time.Now().Unix()
 	activeInt := 0
@@ -33,8 +37,8 @@ func insertPool(t *testing.T, database *sql.DB, id, name, typ, proxyURL, noProxy
 		activeInt = 1
 	}
 	_, err := database.Exec(
-		`INSERT INTO proxy_pools (id, name, type, proxy_url, no_proxy, relay_auth, is_active, test_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, name, typ, proxyURL, noProxy, relayAuth, activeInt, testStatus, now, now,
+		`INSERT INTO proxy_pools (id, name, type, proxy_url, proxy_username, proxy_password, no_proxy, relay_auth, is_active, test_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, name, typ, proxyURL, proxyUsername, proxyPassword, noProxy, relayAuth, activeInt, testStatus, now, now,
 	)
 	if err != nil {
 		t.Fatalf("insert pool %s: %v", id, err)
@@ -466,5 +470,19 @@ func TestRelayTypeRewritten(t *testing.T) {
 	}
 	if cfg.RelayURL != "https://relay1.vercel.app" || cfg.RelayAuth != "rauth123" {
 		t.Fatalf("expected relay config to be populated, got: %+v", cfg)
+	}
+}
+
+func TestResolveConnectionPoolCredentials(t *testing.T) {
+	database := newTestDB(t)
+	insertPoolWithAuth(t, database, "p-auth", "test-p-auth", "http", "http://proxy.example:8080", "user1", "pass1", "", "", true, "active")
+
+	r := NewResolver(database)
+	cfg := r.Resolve(`{"proxyPoolId":"p-auth"}`, "")
+	if cfg.ProxyURL != "http://proxy.example:8080" {
+		t.Fatalf("unexpected proxy URL: %+v", cfg)
+	}
+	if cfg.ProxyUsername != "user1" || cfg.ProxyPassword != "pass1" {
+		t.Fatalf("expected credentials to be attached, got: %+v", cfg)
 	}
 }

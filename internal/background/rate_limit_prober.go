@@ -94,7 +94,7 @@ func (p *RateLimitProber) check() {
 		FROM connections
 		WHERE provider_type_id = 'oc'
 		AND is_active = 1
-		AND status IN ('rate_limited', 'quota_exhausted')
+		AND status IN ('rate_limited','quota_exhausted')
 		AND cooldown_until IS NOT NULL
 		AND cooldown_until <= ?
 	`, now)
@@ -246,13 +246,15 @@ func (p *RateLimitProber) probePerModelLocks() {
 		if p.resolver != nil {
 			cfg := p.resolver.Resolve(ci.psd, l.provider)
 			ctx = executor.ContextWithProxy(ctx, executor.ProxyConfig{
-				Enabled:     cfg.Enabled,
-				ProxyURL:    cfg.ProxyURL,
-				NoProxy:     cfg.NoProxy,
-				RelayURL:    cfg.RelayURL,
-				RelayAuth:   cfg.RelayAuth,
-				RelayType:   cfg.RelayType,
-				StrictProxy: cfg.StrictProxy,
+				Enabled:       cfg.Enabled,
+				ProxyURL:      cfg.ProxyURL,
+				ProxyUsername: cfg.ProxyUsername,
+				ProxyPassword: cfg.ProxyPassword,
+				NoProxy:       cfg.NoProxy,
+				RelayURL:      cfg.RelayURL,
+				RelayAuth:     cfg.RelayAuth,
+				RelayType:     cfg.RelayType,
+				StrictProxy:   cfg.StrictProxy,
 			})
 		}
 

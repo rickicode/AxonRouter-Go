@@ -99,9 +99,6 @@ export const providerStatusCounts = derived(providers, ($providers) => {
     ready: 0,
     rate_limited: 0,
     quota_exhausted: 0,
-    balance_empty: 0,
-    auth_failed: 0,
-    suspended: 0,
     disabled: 0,
   };
   
@@ -397,24 +394,27 @@ export function formatLatency(ms: number): string {
 export function formatTokens(tokens: number): string {
   if (tokens < 1000) return tokens.toString();
   if (tokens < 1000000) return `${(tokens / 1000).toFixed(1)}k`;
-  return `${(tokens / 1000000).toFixed(2)}M`;
+  if (tokens < 1000000000) return `${(tokens / 1000000).toFixed(2)}M`;
+  return `${(tokens / 1000000000).toFixed(2)}B`;
 }
 
 export function formatCost(cost: number): string {
   return `$${cost.toFixed(4)}`;
 }
 
-
-
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(2)}MB`;
+  if (bytes < 1024 * 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(2)}GB`;
+  return `${(bytes / 1024 / 1024 / 1024 / 1024).toFixed(2)}TB`;
+}
 
 export function getStatusColor(status: string): string {
   switch (status) {
     case 'ready': return 'text-green-600 bg-green-50';
     case 'rate_limited': return 'text-yellow-600 bg-yellow-50';
     case 'quota_exhausted': return 'text-orange-600 bg-orange-50';
-    case 'balance_empty': return 'text-red-600 bg-red-50';
-    case 'auth_failed': return 'text-red-600 bg-red-50';
-    case 'suspended': return 'text-gray-600 bg-gray-50';
     case 'disabled': return 'text-gray-600 bg-gray-50';
     default: return 'text-gray-600 bg-gray-50';
   }
@@ -425,9 +425,6 @@ export function getStatusLabel(status: string): string {
     case 'ready': return 'Ready';
     case 'rate_limited': return 'Rate Limited';
     case 'quota_exhausted': return 'Quota Exhausted';
-    case 'balance_empty': return 'Balance Empty';
-    case 'auth_failed': return 'Auth Failed';
-    case 'suspended': return 'Suspended';
     case 'disabled': return 'Disabled';
     default: return status;
   }
@@ -441,7 +438,7 @@ export const quotaTotalPages = writable(1);
 export const quotaLoading = writable(false);
 export const quotaError = writable<string | null>(null);
 export const quotaSummary = writable<QuotaProviderSummary[]>([]);
-export const quotaSavings = writable<number>(0);
+export const quotaSpent = writable<number>(0);
 export const quotaNextReset = writable<string | null>(null);
 
 export async function loadQuota(params?: { provider?: string; search?: string; status?: string; page?: number; per_page?: number }) {
@@ -465,7 +462,7 @@ export async function loadQuotaSummary() {
   try {
     const data: QuotaSummaryResponse = await quotaApi.summary();
     quotaSummary.set(data.providers || []);
-    quotaSavings.set(data.savings_usd || 0);
+    quotaSpent.set(data.spent_usd || 0);
     quotaNextReset.set(data.next_reset || null);
   } catch {
     // silent — summary is optional enhancement
@@ -479,7 +476,7 @@ export async function refreshConnectionQuota(connId: string): Promise<Connection
     quotaItems.update(items =>
       items.map(item =>
         item.connection_id === connId
-          ? { ...item, quotas: result.quotas, plan: result.plan || '', error: result.error || '', fetched_at: result.fetched_at, status: result.error ? 'error' : (result.quotas.length ? 'ok' : 'no_data') }
+          ? { ...item, quotas: result.quotas || [], plan: result.plan || '', error: result.error || '', fetched_at: result.fetched_at, status: result.error ? 'error' : ((result.quotas || []).length ? 'ok' : 'no_data') }
           : item
       )
     );

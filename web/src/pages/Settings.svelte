@@ -10,10 +10,12 @@ import { toast } from 'svelte-sonner';
 import ChangePasswordCard from '$lib/components/ChangePasswordCard.svelte';
 import HttpsSettings from '$lib/components/HttpsSettings.svelte';
 import RuntimeSettings from '$lib/components/RuntimeSettings.svelte';
+import SmartRouterSettings from '$lib/components/SmartRouterSettings.svelte';
+import SparklesIcon from '@lucide/svelte/icons/sparkles';
 import DownloadIcon from '@lucide/svelte/icons/download';
 import UploadIcon from '@lucide/svelte/icons/upload';
 
-let tab = $state<'runtime' | 'security' | 'https'>('runtime');
+let tab = $state<'runtime' | 'security' | 'https' | 'smart-router'>('runtime');
 let settings: Record<string, string> = $state({});
 let importText = $state('');
 let showImport = $state(false);
@@ -67,7 +69,7 @@ async function handleImport() {
 <div class="flex flex-1 flex-col gap-6 p-6">
   <div class="space-y-1">
     <h1 class="text-display-lg">Settings.</h1>
-    <p class="text-body-sm text-muted-foreground">Manage runtime parameters, security, and HTTPS.</p>
+    <p class="text-body-sm text-muted-foreground">Manage runtime parameters, security, HTTPS, and smart routing.</p>
   </div>
 
   <Tabs.Root bind:value={tab} class="w-full flex flex-col gap-6">
@@ -75,6 +77,10 @@ async function handleImport() {
       <Tabs.Trigger value="runtime" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Runtime</Tabs.Trigger>
       <Tabs.Trigger value="security" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Security</Tabs.Trigger>
       <Tabs.Trigger value="https" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">HTTPS</Tabs.Trigger>
+<Tabs.Trigger value="smart-router" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm gap-1.5">
+<SparklesIcon class="size-4" />
+Smart Router
+</Tabs.Trigger>
     </Tabs.List>
 
     <Tabs.Content value="runtime">

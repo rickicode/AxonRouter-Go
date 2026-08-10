@@ -4,17 +4,27 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
+	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
+
+// ccFilterNamingEnabled reports whether Claude Code topic-naming requests
+// should be filtered. It is a variable so tests can override the setting source.
+var ccFilterNamingEnabled = func() bool {
+	return db.GetSetting("cc_filter_naming", "false") == "true"
+}
 
 // Messages handles POST /v1/messages (Anthropic format)
 func (h *Handler) Messages(c *gin.Context) {
@@ -32,14 +42,36 @@ func (h *Handler) Messages(c *gin.Context) {
 	// Apply compression (fail-open); skip if the request uses prompt-cache markers.
 	body = h.compressRequestBody(body)
 
-	model := executor.JSONGet(body, "model")
+	body, model, _ := h.parseThinkingSuffixFromBody(c, body)
 	if model == "" {
 		c.JSON(http.StatusBadRequest, claudeError("invalid_request_error", "model is required"))
 		return
 	}
+	if !h.isModelAllowed(c.Request.Context(), model) {
+		c.JSON(http.StatusForbidden, claudeError("invalid_request_error", "model not allowed for this API key"))
+		return
+	}
+
+	// Stack-safe filter for Claude Code's background topic/title requests.
+	// Detects the well-known system prompts and returns a local JSON/SSE response
+	// without forwarding to any upstream provider (no MITM / interception).
+	if ccFilterNamingEnabled() && isClaudeTopicNamingRequest(body) {
+		h.writeFakeClaudeTopicNamingResponse(c, body, model)
+		return
+	}
+
+	// Smart virtual model routing resolves smart/* ids to a concrete model
+	// before cache/combo/direct routing. On failure it falls through.
+	if resolved, updated, ok := h.resolveVirtualModel(c.Request.Context(), model, body); ok {
+		model = resolved
+		body = updated
+	}
 
 	stream := executor.IsStreamRequest(body)
 	if h.checkTokenBudget(c, body) != nil {
+		return
+	}
+	if h.checkAPIKeyBudget(c) != nil {
 		return
 	}
 
@@ -71,6 +103,9 @@ func (h *Handler) Messages(c *gin.Context) {
 		provider = "claude"
 		modelName = model
 	}
+
+	sessionID := h.sessionIDForAffinity(c, provider, modelName, body)
+
 	exec, providerFormat, err := h.resolveExecutor(provider, modelName)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, claudeError("invalid_request_error", err.Error()))
@@ -80,34 +115,49 @@ func (h *Handler) Messages(c *gin.Context) {
 
 	// Connection failover loop: try up to failoverMaxAttempts connections before giving up.
 	clientFormat := executor.FormatClaude
-	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+	translatedBody := body
+	if clientFormat != providerFormat {
+		translatedBody = registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+	}
+	translatedBody = h.applyThinkingOverrideFromContext(c.Request.Context(), translatedBody, string(providerFormat))
 	translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
 	// NOTE: configurable via failover_max_attempts setting.
 	maxAttempts := h.failoverAttempts()
 	var lastErr error
 	var lastErrCategory string
+	var lastFailedConnID string
 attemptLoop:
 	for attempt := range maxAttempts {
 		if c.Request.Context().Err() != nil {
 			writeContextDone(c)
 			return
 		}
-		conn, err := h.getConnection(c.Request.Context(), provider, modelName)
+		var conn *Connection
+		var err error
+		if lastFailedConnID != "" {
+			conn, err = h.getConnection(c.Request.Context(), provider, modelName, sessionID, lastFailedConnID)
+		} else {
+			conn, err = h.getConnection(c.Request.Context(), provider, modelName, sessionID)
+		}
 		if err != nil {
 			if attempt == 0 {
+				if cat := h.classifyProviderUnavailableForModel(provider, modelName); cat != connstate.ErrorUnknown {
+					msg, statusCode, errType := buildFailoverErrorResponse(string(cat), nil, modelName)
+					c.JSON(statusCode, claudeError(errType, msg))
+					return
+				}
 				c.JSON(http.StatusServiceUnavailable, claudeError("server_error", "no available connection"))
 				return
 			}
 			break
 		}
 		h.proactiveRefreshToken(c.Request.Context(), conn, provider)
-	psdMap := map[string]string{}
-	if conn.ProviderSpecificData != "" {
-		if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
-			logging.Logger.Warn("malformed provider_specific_data", "conn", shortID(conn.ID, 8), "error", err.Error())
+		psdMap := map[string]string{}
+		if conn.ProviderSpecificData != "" {
+			if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
+				logging.Logger.Warn("malformed provider_specific_data", "conn", shortID(conn.ID, 8), "error", err.Error())
+			}
 		}
-	}
-
 
 		req := &executor.Request{
 			Model:                modelName,
@@ -135,23 +185,25 @@ attemptLoop:
 			if h.isClientCanceled(c, err) {
 				return
 			}
-		retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
-		lastErr = err
-		lastErrCategory = cat
-		if !retry {
-			break attemptLoop
+			retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
+			lastErr = err
+			lastErrCategory = cat
+			lastFailedConnID = conn.ID
+			h.clearAffinitySession(provider, sessionID, modelName)
+			if !retry {
+				break attemptLoop
+			}
+			if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+				return
+			}
+			continue
 		}
-		if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
-			return
-		}
-		continue
-	}
 
-	h.resetBanCount(conn.ID)
-	h.persistSuccess(conn.ID)
-	h.combo.RecordSuccess(conn.ID)
+		h.resetBanCount(conn.ID)
+		h.persistSuccess(conn.ID)
+		h.combo.RecordSuccess(conn.ID)
 
-	if req.Stream {
+		if req.Stream {
 			// Retry mid-stream failures across connections, like the combo path.
 			streamCtx, cancelStream := context.WithCancel(proxyCtx)
 			defer cancelStream()
@@ -177,19 +229,19 @@ attemptLoop:
 					retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, holdbackErr, attempt, time.Since(start).Milliseconds(), stream)
 					lastErr = holdbackErr
 					lastErrCategory = cat
-			if !retry {
-				break attemptLoop
-			}
-			if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+					if !retry {
+						break attemptLoop
+					}
+					if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+						return
+					}
+					continue
+				}
+			case <-streamCtx.Done():
 				return
 			}
-			continue
-		}
-	case <-streamCtx.Done():
-		return
-	}
 
-	if streamErr := h.handleClaudeStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, "", true); streamErr != nil {
+			if streamErr := h.handleClaudeStreamResponse(streamCtx, c, streamResult, conn, provider, modelName, start, translatedBody, body, "", true); streamErr != nil {
 				if h.isClientCanceled(c, streamErr) {
 					return
 				}
@@ -198,17 +250,22 @@ attemptLoop:
 				retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, streamErr, attempt, time.Since(start).Milliseconds(), stream)
 				lastErr = streamErr
 				lastErrCategory = cat
-			if !retry {
-				break attemptLoop
+				if !retry {
+					break attemptLoop
+				}
+				if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+					return
+				}
+				continue
 			}
-			if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
-				return
+			return
+		} else {
+			var translatedResp []byte
+			if clientFormat == providerFormat {
+				translatedResp = resp.Body
+			} else {
+				translatedResp = registry.ResponseNonStream(c.Request.Context(), string(clientFormat), string(providerFormat), modelName, body, translatedBody, resp.Body, nil)
 			}
-			continue
-		}
-		return
-	} else {
-			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(clientFormat), string(providerFormat), modelName, body, translatedBody, resp.Body, nil)
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			tokensEstimated := false
 			if tokenCounts.InputTokens+tokenCounts.OutputTokens == 0 && resp.StatusCode < 400 {
@@ -220,29 +277,37 @@ attemptLoop:
 					tokensEstimated = true
 				}
 			}
-	h.logRequest(c, &usage.LogEntry{
-		ApiKeyID: c.GetString("api_key_id"),
-		ConnectionID: conn.ID,
-		ProviderTypeID: provider,
-		ModelID: modelName,
-		ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
-		ApiType:     apiTypeFromPath(c.Request.URL.Path),
-		Modality: "chat",
-		Stream: stream,
-		InputTokens: tokenCounts.InputTokens,
-		OutputTokens: tokenCounts.OutputTokens,
-		ReasoningTokens: tokenCounts.ReasoningTokens,
-		CachedTokens: tokenCounts.CachedTokens,
-		CacheCreationTokens: tokenCounts.CacheCreationTokens,
-		LatencyMs: latency,
-			StatusCode: resp.StatusCode,
-			TokensEstimated: tokensEstimated,
-		})
-		h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
-		if resp.StatusCode < 300 {
-			h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
-		}
-		h.writeJSONResponse(c, resp.StatusCode, translatedResp)
+			estCost := usage.EstimateCost(modelName, "chat", 0, tokenCounts.InputTokens, tokenCounts.OutputTokens, tokenCounts.ReasoningTokens, tokenCounts.CachedTokens, tokenCounts.CacheCreationTokens)
+			h.logRequest(c, &usage.LogEntry{
+				ApiKeyID:            c.GetString("api_key_id"),
+				ConnectionID:        conn.ID,
+				ProviderTypeID:      provider,
+				ModelID:             modelName,
+				ProxyPoolID:         executor.ProxyPoolIDFromContext(proxyCtx),
+				ApiType:             apiTypeFromPath(c.Request.URL.Path),
+				Modality:            "chat",
+				Stream:              stream,
+				InputTokens:         tokenCounts.InputTokens,
+				OutputTokens:        tokenCounts.OutputTokens,
+				ReasoningTokens:     tokenCounts.ReasoningTokens,
+				CachedTokens:        tokenCounts.CachedTokens,
+				CacheCreationTokens: tokenCounts.CacheCreationTokens,
+				CostUsd:             estCost,
+				LatencyMs:           latency,
+				StatusCode:          resp.StatusCode,
+				TokensEstimated:     tokensEstimated,
+			})
+			h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
+			if resp.StatusCode < 300 {
+				h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
+			}
+			h.writeJSONResponse(c, resp.StatusCode, translatedResp, responseCost{
+				modelID:         modelName,
+				exactCost:       resp.CostUsd,
+				counts:          tokenCounts,
+				tokensEstimated: tokensEstimated,
+				flatRate:        h.isFlatRate(provider),
+			})
 		}
 		return
 	}
@@ -250,11 +315,11 @@ attemptLoop:
 	msg, statusCode, errType := buildFailoverErrorResponse(lastErrCategory, lastErr, modelName)
 	logging.Logger.Error(msg, "provider", provider, "model", modelName, "category", lastErrCategory)
 	if stream {
-		// Streaming clients expect an SSE error event and [DONE].
+		// Claude streaming clients expect an Anthropic-compatible SSE error event.
 		errBytes, _ := json.Marshal(claudeError(errType, msg))
-		c.Writer.Write([]byte("data: "))
+		c.Writer.Write([]byte("event: error\ndata: "))
 		c.Writer.Write(errBytes)
-		c.Writer.Write([]byte("\n\ndata: [DONE]\n\n"))
+		c.Writer.Write([]byte("\n\n"))
 		if flusher, ok := c.Writer.(http.Flusher); ok {
 			flusher.Flush()
 		}
@@ -268,7 +333,11 @@ func (h *Handler) handleClaudeStreamResponse(ctx context.Context, c *gin.Context
 	_, providerFormat, _ := h.registry.Get(provider)
 	errFormatter := func(err error) []byte {
 		logging.Logger.Error("upstream streaming error", "provider", provider, "model", model, "error", err)
-		b, _ := json.Marshal(claudeError("api_error", "upstream streaming error"))
+		msg := err.Error()
+		if msg == "" {
+			msg = "upstream streaming error"
+		}
+		b, _ := json.Marshal(claudeError("api_error", msg))
 		return b
 	}
 	return h.streamResponse(ctx, c, result, conn, provider, model, executor.FormatClaude, providerFormat, originalReq, translatedReq, errFormatter, start, comboID, silent)
@@ -290,6 +359,10 @@ func (h *Handler) CountTokens(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, claudeError("invalid_request_error", "model is required"))
 		return
 	}
+	if !h.isModelAllowed(c.Request.Context(), model) {
+		c.JSON(http.StatusForbidden, claudeError("invalid_request_error", "model not allowed for this API key"))
+		return
+	}
 	provider, modelName := executor.SplitModel(model)
 	if provider == "" {
 		provider = "claude"
@@ -302,7 +375,8 @@ func (h *Handler) CountTokens(c *gin.Context) {
 	}
 	body = executor.JSONSet(body, "model", modelName)
 
-	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
+	sessionID := ""
+	conn, err := h.getConnection(c.Request.Context(), provider, modelName, sessionID)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, claudeError("server_error", "no available connection"))
 		return
@@ -331,6 +405,63 @@ func (h *Handler) CountTokens(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusBadRequest, claudeError("invalid_request_error", "token counting only supported for Claude models"))
+}
+
+// isClaudeTopicNamingRequest detects Claude Code's background topic/title
+// generation requests using safe, literal pattern matching against the request
+// body. It does not inspect TLS, terminate connections, or intercept traffic.
+func isClaudeTopicNamingRequest(body []byte) bool {
+	s := string(body)
+	return strings.Contains(s, `Generate a concise, sentence-case title`) ||
+		strings.Contains(s, `Analyze if this message indicates a new conversation topic`) ||
+		strings.Contains(s, `Return JSON with a single "title" field`)
+}
+
+// writeFakeClaudeTopicNamingResponse returns a synthetic Anthropic Messages API
+// response for Claude Code's topic-naming request. This avoids forwarding the
+// request to a provider and therefore saves the upstream tokens.
+func (h *Handler) writeFakeClaudeTopicNamingResponse(c *gin.Context, body []byte, model string) {
+	stream := executor.IsStreamRequest(body)
+	titleJSON := `{"isNewTopic":true,"title":"New conversation"}`
+	msgID := "msg_axon_topic_filter_" + strconv.FormatInt(time.Now().UnixNano(), 10)
+
+	if stream {
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Status(http.StatusOK)
+
+		events := [][2]string{
+			{"message_start", fmt.Sprintf(`{"type":"message_start","message":{"id":%q,"type":"message","role":"assistant","model":%q,"content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}}`, msgID, model)},
+			{"content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`},
+			{"content_block_delta", fmt.Sprintf(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":%q}}`, titleJSON)},
+			{"content_block_stop", `{"type":"content_block_stop","index":0}`},
+			{"message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":4}}`},
+			{"message_stop", `{"type":"message_stop"}`},
+		}
+		for _, ev := range events {
+			c.Writer.Write([]byte("event: " + ev[0] + "\ndata: " + ev[1] + "\n\n"))
+		}
+		if flusher, ok := c.Writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		return
+	}
+
+	resp := map[string]any{
+		"id":            msgID,
+		"type":          "message",
+		"role":          "assistant",
+		"model":         model,
+		"content":       []map[string]string{{"type": "text", "text": titleJSON}},
+		"stop_reason":   "end_turn",
+		"stop_sequence": nil,
+		"usage": map[string]int{
+			"input_tokens":  0,
+			"output_tokens": 4,
+		},
+	}
+	respBytes, _ := json.Marshal(resp)
+	h.writeJSONResponse(c, http.StatusOK, respBytes)
 }
 
 func claudeError(errType, message string) gin.H {

@@ -8,9 +8,11 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
+	providerpkg "github.com/rickicode/AxonRouter-Go/internal/provider"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
 
@@ -123,6 +125,80 @@ func TestImages_UsageAccumulatesOnSuccess(t *testing.T) {
 	}
 	if total != 12 {
 		t.Errorf("total_tokens = %d, want 12", total)
+	}
+}
+
+func TestImages_ComboRoutesToImageKind(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	wq := db.NewWriteQueue(h.db)
+	tracker := usage.NewTracker(h.db)
+	tracker.SetWriteQueue(wq)
+	h.tracker = tracker
+	defer func() {
+		tracker.Stop()
+		wq.Stop()
+	}()
+
+	fg := &fakeImageGenerator{BaseExecutor: executor.NewBaseExecutor()}
+	executor.GetRegistry().Register("cf", executor.FormatOpenAI, fg)
+	defer executor.GetRegistry().Unregister("cf")
+
+	seedProviderAndConnection(t, h, "cf", `["llm","embedding","image"]`, "cf-img-combo-conn", "http://unused")
+
+	_, err := h.combo.CreateComboWithKind("img-combo", "priority", providerpkg.ServiceKindImage, 30000, 1, false, "", "", []combo.CreateStepInput{
+		{ModelID: "cf/black-forest-labs/flux-1-schnell", Priority: 1, Weight: 100},
+	})
+	if err != nil {
+		t.Fatalf("create image combo: %v", err)
+	}
+
+	body := []byte(`{"model":"img-combo","prompt":"a cat"}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.Images(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !fg.called {
+		t.Fatal("expected Images to be called for combo step")
+	}
+}
+
+func TestImages_LLMComboIgnoredForImageRequest(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+
+	fg := &fakeImageGenerator{BaseExecutor: executor.NewBaseExecutor()}
+	executor.GetRegistry().Register("cf", executor.FormatOpenAI, fg)
+	defer executor.GetRegistry().Unregister("cf")
+
+	seedProviderAndConnection(t, h, "cf", `["llm","embedding","image"]`, "cf-img-reject-conn", "http://unused")
+
+	_, err := h.combo.CreateCombo("llm-combo", "priority", 30000, 1, false, "", "", []combo.CreateStepInput{
+		{ModelID: "cf/black-forest-labs/flux-1-schnell", Priority: 1, Weight: 100},
+	})
+	if err != nil {
+		t.Fatalf("create llm combo: %v", err)
+	}
+
+	body := []byte(`{"model":"llm-combo","prompt":"a cat"}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.Images(c)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status 503 (direct routing fallback fails), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if fg.called {
+		t.Fatal("expected Images not to be called when LLM combo is requested on image endpoint")
 	}
 }
 

@@ -3,6 +3,7 @@ package combo
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"math/rand/v2"
 	"sort"
 	"strings"
@@ -30,8 +31,8 @@ type RotationManager struct {
 	// flushScheduled is true while a debounced flush goroutine is pending.
 	flushScheduled bool
 	// usageCache memoizes request_log counts for the least-used strategy.
-	usageCache     usageCacheSnapshot
-	uMu            sync.Mutex
+	usageCache usageCacheSnapshot
+	uMu        sync.Mutex
 }
 
 const usageCacheTTL = 30 * time.Second
@@ -55,6 +56,7 @@ func NewRotationManager(database *sql.DB) *RotationManager {
 // GetRotatedSteps returns combo steps in the order they should be attempted for
 // the given strategy:
 //   - "round-robin": rotated by the persistent counter (sticky for stickyLimit hits)
+//
 // - "weighted": a weighted-random shuffle (probability ∝ step.Weight)
 // - "random": an unweighted random shuffle
 // - "least-used": steps ordered by recent successful usage (lowest first)
@@ -139,19 +141,23 @@ func (rm *RotationManager) cachedUsageCounts(modelIDs []string) map[string]int {
 }
 
 // usageCounts queries request_logs for successful calls per provider+model over
-// the last 7 days. Steps with no usage get a count of 0.
+// the last 7 days. Steps with no usage get a count of 0. Counts are keyed by
+// the original step model ID so callers can look them up without re-parsing.
 func (rm *RotationManager) usageCounts(modelIDs []string) map[string]int {
 	counts := make(map[string]int, len(modelIDs))
 	providers := make([]string, 0, len(modelIDs))
 	models := make([]string, 0, len(modelIDs))
+	pmToIDs := make(map[string][]string, len(modelIDs))
 	for _, id := range modelIDs {
-		provider, model, ok := splitModelID(id)
+		provider, model, ok := SplitProviderModel(id)
 		if !ok {
 			continue
 		}
 		providers = append(providers, provider)
 		models = append(models, model)
 		counts[id] = 0
+		key := provider + "/" + model
+		pmToIDs[key] = append(pmToIDs[key], id)
 	}
 	if len(providers) == 0 || rm.db == nil {
 		return counts
@@ -187,20 +193,11 @@ func (rm *RotationManager) usageCounts(modelIDs []string) map[string]int {
 		if err := rows.Scan(&provider, &model, &n); err != nil {
 			continue
 		}
-		counts[provider+"/"+model] = n
+		for _, id := range pmToIDs[provider+"/"+model] {
+			counts[id] = n
+		}
 	}
 	return counts
-}
-
-// splitModelID splits "cx/gpt-5.4" into (provider, model). The provider prefix is
-// everything before the first slash; everything after is the model ID stored in
-// request_logs.model_id.
-func splitModelID(modelID string) (string, string, bool) {
-	idx := strings.Index(modelID, "/")
-	if idx <= 0 || idx+1 >= len(modelID) {
-		return "", "", false
-	}
-	return modelID[:idx], modelID[idx+1:], true
 }
 
 // placeholders returns "?" repeated n times joined by commas.
@@ -303,10 +300,12 @@ func (rm *RotationManager) loadCounter(comboID string) int {
 // persistCounter bumps the rotation counter in SQLite.
 func (rm *RotationManager) persistCounter(comboID string, counter int) {
 	now := time.Now().Unix()
-	rm.db.Exec(`
+	if _, err := rm.db.Exec(`
 		INSERT INTO rotation_state (combo_id, counter, updated_at) VALUES (?, ?, ?)
 		ON CONFLICT(combo_id) DO UPDATE SET counter = ?, updated_at = ?
-	`, comboID, counter, now, counter, now)
+	`, comboID, counter, now, counter, now); err != nil {
+		log.Printf("WARN: failed to persist rotation counter for combo %s: %v", comboID, err)
+	}
 }
 
 // ResetCounter resets the rotation counter for a combo in memory and on disk.

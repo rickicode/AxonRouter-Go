@@ -15,10 +15,10 @@ import (
 func TestLoggingIncludesClientInfo(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	previous := logging.Logger
+	previous := logging.Logger.Load()
 	var buf bytes.Buffer
-	logging.Logger = slog.New(slog.NewJSONHandler(&buf, nil))
-	t.Cleanup(func() { logging.Logger = previous })
+	logging.SetLogger(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { logging.SetLogger(previous) })
 
 	router := gin.New()
 	router.Use(Logging())
@@ -44,5 +44,17 @@ func TestLoggingIncludesClientInfo(t *testing.T) {
 	}
 	if !strings.Contains(out, `"user_agent":"axon-test/1.0"`) {
 		t.Fatalf("missing user_agent in log output:\n%s", out)
+	}
+	if !strings.Contains(out, `"status":201`) {
+		t.Fatalf("missing status in log output:\n%s", out)
+	}
+	if !strings.Contains(out, `"method":"GET"`) {
+		t.Fatalf("missing method in log output:\n%s", out)
+	}
+	if !strings.Contains(out, `"path":"/test?x=1"`) {
+		t.Fatalf("missing path in log output:\n%s", out)
+	}
+	if !strings.Contains(out, `"lat":`) {
+		t.Fatalf("missing latency in log output:\n%s", out)
 	}
 }

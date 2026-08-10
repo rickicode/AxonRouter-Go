@@ -89,26 +89,44 @@ func (s *Store) RecordFailure(connID string, det ErrorDetection) {
 				cs.SetCooldown(*det.CooldownUntil)
 			}
 		}
-	} else {
-		// Connection-level status change
-		switch {
-		case det.Category == ErrorQuota && det.CooldownUntil != nil:
-			cs.SetQuotaCooldown(*det.CooldownUntil)
-		case det.CooldownUntil != nil:
-			cs.SetCooldown(*det.CooldownUntil)
-		case det.Category == ErrorRateLimit:
-			// Rate limit without explicit CooldownUntil: use default short cooldown
-			cs.SetCooldown(time.Now().Add(60 * time.Second))
-		default:
-			cs.SetStatus(det.Status, det.Message)
+		return
+	}
+
+	// Connection-level status change.
+	reason := det.Message
+	if det.DisabledReason != "" {
+		reason = det.DisabledReason
+	}
+
+	switch {
+	case det.Status == StatusDisabled:
+		if det.CooldownUntil != nil {
+			cs.SetStatusWithCooldown(StatusDisabled, reason, *det.CooldownUntil)
+		} else {
+			cs.SetStatus(StatusDisabled, reason)
 		}
+
+	case det.Category == ErrorQuota && det.CooldownUntil != nil:
+		cs.SetQuotaCooldown(*det.CooldownUntil)
+	case det.CooldownUntil != nil:
+		cs.SetCooldown(*det.CooldownUntil)
+	case det.Category == ErrorRateLimit:
+		// Rate limit without explicit CooldownUntil: use default short cooldown
+		cs.SetCooldown(time.Now().Add(60 * time.Second))
+	default:
+		cs.SetStatus(det.Status, reason)
 	}
 }
 
-// UpdateStatus updates the status of a connection.
-func (s *Store) UpdateStatus(connID string, status Status) {
+// UpdateStatus updates the status of a connection. The optional reason is stored
+// when the status becomes StatusDisabled so callers can preserve the cause.
+func (s *Store) UpdateStatus(connID string, status Status, reason ...string) {
+	reasonStr := ""
+	if len(reason) > 0 {
+		reasonStr = reason[0]
+	}
 	cs := s.GetOrCreate(connID)
-	cs.SetStatus(status, "")
+	cs.SetStatus(status, reasonStr)
 }
 
 // UpdateCooldown sets a cooldown for a connection.
@@ -155,6 +173,50 @@ func (s *Store) HealthyCount() int {
 	return count
 }
 
+// ClassifyProviderUnavailable returns an error category when a provider has no
+// eligible connections but all of its connections share the same failure mode.
+// This lets callers return a precise status code/message (e.g. 429 insufficient
+// quota) instead of a generic 503. It returns an empty category when the state
+// is mixed or unknown so the caller can keep its default behaviour.
+func (s *Store) ClassifyProviderUnavailable(provider string) ErrorCategory {
+	total := 0
+	quota := 0
+	auth := 0
+	balance := 0
+	s.states.Range(func(_, value any) bool {
+		cs := value.(*ConnectionState)
+		if cs.Prefix != provider {
+			return true
+		}
+		total++
+		status := cs.GetStatus()
+		switch status {
+		case StatusQuotaExhausted, StatusRateLimited:
+			quota++
+		case StatusDisabled:
+			switch cs.DisabledReason {
+			case "auth_failed", "suspended":
+				auth++
+			case "balance_empty":
+				balance++
+			}
+		}
+		return true
+	})
+	if total == 0 {
+		return ErrorUnknown
+	}
+	switch {
+	case quota == total:
+		return ErrorQuota
+	case auth == total:
+		return ErrorAuth
+	case balance == total:
+		return ErrorBalanceEmpty
+	}
+	return ErrorUnknown
+}
+
 // SeedConnection creates or updates a connection state entry from DB data.
 // Used to keep the in-memory store in sync with the database.
 // Builds a fully-initialized ConnectionState before publishing to map to avoid partial-read races.
@@ -162,22 +224,15 @@ func (s *Store) SeedConnection(connID, prefix, status string, priority int) {
 	// Build status first so the struct is complete before anyone can see it.
 	var st Status
 	switch status {
-	case "ready":
-		st = StatusReady
 	case "rate_limited":
 		st = StatusRateLimited
 	case "quota_exhausted":
 		st = StatusQuotaExhausted
-	case "balance_empty":
-		st = StatusBalanceEmpty
-	case "auth_failed":
-		st = StatusAuthFailed
-	case "suspended":
-		st = StatusSuspended
 	case "disabled":
 		st = StatusDisabled
-	case "degraded":
-		st = StatusDegraded
+	
+	case "ready":
+		st = StatusReady
 	default:
 		st = StatusUnknown
 	}
@@ -220,4 +275,16 @@ func (s *Store) RangeActive() map[string]bool {
 		return true
 	})
 	return active
+}
+
+// ResetQuota clears quota/cooldown routing state for the connection with the
+// given ID. It returns the updated connection (or nil if the connection is not
+// known) and the list of model identifiers that had active cooldowns before the
+// reset. This is equivalent to CLIProxyAPI's auth.Manager.ResetQuota.
+func (s *Store) ResetQuota(connID string) (*ConnectionState, []string, error) {
+	cs := s.Get(connID)
+	if cs == nil {
+		return nil, nil, nil
+	}
+	return cs.ResetQuota()
 }

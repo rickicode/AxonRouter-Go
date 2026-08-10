@@ -6,8 +6,9 @@
 	import { Label } from '$lib/components/ui/label';
 	import { Badge } from '$lib/components/ui/badge';
 	import ProviderOctopus from '$lib/components/ProviderOctopus.svelte';
-	import { usageApi, apiKeysApi, providersApi, type UsageData, type UsageBreakdown, type UsageTimeBucket, type APIKeyItem, type Provider } from '$lib/api';
-	import { formatTokens, formatCost, formatCount, activeRequests, loadActiveRequests, quotaSavings, quotaNextReset, loadQuotaSummary } from '$lib/stores';
+	import ActivityHeatmap from '$lib/components/ActivityHeatmap.svelte';
+	import { usageApi, apiKeysApi, providersApi, type UsageData, type UsageBreakdown, type UsageTimeBucket, type APIKeyItem, type Provider, type UsageSummaryResponse, type UsageDaySummary, type UsageActivityDay } from '$lib/api';
+	import { formatTokens, formatCost, formatCount, activeRequests, loadActiveRequests, quotaNextReset, loadQuotaSummary } from '$lib/stores';
 	import { toast } from 'svelte-sonner';
 
 import BarChartIcon from '@lucide/svelte/icons/bar-chart';
@@ -23,11 +24,14 @@ import BarChartIcon from '@lucide/svelte/icons/bar-chart';
 	import DownloadIcon from '@lucide/svelte/icons/download';
 	import LayersIcon from '@lucide/svelte/icons/layers';
 	import ZapIcon from '@lucide/svelte/icons/zap';
+	import TrendingUpIcon from '@lucide/svelte/icons/trending-up';
 	import CodeIcon from '@lucide/svelte/icons/code';
 
 let data = $state<UsageData | null>(null);
 let loading = $state(false);
 let error = $state<string | null>(null);
+let summary = $state<UsageSummaryResponse | null>(null);
+let summaryTimer: ReturnType<typeof setInterval> | null = null;
 let apiKeys = $state<APIKeyItem[]>([]);
 	let providers = $state<Provider[]>([]);
 
@@ -39,8 +43,24 @@ let apiKeys = $state<APIKeyItem[]>([]);
 	let filterModel = $state('');
 	let filterModality = $state('');
 	let filterStatus = $state('');
-let realtime = $state(true);
-let rangePreset = $state<'day' | 'weekly' | 'month'>('day');
+	let realtime = $state(true);
+	let rangePreset = $state<'day' | 'weekly' | 'month'>('day');
+	let activityData = $state<UsageActivityDay[]>([]);
+	let activityMetric = $state<'tokens' | 'requests' | 'cost'>('tokens');
+	let activityLoading = $state(false);
+	let activityMetricKey = $derived<'tokens' | 'requests' | 'cost_usd'>(
+		activityMetric === 'cost' ? 'cost_usd' : activityMetric,
+	);
+	const activityMetrics = [
+		{ value: 'tokens' as const, label: 'Tokens' },
+		{ value: 'requests' as const, label: 'Requests' },
+		{ value: 'cost_usd' as const, label: 'Cost' },
+	];
+	function activityFormatter(value: number, metric: 'tokens' | 'requests' | 'cost_usd'): string {
+		if (metric === 'cost_usd') return formatCost(value);
+		if (metric === 'tokens') return formatTokens(value);
+		return formatCount(value);
+	}
 	let hasActiveFilters = $derived(
   !!(filterKey || filterProvider || filterModel || filterModality || filterStatus)
 	);
@@ -138,6 +158,39 @@ async function load(silent = false) {
 		void load();
 	}
 
+async function loadSummary() {
+  try {
+    const res = await usageApi.summary();
+    summary = res.data;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'unknown error';
+    toast.error('Failed to load usage summary: ' + msg);
+  }
+}
+
+async function loadActivity(silent = false) {
+	if (!silent) activityLoading = true;
+	try {
+		const statusCode = filterStatus ? parseInt(filterStatus, 10) : undefined;
+		const res = await usageApi.activity({
+			api_key_id: filterKey || undefined,
+			provider_id: filterProvider || undefined,
+			model_id: filterModel || undefined,
+			modality: filterModality || undefined,
+			status_code: statusCode,
+		});
+		activityData = res.data.days;
+	} catch (err) {
+		activityData = [];
+		if (!silent) {
+			const msg = err instanceof Error ? err.message : 'unknown error';
+			toast.error('Failed to load activity: ' + msg);
+		}
+	} finally {
+		if (!silent) activityLoading = false;
+	}
+}
+
 	function resetFilters() {
 		filterKey = '';
 		filterProvider = '';
@@ -145,6 +198,7 @@ async function load(silent = false) {
 		filterModality = '';
 		filterStatus = '';
 		void load();
+		void loadActivity();
 	}
 
 	function setPreset(p: 'day' | 'weekly' | 'month') {
@@ -152,6 +206,11 @@ async function load(silent = false) {
   if (p === 'day') setRange(today(), today());
   else if (p === 'weekly') setRange(daysAgo(7), today());
   else setRange(daysAgo(30), today());
+}
+
+function onDimensionFilterChange() {
+	void load();
+	void loadActivity();
 }
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -173,8 +232,10 @@ async function initPage() {
     apiKeysApi.list().then((r) => { apiKeys = r.data; }).catch(() => {}),
     providersApi.list().then((r) => { providers = r.data; }).catch(() => {}),
     loadQuotaSummary(),
+    loadSummary(),
   ]);
   setPreset('day');
+  void loadActivity();
 }
 
 onMount(() => {
@@ -183,11 +244,15 @@ onMount(() => {
 		void loadActiveRequests();
 		const activeInterval = setInterval(loadActiveRequests, 3000);
   startPolling();
+  summaryTimer = setInterval(loadSummary, 60000);
+  const activityTimer = setInterval(() => void loadActivity(true), 60000);
 		return () => {
 			tokensChart?.destroy();
 			costChart?.destroy();
 			clearInterval(activeInterval);
     stopPolling();
+    if (summaryTimer) clearInterval(summaryTimer);
+    clearInterval(activityTimer);
 		};
 });
 
@@ -313,7 +378,24 @@ return `${lbl}: ${v.toLocaleString()}`;
 		if (!total) return '0%';
 		return `${((value / total) * 100).toFixed(1)}%`;
 	}
+
+	function todayVal(t: UsageDaySummary | undefined, key: keyof UsageDaySummary): number {
+		return Number(t?.[key] ?? 0);
+	}
 </script>
+
+{#snippet metricCard(label: string, today: number, yesterday: number, fmt: (n: number) => string, inverse = false)}
+<Card class="shadow-card">
+	<CardContent class="p-3">
+		<p class="text-caption text-muted-foreground uppercase">{label}</p>
+		<p class="text-display-md">{fmt(today)}</p>
+		{@const diff = yesterday ? ((today - yesterday) / yesterday) * 100 : (today ? 100 : 0)}
+		{@const sign = diff >= 0 ? '+' : ''}
+		{@const color = !yesterday ? 'text-muted-foreground' : (diff >= 0 ? (inverse ? 'text-red-400' : 'text-emerald-400') : (inverse ? 'text-emerald-400' : 'text-red-400'))}
+		<p class="text-caption {color}">{yesterday ? `${sign}${diff.toFixed(1)}% vs yesterday` : (today ? 'new vs yesterday' : '—')}</p>
+	</CardContent>
+</Card>
+{/snippet}
 
 <div class="flex flex-1 flex-col gap-6 p-6">
 	<div class="space-y-1">
@@ -357,7 +439,7 @@ return `${lbl}: ${v.toLocaleString()}`;
 				</div>
  <div class="space-y-1.5">
  <Label class="text-caption-mono text-muted-foreground uppercase font-semibold">API Key</Label>
- <select bind:value={filterKey} onchange={() => void load()} class="h-9 font-mono text-body-sm rounded-sm border border-input bg-transparent px-3 py-1 w-full text-foreground">
+				<select bind:value={filterKey} onchange={() => onDimensionFilterChange()} class="h-9 font-mono text-body-sm rounded-sm border border-input bg-transparent px-3 py-1 w-full text-foreground">
 						<option value="">All keys</option>
 						{#each apiKeys as k}
 							<option value={k.id}>{k.name || k.id}</option>
@@ -366,7 +448,7 @@ return `${lbl}: ${v.toLocaleString()}`;
 					</div>
  <div class="space-y-1.5">
  <Label class="text-caption-mono text-muted-foreground uppercase font-semibold">Provider</Label>
- <select bind:value={filterProvider} onchange={() => void load()} class="h-9 font-mono text-body-sm rounded-sm border border-input bg-transparent px-3 py-1 w-full text-foreground">
+				<select bind:value={filterProvider} onchange={() => onDimensionFilterChange()} class="h-9 font-mono text-body-sm rounded-sm border border-input bg-transparent px-3 py-1 w-full text-foreground">
 						<option value="">All providers</option>
 						{#each providers as p}
 							<option value={p.id}>{p.display_name || p.id}</option>
@@ -375,11 +457,11 @@ return `${lbl}: ${v.toLocaleString()}`;
 				</div>
  <div class="space-y-1.5">
  <Label class="text-caption-mono text-muted-foreground uppercase font-semibold">Model</Label>
- <Input bind:value={filterModel} onchange={() => void load()} placeholder="e.g. cx/gpt-5.4" class="h-9 font-mono text-body-sm w-full" />
+				<Input bind:value={filterModel} onchange={() => onDimensionFilterChange()} placeholder="e.g. cx/gpt-5.4" class="h-9 font-mono text-body-sm w-full" />
 			</div>
  <div class="space-y-1.5">
  <Label class="text-caption-mono text-muted-foreground uppercase font-semibold">Modality</Label>
- <select bind:value={filterModality} onchange={() => void load()} class="h-9 font-mono text-body-sm rounded-sm border border-input bg-transparent px-3 py-1 w-full text-foreground">
+				<select bind:value={filterModality} onchange={() => onDimensionFilterChange()} class="h-9 font-mono text-body-sm rounded-sm border border-input bg-transparent px-3 py-1 w-full text-foreground">
 						<option value="">All</option>
 						<option value="chat">chat</option>
 						<option value="messages">messages</option>
@@ -393,7 +475,7 @@ return `${lbl}: ${v.toLocaleString()}`;
 				</div>
  <div class="space-y-1.5">
  <Label class="text-caption-mono text-muted-foreground uppercase font-semibold">Status</Label>
- <Input bind:value={filterStatus} onchange={() => void load()} type="number" placeholder="e.g. 200" class="h-9 font-mono text-body-sm w-full" />
+				<Input bind:value={filterStatus} onchange={() => onDimensionFilterChange()} type="number" placeholder="e.g. 200" class="h-9 font-mono text-body-sm w-full" />
 				</div>
 				</div>
 		</CardContent>
@@ -456,67 +538,30 @@ return `${lbl}: ${v.toLocaleString()}`;
   </CardContent>
 </Card>
 {:else if data}
-		<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
-			<Card class="shadow-card">
-				<CardContent class="p-3">
-					<p class="text-caption text-muted-foreground uppercase">Requests</p>
-					<p class="text-display-md">{formatCount(data.summary.requests)}</p>
-				</CardContent>
-			</Card>
-			<Card class="shadow-card">
-				<CardContent class="p-3">
-					<p class="text-caption text-muted-foreground uppercase">Total Tokens</p>
-					<p class="text-display-md">{formatTokens(data.summary.total_tokens)}</p>
-				</CardContent>
-			</Card>
-			<Card class="shadow-card">
-				<CardContent class="p-3">
-					<p class="text-caption text-muted-foreground uppercase">Input</p>
-					<p class="text-display-md">{formatTokens(data.summary.input_tokens)}</p>
-				</CardContent>
-			</Card>
-			<Card class="shadow-card">
-				<CardContent class="p-3">
-					<p class="text-caption text-muted-foreground uppercase">Output</p>
-					<p class="text-display-md">{formatTokens(data.summary.output_tokens)}</p>
-				</CardContent>
-			</Card>
-			<Card class="shadow-card">
-				<CardContent class="p-3">
-					<p class="text-caption text-muted-foreground uppercase">Reasoning</p>
-					<p class="text-display-md">{formatTokens(data.summary.reasoning_tokens)}</p>
-				</CardContent>
-			</Card>
-			<Card class="shadow-card">
-				<CardContent class="p-3">
-					<p class="text-caption text-muted-foreground uppercase">Cost</p>
-					<p class="text-display-md">{formatCost(data.summary.cost_usd)}</p>
-				</CardContent>
-			</Card>
-			<Card class="shadow-card">
-				<CardContent class="p-3">
-					<p class="text-caption text-muted-foreground uppercase">Avg Latency</p>
-					<p class="text-display-md">{fmtLatency(data.summary.avg_latency_ms)}</p>
-				</CardContent>
-			</Card>
-			<Card class="shadow-card">
-				<CardContent class="p-3">
-					<p class="text-caption text-muted-foreground uppercase">Errors</p>
-					<p class="text-display-md flex items-center gap-1.5">
-						{data.summary.errors.toLocaleString()}
-						<Badge variant={data.summary.error_rate > 0.05 ? 'destructive' : 'secondary'} class="text-caption-mono rounded-sm">{fmtPercent(data.summary.error_rate)}</Badge>
-					</p>
-				</CardContent>
-			</Card>
-  </div>
+		<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+			{@render metricCard('Requests', todayVal(summary?.today, 'requests'), todayVal(summary?.yesterday, 'requests'), formatCount)}
+			{@render metricCard('Tokens', todayVal(summary?.today, 'tokens'), todayVal(summary?.yesterday, 'tokens'), formatTokens)}
+			{@render metricCard('Cost', todayVal(summary?.today, 'cost_usd'), todayVal(summary?.yesterday, 'cost_usd'), formatCost)}
+			{@render metricCard('Errors', todayVal(summary?.today, 'errors'), todayVal(summary?.yesterday, 'errors'), (n) => n.toLocaleString(), true)}
+			{@render metricCard('Avg latency', todayVal(summary?.today, 'avg_latency_ms'), todayVal(summary?.yesterday, 'avg_latency_ms'), fmtLatency, true)}
+		</div>
 
-  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
     <Card class="shadow-card">
       <CardContent class="p-3 flex items-center gap-3">
         <DollarSignIcon class="size-5 text-emerald-400" />
         <div>
-          <p class="text-caption text-muted-foreground uppercase">Saved this month</p>
-          <p class="text-display-md">{formatCost($quotaSavings)}</p>
+          <p class="text-caption text-muted-foreground uppercase">Cost this month</p>
+          <p class="text-display-md">{formatCost(summary?.month_to_date?.cost_usd ?? 0)}</p>
+        </div>
+      </CardContent>
+    </Card>
+    <Card class="shadow-card">
+      <CardContent class="p-3 flex items-center gap-3">
+        <TrendingUpIcon class="size-5 text-blue-400" />
+        <div>
+          <p class="text-caption text-muted-foreground uppercase">Projected cost</p>
+          <p class="text-display-md">{formatCost(summary?.projected_month_cost ?? 0)}</p>
         </div>
       </CardContent>
     </Card>
@@ -525,11 +570,21 @@ return `${lbl}: ${v.toLocaleString()}`;
         <TimerIcon class="size-5 text-amber-400" />
         <div>
           <p class="text-caption text-muted-foreground uppercase">Next quota reset</p>
-          <p class="text-display-md">{fmtReset($quotaNextReset ?? undefined)}</p>
+          <p class="text-display-md">{fmtReset(summary?.next_quota_reset ?? $quotaNextReset ?? undefined)}</p>
         </div>
       </CardContent>
     </Card>
   </div>
+
+  <ActivityHeatmap
+    subtitle="Last 12 months"
+    days={activityData}
+    metric={activityMetricKey}
+    metrics={activityMetrics}
+    formatter={activityFormatter}
+    loading={activityLoading}
+    onMetricChange={(m) => { activityMetric = m === 'cost_usd' ? 'cost' : m; }}
+  />
 
   <Card class="shadow-card">
     <CardHeader class="pb-3 border-b border-border flex flex-row items-center justify-between space-y-0">

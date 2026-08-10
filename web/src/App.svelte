@@ -2,15 +2,17 @@
   import './app.css';
   import { onMount } from 'svelte';
   import { router, currentPath } from '$lib/router';
+  import { startHealthChecks } from '$lib/health';
 import * as Sidebar from '$lib/components/ui/sidebar';
   import { Toaster } from '$lib/components/ui/sonner';
   import { toast } from 'svelte-sonner';
   import SidebarNav from '$lib/components/sidebar/SidebarNav.svelte';
   import SidebarBrand from '$lib/components/sidebar/SidebarBrand.svelte';
   import SidebarHealth from '$lib/components/sidebar/SidebarHealth.svelte';
-import { authStore, logout, mustChangePasswordStore } from '$lib/auth';
+import { authStore, logout, mustChangePasswordStore, isPasswordWarningDismissed } from '$lib/auth';
 import Login from './pages/Login.svelte';
 import ChangePasswordModal from '$lib/components/ChangePasswordModal.svelte';
+import UpdateAvailableModal from '$lib/components/UpdateAvailableModal.svelte';
 import LogOutIcon from '@lucide/svelte/icons/log-out';
 import HeartIcon from '@lucide/svelte/icons/heart';
 import { Button } from '$lib/components/ui/button';
@@ -29,19 +31,27 @@ import { Button } from '$lib/components/ui/button';
   import ProxyPoolDetail from './pages/ProxyPoolDetail.svelte';
   import APIKeys from './pages/APIKeys.svelte';
 import Optimization from './pages/Optimization.svelte';
-import CLITools from './pages/CLITools.svelte';
+import CLIToolsList from './pages/CLIToolsList.svelte';
+import CLIToolDetail from './pages/CLIToolDetail.svelte';
+import MCP from './pages/MCP.svelte';
 	import ModelPricing from './pages/ModelPricing.svelte';
 	import Developers from './pages/Developers.svelte';
 import Usage from './pages/Usage.svelte';
 import BackupRestore from './pages/BackupRestore.svelte';
+import Console from './pages/Console.svelte';
 import About from './pages/About.svelte';
 import NotFound from './pages/NotFound.svelte';
 
   let cleanup: (() => void) | undefined;
+  let stopHealthChecks: (() => void) | undefined;
 
   onMount(() => {
     cleanup = router.start();
-    return () => cleanup?.();
+    stopHealthChecks = startHealthChecks();
+    return () => {
+      cleanup?.();
+      stopHealthChecks?.();
+    };
   });
 
   function getPageLabel(path: string): string {
@@ -57,8 +67,10 @@ const labels: Record<string, string> = {
 		'cli-tools': 'CLI Tools',
 		'model-pricing': 'Model Pricing',
 'developers': 'Developers',
-'backup-restore': 'Backup & Restore',
-'about': 'About',
+		'mcp': 'MCP',
+		'backup-restore': 'Backup & Restore',
+		'console': 'Console',
+		'about': 'About',
   };
     return labels[segment] ?? segment.charAt(0).toUpperCase() + segment.slice(1);
   }
@@ -106,8 +118,10 @@ const labels: Record<string, string> = {
   // /optimization → Optimization
   if (segments[0] === 'optimization' && segments.length === 1) return { component: Optimization, params: {} };
 
-// /cli-tools → CLI Tools
-  if (segments[0] === 'cli-tools' && segments.length === 1) return { component: CLITools, params: {} };
+  // /cli-tools/:id → CLIToolDetail
+if (segments[0] === 'cli-tools' && segments.length === 2) return { component: CLIToolDetail, params: { id: segments[1] } };
+// /cli-tools → CLI Tools list
+if (segments[0] === 'cli-tools' && segments.length === 1) return { component: CLIToolsList, params: {} };
 
 	// /usage → Usage
 	if (segments[0] === 'usage' && segments.length === 1) return { component: Usage, params: {} };
@@ -118,8 +132,14 @@ const labels: Record<string, string> = {
 // /developers → Developers
 if (segments[0] === 'developers' && segments.length === 1) return { component: Developers, params: {} };
 
+// /mcp → MCP
+if (segments[0] === 'mcp' && segments.length === 1) return { component: MCP, params: {} };
+
 // /backup-restore → BackupRestore
 if (segments[0] === 'backup-restore' && segments.length === 1) return { component: BackupRestore, params: {} };
+
+// /console → Console
+if (segments[0] === 'console' && segments.length === 1) return { component: Console, params: {} };
 
 // /about → About
 if (segments[0] === 'about' && segments.length === 1) return { component: About, params: {} };
@@ -175,9 +195,10 @@ function handleLogout() {
   </Sidebar.Inset>
   </Sidebar.Provider>
 
-  {#if $mustChangePasswordStore}
+  {#if $mustChangePasswordStore && !isPasswordWarningDismissed()}
     <ChangePasswordModal />
   {/if}
+  <UpdateAvailableModal />
 {:else}
   <Login />
 {/if}

@@ -7,7 +7,7 @@
   <a href="https://github.com/rickicode/AxonRouter-Go/actions/workflows/release.yml">
     <img src="https://img.shields.io/github/actions/workflow/status/rickicode/AxonRouter-Go/release.yml?style=flat-square&label=release%20build" alt="Release Build">
   </a>
-  <img src="https://img.shields.io/badge/Go-1.23%2B-blue?style=flat-square" alt="Go 1.23+">
+  <img src="https://img.shields.io/badge/Go-1.26%2B-blue?style=flat-square" alt="Go 1.26+">
   <img src="https://img.shields.io/badge/Svelte-5%2B-ff3e00?style=flat-square" alt="Svelte 5+">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License">
 </p>
@@ -148,11 +148,15 @@ Server starts on port **3777** by default. Dashboard: **http://localhost:3777**.
 | **Roo Code** | Same model override as Cline |
 | **OpenClaw** | OpenAI-compatible endpoint |
 | **Kiro** | OAuth-managed connection in dashboard |
+| **Grok Build** | Configure via dashboard CLI tools page |
 | **OpenCode** | Free and paid OpenCode prefix support |
+| **Cowork** | Claude Desktop 3P / enterprise inference mode |
+| **PI Coding Agent** | OpenAI-compatible provider registration |
+| **OMP (Oh My Pi)** | OpenAI-compatible provider registration |
 
 > **Any OpenAI-compatible client works.** Point it at `http://localhost:3777/v1` and use provider-prefixed model names.
 
-See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) for per-tool copy-paste settings.
+See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) and the dashboard **CLI Tools** page for per-tool copy-paste settings.
 
 ---
 
@@ -179,8 +183,36 @@ See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) for per-tool copy-paste setting
 | Cloudflare Workers AI | `cf/` | openai | API key |
 | ElevenLabs | `elevenlabs/` | openai | API key |
 | Deepgram | `deepgram/` | openai | API key |
+| Tavily | `tavily/` | openai | API key |
+| Brave Search | `brave/` | openai | API key |
+| Exa | `exa/` | openai | API key |
+| Jina AI | `jina/` | openai | API key |
+| Google PSE | `google-pse/` | openai | API key |
+| Firecrawl | `firecrawl/` | openai | API key |
+| Fal.ai | `fal/` | openai | API key |
+| Black Forest Labs | `black-forest-labs/` | openai | API key |
+| AssemblyAI | `assemblyai/` | openai | API key |
+| Cartesia | `cartesia/` | openai | API key |
+| Edge TTS | `edge-tts/` | openai | none (local) |
+| Qwen | `qwen/` | openai | API key |
+| AliCode | `alicode/` | openai | API key |
+| Kimi Coding | `kimi-coding/` | openai | API key |
+| iFlow | `iflow/` | openai | API key |
+| Volcengine Ark | `volcengine-ark/` | openai | API key |
+| Hunyuan | `hunyuan/` | openai | API key |
+| Nanobanana | `nanobanana/` | openai | API key |
+| Topaz | `topaz/` | openai | API key |
+| Puter | `puter/` | openai | API key |
+| ComfyUI | `comfyui/` | openai | none (local) |
 | Custom OpenAI | `<your-name>/` | openai | API key |
 | Custom Claude | `<your-name>/` | claude | API key |
+| Cursor | `cursor/` | openai | OAuth (imported from IDE) |
+| ZenMux | `zenmux/` | openai | API key |
+| ZenMux Free | `zenmux-free/` | openai | API key |
+| Grok CLI | `grok-cli/` | grok-cli | OAuth |
+| GitHub Copilot | `copilot/` | openai | OAuth |
+| CodeBuddy | `codebuddy/` | openai | OAuth |
+| Qoder | `qoder/` | openai | OAuth |
 
 Setup details for each provider are in [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
 
@@ -325,13 +357,20 @@ Quick links:
 Proxy endpoints:
 
 - `POST /v1/chat/completions`
+- `POST /v1/completions`
 - `POST /v1/messages`
 - `POST /v1/responses`
+- `POST /v1/responses/compact`
+- `POST /v1/live`
+- `POST /v1/realtime/calls`
+- `POST /v1/videos`
+- `POST /v1/videos/generations`
 - `GET /v1/models`
 - `POST /v1/audio/speech`
 - `POST /v1/audio/transcriptions`
 - `POST /v1/images/generations`
-- `POST /v1/video/generations`
+- `POST /v1/images/edits`
+- `POST /v1beta/models/{model}:{generateContent,countTokens,streamGenerateContent}`
 - `POST /v1/embeddings`
 - `POST /v1/unified`
 
@@ -397,17 +436,10 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.10
-
-### Added
-- **Grok CLI session/turn header persistence** — `/v1/chat/completions` and `/v1/responses` calls routed through `grok-cli` now generate stable `x-grok-session-id`, `x-grok-conv-id`, and `x-grok-agent-id` values per connection, a fresh `x-grok-req-id` per request, and a monotonic `x-grok-turn-idx` that advances only by user messages. State is persisted to the connection's `provider_specific_data` and survives restarts.
-- **Grok CLI upstream quota usage** — `grok-cli` connections now display live subscription quota from xAI billing/user endpoints, including monthly included credits, on-demand cap/usage, and prepaid balance. Registered in the quota scheduler alongside Codex, Antigravity, Kiro, and Copilot.
-- **Grok CLI identity header alignment** — bumped client version to `0.2.99`, switched User-Agent to `grok-shell/0.2.99 (linux; x86_64)`, and added `x-grok-client-identifier: grok-shell` plus `x-grok-client-mode: headless` to both chat and quota requests. OAuth scope now includes `conversations:read conversations:write`.
-- **Grok CLI request normalization** — removed forbidden top-level fields (`presence_penalty`, `frequency_penalty`, `seed`, `user`, `previous_response_id`), converted `custom_tool_call`/`custom_tool_call_output` types, stripped `item_reference` and server-generated IDs that cannot resolve with `store=false`, preserved hosted tool types (`web_search`, `x_search`, etc.), and gated reasoning to models in the `grok-4.5` family (with `max` → `xhigh` mapping).
-- **Grok CLI retry and soft-success connection test** — retry transient HTTP 429/502/503 responses with exponential backoff, and treat HTTP 402 during connection tests as a soft success indicating valid auth but exhausted credits.
+### What's New in v0.3.30
 
 ### Fixed
-- **Grok CLI free accounts no longer auto-marked `quota_exhausted`** — quota parsing no longer synthesizes a depleted row for accounts that simply have no on-demand cap (e.g., free/promo accounts). The scheduler only marks a connection exhausted when actual quota data shows zero remaining credits. Matches the 9router reference handler (`open-sse/services/usage/grok-cli.js`).
+- **Proxy health check with credentials** — bulk import and single add now correctly include proxy credentials when testing proxy health. Previously, authenticated proxies were tested without credentials, causing them to fail even though they work fine.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.

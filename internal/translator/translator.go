@@ -24,6 +24,9 @@ const (
 	FormatAntigravity    = types.FormatAntigravity
 	FormatKiro           = types.FormatKiro
 	FormatGrokCLI        = types.FormatGrokCLI
+	FormatDevinCLI       = types.FormatDevinCLI
+	FormatQoder          = types.FormatQoder
+	FormatInteractions   = types.FormatInteractions
 )
 
 // Re-export registry functions

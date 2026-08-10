@@ -41,11 +41,11 @@ type ModelUsage struct {
 
 // DailyUsage holds a single day's aggregated stats.
 type DailyUsage struct {
-	Date       string  `json:"date"`
-	Requests   int64   `json:"requests"`
-	Tokens     int64   `json:"tokens"`
-	CostUsd    float64 `json:"cost_usd"`
-	Errors     int64   `json:"errors"`
+	Date     string  `json:"date"`
+	Requests int64   `json:"requests"`
+	Tokens   int64   `json:"tokens"`
+	CostUsd  float64 `json:"cost_usd"`
+	Errors   int64   `json:"errors"`
 }
 
 // GetProviderUsage returns per-provider usage for the last N hours.
@@ -62,7 +62,7 @@ func (a *Aggregator) GetProviderUsage(hours int) ([]ProviderUsage, error) {
 		       COALESCE(SUM(output_tokens), 0),
 		       COALESCE(SUM(cached_tokens), 0),
 		       COALESCE(SUM(input_tokens + output_tokens), 0),
-		       COALESCE(SUM(cost_usd), 0),
+		       COALESCE(SUM(CASE WHEN flat_rate = 1 THEN 0 ELSE cost_usd END), 0),
 		       SUM(CASE WHEN error_message IS NOT NULL AND error_message != '' THEN 1 ELSE 0 END),
 		       COALESCE(AVG(latency_ms), 0)
 		FROM request_logs WHERE timestamp > ?
@@ -98,7 +98,7 @@ func (a *Aggregator) GetModelUsage(hours int) ([]ModelUsage, error) {
 		       COALESCE(SUM(input_tokens), 0),
 		       COALESCE(SUM(output_tokens), 0),
 		       COALESCE(SUM(cached_tokens), 0),
-		       COALESCE(SUM(cost_usd), 0),
+		       COALESCE(SUM(CASE WHEN flat_rate = 1 THEN 0 ELSE cost_usd END), 0),
 		       SUM(CASE WHEN error_message IS NOT NULL AND error_message != '' THEN 1 ELSE 0 END)
 		FROM request_logs WHERE timestamp > ?
 		GROUP BY model_id
@@ -131,7 +131,7 @@ func (a *Aggregator) GetDailyUsage(days int) ([]DailyUsage, error) {
 		SELECT date(timestamp / 1000, 'unixepoch') as day,
 		       COUNT(*),
 		       COALESCE(SUM(input_tokens + output_tokens), 0),
-		       COALESCE(SUM(cost_usd), 0),
+		       COALESCE(SUM(CASE WHEN flat_rate = 1 THEN 0 ELSE cost_usd END), 0),
 		       SUM(CASE WHEN error_message IS NOT NULL AND error_message != '' THEN 1 ELSE 0 END)
 		FROM request_logs WHERE timestamp > ?
 		GROUP BY day
@@ -151,11 +151,70 @@ func (a *Aggregator) GetDailyUsage(days int) ([]DailyUsage, error) {
 	return result, nil
 }
 
+// TodaySummary holds aggregate usage stats for a single day window.
+type TodaySummary struct {
+	Requests     int64   `json:"requests"`
+	Tokens       int64   `json:"tokens"`
+	CostUsd      float64 `json:"cost_usd"`
+	Errors       int64   `json:"errors"`
+	AvgLatencyMs float64 `json:"avg_latency_ms"`
+}
+
+// GetTodaySummary returns today's aggregate stats including errors and latency.
+func (a *Aggregator) GetTodaySummary() (TodaySummary, error) {
+	var s TodaySummary
+	today := time.Now().Truncate(24 * time.Hour).UnixMilli()
+	err := a.db.QueryRow(`
+		SELECT COUNT(*),
+		       COALESCE(SUM(input_tokens + output_tokens), 0),
+		       COALESCE(SUM(CASE WHEN flat_rate = 1 THEN 0 ELSE cost_usd END), 0),
+		       COALESCE(SUM(CASE WHEN error_message IS NOT NULL AND error_message != '' THEN 1 ELSE 0 END), 0),
+		       COALESCE(AVG(latency_ms), 0)
+		FROM request_logs WHERE timestamp >= ?
+	`, today).Scan(&s.Requests, &s.Tokens, &s.CostUsd, &s.Errors, &s.AvgLatencyMs)
+	return s, err
+}
+
+// GetDaySummary returns aggregate stats for the day offset from today
+// (0 = today, -1 = yesterday).
+func (a *Aggregator) GetDaySummary(dayOffset int) (TodaySummary, error) {
+	var s TodaySummary
+	day := time.Now().AddDate(0, 0, dayOffset).Truncate(24 * time.Hour)
+	start := day.UnixMilli()
+	end := day.Add(24 * time.Hour).UnixMilli()
+	err := a.db.QueryRow(`
+		SELECT COUNT(*),
+		       COALESCE(SUM(input_tokens + output_tokens), 0),
+		       COALESCE(SUM(CASE WHEN flat_rate = 1 THEN 0 ELSE cost_usd END), 0),
+		       COALESCE(SUM(CASE WHEN error_message IS NOT NULL AND error_message != '' THEN 1 ELSE 0 END), 0),
+		       COALESCE(AVG(latency_ms), 0)
+		FROM request_logs WHERE timestamp >= ? AND timestamp < ?
+	`, start, end).Scan(&s.Requests, &s.Tokens, &s.CostUsd, &s.Errors, &s.AvgLatencyMs)
+	return s, err
+}
+
+// GetMonthToDateSummary returns aggregate stats from the start of the current UTC month until now.
+func (a *Aggregator) GetMonthToDateSummary() (TodaySummary, error) {
+	var s TodaySummary
+	now := time.Now().UTC()
+	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).UnixMilli()
+	end := now.UnixMilli()
+	err := a.db.QueryRow(`
+		SELECT COUNT(*),
+		       COALESCE(SUM(input_tokens + output_tokens), 0),
+		       COALESCE(SUM(CASE WHEN flat_rate = 1 THEN 0 ELSE cost_usd END), 0),
+		       COALESCE(SUM(CASE WHEN error_message IS NOT NULL AND error_message != '' THEN 1 ELSE 0 END), 0),
+		       COALESCE(AVG(latency_ms), 0)
+		FROM request_logs WHERE timestamp >= ? AND timestamp <= ?
+	`, start, end).Scan(&s.Requests, &s.Tokens, &s.CostUsd, &s.Errors, &s.AvgLatencyMs)
+	return s, err
+}
+
 // GetTodayStats returns today's aggregate stats.
 func (a *Aggregator) GetTodayStats() (requests int64, tokens int64, cost float64, err error) {
 	today := time.Now().Truncate(24 * time.Hour).UnixMilli()
 	err = a.db.QueryRow(`
-		SELECT COUNT(*), COALESCE(SUM(input_tokens + output_tokens), 0), COALESCE(SUM(cost_usd), 0)
+		SELECT COUNT(*), COALESCE(SUM(input_tokens + output_tokens), 0), COALESCE(SUM(CASE WHEN flat_rate = 1 THEN 0 ELSE cost_usd END), 0)
 		FROM request_logs WHERE timestamp >= ?
 	`, today).Scan(&requests, &tokens, &cost)
 	return

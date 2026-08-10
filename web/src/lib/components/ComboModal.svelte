@@ -6,7 +6,7 @@ import { Label } from '$lib/components/ui/label';
 import { Switch } from '$lib/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
 import ModelPickerDialog from '$lib/components/ModelPickerDialog.svelte';
-import { combosApi, modelsApi } from '$lib/api';
+import { combosApi, gatewayModelsApi } from '$lib/api';
 import type { Combo, ComboStep, GatewayModel } from '$lib/api';
 import { unwrapStr } from '$lib/utils';
 import { planStepSync, type StepDraft, type ExistingStep } from './combo-modal-helpers';
@@ -25,6 +25,7 @@ let {
 } = $props();
 
 let name = $state('');
+let kind = $state('llm');
 let strategy = $state('priority');
 let timeout = $state(30000);
 let stickyLimit = $state(1);
@@ -44,6 +45,11 @@ let loading = $state(false);
 let stepsLoading = $state(false);
 
 	const strategyOptions = ['priority', 'round-robin', 'weighted', 'random', 'least-used', 'fusion'];
+const kindOptions = [
+	{ value: 'llm', label: 'LLM', desc: 'Chat completion combos' },
+	{ value: 'image', label: 'Image', desc: 'Image generation combos' },
+	{ value: 'tts', label: 'TTS', desc: 'Text-to-speech combos' },
+];
 const smartGoalOptions = [
 	{ value: 'auto', label: 'Auto', desc: 'Dynamic selection based on telemetry' },
 	{ value: 'economy', label: 'Economy', desc: 'Lowest cost routing' },
@@ -72,6 +78,7 @@ function strategyDescription(opt: string) {
 function resetState() {
 	if (combo) {
 		name = combo.name;
+		kind = combo.kind || 'llm';
 		strategy = combo.strategy;
 		timeout = combo.timeout_ms;
 		stickyLimit = combo.sticky_limit;
@@ -81,6 +88,7 @@ function resetState() {
 		loadSteps(combo.id);
 	} else {
 		name = '';
+		kind = 'llm';
 		strategy = 'priority';
 		timeout = 30000;
 		stickyLimit = 1;
@@ -129,7 +137,7 @@ function buildFusionConfig(): string {
 async function loadModels() {
 	if (models.length > 0) return;
 	try {
-		const res = await modelsApi.list();
+		const res = await gatewayModelsApi.list();
 		models = res.data || [];
 	} catch (err) {
 		toast.error('Failed to load models: ' + (err instanceof Error ? err.message : 'Unknown'));
@@ -212,13 +220,14 @@ async function handleSave() {
 			if (combo) {
 				await combosApi.update(combo.id, {
 					name: name.trim(),
+					kind,
 					strategy,
 					timeout_ms: timeout,
 					sticky_limit: stickyLimit,
-		is_smart: fusionStrategy ? false : isSmart,
-		smart_goal: fusionStrategy || !isSmart ? null : smartGoal,
-		fusion_config: strategy === 'fusion' ? buildFusionConfig() : undefined,
-		});
+			is_smart: fusionStrategy ? false : isSmart,
+			smart_goal: fusionStrategy || !isSmart ? null : smartGoal,
+			fusion_config: strategy === 'fusion' ? buildFusionConfig() : undefined,
+			});
 		const plan = planStepSync(existingSteps, steps);
 			for (const stepId of plan.toRemove) {
 				await combosApi.removeStep(stepId);
@@ -231,6 +240,7 @@ async function handleSave() {
 			} else {
 				const created = await combosApi.create({
 					name: name.trim(),
+					kind,
 					strategy,
 					timeout_ms: timeout,
 					sticky_limit: stickyLimit,
@@ -264,6 +274,21 @@ async function handleSave() {
 			<div class="space-y-2">
 				<Label class="text-body-sm-strong">Name</Label>
 				<Input bind:value={name} placeholder="e.g. random, premium-rr" class="h-10 text-body-sm" />
+			</div>
+
+			<div class="space-y-2">
+				<Label class="text-body-sm-strong">Kind</Label>
+				<div class="grid grid-cols-3 gap-2">
+					{#each kindOptions as opt}
+						<button
+							class="cursor-pointer flex flex-col items-start gap-0.5 p-2.5 rounded-md border text-left transition-colors {kind === opt.value ? 'border-foreground bg-accent' : 'border-border hover:border-foreground/50'}"
+							onclick={() => (kind = opt.value)}
+						>
+							<span class="text-body-sm-strong">{opt.label}</span>
+							<span class="text-caption text-muted-foreground">{opt.desc}</span>
+						</button>
+					{/each}
+				</div>
 			</div>
 
 			<div class="space-y-2">
@@ -376,7 +401,7 @@ async function handleSave() {
 							<p class="text-caption text-muted-foreground">Add models to define routing order.</p>
 						</div>
 					{:else}
-            <div class="space-y-2">
+            <div class="overflow-y-auto max-h-[40vh] space-y-2 pr-1">
               {#each steps as step, i (step.id ?? `${step.model_id}-${i}`)}
                 <div class="flex items-center gap-3 p-2.5 border border-border rounded-md bg-card/50">
                   <div class="flex flex-col gap-0.5">

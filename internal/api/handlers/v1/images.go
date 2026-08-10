@@ -28,7 +28,39 @@ func (h *Handler) Images(c *gin.Context) {
 	if model == "" {
 		model = "dall-e-3"
 	}
+	if !h.isModelAllowed(c.Request.Context(), model) {
+		c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"message": "model not allowed for this API key", "type": "invalid_request_error"}})
+		return
+	}
 	if h.checkTokenBudget(c, body) != nil {
+		return
+	}
+	if h.checkAPIKeyBudget(c) != nil {
+		return
+	}
+
+	// Combo-first routing for image generation.
+	if comboResult, ok := h.combo.ResolveByKind(model, providerpkg.ServiceKindImage); ok {
+		h.handleMediaCombo(c, comboResult, body, model, start, "image", "application/json", true, func(provider, modelName string) (executor.Executor, error) {
+			var serviceKinds string
+			err := h.db.QueryRow(`SELECT COALESCE(service_kinds, '[]') FROM provider_types WHERE id = ?`, provider).Scan(&serviceKinds)
+			if err != nil {
+				return nil, fmt.Errorf("provider not configured for image generation")
+			}
+			var kinds []string
+			if err := json.Unmarshal([]byte(serviceKinds), &kinds); err != nil {
+				kinds = providerpkg.DefaultServiceKinds()
+			}
+			if !providerpkg.HasServiceKind(kinds, providerpkg.ServiceKindImage) {
+				return nil, fmt.Errorf("provider does not support image generation")
+			}
+			if exec, format, err := h.resolveExecutor(provider, modelName); err == nil {
+				if imgGen, ok := exec.(executor.ImageGenerator); ok && format == executor.FormatOpenAI {
+					return &imageGeneratorAdapter{ImageGenerator: imgGen}, nil
+				}
+			}
+			return executor.NewImagesExecutor(executor.NewBaseExecutor()), nil
+		})
 		return
 	}
 
@@ -37,6 +69,8 @@ func (h *Handler) Images(c *gin.Context) {
 		provider = "openai"
 		modelName = model
 	}
+
+	sessionID := h.sessionIDForAffinity(c, provider, modelName, body)
 
 	// Look up provider capabilities before selecting an execution path.
 	var serviceKinds string
@@ -65,7 +99,7 @@ func (h *Handler) Images(c *gin.Context) {
 		imagesExec = executor.NewImagesExecutor(executor.NewBaseExecutor())
 	}
 
-	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
+	conn, err := h.getConnection(c.Request.Context(), provider, modelName, sessionID)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
 		return
@@ -106,18 +140,22 @@ func (h *Handler) Images(c *gin.Context) {
 	}
 
 	h.logRequest(c, &usage.LogEntry{
-		ApiKeyID: c.GetString("api_key_id"),
-		ConnectionID: conn.ID,
+		ApiKeyID:       c.GetString("api_key_id"),
+		ConnectionID:   conn.ID,
 		ProviderTypeID: provider,
-		ModelID: modelName,
-		ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
-		ApiType: apiTypeFromPath(c.Request.URL.Path),
-		Modality: "image",
-		Stream: false,
-		LatencyMs: time.Since(start).Milliseconds(),
-		StatusCode: resp.StatusCode})
+		ModelID:        modelName,
+		ProxyPoolID:    executor.ProxyPoolIDFromContext(proxyCtx),
+		ApiType:        apiTypeFromPath(c.Request.URL.Path),
+		Modality:       "image",
+		Quantity:       quantityForModality("image", body),
+		Stream:         false,
+		LatencyMs:      time.Since(start).Milliseconds(),
+		StatusCode:     resp.StatusCode})
 
 	h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, resp.Body, false)
+	if h.isFlatRate(provider) {
+		c.Header(costHeader, "0")
+	}
 	c.Header("Content-Type", "application/json")
 	c.Status(resp.StatusCode)
 	c.Writer.Write(resp.Body)

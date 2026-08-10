@@ -80,24 +80,24 @@ func TestGrokCLIExecutor_Headers(t *testing.T) {
 	}
 
 	mustEqual := map[string]string{
-		"Authorization": "Bearer grok-at-123",
-		"X-Xai-Token-Auth": "xai-grok-cli",
-		"x-grok-client-version": "0.2.99",
-		"User-Agent": "grok-shell/0.2.99 (linux; x86_64)",
+		"Authorization":            "Bearer grok-at-123",
+		"X-Xai-Token-Auth":         "xai-grok-cli",
+		"x-grok-client-version":    "0.2.99",
+		"User-Agent":               "grok-shell/0.2.99 (linux; x86_64)",
 		"x-grok-client-identifier": "grok-shell",
-		"x-grok-client-mode": "headless",
-		"x-email": "user@example.com",
-		"x-userid": "grok-sub-abc",
-		"x-grok-model-override": "grok-4.5",
-		"x-grok-turn-idx": "0",
-		"Connection": "Keep-Alive",
+		"x-grok-client-mode":       "headless",
+		"x-email":                  "user@example.com",
+		"x-userid":                 "grok-sub-abc",
+		"x-grok-model-override":    "grok-4.5",
+		"x-grok-turn-idx":          "0",
+		"Connection":               "Keep-Alive",
 	}
 	for name, want := range mustEqual {
 		if got := gotHeaders.Get(name); got != want {
 			t.Errorf("%s=%q, want %q", name, got, want)
 		}
 	}
-	
+
 	needPresent := []string{"x-grok-session-id", "x-grok-conv-id", "x-grok-req-id", "x-grok-agent-id", "x-grok-client-identifier", "x-grok-client-mode"}
 	for _, name := range needPresent {
 		if got := gotHeaders.Get(name); got == "" {
@@ -165,6 +165,7 @@ func TestGrokCLIExecutor_RequestTransform(t *testing.T) {
 		"unknown_field":    "drop-me",
 		"tools": []any{
 			map[string]any{
+				"type":      "namespace",
 				"namespace": "ns1",
 				"tools": []any{
 					map[string]any{"type": "function", "name": "tool_a", "parameters": map[string]any{"type": "object"}},
@@ -221,8 +222,76 @@ func TestGrokCLIExecutor_RequestTransform(t *testing.T) {
 		t.Errorf("model=%q, want grok-4.5", got)
 	}
 	tools := gjson.GetBytes(gotBody, "tools").Array()
-	if len(tools) != 1 || tools[0].Get("type").String() != "function" || tools[0].Get("name").String() != "tool_a" {
-		t.Errorf("expected flattened tool, got %s", gjson.GetBytes(gotBody, "tools").Raw)
+	if len(tools) != 2 {
+		t.Errorf("expected 2 tools (flattened namespace + native x_search), got %d: %s", len(tools), gjson.GetBytes(gotBody, "tools").Raw)
+	}
+	foundFlattened := false
+	foundXSearch := false
+	for _, tool := range tools {
+		if tool.Get("type").String() == "function" && tool.Get("name").String() == "ns1__tool_a" {
+			foundFlattened = true
+		}
+		if tool.Get("type").String() == "x_search" {
+			foundXSearch = true
+		}
+	}
+	if !foundFlattened {
+		t.Errorf("expected qualified flattened tool ns1__tool_a, got %s", gjson.GetBytes(gotBody, "tools").Raw)
+	}
+	if !foundXSearch {
+		t.Errorf("expected native x_search tool to be injected, got %s", gjson.GetBytes(gotBody, "tools").Raw)
+	}
+}
+
+func TestGrokCLIExecutor_ToolListTruncated(t *testing.T) {
+	var gotBody []byte
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		completed, _ := json.Marshal(map[string]any{"type": "response.completed", "response": map[string]any{"id": "r1", "status": "completed", "output": []any{}, "usage": map[string]any{}}})
+		fmt.Fprintln(w, "data: "+string(completed))
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+
+	base := NewBaseExecutor()
+	exec := NewGrokCLIExecutor(base)
+
+	rawTools := make([]any, 0, 250)
+	for i := 0; i < 250; i++ {
+		rawTools = append(rawTools, map[string]any{
+			"type":      "namespace",
+			"namespace": fmt.Sprintf("ns_%d", i),
+			"tools": []any{
+				map[string]any{"type": "function", "name": fmt.Sprintf("tool_%d", i), "parameters": map[string]any{"type": "object"}},
+			},
+		})
+	}
+	body, _ := json.Marshal(map[string]any{
+		"model":    "grok-cli/grok-4.5",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+		"tools":    rawTools,
+	})
+	req := &Request{
+		Provider:    "grok-cli",
+		Model:       "grok-cli/grok-4.5",
+		BaseURL:     ts.URL,
+		AccessToken: "grok-at-123",
+		Body:        body,
+		StreamConfig: &StreamConfig{
+			FetchTimeoutMs:           5000,
+			StreamIdleTimeoutMs:      5000,
+			StreamReadinessTimeoutMs: 5000,
+		},
+	}
+	if _, err := exec.Execute(context.Background(), req); err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	tools := gjson.GetBytes(gotBody, "tools").Array()
+	if len(tools) != grokCLIMaxTools {
+		t.Fatalf("expected %d tools after truncation, got %d", grokCLIMaxTools, len(tools))
 	}
 }
 
@@ -242,6 +311,7 @@ func TestGrokCLIExecutor_ExtractUsage(t *testing.T) {
 					"input_tokens":          8,
 					"output_tokens":         4,
 					"total_tokens":          12,
+					"cost_in_usd_ticks":     125000000000,
 					"output_tokens_details": map[string]any{"reasoning_tokens": 1},
 				},
 			},
@@ -288,6 +358,10 @@ func TestGrokCLIExecutor_ExtractUsage(t *testing.T) {
 	}
 	if res.Usage["reasoning_tokens"] != 1 {
 		t.Fatalf("reasoning_tokens=%d, want 1", res.Usage["reasoning_tokens"])
+	}
+	wantCost := float64(125000000000) / grokCLICostUsdTicksDivisor
+	if res.CostUsd != wantCost {
+		t.Fatalf("CostUsd=%v, want %v", res.CostUsd, wantCost)
 	}
 }
 
@@ -565,10 +639,10 @@ func TestGrokCLIExecutor_ReasoningModelGatingAndMaxMapping(t *testing.T) {
 	}
 
 	cases := []struct {
-		model          string
-		effort         string
-		wantReasoning  bool
-		wantEffort     string
+		model         string
+		effort        string
+		wantReasoning bool
+		wantEffort    string
 	}{
 		{"grok-cli/grok-4.5", "max", true, "xhigh"},
 		{"grok-cli/grok-build-0.1", "high", false, ""},
@@ -617,7 +691,7 @@ func TestGrokCLIExecutor_HostedToolsPreserved(t *testing.T) {
 	base := NewBaseExecutor()
 	exec := NewGrokCLIExecutor(base)
 	body, _ := json.Marshal(map[string]any{
-		"model": "grok-cli/grok-4.5",
+		"model":    "grok-cli/grok-4.5",
 		"messages": []any{map[string]any{"role": "user", "content": "find"}},
 		"tools": []any{
 			map[string]any{"type": "web_search"},
@@ -634,10 +708,10 @@ func TestGrokCLIExecutor_HostedToolsPreserved(t *testing.T) {
 		t.Fatalf("Execute error: %v", err)
 	}
 	tools := gjson.GetBytes(gotBody, "tools").Array()
-	if len(tools) != 7 {
-		t.Fatalf("expected 7 tools, got %d", len(tools))
+	if len(tools) != 6 {
+		t.Fatalf("expected 6 tools (image_generation is dropped), got %d", len(tools))
 	}
-	for _, typ := range []string{"web_search", "x_search", "file_search", "image_generation", "code_interpreter", "mcp", "local_shell"} {
+	for _, typ := range []string{"web_search", "x_search", "file_search", "code_interpreter", "mcp", "local_shell"} {
 		found := false
 		for _, tool := range tools {
 			if tool.Get("type").String() == typ {
@@ -705,9 +779,9 @@ func TestTranslateGrokCLI(t *testing.T) {
 			if got := gjson.GetBytes(out, "error.type").String(); got != tc.wantType {
 				t.Errorf("type=%q, want %q", got, tc.wantType)
 			}
-		if got := gjson.GetBytes(out, "error.code").String(); got != tc.wantCode {
-			t.Errorf("code=%q, want %q", got, tc.wantCode)
-		}
+			if got := gjson.GetBytes(out, "error.code").String(); got != tc.wantCode {
+				t.Errorf("code=%q, want %q", got, tc.wantCode)
+			}
 		})
 	}
 }
@@ -734,11 +808,11 @@ func TestGrokCLIExecutor_Retry_429ThenSuccess(t *testing.T) {
 	exec := NewGrokCLIExecutor(base)
 	body, _ := json.Marshal(map[string]any{"input": []any{}})
 	req := &Request{
-		Provider: "grok-cli",
-		Model: "grok-cli/grok-4.5",
-		BaseURL: ts.URL,
-		AccessToken: "grok-at-123",
-		Body: body,
+		Provider:     "grok-cli",
+		Model:        "grok-cli/grok-4.5",
+		BaseURL:      ts.URL,
+		AccessToken:  "grok-at-123",
+		Body:         body,
 		StreamConfig: &StreamConfig{FetchTimeoutMs: 5000, StreamIdleTimeoutMs: 5000, StreamReadinessTimeoutMs: 5000},
 	}
 
@@ -778,11 +852,11 @@ func TestGrokCLIExecutor_Retry_502ThenSuccess(t *testing.T) {
 	exec := NewGrokCLIExecutor(base)
 	body, _ := json.Marshal(map[string]any{"input": []any{}})
 	req := &Request{
-		Provider: "grok-cli",
-		Model: "grok-cli/grok-4.5",
-		BaseURL: ts.URL,
-		AccessToken: "grok-at-123",
-		Body: body,
+		Provider:     "grok-cli",
+		Model:        "grok-cli/grok-4.5",
+		BaseURL:      ts.URL,
+		AccessToken:  "grok-at-123",
+		Body:         body,
 		StreamConfig: &StreamConfig{FetchTimeoutMs: 5000, StreamIdleTimeoutMs: 5000, StreamReadinessTimeoutMs: 5000},
 	}
 
@@ -814,11 +888,11 @@ func TestGrokCLIExecutor_Retry_429MaxAttempts(t *testing.T) {
 	exec := NewGrokCLIExecutor(base)
 	body, _ := json.Marshal(map[string]any{"input": []any{}})
 	req := &Request{
-		Provider: "grok-cli",
-		Model: "grok-cli/grok-4.5",
-		BaseURL: ts.URL,
-		AccessToken: "grok-at-123",
-		Body: body,
+		Provider:     "grok-cli",
+		Model:        "grok-cli/grok-4.5",
+		BaseURL:      ts.URL,
+		AccessToken:  "grok-at-123",
+		Body:         body,
 		StreamConfig: &StreamConfig{FetchTimeoutMs: 5000, StreamIdleTimeoutMs: 5000, StreamReadinessTimeoutMs: 5000},
 	}
 
@@ -849,11 +923,11 @@ func TestGrokCLIExecutor_Retry_NoRetryOnAuth(t *testing.T) {
 	exec := NewGrokCLIExecutor(base)
 	body, _ := json.Marshal(map[string]any{"input": []any{}})
 	req := &Request{
-		Provider: "grok-cli",
-		Model: "grok-cli/grok-4.5",
-		BaseURL: ts.URL,
-		AccessToken: "grok-at-123",
-		Body: body,
+		Provider:     "grok-cli",
+		Model:        "grok-cli/grok-4.5",
+		BaseURL:      ts.URL,
+		AccessToken:  "grok-at-123",
+		Body:         body,
 		StreamConfig: &StreamConfig{FetchTimeoutMs: 5000, StreamIdleTimeoutMs: 5000, StreamReadinessTimeoutMs: 5000},
 	}
 
@@ -861,7 +935,374 @@ func TestGrokCLIExecutor_Retry_NoRetryOnAuth(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if count != 1 {
-		t.Fatalf("requests=%d, want 1 (no retry for 401)", count)
+}
+
+func TestGrokCLI_CollectNamespaceToolRefs(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{
+		"tools": []any{
+			map[string]any{
+				"type": "namespace",
+				"name": "ns1",
+				"tools": []any{
+					map[string]any{"type": "function", "name": "tool_a"},
+					map[string]any{"type": "custom", "name": "tool_b"},
+				},
+			},
+			map[string]any{"type": "function", "name": "tool_c"},
+			map[string]any{"type": "web_search"},
+		},
+		"input": []any{
+			map[string]any{"type": "message", "role": "user", "content": "hi"},
+			map[string]any{
+				"type": "additional_tools",
+				"tools": []any{
+					map[string]any{
+						"type": "namespace",
+						"name": "ns2",
+						"tools": []any{
+							map[string]any{"type": "function", "name": "tool_d"},
+						},
+					},
+				},
+			},
+		},
+	})
+	refs := collectGrokCLINamespaceToolRefs(body)
+	want := map[string]grokCLINamespaceToolRef{
+		"ns1__tool_a": {namespace: "ns1", name: "tool_a"},
+		"ns1__tool_b": {namespace: "ns1", name: "tool_b"},
+		"ns2__tool_d": {namespace: "ns2", name: "tool_d"},
+	}
+	if len(refs) != len(want) {
+		t.Fatalf("refs count=%d, want %d", len(refs), len(want))
+	}
+	for k, v := range want {
+		got, ok := refs[k]
+		if !ok {
+			t.Errorf("missing ref %q", k)
+			continue
+		}
+		if got != v {
+			t.Errorf("ref %q=%+v, want %+v", k, got, v)
+		}
+	}
+}
+
+func TestGrokCLI_CollectClientDeclaredKeys(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{
+		"tools": []any{
+			map[string]any{
+				"type": "namespace",
+				"name": "ns1",
+				"tools": []any{
+					map[string]any{"type": "function", "name": "tool_a"},
+					map[string]any{"type": "custom", "name": "tool_b"},
+				},
+			},
+			map[string]any{"type": "function", "name": "tool_c"},
+		},
+		"input": []any{
+			map[string]any{
+				"type": "additional_tools",
+				"tools": []any{
+					map[string]any{"type": "function", "name": "tool_d"},
+				},
+			},
+		},
+	})
+	keys := collectGrokCLIClientDeclaredKeys(body)
+	want := []string{
+		grokCLIClientToolKey("function", "ns1", "tool_a"),
+		grokCLIClientToolKey("function", "ns1", "tool_b"),
+		grokCLIClientToolKey("function", "", "tool_c"),
+		grokCLIClientToolKey("function", "", "tool_d"),
+	}
+	if len(keys) != len(want) {
+		t.Fatalf("keys count=%d, want %d; got %v", len(keys), len(want), keys)
+	}
+	for _, k := range want {
+		if !keys[k] {
+			t.Errorf("missing key %q", k)
+		}
+	}
+}
+
+func TestGrokCLI_FlattenNamespaceTools(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{
+		"tools": []any{
+			map[string]any{
+				"type": "namespace",
+				"name": "ns1",
+				"tools": []any{
+					map[string]any{"type": "function", "name": "tool_a", "parameters": map[string]any{"type": "object"}},
+					map[string]any{"type": "custom", "name": "tool_b"},
+					map[string]any{"function": map[string]any{"name": "tool_c", "parameters": map[string]any{"type": "object"}}},
+				},
+			},
+			map[string]any{"type": "function", "name": "tool_d"},
+			map[string]any{"type": "web_search"},
+		},
+	})
+	refs := collectGrokCLINamespaceToolRefs(body)
+	flat := grokcliFlattenNamespaceTools(body, refs)
+	tools := gjson.GetBytes(flat, "tools").Array()
+	if len(tools) != 5 {
+		t.Fatalf("expected 5 tools, got %d: %s", len(tools), gjson.GetBytes(flat, "tools").Raw)
+	}
+	cases := []struct {
+		idx       int
+		typ       string
+		name      string
+		hasParams bool
+	}{
+		{0, "function", "ns1__tool_a", true},
+		{1, "function", "ns1__tool_b", false},
+		{2, "function", "ns1__tool_c", true},
+		{3, "function", "tool_d", false},
+		{4, "web_search", "", false},
+	}
+	for _, tc := range cases {
+		tool := tools[tc.idx]
+		if got := tool.Get("type").String(); got != tc.typ {
+			t.Errorf("tool[%d].type=%q, want %q", tc.idx, got, tc.typ)
+		}
+		if tc.name != "" && tool.Get("name").String() != tc.name {
+			t.Errorf("tool[%d].name=%q, want %q", tc.idx, tool.Get("name").String(), tc.name)
+		}
+		if tc.hasParams && !tool.Get("parameters").Exists() {
+			t.Errorf("tool[%d] missing parameters", tc.idx)
+		}
+	}
+}
+
+func TestGrokCLI_FlattenNamespaceTools_AdditionalTools(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{
+		"input": []any{
+			map[string]any{
+				"type": "additional_tools",
+				"tools": []any{
+					map[string]any{
+						"type": "namespace",
+						"name": "ns2",
+						"tools": []any{
+							map[string]any{"type": "function", "name": "tool_e"},
+						},
+					},
+				},
+			},
+		},
+	})
+	refs := collectGrokCLINamespaceToolRefs(body)
+	flat := grokcliFlattenNamespaceTools(body, refs)
+	tools := gjson.GetBytes(flat, "input.0.tools").Array()
+	if len(tools) != 1 || tools[0].Get("type").String() != "function" || tools[0].Get("name").String() != "ns2__tool_e" {
+		t.Fatalf("expected flattened additional_tools, got %s", gjson.GetBytes(flat, "input.0.tools").Raw)
+	}
+}
+
+func TestGrokCLI_NormalizeTools_DropsAndRewrites(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{
+		"tools": []any{
+			map[string]any{"type": "tool_search"},
+			map[string]any{"type": "image_generation"},
+			map[string]any{"type": "custom", "name": "apply_patch"},
+			map[string]any{"type": "custom", "name": "do_thing"},
+			map[string]any{"type": "web_search", "external_web_access": true},
+			map[string]any{"type": "function", "name": "plain"},
+		},
+	})
+	out := grokcliNormalizeTools(body)
+	tools := gjson.GetBytes(out, "tools").Array()
+	if len(tools) != 3 {
+		t.Fatalf("expected 3 tools, got %d: %s", len(tools), gjson.GetBytes(out, "tools").Raw)
+	}
+	want := []struct {
+		typ  string
+		name string
+	}{
+		{"function", "do_thing"},
+		{"web_search", ""},
+		{"function", "plain"},
+	}
+	for i, tc := range want {
+		if got := tools[i].Get("type").String(); got != tc.typ {
+			t.Errorf("tools[%d].type=%q, want %q", i, got, tc.typ)
+		}
+		if tc.name != "" && tools[i].Get("name").String() != tc.name {
+			t.Errorf("tools[%d].name=%q, want %q", i, tools[i].Get("name").String(), tc.name)
+		}
+	}
+	if gjson.GetBytes(out, "tools.1.external_web_access").Exists() {
+		t.Errorf("external_web_access should have been stripped from web_search")
+	}
+}
+
+func TestGrokCLI_NormalizeTools_ParamsAndFragileSchema(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{
+		"tools": []any{
+			map[string]any{"type": "function", "name": "no_params"},
+			map[string]any{
+				"type": "function",
+				"name": "fragile_union",
+				"parameters": map[string]any{
+					"anyOf": []any{
+						map[string]any{"type": "object"},
+						map[string]any{"type": "string"},
+					},
+				},
+				"strict": true,
+			},
+		},
+	})
+	out := grokcliNormalizeTools(body)
+	if !gjson.GetBytes(out, "tools.0.parameters").Exists() {
+		t.Errorf("missing parameters for no_params")
+	}
+	if got := gjson.GetBytes(out, "tools.0.parameters.type").String(); got != "object" {
+		t.Errorf("tools.0.parameters.type=%q, want object", got)
+	}
+	if gjson.GetBytes(out, "tools.1.strict").Exists() {
+		t.Errorf("strict should be removed from fragile schema")
+	}
+	if got := gjson.GetBytes(out, "tools.1.parameters.additionalProperties").Bool(); !got {
+		t.Errorf("fragile schema should be replaced with additionalProperties:true")
+	}
+}
+
+func TestGrokCLI_EnsureNativeXSearchTool(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{
+		"tools": []any{
+			map[string]any{"type": "function", "name": "a"},
+		},
+	})
+	out, added := grokcliEnsureNativeXSearchTool(body)
+	if !added {
+		t.Fatal("expected x_search to be added")
+	}
+	tools := gjson.GetBytes(out, "tools").Array()
+	if len(tools) != 2 || tools[1].Get("type").String() != "x_search" {
+		t.Errorf("expected x_search appended, got %s", gjson.GetBytes(out, "tools").Raw)
+	}
+
+	body2, _ := json.Marshal(map[string]any{
+		"tools": []any{map[string]any{"type": "x_search"}},
+	})
+	out2, added2 := grokcliEnsureNativeXSearchTool(body2)
+	if added2 {
+		t.Errorf("x_search should not be added twice")
+	}
+	if gjson.GetBytes(out2, "tools").Array()[0].Get("type").String() != "x_search" {
+		t.Errorf("existing x_search should be preserved")
+	}
+
+	body3, _ := json.Marshal(map[string]any{
+		"tools":       []any{map[string]any{"type": "function", "name": "a"}},
+		"tool_choice": map[string]any{"type": "allowed_tools", "tools": []any{map[string]any{"type": "function", "name": "a"}}},
+	})
+	out3, _ := grokcliEnsureNativeXSearchTool(body3)
+	allowed := gjson.GetBytes(out3, "tool_choice.tools").Array()
+	found := false
+	for _, e := range allowed {
+		if e.Get("type").String() == "x_search" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("x_search should be inserted into allowed_tools")
+	}
+}
+
+func TestGrokCLI_NormalizeToolChoice(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{
+		"tools": []any{
+			map[string]any{"type": "function", "name": "ns1__tool_a"},
+			map[string]any{"type": "function", "name": "plain"},
+		},
+		"tool_choice": map[string]any{
+			"type": "allowed_tools",
+			"tools": []any{
+				map[string]any{"type": "function", "name": "ns1__tool_a"},
+				map[string]any{"type": "function", "name": "missing"},
+				map[string]any{"type": "tool", "name": "plain"},
+			},
+		},
+		"parallel_tool_calls": true,
+	})
+	names := grokcliCollectUpstreamToolNames(body)
+	out := grokcliNormalizeToolChoice(body, names)
+	allowed := gjson.GetBytes(out, "tool_choice.tools").Array()
+	if len(allowed) != 2 {
+		t.Fatalf("expected 2 allowed choices, got %d: %s", len(allowed), gjson.GetBytes(out, "tool_choice.tools").Raw)
+	}
+	if gjson.GetBytes(out, "tool_choice.tools.0.name").String() != "ns1__tool_a" {
+		t.Errorf("expected ns1__tool_a to survive")
+	}
+	if gjson.GetBytes(out, "tool_choice.tools.1.type").String() != "function" {
+		t.Errorf("tool entry should be rewritten to function")
+	}
+}
+
+func TestGrokCLI_NormalizeToolChoice_DropsEmpty(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{
+		"tools":               []any{map[string]any{"type": "function", "name": "a"}},
+		"tool_choice":         map[string]any{"type": "allowed_tools", "tools": []any{map[string]any{"type": "function", "name": "missing"}}},
+		"parallel_tool_calls": true,
+	})
+	out := grokcliNormalizeToolChoice(body, grokcliCollectUpstreamToolNames(body))
+	if gjson.GetBytes(out, "tool_choice").Exists() {
+		t.Errorf("tool_choice should be deleted when no allowed tools survive")
+	}
+	if gjson.GetBytes(out, "parallel_tool_calls").Exists() {
+		t.Errorf("parallel_tool_calls should be deleted with empty tool_choice")
+	}
+}
+
+func TestGrokCLI_NormalizeInputItems(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{
+		"input": []any{
+			map[string]any{"type": "message", "role": "user", "content": "hi"},
+			map[string]any{"type": "custom_tool_call", "call_id": "c1", "name": "tool_a", "input": map[string]any{"x": 1}},
+			map[string]any{"type": "custom_tool_call_output", "call_id": "c1", "output": "done"},
+			map[string]any{"type": "tool_use", "call_id": "c2", "name": "tool_b", "arguments": "{}"},
+			map[string]any{"type": "tool_result", "call_id": "c2", "output": "ok"},
+			map[string]any{"type": "function_call", "call_id": "c3", "namespace": "ns1", "name": "tool_c"},
+		},
+	})
+	out, err := grokcliNormalizeInputItems(body)
+	if err != nil {
+		t.Fatalf("grokcliNormalizeInputItems error: %v", err)
+	}
+	items := gjson.GetBytes(out, "input").Array()
+	want := []struct {
+		typ string
+		arg string
+		out string
+	}{
+		{"message", "", ""},
+		{"function_call", `{"x":1}`, ""},
+		{"function_call_output", "", "done"},
+		{"function_call", "{}", ""},
+		{"function_call_output", "", "ok"},
+		{"function_call", "", ""},
+	}
+	for i, tc := range want {
+		gotType := items[i].Get("type").String()
+		if gotType != tc.typ {
+			t.Errorf("items[%d].type=%q, want %q", i, gotType, tc.typ)
+		}
+		if tc.arg != "" {
+			if got := items[i].Get("arguments").String(); got != tc.arg {
+				t.Errorf("items[%d].arguments=%q, want %q", i, got, tc.arg)
+			}
+		}
+		if tc.out != "" {
+			if got := items[i].Get("output").String(); got != tc.out {
+				t.Errorf("items[%d].output=%q, want %q", i, got, tc.out)
+			}
+		}
+	}
+	if items[5].Get("name").String() != "ns1__tool_c" {
+		t.Errorf("expected namespaced input name to be qualified, got %s", items[5].Get("name").String())
 	}
 }

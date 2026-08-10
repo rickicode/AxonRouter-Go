@@ -1,3 +1,9 @@
+- **Codex parity hardening (HIJ-377)** — improved stability, observability, and parity vs. CLIProxyAPI:
+  - Codex Live call sessions (`internal/api/handlers/v1/codexlive.go`) are now mirrored to a durable SQLite table (`codex_live_sessions`) when a database is attached, surviving process restarts with an explicit one-hour TTL and background expiry cleanup on store creation.
+  - The Codex reasoning replay cache (`internal/cache/codex_reasoning.go`) now enforces a global max-byte cap (default 128 MB, override via `AXON_CODEX_REASONING_MAX_BYTES`) and evicts oldest entries by total size in addition to the existing entry-count limit.
+  - Codex request telemetry is now collected in `internal/telemetry/codex.go` and exposed through the existing admin `/metrics` endpoint: `codex_requests_total`, `codex_incomplete_streams_total`, `codex_replay_hits_total`, and `codex_identity_confuse_total`.
+  - The Codex OAuth client ID (`internal/auth/codex/oauth.go`) can be overridden via `AXON_CODEX_OAUTH_CLIENT_ID`; the hardcoded value remains the default.
+  - Existing hardening verified/enforced: header blocklist strips `Cookie`, `Referer`, duplicate `Authorization`, and `X-Forwarded-*` before forwarding upstream; `ResponsesCompact` uses a bounded context timeout via `CODEX_RESPONSES_COMPACT_TIMEOUT_MS`; SSE parsing falls back to the `event:` line when JSON lacks `type`; and reasoning-replay session keys are derived after identity confusion so multi-turn replay stays consistent. Added/updated unit tests for each behavior.
 # Changelog
 
 All notable changes to AxonRouter-Go will be documented in this file.
@@ -7,8 +13,305 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Periodic health check with credentials** — `TestPool` (used by background health checker and single-pool test button) now also reads `proxy_username` and `proxy_password` from DB to reconstruct the full URL with auth before testing.
+
+## [0.3.30] - 2026-08-03
+
+### Fixed
+- **Proxy health check with credentials** — bulk import and single add now correctly include proxy credentials when testing proxy health. Previously, authenticated proxies were tested without credentials, causing them to fail even though they work fine.
+- **Periodic health check with credentials** — background health checker now also reads `proxy_username` and `proxy_password` from DB to reconstruct the full URL with auth before testing.
+
+## [0.3.29] - 2026-08-03
+
+### Fixed
+- **Developer role normalization in OpenAI executor** — `developer` role messages are now converted to `system` at the executor level using efficient gjson/sjson iteration, ensuring compatibility with non-OpenAI providers (DeepSeek, Groq, etc.) even for the non-streaming `Execute` path.
+
+## [0.3.28] - 2026-08-03
+
+### Changed
+- **Faster model sync** — reduced provider model sync interval from 24 hours to 1 hour for more frequent updates, especially for OpenCode providers whose models change frequently.
+
 ### Added
-- No unreleased changes yet.
+- **Manual model sync button** — added a "Sync models" button to the Providers page that triggers an immediate sync of all provider models from upstream endpoints. Shows a loading spinner and success/error toast notifications.
+
+
+
+## [0.3.27] - 2026-08-03
+
+### Fixed
+- **Developer role compatibility** — auto-convert `developer` role to `system` for non-OpenAI providers (DeepSeek, Groq, etc.) since `developer` is OpenAI's Responses-API rename that other providers reject.
+- **Proxy pool cascade delete** — connections are now hard-deleted when their proxy pool is removed, instead of just being soft-deleted.
+- **Bulk import list refresh** — proxy pool list now refreshes properly after bulk import; skipped items (duplicates/unhealthy) no longer counted as errors.
+- **Default noProxy** — both single and bulk proxy add now default to `localhost,127.0.0.1`.
+- **CI build order** — frontend is now built before lint to fix `go embed` check failure.
+
+## [0.3.26] - 2026-08-03
+
+### Added
+- **OpenCode auto-sync** — `oc-zen` and `oc-go` providers now automatically sync their model lists from upstream endpoints every 24 hours, matching the existing behavior of the `oc` (free) provider. Previously these providers only used the static embedded model list.
+
+### Fixed
+- **Failover routing hardening** — all request paths (chat, messages, responses, responses/compact, gemini) now exclude the connection that just failed from the next `getConnection` attempt, preventing the same exhausted account from being retried while the eligibility snapshot rebuilds. Affinity routing also honors this exclusion and the affinity cache is cleared on failover. Provider-unavailability classification is now model-aware so model-scope exhaustion surfaces a 429 instead of a generic 503. The emergency fallback also skips `quota_exhausted` connections whose daily cooldown has no benefit from retrying.
+
+## [0.3.25] - 2026-07-29
+
+### Fixed
+- **Cloudflare free-tier daily quota exhaustion** — Cloudflare accounts that hit the daily free neuron allocation are now locked out of the routing pool until the next UTC midnight instead of the generic 30-minute quota cooldown. Also fixes `quota_exhausted` in-memory state to use `SetQuotaCooldown`, preventing free-tier accounts from being auto-disabled after repeated daily quota hits.
+
+## [0.3.24] - 2026-07-28
+
+### Fixed
+- **Version check rate limit** — changed version check URL from `api.github.com` to `raw.githubusercontent.com` to avoid GitHub API rate limit (60/hr unauthenticated). Resolves "Check update failed: github api returned status 403" error.
+
+## [0.3.23] - 2026-07-28
+
+### Fixed
+- **Cloudflare bulk add validation** — frontend and backend now validate the `email|accountId|apiToken` pipe format for Cloudflare bulk imports. Frontend checks: exactly 3 parts, email contains `@`, accountId is 32-char hex. Backend checks: accountId is 32-char hex (both single and bulk add). Invalid lines are rejected with clear error messages instead of silently creating broken connections.
+
+### Fixed
+- **Cloudflare connection data cleanup** — swapped `api_key` and `accountId` fields for 6380 Cloudflare connections where the values were reversed during bulk import (accountId contained `cfat_` API tokens, api_key contained hex account IDs). AxonRouter restarted to re-seed connstate from corrected DB.
+
+## [0.3.22] - 2026-07-28
+
+### Added
+- **Kiro live catalog consolidation** — live model catalog fetching, caching, fallback, and variant expansion now live alongside the static catalog in `internal/provider/kiro/catalog.go`, matching the 9Router `kiroModels.js` behavior previously split across `catalog.go` and `models.go`. The helper file `models.go` was removed; live fetch helpers moved into `catalog.go` with the same 5-minute TTL cache and static-catalog fallback. Upstream models are expanded into base / `-thinking` / `-agentic` / `-thinking-agentic` variants with human-readable display names, `rateMultiplier`, and `contextLength`. Curated metadata (Vision/Reasoning/Search capabilities, content strip lists, descriptions) is merged on top of live responses so known models keep their flags. Adds regression tests in `internal/provider/kiro/catalog_test.go` and `models_test.go` for fetch success + cache hit, fallback on failure, and variant expansion.
+### Added
+- **Provider registry expansion (search, media, Chinese/regional, developer/niche)** — added 22 new built-in provider prefixes to close coverage gaps vs. 9Router/OmniRoute:
+- Search: `brave`, `tavily`, `exa`, `jina`, `google-pse`, `firecrawl` (webSearch/webFetch service kinds).
+- Media: `fal`, `black-forest-labs`, `assemblyai`, `cartesia`, `edge-tts` (image/video/tts/stt).
+- Chinese/regional: `qwen`, `alicode`, `kimi-coding`, `iflow`, `volcengine-ark`, `hunyuan` (LLM).
+- Developer/niche: `nanobanana`, `topaz`, `puter`, `comfyui` (image/LLM).
+Each provider is seeded in `provider_types` with format `openai`, appropriate base URLs, categories, and service kinds; registered in the OpenAI executor and OpenAI-compatible error translator; aliases added to `provider.Registry`; starter model catalogs appended to `internal/models/models.json`; and STT/TTS executors updated for `assemblyai`, `cartesia`, and `edge-tts`.
+- **CommandCode AI provider** — new built-in `commandcode` provider (alias `cmd`) ported from OmniRoute. Adds `internal/executor/commandcode.go` that routes OpenAI-compatible chat completions and streaming to `https://api.commandcode.ai/alpha/generate`, supports the `/provider/v1/models` model list, merges `system`/`developer` messages, clamps `max_tokens` to the upstream ceiling of 200k, and strips empty tool arrays. Registers the provider in `internal/executor/registry.go`, `internal/provider/aliases.go`, `internal/db/migrations.go`, and `internal/api/handlers/v1/models.go`. Seeds 18 CommandCode models in `internal/models/models.json` and capability entries in `internal/models/capabilities.json`. The Svelte frontend catalog and logo were already added in a prior change; this backend completes the integration. Adds `internal/executor/commandcode_test.go`, `internal/provider/aliases_test.go`, and `internal/models/catalog_test.go` coverage.
+- **Smart-router virtual models (`smart/auto`, `smart/auto-fast`, `smart/auto-quality`)** — new `internal/smart` package resolves virtual model ids to concrete `provider/model-id` candidates based on request complexity, live telemetry from `request_logs`, provider availability, capability requirements, and API-key allowlists. Virtual model registry is persisted in settings as `smart_router_virtual_models` and consumed by the dashboard Smart Router settings page. Smart routing runs before combo resolution for `/v1/chat/completions`, `/v1/messages`, and `/v1/responses`, with transparent fallback to normal resolution when no eligible candidate is found. Includes `internal/smart/features_test.go` and `internal/smart/router_test.go`.
+
+### Added
+- **MCP stdio-SSE bridge for local tool servers** — new `internal/mcp` package registers local MCP servers in an SQLite `mcp_servers` table and exposes them to remote clients via a stdio-SSE bridge. Admin CRUD endpoints (`GET/POST/PATCH/DELETE /api/admin/mcp`, `POST /api/admin/mcp/:id/test`, `GET /api/admin/mcp/:id/tools`) are wired for both session JWT and master API key auth. The SSE endpoint `GET /api/admin/mcp/:id/sse` spawns a per-session subprocess and implements the Anthropic MCP SSE contract (`endpoint` event + `message` events); client messages are delivered via `POST /api/admin/mcp/:id/message?sessionId=xxx`. Subprocesses are reaped by max idle time or disconnect, with restart policies (`always`, `on-failure`, `never`) and a configurable max concurrent clients cap. Command/args are validated to block shell metacharacters; stderr is logged only and never forwarded to clients. A new dashboard page at `/mcp` lists servers, supports add/edit/delete, tests connections, discovers tools, and copies the SSE URL. Added `internal/mcp/mcp_test.go` with CRUD, validation, parsing, and subprocess integration tests. Updated `openspec/specs/api/spec.md` and added `docs/mcp-setup.md`.
+
+- **Provider detail connection-status counters** — the provider detail page now displays fixed status counts next to the Connections heading: total, ready, rate-limited, quota-exhausted, and disabled. Counts are sourced from the provider's existing `status_counts` payload, making it easy to see why a provider's connection pool appears smaller than expected.
+- **Connection pagination limits** — provider detail connections now support 200 and 500 items per page (up from the previous 100 maximum). The backend list endpoint accepts per-page values up to 500 and the "Load all" path fetches 500-row pages for faster bulk exports.
+
+## [0.3.21] - 2026-07-27
+### Added
+- **OAuth quota auto-ping scheduler for Claude and Codex** — new `internal/background/auto_ping.go` runs a lightweight background scheduler that sends a minimal, fail-silent HTTP ping after detected quota reset windows for enabled OAuth connections. Provider-specific configs define ping URLs and headers for `claude` (`/v1/models`) and `cx`/Codex (`/backend-api/wham/usage`). Configuration (`claude_auto_ping`, `codex_auto_ping`) and runtime metrics (`auto_ping_metrics`) are persisted in SQLite settings; per-connection toggles are exposed on the provider detail page for Claude and Codex. The feature is opt-in, uses no user data, and only re-pings after the reset timestamp advances or the fallback interval has elapsed. Added `internal/background/auto_ping_test.go`.
+- **Cursor IDE token auto-import** — new built-in `cursor` provider and `POST /api/admin/oauth/cursor/import` endpoint read `cursorAuth/accessToken` from the Cursor VS Code: SQLite state file (`~/.config/Cursor/User/globalStorage/state.vscdb`, plus macOS and Windows variants), validate it with Cursor's upstream `api2.cursor.sh/auth/usage` API, and create a ready OAuth connection. Logs include only metadata (token and email hashes, user identifiers); the raw token is never logged. If `state.vscdb` is missing or has no token, the endpoint returns 404 with the tried paths so the dashboard can show the manual import guide. The provider detail page adds an "Import from Cursor IDE" button in the token-import tab. Added `internal/auth/cursor` and `internal/api/handlers/admin/cursor_import_test.go` unit tests.
+- **Grok Build CLI tool card and driver** — added `grok-build` to the CLI Tools catalog and implemented `grokBuildDriver` in `internal/api/handlers/admin/clitools_drivers.go`. The driver writes a `[model.9router]` custom model entry to `~/.grok/config.toml`, sets it as the default model, and exposes the generated config and `AXONROUTER_API_KEY` env block in the dashboard.
+- **Claude Code topic-naming filter** — new `cc_filter_naming` setting (default `false`) detects Claude Code's background title-generation requests on `POST /v1/messages` using safe literal prompt matching and returns a local Anthropic-compatible response without forwarding to any upstream provider. Adds a toggle in the CLI Tools Claude setup dialog. Includes unit tests for detection and non-streaming/streaming fake responses.
+- **Remaining CLIProxyAPI `/v1` surface gaps (P2)** — added handlers and route registration for `POST /v1/completions` (legacy OpenAI completions, converting prompt→messages and translating the response back), `POST /v1/images/edits` (JSON and multipart/form-data input, forwarded to `/v1/images/edits`), Codex alpha search at `POST /v1/alpha/search` and `POST /backend-api/codex/alpha/search` (forwarded to the upstream Codex endpoint using an eligible `cx` connection), and the XAI/OpenAI video surface (`POST /v1/videos`, `POST /v1/videos/generations`, `POST /v1/videos/edits`, `POST /v1/videos/extensions`, `GET /v1/videos/:request_id`, plus `POST /openai/v1/videos`, `GET /openai/v1/videos/:video_id`, and `GET /openai/v1/videos/:video_id/content`). `/v1/models` now switches between OpenAI and Claude response formats based on the `Anthropic-Version` header or a `claude-cli` User-Agent. Added unit tests for each new handler.
+
+- **Native Google Gemini `/v1beta` surface** — new handlers in `internal/api/handlers/v1/gemini.go` expose `GET /v1beta/models`, `GET /v1beta/models/{model}`, `POST /v1beta/models/{model}:{generateContent,countTokens,streamGenerateContent}`, and `POST /v1beta/interactions`. Model targets under `/v1beta/interactions` are translated from the interactions shape to native Gemini and back; agent targets and streaming interactions are rejected with a clear error. `GeminiExecutor.CountTokens` now implements the `executor.TokenCounter` interface. Routes are wired behind auth, rate-limiting, and `TrackActive` middleware in `internal/api/router.go`, and requests are logged with `apiType: "gemini"`. Added `internal/api/handlers/v1/gemini_test.go` covering the catalog, single-model lookup, generateContent passthrough, countTokens, upstream error passthrough, and interactions conversion.
+
+- **Codex Live and Realtime `/v1` routes** — added `POST /v1/live`, `GET /v1/live/:call_id`, `POST /v1/realtime/calls`, `GET /v1/realtime/calls/:call_id`, and `GET /v1/realtime`. `CodexLive` forwards SDP/bootstrap requests to the upstream Codex realtime calls endpoint using a selected Codex connection and stores the resulting session. `CodexLiveSideband` upgrades the client to a WebSocket and relays frames bidirectionally to the Codex sideband endpoint. Multipart SDP/session payloads are rewritten to JSON, protocol headers are forwarded, and session affinity routing is supported. Added unit tests covering forwarding, multipart normalization, model allowlist enforcement, sideband relay, and call ID extraction.
+
+- **Generic `/v1/responses/compact` passthrough for OpenAI-compatible providers** — `ResponsesCompact` no longer rejects non-Codex providers. `OpenAIExecutor.ResponsesCompact` forwards non-streaming requests to the upstream `/responses/compact` endpoint, strips the `stream` field, and returns the compacted Responses-shape JSON. Existing Codex compact behavior is preserved. Added handler tests for generic OpenAI-compatible provider success and streaming rejection.
+
+- **ZenMux model passthrough defaults and regression tests** — `internal/providercfg/compatibility.go` now seeds `StripProviderPrefix: "zenmux/"` and `"zenmux-free/"` defaults for `zenmux` and `zenmux-free`, and `internal/executor/registry.go` already routes both prefixes through the OpenAI executor. Added regression tests confirming registry model splitting, compatibility prefix stripping, upstream model IDs are not double-prefixed, free-tier models are accepted with a free connection, and paid-tier models are rejected when no paid ZenMux connection exists.
+
+- **Log-directory size enforcement** — new `AXON_LOGS_MAX_TOTAL_SIZE_MB` config variable (`LogsMaxTotalSizeMB`) limits the total size of files in the configured log directory. A background cleaner removes the oldest `.log`/`.log.gz` files when the directory exceeds the cap, leaving the currently active `axonrouter.log` untouched. Wired from `cmd/server/main.go` with regression tests in `internal/logging/log_dir_cleaner_test.go`.
+
+- **Claude ↔ OpenAI `/v1/responses` translator** — new `internal/translator/openai_responses/claude` package registers bidirectional transforms in the translator registry. OpenAI Responses requests are converted to Claude Messages API format (`instructions` → system message, `input[]` → `messages[]`, `function_call`/`function_call_output` ↔ `tool_use`/`tool_result`, tools → `input_schema`, `reasoning.effort` → `thinking.type` + `budget_tokens`, synthetic `toolu_` IDs). Claude SSE responses are mapped to OpenAI Responses SSE events and a non-streaming final response object with `output` array and usage.
+- **Claude → OpenAI Chat Completions parity** — `internal/translator/claude/openai/request.go` now preserves `thinking` blocks as `reasoning_content` for assistant messages and keeps `redacted_thinking` content blocks intact for OpenAI-compatible providers that accept reasoning content. `cache_control` objects are preserved on system prompts, message content blocks, and tools, and OpenAI-style `response_format` objects are passed through unchanged. Added regression tests for each behavior.
+- **Native Claude ↔ Antigravity translation** — new `internal/translator/claude/antigravity` request converter and `internal/translator/antigravity/claude` response converter let Claude-format clients (Kiro, Claude Code) use Antigravity providers directly. Claude `messages`, `system`, tools, `tool_choice`, thinking blocks, and images are mapped to Antigravity's Gemini-compatible envelope; upstream Antigravity responses are translated back into Claude SSE events (`message_start`, `content_block_start/delta/stop`, `message_delta`, `message_stop`). Invalid or unsigned Claude thinking signatures are stripped, trailing empty assistant turns are removed, and tool names are cloaked/uncloaked consistently with the Antigravity conventions.
+- **Claude thinking signature validation helpers** — new `internal/signature` package provides `IsValidClaudeThinkingSignature`, `NormalizeClaudeThinkingSignature`, and `StripInvalidClaudeThinkingBlocks` (E/R prefix + base64-layer validation) for request sanitization and response normalization.
+- **Codex `/responses` surface expansion** — added `POST /backend-api/codex/responses` as a transparent alias for `POST /v1/responses`, `POST /v1/responses/compact` (plus the alias) for non-streaming context compaction, and `GET /v1/responses` WebSocket upgrade wired to a bidirectional proxy to Codex's Responses WebSocket endpoint. `CodexExecutor.ResponsesCompact` reuses the shared Codex request normalization, rejects `stream=true`, strips the `stream` field, and forwards to `https://chatgpt.com/backend-api/codex/responses/compact`. Added unit tests for compact streaming rejection, compact success, and WebSocket upgrade/relay.
+- **Stream readiness timeout for Antigravity provider** — new `STREAM_RESPONSE_HEADER_TIMEOUT_MS` env var (default 30s) sets `http.Transport.ResponseHeaderTimeout` on all upstream HTTP clients. Requests that do not receive response headers within the window abort with `StreamReadinessTimeoutError`, which embeds a 504 Gateway Timeout `UpstreamError` so clients see HTTP 504. Because the timeout covers only the header window, normal requests that receive headers continue streaming unaffected. Added unit tests verifying the timeout triggers when headers are delayed and is ignored when headers arrive quickly.
+- **Antigravity grounding URL resolution and `totalTokenCount` extraction** — `ExtractTokensFromBody` and `ExtractTokensFromSSEChunk` now extract `totalTokenCount` from Gemini `usageMetadata` for both streaming and non-streaming responses. Added `internal/executor/antigravity_grounding.go` which resolves `vertexaisearch.cloud.google.com/grounding-api-redirect/` URLs to their final targets via HEAD requests with redirects disabled. Resolution results are cached and uncached URLs are resolved asynchronously so the response is never blocked. Both streaming and non-streaming Antigravity responses pass through the resolver before translation.
+- **Experimental Claude betas management** — `internal/executor/claude.go` now always includes the base experimental betas (`claude-code-20250219`, `oauth-2025-04-20`, `interleaved-thinking-2025-05-14`, `prompt-caching-scope-2026-01-05`, `redact-thinking-2026-02-12`, `token-efficient-tools-2026-03-28`) in the upstream `anthropic-beta` header. Client-provided betas from the request body are extracted and merged with the base list, with deduplication. The same merge logic applies to Claude `Execute`, `ExecuteStream`, and `CountTokens`. Added unit tests covering extraction, deduplication, and header merging.
+- **Claude cloaking, CCH signing, and OAuth tool-name remapping** — ported from CLIProxyAPI to `internal/executor/claude_cloaking.go`, `internal/executor/claude_signing.go`, and `internal/executor/claude_tools.go`. `ClaudeExecutor` now injects Claude Code-style system prompts and fake user IDs, obfuscates configured sensitive words, signs Anthropic billing headers with xxHash for OAuth traffic, and renames third-party tool names (e.g., `bash` → `Bash`) to match Claude Code conventions. Original tool names are restored on responses using a per-request reverse map. Config flags: `AXON_DISABLE_CLAUDE_CLOAK`, `AXON_CLAUDE_CLOAK_MODE` (`auto`/`always`/`never`), `AXON_CLAUDE_CLOAK_SENSITIVE_WORDS`, and `AXON_CLAUDE_CCH_SIGNING`.
+- **Expose per-request cost to API consumers via response headers** — every proxied response now includes `X-AxonRouter-Response-Cost`, `X-AxonRouter-Tokens-In`, `X-AxonRouter-Tokens-Out`, and `X-AxonRouter-Cost-Estimated`. Non-streaming JSON responses attach them as normal headers; streaming responses declare HTTP trailers and emit the same values after the SSE stream completes. Cost values match the estimation logic used for `request_logs.cost_usd`, and `X-AxonRouter-Cost-Estimated` is `true` only when the cost is derived from model pricing rather than provider-reported exact cost.
+- **Output-side compression via system-prompt injection** — new `internal/compression/engines/output` engine injects model-behavior prompts into OpenAI-style `messages` arrays. Levels are `caveman` (ultra-terse) and `ponytail` (YAGNI/minimal code). The engine is fail-open, is registered in the compression pipeline, records `output_<level>` as a separate technique without double-counting input-side metrics, and can be enabled via `GET/PUT /api/admin/settings/compression`. The Optimization dashboard page adds a toggle and level selector under the Compression tab.
+- **Codex executor parity with CLIProxyAPI** — transparent zstd/gzip/deflate request decompression in `internal/api/handlers/v1/handler.go`; configurable `STREAMING_BOOTSTRAP_MAX_WAIT_SECONDS` ceiling for upstream `Retry-After` / "resets in" cooldowns in `internal/connstate/detector.go`; reasoning replay cache in `internal/cache/codex_reasoning.go` with `X-Codex-Reasoning-Replay-Session` key support and automatic injection of cached reasoning/function_call items into Codex requests; image generation tool auto-injection when Codex model names contain image aliases; identity confuse/expose helpers to rewrite Codex request/response identity fields; and `CodexIncompleteStreamError` implementing a request-scoped interface so `connstate.DetectError` classifies incomplete streams as transient network errors. Added unit tests for each behavior.
+- **Cowork (Claude Desktop 3P) CLI tool driver** — registered `cowork` in the CLI Tools catalog and implemented `coworkDriver` in `internal/api/handlers/admin/clitools_drivers.go`. The driver writes Claude Desktop's per-user `claude_desktop_config.json` for Cowork on 3P, pointing `enterpriseConfig.inferenceProvider` at the gateway's Anthropic-compatible `/v1/messages` endpoint. Supports model discovery and explicit model pinning. Added the Cowork card to the dashboard CLI Tools page.
+### Fixed
+- **`go build ./...` now passes on a fresh checkout** — `web/embed.go` uses `//go:embed all:build`, but `web/build/` was gitignored and missing after clone, causing an immediate embed error. A tracked `web/build/.gitkeep` placeholder now keeps the embedded directory non-empty, and `.gitignore` ignores only generated build artifacts so the placeholder remains in version control. The real frontend is still embedded normally once `cd web && npm run build` is run.
+- **Claude streaming terminal errors now emit `event: error` SSE frames** — `internal/api/handlers/v1/handler.go::streamResponse` and the `/v1/messages` failover path previously emitted in-band `data: {"error":...}` frames (or dropped the connection) when a Claude stream failed. They now emit Anthropic-compatible `event: error\ndata: {"type":"error","error":{"type":"...","message":"..."}}\n\n` frames and close the stream cleanly, matching CLIProxyAPI behavior. OpenAI-compatible streams continue to use `data:` errors followed by `[DONE]`. Added unit tests for Claude and OpenAI error framing.
+- **Codex `/v1/responses` parity with CLIProxyAPI** — `CodexExecutor.ExecuteStream` now patches empty `response.output` arrays in the final `response.completed` / `response.done` event using output items collected from preceding `response.output_item.done` events, matching the non-stream path and CLIProxyAPI behavior. Also normalizes native OpenAI Responses requests before forwarding to Codex: coerces string `input` into a user message array, converts `role=system` to `developer`, forces `stream=true`/`store=false`/`parallel_tool_calls=true`/`include=["reasoning.encrypted_content"]`, rewrites `web_search_preview` aliases to `web_search`, and strips unsupported fields while preserving the Codex allow-list.
+- **Fusion panel/judge text extraction now supports Claude, Gemini, and OpenAI Responses** — `extractAssistantContent` in `internal/api/handlers/v1/chat.go` previously only read `choices[0].message.content`, so panels or judge models that reply in Anthropic Claude (`content[].text`), Google Gemini (`candidates[0].content.parts[].text`), or OpenAI Responses (`output[].message.content[].output_text`) were treated as empty and failed fusion. The extractor now parses all four shapes and falls back to `output_text`/`text`, with unit tests covering each format.
+- **Antigravity max output tokens cap and Claude conversation fix** — ported from OmniRoute. `internal/executor/antigravity.go::sanitizeRequest` now hard-caps `generationConfig.maxOutputTokens` to `16384` and emits a warning log when capping; previously, requests up to 64K could be rejected by the upstream. `internal/translator/antigravity/openai/request.go::convertOpenAIRequestToAntigravity` now strips trailing assistant ("model") turns from Claude-branded Antigravity requests, because Vertex AI rejects assistant-ending conversations; native Gemini-branded Antigravity requests are left untouched.
+
+
+### Added
+- **Claude prompt caching support** — new `internal/executor/claude_caching.go` automatically manages Anthropic `cache_control` breakpoints for Claude requests. It injects optimal breakpoints when missing (last tool, last system prompt, second-to-last user turn), enforces Anthropic's 4-breakpoint limit, and normalizes TTL ordering so a `1h` block never follows a `5m` block. Wired into `ClaudeExecutor.Execute`, `ExecuteStream`, and `CountTokens`. Includes unit tests.
+- **Signature sanitization for Claude cross-provider conversations** — new `internal/signature` package ports provider-aware thinking/tool signature compatibility from CLIProxyAPI. `SanitizeClaudeMessagesForClaudeUpstream` drops invalid cross-provider thinking blocks, normalizes native Claude signatures to provider-native E-form, drops empty thinking placeholders and empty messages, and strips tool provenance signatures before forwarding to Anthropic. The sanitizer is called from `ClaudeExecutor` and the OpenAI-to-Claude request translator; decisions and counts are logged at debug level.
+- **Claude thinking block management** — new `internal/executor/claude_thinking.go` helpers enforce Anthropic's extended-thinking request rules: `disableThinkingIfToolChoiceForced` removes `thinking` and `output_config.effort` when `tool_choice.type` is `any` or `tool`; `normalizeClaudeSamplingForUpstream` strips `temperature`, `top_p`, and `top_k` for thinking-enabled requests; `ensureClaudeThinkingDisplay` defaults `thinking.display` to `"summarized"` when the client does not set it. Wired into `prepareClaudeBody` so `Execute`, `ExecuteStream`, and `CountTokens` all apply the rules in the required order. Added unit tests covering forced-tool removal, sampling normalization, display defaults, and client-explicit `display: "omitted"` preservation.
+- **Google One AI credits retry for Antigravity provider** — new `ANTIGRAVITY_CREDITS` config supports three modes: `off` (default, no `enabledCreditTypes`: ["GOOGLE_ONE_AI"] injection), `always` (inject `enabledCreditTypes: ["GOOGLE_ONE_AI"]` on every request), and `retry` (inject only after a 429 `quota_exhausted`). On explicit `INSUFFICIENT_G1_CREDITS_BALANCE` the auth is permanently disabled from credits retry. Includes an in-memory credits-balance cache with 5-minute TTL (`internal/cache/antigravity.go`) and unit tests for config parsing, cache behavior, and executor retry logic.
+- **Codex tier cost multipliers** — `service_tier` is now detected from `/v1/chat/completions` and `/v1/responses` request bodies and persisted on `request_logs.service_tier`. Estimated costs apply tier multipliers: `flex` 0.5×, `priority` 1.5×, `fast` 2.5×, with `standard`/unknown/default as 1.0×. Multipliers are configurable per model via new `model_pricing.tier_flex_multiplier`, `tier_priority_multiplier`, and `tier_fast_multiplier` columns, surfaced through the admin model-pricing API. Existing upstream-reported costs are preserved unchanged.
+- **Flat-rate provider awareness for cost display** — added a per-provider `flat_rate` flag in `internal/providercfg.ProviderSettings` (persisted to the provider JSON config) and exposed it through the admin provider settings API. When `flat_rate=true`, dashboard usage/analytics report `$0` cost (via `flat_rate`-aware SQL aggregates) while `request_logs.cost_usd` continues to store the estimated cost for internal budget/quota tracking. API responses set `X-AxonRouter-Response-Cost: 0` for flat-rate providers, and each log row records `flat_rate=true`. The provider routing modal gained a Flat-rate toggle so operators can mark subscription/cookie-web providers (e.g., Kimi Coding, GLM Coding).
+- **Fusion panel tool-history flattening** — `stripFusionTools` now flattens tool/function turns and Anthropic-style `tool_use`/`tool_result` content blocks into plain assistant prose for fusion panel requests. Panel models retain conversational context without being able to emit `tool_calls`, matching the 9router reference implementation.
+- **OpenAI Chat Completions → Claude translator parity** — `internal/translator/openai/claude/request.go` now maps `reasoning_effort` to Claude `thinking` config using adaptive `output_config.effort` for models that advertise thinking levels (e.g., Claude 4.6/4.7) and legacy `thinking.budget_tokens` for older models. `cache_control` is preserved on system blocks, message content parts, and tools via `internal/translator/common`. Object-form `tool_choice: {"type":"function","function":{"name":"..."}}` is now supported and maps to Claude's `tool` choice with `_cc` name cloaking. Added regression tests for reasoning, cache_control, and tool_choice.
+
+
+### Changed
+- **Concurrent provider detail test-all for large providers** — `Test all` on the provider detail page now processes connections sequentially for small lists, but runs with two parallel workers when there are more than 100 accounts. Each row is still refreshed inline after its test completes.
+
+### Fixed
+- **Fusion judge body preserves full conversation history** — `buildFusionJudgeBody` no longer replaces the entire `messages` array with a synthetic system prompt plus the raw user question. It now unmarshals the original request, keeps system instructions, developer messages, tool results, and conversation history, and appends the judge directive as a new user turn. This restores context for the judge model and fixes degraded synthesis quality. Added unit tests covering multi-turn conversation preservation and anonymized source labels.
+- **Capability detection now scans only the trailing user turn** — `internal/combo/capabilities.go::DetectRequiredCapabilities` no longer scans the full message history; it only inspects messages after the last assistant turn. Text-only follow-ups in conversations that previously contained an image no longer force `Vision = true`, preventing unnecessary routing to vision-capable models. Added unit tests for trailing-image detection and text-only follow-ups after an image exchange.
+- **Combo transient-error cooldown before failover** — `internal/api/handlers/v1/chat.go::handleComboRequest` now waits 2 seconds (capped at 5 seconds) before trying the next combo connection when an upstream returns HTTP 502/503/504. Non-transient errors still fail through immediately, preventing retry storms against briefly-overloaded providers. Added unit tests covering 502/503/504 cooldown and 400/401/429/500 no-cooldown paths.
+- **Combo step load failures now propagate errors** — `internal/combo/loadAllSteps()` now returns `(map[string][]db.ComboStep, error)` instead of silently logging and returning an empty map. `snapshotFromDB()` propagates the error, so `RefreshFromDB()` no longer replaces the in-memory cache with combos that are missing their steps. Added a regression test verifying the cache is left unchanged when the `combo_steps` query fails.
+- **Security Warning modal respects 24-hour dismissal** — `ChangePasswordModal` is no longer shown for 24 hours after the user dismisses it. Dismissal is stored as a timestamp in `localStorage`/`sessionStorage` and automatically expires after one day. The old boolean dismissal flag is migrated to the new timestamp format on first load.
+- **Fusion single-panel synthetic fallback** — `handleFusionRequest` now re-runs the lone successful panel model using the original request when only one panel succeeds. The client receives the real provider response (including `usage`, `finish_reason`, and `tool_calls`) instead of a stripped synthetic envelope. If the re-run fails, the handler falls back to the synthetic envelope. Added unit tests covering both the real-response path and the fallback path.
+- **Fusion streaming judge failure fallback** — `handleFusionRequest` now falls back to the first successful panel response and emits a terminating `data: [DONE]\n\n` frame when the judge model's stream fails mid-way. Previously the handler returned immediately, leaving clients with a truncated SSE stream.
+
+### Removed
+- **Deprecated `amazon-q` provider** — removed the `amazon-q` (and alias `aq`) built-in provider and its catalog/model entries. It is superseded by the `kiro` provider; existing AWS tokens cached as `amazon-q-auth-token.json` are still usable because the Kiro auto-import flow now checks only `kiro-auth-token.json`.
+
+## [0.3.20] - 2026-07-23
+
+### Added
+- **Deduplicate OAuth connections by account** — new `internal/db.UpsertOAuthConnection` helper looks up an existing OAuth row by `provider_type_id` + `oauth_email` and updates its tokens, resets `status='ready'` and `is_active=1`, and returns the existing id instead of creating a duplicate. Added the `connections.oauth_email` column and a partial unique index `idx_connections_oauth_account`. Wired the upsert into the generic OAuth callback, Kiro auth flows, OAuth token import, and Codex CLI credential import.
+
+### Changed
+- **Account status model refactor** — collapsed the legacy terminal statuses `auth_failed`, `balance_empty`, and `suspended` into `disabled` with a new `disabled_reason` column. Added a non-destructive migration that preserves the cause of existing terminal rows as `manual`, `auth_failed`, `balance_empty`, or `suspended`. Updated connection state, admin connection handlers, token refresh scheduler, quota fetcher, lifecycle cleanup, and dashboard provider summary to set, read, and expose `disabled_reason`. Updated dashboard and provider detail UI so the status distribution, filters, badges, and color helpers only render the canonical statuses (`ready`, `rate_limited`, `quota_exhausted`, `disabled`). Dashboard stats and provider list now count all connections (including disabled), and provider cards expose a `disabled_reasons` breakdown.
+
+### Fixed
+- **Synthetic streaming finish_reason for strict clients** — `internal/api/handlers/v1/handler.go::streamResponse` now detects whether a chat-completions stream ended without emitting a non-null `finish_reason`. If so, it synthesizes a terminal `data: {"choices":[{"finish_reason":"stop"}]}\n\n` frame before `data: [DONE]\n\n`. This fixes strict clients such as PI Coding Agent that throw `Stream ended without finish_reason` when the upstream omits the terminal chunk (OpenCode and other clients tolerated the omission).
+- **Global HTTP status-code classification** — moved the unambiguous status-code mappings (`401`/`403` → auth, `408` → timeout, `5xx` → server) into a declarative `StatusCodeCategories` table in `internal/connstate/patterns.go`. Ambiguous codes (`402`, `429`, `404`) still use body-pattern fallbacks so providers cannot force a false classification with a generic status code. Refactored `ClassifyFromResponse` to use the new table and added regression tests.
+- **Frontend provider detail test-all** — the `Test all` button on the provider detail page now runs connection tests one-by-one in the browser using the existing `/connections/:id/test` endpoint, refreshing each row inline as it completes instead of calling the backend bulk test endpoint. The per-page selector now includes an `All` option that loads every connection across pages and displays them in a single table.
+- **Disabled connections are no longer auto-deleted** — `LifecycleManager.Cleanup` now only removes legacy terminal rows (`auth_failed`, `suspended`, `balance_empty`). Canonical `disabled` rows are preserved and must be deleted manually by the operator.
+- **Provider detail connection list shows disabled rows** — the admin `/connections/:provider` endpoint now includes `disabled` (is_active=0) rows in the default list and when filtering by status `disabled`. The active-only filter is only applied for `ready`, `rate_limited`, and `quota_exhausted`. This fixes the inconsistency where provider cards showed disabled counts but the detail page only displayed active accounts.
+
+## [0.3.19] - 2026-07-22
+
+### Added
+- **Standalone OAuth token refresh scheduler** — `internal/background/token_refresh_scheduler.go` runs independently of the quota scheduler, scans active OAuth connections, refreshes tokens before expiry, and marks connections `auth_failed` on unrecoverable refresh errors.
+- **Forced token refresh retry on quota auth failures** — when a quota fetch fails with an auth error (HTTP 401/403 or equivalent), the quota fetcher performs an unconditional token refresh via `auth.Manager` and retries the fetch once. This applies globally to all OAuth providers.
+- **Bedrock tool schema normalization** — strips unsupported JSON Schema keywords (`additionalProperties`, `anyOf`, `oneOf`, `allOf`, `not`, `$schema`, `$id`, `$ref`, `$defs`, `definitions`) from tool schemas sent to Bedrock and ensures every `function.parameters` object has `type: object` with a `properties` map. Required strings that do not match property keys are filtered out, and nested schemas are normalized recursively.
+- **API-key allowed_models admin persistence** — `POST /api/admin/api-keys` now accepts `allowed_models`, persists the list as JSON in `api_keys.allowed_models`, and returns it in the creation response. `GET /api/admin/api-keys` parses the stored JSON and includes `allowed_models` in each listed key.
+- **API-key allowed_models loaded by auth middleware** — `Auth` now reads `api_keys.allowed_models`, parses it into a set, and stores it both in the Gin context (`allowed_models`) and on the request context via `AllowedModelsFromContext`. Invalid JSON is treated as unlimited.
+- **Enforce allowed_models on direct `/v1/*` routes** — all direct routing handlers (`/v1/chat/completions`, `/v1/messages`, `/v1/messages/count_tokens`, `/v1/responses`, `/v1/embeddings`, `/v1/images/generations`, `/v1/video/generations`, `/v1/audio/speech`, `/v1/audio/transcriptions`, `/v1/unified`) now reject requests with `403 Forbidden` when the requested model is not in the API key's allowlist. The check uses the same full-ID and provider-prefix matching as the `GET /v1/models` filter, and a missing or empty allowlist preserves unlimited access.
+- **Amazon Q built-in provider** — new `amazon-q/` (and `aq/`) prefix for Amazon Q Developer, reusing the Kiro executor and translator. Registers `amazon-q` in provider types, the executor registry, and the dashboard catalog with a static model list mirroring Kiro (`auto`, Claude 4.x/4.5/4.6/4.7/5, DeepSeek V3.2, MiniMax M2.x, GLM-5, and Qwen3 Coder Next).
+- **Kiro Claude 4.6 / 4.7 models** — adds `claude-sonnet-4.6`, `claude-opus-4.6`, `claude-sonnet-4.7`, and `claude-opus-4.7` base models with pricing seed so the full Claude 4.x family is routable.
+- **Kiro catalog sync** — keeps `internal/models/models.json` in sync with `internal/provider/kiro/catalog.go` by adding missing `auto` and `claude-sonnet-4` entries, plus a regression test to prevent future drift.
+- **QwenCloud built-in provider** — new `qwencloud/` prefix routing to the international DashScope Responses API (`https://dashscope-intl.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1/responses`) with API-key auth. Uses a dedicated `OpenAIResponsesExecutor` so both `/v1/responses` and translated `/v1/chat/completions` traffic hit the upstream `/v1/responses` endpoint. Includes dashboard catalog entry with the provided Alibaba logo and a seeded model list covering `qwen3.7-plus`, `qwen3.7-max`, `qwen3.6-plus`, `qwen3.6-max`, `qwen3.6-flash`, `qwen3.5-omni-plus`, `qwen-plus`, `glm-5.2`, `deepseek-v4-flash`, and `qwen3-coder-plus`.
+- **Filter `GET /v1/models` by API-key allowed models** — `internal/api/handlers/v1/models.go` now reads `allowed_models` from the Gin context (populated by auth middleware in task 02) and restricts the returned model list to entries whose full model ID or provider prefix appears in the set. An empty set preserves the previous unlimited behavior, and the dashboard's `ListActiveModels()` admin route is left unchanged.
+- **Dashboard API-key allowlist UI** — the API Keys page now lets operators create keys restricted to specific providers or models. Provider and model multi-selects are built from `providersApi.list()` and `modelsApi.list()`, validation blocks submission with a toast when a restricted mode is chosen with no selection, and the keys table shows a compact summary such as "Limited to 2 model(s)".
+- **API-key allowlist regression tests** — expanded unit tests for `filterAllowedModels`, `modelIDAllowed`, and `isModelAllowed` covering unlimited, exact full-ID, provider-prefix, combo, smart virtual model, and negative cases.
+
+### Fixed
+- **Kiro social token refresh** — `internal/auth/kiro/social.go` now sends `User-Agent: kiro-cli/1.0.0` during social code exchange and refresh, matching the working 9router flow against Kiro's auth service.
+- **Quota refresh passes provider-specific data** — `internal/quota/fetcher.go` forwards `provider_specific_data` strings to `auth.Credentials.ProviderSpecific` so fields like Kiro `profileArn` survive refresh.
+- **Tolerant quota refresh** — a failed token refresh no longer disables a connection when the current access token is still valid; the quota fetch continues and defers refresh to the next scheduler tick.
+- **Avoid over-clearing exhaustion cache** — `persistSuccess` no longer clears the entire exhaustion cache on every successful request, preserving model-scoped rate-limit entries that may still be active for other models.
+- **Deterministic Grok CLI failover test** — `TestGrokCLI_EndToEnd_FailoverAuthFailed` now pins the valid connection as recently-used so the invalid connection is consistently selected first.
+
+## [0.3.18] - 2026-07-20
+
+### Security
+- **Restrict master API key break-glass actions** — the programmatic `/admin/api/v1` master key can no longer change the admin password, restart/upgrade the gateway, download/restore backups, read/regenerate itself, or alter TLS config. It remains usable for all other admin-automation endpoints (providers, connections, models, combos, proxy pools, API keys, logs, usage, quota, settings, etc.).
+
+### Changed
+- **Routing hot-path optimizations** — reduced `getConnection` ready-snapshot latency by ~4.7× (17.3 µs → 3.7 µs) by capturing `time.Now()` once per candidate, removing redundant `RoutingMode()` lookups from the hot path, converting `ExhaustionCache` to `sync.Map`, and using `singleflight` to collapse concurrent first-time provider-config disk reads.
+- **Pre-materialized eligibility readyView** — `EligibilitySnapshot` now stores sorted `*ConnectionState` pointers per provider prefix so the routing loop avoids repeated `store.Get` map lookups.
+
+### Added
+- **Routing hot-path benchmarks** — `internal/api/handlers/v1/handler_benchmark_test.go`, `providercfg_benchmark_test.go`, `modellock_benchmark_test.go`, and `exhaustion_benchmark_test.go` baseline the connection-selection path.
+- **Per-model round-robin cursor** — round-robin counters are now keyed by `provider + "\x00" + modelID` so independent models on the same provider rotate separately and high-traffic models do not steal rotation from siblings.
+
+## [0.3.17] - 2026-07-20
+
+### Added
+- **Console log file rotation and dashboard Console page** — application logs are now written to a rotating on-disk file (`/tmp/axonrouter.log`) via `internal/logging/file.go` (2 MB max, 3 backups). A new `GET /api/admin/console-logs` endpoint tails up to 500 lines for the dashboard, and the new Console page under System shows live, auto-polling log output in the sidebar.
+- **Recency-aware connection rotation** — tracks an in-memory `lastUsedAt` timestamp per connection and uses it as a secondary sort key when building the eligibility snapshot and fallback candidate order, spreading simultaneous requests across siblings instead of concentrating them on the same freshly-selected connection.
+- **In-product upgrade, logs, and restart flow** — `POST /api/admin/upgrade` now returns per-step upgrade logs, and `POST /api/admin/restart` restarts the service; the About page and update-available modal show live logs and a restart prompt after upgrade completes.
+
+### Fixed
+- **Cloudflare Kimi reasoning stream hang** — defaults `chat_template_kwargs.thinking` to `false` for Cloudflare reasoning models unless the client explicitly requests reasoning, and normalizes upstream `reasoning` fields to OpenAI-standard `reasoning_content` in both streaming and non-streaming responses so `cf/moonshotai/kimi-k2.7` no longer appears stuck in thinking.
+
+## [0.3.16] - 2026-07-20
+
+### Added
+- **Auto-refresh OAuth tokens during connection test** — expired OAuth tokens are refreshed automatically before `TestConnection` validates the account.
+- Docker image build/push moved into the GitHub Actions release workflow.
+
+### Fixed
+- **CodeBuddy routing and quota display** — adds a fallback router path for CodeBuddy so requests reach the right translator and surfaces CodeBuddy quota as credits in the dashboard.
+- **Kiro OpenAI translator wiring** — wires the OpenAI→Kiro translator, refreshes provider-specific defaults (PSD), and syncs the live model catalog.
+
+## [0.3.15] - 2026-07-20
+
+### Added
+- Dashboard update modal with short changelog shown once per browser session when an update is available.
+- Sidebar badge on the About menu when an update is available.
+- Centralized `web/src/lib/health.ts` store for health/version/update state.
+- CLI `--version` / `-v` flag to print the current version without starting the server.
+
+### Changed
+- Renamed service-management CLI flag from `--startup` to `--service` (e.g., `axonrouter --service install`).
+- `installer.sh` now uses `axonrouter --service install`.
+- `POST /api/admin/upgrade` now rejects upgrades unless a newer release is actually available.
+- Upgrade now backs up the existing binary to `.bak` before replacing it and restores the backup if replacement fails.
+- `version.Checker` is now owned by `Router` and stopped during graceful shutdown.
+
+### Fixed
+- **CodeBuddy streaming reasoning leak** — aggregates `reasoning_content` deltas into a single block, strips non-standard SSE noise (`extra_fields`, null `function_call`, empty `refusal`, intermediate `usage`) so clients such as OpenCode don't render choppy "thinking" placeholders.
+- `installer.sh` no longer fails with `Init already exists` when upgrading an existing installation; it now reloads and restarts the axonrouter service automatically.
+- `Makefile` release target now pushes the `master` branch instead of `main`.
+
+## [0.3.14] - 2026-07-20
+
+### Added
+- **CodeBuddy executor wrapper** — adds a dedicated executor for the `codebuddy` provider that prepends a required leading `system` message and always calls the upstream streaming endpoint, aggregating SSE chunks back into a single non-streaming response.
+
+### Fixed
+- **Grok 4.5 model catalog limits** — corrected `grok-cli/grok-4.5*` entries in `internal/models/models.json` from 1M context / 65,536 output tokens to 500k context / 32,768 output tokens to match xAI's official Grok 4.5 spec.
+- **Grok CLI reasoning cache eviction** — replaced O(n·k) oldest-entry eviction with O(n log n) single-pass sort, added a background goroutine that purges expired replay entries every 5 minutes, and wired start/stop into the router lifecycle.
+
+## [0.3.13] - 2026-07-20
+
+### Added
+- **200-tool cap for `grok-cli`** — flattens and truncates large tool lists to the first 200 entries before sending upstream, with a warn log when truncation occurs.
+- **Transactional provider-account creation with deduplication, auto-priority, and reorder** — `AddConnection` now runs in a SQLite transaction, rejects duplicate `(provider, name)` or OAuth-token accounts with `409`, auto-assigns priority as `max + 1`, and normalizes priority ordering after every add/delete.
+- **Pre-save provider key validation** — backend rejects invalid API keys before persisting the connection; dashboard modal surfaces validation errors inline and blocks submit until the key passes.
+- **Per-model account lockout with exponential backoff** — rate-limit/quota errors lock only the failing `(connection, model)` pair, escalate backoff (`30s × 2^level` capped at `1h`), honor upstream `resets_at` timestamps, and clear automatically on success.
+- **In-memory device tracker ported from 9router/OmniRoute** — passive tracking on every `/v1/*` request after API-key resolution. Stores SHA-256 fingerprints of masked IP + truncated User-Agent, enforces TTL and per-key/total limits, and exposes no raw IPs.
+- **Admin device endpoint and dashboard UI** — `GET /api/admin/keys/:id/devices` returns device count and list; API Keys dashboard page shows count and a detail dialog with fingerprint, masked IP, UA, and last-seen time.
+- **OAuth mode in Add Connection modal** — explicit "Connect" button opens the existing backend OAuth flow in a popup, polls until completion, and refreshes the connection list on success.
+- **Bulk proxy-pool assignment** — `ProviderDetail` supports multi-selecting connections and applying/unbinding a proxy pool in one transaction; only available for proxy-pool providers (`oc`, `mimocode`).
+- **Device-tracker configuration** — env vars `DEVICE_TRACKER_TTL_MS`, `DEVICE_TRACKER_MAX_PER_KEY`, `DEVICE_TRACKER_MAX_TOTAL_DEVICES`.
+- **Live Kiro model catalog** — `internal/provider/kiro/models.go` calls `ListAvailableModels` with fingerprint headers, caches results for 5 minutes, falls back to the static catalog, and expands each live model into base / `-thinking` / `-agentic` / `-thinking-agentic` variants carrying `rateMultiplier` and `contextLength`.
+- **Kiro multi-endpoint quota fetcher** — `internal/quota/kiro.go` tries `codewhisperer` POST, `codewhisperer` GET, and `q` GET fallbacks; discovers `profileArn` across AWS regions; parses `usageBreakdownList`, `overageConfiguration.unlimited`, and `freeTrialInfo`; surfaces a friendly message for social-auth accounts when quota APIs reject the token.
+- **Kiro multi-method authentication** — Kiro now supports AWS Builder ID, IAM Identity Center (IDC), Google/GitHub social OAuth, refresh-token import, API key, and enterprise External IdP (SSO) auth methods. SSRF-guarded enterprise IdP refresh with an allowlist of 15 common IdP host suffixes.
+- **Kiro auto-import from local Kiro app** — `internal/auth/kiro/autoimport.go` reads `kiro-cli` SQLite storage, AWS SSO cache, and Kiro IDE `profile.json` to discover existing tokens and profile Arn.
+- **Kiro region resolution and auth-aware endpoints** — `internal/executor/kiro_region.go` resolves the runtime region from `profileArn` first, supports only `us-east-1`/`eu-central-1`, orders endpoints per auth method, and sets conditional `tokentype`/`TokenType` headers.
+- **Kiro tool schema sanitizer and agentic mode** — tool schemas are sanitized for Kiro's strict JSON Schema subset, long tool names are hash-truncated with reverse name mapping, adaptive thinking is gated to an allowlist of supported models, and synthetic `-agentic` variants receive an agentic system prompt.
+- **Kiro inline thinking splitter** — `internal/executor/kiro.go` splits `<thinking>...</thinking>` blocks out of `assistantResponseEvent` content into `reasoning_content` deltas when a separate `reasoningContentEvent` is not emitted.
+- **Dashboard simplification + system metrics** — removed date-range selector, defaults to today's traffic only, adds CPU/RAM/disk system-metric cards, and links to the Usage page for details. Backend uses cross-platform `gopsutil`.
+- **Usage summary endpoint** — `GET /api/admin/usage/summary` returns today, yesterday, month-to-date, projected month cost, and next quota reset.
+- **Usage page enhancements** — replaced the misleading "Saved this month" card with "Cost this month" and "Projected cost", added today vs yesterday deltas.
+- **Grok CLI advanced tool normalization** — drops upstream pseudo-tools (`tool_search`, `image_generation`, `apply_patch`), rewrites `custom` → `function`, injects missing parameters, simplifies fragile schemas, auto-injects native `x_search`, normalizes `tool_choice`, and converts legacy `custom_tool_call` / `tool_use` input items.
+- **Grok CLI response namespace restoration** — restores original tool names and a `namespace` field on output items so downstream Chat Completions responses stay readable, and filters internal `x_search` subtool traces.
+- **Grok CLI reasoning replay cache** — caches replayable output items (reasoning `encrypted_content`, assistant messages, tool calls) per model/session and injects them before the last user message on subsequent turns.
+
+### Fixed
+- **Kiro OAuth account naming** — AWS Builder ID / IDC device-code flows and social/import flows now extract the account email from the JWT; when no email is present the connection is named `Kiro-1`, `Kiro-2`, etc.
+- **Kiro device-code auto-fill** — the dashboard now receives `verification_uri_complete` so the browser can pre-fill the user code when opening the AWS authorization page.
+- **Kiro quota fallback profile ARN** — `internal/quota/kiro.go` now falls back to the shared default `profileArn` for AWS Builder ID and social auth (matching 9router), allowing quota to populate instead of returning "Profile ARN not available".
+- **Kiro quota dashboard display** — Kiro credits are shown as `used / total credits` instead of a percentage on the Quota page.
+- **Grok CLI non-stream response translation** — `/v1/chat/completions` responses from `grok-cli` are now translated back to standard OpenAI format instead of leaking Grok's internal `response.completed` event shape.
+- **Grok CLI tool-call argument streaming** — buffers per-call `function_call_arguments.delta` chunks and falls back to accumulated arguments when `output_item.done` arrives with empty arguments.
+- Provider-account single add is now transaction-safe; no more inconsistent in-memory state if DB insert fails.
+- Priority gaps after connection deletion are closed by automatic reordering.
+- **Grok CLI 402 spending-limit handling** — `personal-team-blocked:spending-limit` responses are now treated as a quota cooldown instead of permanently disabling the connection, so the connection can recover automatically after the user tops up.
+- **Grok CLI failover error mapping** — when all `grok-cli` connections are exhausted due to quota/cooldown, the client now receives HTTP 429 `insufficient_quota` with the upstream message instead of HTTP 503 `server_error`.
+- **Grok CLI scanner buffer** — raised the SSE line scanner limit from 64 KB to 50 MB to avoid `bufio.Scanner: token too long` on large streaming events (reasoning replay, tool results, image data).
+- **Grok CLI quota info** — fetches Grok task usage (`https://grok.com/rest/tasks/usage`) in addition to the billing/user endpoints, parses `creditUsagePercent`, `creditBalance`, `productUsage`, `onDemandCap`, and weekly/occasional task limits so the Quota page no longer shows "no data" for Grok CLI accounts.
+- **Quota page empty refresh** — fixed `Cannot read properties of null (reading 'length')` when a manual quota refresh returns an empty/null quota list.
+
+## [0.3.11] - 2026-07-19
+
+### Added
+- **Windows icon + tray launch** — Windows release binary embeds `assets/icon.ico` via `.syso` resources and builds with `-H=windowsgui -tags tray`. Double-clicking `axonrouter-windows-amd64.exe` starts the system tray icon instead of a flashing console.
+- **Devin CLI and Qoder providers** — ported from OmniRoute. Devin routes through the local `devin acp` CLI; Qoder supports dual-mode transport (DashScope HTTP for API keys, `qodercli` for PAT `pt-*` tokens). Includes shared CLI subprocess runtime, provider seeding, static model catalog, frontend catalog entries, and alias registry.
+- **Devin and Qoder provider icons** — added `devin.svg` (from OmniRoute Windsurf/Cognition branding) and `qoder.png` (from 9router) to the dashboard provider catalog.
+- **Built-in `codebuddy` provider (Tencent CodeBuddy)** with custom browser OAuth polling flow, v2 chat endpoint, required Tencent CLI headers, and a 15-model catalog (GLM/Kimi/MiniMax/DeepSeek/Hunyuan).
+
+### Fixed
+- **Windows release build** — split Unix process-group logic (`Setpgid`, `Getpgid`, `Kill`) from `internal/executor/cli_runtime.go` into `cli_runtime_unix.go` and `cli_runtime_windows.go`. Windows builds now use `taskkill /F /T /PID` instead of undefined `syscall.Setpgid/Getpgid/Kill`.
+- **Public health endpoint no longer runs bcrypt on every request** — `must_change_password` now uses the `admin_password_changed` setting instead of `bcrypt.CompareHashAndPassword`, keeping `/api/admin/health` fast for load-balancer probes and the dashboard sidebar.
+- **Version comparison handles pre-release and build metadata** — `internal/version` now parses semver-ish tags such as `v0.4.0-beta.1` or `v0.4.0+build.123` without returning a false "up to date" result.
+- **Frontend version helper hardened** — `web/src/lib/about-utils.ts` now ignores pre-release/build suffixes and never returns `NaN` comparison results; stale error state in `About.svelte` is also reset after a successful health fetch.
 
 ## [0.3.10] - 2026-07-18
 
@@ -67,6 +370,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Restore reliability improved:** larger insert batches (500 rows), exponential backoff retries on transient `database is locked` / busy errors, and a single per-backup encryption salt so encrypted restores no longer re-derive the PBKDF2 key for every row.
 
 ### Changed
+- **Simplified Kiro add-connection auth menu** — removed the rarely-used External IDP tile and merged "Import Token" with "Auto-import from kiro-cli" into a single "Import from CLI / Token" flow. Backend support for External IdP and auto-import remains intact; only the dashboard UI was consolidated.
 - `streamResponse`, `handleStreamResponse`, and `handleClaudeStreamResponse` now return an `error` so callers can implement retry/failover logic.
 - **Backup/restore UI simplified further:** category selection removed; backup always includes every category so restore produces a 100% identical gateway (provider accounts, connections, combos, keys, config, logs, cache).
 

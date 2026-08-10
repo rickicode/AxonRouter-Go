@@ -8,6 +8,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+
+	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
+	"github.com/tidwall/gjson"
 )
 
 func TestOpenAIEndpointNormalizesBaseURL(t *testing.T) {
@@ -257,6 +260,69 @@ func TestSanitizeCFRequest_FiltersContentBlocks(t *testing.T) {
 	}
 }
 
+func TestSanitizeRequest_ConvertsDeveloperRole(t *testing.T) {
+	tests := []struct {
+		name string
+		role string
+		want string
+	}{
+		{"developer converts to system", "developer", "system"},
+		{"system stays system", "system", "system"},
+		{"user stays user", "user", "user"},
+		{"assistant stays assistant", "assistant", "assistant"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := mustJSON(map[string]any{
+				"model": "deepseek-chat",
+				"messages": []any{
+					map[string]any{"role": tt.role, "content": "You are helpful."},
+					map[string]any{"role": "user", "content": "Hello"},
+				},
+			})
+			out := sanitizeRequestWithCompatibility(body, providercfg.Compatibility{})
+
+			var got map[string]any
+			if err := json.Unmarshal(out, &got); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			msgs := got["messages"].([]any)
+			first := msgs[0].(map[string]any)
+			if first["role"] != tt.want {
+				t.Errorf("role = %v, want %v", first["role"], tt.want)
+			}
+		})
+	}
+}
+
+func TestSanitizeRequest_ConvertsMultipleDeveloperMessages(t *testing.T) {
+	body := mustJSON(map[string]any{
+		"model": "deepseek-chat",
+		"messages": []any{
+			map[string]any{"role": "developer", "content": "System instruction 1"},
+			map[string]any{"role": "developer", "content": "System instruction 2"},
+			map[string]any{"role": "user", "content": "Hello"},
+		},
+	})
+	out := sanitizeRequestWithCompatibility(body, providercfg.Compatibility{})
+
+	var got map[string]any
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	msgs := got["messages"].([]any)
+	for i, raw := range msgs {
+		msg := raw.(map[string]any)
+		if i < 2 && msg["role"] != "system" {
+			t.Errorf("message[%d].role = %v, want system", i, msg["role"])
+		}
+		if i == 2 && msg["role"] != "user" {
+			t.Errorf("message[%d].role = %v, want user", i, msg["role"])
+		}
+	}
+}
+
 func TestSplitModel_StripsAtPrefix(t *testing.T) {
 	tests := []struct {
 		model      string
@@ -306,5 +372,98 @@ func TestOpenAIExecutor_Images(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, resp.StatusCode)
+	}
+}
+
+func TestNormalizeDeveloperRoles(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		wantRole string
+	}{
+		{
+			name:     "converts developer to system",
+			body:     `{"model":"deepseek-chat","messages":[{"role":"developer","content":"instructions"},{"role":"user","content":"hi"}]}`,
+			wantRole: "system",
+		},
+		{
+			name:     "no-op when no developer role",
+			body:     `{"model":"deepseek-chat","messages":[{"role":"system","content":"instructions"},{"role":"user","content":"hi"}]}`,
+			wantRole: "system",
+		},
+		{
+			name:     "converts multiple developer messages",
+			body:     `{"model":"deepseek-chat","messages":[{"role":"developer","content":"a"},{"role":"developer","content":"b"},{"role":"user","content":"hi"}]}`,
+			wantRole: "system",
+		},
+		{
+			name:     "no-op when no messages field",
+			body:     `{"model":"deepseek-chat"}`,
+			wantRole: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := normalizeDeveloperRoles([]byte(tt.body))
+			msgs := gjson.GetBytes(out, "messages").Array()
+			if tt.wantRole == "" {
+				if len(msgs) != 0 {
+					t.Errorf("expected no messages, got %d", len(msgs))
+				}
+				return
+			}
+			for i, msg := range msgs {
+				role := msg.Get("role").String()
+				if role == "developer" {
+					t.Errorf("message[%d].role still developer after conversion", i)
+				}
+			}
+			if msgs[0].Get("role").String() != tt.wantRole {
+				t.Errorf("first message role = %s, want %s", msgs[0].Get("role").String(), tt.wantRole)
+			}
+		})
+	}
+}
+
+func TestSanitizeDeepSeekThinkingMode(t *testing.T) {
+	tests := []struct {
+		name             string
+		body             string
+		wantReasoningEffort bool
+	}{
+		{
+			name:             "strips reasoning_effort when assistant missing reasoning_content",
+			body:             `{"model":"deepseek-r1","reasoning_effort":"high","messages":[{"role":"system","content":"hi"},{"role":"user","content":"hello"},{"role":"assistant","content":"hey"}]}`,
+			wantReasoningEffort: false,
+		},
+		{
+			name:             "keeps reasoning_effort when assistant has reasoning_content",
+			body:             `{"model":"deepseek-r1","reasoning_effort":"high","messages":[{"role":"system","content":"hi"},{"role":"user","content":"hello"},{"role":"assistant","content":"hey","reasoning_content":"thinking..."}]}`,
+			wantReasoningEffort: true,
+		},
+		{
+			name:             "no-op when no reasoning_effort",
+			body:             `{"model":"deepseek-r1","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"hey"}]}`,
+			wantReasoningEffort: false,
+		},
+		{
+			name:             "no-op when reasoning_effort is none",
+			body:             `{"model":"deepseek-r1","reasoning_effort":"none","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"hey"}]}`,
+			wantReasoningEffort: true,
+		},
+		{
+			name:             "no-op when no assistant messages",
+			body:             `{"model":"deepseek-r1","reasoning_effort":"high","messages":[{"role":"user","content":"hello"}]}`,
+			wantReasoningEffort: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := sanitizeDeepSeekThinkingMode([]byte(tt.body))
+			hasRE := gjson.GetBytes(out, "reasoning_effort").Exists()
+			if hasRE != tt.wantReasoningEffort {
+				t.Errorf("reasoning_effort exists = %v, want %v", hasRE, tt.wantReasoningEffort)
+			}
+		})
 	}
 }

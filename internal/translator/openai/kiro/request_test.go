@@ -108,25 +108,38 @@ func TestConvertOpenAIRequestToKiro_Basic(t *testing.T) {
 
 func TestConvertOpenAIRequestToKiro_Reasoning(t *testing.T) {
 	body := []byte(`{
-		"model": "claude-opus-4",
+		"model": "claude-sonnet-4.5",
 		"messages": [{"role": "user", "content": "Think deeply"}],
 		"reasoning_effort": "high",
 		"max_tokens": 8192
 	}`)
 
-	out := ConvertOpenAIRequestToKiro("claude-opus-4", body, true)
+	out := ConvertOpenAIRequestToKiro("claude-sonnet-4.5", body, true)
 	var payload map[string]any
 	if err := json.Unmarshal(out, &payload); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	fields, ok := payload["additionalModelRequestFields"].(map[string]any)
+	amrf, ok := payload["additionalModelRequestFields"].(map[string]any)
 	if !ok {
 		t.Fatalf("additionalModelRequestFields missing")
 	}
-	cfg := fields["output_config"].(map[string]any)
-	if cfg["effort"] != "high" {
-		t.Errorf("effort = %v", cfg["effort"])
+	thinking, ok := amrf["thinking"].(map[string]any)
+	if !ok {
+		t.Fatalf("additionalModelRequestFields.thinking missing")
+	}
+	if thinking["type"] != "adaptive" {
+		t.Errorf("thinking.type = %v, want adaptive", thinking["type"])
+	}
+	if thinking["display"] != "enabled" {
+		t.Errorf("thinking.display = %v, want enabled", thinking["display"])
+	}
+	outConf, ok := amrf["output_config"].(map[string]any)
+	if !ok {
+		t.Fatalf("additionalModelRequestFields.output_config missing")
+	}
+	if outConf["effort"] != "high" {
+		t.Errorf("output_config.effort = %v, want high", outConf["effort"])
 	}
 
 	current := payload["conversationState"].(map[string]any)["currentMessage"].(map[string]any)
@@ -135,15 +148,12 @@ func TestConvertOpenAIRequestToKiro_Reasoning(t *testing.T) {
 	if !strings.HasPrefix(content, "<thinking_mode>enabled</thinking_mode>") {
 		t.Errorf("thinking directive missing: %s", content)
 	}
+	if !strings.Contains(content, "Think deeply") {
+		t.Errorf("user content missing: %s", content)
+	}
 	inf, ok := payload["inferenceConfig"].(map[string]any)
 	if !ok {
 		t.Fatalf("inferenceConfig missing; maxTokens should be preserved")
-	}
-	if _, ok := inf["temperature"]; ok {
-		t.Errorf("temperature should be stripped while thinking")
-	}
-	if _, ok := inf["topP"]; ok {
-		t.Errorf("topP should be stripped while thinking")
 	}
 	if inf["maxTokens"] != float64(8192) {
 		t.Errorf("maxTokens = %v, want 8192", inf["maxTokens"])
@@ -163,6 +173,28 @@ func TestConvertOpenAIRequestToKiro_UnsupportedSuffix(t *testing.T) {
 	}
 }
 
+func TestConvertOpenAIRequestToKiro_NonAllowlistedNoAdaptiveThinking(t *testing.T) {
+	body := []byte(`{
+		"model": "claude-haiku-4.5",
+		"messages": [{"role": "user", "content": "hi"}],
+		"reasoning_effort": "high"
+	}`)
+	out := ConvertOpenAIRequestToKiro("claude-haiku-4.5", body, true)
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := payload["additionalModelRequestFields"]; ok {
+		t.Errorf("additionalModelRequestFields should not be present for non-allowlisted model")
+	}
+	current := payload["conversationState"].(map[string]any)["currentMessage"].(map[string]any)
+	content := current["userInputMessage"].(map[string]any)["content"].(string)
+	if strings.Contains(content, "<thinking_mode>") {
+		t.Errorf("non-allowlisted model should not get thinking directive, got %q", content)
+	}
+}
+
+
 func uimHasTools(uim map[string]any) bool {
 	ctx, _ := uim["userInputMessageContext"].(map[string]any)
 	if ctx == nil {
@@ -170,4 +202,259 @@ func uimHasTools(uim map[string]any) bool {
 	}
 	tools, _ := ctx["tools"].([]any)
 	return len(tools) > 0
+}
+
+func TestConvertOpenAIRequestToKiro_SystemPromptUsesInstructionsTag(t *testing.T) {
+	body := []byte(`{
+		"model": "kiro/claude-sonnet-4-6",
+		"messages": [
+			{"role": "system", "content": "Be concise."},
+			{"role": "user", "content": "Hello"}
+		]
+	}`)
+
+	out := ConvertOpenAIRequestToKiro("kiro/claude-sonnet-4-6", body, true)
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if _, ok := payload["systemPrompt"]; ok {
+		t.Errorf("systemPrompt top-level field should not be present")
+	}
+
+	current := payload["conversationState"].(map[string]any)["currentMessage"].(map[string]any)
+	content := current["userInputMessage"].(map[string]any)["content"].(string)
+	if !strings.Contains(content, "<instructions>\nBe concise.\n</instructions>") {
+		t.Errorf("current content missing folded system instructions: %q", content)
+	}
+	if strings.Contains(content, "<system-reminder>") {
+		t.Errorf("current content still uses old <system-reminder> tag: %q", content)
+	}
+}
+
+func TestSupportsReasoning_NewClaudeModels(t *testing.T) {
+	cases := map[string]bool{
+		"claude-sonnet-4.5": true,
+		"claude-sonnet-4":   true,
+		"claude-haiku-4.5":  false,
+		"auto":              false,
+	}
+	for model, want := range cases {
+		if got := supportsReasoning(model); got != want {
+			t.Errorf("supportsReasoning(%q) = %v, want %v", model, got, want)
+		}
+	}
+}
+
+func TestBuildKiroTools_DescriptionTruncation(t *testing.T) {
+	longDesc := strings.Repeat("a", 10050)
+	tools := []any{
+		map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "long_desc_tool",
+				"description": longDesc,
+				"parameters": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+				},
+			},
+		},
+	}
+	out := buildKiroTools(tools)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(out))
+	}
+	spec := out[0]["toolSpecification"].(map[string]any)
+	got, _ := spec["description"].(string)
+	if len(got) > 10000 {
+		t.Errorf("description length = %d, want <= 10000", len(got))
+	}
+	if !strings.HasSuffix(got, " …") {
+		t.Errorf("description should end with ellipsis marker, got suffix %q", got[len(got)-10:])
+	}
+}
+
+func TestConvertOpenAIRequestToKiro_HTTPImageFallback(t *testing.T) {
+	body := []byte(`{
+		"model": "kiro/claude-sonnet-4-6",
+		"messages": [
+			{"role": "user", "content": [
+				{"type": "text", "text": "describe this"},
+				{"type": "image_url", "image_url": {"url": "https://example.com/pic.png"}}
+			]},
+			{"role": "assistant", "content": "ok"}
+		]
+	}`)
+
+	out := ConvertOpenAIRequestToKiro("kiro/claude-sonnet-4-6", body, false)
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cs := payload["conversationState"].(map[string]any)
+	history, _ := cs["history"].([]any)
+	if len(history) == 0 {
+		t.Fatalf("expected history user message, got none")
+	}
+	uim := history[0].(map[string]any)["userInputMessage"].(map[string]any)
+	content := uim["content"].(string)
+	if !strings.Contains(content, "[Image: https://example.com/pic.png]") {
+		t.Errorf("history user content missing HTTP image fallback, got %q", content)
+	}
+}
+
+func TestBuildKiroTools_FallsBackToInputSchema(t *testing.T) {
+	tools := []any{
+		map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "read_file",
+				"description": "Read a file",
+				"input_schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"path": map[string]any{"type": "string"},
+					},
+					"required": []any{"path"},
+				},
+			},
+		},
+	}
+	out := buildKiroTools(tools)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(out))
+	}
+	spec, ok := out[0]["toolSpecification"].(map[string]any)
+	if !ok {
+		t.Fatalf("toolSpecification missing")
+	}
+	inputSchema, ok := spec["inputSchema"].(map[string]any)
+	if !ok {
+		t.Fatalf("inputSchema missing")
+	}
+	schemaJSON, ok := inputSchema["json"].(map[string]any)
+	if !ok {
+		t.Fatalf("inputSchema.json missing")
+	}
+	req, _ := schemaJSON["required"].([]any)
+	if len(req) != 1 || req[0] != "path" {
+		t.Errorf("required = %v, want [path]", req)
+	}
+}
+
+func TestBuildKiroTools_FiltersInvalidRequired(t *testing.T) {
+	tools := []any{
+		map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "run_cmd",
+				"description": "Run command",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"cmd": map[string]any{"type": "string"},
+					},
+					"required": []any{"cmd", map[string]any{"type": "string"}},
+				},
+			},
+		},
+	}
+	out := buildKiroTools(tools)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(out))
+	}
+	spec, ok := out[0]["toolSpecification"].(map[string]any)
+	if !ok {
+		t.Fatalf("toolSpecification missing")
+	}
+	inputSchema, ok := spec["inputSchema"].(map[string]any)
+	if !ok {
+		t.Fatalf("inputSchema missing")
+	}
+	schemaJSON, ok := inputSchema["json"].(map[string]any)
+	if !ok {
+		t.Fatalf("inputSchema.json missing")
+	}
+	req, _ := schemaJSON["required"].([]any)
+	if len(req) != 1 || req[0] != "cmd" {
+		t.Errorf("required = %v, want [cmd]", req)
+	}
+}
+
+func TestConvertOpenAIRequestToKiro_PreservesRequiredStrings(t *testing.T) {
+	body := []byte(`{
+		"model": "kiro/claude-sonnet-4-6",
+		"messages": [{"role": "user", "content": "Hello"}],
+		"tools": [
+			{"type": "function", "function": {
+				"name": "get_weather",
+				"description": "Get weather",
+				"parameters": {
+					"type": "object",
+					"properties": {
+						"city": {"type": "string"},
+						"unit": {"type": "string", "enum": ["celsius","fahrenheit"]}
+					},
+					"required": ["city"]
+				}
+			}}
+		]
+	}`)
+
+	out := ConvertOpenAIRequestToKiro("kiro/claude-sonnet-4-6", body, true)
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	current := payload["conversationState"].(map[string]any)["currentMessage"].(map[string]any)
+	uim := current["userInputMessage"].(map[string]any)
+	ctx, _ := uim["userInputMessageContext"].(map[string]any)
+	if ctx == nil {
+		t.Fatalf("userInputMessageContext missing")
+	}
+	tools, _ := ctx["tools"].([]any)
+	if len(tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(tools))
+	}
+	tool := tools[0].(map[string]any)
+	spec := tool["toolSpecification"].(map[string]any)
+	inputSchema := spec["inputSchema"].(map[string]any)
+	schemaJSON := inputSchema["json"].(map[string]any)
+
+	req, _ := schemaJSON["required"].([]any)
+	if len(req) != 1 || req[0] != "city" {
+		t.Errorf("required = %v, want [city]", req)
+	}
+
+	unit := schemaJSON["properties"].(map[string]any)["unit"].(map[string]any)
+	enum, _ := unit["enum"].([]any)
+	if len(enum) != 2 || enum[0] != "celsius" || enum[1] != "fahrenheit" {
+		t.Errorf("enum = %v, want [celsius fahrenheit]", enum)
+	}
+}
+
+func TestConvertOpenAIRequestToKiro_Base64ImageStillInImages(t *testing.T) {
+	body := []byte(`{
+		"model": "kiro/claude-sonnet-4-6",
+		"messages": [
+			{"role": "user", "content": [
+				{"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}}
+			]}
+		]
+	}`)
+
+	out := ConvertOpenAIRequestToKiro("kiro/claude-sonnet-4-6", body, false)
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cs := payload["conversationState"].(map[string]any)
+	current := cs["currentMessage"].(map[string]any)["userInputMessage"].(map[string]any)
+	images, _ := current["images"].([]any)
+	if len(images) == 0 {
+		t.Errorf("base64 image was not placed into images field")
+	}
 }

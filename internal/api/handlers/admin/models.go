@@ -76,7 +76,7 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 	// /accounts/{accountId}/ai/models/search. Match OmniRoute's behavior.
 	if providerID == "cf" && dbErr == nil {
 		var cfAPIKey, cfPSD string
-		err := h.db.QueryRow(`SELECT COALESCE(api_key,''), provider_specific_data FROM connections WHERE provider_type_id = ? AND status IN ('ready','degraded') AND is_active = 1 LIMIT 1`, providerID).Scan(&cfAPIKey, &cfPSD)
+		err := h.db.QueryRow(`SELECT COALESCE(api_key,''), provider_specific_data FROM connections WHERE provider_type_id = ? AND status = 'ready' AND is_active = 1 LIMIT 1`, providerID).Scan(&cfAPIKey, &cfPSD)
 		if err == nil && cfAPIKey != "" {
 			psd := make(map[string]string)
 			if cfPSD != "" {
@@ -325,13 +325,11 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 			// Refresh OAuth token if expired
 			if accessToken != "" && expiresAt > 0 && time.Now().Unix() > expiresAt-30 && refreshToken.Valid && refreshToken.String != "" && h.authMgr != nil {
 				creds := &auth.Credentials{AccessToken: accessToken, RefreshToken: refreshToken.String, ExpiresAt: time.Unix(expiresAt, 0)}
-				newCreds, err := h.authMgr.RefreshToken(c.Request.Context(), auth.ProviderType(providerID), creds)
+				newCreds, err := h.authMgr.RefreshTokenForConnection(c.Request.Context(), connID, auth.ProviderType(providerID), creds)
 				if err != nil {
 					logging.Logger.Debug("OAuth refresh failed", "conn", connID, "err", err)
 				} else {
 					accessToken = newCreds.AccessToken
-					h.db.Exec(`UPDATE connections SET oauth_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
-						newCreds.AccessToken, newCreds.ExpiresAt.Unix(), time.Now().Unix(), connID)
 				}
 			}
 		}
@@ -451,7 +449,7 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 		return
 	}
 
-	testReq.Body = buildTestBody(format, modelName)
+	testReq.Body = buildTestBody(format, modelName, providerID)
 	streamResult, err := exec.ExecuteStream(c.Request.Context(), testReq)
 	if err != nil {
 		latency := time.Since(start).Milliseconds()
@@ -493,7 +491,7 @@ func (h *ModelHandler) TestModel(c *gin.Context) {
 }
 
 // buildTestBody constructs a minimal test request body matching the provider's native API format.
-func buildTestBody(format, model string) []byte {
+func buildTestBody(format, model, providerID string) []byte {
 	switch executor.ProviderFormat(format) {
 	case executor.FormatOpenAIResponses:
 		body := map[string]any{
@@ -524,9 +522,13 @@ func buildTestBody(format, model string) []byte {
 		b, _ := json.Marshal(body)
 		return b
 	default:
+		messages := []map[string]string{{"role": "user", "content": "Hi"}}
+		if providerID == "codebuddy" {
+			messages = append([]map[string]string{{"role": "system", "content": "You are a helpful assistant."}}, messages...)
+		}
 		body := map[string]any{
 			"model":      model,
-			"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
+			"messages":   messages,
 			"max_tokens": 5,
 		}
 		b, _ := json.Marshal(body)
@@ -545,6 +547,8 @@ var providerCatalogKeys = map[string][]string{
 	"kiro":          {"kiro"},
 	"aistudio":      {"aistudio"},
 	"xai":           {"xai"},
+	"zenmux":        {"zenmux"},
+	"zenmux-free":   {"zenmux-free"},
 	"oc":            {"oc"},
 	"oc-zen":        {"oc-zen"},
 	"oc-go":         {"oc-go"},
@@ -572,6 +576,11 @@ var providerCatalogKeys = map[string][]string{
 	"copilot":       {"copilot"},
 	"bedrock":       {"bedrock"},
 	"grok-cli":      {"grok-cli"},
+	"freebuff":      {"freebuff"},
+	"codebuddy":     {"codebuddy"},
+	"devin":         {"devin"},
+	"qoder":         {"qoder"},
+	"qwencloud":     {"qwencloud"},
 }
 
 // staticModels returns model IDs from the auto-updating catalog, stripped of leading "@".
@@ -586,6 +595,22 @@ func staticModels(providerID string) []string {
 		stripped[i] = strings.TrimPrefix(id, "@")
 	}
 	return stripped
+}
+
+// pickModel returns the first candidate that satisfies any of the provided
+// preference predicates. If none match, it falls back to the first candidate.
+func pickModel(ids []string, preds ...func(string) bool) string {
+	for _, pred := range preds {
+		for _, id := range ids {
+			if pred(id) {
+				return id
+			}
+		}
+	}
+	if len(ids) > 0 {
+		return ids[0]
+	}
+	return ""
 }
 
 // defaultTestModel returns the first available model for a provider from the catalog.
@@ -603,6 +628,22 @@ func defaultTestModel(providerID string) string {
 		if providerID == "bedrock" {
 			// Bedrock Mantle's OpenAI-compatible chat endpoint reliably supports this model.
 			return "openai.gpt-oss-120b"
+		}
+		if providerID == "kiro" {
+			// Kiro's "auto" model is a stable, capability-agnostic upstream id.
+			return "auto"
+		}
+		if providerID == "zenmux" {
+			return pickModel(ids,
+				func(id string) bool { return id == "openai/gpt-5.6-luna" },
+			)
+		}
+		if providerID == "zenmux-free" {
+			return pickModel(ids,
+				func(id string) bool { return strings.Contains(id, "inclusionai/ling-3.0-flash") },
+				func(id string) bool { return strings.Contains(id, "z-ai/glm-4.7") },
+				func(id string) bool { return strings.Contains(id, "-free") },
+			)
 		}
 		return ids[0]
 	}
@@ -638,6 +679,12 @@ func defaultTestModel(providerID string) string {
 	case "bedrock":
 		// Bedrock Mantle's OpenAI-compatible chat endpoint reliably supports this model.
 		return "openai.gpt-oss-120b"
+	case "devin":
+		return "devin"
+	case "qoder":
+		return "qoder-rome-30ba3b"
+	case "codebuddy":
+		return "glm-5.0"
 	default:
 		return ""
 	}

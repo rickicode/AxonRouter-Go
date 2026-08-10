@@ -2,12 +2,13 @@ package admin
 
 import (
 	"database/sql"
+	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 )
@@ -39,7 +40,7 @@ func (h *ComboHandler) List(c *gin.Context) {
 
 	offset := (page - 1) * perPage
 	rows, err := h.db.Query(`
-	SELECT id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal,
+	SELECT id, name, kind, strategy, sticky_limit, timeout_ms, is_smart, smart_goal,
 	fusion_config, is_active, created_at, updated_at
 	FROM combos WHERE is_active = 1
 	ORDER BY created_at DESC
@@ -54,9 +55,20 @@ func (h *ComboHandler) List(c *gin.Context) {
 	var combos []db.Combo
 	for rows.Next() {
 		cb := db.Combo{}
-		rows.Scan(&cb.ID, &cb.Name, &cb.Strategy, &cb.StickyLimit,
-			&cb.TimeoutMs, &cb.IsSmart, &cb.SmartGoal, &cb.FusionConfig,
-			&cb.IsActive, &cb.CreatedAt, &cb.UpdatedAt)
+		var fusionConfig sql.NullString
+		var kind sql.NullString
+		if err := rows.Scan(&cb.ID, &cb.Name, &kind, &cb.Strategy, &cb.StickyLimit,
+			&cb.TimeoutMs, &cb.IsSmart, &cb.SmartGoal, &fusionConfig,
+			&cb.IsActive, &cb.CreatedAt, &cb.UpdatedAt); err != nil {
+			log.Printf("WARN: failed to scan combo row in admin list: %v", err)
+			continue
+		}
+		if kind.Valid && kind.String != "" {
+			cb.Kind = kind.String
+		} else {
+			cb.Kind = "llm"
+		}
+		cb.FusionConfig = fusionConfig.String
 		combos = append(combos, cb)
 	}
 
@@ -90,10 +102,11 @@ func (h *ComboHandler) Get(c *gin.Context) {
 // Create creates a new combo with steps.
 func (h *ComboHandler) Create(c *gin.Context) {
 	var req struct {
-		Name        string `json:"name" binding:"required"`
-		Strategy    string `json:"strategy"`
-		TimeoutMs   int    `json:"timeout_ms"`
-		StickyLimit int    `json:"sticky_limit"`
+		Name         string `json:"name" binding:"required"`
+		Kind         string `json:"kind"`
+		Strategy     string `json:"strategy"`
+		TimeoutMs    int    `json:"timeout_ms"`
+		StickyLimit  int    `json:"sticky_limit"`
 		IsSmart      bool   `json:"is_smart"`
 		SmartGoal    string `json:"smart_goal"`
 		FusionConfig string `json:"fusion_config"`
@@ -154,9 +167,13 @@ func (h *ComboHandler) Create(c *gin.Context) {
 		}
 	}
 
-	result, err := h.handler.CreateCombo(req.Name, req.Strategy, req.TimeoutMs, req.StickyLimit, req.IsSmart, req.SmartGoal, req.FusionConfig, steps)
+	result, err := h.handler.CreateComboWithKind(req.Name, req.Strategy, req.Kind, req.TimeoutMs, req.StickyLimit, req.IsSmart, req.SmartGoal, req.FusionConfig, steps)
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		if errors.Is(err, combo.ErrNoEligibleConnection) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		}
 		return
 	}
 	c.JSON(http.StatusCreated, result)
@@ -166,9 +183,10 @@ func (h *ComboHandler) Create(c *gin.Context) {
 func (h *ComboHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		Name        string  `json:"name"`
-		Strategy    string  `json:"strategy"`
-		TimeoutMs    int     `json:"timeout_ms"`
+		Name         string  `json:"name"`
+		Kind         string  `json:"kind"`
+		Strategy     string  `json:"strategy"`
+		TimeoutMs    *int    `json:"timeout_ms"`
 		StickyLimit  *int    `json:"sticky_limit"`
 		IsSmart      *bool   `json:"is_smart"`
 		SmartGoal    *string `json:"smart_goal"`
@@ -202,56 +220,22 @@ func (h *ComboHandler) Update(c *gin.Context) {
 		}
 	}
 
-	sets := []string{}
-	args := []interface{}{}
-	if req.Name != "" {
-		sets = append(sets, "name = ?")
-		args = append(args, req.Name)
-	}
-	if req.Strategy != "" {
-		sets = append(sets, "strategy = ?")
-		args = append(args, req.Strategy)
-	}
-	if req.TimeoutMs > 0 {
-		sets = append(sets, "timeout_ms = ?")
-		args = append(args, req.TimeoutMs)
-	}
-	if req.StickyLimit != nil && *req.StickyLimit > 0 {
-		sets = append(sets, "sticky_limit = ?")
-		args = append(args, *req.StickyLimit)
-	}
-	if req.IsSmart != nil {
-		sets = append(sets, "is_smart = ?")
-		args = append(args, boolToInt(*req.IsSmart))
-	}
-	if req.SmartGoal != nil {
-		sets = append(sets, "smart_goal = ?")
-		args = append(args, *req.SmartGoal)
-	}
-	if req.FusionConfig != "" {
-		sets = append(sets, "fusion_config = ?")
-		args = append(args, req.FusionConfig)
-	}
-	if req.IsActive != nil {
-		sets = append(sets, "is_active = ?")
-		args = append(args, boolToInt(*req.IsActive))
-	}
-	if len(sets) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "nothing to update"})
-		return
-	}
-
-	sets = append(sets, "updated_at = ?")
-	args = append(args, time.Now().Unix(), id)
-
-	result, err := h.db.Exec("UPDATE combos SET "+joinStrings(sets, ", ")+" WHERE id = ?", args...)
-	if err != nil {
+	if err := h.handler.UpdateCombo(id, combo.UpdateComboInput{
+		Name:         req.Name,
+		Kind:         req.Kind,
+		Strategy:     req.Strategy,
+		TimeoutMs:    req.TimeoutMs,
+		StickyLimit:  req.StickyLimit,
+		IsSmart:      req.IsSmart,
+		SmartGoal:    req.SmartGoal,
+		FusionConfig: req.FusionConfig,
+		IsActive:     req.IsActive,
+	}); err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "combo not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "combo not found"})
 		return
 	}
 
@@ -259,13 +243,17 @@ func (h *ComboHandler) Update(c *gin.Context) {
 		h.handler.ResetRotationCounter(id)
 	}
 
-	h.handler.RefreshFromDB()
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 // Delete removes a combo.
 func (h *ComboHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
+	var exists int
+	if err := h.db.QueryRow(`SELECT COUNT(*) FROM combos WHERE id = ?`, id).Scan(&exists); err != nil || exists == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "combo not found"})
+		return
+	}
 	if err := h.handler.DeleteCombo(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -296,58 +284,48 @@ func (h *ComboHandler) AddStep(c *gin.Context) {
 		req.Priority = maxPriority + 1
 	}
 
-	connectionID := req.ConnectionID
-	if connectionID == "" {
-		if picked, ok := h.handler.PickConnection(db.ComboStep{ModelID: req.ModelID}); ok {
-			connectionID = picked
-		}
-	}
-	if connectionID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no eligible connection for model " + req.ModelID})
-		return
-	}
-
-	stepID := uuid.New().String()
-	_, err := h.db.Exec(`
-	INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, stepID, comboID, connectionID, req.ModelID, req.Priority, req.Weight, time.Now().Unix())
+	stepID, err := h.handler.AddComboStep(comboID, combo.AddComboStepInput{
+		ConnectionID: req.ConnectionID,
+		ModelID:      req.ModelID,
+		Priority:     req.Priority,
+		Weight:       req.Weight,
+	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		if errors.Is(err, combo.ErrNoEligibleConnection) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
 		return
 	}
 
-	h.handler.RefreshFromDB()
 	c.JSON(http.StatusCreated, gin.H{"id": stepID, "priority": req.Priority})
 }
 
 // RemoveStep removes a step from a combo.
 func (h *ComboHandler) RemoveStep(c *gin.Context) {
 	stepID := c.Param("stepId")
-	result, err := h.db.Exec(`DELETE FROM combo_steps WHERE id = ?`, stepID)
-	if err != nil {
+	if err := h.handler.RemoveComboStep(stepID); err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "step not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "step not found"})
-		return
-	}
-	h.handler.RefreshFromDB()
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 // ComboMetric aggregates request_logs usage for a single combo.
 type ComboMetric struct {
-	ComboID        string  `json:"combo_id"`
-	ComboName      string  `json:"combo_name"`
-	Requests       int     `json:"requests"`
-	Successes      int     `json:"successes"`
-	Errors         int     `json:"errors"`
-	InputTokens    int     `json:"input_tokens"`
-	OutputTokens   int     `json:"output_tokens"`
-	AvgLatencyMs   float64 `json:"avg_latency_ms"`
+	ComboID      string  `json:"combo_id"`
+	ComboName    string  `json:"combo_name"`
+	Requests     int     `json:"requests"`
+	Successes    int     `json:"successes"`
+	Errors       int     `json:"errors"`
+	InputTokens  int     `json:"input_tokens"`
+	OutputTokens int     `json:"output_tokens"`
+	AvgLatencyMs float64 `json:"avg_latency_ms"`
 }
 
 // Metrics returns aggregate usage counts per combo from request_logs.
@@ -356,7 +334,7 @@ func (h *ComboHandler) Metrics(c *gin.Context) {
 	window := 24 * time.Hour
 	if w, err := strconv.Atoi(c.DefaultQuery("window", "86400")); err == nil && w > 0 {
 		maxWindow := 30 * 24 * time.Hour
-		if time.Duration(w)*time.Second < maxWindow {
+		if time.Duration(w)*time.Second <= maxWindow {
 			window = time.Duration(w) * time.Second
 		} else {
 			window = maxWindow
@@ -427,6 +405,9 @@ func (h *ComboHandler) SeedDefaults(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	h.handler.RefreshFromDB()
+	if err := h.handler.RefreshFromDB(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
 CREATE TABLE IF NOT EXISTS combos (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
+    kind TEXT DEFAULT 'llm',
     strategy TEXT NOT NULL DEFAULT 'priority',
     sticky_limit INTEGER DEFAULT 1,
     timeout_ms INTEGER DEFAULT 30000,
@@ -112,6 +113,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
   cost_usd REAL DEFAULT 0,
   client_ip TEXT,
   user_agent TEXT,
+  service_tier TEXT,
   created_at INTEGER NOT NULL
 );
 
@@ -151,14 +153,20 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		`ALTER TABLE request_logs ADD COLUMN api_key_id TEXT`,
 		`ALTER TABLE api_keys ADD COLUMN max_tokens INTEGER DEFAULT 0`,
 		`ALTER TABLE api_keys ADD COLUMN expires_at INTEGER`,
+		`ALTER TABLE api_keys ADD COLUMN allowed_models TEXT`,
 		`ALTER TABLE request_logs ADD COLUMN tokens_estimated INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE request_logs ADD COLUMN proxy_pool_id TEXT`,
 		`ALTER TABLE request_logs ADD COLUMN api_type TEXT`,
 		`ALTER TABLE request_logs ADD COLUMN client_ip TEXT`,
 		`ALTER TABLE request_logs ADD COLUMN user_agent TEXT`,
+		`ALTER TABLE request_logs ADD COLUMN flat_rate INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE request_logs ADD COLUMN service_tier TEXT`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id, timestamp DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_combo_steps_combo_id ON combo_steps(combo_id)`,
 		`ALTER TABLE provider_types ADD COLUMN category TEXT DEFAULT 'apikey'`,
+		`ALTER TABLE provider_types ADD COLUMN skip_key_validation INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE provider_types ADD COLUMN service_kinds TEXT DEFAULT '["llm"]'`,
+		`ALTER TABLE combos ADD COLUMN kind TEXT DEFAULT 'llm'`,
 		`ALTER TABLE combos ADD COLUMN fusion_config TEXT`,
 		`CREATE TABLE IF NOT EXISTS compression_metrics (
     mode TEXT PRIMARY KEY,
@@ -167,6 +175,7 @@ CREATE TABLE IF NOT EXISTS rotation_state (
     compressed_tokens INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL DEFAULT 0
 )`,
+		`ALTER TABLE connections ADD COLUMN disabled_reason TEXT`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			// Ignore "duplicate column name" errors
@@ -176,6 +185,29 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		}
 	}
 
+	// Collapse legacy terminal statuses into `disabled` with a reason.
+	// Each UPDATE is idempotent because it only touches rows whose status still
+	// matches the legacy value. Re-running after all rows are migrated is a no-op.
+	// All legacy terminal rows are inactive; re-enable requires explicit admin action.
+	if _, err := db.Exec(`UPDATE connections SET status='disabled', disabled_reason='auth_failed', is_active=0 WHERE status='auth_failed'`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE connections SET status='disabled', disabled_reason='suspended', is_active=0 WHERE status='suspended'`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE connections SET status='disabled', disabled_reason='balance_empty', is_active=0 WHERE status='balance_empty'`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE connections SET disabled_reason='unknown' WHERE status='disabled' AND COALESCE(disabled_reason,'')=''`); err != nil {
+		return err
+	}
+
+	// Backfill legacy connection statuses into the simplified model.
+	// cooldown/degraded become ready while preserving cooldown_until so existing
+	// cooldown rows recover automatically when the horizon expires.
+	if _, err := db.Exec(`UPDATE connections SET status='ready' WHERE status IN ('cooldown','degraded')`); err != nil {
+		return err
+	}
 	// Backfill status_code for legacy request_logs rows that only recorded the
 	// error message. This is idempotent: rows with a non-zero status_code keep it.
 
@@ -190,7 +222,74 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		return err
 	}
 
+	// Per-API-key USD budget limits and warning threshold.
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS api_key_budgets (
+			api_key_id TEXT PRIMARY KEY REFERENCES api_keys(id),
+			daily_limit_usd REAL DEFAULT 0,
+			monthly_limit_usd REAL DEFAULT 0,
+			warning_threshold REAL DEFAULT 0.8,
+			updated_at INTEGER NOT NULL
+		)
+	`); err != nil {
+		return err
+	}
+
+	// Per-request USD spend history, bucketed by UTC day/month for budget aggregation.
+	// Reset is implicit: queries target the current period_start for the day/month.
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS api_key_spend_history (
+			id TEXT PRIMARY KEY,
+			api_key_id TEXT NOT NULL REFERENCES api_keys(id),
+			cost_usd REAL NOT NULL,
+			period_type TEXT NOT NULL,
+			period_start INTEGER NOT NULL,
+			created_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_api_key_spend_history_lookup
+			ON api_key_spend_history(api_key_id, period_type, period_start)
+	`); err != nil {
+		return err
+	}
+
+	// MCP stdio-SSE bridge server registrations.
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS mcp_servers (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL UNIQUE,
+			command TEXT NOT NULL,
+			args TEXT NOT NULL DEFAULT '[]',
+			env TEXT NOT NULL DEFAULT '{}',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			restart_policy TEXT NOT NULL DEFAULT 'on-failure',
+			max_clients INTEGER NOT NULL DEFAULT 4,
+			max_idle_sec INTEGER NOT NULL DEFAULT 60,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_mcp_servers_name ON mcp_servers(name);
+		CREATE INDEX IF NOT EXISTS idx_mcp_servers_enabled ON mcp_servers(enabled)
+	`); err != nil {
+		return err
+	}
+
 	if err := migrateRequestLogStatusCodes(db); err != nil {
+		return err
+	}
+
+	// Persistent Codex Live/realtime call session storage.
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS codex_live_sessions (
+			call_id TEXT PRIMARY KEY,
+			conn_id TEXT NOT NULL,
+			conn_token TEXT NOT NULL,
+			model TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_codex_live_sessions_expires
+			ON codex_live_sessions(expires_at);
+	`); err != nil {
 		return err
 	}
 
@@ -200,12 +299,35 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		ID, DisplayName, Format, BaseURL, Category string
 		ServiceKinds                               []string
 	}{
+		{"brave", "Brave Search", "openai", "https://api.search.brave.com/res/v1", "apikey", []string{"webSearch"}},
+		{"tavily", "Tavily", "openai", "https://api.tavily.com", "apikey", []string{"webSearch", "webFetch"}},
+		{"exa", "Exa", "openai", "https://api.exa.ai", "apikey", []string{"webSearch", "webFetch"}},
+		{"jina", "Jina AI", "openai", "https://api.jina.ai", "apikey", []string{"webSearch", "webFetch"}},
+		{"google-pse", "Google Programmable Search Engine", "openai", "https://www.googleapis.com/customsearch/v1", "apikey", []string{"webSearch"}},
+		{"firecrawl", "Firecrawl", "openai", "https://api.firecrawl.dev", "apikey", []string{"webSearch", "webFetch"}},
+		{"fal", "Fal.ai", "openai", "https://api.fal.ai/v1", "apikey", []string{"image", "video"}},
+		{"black-forest-labs", "Black Forest Labs", "openai", "https://api.bfl.ai/v1", "apikey", []string{"image"}},
+		{"assemblyai", "AssemblyAI", "openai", "https://api.assemblyai.com/v2", "apikey", []string{"stt"}},
+		{"cartesia", "Cartesia", "openai", "https://api.cartesia.ai/v1", "apikey", []string{"tts"}},
+		{"edge-tts", "Edge TTS", "openai", "", "no-auth", []string{"tts"}},
+		{"qwen", "Qwen", "openai", "https://chat.qwen.ai/api/v2", "apikey", []string{"llm"}},
+		{"alicode", "AliCode", "openai", "https://chat.qwen.ai/api/v2", "apikey", []string{"llm"}},
+		{"kimi-coding", "Kimi Coding", "openai", "https://api.moonshot.cn/v1", "apikey", []string{"llm"}},
+		{"iflow", "iFlow", "openai", "https://api.iflow.dev/v1", "apikey", []string{"llm"}},
+		{"volcengine-ark", "Volcengine Ark", "openai", "https://ark.cn-beijing.volces.com/api/v3", "apikey", []string{"llm"}},
+		{"hunyuan", "Tencent Hunyuan", "openai", "https://hunyuan.tencentcloudapi.com/v1", "apikey", []string{"llm"}},
+		{"nanobanana", "Nanobanana", "openai", "https://api.nanobanana.com/v1", "apikey", []string{"image"}},
+		{"topaz", "Topaz", "openai", "https://api.topazlabs.com/v1", "apikey", []string{"image"}},
+		{"puter", "Puter", "openai", "https://puter.com/api/v1", "apikey", []string{"llm"}},
+		{"comfyui", "ComfyUI", "openai", "http://localhost:8188", "no-auth", []string{"image"}},
 		{"ag", "Antigravity", "antigravity", "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse", "oauth", []string{"llm"}},
 		{"cx", "OpenAI Codex", "openai-responses", "https://chatgpt.com/backend-api/codex/responses", "oauth", []string{"llm"}},
-		{"kiro", "Kiro AI", "openai", "https://api.kiro.ai/v1", "oauth", []string{"llm"}},
+		{"kiro", "Kiro AI", "kiro", "https://runtime.us-east-1.kiro.dev/generateAssistantResponse", "oauth", []string{"llm"}},
 		{"openai", "OpenAI Platform", "openai", "https://api.openai.com/v1", "apikey", []string{"llm", "embedding", "image"}},
 		{"claude", "Anthropic Claude", "anthropic", "https://api.anthropic.com/v1", "apikey", []string{"llm"}},
 		{"gemini", "Gemini", "gemini", "https://generativelanguage.googleapis.com/v1beta", "apikey", []string{"llm"}},
+		{"gemini-interactions", "Gemini Interactions", "interactions", "https://generativelanguage.googleapis.com/v1beta", "apikey", []string{"llm"}},
+		{"aistudio", "AI Studio", "interactions", "https://generativelanguage.googleapis.com/v1beta", "apikey", []string{"llm"}},
 		{"deepseek", "DeepSeek", "openai", "https://api.deepseek.com/v1", "apikey", []string{"llm"}},
 		{"groq", "Groq Cloud", "openai", "https://api.groq.com/openai/v1", "apikey", []string{"llm"}},
 		{"openrouter", "OpenRouter", "openai", "https://openrouter.ai/api/v1", "apikey", []string{"llm"}},
@@ -227,14 +349,23 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		{"lambda", "Lambda", "openai", "https://api.lambda.ai/v1", "apikey", []string{"llm"}},
 		{"pollinations", "Pollinations.AI", "openai", "https://gen.pollinations.ai/v1", "apikey", []string{"llm"}},
 		{"zenmux", "ZenMux", "openai", "https://zenmux.ai/api/v1", "apikey", []string{"llm"}},
+		{"zenmux-free", "ZenMux Free", "openai", "https://zenmux.ai/api/v1", "apikey", []string{"llm"}},
 
 		{"copilot", "GitHub Copilot", "openai", "https://api.githubcopilot.com", "oauth", []string{"llm"}},
 
 		{"grok-cli", "Grok CLI (Grok Build)", "grok-cli", "https://cli-chat-proxy.grok.com/v1/responses", "oauth", []string{"llm"}},
 		{"freebuff", "Freebuff", "freebuff", "https://www.codebuff.com/api/v1/chat/completions", "oauth", []string{"llm"}},
 
+		{"devin", "Devin CLI", "devin-cli", "", "apikey", []string{"llm"}},
+		{"qoder", "Qoder", "qoder", "https://dashscope.aliyuncs.com/compatible-mode/v1", "oauth", []string{"llm"}},
+		{"qwencloud", "Qwen Cloud", "openai-responses", "https://dashscope-intl.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1/responses", "apikey", []string{"llm"}},
+
+		{"codebuddy", "CodeBuddy", "openai", "https://www.codebuddy.ai/v2/chat/completions", "oauth", []string{"llm"}},
+		{"cursor", "Cursor IDE", "openai", "https://api2.cursor.sh", "oauth", []string{"llm"}},
+
 		{"vertex", "Google Vertex AI", "openai", "https://aiplatform.googleapis.com/v1/projects/{projectId}/locations/{location}/endpoints/openapi", "service-account", []string{"llm"}},
 		{"bedrock", "Amazon Bedrock Mantle", "openai", "https://bedrock-mantle.{region}.api.aws/v1", "apikey", []string{"llm"}},
+		{"commandcode", "CommandCode AI", "openai", "https://api.commandcode.ai", "apikey", []string{"llm"}},
 	}
 	for _, p := range providers {
 		serviceKindsJSON, _ := json.Marshal(p.ServiceKinds)
@@ -247,6 +378,29 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 	// Repair legacy Grok CLI base_url rows that point at /v1 instead of /v1/responses.
 	// The executor now hardens this too, but fixing the DB avoids confusion in the UI.
 	if _, err := db.Exec(`UPDATE provider_types SET base_url = 'https://cli-chat-proxy.grok.com/v1/responses' WHERE id = 'grok-cli' AND base_url IN ('https://cli-chat-proxy.grok.com/v1', 'https://cli-chat-proxy.grok.com/v1/', 'https://cli-chat-proxy.grok.com/', 'https://cli-chat-proxy.grok.com')`); err != nil {
+		return err
+	}
+
+	// Repair legacy Kiro rows that were seeded with the wrong format/base_url.
+	if _, err := db.Exec(`UPDATE provider_types SET format = 'kiro', base_url = 'https://runtime.us-east-1.kiro.dev/generateAssistantResponse' WHERE id = 'kiro'`); err != nil {
+		return err
+	}
+
+	// CodeBuddy switched from the Tencent China endpoint (copilot.tencent.com)
+	// to the international endpoint (www.codebuddy.ai). Repair any legacy base_url
+	// that still points at the old domains, the bare codebuddy.ai apex, or the wrong
+	// /plugin/chat/completions path that returns 404 upstream.
+	if _, err := db.Exec(`
+		UPDATE provider_types SET base_url = 'https://www.codebuddy.ai/v2/chat/completions'
+		WHERE id = 'codebuddy'
+		  AND (
+			  base_url IN ('https://copilot.tencent.com/v2/chat/completions', 'https://codebuddy.ai/v2/chat/completions')
+			  OR base_url LIKE '%copilot.tencent.com%'
+			  OR base_url LIKE '%/plugin/chat/completions%'
+			  OR base_url = ''
+			  OR base_url IS NULL
+		  )
+	`); err != nil {
 		return err
 	}
 
@@ -322,6 +476,20 @@ CREATE INDEX IF NOT EXISTS idx_quota_cache_connection ON quota_cache(connection_
 		}
 	}
 
+	// OAuth account deduplication: stable identifier separate from the user-editable name.
+	if _, err := db.Exec(`ALTER TABLE connections ADD COLUMN oauth_email TEXT`); err != nil {
+		if !isDuplicateColumnError(err) {
+			return err
+		}
+	}
+	if _, err := db.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_connections_oauth_account
+		ON connections(provider_type_id, oauth_email)
+		WHERE auth_type = 'oauth' AND oauth_email IS NOT NULL AND oauth_email != ''
+	`); err != nil {
+		return err
+	}
+
 	// Proxy pool tables
 	if _, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS proxy_pools (
@@ -361,6 +529,8 @@ CREATE TABLE IF NOT EXISTS proxy_groups (
 		`ALTER TABLE proxy_pools ADD COLUMN proxy_country TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE proxy_pools ADD COLUMN proxy_city TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE proxy_pools ADD COLUMN proxy_org TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE proxy_pools ADD COLUMN proxy_username TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE proxy_pools ADD COLUMN proxy_password TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			if !isDuplicateColumnError(err) {
@@ -396,11 +566,34 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 	cached_write_per_1k REAL NOT NULL DEFAULT 0,
 	image_per_unit REAL NOT NULL DEFAULT 0,
 	audio_per_min REAL NOT NULL DEFAULT 0,
+	video_per_unit REAL NOT NULL DEFAULT 0,
 	currency TEXT NOT NULL DEFAULT 'USD',
+	tier_flex_multiplier REAL NOT NULL DEFAULT 0.5,
+	tier_priority_multiplier REAL NOT NULL DEFAULT 1.5,
+	tier_fast_multiplier REAL NOT NULL DEFAULT 2.5,
 	updated_at INTEGER NOT NULL DEFAULT 0
 );
 `); err != nil {
 		return err
+	}
+	if _, err := db.Exec(`ALTER TABLE model_pricing ADD COLUMN video_per_unit REAL NOT NULL DEFAULT 0`); err != nil {
+		if !isDuplicateColumnError(err) {
+			return err
+		}
+	}
+
+	// Incremental migrations for model_pricing columns added after the table was
+	// introduced later in the migration sequence.
+	for _, stmt := range []string{
+		`ALTER TABLE model_pricing ADD COLUMN tier_flex_multiplier REAL NOT NULL DEFAULT 0.5`,
+		`ALTER TABLE model_pricing ADD COLUMN tier_priority_multiplier REAL NOT NULL DEFAULT 1.5`,
+		`ALTER TABLE model_pricing ADD COLUMN tier_fast_multiplier REAL NOT NULL DEFAULT 2.5`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			if !isDuplicateColumnError(err) {
+				return err
+			}
+		}
 	}
 
 	// User-added custom models for custom providers.
@@ -413,7 +606,10 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 		return err
 	}
 
-	// Seed default model pricing (INSERT OR IGNORE — never overwrites operator edits).
+	// Seed default model pricing. On first run the table is empty and all seed
+	// rows are inserted. On subsequent runs use INSERT OR IGNORE so operator
+	// edits made through the admin UI/API survive restarts while any new models
+	// added to the code seed list are still merged in.
 	now = time.Now().Unix()
 	seedPricing := []struct {
 		ID, Name                                 string
@@ -530,8 +726,14 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 		// ── Alibaba Qwen ──
 		{"qwen3.5-plus", "Qwen 3.5 Plus", 0.0004, 0.0012, 0, 0, 0},
 		{"qwen3.6-plus", "Qwen 3.6 Plus", 0.0004, 0.0012, 0, 0, 0},
-		{"qwen3.7-max", "Qwen 3.7 Max", 0.0008, 0.0024, 0, 0, 0},
-		{"qwen3.7-plus", "Qwen 3.7 Plus", 0.0004, 0.0012, 0, 0, 0},
+		// ── Qoder / DashScope (Qwen Cloud) ──
+		{"qwen3.7-max", "Qwen 3.7 Max", 0.0025, 0.0075, 0, 0, 0},
+		{"qwen3.7-plus", "Qwen 3.7 Plus", 0.0004, 0.0016, 0, 0, 0},
+		{"qwen3.6-flash", "Qwen 3.6 Flash", 0.00025, 0.0015, 0, 0, 0},
+		{"qwen3-vl-plus", "Qwen 3 VL Plus", 0.0002, 0.0016, 0, 0, 0},
+		{"qwen3-coder-plus", "Qwen 3 Coder Plus", 0.001, 0.005, 0, 0, 0},
+		// ultimate is Qoder's qodercli auto-routing tier; currently deepseek-r1 maps to it.
+		{"ultimate", "Qoder Ultimate", 0.00055, 0.00219, 0, 0, 0},
 
 		// ── MiniMax ──
 		{"minimax-m2.5", "MiniMax M2.5", 0.0005, 0.001, 0, 0, 0},
@@ -599,11 +801,87 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 		{"nemotron-3-ultra-free", "Nemotron 3 Ultra Free", 0.0003, 0.0006, 0, 0, 0},
 		{"north-mini-code-free", "North Mini Code Free", 0.0002, 0.0004, 0, 0, 0},
 
-		// ── ZenMux (average canonical model rates; lookup strips the zenmux/ prefix) ──
-		{"z-ai/glm-5.2", "GLM 5.2", 0.0014, 0.0044, 0, 0, 0},
+		// ── ZenMux (lookup strips the zenmux/ provider prefix) ──
+		{"anthropic/claude-fable-5", "anthropic/claude-fable-5", 0.01, 0.05, 0, 0.001, 0},
+		{"anthropic/claude-opus-4.7", "anthropic/claude-opus-4.7", 0.005, 0.025, 0, 0.0005, 0},
+		{"anthropic/claude-opus-4.8", "anthropic/claude-opus-4.8", 0.005, 0.025, 0, 0.0005, 0},
+		{"anthropic/claude-opus-5", "Anthropic: Claude Opus 5", 0.005, 0.025, 0, 0.0005, 0},
+		{"anthropic/claude-sonnet-4.6", "anthropic/claude-sonnet-4.6", 0.003, 0.015, 0, 0.0003, 0},
+		{"anthropic/claude-sonnet-5", "anthropic/claude-sonnet-5", 0.002, 0.01, 0, 0.0002, 0},
+		{"baidu/ernie-5.1", "baidu/ernie-5.1", 0.000424593, 0.00191067, 0, 0, 0},
+		{"bytedance/doubao-seed-2.1-pro", "bytedance/doubao-seed-2.1-pro", 0.000422572, 0.00211286, 0, 8.45334e-05, 0},
+		{"bytedance/doubao-seed-2.1-turbo", "bytedance/doubao-seed-2.1-turbo", 0.000422572, 0.00211286, 0, 8.45334e-05, 0},
 		{"deepseek-v3.2", "DeepSeek V3.2", 0.00062, 0.00185, 0, 0, 0},
+		{"deepseek/deepseek-r1-0528", "deepseek/deepseek-r1-0528", 0.00056, 0.00223, 0, 0.000112, 0},
+		{"deepseek/deepseek-v3.2", "deepseek/deepseek-v3.2", 0.000293, 0.0004395, 0, 2.93e-05, 0},
+		{"deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-flash", 0.00014, 0.00028, 0, 2.8e-06, 0},
+		{"deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-pro", 0.000435, 0.00087, 0, 3.625e-06, 0},
+		{"google/gemini-2.5-flash", "google/gemini-2.5-flash", 0.0003, 0.0025, 0, 3e-05, 0},
+		{"google/gemini-2.5-flash-lite", "google/gemini-2.5-flash-lite", 0.0001, 0.0004, 0, 1e-05, 0},
+		{"google/gemini-2.5-pro", "google/gemini-2.5-pro", 0.00125, 0.01, 0, 0.00013, 0},
+		{"google/gemini-3.1-pro-preview", "google/gemini-3.1-pro-preview", 0.002, 0.012, 0, 0.0002, 0},
+		{"google/gemini-3.5-flash", "google/gemini-3.5-flash", 0.0015, 0.009, 0, 0.00015, 0},
 		{"grok-4.1-fast", "Grok 4.1 Fast", 0.0002, 0.0005, 0, 0, 0},
+		{"inclusionai/ling-2.6-1t", "inclusionai/ling-2.6-1t", 0.000131816, 0.00109846, 0, 2.63631e-05, 0},
+		{"inclusionai/ling-3.0-flash", "inclusionai/ling-3.0-flash", 1e-06, 1e-06, 0, 0, 0}, // free-tier (nominal price to satisfy seed guard)
+		{"kuaishou/kat-coder-air-v2.5", "kuaishou/kat-coder-air-v2.5", 0.000135, 0.00054, 0, 2.7e-05, 0},
+		{"kuaishou/kat-coder-pro-v2.5", "kuaishou/kat-coder-pro-v2.5", 0.000444, 0.001776, 0, 9e-05, 0},
+		{"meituan/longcat-2.0", "meituan/longcat-2.0", 0.0003, 0.00118, 0, 6e-06, 0},
+		{"minimax/minimax-m2.5", "minimax/minimax-m2.5", 0.0003, 0.0012, 0, 3e-05, 0},
+		{"minimax/minimax-m2.7", "minimax/minimax-m2.7", 0.0003, 0.0012, 0, 6e-05, 0},
+		{"minimax/minimax-m3", "minimax/minimax-m3", 0.000137308, 0.00054923, 0, 2.74615e-05, 0},
 		{"mistral-large", "Mistral Large", 0.002, 0.006, 0, 0, 0},
+		{"mistralai/mistral-large-2512", "mistralai/mistral-large-2512", 0.0005, 0.0015, 0, 5e-05, 0},
+		{"moonshotai/kimi-k2.5", "moonshotai/kimi-k2.5", 0.00058, 0.00302, 0, 0.0001, 0},
+		{"moonshotai/kimi-k2.6", "moonshotai/kimi-k2.6", 0.00095, 0.004, 0, 0.00016, 0},
+		{"moonshotai/kimi-k2.7-code", "moonshotai/kimi-k2.7-code", 0.000425773, 0.00179273, 0, 8.51546e-05, 0},
+		{"moonshotai/kimi-k2.7-code-highspeed", "moonshotai/kimi-k2.7-code-highspeed", 0.0019, 0.008, 0, 0.00038, 0},
+		{"moonshotai/kimi-k3", "MoonshotAI: Kimi K3", 0.003, 0.015, 0, 0.0003, 0},
+		{"moonshotai/kimi-k3-free", "moonshotai/kimi-k3-free", 1e-06, 1e-06, 0, 0, 0}, // free-tier (nominal price to satisfy seed guard)
+		{"openai/gpt-4o", "openai/gpt-4o", 0.0025, 0.01, 0, 0.00125, 0},
+		{"openai/gpt-4o-mini", "openai/gpt-4o-mini", 0.00015, 0.0006, 0, 7.5e-05, 0},
+		{"openai/gpt-5.1", "openai/gpt-5.1", 0.00125, 0.01, 0, 0.000125, 0},
+		{"openai/gpt-5.2", "openai/gpt-5.2", 0.00175, 0.014, 0, 0.000175, 0},
+		{"openai/gpt-5.2-pro", "openai/gpt-5.2-pro", 0.021, 0.168, 0, 0, 0},
+		{"openai/gpt-5.4", "openai/gpt-5.4", 0.0025, 0.015, 0, 0.00025, 0},
+		{"openai/gpt-5.4-mini", "openai/gpt-5.4-mini", 0.00075, 0.0045, 0, 7.5e-05, 0},
+		{"openai/gpt-5.4-pro", "openai/gpt-5.4-pro", 0.03, 0.18, 0, 0, 0},
+		{"openai/gpt-5.5", "openai/gpt-5.5", 0.005, 0.03, 0, 0.0005, 0},
+		{"openai/gpt-5.5-pro", "openai/gpt-5.5-pro", 0.03, 0.18, 0, 0, 0},
+		{"openai/gpt-5.6-luna", "openai/gpt-5.6-luna", 0.001, 0.006, 0, 0.0001, 0},
+		{"openai/gpt-5.6-sol", "openai/gpt-5.6-sol", 0.005, 0.03, 0, 0.0005, 0},
+		{"openai/gpt-5.6-terra", "openai/gpt-5.6-terra", 0.0025, 0.015, 0, 0.00025, 0},
+		{"openai/o4-mini", "openai/o4-mini", 0.0011, 0.0044, 0, 0.000275, 0},
+		{"qwen/qwen3-coder-plus", "qwen/qwen3-coder-plus", 0.001, 0.005, 0, 0.0001, 0},
+		{"qwen/qwen3.5-plus", "qwen/qwen3.5-plus", 0.0004, 0.0024, 0, 4e-05, 0},
+		{"qwen/qwen3.6-plus", "qwen/qwen3.6-plus", 0.0005, 0.003, 0, 5e-05, 0},
+		{"qwen/qwen3.7-max", "qwen/qwen3.7-max", 0.000430777, 0.00129233, 0, 4.30777e-05, 0},
+		{"qwen/qwen3.7-plus", "qwen/qwen3.7-plus", 0.000137308, 0.00054923, 0, 1.37308e-05, 0},
+		{"sapiens-ai/agnes-2.0-flash", "sapiens-ai/agnes-2.0-flash", 0.0001, 0.0002, 0, 0, 0},
+		{"stepfun/step-3.7-flash-free", "stepfun/step-3.7-flash-free", 1e-06, 1e-06, 0, 0, 0}, // free-tier (nominal price to satisfy seed guard)
+		{"tencent/hy3", "tencent/hy3", 0.0001323, 0.0005301, 0, 3.33e-05, 0},
+		{"x-ai/grok-4.2-fast", "x-ai/grok-4.2-fast", 0.002, 0.006, 0, 0.0002, 0},
+		{"x-ai/grok-4.3", "x-ai/grok-4.3", 0.00125, 0.0025, 0, 0.0002, 0},
+		{"x-ai/grok-4.5", "x-ai/grok-4.5", 0.002, 0.006, 0, 0.0005, 0},
+		{"x-ai/grok-4.5-free", "x-ai/grok-4.5-free", 1e-06, 1e-06, 0, 0, 0}, // free-tier (nominal price to satisfy seed guard)
+		{"x-ai/grok-build-0.1", "x-ai/grok-build-0.1", 0.001, 0.002, 0, 0.0002, 0},
+		{"xiaomi/mimo-v2.5", "xiaomi/mimo-v2.5", 0.000140092, 0.000270844, 0, 2.70844e-06, 0},
+		{"xiaomi/mimo-v2.5-pro", "xiaomi/mimo-v2.5-pro", 0.000435, 0.00087, 0, 3.65795e-06, 0},
+		{"z-ai/glm-4.6v-flash-free", "z-ai/glm-4.6v-flash-free", 1e-06, 1e-06, 0, 0, 0}, // free-tier (nominal price to satisfy seed guard)
+		{"z-ai/glm-4.7-flash-free", "z-ai/glm-4.7-flash-free", 1e-06, 1e-06, 0, 0, 0},   // free-tier (nominal price to satisfy seed guard)
+		{"z-ai/glm-5", "z-ai/glm-5", 0.00058, 0.0026, 0, 0.00014, 0},
+		{"z-ai/glm-5-turbo", "z-ai/glm-5-turbo", 0.00073, 0.00319, 0, 0.000174, 0},
+		{"z-ai/glm-5.1", "z-ai/glm-5.1", 0.0008781, 0.0035126, 0, 0.0001903, 0},
+		{"z-ai/glm-5.2", "GLM 5.2", 0.0014, 0.0044, 0, 0, 0},
+
+		// ── Kiro (verified upstream model IDs; variants look up base ID via substring fallback) ──
+		{"claude-sonnet-4.6", "Claude Sonnet 4.6", 0.003, 0.015, 0, 0.0003, 0.00375},
+		{"claude-opus-4.6", "Claude Opus 4.6", 0.015, 0.075, 0, 0.0003, 0.00375},
+		{"claude-sonnet-4.7", "Claude Sonnet 4.7", 0.003, 0.015, 0, 0.0003, 0.00375},
+		{"claude-opus-4.7", "Claude Opus 4.7", 0.015, 0.075, 0, 0.0003, 0.00375},
+		{"claude-haiku-4.5", "Claude Haiku 4.5", 0.001, 0.005, 0, 0.0001, 0.00125},
+		{"deepseek-3.2", "DeepSeek V3.2", 0.0005, 0.0015, 0, 0, 0},
+		{"qwen3-coder-next", "Qwen3 Coder Next", 0.0004, 0.0012, 0, 0, 0},
 
 		// ── Misc ──
 		{"big-pickle", "Big Pickle", 0.0005, 0.001, 0, 0, 0},
@@ -614,14 +892,11 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 	if err := validateSeedPricing(seedPricing); err != nil {
 		return err
 	}
-	// One-time reset: wipe any previously-seeded rows so stale IDs / $0 free-tier
-	// entries from older builds cannot coexist with the new canonical seed.
-	// The pricing table is seed-only (no runtime writes), so this is safe.
-	if _, err := db.Exec(`DELETE FROM model_pricing`); err != nil {
-		return err
-	}
+	// Use INSERT OR IGNORE so we only add missing models. Existing rows keep the
+	// values set by the operator (or a previous first-run seed); they are never
+	// reset on startup.
 	for _, p := range seedPricing {
-		if _, err := db.Exec(`INSERT OR REPLACE INTO model_pricing
+		if _, err := db.Exec(`INSERT OR IGNORE INTO model_pricing
 		(model_id, display_name, input_per_1k, output_per_1k, reason_per_1k, cached_read_per_1k, cached_write_per_1k, currency, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, 'USD', ?)`,
 			p.ID, p.Name, p.In, p.Out, p.Reason, p.CachedRead, p.CachedWrite, now); err != nil {

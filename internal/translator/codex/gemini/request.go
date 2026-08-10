@@ -5,12 +5,16 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/rickicode/AxonRouter-Go/internal/headroom"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/common"
 	"github.com/tidwall/gjson"
+
 	"github.com/tidwall/sjson"
 )
 
 // convertCodexRequestToGemini transforms a Codex Responses API request to Gemini generateContent format.
 func convertCodexRequestToGemini(modelName string, body []byte, stream bool) []byte {
+	body = common.CompressToolBlocks(body, headroom.GlobalToolCompressor(), headroom.DefaultToolThreshold)
 	_ = stream
 	root := gjson.ParseBytes(body)
 
@@ -30,6 +34,13 @@ func convertCodexRequestToGemini(modelName string, body []byte, stream bool) []b
 	}
 	if topP := root.Get("top_p"); topP.Exists() {
 		out, _ = sjson.SetBytes(out, "generationConfig.topP", topP.Float())
+	}
+
+	// Reasoning: Codex reasoning.effort -> Gemini thinkingConfig.
+	if reasoning := root.Get("reasoning"); reasoning.Exists() && reasoning.IsObject() {
+		if effort := reasoning.Get("effort"); effort.Exists() && effort.Type == gjson.String {
+			out = applyCodexReasoningEffort(out, effort.String())
+		}
 	}
 
 	// System instruction: prefer Codex "instructions", fallback to top-level "system".
@@ -53,11 +64,17 @@ func convertCodexRequestToGemini(modelName string, body []byte, stream bool) []b
 	}
 
 	// Tools
+	hasGoogleSearch := false
 	if tools := root.Get("tools"); tools.Exists() && tools.IsArray() {
 		var functionDeclarations []map[string]interface{}
 		tools.ForEach(func(_, tool gjson.Result) bool {
 			tType := tool.Get("type").String()
-			if tType == "function" {
+			switch tType {
+			case "web_search":
+				if modelSupportsWebSearch(modelName) {
+					hasGoogleSearch = true
+				}
+			case "function":
 				decl := map[string]interface{}{
 					"name":        tool.Get("name").String(),
 					"description": tool.Get("description").String(),
@@ -78,7 +95,64 @@ func convertCodexRequestToGemini(modelName string, body []byte, stream bool) []b
 		}
 	}
 
+	// Map Codex tool_choice to Gemini functionCallingConfig.
+	if tc := root.Get("tool_choice"); tc.Exists() {
+		mode, allowed := geminiFunctionCallingConfig(tc)
+		if mode != "" {
+			out, _ = sjson.SetBytes(out, "toolConfig.functionCallingConfig.mode", mode)
+			if len(allowed) > 0 {
+				b, _ := json.Marshal(allowed)
+				out, _ = sjson.SetRawBytes(out, "toolConfig.functionCallingConfig.allowedFunctionNames", b)
+			}
+		}
+	}
+
+	// response_format → Gemini structured output / JSON mode.
+	if rf := root.Get("response_format"); rf.Exists() && rf.IsObject() {
+		switch rf.Get("type").String() {
+		case "json_object":
+			out, _ = sjson.SetBytes(out, "generationConfig.responseMimeType", "application/json")
+		case "json_schema":
+			out, _ = sjson.SetBytes(out, "generationConfig.responseMimeType", "application/json")
+			if schema := rf.Get("json_schema.schema"); schema.Exists() {
+				out, _ = sjson.SetRawBytes(out, "generationConfig.responseSchema", []byte(schema.Raw))
+			}
+		}
+	}
+
+	if hasGoogleSearch {
+		out, _ = sjson.SetRawBytes(out, "tools.-1", []byte(`{"googleSearch":{}}`))
+	}
+
 	return out
+}
+
+// geminiFunctionCallingConfig maps a Codex tool_choice value to Gemini
+// functionCallingConfig mode and optional allowedFunctionNames list.
+func geminiFunctionCallingConfig(tc gjson.Result) (string, []string) {
+	switch {
+	case tc.Type == gjson.String:
+		switch tc.String() {
+		case "none":
+			return "NONE", nil
+		case "auto":
+			return "AUTO", nil
+		case "required":
+			return "ANY", nil
+		}
+	case tc.IsObject():
+		if tc.Get("type").String() == "function" {
+			name := tc.Get("function.name").String()
+			if name == "" {
+				name = tc.Get("name").String()
+			}
+			if name != "" {
+				return "ANY", []string{name}
+			}
+			return "ANY", nil
+		}
+	}
+	return "", nil
 }
 
 func appendCodexInputItem(out []byte, item, allInput gjson.Result) []byte {
@@ -126,9 +200,13 @@ func appendCodexInputItem(out []byte, item, allInput gjson.Result) []byte {
 						p++
 					}
 				case "input_audio":
-					if data := part.Get("data"); data.Exists() {
-						node, _ = sjson.SetBytes(node, partKey(p, "inlineData.mimeType"), "audio/wav")
-						node, _ = sjson.SetBytes(node, partKey(p, "inlineData.data"), data.String())
+					if dataVal := part.Get("data"); dataVal.Exists() {
+						mime, data := parseInlineData(dataVal.String())
+						if mime == "" {
+							mime = audioMimeType(part.Get("format").String())
+						}
+						node, _ = sjson.SetBytes(node, partKey(p, "inlineData.mimeType"), mime)
+						node, _ = sjson.SetBytes(node, partKey(p, "inlineData.data"), data)
 						p++
 					}
 				}
@@ -204,6 +282,63 @@ func textFromStringOrTextParts(v gjson.Result) string {
 	return ""
 }
 
+// parseInlineData parses a data URL (data:[<mime>][;base64],<data>) and returns
+// the MIME type and data payload. Non-data URLs are returned with an empty MIME.
+func parseInlineData(s string) (string, string) {
+	s = strings.TrimSpace(s)
+	const prefix = "data:"
+	if !strings.HasPrefix(s, prefix) {
+		return "", s
+	}
+	rest := s[len(prefix):]
+	idx := strings.Index(rest, ",")
+	if idx < 0 {
+		return "", s
+	}
+	meta := rest[:idx]
+	data := rest[idx+1:]
+
+	mime := ""
+	if p := strings.Index(meta, ";"); p >= 0 {
+		mime = meta[:p]
+	} else if meta != "" {
+		mime = meta
+	}
+	return mime, data
+}
+
+func audioMimeType(format string) string {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "mp3":
+		return "audio/mpeg"
+	case "wav":
+		return "audio/wav"
+	case "ogg":
+		return "audio/ogg"
+	case "flac":
+		return "audio/flac"
+	case "aac":
+		return "audio/aac"
+	case "webm":
+		return "audio/webm"
+	default:
+		return "audio/wav"
+	}
+}
+
+func modelSupportsWebSearch(modelName string) bool {
+	m := strings.ToLower(strings.TrimSpace(modelName))
+	switch {
+	case strings.Contains(m, "gemini-1.5"):
+		return true
+	case strings.Contains(m, "gemini-2"):
+		return true
+	case strings.Contains(m, "gemini-3"):
+		return true
+	}
+	return false
+}
+
 func parseInlineImage(s string) (string, string) {
 	s = strings.TrimSpace(s)
 	const prefix = "data:"
@@ -266,6 +401,25 @@ func argsStringToMap(raw string) map[string]interface{} {
 
 func partKey(index int, field string) string {
 	return fmt.Sprintf("parts.%d.%s", index, field)
+}
+
+func applyCodexReasoningEffort(out []byte, effort string) []byte {
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	if effort == "" {
+		return out
+	}
+	const path = "generationConfig.thinkingConfig"
+	switch effort {
+	case "none":
+		out, _ = sjson.SetBytes(out, path+".includeThoughts", false)
+	case "auto":
+		out, _ = sjson.SetBytes(out, path+".thinkingBudget", -1)
+		out, _ = sjson.SetBytes(out, path+".includeThoughts", true)
+	default:
+		out, _ = sjson.SetBytes(out, path+".thinkingLevel", effort)
+		out, _ = sjson.SetBytes(out, path+".includeThoughts", true)
+	}
+	return out
 }
 
 func unmarshalJSON(raw string) interface{} {

@@ -6,22 +6,27 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/klauspost/compress/zstd"
 
-	_ "modernc.org/sqlite"
 	"golang.org/x/crypto/bcrypt"
+	_ "modernc.org/sqlite"
 
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
+	"github.com/rickicode/AxonRouter-Go/internal/compression"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
@@ -64,7 +69,22 @@ type fakeExecutor struct {
 		result *executor.StreamResult
 		err    error
 	}
-	streamErr bool
+	streamErr       bool
+	delay           time.Duration
+	compactResponse *executor.Response
+	compactErr      error
+}
+
+func (f *fakeExecutor) ResponsesCompact(ctx context.Context, req *executor.Request) (*executor.Response, error) {
+	f.callCount++
+	if f.delay > 0 {
+		select {
+		case <-time.After(f.delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return f.compactResponse, f.compactErr
 }
 
 func (f *fakeExecutor) Execute(ctx context.Context, req *executor.Request) (*executor.Response, error) {
@@ -72,6 +92,13 @@ func (f *fakeExecutor) Execute(ctx context.Context, req *executor.Request) (*exe
 	f.callCount++
 	if idx >= len(f.responses) {
 		return nil, errors.New("no more responses")
+	}
+	if f.delay > 0 {
+		select {
+		case <-time.After(f.delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	return f.responses[idx].resp, f.responses[idx].err
 }
@@ -109,7 +136,7 @@ func (f *fakeOAuthService) StartLocalServer(ctx context.Context, state string) (
 	return 0, nil, nil
 }
 
-func openTestDB(t *testing.T) *sql.DB {
+func openTestDB(t testing.TB) *sql.DB {
 	t.Helper()
 	tmp := filepath.Join(t.TempDir(), "handler-test.db")
 	database, err := sql.Open("sqlite", tmp)
@@ -133,7 +160,7 @@ func mustHashKey(t *testing.T, key string) string {
 	return string(hash)
 }
 
-func newTestHandler(t *testing.T) *Handler {
+func newTestHandler(t testing.TB) *Handler {
 	t.Helper()
 	store := connstate.NewStore()
 	store.SeedConnection("conn-1", "test", "ready", 0)
@@ -141,14 +168,18 @@ func newTestHandler(t *testing.T) *Handler {
 	database := openTestDB(t)
 	elig := connstate.NewEligibilityManager(store)
 	return &Handler{
-		db: database,
-		store: store,
-		elig: elig,
-		authMgr: mgr,
-		exhaustion: quota.NewExhaustionCache(),
-		providerCfg: providercfg.NewManager(t.TempDir()),
-		combo: combo.NewHandler(database, store, elig),
-		registry: executor.GetRegistry(),
+		db:                  database,
+		store:               store,
+		elig:                elig,
+		authMgr:             mgr,
+		exhaustion:          quota.NewExhaustionCache(),
+		providerCfg:         providercfg.NewManager(t.TempDir()),
+		exactCache:          cache.NewExactCache(100),
+		sessions:            connstate.NewSessionCache(),
+		combo:               combo.NewHandler(database, store, elig),
+		registry:            executor.GetRegistry(),
+		compressionStrategy: compression.Strategy{Mode: compression.ModeOff},
+		codexLiveSessions:   newCodexLiveSessionStore().withDB(database),
 		failoverMaxAttempts: 5,
 	}
 }
@@ -505,6 +536,85 @@ func TestPersistCooldown_WritesRealColumns(t *testing.T) {
 	}
 }
 
+func TestPersistCooldown_PersistsAuthFailedAsInactive(t *testing.T) {
+	h := newTestHandler(t)
+	database := h.db
+	wq := db.NewWriteQueue(database)
+	h.writeQueue = wq
+
+	if _, err := database.Exec(`INSERT INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('test-auth','Test Auth','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-auth','test-auth','c-auth','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+
+	det := connstate.ErrorDetection{
+		Category: connstate.ErrorAuth,
+		Message:  "permission denied",
+		Status:   connstate.StatusDisabled,
+	}
+	h.persistCooldownScoped("conn-auth", det)
+
+	wq.Stop() // flush all queued writes
+
+	var status string
+	var isActive int
+	var reason string
+	row := database.QueryRow(`SELECT status, is_active, COALESCE(disabled_reason,'') FROM connections WHERE id='conn-auth'`)
+	if err := row.Scan(&status, &isActive, &reason); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if status != string(connstate.StatusDisabled) {
+		t.Fatalf("status = %q, want disabled", status)
+	}
+	if isActive != 0 {
+		t.Fatalf("is_active = %d, want 0", isActive)
+	}
+	if reason != "auth_failed" {
+		t.Fatalf("disabled_reason = %q, want auth_failed", reason)
+	}
+}
+
+func TestPersistSuccess_ResetsExpiredCooldown(t *testing.T) {
+	h := newTestHandler(t)
+	database := h.db
+	wq := db.NewWriteQueue(database)
+	h.writeQueue = wq
+
+	if _, err := database.Exec(`INSERT INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('test2','Test2','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	past := time.Now().Add(-time.Hour).Unix()
+	if _, err := database.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, cooldown_until, is_active, created_at, updated_at) VALUES ('conn-expired','test2','c2','none','ready',?,1,0,0)`, past); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-expired", "test2", "ready", 0)
+
+	// In-memory should also reflect the stale cooldown row.
+	cs := h.store.Get("conn-expired")
+	cs.SetCooldown(time.Now().Add(-time.Hour))
+
+	h.persistSuccess("conn-expired")
+	wq.Stop()
+
+	var status string
+	var cooldownU sql.NullInt64
+	row := database.QueryRow(`SELECT status, cooldown_until FROM connections WHERE id='conn-expired'`)
+	if err := row.Scan(&status, &cooldownU); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if status != "ready" {
+		t.Fatalf("status = %q, want ready", status)
+	}
+	if cooldownU.Valid {
+		t.Fatalf("expected cooldown_until cleared, got %v", cooldownU.Int64)
+	}
+	if cs.GetStatus() != connstate.StatusReady {
+		t.Fatalf("in-memory status = %v, want ready", cs.GetStatus())
+	}
+}
+
 // TestGetConnectionRejectsCooledDownConnection proves that getConnection never
 // returns a connection that is actively in cooldown, even when an eligibility
 // snapshot is stale.
@@ -525,7 +635,7 @@ func TestGetConnectionRejectsCooledDownConnection(t *testing.T) {
 	cs := h.store.Get("conn-oc-1")
 
 	// Normal case: connection is eligible.
-	conn, err := h.getConnection(context.Background(), "oc", "hy3-free")
+	conn, err := h.getConnection(context.Background(), "oc", "hy3-free", "")
 	if err != nil {
 		t.Fatalf("expected eligible connection: %v", err)
 	}
@@ -533,13 +643,484 @@ func TestGetConnectionRejectsCooledDownConnection(t *testing.T) {
 		t.Fatalf("expected conn-oc-1, got %s", conn.ID)
 	}
 
-	// Mark cooldown and rebuild snapshot.
+	// Mark cooldown and rebuild snapshot. The connection is removed from the
+	// eligibility snapshot, but the last-resort fallback should still pick it
+	// because it is the only active connection.
 	cs.SetCooldown(time.Now().Add(time.Hour))
 	h.elig.RecomputeAll()
 
-	conn, err = h.getConnection(context.Background(), "oc", "hy3-free")
+	conn, err = h.getConnection(context.Background(), "oc", "hy3-free", "")
+	if err != nil {
+		t.Fatalf("expected fallback to cooled-down connection: %v", err)
+	}
+	if conn.ID != "conn-oc-1" {
+		t.Fatalf("expected conn-oc-1, got %s", conn.ID)
+	}
+}
+
+func TestGetConnection_ZenMuxFreeAcceptsModel(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if _, err := h.db.Exec(`
+		INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at)
+		VALUES ('conn-zm-free','zenmux-free','zm-free','apikey','ready',1,?,?)
+	`, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-zm-free", "zenmux-free", "ready", 0)
+	h.elig.RecomputeAll()
+
+	conn, err := h.getConnection(context.Background(), "zenmux-free", "z-ai/glm-5.2", "")
+	if err != nil {
+		t.Fatalf("expected free zenmux connection: %v", err)
+	}
+	if conn.ID != "conn-zm-free" {
+		t.Fatalf("expected conn-zm-free, got %s", conn.ID)
+	}
+}
+
+func TestGetConnection_ZenMuxPaidRejectedWithoutPaidConnection(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	// Seed only a free-tier ZenMux connection.
+	if _, err := h.db.Exec(`
+		INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at)
+		VALUES ('conn-zm-free','zenmux-free','zm-free','apikey','ready',1,?,?)
+	`, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-zm-free", "zenmux-free", "ready", 0)
+	h.elig.RecomputeAll()
+
+	_, err := h.getConnection(context.Background(), "zenmux", "openai/gpt-5.6-luna", "")
 	if err == nil {
-		t.Fatalf("expected error for cooled-down connection, got conn %s", conn.ID)
+		t.Fatal("expected no available paid zenmux connection, got a connection")
+	}
+}
+
+func TestTryPickConnection_RejectsTerminalStatus(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('terminal','Terminal','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-terminal','terminal','t1','none','ready',1,?,?)`, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-terminal", "terminal", "ready", 0)
+
+	cs := h.store.Get("conn-terminal")
+	cs.SetStatus(connstate.StatusDisabled, "bad creds")
+
+	picked, ok := h.tryPickConnection(context.Background(), cs, "terminal", "gpt-4o", time.Now(), providercfg.DefaultRoutingMode)
+	if ok {
+		t.Fatalf("expected disabled connection to be rejected, got %s", picked.ID)
+	}
+}
+
+func TestTryPickConnection_AcceptsCooldownExpired(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('expired','Expired','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-expired','expired','e1','none','ready',1,?,?)`, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-expired", "expired", "ready", 0)
+
+	cs := h.store.Get("conn-expired")
+	past := time.Now().Add(-time.Hour)
+	cs.SetCooldown(past)
+
+	picked, ok := h.tryPickConnection(context.Background(), cs, "expired", "gpt-4o", time.Now(), providercfg.DefaultRoutingMode)
+	if !ok {
+		t.Fatal("expected cooldown-expired connection to be accepted")
+	}
+	if picked.ID != "conn-expired" {
+		t.Fatalf("expected conn-expired, got %s", picked.ID)
+	}
+}
+
+func TestTryPickConnection_HealsExpiredCooldown(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('heal','Heal','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-heal','heal','h1','none','ready',1,?,?)`, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-heal", "heal", "ready", 0)
+
+	cs := h.store.Get("conn-heal")
+	cs.SetCooldown(time.Now().Add(-time.Hour))
+	if cs.GetStatus() != connstate.StatusReady {
+		t.Fatalf("setup: status = %v, want ready", cs.GetStatus())
+	}
+
+	picked, ok := h.tryPickConnection(context.Background(), cs, "heal", "gpt-4o", time.Now(), providercfg.DefaultRoutingMode)
+	if !ok {
+		t.Fatal("expected cooldown-expired connection to be accepted")
+	}
+	if picked.ID != "conn-heal" {
+		t.Fatalf("expected conn-heal, got %s", picked.ID)
+	}
+	if cs.GetStatus() != connstate.StatusReady {
+		t.Fatalf("status = %v, want ready after heal", cs.GetStatus())
+	}
+}
+
+func TestTryPickConnection_HealsExpiredRateLimited(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('rl','RateLimited','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-rl','rl','r1','none','ready',1,?,?)`, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-rl", "rl", "ready", 0)
+
+	cs := h.store.Get("conn-rl")
+	cs.SetCooldown(time.Now().Add(-time.Hour))
+	cs.SetStatus(connstate.StatusRateLimited, "")
+	if cs.GetStatus() != connstate.StatusRateLimited {
+		t.Fatalf("setup: status = %v, want rate_limited", cs.GetStatus())
+	}
+
+	picked, ok := h.tryPickConnection(context.Background(), cs, "rl", "gpt-4o", time.Now(), providercfg.DefaultRoutingMode)
+	if !ok {
+		t.Fatal("expected rate-limited expired connection to be accepted")
+	}
+	if picked.ID != "conn-rl" {
+		t.Fatalf("expected conn-rl, got %s", picked.ID)
+	}
+	if cs.GetStatus() != connstate.StatusReady {
+		t.Fatalf("status = %v, want ready after heal", cs.GetStatus())
+	}
+}
+
+func TestTryPickConnection_DoesNotHealActiveCooldown(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('activecd','ActiveCooldown','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-active','activecd','a1','none','ready',1,?,?)`, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-active", "activecd", "ready", 0)
+
+	cs := h.store.Get("conn-active")
+	future := time.Now().Add(time.Hour)
+	cs.SetCooldown(future)
+
+	picked, ok := h.tryPickConnection(context.Background(), cs, "activecd", "gpt-4o", time.Now(), providercfg.DefaultRoutingMode)
+	if ok {
+		t.Fatalf("expected active-cooldown connection to be rejected, got %s", picked.ID)
+	}
+	if cs.GetStatus() != connstate.StatusReady {
+		t.Fatalf("status = %v, want ready to stay active", cs.GetStatus())
+	}
+}
+
+func TestTryPickConnectionFallback_HealsExpiredCooldown(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('fb','Fallback','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-fb','fb','f1','none','ready',1,?,?)`, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-fb", "fb", "ready", 0)
+
+	cs := h.store.Get("conn-fb")
+	cs.SetCooldown(time.Now().Add(-time.Hour))
+
+	picked, ok := h.tryPickConnectionFallback(context.Background(), "conn-fb", "fb", "", time.Now(), providercfg.DefaultRoutingMode)
+	if !ok {
+		t.Fatal("expected fallback to accept cooldown-expired connection")
+	}
+	if picked.ID != "conn-fb" {
+		t.Fatalf("expected conn-fb, got %s", picked.ID)
+	}
+	if cs.GetStatus() != connstate.StatusReady {
+		t.Fatalf("status = %v, want ready after heal", cs.GetStatus())
+	}
+}
+
+func TestPrepareConnection_HealsExpiredCooldown(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('prep','Prepare','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-prep','prep','p1','none','ready',1,?,?)`, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-prep", "prep", "ready", 0)
+
+	cs := h.store.Get("conn-prep")
+	cs.SetCooldown(time.Now().Add(-time.Hour))
+
+	conn, err := h.prepareConnection(context.Background(), "conn-prep", "prep", "", time.Now())
+	if err != nil {
+		t.Fatalf("expected prepare to succeed: %v", err)
+	}
+	if conn.ID != "conn-prep" {
+		t.Fatalf("expected conn-prep, got %s", conn.ID)
+	}
+	if cs.GetStatus() != connstate.StatusReady {
+		t.Fatalf("status = %v, want ready after heal", cs.GetStatus())
+	}
+}
+
+func TestPersistSuccess_HealsTransientStatus(t *testing.T) {
+	h := newTestHandler(t)
+	database := h.db
+	wq := db.NewWriteQueue(database)
+	h.writeQueue = wq
+
+	if _, err := database.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('suc','Success','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-suc','suc','s1','none','rate_limited',1,0,0)`); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-suc", "suc", "rate_limited", 0)
+
+	cs := h.store.Get("conn-suc")
+	h.persistSuccess("conn-suc")
+	wq.Stop()
+
+	if cs.GetStatus() != connstate.StatusReady {
+		t.Fatalf("in-memory status = %v, want ready", cs.GetStatus())
+	}
+	var status string
+	if err := database.QueryRow(`SELECT status FROM connections WHERE id='conn-suc'`).Scan(&status); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if status != "ready" {
+		t.Fatalf("db status = %q, want ready", status)
+	}
+}
+
+func TestPersistSuccess_LeavesTerminalStatusAlone(t *testing.T) {
+	h := newTestHandler(t)
+	wq := db.NewWriteQueue(h.db)
+	h.writeQueue = wq
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('term','Terminal','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-term','term','t1','none','disabled',1,0,0)`); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	h.store.SeedConnection("conn-term", "term", "disabled", 0)
+
+	cs := h.store.Get("conn-term")
+	h.persistSuccess("conn-term")
+	wq.Stop()
+
+	if cs.GetStatus() != connstate.StatusDisabled {
+		t.Fatalf("in-memory status = %v, want disabled", cs.GetStatus())
+	}
+	var status string
+	if err := h.db.QueryRow(`SELECT status FROM connections WHERE id='conn-term'`).Scan(&status); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if status != "disabled" {
+		t.Fatalf("db status = %q, want disabled", status)
+	}
+}
+
+func TestPersistSuccess_LeavesReadyStatusAlone(t *testing.T) {
+	h := newTestHandler(t)
+	wq := db.NewWriteQueue(h.db)
+	h.writeQueue = wq
+
+	cs := h.store.Get("conn-1")
+	cs.SetStatus(connstate.StatusReady, "")
+	before := cs.Snapshot()
+
+	h.persistSuccess("conn-1")
+	wq.Stop()
+
+	after := cs.Snapshot()
+	if after.Status != connstate.StatusReady {
+		t.Fatalf("status = %v, want ready", after.Status)
+	}
+	if after.SuccessCount != before.SuccessCount {
+		t.Fatalf("SuccessCount changed from %d to %d on already-ready connection", before.SuccessCount, after.SuccessCount)
+	}
+}
+
+func TestOrderCandidatesPrioritizesRemainingQuota(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('oc','OC','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	ids := []string{"conn-low", "conn-mid", "conn-high"}
+	for _, id := range ids {
+		if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?, 'oc', ?, 'none', 'ready', 1, ?, ?)`, id, id, now, now); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+		h.store.SeedConnection(id, "oc", "ready", 0)
+	}
+	h.store.Get("conn-low").SetRemainingPct(10)
+	h.store.Get("conn-mid").SetRemainingPct(50)
+	h.store.Get("conn-high").SetRemainingPct(90)
+
+	ordered := h.orderCandidates("oc", "hy3-free", []*connstate.ConnectionState{
+		h.store.Get("conn-low"),
+		h.store.Get("conn-mid"),
+		h.store.Get("conn-high"),
+	}, providercfg.DefaultRoutingMode)
+	want := []string{"conn-high", "conn-mid", "conn-low"}
+	for i, id := range want {
+		if ordered[i].ID != id {
+			t.Fatalf("order[%d] = %s, want %s; got %v", i, ordered[i].ID, id, idsFromConnStates(ordered))
+		}
+	}
+}
+
+func idsFromConnStates(states []*connstate.ConnectionState) []string {
+	ids := make([]string, len(states))
+	for i, s := range states {
+		ids[i] = s.ID
+	}
+	return ids
+}
+
+// TestRecencyAwareDistribution proves that concurrent requests for the same
+// provider/model do not concentrate on a single connection. It seeds several
+// eligible connections with equal remaining quota and spawns many goroutines
+// that all call getConnection; no connection should receive more than 60% of
+// the selections.
+func TestRecencyAwareDistribution(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('recency','Recency','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+
+	connIDs := []string{"recency-a", "recency-b", "recency-c"}
+	for _, id := range connIDs {
+		if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?, 'recency', ?, 'none', 'ready', 1, ?, ?)`, id, id, now, now); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+		h.store.SeedConnection(id, "recency", "ready", 0)
+		h.store.Get(id).SetRemainingPct(50)
+	}
+	h.elig.RecomputeAll()
+
+	const workers = 50
+	const callsPerWorker = 20
+	counts := make(map[string]int)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	ctx := context.Background()
+
+	wg.Add(workers)
+	for w := 0; w < workers; w++ {
+		go func() {
+			defer wg.Done()
+			for i := 0; i < callsPerWorker; i++ {
+				conn, err := h.getConnection(ctx, "recency", "gpt-4o", "")
+				if err != nil {
+					t.Errorf("getConnection failed: %v", err)
+					return
+				}
+				mu.Lock()
+				counts[conn.ID]++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+
+	total := workers * callsPerWorker
+	if len(counts) != len(connIDs) {
+		t.Fatalf("expected selections across %d connections, got %d: %v", len(connIDs), len(counts), counts)
+	}
+	for id, n := range counts {
+		pct := float64(n) / float64(total)
+		if pct > 0.60 {
+			t.Fatalf("connection %s received %.0f%% of requests (%d/%d): %v", id, pct*100, n, total, counts)
+		}
+	}
+}
+
+// TestRecencyTiebreaker proves that, when remaining quota is equal, the
+// eligibility snapshot and getConnection prefer the least-recently-used
+// connection and mark it as used on selection.
+func TestRecencyTiebreaker(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('recency','Recency','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if err := h.providerCfg.Save("recency", providercfg.ProviderSettings{RoutingMode: providercfg.FirstEligible}); err != nil {
+		t.Fatalf("save routing mode: %v", err)
+	}
+
+	connIDs := []string{"recency-a", "recency-b", "recency-c"}
+	for _, id := range connIDs {
+		if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?, 'recency', ?, 'none', 'ready', 1, ?, ?)`, id, id, now, now); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+		h.store.SeedConnection(id, "recency", "ready", 0)
+		h.store.Get(id).SetRemainingPct(50)
+	}
+
+	// Make a and b recently used; c should be preferred next.
+	h.store.Get("recency-a").RecordUsed()
+	h.store.Get("recency-b").RecordUsed()
+	h.elig.RecomputeAll()
+
+	conns := h.elig.GetByPrefixState("recency")
+	if len(conns) != 3 {
+		t.Fatalf("expected 3 eligible connections, got %d", len(conns))
+	}
+	if conns[0].ID != "recency-c" {
+		t.Fatalf("expected least-recently-used recency-c first, got %s", conns[0].ID)
+	}
+
+	ctx := context.Background()
+	conn, err := h.getConnection(ctx, "recency", "gpt-4o", "")
+	if err != nil {
+		t.Fatalf("getConnection failed: %v", err)
+	}
+	if conn.ID != "recency-c" {
+		t.Fatalf("expected to select recency-c, got %s", conn.ID)
+	}
+	if h.store.Get("recency-c").LastUsedAt().IsZero() {
+		t.Fatal("expected recency-c LastUsedAt to be updated")
 	}
 }
 
@@ -643,7 +1224,7 @@ func TestMalformedProviderSpecificData_Warns(t *testing.T) {
 	logging.Init("text")
 	h := newTestHandler(t)
 	mh := &memoryHandler{}
-	logging.Logger = slog.New(mh)
+	logging.SetLogger(slog.New(mh))
 
 	wq := db.NewWriteQueue(h.db)
 	tracker := usage.NewTracker(h.db)
@@ -713,7 +1294,15 @@ func TestBuildFailoverErrorResponse(t *testing.T) {
 		{
 			name:        "auth error",
 			category:    connstate.ErrorAuth,
-			wantMsg:     "authentication failed for all connections",
+			wantMsg:     "authentication failed",
+			wantStatus:  http.StatusUnauthorized,
+			wantErrType: "authentication_error",
+		},
+		{
+			name:        "auth error preserves upstream message",
+			category:    connstate.ErrorAuth,
+			lastErr:     &executor.UpstreamError{StatusCode: 403, Body: []byte(`{"error":{"message":"Access denied"}}`)},
+			wantMsg:     "Access denied",
 			wantStatus:  http.StatusUnauthorized,
 			wantErrType: "authentication_error",
 		},
@@ -748,52 +1337,52 @@ func TestBuildFailoverErrorResponse(t *testing.T) {
 			wantErrType: "server_error",
 		},
 	}
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				msg, status, errType := buildFailoverErrorResponse(string(tt.category), tt.lastErr, tt.modelName)
-				if msg != tt.wantMsg {
-					t.Errorf("msg: got %q, want %q", msg, tt.wantMsg)
-				}
-				if status != tt.wantStatus {
-					t.Errorf("status: got %d, want %d", status, tt.wantStatus)
-				}
-				if errType != tt.wantErrType {
-					t.Errorf("errType: got %q, want %q", errType, tt.wantErrType)
-				}
-			})
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg, status, errType := buildFailoverErrorResponse(string(tt.category), tt.lastErr, tt.modelName)
+			if msg != tt.wantMsg {
+				t.Errorf("msg: got %q, want %q", msg, tt.wantMsg)
+			}
+			if status != tt.wantStatus {
+				t.Errorf("status: got %d, want %d", status, tt.wantStatus)
+			}
+			if errType != tt.wantErrType {
+				t.Errorf("errType: got %q, want %q", errType, tt.wantErrType)
+			}
+		})
 	}
+}
 
-	// TestStreamResponse_UsageAccumulation verifies that per-chunk token extraction
-	// accumulates correctly across a Claude message_start + message_delta stream
-	// and writes merged tokens to request_logs.
-	func TestStreamResponse_UsageAccumulation(t *testing.T) {
-		h := newTestHandler(t)
+// TestStreamResponse_UsageAccumulation verifies that per-chunk token extraction
+// accumulates correctly across a Claude message_start + message_delta stream
+// and writes merged tokens to request_logs.
+func TestStreamResponse_UsageAccumulation(t *testing.T) {
+	h := newTestHandler(t)
 
-		// Create a minimal tracker and set it on the handler so Log() doesn't
-		// panic, but we will verify via api_key_usage instead of request_logs
-		// to avoid the async tracker flush race in tests.
-		wq := db.NewWriteQueue(h.db)
-		tracker := usage.NewTracker(h.db)
-		tracker.SetWriteQueue(wq)
-		h.tracker = tracker
+	// Create a minimal tracker and set it on the handler so Log() doesn't
+	// panic, but we will verify via api_key_usage instead of request_logs
+	// to avoid the async tracker flush race in tests.
+	wq := db.NewWriteQueue(h.db)
+	tracker := usage.NewTracker(h.db)
+	tracker.SetWriteQueue(wq)
+	h.tracker = tracker
 
-		// Seed a provider_type and api_key so the DB FK constraint is satisfied.
-		if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('test','Test','openai','http://x',0)`); err != nil {
-			t.Fatalf("seed provider_type: %v", err)
-		}
-		if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-1','test','c1','none','ready',1,0,0)`); err != nil {
-			t.Fatalf("seed connection: %v", err)
-		}
+	// Seed a provider_type and api_key so the DB FK constraint is satisfied.
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('test','Test','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed provider_type: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('conn-1','test','c1','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
 	// Seed the test API key so the increment path has a row to update.
 	hash := mustHashKey(t, "sk-test")
 	if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_keys (id, name, key_hash, created_at) VALUES ('test-key-1', 'test-key', ?, 0)`, hash); err != nil {
 		t.Fatalf("seed api_key: %v", err)
 	}
 
-		if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_key_usage (api_key_id, total_tokens, updated_at) VALUES ('test-key-1', 0, 0)`); err != nil {
-			t.Fatalf("seed api_key_usage: %v", err)
-		}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO api_key_usage (api_key_id, total_tokens, updated_at) VALUES ('test-key-1', 0, 0)`); err != nil {
+		t.Fatalf("seed api_key_usage: %v", err)
+	}
 
 	// Create a gin test context with api_key_id set.
 	rec := httptest.NewRecorder()
@@ -802,22 +1391,21 @@ func TestBuildFailoverErrorResponse(t *testing.T) {
 	c.Request.Header.Set("Authorization", "Bearer sk-test")
 	c.Set("api_key_id", "test-key-1")
 
+	// Build a stream with Claude message_start (input tokens + cache)
+	// and message_delta (output tokens).
+	chunks := make(chan executor.StreamChunk, 3)
+	chunks <- executor.StreamChunk{
+		Payload: []byte(`data: {"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":0,"cache_creation_input_tokens":2,"cache_read_input_tokens":3}}}`),
+	}
+	chunks <- executor.StreamChunk{
+		Payload: []byte(`data: {"type":"message_delta","usage":{"output_tokens":25}}`),
+	}
+	close(chunks)
 
-		// Build a stream with Claude message_start (input tokens + cache)
-		// and message_delta (output tokens).
-		chunks := make(chan executor.StreamChunk, 3)
-		chunks <- executor.StreamChunk{
-			Payload: []byte(`data: {"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":0,"cache_creation_input_tokens":2,"cache_read_input_tokens":3}}}`),
-		}
-		chunks <- executor.StreamChunk{
-			Payload: []byte(`data: {"type":"message_delta","usage":{"output_tokens":25}}`),
-		}
-		close(chunks)
-
-		result := &executor.StreamResult{
-			Chunks:     chunks,
-			StatusCode: http.StatusOK,
-		}
+	result := &executor.StreamResult{
+		Chunks:     chunks,
+		StatusCode: http.StatusOK,
+	}
 
 	conn := &Connection{ID: "conn-1"}
 	dummyReq := []byte(`{}`)
@@ -830,29 +1418,29 @@ func TestBuildFailoverErrorResponse(t *testing.T) {
 		time.Now(), "", false,
 	)
 
-		// Verify via api_key_usage: the accumulated tokens (15 input + 25 output = 40)
-		// should have been written by incrementAPIKeyUsage which uses a direct DB write
-		// (not going through the async tracker).
-		var totalTokens int64
-		err := h.db.QueryRow(`SELECT total_tokens FROM api_key_usage WHERE api_key_id = 'test-key-1'`).Scan(&totalTokens)
-		if err != nil {
-			t.Fatalf("query api_key_usage: %v", err)
-		}
-		if totalTokens != 40 {
-			t.Errorf("total_tokens = %d, want 40 (15 input + 25 output)", totalTokens)
-		}
+	// Verify via api_key_usage: the accumulated tokens (15 input + 25 output = 40)
+	// should have been written by incrementAPIKeyUsage which uses a direct DB write
+	// (not going through the async tracker).
+	var totalTokens int64
+	err := h.db.QueryRow(`SELECT total_tokens FROM api_key_usage WHERE api_key_id = 'test-key-1'`).Scan(&totalTokens)
+	if err != nil {
+		t.Fatalf("query api_key_usage: %v", err)
+	}
+	if totalTokens != 40 {
+		t.Errorf("total_tokens = %d, want 40 (15 input + 25 output)", totalTokens)
+	}
 
-		// Also verify the SSE output contains the translated chunks.
-		body := rec.Body.String()
-		if !strings.Contains(body, "data: [DONE]") {
-			t.Errorf("SSE output missing [DONE] marker")
-		}
-		if !strings.Contains(body, "type\":\"message_start") {
-			t.Errorf("SSE output missing message_start chunk")
-		}
-		if !strings.Contains(body, "type\":\"message_delta") {
-			t.Errorf("SSE output missing message_delta chunk")
-		}
+	// Also verify the SSE output contains the translated chunks.
+	body := rec.Body.String()
+	if !strings.Contains(body, "data: [DONE]") {
+		t.Errorf("SSE output missing [DONE] marker")
+	}
+	if !strings.Contains(body, "type\":\"message_start") {
+		t.Errorf("SSE output missing message_start chunk")
+	}
+	if !strings.Contains(body, "type\":\"message_delta") {
+		t.Errorf("SSE output missing message_delta chunk")
+	}
 
 	// Clean up
 	tracker.Stop()
@@ -891,8 +1479,8 @@ func TestStreamResponse_UpstreamChunkErrMarksExhausted(t *testing.T) {
 		time.Now(), "", false,
 	)
 
-	if !h.exhaustion.IsExhausted("conn-err") {
-		t.Error("expected connection marked exhausted after rate-limit chunk error")
+	if !h.exhaustion.IsExhaustedScope("conn-err", "test-model") {
+		t.Error("expected connection model scope marked exhausted after rate-limit chunk error")
 	}
 
 	tracker.Stop()
@@ -940,6 +1528,84 @@ func TestStreamResponse_ClientCanceledChunkErrDoesNotMarkExhausted(t *testing.T)
 
 	tracker.Stop()
 	wq.Stop()
+}
+
+func TestStreamResponse_ClaudeChunkErrorEmitsEventError(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	chunks := make(chan executor.StreamChunk, 2)
+	chunks <- executor.StreamChunk{Payload: []byte(`data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}`)}
+	chunks <- executor.StreamChunk{Err: errors.New("simulated upstream failure")}
+	close(chunks)
+	result := &executor.StreamResult{Chunks: chunks, StatusCode: http.StatusOK}
+
+	conn := &Connection{ID: "conn-claude-err"}
+	h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
+		executor.FormatClaude, executor.FormatClaude,
+		[]byte(`{}`), []byte(`{}`),
+		func(err error) []byte {
+			msg := err.Error()
+			if msg == "" {
+				msg = "upstream streaming error"
+			}
+			b, _ := json.Marshal(claudeError("api_error", msg))
+			return b
+		},
+		time.Now(), "", false,
+	)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: error\n") {
+		t.Errorf("expected Claude SSE error event, got:\n%s", body)
+	}
+	if !strings.Contains(body, `"type":"error"`) {
+		t.Errorf("expected error payload with type error, got:\n%s", body)
+	}
+	if !strings.Contains(body, "simulated upstream failure") {
+		t.Errorf("expected human-readable error message, got:\n%s", body)
+	}
+	if strings.Contains(body, "data: [DONE]") {
+		t.Errorf("Claude error stream should not emit data: [DONE], got:\n%s", body)
+	}
+}
+
+func TestStreamResponse_OpenAIChunkErrorPreservesDataErrorDone(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	chunks := make(chan executor.StreamChunk, 2)
+	chunks <- executor.StreamChunk{Payload: []byte(`data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"}}]}`)}
+	chunks <- executor.StreamChunk{Err: errors.New("simulated upstream failure")}
+	close(chunks)
+	result := &executor.StreamResult{Chunks: chunks, StatusCode: http.StatusOK}
+
+	conn := &Connection{ID: "conn-openai-err"}
+	h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
+		executor.FormatOpenAI, executor.FormatOpenAI,
+		[]byte(`{}`), []byte(`{}`),
+		func(err error) []byte { return []byte(`{"error":"upstream"}`) },
+		time.Now(), "", false,
+	)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "data: {\"error\":\"upstream\"}") {
+		t.Errorf("expected OpenAI-style data error, got:\n%s", body)
+	}
+	if !strings.Contains(body, "data: [DONE]") {
+		t.Errorf("expected [DONE] after OpenAI error, got:\n%s", body)
+	}
+	if strings.Contains(body, "event: error") {
+		t.Errorf("OpenAI stream should not emit event:error, got:\n%s", body)
+	}
 }
 
 // TestFallbackUsage verifies that fallback estimation is applied when token
@@ -1036,14 +1702,14 @@ func TestFallbackUsage(t *testing.T) {
 
 		conn := &Connection{ID: "conn-1"}
 		originalReq := []byte(`{"model":"test/model","messages":[{"role":"user","content":"Hello"}]}`)
-	translatedReq := []byte(`{"model":"test-model","messages":[{"role":"user","content":"Hello"}]}`)
+		translatedReq := []byte(`{"model":"test-model","messages":[{"role":"user","content":"Hello"}]}`)
 
-	h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
-		executor.FormatOpenAI, executor.FormatOpenAI,
-		originalReq, translatedReq,
-		func(err error) []byte { return []byte(err.Error()) },
-		time.Now(), "", false,
-	)
+		h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
+			executor.FormatOpenAI, executor.FormatOpenAI,
+			originalReq, translatedReq,
+			func(err error) []byte { return []byte(err.Error()) },
+			time.Now(), "", false,
+		)
 
 		// Verify api_key_usage got non-zero estimated tokens (fallback).
 		var totalTokens int64
@@ -1053,6 +1719,18 @@ func TestFallbackUsage(t *testing.T) {
 		}
 		if totalTokens == 0 {
 			t.Error("expected non-zero estimated tokens from fallback, got 0")
+		}
+
+		// The upstream stream had no finish_reason, so streamResponse should
+		// synthesize one before [DONE].
+		body := rec.Body.String()
+		if !strings.Contains(body, `"finish_reason":"stop"`) {
+			t.Errorf("expected synthetic finish_reason=stop before [DONE]; body:\n%s", body)
+		}
+		finishIdx := strings.Index(body, `"finish_reason":"stop"`)
+		doneIdx := strings.Index(body, "data: [DONE]")
+		if finishIdx == -1 || doneIdx == -1 || finishIdx > doneIdx {
+			t.Errorf("synthetic finish_reason must appear before [DONE]; finishIdx=%d doneIdx=%d", finishIdx, doneIdx)
 		}
 
 		tracker.Stop()
@@ -1101,15 +1779,15 @@ func TestFallbackUsage(t *testing.T) {
 			StatusCode: http.StatusOK,
 		}
 
-	conn := &Connection{ID: "conn-1"}
-	dummyReq := []byte(`{}`)
+		conn := &Connection{ID: "conn-1"}
+		dummyReq := []byte(`{}`)
 
-	h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
-		executor.FormatOpenAI, executor.FormatOpenAI,
-		dummyReq, dummyReq,
-		func(err error) []byte { return []byte(err.Error()) },
-		time.Now(), "", false,
-	)
+		h.streamResponse(context.Background(), c, result, conn, "test", "test-model",
+			executor.FormatOpenAI, executor.FormatOpenAI,
+			dummyReq, dummyReq,
+			func(err error) []byte { return []byte(err.Error()) },
+			time.Now(), "", false,
+		)
 
 		var totalTokens int64
 		err := h.db.QueryRow(`SELECT total_tokens FROM api_key_usage WHERE api_key_id = 'test-key-2'`).Scan(&totalTokens)
@@ -1433,6 +2111,83 @@ func TestBodyPreserved_TrackActiveRestores(t *testing.T) {
 	}
 }
 
+func compressZstd(t *testing.T, raw []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	enc, err := zstd.NewWriter(&buf)
+	if err != nil {
+		t.Fatalf("zstd writer: %v", err)
+	}
+	if _, err := enc.Write(raw); err != nil {
+		t.Fatalf("zstd write: %v", err)
+	}
+	if err := enc.Close(); err != nil {
+		t.Fatalf("zstd close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func TestReadBody_DecompressesZstd(t *testing.T) {
+	body := []byte(`{"model":"openai/gpt-4o","messages":[{"role":"user","content":"hi"}]}`)
+	compressed := compressZstd(t, body)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(compressed))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("Content-Encoding", "zstd")
+
+	got, err := readBody(c)
+	if err != nil {
+		t.Fatalf("readBody: %v", err)
+	}
+	if string(got) != string(body) {
+		t.Fatalf("decompressed body mismatch; got %q, want %q", got, body)
+	}
+}
+
+func TestReadBody_ZstdInvalidFallsBackToRawJSON(t *testing.T) {
+	body := []byte(`{"model":"openai/gpt-4o"}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("Content-Encoding", "zstd")
+
+	got, err := readBody(c)
+	if err != nil {
+		t.Fatalf("readBody: %v", err)
+	}
+	if string(got) != string(body) {
+		t.Fatalf("expected raw JSON fallback, got %q", got)
+	}
+}
+
+func TestTrackActive_DecompressesZstd(t *testing.T) {
+	h := newTestHandler(t)
+	body := []byte(`{"model":"openai/gpt-4o","stream":true}`)
+	compressed := compressZstd(t, body)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(compressed))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("Content-Encoding", "zstd")
+
+	h.TrackActive()(c)
+	if rec.Code == http.StatusRequestEntityTooLarge {
+		t.Fatalf("TrackActive rejected compressed body: %s", rec.Body.String())
+	}
+
+	got, err := readBody(c)
+	if err != nil {
+		t.Fatalf("readBody after TrackActive: %v", err)
+	}
+	if string(got) != string(body) {
+		t.Fatalf("body mismatch after TrackActive decompression; got %q, want %q", got, body)
+	}
+}
+
 // TestRefreshOAuthToken_PersistsProviderSpecific verifies that a successful
 // OAuth refresh which returns provider-specific data marshals it to
 // connections.provider_specific_data and updates the in-memory cache.
@@ -1441,11 +2196,12 @@ func TestRefreshOAuthToken_PersistsProviderSpecific(t *testing.T) {
 	h := newTestHandler(t)
 	wq := db.NewWriteQueue(h.db)
 	h.writeQueue = wq
+	h.authMgr.SetTokenWriter(db.NewOAuthTokenWriter(h.db, wq))
 
 	if _, err := h.db.Exec(`INSERT INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('psdtest','PsdTest','openai','http://x',0)`); err != nil {
 		t.Fatalf("seed provider_type: %v", err)
 	}
-	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, provider_specific_data, created_at, updated_at) VALUES ('psdtest-conn','psdtest','c1','oauth','ready',1,'',0,0)`); err != nil {
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, oauth_token, oauth_refresh_token, oauth_expires_at, provider_specific_data, created_at, updated_at) VALUES ('psdtest-conn','psdtest','c1','oauth','ready',1,'old-access','old-refresh',?,'',0,0)`, time.Now().Add(-time.Minute).Unix()); err != nil {
 		t.Fatalf("seed connection: %v", err)
 	}
 
@@ -1511,12 +2267,13 @@ func TestRefreshOAuthToken_KeepsProviderSpecificWhenEmpty(t *testing.T) {
 	h := newTestHandler(t)
 	wq := db.NewWriteQueue(h.db)
 	h.writeQueue = wq
+	h.authMgr.SetTokenWriter(db.NewOAuthTokenWriter(h.db, wq))
 
 	if _, err := h.db.Exec(`INSERT INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('psdempty','PsdEmpty','openai','http://x',0)`); err != nil {
 		t.Fatalf("seed provider_type: %v", err)
 	}
 	existing := `{"proxyPoolId":"pool-abc"}`
-	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, provider_specific_data, created_at, updated_at) VALUES ('psdempty-conn','psdempty','c1','oauth','ready',1,?,0,0)`, existing); err != nil {
+	if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, oauth_token, oauth_refresh_token, oauth_expires_at, provider_specific_data, created_at, updated_at) VALUES ('psdempty-conn','psdempty','c1','oauth','ready',1,'old-access','old-refresh',?,?,0,0)`, time.Now().Add(-time.Minute).Unix(), existing); err != nil {
 		t.Fatalf("seed connection: %v", err)
 	}
 
@@ -1557,5 +2314,959 @@ func TestRefreshOAuthToken_KeepsProviderSpecificWhenEmpty(t *testing.T) {
 	}
 	if psd != existing {
 		t.Errorf("persisted PSD changed: got %q, want %q", psd, existing)
+	}
+}
+
+// TestComboStream_EmptyCloseFailsOverToNextStep verifies that when a streaming
+// combo step's upstream closes without delivering any content, the orchestrator
+// fails over to the next step instead of returning an empty-looking stream.
+func TestComboStream_EmptyCloseFailsOverToNextStep(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('comboempty1','CE1','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed pt1: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('comboempty-conn1','comboempty1','c1','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed conn1: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('comboempty2','CE2','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed pt2: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('comboempty-conn2','comboempty2','c2','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed conn2: %v", err)
+	}
+
+	fe1 := &fakeExecutor{
+		streamResults: []struct {
+			result *executor.StreamResult
+			err    error
+		}{
+			{
+				result: &executor.StreamResult{
+					Chunks:     make(chan executor.StreamChunk),
+					StatusCode: http.StatusOK,
+				},
+			},
+		},
+	}
+	close(fe1.streamResults[0].result.Chunks)
+	executor.GetRegistry().Register("comboempty1", executor.FormatOpenAI, fe1)
+	defer executor.GetRegistry().Unregister("comboempty1")
+
+	chunks2 := make(chan executor.StreamChunk, 2)
+	chunks2 <- executor.StreamChunk{Payload: []byte(`data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"ok"}}]}`)}
+	close(chunks2)
+	fe2 := &fakeExecutor{
+		streamResults: []struct {
+			result *executor.StreamResult
+			err    error
+		}{
+			{
+				result: &executor.StreamResult{
+					Chunks:     chunks2,
+					StatusCode: http.StatusOK,
+				},
+			},
+		},
+	}
+	executor.GetRegistry().Register("comboempty2", executor.FormatOpenAI, fe2)
+	defer executor.GetRegistry().Unregister("comboempty2")
+
+	now := db.UnixNow()
+	if _, err := h.db.Exec(`INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, is_active, created_at, updated_at) VALUES ('combo-empty','combo-empty','priority',1,30000,1,?,?)`, now, now); err != nil {
+		t.Fatalf("insert combo: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at) VALUES (?,?,?,?,?,?,?)`,
+		"cs1", "combo-empty", "comboempty-conn1", "comboempty1/m1", 1, 100, now); err != nil {
+		t.Fatalf("insert step1: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at) VALUES (?,?,?,?,?,?,?)`,
+		"cs2", "combo-empty", "comboempty-conn2", "comboempty2/m2", 2, 100, now); err != nil {
+		t.Fatalf("insert step2: %v", err)
+	}
+
+	h.store.SeedConnection("comboempty-conn1", "comboempty1", "ready", 0)
+	h.store.SeedConnection("comboempty-conn2", "comboempty2", "ready", 0)
+	h.elig.RecomputeAll()
+	h.combo = combo.NewHandler(h.db, h.store, h.elig)
+
+	body := []byte(`{"model":"combo-empty","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.ChatCompletions(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	out := rec.Body.String()
+	if !strings.Contains(out, `"content":"ok"`) {
+		t.Fatalf("expected failover to step 2 content, got: %s", out)
+	}
+	if strings.Count(out, "[DONE]") != 1 {
+		t.Fatalf("expected exactly one [DONE], got: %s", out)
+	}
+}
+
+// TestCombo_NonStreamingUpstreamErrorBodyFailsOver verifies that when a combo
+// step returns an upstream error embedded in a 200-status body, the orchestrator
+// treats it as a retryable failure and moves to the next step.
+func TestCombo_NonStreamingUpstreamErrorBodyFailsOver(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('comboerr1','CE1','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed pt1: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('comboerr-conn1','comboerr1','c1','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed conn1: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('comboerr2','CE2','openai','http://x',0)`); err != nil {
+		t.Fatalf("seed pt2: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES ('comboerr-conn2','comboerr2','c2','none','ready',1,0,0)`); err != nil {
+		t.Fatalf("seed conn2: %v", err)
+	}
+
+	fe1 := &fakeExecutor{
+		responses: []struct {
+			resp *executor.Response
+			err  error
+		}{
+			{
+				resp: &executor.Response{
+					StatusCode: http.StatusOK,
+					Body:       []byte(`{"error":{"message":"model overloaded","type":"server_error"}}`),
+				},
+			},
+		},
+	}
+	executor.GetRegistry().Register("comboerr1", executor.FormatOpenAI, fe1)
+	defer executor.GetRegistry().Unregister("comboerr1")
+
+	fe2 := &fakeExecutor{
+		responses: []struct {
+			resp *executor.Response
+			err  error
+		}{
+			{
+				resp: &executor.Response{
+					StatusCode: http.StatusOK,
+					Body:       []byte(`{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"fallback ok"}}]}`),
+				},
+			},
+		},
+	}
+	executor.GetRegistry().Register("comboerr2", executor.FormatOpenAI, fe2)
+	defer executor.GetRegistry().Unregister("comboerr2")
+
+	now := db.UnixNow()
+	if _, err := h.db.Exec(`INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, is_active, created_at, updated_at) VALUES ('combo-err','combo-err','priority',1,30000,1,?,?)`, now, now); err != nil {
+		t.Fatalf("insert combo: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at) VALUES (?,?,?,?,?,?,?)`,
+		"ces1", "combo-err", "comboerr-conn1", "comboerr1/m1", 1, 100, now); err != nil {
+		t.Fatalf("insert step1: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at) VALUES (?,?,?,?,?,?,?)`,
+		"ces2", "combo-err", "comboerr-conn2", "comboerr2/m2", 2, 100, now); err != nil {
+		t.Fatalf("insert step2: %v", err)
+	}
+
+	h.store.SeedConnection("comboerr-conn1", "comboerr1", "ready", 0)
+	h.store.SeedConnection("comboerr-conn2", "comboerr2", "ready", 0)
+	h.elig.RecomputeAll()
+	h.combo = combo.NewHandler(h.db, h.store, h.elig)
+
+	body := []byte(`{"model":"combo-err","messages":[{"role":"user","content":"hi"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.ChatCompletions(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	out := rec.Body.String()
+	if !strings.Contains(out, "fallback ok") {
+		t.Fatalf("expected failover to step 2 response, got: %s", out)
+	}
+}
+
+// TestFusion_MinPanelThenGrace verifies that fusion stops collecting panel
+// responses once min_panel successes are in and only waits for the grace period
+// afterwards, instead of waiting for every panel to finish.
+func TestFusion_MinPanelThenGrace(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+
+	for i, pid := range []string{"fusion1", "fusion2", "fusionslow"} {
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES (?,?, 'openai','http://x',0)`, pid, pid); err != nil {
+			t.Fatalf("seed pt %d: %v", i, err)
+		}
+		cid := fmt.Sprintf("fconn-%d", i)
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?,?, 'c','none','ready',1,0,0)`, cid, pid); err != nil {
+			t.Fatalf("seed conn %d: %v", i, err)
+		}
+		h.store.SeedConnection(cid, pid, "ready", 0)
+	}
+	h.elig.RecomputeAll()
+
+	// First two panels return quickly.
+	for _, pid := range []string{"fusion1", "fusion2"} {
+		fe := &fakeExecutor{
+			responses: []struct {
+				resp *executor.Response
+				err  error
+			}{
+				{
+					resp: &executor.Response{
+						StatusCode: http.StatusOK,
+						Body:       []byte(`{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"panel "}}]}`),
+					},
+				},
+			},
+		}
+		executor.GetRegistry().Register(pid, executor.FormatOpenAI, fe)
+		defer executor.GetRegistry().Unregister(pid)
+	}
+	// Slow panel never returns within test bounds.
+	slow := &fakeExecutor{
+		responses: []struct {
+			resp *executor.Response
+			err  error
+		}{
+			{
+				resp: &executor.Response{
+					StatusCode: http.StatusOK,
+					Body:       []byte(`{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"slow"}}]}`),
+				},
+			},
+		},
+		delay: 30 * time.Second,
+	}
+	executor.GetRegistry().Register("fusionslow", executor.FormatOpenAI, slow)
+	defer executor.GetRegistry().Unregister("fusionslow")
+
+	now := db.UnixNow()
+	if _, err := h.db.Exec(`INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, fusion_config, is_active, created_at, updated_at) VALUES ('combo-fusion','combo-fusion','fusion',1,30000,'{"min_panel":2,"straggler_grace_ms":100}',1,?,?)`, now, now); err != nil {
+		t.Fatalf("insert combo: %v", err)
+	}
+	for i, cid := range []string{"fconn-0", "fconn-1", "fconn-2"} {
+		if _, err := h.db.Exec(`INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at) VALUES (?,?,?,?,?,?,?)`,
+			fmt.Sprintf("cfs-%d", i), "combo-fusion", cid, fmt.Sprintf("fusion%d/m", i+1), i+1, 100, now); err != nil {
+			t.Fatalf("insert step %d: %v", i, err)
+		}
+	}
+	h.combo = combo.NewHandler(h.db, h.store, h.elig)
+
+	body := []byte(`{"model":"combo-fusion","messages":[{"role":"user","content":"hi"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	start := time.Now()
+	h.ChatCompletions(c)
+	elapsed := time.Since(start)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// Should not wait 30s for slow panel; minPanel(2)+grace(100ms) should be enough.
+	if elapsed >= 2*time.Second {
+		t.Fatalf("fusion hung too long waiting for all panels: %v", elapsed)
+	}
+}
+
+// TestFusion_JudgeStreamFails_FallsBackToFirstPanel verifies that when the
+// judge model's stream fails mid-way, the client still receives a complete SSE
+// stream containing the first panel response and a terminating [DONE] frame.
+func TestFusion_JudgeStreamFails_FallsBackToFirstPanel(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+
+	// Two panel providers plus a separate judge provider.
+	for i, pid := range []string{"fusion1", "fusion2", "judge"} {
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES (?,?, 'openai','http://x',0)`, pid, pid); err != nil {
+			t.Fatalf("seed pt %d: %v", i, err)
+		}
+		cid := fmt.Sprintf("fconn-%d", i)
+		if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?,?, 'c','none','ready',1,0,0)`, cid, pid); err != nil {
+			t.Fatalf("seed conn %d: %v", i, err)
+		}
+		h.store.SeedConnection(cid, pid, "ready", 0)
+	}
+	h.elig.RecomputeAll()
+
+	for _, pid := range []string{"fusion1", "fusion2"} {
+		fe := &fakeExecutor{
+			responses: []struct {
+				resp *executor.Response
+				err  error
+			}{
+				{
+					resp: &executor.Response{
+						StatusCode: http.StatusOK,
+						Body:       []byte(`{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"panel one"}}]}`),
+					},
+				},
+			},
+		}
+		executor.GetRegistry().Register(pid, executor.FormatOpenAI, fe)
+		defer executor.GetRegistry().Unregister(pid)
+	}
+
+	// Judge returns a stream that closes without any content. handleStreamResponse
+	// treats this as a failure and returns an error; the fusion handler must then
+	// fall back to the first panel response. Provide several identical results so
+	// the test is robust to any preflight ExecuteStream calls made by the routing
+	// machinery for the same provider.
+	makeFailingStream := func() *executor.StreamResult {
+		chunks := make(chan executor.StreamChunk)
+		close(chunks)
+		return &executor.StreamResult{
+			Chunks:     chunks,
+			StatusCode: http.StatusOK,
+			Headers:    http.Header{"Content-Type": []string{"text/event-stream"}},
+		}
+	}
+	judgeExec := &fakeExecutor{
+		streamResults: []struct {
+			result *executor.StreamResult
+			err    error
+		}{
+			{result: makeFailingStream()},
+			{result: makeFailingStream()},
+			{result: makeFailingStream()},
+			{result: makeFailingStream()},
+			{result: makeFailingStream()},
+		},
+	}
+	executor.GetRegistry().Register("judge", executor.FormatOpenAI, judgeExec)
+	defer executor.GetRegistry().Unregister("judge")
+
+	now := db.UnixNow()
+	if _, err := h.db.Exec(`INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, fusion_config, is_active, created_at, updated_at) VALUES ('combo-fusion','combo-fusion','fusion',1,30000,'{"min_panel":2,"straggler_grace_ms":100,"judge_model":"judge/m"}',1,?,?)`, now, now); err != nil {
+		t.Fatalf("insert combo: %v", err)
+	}
+	for i, cid := range []string{"fconn-0", "fconn-1", "fconn-2"} {
+		modelID := fmt.Sprintf("fusion%d/m", i+1)
+		if i == 2 {
+			modelID = "judge/m"
+		}
+		if _, err := h.db.Exec(`INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at) VALUES (?,?,?,?,?,?,?)`,
+			fmt.Sprintf("cfs-%d", i), "combo-fusion", cid, modelID, i+1, 100, now); err != nil {
+			t.Fatalf("insert step %d: %v", i, err)
+		}
+	}
+	h.combo = combo.NewHandler(h.db, h.store, h.elig)
+
+	body := []byte(`{"model":"combo-fusion","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.ChatCompletions(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("expected text/event-stream, got %q", ct)
+	}
+	respBody := rec.Body.String()
+	if !strings.Contains(respBody, "panel one") {
+		t.Fatalf("expected fallback to first panel content, got:\n%s", respBody)
+	}
+	if !strings.Contains(respBody, "data: [DONE]") {
+		t.Fatalf("expected terminating [DONE] frame, got:\n%s", respBody)
+	}
+}
+
+// TestFusion_SinglePanelSuccess_ReRunsModel returns the real provider response
+// (including usage and finish_reason) instead of the synthetic envelope when only
+// one fusion panel succeeds.
+func TestFusion_SinglePanelSuccess_ReRunsModel(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	pid := "fusion1"
+	cid := "fconn-0"
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES (?,?,'openai','http://x',0)`, pid, pid); err != nil {
+		t.Fatalf("seed pt: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?,?,'c','none','ready',1,0,0)`, cid, pid); err != nil {
+		t.Fatalf("seed conn: %v", err)
+	}
+	h.store.SeedConnection(cid, pid, "ready", 0)
+	h.elig.RecomputeAll()
+
+	fe := &fakeExecutor{
+		responses: []struct {
+			resp *executor.Response
+			err  error
+		}{
+			{
+				resp: &executor.Response{
+					StatusCode: http.StatusOK,
+					Body:       []byte(`{"id":"panel","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"panel answer"}}]}`),
+				},
+			},
+			{
+				resp: &executor.Response{
+					StatusCode: http.StatusOK,
+					Body:       []byte(`{"id":"real","object":"chat.completion","model":"fusion1/m","usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5},"choices":[{"index":0,"message":{"role":"assistant","content":"real answer"},"finish_reason":"stop"}]}`),
+				},
+			},
+		},
+	}
+	executor.GetRegistry().Register(pid, executor.FormatOpenAI, fe)
+	defer executor.GetRegistry().Unregister(pid)
+
+	now := db.UnixNow()
+	if _, err := h.db.Exec(`INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, fusion_config, is_active, created_at, updated_at) VALUES ('combo-fusion','combo-fusion','fusion',1,30000,'{"min_panel":1,"straggler_grace_ms":100}',1,?,?)`, now, now); err != nil {
+		t.Fatalf("insert combo: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at) VALUES ('cfs-0','combo-fusion',?, 'fusion1/m',1,100,?)`, cid, now); err != nil {
+		t.Fatalf("insert step: %v", err)
+	}
+	h.combo = combo.NewHandler(h.db, h.store, h.elig)
+
+	body := []byte(`{"model":"combo-fusion","messages":[{"role":"user","content":"hi"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	h.ChatCompletions(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if fe.callCount != 2 {
+		t.Fatalf("expected 2 executor calls (panel + re-run), got %d", fe.callCount)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got["id"] != "real" {
+		t.Fatalf("expected real provider response id, got %v", got["id"])
+	}
+	if _, ok := got["usage"]; !ok {
+		t.Fatalf("expected usage metadata in response, got %s", rec.Body.String())
+	}
+	choices, _ := got["choices"].([]any)
+	if len(choices) == 0 {
+		t.Fatalf("expected choices in response")
+	}
+	choice, _ := choices[0].(map[string]any)
+	if choice["finish_reason"] != "stop" {
+		t.Fatalf("expected finish_reason stop, got %v", choice["finish_reason"])
+	}
+}
+
+// TestFusion_SinglePanelSuccess_ReRunFails_FallsBackToSynthetic verifies that when
+// only one panel succeeds but the real-provider re-run fails, the client still gets
+// the synthetic envelope.
+func TestFusion_SinglePanelSuccess_ReRunFails_FallsBackToSynthetic(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	pid := "fusion1"
+	cid := "fconn-0"
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES (?,?,'openai','http://x',0)`, pid, pid); err != nil {
+		t.Fatalf("seed pt: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?,?,'c','none','ready',1,0,0)`, cid, pid); err != nil {
+		t.Fatalf("seed conn: %v", err)
+	}
+	h.store.SeedConnection(cid, pid, "ready", 0)
+	h.elig.RecomputeAll()
+
+	fe := &fakeExecutor{
+		responses: []struct {
+			resp *executor.Response
+			err  error
+		}{
+			{
+				resp: &executor.Response{
+					StatusCode: http.StatusOK,
+					Body:       []byte(`{"id":"panel","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"panel answer"}}]}`),
+				},
+			},
+			{err: errors.New("rerun failed")},
+		},
+	}
+	executor.GetRegistry().Register(pid, executor.FormatOpenAI, fe)
+	defer executor.GetRegistry().Unregister(pid)
+
+	now := db.UnixNow()
+	if _, err := h.db.Exec(`INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, fusion_config, is_active, created_at, updated_at) VALUES ('combo-fusion','combo-fusion','fusion',1,30000,'{"min_panel":1,"straggler_grace_ms":100}',1,?,?)`, now, now); err != nil {
+		t.Fatalf("insert combo: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at) VALUES ('cfs-0','combo-fusion',?, 'fusion1/m',1,100,?)`, cid, now); err != nil {
+		t.Fatalf("insert step: %v", err)
+	}
+	h.combo = combo.NewHandler(h.db, h.store, h.elig)
+
+	body := []byte(`{"model":"combo-fusion","messages":[{"role":"user","content":"hi"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	h.ChatCompletions(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if fe.callCount != 2 {
+		t.Fatalf("expected 2 executor calls (panel + re-run), got %d", fe.callCount)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !strings.HasPrefix(got["id"].(string), "fusion-") {
+		t.Fatalf("expected synthetic fusion response id, got %v", got["id"])
+	}
+}
+
+func TestStripFusionTools_FlattenToolHistory(t *testing.T) {
+	body := []byte(`{
+		"model": "combo",
+		"stream": true,
+		"tools": [{"type": "function", "function": {"name": "calc"}}],
+		"tool_choice": "auto",
+		"messages": [
+			{"role": "user", "content": "what is 1+1"},
+			{"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "calc"}}]},
+			{"role": "tool", "tool_call_id": "c1", "content": "2"}
+		]
+	}`)
+	got := stripFusionTools(body)
+	var m map[string]any
+	if err := json.Unmarshal(got, &m); err != nil {
+		t.Fatalf("stripFusionTools returned invalid JSON: %v", err)
+	}
+	if _, ok := m["tools"]; ok {
+		t.Error("tools should be stripped")
+	}
+	if _, ok := m["tool_choice"]; ok {
+		t.Error("tool_choice should be stripped")
+	}
+	msgs, ok := m["messages"].([]any)
+	if !ok || len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %v", m["messages"])
+	}
+	want := []struct {
+		role    string
+		content string
+	}{
+		{"user", "what is 1+1"},
+		{"assistant", "[Called tools: calc]"},
+		{"assistant", "[Tool result: 2]"},
+	}
+	for i, want := range want {
+		msg, ok := msgs[i].(map[string]any)
+		if !ok {
+			t.Fatalf("message %d is not an object", i)
+		}
+		if got := msg["role"]; got != want.role {
+			t.Errorf("message %d role = %v, want %v", i, got, want.role)
+		}
+		if got := msg["content"]; got != want.content {
+			t.Errorf("message %d content = %v, want %v", i, got, want.content)
+		}
+	}
+}
+
+func TestFlattenToolHistory(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []any
+		want []map[string]any
+	}{
+		{
+			name: "tool result becomes assistant prose",
+			in: []any{
+				map[string]any{"role": "tool", "content": "42"},
+			},
+			want: []map[string]any{
+				{"role": "assistant", "content": "[Tool result: 42]"},
+			},
+		},
+		{
+			name: "assistant tool_calls inlined",
+			in: []any{
+				map[string]any{"role": "assistant", "content": "calling", "tool_calls": []any{
+					map[string]any{"type": "function", "function": map[string]any{"name": "a"}},
+					map[string]any{"type": "function", "function": map[string]any{"name": "b"}},
+				}},
+			},
+			want: []map[string]any{
+				{"role": "assistant", "content": "calling\n[Called tools: a, b]"},
+			},
+		},
+		{
+			name: "anthropic tool blocks flattened",
+			in: []any{
+				map[string]any{"role": "assistant", "content": []any{
+					map[string]any{"type": "text", "text": "result:"},
+					map[string]any{"type": "tool_result", "content": []map[string]any{{"type": "text", "text": "ok"}}},
+				}},
+			},
+			want: []map[string]any{
+				{"role": "assistant", "content": "result:\n[Tool result: ok]"},
+			},
+		},
+		{
+			name: "regular messages pass through",
+			in: []any{
+				map[string]any{"role": "system", "content": "sys"},
+				map[string]any{"role": "user", "content": "hi"},
+			},
+			want: []map[string]any{
+				{"role": "system", "content": "sys"},
+				{"role": "user", "content": "hi"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := flattenToolHistory(tt.in)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %d messages, want %d", len(got), len(tt.want))
+			}
+			for i, want := range tt.want {
+				msg, ok := got[i].(map[string]any)
+				if !ok {
+					t.Fatalf("message %d is not a map", i)
+				}
+				for k, v := range want {
+					if msg[k] != v {
+						t.Errorf("message %d %q = %v, want %v", i, k, msg[k], v)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestIsModelAllowed(t *testing.T) {
+	h := newTestHandler(t)
+
+	tests := []struct {
+		name    string
+		model   string
+		allowed map[string]struct{}
+		want    bool
+	}{
+		{name: "nil allowed means unlimited", model: "openai/gpt-4o", allowed: nil, want: true},
+		{name: "empty allowed means unlimited", model: "openai/gpt-4o", allowed: map[string]struct{}{}, want: true},
+		{name: "exact full id match", model: "openai/gpt-4o", allowed: map[string]struct{}{"openai/gpt-4o": {}}, want: true},
+		{name: "provider prefix match", model: "openai/gpt-4o", allowed: map[string]struct{}{"openai": {}}, want: true},
+		{name: "no match", model: "openai/gpt-4o", allowed: map[string]struct{}{"claude": {}}, want: false},
+		{name: "exact mismatch", model: "openai/gpt-4o", allowed: map[string]struct{}{"openai/gpt-4o-mini": {}}, want: false},
+		{name: "combo name exact match", model: "my-combo", allowed: map[string]struct{}{"my-combo": {}}, want: true},
+		{name: "smart prefix match", model: "smart/auto", allowed: map[string]struct{}{"smart": {}}, want: true},
+		{name: "combo smart virtual prefix match", model: "smart/balanced", allowed: map[string]struct{}{"smart": {}}, want: true},
+		{name: "negative exact mismatch", model: "openai/gpt-4o", allowed: map[string]struct{}{"openai/gpt-4o-mini": {}}, want: false},
+		{name: "negative unrelated prefix", model: "openai/gpt-4o", allowed: map[string]struct{}{"claude": {}}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			if tt.allowed != nil {
+				ctx = context.WithValue(ctx, "allowed_models", tt.allowed)
+			}
+			if got := h.isModelAllowed(ctx, tt.model); got != tt.want {
+				t.Errorf("isModelAllowed(%q) = %v, want %v", tt.model, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestModelIDAllowed(t *testing.T) {
+	tests := []struct {
+		name    string
+		model   string
+		allowed map[string]struct{}
+		want    bool
+	}{
+		{name: "unlimited", model: "openai/gpt-4o", allowed: nil, want: true},
+		{name: "exact id", model: "openai/gpt-4o", allowed: map[string]struct{}{"openai/gpt-4o": {}}, want: true},
+		{name: "prefix", model: "openai/gpt-4o-mini", allowed: map[string]struct{}{"openai": {}}, want: true},
+		{name: "combo exact", model: "my-combo", allowed: map[string]struct{}{"my-combo": {}}, want: true},
+		{name: "smart virtual prefix", model: "smart/balanced", allowed: map[string]struct{}{"smart": {}}, want: true},
+		{name: "negative no match", model: "openai/gpt-4o", allowed: map[string]struct{}{"claude": {}}, want: false},
+		{name: "negative exact mismatch", model: "openai/gpt-4o", allowed: map[string]struct{}{"openai/gpt-4o-mini": {}}, want: false},
+		{name: "negative empty allowed means unlimited still true", model: "openai/gpt-4o", allowed: map[string]struct{}{}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := modelIDAllowed(tt.model, tt.allowed); got != tt.want {
+				t.Errorf("modelIDAllowed(%q) = %v, want %v", tt.model, got, tt.want)
+			}
+		})
+	}
+}
+
+// jsonRequestWithAllowedModels builds a Gin test context carrying an allowed_models
+// set on the request context. nil allowed means unlimited.
+func jsonRequestWithAllowedModels(t *testing.T, method, path string, body []byte, allowed map[string]struct{}) (*httptest.ResponseRecorder, *gin.Context) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	ctx := context.Background()
+	if allowed != nil {
+		ctx = context.WithValue(ctx, "allowed_models", allowed)
+	}
+	c.Request = httptest.NewRequest(method, path, bytes.NewReader(body)).WithContext(ctx)
+	c.Request.Header.Set("Content-Type", "application/json")
+	return rec, c
+}
+
+func TestDirectRoutes_ModelNotAllowed_ReturnsForbidden(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := newTestHandler(t)
+
+	forbidden := map[string]struct{}{"claude": {}}
+
+	cases := []struct {
+		name         string
+		path         string
+		body         []byte
+		allowed      map[string]struct{}
+		wantStatus   int
+		checkBody    bool
+		wantContains string
+		handler      func(*gin.Context)
+	}{
+		{
+			name:         "chat completions forbidden",
+			path:         "/v1/chat/completions",
+			body:         []byte(`{"model":"openai/gpt-4o","messages":[{"role":"user","content":"hi"}]}`),
+			allowed:      forbidden,
+			wantStatus:   http.StatusForbidden,
+			checkBody:    true,
+			wantContains: "model not allowed for this API key",
+			handler:      h.ChatCompletions,
+		},
+		{
+			name:         "messages forbidden",
+			path:         "/v1/messages",
+			body:         []byte(`{"model":"openai/gpt-4o","messages":[{"role":"user","content":"hi"}]}`),
+			allowed:      forbidden,
+			wantStatus:   http.StatusForbidden,
+			checkBody:    true,
+			wantContains: "model not allowed for this API key",
+			handler:      h.Messages,
+		},
+		{
+			name:         "count tokens forbidden",
+			path:         "/v1/messages/count_tokens",
+			body:         []byte(`{"model":"openai/gpt-4o","messages":[{"role":"user","content":"hi"}]}`),
+			allowed:      forbidden,
+			wantStatus:   http.StatusForbidden,
+			checkBody:    true,
+			wantContains: "model not allowed for this API key",
+			handler:      h.CountTokens,
+		},
+		{
+			name:         "responses forbidden",
+			path:         "/v1/responses",
+			body:         []byte(`{"model":"openai/gpt-4o","input":"hi"}`),
+			allowed:      forbidden,
+			wantStatus:   http.StatusForbidden,
+			checkBody:    true,
+			wantContains: "model not allowed for this API key",
+			handler:      h.Responses,
+		},
+		{
+			name:         "embeddings forbidden",
+			path:         "/v1/embeddings",
+			body:         []byte(`{"model":"openai/text-embedding-3-small","input":"hi"}`),
+			allowed:      forbidden,
+			wantStatus:   http.StatusForbidden,
+			checkBody:    true,
+			wantContains: "model not allowed for this API key",
+			handler:      h.Embeddings,
+		},
+		{
+			name:         "images forbidden",
+			path:         "/v1/images/generations",
+			body:         []byte(`{"model":"openai/dall-e-3","prompt":"hi"}`),
+			allowed:      forbidden,
+			wantStatus:   http.StatusForbidden,
+			checkBody:    true,
+			wantContains: "model not allowed for this API key",
+			handler:      h.Images,
+		},
+		{
+			name:         "video forbidden",
+			path:         "/v1/video/generations",
+			body:         []byte(`{"model":"openai/gpt-4o","prompt":"hi"}`),
+			allowed:      forbidden,
+			wantStatus:   http.StatusForbidden,
+			checkBody:    true,
+			wantContains: "model not allowed for this API key",
+			handler:      h.Video,
+		},
+		{
+			name:         "tts forbidden",
+			path:         "/v1/audio/speech",
+			body:         []byte(`{"model":"openai/tts-1","input":"hi"}`),
+			allowed:      forbidden,
+			wantStatus:   http.StatusForbidden,
+			checkBody:    true,
+			wantContains: "model not allowed for this API key",
+			handler:      h.TTS,
+		},
+		{
+			name:         "unified forbidden",
+			path:         "/v1/unified",
+			body:         []byte(`{"mode":"text","model":"openai/gpt-4o","messages":[{"role":"user","content":"hi"}]}`),
+			allowed:      forbidden,
+			wantStatus:   http.StatusForbidden,
+			checkBody:    true,
+			wantContains: "model not allowed for this API key",
+			handler:      h.Unified,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec, c := jsonRequestWithAllowedModels(t, http.MethodPost, tc.path, tc.body, tc.allowed)
+			tc.handler(c)
+			if rec.Code != tc.wantStatus {
+				t.Errorf("status = %d, want %d: body = %s", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			if tc.checkBody && !strings.Contains(rec.Body.String(), tc.wantContains) {
+				t.Errorf("body does not contain %q: %s", tc.wantContains, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestSTT_ModelNotAllowed_ReturnsForbidden(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := newTestHandler(t)
+
+	forbidden := map[string]struct{}{"claude": {}}
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if err := mw.WriteField("model", "openai/whisper-1"); err != nil {
+		t.Fatalf("write model field: %v", err)
+	}
+	part, err := mw.CreateFormFile("file", "audio.wav")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write([]byte("fake audio")); err != nil {
+		t.Fatalf("write file data: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	ctx := context.WithValue(context.Background(), "allowed_models", forbidden)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", &buf).WithContext(ctx)
+	c.Request.Header.Set("Content-Type", mw.FormDataContentType())
+
+	h.STT(c)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d: body = %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "model not allowed for this API key") {
+		t.Errorf("body does not contain forbidden message: %s", rec.Body.String())
+	}
+}
+
+func TestSessionAffinity_CachesConnectionPerSessionModel(t *testing.T) {
+	logging.Init("text")
+	h := newTestHandler(t)
+	now := time.Now().Unix()
+
+	if err := h.providerCfg.Save("affinity-test", providercfg.ProviderSettings{RoutingMode: providercfg.Affinity}); err != nil {
+		t.Fatalf("save routing mode: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('affinity-test','AffinityTest','openai','http://x',?)`, now); err != nil {
+		t.Fatalf("seed provider type: %v", err)
+	}
+	ids := []string{"aff-a", "aff-b"}
+	for _, id := range ids {
+		if _, err := h.db.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, created_at, updated_at) VALUES (?,'affinity-test',?,'none','ready',1,?,?)`, id, id, now, now); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+		h.store.SeedConnection(id, "affinity-test", "ready", 0)
+		h.store.Get(id).SetRemainingPct(50)
+	}
+	h.elig.RecomputeAll()
+
+	ctx := context.Background()
+	body := []byte(`{"model":"affinity-test/model","messages":[{"role":"user","content":"hi"}]}`)
+
+	// First call selects and caches a connection for the message-hash session.
+	c1, err := h.getConnection(ctx, "affinity-test", "gpt-4o", h.extractSessionID(nil, body))
+	if err != nil {
+		t.Fatalf("first call failed: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		c2, err := h.getConnection(ctx, "affinity-test", "gpt-4o", h.extractSessionID(nil, body))
+		if err != nil {
+			t.Fatalf("repeat call %d failed: %v", i, err)
+		}
+		if c2.ID != c1.ID {
+			t.Fatalf("affinity broke on repeat call %d: got %s want %s", i, c2.ID, c1.ID)
+		}
+	}
+
+	// A different session should be allowed to select a different connection.
+	otherBody := []byte(`{"model":"affinity-test/model","messages":[{"role":"user","content":"hello"}]}`)
+	otherSession := h.extractSessionID(nil, otherBody)
+	if otherSession == h.extractSessionID(nil, body) {
+		t.Fatal("different bodies produced the same session hash")
+	}
+}
+
+func TestExtractSessionID_Priority(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Priority 1: metadata.user_id with _session_<uuid>
+	body := []byte(`{"metadata":{"user_id":"rickicode_session_550e8400-e29b-41d4-a716-446655440000"}}`)
+	if got := h.extractSessionID(nil, body); got != "550e8400-e29b-41d4-a716-446655440000" {
+		t.Fatalf("metadata.user_id extraction = %q", got)
+	}
+
+	// Priority 6: stable hash of first messages.
+	body = []byte(`{"messages":[{"role":"system","content":"sys"},{"role":"user","content":"hi"}]}`)
+	first := h.extractSessionID(nil, body)
+	if first == "" {
+		t.Fatal("expected stable hash fallback")
+	}
+	// Same messages produce same session.
+	if second := h.extractSessionID(nil, body); second != first {
+		t.Fatalf("stable hash changed: %q vs %q", first, second)
+	}
+}
+
+func TestExtractSessionID_HeaderPriority(t *testing.T) {
+	h := newTestHandler(t)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	c.Request.Header.Set("X-Session-ID", "header-session")
+	body := []byte(`{"messages":[{"role":"user","content":"hi"}]}`)
+	if got := h.extractSessionID(c, body); got != "header-session" {
+		t.Fatalf("X-Session-ID priority = %q", got)
 	}
 }

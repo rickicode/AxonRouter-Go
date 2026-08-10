@@ -12,8 +12,11 @@ import { copyToClipboard } from '$lib/copy';
 import { connections } from '$lib/stores';
 import { getProxyPoolId, filterProxyPools } from '$lib/auto-add-proxy-pools';
 import ProviderIcon from '$lib/components/ProviderIcon.svelte';
+import KiroDeviceCodeView from '$lib/components/KiroDeviceCodeView.svelte';
+import KiroSocialCallbackView from '$lib/components/KiroSocialCallbackView.svelte';
 import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 import type { ProviderMeta } from '$lib/provider-catalog';
+import { KIRO_METHODS, KIRO_STARTING_METHOD, getKiroMethodLabel, type KiroMethod } from '$lib/components/kiro-method-menu';
 
   let {
     open = $bindable(false),
@@ -29,9 +32,11 @@ import type { ProviderMeta } from '$lib/provider-catalog';
 
   type Step = 'form' | 'oauth-waiting' | 'done' | 'error';
   type Mode = 'single' | 'bulk';
+  type AuthMode = 'oauth' | 'apikey' | 'none' | 'custom';
 
   let step = $state<Step>('form');
   let mode = $state<Mode>('single');
+  let authMode = $state<AuthMode>('oauth');
   let connectionName = $state('');
   let apiKey = $state('');
   let showKey = $state(false);
@@ -64,6 +69,19 @@ let poolSearch = $state('');
 let poolDropdownOpen = $state(false);
 let poolDropdownRef: HTMLDivElement | undefined = $state();
 
+  // Kiro method selection state
+  let kiroMethod = $state<KiroMethod | 'menu'>(KIRO_STARTING_METHOD);
+  let kiroSession = $state<{ authUrl: string; userCode?: string; sessionId: string; provider?: 'google' | 'github' } | null>(null);
+  let idcStartUrl = $state('');
+  let idcRegion = $state('');
+  let apiKeyInput = $state('');
+  let apiKeyRegion = $state('');
+  let importRefreshToken = $state('');
+  let importClientId = $state('');
+  let importClientSecret = $state('');
+  let importStartUrl = $state('');
+  let importRegion = $state('');
+
 // Bulk import via .txt upload + chunked send (keeps RAM bounded on both sides).
 const BULK_CHUNK = 5000;
 let uploadedFileName = $state('');
@@ -81,11 +99,21 @@ function parseConnectionLines(text: string) {
     let conn: { name: string; api_key: string; priority?: number; provider_specific_data?: Record<string, string> } | null = null;
     if (meta?.inputFormat === 'pipe') {
       const parts = line.split('|').map((p) => p.trim());
-      if (parts.length < 3) {
-        warnings.push(`Line ${index + 1}: expected email|accountId|apiToken, got "${line}"`);
+      if (parts.length !== 3) {
+        warnings.push(`Line ${index + 1}: expected email|accountId|apiToken (3 parts), got ${parts.length} part(s): "${line}"`);
       } else {
         const [email, accountId, apiToken] = parts;
-        conn = { name: email || `Connection ${index + 1}`, api_key: apiToken, provider_specific_data: { accountId } };
+        // Validate email format
+        if (!email.includes('@')) {
+          warnings.push(`Line ${index + 1}: invalid email "${email}"`);
+        }
+        // Validate accountId is 32-char hex (Cloudflare account ID)
+        else if (!/^[0-9a-f]{32}$/i.test(accountId)) {
+          warnings.push(`Line ${index + 1}: invalid accountId "${accountId}" (must be 32-char hex)`);
+        }
+        else {
+          conn = { name: email, api_key: apiToken, provider_specific_data: { accountId } };
+        }
       }
     } else {
       const match = line.match(/^([^,:\t|]+)[,:\t|](.+)$/);
@@ -139,6 +167,17 @@ async function submitBulkChunked() {
     toast.error('No connections to import');
     return;
   }
+
+  // Cloudflare requires accountId in provider_specific_data for every connection.
+  if (meta?.inputFormat === 'pipe') {
+    const missing = all.filter((c) => !c.provider_specific_data?.accountId);
+    if (missing.length > 0) {
+      const msg = `${missing.length} connection(s) missing Account ID. Each line must be: email|accountId|apiToken`;
+      toast.error(msg);
+      return;
+    }
+  }
+
   importing = true;
   importProgress = 0;
   importSummary = { created: 0, failed: 0, total: all.length };
@@ -187,14 +226,19 @@ async function submitBulkChunked() {
 }
 
   const authType = $derived(meta?.authType ?? 'apikey');
-  const isOAuth = $derived(authType === 'oauth');
-  const isNoAuth = $derived(authType === 'none');
-  const isApiKey = $derived(authType === 'apikey' || authType === 'custom');
+  const authModes = $derived(meta?.authModes ?? [authType]);
+  const effectiveAuthType = $derived(authModes.includes(authMode) ? authMode : authModes[0]);
+  const isOAuth = $derived(effectiveAuthType === 'oauth');
+  const isNoAuth = $derived(effectiveAuthType === 'none');
+  const isApiKey = $derived(effectiveAuthType === 'apikey' || effectiveAuthType === 'custom');
 const supportsBulk = $derived(isApiKey);
 const isOCProvider = $derived(providerId === 'oc');
 const isMimocodeProvider = $derived(providerId === 'mimocode');
 const needsProxyPool = $derived(isOCProvider || isMimocodeProvider);
-const showImportMode = $derived(providerId === 'grok-cli');
+const showImportMode = $derived(providerId === 'grok-cli' || providerId === 'kiro' || providerId === 'cursor');
+const isKiro = $derived(providerId === 'kiro');
+const isCursor = $derived(providerId === 'cursor');
+let autoImportedPsd = $state<Record<string, string> | undefined>(undefined);
 const existingPoolIds = $derived(
   new Set(
     $connections
@@ -209,6 +253,7 @@ const filteredPools = $derived(filterProxyPools(proxyPools, poolSearch));
 function reset() {
   step = 'form';
   mode = 'single';
+  authMode = authModes.includes('oauth') ? 'oauth' : (authModes[0] ?? 'apikey');
   connectionName = '';
   apiKey = '';
   bulkText = '';
@@ -243,6 +288,18 @@ function reset() {
   importing = false;
   importProgress = 0;
   importSummary = null;
+  autoImportedPsd = undefined;
+  kiroMethod = KIRO_STARTING_METHOD;
+  kiroSession = null;
+  idcStartUrl = '';
+  idcRegion = '';
+  apiKeyInput = '';
+  apiKeyRegion = '';
+  importRefreshToken = '';
+  importClientId = '';
+  importClientSecret = '';
+  importStartUrl = '';
+  importRegion = '';
 }
 
 function handleOpenChange(isOpen: boolean) {
@@ -274,6 +331,11 @@ $effect(() => {
     selectedRegion = meta.defaultRegion ?? meta.regionOptions[0] ?? '';
   }
 });
+$effect(() => {
+  if (!authModes.includes(authMode)) {
+    authMode = authModes.includes('oauth') ? 'oauth' : (authModes[0] ?? 'apikey');
+  }
+});
 
 async function fetchProxyPools() {
   if (!needsProxyPool) return;
@@ -301,10 +363,12 @@ async function fetchProxyPools() {
         .filter(Boolean)
         .map((line, index) => {
           const parts = line.split('|').map((p) => p.trim());
-          if (parts.length < 3) return null;
+          if (parts.length !== 3) return null;
           const [email, accountId, apiToken] = parts;
+          // Validate email has @ and accountId is 32-char hex
+          if (!email.includes('@') || !/^[0-9a-f]{32}$/i.test(accountId)) return null;
           return {
-            name: email || defaultName(index + 1),
+            name: email,
             api_key: apiToken,
             provider_specific_data: { accountId },
           };
@@ -346,7 +410,7 @@ async function copyOAuthUrl() {
       for (let i = 0; i < 15; i++) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
         try {
-          const status = await oauthApi.poll(oauthSessionId);
+          const status = await oauthApi.pollStatus(oauthSessionId);
           if (status.status === 'connected') {
             oauthPolling = false;
             const accountName = status.name || (meta?.displayName ?? providerId);
@@ -428,9 +492,20 @@ async function handleValidate() {
           validating = true;
           validationResult = null;
           const res = await providersApi.validateKey(providerId, apiKey.trim());
-          validationResult = res.valid ? 'success' : 'failed';
-        } catch {
+          if (!res.valid) {
+            validationResult = 'failed';
+            errorMsg = 'API key validation failed';
+            toast.error(errorMsg);
+            submitting = false;
+            return;
+          }
+          validationResult = 'success';
+        } catch (err) {
           validationResult = 'failed';
+          errorMsg = err instanceof Error ? err.message : 'API key validation failed';
+          toast.error(errorMsg);
+          submitting = false;
+          return;
         } finally {
           validating = false;
         }
@@ -548,6 +623,7 @@ async function handleImportSubmit() {
       return;
     }
     const psd: Record<string, string> = {};
+    if (autoImportedPsd) Object.assign(psd, autoImportedPsd);
     if (deviceId.trim()) psd.deviceId = deviceId.trim();
     const name = connectionName.trim() || email.trim() || defaultName();
     await oauthApi.importToken({
@@ -570,6 +646,47 @@ async function handleImportSubmit() {
   }
 }
 
+async function handleAutoImportKiro() {
+  errorMsg = '';
+  try {
+    const res = await oauthApi.autoImportKiro();
+    if (!res.found) {
+      toast.error(res.error || 'No local Kiro credentials found. Run kiro-cli login first.');
+      return;
+    }
+    if (!res.refresh_token) {
+      toast.error('Discovered credential is incomplete');
+      return;
+    }
+    importRefreshToken = res.refresh_token;
+    importClientId = res.client_id ?? '';
+    importClientSecret = res.client_secret ?? '';
+    importRegion = res.region ?? '';
+    importStartUrl = '';
+    toast.success(`Auto-imported from ${res.source || 'kiro-cli'}. Review the fields and click Import token.`);
+    kiroMethod = 'import';
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : 'Auto-import failed');
+  }
+}
+
+async function handleAutoImportCursor() {
+  errorMsg = '';
+  submitting = true;
+  try {
+    const res = await oauthApi.importCursorFromIDE();
+    toast.success(`Cursor connected: ${res.name}`);
+    step = 'done';
+    onCreated?.();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Cursor IDE import failed';
+    errorMsg = msg;
+    toast.error(msg);
+  } finally {
+    submitting = false;
+  }
+}
+
 async function handleOAuthSubmit() {
     errorMsg = '';
     submitting = true;
@@ -577,7 +694,7 @@ async function handleOAuthSubmit() {
     oauthStatusText = 'Starting OAuth login...';
 
     try {
-      const res = await oauthApi.start(providerId, meta?.displayName ?? providerId);
+      const res = await oauthApi.startFlow(providerId, meta?.displayName ?? providerId);
       oauthUrl = res.auth_url;
       oauthUserCode = res.user_code || '';
       oauthSessionId = res.session_id;
@@ -585,10 +702,20 @@ async function handleOAuthSubmit() {
       oauthPolling = true;
       oauthStatusText = oauthUserCode
         ? 'Enter the code below in your browser, then authorize.'
-        : 'Open the URL below in your browser to authenticate.';
+        : 'A browser window was opened. Complete login there to finish.';
 
       toast.info(`OAuth started for ${meta?.displayName ?? providerId}`);
       pollOAuthStatus(res.session_id);
+
+      // Open a small popup for the OAuth provider so the user stays in the dashboard.
+      // If the popup is blocked, the user can still open the URL from the waiting step.
+      if (oauthUrl) {
+        window.open(
+          oauthUrl,
+          'oauth',
+          'width=600,height=700,popup=yes,scrollbars=yes,resizable=yes'
+        );
+      }
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : 'Failed to start OAuth';
       toast.error(errorMsg);
@@ -604,7 +731,7 @@ async function handleOAuthSubmit() {
       await new Promise((resolve) => setTimeout(resolve, 2000));
       if (!oauthPolling) return;
       try {
-        const status = await oauthApi.poll(sessionId);
+        const status = await oauthApi.pollStatus(sessionId);
         if (status.status === 'connected') {
           oauthPolling = false;
           const accountName = status.name || (meta?.displayName ?? providerId);
@@ -632,11 +759,125 @@ async function handleOAuthSubmit() {
     step = 'error';
   }
 
-  function cancelOAuth() {
-    oauthPolling = false;
-    toast.info('OAuth cancelled');
-    handleOpenChange(false);
+function cancelOAuth() {
+  oauthPolling = false;
+  toast.info('OAuth cancelled');
+  handleOpenChange(false);
+}
+
+function finishKiroConnection(name?: string) {
+  oauthStatusText = name ? `Connected as ${name}` : 'Kiro connected';
+  step = 'done';
+  onCreated?.();
+}
+
+function backToKiroMenu() {
+  kiroMethod = KIRO_STARTING_METHOD;
+  kiroSession = null;
+  errorMsg = '';
+}
+
+function selectKiroMethod(method: KiroMethod) {
+  kiroMethod = method;
+  errorMsg = '';
+  if (method === 'builder-id') {
+    startKiroBuilderID();
+  } else if (method === 'google' || method === 'github') {
+    startKiroSocial(method);
   }
+}
+
+async function startKiroBuilderID() {
+  errorMsg = '';
+  submitting = true;
+  try {
+    const res = await oauthApi.startKiroBuilderID();
+    kiroSession = { authUrl: res.auth_url, userCode: res.user_code, sessionId: res.session_id };
+    kiroMethod = 'builder-id';
+  } catch (err) {
+    errorMsg = err instanceof Error ? err.message : 'Failed to start AWS Builder ID';
+    toast.error(errorMsg);
+  } finally {
+    submitting = false;
+  }
+}
+
+async function startKiroIDC() {
+  errorMsg = '';
+  if (!idcStartUrl.trim()) {
+    toast.error('Start URL is required');
+    return;
+  }
+  submitting = true;
+  try {
+    const res = await oauthApi.startKiroIDC(idcStartUrl.trim(), '', idcRegion.trim());
+    kiroSession = { authUrl: res.auth_url, userCode: res.user_code, sessionId: res.session_id };
+  } catch (err) {
+    errorMsg = err instanceof Error ? err.message : 'Failed to start IAM Identity Center';
+    toast.error(errorMsg);
+  } finally {
+    submitting = false;
+  }
+}
+
+async function validateKiroAPIKey() {
+  errorMsg = '';
+  if (!apiKeyInput.trim()) {
+    toast.error('API key is required');
+    return;
+  }
+  submitting = true;
+  try {
+    const res = await oauthApi.validateKiroAPIKey(apiKeyInput.trim(), apiKeyRegion.trim() || undefined);
+    toast.success(`Kiro API key connected: ${res.name}`);
+    finishKiroConnection(res.name);
+  } catch (err) {
+    errorMsg = err instanceof Error ? err.message : 'Kiro API key validation failed';
+    toast.error(errorMsg);
+  } finally {
+    submitting = false;
+  }
+}
+
+async function startKiroSocial(provider: 'google' | 'github') {
+  errorMsg = '';
+  submitting = true;
+  try {
+    const res = await oauthApi.startKiroSocial(provider);
+    kiroSession = { authUrl: res.auth_url, sessionId: res.session_id, provider };
+  } catch (err) {
+    errorMsg = err instanceof Error ? err.message : `Failed to start ${provider} login`;
+    toast.error(errorMsg);
+    backToKiroMenu();
+  } finally {
+    submitting = false;
+  }
+}
+
+async function importKiroToken() {
+  errorMsg = '';
+  if (!importRefreshToken.trim()) {
+    toast.error('Refresh token is required');
+    return;
+  }
+  submitting = true;
+  try {
+    const res = await oauthApi.importKiroToken(
+      importRefreshToken.trim(),
+      importClientId.trim() || undefined,
+      importClientSecret.trim() || undefined,
+      importRegion.trim() || undefined,
+      importStartUrl.trim() || undefined,
+    );
+    toast.success(`Kiro token imported: ${res.name}`);
+    finishKiroConnection(res.name);
+  } catch (err) {
+    errorMsg = err instanceof Error ? err.message : 'Failed to import Kiro token';
+    toast.error(errorMsg);
+  } finally {
+    submitting = false;
+  }
+}
 
 function handleSubmit() {
   if (isOAuth && importMode) return handleImportSubmit();
@@ -644,14 +885,7 @@ function handleSubmit() {
   if (isNoAuth) return handleNoAuthSubmit();
   return handleApiKeySubmit();
 }
-// Auto-start OAuth when modal opens for OAuth providers (matches AxonRouter TS behavior).
-// Grok CLI offers a manual import mode, so skip auto-start while the user is importing tokens.
-$effect(() => {
-  if (open && isOAuth && step === 'form' && !submitting && !oauthPolling && !importMode) {
-    // Use setTimeout to avoid calling during render
-    setTimeout(() => handleOAuthSubmit(), 50);
-  }
-});
+
 // Fetch proxy pools when modal opens for OpenCode Free or MiMoCode
 $effect(() => {
   if (open && needsProxyPool && step === 'form') {
@@ -676,10 +910,10 @@ $effect(() => {
           {/if}
           <div class="min-w-0 space-y-1">
             <Dialog.Title class="text-lg font-semibold">
-              {isOAuth ? (importMode ? 'Import OAuth token' : 'Connect OAuth account') : isNoAuth ? 'Add no-auth connection' : 'Add API key'}
+              {isKiro ? 'Connect Kiro account' : isOAuth ? (importMode ? 'Import OAuth token' : 'Connect OAuth account') : isNoAuth ? 'Add no-auth connection' : 'Add API key'}
             </Dialog.Title>
             <Dialog.Description class="text-sm text-muted-foreground">
-              {meta?.displayName ?? providerId} · {isOAuth ? (importMode ? 'manual token import' : 'browser login') : isNoAuth ? 'no credential required' : 'single or bulk credential'}
+              {meta?.displayName ?? providerId} · {isKiro ? 'choose an authentication method' : isOAuth ? (importMode ? 'manual token import' : 'browser login') : isNoAuth ? 'no credential required' : 'single or bulk credential'}
             </Dialog.Description>
             <div class="flex flex-wrap gap-1.5 pt-1">
               <Badge variant="outline" class="rounded-full text-caption-mono">{meta?.prefix ?? `${providerId}/`}</Badge>
@@ -693,6 +927,138 @@ $effect(() => {
       </Dialog.Header>
 
       <div class="flex flex-col gap-4 py-2">
+        {#if authModes.length > 1}
+          <div class="grid grid-cols-2 gap-2 rounded-lg border border-border/50 bg-muted/20 p-1">
+            <button
+              type="button"
+              class="rounded-md px-3 py-2 text-sm transition-colors {authMode === 'oauth' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}"
+              onclick={() => authMode = 'oauth'}
+            >
+              OAuth
+            </button>
+            <button
+              type="button"
+              class="rounded-md px-3 py-2 text-sm transition-colors {authMode === 'apikey' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}"
+              onclick={() => authMode = 'apikey'}
+            >
+              API key / PAT
+            </button>
+          </div>
+        {/if}
+        {#if isKiro}
+          <div class="flex flex-col gap-3">
+            <p class="text-body-sm text-muted-foreground">Choose how to authenticate with Kiro.</p>
+
+            {#if kiroMethod === 'menu'}
+              <div class="grid grid-cols-1 gap-2">
+                {#each KIRO_METHODS as method}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    class="text-body-sm rounded-sm cursor-pointer justify-start"
+                    disabled={submitting}
+                    onclick={() => selectKiroMethod(method.id)}
+                  >
+                    {method.label}
+                  </Button>
+                {/each}
+              </div>
+            {:else}
+              <div class="flex flex-col gap-3">
+                <div class="flex items-center gap-2">
+                  <Button variant="ghost" size="sm" class="text-body-sm rounded-sm cursor-pointer" onclick={backToKiroMenu}>
+                    Back
+                  </Button>
+                  <span class="text-body-sm-strong">{getKiroMethodLabel(kiroMethod)}</span>
+                </div>
+
+                {#if (kiroMethod === 'builder-id' || kiroMethod === 'idc') && kiroSession}
+                  <KiroDeviceCodeView
+                    authUrl={kiroSession.authUrl}
+                    userCode={kiroSession.userCode}
+                    sessionId={kiroSession.sessionId}
+                    onSuccess={(id, name) => finishKiroConnection(name)}
+                    onError={(err) => { errorMsg = err; }}
+                  />
+                {:else if kiroMethod === 'idc'}
+                  <div class="flex flex-col gap-1.5">
+                    <Label class="text-body-sm-strong">Start URL</Label>
+                    <Input bind:value={idcStartUrl} placeholder="https://d-xxx.awsapps.com/start" class="h-9 text-body-sm" />
+                  </div>
+                  <div class="flex flex-col gap-1.5">
+                    <Label class="text-body-sm-strong">Region</Label>
+                    <Input bind:value={idcRegion} placeholder="us-east-1" class="h-9 text-body-sm" />
+                  </div>
+                  <Button class="text-body-sm rounded-sm cursor-pointer" disabled={submitting} onclick={startKiroIDC}>
+                    Start device code
+                  </Button>
+                {:else if kiroMethod === 'api-key'}
+                  <div class="flex flex-col gap-1.5">
+                    <Label class="text-body-sm-strong">API key</Label>
+                    <Input bind:value={apiKeyInput} type="password" placeholder="KIRO API key" class="h-9 text-body-sm font-mono" autocomplete="off" spellcheck={false} />
+                  </div>
+                  <div class="flex flex-col gap-1.5">
+                    <Label class="text-body-sm-strong">Region <span class="text-muted-foreground font-normal">(optional)</span></Label>
+                    <Input bind:value={apiKeyRegion} placeholder="us-east-1" class="h-9 text-body-sm font-mono" />
+                  </div>
+                  <Button class="text-body-sm rounded-sm cursor-pointer" disabled={submitting} onclick={validateKiroAPIKey}>
+                    Validate and add
+                  </Button>
+                {:else if (kiroMethod === 'google' || kiroMethod === 'github') && kiroSession?.provider === kiroMethod}
+                  <KiroSocialCallbackView
+                    provider={kiroSession.provider}
+                    authUrl={kiroSession.authUrl}
+                    sessionId={kiroSession.sessionId}
+                    onSuccess={(id, name) => finishKiroConnection(name)}
+                    onError={(err) => { errorMsg = err; }}
+                  />
+                {:else if kiroMethod === 'import'}
+                  <div class="flex flex-col gap-3">
+                    <div class="flex flex-col gap-1.5">
+                      <Button variant="outline" class="text-body-sm rounded-sm cursor-pointer justify-start" disabled={submitting} onclick={handleAutoImportKiro}>
+                        <span class="material-symbols-outlined mr-2 text-base">folder_open</span>
+                        Auto-import from this machine
+                      </Button>
+                      <p class="text-caption text-muted-foreground">Scan kiro-cli SQLite, AWS SSO cache, and Kiro IDE profile.json on this machine.</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                      <div class="h-px flex-1 bg-border"></div>
+                      <span class="text-[11px] uppercase tracking-wide text-muted-foreground">or paste token</span>
+                      <div class="h-px flex-1 bg-border"></div>
+                    </div>
+                    <div class="flex flex-col gap-1.5">
+                      <Label class="text-body-sm-strong">Refresh token <span class="text-destructive">*</span></Label>
+                      <Textarea bind:value={importRefreshToken} placeholder="eyJ..." class="min-h-20 font-mono text-code" />
+                    </div>
+                    <div class="flex flex-col gap-1.5">
+                      <Label class="text-body-sm-strong">Client ID <span class="text-muted-foreground font-normal">(optional)</span></Label>
+                      <Input bind:value={importClientId} class="h-9 text-body-sm font-mono" autocomplete="off" spellcheck={false} />
+                    </div>
+                    <div class="flex flex-col gap-1.5">
+                      <Label class="text-body-sm-strong">Client secret <span class="text-muted-foreground font-normal">(optional)</span></Label>
+                      <Input bind:value={importClientSecret} type="password" class="h-9 text-body-sm font-mono" autocomplete="off" spellcheck={false} />
+                    </div>
+                    <div class="flex flex-col gap-1.5">
+                      <Label class="text-body-sm-strong">Region <span class="text-muted-foreground font-normal">(optional)</span></Label>
+                      <Input bind:value={importRegion} placeholder="us-east-1" class="h-9 text-body-sm font-mono" />
+                    </div>
+                    <div class="flex flex-col gap-1.5">
+                      <Label class="text-body-sm-strong">Start URL <span class="text-muted-foreground font-normal">(optional)</span></Label>
+                      <Input bind:value={importStartUrl} placeholder="https://d-xxx.awsapps.com/start" class="h-9 text-body-sm font-mono" />
+                    </div>
+                    <Button class="text-body-sm rounded-sm cursor-pointer" disabled={submitting} onclick={importKiroToken}>
+                      Import
+                    </Button>
+                  </div>
+                {/if}
+              </div>
+            {/if}
+
+            {#if errorMsg}
+              <p class="rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 text-body-sm text-destructive">{errorMsg}</p>
+            {/if}
+          </div>
+        {:else}
         {#if supportsBulk}
           <div class="grid grid-cols-2 gap-2 rounded-lg border border-border/50 bg-muted/20 p-1">
             <button
@@ -914,6 +1280,28 @@ $effect(() => {
           {/if}
 
           {#if importMode}
+            {#if providerId === 'kiro'}
+              <Button variant="outline" class="w-full text-sm" onclick={handleAutoImportKiro}>
+                Auto-import from kiro-cli
+              </Button>
+              <div class="flex items-center gap-3">
+                <div class="h-px flex-1 bg-border"></div>
+                <span class="text-[11px] uppercase tracking-wide text-muted-foreground">or manual</span>
+                <div class="h-px flex-1 bg-border"></div>
+              </div>
+            {:else if providerId === 'cursor'}
+              <Button variant="outline" class="w-full text-sm cursor-pointer" disabled={submitting} onclick={handleAutoImportCursor}>
+                {submitting ? 'Importing...' : 'Import from Cursor IDE'}
+              </Button>
+              <p class="text-[11px] text-muted-foreground">
+                Reads <span class="font-mono">cursorAuth/accessToken</span> from the local Cursor VS Code: state file and validates it with Cursor's upstream API.
+              </p>
+              <div class="flex items-center gap-3">
+                <div class="h-px flex-1 bg-border"></div>
+                <span class="text-[11px] uppercase tracking-wide text-muted-foreground">or manual</span>
+                <div class="h-px flex-1 bg-border"></div>
+              </div>
+            {/if}
             <div class="flex flex-col gap-1.5">
               <Label class="text-sm font-medium">Access token <span class="text-destructive">*</span></Label>
               <Input bind:value={accessToken} type="password" placeholder="eyJ..." class="h-9 text-sm font-mono" autocomplete="off" spellcheck={false} />
@@ -936,7 +1324,7 @@ $effect(() => {
             </div>
           {:else}
             <div class="rounded-lg border border-border/50 bg-muted/30 p-3 text-sm text-muted-foreground">
-              <p>A browser tab opens automatically. Complete login there — this modal waits up to 5 minutes for the callback.</p>
+              <p>Click <strong>Connect</strong> to open a small browser window and complete OAuth login. This modal waits up to 5 minutes for the callback.</p>
             </div>
           {/if}
           {/if}
@@ -1034,23 +1422,26 @@ $effect(() => {
         {#if errorMsg}
           <p class="rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive">{errorMsg}</p>
         {/if}
+        {/if}
       </div>
 
       <Dialog.Footer>
         <Button variant="outline" onclick={() => handleOpenChange(false)} class="text-sm">Cancel</Button>
-        <Button onclick={handleSubmit} disabled={submitting || importing || (isNoAuth && needsProxyPool && !selectedPoolId)} class="text-sm">
-          {#if importing}
-            Importing… {Math.round(importProgress * 100)}%
-          {:else if submitting}
-            {isOAuth ? 'Starting OAuth...' : mode === 'bulk' ? 'Importing...' : 'Adding...'}
+        {#if !isKiro}
+          <Button onclick={handleSubmit} disabled={submitting || importing || (isNoAuth && needsProxyPool && !selectedPoolId) || validationResult === 'failed'} class="text-sm">
+            {#if importing}
+              Importing… {Math.round(importProgress * 100)}%
+            {:else if submitting}
+              {isOAuth ? 'Starting OAuth...' : mode === 'bulk' ? 'Importing...' : 'Adding...'}
 {:else if isOAuth}
-              {importMode ? 'Import token' : 'Connect'}
-            {:else if mode === 'bulk'}
-              Import keys
-            {:else}
-              Add connection
-            {/if}
-        </Button>
+                {importMode ? 'Import token' : 'Connect'}
+              {:else if mode === 'bulk'}
+                Import keys
+              {:else}
+                Add connection
+              {/if}
+          </Button>
+        {/if}
       </Dialog.Footer>
     {:else if step === 'oauth-waiting'}
       <Dialog.Header>

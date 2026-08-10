@@ -57,3 +57,15 @@ func getNumberField(m map[string]any, keys ...string) float64 {
 	}
 	return 0
 }
+
+// getSliceField returns the first matching slice field from a map.
+func getSliceField(m map[string]any, keys ...string) []any {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			if s, ok := v.([]any); ok {
+				return s
+			}
+		}
+	}
+	return nil
+}

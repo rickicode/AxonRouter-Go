@@ -22,6 +22,9 @@ const (
 	FormatKiro            ProviderFormat = "kiro"
 	FormatGrokCLI         ProviderFormat = "grok-cli"
 	FormatFreebuff        ProviderFormat = "freebuff"
+	FormatDevinCLI        ProviderFormat = "devin-cli"
+	FormatQoder           ProviderFormat = "qoder"
+	FormatInteractions    ProviderFormat = "interactions"
 )
 
 // Registry maps provider prefixes to executors.
@@ -114,14 +117,20 @@ func RegisterDefaults() {
 
 	// OpenAI-compatible providers
 	openaiExec := NewOpenAIExecutor(base)
-	for _, p := range []string{"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp", "elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras", "together", "fireworks", "novita", "lambda", "pollinations", "zenmux"} {
+	for _, p := range []string{"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp", "elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras", "together", "fireworks", "novita", "lambda", "pollinations", "zenmux", "zenmux-free", "cursor", "brave", "tavily", "exa", "jina", "google-pse", "firecrawl", "fal", "black-forest-labs", "assemblyai", "cartesia", "edge-tts", "qwen", "alicode", "kimi-coding", "iflow", "volcengine-ark", "hunyuan", "nanobanana", "topaz", "puter", "comfyui"} {
 		GetRegistry().Register(p, FormatOpenAI, openaiExec)
 	}
+	// CodeBuddy uses an OpenAI-compatible endpoint but requires a leading system
+	// message and only supports streaming chat completions upstream.
+	GetRegistry().Register("codebuddy", FormatOpenAI, NewCodeBuddyExecutor(base))
 	GetRegistry().Register("mimocode", FormatOpenAI, NewMimocodeExecutor(base))
 	GetRegistry().Register("openrouter", FormatOpenAI, NewOpenRouterExecutor(base))
 	GetRegistry().Register("copilot", FormatOpenAI, NewCopilotExecutor(base))
 	GetRegistry().Register("vertex", FormatOpenAI, NewVertexExecutor(base))
 	GetRegistry().Register("bedrock", FormatOpenAI, NewBedrockExecutor(base))
+
+	// CommandCode AI uses dedicated executor for request normalization.
+	GetRegistry().Register("commandcode", FormatOpenAI, NewCommandCodeExecutor(base))
 
 	// Cloudflare Workers AI uses dedicated executor for sanitization.
 	cfExec := NewCloudflareExecutor(openaiExec)
@@ -141,8 +150,9 @@ func RegisterDefaults() {
 	for _, p := range []string{
 		"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp",
 		"elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras",
-		"together", "fireworks", "novita", "lambda", "pollinations", "zenmux",
-		"mimocode", "openrouter", "copilot", "vertex", "bedrock",
+		"together", "fireworks", "novita", "lambda", "pollinations", "zenmux", "zenmux-free",
+		"mimocode", "openrouter", "copilot", "vertex", "bedrock", "codebuddy",
+		"qwencloud", "cursor", "brave", "tavily", "exa", "jina", "google-pse", "firecrawl", "fal", "black-forest-labs", "assemblyai", "cartesia", "edge-tts", "qwen", "alicode", "kimi-coding", "iflow", "volcengine-ark", "hunyuan", "nanobanana", "topaz", "puter", "comfyui", "commandcode",
 	} {
 		translator.Register(p, translator.Func(providers.TranslateOpenAICompatible))
 	}
@@ -157,9 +167,20 @@ func RegisterDefaults() {
 	geminiExec := NewGeminiExecutor(base)
 	GetRegistry().Register("gemini", FormatGemini, geminiExec)
 
+	// Gemini native Interactions API
+	geminiInteractionsExec := NewGeminiInteractionsExecutor(base)
+	for _, p := range []string{"gemini-interactions", "aistudio"} {
+		GetRegistry().Register(p, FormatInteractions, geminiInteractionsExec)
+	}
+
 	// Codex (openai-responses format)
 	codexExec := NewCodexExecutor(base)
 	GetRegistry().Register("cx", FormatOpenAIResponses, codexExec)
+
+	// Qwen Cloud exposes an OpenAI-compatible Responses endpoint; route both
+	// /v1/responses and translated /v1/chat/completions traffic to
+	// /v1/responses upstream.
+	GetRegistry().Register("qwencloud", FormatOpenAIResponses, NewOpenAIResponsesExecutor(base))
 
 	// Antigravity
 	agExec := NewAntigravityExecutor(base)
@@ -177,6 +198,16 @@ func RegisterDefaults() {
 	// Freebuff (Codebuff-compatible OpenAI chat endpoint)
 	GetRegistry().Register("freebuff", FormatFreebuff, NewFreebuffExecutor(base))
 	translator.Register("freebuff", translator.Func(providers.TranslateOpenAICompatible))
+
+	// Devin CLI
+	devinExec := NewDevinCLIExecutor(base)
+	GetRegistry().Register("devin", FormatDevinCLI, devinExec)
+	translator.Register("devin", translator.Func(providers.TranslateOpenAICompatible))
+
+	// Qoder (dual-mode CLI/HTTP)
+	qoderExec := NewQoderExecutor(base, openaiExec)
+	GetRegistry().Register("qoder", FormatQoder, qoderExec)
+	translator.Register("qoder", translator.Func(providers.TranslateOpenAICompatible))
 }
 
 // RegisterCustomProviders registers all user-added custom providers from the DB
@@ -185,10 +216,14 @@ func RegisterCustomProviders(db *sql.DB) {
 	reg := GetRegistry()
 	base := NewBaseExecutor()
 	openaiExec := NewOpenAIExecutor(base)
+	openaiResponsesExec := NewOpenAIResponsesExecutor(base)
 	claudeExec := NewClaudeExecutor(base)
 	geminiExec := NewGeminiExecutor(base)
+	geminiInteractionsExec := NewGeminiInteractionsExecutor(base)
 	agExec := NewAntigravityExecutor(base)
 	kiroExec := NewKiroExecutor(base)
+	devinExec := NewDevinCLIExecutor(base)
+	qoderExec := NewQoderExecutor(base, openaiExec)
 
 	rows, err := db.Query(`SELECT id, format FROM provider_types WHERE is_custom = 1`)
 	if err != nil {
@@ -200,13 +235,13 @@ func RegisterCustomProviders(db *sql.DB) {
 		if err := rows.Scan(&id, &format); err != nil {
 			continue
 		}
-		registerCustomProvider(reg, openaiExec, claudeExec, geminiExec, agExec, kiroExec, id, format)
+		registerCustomProvider(reg, openaiExec, openaiResponsesExec, claudeExec, geminiExec, geminiInteractionsExec, agExec, kiroExec, devinExec, qoderExec, id, format)
 	}
 }
 
 // registerCustomProvider maps a provider format to the reusable built-in executor
 // and translator so the custom provider routes and translates like a built-in.
-func registerCustomProvider(reg *Registry, openaiExec, claudeExec, geminiExec, agExec, kiroExec Executor, id, format string) {
+func registerCustomProvider(reg *Registry, openaiExec, openaiResponsesExec, claudeExec, geminiExec, geminiInteractionsExec, agExec, kiroExec, devinExec, qoderExec Executor, id, format string) {
 	switch format {
 	case "anthropic", "claude":
 		reg.Register(id, FormatClaude, claudeExec)
@@ -214,13 +249,25 @@ func registerCustomProvider(reg *Registry, openaiExec, claudeExec, geminiExec, a
 	case "gemini":
 		reg.Register(id, FormatGemini, geminiExec)
 		translator.Register(id, translator.Func(providers.TranslateGemini))
+	case "interactions", "gemini-interactions":
+		reg.Register(id, FormatInteractions, geminiInteractionsExec)
+		translator.Register(id, translator.Func(providers.TranslateGemini))
 	case "antigravity":
 		reg.Register(id, FormatAntigravity, agExec)
 		translator.Register(id, translator.Func(providers.TranslateAntigravity))
 	case "kiro":
 		reg.Register(id, FormatKiro, kiroExec)
 		translator.Register(id, translator.Func(providers.TranslateKiro))
-	default: // openai, openai-responses, and unknown -> OpenAI-compatible
+	case "devin", "devin-cli":
+		reg.Register(id, FormatDevinCLI, devinExec)
+		translator.Register(id, translator.Func(providers.TranslateOpenAICompatible))
+	case "qoder":
+		reg.Register(id, FormatQoder, qoderExec)
+		translator.Register(id, translator.Func(providers.TranslateOpenAICompatible))
+	case "openai-responses":
+		reg.Register(id, FormatOpenAIResponses, openaiResponsesExec)
+		translator.Register(id, translator.Func(providers.TranslateOpenAICompatible))
+	default: // openai and unknown -> OpenAI-compatible
 		reg.Register(id, FormatOpenAI, openaiExec)
 		translator.Register(id, translator.Func(providers.TranslateOpenAICompatible))
 	}

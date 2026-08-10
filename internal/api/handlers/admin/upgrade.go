@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -28,6 +29,7 @@ type UpgradeHandler struct {
 	baseURL string
 	binDir  string
 	mu      sync.Mutex
+	logs    []string
 }
 
 // NewUpgradeHandler creates a handler that downloads the latest release.
@@ -45,13 +47,22 @@ func (h *UpgradeHandler) Upgrade(c *gin.Context) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	h.logs = nil
+	h.logs = append(h.logs, "Checking latest version...")
+
 	info, ok := h.checker.LatestVersion()
 	if !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to determine latest version"})
 		return
 	}
+	if !h.checker.UpdateAvailable() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no newer version available"})
+		return
+	}
 
 	asset := assetName()
+	h.logs = append(h.logs, fmt.Sprintf("Downloading %s...", asset))
+
 	assetURL := fmt.Sprintf("%s/%s/%s", h.baseURL, info.Tag, asset)
 	checksumURL := fmt.Sprintf("%s/%s/checksums.txt", h.baseURL, info.Tag)
 
@@ -67,6 +78,8 @@ func (h *UpgradeHandler) Upgrade(c *gin.Context) {
 		return
 	}
 
+	h.logs = append(h.logs, "Verifying checksum...")
+
 	expected, err := findChecksum(checksums, asset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("checksum lookup: %v", err)})
@@ -79,11 +92,15 @@ func (h *UpgradeHandler) Upgrade(c *gin.Context) {
 		return
 	}
 
+	h.logs = append(h.logs, "Writing new binary...")
+
 	path, err := h.writeBinary(asset, binary)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("write binary: %v", err)})
 		return
 	}
+
+	h.logs = append(h.logs, "Upgrade complete")
 
 	restartCmd, restartHint := restartInstructions()
 
@@ -94,6 +111,7 @@ func (h *UpgradeHandler) Upgrade(c *gin.Context) {
 		"asset":           asset,
 		"restart_command": restartCmd,
 		"restart_hint":    restartHint,
+		"logs":            h.logs,
 	})
 }
 
@@ -150,6 +168,19 @@ func (h *UpgradeHandler) upgradeBinaryPath() (string, error) {
 	return exe, nil
 }
 
+// copyFile copies the contents and permissions of src to dst.
+func copyFile(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, info.Mode())
+}
+
 func (h *UpgradeHandler) writeBinary(asset string, binary []byte) (string, error) {
 	path, err := h.upgradeBinaryPath()
 	if err != nil {
@@ -158,18 +189,38 @@ func (h *UpgradeHandler) writeBinary(asset string, binary []byte) (string, error
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}
+
+	backupPath := path + ".bak"
+	targetExisted := false
+	if _, err := os.Stat(path); err == nil {
+		targetExisted = true
+		h.logs = append(h.logs, fmt.Sprintf("Backing up existing binary to %s...", backupPath))
+		if err := copyFile(path, backupPath); err != nil {
+			return "", fmt.Errorf("backup existing binary: %w", err)
+		}
+	}
+
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, binary, 0o755); err != nil {
-		return "", err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		if runtime.GOOS != "windows" {
-			return "", err
+		if targetExisted {
+			_ = copyFile(backupPath, path)
 		}
-		// Windows Rename does not overwrite an existing file.
-		_ = os.Remove(path)
-		if err := os.Rename(tmp, path); err != nil {
-			return "", err
+		return "", fmt.Errorf("write new binary: %w", err)
+	}
+
+	if err := os.Rename(tmp, path); err != nil {
+		if runtime.GOOS == "windows" {
+			_ = os.Remove(path)
+			err = os.Rename(tmp, path)
+		}
+		if err != nil {
+			_ = os.Remove(tmp)
+			if targetExisted {
+				if rerr := copyFile(backupPath, path); rerr != nil {
+					return "", fmt.Errorf("replace failed and restore failed: %v (original: %w)", rerr, err)
+				}
+			}
+			return "", fmt.Errorf("replace binary: %w", err)
 		}
 	}
 	return path, nil
@@ -200,4 +251,57 @@ func findChecksum(data []byte, asset string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no checksum for %s", asset)
+}
+
+// RestartHandler initiates a service restart when AxonRouter is managed by systemd.
+type RestartHandler struct {
+	checkActive func(name string, arg ...string) error
+	restart     func(name string, arg ...string) error
+}
+
+// NewRestartHandler creates a handler that restarts the systemd service.
+func NewRestartHandler() *RestartHandler {
+	return &RestartHandler{
+		checkActive: func(name string, arg ...string) error {
+			return exec.Command(name, arg...).Run()
+		},
+		restart: func(name string, arg ...string) error {
+			return exec.Command(name, arg...).Start()
+		},
+	}
+}
+
+// Restart checks whether the axonrouter systemd unit is active and, if so,
+// starts a non-blocking restart. It prefers a user-scoped unit and falls back
+// to a system-scoped unit.
+func (h *RestartHandler) Restart(c *gin.Context) {
+	userActive := h.checkActive("systemctl", "--user", "is-active", "axonrouter") == nil
+	systemActive := false
+	if !userActive {
+		systemActive = h.checkActive("systemctl", "is-active", "axonrouter") == nil
+	}
+
+	if !userActive && !systemActive {
+		cmd, _ := restartInstructions()
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":           "service not managed by systemd",
+			"restart_command": cmd,
+		})
+		return
+	}
+
+	args := []string{"restart", "axonrouter"}
+	if userActive {
+		args = []string{"--user", "restart", "axonrouter"}
+	}
+
+	if err := h.restart("systemctl", args...); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to start restart: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"ok":      true,
+		"message": "restart initiated",
+	})
 }

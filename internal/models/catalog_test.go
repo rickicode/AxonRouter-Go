@@ -34,10 +34,11 @@ func TestGetModelTargetFormat_UnknownProvider(t *testing.T) {
 
 func TestGetModelIDs_NewOpenAICompatibleProviders(t *testing.T) {
 	want := map[string][]string{
-		"glm":     {"glm-4", "glm-5"},
-		"minimax": {"minimax-m2.1", "minimax-m2.5"},
-		"kimi":    {"kimi-k2"},
-		"mistral": {"mistral-large-latest", "codestral-latest"},
+		"glm":       {"glm-4", "glm-5"},
+		"minimax":   {"minimax-m2.1", "minimax-m2.5"},
+		"kimi":      {"kimi-k2"},
+		"mistral":   {"mistral-large-latest", "codestral-latest"},
+		"codebuddy": {"glm-5.0", "glm-5.2"},
 	}
 	for key, ids := range want {
 		got := GetModelIDs(key)
@@ -121,6 +122,30 @@ func TestServiceKindsForModelID_Unknown(t *testing.T) {
 	}
 }
 
+func TestGetModelIDs_QwenCloudContainsExpectedModels(t *testing.T) {
+	want := []string{
+		"qwen3.7-plus",
+		"qwen3.7-max",
+		"qwen3.6-plus",
+		"qwen3.6-max",
+		"qwen3.6-flash",
+		"qwen3.5-omni-plus",
+		"qwen-plus",
+		"glm-5.2",
+		"deepseek-v4-flash",
+		"qwen3-coder-plus",
+	}
+	got := GetModelIDs("qwencloud")
+	if len(got) == 0 {
+		t.Fatal("GetModelIDs(qwencloud) returned empty")
+	}
+	for _, id := range want {
+		if !slices.Contains(got, id) {
+			t.Errorf("GetModelIDs(qwencloud) missing %q; got %v", id, got)
+		}
+	}
+}
+
 func TestDiscoverCloudflareModelsCached_HitsUpstreamOnceWithinTTL(t *testing.T) {
 	var calls int
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -192,3 +217,103 @@ func (t *cfTestTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	return http.DefaultTransport.RoundTrip(req)
 }
+
+// TestTryFetchProviders_ZenMuxFreeFiltering verifies that zenmux-free sync keeps
+// only models whose prompt + completion pricing is zero, falling back to the
+// "-free" suffix when pricing metadata is missing.
+func TestTryFetchProviders_ZenMuxFreeFiltering(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{
+					"id": "paid-model",
+					"pricings": map[string]any{
+						"prompt":     []map[string]any{{"value": 5, "unit": "perMTokens", "currency": "USD"}},
+						"completion": []map[string]any{{"value": 10, "unit": "perMTokens", "currency": "USD"}},
+					},
+				},
+				{
+					"id": "free-model",
+					"pricings": map[string]any{
+						"prompt":     []map[string]any{{"value": 0, "unit": "perMTokens", "currency": "USD"}},
+						"completion": []map[string]any{{"value": 0, "unit": "perMTokens", "currency": "USD"}},
+					},
+				},
+				{
+					// No pricing metadata: should be kept only by the "-free" suffix fallback.
+					"id": "fallback-free",
+				},
+				{
+					// No pricing metadata and no "-free" suffix: should be dropped.
+					"id": "unknown-model",
+				},
+			},
+		})
+	}))
+	defer upstream.Close()
+
+	origEndpoints := ProviderEndpoints()
+	origFreeOnly := ProviderFreeOnly()
+	defer func() {
+		SetProviderEndpoints(origEndpoints)
+		SetProviderFreeOnly(origFreeOnly)
+	}()
+
+	SetProviderEndpoints(map[string]string{
+		"zenmux":      upstream.URL,
+		"zenmux-free": upstream.URL,
+	})
+	SetProviderFreeOnly(map[string]bool{
+		"zenmux-free": true,
+	})
+
+	tryFetchProviders(t.Context())
+
+	paid := getCurrentModelIDs("zenmux")
+	free := getCurrentModelIDs("zenmux-free")
+
+	wantPaid := []string{"fallback-free", "free-model", "paid-model", "unknown-model"}
+	slices.Sort(paid)
+	if !slices.Equal(paid, wantPaid) {
+		t.Errorf("zenmux full list = %v, want %v", paid, wantPaid)
+	}
+
+	wantFree := []string{"fallback-free", "free-model"}
+	if !slices.Equal(free, wantFree) {
+		t.Errorf("zenmux-free filtered list = %v, want %v", free, wantFree)
+	}
+}
+
+// getCurrentModelIDs returns the in-memory model IDs for a provider key.
+func getCurrentModelIDs(key string) []string {
+	mu.RLock()
+	defer mu.RUnlock()
+	entries := current[key]
+	ids := make([]string, 0, len(entries))
+	for _, e := range entries {
+		ids = append(ids, e.ID)
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+func TestGetModelIDs_CommandCodeContainsExpectedModels(t *testing.T) {
+	want := []string{
+		"claude-opus-4-7",
+		"deepseek/deepseek-v4-pro",
+		"moonshotai/Kimi-K2.6",
+		"zai-org/GLM-5.1",
+		"MiniMaxAI/MiniMax-M2.7",
+		"Qwen/Qwen3.6-Max-Preview",
+	}
+	got := GetModelIDs("commandcode")
+	if len(got) == 0 {
+		t.Fatal("GetModelIDs(commandcode) returned empty")
+	}
+	for _, id := range want {
+		if !slices.Contains(got, id) {
+			t.Errorf("GetModelIDs(commandcode) missing %q; got %v", id, got)
+		}
+	}
+}
+

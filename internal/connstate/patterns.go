@@ -3,9 +3,31 @@ package connstate
 // Error patterns for classification. Hardcoded for fast matching.
 // These cover the most common error messages from OpenAI, Claude, Gemini, and other providers.
 
+// StatusCodeCategories maps HTTP status codes that unambiguously indicate an
+// error category. Ambiguous codes (402, 429, 404) are handled by
+// ClassifyFromResponse using body patterns so a provider cannot force a wrong
+// classification just by returning a generic status code.
+var StatusCodeCategories = map[int]ErrorCategory{
+	401: ErrorAuth,    // Unauthorized
+	403: ErrorAuth,    // Forbidden
+	408: ErrorTimeout, // Request Timeout
+}
+
+// StatusCodeNeedsBodyClassification returns true for status codes where the
+// category depends on the response body (payment required / too many requests).
+func StatusCodeNeedsBodyClassification(statusCode int) bool {
+	return statusCode == 402 || statusCode == 429
+}
+
+// IsServerErrorStatus returns true for HTTP 5xx status codes.
+func IsServerErrorStatus(statusCode int) bool {
+	return statusCode >= 500
+}
+
 var RateLimitPatterns = []string{
 	"rate limit",
 	"rate_limit",
+	"rate_limit_exceeded",
 	"ratelimit",
 	"too many requests",
 	"too_many_requests",
@@ -18,8 +40,8 @@ var RateLimitPatterns = []string{
 	"retry-after",
 	"throttled",
 	"throttling",
-	"capacity temporarily exceeded", // CF Workers AI capacity overload (code 3040)
-	"3040", // CF Workers AI capacity error code
+	"capacity temporarily exceeded",         // CF Workers AI capacity overload (code 3040)
+	"3040",                                  // CF Workers AI capacity error code
 	"high-frequency non-compliant requests", // MiMoCode anti-abuse IP/account flag
 }
 
@@ -27,23 +49,27 @@ var QuotaPatterns = []string{
 	"quota exceeded",
 	"quota_exceeded",
 	"billing",
+	"billing_hard_limit_reached",
 	"insufficient_quota",
 	"insufficient quota",
 	"credit",
 	"out of credits",
+	"credits exhausted", // CodeBuddy credits exhausted (code 14018)
 	"payment required",
 	"usage limit",
 	"monthly limit",
-	"spending-limit", // Grok CLI spending limit reached
-	"freeusage", // OpenCode Zen FreeUsageLimitError (daily free quota, not per-minute rate limit)
+	"spending-limit",        // Grok CLI spending limit reached
+	"freeusage",             // OpenCode Zen FreeUsageLimitError (daily free quota, not per-minute rate limit)
 	"neurons",               // CF Workers AI daily quota
 	"daily free allocation", // CF Workers AI daily quota
 	"upgrade to cloudflare", // CF Workers AI paid plan prompt
 	"4006",                  // CF Workers AI error code
+	"14018",                 // CodeBuddy credits exhausted error code
 }
 
 var BalanceEmptyPatterns = []string{
 	"add credits",
+	"balance_empty",
 	"billing hard limit",
 	"insufficient funds",
 	"insufficient balance",
@@ -58,19 +84,26 @@ var BalanceEmptyPatterns = []string{
 var AuthPatterns = []string{
 	"invalid api key",
 	"invalid_api_key",
+	"incorrect_api_key",
+	"auth_failed",
 	"unauthorized",
 	"authentication",
 	"auth failed",
 	"invalid token",
 	"expired token",
 	"permission denied",
+	"permission-denied",
 	"access denied",
+	"access to the chat endpoint is denied",
+	"incorrect credentials",
 	"invalid bearer",
 }
 
 var ModelNotFoundPatterns = []string{
 	"model not found",
 	"model_not_found",
+	"model_not_supported",
+	"model is not supported",
 	"no such model",
 	"unknown model",
 	"invalid model",

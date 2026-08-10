@@ -6,6 +6,7 @@ type Strategy struct {
 	Lite    LiteConfig
 	Caveman EngineConfig
 	Rtk     EngineConfig
+	Output  EngineConfig
 }
 
 // Apply runs the compression pipeline for the configured mode.
@@ -38,6 +39,14 @@ func Apply(cfg Strategy, body []byte) ([]byte, EngineStats, error) {
 		}
 	}
 
+	// 3. Optional output-side compression (system-prompt injection).
+	var outputStats EngineStats
+	if cfg.Output != nil && boolValue(cfg.Output["enabled"]) {
+		if e, ok := Get("output"); ok {
+			liteBody, outputStats, _ = e.Apply(liteBody, cfg.Output)
+		}
+	}
+
 	// Compute combined stats.
 	totalOriginal := liteStats.OriginalTokens
 	if totalOriginal == 0 {
@@ -53,14 +62,12 @@ func Apply(cfg Strategy, body []byte) ([]byte, EngineStats, error) {
 	techniques := make([]string, len(liteStats.TechniquesUsed))
 	copy(techniques, liteStats.TechniquesUsed)
 	for _, t := range engineStats.TechniquesUsed {
-		found := false
-		for _, existing := range techniques {
-			if existing == t {
-				found = true
-				break
-			}
+		if !contains(techniques, t) {
+			techniques = append(techniques, t)
 		}
-		if !found {
+	}
+	for _, t := range outputStats.TechniquesUsed {
+		if !contains(techniques, t) {
 			techniques = append(techniques, t)
 		}
 	}
@@ -71,4 +78,22 @@ func Apply(cfg Strategy, body []byte) ([]byte, EngineStats, error) {
 		SavingsPercent:   savings,
 		TechniquesUsed:   techniques,
 	}, nil
+}
+
+func boolValue(v interface{}) bool {
+	if v == nil {
+		return false
+	}
+	switch b := v.(type) {
+	case bool:
+		return b
+	case string:
+		return b == "true" || b == "1" || b == "on"
+	case int:
+		return b != 0
+	case int64:
+		return b != 0
+	default:
+		return false
+	}
 }

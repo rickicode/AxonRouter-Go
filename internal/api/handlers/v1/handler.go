@@ -2,8 +2,12 @@ package v1
 
 import (
 	"bytes"
+	"compress/flate"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +16,8 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"os"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"github.com/klauspost/compress/zstd"
 	"github.com/rickicode/AxonRouter-Go/internal/active"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
@@ -32,6 +39,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
+	"github.com/rickicode/AxonRouter-Go/internal/smart"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 	"github.com/tidwall/gjson"
@@ -44,9 +52,31 @@ var (
 	errReadBody     = errors.New("failed to read request body")
 )
 
-// readBody reads the request body with a size limit.
+// readBody reads the request body with a size limit and transparently
+// decompresses supported Content-Encoding values (zstd, gzip, deflate).
 // Size-limit violations return errBodyTooLarge; other read failures return errReadBody.
 func readBody(c *gin.Context) ([]byte, error) {
+	raw, err := readRawBody(c)
+	if err != nil {
+		return nil, err
+	}
+	decoded, err := decodeRequestBody(raw, c.Request.Header.Get("Content-Encoding"))
+	if err != nil {
+		// Fail-open for payloads that are already valid JSON: a missing or
+		// mismatched Content-Encoding header should not break valid requests.
+		if json.Valid(raw) {
+			return raw, nil
+		}
+		return nil, errReadBody
+	}
+	if len(decoded) > maxBodySize {
+		return nil, fmt.Errorf("%w (max %d bytes)", errBodyTooLarge, maxBodySize)
+	}
+	return decoded, nil
+}
+
+// readRawBody reads the raw request body capped at maxBodySize.
+func readRawBody(c *gin.Context) ([]byte, error) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodySize)
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -56,6 +86,82 @@ func readBody(c *gin.Context) ([]byte, error) {
 		return nil, errReadBody
 	}
 	return body, nil
+}
+
+// decodeRequestBody applies Content-Encoding decompression in reverse order
+// for chained encodings (e.g., "gzip, zstd"). Unsupported encodings return an
+// error so the caller can fail-open when the payload is valid JSON.
+func decodeRequestBody(raw []byte, encoding string) ([]byte, error) {
+	encoding = strings.TrimSpace(encoding)
+	if encoding == "" || strings.EqualFold(encoding, "identity") {
+		return raw, nil
+	}
+	parts := strings.Split(encoding, ",")
+	body := raw
+	for i := len(parts) - 1; i >= 0; i-- {
+		enc := strings.ToLower(strings.TrimSpace(parts[i]))
+		switch enc {
+		case "", "identity":
+			continue
+		case "zstd":
+			decoded, err := decodeZstdBody(body)
+			if err != nil {
+				return nil, err
+			}
+			body = decoded
+		case "gzip":
+			decoded, err := decodeGzipBody(body)
+			if err != nil {
+				return nil, err
+			}
+			body = decoded
+		case "deflate":
+			decoded, err := decodeDeflateBody(body)
+			if err != nil {
+				return nil, err
+			}
+			body = decoded
+		default:
+			return nil, fmt.Errorf("unsupported request content encoding: %s", enc)
+		}
+	}
+	return body, nil
+}
+
+func decodeZstdBody(raw []byte) ([]byte, error) {
+	decoder, err := zstd.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("zstd decoder: %w", err)
+	}
+	defer decoder.Close()
+	decoded, err := io.ReadAll(decoder)
+	if err != nil {
+		return nil, fmt.Errorf("zstd decode: %w", err)
+	}
+	return decoded, nil
+}
+
+func decodeGzipBody(raw []byte) ([]byte, error) {
+	reader, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("gzip decoder: %w", err)
+	}
+	defer reader.Close()
+	decoded, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("gzip decode: %w", err)
+	}
+	return decoded, nil
+}
+
+func decodeDeflateBody(raw []byte) ([]byte, error) {
+	reader := flate.NewReader(bytes.NewReader(raw))
+	defer reader.Close()
+	decoded, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("deflate decode: %w", err)
+	}
+	return decoded, nil
 }
 
 // TrackActive registers an in-flight request so the dashboard's live
@@ -83,10 +189,9 @@ func (h *Handler) TrackActive() gin.HandlerFunc {
 			}
 		} else {
 			// Enforce max body size here too, before any tracking reads.
-			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodySize)
-			raw, err := io.ReadAll(c.Request.Body)
+			raw, err := readRawBody(c)
 			if err != nil {
-				if strings.Contains(err.Error(), "http: request body too large") {
+				if errors.Is(err, errBodyTooLarge) {
 					c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{
 						"error": gin.H{"message": fmt.Sprintf("request body too large (max %d bytes)", maxBodySize), "type": "invalid_request_error"},
 					})
@@ -96,10 +201,15 @@ func (h *Handler) TrackActive() gin.HandlerFunc {
 				c.Next()
 				return
 			}
-			// Restore body for downstream handlers (readBody reads it again).
+			// Restore the original (possibly compressed) body for downstream handlers
+			// so readBody can apply Content-Encoding decompression itself.
 			c.Request.Body = io.NopCloser(bytes.NewReader(raw))
-			model = executor.JSONGet(raw, "model")
-			stream = executor.IsStreamRequest(raw)
+			body := raw
+			if decoded, err := decodeRequestBody(raw, c.Request.Header.Get("Content-Encoding")); err == nil {
+				body = decoded
+			}
+			model = executor.JSONGet(body, "model")
+			stream = executor.IsStreamRequest(body)
 		}
 
 		if model == "" {
@@ -131,6 +241,10 @@ func modalityFromPath(path string) string {
 		return "messages"
 	case strings.Contains(path, "responses"):
 		return "responses"
+	case strings.Contains(path, "live"):
+		return "live"
+	case strings.Contains(path, "realtime"):
+		return "realtime"
 	case strings.Contains(path, "embeddings"):
 		return "embeddings"
 	case strings.Contains(path, "images"):
@@ -152,16 +266,60 @@ func apiTypeFromPath(path string) string {
 	return unifiedSurface(path)
 }
 
-// logRequest enqueues a usage log entry enriched with the client IP and
-// User-Agent from the gin context. It is a single place where all /v1
-// request logging captures request metadata.
+// logRequest enqueues a usage log entry enriched with the client IP,
+// User-Agent, and flat-rate flag from the gin context and provider config.
+// It is a single place where all /v1 request logging captures request metadata.
 func (h *Handler) logRequest(c *gin.Context, entry *usage.LogEntry) {
-  if h.tracker == nil || entry == nil || c == nil {
-    return
-  }
-  entry.ClientIP = c.ClientIP()
-  entry.UserAgent = c.Request.UserAgent()
-  h.tracker.Log(entry)
+	if h.tracker == nil || entry == nil || c == nil {
+		return
+	}
+	entry.ClientIP = c.ClientIP()
+	entry.UserAgent = c.Request.UserAgent()
+	if entry.ServiceTier == "" {
+		if v, ok := c.Get("service_tier"); ok {
+			if s, ok := v.(string); ok {
+				entry.ServiceTier = s
+			}
+		}
+	}
+	if h.providerCfg != nil && entry.ProviderTypeID != "" {
+		entry.FlatRate = h.providerCfg.FlatRate(entry.ProviderTypeID)
+	}
+	h.tracker.Log(entry)
+}
+
+// extractServiceTier returns the service_tier value from a request body.
+// Supported values from OpenAI/Codex APIs are "flex", "priority", and "fast";
+// any other value is passed through so the cost estimator can apply defaults.
+func extractServiceTier(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	return gjson.GetBytes(body, "service_tier").String()
+}
+
+// isFlatRate reports whether the named provider is configured as a flat-rate
+// (subscription/cookie-web) provider. It returns false when no provider config
+// manager is available or when the flag has not been set.
+func (h *Handler) isFlatRate(provider string) bool {
+	if h.providerCfg == nil || provider == "" {
+		return false
+	}
+	return h.providerCfg.FlatRate(provider)
+}
+
+// trackDevice records the calling client device for the resolved API key.
+// It is a no-op when no device tracker is configured or the request is
+// unauthenticated, so handlers can call it unconditionally after auth.
+func (h *Handler) trackDevice(c *gin.Context) {
+	if h.deviceTracker == nil || c == nil {
+		return
+	}
+	apiKeyID := c.GetString("api_key_id")
+	if apiKeyID == "" {
+		return
+	}
+	h.deviceTracker.Track(apiKeyID, c.Request.Header, c.Request.UserAgent())
 }
 
 // unifiedSurface maps a proxy path to the client-facing API surface name.
@@ -171,6 +329,8 @@ func unifiedSurface(path string) string {
 	switch {
 	case strings.Contains(path, "/chat/completions"):
 		return "openai"
+	case strings.HasSuffix(path, "/completions"):
+		return "openai"
 	case strings.Contains(path, "/messages"):
 		return "claude"
 	case strings.Contains(path, "/responses"):
@@ -179,7 +339,9 @@ func unifiedSurface(path string) string {
 		return "embeddings"
 	case strings.Contains(path, "/images/generations"):
 		return "images"
-	case strings.Contains(path, "/video/generations"):
+	case strings.Contains(path, "/images/edits"):
+		return "images"
+	case strings.Contains(path, "/video/generations") || strings.Contains(path, "/videos"):
 		return "video"
 	case strings.Contains(path, "/audio/speech"):
 		return "tts"
@@ -187,6 +349,10 @@ func unifiedSurface(path string) string {
 		return "stt"
 	case strings.Contains(path, "/count_tokens"):
 		return "count_tokens"
+	case strings.Contains(path, "/alpha/search"):
+		return "codex_search"
+	case strings.Contains(path, "/v1beta"):
+		return "gemini"
 	default:
 		return modalityFromPath(path)
 	}
@@ -224,14 +390,18 @@ type Handler struct {
 	store               *connstate.Store
 	elig                *connstate.EligibilityManager
 	combo               *combo.Handler
+	smartRouter         *smart.Router
 	tracker             *usage.Tracker
+	deviceTracker       *usage.DeviceTracker
 	authMgr             *auth.Manager
 	resolver            *proxypool.Resolver
 	exhaustion          *quota.ExhaustionCache
-	conns sync.Map // connID -> *Connection (write-through credential cache)
+	conns               sync.Map // connID -> *Connection (write-through credential cache)
 	compressionStrategy compression.Strategy
-	exactCache cache.CacheStorage
-	providerCfg *providercfg.Manager
+	exactCache          cache.CacheStorage
+	providerCfg         *providercfg.Manager
+	sessions            *connstate.SessionCache
+	codexLiveSessions   *codexLiveSessionStore
 
 	// failoverMaxAttempts caps how many connections the failover loop tries
 	// before giving up. Loaded once from the failover_max_attempts setting (default 5).
@@ -244,9 +414,14 @@ type Handler struct {
 	// test-only executor factories so TTS/STT/Video endpoint tests can bypass
 	// real network calls. Nil in production; handlers fall back to the real
 	// executor constructors when these are unset.
-	ttsExecutorFactory  func() executor.Executor
-	sttExecutorFactory  func() executor.Executor
+	ttsExecutorFactory   func() executor.Executor
+	sttExecutorFactory   func() executor.Executor
 	videoExecutorFactory func() executor.Executor
+
+	// test-only overrides for Codex Live upstream calls. Nil/empty means use the
+	// production HTTP client and sideband base URL.
+	codexLiveHTTPClient      *http.Client
+	codexLiveSidebandBaseURL string
 }
 
 // NewHandler creates a new v1 handler with all dependencies.
@@ -256,7 +431,9 @@ func NewHandler(
 	store *connstate.Store,
 	elig *connstate.EligibilityManager,
 	comboHandler *combo.Handler,
+	smartRouter *smart.Router,
 	tracker *usage.Tracker,
+	deviceTracker *usage.DeviceTracker,
 	authManager *auth.Manager,
 	resolver *proxypool.Resolver,
 	exhaustionCache *quota.ExhaustionCache,
@@ -271,13 +448,17 @@ func NewHandler(
 		store:               store,
 		elig:                elig,
 		combo:               comboHandler,
+		smartRouter:         smartRouter,
 		tracker:             tracker,
+		deviceTracker:       deviceTracker,
 		authMgr:             authManager,
 		resolver:            resolver,
 		exhaustion:          exhaustionCache,
 		compressionStrategy: compressionStrategy,
 		exactCache:          exactCache,
 		providerCfg:         providerCfg,
+		sessions:            connstate.NewSessionCache(),
+		codexLiveSessions:   newCodexLiveSessionStore().withDB(db),
 		failoverMaxAttempts: loadFailoverMaxAttempts(db),
 	}
 }
@@ -307,6 +488,25 @@ func (h *Handler) failoverAttempts() int {
 	return h.failoverMaxAttempts
 }
 
+// resolveVirtualModel intercepts smart/* virtual model ids, resolves them to
+// a concrete provider/model, and updates both the model string and request body.
+// If the virtual model is disabled or has no eligible candidates, it returns
+// false and lets the caller fall back to normal resolution.
+func (h *Handler) resolveVirtualModel(ctx context.Context, model string, body []byte) (string, []byte, bool) {
+	if !strings.HasPrefix(model, "smart/") || h.smartRouter == nil {
+		return model, body, false
+	}
+	resolved, err := h.smartRouter.Resolve(ctx, model, body, allowedModelsFromContext(ctx))
+	if err != nil {
+		return model, body, false
+	}
+	if resolved == "" {
+		return model, body, false
+	}
+	body = executor.JSONSet(body, "model", resolved)
+	return resolved, body, true
+}
+
 // resolveExecutor finds the executor for a provider/model.
 func (h *Handler) resolveExecutor(provider, model string) (executor.Executor, executor.ProviderFormat, error) {
 	provider = provideralias.ResolveAlias(provider)
@@ -319,35 +519,181 @@ func (h *Handler) resolveExecutor(provider, model string) (executor.Executor, ex
 
 const pickMaxAttempts = 10
 
+// classifyProviderUnavailableForModel returns a specific error category when
+// every non-disabled connection for a provider is unavailable for the requested
+// model. Unlike Store.ClassifyProviderUnavailable, it also considers model-scope
+// exhaustion cache entries so a provider whose connections are all exhausted for
+// this model (but still healthy for other models) surfaces a 429 instead of a
+// generic 503.
+func (h *Handler) classifyProviderUnavailableForModel(provider, modelName string) connstate.ErrorCategory {
+	provider = provideralias.ResolveAlias(provider)
+	if h.store == nil {
+		return connstate.ErrorUnknown
+	}
+	var (
+		total   int
+		quota   int
+		auth    int
+		balance int
+	)
+	now := time.Now()
+	scope := connstate.ModelScope(provider, modelName)
+	h.store.Range(func(connID string, cs *connstate.ConnectionState) bool {
+		if cs.Prefix != provider {
+			return true
+		}
+		total++
+		switch cs.GetStatus() {
+		case connstate.StatusQuotaExhausted, connstate.StatusRateLimited:
+			quota++
+		case connstate.StatusDisabled:
+			switch cs.DisabledReason {
+			case "auth_failed", "suspended":
+				auth++
+			case "balance_empty":
+				balance++
+			}
+		default:
+			if modelName != "" && h.exhaustion.IsExhaustedScopeAt(connID, scope, now) {
+				quota++
+			}
+		}
+		return true
+	})
+	if total == 0 {
+		return connstate.ErrorUnknown
+	}
+	switch {
+	case quota == total:
+		return connstate.ErrorQuota
+	case auth == total:
+		return connstate.ErrorAuth
+	case balance == total:
+		return connstate.ErrorBalanceEmpty
+	}
+	return connstate.ErrorUnknown
+}
+
+// clearAffinitySession removes the cached affinity mapping for a
+// provider/session/model so the next request does not immediately reuse a
+// connection that just failed.
+func (h *Handler) clearAffinitySession(provider, sessionID, modelName string) {
+	if h.sessions == nil || sessionID == "" {
+		return
+	}
+	h.sessions.Delete(connstate.SessionKey(provideralias.ResolveAlias(provider), sessionID, modelName))
+}
+
 // getConnection returns an active connection for a provider using the precomputed
 // eligibility snapshot. The hot path samples up to pickMaxAttempts candidates
 // so routing cost stays bounded regardless of how many eligible connections a
 // provider has. A full scan is only used as a fallback when every sampled
 // connection fails model-level cooldown/exhaustion checks.
-func (h *Handler) getConnection(ctx context.Context, provider string, modelID string) (*Connection, error) {
+func (h *Handler) getConnection(ctx context.Context, provider string, modelID string, sessionID string, excludeConnID ...string) (conn *Connection, err error) {
 	provider = provideralias.ResolveAlias(provider)
-
-	connIDs := h.elig.GetByPrefix(provider)
-	logging.Logger.Debug("getConnection", "provider", provider, "eligible", len(connIDs))
-	if len(connIDs) == 0 {
-		return nil, fmt.Errorf("no eligible connection for provider: %s", provider)
+	mode := h.providerCfg.RoutingMode(provider)
+	now := time.Now()
+	var excluded string
+	if len(excludeConnID) > 0 {
+		excluded = excludeConnID[0]
 	}
 
-	start := h.pickStartIndex(provider, len(connIDs))
-	bound := pickMaxAttempts
-	if bound > len(connIDs) {
-		bound = len(connIDs)
+	// Remember the selected connection for affinity routing, and try to
+	// reuse a previously cached connection for this session/model.
+	defer func() {
+		if err == nil && conn != nil && mode == providercfg.Affinity && sessionID != "" {
+			h.sessions.Put(connstate.SessionKey(provider, sessionID, modelID), conn.ID)
+		}
+	}()
+	if mode == providercfg.Affinity && sessionID != "" {
+		if c, ok := h.tryAffinityConnection(ctx, provider, sessionID, modelID, now, mode, excluded); ok {
+			conn = c
+			return
+		}
 	}
-	for i := 0; i < bound; i++ {
-		idx := (start + i) % len(connIDs)
-		if conn, ok := h.tryPickConnection(ctx, connIDs[idx], provider, modelID); ok {
+
+	conns := h.elig.GetByPrefixState(provider)
+	logging.Logger.Debug("getConnection", "provider", provider, "eligible", len(conns), "excluded", excluded)
+	if len(conns) > 0 {
+		start := h.pickStartIndex(provider, modelID, len(conns), mode)
+		bound := pickMaxAttempts
+		if bound > len(conns) {
+			bound = len(conns)
+		}
+		for i := 0; i < bound; i++ {
+			idx := (start + i) % len(conns)
+			if excluded != "" && conns[idx].ID == excluded {
+				continue
+			}
+			if conn, ok := h.tryPickConnection(ctx, conns[idx], provider, modelID, now, mode); ok {
+				return conn, nil
+			}
+		}
+
+		for i := bound; i < len(conns); i++ {
+			idx := (start + i) % len(conns)
+			if excluded != "" && conns[idx].ID == excluded {
+				continue
+			}
+			if conn, ok := h.tryPickConnection(ctx, conns[idx], provider, modelID, now, mode); ok {
+				return conn, nil
+			}
+		}
+	}
+
+	// Safety net: if the eligibility snapshot is empty or every eligible
+	// candidate was filtered out (e.g. all accounts are in a transient cooldown),
+	// scan all known connections for this provider and try them, ignoring
+	// cooldown windows but still honoring exhaustion and terminal statuses.
+	return h.getConnectionFallback(ctx, provider, modelID, now, mode, excluded)
+}
+
+// getConnectionFallback is the last-resort router used when the eligibility
+// snapshot has no usable connection. It tries two passes:
+//  1. Respect cooldowns but consider any non-terminal connection.
+//  2. If everything is in cooldown, bypass cooldown once as emergency fallback
+//     so a healthy account that was briefly cooled down can still receive traffic.
+//     Daily quota exhaustion (StatusQuotaExhausted) is never bypassed because its
+//     cooldown is account-wide and not recoverable by retrying.
+func (h *Handler) getConnectionFallback(ctx context.Context, provider, modelID string, now time.Time, mode providercfg.RoutingMode, excludeConnID ...string) (*Connection, error) {
+	var excluded string
+	if len(excludeConnID) > 0 {
+		excluded = excludeConnID[0]
+	}
+	var candidates []*connstate.ConnectionState
+	h.store.Range(func(connID string, cs *connstate.ConnectionState) bool {
+		if cs.Prefix != provider {
+			return true
+		}
+		if cs.GetStatus() == connstate.StatusDisabled {
+			return true
+		}
+		if excluded != "" && connID == excluded {
+			return true
+		}
+		candidates = append(candidates, cs)
+		return true
+	})
+
+	candidates = h.orderCandidates(provider, modelID, candidates, mode)
+
+	// Pass 1: respect cooldowns, just expand the pool beyond the eligibility snapshot.
+	for _, cs := range candidates {
+		if conn, ok := h.tryPickConnection(ctx, cs, provider, modelID, now, mode); ok {
+			logging.Logger.Info("getConnection fallback (cooldown-aware) selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name)
 			return conn, nil
 		}
 	}
 
-	for i := bound; i < len(connIDs); i++ {
-		idx := (start + i) % len(connIDs)
-		if conn, ok := h.tryPickConnection(ctx, connIDs[idx], provider, modelID); ok {
+	// Pass 2: every account is in cooldown. Bypass short cooldowns (rate limit,
+	// degraded) as emergency fallback, but never bypass quota exhaustion because
+	// its cooldown is account-wide and daily — retrying is pointless.
+	for _, cs := range candidates {
+		if cs.GetStatus() == connstate.StatusQuotaExhausted {
+			continue
+		}
+		if conn, ok := h.tryPickConnectionFallback(ctx, cs.ID, provider, modelID, now, mode); ok {
+			logging.Logger.Info("getConnection emergency fallback selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name)
 			return conn, nil
 		}
 	}
@@ -355,16 +701,172 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 	return nil, fmt.Errorf("no available connection for provider: %s (all exhausted or failing)", provider)
 }
 
+// tryPickConnectionFallback is like tryPickConnection but ignores connection-level
+// cooldowns. It still respects model-level cooldowns and exhaustion so we do not
+// hammer accounts that are genuinely out of quota.
+func (h *Handler) tryPickConnectionFallback(ctx context.Context, connID, provider, modelID string, now time.Time, mode providercfg.RoutingMode) (*Connection, bool) {
+	cs := h.store.Get(connID)
+	if cs == nil {
+		return nil, false
+	}
+	if cs.GetStatus().IsRoutingTerminal() {
+		return nil, false
+	}
+	if status := cs.GetStatus(); status.IsHealable() && !cs.IsInCooldownAt(now) {
+		cs.SetStatus(connstate.StatusReady, "")
+	}
+	if modelID != "" && cs.IsModelInCooldownAt(modelID, now) {
+		return nil, false
+	}
+	if modelID != "" && h.exhaustion.IsExhaustedScopeAt(connID, connstate.ModelScope(provider, modelID), now) {
+		return nil, false
+	}
+	if h.exhaustion.IsExhaustedAt(connID, now) {
+		return nil, false
+	}
+	conn, err := h.getCachedConn(ctx, connID, now)
+	if err != nil {
+		logging.Logger.Debug("load conn failed", "conn", connID[:8], "err", err)
+		return nil, false
+	}
+	cs.RecordUsed()
+	logging.Logger.Debug("getConnection fallback selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name, "mode", mode)
+	h.bindActiveConn(ctx, conn)
+	return conn, true
+}
+
+// tryAffinityConnection attempts to reuse a cached connection for the
+// provider/session/model combination. The cached connection is validated
+// with the same cooldown/exhaustion checks as normal selection.
+func (h *Handler) tryAffinityConnection(ctx context.Context, provider, sessionID, modelID string, now time.Time, mode providercfg.RoutingMode, excludeConnID string) (*Connection, bool) {
+	if h.sessions == nil {
+		return nil, false
+	}
+	cachedID, ok := h.sessions.Get(connstate.SessionKey(provider, sessionID, modelID))
+	if !ok {
+		return nil, false
+	}
+	if excludeConnID != "" && cachedID == excludeConnID {
+		return nil, false
+	}
+	cs := h.store.Get(cachedID)
+	if cs == nil {
+		return nil, false
+	}
+	if c, ok := h.tryPickConnection(ctx, cs, provider, modelID, now, mode); ok {
+		logging.Logger.Debug("getConnection affinity hit", "provider", provider, "model", modelID, "conn", shortID(c.ID, 8))
+		return c, true
+	}
+	return nil, false
+}
+
+// sessionIDForAffinity extracts a session identifier when the provider is
+// configured for affinity routing. It is a no-op for other routing modes so
+// the default hot path avoids unnecessary JSON/header parsing.
+func (h *Handler) sessionIDForAffinity(c *gin.Context, provider, modelID string, body []byte) string {
+	if h.sessions == nil || h.providerCfg.RoutingMode(provider) != providercfg.Affinity {
+		return ""
+	}
+	return h.extractSessionID(c, body)
+}
+
+var sessionUUIDRegex = regexp.MustCompile(`_session_([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})`)
+
+// extractSessionID returns a stable session identifier for affinity routing.
+// The priority order is:
+//  1. UUID embedded in metadata.user_id after "_session_".
+//  2. X-Session-ID header.
+//  3. Session-Id / Session_id header.
+//  4. X-Client-Request-Id header.
+//  5. conversation_id field in the JSON body.
+//  6. Stable SHA-256 hash of the first system+user+assistant message contents.
+func (h *Handler) extractSessionID(c *gin.Context, body []byte) string {
+	if len(body) > 0 {
+		if userID := gjson.GetBytes(body, "metadata.user_id").String(); userID != "" {
+			if m := sessionUUIDRegex.FindStringSubmatch(userID); len(m) > 1 {
+				return m[1]
+			}
+		}
+	}
+	if c != nil && c.Request != nil {
+		if v := firstHeaderValue(c.Request.Header, "x-session-id"); v != "" {
+			return v
+		}
+		if v := firstHeaderValue(c.Request.Header, "session-id"); v != "" {
+			return v
+		}
+		if v := firstHeaderValue(c.Request.Header, "session_id"); v != "" {
+			return v
+		}
+		if v := firstHeaderValue(c.Request.Header, "x-client-request-id"); v != "" {
+			return v
+		}
+	}
+	if len(body) > 0 {
+		if conv := gjson.GetBytes(body, "conversation_id").String(); conv != "" {
+			return conv
+		}
+		if messages := gjson.GetBytes(body, "messages"); messages.IsArray() {
+			var parts []string
+			var seenSystem, seenUser, seenAssistant bool
+			for _, msg := range messages.Array() {
+				role := msg.Get("role").String()
+				content := msg.Get("content").String()
+				switch role {
+				case "system":
+					if !seenSystem {
+						parts = append(parts, content)
+						seenSystem = true
+					}
+				case "user":
+					if !seenUser {
+						parts = append(parts, content)
+						seenUser = true
+					}
+				case "assistant":
+					if !seenAssistant {
+						parts = append(parts, content)
+						seenAssistant = true
+					}
+				}
+				if seenSystem && seenUser && seenAssistant {
+					break
+				}
+			}
+			if len(parts) > 0 {
+				sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+				return hex.EncodeToString(sum[:])
+			}
+		}
+	}
+	return ""
+}
+
+func firstHeaderValue(h http.Header, name string) string {
+	if h == nil {
+		return ""
+	}
+	lower := strings.ToLower(name)
+	for k, v := range h {
+		if strings.ToLower(k) == lower && len(v) > 0 {
+			if s := strings.TrimSpace(v[0]); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
 // pickStartIndex returns the first index to inspect based on the configured
 // routing mode. first_eligible always starts at 0; round_robin rotates an
-// atomic counter; random chooses a uniform index.
-func (h *Handler) pickStartIndex(provider string, total int) int {
+// atomic counter keyed by provider and modelID; random chooses a uniform index.
+func (h *Handler) pickStartIndex(provider, modelID string, total int, mode providercfg.RoutingMode) int {
 	if total <= 1 {
 		return 0
 	}
-	switch h.providerCfg.RoutingMode(provider) {
+	switch mode {
 	case providercfg.RoundRobin:
-		return h.providerCfg.NextRoundRobinIndex(provider, total)
+		return h.providerCfg.NextRoundRobinIndex(provider, modelID, total)
 	case providercfg.Random:
 		return rand.IntN(total)
 	default:
@@ -374,50 +876,75 @@ func (h *Handler) pickStartIndex(provider string, total int) int {
 
 // tryPickConnection checks a single eligible connection for model-level
 // cooldowns/quota exhaustion and loads its DB credentials when it passes.
-func (h *Handler) tryPickConnection(ctx context.Context, connID, provider, modelID string) (*Connection, bool) {
-	cs := h.store.Get(connID)
-	if cs == nil {
+// The caller supplies the pre-resolved *ConnectionState so the routing hot path
+// avoids a store.Get lookup per candidate.
+//
+// Terminal statuses are checked explicitly as a safety net: the eligibility
+// snapshot is rebuilt asynchronously, so an account that was just marked
+// auth_failed/disabled/etc. could still appear in the snapshot for a few
+// milliseconds and be selected again. Cooldown/expired statuses are *not*
+// terminal: a connection whose cooldown has already expired must be usable
+// even if the snapshot still lists it as cooldown/quota_exhausted.
+func (h *Handler) tryPickConnection(ctx context.Context, cs *connstate.ConnectionState, provider, modelID string, now time.Time, mode providercfg.RoutingMode) (*Connection, bool) {
+	if cs.GetStatus().IsRoutingTerminal() {
 		return nil, false
 	}
-	if cs.IsInCooldown() {
+	if status := cs.GetStatus(); status.IsHealable() && !cs.IsInCooldownAt(now) {
+		cs.SetStatus(connstate.StatusReady, "")
+	}
+	if cs.IsInCooldownAt(now) {
 		return nil, false
 	}
-	if modelID != "" && cs.IsModelInCooldown(modelID) {
+	if modelID != "" && cs.IsModelInCooldownAt(modelID, now) {
 		return nil, false
 	}
-	if modelID != "" && h.exhaustion.IsExhaustedScope(connID, connstate.ModelScope(provider, modelID)) {
+	connID := cs.ID
+	if modelID != "" && h.exhaustion.IsExhaustedScopeAt(connID, connstate.ModelScope(provider, modelID), now) {
 		return nil, false
 	}
-	if h.exhaustion.IsExhausted(connID) {
+	if h.exhaustion.IsExhaustedAt(connID, now) {
 		return nil, false
 	}
-	conn, err := h.getCachedConn(ctx, connID)
+	conn, err := h.getCachedConn(ctx, connID, now)
 	if err != nil {
 		logging.Logger.Debug("load conn failed", "conn", connID[:8], "err", err)
 		return nil, false
 	}
-	logging.Logger.Info("getConnection selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name, "mode", h.providerCfg.RoutingMode(provider))
+	cs.RecordUsed()
+	logging.Logger.Debug("getConnection selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name, "mode", mode)
 	h.bindActiveConn(ctx, conn)
 	return conn, true
 }
 
-// orderCandidates reorders eligible connection IDs according to the provider's
+// orderCandidates reorders eligible connections according to the provider's
 // configured routing mode.
 //
-//   - first_eligible: use the snapshot order (one account stays first until it
-//     becomes ineligible).
-//   - round_robin: rotate the starting index on every request.
-//   - random: pick a random starting index for each request.
-func (h *Handler) orderCandidates(provider string, candidates []string) []string {
+//   - first_eligible: accounts are sorted by remaining quota (highest first).
+//   - round_robin: rotate the starting index keyed by provider and modelID,
+//     but the rotation is applied on top of the quota-sorted list so healthier
+//     accounts are preferred.
+//   - random: pick a random starting index on the quota-sorted list.
+func (h *Handler) orderCandidates(provider, modelID string, candidates []*connstate.ConnectionState, mode providercfg.RoutingMode) []*connstate.ConnectionState {
 	if len(candidates) <= 1 {
 		return candidates
 	}
 
-	mode := h.providerCfg.RoutingMode(provider)
+	// Quota-aware, then recency-aware: put accounts with the most remaining quota
+	// first, and break ties by preferring least-recently-used connections. This
+	// spreads simultaneous requests across siblings instead of concentrating them
+	// on the same freshly-selected connection.
+	sort.SliceStable(candidates, func(i, j int) bool {
+		ri, rj := candidates[i].GetRemainingPct(), candidates[j].GetRemainingPct()
+		if ri != rj {
+			return ri > rj
+		}
+		return candidates[i].LastUsedAt().Before(candidates[j].LastUsedAt())
+	})
+
 	var start int
 	switch mode {
 	case providercfg.RoundRobin:
-		start = h.providerCfg.NextRoundRobinIndex(provider, len(candidates))
+		start = h.providerCfg.NextRoundRobinIndex(provider, modelID, len(candidates))
 	case providercfg.Random:
 		start = rand.IntN(len(candidates))
 	default:
@@ -427,7 +954,7 @@ func (h *Handler) orderCandidates(provider string, candidates []string) []string
 	if start == 0 {
 		return candidates
 	}
-	out := make([]string, 0, len(candidates))
+	out := make([]*connstate.ConnectionState, 0, len(candidates))
 	out = append(out, candidates[start:]...)
 	out = append(out, candidates[:start]...)
 	return out
@@ -436,28 +963,35 @@ func (h *Handler) orderCandidates(provider string, candidates []string) []string
 // prepareConnection performs preflight checks and proactive token refresh for a
 // specific connection. Used by combo routing so it gets the same cooldown/exhaustion
 // guards and OAuth refresh as the regular single-model path.
-func (h *Handler) prepareConnection(ctx context.Context, connID, provider, modelID string) (*Connection, error) {
+func (h *Handler) prepareConnection(ctx context.Context, connID, provider, modelID string, now time.Time) (*Connection, error) {
 	cs := h.store.Get(connID)
 	if cs == nil {
 		return nil, fmt.Errorf("connection state not found")
 	}
-	if cs.IsInCooldown() {
+	if cs.GetStatus().IsRoutingTerminal() {
+		return nil, fmt.Errorf("connection terminal status")
+	}
+	if status := cs.GetStatus(); status.IsHealable() && !cs.IsInCooldownAt(now) {
+		cs.SetStatus(connstate.StatusReady, "")
+	}
+	if cs.IsInCooldownAt(now) {
 		return nil, fmt.Errorf("connection in cooldown")
 	}
-	if modelID != "" && cs.IsModelInCooldown(modelID) {
+	if modelID != "" && cs.IsModelInCooldownAt(modelID, now) {
 		return nil, fmt.Errorf("model in cooldown")
 	}
-	if modelID != "" && h.exhaustion.IsExhaustedScope(connID, connstate.ModelScope(provider, modelID)) {
+	if modelID != "" && h.exhaustion.IsExhaustedScopeAt(connID, connstate.ModelScope(provider, modelID), now) {
 		return nil, fmt.Errorf("model exhausted")
 	}
-	if h.exhaustion.IsExhausted(connID) {
+	if h.exhaustion.IsExhaustedAt(connID, now) {
 		return nil, fmt.Errorf("connection exhausted")
 	}
 
-	conn, err := h.getCachedConn(ctx, connID)
+	conn, err := h.getCachedConn(ctx, connID, now)
 	if err != nil {
 		return nil, err
 	}
+	cs.RecordUsed()
 
 	// Proactive token refresh (same as regular routing path)
 	h.proactiveRefreshToken(ctx, conn, provider)
@@ -485,10 +1019,10 @@ type cachedConn struct {
 // getCachedConn returns a cached connection by ID, falling back to a DB load
 // on miss or TTL expiry (60s). This eliminates the per-request DB SELECT on the
 // hot path — the last remaining DB call in getConnection/prepareConnection.
-func (h *Handler) getCachedConn(ctx context.Context, connID string) (*Connection, error) {
+func (h *Handler) getCachedConn(ctx context.Context, connID string, now time.Time) (*Connection, error) {
 	if v, ok := h.conns.Load(connID); ok {
 		cc := v.(cachedConn)
-		if time.Since(cc.cachedAt) < connCacheTTL {
+		if now.Sub(cc.cachedAt) < connCacheTTL {
 			copied := *cc.conn
 			return &copied, nil
 		}
@@ -498,7 +1032,7 @@ func (h *Handler) getCachedConn(ctx context.Context, connID string) (*Connection
 	if err != nil {
 		return nil, err
 	}
-	h.conns.Store(connID, cachedConn{conn: conn, cachedAt: time.Now()})
+	h.conns.Store(connID, cachedConn{conn: conn, cachedAt: now})
 	copied := *conn
 	return &copied, nil
 }
@@ -537,11 +1071,11 @@ func (h *Handler) loadConnectionByID(ctx context.Context, connID string) (*Conne
 // refreshLeadMs defines per-provider proactive refresh lead times (ms).
 // Matches OmniRoute REFRESH_LEAD_MS at open-sse/services/tokenRefresh.ts:32-49.
 var refreshLeadMs = map[string]time.Duration{
-	"cx":      5 * time.Minute,  // Codex: Auth0 rotating refresh tokens
-	"ag":      15 * time.Minute, // Antigravity: Google non-rotating refresh tokens
-	"kiro":    5 * time.Minute,  // Kiro: AWS SSO OIDC one-time-use refresh tokens
-	"copilot": 5 * time.Minute, // Copilot: GitHub device-code tokens refresh early due to Copilot token skew
-	"grok-cli": 5 * time.Minute, // Grok CLI: xAI OIDC device-code tokens refresh before expiry
+	"cx":       5 * time.Minute,  // Codex: Auth0 rotating refresh tokens
+	"ag":       15 * time.Minute, // Antigravity: Google non-rotating refresh tokens
+	"kiro":     5 * time.Minute,  // Kiro: AWS SSO OIDC one-time-use refresh tokens
+	"copilot":  5 * time.Minute,  // Copilot: GitHub device-code tokens refresh early due to Copilot token skew
+	"grok-cli": 5 * time.Minute,  // Grok CLI: xAI OIDC device-code tokens refresh before expiry
 }
 
 const defaultRefreshLeadMs = 5 * time.Minute
@@ -583,31 +1117,45 @@ func (h *Handler) refreshOAuthToken(ctx context.Context, conn *Connection, provi
 		return fmt.Errorf("oauth not supported for provider: %s", provider)
 	}
 
-	creds := &auth.Credentials{
-		AccessToken:  conn.AccessToken,
-		RefreshToken: conn.RefreshToken,
-		ExpiresAt:    conn.OAuthExpiresAt,
+	providerSpecific := map[string]string{}
+	if conn.ProviderSpecificData != "" {
+		var raw map[string]any
+		if e := json.Unmarshal([]byte(conn.ProviderSpecificData), &raw); e == nil {
+			for k, v := range raw {
+				if s, ok := v.(string); ok {
+					providerSpecific[k] = s
+				}
+			}
+		}
 	}
 
-	newCreds, err := h.authMgr.RefreshToken(ctx, providerType, creds)
+	creds := &auth.Credentials{
+		AccessToken:      conn.AccessToken,
+		RefreshToken:     conn.RefreshToken,
+		ExpiresAt:        conn.OAuthExpiresAt,
+		ProviderSpecific: providerSpecific,
+	}
+
+	newCreds, err := h.authMgr.RefreshTokenForConnection(ctx, conn.ID, providerType, creds)
 	if err != nil {
 		// Check for unrecoverable errors (matches OmniRoute isUnrecoverableRefreshError)
 		if isUnrecoverableRefreshError(err) {
 			log.Printf("Unrecoverable refresh error for %s/%s: %v — blocking connection", provider, conn.ID, err)
 			connID := conn.ID
 			h.writeQueue.EnqueueOrBlock(ctx, "refreshOAuth:authFailed", func(d *sql.DB) error {
-				_, err := d.Exec(`UPDATE connections SET is_active = 0, status = 'auth_failed', updated_at = ? WHERE id = ?`,
+				_, err := d.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', disabled_reason = 'auth_failed', updated_at = ? WHERE id = ?`,
 					time.Now().Unix(), connID)
 				return err
 			})
-			h.store.UpdateStatus(conn.ID, connstate.StatusAuthFailed)
-			h.elig.ScheduleUpdate()
+			h.store.UpdateStatus(conn.ID, connstate.StatusDisabled, "auth_failed")
+			h.elig.ScheduleUpdateProvider(provider)
 		}
 		return fmt.Errorf("refresh token: %w", err)
 	}
 
 	// Update connection in memory
 	conn.AccessToken = newCreds.AccessToken
+	conn.RefreshToken = newCreds.RefreshToken
 	conn.OAuthExpiresAt = newCreds.ExpiresAt
 	if len(newCreds.ProviderSpecific) > 0 {
 		if psdBytes, err := json.Marshal(newCreds.ProviderSpecific); err == nil {
@@ -616,20 +1164,6 @@ func (h *Handler) refreshOAuthToken(ctx context.Context, conn *Connection, provi
 	}
 	// Update the credential cache so subsequent requests see the new token immediately.
 	h.conns.Store(conn.ID, cachedConn{conn: conn, cachedAt: time.Now()})
-	// Persist to DB (async — does not block the request path).
-	connID := conn.ID
-	accessToken := conn.AccessToken
-	refreshToken := conn.RefreshToken
-	expiresAt := conn.OAuthExpiresAt.Unix()
-	providerSpecificData := conn.ProviderSpecificData
-	h.writeQueue.EnqueueOrBlock(ctx, "refreshOAuth:persist", func(d *sql.DB) error {
-		_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?`,
-			accessToken, refreshToken, expiresAt, providerSpecificData, time.Now().Unix(), connID)
-		if err != nil {
-			log.Printf("WARN: failed to persist OAuth token for connection %s: %v", connID, err)
-		}
-		return err
-	})
 	return nil
 }
 
@@ -768,11 +1302,13 @@ func buildFailoverErrorResponse(category string, lastErr error, modelName string
 	case connstate.ErrorModelNotFound:
 		return "model not found: " + modelName, http.StatusNotFound, "invalid_request_error"
 	case connstate.ErrorAuth:
-		return "authentication failed for all connections", http.StatusUnauthorized, "authentication_error"
+		return upstreamMessage("authentication failed"), http.StatusUnauthorized, "authentication_error"
 	case connstate.ErrorRateLimit:
 		return upstreamMessage("rate limit exceeded for all connections"), http.StatusTooManyRequests, "rate_limit_error"
 	case connstate.ErrorQuota:
 		return upstreamMessage("quota exhausted for all connections"), http.StatusTooManyRequests, "insufficient_quota"
+	case connstate.ErrorBalanceEmpty:
+		return upstreamMessage("balance empty for all connections"), http.StatusTooManyRequests, "insufficient_quota"
 	default:
 		return "all connections exhausted or failing", http.StatusServiceUnavailable, "server_error"
 	}
@@ -804,16 +1340,6 @@ func failoverBackoff(ctx context.Context, attempt int, maxAttempts int) bool {
 
 // isAuthError checks if an error indicates an authentication failure (401/403).
 // Used for reactive retry: refresh token and retry once on auth errors.
-func isAuthError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "401") || strings.Contains(msg, "403") ||
-		strings.Contains(msg, "unauthorized") || strings.Contains(msg, "forbidden") ||
-		strings.Contains(msg, "authentication") || strings.Contains(msg, "access denied")
-}
-
 // shortID returns a safe prefix of id up to n bytes; it never panics on short IDs.
 func shortID(id string, n int) string {
 	if n <= 0 || len(id) <= n {
@@ -829,6 +1355,24 @@ func writeReadBodyError(c *gin.Context, err error) {
 		return
 	}
 	c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": errReadBody.Error(), "type": "invalid_request_error"}})
+}
+
+// allowedModelsFromContext extracts the API-key allowlist set stored on the
+// request context by the auth middleware. A nil or empty set means unlimited.
+func allowedModelsFromContext(ctx context.Context) map[string]struct{} {
+	if v := ctx.Value("allowed_models"); v != nil {
+		if set, ok := v.(map[string]struct{}); ok {
+			return set
+		}
+	}
+	return nil
+}
+
+// isModelAllowed reports whether modelID is permitted by the API-key allowlist
+// stored on the request context. An absent or empty allowlist means unlimited
+// access (legacy keys or the internal admin surface).
+func (h *Handler) isModelAllowed(ctx context.Context, modelID string) bool {
+	return modelIDAllowed(modelID, allowedModelsFromContext(ctx))
 }
 
 // writeContextDone writes an explicit 499 for client cancellations and 504 for timeouts.
@@ -889,16 +1433,161 @@ func (h *Handler) executeWithRetry(
 		if isUnrecoverableRefreshError(err) {
 			break
 		}
-		if attempt < 2 && isAuthError(err) && h.proactiveRefreshToken(ctx, conn, provider) {
+		if attempt < 2 && auth.IsAuthError(err) && h.proactiveRefreshToken(ctx, conn, provider) {
 			req.AccessToken = conn.AccessToken
 			continue
 		}
-		if !isAuthError(err) {
+		if !auth.IsAuthError(err) {
 			break
 		}
 	}
 
 	return resp, streamResult, err
+}
+
+// handleMediaCombo routes a non-streaming request (image or TTS) through a
+// combo's steps. The caller supplies an executor factory per step. The first
+// successful step response is written to the client; if every step fails, a
+// combo-style 503 error is returned.
+func (h *Handler) handleMediaCombo(
+	c *gin.Context,
+	comboResult *combo.ComboResult,
+	body []byte,
+	model string,
+	start time.Time,
+	modality string,
+	defaultContentType string,
+	accumulateBody bool,
+	execForStep func(provider, modelName string) (executor.Executor, error),
+) {
+	strategy := h.combo.EffectiveStrategy(comboResult.Combo.Name, comboResult.Combo.Strategy)
+	steps := h.combo.RotateSteps(comboResult.Combo.ID, strategy, comboResult.Combo.StickyLimit, comboResult.Steps)
+
+	comboTimeout := 30 * time.Second
+	if comboResult.Combo != nil && comboResult.Combo.TimeoutMs > 0 {
+		comboTimeout = time.Duration(comboResult.Combo.TimeoutMs) * time.Millisecond
+	}
+	comboCtx, cancel := context.WithTimeout(c.Request.Context(), comboTimeout)
+	defer cancel()
+
+	var lastErr error
+	var lastErrCategory string
+	var lastModelName string
+
+	for _, step := range steps {
+		provider, modelName := executor.SplitModel(step.ModelID)
+		if provider == "" {
+			continue
+		}
+		lastModelName = modelName
+
+		stepExec, err := execForStep(provider, modelName)
+		if err != nil {
+			lastErr = err
+			lastErrCategory = "executor"
+			continue
+		}
+
+		connIDs := h.combo.PickConnections(provider, modelName)
+		if len(connIDs) == 0 {
+			continue
+		}
+
+		stepBody := executor.JSONSet(body, "model", modelName)
+		for _, connID := range connIDs {
+			if comboCtx.Err() != nil {
+				break
+			}
+			now := time.Now()
+			conn, err := h.prepareConnection(comboCtx, connID, provider, modelName, now)
+			if err != nil {
+				continue
+			}
+
+			var psdMap map[string]string
+			if conn.ProviderSpecificData != "" {
+				if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
+					logging.Logger.Warn("malformed provider_specific_data", "conn", shortID(conn.ID, 8), "error", err.Error())
+				}
+			}
+
+			req := &executor.Request{
+				Model:                modelName,
+				Body:                 stepBody,
+				APIKey:               conn.APIKey,
+				AccessToken:          conn.AccessToken,
+				BaseURL:              conn.BaseURL,
+				Provider:             provider,
+				ProviderSpecificData: psdMap,
+			}
+			proxyCtx := h.proxyContext(comboCtx, conn)
+			resp, _, err := h.executeWithRetry(proxyCtx, stepExec, req, conn, provider, modelName)
+			latency := time.Since(start).Milliseconds()
+			if err != nil {
+				det := connstate.DetectError(proxyCtx, 0, "", err, provider, modelName, nil)
+				if det.ModelID != "" && (det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
+					scope := connstate.ModelScope(provider, det.ModelID)
+					h.exhaustion.MarkExhausted(quota.ExhaustKey(connID, scope), quota.TTLFromCooldown(det.CooldownUntil, 5*time.Minute))
+				} else if det.Category == connstate.ErrorRateLimit {
+					h.exhaustion.MarkExhausted(connID, quota.TTLFromCooldown(det.CooldownUntil, quota.DefaultExhaustionTTL))
+				} else if det.Category == connstate.ErrorQuota {
+					ttl := 24 * time.Hour
+					if det.CooldownUntil != nil {
+						ttl = time.Until(*det.CooldownUntil)
+					}
+					h.exhaustion.MarkExhausted(connID, ttl)
+				}
+				h.combo.RecordFailure(connID, det)
+				h.persistCooldownScoped(connID, det)
+				if det.Status != connstate.StatusReady {
+					h.elig.ScheduleUpdateProvider(provider)
+				}
+				lastErr = err
+				lastErrCategory = string(det.Category)
+				continue
+			}
+
+			h.resetBanCount(connID)
+			h.persistSuccess(connID)
+			h.combo.RecordSuccess(connID)
+
+			var respBody []byte
+			if accumulateBody {
+				respBody = resp.Body
+			}
+			h.logRequest(c, &usage.LogEntry{
+				ApiKeyID:       c.GetString("api_key_id"),
+				ConnectionID:   connID,
+				ProviderTypeID: provider,
+				ModelID:        modelName,
+				ComboID:        comboResult.Combo.Name,
+				ProxyPoolID:    executor.ProxyPoolIDFromContext(proxyCtx),
+				ApiType:        apiTypeFromPath(c.Request.URL.Path),
+				Modality:       modality,
+				Quantity:       quantityForModality(modality, body),
+				Stream:         false,
+				LatencyMs:      latency,
+				StatusCode:     resp.StatusCode,
+			})
+			h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, respBody, false)
+			contentType := defaultContentType
+			if ct := resp.Headers.Get("Content-Type"); ct != "" {
+				contentType = ct
+			}
+			c.Header("Content-Type", contentType)
+			c.Status(resp.StatusCode)
+			c.Writer.Write(resp.Body)
+			return
+		}
+	}
+
+	msg, statusCode, errType := buildFailoverErrorResponse(lastErrCategory, lastErr, lastModelName)
+	detail := gin.H{"model": model}
+	if lastModelName != "" {
+		detail["attempted_model"] = lastModelName
+	}
+	logging.Logger.Error(msg, "combo", model, "category", lastErrCategory)
+	c.JSON(statusCode, gin.H{"error": gin.H{"message": msg, "type": errType, "detail": detail}})
 }
 
 // isClientCanceled reports whether err is a context cancellation that originated
@@ -951,6 +1640,8 @@ func (h *Handler) executeProviderCall(
 			logging.Logger.Warn("malformed provider_specific_data", "conn", shortID(conn.ID, 8), "error", err.Error())
 		}
 	}
+	_, providerFormat, _ := h.registry.Get(provider)
+	translatedBody = h.applyThinkingOverrideFromContext(ctx, translatedBody, string(providerFormat))
 	req := &executor.Request{
 		Model:                modelName,
 		Body:                 translatedBody,
@@ -998,30 +1689,32 @@ func (h *Handler) persistProviderSpecificData(ctx context.Context, conn *Connect
 // (model_not_found, auth_failed), category for the caller to build better error messages.
 func (h *Handler) handleFailoverError(ctx context.Context, c *gin.Context, conn *Connection, provider, modelName string, err error, attempt int, latency int64, stream bool) (bool, string) {
 	det := connstate.DetectError(c.Request.Context(), 0, "", err, provider, modelName, nil)
-	if connstate.HasPerModelQuota(provider) && det.ModelID != "" &&
-		(det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
+	// Always mark rate-limit/quota exhaustion at model scope when we know the
+	// model. This keeps the connection eligible for other models unless the
+	// provider itself is globally exhausted. Connection-wide exhaustion is a
+	// fallback when the model is unknown.
+	if det.ModelID != "" && (det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
 		scope := connstate.ModelScope(provider, det.ModelID)
 		h.exhaustion.MarkExhausted(quota.ExhaustKey(conn.ID, scope), quota.TTLFromCooldown(det.CooldownUntil, 5*time.Minute))
-		// Per-model scope keeps the connection itself ready/eligible so other
-		// models can still route through it.
-	} else {
-		if det.Category == connstate.ErrorRateLimit {
-			h.exhaustion.MarkExhausted(conn.ID, quota.TTLFromCooldown(det.CooldownUntil, quota.DefaultExhaustionTTL))
-		} else if det.Category == connstate.ErrorQuota {
-			ttl := 24 * time.Hour // fallback for daily quotas
-			if det.CooldownUntil != nil {
-				ttl = time.Until(*det.CooldownUntil)
-			}
-			h.exhaustion.MarkExhausted(conn.ID, ttl)
+	} else if det.Category == connstate.ErrorRateLimit {
+		h.exhaustion.MarkExhausted(conn.ID, quota.TTLFromCooldown(det.CooldownUntil, quota.DefaultExhaustionTTL))
+	} else if det.Category == connstate.ErrorQuota {
+		ttl := 24 * time.Hour // fallback for daily quotas
+		if det.CooldownUntil != nil {
+			ttl = time.Until(*det.CooldownUntil)
 		}
+		h.exhaustion.MarkExhausted(conn.ID, ttl)
 	}
 	h.combo.RecordFailure(conn.ID, det)
 	h.persistCooldownScoped(conn.ID, det)
-	// Update in-memory status so dashboard reflects rate_limited/quota_exhausted immediately.
-	if det.Status != "" {
-		h.store.UpdateStatus(conn.ID, det.Status)
+	// In-memory state is updated synchronously inside persistCooldownScoped so the
+	// dashboard and routing snapshot reflect the failure immediately.
+	// For providers with API-backed quota (CodeBuddy), refresh quota inline so
+	// the next routing decision uses the latest state instead of stale cache.
+	if provider == "codebuddy" && (det.Category == connstate.ErrorQuota || det.Category == connstate.ErrorRateLimit) {
+		h.refreshQuotaAsync(conn.ID)
 	}
-	h.elig.ScheduleUpdate()
+	h.elig.ScheduleUpdateProvider(provider)
 	h.checkAutoDisable(conn.ID, provider)
 
 	// Truncate error for log readability — full error goes to tracker DB
@@ -1062,26 +1755,56 @@ func (h *Handler) handleFailoverError(ctx context.Context, c *gin.Context, conn 
 	}
 
 	h.logRequest(c, &usage.LogEntry{
-		ApiKeyID: c.GetString("api_key_id"),
-		ConnectionID: conn.ID,
+		ApiKeyID:       c.GetString("api_key_id"),
+		ConnectionID:   conn.ID,
 		ProviderTypeID: provider,
-		ModelID: modelName,
-		ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
-		ApiType: apiTypeFromPath(c.Request.URL.Path),
-		Modality: "chat",
-		Stream: stream,
-		LatencyMs: latency,
-		ErrorMessage: err.Error(),
+		ModelID:        modelName,
+		ProxyPoolID:    executor.ProxyPoolIDFromContext(ctx),
+		ApiType:        apiTypeFromPath(c.Request.URL.Path),
+		Modality:       "chat",
+		Stream:         stream,
+		LatencyMs:      latency,
+		ErrorMessage:   err.Error(),
 	})
 
-// Non-retryable errors: only model-not-found is a hard stop. Auth failures
-// now fail over too (a sibling connection may hold a valid key), so they are
-// retryable here.
-switch det.Category {
-case connstate.ErrorModelNotFound:
-	return false, string(det.Category)
+	// Non-retryable errors: only model-not-found is a hard stop. Auth failures
+	// now fail over too (a sibling connection may hold a valid key), so they are
+	// retryable here.
+	switch det.Category {
+	case connstate.ErrorModelNotFound:
+		return false, string(det.Category)
+	}
+	return true, string(det.Category)
 }
-return true, string(det.Category)
+
+// refreshQuotaAsync fetches and caches the latest quota for a connection in
+// the background. Used after a quota/rate-limit error so routing decisions
+// use fresh data instead of the scheduled cache.
+func (h *Handler) refreshQuotaAsync(connID string) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logging.Logger.Warn("refreshQuotaAsync panic recovered", "conn", shortID(connID, 8), "panic", r)
+			}
+		}()
+
+		cq, err := quota.FetchConnectionQuota(h.db, connID)
+		if err != nil {
+			logging.Logger.Debug("inline quota refresh failed", "conn", shortID(connID, 8), "err", err.Error())
+			return
+		}
+
+		var changed bool
+		quota.SaveQuotaCache(h.db, []quota.ProviderQuota{{
+			ProviderID:   cq.ProviderID,
+			ProviderName: cq.ProviderName,
+			Connections:  []quota.ConnectionQuota{*cq},
+		}})
+		quota.UpdateConnectionQuotaStatus(h.db, h.store, h.exhaustion, connID, cq.Quotas, cq.Error, &changed)
+		if changed {
+			h.scheduleEligibilityUpdate(connID)
+		}
+	}()
 }
 
 // writeUpstreamClientError writes an OpenAI-compatible upstream error directly
@@ -1097,33 +1820,47 @@ func (h *Handler) writeUpstreamClientError(
 	start time.Time,
 	stream bool,
 ) bool {
+	var statusCode int
+	var body []byte
+	var errBody []byte
+
 	var upErr *executor.UpstreamError
-	if !errors.As(err, &upErr) {
-		return false
-	}
-	if upErr.StatusCode == http.StatusTooManyRequests || upErr.StatusCode == http.StatusPaymentRequired {
-		return false
-	}
-	c.Header("Content-Type", "application/json")
-	c.Status(upErr.StatusCode)
-	c.Writer.Write(upErr.Body)
-	if h.tracker != nil && conn != nil {
-		errBody := upErr.RawBody
+	if errors.As(err, &upErr) {
+		if upErr.StatusCode == http.StatusTooManyRequests || upErr.StatusCode == http.StatusPaymentRequired {
+			return false
+		}
+		statusCode = upErr.StatusCode
+		body = upErr.Body
+		errBody = upErr.RawBody
 		if len(errBody) == 0 {
 			errBody = upErr.Body
 		}
+	} else {
+		var valErr *executor.ClaudeStreamValidationError
+		if !errors.As(err, &valErr) {
+			return false
+		}
+		statusCode = http.StatusBadGateway
+		body, _ = json.Marshal(gin.H{"error": gin.H{"message": valErr.Error(), "type": "server_error"}})
+		errBody = body
+	}
+
+	c.Header("Content-Type", "application/json")
+	c.Status(statusCode)
+	c.Writer.Write(body)
+	if h.tracker != nil && conn != nil {
 		h.logRequest(c, &usage.LogEntry{
-			ApiKeyID: c.GetString("api_key_id"),
-			ConnectionID: conn.ID,
+			ApiKeyID:       c.GetString("api_key_id"),
+			ConnectionID:   conn.ID,
 			ProviderTypeID: provider,
-			ModelID: modelName,
-			ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
-			ApiType: apiTypeFromPath(c.Request.URL.Path),
-			Modality: "chat",
-			Stream: stream,
-			LatencyMs: time.Since(start).Milliseconds(),
-			StatusCode: upErr.StatusCode,
-			ErrorMessage: string(errBody),
+			ModelID:        modelName,
+			ProxyPoolID:    executor.ProxyPoolIDFromContext(ctx),
+			ApiType:        apiTypeFromPath(c.Request.URL.Path),
+			Modality:       "chat",
+			Stream:         stream,
+			LatencyMs:      time.Since(start).Milliseconds(),
+			StatusCode:     statusCode,
+			ErrorMessage:   string(errBody),
 		})
 	}
 	return true
@@ -1157,14 +1894,16 @@ func (h *Handler) proxyCandidates(conn *Connection) []executor.ProxyConfig {
 	forceStrict := conn.Provider == "freebuff"
 	for _, c := range cfgs {
 		out = append(out, executor.ProxyConfig{
-			Enabled:     c.Enabled,
-			ProxyPoolID: c.ProxyPoolID,
-			ProxyURL:    c.ProxyURL,
-			NoProxy:     c.NoProxy,
-			RelayURL:    c.RelayURL,
-			RelayAuth:   c.RelayAuth,
-			RelayType:   c.RelayType,
-			StrictProxy: c.StrictProxy || forceStrict,
+			Enabled:       c.Enabled,
+			ProxyPoolID:   c.ProxyPoolID,
+			ProxyURL:      c.ProxyURL,
+			ProxyUsername: c.ProxyUsername,
+			ProxyPassword: c.ProxyPassword,
+			NoProxy:       c.NoProxy,
+			RelayURL:      c.RelayURL,
+			RelayAuth:     c.RelayAuth,
+			RelayType:     c.RelayType,
+			StrictProxy:   c.StrictProxy || forceStrict,
 		})
 	}
 	return out
@@ -1270,6 +2009,22 @@ func computeAdaptiveReadiness(body []byte, model string, baseMs int) int {
 	return total
 }
 
+// writeSSEErrorFrame writes a terminal SSE error frame appropriate to the client
+// format. For Claude streams it emits an Anthropic-compatible "event: error"
+// frame; for OpenAI-compatible streams it emits a "data:" error event.
+func writeSSEErrorFrame(w http.ResponseWriter, clientFormat executor.ProviderFormat, errBytes []byte, flusher http.Flusher) {
+	if clientFormat == executor.FormatClaude {
+		w.Write([]byte("event: error\ndata: "))
+	} else {
+		w.Write([]byte("data: "))
+	}
+	w.Write(errBytes)
+	w.Write([]byte("\n\n"))
+	if flusher != nil {
+		flusher.Flush()
+	}
+}
+
 // streamResponse writes a translated SSE stream to the client with heartbeat and
 // client-disconnect detection. Each translated chunk already includes the SSE
 // frame (data: ...\n\n), so the helper writes the bytes as-is and flushes.
@@ -1301,6 +2056,10 @@ func (h *Handler) streamResponse(
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
+	c.Header("Trailer", costTrailerNames)
+	if h.isFlatRate(provider) {
+		c.Header(costHeader, "0")
+	}
 	c.Status(http.StatusOK)
 
 	heartbeatInterval := 15 * time.Second
@@ -1317,6 +2076,7 @@ func (h *Handler) streamResponse(
 	lastChunkTime := time.Now()
 	var streamState any
 	var sawContent bool
+	var sawFinish bool
 	streamStart := time.Now()
 	isCombo := comboID != ""
 
@@ -1324,10 +2084,39 @@ func (h *Handler) streamResponse(
 		select {
 		case chunk, ok := <-result.Chunks:
 			if !ok {
+				// A clean upstream close that produced zero content is treated as a
+				// failure. In combo/direct silent mode the caller can still fail over;
+				// otherwise the caller will write an in-band error before closing.
+				if !sawContent {
+					logging.Logger.Warn("stream closed without delivering any content",
+						"provider", provider, "model", model, "combo", comboID, "conn", shortID(conn.ID, 8))
+					return errors.New("upstream stream closed without content")
+				}
+
+				// Some strict clients (e.g. PI Coding Agent) require a terminal
+				// finish_reason chunk before [DONE]. If the upstream stream ended
+				// without emitting one, synthesize it. Only do this for the OpenAI
+				// chat-completions SSE format; Claude/Responses streams have their
+				// own terminal shapes.
+				if !sawFinish && clientFormat == executor.FormatOpenAI {
+					finishChunk, _ := json.Marshal(map[string]any{
+						"id":      "chatcmpl-" + strconv.FormatInt(time.Now().UnixNano(), 10),
+						"object":  "chat.completion.chunk",
+						"created": time.Now().Unix(),
+						"model":   model,
+						"choices": []map[string]any{{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}},
+					})
+					c.Writer.Write([]byte("data: "))
+					c.Writer.Write(finishChunk)
+					c.Writer.Write([]byte("\n\n"))
+					flusher.Flush()
+				}
+
 				c.Writer.Write([]byte("data: [DONE]\n\n"))
 				flusher.Flush()
 
 				latency := time.Since(start).Milliseconds()
+
 				tokensEstimated := false
 				if acc.InputTokens+acc.OutputTokens == 0 {
 					estInput := usage.EstimateTokensFromRequest(originalReq)
@@ -1341,26 +2130,30 @@ func (h *Handler) streamResponse(
 						tokensEstimated = true
 					}
 				}
+				apiKeyID := c.GetString("api_key_id")
 				h.logRequest(c, &usage.LogEntry{
-					ApiKeyID: c.GetString("api_key_id"),
-					ConnectionID: conn.ID,
-					ProviderTypeID: provider,
-					ModelID: model,
-					ComboID: comboID,
-					ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
-					ApiType: apiTypeFromPath(c.Request.URL.Path),
-					Modality: "chat",
-					Stream: true,
-					InputTokens: acc.InputTokens,
-					OutputTokens: acc.OutputTokens,
-					ReasoningTokens: acc.ReasoningTokens,
-					CachedTokens: acc.CachedTokens,
+					ApiKeyID:            apiKeyID,
+					ConnectionID:        conn.ID,
+					ProviderTypeID:      provider,
+					ModelID:             model,
+					ComboID:             comboID,
+					ProxyPoolID:         executor.ProxyPoolIDFromContext(ctx),
+					ApiType:             apiTypeFromPath(c.Request.URL.Path),
+					Modality:            "chat",
+					Stream:              true,
+					InputTokens:         acc.InputTokens,
+					OutputTokens:        acc.OutputTokens,
+					ReasoningTokens:     acc.ReasoningTokens,
+					CachedTokens:        acc.CachedTokens,
 					CacheCreationTokens: acc.CacheCreationTokens,
-					LatencyMs: latency,
-					StatusCode: http.StatusOK,
-					TokensEstimated: tokensEstimated,
+					CostUsd:             acc.CostUsd,
+					LatencyMs:           latency,
+					StatusCode:          http.StatusOK,
+					TokensEstimated:     tokensEstimated,
 				})
-				h.incrementAPIKeyUsage(c.GetString("api_key_id"), acc.InputTokens+acc.OutputTokens)
+				h.incrementAPIKeyUsage(apiKeyID, acc.InputTokens+acc.OutputTokens)
+				h.recordAPIKeyCostFromCounts(apiKeyID, model, acc)
+				writeCostTrailers(c, model, acc.CostUsd, acc, tokensEstimated, h.isFlatRate(provider))
 				return nil
 			}
 
@@ -1376,57 +2169,66 @@ func (h *Handler) streamResponse(
 				}
 				latency := time.Since(start).Milliseconds()
 				h.handleFailoverError(ctx, c, conn, provider, model, chunk.Err, 0, latency, true)
-			// If this is a combo stream or the caller asked for silent failure,
-			// don't write error/DONE yet. Return the error so the caller can
-			// failover to the next connection/model and keep the stream alive.
-			if isCombo || silent {
-				errMsg := chunk.Err.Error()
+				// If this is a combo stream or the caller asked for silent failure,
+				// don't write error/DONE yet. Return the error so the caller can
+				// failover to the next connection/model and keep the stream alive.
+				if isCombo || silent {
+					errMsg := chunk.Err.Error()
 					logging.Logger.Warn("mid-stream failure in combo, failing over",
 						"provider", provider, "model", model, "combo", comboID,
 						"error", errMsg)
 					h.logRequest(c, &usage.LogEntry{
-						ApiKeyID: c.GetString("api_key_id"),
-						ConnectionID: conn.ID,
+						ApiKeyID:       c.GetString("api_key_id"),
+						ConnectionID:   conn.ID,
 						ProviderTypeID: provider,
-						ModelID: model,
-						ComboID: comboID,
-						ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
-						ApiType: apiTypeFromPath(c.Request.URL.Path),
-						Modality: "chat",
-						Stream: true,
-						LatencyMs: latency,
-						StatusCode: http.StatusBadGateway,
-						ErrorMessage: errMsg,
+						ModelID:        model,
+						ComboID:        comboID,
+						ProxyPoolID:    executor.ProxyPoolIDFromContext(ctx),
+						ApiType:        apiTypeFromPath(c.Request.URL.Path),
+						Modality:       "chat",
+						Stream:         true,
+						LatencyMs:      latency,
+						StatusCode:     http.StatusBadGateway,
+						ErrorMessage:   errMsg,
 					})
 					return chunk.Err
 				}
-				c.Writer.Write([]byte("data: "))
-				c.Writer.Write(errFormatter(chunk.Err))
-				c.Writer.Write([]byte("\n\n"))
-				c.Writer.Write([]byte("data: [DONE]\n\n"))
-				flusher.Flush()
+				writeSSEErrorFrame(c.Writer, clientFormat, errFormatter(chunk.Err), flusher)
+				if clientFormat != executor.FormatClaude {
+					c.Writer.Write([]byte("data: [DONE]\n\n"))
+					flusher.Flush()
+				}
 				h.logRequest(c, &usage.LogEntry{
-					ApiKeyID: c.GetString("api_key_id"),
-					ConnectionID: conn.ID,
+					ApiKeyID:       c.GetString("api_key_id"),
+					ConnectionID:   conn.ID,
 					ProviderTypeID: provider,
-					ModelID: model,
-					ComboID: comboID,
-					ProxyPoolID: executor.ProxyPoolIDFromContext(ctx),
-					ApiType: apiTypeFromPath(c.Request.URL.Path),
-					Modality: "chat",
-					Stream: true,
-					LatencyMs: latency,
-					ErrorMessage: chunk.Err.Error(),
+					ModelID:        model,
+					ComboID:        comboID,
+					ProxyPoolID:    executor.ProxyPoolIDFromContext(ctx),
+					ApiType:        apiTypeFromPath(c.Request.URL.Path),
+					Modality:       "chat",
+					Stream:         true,
+					LatencyMs:      latency,
+					ErrorMessage:   chunk.Err.Error(),
 				})
 				return chunk.Err
 			}
 
 			lastChunkTime = time.Now()
-			translatedChunks := registry.Response(ctx, string(clientFormat), string(providerFormat), model, originalReq, translatedReq, chunk.Payload, &streamState)
+			var translatedChunks [][]byte
+			if clientFormat == providerFormat {
+				// Direct SSE passthrough when client and provider share the same native format.
+				translatedChunks = [][]byte{append(chunk.Payload, "\n\n"...)}
+			} else {
+				translatedChunks = registry.Response(ctx, string(providerFormat), string(clientFormat), model, originalReq, translatedReq, chunk.Payload, &streamState)
+			}
 			for _, tc := range translatedChunks {
 				c.Writer.Write(tc)
 				flusher.Flush()
 				totalOutputBytes += estimateOutputFromTranslatedChunk(tc)
+				if !sawFinish {
+					sawFinish = chunkHasNonNullFinishReason(tc)
+				}
 			}
 
 			// Stream quality peek: log time-to-first-content and validate
@@ -1459,6 +2261,9 @@ func (h *Handler) streamResponse(
 			if counts, found := ExtractTokensFromSSEChunk(chunk.Payload); found {
 				MergeTokenCounts(&acc, &counts)
 			}
+			if costUsd, found := ExtractCostInUsdTicksFromSSEChunk(chunk.Payload); found {
+				acc.CostUsd = costUsd
+			}
 
 		case <-ticker.C:
 			if time.Since(lastChunkTime) >= heartbeatInterval {
@@ -1479,18 +2284,52 @@ func (h *Handler) streamResponse(
 					if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 						errMsg = "stream deadline exceeded"
 					}
-					errBytes, _ := json.Marshal(gin.H{"error": gin.H{"message": errMsg, "type": "server_error"}})
-					c.Writer.Write([]byte("data: "))
-					c.Writer.Write(errBytes)
-					c.Writer.Write([]byte("\n\n"))
+					var errBytes []byte
+					if clientFormat == executor.FormatClaude {
+						errBytes, _ = json.Marshal(claudeError("server_error", errMsg))
+					} else {
+						errBytes, _ = json.Marshal(gin.H{"error": gin.H{"message": errMsg, "type": "server_error"}})
+					}
+					writeSSEErrorFrame(c.Writer, clientFormat, errBytes, flusher)
 				}
-				c.Writer.Write([]byte("data: [DONE]\n\n"))
-				flusher.Flush()
+				if clientFormat != executor.FormatClaude {
+					c.Writer.Write([]byte("data: [DONE]\n\n"))
+					flusher.Flush()
+				}
 			}
 			return ctx.Err()
 		}
 	}
 }
+
+// chunkHasNonNullFinishReason reports whether a translated SSE frame contains a
+// non-null finish_reason value. This is a fast path check; it intentionally
+// ignores null-valued finish_reason markers that appear on intermediate chunks.
+func chunkHasNonNullFinishReason(frame []byte) bool {
+	data := bytes.TrimSpace(frame)
+	if bytes.HasPrefix(data, []byte("data:")) {
+		data = bytes.TrimSpace(data[5:])
+	}
+	if len(data) == 0 || string(data) == "[DONE]" {
+		return false
+	}
+	idx := bytes.Index(data, []byte(`"finish_reason"`))
+	if idx == -1 {
+		return false
+	}
+	i := idx + len(`"finish_reason"`)
+	for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\n' || data[i] == '\r') {
+		i++
+	}
+	if i < len(data) && data[i] == ':' {
+		i++
+	}
+	for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\n' || data[i] == '\r') {
+		i++
+	}
+	return i < len(data) && data[i] == '"'
+}
+
 func (h *Handler) checkAutoDisable(connID, provider string) {
 	cs := h.store.Get(connID)
 	if cs == nil {
@@ -1498,6 +2337,13 @@ func (h *Handler) checkAutoDisable(connID, provider string) {
 	}
 	threshold := 3
 	banCount := cs.GetBanCount()
+	// Preserve the existing disabled reason (set by the auth/balance failure that
+	// incremented BanCount). If there is none, use a generic marker so the DB
+	// row is never left with disabled_reason = NULL/unknown.
+	disabledReason := cs.GetDisabledReason()
+	if disabledReason == "" {
+		disabledReason = "auto_disabled"
+	}
 
 	// Persist ban count to DB (async — does not block the request path).
 	banCountCopy := banCount
@@ -1508,8 +2354,10 @@ func (h *Handler) checkAutoDisable(connID, provider string) {
 		}
 		if banCountCopy >= threshold {
 			log.Printf("Auto-disabling connection %s after %d consecutive ban signals", connID, banCountCopy)
-			if _, err := d.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', updated_at = ? WHERE id = ?`,
-				time.Now().Unix(), connID); err != nil {
+			// A terminal disabled status must not carry a leftover cooldown horizon,
+			// otherwise the dashboard shows "disabled + Expired".
+			if _, err := d.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', disabled_reason = ?, cooldown_until = NULL, updated_at = ? WHERE id = ?`,
+				disabledReason, time.Now().Unix(), connID); err != nil {
 				return err
 			}
 		}
@@ -1518,8 +2366,8 @@ func (h *Handler) checkAutoDisable(connID, provider string) {
 
 	// In-memory status update is synchronous (cheap, lock-free sync.Map).
 	if banCount >= threshold {
-		h.store.UpdateStatus(connID, connstate.StatusDisabled)
-		h.elig.ScheduleUpdate()
+		h.store.UpdateStatus(connID, connstate.StatusDisabled, disabledReason)
+		h.scheduleEligibilityUpdate(connID)
 	}
 }
 
@@ -1560,28 +2408,87 @@ func (h *Handler) persistCooldownScoped(connID string, det connstate.ErrorDetect
 		return
 	}
 
-	// Balance-empty is a terminal state (needs manual top-up), so persist it
-	// even when there is no cooldown horizon.
-	if det.CooldownUntil == nil && det.Category != connstate.ErrorBalanceEmpty {
-		return
-	}
+	// Balance-empty is a terminal state (needs manual top-up), and auth failures
+	// are also terminal (invalid credentials). Persist these immediately even when
+	// there is no cooldown horizon so a restart does not resurrect a bad account.
 	status := string(det.Status)
 	if det.Category == connstate.ErrorQuota {
 		status = string(connstate.StatusQuotaExhausted)
 	}
 	statusVal := status
+
+	// Only persist terminal failures or cooldown-bearing errors. Transient errors
+	// without a cooldown (e.g. 5xx) are left for the scheduler to heal.
+	if det.CooldownUntil == nil && !connstate.Status(statusVal).IsRoutingTerminal() {
+		return
+	}
 	var cooldownUntil *int64
 	if det.CooldownUntil != nil {
 		u := det.CooldownUntil.Unix()
 		cooldownUntil = &u
 	}
+	// Terminal statuses should also be marked inactive so they stop being routed to
+	// and become eligible for lifecycle garbage collection.
+	isActive := 1
+	disabledReason := ""
+	if connstate.Status(statusVal).IsRoutingTerminal() {
+		isActive = 0
+		switch det.Category {
+		case connstate.ErrorAuth:
+			disabledReason = "auth_failed"
+		case connstate.ErrorBalanceEmpty:
+			disabledReason = "balance_empty"
+		}
+	}
+	// Sync in-memory status immediately so the routing snapshot and dashboard show
+	// the correct state without waiting for the async DB write. Quota exhaustion
+	// uses SetQuotaCooldown so status stays quota_exhausted and CooldownUntil is
+	// populated without incrementing BanCount.
+	switch connstate.Status(statusVal) {
+	case connstate.StatusQuotaExhausted:
+		if cooldownUntil != nil {
+			if cs := h.store.Get(connID); cs != nil {
+				cs.SetQuotaCooldown(time.Unix(*cooldownUntil, 0))
+			}
+		} else {
+			h.store.UpdateStatus(connID, connstate.StatusQuotaExhausted)
+		}
+	case connstate.StatusDisabled:
+		h.store.UpdateStatus(connID, connstate.StatusDisabled, disabledReason)
+	default:
+		if statusVal != "" {
+			h.store.UpdateStatus(connID, connstate.Status(statusVal))
+		}
+	}
+
 	errMsg := det.Message
 	errCode := string(det.Category)
 	h.writeQueue.Enqueue("persistCooldownScoped", func(d *sql.DB) error {
 		now := time.Now().Unix()
+		// Quota exhaustion resets consecutive_ban_count so transient auth errors
+		// do not accumulate toward auto-disable when the real failure is quota.
+		if connstate.Status(statusVal) == connstate.StatusQuotaExhausted {
+			_, err := d.Exec(`
+UPDATE connections
+SET is_active = ?,
+    status = ?,
+    disabled_reason = ?,
+    cooldown_until = ?,
+    consecutive_ban_count = 0,
+    last_error = ?,
+    last_error_code = ?,
+    failure_count = failure_count + 1,
+    last_failure_at = ?,
+    updated_at = ?
+WHERE id = ?
+`, isActive, statusVal, disabledReason, cooldownUntil, errMsg, errCode, now, now, connID)
+			return err
+		}
 		_, err := d.Exec(`
 UPDATE connections
-SET status = ?,
+SET is_active = ?,
+    status = ?,
+    disabled_reason = ?,
     cooldown_until = ?,
     last_error = ?,
     last_error_code = ?,
@@ -1589,7 +2496,7 @@ SET status = ?,
     last_failure_at = ?,
     updated_at = ?
 WHERE id = ?
-`, statusVal, cooldownUntil, errMsg, errCode, now, now, connID)
+`, isActive, statusVal, disabledReason, cooldownUntil, errMsg, errCode, now, now, connID)
 		return err
 	})
 }
@@ -1607,6 +2514,7 @@ func (h *Handler) persistCooldown(connID string, det connstate.ErrorDetection) {
 		status = string(connstate.StatusQuotaExhausted)
 	}
 	statusVal := status
+
 	cooldownUntil := det.CooldownUntil.Unix()
 	errMsg := det.Message
 	errCode := string(det.Category)
@@ -1618,11 +2526,46 @@ func (h *Handler) persistCooldown(connID string, det connstate.ErrorDetection) {
 	})
 }
 
-// persistSuccess records a successful request so the dashboard reflects last_success_at.
+// persistSuccess records a successful request so the dashboard reflects
+// last_success_at. It also heals a stale cooldown/quota status back to ready
+// so a connection that was briefly exhausted can be reused immediately after
+// a successful request or test-connection.
 func (h *Handler) persistSuccess(connID string) {
 	now := time.Now().Unix()
+
+	// In-memory recovery: reset status so the next eligibility snapshot
+	// includes this connection right away. We intentionally do NOT clear the
+	// exhaustion cache here; model-scoped rate limits may still be active for
+	// other models, and expired entries are ignored by the pick checks anyway.
+	if cs := h.store.Get(connID); cs != nil {
+		if cs.GetStatus().IsHealable() {
+			cs.SetStatus(connstate.StatusReady, "")
+		}
+	}
+	h.scheduleEligibilityUpdate(connID)
+
+	// Only clear a stale DB cooldown row when the cooldown has actually
+	// expired. If the cooldown is still active, leave the DB row alone so the
+	// scheduler can recover it when the time comes.
 	h.writeQueue.Enqueue("persistSuccess", func(d *sql.DB) error {
-		_, err := d.Exec(`UPDATE connections SET last_success_at = ?, updated_at = ? WHERE id = ?`, now, now, connID)
+		_, err := d.Exec(`
+			UPDATE connections
+			SET status = CASE
+					WHEN status IN ('rate_limited','quota_exhausted')
+						 AND (cooldown_until IS NULL OR cooldown_until <= ?)
+					THEN 'ready'
+					ELSE status
+				END,
+				cooldown_until = CASE
+					WHEN status IN ('rate_limited','quota_exhausted')
+					     AND (cooldown_until IS NULL OR cooldown_until <= ?)
+					THEN NULL
+					ELSE cooldown_until
+				END,
+				last_success_at = ?,
+				updated_at = ?
+			WHERE id = ?
+		`, now, now, now, now, connID)
 		return err
 	})
 }
@@ -1735,13 +2678,38 @@ func (h *Handler) accumulateAPIKeyUsage(apiKeyID string, reqBody, respBody []byt
 		return
 	}
 	var total int64
-	if counts := ExtractTokensFromBody(respBody); counts.InputTokens > 0 || counts.OutputTokens > 0 {
+	var counts StreamTokenCounts
+	extracted := ExtractTokensFromBody(respBody)
+	if extracted.InputTokens > 0 || extracted.OutputTokens > 0 {
+		counts = extracted
 		total = counts.InputTokens + counts.OutputTokens
 	} else {
 		total = usage.EstimateTokensFromRequest(reqBody)
 		if estimateOutput {
 			total += usage.EstimateTokensFromResponse(respBody)
 		}
+		counts.InputTokens = usage.EstimateTokensFromRequest(reqBody)
+		if estimateOutput {
+			counts.OutputTokens = usage.EstimateTokensFromResponse(respBody)
+		}
 	}
 	h.incrementAPIKeyUsage(apiKeyID, total)
+	if apiKeyID != "" && len(reqBody) > 0 {
+		model := executor.JSONGet(reqBody, "model")
+		h.recordAPIKeyCostFromCounts(apiKeyID, model, counts)
+	}
+}
+
+// scheduleEligibilityUpdate triggers a per-provider eligibility rebuild for the
+// provider that owns connID. If the connection is not found in the store, it
+// falls back to a full rebuild.
+func (h *Handler) scheduleEligibilityUpdate(connID string) {
+	cs := h.store.Get(connID)
+	if cs == nil || h.elig == nil {
+		if h.elig != nil {
+			h.elig.ScheduleUpdate()
+		}
+		return
+	}
+	h.elig.ScheduleUpdateProvider(cs.Prefix)
 }

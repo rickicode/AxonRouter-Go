@@ -30,24 +30,30 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/api/middleware"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/antigravity"
+	"github.com/rickicode/AxonRouter-Go/internal/auth/codebuddy"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/codex"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/freebuff"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/github"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/grokcli"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/kiro"
+	"github.com/rickicode/AxonRouter-Go/internal/auth/qoder"
 	"github.com/rickicode/AxonRouter-Go/internal/background"
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/compression"
 	_ "github.com/rickicode/AxonRouter-Go/internal/compression/engines/caveman"
+	_ "github.com/rickicode/AxonRouter-Go/internal/compression/engines/output"
 	_ "github.com/rickicode/AxonRouter-Go/internal/compression/engines/rtk"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/headroom"
+	"github.com/rickicode/AxonRouter-Go/internal/mcp"
 	"github.com/rickicode/AxonRouter-Go/internal/models"
 	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
+	"github.com/rickicode/AxonRouter-Go/internal/smart"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 	"github.com/rickicode/AxonRouter-Go/internal/version"
 	"github.com/rickicode/AxonRouter-Go/web"
@@ -55,24 +61,33 @@ import (
 
 // Router holds all dependencies and mounts all routes.
 type Router struct {
-	engine     *gin.Engine
-	db         *sql.DB
-	writeQueue *db.WriteQueue // centralized async writer; drained on Shutdown
-	store      *connstate.Store
-	elig       *connstate.EligibilityManager
-	combo      *combo.Handler
-	tracker    *usage.Tracker
-	authMgr    *auth.Manager
+	engine        *gin.Engine
+	db            *sql.DB
+	writeQueue    *db.WriteQueue // centralized async writer; drained on Shutdown
+	store         *connstate.Store
+	elig          *connstate.EligibilityManager
+	combo         *combo.Handler
+	tracker       *usage.Tracker
+	deviceTracker *usage.DeviceTracker
+	authMgr       *auth.Manager
 
 	// HTTP/HTTPS servers
 	httpServer  *http.Server
 	httpsServer *http.Server
 
 	// Background goroutines
-	quotaScheduler  *background.QuotaSchedulerDB
-	usageFlush      *background.UsageFlush
-	cleanup         *background.Cleanup
-	rateLimitProber *background.RateLimitProber
+	quotaScheduler        *background.QuotaSchedulerDB
+	tokenRefreshScheduler *background.TokenRefreshScheduler
+	autoPingScheduler     *background.AutoPingScheduler
+	usageFlush            *background.UsageFlush
+	cleanup               *background.Cleanup
+	lifecycleManager      *background.LifecycleManager
+	rateLimitProber       *background.RateLimitProber
+	mcpHandler            *mcp.Handler
+	mcpAPI                *mcp.API
+
+	// versionChecker polls GitHub Releases for update notifications.
+	versionChecker *version.Checker
 
 	// Shutdown may be invoked more than once (e.g. service manager + manual
 	// restart after restore). Guard the cleanup so it is idempotent.
@@ -81,12 +96,13 @@ type Router struct {
 
 // Config holds configuration for creating a router.
 type Config struct {
-	DB               *sql.DB
-	WriteQueue       *db.WriteQueue // centralized async writer (nil → one is created)
-	Port             string
-	QuotaIntervalMin int
-	LogRetentionDays int
-	WebFS            fs.FS // embedded frontend filesystem
+	DB                           *sql.DB
+	WriteQueue                   *db.WriteQueue // centralized async writer (nil → one is created)
+	Port                         string
+	QuotaIntervalMin             int
+	LogRetentionDays             int
+	ConnectionCleanupIntervalMin int
+	WebFS                        fs.FS // embedded frontend filesystem
 }
 
 // New creates and configures the Gin router with all routes and middleware.
@@ -105,38 +121,54 @@ func New(cfg Config) *Router {
 	elig := connstate.NewEligibilityManager(store)
 	elig.RecomputeAll()
 
-	// Seed defaults before loading the in-memory combo cache so first-run combos
-	// are immediately routable and visible to the detail/update handlers.
-	combo.SeedDefaultCombos(cfg.DB)
-
-	comboHandler := combo.NewHandler(cfg.DB, store, elig)
 	// Centralized async write queue: all non-critical DB writes (cooldowns, ban
-	// counts, OAuth token persistence) funnel through this single writer goroutine.
-	// SQLite only allows one writer at a time anyway, so serializing at the app
-	// layer avoids write-lock contention reaching the connection pool.
+	// counts, OAuth token persistence, combo mutations) funnel through this single
+	// writer goroutine. SQLite only allows one writer at a time anyway, so
+	// serializing at the app layer avoids write-lock contention reaching the
+	// connection pool.
 	writeQueue := cfg.WriteQueue
 	if writeQueue == nil {
 		writeQueue = db.NewWriteQueue(cfg.DB)
 	}
+
+	// Seed defaults before loading the in-memory combo cache so first-run combos
+	// are immediately routable and visible to the detail/update handlers.
+	combo.SeedDefaultCombos(cfg.DB)
+
+	comboHandler := combo.NewHandler(cfg.DB, store, elig, writeQueue)
 	// Auth cache: eliminates 2 DB queries + bcrypt per request on the hot path.
 	authCache := middleware.NewAuthCache(30 * time.Second)
 	tracker := usage.NewTracker(cfg.DB)
 	tracker.SetWriteQueue(writeQueue) // route all batch inserts through the single writer goroutine
+	deviceTracker := usage.NewDeviceTracker(config.Get())
+	deviceTracker.StartCleanup()
 	usage.InitPricing(cfg.DB)
 	usage.StartPeriodicReload(context.Background(), time.Hour)
 	km := adminapi.NewKeyManager(cfg.DB)
-	authManager := auth.NewManager()
+	authManager := auth.NewManagerWithWriter(db.NewOAuthTokenWriter(cfg.DB, writeQueue))
 
 	// Register OAuth services
 	authManager.RegisterService(auth.ProviderCodex, codex.NewOAuthService(http.DefaultClient))
 	authManager.RegisterService(auth.ProviderAntigravity, antigravity.NewOAuthService(http.DefaultClient))
-	authManager.RegisterService(auth.ProviderKiro, kiro.NewOAuthService(http.DefaultClient))
+	kiroAuthSvc := kiro.NewAuthService(http.DefaultClient)
+	authManager.RegisterService(auth.ProviderKiro, kiroAuthSvc)
 	authManager.RegisterService(auth.ProviderGitHub, github.NewOAuthService(http.DefaultClient))
 	authManager.RegisterService(auth.ProviderGrokCli, grokcli.NewOAuthService(http.DefaultClient))
 	authManager.RegisterService(auth.ProviderFreebuff, freebuff.NewOAuthService(http.DefaultClient))
+	authManager.RegisterService(auth.ProviderCodeBuddy, codebuddy.NewOAuthService(http.DefaultClient))
+	authManager.RegisterService(auth.ProviderQoder, qoder.NewOAuthService(http.DefaultClient))
 	quota.SetAuthManager(authManager)
 	settingHandler := admin.NewSettingHandler(cfg.DB)
 	settingHandler.SeedDefaults()
+	// Initialize headroom tool compressor from environment/config settings.
+	hCFG := headroom.Config{
+		Enabled:         config.Get().Headroom.Enabled,
+		Endpoint:        config.Get().Headroom.Endpoint,
+		TimeoutMs:       config.Get().Headroom.TimeoutMs,
+		MaxPayloadBytes: config.Get().Headroom.MaxPayloadBytes,
+	}
+	headroom.InitGlobalToolCompressor(hCFG)
+	headroom.SetEnabled(hCFG.Enabled)
 	// Bootstrap dashboard login auth (JWT secret + default admin password)
 	InitAuth(cfg.DB)
 
@@ -145,11 +177,17 @@ func New(cfg Config) *Router {
 	quota.SetAuthManager(authManager)
 	exhaustionCache := quota.NewExhaustionCache()
 	quotaScheduler := background.NewQuotaSchedulerDB(cfg.DB, writeQueue, store, elig, cfg.QuotaIntervalMin, exhaustionCache)
+	tokenRefreshScheduler := background.NewTokenRefreshScheduler(cfg.DB, writeQueue, store, elig, authManager, cfg.QuotaIntervalMin)
+	autoPingScheduler := background.NewAutoPingScheduler(cfg.DB, cfg.QuotaIntervalMin)
 	usageFlush := background.NewUsageFlush(tracker)
 	cleanup := background.NewCleanup(comboHandler, cfg.DB, cfg.LogRetentionDays)
+	lifecycleManager := background.NewLifecycleManager(cfg.DB, cfg.ConnectionCleanupIntervalMin)
 	quotaScheduler.Start(ctx)
+	tokenRefreshScheduler.Start(ctx)
+	autoPingScheduler.Start(ctx)
 	usageFlush.Start(ctx)
 	cleanup.Start(ctx)
+	lifecycleManager.Start(ctx)
 	// Proxy pool system
 	proxyResolver := proxypool.NewResolver(cfg.DB)
 	// Flush cached proxy idle connections whenever proxy pool/group/default
@@ -158,6 +196,7 @@ func New(cfg Config) *Router {
 	rateLimitProber := background.NewRateLimitProber(cfg.DB, writeQueue, store, elig, exhaustionCache, executor.GetRegistry(), proxyResolver)
 	rateLimitProber.Start(ctx)
 	models.StartUpdater(ctx)
+	cache.StartGrokCLIReasoningEviction(ctx, 5*time.Minute)
 	proxyHealth := proxypool.NewHealthChecker(cfg.DB)
 	proxyHealth.Start(ctx)
 
@@ -165,7 +204,7 @@ func New(cfg Config) *Router {
 	providerCfg := providercfg.NewManager(config.Get().DataDir)
 
 	// Create admin handlers
-	connectionH := admin.NewConnectionHandler(cfg.DB, executor.GetRegistry(), store, elig, exhaustionCache, authManager, writeQueue)
+	connectionH := admin.NewConnectionHandler(cfg.DB, executor.GetRegistry(), store, elig, exhaustionCache, authManager, writeQueue, lifecycleManager)
 	providerH := admin.NewProviderHandler(cfg.DB, executor.GetRegistry(), store, elig, providerCfg, writeQueue, authManager)
 
 	// Auto-migrate raw API keys to bcrypt
@@ -180,6 +219,10 @@ func New(cfg Config) *Router {
 			ReplaceImageUrls:       db.GetSetting("compression_lite_image_urls", "true") == "true",
 			RemoveRedundantContent: db.GetSetting("compression_lite_redundant", "false") == "true",
 			DedupSystemPrompt:      db.GetSetting("compression_lite_dedup", "false") == "true",
+		},
+		Output: compression.EngineConfig{
+			"enabled": db.GetSetting("compression_output_enabled", "false") == "true",
+			"level":   db.GetSetting("compression_output_level", "caveman"),
 		},
 	}
 
@@ -196,6 +239,10 @@ func New(cfg Config) *Router {
 	versionChecker := version.NewChecker(&http.Client{Timeout: 10 * time.Second})
 	healthH := admin.NewHealthHandler(cfg.DB, store, tracker, versionChecker)
 	upgradeH := admin.NewUpgradeHandler(versionChecker)
+	restartH := admin.NewRestartHandler()
+	consoleLogsH := admin.NewConsoleLogsHandler()
+	mcpH := mcp.NewHandler(cfg.DB)
+	mcpAPI := mcp.NewAPI()
 	proxyPoolH := admin.NewProxyPoolHandler(cfg.DB, proxyHealth, proxyResolver, writeQueue)
 	proxyGroupH := admin.NewProxyGroupHandler(cfg.DB, proxyResolver)
 	proxyDeployH := admin.NewProxyDeployHandler(cfg.DB, proxyHealth, proxyResolver)
@@ -206,9 +253,12 @@ func New(cfg Config) *Router {
 	// Additional admin handlers (moved here so the JWT /api/admin and master-key
 	// /admin/api/v1 groups can share the same route table).
 	apiKeyH := admin.NewAPIKeyHandler(cfg.DB, authCache)
+	devicesH := admin.NewDevicesHandler(cfg.DB, deviceTracker)
 	usageH := admin.NewUsageHandler(cfg.DB)
 	modelH := admin.NewModelHandler(cfg.DB, executor.GetRegistry(), store, authManager)
 	oauthH := admin.NewOAuthHandler(cfg.DB, authManager, store, elig)
+	kiroAuthH := admin.NewKiroAuthHandler(cfg.DB, kiroAuthSvc, store, elig)
+	cursorImportH := admin.NewCursorImportHandler(cfg.DB, store, elig)
 	quotaH := admin.NewQuotaHandler(cfg.DB)
 	modelPricingH := admin.NewModelPricingHandler()
 	developersH := admin.NewDevelopersHandler(cfg.DB, km, cfg.Port)
@@ -224,7 +274,8 @@ func New(cfg Config) *Router {
 	limiter := middleware.NewRateLimiter(600)
 	loginLimiter := middleware.NewRateLimiter(10)
 	// Create v1 handler with all dependencies (must exist before wiring routes)
-	v1H := v1.NewHandler(cfg.DB, writeQueue, store, elig, comboHandler, tracker, authManager, proxyResolver, exhaustionCache, compStrategy, exactCache, providerCfg)
+	smartRouter := smart.NewRouter(cfg.DB, store, elig)
+	v1H := v1.NewHandler(cfg.DB, writeQueue, store, elig, comboHandler, smartRouter, tracker, deviceTracker, authManager, proxyResolver, exhaustionCache, compStrategy, exactCache, providerCfg)
 	// ---- /v1 routes (proxy) ----
 	v1Group := engine.Group("/v1")
 	v1Group.Use(middleware.Auth(cfg.DB, authCache))
@@ -232,18 +283,46 @@ func New(cfg Config) *Router {
 	v1Group.Use(v1H.TrackActive())
 
 	v1Group.POST("/chat/completions", v1H.ChatCompletions)
+	v1Group.POST("/completions", v1H.Completions)
 	v1Group.GET("/models", v1H.Models)
 	v1Group.POST("/audio/speech", v1H.TTS)
 	v1Group.POST("/audio/transcriptions", v1H.STT)
 	v1Group.POST("/images/generations", v1H.Images)
+	v1Group.POST("/images/edits", v1H.ImagesEdits)
 	v1Group.POST("/video/generations", v1H.Video)
+	v1Group.POST("/videos", v1H.VideosCreate)
+	v1Group.POST("/videos/generations", v1H.VideosGenerations)
+	v1Group.POST("/videos/edits", v1H.VideosEdits)
+	v1Group.POST("/videos/extensions", v1H.VideosExtensions)
+	v1Group.GET("/videos/:request_id", v1H.VideosRetrieve)
 	v1Group.POST("/embeddings", v1H.Embeddings)
+	v1Group.POST("/alpha/search", v1H.CodexAlphaSearch)
+	v1Group.GET("/responses", v1H.ResponsesWebsocket)
 	v1Group.POST("/responses", v1H.Responses)
+	v1Group.POST("/responses/compact", v1H.ResponsesCompact)
 	v1Group.POST("/unified", v1H.Unified)
 	v1Group.POST("/messages/count_tokens", v1H.CountTokens)
 	v1Group.POST("/messages", v1H.Messages)
 	// Some Anthropic clients append an extra /v1 segment to the base URL.
 	v1Group.POST("/v1/messages", v1H.Messages)
+
+	// Codex Live / Realtime voice WebRTC bootstrap and sideband routes.
+	v1Group.POST("/live", v1H.CodexLive)
+	v1Group.GET("/live/:call_id", v1H.CodexLiveSideband)
+	v1Group.POST("/realtime/calls", v1H.CodexLive)
+	v1Group.GET("/realtime/calls/:call_id", v1H.CodexLiveSideband)
+	v1Group.GET("/realtime", v1H.CodexLiveSideband)
+
+	// ---- /v1beta routes (native Google Gemini surface) ----
+	v1betaGroup := engine.Group("/v1beta")
+	v1betaGroup.Use(middleware.Auth(cfg.DB, authCache))
+	v1betaGroup.Use(middleware.RateLimit(limiter))
+	v1betaGroup.Use(v1H.TrackActive())
+
+	v1betaGroup.GET("/models", v1H.GeminiModels)
+	v1betaGroup.POST("/interactions", v1H.Interactions)
+	v1betaGroup.POST("/models/*action", v1H.GeminiHandler)
+	v1betaGroup.GET("/models/*action", v1H.GeminiGetHandler)
 
 	// CLI Tools model catalog used by both the dashboard and programmatic admin API.
 	modelLister := func() []map[string]string {
@@ -261,6 +340,24 @@ func New(cfg Config) *Router {
 	// Health check is reachable without admin auth for sidebar/lb probes.
 	engine.HEAD("/api/admin/health", healthH.Health)
 	engine.GET("/api/admin/health", healthH.Health)
+
+	// Direct Codex-compatible surface aliases (clients hard-coded to the ChatGPT base URL).
+	codexGroup := engine.Group("/backend-api/codex")
+	codexGroup.Use(middleware.Auth(cfg.DB, authCache))
+	codexGroup.Use(middleware.RateLimit(limiter))
+	codexGroup.Use(v1H.TrackActive())
+	codexGroup.POST("/responses", v1H.Responses)
+	codexGroup.POST("/responses/compact", v1H.ResponsesCompact)
+	codexGroup.POST("/alpha/search", v1H.CodexAlphaSearch)
+
+	// OpenAI-compatible video surface (some clients use /openai/v1 as a prefix).
+	openaiV1Group := engine.Group("/openai/v1")
+	openaiV1Group.Use(middleware.Auth(cfg.DB, authCache))
+	openaiV1Group.Use(middleware.RateLimit(limiter))
+	openaiV1Group.Use(v1H.TrackActive())
+	openaiV1Group.POST("/videos", v1H.OpenAIVideosCreate)
+	openaiV1Group.GET("/videos/:video_id", v1H.OpenAIVideosRetrieve)
+	openaiV1Group.GET("/videos/:video_id/content", v1H.OpenAIVideosContent)
 
 	// Public login endpoint (issues a session JWT). Rate-limited per IP to slow brute force.
 	engine.POST("/api/admin/login", middleware.RateLimit(loginLimiter), LoginHandler(cfg.DB))
@@ -282,6 +379,7 @@ func New(cfg Config) *Router {
 		g.POST("/providers/:id/test", providerH.TestAll)
 		g.POST("/providers/:id/connections", providerH.AddConnection)
 		g.POST("/providers/:id/connections/bulk", providerH.BulkAddConnections)
+		g.POST("/providers/:id/connections/bulk-proxy", providerH.BulkAssignProxy)
 		g.POST("/providers/validate", providerH.ValidateKey)
 		g.GET("/providers/:id/settings", providerH.GetSettings)
 		g.PATCH("/providers/:id/settings", providerH.UpdateSettings)
@@ -295,6 +393,7 @@ func New(cfg Config) *Router {
 		g.POST("/connections/:id/refresh", connectionH.RefreshToken)
 		g.POST("/connections/:id/reset", connectionH.ResetStatus)
 		g.PATCH("/connections/bulk", connectionH.BulkUpdate)
+		g.POST("/system/connection-cleanup", connectionH.CleanupConnections)
 
 		// Models
 		g.GET("/providers/:id/models", modelH.ListModels)
@@ -308,6 +407,22 @@ func New(cfg Config) *Router {
 		g.GET("/oauth/:sessionId/poll", oauthH.PollOAuth)
 		g.POST("/oauth/callback", oauthH.SubmitOAuthCallback)
 		g.POST("/oauth/import-token", oauthH.ImportToken)
+
+		// Cursor IDE token auto-import from local VS Code: state file
+		g.POST("/oauth/cursor/import", cursorImportH.ImportCursorToken)
+
+		// Kiro multi-method auth
+		g.POST("/oauth/kiro/builder-id/start", kiroAuthH.StartBuilderID)
+		g.POST("/oauth/kiro/idc/start", kiroAuthH.StartIDC)
+		g.POST("/oauth/kiro/google/start", kiroAuthH.GoogleStart)
+		g.POST("/oauth/kiro/google/callback", kiroAuthH.GoogleCallback)
+		g.POST("/oauth/kiro/github/start", kiroAuthH.GitHubStart)
+		g.POST("/oauth/kiro/github/callback", kiroAuthH.GitHubCallback)
+		g.POST("/oauth/kiro/import", kiroAuthH.ImportKiroToken)
+		g.POST("/oauth/kiro/api-key", kiroAuthH.APIKey)
+		g.POST("/oauth/kiro/external-idp", kiroAuthH.ExternalIDP)
+		g.GET("/oauth/kiro/auto-import", kiroAuthH.AutoImport)
+		g.GET("/oauth/kiro/:sessionId/poll", kiroAuthH.Poll)
 
 		// Combos
 		g.GET("/combos", comboH.List)
@@ -352,6 +467,12 @@ func New(cfg Config) *Router {
 		// Upgrade
 		g.GET("/upgrade/check", healthH.CheckUpdate)
 		g.POST("/upgrade", upgradeH.Upgrade)
+		g.POST("/restart", restartH.Restart)
+
+		// Console logs (rotating file in /tmp)
+		g.GET("/console-logs", consoleLogsH.Get)
+		g.DELETE("/console-logs", consoleLogsH.Clear)
+		g.GET("/console-logs/stream", consoleLogsH.Stream)
 
 		// Quota
 		g.GET("/quota", quotaH.List)
@@ -389,12 +510,26 @@ func New(cfg Config) *Router {
 		// API Keys
 		g.GET("/api-keys", apiKeyH.List)
 		g.POST("/api-keys", apiKeyH.Create)
+		g.GET("/api-keys/:id", apiKeyH.Get)
 		g.DELETE("/api-keys/:id", apiKeyH.Delete)
 		g.PATCH("/api-keys/:id/toggle", apiKeyH.ToggleActive)
 		g.GET("/api-keys/:id/value", apiKeyH.GetValue)
+		g.GET("/keys/:id/devices", devicesH.GetDevices)
 
 		// Usage
 		g.GET("/usage", usageH.Get)
+		g.GET("/usage/summary", usageH.Summary)
+		g.GET("/usage/activity", usageH.Activity)
+
+		// MCP stdio-SSE bridge
+		g.GET("/mcp", mcpH.ListAdmin)
+		g.POST("/mcp", mcpH.CreateAdmin)
+		g.PATCH("/mcp/:id", mcpH.UpdateAdmin)
+		g.DELETE("/mcp/:id", mcpH.DeleteAdmin)
+		g.POST("/mcp/:id/test", mcpH.TestAdmin)
+		g.GET("/mcp/:id/tools", mcpH.ToolsAdmin)
+		g.GET("/mcp/:id/sse", mcp.AuthTokenFromQuery(), mcpH.SSEAdmin)
+		g.POST("/mcp/:id/message", mcp.AuthTokenFromQuery(), mcpH.MessageAdmin)
 
 		// CLI Tools — unified model catalog for dashboard pickers + per-tool config generation
 		g.GET("/models", func(c *gin.Context) {
@@ -410,6 +545,7 @@ func New(cfg Config) *Router {
 		g.GET("/settings/compression", optimizationH.GetCompressionSettings)
 		g.PUT("/settings/compression", optimizationH.UpdateCompressionSettings)
 		g.GET("/compression/metrics", optimizationH.GetCompressionMetrics)
+		g.GET("/headroom/status", optimizationH.GetHeadroomStatus)
 		g.GET("/cache/stats", optimizationH.GetCacheStats)
 		g.POST("/cache/flush", optimizationH.FlushCache)
 		g.POST("/optimization/preview", optimizationH.PreviewCompression)
@@ -425,10 +561,16 @@ func New(cfg Config) *Router {
 
 	registerAdminRoutes(adminGroup)
 
+	// ---- /mcp routes (API key bearer tokens) ----
+	mcpGroup := engine.Group("/mcp")
+	mcpGroup.Use(middleware.Auth(cfg.DB, authCache))
+	mcpAPI.RegisterRoutes(mcpGroup)
+
 	// ---- /admin/api/v1 routes (master key protected) ----
 	masterGroup := engine.Group("/admin/api/v1")
 	masterGroup.Use(middleware.MasterAuth(km))
 	masterGroup.Use(admin.ProgrammaticResponseWrapper())
+	masterGroup.Use(middleware.MasterRestrict())
 	registerAdminRoutes(masterGroup)
 
 	// ---- Static frontend (SPA) ----
@@ -463,18 +605,25 @@ func New(cfg Config) *Router {
 	})
 
 	r := &Router{
-		engine:          engine,
-		db:              cfg.DB,
-		writeQueue:      writeQueue,
-		store:           store,
-		elig:            elig,
-		combo:           comboHandler,
-		tracker:         tracker,
-		authMgr:         authManager,
-		quotaScheduler:  quotaScheduler,
-		usageFlush:      usageFlush,
-		cleanup:         cleanup,
-		rateLimitProber: rateLimitProber,
+		engine:                engine,
+		db:                    cfg.DB,
+		writeQueue:            writeQueue,
+		store:                 store,
+		elig:                  elig,
+		combo:                 comboHandler,
+		tracker:               tracker,
+		deviceTracker:         deviceTracker,
+		authMgr:               authManager,
+		quotaScheduler:        quotaScheduler,
+		usageFlush:            usageFlush,
+		mcpHandler:            mcpH,
+		mcpAPI:                mcpAPI,
+		cleanup:               cleanup,
+		lifecycleManager:      lifecycleManager,
+		tokenRefreshScheduler: tokenRefreshScheduler,
+		autoPingScheduler:     autoPingScheduler,
+		rateLimitProber:       rateLimitProber,
+		versionChecker:        versionChecker,
 	}
 
 	// Let the TLS handler report whether HTTPS is actually listening.
@@ -598,10 +747,19 @@ func (r *Router) Shutdown() {
 			_ = r.httpsServer.Shutdown(ctx)
 		}
 		r.tracker.Stop()
+		r.deviceTracker.Stop()
 		r.quotaScheduler.Stop()
+		r.tokenRefreshScheduler.Stop()
+		r.autoPingScheduler.Stop()
 		r.usageFlush.Stop()
 		r.cleanup.Stop()
+		r.lifecycleManager.Stop()
 		r.rateLimitProber.Stop()
+		cache.StopGrokCLIReasoningEviction()
+		if r.versionChecker != nil {
+			r.versionChecker.Stop()
+		}
+		r.mcpHandler.Stop(ctx)
 	})
 }
 

@@ -41,7 +41,7 @@ type DeviceTokenResponse struct {
 
 // RequestDeviceUserCode asks the OpenAI authorization server for a device code.
 func (s *OAuthService) RequestDeviceUserCode(ctx context.Context) (*DeviceUserCodeResponse, error) {
-	body, err := json.Marshal(map[string]string{"client_id": ClientID})
+	body, err := json.Marshal(map[string]string{"client_id": codexOAuthClientID()})
 	if err != nil {
 		return nil, fmt.Errorf("marshal device user-code request: %w", err)
 	}

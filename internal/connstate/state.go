@@ -2,6 +2,7 @@ package connstate
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -23,35 +24,52 @@ const (
 	StatusReady          Status = "ready"
 	StatusRateLimited    Status = "rate_limited"
 	StatusQuotaExhausted Status = "quota_exhausted"
-	StatusBalanceEmpty   Status = "balance_empty"
-	StatusAuthFailed     Status = "auth_failed"
-	StatusSuspended      Status = "suspended"
 	StatusDisabled       Status = "disabled"
-	StatusDegraded       Status = "degraded"
-	StatusCooldown       Status = "cooldown"
+	
+	
 )
 
 // IsEligible returns true if the status indicates the connection can be used.
 func (s Status) IsEligible() bool {
-	return s == StatusReady || s == StatusDegraded
+	return s == StatusReady
+}
+
+// IsHealable returns true for transient, non-terminal statuses that can be
+// reset to ready when a cooldown expires or a request succeeds.
+func (s Status) IsHealable() bool {
+	switch s {
+	case StatusRateLimited, StatusQuotaExhausted:
+		return true
+	}
+	return false
+}
+
+// IsRoutingTerminal returns true if the status means the connection should not
+// be selected for routing regardless of cooldown state. This guards against stale
+// eligibility snapshots re-picking an account that was just marked failed.
+func (s Status) IsRoutingTerminal() bool {
+	return s == StatusDisabled
 }
 
 // ConnectionState holds the live state of a single provider connection.
 type ConnectionState struct {
-	ID            string
-	ProviderID    int64
-	Prefix        string
-	Priority      int // Higher = tried first
-	Status        Status
-	LastCheckAt   time.Time
-	LastError     string
-	ResponseTime  time.Duration
-	FailCount     int
-	BanCount      int // Consecutive ban signals (auth/quota/balance)
-	SuccessCount  int
-	CooldownUntil *time.Time
-	ModelLimits   sync.Map // modelID -> *ModelLimitState
-	mu            sync.RWMutex
+	ID             string
+	ProviderID     int64
+	Prefix         string
+	Priority       int // Higher = tried first
+	Status         Status
+	LastCheckAt    time.Time
+	LastError      string
+	DisabledReason string // reason when Status == StatusDisabled (auth_failed, balance_empty, manual, ...)
+	ResponseTime   time.Duration
+	FailCount      int
+	BanCount       int // Consecutive ban signals (auth/quota/balance)
+	SuccessCount   int
+	CooldownUntil  *time.Time
+	RemainingPct   float64  // cached min remaining quota percentage (0-100)
+	ModelLimits    sync.Map // modelID -> *ModelLimitState
+	mu             sync.RWMutex
+	lastUsedAt     atomic.Int64
 }
 
 // GetStatus returns the current status (thread-safe).
@@ -82,6 +100,42 @@ func (cs *ConnectionState) ResetBanCount() {
 	cs.BanCount = 0
 }
 
+// GetRemainingPct returns the cached minimum remaining quota percentage.
+func (cs *ConnectionState) GetRemainingPct() float64 {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return cs.RemainingPct
+}
+
+// GetDisabledReason returns the disabled reason, if any (thread-safe).
+func (cs *ConnectionState) GetDisabledReason() string {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return cs.DisabledReason
+}
+
+// SetRemainingPct stores the minimum remaining quota percentage (thread-safe).
+func (cs *ConnectionState) SetRemainingPct(pct float64) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.RemainingPct = pct
+}
+
+// RecordUsed marks this connection as having just been selected. In-memory only.
+func (cs *ConnectionState) RecordUsed() {
+	cs.lastUsedAt.Store(time.Now().UnixNano())
+}
+
+// LastUsedAt returns the timestamp of the last selection (zero if never used).
+func (cs *ConnectionState) LastUsedAt() time.Time {
+	return time.Unix(0, cs.lastUsedAt.Load())
+}
+
+// lastUsedAtNano returns the raw nanosecond timestamp for cheap comparisons.
+func (cs *ConnectionState) lastUsedAtNano() int64 {
+	return cs.lastUsedAt.Load()
+}
+
 // SetStatus updates the status and timestamps (thread-safe).
 func (cs *ConnectionState) SetStatus(status Status, err string) {
 	cs.mu.Lock()
@@ -94,10 +148,31 @@ func (cs *ConnectionState) SetStatus(status Status, err string) {
 		cs.FailCount = 0
 		cs.BanCount = 0 // reset ban count on success
 		cs.CooldownUntil = nil
-	} else if status == StatusAuthFailed || status == StatusSuspended || status == StatusQuotaExhausted || status == StatusBalanceEmpty {
+	} else if status == StatusDisabled || status == StatusQuotaExhausted {
 		cs.FailCount++
 		cs.BanCount++
+		if status == StatusDisabled {
+			cs.DisabledReason = err
+		}
 	}
+}
+
+// SetStatusWithCooldown sets a terminal status and a cooldown horizon at the
+// same time (thread-safe). This is used for auth/balance failures that should
+// stop routing immediately but still be eligible for automatic recovery after
+// the cooldown expires.
+func (cs *ConnectionState) SetStatusWithCooldown(status Status, err string, until time.Time) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.Status = status
+	cs.LastCheckAt = time.Now()
+	cs.LastError = err
+	cs.CooldownUntil = &until
+	if status == StatusDisabled {
+		cs.DisabledReason = err
+	}
+	cs.FailCount++
+	cs.BanCount++
 }
 
 // SetCooldown sets a cooldown timer.
@@ -105,29 +180,37 @@ func (cs *ConnectionState) SetCooldown(until time.Time) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.CooldownUntil = &until
-	cs.Status = StatusCooldown
+	cs.Status = StatusReady
 }
 
 // SetQuotaCooldown sets a quota-exhausted cooldown (midnight UTC recovery).
 // Unlike SetCooldown, it preserves StatusQuotaExhausted so the DB recovery
-// path in QuotaScheduler recognises it correctly.
+// path in QuotaScheduler recognises it correctly. Quota exhaustion is recoverable
+// and does NOT increment BanCount. It also resets any existing BanCount so that
+// transient auth errors do not accumulate toward auto-disable when the actual
+// failure mode is quota exhaustion.
 func (cs *ConnectionState) SetQuotaCooldown(until time.Time) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.CooldownUntil = &until
 	cs.Status = StatusQuotaExhausted
 	cs.FailCount++
-	cs.BanCount++
+	cs.BanCount = 0
 }
 
 // IsInCooldown checks if the connection is in cooldown.
 func (cs *ConnectionState) IsInCooldown() bool {
+	return cs.IsInCooldownAt(time.Now())
+}
+
+// IsInCooldownAt checks if the connection is in cooldown at the given time.
+func (cs *ConnectionState) IsInCooldownAt(now time.Time) bool {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
 	if cs.CooldownUntil == nil {
 		return false
 	}
-	return time.Now().Before(*cs.CooldownUntil)
+	return now.Before(*cs.CooldownUntil)
 }
 
 // IsCooldownExpired checks if the connection has an expired cooldown timer (thread-safe).
@@ -173,8 +256,13 @@ func (cs *ConnectionState) GetModelLimit(modelID string) *ModelLimitState {
 
 // IsModelInCooldown checks if a specific model is in cooldown.
 func (cs *ConnectionState) IsModelInCooldown(modelID string) bool {
+	return cs.IsModelInCooldownAt(modelID, time.Now())
+}
+
+// IsModelInCooldownAt checks if a specific model is in cooldown at the given time.
+func (cs *ConnectionState) IsModelInCooldownAt(modelID string, now time.Time) bool {
 	mls := cs.GetModelLimit(modelID)
-	return mls.IsInCooldown()
+	return mls.IsInCooldownAt(now)
 }
 
 // SetModelCooldown sets a cooldown for a specific model.
@@ -233,12 +321,17 @@ type ModelLimitState struct {
 
 // IsInCooldown checks if the model is in cooldown.
 func (mls *ModelLimitState) IsInCooldown() bool {
+	return mls.IsInCooldownAt(time.Now())
+}
+
+// IsInCooldownAt checks if the model is in cooldown at the given time.
+func (mls *ModelLimitState) IsInCooldownAt(now time.Time) bool {
 	mls.mu.RLock()
 	defer mls.mu.RUnlock()
 	if mls.CooldownUntil == nil {
 		return false
 	}
-	return time.Now().Before(*mls.CooldownUntil)
+	return now.Before(*mls.CooldownUntil)
 }
 
 // SetCooldown sets a cooldown timer for this model.
@@ -267,4 +360,39 @@ func (mls *ModelLimitState) SetRPMRemaining(n int64) {
 	mls.mu.Lock()
 	defer mls.mu.Unlock()
 	mls.RPMRemaining = n
+}
+
+// ResetQuota clears quota/cooldown routing state for a single connection and
+// returns the updated connection along with any model IDs that were in cooldown
+// before the reset. It is the AxonRouter-Go equivalent of CLIProxyAPI's
+// auth.Manager.ResetQuota and is safe for concurrent use.
+func (cs *ConnectionState) ResetQuota() (*ConnectionState, []string, error) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
+	affectedModels := make([]string, 0)
+	now := time.Now()
+	cs.ModelLimits.Range(func(key, value any) bool {
+		modelID := key.(string)
+		mls := value.(*ModelLimitState)
+		mls.mu.RLock()
+		inCooldown := mls.CooldownUntil != nil && now.Before(*mls.CooldownUntil)
+		mls.mu.RUnlock()
+		if inCooldown {
+			affectedModels = append(affectedModels, modelID)
+			mls.ClearCooldown()
+		}
+		return true
+	})
+
+	if cs.Status.IsHealable() {
+		cs.Status = StatusReady
+	}
+	cs.CooldownUntil = nil
+	cs.LastError = ""
+	cs.FailCount = 0
+	cs.BanCount = 0
+	cs.LastCheckAt = time.Now()
+
+	return cs, affectedModels, nil
 }

@@ -48,6 +48,8 @@ let showDeleteErrorConfirm = $state(false);
 let editPoolId = $state('');
 let editPoolName = $state('');
 let editPoolUrl = $state('');
+let editPoolUsername = $state('');
+let editPoolPassword = $state('');
 let editPoolType = $state('http');
 let editPoolNoProxy = $state('');
 let editPoolLoading = $state(false);
@@ -55,14 +57,16 @@ let editPoolLoading = $state(false);
 // Create pool form
 let poolName = $state('');
 let poolUrl = $state('');
+let poolUsername = $state('');
+let poolPassword = $state('');
 let poolType = $state('http');
-let poolNoProxy = $state('');
+let poolNoProxy = $state('localhost,127.0.0.1');
 let createPoolLoading = $state(false);
 
 // Bulk import form
 let bulkText = $state('');
 let bulkType = $state('http');
-let bulkNoProxy = $state('');
+let bulkNoProxy = $state('localhost,127.0.0.1');
 let bulkActive = $state(true);
 let bulkLoading = $state(false);
 // .txt upload + chunked send (keeps RAM bounded, mirrors provider bulk import).
@@ -155,7 +159,9 @@ async function handleBulkImportChunked() {
         for (const d of res.details ?? []) {
           if (d.status === 'created') {
             bulkCheckSuccess++;
-          } else if (d.status === 'error') {
+          } else if (d.status === 'skipped') {
+            // Skipped items (duplicates, unhealthy) are counted but not errors
+          } else {
             bulkCheckFailed++;
             bulkCheckErrors.push({ index: d.index, url: d.url ?? '', reason: d.reason ?? '' });
           }
@@ -180,6 +186,8 @@ async function handleBulkImportChunked() {
       uploadedPoolFile = '';
       poolParseWarnings = [];
       poolPage = 1;
+      // Small delay to ensure DB writes are committed before refreshing
+      await new Promise(r => setTimeout(r, 200));
       await loadAll(true);
       if (bulkCheckFailed > 0) {
         toast.error('Import finished with failures', { description: `${bulkCheckSuccess} added, ${bulkCheckFailed} failed, ${bulkCheckProcessed} processed` });
@@ -338,10 +346,22 @@ async function handleCreatePool() {
 	if (!poolName.trim() || !poolUrl.trim()) return;
 	createPoolLoading = true;
 	try {
-		await proxyPoolsApi.create({ name: poolName.trim(), proxyUrl: poolUrl.trim(), type: poolType, noProxy: poolNoProxy.trim() || undefined, isActive: true });
+		const parsed = parseProxyUrl(poolUrl);
+		const payload: Record<string, unknown> = {
+			name: poolName.trim(),
+			proxyUrl: parsed.url || poolUrl.trim(),
+			type: poolType,
+			noProxy: poolNoProxy.trim() || undefined,
+			isActive: true,
+		};
+		if (poolUsername.trim()) payload.proxyUsername = poolUsername.trim();
+		else if (parsed.username) payload.proxyUsername = parsed.username;
+		if (poolPassword.trim()) payload.proxyPassword = poolPassword.trim();
+		else if (parsed.password) payload.proxyPassword = parsed.password;
+		await proxyPoolsApi.create(payload);
 		toast.success('Proxy pool created');
 		showAddPool = false;
-		poolName = ''; poolUrl = ''; poolNoProxy = '';
+		poolName = ''; poolUrl = ''; poolUsername = ''; poolPassword = ''; poolNoProxy = 'localhost,127.0.0.1';
 		poolPage = 1;
 		await loadAll(true);
 	} catch (err) { toast.error(err instanceof Error ? err.message : 'Unknown error'); }
@@ -352,11 +372,13 @@ function resetAddPoolModal(tab: 'single' | 'bulk') {
   addPoolTab = tab;
   poolName = '';
   poolUrl = '';
-  poolNoProxy = '';
+  poolUsername = '';
+  poolPassword = '';
+  poolNoProxy = 'localhost,127.0.0.1';
   poolType = 'http';
   bulkText = '';
   bulkType = 'http';
-  bulkNoProxy = '';
+  bulkNoProxy = 'localhost,127.0.0.1';
   bulkActive = true;
 }
 
@@ -430,7 +452,10 @@ async function deleteAllErrorPools() {
 function openEditPool(pool: ProxyPool) {
 	editPoolId = pool.id;
 	editPoolName = pool.name;
-	editPoolUrl = pool.proxyUrl;
+	const parsed = parseProxyUrl(pool.proxyUrl);
+	editPoolUrl = parsed.url || pool.proxyUrl;
+	editPoolUsername = pool.proxyUsername || parsed.username || '';
+	editPoolPassword = parsed.password || '';
 	editPoolType = pool.type;
 	editPoolNoProxy = pool.noProxy ?? '';
 	showEditPool = true;
@@ -440,12 +465,18 @@ async function handleEditPool() {
 	if (!editPoolId || !editPoolName.trim() || !editPoolUrl.trim()) return;
 	editPoolLoading = true;
 	try {
-		const res = await proxyPoolsApi.update(editPoolId, {
+		const parsed = parseProxyUrl(editPoolUrl);
+		const payload: Record<string, unknown> = {
 			name: editPoolName.trim(),
-			proxyUrl: editPoolUrl.trim(),
+			proxyUrl: parsed.url || editPoolUrl.trim(),
 			type: editPoolType,
 			noProxy: editPoolNoProxy.trim() || undefined,
-		});
+		};
+		if (editPoolUsername.trim()) payload.proxyUsername = editPoolUsername.trim();
+		else if (parsed.username) payload.proxyUsername = parsed.username;
+		if (editPoolPassword.trim()) payload.proxyPassword = editPoolPassword.trim();
+		else if (parsed.password) payload.proxyPassword = parsed.password;
+		const res = await proxyPoolsApi.update(editPoolId, payload);
 		if (res.data?.testStatus === 'error') {
 			toast.warning(`Pool saved — proxy check failed: ${res.data.lastError || 'unreachable'}`);
 		} else {
@@ -685,6 +716,45 @@ async function saveProxyDefaults() {
     return type;
   }
 
+  function parseProxyUrl(url: string): { url: string; username: string; password: string } {
+    const raw = (url || '').trim();
+    try {
+      const u = new URL(raw);
+      const username = u.username || '';
+      const password = u.password || '';
+      u.username = '';
+      u.password = '';
+      return { url: u.toString(), username, password };
+    } catch {
+      return { url: raw, username: '', password: '' };
+    }
+  }
+
+  function defaultProxyPort(protocol: string): string {
+    if (protocol === 'http:') return '80';
+    if (protocol === 'https:') return '443';
+    if (protocol === 'socks5:') return '1080';
+    return '';
+  }
+
+  function formatProxyHostPort(url: string): string {
+    const raw = (url || '').trim();
+    try {
+      const u = new URL(raw);
+      const host = u.hostname;
+      const port = u.port || defaultProxyPort(u.protocol);
+      return port ? `${host}:${port}` : host;
+    } catch {
+      return raw;
+    }
+  }
+
+  function maskUsername(username?: string | null): string {
+    if (!username) return '—';
+    if (username.length <= 2) return '*'.repeat(username.length);
+    return username[0] + '*'.repeat(username.length - 2) + username[username.length - 1];
+  }
+
   async function handleDeploy() {
     if (!deployToken.trim()) return;
     deployLoading = true; deployResult = null;
@@ -842,8 +912,9 @@ async function handleBulkImport() {
 								<input type="checkbox" checked={allVisibleSelected} onchange={toggleSelectAll} class="size-4 rounded border-border bg-background text-foreground accent-foreground cursor-pointer" aria-label="Select all pools" />
 							</th>
 							<th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Name</th>
-							<th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Proxy URL</th>
+							<th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Host:Port</th>
 							<th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Type</th>
+							<th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">User</th>
 							<th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">State</th>
 							<th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Health</th>
 							<th class="text-right text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Latency</th>
@@ -860,7 +931,7 @@ async function handleBulkImport() {
 								<a href="/proxy-pools/{pool.id}" class="text-body-sm-strong hover:underline truncate block max-w-[160px]">{pool.name}</a>
 							</td>
                   <td class="px-4 py-2.5">
-                    <span class="text-caption-mono text-muted-foreground truncate block max-w-[220px]">{pool.proxyUrl}</span>
+                    <span class="text-caption-mono text-muted-foreground truncate block max-w-[220px]" title={pool.proxyUrl}>{formatProxyHostPort(pool.proxyUrl)}</span>
                     {#if pool.proxyCountry || pool.proxyIp}
                       <span class="text-[10px] text-muted-foreground/60 truncate block max-w-[220px]" title={pool.proxyIp || ''}>
                         {pool.proxyCountry || '—'}{pool.proxyCity ? ', ' + pool.proxyCity : ''}{pool.proxyOrg ? ' • ' + pool.proxyOrg.replace(/^AS\d+\s*/, '') : ''}
@@ -869,6 +940,9 @@ async function handleBulkImport() {
                   </td>
                   <td class="px-4 py-2.5">
                     <span class="text-caption-mono text-muted-foreground">{typeLabel(pool.type)}</span>
+                  </td>
+                  <td class="px-4 py-2.5">
+                    <span class="text-caption-mono text-muted-foreground" title={(pool.proxyUsername || '')}>{maskUsername(pool.proxyUsername)}</span>
                   </td>
 <td class="px-4 py-2.5 text-center">
               <div class="flex justify-center">
@@ -1175,8 +1249,18 @@ async function handleBulkImport() {
 					</div>
 					<div class="space-y-2">
 						<Label class="text-sm font-medium">Proxy URL</Label>
-						<Input bind:value={poolUrl} placeholder="http://proxy:8080" class="h-10 text-body-sm font-mono" />
-					</div>
+							<Input bind:value={poolUrl} placeholder="http://proxy:8080" class="h-10 text-body-sm font-mono" />
+						</div>
+						<div class="grid grid-cols-2 gap-4">
+							<div class="space-y-2">
+								<Label class="text-sm font-medium">Username</Label>
+								<Input bind:value={poolUsername} placeholder="user" class="h-10 text-body-sm" />
+							</div>
+							<div class="space-y-2">
+								<Label class="text-sm font-medium">Password</Label>
+								<Input type="password" bind:value={poolPassword} placeholder="••••••••" class="h-10 text-body-sm" />
+							</div>
+						</div>
 					<div class="space-y-2">
 						<Label class="text-sm font-medium">Type</Label>
 						<div class="inline-flex w-fit flex-wrap items-center gap-1 rounded-lg bg-muted p-1">
@@ -1401,7 +1485,8 @@ async function handleBulkImport() {
                     <input type="checkbox" checked={allGroupModalSelected} onchange={toggleGroupModalSelectAll} class="size-4 rounded border-border bg-background text-foreground accent-foreground cursor-pointer" aria-label="Select all pools" />
                   </th>
                   <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Name</th>
-                  <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Proxy URL</th>
+                  <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Host:Port</th>
+                  <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">User</th>
                   <th class="text-left text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Type</th>
                   <th class="text-center text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Health</th>
                   <th class="text-right text-caption-mono text-muted-foreground uppercase font-semibold px-4 py-2.5">Latency</th>
@@ -1418,10 +1503,13 @@ async function handleBulkImport() {
                     <span class="text-body-sm-strong truncate block max-w-[160px]">{pool.name}</span>
                   </td>
                   <td class="px-4 py-2.5">
-                    <span class="text-caption-mono text-muted-foreground truncate block max-w-[260px]">{pool.proxyUrl}</span>
+                    <span class="text-caption-mono text-muted-foreground truncate block max-w-[260px]" title={pool.proxyUrl}>{formatProxyHostPort(pool.proxyUrl)}</span>
                   </td>
                   <td class="px-4 py-2.5">
                     <span class="text-caption-mono text-muted-foreground">{typeLabel(pool.type)}</span>
+                  </td>
+                  <td class="px-4 py-2.5">
+                    <span class="text-caption-mono text-muted-foreground" title={(pool.proxyUsername || '')}>{maskUsername(pool.proxyUsername)}</span>
                   </td>
                   <td class="px-4 py-2.5 text-center">
                     {#if pool.testStatus === 'active'}
@@ -1486,8 +1574,19 @@ async function handleBulkImport() {
 				</div>
 				<div class="space-y-2">
 					<Label class="text-sm font-medium">Proxy URL</Label>
-					<Input bind:value={editPoolUrl} class="h-10 text-body-sm font-mono" />
-				</div>
+						<Input bind:value={editPoolUrl} class="h-10 text-body-sm font-mono" />
+					</div>
+					<div class="grid grid-cols-2 gap-4">
+						<div class="space-y-2">
+							<Label class="text-sm font-medium">Username</Label>
+							<Input bind:value={editPoolUsername} class="h-10 text-body-sm" />
+						</div>
+						<div class="space-y-2">
+							<Label class="text-sm font-medium">Password</Label>
+							<Input type="password" bind:value={editPoolPassword} placeholder="••••••••" class="h-10 text-body-sm" />
+						</div>
+					</div>
+					<div class="space-y-2">
 				<div class="space-y-2">
 					<Label class="text-sm font-medium">Type</Label>
 					<div class="inline-flex w-fit flex-wrap items-center gap-1 rounded-lg bg-muted p-1">

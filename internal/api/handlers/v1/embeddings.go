@@ -24,6 +24,8 @@ func (h *Handler) Embeddings(c *gin.Context) {
 		return
 	}
 
+	h.trackDevice(c)
+
 	// Apply compression (fail-open); skip if the request uses prompt-cache markers.
 	// Embeddings bodies rarely benefit, but this keeps the handler consistent with
 	// the rest of the v1 surface and is essentially a no-op when no messages exist.
@@ -34,7 +36,14 @@ func (h *Handler) Embeddings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "model is required", "type": "invalid_request_error"}})
 		return
 	}
+	if !h.isModelAllowed(c.Request.Context(), model) {
+		c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"message": "model not allowed for this API key", "type": "invalid_request_error"}})
+		return
+	}
 	if h.checkTokenBudget(c, body) != nil {
+		return
+	}
+	if h.checkAPIKeyBudget(c) != nil {
 		return
 	}
 	provider, modelName := executor.SplitModel(model)
@@ -42,6 +51,8 @@ func (h *Handler) Embeddings(c *gin.Context) {
 		provider = "openai"
 		modelName = model
 	}
+
+	sessionID := h.sessionIDForAffinity(c, provider, modelName, body)
 
 	// Resolve executor before capability checks so we can report unknown providers
 	// explicitly and then validate modality requirements.
@@ -78,7 +89,7 @@ func (h *Handler) Embeddings(c *gin.Context) {
 	}
 
 	body = executor.JSONSet(body, "model", modelName)
-	conn, err := h.getConnection(c.Request.Context(), provider, modelName)
+	conn, err := h.getConnection(c.Request.Context(), provider, modelName, sessionID)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
 		return
@@ -93,12 +104,12 @@ func (h *Handler) Embeddings(c *gin.Context) {
 		}
 	}
 	req := &executor.Request{
-		Model: modelName,
-		Body: body,
-		APIKey: conn.APIKey,
-		AccessToken: conn.AccessToken,
-		BaseURL: conn.BaseURL,
-		Provider: provider,
+		Model:                modelName,
+		Body:                 body,
+		APIKey:               conn.APIKey,
+		AccessToken:          conn.AccessToken,
+		BaseURL:              conn.BaseURL,
+		Provider:             provider,
 		ProviderSpecificData: psdMap,
 	}
 	proxyCtx := h.proxyContext(c.Request.Context(), conn)
@@ -127,18 +138,31 @@ func (h *Handler) Embeddings(c *gin.Context) {
 		}
 		return
 	}
+	tokenCounts := ExtractTokensFromBody(resp.Body)
+	tokensEstimated := false
+	if tokenCounts.InputTokens == 0 && resp.StatusCode < 400 {
+		if est := usage.EstimateTokensFromRequest(body); est > 0 {
+			tokenCounts.InputTokens = est
+			tokensEstimated = true
+		}
+	}
 	h.logRequest(c, &usage.LogEntry{
-		ApiKeyID: c.GetString("api_key_id"),
-		ConnectionID: conn.ID,
+		ApiKeyID:       c.GetString("api_key_id"),
+		ConnectionID:   conn.ID,
 		ProviderTypeID: provider,
-		ModelID: modelName,
-		ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
-		ApiType: apiTypeFromPath(c.Request.URL.Path),
-		Modality: "embedding",
-		Stream: false,
-		LatencyMs: time.Since(start).Milliseconds(),
-		StatusCode: resp.StatusCode})
+		ModelID:        modelName,
+		ProxyPoolID:    executor.ProxyPoolIDFromContext(proxyCtx),
+		ApiType:        apiTypeFromPath(c.Request.URL.Path),
+		Modality:       "embedding",
+		Stream:         false,
+		InputTokens:    tokenCounts.InputTokens,
+		LatencyMs:      time.Since(start).Milliseconds(),
+		StatusCode:     resp.StatusCode,
+		TokensEstimated: tokensEstimated,
+	})
 	h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, resp.Body, false)
+	embedTokenCounts := ExtractTokensFromBody(resp.Body)
+	writeCostHeaders(c, modelName, resp.CostUsd, embedTokenCounts, false, h.isFlatRate(provider))
 	c.Header("Content-Type", "application/json")
 	c.Status(resp.StatusCode)
 	c.Writer.Write(resp.Body)
@@ -154,6 +178,6 @@ func normalizeEmbeddingModel(provider, modelName string) string {
 			return "@" + modelName
 		}
 		return "@cf/" + modelName
-}
+	}
 	return modelName
 }

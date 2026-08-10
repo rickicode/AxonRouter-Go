@@ -2,6 +2,7 @@ package connstate
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -77,8 +78,10 @@ func TestRecordFailure_QuotaCooldownSetsMidnight(t *testing.T) {
 	if !cs.IsInCooldown() {
 		t.Error("expected connection to be in cooldown")
 	}
-	if cs.BanCount != 1 {
-		t.Errorf("expected ban count 1, got %d", cs.BanCount)
+	// Quota exhaustion must not increase BanCount; it is a recoverable daily
+	// limit, not a permanent credential failure.
+	if cs.BanCount != 0 {
+		t.Errorf("expected ban count 0 after quota failure, got %d", cs.BanCount)
 	}
 }
 
@@ -114,7 +117,7 @@ func TestDetectError_429WithQuotaBody(t *testing.T) {
 	// This must be classified as ErrorQuota, not ErrorRateLimit.
 	cfBody := `{"errors":[{"message":"AiError: AiError: you have used up your daily free allocation of 10,000 neurons, please upgrade to Cloudflare's Workers Paid plan if you would like to continue usage. (de3fabb0-569c-4e72-bec9-fedd0de629b3)","code":4006}],"success":false,"result":{},"messages":[]}`
 
-	det := DetectError(context.Background(),429, cfBody, nil, "cf", "", nil)
+	det := DetectError(context.Background(), 429, cfBody, nil, "cf", "", nil)
 	if det.Category != ErrorQuota {
 		t.Errorf("expected ErrorQuota for 429+neurons body, got %s", det.Category)
 	}
@@ -133,8 +136,80 @@ func TestDetectError_429WithQuotaBody(t *testing.T) {
 
 func TestDetectError_429WithoutQuotaBody(t *testing.T) {
 	// Regular rate limit (e.g. OpenAI) — 429 without quota patterns
-	det := DetectError(context.Background(),429, `{"error":{"message":"rate limit exceeded"}}`, nil, "openai", "", nil)
+	det := DetectError(context.Background(), 429, `{"error":{"message":"rate limit exceeded"}}`, nil, "openai", "", nil)
 	if det.Category != ErrorRateLimit {
 		t.Errorf("expected ErrorRateLimit for plain 429, got %s", det.Category)
+	}
+}
+
+func TestClassifyProviderUnavailable(t *testing.T) {
+	tests := []struct {
+		name    string
+		states  []Status
+		reasons []string
+		want    ErrorCategory
+	}{
+		{"all quota", []Status{StatusQuotaExhausted, StatusQuotaExhausted}, nil, ErrorQuota},
+		{"all ready cooldown", []Status{StatusReady, StatusReady}, nil, ErrorUnknown},
+		{"mixed quota+ready cooldown", []Status{StatusQuotaExhausted, StatusReady}, nil, ErrorUnknown},
+		{"all auth", []Status{StatusDisabled, StatusDisabled}, []string{"auth_failed", "auth_failed"}, ErrorAuth},
+		{"all balance empty", []Status{StatusDisabled, StatusDisabled}, []string{"balance_empty", "balance_empty"}, ErrorBalanceEmpty},
+		{"mixed disabled reasons", []Status{StatusDisabled, StatusDisabled}, []string{"auth_failed", "balance_empty"}, ErrorUnknown},
+		{"mixed quota+ready", []Status{StatusQuotaExhausted, StatusReady}, nil, ErrorUnknown},
+		{"empty provider", []Status{}, nil, ErrorUnknown},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewStore()
+			for i, st := range tt.states {
+				store.SeedConnection(fmt.Sprintf("conn-%d", i), "grok-cli", "ready", i)
+				cs := store.Get(fmt.Sprintf("conn-%d", i))
+				cs.SetStatus(st, "")
+				if len(tt.reasons) > i {
+					cs.DisabledReason = tt.reasons[i]
+				}
+			}
+			if got := store.ClassifyProviderUnavailable("grok-cli"); got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStore_ResetQuota(t *testing.T) {
+	store := NewStore()
+	store.SeedConnection("conn-1", "openai", "ready", 0)
+	cs := store.Get("conn-1")
+	future := time.Now().Add(time.Hour)
+	cs.SetCooldown(future)
+	cs.SetModelCooldown("gpt-4o", future)
+
+	updated, affected, err := store.ResetQuota("conn-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updated == nil {
+		t.Fatal("expected updated connection, got nil")
+	}
+	if len(affected) != 1 || affected[0] != "gpt-4o" {
+		t.Errorf("expected gpt-4o affected, got %v", affected)
+	}
+	if updated.GetStatus() != StatusReady {
+		t.Errorf("expected status ready, got %s", updated.GetStatus())
+	}
+}
+
+func TestStore_ResetQuota_UnknownConnection(t *testing.T) {
+	store := NewStore()
+	updated, affected, err := store.ResetQuota("missing")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updated != nil {
+		t.Errorf("expected nil for unknown connection, got %v", updated)
+	}
+	if len(affected) != 0 {
+		t.Errorf("expected empty affected list, got %v", affected)
 	}
 }

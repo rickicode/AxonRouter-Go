@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/gin-gonic/gin"
 	kardianos "github.com/kardianos/service"
@@ -138,10 +139,10 @@ func handleStartupAction(action string) {
 	// install-root is a backward-compatible alias for install (now works for both).
 	if requestedRoot && !isRoot() {
 		printStartupBox("Root required", []string{
-			red("--startup install-root must be run as root."),
+			red("--service install-root must be run as root."),
 			"",
 			"Re-run with sudo:",
-			cyan(" sudo axonrouter --startup install-root"),
+			cyan(" sudo axonrouter --service install-root"),
 		})
 		os.Exit(1)
 	}
@@ -175,7 +176,7 @@ func handleStartupAction(action string) {
 	case "status":
 		st, err := svc.Status()
 		if err != nil {
-			installHint := cyan("Install: axonrouter --startup install")
+			installHint := cyan("Install: axonrouter --service install")
 			printStartupBox("Service status unavailable", []string{
 				red(err.Error()),
 				"",
@@ -189,16 +190,16 @@ func handleStartupAction(action string) {
 			printStartupBox("Service running", []string{
 				green("axonrouter is running as user '" + svcCfg.UserName + "'."),
 				"",
-				"Stop:    axonrouter --startup stop",
-				"Restart: axonrouter --startup restart",
-				"Uninstall: axonrouter --startup uninstall",
+				"Stop:    axonrouter --service stop",
+				"Restart: axonrouter --service restart",
+				"Uninstall: axonrouter --service uninstall",
 			})
 		case kardianos.StatusStopped:
 			printStartupBox("Service stopped", []string{
 				yellow("axonrouter is installed but stopped."),
 				"User: " + svcCfg.UserName,
 				"",
-				"Start: axonrouter --startup start",
+				"Start: axonrouter --service start",
 			})
 		default:
 			printStartupBox("Service status unknown", []string{
@@ -212,7 +213,7 @@ func handleStartupAction(action string) {
 	act, err := service.ControlAction(action)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, red(err.Error()))
-		fmt.Fprintln(os.Stderr, "Usage: axonrouter --startup {install|install-root|status|start|stop|restart|uninstall}")
+		fmt.Fprintln(os.Stderr, "Usage: axonrouter --service {install|install-root|status|start|stop|restart|uninstall}")
 		os.Exit(1)
 	}
 	if err := kardianos.Control(svc, act); err != nil {
@@ -234,7 +235,7 @@ func handleStartupAction(action string) {
 		}
 		installLines = append(installLines,
 			"",
-			"Check status: axonrouter --startup status",
+			"Check status: axonrouter --service status",
 		)
 		if !userMode {
 			installLines = append(installLines, "System service: systemctl status axonrouter")
@@ -247,25 +248,25 @@ func handleStartupAction(action string) {
 		printStartupBox("Service started", []string{
 			green("axonrouter is starting as user '" + svcCfg.UserName + "'."),
 			"",
-			"Check status: axonrouter --startup status",
+			"Check status: axonrouter --service status",
 		})
 	case "stop":
 		printStartupBox("Service stopped", []string{
 			green("axonrouter has been stopped."),
 			"",
-			"Start again: axonrouter --startup start",
+			"Start again: axonrouter --service start",
 		})
 	case "restart":
 		printStartupBox("Service restarted", []string{
 			green("axonrouter is restarting as user '" + svcCfg.UserName + "'."),
 			"",
-			"Check status: axonrouter --startup status",
+			"Check status: axonrouter --service status",
 		})
 	case "uninstall":
 		printStartupBox("Service uninstalled", []string{
 			green("axonrouter has been removed from the service manager."),
 			"",
-			"Re-install: axonrouter --startup install",
+			"Re-install: axonrouter --service install",
 		})
 	}
 	os.Exit(0)
@@ -304,11 +305,14 @@ func main() {
 		fmt.Println(" axonrouter Start the server")
 		fmt.Println(" axonrouter --tray Start the server with a system tray icon")
 		fmt.Println(" (requires build tag: tray)")
-		fmt.Println(" axonrouter --startup install Install systemd service")
+		fmt.Println(" axonrouter --no-tray Start the server without the system tray icon")
+		fmt.Println(" (tray builds only)")
+		fmt.Println(" axonrouter --service install Install systemd service")
 		fmt.Println(" (root=system service, user=user service+linger)")
-		fmt.Println(" axonrouter --startup {status|start|stop|restart|uninstall}")
+		fmt.Println(" axonrouter --service {status|start|stop|restart|uninstall}")
 		fmt.Println(" Manage system service")
 		fmt.Println(" axonrouter --setpass <password> Set admin dashboard password")
+		fmt.Println(" axonrouter --version Show version")
 		fmt.Println(" axonrouter --help Show this help")
 		fmt.Println()
 		fmt.Println("Environment:")
@@ -316,14 +320,20 @@ func main() {
 		fmt.Println(" AXONROUTER_DIR Data directory (default: ~/axonrouter)")
 		fmt.Println(" AXON_DB_URL Turso/libsql remote database URL (optional)")
 		fmt.Println(" AXON_DB_TOKEN Turso/libsql auth token (used when AXON_DB_URL is set)")
+		fmt.Println(" AXON_LOGS_MAX_TOTAL_SIZE_MB Max total log directory size in MB (0 = disabled)")
 		os.Exit(0)
 	}
 
-	if len(os.Args) == 2 && os.Args[1] == "--startup" {
-		fmt.Fprintln(os.Stderr, "Usage: axonrouter --startup {install|install-root|status|start|stop|restart|uninstall}")
+	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+		fmt.Println(version.String())
+		os.Exit(0)
+	}
+
+	if len(os.Args) == 2 && os.Args[1] == "--service" {
+		fmt.Fprintln(os.Stderr, "Usage: axonrouter --service {install|install-root|status|start|stop|restart|uninstall}")
 		os.Exit(1)
 	}
-	if len(os.Args) >= 3 && os.Args[1] == "--startup" {
+	if len(os.Args) >= 3 && os.Args[1] == "--service" {
 		handleStartupAction(os.Args[2])
 	}
 
@@ -331,7 +341,13 @@ func main() {
 		setAdminPassword(os.Args[2])
 	}
 
-	trayMode := len(os.Args) >= 2 && os.Args[1] == "--tray"
+	trayMode := defaultTrayMode
+	if len(os.Args) >= 2 && os.Args[1] == "--tray" {
+		trayMode = true
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "--no-tray" {
+		trayMode = false
+	}
 	if trayMode && len(os.Args) >= 3 && os.Args[2] == "--help" {
 		fmt.Println("--tray          Start the server with a system tray icon")
 		fmt.Println("                (requires building with -tags tray)")
@@ -356,15 +372,24 @@ func main() {
 		log.Fatalf("Failed to open database: %v", err)
 	}
 
-	// Initialise compact logger (switch to json/text via log_format setting)
+	// Initialise compact logger (switch to json/text via log_format setting).
+	// The log path defaults to <LogDir>/axonrouter.log unless overridden by
+	// AXON_LOG_FILE_PATH.  Per-file rotation (size/retention/max-files) is
+	// started by Init(); a separate background cleaner enforces
+	// LogsMaxTotalSizeMB by removing oldest files.
+	if os.Getenv("AXON_LOG_FILE_PATH") == "" {
+		logging.LogFilePath = filepath.Join(cfg.LogDir, "axonrouter.log")
+	}
 	logging.Init(db.GetSetting("log_format", "compact"))
+	logging.StartLogDirCleaner(cfg.LogDir, cfg.LogsMaxTotalSizeMB, logging.LogFilePath)
 
 	// Create router with all routes and background goroutines
 	router := api.New(api.Config{
-		DB:               database,
-		Port:             cfg.Port,
-		QuotaIntervalMin: 1,
-		LogRetentionDays: 30,
+		DB:                           database,
+		Port:                         cfg.Port,
+		QuotaIntervalMin:             1,
+		LogRetentionDays:             30,
+		ConnectionCleanupIntervalMin: 60,
 	})
 
 	addr := fmt.Sprintf(":%s", cfg.Port)

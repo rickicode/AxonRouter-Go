@@ -16,6 +16,26 @@ func TestDefaultTestModel_CloudflareStripsProviderPrefix(t *testing.T) {
 	}
 }
 
+func TestListModelEntries_CodeBuddyIncludesServiceKinds(t *testing.T) {
+	h := &ModelHandler{}
+	entries := h.listModelEntries("codebuddy", []string{"llm"}, nil, staticModels("codebuddy"), nil)
+	if len(entries) == 0 {
+		t.Fatal("expected CodeBuddy model entries")
+	}
+	find := func(id string) map[string]any {
+		for _, e := range entries {
+			if gotID, ok := e["id"].(string); ok && gotID == id {
+				return e
+			}
+		}
+		return nil
+	}
+	llm := find("codebuddy/glm-5.0")
+	if llm == nil || !slices.Contains(kindsOf(llm), "llm") {
+		t.Errorf("CodeBuddy glm-5.0 entry missing service_kinds llm: %#v", llm)
+	}
+}
+
 func TestListModelEntries_CFIncludesServiceKinds(t *testing.T) {
 	h := &ModelHandler{}
 	entries := h.listModelEntries("cf", nil, nil, staticModels("cf"), nil)
@@ -65,6 +85,68 @@ func TestListModelEntries_MultiKindProviderDoesNotFallback(t *testing.T) {
 	}
 	if _, ok := entries[0]["service_kinds"]; ok {
 		t.Errorf("expected no service_kinds fallback for multi-kind provider, got %v", entries[0]["service_kinds"])
+	}
+}
+
+func TestListModelEntries_QwenCloudIncludesExpectedModels(t *testing.T) {
+	h := &ModelHandler{}
+	entries := h.listModelEntries("qwencloud", []string{"llm"}, nil, staticModels("qwencloud"), nil)
+	if len(entries) == 0 {
+		t.Fatal("expected QwenCloud model entries")
+	}
+	ids := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if id, ok := e["id"].(string); ok {
+			ids = append(ids, id)
+		}
+	}
+	want := []string{
+		"qwencloud/qwen3.7-plus",
+		"qwencloud/qwen3.7-max",
+		"qwencloud/qwen3.6-plus",
+		"qwencloud/qwen3.6-max",
+		"qwencloud/qwen3.6-flash",
+		"qwencloud/qwen3.5-omni-plus",
+		"qwencloud/qwen-plus",
+		"qwencloud/glm-5.2",
+		"qwencloud/deepseek-v4-flash",
+		"qwencloud/qwen3-coder-plus",
+	}
+	for _, w := range want {
+		if !slices.Contains(ids, w) {
+			t.Errorf("QwenCloud entries missing %q; got %v", w, ids)
+		}
+	}
+}
+
+func TestDefaultTestModel_ZenMuxReturnsPaidHead(t *testing.T) {
+	got := defaultTestModel("zenmux")
+	// Prefer the historical paid head; fallbacks are acceptable when it is not in catalog.
+	wantOptions := []string{"openai/gpt-5.6-luna", "openai/gpt-5.6-terra", "openai/gpt-5.6-sol"}
+	for _, want := range wantOptions {
+		if got == want {
+			return
+		}
+	}
+	t.Errorf("defaultTestModel(zenmux) = %q, want one of paid GPT-5.6 heads %v", got, wantOptions)
+}
+
+func TestDefaultTestModel_ZenMuxFreeReturnsFreeModel(t *testing.T) {
+	got := defaultTestModel("zenmux-free")
+	want := "inclusionai/ling-3.0-flash"
+	if got != want {
+		t.Errorf("defaultTestModel(zenmux-free) = %q, want %q", got, want)
+	}
+	freeModels := []string{
+		"inclusionai/ling-3.0-flash",
+		"z-ai/glm-4.7-flash-free",
+		"x-ai/grok-4.5-free",
+		"stepfun/step-3.7-flash-free",
+		"z-ai/glm-4.6v-flash-free",
+		"moonshotai/kimi-k3-free",
+	}
+	if !slices.Contains(freeModels, got) {
+		t.Errorf("defaultTestModel(zenmux-free) returned non-free model %q; expected one of %v", got, freeModels)
 	}
 }
 

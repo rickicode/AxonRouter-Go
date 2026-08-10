@@ -282,6 +282,76 @@ func TestDeviceFlow_PollSucceeds(t *testing.T) {
 	}
 }
 
+func TestExtractAccountIDFromPSD(t *testing.T) {
+	tests := []struct {
+		name string
+		psd  string
+		want string
+	}{
+		{
+			name: "account_id field",
+			psd:  `{"account_id":"acc-123"}`,
+			want: "acc-123",
+		},
+		{
+			name: "chatgpt_account_id field",
+			psd:  `{"chatgpt_account_id":"acc-456"}`,
+			want: "acc-456",
+		},
+		{
+			name: "workspaceId field",
+			psd:  `{"workspaceId":"ws-789"}`,
+			want: "ws-789",
+		},
+		{
+			name: "id_token JWT with chatgpt_account_id",
+			psd:  fmt.Sprintf(`{"id_token":"%s"}`, testIDTokenWithAccountID("acc-jwt")),
+			want: "acc-jwt",
+		},
+		{
+			name: "empty JSON",
+			psd:  `{}`,
+			want: "",
+		},
+		{
+			name: "account_id takes precedence over workspaceId",
+			psd:  `{"account_id":"acc-xyz","workspaceId":"ws-abc"}`,
+			want: "acc-xyz",
+		},
+		{
+			name: "two-part id_token rejected",
+			psd:  `{"id_token":"header.payload"}`,
+			want: "",
+		},
+		{
+			name: "empty segment id_token rejected",
+			psd:  `{"id_token":"header..sig"}`,
+			want: "",
+		},
+		{
+			name: "extra segment id_token rejected",
+			psd:  `{"id_token":"h.p.s.extra"}`,
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := extractAccountIDFromPSD(tt.psd); got != tt.want {
+				t.Errorf("extractAccountIDFromPSD(%q) = %q, want %q", tt.psd, got, tt.want)
+			}
+		})
+	}
+}
+
+func testIDTokenWithAccountID(accountID string) string {
+	claims, _ := json.Marshal(map[string]any{
+		"sub":                         accountID,
+		"https://api.openai.com/auth": map[string]string{"chatgpt_account_id": accountID},
+	})
+	payload := base64.RawURLEncoding.EncodeToString(claims)
+	return "header." + payload + ".sig"
+}
+
 func TestDeviceFlow_PollExpires(t *testing.T) {
 	calls := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -303,3 +373,41 @@ func TestDeviceFlow_PollExpires(t *testing.T) {
 	}
 }
 
+func TestOAuthClientID_EnvironmentOverride(t *testing.T) {
+	t.Setenv("AXON_CODEX_OAUTH_CLIENT_ID", "custom_client_id")
+	if got := codexOAuthClientID(); got != "custom_client_id" {
+		t.Errorf("codexOAuthClientID() = %q, want custom_client_id", got)
+	}
+}
+
+func TestOAuthClientID_Default(t *testing.T) {
+	t.Setenv("AXON_CODEX_OAUTH_CLIENT_ID", "")
+	if got := codexOAuthClientID(); got != ClientID {
+		t.Errorf("codexOAuthClientID() = %q, want default %q", got, ClientID)
+	}
+}
+
+func TestDeviceFlow_ClientID_HonorsEnvironment(t *testing.T) {
+	var gotClientID string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/usercode" {
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode body: %v", err)
+			}
+			gotClientID = body["client_id"]
+		}
+		w.Write([]byte(`{"device_auth_id":"daid","user_code":"UC-1234","verification_uri":"http://verify","interval":5}`))
+	}))
+	defer ts.Close()
+
+	t.Setenv("AXON_CODEX_OAUTH_CLIENT_ID", "custom_device_client_id")
+	svc := NewOAuthService(ts.Client())
+	svc.deviceUserCodeURL = ts.URL + "/usercode"
+	if _, err := svc.RequestDeviceUserCode(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotClientID != "custom_device_client_id" {
+		t.Errorf("client_id=%q, want custom_device_client_id", gotClientID)
+	}
+}

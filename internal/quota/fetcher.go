@@ -73,12 +73,14 @@ type providerMeta struct {
 // knownProviders maps provider_type_id to display metadata (colors, icons).
 // Display names are loaded from the DB provider_types table at runtime.
 var knownProviders = map[string]providerMeta{
-	"cx":       {DisplayName: "Codex", Color: "#10a37f", IconFile: "codex.svg"},
-	"ag":       {DisplayName: "Antigravity", Color: "#4285f4", IconFile: "antigravity.svg"},
-	"kiro":     {DisplayName: "Kiro", Color: "#ff9900", IconFile: "kiro.svg"},
-	"copilot":  {DisplayName: "GitHub Copilot", Color: "#24292E", IconFile: "copilot.png"},
-	"grok-cli": {DisplayName: "Grok CLI (Grok Build)", Color: "#000000", IconFile: "grok-cli.png"},
-	"freebuff": {DisplayName: "Freebuff", Color: "#8b5cf6", IconFile: ""},
+	"cx":        {DisplayName: "Codex", Color: "#10a37f", IconFile: "codex.svg"},
+	"ag":        {DisplayName: "Antigravity", Color: "#4285f4", IconFile: "antigravity.svg"},
+	"kiro":      {DisplayName: "Kiro", Color: "#ff9900", IconFile: "kiro.svg"},
+	"copilot":   {DisplayName: "GitHub Copilot", Color: "#24292E", IconFile: "copilot.png"},
+	"grok-cli":  {DisplayName: "Grok CLI (Grok Build)", Color: "#000000", IconFile: "grok-cli.png"},
+	"freebuff":  {DisplayName: "Freebuff", Color: "#8b5cf6", IconFile: ""},
+	"codebuddy": {DisplayName: "CodeBuddy", Color: "#5b21b6", IconFile: "codebuddy.png"},
+	"qoder":     {DisplayName: "Qoder", Color: "#000000", IconFile: "qoder.svg"},
 }
 
 // ProviderMeta returns display metadata for a provider type, if known.
@@ -227,6 +229,26 @@ func parseProviderSpecificData(raw sql.NullString) map[string]any {
 	return m
 }
 
+// parseProviderSpecificStrings returns a string-only view of the raw
+// provider_specific_data JSON column. It keeps the same keys but drops
+// non-string values, matching what the auth-manager refresh path expects.
+func parseProviderSpecificStrings(raw sql.NullString) map[string]string {
+	if !raw.Valid || raw.String == "" {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(raw.String), &m); err != nil {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		if s, ok := v.(string); ok {
+			out[k] = s
+		}
+	}
+	return out
+}
+
 // mapStringToAny converts a string-string map to the map[string]any used by fetchers.
 func mapStringToAny(in map[string]string) map[string]any {
 	if in == nil {
@@ -320,6 +342,11 @@ var unrecoverableOAuthCodes = map[string]bool{
 	"unrecoverable_refresh_error": true,
 }
 
+// IsUnrecoverableRefreshError is the exported form used by other packages.
+func IsUnrecoverableRefreshError(err error) bool {
+	return isUnrecoverableRefreshError(err)
+}
+
 // isUnrecoverableRefreshError checks if a refresh error indicates the token is permanently invalid.
 func isUnrecoverableRefreshError(err error) bool {
 	if err == nil {
@@ -366,83 +393,81 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 		refreshLead = 300 // 5 minutes for Kiro
 	}
 
+	var proactiveRefreshDone bool
+
 	if c.OAuthExpiresAt > 0 && c.OAuthRefreshToken.Valid && c.OAuthRefreshToken.String != "" &&
 		time.Now().Unix() > c.OAuthExpiresAt-refreshLead {
 		var (
 			newToken            string
-			newRefreshToken     string
-			newExpiry           int64
 			newProviderSpecific map[string]string
 			refreshed           bool
+			authMgrAttempted    bool
 		)
 
 		// Prefer auth manager for all OAuth providers (includes Codex singleflight + rotation groups).
 		if authMgr != nil {
 			providerType := auth.ProviderType(providerID)
 			if _, ok := authMgr.GetService(providerType); ok {
+				providerSpecific := parseProviderSpecificStrings(c.ProviderSpecificData)
 				creds := &auth.Credentials{
-					AccessToken:  token,
-					RefreshToken: c.OAuthRefreshToken.String,
-					ExpiresAt:    time.Unix(c.OAuthExpiresAt, 0),
+					AccessToken:      token,
+					RefreshToken:     c.OAuthRefreshToken.String,
+					ExpiresAt:        time.Unix(c.OAuthExpiresAt, 0),
+					ProviderSpecific: providerSpecific,
 				}
-				newCreds, err := authMgr.RefreshToken(context.Background(), providerType, creds)
+				newCreds, err := authMgr.RefreshTokenForConnection(context.Background(), c.ID, providerType, creds)
 				if err == nil {
 					newToken = newCreds.AccessToken
-					newRefreshToken = newCreds.RefreshToken
-					if !newCreds.ExpiresAt.IsZero() {
-						newExpiry = newCreds.ExpiresAt.Unix()
-					}
 					newProviderSpecific = newCreds.ProviderSpecific
 					refreshed = true
+					proactiveRefreshDone = true
 				} else {
 					log.Printf("quota: auth manager token refresh failed for %s (%s): %v", c.ID, c.Name, err)
-					cq.Error = fmt.Sprintf("token refresh failed: %v", err)
-					if isUnrecoverableRefreshError(err) && db != nil {
-						now := time.Now().Unix()
-						if _, derr := db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', updated_at = ? WHERE id = ?`, now, c.ID); derr == nil {
-							log.Printf("quota: connection %s disabled due to unrecoverable refresh error", c.ID)
+					// If the current access token is still valid, keep using it for the quota
+					// fetch instead of failing the whole quota check. Refresh will be retried on
+					// the next scheduler tick and during request-time proactive refresh.
+					if time.Now().Unix() < c.OAuthExpiresAt {
+						cq.Message = fmt.Sprintf("token refresh deferred: %v", err)
+						authMgrAttempted = true
+					} else {
+						cq.Error = fmt.Sprintf("token refresh failed: %v", err)
+						if isUnrecoverableRefreshError(err) && db != nil {
+							now := time.Now().Unix()
+							if _, derr := db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', disabled_reason = 'auth_failed', updated_at = ? WHERE id = ?`, now, c.ID); derr == nil {
+								log.Printf("quota: connection %s disabled due to unrecoverable refresh error", c.ID)
+							}
 						}
+						return cq
 					}
-					return cq
 				}
 			}
 		}
 
 		// Raw fallback for Antigravity and Kiro when auth manager is unavailable/failed.
-		if !refreshed && (providerID == "ag" || providerID == "kiro") {
+		if !refreshed && !authMgrAttempted && (providerID == "ag" || providerID == "kiro") {
 			var err error
-			newToken, newRefreshToken, newExpiry, err = refreshOAuthToken(providerID, c.OAuthRefreshToken.String)
+			newToken, _, _, err = refreshOAuthToken(providerID, c.OAuthRefreshToken.String)
 			if err != nil {
 				log.Printf("quota: raw token refresh failed for %s (%s): %v", c.ID, c.Name, err)
 				cq.Error = fmt.Sprintf("token refresh failed: %v", err)
 				if isUnrecoverableRefreshError(err) && db != nil {
 					now := time.Now().Unix()
-					if _, derr := db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', updated_at = ? WHERE id = ?`, now, c.ID); derr == nil {
+					if _, derr := db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', disabled_reason = 'auth_failed', updated_at = ? WHERE id = ?`, now, c.ID); derr == nil {
 						log.Printf("quota: connection %s disabled due to unrecoverable refresh error", c.ID)
 					}
 				}
 				return cq
 			}
 			refreshed = true
+			proactiveRefreshDone = true
 		}
 
 		if refreshed {
 			token = newToken
-			var psdJSON []byte
 			if len(newProviderSpecific) > 0 {
-				psdJSON, _ = json.Marshal(newProviderSpecific)
+				psdJSON, _ := json.Marshal(newProviderSpecific)
 				psd = mapStringToAny(newProviderSpecific)
 				c.ProviderSpecificData = sql.NullString{Valid: true, String: string(psdJSON)}
-			}
-			if db != nil {
-				now := time.Now().Unix()
-				if psdJSON != nil {
-					db.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?`,
-						newToken, newRefreshToken, newExpiry, psdJSON, now, c.ID)
-				} else {
-					db.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`,
-						newToken, newRefreshToken, newExpiry, now, c.ID)
-				}
 			}
 		}
 	}
@@ -455,61 +480,121 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 		err     error
 	}
 
-	ch := make(chan fetchResult, 1)
-	go func() {
-		var r fetchResult
-		switch providerID {
-		case "cx":
-			r.quotas, r.plan, r.headers, r.err = fetchCodexQuota(token, psd)
-		case "ag":
-			r.quotas, r.plan, r.err = fetchAntigravityQuota(token, psd)
-		case "kiro":
-			r.quotas, r.plan, r.err = fetchKiroQuota(token, psd)
-		case "grok-cli":
-			r.quotas, r.plan, r.err = fetchGrokCliQuota(token, psd)
-		case "freebuff":
-			r.quotas, r.plan, r.err = fetchFreebuffQuota(token)
-		case "copilot":
-			// The /user endpoint requires the GitHub OAuth access token, not the
-			// short-lived Copilot token. See OmniRoute open-sse/services/usage.ts:643.
-			r.quotas, r.plan, r.err = fetchCopilotQuota(token)
-			// Refresh the short-lived Copilot token in the background so the
-			// executor and dashboard expiry timer stay current.
-			if _, _, syncErr := refreshCopilotTokenIfNeeded(db, c.ID, token, psd); syncErr != nil {
-				log.Printf("quota: failed to sync Copilot token expiry for %s: %v", c.ID, syncErr)
+	doFetch := func(tok string, psd map[string]any) fetchResult {
+		ch := make(chan fetchResult, 1)
+		go func() {
+			var r fetchResult
+			switch providerID {
+			case "cx":
+				r.quotas, r.plan, r.headers, r.err = fetchCodexQuota(tok, psd)
+			case "ag":
+				r.quotas, r.plan, r.err = fetchAntigravityQuota(tok, psd)
+			case "kiro":
+				r.quotas, r.plan, r.msg, r.err = fetchKiroQuota(tok, psd)
+			case "grok-cli":
+				r.quotas, r.plan, r.err = fetchGrokCliQuota(tok, psd)
+			case "freebuff":
+				r.quotas, r.plan, r.err = fetchFreebuffQuota(tok)
+			case "copilot":
+				// The /user endpoint requires the GitHub OAuth access token, not the
+				// short-lived Copilot token. See OmniRoute open-sse/services/usage.ts:643.
+				r.quotas, r.plan, r.err = fetchCopilotQuota(tok)
+				// Refresh the short-lived Copilot token in the background so the
+				// executor and dashboard expiry timer stay current.
+				if _, _, syncErr := refreshCopilotTokenIfNeeded(db, c.ID, tok, psd); syncErr != nil {
+					log.Printf("quota: failed to sync Copilot token expiry for %s: %v", c.ID, syncErr)
+				}
+			case "codebuddy":
+				r.quotas, r.plan, r.err = fetchCodeBuddyQuota(tok, psd)
+			case "qoder":
+				r.quotas, r.plan, r.err = fetchQoderQuota(tok, psd)
+			default:
+				if _, known := knownProviders[providerID]; known {
+					// A provider in knownProviders must have a fetcher; fail loudly so it
+					// shows up in the dashboard instead of silently showing "No quota data".
+					r.err = fmt.Errorf("no quota fetcher implemented for provider: %s", providerID)
+				} else {
+					r.msg = "Quota fetching not supported for this provider"
+				}
 			}
-		default:
-			if _, known := knownProviders[providerID]; known {
-				// A provider in knownProviders must have a fetcher; fail loudly so it
-				// shows up in the dashboard instead of silently showing "No quota data".
-				r.err = fmt.Errorf("no quota fetcher implemented for provider: %s", providerID)
-			} else {
-				r.msg = "Quota fetching not supported for this provider"
-			}
-		}
-		ch <- r
-	}()
+			ch <- r
+		}()
 
-	select {
-	case r := <-ch:
-		if r.err != nil {
-			cq.Error = r.err.Error()
-		} else {
-			cq.Quotas = r.quotas
-			cq.Plan = r.plan
-			cq.Message = r.msg
-
-			// Codex /wham/usage may carry x-codex-5h-* / x-codex-7d-* headers. If so,
-			// merge them into the cached quota so the dashboard can render 5h/7d bars
-			// even before a live Codex chat request happens.
-			if providerID == "cx" && r.headers != nil && (r.headers.Get("x-codex-5h-limit") != "" || r.headers.Get("x-codex-7d-limit") != "") {
-				SaveCodexHeaderQuota(db, c.ID, providerID, c.Name, r.plan, r.headers)
-			}
+		select {
+		case r := <-ch:
+			return r
+		case <-time.After(15 * time.Second):
+			return fetchResult{err: fmt.Errorf("quota fetch timed out (15s)")}
 		}
-	case <-time.After(15 * time.Second):
-		cq.Error = "Quota fetch timed out (15s)"
+	}
+
+	r := doFetch(token, psd)
+
+	// On an auth error, force a token refresh and retry once. This covers the case
+	// where the token became invalid between scheduler ticks or where the proactive
+	// refresh was deferred because the token was still within its expiry window.
+	if r.err != nil && auth.IsAuthError(r.err) && !proactiveRefreshDone &&
+		c.OAuthRefreshToken.Valid && c.OAuthRefreshToken.String != "" {
+		if newToken, newPSD, ok := forceRefreshOnQuotaAuthError(c, token, psd, providerID, db); ok {
+			token = newToken
+			psd = newPSD
+			r = doFetch(token, psd)
+		}
+	}
+
+	if r.err != nil {
+		cq.Error = r.err.Error()
+	} else {
+		cq.Quotas = r.quotas
+		cq.Plan = r.plan
+		cq.Message = r.msg
+
+		// Codex /wham/usage may carry x-codex-5h-* / x-codex-7d-* headers. If so,
+		// merge them into the cached quota so the dashboard can render 5h/7d bars
+		// even before a live Codex chat request happens.
+		if providerID == "cx" && r.headers != nil && (r.headers.Get("x-codex-5h-limit") != "" || r.headers.Get("x-codex-7d-limit") != "") {
+			SaveCodexHeaderQuota(db, c.ID, providerID, c.Name, r.plan, r.headers)
+		}
 	}
 
 	setCachedQuota(c.ID, cq)
 	return cq
+}
+
+// forceRefreshOnQuotaAuthError performs an unconditional token refresh via the
+// auth manager when a quota fetch fails with an auth error. It returns the new
+// token and provider-specific data if the refresh succeeded.
+func forceRefreshOnQuotaAuthError(c connRow, token string, psd map[string]any, providerID string, db *sql.DB) (string, map[string]any, bool) {
+	if authMgr == nil {
+		return "", nil, false
+	}
+	providerType := auth.ProviderType(providerID)
+	if _, ok := authMgr.GetService(providerType); !ok {
+		return "", nil, false
+	}
+
+	providerSpecific := parseProviderSpecificStrings(c.ProviderSpecificData)
+
+	creds := &auth.Credentials{
+		AccessToken:      token,
+		RefreshToken:     c.OAuthRefreshToken.String,
+		ExpiresAt:        time.Unix(c.OAuthExpiresAt, 0),
+		ProviderSpecific: providerSpecific,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	newCreds, err := authMgr.RefreshTokenForConnection(ctx, c.ID, providerType, creds)
+	if err != nil {
+		log.Printf("quota: forced token refresh failed for %s (%s): %v", c.ID, c.Name, err)
+		return "", nil, false
+	}
+
+	if len(newCreds.ProviderSpecific) > 0 {
+		psd = mapStringToAny(newCreds.ProviderSpecific)
+	}
+
+	log.Printf("quota: forced token refresh succeeded for %s (%s)", c.ID, c.Name)
+	return newCreds.AccessToken, psd, true
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
+	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
@@ -27,15 +28,30 @@ func (h *Handler) Responses(c *gin.Context) {
 
 	// Apply compression (fail-open); skip if the request uses prompt-cache markers.
 	body = h.compressRequestBody(body)
+	c.Set("service_tier", extractServiceTier(body))
 
-	model := executor.JSONGet(body, "model")
+	body, model, _ := h.parseThinkingSuffixFromBody(c, body)
 	if model == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "model is required", "type": "invalid_request_error"}})
 		return
 	}
+	if !h.isModelAllowed(c.Request.Context(), model) {
+		c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"message": "model not allowed for this API key", "type": "invalid_request_error"}})
+		return
+	}
+
+	// Smart virtual model routing resolves smart/* ids to a concrete model
+	// before cache/combo/direct routing. On failure it falls through.
+	if resolved, updated, ok := h.resolveVirtualModel(c.Request.Context(), model, body); ok {
+		model = resolved
+		body = updated
+	}
 
 	stream := executor.IsStreamRequest(body)
 	if h.checkTokenBudget(c, body) != nil {
+		return
+	}
+	if h.checkAPIKeyBudget(c) != nil {
 		return
 	}
 
@@ -67,6 +83,9 @@ func (h *Handler) Responses(c *gin.Context) {
 		provider = "cx"
 		modelName = model
 	}
+
+	sessionID := h.sessionIDForAffinity(c, provider, modelName, body)
+
 	exec, providerFormat, err := h.resolveExecutor(provider, modelName)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": err.Error(), "type": "invalid_request_error"}})
@@ -75,6 +94,7 @@ func (h *Handler) Responses(c *gin.Context) {
 	body = executor.JSONSet(body, "model", modelName)
 	clientFormat := executor.FormatOpenAIResponses
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
+	translatedBody = h.applyThinkingOverrideFromContext(c.Request.Context(), translatedBody, string(providerFormat))
 	translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
 
 	// NOTE: configurable via failover_max_attempts setting.
@@ -82,15 +102,27 @@ func (h *Handler) Responses(c *gin.Context) {
 	var lastConn *Connection
 	var lastErr error
 	var lastErrCategory string
+	var lastFailedConnID string
 attemptLoop:
 	for attempt := range maxAttempts {
 		if c.Request.Context().Err() != nil {
 			writeContextDone(c)
 			return
 		}
-		conn, err := h.getConnection(c.Request.Context(), provider, modelName)
+		var conn *Connection
+		var err error
+		if lastFailedConnID != "" {
+			conn, err = h.getConnection(c.Request.Context(), provider, modelName, sessionID, lastFailedConnID)
+		} else {
+			conn, err = h.getConnection(c.Request.Context(), provider, modelName, sessionID)
+		}
 		if err != nil {
 			if attempt == 0 {
+				if cat := h.classifyProviderUnavailableForModel(provider, modelName); cat != connstate.ErrorUnknown {
+					msg, statusCode, errType := buildFailoverErrorResponse(string(cat), nil, modelName)
+					c.JSON(statusCode, gin.H{"error": gin.H{"message": msg, "type": errType}})
+					return
+				}
 				c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
 				return
 			}
@@ -98,12 +130,12 @@ attemptLoop:
 		}
 		lastConn = conn
 		h.proactiveRefreshToken(c.Request.Context(), conn, provider)
-	psdMap := map[string]string{}
-	if conn.ProviderSpecificData != "" {
-		if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
-			logging.Logger.Warn("malformed provider_specific_data", "conn", shortID(conn.ID, 8), "error", err.Error())
+		psdMap := map[string]string{}
+		if conn.ProviderSpecificData != "" {
+			if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
+				logging.Logger.Warn("malformed provider_specific_data", "conn", shortID(conn.ID, 8), "error", err.Error())
+			}
 		}
-	}
 
 		req := &executor.Request{
 			Model:                modelName,
@@ -141,28 +173,30 @@ attemptLoop:
 		if provider == "cx" {
 			h.codexPersistIfCodex(conn, resp, streamResult)
 		}
-	if err != nil {
-		if h.isClientCanceled(c, err) {
-			return
-		}
-		// NOTE: auth and balance failures rotate to sibling connections before surfacing.
-		det := connstate.DetectError(proxyCtx, 0, "", err, provider, modelName, nil)
-		if !isFailoverEligible(det.Category) {
-			if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
+		if err != nil {
+			if h.isClientCanceled(c, err) {
 				return
 			}
+			// NOTE: auth and balance failures rotate to sibling connections before surfacing.
+			det := connstate.DetectError(proxyCtx, 0, "", err, provider, modelName, nil)
+			if !isFailoverEligible(det.Category) {
+				if h.writeUpstreamClientError(proxyCtx, c, err, conn, provider, modelName, start, stream) {
+					return
+				}
+			}
+			retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
+			lastErr = err
+			lastErrCategory = cat
+			lastFailedConnID = conn.ID
+			h.clearAffinitySession(provider, sessionID, modelName)
+			if !retry {
+				break attemptLoop
+			}
+			if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
+				return
+			}
+			continue
 		}
-		retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
-		lastErr = err
-		lastErrCategory = cat
-		if !retry {
-			break attemptLoop
-		}
-		if !failoverBackoff(c.Request.Context(), attempt, maxAttempts) {
-			return
-		}
-		continue
-	}
 		h.resetBanCount(conn.ID)
 		h.persistSuccess(conn.ID)
 		h.combo.RecordSuccess(conn.ID)
@@ -175,11 +209,10 @@ attemptLoop:
 				return b
 			}
 
-			// Holdback buffer: wait 750ms/64KB before committing to this connection.
-			// If the stream errors during holdback, retry the next connection
-			// transparently. Matches OmniRoute holdback behavior.
-			holdbackMs := 750
-			holdbackBytes := 64 * 1024
+			// Holdback buffer: wait for the configured window before committing to
+			// this connection. If the stream errors during holdback, retry the next
+			// connection transparently. Matches OmniRoute holdback behavior.
+			holdbackMs, holdbackBytes := h.holdbackConfig(provider)
 			streamCtx, cancelStream := context.WithCancel(c.Request.Context())
 			defer cancelStream()
 			holdbackChunks, holdbackErrCh := executor.WrapWithHoldback(streamCtx, streamResult.Chunks, holdbackMs, holdbackBytes)
@@ -196,7 +229,7 @@ attemptLoop:
 							return
 						}
 					}
-					if connstate.HasPerModelQuota(provider) && det.ModelID != "" && (det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
+					if det.ModelID != "" && (det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
 						scope := connstate.ModelScope(provider, det.ModelID)
 						h.exhaustion.MarkExhausted(quota.ExhaustKey(conn.ID, scope), quota.TTLFromCooldown(det.CooldownUntil, 5*time.Minute))
 					} else if det.Category == connstate.ErrorRateLimit {
@@ -211,7 +244,7 @@ attemptLoop:
 					h.combo.RecordFailure(conn.ID, det)
 					h.persistCooldownScoped(conn.ID, det)
 					if det.Status != connstate.StatusReady {
-						h.elig.ScheduleUpdate()
+						h.elig.ScheduleUpdateProvider(provider)
 					}
 					lastErr = holdbackErr
 					lastErrCategory = string(det.Category)
@@ -237,7 +270,7 @@ attemptLoop:
 						return
 					}
 				}
-				if connstate.HasPerModelQuota(provider) && det.ModelID != "" && (det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
+				if det.ModelID != "" && (det.Category == connstate.ErrorRateLimit || det.Category == connstate.ErrorQuota) {
 					scope := connstate.ModelScope(provider, det.ModelID)
 					h.exhaustion.MarkExhausted(quota.ExhaustKey(conn.ID, scope), quota.TTLFromCooldown(det.CooldownUntil, 5*time.Minute))
 				} else if det.Category == connstate.ErrorRateLimit {
@@ -252,7 +285,7 @@ attemptLoop:
 				h.combo.RecordFailure(conn.ID, det)
 				h.persistCooldownScoped(conn.ID, det)
 				if det.Status != connstate.StatusReady {
-					h.elig.ScheduleUpdate()
+					h.elig.ScheduleUpdateProvider(provider)
 				}
 				lastErr = streamErr
 				lastErrCategory = "stream-" + string(det.Category)
@@ -275,29 +308,40 @@ attemptLoop:
 					tokensEstimated = true
 				}
 			}
-		h.logRequest(c, &usage.LogEntry{
-			ApiKeyID: c.GetString("api_key_id"),
-			ConnectionID: conn.ID,
-			ProviderTypeID: provider,
-			ModelID: modelName,
-			ProxyPoolID: executor.ProxyPoolIDFromContext(proxyCtx),
-			ApiType:     apiTypeFromPath(c.Request.URL.Path),
-			Modality: "chat",
-			Stream: stream,
-			InputTokens: tokenCounts.InputTokens,
-			OutputTokens: tokenCounts.OutputTokens,
-			ReasoningTokens: tokenCounts.ReasoningTokens,
-			CachedTokens: tokenCounts.CachedTokens,
-			CacheCreationTokens: tokenCounts.CacheCreationTokens,
-			LatencyMs: latency,
-			StatusCode: resp.StatusCode,
-			TokensEstimated: tokensEstimated,
-		})
-		h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
-		if resp.StatusCode < 300 {
-			h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
-		}
-		h.writeJSONResponse(c, resp.StatusCode, translatedResp)
+			estCost := resp.CostUsd
+			if estCost == 0 {
+				estCost = usage.EstimateCost(modelName, "chat", 0, tokenCounts.InputTokens, tokenCounts.OutputTokens, tokenCounts.ReasoningTokens, tokenCounts.CachedTokens, tokenCounts.CacheCreationTokens)
+			}
+			h.logRequest(c, &usage.LogEntry{
+				ApiKeyID:            c.GetString("api_key_id"),
+				ConnectionID:        conn.ID,
+				ProviderTypeID:      provider,
+				ModelID:             modelName,
+				ProxyPoolID:         executor.ProxyPoolIDFromContext(proxyCtx),
+				ApiType:             apiTypeFromPath(c.Request.URL.Path),
+				Modality:            "chat",
+				Stream:              stream,
+				InputTokens:         tokenCounts.InputTokens,
+				OutputTokens:        tokenCounts.OutputTokens,
+				ReasoningTokens:     tokenCounts.ReasoningTokens,
+				CachedTokens:        tokenCounts.CachedTokens,
+				CacheCreationTokens: tokenCounts.CacheCreationTokens,
+				CostUsd:             estCost,
+				LatencyMs:           latency,
+				StatusCode:          resp.StatusCode,
+				TokensEstimated:     tokensEstimated,
+			})
+			h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
+	if resp.StatusCode < 300 {
+		h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
+	}
+	h.writeJSONResponse(c, resp.StatusCode, translatedResp, responseCost{
+		modelID:         modelName,
+		exactCost:       resp.CostUsd,
+		counts:          tokenCounts,
+		tokensEstimated: tokensEstimated,
+		flatRate:        h.isFlatRate(provider),
+	})
 		}
 		return
 	}
@@ -322,4 +366,12 @@ attemptLoop:
 		return
 	}
 	c.JSON(statusCode, gin.H{"error": gin.H{"message": msg, "type": errType, "detail": detail}})
+}
+
+// holdbackConfig returns the streaming holdback window for a provider.
+func (h *Handler) holdbackConfig(provider string) (int, int) {
+	if h.providerCfg != nil {
+		return h.providerCfg.Holdback(provider)
+	}
+	return providercfg.DefaultHoldbackMs, providercfg.DefaultHoldbackBytes
 }

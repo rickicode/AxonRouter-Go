@@ -25,14 +25,14 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: Lint
-        run: make lint
-
-      - name: Test
-        run: make test
-
       - name: Build frontend
         working-directory: ./web
         run: |
           npm ci
           npm run build
+
+      - name: Lint
+        run: make lint
+
+      - name: Test
+        run: make test

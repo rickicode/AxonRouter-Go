@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,15 @@ const (
 	ClientID    = "app_EMoamEEZ73f0CkXaXp7hrann"
 	RedirectURI = "http://localhost:%d/auth/callback"
 )
+
+// codexOAuthClientID returns the configured Codex OAuth client ID.
+// AXON_CODEX_OAUTH_CLIENT_ID overrides the built-in default.
+func codexOAuthClientID() string {
+	if id := strings.TrimSpace(os.Getenv("AXON_CODEX_OAUTH_CLIENT_ID")); id != "" {
+		return id
+	}
+	return ClientID
+}
 
 // OAuthService handles Codex OAuth2 PKCE flow.
 type OAuthService struct {
@@ -117,7 +127,7 @@ func (s *OAuthService) GenerateAuthURL(ctx context.Context, state string) (strin
 	redirectURI := fmt.Sprintf(RedirectURI, port)
 
 	params := url.Values{
-		"client_id":                  {ClientID},
+		"client_id":                  {codexOAuthClientID()},
 		"response_type":              {"code"},
 		"redirect_uri":               {redirectURI},
 		"scope":                      {"openid profile email offline_access"},
@@ -141,7 +151,7 @@ func (s *OAuthService) ExchangeCode(ctx context.Context, code string) (*auth.Cre
 func (s *OAuthService) exchangeCode(ctx context.Context, code, redirectURI, codeVerifier string) (*auth.Credentials, error) {
 	data := url.Values{
 		"grant_type":   {"authorization_code"},
-		"client_id":    {ClientID},
+		"client_id":    {codexOAuthClientID()},
 		"code":         {code},
 		"redirect_uri": {redirectURI},
 	}
@@ -203,7 +213,7 @@ func (s *OAuthService) RefreshToken(ctx context.Context, creds *auth.Credentials
 
 	data := url.Values{
 		"grant_type":    {"refresh_token"},
-		"client_id":     {ClientID},
+		"client_id":     {codexOAuthClientID()},
 		"refresh_token": {creds.RefreshToken},
 	}
 

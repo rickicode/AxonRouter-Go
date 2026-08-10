@@ -98,6 +98,9 @@ func (h *SettingHandler) Delete(c *gin.Context) {
 // DefaultSettings returns the default settings with their values.
 var DefaultSettings = map[string]string{
 	"quota_check_interval_min":    "30",
+	"claude_auto_ping":            `{"enabled":false,"connections":{}}`,
+	"codex_auto_ping":             `{"enabled":false,"connections":{}}`,
+	"auto_ping_metrics":           `{}`,
 	"port":                        "3777",
 	"rate_limit_per_min":          "600",
 	"log_retention_days":          "30",
@@ -114,6 +117,11 @@ var DefaultSettings = map[string]string{
 	"compression_lite_dedup":      "false",
 	"combo_strategy":              "priority",
 	"combo_strategies":            "{}",
+	"cc_filter_naming":            "false",
+	"headroom_enabled":            "false",
+	"headroom_endpoint":           "127.0.0.1:9123",
+	"headroom_timeout_ms":           "30000",
+	"headroom_max_payload_bytes":    "524288",
 }
 
 // SeedDefaults inserts default settings if they don't exist.

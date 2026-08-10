@@ -60,11 +60,11 @@ func (h *QuotaHandler) Summary(c *gin.Context) {
 		Total       int               `json:"total"`
 		Statuses    map[string]int    `json:"statuses"`
 		NextReset   string            `json:"next_reset,omitempty"`
-		SavingsUSD  float64           `json:"savings_usd"`
+		SpentUSD    float64           `json:"spent_usd"`
 	}
 
 	resets, _ := quota.NextProviderResets(h.db)
-	savingsByProvider, totalSavings, _ := usage.SavingsThisMonth(h.db)
+	costByProvider, totalCost, _ := usage.CostThisMonth(h.db)
 
 	providerMap := make(map[string]*providerSummary)
 	for rows.Next() {
@@ -97,14 +97,14 @@ func (h *QuotaHandler) Summary(c *gin.Context) {
 	var summaries []providerSummary
 	for _, s := range providerMap {
 		s.NextReset = resets[s.ProviderID]
-		s.SavingsUSD = savingsByProvider[s.ProviderID]
+		s.SpentUSD = costByProvider[s.ProviderID]
 		summaries = append(summaries, *s)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"providers":    summaries,
-		"savings_usd":  totalSavings,
-		"next_reset":   earliestReset(resets),
+		"providers":  summaries,
+		"spent_usd":  totalCost,
+		"next_reset": earliestReset(resets),
 	})
 }
 

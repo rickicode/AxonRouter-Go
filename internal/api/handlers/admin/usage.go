@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/quota"
+	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
 
 // UsageHandler aggregates request_logs into rich usage reports.
@@ -62,6 +64,19 @@ type timeBucket struct {
 	ReasonTokens int64   `json:"reasoning_tokens"`
 	Tokens       int64   `json:"tokens"`
 	CostUSD      float64 `json:"cost_usd"`
+}
+
+type activityDay struct {
+	Date     string  `json:"date"`
+	Requests int64   `json:"requests"`
+	Tokens   int64   `json:"tokens"`
+	CostUSD  float64 `json:"cost_usd"`
+}
+
+type activityResponse struct {
+	From string        `json:"from"`
+	To   string        `json:"to"`
+	Days []activityDay `json:"days"`
 }
 
 type usageSummary struct {
@@ -182,7 +197,7 @@ func (h *UsageHandler) summary(ctx context.Context, f usageFilters) (usageSummar
 			COALESCE(SUM(rl.output_tokens), 0),
 			COALESCE(SUM(rl.reasoning_tokens), 0),
 			COALESCE(SUM(rl.input_tokens + rl.output_tokens + rl.reasoning_tokens), 0),
-			COALESCE(SUM(rl.cost_usd), 0),
+			COALESCE(SUM(CASE WHEN rl.flat_rate = 1 THEN 0 ELSE rl.cost_usd END), 0),
 			COALESCE(SUM(CASE WHEN rl.status_code >= 400 OR rl.error_message IS NOT NULL THEN 1 ELSE 0 END), 0),
 			COALESCE(AVG(rl.latency_ms), 0)
 		FROM request_logs rl
@@ -214,7 +229,7 @@ func (h *UsageHandler) byAPIKey(ctx context.Context, f usageFilters) ([]usageBre
 			COALESCE(SUM(rl.output_tokens), 0),
 			COALESCE(SUM(rl.reasoning_tokens), 0),
 			COALESCE(SUM(rl.input_tokens + rl.output_tokens + rl.reasoning_tokens), 0),
-			COALESCE(SUM(rl.cost_usd), 0),
+			COALESCE(SUM(CASE WHEN rl.flat_rate = 1 THEN 0 ELSE rl.cost_usd END), 0),
 			COALESCE(SUM(CASE WHEN rl.status_code >= 400 OR rl.error_message IS NOT NULL THEN 1 ELSE 0 END), 0),
 			COALESCE(AVG(rl.latency_ms), 0),
 			MIN(rl.timestamp),
@@ -242,7 +257,7 @@ func (h *UsageHandler) byModel(ctx context.Context, f usageFilters) ([]usageBrea
 			COALESCE(SUM(rl.output_tokens), 0),
 			COALESCE(SUM(rl.reasoning_tokens), 0),
 			COALESCE(SUM(rl.input_tokens + rl.output_tokens + rl.reasoning_tokens), 0),
-			COALESCE(SUM(rl.cost_usd), 0),
+			COALESCE(SUM(CASE WHEN rl.flat_rate = 1 THEN 0 ELSE rl.cost_usd END), 0),
 			COALESCE(SUM(CASE WHEN rl.status_code >= 400 OR rl.error_message IS NOT NULL THEN 1 ELSE 0 END), 0),
 			COALESCE(AVG(rl.latency_ms), 0),
 			MIN(rl.timestamp),
@@ -270,7 +285,7 @@ func (h *UsageHandler) byProvider(ctx context.Context, f usageFilters) ([]usageB
 			COALESCE(SUM(rl.output_tokens), 0),
 			COALESCE(SUM(rl.reasoning_tokens), 0),
 			COALESCE(SUM(rl.input_tokens + rl.output_tokens + rl.reasoning_tokens), 0),
-			COALESCE(SUM(rl.cost_usd), 0),
+			COALESCE(SUM(CASE WHEN rl.flat_rate = 1 THEN 0 ELSE rl.cost_usd END), 0),
 			COALESCE(SUM(CASE WHEN rl.status_code >= 400 OR rl.error_message IS NOT NULL THEN 1 ELSE 0 END), 0),
 			COALESCE(AVG(rl.latency_ms), 0),
 			MIN(rl.timestamp),
@@ -298,7 +313,7 @@ func (h *UsageHandler) byModality(ctx context.Context, f usageFilters) ([]usageB
 			COALESCE(SUM(rl.output_tokens), 0),
 			COALESCE(SUM(rl.reasoning_tokens), 0),
 			COALESCE(SUM(rl.input_tokens + rl.output_tokens + rl.reasoning_tokens), 0),
-			COALESCE(SUM(rl.cost_usd), 0),
+			COALESCE(SUM(CASE WHEN rl.flat_rate = 1 THEN 0 ELSE rl.cost_usd END), 0),
 			COALESCE(SUM(CASE WHEN rl.status_code >= 400 OR rl.error_message IS NOT NULL THEN 1 ELSE 0 END), 0),
 			COALESCE(AVG(rl.latency_ms), 0),
 			MIN(rl.timestamp),
@@ -325,7 +340,7 @@ func (h *UsageHandler) byStatus(ctx context.Context, f usageFilters) ([]usageBre
 			COALESCE(SUM(rl.output_tokens), 0),
 			COALESCE(SUM(rl.reasoning_tokens), 0),
 			COALESCE(SUM(rl.input_tokens + rl.output_tokens + rl.reasoning_tokens), 0),
-			COALESCE(SUM(rl.cost_usd), 0),
+			COALESCE(SUM(CASE WHEN rl.flat_rate = 1 THEN 0 ELSE rl.cost_usd END), 0),
 			COALESCE(SUM(CASE WHEN rl.status_code >= 400 OR rl.error_message IS NOT NULL THEN 1 ELSE 0 END), 0),
 			COALESCE(AVG(rl.latency_ms), 0),
 			MIN(rl.timestamp),
@@ -379,7 +394,7 @@ func (h *UsageHandler) byTime(ctx context.Context, f usageFilters) ([]timeBucket
 			COALESCE(SUM(rl.output_tokens), 0),
 			COALESCE(SUM(rl.reasoning_tokens), 0),
 			COALESCE(SUM(rl.input_tokens + rl.output_tokens + rl.reasoning_tokens), 0),
-			COALESCE(SUM(rl.cost_usd), 0)
+			COALESCE(SUM(CASE WHEN rl.flat_rate = 1 THEN 0 ELSE rl.cost_usd END), 0)
 		FROM request_logs rl
 		%s
 		GROUP BY bucket
@@ -509,4 +524,100 @@ func parseInt(v string) (int, error) {
 	var n int
 	_, err := fmt.Sscanf(v, "%d", &n)
 	return n, err
+}
+
+// Summary returns compact usage stats for the dashboard system-metrics cards.
+// GET /api/admin/usage/summary
+func (h *UsageHandler) Summary(c *gin.Context) {
+	agg := usage.NewAggregator(h.db)
+
+	today, _ := agg.GetTodaySummary()
+	yesterday, _ := agg.GetDaySummary(-1)
+	month, _ := agg.GetMonthToDateSummary()
+
+	now := time.Now().UTC()
+	daysInMonth := time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day()
+	daysElapsed := now.Day()
+	if daysElapsed < 1 {
+		daysElapsed = 1
+	}
+	projected := 0.0
+	if month.CostUsd > 0 {
+		projected = month.CostUsd / float64(daysElapsed) * float64(daysInMonth)
+	}
+
+	resets, _ := quota.NextProviderResets(h.db)
+	c.JSON(http.StatusOK, gin.H{
+		"data": gin.H{
+			"today":                today,
+			"yesterday":            yesterday,
+			"month_to_date":        month,
+			"projected_month_cost": projected,
+			"next_quota_reset":     earliestReset(resets),
+		},
+	})
+}
+
+// Activity returns sparse per-day activity for the last 12 months in UTC,
+// with the same dimension filters as /usage. Explicit from/to query params
+// are ignored; the date range is always now-364 days through now inclusive.
+func (h *UsageHandler) Activity(c *gin.Context) {
+	now := time.Now().UTC()
+	from := now.AddDate(0, 0, -364).Truncate(24 * time.Hour)
+	to := now.Truncate(24 * time.Hour).Add(24*time.Hour - time.Second)
+
+	f := usageFilters{
+		From:       from.UnixMilli(),
+		To:         to.UnixMilli(),
+		APIKeyID:   c.Query("api_key_id"),
+		ModelID:    c.Query("model_id"),
+		ProviderID: c.Query("provider_id"),
+		Modality:   c.Query("modality"),
+	}
+	if v := c.Query("status_code"); v != "" {
+		if n, err := parseInt(v); err == nil {
+			f.StatusCode = n
+		}
+	}
+
+	days, err := h.activity(c.Request.Context(), f)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": activityResponse{
+		From: from.Format(time.DateOnly),
+		To:   to.Format(time.DateOnly),
+		Days: days,
+	}})
+}
+
+func (h *UsageHandler) activity(ctx context.Context, f usageFilters) ([]activityDay, error) {
+	where, args := baseWhere(f)
+	rows, err := h.db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT
+			date(rl.timestamp / 1000, 'unixepoch') AS day,
+			COUNT(*),
+			COALESCE(SUM(rl.input_tokens + rl.output_tokens + rl.reasoning_tokens), 0),
+			COALESCE(SUM(CASE WHEN rl.flat_rate = 1 THEN 0 ELSE rl.cost_usd END), 0)
+		FROM request_logs rl
+		%s
+		GROUP BY day
+		ORDER BY day ASC
+	`, where), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]activityDay, 0)
+	for rows.Next() {
+		var d activityDay
+		if err := rows.Scan(&d.Date, &d.Requests, &d.Tokens, &d.CostUSD); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }

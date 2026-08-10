@@ -9,12 +9,17 @@
 2. **ASSUMPTION = hallucination** — if no data exists, do not assume.
 3. **VERIFY before claiming** — check first, then speak.
 4. **Model names, URLs, endpoints, behavior** — ALL must be verified from the codebase or live API.
+5. **ALWAYS use Semble + `rg` first** — for implementation questions, model names, endpoints, or any code context, search with Semble (discovery) and `rg` (exact/literal verification) before answering.
 
 ### Workflow (MUST follow)
-1. Search the codebase first (`grep`, `read`, `lsp`).
-2. If missing, check reference codebases (`OmniRoute`, `CLIProxyAPI`, `AMRouter`).
-3. If still missing, use web search.
-4. If still missing, say: **"I don't know; no data available."**
+1. **Always use Semble first** when the file, symbol, or behavior is not yet known; it is the primary discovery tool for this project.
+2. Use **`rg`** (or the built-in `grep` tool) for exact text/regex searches, error messages, TODOs, URLs, and for verifying an old name/value has been completely removed.
+3. Verify any code, model name, URL, endpoint, or behavior against actual source code or a live API response before claiming it.
+4. If missing in this repo, check reference codebases (`OmniRoute`, `CLIProxyAPI`, `AMRouter`) with the same Semble/`rg` discipline.
+5. If still missing, use web search.
+6. If still missing, say: **"I don't know; no data available."**
+
+**No guessing.** When there is no supporting data, respond "I don't know" rather than filling the gap with assumptions.
 
 ### Examples
 - ❌ Wrong: "Mimo has balance tracking" — not checked against code.
@@ -32,16 +37,50 @@
 When **Serena** is unavailable, fall back to `lsp`, `ast_grep`, and `ast_edit` as the semantic-equivalent tools for code navigation and editing.
 
 ### Serena Configuration (Project-Specific)
+**Serena MCP server has been removed** to save memory. Agents now use **Serena CLI directly** via bash commands. This means:
+- Language servers (`gopls`, `tsserver`) are spawned **on-demand** when a Serena CLI command is executed, and stopped after the command completes.
+- No persistent Serena MCP server process running in the background.
+- Built-in `serena_*` tools in the harness still work (they use CLI internally).
 
 This project uses **Go** for the backend and **Svelte/TypeScript** for the frontend. Before relying on Serena, ensure `/workspaces/AxonRouter-GO/.serena/project.yml` lists both languages:
-
 ```yaml
 languages:
-  - go
-  - svelte
+- go
+- svelte
 ```
-
 If only `svelte` is listed, Go symbol queries will time out because `gopls` is not started.
+
+**Usage example (CLI):**
+```bash
+# Find a symbol
+serena find_symbol --name-path "Handler/getConnection" --relative-path "internal/api/handlers/v1/handler.go"
+
+# Search for pattern
+serena search_for_pattern --substring-pattern "getConnection" --relative-path "."
+
+# Replace symbol body
+serena replace_symbol_body --name-path "Handler/getConnection" --relative-path "internal/api/handlers/v1/handler.go" --body "..."
+```
+### Serena Scope Limit (CRITICAL)
+
+**Serena ONLY works on files inside the repository.** Do NOT use Serena for:
+- Files in `~/.pi/agent/`, `~/.config/`, `/tmp/`, or any path outside the repo
+- Global config files (AGENTS.md, mcp.json, opencode.jsonc, etc.)
+- Files in other workspaces or repos
+
+For files outside the repo, use `read`, `edit`, `write`, `bash` (grep/cat/sed) instead.
+
+```bash
+# ✅ Correct — Serena for repo files
+serena_find_symbol ...  # (repo files only)
+
+# ✅ Correct — read/edit for external files
+read /home/agent/.pi/agent/AGENTS.md
+edit /home/agent/.config/opencode/profiles/hive/opencode.jsonc
+
+# ❌ Wrong — Serena on external file
+serena_read_file /home/agent/.pi/agent/AGENTS.md  # WILL FAIL
+```
 
 ### Semble — discovery
 
@@ -106,6 +145,18 @@ After every edit:
 - Run `go build ./...` and `go test ./...` (or the relevant package tests).
 - For frontend changes, run `npm run build` in `web/` until zero warnings.
 
+## Prohibited: MITM, Traffic Interception, and Transparent Proxies (CRITICAL)
+
+NEVER implement, ship, or configure any form of **MITM**, **traffic intercept**, **IDE transparent proxy**, **TLS termination**, **certificate bypass**, or **man-in-the-middle handler** for Kiro, Codex, OpenAI, Mimo, or any other provider. This applies to any code, configuration, documentation, or workaround that sits between a user, IDE, plugin, or command-line tool and an upstream provider's official endpoint in order to inspect, modify, reroute, or replay encrypted traffic.
+
+This is non-negotiable because:
+- It violates provider Terms of Service and applicable computer-fraud / privacy laws.
+- It breaks TLS trust for users and upstream services, creating a severe security liability.
+- It introduces unsustainable maintenance: certificate pinning, protocol drift, and IDE/version-specific proxy behavior become the project's responsibility.
+- It makes AxonRouter liable for intercepted content, credentials, and telemetry.
+
+All provider integrations MUST use documented, official HTTP/HTTPS endpoints and explicit API keys supplied by the operator. If a provider's official API does not support a feature, that feature is out of scope — do not work around it via interception.
+
 ## Multi-Codebase Comparison Rule (CRITICAL)
 When CLIProxyAPI, AxonRouter, and OmniRoute implement the same subsystem:
 1. Read ALL three implementations.
@@ -152,6 +203,19 @@ When CLIProxyAPI, AxonRouter, and OmniRoute implement the same subsystem:
 - Routing must be <1ms regardless of connection count.
 - Pre-computed eligible list for O(1) routing.
 - Dashboard pagination is mandatory.
+
+## Routing Hot Path Implementation Notes
+
+The connection-selection path in `internal/api/handlers/v1/handler.go` is heavily optimized. When touching routing code, preserve these invariants:
+
+1. **Eligibility snapshot is lock-free** — stored in `atomic.Value` (`internal/connstate/eligibility.go`). Rebuilds are coalesced into a 50ms window to avoid O(N) spikes under bursty failovers.
+2. **Hot path is bounded** — `getConnection` samples at most `pickMaxAttempts = 10` eligible candidates before falling back; the snapshot also stores pre-sorted `*ConnectionState` pointers (`ByPrefixState`) to avoid repeated `store.Get` lookups.
+3. **Round-robin is per `provider/model`** — `providercfg.NextRoundRobinIndex` keys its atomic counter by `providerID + "\x00" + modelID` so models rotate independently.
+4. **Avoid repeated `time.Now()`** — `tryPickConnection` captures one `now` value and passes it to cooldown/exhaustion checks. Add `_At(now)` variants instead of adding new clock reads.
+5. **Read-heavy caches use `sync.Map`** — `ExhaustionCache` and the connection credential cache in `Handler.conns` are `sync.Map`; don't introduce `sync.RWMutex` guarding a global map on the hot path.
+6. **Resolve `RoutingMode` once per request** — pass the resolved `providercfg.RoutingMode` down the call chain; do not re-query the provider-config manager inside loops or log statements.
+7. **Cold disk loads use `singleflight`** — `providercfg.Manager.Get` collapses concurrent first-time reads for the same provider JSON to a single `os.ReadFile`.
+8. **Recency tiebreaker is in-memory only** — `ConnectionState.lastUsedAt` is an `atomic.Int64` (unix-nano) used as a secondary sort key; it is not persisted to SQLite.
 
 ## Execution & Build Rules
 
@@ -375,23 +439,12 @@ Use the exact version the user asked for. If no version was specified, ask.
 make release v=X.Y.Z
 ```
 
-#### 7.5 Work around the Makefile push bug
-`make release` tries to push branch `main`, but this repo uses `master`. When you see:
-```
-error: src refspec main does not match any
-```
-finish the push manually:
-```bash
-git push origin master
-git push origin vX.Y.Z
-```
-
-#### 7.6 Verify the release artifacts
+#### 7.5 Verify the release artifacts
 - Local tag: `git tag --list 'vX.Y.Z'`
 - Remote tag: `git ls-remote --tags origin vX.Y.Z`
 - GitHub Actions release workflow is triggered by the tag.
 
-#### 7.7 If recreating an existing release
+#### 7.6 If recreating an existing release
 Sometimes the user deletes a release and wants the same version again. Do this first:
 1. Delete remote tag: `git push --delete origin vX.Y.Z`
 2. Delete local tag: `git tag -d vX.Y.Z`

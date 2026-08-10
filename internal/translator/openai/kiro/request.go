@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rickicode/AxonRouter-Go/internal/headroom"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/common"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/types"
 )
@@ -25,11 +27,31 @@ func init() {
 var (
 	kiroUnsupportedSuffix = "[1m]"
 	kiroModelNormalizeRe  = regexp.MustCompile(`^(claude-(?:opus|sonnet|haiku|3-\d+)-\d+)-(\d{1,2})$`)
+
+	// KiroAdaptiveThinkingModels is the strict allowlist of models that support
+	// Kiro's adaptive thinking. Sending it to other models causes 400 errors.
+	// Legacy 4.5 and Haiku models are excluded based on live smoke tests.
+	kiroAdaptiveThinkingModels = map[string]struct{}{
+		"claude-sonnet-4.5": {},
+		"claude-sonnet-4":   {},
+	}
+
+	// Agentic system prompt (chunked-write assistant) injected for synthetic -agentic variants.
+	agenticSystemPrompt = `<system-reminder>
+You are an agentic coding assistant. When the user asks you to write, edit, or refactor code, you MUST use the chunked-write protocol:
+1. Call the write_file tool for every file you create or modify.
+2. Apply edits incrementally — one logical change per tool call.
+3. After each edit, verify the result by reading the affected region.
+4. Never emit the final code inside the chat message unless explicitly asked.
+5. Always prefer deterministic, idiomatic, and production-ready code.
+Failure to use the chunked-write protocol will result in rejection.
+</system-reminder>`
 )
 
 // ConvertOpenAIRequestToKiro translates an OpenAI Chat Completions request
 // into the AWS CodeWhisperer / Kiro generateAssistantResponse payload shape.
 func ConvertOpenAIRequestToKiro(model string, body []byte, stream bool) []byte {
+	body = common.CompressToolBlocks(body, headroom.GlobalToolCompressor(), headroom.DefaultToolThreshold)
 	if strings.Contains(strings.ToLower(model), kiroUnsupportedSuffix) {
 		return mustMarshal(map[string]any{
 			"error": map[string]any{
@@ -56,7 +78,14 @@ func ConvertOpenAIRequestToKiro(model string, body []byte, stream bool) []byte {
 		tools = synthesizeToolsFromHistory(messages)
 	}
 
-	history, currentMessage := convertMessages(messages, tools, normalizedModel)
+	// Sanitize tool schemas and normalize long tool names. The nameMap is used
+	// to restore original names when streaming Kiro responses back to clients.
+	sanitizedTools, toolNameMap, err := SanitizeTools(tools)
+	if err == nil && len(sanitizedTools) > 0 {
+		tools = sanitizedTools
+	}
+
+	history, currentMessage := convertMessages(messages, tools, normalizedModel, isAgenticVariant(normalizedModel))
 	if currentMessage == nil {
 		currentMessage = map[string]any{
 			"userInputMessage": map[string]any{
@@ -86,8 +115,8 @@ func ConvertOpenAIRequestToKiro(model string, body []byte, stream bool) []byte {
 	}
 	content, _ := currentUserInput["content"].(string)
 
-	// Attach context timestamp to current user message.
-	content = fmt.Sprintf("[Context: Current time is %s]\n\n%s", time.Now().UTC().Format(time.RFC3339), content)
+	// Extract original system messages for the top-level systemPrompt field.
+	systemTexts := extractSystemTexts(messages)
 
 	// Build deterministic conversationId from first real user content.
 	firstUser := firstRealUserContent(messages, history)
@@ -96,14 +125,32 @@ func ConvertOpenAIRequestToKiro(model string, body []byte, stream bool) []byte {
 	}
 	conversationID := uuidv5(firstUser[:maxLen(firstUser, 4000)], kiroNamespaceUUID())
 
+	// Freeze and replay the first user message to keep the upstream cache key stable.
+	// The translator registry does not expose a connection ID, so the replay cache is
+	// keyed by the deterministic conversation ID.
+	history = applySessionReplay(conversationID, history, currentMessage)
+
 	effort := ""
 	if supportsReasoning(normalizedModel) {
 		effort = resolveKiroEffort(req)
 	}
+
+	// Assemble the top-level system prompt: thinking directive + agentic prompt + original system texts.
+	var systemPromptParts []string
 	if effort != "" {
 		thinkingLength := capThinkingBudget(normalizedModel, thinkingLengthForEffort(effort))
-		directive := fmt.Sprintf("<thinking_mode>enabled</thinking_mode><max_thinking_length>%d</max_thinking_length>", thinkingLength)
-		content = directive + "\n\n" + content
+		systemPromptParts = append(systemPromptParts, fmt.Sprintf("<thinking_mode>enabled</thinking_mode><max_thinking_length>%d</max_thinking_length>", thinkingLength))
+	}
+	if isAgenticVariant(normalizedModel) {
+		systemPromptParts = append(systemPromptParts, agenticSystemPrompt)
+	}
+	systemPromptParts = append(systemPromptParts, systemTexts...)
+	systemPrompt := strings.Join(systemPromptParts, "\n\n")
+
+	// Attach context timestamp and system prompt to current user message.
+	content = fmt.Sprintf("[Context: Current time is %s]\n\n%s", time.Now().UTC().Format(time.RFC3339), content)
+	if systemPrompt != "" {
+		content = systemPrompt + "\n\n" + content
 	}
 	currentUserInput["content"] = content
 
@@ -114,7 +161,7 @@ func ConvertOpenAIRequestToKiro(model string, body []byte, stream bool) []byte {
 			"currentMessage":  currentMessage,
 			"history":         history,
 		},
-		"_toolNameMap": map[string]string{}, // passthrough; original names used.
+		"_toolNameMap": toolNameMap,
 	}
 	if profileArn != "" {
 		payload["profileArn"] = profileArn
@@ -132,37 +179,21 @@ func ConvertOpenAIRequestToKiro(model string, body []byte, stream bool) []byte {
 		}
 		payload["inferenceConfig"] = inference
 	}
-	if effort != "" {
-		fields := map[string]any{
-			"output_config": map[string]any{"effort": effort},
-			"thinking":      map[string]any{"type": "adaptive", "display": "summarized"},
-		}
-		// Heuristic floor to avoid rejected small max_tokens while thinking.
-		if capped := capMaxOutputTokens(normalizedModel, maxTokens); capped > 0 {
-			if capped < 1024 {
-				capped = 1024
-			}
-			fields["max_tokens"] = capped
-		}
-		payload["additionalModelRequestFields"] = fields
-		// Strip temperature/topP from inferenceConfig for adaptive-only Claude models.
-		if inf, ok := payload["inferenceConfig"].(map[string]any); ok {
-			delete(inf, "temperature")
-			delete(inf, "topP")
-			if len(inf) == 0 {
-				delete(payload, "inferenceConfig")
-			}
+	if supportsReasoning(normalizedModel) && effort != "" {
+		payload["additionalModelRequestFields"] = map[string]any{
+			"thinking": map[string]any{
+				"type":    "adaptive",
+				"display": "enabled",
+			},
+			"output_config": map[string]any{
+				"effort": effort,
+			},
 		}
 	}
-
-	if stream {
-		payload["_stream"] = true
-	}
-
 	return mustMarshal(payload)
 }
 
-func convertMessages(messages, tools []any, model string) ([]map[string]any, map[string]any) {
+func convertMessages(messages, tools []any, model string, agentic bool) ([]map[string]any, map[string]any) {
 	supportsImages := strings.Contains(strings.ToLower(model), "claude")
 
 	var history []map[string]any
@@ -220,6 +251,10 @@ func convertMessages(messages, tools []any, model string) ([]map[string]any, map
 		}
 	}
 
+	if agentic {
+		messages = injectAgenticSystemPrompt(messages)
+	}
+
 	for _, raw := range messages {
 		msg, ok := raw.(map[string]any)
 		if !ok {
@@ -255,11 +290,14 @@ func convertMessages(messages, tools []any, model string) ([]map[string]any, map
 			if supportsImages {
 				for _, raw := range v {
 					if img, ok := raw.(map[string]any); ok {
-						if format, bytes := extractImage(img); bytes != "" {
+						format, bytes, url := extractImage(img)
+						if bytes != "" {
 							pendingImages = append(pendingImages, map[string]any{
 								"format": format,
 								"source": map[string]any{"bytes": bytes},
 							})
+						} else if url != "" {
+							pendingUser = append(pendingUser, fmt.Sprintf("[Image: %s]", url))
 						}
 					}
 				}
@@ -278,7 +316,7 @@ func convertMessages(messages, tools []any, model string) ([]map[string]any, map
 		}
 
 		if originalRole == "system" && text != "" {
-			text = wrapSystemReminder(text)
+			text = wrapKiroInstructions(text)
 		}
 
 		if currentRole == "user" {
@@ -384,8 +422,66 @@ func convertMessages(messages, tools []any, model string) ([]map[string]any, map
 	return history, currentMessage
 }
 
-func wrapSystemReminder(text string) string {
-	return "<system-reminder>\n" + text + "\n</system-reminder>"
+func wrapKiroInstructions(text string) string {
+	return "<instructions>\n" + text + "\n</instructions>"
+}
+
+// extractSystemTexts pulls role=system messages out of the OpenAI request so
+// they can be sent as Kiro's top-level systemPrompt in addition to being folded
+// into the user content prefix.
+func extractSystemTexts(messages []any) []string {
+	var out []string
+	for _, raw := range messages {
+		msg, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		role, _ := msg["role"].(string)
+		if role != "system" {
+			continue
+		}
+		content := msg["content"]
+		switch v := content.(type) {
+		case string:
+			if v != "" {
+				out = append(out, v)
+			}
+		case []any:
+			text := extractTextFromBlocks(v)
+			if text != "" {
+				out = append(out, text)
+			}
+		}
+	}
+	return out
+}
+
+func injectAgenticSystemPrompt(messages []any) []any {
+	if agenticSystemPrompt == "" {
+		return messages
+	}
+	out := make([]any, 0, len(messages)+1)
+	injected := false
+	for _, raw := range messages {
+		msg, ok := raw.(map[string]any)
+		if !ok {
+			out = append(out, raw)
+			continue
+		}
+		if !injected && msg["role"] == "system" {
+			content, _ := msg["content"].(string)
+			msg["content"] = content + "\n\n" + agenticSystemPrompt
+			injected = true
+		} else if !injected && msg["role"] == "user" {
+			out = append(out, map[string]any{"role": "system", "content": agenticSystemPrompt})
+			injected = true
+		}
+		out = append(out, msg)
+	}
+	if !injected && len(out) == 0 {
+		out = append(out, map[string]any{"role": "system", "content": agenticSystemPrompt})
+	}
+	return out
 }
 
 func extractTextFromBlocks(blocks []any) string {
@@ -404,24 +500,26 @@ func extractTextFromBlocks(blocks []any) string {
 	return strings.Join(parts, "\n")
 }
 
-func extractImage(block map[string]any) (format, bytes string) {
+func extractImage(block map[string]any) (format, bytes, url string) {
 	btype, _ := block["type"].(string)
 	switch btype {
 	case "image_url":
 		iu, _ := block["image_url"].(map[string]any)
-		url, _ := iu["url"].(string)
-		return parseDataURL(url)
+		url, _ = iu["url"].(string)
+		format, bytes = parseDataURL(url)
+		return format, bytes, url
 	case "image":
 		src, _ := block["source"].(map[string]any)
 		if src["type"] == "base64" {
 			mediaType, _ := src["media_type"].(string)
-			return extFromMime(mediaType), asString(src["data"])
+			return extFromMime(mediaType), asString(src["data"]), ""
 		}
 		if img, ok := block["image"].(string); ok {
-			return parseDataURL(img)
+			format, bytes = parseDataURL(img)
+			return format, bytes, img
 		}
 	}
-	return "", ""
+	return "", "", ""
 }
 
 func parseDataURL(url string) (format, bytes string) {
@@ -535,6 +633,7 @@ func buildToolUses(toolCalls []any) []map[string]any {
 }
 
 func buildKiroTools(tools []any) []map[string]any {
+	const kiroMaxToolDescriptionLen = 10000
 	var out []map[string]any
 	for _, raw := range tools {
 		tool, ok := raw.(map[string]any)
@@ -549,10 +648,18 @@ func buildKiroTools(tools []any) []map[string]any {
 		desc, _ := fn["description"].(string)
 		if desc == "" {
 			desc = fmt.Sprintf("Tool: %s", name)
+		} else if len(desc) > kiroMaxToolDescriptionLen {
+			desc = desc[:kiroMaxToolDescriptionLen-len(" …")] + " …"
 		}
 		params, _ := fn["parameters"].(map[string]any)
 		if params == nil {
-			params = tool["parameters"].(map[string]any)
+			params, _ = tool["parameters"].(map[string]any)
+		}
+		if params == nil {
+			params, _ = fn["input_schema"].(map[string]any)
+		}
+		if params == nil {
+			params, _ = tool["input_schema"].(map[string]any)
 		}
 		out = append(out, map[string]any{
 			"toolSpecification": map[string]any{
@@ -572,8 +679,18 @@ func normalizeKiroToolSchema(schema map[string]any) map[string]any {
 	out := map[string]any{}
 	for k, v := range schema {
 		switch {
-		case k == "required" && isEmptyArray(v):
-			continue
+		case k == "required":
+			if arr, ok := v.([]any); ok {
+				filtered := make([]any, 0, len(arr))
+				for _, r := range arr {
+					if s, ok := r.(string); ok && s != "" {
+						filtered = append(filtered, s)
+					}
+				}
+				if len(filtered) > 0 {
+					out[k] = filtered
+				}
+			}
 		case k == "additionalProperties":
 			continue
 		case k == "properties" && isObject(v):
@@ -588,7 +705,11 @@ func normalizeKiroToolSchema(schema map[string]any) map[string]any {
 			arr := v.([]any)
 			next := make([]any, len(arr))
 			for i, item := range arr {
-				next[i] = normalizeKiroToolSchema(asObject(item))
+				if child, ok := item.(map[string]any); ok {
+					next[i] = normalizeKiroToolSchema(child)
+				} else {
+					next[i] = item
+				}
 			}
 			out[k] = next
 		default:
@@ -880,7 +1001,12 @@ func thinkingLengthForEffort(effort string) int {
 
 func supportsReasoning(model string) bool {
 	m := strings.ToLower(model)
-	return strings.Contains(m, "claude")
+	_, ok := kiroAdaptiveThinkingModels[m]
+	return ok
+}
+
+func isAgenticVariant(model string) bool {
+	return strings.HasSuffix(strings.ToLower(model), "-agentic")
 }
 
 func capThinkingBudget(model string, budget int) int {

@@ -45,7 +45,7 @@ func (h *ProviderHandler) List(c *gin.Context) {
 	SELECT pt.id, pt.display_name, pt.format, pt.base_url, pt.is_custom, pt.custom_headers, pt.category, pt.service_kinds, pt.created_at,
 	COUNT(c.id) as connection_count
 	FROM provider_types pt
-	LEFT JOIN connections c ON c.provider_type_id = pt.id AND c.is_active = 1
+	LEFT JOIN connections c ON c.provider_type_id = pt.id
 	GROUP BY pt.id
 	ORDER BY pt.display_name
 	`)
@@ -69,6 +69,7 @@ func (h *ProviderHandler) List(c *gin.Context) {
 	// Fill status counts after outer rows are closed (avoids SQLite deadlock)
 	for i := range providers {
 		providers[i].StatusCounts = h.getStatusCounts(providers[i].ID)
+		providers[i].DisabledReasons = h.getDisabledReasonCounts(providers[i].ID)
 		if info, ok := provider.Registry[providers[i].ID]; ok {
 			providers[i].Aliases = info.Aliases
 		}
@@ -97,7 +98,7 @@ func (h *ProviderHandler) Get(c *gin.Context) {
 		return
 	}
 
-	h.db.QueryRow(`SELECT COUNT(*) FROM connections WHERE provider_type_id = ? AND is_active = 1`, id).Scan(&p.ConnectionCount)
+	h.db.QueryRow(`SELECT COUNT(*) FROM connections WHERE provider_type_id = ?`, id).Scan(&p.ConnectionCount)
 	p.StatusCounts = h.getStatusCounts(id)
 	if info, ok := provider.Registry[id]; ok {
 		p.Aliases = info.Aliases
@@ -259,7 +260,7 @@ func (h *ProviderHandler) getStatusCounts(providerID string) map[string]int {
 	counts := make(map[string]int)
 	rows, err := h.db.Query(`
 		SELECT status, COUNT(*) FROM connections
-		WHERE provider_type_id = ? AND is_active = 1
+		WHERE provider_type_id = ?
 		GROUP BY status
 	`, providerID)
 	if err != nil {
@@ -271,6 +272,28 @@ func (h *ProviderHandler) getStatusCounts(providerID string) map[string]int {
 		var count int
 		rows.Scan(&status, &count)
 		counts[status] = count
+	}
+	return counts
+}
+
+// getDisabledReasonCounts returns per-reason totals for disabled connections of
+// a provider so the provider cards can show *why* accounts are disabled.
+func (h *ProviderHandler) getDisabledReasonCounts(providerID string) map[string]int {
+	counts := make(map[string]int)
+	rows, err := h.db.Query(`
+		SELECT COALESCE(disabled_reason, 'unknown'), COUNT(*) FROM connections
+		WHERE provider_type_id = ? AND status = 'disabled'
+		GROUP BY disabled_reason
+	`, providerID)
+	if err != nil {
+		return counts
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var reason string
+		var count int
+		rows.Scan(&reason, &count)
+		counts[reason] = count
 	}
 	return counts
 }
@@ -299,11 +322,11 @@ const testConnTimeout = 30 * time.Second
 // testAllRefreshLead defines per-provider proactive refresh lead times.
 // Matches OmniRoute REFRESH_LEAD_MS at open-sse/services/tokenRefresh.ts:32-49.
 var testAllRefreshLead = map[string]time.Duration{
-	"cx":      5 * time.Minute,  // Codex: Auth0 rotating refresh tokens
-	"ag":      15 * time.Minute, // Antigravity: Google non-rotating refresh tokens
-	"kiro":    5 * time.Minute,  // Kiro: AWS SSO OIDC one-time-use refresh tokens
-	"copilot": 5 * time.Minute, // Copilot: GitHub device-code tokens refresh early
-	"grok-cli": 5 * time.Minute, // Grok CLI: xAI OIDC device-code tokens refresh before expiry
+	"cx":       5 * time.Minute,  // Codex: Auth0 rotating refresh tokens
+	"ag":       15 * time.Minute, // Antigravity: Google non-rotating refresh tokens
+	"kiro":     5 * time.Minute,  // Kiro: AWS SSO OIDC one-time-use refresh tokens
+	"copilot":  5 * time.Minute,  // Copilot: GitHub device-code tokens refresh early
+	"grok-cli": 5 * time.Minute,  // Grok CLI: xAI OIDC device-code tokens refresh before expiry
 }
 
 const testAllDefaultRefreshLead = 5 * time.Minute
@@ -355,7 +378,7 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 		return
 	}
 
-	bodyBytes := buildTestBody(format, defaultTestModel(providerID))
+	bodyBytes := buildTestBody(format, defaultTestModel(providerID), providerID)
 	ctx := c.Request.Context()
 
 	var inputs []testInput
@@ -399,24 +422,25 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 			// Refresh expired/near-expiry OAuth tokens before testing.
 			accessToken := in.access
 			expiresAt := in.expiresAt
+			psd := in.psdMap
 			if h.authMgr != nil && in.authType == "oauth" && shouldRefreshTestToken(providerID, in.refreshToken, expiresAt) {
 				creds := &auth.Credentials{
 					AccessToken:  in.access,
 					RefreshToken: in.refreshToken,
 					ExpiresAt:    time.Unix(expiresAt, 0),
 				}
-				newCreds, err := h.authMgr.RefreshToken(ctx, auth.ProviderType(providerID), creds)
+				newCreds, err := h.authMgr.RefreshTokenForConnection(ctx, in.connID, auth.ProviderType(providerID), creds)
 				if err != nil {
 					latency := time.Since(start).Milliseconds()
 					if isUnrecoverableRefreshError(err) {
 						log.Printf("Unrecoverable refresh error for %s/%s: %v — blocking connection", providerID, in.connID, err)
 						connID := in.connID
 						h.execWrite(requestCtx, "testall:auth_failed:"+connID, func(d *sql.DB) error {
-							_, err := d.Exec(`UPDATE connections SET is_active = 0, status = 'auth_failed', updated_at = ? WHERE id = ?`, time.Now().Unix(), connID)
+							_, err := d.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', disabled_reason = 'auth_failed', updated_at = ? WHERE id = ?`, time.Now().Unix(), connID)
 							return err
 						})
 						if h.store != nil {
-							h.store.UpdateStatus(connID, connstate.StatusAuthFailed)
+							h.store.UpdateStatus(connID, connstate.StatusDisabled, "auth_failed")
 						}
 					}
 					results[i] = testResult{ConnectionID: in.connID, Status: "failed", Error: err.Error(), LatencyMs: latency}
@@ -428,22 +452,8 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 				if refreshToken == "" {
 					refreshToken = in.refreshToken
 				}
-				connID := in.connID
-				psd := in.psdMap
 				if len(newCreds.ProviderSpecific) > 0 {
 					psd = newCreds.ProviderSpecific
-				}
-				if len(psd) > 0 {
-					psdJSON, _ := json.Marshal(psd)
-					h.execWrite(requestCtx, "testall:refresh:"+connID, func(d *sql.DB) error {
-						_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?`, accessToken, refreshToken, expiresAt, psdJSON, time.Now().Unix(), connID)
-						return err
-					})
-				} else {
-					h.execWrite(requestCtx, "testall:refresh:"+connID, func(d *sql.DB) error {
-						_, err := d.Exec(`UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?`, accessToken, refreshToken, expiresAt, time.Now().Unix(), connID)
-						return err
-					})
 				}
 			}
 
@@ -453,7 +463,7 @@ func (h *ProviderHandler) TestAll(c *gin.Context) {
 				BaseURL:              in.baseURL,
 				Body:                 bodyBytes,
 				Provider:             providerID,
-				ProviderSpecificData: in.psdMap,
+				ProviderSpecificData: psd,
 			})
 			if err != nil {
 				latency := time.Since(start).Milliseconds()
@@ -614,7 +624,7 @@ func (h *ProviderHandler) AddConnection(c *gin.Context) {
 		return
 	}
 
-	// Validate CF connections require an Account ID
+	// Validate CF connections require an Account ID with valid format
 	if providerID == "cf" {
 		accountID := req.ProviderSpecificData["accountId"]
 		if accountID == "" {
@@ -623,6 +633,17 @@ func (h *ProviderHandler) AddConnection(c *gin.Context) {
 		if accountID == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Cloudflare Workers AI requires an Account ID. Add it in provider_specific_data.accountId or set CLOUDFLARE_ACCOUNT_ID env var."})
 			return
+		}
+		// Validate accountId is 32-char hex
+		if len(accountID) != 32 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Account ID format (must be 32-char hex, got " + fmt.Sprintf("%d", len(accountID)) + " chars). Find it at: https://dash.cloudflare.com (right sidebar)"})
+			return
+		}
+		for _, ch := range accountID {
+			if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Account ID format (must be hex, got '" + accountID[:4] + "...'). Find it at: https://dash.cloudflare.com (right sidebar)"})
+				return
+			}
 		}
 	}
 
@@ -686,13 +707,32 @@ func (h *ProviderHandler) AddConnection(c *gin.Context) {
 		req.AuthType = "api_key"
 	}
 
+	// Enforce upstream key validation before persisting API-key-backed connections.
+	// Providers can opt out via provider_types.skip_key_validation.
+	if req.AuthType != "oauth" && req.AuthType != "none" && req.APIKey != "" {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+		defer cancel()
+		valid, errMsg := h.validateKeyForRequest(ctx, providerID, req.APIKey, req.ProviderSpecificData)
+		if !valid {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+			return
+		}
+	}
+
 	apiKey := sql.NullString{}
 	if req.APIKey != "" {
 		apiKey = sql.NullString{String: req.APIKey, Valid: true}
 	}
 	initialStatus := "ready"
+	disabledReason := sql.NullString{}
+	active := 1
 	if req.AuthType == "oauth" {
-		initialStatus = "auth_failed" // not eligible until OAuth completes
+		// Not eligible until OAuth completes. Mark as disabled with a manual
+		// reason so it is excluded from routing and can be enabled by the
+		// OAuth callback flow without ambiguity.
+		initialStatus = "disabled"
+		disabledReason = sql.NullString{String: "manual", Valid: true}
+		active = 0
 	}
 
 	var psdJSON sql.NullString
@@ -706,9 +746,9 @@ func (h *ProviderHandler) AddConnection(c *gin.Context) {
 	}
 
 	_, err := h.db.Exec(`
-		INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, priority, provider_specific_data, status, is_active, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-	`, connID, providerID, req.Name, req.AuthType, apiKey, req.Priority, psdJSON, initialStatus, now, now)
+		INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, priority, provider_specific_data, status, disabled_reason, is_active, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, connID, providerID, req.Name, req.AuthType, apiKey, req.Priority, psdJSON, initialStatus, disabledReason, active, now, now)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -731,13 +771,15 @@ func (h *ProviderHandler) AddConnection(c *gin.Context) {
 // failures are reported instead of being silently dropped.
 func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 	providerID := c.Param("id")
+	type bulkInput struct {
+		Name                 string            `json:"name"`
+		APIKey               string            `json:"api_key"`
+		Priority             int               `json:"priority"`
+		ProviderSpecificData map[string]string `json:"provider_specific_data,omitempty"`
+	}
 	var req struct {
-		Connections []struct {
-			Name                 string            `json:"name"`
-			APIKey               string            `json:"api_key"`
-			Priority             int               `json:"priority"`
-			ProviderSpecificData map[string]string `json:"provider_specific_data,omitempty"`
-		} `json:"connections"`
+		Connections        []bulkInput `json:"connections"`
+		ValidateSampleSize int         `json:"validate_sample_size"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -750,7 +792,7 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 		return
 	}
 
-	// Validate CF connections require Account ID (fail fast before any inserts).
+	// Validate CF connections require Account ID with valid format (fail fast before any inserts).
 	if providerID == "cf" {
 		for i, conn := range req.Connections {
 			accountID := conn.ProviderSpecificData["accountId"]
@@ -760,6 +802,17 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 			if accountID == "" {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "connection #" + fmt.Sprintf("%d", i+1) + ": Cloudflare Workers AI requires an Account ID"})
 				return
+			}
+			// Validate accountId is 32-char hex (Cloudflare account ID format)
+			if len(accountID) != 32 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "connection #" + fmt.Sprintf("%d", i+1) + ": invalid Account ID format (must be 32-char hex, got " + fmt.Sprintf("%d", len(accountID)) + " chars)"})
+				return
+			}
+			for _, ch := range accountID {
+				if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "connection #" + fmt.Sprintf("%d", i+1) + ": invalid Account ID format (must be hex, got '" + accountID[:4] + "...')"})
+					return
+				}
 			}
 		}
 	}
@@ -772,58 +825,120 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 
 	const batchSize = 200
 	now := time.Now().Unix()
-	var created, failed int
-	var errors []string
-	var seeded []struct {
+
+	type classifiedConn struct {
+		bulkInput
+		state  string // accepted, rejected, duplicate
+		errMsg string
+	}
+
+	// Classify duplicate API keys within this import request. Empty keys are not
+	// considered duplicates because they typically represent no-auth providers.
+	seenKeys := make(map[string]int)
+	classified := make([]classifiedConn, 0, len(req.Connections))
+	for i, conn := range req.Connections {
+		if conn.APIKey != "" {
+			if prev, dup := seenKeys[conn.APIKey]; dup {
+				classified = append(classified, classifiedConn{
+					bulkInput: conn,
+					state:     "duplicate",
+					errMsg:    fmt.Sprintf("connection %q: duplicate api_key (first at index %d)", conn.Name, prev+1),
+				})
+				continue
+			}
+			seenKeys[conn.APIKey] = i
+		}
+		classified = append(classified, classifiedConn{bulkInput: conn, state: "accepted"})
+	}
+
+	// Sample validation: test up to N accepted, non-empty keys against the provider.
+	// Rows that fail validation are still persisted with status='disabled',
+	// disabled_reason='auth_failed', and is_active=0 so the lifecycle GC can
+	// clean them up later.
+	if req.ValidateSampleSize > 0 {
+		sample := make([]*classifiedConn, 0, len(classified))
+		for i := range classified {
+			if classified[i].state == "accepted" && classified[i].APIKey != "" {
+				sample = append(sample, &classified[i])
+			}
+		}
+		if len(sample) > req.ValidateSampleSize {
+			sample = sample[:req.ValidateSampleSize]
+		}
+		ctx := c.Request.Context()
+		for _, item := range sample {
+			valid, errMsg := h.validateKeyForRequest(ctx, providerID, item.APIKey, item.ProviderSpecificData)
+			if !valid {
+				item.state = "rejected"
+				item.errMsg = fmt.Sprintf("connection %q: validation failed: %s", item.Name, errMsg)
+			}
+		}
+	}
+
+	type seedInfo struct {
 		id       string
 		priority int
 	}
+	var errors []string
+	var seeded []seedInfo
+	var totalAccepted, totalRejected, totalDuplicates, dbErrors int
 
 	// batchResult is returned from the batch closure; the handler reads it
 	// only AFTER WriteQueue.Do returns (the queue's done-channel establishes a
 	// happens-before edge, so this is race-free — do NOT mutate handler
 	// locals from inside the closure).
 	type batchResult struct {
-		seeded []struct {
-			id       string
-			priority int
-		}
-		created int
-		fails   []string
-		err     error
+		accepted   int
+		rejected   int
+		duplicates int
+		seeded     []seedInfo
+		fails      []string
+		err        error
 	}
 
-	runBatch := func(d *sql.DB, conns []struct {
-		Name                 string            `json:"name"`
-		APIKey               string            `json:"api_key"`
-		Priority             int               `json:"priority"`
-		ProviderSpecificData map[string]string `json:"provider_specific_data,omitempty"`
-	}) batchResult {
+	runBatch := func(d *sql.DB, batch []classifiedConn) batchResult {
 		res := batchResult{}
 		tx, err := d.Begin()
 		if err != nil {
 			res.err = err
 			return res
 		}
-		for _, conn := range conns {
+		for _, item := range batch {
 			connID := uuid.New().String()
-			apiKey := sql.NullString{String: conn.APIKey, Valid: conn.APIKey != ""}
+			apiKey := sql.NullString{String: item.APIKey, Valid: item.APIKey != ""}
 			var psdJSON sql.NullString
-			if len(conn.ProviderSpecificData) > 0 {
-				if b, err := json.Marshal(conn.ProviderSpecificData); err == nil {
+			if len(item.ProviderSpecificData) > 0 {
+				if b, err := json.Marshal(item.ProviderSpecificData); err == nil {
 					psdJSON = sql.NullString{String: string(b), Valid: true}
 				}
 			}
-			if _, err := tx.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, priority, provider_specific_data, status, is_active, created_at, updated_at) VALUES (?, ?, ?, 'api_key', ?, ?, ?, 'ready', 1, ?, ?)`,
-				connID, providerID, conn.Name, apiKey, conn.Priority, psdJSON, now, now); err != nil {
-				res.fails = append(res.fails, fmt.Sprintf("connection %q: %s", conn.Name, err.Error()))
+			status := "ready"
+			disabledReason := sql.NullString{}
+			active := 1
+			switch item.state {
+			case "rejected":
+				status = "disabled"
+				disabledReason = sql.NullString{String: "auth_failed", Valid: true}
+				active = 0
+			case "duplicate":
+				status = "disabled"
+				disabledReason = sql.NullString{String: "manual", Valid: true}
+				active = 0
+			}
+			if _, err := tx.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, api_key, priority, provider_specific_data, status, disabled_reason, is_active, created_at, updated_at) VALUES (?, ?, ?, 'api_key', ?, ?, ?, ?, ?, ?, ?, ?)`,
+				connID, providerID, item.Name, apiKey, item.Priority, psdJSON, status, disabledReason, active, now, now); err != nil {
+				res.fails = append(res.fails, fmt.Sprintf("connection %q: %s", item.Name, err.Error()))
 				continue
 			}
-			res.created++
-			res.seeded = append(res.seeded, struct {
-				id       string
-				priority int
-			}{id: connID, priority: conn.Priority})
+			switch item.state {
+			case "accepted":
+				res.accepted++
+				res.seeded = append(res.seeded, seedInfo{id: connID, priority: item.Priority})
+			case "rejected":
+				res.rejected++
+			case "duplicate":
+				res.duplicates++
+			}
 		}
 		if err := tx.Commit(); err != nil {
 			res.err = err
@@ -832,12 +947,12 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 		return res
 	}
 
-	for start := 0; start < len(req.Connections); start += batchSize {
+	for start := 0; start < len(classified); start += batchSize {
 		end := start + batchSize
-		if end > len(req.Connections) {
-			end = len(req.Connections)
+		if end > len(classified) {
+			end = len(classified)
 		}
-		batch := req.Connections[start:end]
+		batch := classified[start:end]
 		var br batchResult
 		var batchErr error
 		if h.writeQueue != nil {
@@ -850,19 +965,29 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 		}
 		if batchErr != nil {
 			// Whole-batch failure: nothing in this batch was persisted.
-			for _, conn := range batch {
-				failed++
-				errors = append(errors, fmt.Sprintf("connection %q: %s", conn.Name, batchErr.Error()))
+			for _, item := range batch {
+				dbErrors++
+				errors = append(errors, fmt.Sprintf("connection %q: %s", item.Name, batchErr.Error()))
 			}
 			continue
 		}
-		created += br.created
-		failed += len(br.fails)
+		totalAccepted += br.accepted
+		totalRejected += br.rejected
+		totalDuplicates += br.duplicates
+		dbErrors += len(br.fails)
 		errors = append(errors, br.fails...)
 		seeded = append(seeded, br.seeded...)
 	}
 
-	// Seed in-memory store ONLY for committed rows, then recompute eligibility once.
+	// Append duplicate/validation error messages so callers can see why each row
+	// was not accepted.
+	for _, item := range classified {
+		if item.errMsg != "" {
+			errors = append(errors, item.errMsg)
+		}
+	}
+
+	// Seed in-memory store ONLY for committed accepted rows, then recompute eligibility once.
 	if h.store != nil {
 		for _, s := range seeded {
 			h.store.SeedConnection(s.id, providerID, "ready", s.priority)
@@ -872,7 +997,160 @@ func (h *ProviderHandler) BulkAddConnections(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"created": created, "total": len(req.Connections), "failed": failed, "errors": errors})
+	c.JSON(http.StatusCreated, gin.H{
+		"total":      len(req.Connections),
+		"accepted":   totalAccepted,
+		"rejected":   totalRejected,
+		"duplicates": totalDuplicates,
+		"created":    totalAccepted,
+		"failed":     totalRejected + totalDuplicates + dbErrors,
+		"errors":     errors,
+	})
+}
+
+// BulkAssignProxy assigns (or unbinds) a proxy pool for multiple connections of
+// a provider that requires proxy pools. It mutates provider_specific_data in a
+// single transaction.
+func (h *ProviderHandler) BulkAssignProxy(c *gin.Context) {
+	providerID := c.Param("id")
+	var req struct {
+		ConnectionIDs []string `json:"connection_ids" binding:"required"`
+		ProxyPoolID   *string  `json:"proxy_pool_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Only oc and mimocode use proxy pools today.
+	if providerID != "oc" && providerID != "mimocode" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bulk proxy assignment is only supported for providers that require proxy pools"})
+		return
+	}
+
+	var exists bool
+	h.db.QueryRow(`SELECT COUNT(*) > 0 FROM provider_types WHERE id = ?`, providerID).Scan(&exists)
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "provider not found"})
+		return
+	}
+
+	if len(req.ConnectionIDs) == 0 {
+		c.JSON(http.StatusOK, gin.H{"updated": 0})
+		return
+	}
+
+	// Validate proxy pool when binding.
+	if req.ProxyPoolID != nil && *req.ProxyPoolID != "" {
+		var poolExists bool
+		h.db.QueryRow(`SELECT COUNT(*) > 0 FROM proxy_pools WHERE id = ? AND is_active = 1`, *req.ProxyPoolID).Scan(&poolExists)
+		if !poolExists {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "proxy pool not found or inactive"})
+			return
+		}
+	}
+
+	const maxBulk = 5000
+	if len(req.ConnectionIDs) > maxBulk {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "too many connections: maximum " + strconv.Itoa(maxBulk)})
+		return
+	}
+
+	placeholders := make([]string, len(req.ConnectionIDs))
+	args := make([]interface{}, 0, len(req.ConnectionIDs)+1)
+	for i, id := range req.ConnectionIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	inClause := strings.Join(placeholders, ",")
+
+	now := time.Now().Unix()
+	run := func(d *sql.DB) (int, error) {
+		tx, err := d.Begin()
+		if err != nil {
+			return 0, err
+		}
+		defer func() {
+			if err != nil {
+				_ = tx.Rollback()
+			}
+		}()
+
+		// Lock the relevant rows and load current provider_specific_data.
+		rows, err := tx.Query(`
+			SELECT id, COALESCE(provider_specific_data, '') FROM connections
+			WHERE provider_type_id = ? AND is_active = 1 AND id IN (`+inClause+`)
+		`, append([]interface{}{providerID}, args...)...)
+		if err != nil {
+			return 0, err
+		}
+		defer rows.Close()
+
+		type item struct {
+			id  string
+			psd map[string]string
+		}
+		var items []item
+		for rows.Next() {
+			var id, raw string
+			if err := rows.Scan(&id, &raw); err != nil {
+				return 0, err
+			}
+			psd := map[string]string{}
+			if raw != "" {
+				if e := json.Unmarshal([]byte(raw), &psd); e != nil {
+					return 0, e
+				}
+			}
+			items = append(items, item{id: id, psd: psd})
+		}
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		if len(items) == 0 {
+			_ = tx.Commit()
+			return 0, nil
+		}
+
+		// Update each row.
+		for _, it := range items {
+			if req.ProxyPoolID != nil && *req.ProxyPoolID != "" {
+				it.psd["proxyPoolId"] = *req.ProxyPoolID
+			} else {
+				delete(it.psd, "proxyPoolId")
+			}
+			b, err := json.Marshal(it.psd)
+			if err != nil {
+				return 0, err
+			}
+			var psdJSON interface{} = b
+			if len(it.psd) == 0 {
+				psdJSON = nil
+			}
+			if _, err := tx.Exec(`UPDATE connections SET provider_specific_data = ?, updated_at = ? WHERE id = ?`, psdJSON, now, it.id); err != nil {
+				return 0, err
+			}
+		}
+
+		return len(items), tx.Commit()
+	}
+
+	var updated int
+	var err error
+	if h.writeQueue != nil {
+		err = h.writeQueue.Do(c.Request.Context(), "bulk-assign-proxy", func(d *sql.DB) error {
+			updated, err = run(d)
+			return err
+		})
+	} else {
+		updated, err = run(h.db)
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"updated": updated})
 }
 
 // ValidateKey checks if an API key is valid for a provider by attempting a lightweight model list request.
@@ -887,63 +1165,72 @@ func (h *ProviderHandler) ValidateKey(c *gin.Context) {
 		return
 	}
 
-	// Get provider base URL and format
-	var provider struct {
-		ID      string
-		Format  string
-		BaseURL string
-	}
-	dbErr := h.db.QueryRow(`SELECT id, format, base_url FROM provider_types WHERE id = ?`, req.Provider).Scan(&provider.ID, &provider.Format, &provider.BaseURL)
-	if dbErr != nil {
+	valid, errMsg := h.validateKeyForRequest(c.Request.Context(), req.Provider, req.APIKey, req.ProviderSpecificData)
+	if !valid && errMsg == "provider not found" {
 		c.JSON(http.StatusNotFound, gin.H{"error": "provider not found"})
 		return
 	}
+	c.JSON(http.StatusOK, gin.H{"valid": valid})
+}
 
-	// Resolve executor
-	executorID := req.Provider
-	if dbErr == nil {
-		executorID = provider.ID
+// validateKeyForRequest performs a lightweight upstream request to verify the
+// API key. It returns (true, "") when the key is accepted by the upstream, or
+// (false, <upstream message>) otherwise. Providers may opt out via
+// provider_types.skip_key_validation.
+func (h *ProviderHandler) validateKeyForRequest(ctx context.Context, providerID, apiKey string, psd map[string]string) (bool, string) {
+	var provider struct {
+		ID                string
+		Format            string
+		BaseURL           string
+		SkipKeyValidation int
 	}
-	exec, _, ok := h.registry.Get(executorID)
+	if err := h.db.QueryRow(`SELECT id, format, base_url, skip_key_validation FROM provider_types WHERE id = ?`, providerID).
+		Scan(&provider.ID, &provider.Format, &provider.BaseURL, &provider.SkipKeyValidation); err != nil {
+		if err == sql.ErrNoRows {
+			return false, "provider not found"
+		}
+		return false, err.Error()
+	}
+
+	if provider.SkipKeyValidation == 1 {
+		return true, ""
+	}
+
+	exec, _, ok := h.registry.Get(provider.ID)
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no executor for provider"})
-		return
+		return false, "no executor for provider"
 	}
 
-	// Try a lightweight request to validate the key
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
-
-	testModel := defaultTestModel(req.Provider)
+	testModel := defaultTestModel(providerID)
 	if testModel == "" {
 		testModel = "gpt-4o-mini"
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	resp, err := exec.ExecuteStream(ctx, &executor.Request{
-		APIKey:               req.APIKey,
+		APIKey:               apiKey,
 		BaseURL:              provider.BaseURL,
-		Body:                 buildTestBody(provider.Format, testModel),
-		Provider:             req.Provider,
+		Body:                 buildTestBody(provider.Format, testModel, providerID),
+		Provider:             providerID,
 		Model:                testModel,
-		ProviderSpecificData: req.ProviderSpecificData,
+		ProviderSpecificData: psd,
 	})
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"valid": false})
-		return
+		return false, err.Error()
 	}
 
-	var valid bool
 	for chunk := range resp.Chunks {
 		if chunk.Err != nil {
-			break
+			return false, chunk.Err.Error()
 		}
 		if chunk.Payload != nil {
-			valid = true
-			break
+			return true, ""
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"valid": valid})
+	return false, "invalid API key"
 }
 
 // GetSettings returns the persistent JSON-file settings for a provider.
@@ -957,6 +1244,7 @@ func (h *ProviderHandler) GetSettings(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"provider_id":  id,
 		"routing_mode": s.RoutingMode,
+		"flat_rate":    s.FlatRate,
 	})
 }
 
@@ -965,6 +1253,7 @@ func (h *ProviderHandler) UpdateSettings(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
 		RoutingMode providercfg.RoutingMode `json:"routing_mode"`
+		FlatRate    bool                    `json:"flat_rate"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -972,16 +1261,16 @@ func (h *ProviderHandler) UpdateSettings(c *gin.Context) {
 	}
 
 	switch req.RoutingMode {
-	case providercfg.FirstEligible, providercfg.RoundRobin, providercfg.Random:
+	case providercfg.FirstEligible, providercfg.RoundRobin, providercfg.Random, providercfg.Affinity:
 		// ok
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "routing_mode must be one of: first_eligible, round_robin, random",
+			"error": "routing_mode must be one of: first_eligible, round_robin, random, affinity",
 		})
 		return
 	}
 
-	if err := h.providerCfg.Save(id, providercfg.ProviderSettings{RoutingMode: req.RoutingMode}); err != nil {
+	if err := h.providerCfg.Save(id, providercfg.ProviderSettings{RoutingMode: req.RoutingMode, FlatRate: req.FlatRate}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -989,5 +1278,6 @@ func (h *ProviderHandler) UpdateSettings(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"provider_id":  id,
 		"routing_mode": req.RoutingMode,
+		"flat_rate":    req.FlatRate,
 	})
 }

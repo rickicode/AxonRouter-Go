@@ -39,6 +39,7 @@ type WriteQueue struct {
 	paused bool
 	dropped atomic.Int64
 	stopOnce sync.Once
+	active   atomic.Int64 // number of operations currently executing
 }
 
 // NewWriteQueue creates a write queue backed by the given DB.
@@ -166,18 +167,22 @@ func (wq *WriteQueue) loop() {
 			if !wq.waitUntilResumedOrStopped() {
 				return
 			}
+			wq.active.Add(1)
 			if err := op.fn(wq.db); err != nil {
 				logging.Logger.Error("writequeue: write failed",
 					"op", op.label, "error", err.Error())
 			}
+			wq.active.Add(-1)
 		case <-wq.stop:
 			// Drain remaining writes before exiting.
 			for {
 				select {
 				case op := <-wq.ch:
+					wq.active.Add(1)
 					if err := op.fn(wq.db); err != nil {
 						log.Printf("writequeue: write failed during shutdown: op=%s err=%v", op.label, err)
 					}
+					wq.active.Add(-1)
 				default:
 					return
 				}
@@ -209,12 +214,12 @@ func (wq *WriteQueue) Buffered() int {
 	return len(wq.ch)
 }
 
-// FlushIdle waits for the write queue to drain or times out.
-// Useful for tests and graceful shutdown.
+// FlushIdle waits for the write queue to drain and any in-flight operation to
+// finish, or until timeout. Useful for tests and graceful shutdown.
 func (wq *WriteQueue) FlushIdle(timeout time.Duration) {
 	deadline := time.After(timeout)
 	for {
-		if wq.Buffered() == 0 {
+		if wq.Buffered() == 0 && wq.active.Load() == 0 {
 			return
 		}
 		select {

@@ -44,6 +44,11 @@ func buildEventFrame(headers map[string]string, payload map[string]any) []byte {
 	return buf
 }
 
+func testPayload(p map[string]any) json.RawMessage {
+	b, _ := json.Marshal(p)
+	return b
+}
+
 func TestParseEventFrame(t *testing.T) {
 	frame := buildEventFrame(
 		map[string]string{
@@ -65,7 +70,11 @@ func TestParseEventFrame(t *testing.T) {
 	if parsed.Payload == nil {
 		t.Fatalf("payload nil")
 	}
-	inner := parsed.Payload["assistantResponseEvent"].(map[string]any)
+	var parsedPayload map[string]any
+	if err := json.Unmarshal(parsed.Payload, &parsedPayload); err != nil {
+		t.Fatalf("payload JSON parse: %v", err)
+	}
+	inner := parsedPayload["assistantResponseEvent"].(map[string]any)
 	if inner["content"] != "hello" {
 		t.Errorf("payload content = %v, want hello", inner["content"])
 	}
@@ -112,5 +121,90 @@ func TestByteQueueFrameExtraction(t *testing.T) {
 	data := q.read(int(length))
 	if !bytes.Equal(data, frame) {
 		t.Fatalf("extracted frame bytes mismatch")
+	}
+}
+
+func TestKiroContextUsageEvent(t *testing.T) {
+	state := &kiroStreamState{}
+
+	chunks := state.handleEvent(&EventFrame{
+		Headers: map[string]string{":event-type": "contextUsageEvent"},
+		Payload: testPayload(map[string]any{
+			"contextUsageEvent": map[string]any{"contextUsagePercentage": 10},
+		}),
+	}, nil, "kiro")
+	if len(chunks) != 0 {
+		t.Errorf("contextUsageEvent should not emit chunks, got %d", len(chunks))
+	}
+
+	chunks = state.handleEvent(&EventFrame{
+		Headers: map[string]string{":event-type": "messageStopEvent"},
+		Payload: testPayload(map[string]any{"messageStopEvent": map[string]any{}}),
+	}, nil, "kiro")
+	if len(chunks) != 1 {
+		t.Fatalf("expected 1 chunk from messageStopEvent, got %d", len(chunks))
+	}
+
+	var data map[string]any
+	if err := json.Unmarshal(bytes.TrimPrefix(chunks[0], []byte("data: ")), &data); err != nil {
+		t.Fatalf("failed to unmarshal chunk: %v", err)
+	}
+	usage, ok := data["usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected usage in final chunk, got %v", data)
+	}
+	if got, want := usage["prompt_tokens"], float64(20000); got != want {
+		t.Errorf("prompt_tokens = %v, want %v", got, want)
+	}
+}
+
+func TestKiroContextUsageEvent_FallbackWithoutHeader(t *testing.T) {
+	state := &kiroStreamState{}
+
+	chunks := state.handleEvent(&EventFrame{
+		Headers: map[string]string{},
+		Payload: testPayload(map[string]any{
+			"contextUsageEvent": map[string]any{"contextUsagePercentage": 25},
+		}),
+	}, nil, "kiro")
+	if len(chunks) != 0 {
+		t.Errorf("contextUsageEvent should not emit chunks, got %d", len(chunks))
+	}
+
+	chunks = state.handleEvent(&EventFrame{
+		Headers: map[string]string{":event-type": "messageStopEvent"},
+		Payload: testPayload(map[string]any{"messageStopEvent": map[string]any{}}),
+	}, nil, "kiro")
+	if len(chunks) != 1 {
+		t.Fatalf("expected 1 chunk from messageStopEvent, got %d", len(chunks))
+	}
+
+	var data map[string]any
+	if err := json.Unmarshal(bytes.TrimPrefix(chunks[0], []byte("data: ")), &data); err != nil {
+		t.Fatalf("failed to unmarshal chunk: %v", err)
+	}
+	usage := data["usage"].(map[string]any)
+	if got, want := usage["prompt_tokens"], float64(50000); got != want {
+		t.Errorf("prompt_tokens = %v, want %v", got, want)
+	}
+}
+
+func TestKiroMeteringEvent(t *testing.T) {
+	state := &kiroStreamState{}
+
+	chunks := state.handleEvent(&EventFrame{
+		Headers: map[string]string{":event-type": "meteringEvent"},
+		Payload: testPayload(map[string]any{"meteringEvent": map[string]any{}}),
+	}, nil, "kiro")
+	if len(chunks) != 0 {
+		t.Errorf("meteringEvent should not emit chunks, got %d", len(chunks))
+	}
+
+	chunks = state.handleEvent(&EventFrame{
+		Headers: map[string]string{":event-type": "messageStopEvent"},
+		Payload: testPayload(map[string]any{"messageStopEvent": map[string]any{}}),
+	}, nil, "kiro")
+	if len(chunks) != 1 {
+		t.Fatalf("expected 1 chunk from messageStopEvent, got %d", len(chunks))
 	}
 }

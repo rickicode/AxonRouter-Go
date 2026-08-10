@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
+	"github.com/rickicode/AxonRouter-Go/internal/background"
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
@@ -26,18 +27,19 @@ type modelTester interface {
 
 // ConnectionHandler handles connection CRUD operations.
 type ConnectionHandler struct {
-	db         *sql.DB
-	registry   *executor.Registry
-	store      *connstate.Store
-	elig       *connstate.EligibilityManager
-	exhaustion *quota.ExhaustionCache
-	authMgr    *auth.Manager
-	writeQueue *db.WriteQueue
+	db           *sql.DB
+	registry     *executor.Registry
+	store        *connstate.Store
+	elig         *connstate.EligibilityManager
+	exhaustion   *quota.ExhaustionCache
+	authMgr      *auth.Manager
+	writeQueue   *db.WriteQueue
+	lifecycleMgr *background.LifecycleManager
 }
 
 // NewConnectionHandler creates a new connection handler.
-func NewConnectionHandler(database *sql.DB, registry *executor.Registry, store *connstate.Store, elig *connstate.EligibilityManager, exhaustion *quota.ExhaustionCache, authMgr *auth.Manager, writeQueue *db.WriteQueue) *ConnectionHandler {
-	return &ConnectionHandler{db: database, registry: registry, store: store, elig: elig, exhaustion: exhaustion, authMgr: authMgr, writeQueue: writeQueue}
+func NewConnectionHandler(database *sql.DB, registry *executor.Registry, store *connstate.Store, elig *connstate.EligibilityManager, exhaustion *quota.ExhaustionCache, authMgr *auth.Manager, writeQueue *db.WriteQueue, lifecycleMgr *background.LifecycleManager) *ConnectionHandler {
+	return &ConnectionHandler{db: database, registry: registry, store: store, elig: elig, exhaustion: exhaustion, authMgr: authMgr, writeQueue: writeQueue, lifecycleMgr: lifecycleMgr}
 }
 
 // List returns paginated connections for a provider.
@@ -51,15 +53,18 @@ func (h *ConnectionHandler) List(c *gin.Context) {
 	if page < 1 {
 		page = 1
 	}
-	if perPage < 1 || perPage > 200 {
+	if perPage < 1 || perPage > 500 {
 		perPage = 50
 	}
 
-	// Build where clause
-	where := "provider_type_id = ? AND is_active = 1"
+	// Build where clause. Disabled rows are is_active=0, so when showing all
+	// or filtering by 'disabled' we must drop the active-only constraint.
+	where := "provider_type_id = ?"
 	args := []interface{}{providerID}
-	if status != "" {
-		where += " AND status = ?"
+	if status == "disabled" {
+		where += " AND is_active = 0 AND status = 'disabled'"
+	} else if status != "" {
+		where += " AND is_active = 1 AND status = ?"
 		args = append(args, status)
 	}
 	if search != "" {
@@ -75,16 +80,16 @@ func (h *ConnectionHandler) List(c *gin.Context) {
 	offset := (page - 1) * perPage
 	queryArgs := append(args, perPage, offset)
 	rows, err := h.db.Query(`
- SELECT id, provider_type_id, name, auth_type, status,
- COALESCE(priority, 0), cooldown_until, last_error, last_error_code,
- last_success_at, last_failure_at, failure_count,
- capabilities, is_active, created_at, updated_at,
- COALESCE(oauth_expires_at, 0),
- COALESCE(provider_specific_data, '')
- FROM connections WHERE `+where+`
- ORDER BY priority DESC, created_at DESC
- LIMIT ? OFFSET ?
- `, queryArgs...)
+  SELECT id, provider_type_id, name, auth_type, status,
+  COALESCE(priority, 0), cooldown_until, last_error, last_error_code,
+  last_success_at, last_failure_at, failure_count,
+  capabilities, COALESCE(disabled_reason, ''), is_active, created_at, updated_at,
+  COALESCE(oauth_expires_at, 0),
+  COALESCE(provider_specific_data, '')
+  FROM connections WHERE `+where+`
+  ORDER BY priority DESC, created_at DESC
+  LIMIT ? OFFSET ?
+  `, queryArgs...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -98,7 +103,7 @@ func (h *ConnectionHandler) List(c *gin.Context) {
 		rows.Scan(&conn.ID, &conn.ProviderTypeID, &conn.Name, &conn.AuthType,
 			&conn.Status, &conn.Priority, &conn.CooldownUntil, &conn.LastError, &conn.LastErrorCode,
 			&conn.LastSuccessAt, &conn.LastFailureAt, &conn.FailureCount,
-			&conn.Capabilities, &conn.IsActive, &conn.CreatedAt, &conn.UpdatedAt,
+			&conn.Capabilities, &conn.DisabledReason, &conn.IsActive, &conn.CreatedAt, &conn.UpdatedAt,
 			&conn.OAuthExpiresAt, &psd)
 		entry := connToJSON(conn)
 		if psd != "" {
@@ -134,14 +139,14 @@ func (h *ConnectionHandler) Get(c *gin.Context) {
 		SELECT id, provider_type_id, name, auth_type, status,
 		       cooldown_until, last_error, last_error_code,
 		       last_success_at, last_failure_at, failure_count,
-		       capabilities, is_active, created_at, updated_at,
+		       capabilities, COALESCE(disabled_reason, ''), is_active, created_at, updated_at,
 		       COALESCE(provider_specific_data, ''),
 		       COALESCE(oauth_expires_at, 0)
 		FROM connections WHERE id = ?
 	`, id).Scan(&conn.ID, &conn.ProviderTypeID, &conn.Name, &conn.AuthType,
 		&conn.Status, &conn.CooldownUntil, &conn.LastError, &conn.LastErrorCode,
 		&conn.LastSuccessAt, &conn.LastFailureAt, &conn.FailureCount,
-		&conn.Capabilities, &conn.IsActive, &conn.CreatedAt, &conn.UpdatedAt,
+		&conn.Capabilities, &conn.DisabledReason, &conn.IsActive, &conn.CreatedAt, &conn.UpdatedAt,
 		&psd, &conn.OAuthExpiresAt)
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
@@ -185,10 +190,24 @@ func (h *ConnectionHandler) Update(c *gin.Context) {
 	if req.Status != "" {
 		sets = append(sets, "status = ?")
 		args = append(args, req.Status)
+		switch req.Status {
+		case "disabled":
+			sets = append(sets, "disabled_reason = 'manual'")
+		case "ready":
+			sets = append(sets, "disabled_reason = NULL")
+		}
 	}
 	if req.IsActive != nil {
 		sets = append(sets, "is_active = ?")
 		args = append(args, boolToInt(*req.IsActive))
+		// Keep status in sync with active flag unless caller explicitly provided a status.
+		if req.Status == "" {
+			if *req.IsActive {
+				sets = append(sets, "status = 'ready', disabled_reason = NULL")
+			} else {
+				sets = append(sets, "status = 'disabled', disabled_reason = 'manual'")
+			}
+		}
 	}
 	if req.Capabilities != "" {
 		sets = append(sets, "capabilities = ?")
@@ -220,13 +239,21 @@ func (h *ConnectionHandler) Update(c *gin.Context) {
 
 	// Sync in-memory state
 	if h.store != nil && req.Status != "" {
-		h.store.UpdateStatus(id, connstate.Status(req.Status))
+		if req.Status == "disabled" {
+			h.store.UpdateStatus(id, connstate.StatusDisabled, "manual")
+		} else {
+			h.store.UpdateStatus(id, connstate.Status(req.Status))
+		}
 		if h.elig != nil {
 			h.elig.Update(h.store)
 		}
 	}
-	if req.IsActive != nil && !*req.IsActive && h.store != nil {
-		h.store.UpdateStatus(id, connstate.StatusDisabled)
+	if req.IsActive != nil && h.store != nil {
+		if *req.IsActive {
+			h.store.UpdateStatus(id, connstate.StatusReady)
+		} else {
+			h.store.UpdateStatus(id, connstate.StatusDisabled, "manual")
+		}
 		if h.elig != nil {
 			h.elig.Update(h.store)
 		}
@@ -247,7 +274,7 @@ func (h *ConnectionHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	result, err := h.db.Exec(`UPDATE connections SET is_active = 0, updated_at = ? WHERE id = ?`, time.Now().Unix(), id)
+	result, err := h.db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', disabled_reason = 'manual', updated_at = ? WHERE id = ?`, time.Now().Unix(), id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -260,7 +287,7 @@ func (h *ConnectionHandler) Delete(c *gin.Context) {
 
 	// Sync in-memory state
 	if h.store != nil {
-		h.store.UpdateStatus(id, connstate.StatusDisabled)
+		h.store.UpdateStatus(id, connstate.StatusDisabled, "manual")
 		if h.elig != nil {
 			h.elig.Update(h.store)
 		}
@@ -279,17 +306,22 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 		ID             string
 		ProviderTypeID string
 		Format         string
+		AuthType       string
 		APIKey         string
 		AccessToken    string
+		RefreshToken   string
+		ExpiresAt      int64
 		BaseURL        string
 		PSDRaw         string
 	}
 	err := h.db.QueryRow(`
-		SELECT c.id, c.provider_type_id, pt.format, COALESCE(c.api_key,''), COALESCE(c.oauth_token,''),
+		SELECT c.id, c.provider_type_id, pt.format, COALESCE(c.auth_type,''), COALESCE(c.api_key,''),
+		       COALESCE(c.oauth_token,''), COALESCE(c.oauth_refresh_token,''), COALESCE(c.oauth_expires_at,0),
 		       COALESCE(pt.base_url,''), COALESCE(c.provider_specific_data, '')
 		FROM connections c JOIN provider_types pt ON c.provider_type_id = pt.id
 		WHERE c.id = ?
-	`, id).Scan(&conn.ID, &conn.ProviderTypeID, &conn.Format, &conn.APIKey, &conn.AccessToken, &conn.BaseURL, &conn.PSDRaw)
+	`, id).Scan(&conn.ID, &conn.ProviderTypeID, &conn.Format, &conn.AuthType, &conn.APIKey,
+		&conn.AccessToken, &conn.RefreshToken, &conn.ExpiresAt, &conn.BaseURL, &conn.PSDRaw)
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
 		return
@@ -308,7 +340,7 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 
 	// Build format-specific test body with default model for this provider
 	model := defaultTestModel(conn.ProviderTypeID)
-	bodyBytes := buildTestBody(conn.Format, model)
+	bodyBytes := buildTestBody(conn.Format, model, conn.ProviderTypeID)
 
 	// Parse provider_specific_data
 	var psdMap map[string]string
@@ -316,41 +348,169 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 		json.Unmarshal([]byte(conn.PSDRaw), &psdMap)
 	}
 
-	start := time.Now()
-	streamResult, err := exec.ExecuteStream(c.Request.Context(), &executor.Request{
-		APIKey: conn.APIKey,
-		AccessToken: conn.AccessToken,
-		BaseURL: conn.BaseURL,
-		Body: bodyBytes,
-		Provider: conn.ProviderTypeID,
-		Model: model,
-		ProviderSpecificData: psdMap,
-	})
-	if err != nil {
-		latency := time.Since(start).Milliseconds()
-		if upErr, ok := grokCLITestSoftSuccess(conn.ProviderTypeID, err); ok {
-			h.recordTestSuccess(id)
-			c.JSON(http.StatusOK, gin.H{
-				"connection_id": id,
-				"status": "ok",
-				"status_code": upErr.StatusCode,
-				"latency_ms": latency,
-				"message": "Authentication succeeded, but credits/quota are exhausted. The connection remains ready.",
-			})
-			return
+	ctx := c.Request.Context()
+	accessToken := conn.AccessToken
+	refreshToken := conn.RefreshToken
+	expiresAt := conn.ExpiresAt
+
+	// Refresh expired/near-expiry OAuth tokens before testing.
+	if h.authMgr != nil && conn.AuthType == "oauth" && shouldRefreshTestToken(conn.ProviderTypeID, refreshToken, expiresAt) {
+		creds := &auth.Credentials{
+			AccessToken:      accessToken,
+			RefreshToken:     refreshToken,
+			ExpiresAt:        time.Unix(expiresAt, 0),
+			ProviderSpecific: psdMap,
 		}
-		det := connstate.DetectError(c.Request.Context(), 0, "", err, conn.ProviderTypeID, "", nil)
-		h.recordTestFailure(id, det)
+		newCreds, refreshErr := h.authMgr.RefreshTokenForConnection(ctx, id, auth.ProviderType(conn.ProviderTypeID), creds)
+		if refreshErr != nil {
+			log.Printf("TestConnection proactive refresh failed for %s: %v", id, refreshErr)
+		} else {
+			accessToken = newCreds.AccessToken
+			expiresAt = newCreds.ExpiresAt.Unix()
+			refreshToken = newCreds.RefreshToken
+			if refreshToken == "" {
+				refreshToken = conn.RefreshToken
+			}
+			if len(newCreds.ProviderSpecific) > 0 {
+				psdMap = newCreds.ProviderSpecific
+			}
+		}
+	}
+
+	req := &executor.Request{
+		APIKey:               conn.APIKey,
+		AccessToken:          accessToken,
+		BaseURL:              conn.BaseURL,
+		Body:                 bodyBytes,
+		Provider:             conn.ProviderTypeID,
+		Model:                model,
+		ProviderSpecificData: psdMap,
+	}
+	// Qoder-specific lightweight validation before the expensive executor test.
+	if conn.ProviderTypeID == "qoder" {
+		if token := executor.EffectiveQoderToken(req); token != "" {
+			valLatency, code, valErr := h.validateQoderToken(ctx, token)
+			if valErr != nil {
+				var det connstate.ErrorDetection
+				if code == http.StatusUnauthorized || code == http.StatusForbidden {
+					det = connstate.ErrorDetection{
+						Category:       connstate.ErrorAuth,
+						Message:        "Qoder token rejected",
+						Status:         connstate.StatusDisabled,
+						DisabledReason: "auth_failed",
+					}
+				} else {
+					det = connstate.ErrorDetection{
+						Category:       connstate.ErrorServer,
+						Message:        "Qoder token validation failed",
+						Status:         connstate.StatusDisabled,
+						DisabledReason: "provider_error",
+					}
+				}
+				h.recordTestFailure(id, det)
+				c.JSON(http.StatusOK, gin.H{
+					"connection_id": id,
+					"status":        "failed",
+					"error":         det.Message,
+					"latency_ms":    valLatency,
+				})
+				return
+			}
+		}
+	}
+
+	latency, statusCode, testErr := h.runTestAttempt(ctx, exec, req)
+	if testErr == nil {
+		h.recordTestSuccess(id)
 		c.JSON(http.StatusOK, gin.H{
 			"connection_id": id,
-			"status": "failed",
-			"error": err.Error(),
-			"latency_ms": latency,
+			"status":        "ok",
+			"status_code":   statusCode,
+			"latency_ms":    latency,
 		})
 		return
 	}
 
-	// Read first chunk to verify connectivity, drain rest
+	if upErr, ok := grokCLITestSoftSuccess(conn.ProviderTypeID, testErr); ok {
+		h.recordTestSuccess(id)
+		c.JSON(http.StatusOK, gin.H{
+			"connection_id": id,
+			"status":        "ok",
+			"status_code":   upErr.StatusCode,
+			"latency_ms":    latency,
+			"message":       "Authentication succeeded, but credits/quota are exhausted. The connection remains ready.",
+		})
+		return
+	}
+
+	det := connstate.DetectError(ctx, 0, "", testErr, conn.ProviderTypeID, "", nil)
+	if h.authMgr != nil && conn.AuthType == "oauth" && refreshToken != "" && isRefreshableTestError(conn.ProviderTypeID, testErr, det) {
+		creds := &auth.Credentials{
+			AccessToken:      accessToken,
+			RefreshToken:     refreshToken,
+			ExpiresAt:        time.Unix(expiresAt, 0),
+			ProviderSpecific: psdMap,
+		}
+		newCreds, refreshErr := h.authMgr.RefreshTokenForConnection(ctx, id, auth.ProviderType(conn.ProviderTypeID), creds)
+		if refreshErr == nil {
+			accessToken = newCreds.AccessToken
+			expiresAt = newCreds.ExpiresAt.Unix()
+			refreshToken = newCreds.RefreshToken
+			if refreshToken == "" {
+				refreshToken = conn.RefreshToken
+			}
+			if len(newCreds.ProviderSpecific) > 0 {
+				psdMap = newCreds.ProviderSpecific
+			}
+
+			req.AccessToken = accessToken
+			req.ProviderSpecificData = psdMap
+			latency, statusCode, testErr = h.runTestAttempt(ctx, exec, req)
+			if testErr == nil {
+				h.recordTestSuccess(id)
+				c.JSON(http.StatusOK, gin.H{
+					"connection_id": id,
+					"status":        "ok",
+					"status_code":   statusCode,
+					"latency_ms":    latency,
+				})
+				return
+			}
+			if upErr, ok := grokCLITestSoftSuccess(conn.ProviderTypeID, testErr); ok {
+				h.recordTestSuccess(id)
+				c.JSON(http.StatusOK, gin.H{
+					"connection_id": id,
+					"status":        "ok",
+					"status_code":   upErr.StatusCode,
+					"latency_ms":    latency,
+					"message":       "Authentication succeeded, but credits/quota are exhausted. The connection remains ready.",
+				})
+				return
+			}
+			det = connstate.DetectError(ctx, 0, "", testErr, conn.ProviderTypeID, "", nil)
+		} else {
+			log.Printf("TestConnection reactive refresh failed for %s: %v", id, refreshErr)
+		}
+	}
+
+	h.recordTestFailure(id, det)
+	c.JSON(http.StatusOK, gin.H{
+		"connection_id": id,
+		"status":        "failed",
+		"error":         testErr.Error(),
+		"latency_ms":    latency,
+	})
+}
+
+// runTestAttempt executes the stream and drains the first chunk, returning the
+// latency, HTTP status code on success, and the first error encountered.
+func (h *ConnectionHandler) runTestAttempt(ctx context.Context, exec executor.Executor, req *executor.Request) (int64, int, error) {
+	start := time.Now()
+	streamResult, err := exec.ExecuteStream(ctx, req)
+	if err != nil {
+		return time.Since(start).Milliseconds(), 0, err
+	}
+
 	var firstErr error
 	for chunk := range streamResult.Chunks {
 		if chunk.Err != nil {
@@ -359,38 +519,24 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 		}
 	}
 	latency := time.Since(start).Milliseconds()
-
 	if firstErr != nil {
-		if upErr, ok := grokCLITestSoftSuccess(conn.ProviderTypeID, firstErr); ok {
-			h.recordTestSuccess(id)
-			c.JSON(http.StatusOK, gin.H{
-				"connection_id": id,
-				"status": "ok",
-				"status_code": upErr.StatusCode,
-				"latency_ms": latency,
-				"message": "Authentication succeeded, but credits/quota are exhausted. The connection remains ready.",
-			})
-			return
-		}
-		det := connstate.DetectError(c.Request.Context(), 0, "", firstErr, conn.ProviderTypeID, "", nil)
-		h.recordTestFailure(id, det)
-		c.JSON(http.StatusOK, gin.H{
-			"connection_id": id,
-			"status": "failed",
-			"error": firstErr.Error(),
-			"latency_ms": latency,
-		})
-		return
+		return latency, 0, firstErr
 	}
+	return latency, streamResult.StatusCode, nil
+}
 
-	h.recordTestSuccess(id)
-
-	c.JSON(http.StatusOK, gin.H{
-		"connection_id": id,
-		"status": "ok",
-		"status_code": streamResult.StatusCode,
-		"latency_ms": latency,
-	})
+// validateQoderToken performs a cheap upstream credential check before the
+// executor test. PAT tokens (pt-*) are exchanged for a short-lived job token;
+// API/OAuth-derived tokens are checked against the DashScope models endpoint.
+// It returns the latency, HTTP status code, and a token-safe error.
+func (h *ConnectionHandler) validateQoderToken(ctx context.Context, token string) (int64, int, error) {
+	start := time.Now()
+	if executor.IsQoderPAT(token) {
+		_, code, err := quota.ResolveQoderJobToken(token)
+		return time.Since(start).Milliseconds(), code, err
+	}
+	code, err := quota.CheckQoderAPIToken(ctx, token)
+	return time.Since(start).Milliseconds(), code, err
 }
 
 // grokCLITestSoftSuccess reports whether a Grok CLI connection test error is an
@@ -445,24 +591,45 @@ func (h *ConnectionHandler) recordTestFailure(connID string, det connstate.Error
 	if det.Category == connstate.ErrorQuota {
 		status = connstate.StatusQuotaExhausted
 	}
+
+	disabledReason := det.DisabledReason
+	isActive := 1
+	if status == connstate.StatusDisabled {
+		isActive = 0
+		if disabledReason == "" {
+			switch det.Category {
+			case connstate.ErrorAuth:
+				disabledReason = "auth_failed"
+			case connstate.ErrorBalanceEmpty:
+				disabledReason = "balance_empty"
+			default:
+				disabledReason = "manual"
+			}
+		}
+	}
+
 	if status != "" && h.store != nil {
-		h.store.UpdateStatus(connID, status)
+		if status == connstate.StatusDisabled {
+			h.store.UpdateStatus(connID, status, disabledReason)
+		} else {
+			h.store.UpdateStatus(connID, status)
+		}
 	}
 	if status != "" {
 		errCode := string(det.Category)
 		now := time.Now().Unix()
 		if det.CooldownUntil != nil {
 			if _, err := h.db.Exec(`
-				UPDATE connections SET status = ?, cooldown_until = ?, last_error = ?, last_error_code = ?,
+				UPDATE connections SET status = ?, disabled_reason = ?, is_active = ?, cooldown_until = ?, last_error = ?, last_error_code = ?,
 				failure_count = failure_count + 1, last_failure_at = ?, updated_at = ? WHERE id = ?
-			`, status, det.CooldownUntil.Unix(), det.Message, errCode, now, now, connID); err != nil {
+			`, status, disabledReason, isActive, det.CooldownUntil.Unix(), det.Message, errCode, now, now, connID); err != nil {
 				log.Printf("recordTestFailure db update failed for %s: %v", connID, err)
 			}
 		} else {
 			if _, err := h.db.Exec(`
-				UPDATE connections SET status = ?, last_error = ?, last_error_code = ?,
+				UPDATE connections SET status = ?, disabled_reason = ?, is_active = ?, last_error = ?, last_error_code = ?,
 				failure_count = failure_count + 1, last_failure_at = ?, updated_at = ? WHERE id = ?
-			`, status, det.Message, errCode, now, now, connID); err != nil {
+			`, status, disabledReason, isActive, det.Message, errCode, now, now, connID); err != nil {
 				log.Printf("recordTestFailure db update failed for %s: %v", connID, err)
 			}
 		}
@@ -482,6 +649,15 @@ func (h *ConnectionHandler) recordTestFailure(connID string, det connstate.Error
 	if h.elig != nil {
 		h.elig.Update(h.store)
 	}
+}
+
+// execWrite runs a DB write through the single-writer queue when available,
+// falling back to a direct exec so callers can run with or without a queue.
+func (h *ConnectionHandler) execWrite(ctx context.Context, label string, fn func(*sql.DB) error) error {
+	if h.writeQueue != nil {
+		return h.writeQueue.Do(ctx, label, fn)
+	}
+	return fn(h.db)
 }
 
 // ResetStatus resets a connection's status and syncs in-memory state.
@@ -542,19 +718,19 @@ func (h *ConnectionHandler) BulkUpdate(c *gin.Context) {
 	var status connstate.Status
 	switch req.Action {
 	case "disable":
-		query = "UPDATE connections SET is_active = ?, updated_at = ? WHERE id IN (" + inClause + ")"
+		query = "UPDATE connections SET is_active = ?, status = 'disabled', disabled_reason = 'manual', updated_at = ? WHERE id IN (" + inClause + ")"
 		args = append([]interface{}{false, now}, args...)
 		status = connstate.StatusDisabled
 	case "enable":
-		query = "UPDATE connections SET is_active = ?, updated_at = ? WHERE id IN (" + inClause + ")"
+		query = "UPDATE connections SET is_active = ?, status = 'ready', disabled_reason = NULL, updated_at = ? WHERE id IN (" + inClause + ")"
 		args = append([]interface{}{true, now}, args...)
 		status = connstate.StatusReady
 	case "reset":
-		query = "UPDATE connections SET status = 'ready', failure_count = 0, updated_at = ? WHERE id IN (" + inClause + ")"
+		query = "UPDATE connections SET status = 'ready', disabled_reason = NULL, failure_count = 0, updated_at = ? WHERE id IN (" + inClause + ")"
 		args = append([]interface{}{now}, args...)
 		status = connstate.StatusReady
 	case "delete":
-		query = "UPDATE connections SET is_active = ?, updated_at = ? WHERE id IN (" + inClause + ")"
+		query = "UPDATE connections SET is_active = ?, status = 'disabled', disabled_reason = 'manual', updated_at = ? WHERE id IN (" + inClause + ")"
 		args = append([]interface{}{false, now}, args...)
 		status = connstate.StatusDisabled
 	default:
@@ -591,7 +767,11 @@ func (h *ConnectionHandler) BulkUpdate(c *gin.Context) {
 	// Only mutate in-memory state after the DB write committed successfully.
 	if h.store != nil {
 		for _, id := range req.IDs {
-			h.store.UpdateStatus(id, status)
+			if status == connstate.StatusDisabled {
+				h.store.UpdateStatus(id, status, "manual")
+			} else {
+				h.store.UpdateStatus(id, status)
+			}
 		}
 		if h.elig != nil {
 			h.elig.Update(h.store)
@@ -641,6 +821,7 @@ func connToJSON(conn db.Connection) gin.H {
 		"last_failure_at":  nullInt64(conn.LastFailureAt),
 		"failure_count":    conn.FailureCount,
 		"capabilities":     nullStr(conn.Capabilities),
+		"disabled_reason":  nullStr(conn.DisabledReason),
 		"is_active":        conn.IsActive,
 		"created_at":       conn.CreatedAt,
 		"updated_at":       conn.UpdatedAt,
@@ -654,11 +835,11 @@ func (h *ConnectionHandler) RefreshToken(c *gin.Context) {
 
 	var providerTypeID, refreshToken string
 	var expiresAt int64
-	var accessToken string
+	var accessToken, psdRaw string
 	err := h.db.QueryRow(`
-		SELECT provider_type_id, COALESCE(oauth_token,''), COALESCE(oauth_refresh_token,''), COALESCE(oauth_expires_at,0)
+		SELECT provider_type_id, COALESCE(oauth_token,''), COALESCE(oauth_refresh_token,''), COALESCE(oauth_expires_at,0), COALESCE(provider_specific_data, '')
 		FROM connections WHERE id = ?
-	`, connID).Scan(&providerTypeID, &accessToken, &refreshToken, &expiresAt)
+	`, connID).Scan(&providerTypeID, &accessToken, &refreshToken, &expiresAt, &psdRaw)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
 		return
@@ -676,33 +857,29 @@ func (h *ConnectionHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 
-	creds := &auth.Credentials{
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-		ExpiresAt:    time.Unix(expiresAt, 0),
+	providerSpecific := map[string]string{}
+	if psdRaw != "" {
+		var raw map[string]any
+		if e := json.Unmarshal([]byte(psdRaw), &raw); e == nil {
+			for k, v := range raw {
+				if s, ok := v.(string); ok {
+					providerSpecific[k] = s
+				}
+			}
+		}
 	}
 
-	newCreds, err := h.authMgr.RefreshToken(c.Request.Context(), auth.ProviderType(providerTypeID), creds)
+	creds := &auth.Credentials{
+		AccessToken:      accessToken,
+		RefreshToken:     refreshToken,
+		ExpiresAt:        time.Unix(expiresAt, 0),
+		ProviderSpecific: providerSpecific,
+	}
+
+	newCreds, err := h.authMgr.RefreshTokenForConnection(c.Request.Context(), connID, auth.ProviderType(providerTypeID), creds)
 	if err != nil {
 		log.Printf("Manual token refresh failed for %s: %v", connID, err)
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
-	}
-
-	now := time.Now().Unix()
-	if len(newCreds.ProviderSpecific) > 0 {
-		psdJSON, _ := json.Marshal(newCreds.ProviderSpecific)
-		_, err = h.db.Exec(`
-			UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, provider_specific_data = ?, updated_at = ? WHERE id = ?
-		`, newCreds.AccessToken, newCreds.RefreshToken, newCreds.ExpiresAt.Unix(), psdJSON, now, connID)
-	} else {
-		_, err = h.db.Exec(`
-			UPDATE connections SET oauth_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, updated_at = ? WHERE id = ?
-		`, newCreds.AccessToken, newCreds.RefreshToken, newCreds.ExpiresAt.Unix(), now, connID)
-	}
-	if err != nil {
-		log.Printf("Failed to persist refreshed token for %s: %v", connID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to persist token"})
 		return
 	}
 
@@ -718,4 +895,40 @@ func (h *ConnectionHandler) RefreshToken(c *gin.Context) {
 		"expires_at": newCreds.ExpiresAt.Unix(),
 		"message":    "Token refreshed successfully",
 	})
+}
+
+// CleanupConnections runs the connection lifecycle cleanup synchronously and
+// returns how many stale legacy terminal rows were deleted. Canonical 'disabled'
+// rows are never removed by this endpoint; they must be deleted manually.
+// POST /api/admin/system/connection-cleanup
+//
+// Query params:
+//
+//	grace_days - optional retention window in days; defaults to the manager's
+//	             configured retention. Use 0 to delete every eligible row.
+func (h *ConnectionHandler) CleanupConnections(c *gin.Context) {
+	if h.lifecycleMgr == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "lifecycle manager not configured"})
+		return
+	}
+
+	var deleted int64
+	var err error
+	if s := c.Query("grace_days"); s != "" {
+		days, parseErr := strconv.Atoi(s)
+		if parseErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid grace_days"})
+			return
+		}
+		retention := time.Duration(days) * 24 * time.Hour
+		deleted, err = h.lifecycleMgr.CleanupWithRetention(retention)
+	} else {
+		deleted, err = h.lifecycleMgr.Cleanup()
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "cleanup failed: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"deleted": deleted})
 }

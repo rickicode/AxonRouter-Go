@@ -25,21 +25,20 @@ export interface Provider {
     ready: number;
     rate_limited: number;
     quota_exhausted: number;
-    balance_empty: number;
-    auth_failed: number;
-    suspended: number;
     disabled: number;
   };
+  disabled_reasons?: Record<string, number>;
   aliases?: string[];
   category: string;
   service_kinds: string[];
 }
 
-export type RoutingMode = "first_eligible" | "round_robin" | "random";
+export type RoutingMode = "first_eligible" | "round_robin" | "random" | "affinity";
 
 export interface ProviderSettings {
   provider_id: string;
   routing_mode: RoutingMode;
+  flat_rate?: boolean;
 }
 
 export interface Connection {
@@ -47,8 +46,9 @@ export interface Connection {
   provider_type_id: string;
   name: string;
   auth_type: string;
- api_key?: string;
+  api_key?: string;
   status: string;
+  disabled_reason?: string | null;
   cooldown_until: number | null;
   last_error: string | null;
   last_error_code: number | null;
@@ -88,6 +88,7 @@ export interface BulkCreateConnectionResponse {
 export interface Combo {
 	id: string;
 	name: string;
+	kind: string;
 	strategy: string;
 	sticky_limit: number;
 	timeout_ms: number;
@@ -353,6 +354,10 @@ deleteModel: (id: string, model: string) =>
  fetchApi<{ data: ProviderModelEntry[] }>(`/providers/${id}/models?model=${encodeURIComponent(model)}`, {
   method: "DELETE",
     }),
+syncModels: () =>
+  fetchApi<{ message: string }>('/models/sync', {
+    method: 'POST',
+  }),
 };
 
 // Connection API
@@ -454,6 +459,18 @@ export const connectionsApi = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
+
+  bulkAssignProxy: (
+    providerId: string,
+    data: { connection_ids: string[]; proxy_pool_id: string | null },
+  ) =>
+    fetchApi<{ updated: number }>(
+      `/providers/${providerId}/connections/bulk-proxy`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    ),
 };
 
 export interface ImportOAuthTokenPayload {
@@ -471,8 +488,45 @@ export interface ImportOAuthTokenResponse {
   status: string;
 }
 
+export interface KiroAutoImportResult {
+  found: boolean;
+  access_token?: string;
+  refresh_token?: string;
+  expires_at?: number;
+  region?: string;
+  profile_arn?: string;
+  auth_method?: string;
+  client_id?: string;
+  client_secret?: string;
+  token_endpoint?: string;
+  scopes?: string;
+  source?: string;
+  tried_paths?: string[];
+  error?: string;
+}
+
+export interface KiroDeviceCodeResponse {
+  auth_url: string;
+  session_id: string;
+  port: number;
+  user_code?: string;
+}
+
+export interface KiroPollResponse {
+  status: string;
+  name?: string;
+  connection_id?: string;
+  error?: string;
+}
+
+export interface KiroConnectionResponse {
+  connection_id: string;
+  name: string;
+  status: string;
+}
+
 export const oauthApi = {
-  start: (provider: string, providerName?: string) =>
+  startFlow: (provider: string, providerName?: string) =>
     fetchApi<{
       auth_url: string;
       session_id: string;
@@ -483,7 +537,7 @@ export const oauthApi = {
       body: JSON.stringify({ provider, provider_name: providerName }),
     }),
 
-  poll: (sessionId: string) =>
+  pollStatus: (sessionId: string) =>
     fetchApi<{
       status: string;
       name?: string;
@@ -502,6 +556,69 @@ export const oauthApi = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+
+  startKiroBuilderID: () =>
+    fetchApi<KiroDeviceCodeResponse>("/oauth/kiro/builder-id/start", {
+      method: "POST",
+    }),
+
+  startKiroIDC: (startUrl: string, issuerUrl?: string, region?: string) =>
+    fetchApi<KiroDeviceCodeResponse>("/oauth/kiro/idc/start", {
+      method: "POST",
+      body: JSON.stringify({ start_url: startUrl, issuer_url: issuerUrl, region }),
+    }),
+
+  startKiroSocial: (provider: "google" | "github") =>
+    fetchApi<{ auth_url: string; session_id: string }>(
+      `/oauth/kiro/${provider}/start`,
+      { method: "POST" }
+    ),
+
+  exchangeKiroSocial: (provider: "google" | "github", sessionId: string, code: string) =>
+    fetchApi<KiroConnectionResponse>(`/oauth/kiro/${provider}/callback`, {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId, code }),
+    }),
+
+  validateKiroAPIKey: (apiKey: string, region?: string) =>
+    fetchApi<KiroConnectionResponse>("/oauth/kiro/api-key", {
+      method: "POST",
+      body: JSON.stringify({ api_key: apiKey, region }),
+    }),
+
+  importKiroToken: (
+    refreshToken: string,
+    clientId?: string,
+    clientSecret?: string,
+    region?: string,
+    startUrl?: string
+  ) =>
+    fetchApi<KiroConnectionResponse>("/oauth/kiro/import", {
+      method: "POST",
+      body: JSON.stringify({
+        refresh_token: refreshToken,
+        client_id: clientId,
+        client_secret: clientSecret,
+        region,
+        start_url: startUrl,
+      }),
+    }),
+
+  importKiroExternalIDP: (json: string) =>
+    fetchApi<KiroConnectionResponse>("/oauth/kiro/external-idp", {
+      method: "POST",
+      body: JSON.stringify({ json }),
+    }),
+
+  pollKiroSession: (sessionId: string) =>
+    fetchApi<KiroPollResponse>(`/oauth/kiro/${sessionId}/poll`),
+
+  autoImportKiro: () => fetchApi<KiroAutoImportResult>("/oauth/kiro/auto-import"),
+
+  importCursorFromIDE: () =>
+    fetchApi<{ id: string; name: string; status: string; expires_at?: number; email_hash?: string; source?: string }>("/oauth/cursor/import", {
+      method: "POST",
+    }),
 };
 
 export interface APIKeyItem {
@@ -513,6 +630,26 @@ export interface APIKeyItem {
   is_active: boolean;
   created_at: number;
   expires_at?: number;
+  allowed_models?: string[];
+  daily_limit_usd: number;
+  monthly_limit_usd: number;
+  warning_threshold: number;
+  daily_spend_usd: number;
+  monthly_spend_usd: number;
+}
+
+export interface TrackedDevice {
+  fingerprint: string;
+  ip: string;
+  userAgent: string;
+  lastSeen: number;
+}
+
+export interface KeyDevicesResponse {
+  keyId: string;
+  name: string;
+  count: number;
+  devices: TrackedDevice[];
 }
 
 export interface APIKeyCreateResponse {
@@ -522,6 +659,10 @@ export interface APIKeyCreateResponse {
   max_tokens: number;
   message: string;
   expires_at?: number;
+  allowed_models?: string[];
+  daily_limit_usd: number;
+  monthly_limit_usd: number;
+  warning_threshold: number;
 }
 
 export interface UsageBreakdown {
@@ -553,6 +694,21 @@ export interface UsageTimeBucket {
   reasoning_tokens: number;
   tokens: number;
   cost_usd: number;
+}
+
+export interface UsageActivityDay {
+  date: string;
+  requests: number;
+  tokens: number;
+  cost_usd: number;
+}
+
+export interface UsageActivityResponse {
+  data: {
+    from: string;
+    to: string;
+    days: UsageActivityDay[];
+  };
 }
 
 export interface UsageSummary {
@@ -590,7 +746,7 @@ export interface UsageData {
 export const apiKeysApi = {
   list: () => fetchApi<{ data: APIKeyItem[] }>("/api-keys"),
 
-  create: (name?: string, rateLimit?: number, maxTokens?: number, expiresAt?: number) =>
+  create: (name?: string, rateLimit?: number, maxTokens?: number, expiresAt?: number, allowedModels?: string[], dailyLimitUsd?: number, monthlyLimitUsd?: number, warningThreshold?: number) =>
     fetchApi<APIKeyCreateResponse>("/api-keys", {
       method: "POST",
       body: JSON.stringify({
@@ -598,6 +754,10 @@ export const apiKeysApi = {
         rate_limit_per_min: rateLimit,
         max_tokens: maxTokens,
         expires_at: expiresAt,
+        ...(allowedModels !== undefined ? { allowed_models: allowedModels } : {}),
+        ...(dailyLimitUsd !== undefined ? { daily_limit_usd: dailyLimitUsd } : {}),
+        ...(monthlyLimitUsd !== undefined ? { monthly_limit_usd: monthlyLimitUsd } : {}),
+        ...(warningThreshold !== undefined ? { warning_threshold: warningThreshold } : {}),
       }),
     }),
 
@@ -606,15 +766,40 @@ export const apiKeysApi = {
       method: "DELETE",
     }),
 
-  toggle: (id: string, isActive: boolean) =>
+  toggle: (id: string, isActive: boolean, maxTokens?: number, dailyLimitUsd?: number, monthlyLimitUsd?: number, warningThreshold?: number) =>
     fetchApi<{ ok: boolean }>(`/api-keys/${id}/toggle`, {
       method: "PATCH",
-      body: JSON.stringify({ is_active: isActive }),
+      body: JSON.stringify({
+        is_active: isActive,
+        ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
+        ...(dailyLimitUsd !== undefined ? { daily_limit_usd: dailyLimitUsd } : {}),
+        ...(monthlyLimitUsd !== undefined ? { monthly_limit_usd: monthlyLimitUsd } : {}),
+        ...(warningThreshold !== undefined ? { warning_threshold: warningThreshold } : {}),
+      }),
     }),
 
   value: (id: string) =>
-    fetchApi<{ id: string; key: string }>(`/api-keys/${id}/value`),
+    fetchApi<{ id: string; key: string; value: string }>(`/api-keys/${id}/value`),
+
+  getDevices: (id: string) =>
+    fetchApi<KeyDevicesResponse>(`/keys/${id}/devices`),
 };
+
+export interface UsageDaySummary {
+  requests: number;
+  tokens: number;
+  cost_usd: number;
+  errors: number;
+  avg_latency_ms: number;
+}
+
+export interface UsageSummaryResponse {
+  today: UsageDaySummary;
+  yesterday: UsageDaySummary;
+  month_to_date: UsageDaySummary;
+  projected_month_cost: number;
+  next_quota_reset?: string;
+}
 
 // Usage API
 export const usageApi = {
@@ -639,6 +824,25 @@ export const usageApi = {
         ).toString()
       : "";
     return fetchApi<{ data: UsageData }>(`/usage${qs}`);
+  },
+  summary: () => fetchApi<{ data: UsageSummaryResponse }>("/usage/summary"),
+  activity: (params?: {
+    api_key_id?: string;
+    provider_id?: string;
+    model_id?: string;
+    modality?: string;
+    status_code?: number;
+  }) => {
+    const searchParams = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== "") {
+          searchParams.set(k, String(v));
+        }
+      });
+    }
+    const qs = searchParams.toString() ? `?${searchParams.toString()}` : "";
+    return fetchApi<UsageActivityResponse>(`/usage/activity${qs}`);
   },
 };
 
@@ -722,6 +926,7 @@ export interface ModelPricing {
   cached_write_per_1k: number;
   image_per_unit: number;
   audio_per_min: number;
+  video_per_unit: number;
   currency: string;
   updated_at: number;
   service_kinds?: string[];
@@ -742,6 +947,51 @@ export const modelPricingApi = {
   delete: (id: string) =>
     fetchApi<{ ok: boolean }>(`/model-pricing/${id}`, { method: "DELETE" }),
 };
+
+// Console Logs API
+export interface ConsoleLogEntry {
+	ts: string;
+	level: string;
+	msg: string;
+	component?: string;
+	request_id?: string;
+	provider?: string;
+	model?: string;
+	conn?: string;
+	error?: string;
+	extra?: Record<string, unknown>;
+}
+
+export interface ConsoleLogsResponse {
+	entries: ConsoleLogEntry[];
+	path: string;
+	total: number;
+}
+
+export const getConsoleLogs = (params?: {
+	level?: string;
+	search?: string;
+}) => {
+	const query = new URLSearchParams();
+	if (params?.level) query.set('level', params.level);
+	if (params?.search) query.set('search', params.search);
+	const qs = query.toString();
+	return fetchApi<ConsoleLogsResponse>(`/console-logs${qs ? '?' + qs : ''}`);
+};
+export const streamConsoleLogs = (params?: {
+	level?: string;
+	search?: string;
+}): EventSource => {
+	const query = new URLSearchParams();
+	if (params?.level) query.set('level', params.level);
+	if (params?.search) query.set('search', params.search);
+	const token = getToken();
+	if (token) query.set('token', token);
+	const qs = query.toString();
+	return new EventSource(`${API_BASE}/console-logs/stream${qs ? '?' + qs : ''}`);
+};
+export const clearConsoleLogs = () =>
+	fetchApi<void>('/console-logs', { method: 'DELETE' });
 
 // Logs API
 export const logsApi = {
@@ -796,18 +1046,32 @@ export const settingsApi = {
 };
 
 // Dashboard API
+export interface DashboardStats {
+  total_providers: number;
+  total_connections: number;
+  total_combos: number;
+  status_counts: Record<string, number>;
+  requests_today: number;
+  tokens_today: number;
+  cost_today: number;
+  errors_today: number;
+  avg_latency_ms_today: number;
+  cpu_percent: number;
+  cpu_cores: number;
+  memory_used_bytes: number;
+  memory_total_bytes: number;
+  memory_percent: number;
+  disk_used_bytes: number;
+  disk_total_bytes: number;
+  disk_percent: number;
+  uptime_seconds: number;
+  buffer_length?: number;
+  healthy_connections?: number;
+  dropped_usage_events?: number;
+}
+
 export const dashboardApi = {
-  stats: () =>
-    fetchApi<{
-      total_providers: number;
-      total_connections: number;
-      total_combos: number;
-      status_counts: Record<string, number>;
-      requests_today: number;
-      tokens_today: number;
-      cost_today: number;
-      uptime_seconds: number;
-    }>("/dashboard/stats"),
+  stats: () => fetchApi<DashboardStats>("/dashboard/stats"),
   usageStats: (hours = 24) =>
     fetchApi<{
       provider_usage: {
@@ -886,19 +1150,19 @@ export interface QuotaCacheResponse {
 }
 
 export interface QuotaProviderSummary {
- provider_id: string;
- display_name: string;
- color?: string;
- icon_file?: string;
- total: number;
- statuses: Record<string, number>;
- next_reset?: string;
- savings_usd?: number;
+  provider_id: string;
+  display_name: string;
+  color?: string;
+  icon_file?: string;
+  total: number;
+  statuses: Record<string, number>;
+  next_reset?: string;
+  spent_usd?: number;
 }
 
 export interface QuotaSummaryResponse {
   providers: QuotaProviderSummary[];
-  savings_usd: number;
+  spent_usd: number;
   next_reset?: string;
 }
 
@@ -941,6 +1205,7 @@ export interface ProxyPool {
   name: string;
   type: string; // http, vercel, deno, cloudflare
   proxyUrl: string;
+  proxyUsername?: string;
   noProxy: string;
   relayAuth: string;
   isActive: boolean;
@@ -1132,6 +1397,12 @@ export const proxyDeployApi = {
 };
 
 // Compression & Cache types
+export interface HeadroomSettings {
+enabled: boolean;
+endpoint?: string;
+timeout_ms?: number;
+max_payload_bytes?: number;
+}
 export interface CompressionSettings {
   mode: "off" | "lite" | "standard" | "rtk" | "aggressive" | "ultra";
   lite?: {
@@ -1140,6 +1411,11 @@ export interface CompressionSettings {
     remove_redundant_content: boolean;
     dedup_system_prompt: boolean;
   };
+  output?: {
+    enabled: boolean;
+    level: "caveman" | "ponytail";
+  };
+  headroom?: HeadroomSettings;
 }
 
 export interface CacheStats {
@@ -1179,6 +1455,15 @@ export interface CompressionMetrics {
   tokens_saved: number;
   savings_percent: number;
   modes: CompressionModeMetric[];
+  headroom?: HeadroomMetrics;
+  headroom_status?: "running" | "stopped" | "error";
+  headroom_endpoint?: string;
+}
+
+export interface HeadroomMetrics {
+  total: number;
+  bytes_saved: number;
+  errors: number;
 }
 
 export const compressionApi = {
@@ -1282,6 +1567,7 @@ export interface CLIToolState {
   state?: unknown;
   configured: boolean;
   config?: CLIToolConfig;
+  actualConfig?: { path?: string; content?: string };
 }
 
 export interface CLIToolSelection {
@@ -1294,6 +1580,12 @@ export interface CLIToolSelection {
   activeModel?: string;
   subagentModel?: string;
   agentModels?: Record<string, string>;
+  reasoningEffort?: string;
+}
+
+export interface CLIToolExtraFile {
+  path: string;
+  content: string;
 }
 
 export interface CLIToolConfig {
@@ -1302,6 +1594,7 @@ export interface CLIToolConfig {
   configContent: string;
   runCommand: string;
   backupPath?: string;
+  extraFiles?: CLIToolExtraFile[];
 }
 
 export interface CLIToolSavedResponse {
@@ -1318,6 +1611,11 @@ export const cliToolsApi = {
     fetchApi<CLIToolSavedResponse>(`/cli-tools/${toolId}`, {
       method: "POST",
       body: JSON.stringify(data),
+    }),
+  saveConfigContent: (toolId: string, content: string) =>
+    fetchApi<CLIToolSavedResponse>(`/cli-tools/${toolId}`, {
+      method: "POST",
+      body: JSON.stringify({ configContentOverride: content }),
     }),
   delete: (toolId: string) =>
     fetchApi<{ success: boolean }>(`/cli-tools/${toolId}`, {
@@ -1396,4 +1694,176 @@ export const tlsApi = {
     fetchApi<{ data: TLSCheckDNSResult }>(
       `/tls-config/check-dns?domain=${encodeURIComponent(domain)}`,
     ),
+};
+
+// Smart Router / virtual models
+export const SMART_VIRTUAL_MODEL_IDS = [
+	"smart/auto",
+	"smart/auto-fast",
+	"smart/auto-quality",
+] as const;
+
+export interface SmartVirtualModel {
+	id: string;
+	enabled: boolean;
+	candidates: string[];
+}
+
+export interface SmartRouterConfig {
+	models: SmartVirtualModel[];
+}
+
+export const defaultSmartRouterConfig: SmartRouterConfig = {
+	models: SMART_VIRTUAL_MODEL_IDS.map((id) => ({ id, enabled: true, candidates: [] })),
+};
+
+function migrateSmartRouterConfig(input: SmartRouterConfig): SmartRouterConfig {
+	const byId = new Map<string, SmartVirtualModel>(
+		(input.models || []).map((m) => [m.id, { ...m, candidates: m.candidates || [] }]),
+	);
+	for (const id of SMART_VIRTUAL_MODEL_IDS) {
+		if (!byId.has(id)) {
+			byId.set(id, { id, enabled: false, candidates: [] });
+		}
+	}
+	return { models: SMART_VIRTUAL_MODEL_IDS.map((id) => byId.get(id)!) };
+}
+
+const SMART_ROUTER_CONFIG_KEY = "smart_router_virtual_models";
+
+export const smartRouterApi = {
+	getConfig: async (): Promise<SmartRouterConfig> => {
+		try {
+			const { value } = await settingsApi.get(SMART_ROUTER_CONFIG_KEY);
+			const parsed = JSON.parse(value || "null") as SmartRouterConfig | null;
+			return migrateSmartRouterConfig(parsed || defaultSmartRouterConfig);
+		} catch {
+			return migrateSmartRouterConfig(defaultSmartRouterConfig);
+		}
+	},
+	updateConfig: async (config: SmartRouterConfig): Promise<void> => {
+		await settingsApi.update(
+			SMART_ROUTER_CONFIG_KEY,
+			JSON.stringify(migrateSmartRouterConfig(config)),
+		);
+	},
+};
+
+export interface VirtualModelTelemetry {
+	requests: number;
+	avgLatencyMs: number;
+	successRate: number;
+	costPer1KTokens: number;
+}
+
+export function computeVirtualModelTelemetry(
+	candidates: string[],
+	byModel: {
+		model_id?: string;
+		requests: number;
+		errors: number;
+		avg_latency_ms: number;
+		cost_usd: number;
+		total_tokens: number;
+	}[],
+): VirtualModelTelemetry | null {
+	const candidateSet = new Set(candidates);
+	const rows = byModel.filter((r) => candidateSet.has(r.model_id || ""));
+	const requests = rows.reduce((sum, r) => sum + (r.requests || 0), 0);
+	if (requests === 0) return null;
+	const errors = rows.reduce((sum, r) => sum + (r.errors || 0), 0);
+	const totalTokens = rows.reduce((sum, r) => sum + (r.total_tokens || 0), 0);
+	const totalCost = rows.reduce((sum, r) => sum + (r.cost_usd || 0), 0);
+	const weightedLatency = rows.reduce(
+		(sum, r) => sum + (r.avg_latency_ms || 0) * (r.requests || 0),
+		0,
+	);
+	return {
+		requests,
+		avgLatencyMs: weightedLatency / requests,
+		successRate: ((requests - errors) / requests) * 100,
+		costPer1KTokens: totalTokens > 0 ? (totalCost / totalTokens) * 1000 : 0,
+	};
+}
+
+// Active model catalog used by dashboard pickers. Ensures smart virtual models
+// are present and hides the ones disabled in Smart Router settings.
+export const gatewayModelsApi = {
+	list: async (): Promise<{ data: GatewayModel[] }> => {
+		const [{ data: raw }, config] = await Promise.all([
+			modelsApi.list(),
+			smartRouterApi.getConfig().catch(() => null),
+		]);
+		const data: GatewayModel[] = [...(raw || [])];
+		const ids = new Set(data.map((m) => m.id));
+		for (const id of SMART_VIRTUAL_MODEL_IDS) {
+			if (!ids.has(id)) {
+				data.push({
+					id,
+					object: "model",
+					created: 1700000000,
+					owned_by: "axonrouter",
+				});
+			}
+		}
+		if (config) {
+			const disabled = new Set(
+				config.models.filter((m) => !m.enabled).map((m) => m.id),
+			);
+			return { data: data.filter((m) => !disabled.has(m.id)).sort((a, b) => a.id.localeCompare(b.id)) };
+		}
+		return { data: data.sort((a, b) => a.id.localeCompare(b.id)) };
+	},
+};
+
+// MCP stdio-SSE bridge
+export interface MCPServer {
+	id: string;
+	name: string;
+	command: string;
+	args: string[];
+	env: Record<string, string>;
+	enabled: boolean;
+	restart_policy: "always" | "on-failure" | "never";
+	max_clients: number;
+	max_idle_sec: number;
+	status?: "running" | "stopped" | "error";
+	created_at: number;
+	updated_at: number;
+}
+
+export interface MCPTool {
+	name: string;
+	description?: string;
+	inputSchema?: unknown;
+}
+
+export const mcpApi = {
+	list: () => fetchApi<{ data: MCPServer[] }>("/mcp"),
+
+	create: (data: Partial<MCPServer>) =>
+		fetchApi<{ data: MCPServer }>("/mcp", {
+			method: "POST",
+			body: JSON.stringify(data),
+		}),
+
+	update: (id: string, data: Partial<MCPServer>) =>
+		fetchApi<{ data: MCPServer }>(`/mcp/${id}`, {
+			method: "PATCH",
+			body: JSON.stringify(data),
+		}),
+
+	delete: (id: string) =>
+		fetchApi<{ success: boolean }>(`/mcp/${id}`, {
+			method: "DELETE",
+		}),
+
+	test: (id: string) =>
+		fetchApi<{ success: boolean; message?: string; error?: string }>(`/mcp/${id}/test`, {
+			method: "POST",
+		}),
+
+	tools: (id: string) => fetchApi<{ data: MCPTool[] }>(`/mcp/${id}/tools`),
+
+	sseUrl: (id: string, token: string) => `${window.location.origin}/api/admin/mcp/${encodeURIComponent(id)}/sse?token=${encodeURIComponent(token)}`,
 };

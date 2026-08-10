@@ -1,5 +1,6 @@
 <script lang="ts">
   import { currentPath, router } from '$lib/router';
+  import { healthUpdateAvailable } from '$lib/health';
   import * as Sidebar from '$lib/components/ui/sidebar';
   import HomeIcon from '@lucide/svelte/icons/home';
   import ServerIcon from '@lucide/svelte/icons/server';
@@ -16,6 +17,7 @@ import ArchiveRestoreIcon from '@lucide/svelte/icons/archive-restore';
 import BarChartIcon from '@lucide/svelte/icons/bar-chart';
   import CodeIcon from '@lucide/svelte/icons/code';
 import InfoIcon from '@lucide/svelte/icons/info';
+import BlocksIcon from '@lucide/svelte/icons/blocks';
 
   let { onclose }: { onclose?: () => void } = $props();
 
@@ -29,11 +31,13 @@ const platformItems = [
  { href: '/logs', label: 'Logs', icon: TerminalIcon },
 ];
 const systemItems = [
+    { href: '/console', label: 'Console', icon: TerminalIcon },
     { href: '/proxy-pools', label: 'Proxy Pools', icon: GlobeIcon },
  { href: '/api-keys', label: 'API Keys', icon: KeyIcon },
  { href: '/developers', label: 'Developers', icon: CodeIcon },
     { href: '/cli-tools', label: 'CLI Tools', icon: BotIcon },
 { href: '/model-pricing', label: 'Model Pricing', icon: BadgeDollarSignIcon },
+{ href: '/mcp', label: 'MCP', icon: BlocksIcon },
 { href: '/backup-restore', label: 'Backup & Restore', icon: ArchiveRestoreIcon },
 { href: '/settings', label: 'Settings', icon: SettingsIcon },
   { href: '/about', label: 'About', icon: InfoIcon },
@@ -72,6 +76,9 @@ const systemItems = [
           {#if active}
             <span class="ml-auto size-1.5 rounded-full bg-sidebar-primary shrink-0"></span>
           {/if}
+          {#if item.href === '/about' && $healthUpdateAvailable}
+            <span class="ml-1.5 size-1.5 rounded-full bg-emerald-500 shrink-0 animate-pulse"></span>
+          {/if}
         </a>
       {/each}
     </nav>
@@ -98,6 +105,9 @@ const systemItems = [
           <span class="truncate">{item.label}</span>
           {#if active}
             <span class="ml-auto size-1.5 rounded-full bg-sidebar-primary shrink-0"></span>
+          {/if}
+          {#if item.href === '/about' && $healthUpdateAvailable}
+            <span class="ml-1.5 size-1.5 rounded-full bg-emerald-500 shrink-0 animate-pulse"></span>
           {/if}
         </a>
       {/each}

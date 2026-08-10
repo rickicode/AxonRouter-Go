@@ -15,6 +15,7 @@ import (
 
 const (
 	sessionTTL        = 72 * time.Hour
+	rememberMeTTL     = 30 * 24 * time.Hour
 	minPasswordLength = 8
 )
 
@@ -94,13 +95,13 @@ func mustChangePassword(database *sql.DB) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(defaultAdminPassword)) == nil
 }
 
-// issueToken mints a fresh HS256 JWT with sub=admin and exp=now+sessionTTL.
-func issueToken() (string, error) {
+// issueToken mints a fresh HS256 JWT with sub=admin and exp=now+duration.
+func issueToken(duration time.Duration) (string, error) {
 	now := time.Now()
 	claims := jwt.RegisteredClaims{
 		Subject:   "admin",
 		IssuedAt:  jwt.NewNumericDate(now),
-		ExpiresAt: jwt.NewNumericDate(now.Add(sessionTTL)),
+		ExpiresAt: jwt.NewNumericDate(now.Add(duration)),
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return tok.SignedString(jwtSecret)
@@ -111,7 +112,8 @@ func issueToken() (string, error) {
 func LoginHandler(database *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
-			Password string `json:"password"`
+			Password   string `json:"password"`
+			RememberMe bool   `json:"remember_me"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil || req.Password == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "password required"})
@@ -124,7 +126,11 @@ func LoginHandler(database *sql.DB) gin.HandlerFunc {
 			return
 		}
 
-		tok, err := issueToken()
+		duration := sessionTTL
+		if req.RememberMe {
+			duration = rememberMeTTL
+		}
+		tok, err := issueToken(duration)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to issue token"})
 			return
@@ -227,7 +233,7 @@ func SessionAuth(database *sql.DB) gin.HandlerFunc {
 			return
 		}
 
-		if tok, err := issueToken(); err == nil {
+		if tok, err := issueToken(sessionTTL); err == nil {
 			c.Header("X-Auth-Token", tok)
 		}
 		c.Next()

@@ -45,7 +45,7 @@ func resolveDefaultConnection(database *sql.DB, modelID string) string {
 func DefaultCombos() []DefaultComboDef {
 	return []DefaultComboDef{
 		{
-			Name: "balanced",
+			Name:     "balanced",
 			Strategy: "priority",
 			Steps: []DefaultStepDef{
 				{ModelID: "oc/hy3-free", Priority: 1, Weight: 100},
@@ -55,7 +55,7 @@ func DefaultCombos() []DefaultComboDef {
 			},
 		},
 		{
-			Name: "economy",
+			Name:     "economy",
 			Strategy: "priority",
 			Steps: []DefaultStepDef{
 				{ModelID: "oc/hy3-free", Priority: 1, Weight: 100},
@@ -64,7 +64,7 @@ func DefaultCombos() []DefaultComboDef {
 			},
 		},
 		{
-			Name: "premium",
+			Name:     "premium",
 			Strategy: "priority",
 			Steps: []DefaultStepDef{
 				{ModelID: "ag/claude-opus-4-6-thinking", Priority: 1, Weight: 100},
@@ -73,7 +73,7 @@ func DefaultCombos() []DefaultComboDef {
 			},
 		},
 		{
-			Name: "round-robin",
+			Name:     "round-robin",
 			Strategy: "round-robin",
 			Steps: []DefaultStepDef{
 				{ModelID: "oc/hy3-free", Priority: 1, Weight: 100},
@@ -82,19 +82,19 @@ func DefaultCombos() []DefaultComboDef {
 				{ModelID: "cx/gpt-5.4", Priority: 4, Weight: 100},
 			},
 		},
-	{
-		Name:     "random",
-		Strategy: "random",
-		Steps: []DefaultStepDef{
-			{ModelID: "cf/moonshotai/kimi-k2.6", Priority: 1, Weight: 100},
-			{ModelID: "oc/hy3-free", Priority: 2, Weight: 100},
-			{ModelID: "ag/claude-sonnet-4-6", Priority: 3, Weight: 100},
-			{ModelID: "cx/gpt-5.4", Priority: 4, Weight: 100},
+		{
+			Name:     "random",
+			Strategy: "random",
+			Steps: []DefaultStepDef{
+				{ModelID: "cf/moonshotai/kimi-k2.6", Priority: 1, Weight: 100},
+				{ModelID: "oc/hy3-free", Priority: 2, Weight: 100},
+				{ModelID: "ag/claude-sonnet-4-6", Priority: 3, Weight: 100},
+				{ModelID: "cx/gpt-5.4", Priority: 4, Weight: 100},
+			},
 		},
-	},
-{
-	Name: "fusion",
-			Strategy: "fusion",
+		{
+			Name:         "fusion",
+			Strategy:     "fusion",
 			FusionConfig: defaultFusionConfig(),
 			Steps: []DefaultStepDef{
 				{ModelID: "oc/hy3-free", Priority: 1, Weight: 100},
@@ -108,12 +108,12 @@ func DefaultCombos() []DefaultComboDef {
 
 // DefaultComboDef is a combo definition for seeding.
 type DefaultComboDef struct {
-	Name string
-	Strategy string
-	IsSmart bool
-	SmartGoal string
+	Name         string
+	Strategy     string
+	IsSmart      bool
+	SmartGoal    string
 	FusionConfig string
-	Steps []DefaultStepDef
+	Steps        []DefaultStepDef
 }
 
 // DefaultStepDef is a step definition for seeding.
@@ -142,8 +142,8 @@ func SeedDefaultCombos(database *sql.DB) error {
 			smartGoal = sql.NullString{String: def.SmartGoal, Valid: true}
 		}
 		_, err := database.Exec(`
-		INSERT INTO combos (id, name, strategy, sticky_limit, timeout_ms, is_smart, smart_goal, fusion_config, is_active, created_at, updated_at)
-		VALUES (?, ?, ?, 1, 30000, ?, ?, ?, 1, ?, ?)
+		INSERT INTO combos (id, name, kind, strategy, sticky_limit, timeout_ms, is_smart, smart_goal, fusion_config, is_active, created_at, updated_at)
+		VALUES (?, ?, 'llm', ?, 1, 30000, ?, ?, ?, 1, ?, ?)
 		`, comboID, def.Name, def.Strategy, boolToInt(def.IsSmart), smartGoal, def.FusionConfig, now, now)
 		if err != nil {
 			continue

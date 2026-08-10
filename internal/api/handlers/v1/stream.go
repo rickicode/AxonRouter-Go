@@ -5,13 +5,17 @@ import (
 	"encoding/json"
 )
 
-// StreamTokenCounts holds extracted token counts from streaming response.
+const grokCLICostUsdTicksDivisor = 10_000_000_000
+
+// StreamTokenCounts holds extracted token counts and cost from streaming response.
 type StreamTokenCounts struct {
-	InputTokens        int64
-	OutputTokens       int64
-	ReasoningTokens    int64
-	CachedTokens       int64 // cache READ only
+	InputTokens         int64
+	OutputTokens        int64
+	ReasoningTokens     int64
+	TotalTokens         int64
+	CachedTokens        int64 // cache READ only
 	CacheCreationTokens int64 // cache WRITE (new)
+	CostUsd             float64
 }
 
 // ExtractTokensFromBody extracts token counts from a non-streaming response body.
@@ -23,13 +27,13 @@ func ExtractTokensFromBody(body []byte) StreamTokenCounts {
 	// OpenAI-format (also what translators emit).
 	var resp struct {
 		Usage struct {
-			PromptTokens int64 `json:"prompt_tokens"`
-			CompletionTokens int64 `json:"completion_tokens"`
-			TotalTokens int64 `json:"total_tokens"`
-			InputTokens int64 `json:"input_tokens"`
-			OutputTokens int64 `json:"output_tokens"`
+			PromptTokens        int64 `json:"prompt_tokens"`
+			CompletionTokens    int64 `json:"completion_tokens"`
+			TotalTokens         int64 `json:"total_tokens"`
+			InputTokens         int64 `json:"input_tokens"`
+			OutputTokens        int64 `json:"output_tokens"`
 			PromptTokensDetails *struct {
-				CachedTokens int64 `json:"cached_tokens"`
+				CachedTokens        int64 `json:"cached_tokens"`
 				CacheCreationTokens int64 `json:"cache_creation_tokens"`
 			} `json:"prompt_tokens_details"`
 			CompletionTokensDetails *struct {
@@ -60,10 +64,10 @@ func ExtractTokensFromBody(body []byte) StreamTokenCounts {
 	// Native Claude-format usage (input_tokens is base only; cache is reported separately).
 	var claude struct {
 		Usage struct {
-			InputTokens int64 `json:"input_tokens"`
-			OutputTokens int64 `json:"output_tokens"`
+			InputTokens              int64 `json:"input_tokens"`
+			OutputTokens             int64 `json:"output_tokens"`
 			CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
-			CacheReadInputTokens int64 `json:"cache_read_input_tokens"`
+			CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(body, &claude); err == nil && claude.Usage.InputTokens > 0 {
@@ -77,17 +81,19 @@ func ExtractTokensFromBody(body []byte) StreamTokenCounts {
 	// Gemini non-streaming format: {"usageMetadata": {"promptTokenCount": N, "candidatesTokenCount": N, ...}}
 	var gemini struct {
 		UsageMetadata *struct {
-			PromptTokenCount int64 `json:"promptTokenCount"`
-			CandidatesTokenCount int64 `json:"candidatesTokenCount"`
+			PromptTokenCount        int64 `json:"promptTokenCount"`
+			CandidatesTokenCount    int64 `json:"candidatesTokenCount"`
 			CachedContentTokenCount int64 `json:"cachedContentTokenCount"`
-			ThoughtsTokenCount int64 `json:"thoughtsTokenCount"`
+			ThoughtsTokenCount      int64 `json:"thoughtsTokenCount"`
+			TotalTokenCount         int64 `json:"totalTokenCount"`
 		} `json:"usageMetadata"`
 	}
-	if err := json.Unmarshal(body, &gemini); err == nil && gemini.UsageMetadata != nil && gemini.UsageMetadata.PromptTokenCount > 0 {
+	if err := json.Unmarshal(body, &gemini); err == nil && gemini.UsageMetadata != nil && (gemini.UsageMetadata.PromptTokenCount > 0 || gemini.UsageMetadata.TotalTokenCount > 0) {
 		counts.InputTokens = gemini.UsageMetadata.PromptTokenCount
 		counts.OutputTokens = gemini.UsageMetadata.CandidatesTokenCount
 		counts.CachedTokens = gemini.UsageMetadata.CachedContentTokenCount
 		counts.ReasoningTokens = gemini.UsageMetadata.ThoughtsTokenCount
+		counts.TotalTokens = gemini.UsageMetadata.TotalTokenCount
 		return counts
 	}
 
@@ -95,9 +101,9 @@ func ExtractTokensFromBody(body []byte) StreamTokenCounts {
 	var responsesAPI struct {
 		Response *struct {
 			Usage *struct {
-				InputTokens int64 `json:"input_tokens"`
+				InputTokens  int64 `json:"input_tokens"`
 				OutputTokens int64 `json:"output_tokens"`
-				TotalTokens int64 `json:"total_tokens"`
+				TotalTokens  int64 `json:"total_tokens"`
 			} `json:"usage"`
 		} `json:"response"`
 	}
@@ -132,10 +138,10 @@ func ExtractTokensFromSSEChunk(line []byte) (StreamTokenCounts, bool) {
 	// Try OpenAI format: {"usage": {"prompt_tokens": N, "completion_tokens": N, ...}}
 	var openai struct {
 		Usage *struct {
-			PromptTokens int64 `json:"prompt_tokens"`
-			CompletionTokens int64 `json:"completion_tokens"`
+			PromptTokens        int64 `json:"prompt_tokens"`
+			CompletionTokens    int64 `json:"completion_tokens"`
 			PromptTokensDetails *struct {
-				CachedTokens int64 `json:"cached_tokens"`
+				CachedTokens        int64 `json:"cached_tokens"`
 				CacheCreationTokens int64 `json:"cache_creation_tokens"`
 			} `json:"prompt_tokens_details"`
 			CompletionTokensDetails *struct {
@@ -161,10 +167,10 @@ func ExtractTokensFromSSEChunk(line []byte) (StreamTokenCounts, bool) {
 		Type    string `json:"type"`
 		Message *struct {
 			Usage *struct {
-				InputTokens            int64 `json:"input_tokens"`
-				OutputTokens           int64 `json:"output_tokens"`
+				InputTokens              int64 `json:"input_tokens"`
+				OutputTokens             int64 `json:"output_tokens"`
 				CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
-				CacheReadInputTokens    int64 `json:"cache_read_input_tokens"`
+				CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
 			} `json:"usage"`
 		} `json:"message"`
 	}
@@ -192,17 +198,19 @@ func ExtractTokensFromSSEChunk(line []byte) (StreamTokenCounts, bool) {
 	// Try Gemini format: {"usageMetadata": {"promptTokenCount": N, "candidatesTokenCount": N, ...}}
 	var gemini struct {
 		UsageMetadata *struct {
-			PromptTokenCount      int64 `json:"promptTokenCount"`
-			CandidatesTokenCount  int64 `json:"candidatesTokenCount"`
+			PromptTokenCount        int64 `json:"promptTokenCount"`
+			CandidatesTokenCount    int64 `json:"candidatesTokenCount"`
 			CachedContentTokenCount int64 `json:"cachedContentTokenCount"`
-			ThoughtsTokenCount    int64 `json:"thoughtsTokenCount"`
+			ThoughtsTokenCount      int64 `json:"thoughtsTokenCount"`
+			TotalTokenCount         int64 `json:"totalTokenCount"`
 		} `json:"usageMetadata"`
 	}
-	if err := json.Unmarshal(chunk, &gemini); err == nil && gemini.UsageMetadata != nil && gemini.UsageMetadata.PromptTokenCount > 0 {
+	if err := json.Unmarshal(chunk, &gemini); err == nil && gemini.UsageMetadata != nil && (gemini.UsageMetadata.PromptTokenCount > 0 || gemini.UsageMetadata.TotalTokenCount > 0) {
 		counts.InputTokens = gemini.UsageMetadata.PromptTokenCount
 		counts.OutputTokens = gemini.UsageMetadata.CandidatesTokenCount
 		counts.CachedTokens = gemini.UsageMetadata.CachedContentTokenCount
 		counts.ReasoningTokens = gemini.UsageMetadata.ThoughtsTokenCount
+		counts.TotalTokens = gemini.UsageMetadata.TotalTokenCount
 		return counts, true
 	}
 
@@ -236,6 +244,40 @@ func ExtractTokensFromSSEChunk(line []byte) (StreamTokenCounts, bool) {
 	return counts, false
 }
 
+// ExtractCostInUsdTicksFromSSEChunk attempts to read usage.cost_in_usd_ticks from
+// a single SSE data line. It supports both response.usage.cost_in_usd_ticks and
+// top-level usage.cost_in_usd_ticks (used by Grok CLI).
+func ExtractCostInUsdTicksFromSSEChunk(line []byte) (float64, bool) {
+	if !bytes.HasPrefix(line, []byte("data:")) {
+		return 0, false
+	}
+	chunk := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+	if len(chunk) == 0 || string(chunk) == "[DONE]" {
+		return 0, false
+	}
+
+	var wrapper struct {
+		Response *struct {
+			Usage *struct {
+				CostInUsdTicks uint64 `json:"cost_in_usd_ticks"`
+			} `json:"usage"`
+		} `json:"response"`
+		Usage *struct {
+			CostInUsdTicks uint64 `json:"cost_in_usd_ticks"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(chunk, &wrapper); err != nil {
+		return 0, false
+	}
+	if wrapper.Response != nil && wrapper.Response.Usage != nil && wrapper.Response.Usage.CostInUsdTicks > 0 {
+		return float64(wrapper.Response.Usage.CostInUsdTicks) / grokCLICostUsdTicksDivisor, true
+	}
+	if wrapper.Usage != nil && wrapper.Usage.CostInUsdTicks > 0 {
+		return float64(wrapper.Usage.CostInUsdTicks) / grokCLICostUsdTicksDivisor, true
+	}
+	return 0, false
+}
+
 // MergeTokenCounts copies non-zero fields from src into dst.
 // Matches OmniRoute's mergeUsage pattern where incoming non-zero values overwrite target.
 func MergeTokenCounts(dst, src *StreamTokenCounts) {
@@ -248,11 +290,16 @@ func MergeTokenCounts(dst, src *StreamTokenCounts) {
 	if src.ReasoningTokens > 0 {
 		dst.ReasoningTokens = src.ReasoningTokens
 	}
+	if src.TotalTokens > 0 {
+		dst.TotalTokens = src.TotalTokens
+	}
 	if src.CachedTokens > 0 {
 		dst.CachedTokens = src.CachedTokens
 	}
 	if src.CacheCreationTokens > 0 {
 		dst.CacheCreationTokens = src.CacheCreationTokens
 	}
+	if src.CostUsd > 0 {
+		dst.CostUsd = src.CostUsd
+	}
 }
-

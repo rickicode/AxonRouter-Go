@@ -15,4 +15,16 @@ func init() {
 			NonStream: convertGrokResponseToOpenAINonStream,
 		},
 	)
+
+	// Register the reverse response direction so ChatCompletions can translate
+	// Grok CLI Responses upstream bodies back to OpenAI chat completion format.
+	registry.Register(
+		types.FormatGrokCLI,
+		types.FormatOpenAI,
+		nil,
+		types.ResponseTransform{
+			Stream:    convertGrokResponseToOpenAIStream,
+			NonStream: convertGrokResponseToOpenAINonStream,
+		},
+	)
 }

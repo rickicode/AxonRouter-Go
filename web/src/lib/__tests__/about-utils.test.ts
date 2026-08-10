@@ -21,6 +21,14 @@ describe('about-utils', () => {
     expect(isUpdateAvailable('0.3.1', 'v0.3.1')).toBe(false);
   });
 
+  it('handles prerelease and build metadata', () => {
+    expect(isUpdateAvailable('0.3.1', '0.4.0-beta.1')).toBe(true);
+    expect(isUpdateAvailable('0.3.1', '0.4.0+build.123')).toBe(true);
+    expect(isUpdateAvailable('0.4.0-beta.1', '0.4.0-beta.2')).toBe(false);
+    expect(isUpdateAvailable('0.3.1', '0.4')).toBe(true);
+    expect(isUpdateAvailable('0.4.0', '0.4')).toBe(false);
+  });
+
   it('extracts structured notes from a changelog section', () => {
     const md = `# Changelog
 

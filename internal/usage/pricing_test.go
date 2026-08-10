@@ -46,6 +46,27 @@ func TestGetPricingStripsProviderPrefix(t *testing.T) {
 	}
 }
 
+func TestGetPricingStripsZenMuxProviderPrefix(t *testing.T) {
+	database := newTestPricingDB(t)
+	InitPricing(database)
+
+	bare := GetPricing("deepseek-v3.2")
+	if bare.InputPer1K == 0 || bare.OutputPer1K == 0 {
+		t.Fatalf("bare deepseek-v3.2 pricing invalid: got in=%.6f out=%.6f", bare.InputPer1K, bare.OutputPer1K)
+	}
+
+	// zenmux/ and zenmux-free/ must both resolve to the same row as the bare model ID.
+	prefixed := GetPricing("zenmux/deepseek-v3.2")
+	if prefixed != bare {
+		t.Fatalf("zenmux/deepseek-v3.2 resolved differently from bare: got %+v, want %+v", prefixed, bare)
+	}
+
+	freePrefixed := GetPricing("zenmux-free/deepseek-v3.2")
+	if freePrefixed != bare {
+		t.Fatalf("zenmux-free/deepseek-v3.2 resolved differently from bare: got %+v, want %+v", freePrefixed, bare)
+	}
+}
+
 func TestGetPricingDeterministicPrefix(t *testing.T) {
 	database := newTestPricingDB(t)
 	InitPricing(database)
@@ -69,7 +90,7 @@ func TestEstimateCostTokenBreakdown(t *testing.T) {
 	// 1000 input (200 cached) + 1000 output, 0 reasoning.
 	p := GetPricing("gpt-4o")
 	want := float64(800)/1000*p.InputPer1K + float64(200)/1000*p.CachedReadPer1K + float64(1000)/1000*p.OutputPer1K
-	got := EstimateCost("gpt-4o", 1000, 1000, 0, 200, 0)
+	got := EstimateCost("gpt-4o", "chat", 0, 1000, 1000, 0, 200, 0)
 	if math.Abs(got-want) > 1e-9 {
 		t.Fatalf("EstimateCost cached = %.6f, want %.6f", got, want)
 	}
@@ -80,13 +101,13 @@ func TestEstimateCostTokenBreakdown(t *testing.T) {
 	}
 	rp := GetPricing("rtest")
 	rw := float64(1000)/1000*rp.InputPer1K + float64(1000)/1000*rp.OutputPer1K + float64(500)/1000*rp.ReasonPer1K
-	rg := EstimateCost("rtest", 1000, 1000, 500, 0, 0)
+	rg := EstimateCost("rtest", "chat", 0, 1000, 1000, 500, 0, 0)
 	if math.Abs(rg-rw) > 1e-9 {
 		t.Fatalf("EstimateCost reasoning = %.6f, want %.6f", rg, rw)
 	}
 
 	// Cached never overcharges: when input is fully cached, nonCached clamps to 0.
-	cg := EstimateCost("gpt-4o", 1000, 1000, 0, 1000, 0)
+	cg := EstimateCost("gpt-4o", "chat", 0, 1000, 1000, 0, 1000, 0)
 	cw := float64(1000)/1000*p.CachedReadPer1K + float64(1000)/1000*p.OutputPer1K
 	if math.Abs(cg-cw) > 1e-9 {
 		t.Fatalf("EstimateCost cached-clamp = %.6f, want %.6f", cg, cw)
@@ -97,7 +118,7 @@ func TestEstimateCostTokenBreakdown(t *testing.T) {
 	}
 	cp := GetPricing("ctest")
 	// cache-inclusive input 1000 = base 500 + read 200 + creation 300.
-	cg2 := EstimateCost("ctest", 1000, 1000, 0, 200, 300)
+	cg2 := EstimateCost("ctest", "chat", 0, 1000, 1000, 0, 200, 300)
 	cw2 := float64(500)/1000*cp.InputPer1K + float64(200)/1000*cp.CachedReadPer1K + float64(300)/1000*cp.CachedWritePer1K + float64(1000)/1000*cp.OutputPer1K
 	if math.Abs(cg2-cw2) > 1e-9 {
 		t.Fatalf("EstimateCost cache-creation = %.6f, want %.6f", cg2, cw2)
@@ -136,5 +157,131 @@ func TestUpsertAndDeletePricing(t *testing.T) {
 	}
 	if p := GetPricing("custom-model"); p.InputPer1K != defaultPricing.InputPer1K {
 		t.Fatalf("deleted price still present: got in=%.5f", p.InputPer1K)
+	}
+}
+
+func TestEstimateCostByModality(t *testing.T) {
+	database := newTestPricingDB(t)
+	InitPricing(database)
+
+	// Image cost = quantity * image_per_unit.
+	if err := UpsertPricing(ModelPricingRow{ModelID: "dall-e-3", DisplayName: "DALL-E 3", InputPer1K: 0.001, OutputPer1K: 0.001, ImagePerUnit: 0.04}); err != nil {
+		t.Fatalf("upsert image: %v", err)
+	}
+	if got := EstimateCost("dall-e-3", "image", 3, 0, 0, 0, 0, 0); math.Abs(got-0.12) > 1e-9 {
+		t.Fatalf("image cost = %.6f, want 0.12", got)
+	}
+
+	// Audio cost = minutes * audio_per_min. TTS/STT share the audio branch.
+	if err := UpsertPricing(ModelPricingRow{ModelID: "whisper-1", DisplayName: "Whisper", InputPer1K: 0.001, OutputPer1K: 0.001, AudioPerMin: 0.006}); err != nil {
+		t.Fatalf("upsert audio: %v", err)
+	}
+	if got := EstimateCost("whisper-1", "audio", 5, 0, 0, 0, 0, 0); math.Abs(got-0.03) > 1e-9 {
+		t.Fatalf("audio cost = %.6f, want 0.03", got)
+	}
+	if got := EstimateCost("whisper-1", "stt", 2, 0, 0, 0, 0, 0); math.Abs(got-0.012) > 1e-9 {
+		t.Fatalf("stt cost = %.6f, want 0.012", got)
+	}
+	if got := EstimateCost("whisper-1", "tts", 10, 0, 0, 0, 0, 0); math.Abs(got-0.06) > 1e-9 {
+		t.Fatalf("tts cost = %.6f, want 0.06", got)
+	}
+
+	// Video cost = quantity * video_per_unit.
+	if err := UpsertPricing(ModelPricingRow{ModelID: "sora-1", DisplayName: "Sora", InputPer1K: 0.001, OutputPer1K: 0.001, VideoPerUnit: 0.5}); err != nil {
+		t.Fatalf("upsert video: %v", err)
+	}
+	if got := EstimateCost("sora-1", "video", 2, 0, 0, 0, 0, 0); math.Abs(got-1.0) > 1e-9 {
+		t.Fatalf("video cost = %.6f, want 1.0", got)
+	}
+
+	// Embedding cost = input_tokens * input_per_1k / 1000.
+	if err := UpsertPricing(ModelPricingRow{ModelID: "text-embedding-3-small", DisplayName: "Embedding 3 Small", InputPer1K: 0.02, OutputPer1K: 0.001}); err != nil {
+		t.Fatalf("upsert embedding: %v", err)
+	}
+	if got := EstimateCost("text-embedding-3-small", "embedding", 0, 1500, 0, 0, 0, 0); math.Abs(got-0.03) > 1e-9 {
+		t.Fatalf("embedding cost = %.6f, want 0.03", got)
+	}
+
+	// Unknown or zero-quantity modality pricing returns 0 instead of falling back to text tokens.
+	if got := EstimateCost("dall-e-3", "image", 0, 1000, 1000, 0, 0, 0); got != 0 {
+		t.Fatalf("zero-quantity image cost = %.6f, want 0", got)
+	}
+}
+
+func TestEstimateCostServiceTierMultipliers(t *testing.T) {
+	database := newTestPricingDB(t)
+	InitPricing(database)
+
+	// gpt-4o seeded: in 0.0025, out 0.01.
+	base := EstimateCost("gpt-4o", "chat", 0, 1000, 1000, 0, 0, 0)
+
+	cases := []struct {
+		tier string
+		mult float64
+	}{
+		{"", 1.0},
+		{"standard", 1.0},
+		{"default", 1.0},
+		{"flex", 0.5},
+		{"priority", 1.5},
+		{"fast", 2.5},
+		{"FAST", 2.5}, // case-insensitive
+	}
+	for _, tc := range cases {
+		got := EstimateCostWithServiceTier("gpt-4o", "chat", tc.tier, 0, 1000, 1000, 0, 0, 0)
+		want := base * tc.mult
+		if math.Abs(got-want) > 1e-9 {
+			t.Fatalf("tier %q: got %.6f, want %.6f", tc.tier, got, want)
+		}
+	}
+}
+
+func TestEstimateCostConfigurableTierMultiplier(t *testing.T) {
+	database := newTestPricingDB(t)
+	InitPricing(database)
+
+	// Configure a custom fast multiplier for this model.
+	if err := UpsertPricing(ModelPricingRow{
+		ModelID:                "tiered-model",
+		DisplayName:            "Tiered",
+		InputPer1K:             0.001,
+		OutputPer1K:            0.002,
+		TierFastMultiplier:     3.0,
+		TierPriorityMultiplier: 1.5,
+		TierFlexMultiplier:     0.5,
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	base := EstimateCost("tiered-model", "chat", 0, 1000, 1000, 0, 0, 0)
+	fast := EstimateCostWithServiceTier("tiered-model", "chat", "fast", 0, 1000, 1000, 0, 0, 0)
+	if math.Abs(fast-base*3.0) > 1e-9 {
+		t.Fatalf("custom fast multiplier = %.6f, want %.6f", fast, base*3.0)
+	}
+
+	flex := EstimateCostWithServiceTier("tiered-model", "chat", "flex", 0, 1000, 1000, 0, 0, 0)
+	if math.Abs(flex-base*0.5) > 1e-9 {
+		t.Fatalf("custom flex multiplier = %.6f, want %.6f", flex, base*0.5)
+	}
+}
+
+func TestPricingSeedRowsAreValid(t *testing.T) {
+	database := newTestPricingDB(t)
+	InitPricing(database)
+
+	rows := ListPricing()
+	if len(rows) == 0 {
+		t.Fatal("expected seeded pricing rows")
+	}
+
+	seen := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		if r.InputPer1K <= 0 || r.OutputPer1K <= 0 {
+			t.Errorf("model %q has zero prices: in=%.6f out=%.6f", r.ModelID, r.InputPer1K, r.OutputPer1K)
+		}
+		if seen[r.ModelID] {
+			t.Errorf("duplicate model ID %q in seeded pricing", r.ModelID)
+		}
+		seen[r.ModelID] = true
 	}
 }

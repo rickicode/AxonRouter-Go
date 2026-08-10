@@ -4,12 +4,15 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/rickicode/AxonRouter-Go/internal/headroom"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/common"
 	"github.com/tidwall/gjson"
 )
 
 // ConvertClaudeRequestToOpenAI converts an Anthropic Messages request to OpenAI Chat Completions format.
 // It builds a single map[string]any and marshals once, avoiding ~12 sjson round-trips.
 func ConvertClaudeRequestToOpenAI(modelName string, body []byte, stream bool) []byte {
+	body = common.CompressToolBlocks(body, headroom.GlobalToolCompressor(), headroom.DefaultToolThreshold)
 	root := gjson.ParseBytes(body)
 
 	out := map[string]any{
@@ -42,31 +45,37 @@ func ConvertClaudeRequestToOpenAI(modelName string, body []byte, stream bool) []
 		}
 	}
 
-// System message (string or array of {text,...}).
+	// System message (string or array of {text,...}).
 	// We preserve array form so cache_control blocks can be dropped while still
 	// keeping multi-part system prompts intact; pure strings stay strings.
 	if sys := root.Get("system"); sys.Exists() {
 		if sys.Type == gjson.String {
-			messages = append(messages, map[string]any{
+			sysMsg := map[string]any{
 				"role":    "system",
 				"content": sys.String(),
-			})
+			}
+			common.AttachMessageCacheControlToMap(sysMsg, sys)
+			messages = append(messages, sysMsg)
 		} else if sys.IsArray() {
 			var sysParts []map[string]any
 			sys.ForEach(func(_, part gjson.Result) bool {
 				if t := part.Get("text"); t.Exists() {
-					sysParts = append(sysParts, map[string]any{
+					sysPart := map[string]any{
 						"type": "text",
 						"text": t.String(),
-					})
+					}
+					common.CopyCacheControlToMap(sysPart, part)
+					sysParts = append(sysParts, sysPart)
 				}
 				return true
 			})
 			if len(sysParts) > 0 {
-				messages = append(messages, map[string]any{
+				sysMsg := map[string]any{
 					"role":    "system",
 					"content": sysParts,
-				})
+				}
+				common.AttachMessageCacheControlToMap(sysMsg, sys)
+				messages = append(messages, sysMsg)
 			}
 		}
 	}
@@ -114,10 +123,12 @@ func ConvertClaudeRequestToOpenAI(modelName string, body []byte, stream bool) []
 				return true
 			}
 			if content.Type == gjson.String {
-				messages = append(messages, map[string]any{
+				m := map[string]any{
 					"role":    role,
 					"content": content.String(),
-				})
+				}
+				common.AttachMessageCacheControlToMap(m, msg)
+				messages = append(messages, m)
 				return true
 			}
 
@@ -128,14 +139,18 @@ func ConvertClaudeRequestToOpenAI(modelName string, body []byte, stream bool) []
 				content any
 			}
 			var toolResults []toolResult
+			var reasoningParts []string
 
 			content.ForEach(func(_, part gjson.Result) bool {
-				switch part.Get("type").String() {
+				partType := part.Get("type").String()
+				switch partType {
 				case "text":
-					contentParts = append(contentParts, map[string]any{
+					textPart := map[string]any{
 						"type": "text",
 						"text": part.Get("text").String(),
-					})
+					}
+					common.CopyCacheControlToMap(textPart, part)
+					contentParts = append(contentParts, textPart)
 				case "image":
 					if source := part.Get("source"); source.Exists() {
 						url := ""
@@ -144,10 +159,12 @@ func ConvertClaudeRequestToOpenAI(modelName string, body []byte, stream bool) []
 						} else {
 							url = source.Get("url").String()
 						}
-						contentParts = append(contentParts, map[string]any{
+						imagePart := map[string]any{
 							"type":      "image_url",
 							"image_url": map[string]any{"url": url},
-						})
+						}
+						common.CopyCacheControlToMap(imagePart, part)
+						contentParts = append(contentParts, imagePart)
 					}
 				case "tool_use":
 					args := part.Get("input").String()
@@ -155,7 +172,7 @@ func ConvertClaudeRequestToOpenAI(modelName string, body []byte, stream bool) []
 						args = "{}"
 					}
 					toolCalls = append(toolCalls, map[string]any{
-						"id": part.Get("id").String(),
+						"id":   part.Get("id").String(),
 						"type": "function",
 						"function": map[string]any{
 							"name":      part.Get("name").String(),
@@ -165,8 +182,29 @@ func ConvertClaudeRequestToOpenAI(modelName string, body []byte, stream bool) []
 				case "tool_result":
 					c := normalizeToolResultContent(part.Get("content"))
 					toolResults = append(toolResults, toolResult{id: part.Get("tool_use_id").String(), content: c})
-				case "thinking", "redacted_thinking":
-					// dropped in request translation (never mapped to OpenAI)
+				case "thinking":
+					if role == "assistant" {
+						if reasoning := part.Get("thinking").String(); reasoning != "" {
+							reasoningParts = append(reasoningParts, reasoning)
+						}
+					} else {
+						thinkingPart := map[string]any{
+							"type":     "thinking",
+							"thinking": part.Get("thinking").String(),
+						}
+						if sig := part.Get("signature"); sig.Exists() {
+							thinkingPart["signature"] = sig.String()
+						}
+						common.CopyCacheControlToMap(thinkingPart, part)
+						contentParts = append(contentParts, thinkingPart)
+					}
+				case "redacted_thinking":
+					redacted := map[string]any{
+						"type": "redacted_thinking",
+						"data": part.Get("data").String(),
+					}
+					common.CopyCacheControlToMap(redacted, part)
+					contentParts = append(contentParts, redacted)
 				}
 				return true
 			})
@@ -174,13 +212,17 @@ func ConvertClaudeRequestToOpenAI(modelName string, body []byte, stream bool) []
 			// assistant tool_use → tool_calls (content may be null)
 			if role == "assistant" && len(toolCalls) > 0 {
 				m := map[string]any{
-					"role":      role,
-					"content":   nil,
+					"role":       role,
+					"content":    nil,
 					"tool_calls": toolCalls,
 				}
 				if len(contentParts) > 0 {
 					m["content"] = contentParts
 				}
+				if len(reasoningParts) > 0 {
+					m["reasoning_content"] = strings.Join(reasoningParts, "\n\n")
+				}
+				common.AttachMessageCacheControlToMap(m, msg)
 				messages = append(messages, m)
 				return true
 			}
@@ -195,10 +237,12 @@ func ConvertClaudeRequestToOpenAI(modelName string, body []byte, stream bool) []
 					})
 				}
 				if len(contentParts) > 0 {
-					messages = append(messages, map[string]any{
+					contentMsg := map[string]any{
 						"role":    "user",
 						"content": contentParts,
-					})
+					}
+					common.AttachMessageCacheControlToMap(contentMsg, msg)
+					messages = append(messages, contentMsg)
 				}
 				return true
 			}
@@ -210,6 +254,10 @@ func ConvertClaudeRequestToOpenAI(modelName string, body []byte, stream bool) []
 			} else {
 				m["content"] = ""
 			}
+			if role == "assistant" && len(reasoningParts) > 0 {
+				m["reasoning_content"] = strings.Join(reasoningParts, "\n\n")
+			}
+			common.AttachMessageCacheControlToMap(m, msg)
 			messages = append(messages, m)
 			return true
 		})
@@ -228,12 +276,22 @@ func ConvertClaudeRequestToOpenAI(modelName string, body []byte, stream bool) []
 			if schema := tool.Get("input_schema"); schema.Exists() {
 				fn["parameters"] = json.RawMessage(schema.Raw)
 			}
-			oaiTools = append(oaiTools, map[string]any{"type": "function", "function": fn})
+			oaiTool := map[string]any{"type": "function", "function": fn}
+			if !common.CopyCacheControlToMap(oaiTool, tool) {
+				common.CopyCacheControlToMap(fn, tool.Get("function"))
+			}
+			oaiTools = append(oaiTools, oaiTool)
 			return true
 		})
 		if len(oaiTools) > 0 {
 			out["tools"] = oaiTools
 		}
+	}
+
+	// response_format passthrough (reverse mapping when the Claude request carries an
+	// OpenAI-style response_format from an earlier translation or a compatible client).
+	if rf := root.Get("response_format"); rf.Exists() {
+		out["response_format"] = json.RawMessage(rf.Raw)
 	}
 
 	b, _ := json.Marshal(out)

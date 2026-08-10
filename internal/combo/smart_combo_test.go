@@ -58,3 +58,150 @@ func TestGetTelemetryWindowUsesMilliseconds(t *testing.T) {
 		t.Fatalf("expected only recent row (cost 5.0), got TotalCost=%v (window filter broken)", tel.TotalCost)
 	}
 }
+
+func combo(name, goal string) *db.Combo {
+	return &db.Combo{
+		Name:      name,
+		SmartGoal: sql.NullString{String: goal, Valid: goal != ""},
+		IsSmart:   true,
+	}
+}
+
+func smartComboWithTelemetry(tel *Telemetry) *SmartCombo {
+	sc := NewSmartCombo(nil)
+	sc.cachedTelemetry = tel
+	sc.cachedAt = timeNow()
+	return sc
+}
+
+func goalOf(c *db.Combo) string {
+	if c == nil || !c.SmartGoal.Valid {
+		return ""
+	}
+	return c.SmartGoal.String
+}
+
+func TestResolve_GoalAuto_ErrorRateAbove15_SwitchesToPremium(t *testing.T) {
+	sc := smartComboWithTelemetry(&Telemetry{
+		WindowMin:  60,
+		TotalCost:  10.0,
+		ErrorRate:  0.20,
+		TotalReqs:  100,
+		ErrorCount: 20,
+	})
+	combos := []*db.Combo{
+		combo("z-balanced", "balanced"),
+		combo("a-premium", "premium"),
+		combo("m-economy", "economy"),
+	}
+	got, err := sc.Resolve(GoalAuto, combos)
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+	if goalOf(got) != string(GoalPremium) {
+		t.Fatalf("expected goal %q, got %q", GoalPremium, goalOf(got))
+	}
+}
+
+func TestResolve_GoalAuto_CostAbove85_SwitchesToEconomy(t *testing.T) {
+	sc := smartComboWithTelemetry(&Telemetry{
+		WindowMin:  60,
+		TotalCost:  60.0,
+		ErrorRate:  0.02,
+		TotalReqs:  50,
+		ErrorCount: 1,
+	})
+	combos := []*db.Combo{
+		combo("z-balanced", "balanced"),
+		combo("a-premium", "premium"),
+		combo("m-economy", "economy"),
+	}
+	got, err := sc.Resolve(GoalAuto, combos)
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+	if goalOf(got) != string(GoalEconomy) {
+		t.Fatalf("expected goal %q, got %q", GoalEconomy, goalOf(got))
+	}
+}
+
+func TestResolve_GoalAuto_Normal_ReturnsBalanced(t *testing.T) {
+	sc := smartComboWithTelemetry(&Telemetry{
+		WindowMin:  60,
+		TotalCost:  12.0,
+		ErrorRate:  0.05,
+		TotalReqs:  100,
+		ErrorCount: 5,
+	})
+	combos := []*db.Combo{
+		combo("a-economy", "economy"),
+		combo("m-balanced", "balanced"),
+		combo("z-premium", "premium"),
+	}
+	got, err := sc.Resolve(GoalAuto, combos)
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+	if goalOf(got) != string(GoalBalanced) {
+		t.Fatalf("expected goal %q, got %q", GoalBalanced, goalOf(got))
+	}
+}
+
+func TestResolve_Fallback_WhenGoalNotFound(t *testing.T) {
+	sc := smartComboWithTelemetry(&Telemetry{WindowMin: 60})
+	combos := []*db.Combo{
+		combo("p1", "premium"),
+		combo("b1", "balanced"),
+	}
+	got, err := sc.Resolve(GoalEconomy, combos)
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+	if goalOf(got) != "balanced" {
+		t.Fatalf("expected fallback to balanced, got %q", goalOf(got))
+	}
+
+	// When both primary and first fallback are missing, use the second fallback.
+	combos2 := []*db.Combo{
+		combo("e1", "economy"),
+		combo("p2", "premium"),
+	}
+	got2, err := sc.Resolve(GoalBalanced, combos2)
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+	if goalOf(got2) != "economy" {
+		t.Fatalf("expected fallback to economy, got %q", goalOf(got2))
+	}
+}
+
+func TestResolve_Deterministic_SortByName(t *testing.T) {
+	sc := smartComboWithTelemetry(&Telemetry{WindowMin: 60})
+	combos := []*db.Combo{
+		combo("charlie", ""),
+		combo("alpha", ""),
+		combo("bravo", ""),
+	}
+	got1, err := sc.Resolve(GoalBalanced, combos)
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+
+	// Same set in a different order must produce the same result.
+	combos2 := []*db.Combo{
+		combo("bravo", ""),
+		combo("charlie", ""),
+		combo("alpha", ""),
+	}
+	got2, err := sc.Resolve(GoalBalanced, combos2)
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+
+	if got1 == nil || got2 == nil {
+		t.Fatalf("expected a combo, got nil")
+	}
+	if got1.Name != "alpha" || got2.Name != "alpha" {
+		t.Fatalf("expected deterministic selection of alpha, got %q and %q", got1.Name, got2.Name)
+	}
+}

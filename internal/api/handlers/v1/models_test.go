@@ -1,8 +1,16 @@
 package v1
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
+	"github.com/rickicode/AxonRouter-Go/internal/models"
 )
 
 func TestGetProviderModels_CFIncludesServiceKinds(t *testing.T) {
@@ -46,6 +54,40 @@ func TestGetProviderModels_CFIncludesServiceKinds(t *testing.T) {
 	}
 }
 
+// TestGetProviderModels_CodeBuddyIncludesExpectedModels verifies the codebuddy
+// provider catalog exposes the seeded models with correct ownership.
+func TestGetProviderModels_CodeBuddyIncludesExpectedModels(t *testing.T) {
+	h := newTestHandler(t)
+	models := h.getProviderModels("codebuddy")
+	if len(models) == 0 {
+		t.Fatal("expected codebuddy models from catalog")
+	}
+
+	want := map[string]string{
+		"codebuddy/glm-5.0":   "tencent",
+		"codebuddy/kimi-k2.6": "tencent",
+	}
+	for id, owner := range want {
+		found := false
+		for _, m := range models {
+			gotID, ok := m["id"].(string)
+			if !ok || gotID != id {
+				continue
+			}
+			found = true
+			if gotOwner, _ := m["owned_by"].(string); gotOwner != owner {
+				t.Errorf("model %q owned_by = %q, want %q", id, gotOwner, owner)
+			}
+			if kinds := kindsOf(m); !slices.Contains(kinds, "llm") {
+				t.Errorf("model %q service_kinds = %v, want llm", id, kinds)
+			}
+		}
+		if !found {
+			t.Errorf("missing codebuddy model %q", id)
+		}
+	}
+}
+
 // TestGetProviderModels_GrokCLIIncludesExpectedModels verifies the grok-cli
 // provider catalog exposes the seeded models with correct ownership.
 func TestGetProviderModels_GrokCLIIncludesExpectedModels(t *testing.T) {
@@ -56,11 +98,11 @@ func TestGetProviderModels_GrokCLIIncludesExpectedModels(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"grok-cli/grok-build":       "xai",
-		"grok-cli/grok-4.5":         "xai",
-		"grok-cli/grok-4.5-high":    "xai",
-		"grok-cli/grok-4.5-medium":  "xai",
-		"grok-cli/grok-4.5-low":     "xai",
+		"grok-cli/grok-build":      "xai",
+		"grok-cli/grok-4.5":        "xai",
+		"grok-cli/grok-4.5-high":   "xai",
+		"grok-cli/grok-4.5-medium": "xai",
+		"grok-cli/grok-4.5-low":    "xai",
 	}
 	for id, owner := range want {
 		found := false
@@ -83,6 +125,194 @@ func TestGetProviderModels_GrokCLIIncludesExpectedModels(t *testing.T) {
 	}
 }
 
+func TestFilterAllowedModels(t *testing.T) {
+	all := []gin.H{
+		{"id": "openai/gpt-4o"},
+		{"id": "openai/gpt-4o-mini"},
+		{"id": "claude/claude-sonnet-4"},
+		{"id": "smart/auto"},
+		{"id": "my-combo"},
+	}
+
+	ids := func(ms []gin.H) []string {
+		out := make([]string, 0, len(ms))
+		for _, m := range ms {
+			out = append(out, m["id"].(string))
+		}
+		return out
+	}
+
+	t.Run("empty allowed keeps all", func(t *testing.T) {
+		got := filterAllowedModels(all, nil)
+		want := []string{"openai/gpt-4o", "openai/gpt-4o-mini", "claude/claude-sonnet-4", "smart/auto", "my-combo"}
+		if !slices.Equal(ids(got), want) {
+			t.Errorf("got %v, want %v", ids(got), want)
+		}
+	})
+
+	t.Run("filters by full id", func(t *testing.T) {
+		allowed := map[string]struct{}{"openai/gpt-4o": {}}
+		got := filterAllowedModels(all, allowed)
+		want := []string{"openai/gpt-4o"}
+		if !slices.Equal(ids(got), want) {
+			t.Errorf("got %v, want %v", ids(got), want)
+		}
+	})
+
+	t.Run("filters by provider prefix", func(t *testing.T) {
+		allowed := map[string]struct{}{"openai": {}}
+		got := filterAllowedModels(all, allowed)
+		want := []string{"openai/gpt-4o", "openai/gpt-4o-mini"}
+		if !slices.Equal(ids(got), want) {
+			t.Errorf("got %v, want %v", ids(got), want)
+		}
+	})
+
+	t.Run("filters by mix of id and prefix", func(t *testing.T) {
+		allowed := map[string]struct{}{
+			"claude":             {},
+			"openai/gpt-4o-mini": {},
+		}
+		got := filterAllowedModels(all, allowed)
+		want := []string{"openai/gpt-4o-mini", "claude/claude-sonnet-4"}
+		if !slices.Equal(ids(got), want) {
+			t.Errorf("got %v, want %v", ids(got), want)
+		}
+	})
+
+	t.Run("no match returns empty", func(t *testing.T) {
+		allowed := map[string]struct{}{"gemini": {}}
+		got := filterAllowedModels(all, allowed)
+		if len(got) != 0 {
+			t.Errorf("got %v, want empty", ids(got))
+		}
+	})
+
+	t.Run("filters smart virtual models by prefix", func(t *testing.T) {
+		allowed := map[string]struct{}{"smart": {}}
+		got := filterAllowedModels(all, allowed)
+		want := []string{"smart/auto"}
+		if !slices.Equal(ids(got), want) {
+			t.Errorf("got %v, want %v", ids(got), want)
+		}
+	})
+
+	t.Run("filters combo by exact name", func(t *testing.T) {
+		allowed := map[string]struct{}{"my-combo": {}}
+		got := filterAllowedModels(all, allowed)
+		want := []string{"my-combo"}
+		if !slices.Equal(ids(got), want) {
+			t.Errorf("got %v, want %v", ids(got), want)
+		}
+	})
+
+	t.Run("negative ids are excluded when allowed is non-empty", func(t *testing.T) {
+		allowed := map[string]struct{}{
+			"openai/gpt-4o": {},
+			"claude":        {},
+		}
+		got := filterAllowedModels(all, allowed)
+		want := []string{"openai/gpt-4o", "claude/claude-sonnet-4"}
+		if !slices.Equal(ids(got), want) {
+			t.Errorf("got %v, want %v", ids(got), want)
+		}
+	})
+}
+
+func TestModels_AllowedModelsContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := newTestHandler(t)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("allowed_models", map[string]struct{}{"smart": {}})
+
+	h.Models(c)
+
+	resp := w.Result()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body struct {
+		Data []gin.H `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if len(body.Data) == 0 {
+		t.Fatal("expected filtered models, got none")
+	}
+	for _, m := range body.Data {
+		id, _ := m["id"].(string)
+		if !strings.HasPrefix(id, "smart/") {
+			t.Errorf("unexpected model id in filtered response: %q", id)
+		}
+	}
+}
+
+func TestModels_AnthropicFormat(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := newTestHandler(t)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	c.Request.Header.Set("Anthropic-Version", "2023-06-01")
+
+	h.Models(c)
+
+	resp := w.Result()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Data) == 0 {
+		t.Fatal("expected models in anthropic format")
+	}
+	first := body.Data[0]
+	if _, ok := first["max_input_tokens"]; !ok {
+		t.Errorf("expected anthropic model to include max_input_tokens, got %+v", first)
+	}
+	if _, ok := first["display_name"]; !ok {
+		t.Errorf("expected anthropic model to include display_name, got %+v", first)
+	}
+}
+
+func TestModels_ClaudeCLIUserAgent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := newTestHandler(t)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	c.Request.Header.Set("User-Agent", "claude-cli/1.0")
+
+	h.Models(c)
+
+	resp := w.Result()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Data) == 0 {
+		t.Fatal("expected models in anthropic format")
+	}
+}
+
 func kindsOf(m map[string]any) []string {
 	if v, ok := m["service_kinds"].([]string); ok {
 		return v
@@ -97,4 +327,82 @@ func kindsOf(m map[string]any) []string {
 		return out
 	}
 	return nil
+}
+
+// TestGetProviderModels_ZenMuxVsZenMuxFree verifies that /v1/models (via
+// getProviderModels) exposes the full ZenMux catalog under the zenmux prefix
+// and only zero-priced / "-free" models under zenmux-free.
+func TestGetProviderModels_ZenMuxVsZenMuxFree(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{
+					"id": "paid-model",
+					"pricings": map[string]any{
+						"prompt":     []map[string]any{{"value": 5, "unit": "perMTokens"}},
+						"completion": []map[string]any{{"value": 10, "unit": "perMTokens"}},
+					},
+				},
+				{
+					"id": "free-model",
+					"pricings": map[string]any{
+						"prompt":     []map[string]any{{"value": 0, "unit": "perMTokens"}},
+						"completion": []map[string]any{{"value": 0, "unit": "perMTokens"}},
+					},
+				},
+				{
+					// Kept by the "-free" suffix fallback.
+					"id": "fallback-free",
+				},
+			},
+		})
+	}))
+	defer upstream.Close()
+
+	origEndpoints := models.ProviderEndpoints()
+	origFreeOnly := models.ProviderFreeOnly()
+	defer func() {
+		models.SetProviderEndpoints(origEndpoints)
+		models.SetProviderFreeOnly(origFreeOnly)
+	}()
+
+	models.SetProviderEndpoints(map[string]string{
+		"zenmux":      upstream.URL,
+		"zenmux-free": upstream.URL,
+	})
+	models.SetProviderFreeOnly(map[string]bool{
+		"zenmux-free": true,
+	})
+
+	models.SyncNow(context.Background())
+
+	h := newTestHandler(t)
+	full := modelIDs(h.getProviderModels("zenmux"))
+	free := modelIDs(h.getProviderModels("zenmux-free"))
+
+	wantFull := []string{"zenmux/fallback-free", "zenmux/free-model", "zenmux/paid-model"}
+	slices.Sort(full)
+	if !slices.Equal(full, wantFull) {
+		t.Errorf("zenmux models = %v, want %v", full, wantFull)
+	}
+
+	wantFree := []string{"zenmux-free/fallback-free", "zenmux-free/free-model"}
+	slices.Sort(free)
+	if !slices.Equal(free, wantFree) {
+		t.Errorf("zenmux-free models = %v, want %v", free, wantFree)
+	}
+
+	if slices.Equal(full, free) {
+		t.Error("zenmux and zenmux-free returned identical model lists")
+	}
+}
+
+func modelIDs(models []gin.H) []string {
+	ids := make([]string, 0, len(models))
+	for _, m := range models {
+		if id, ok := m["id"].(string); ok {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }

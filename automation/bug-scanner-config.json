@@ -1,0 +1,74 @@
+{
+  "project_id": "19ad9504-5ba5-4396-954c-8bb815a86fdc",
+  "log_file": "automation/bug-scanner-log.md",
+  "max_objective_issues": 3,
+  "max_parity_issues": 1,
+  "baseline": [
+    "go build ./..."
+  ],
+  "sides": [
+    {
+      "name": "spec-static",
+      "command": "{ go vet ./...; if command -v openlore >/dev/null 2>&1; then openlore check-spec-drift --failOn=warning; fi; if command -v staticcheck >/dev/null 2>&1; then staticcheck ./...; fi; }",
+      "parity_focus": "go vet, openlore spec drift, and staticcheck"
+    },
+    {
+      "name": "frontend",
+      "command": "cd web && ([ -d node_modules ] || npm install) && timeout 10m npm run build",
+      "parity_focus": "Svelte dashboard build only (CLIProxyAPI has no frontend)"
+    },
+    {
+      "name": "routing",
+      "command": "go test -timeout 10m ./internal/api/... ./internal/connstate/... ./internal/proxypool/...",
+      "parity_focus": "routing, connection selection, proxy pool, and API handler behavior vs CLIProxyAPI internal/api and OmniRoute routing/policy modules"
+    },
+    {
+      "name": "executor",
+      "command": "go test -timeout 10m ./internal/executor/... ./internal/translator/... ./internal/modalities/... ./internal/thinking/...",
+      "parity_focus": "executor and translator behavior, especially Codex/Claude Code request/response handling vs CLIProxyAPI internal/executor and internal/translator"
+    },
+    {
+      "name": "provider",
+      "command": "go test -timeout 10m ./internal/provider/... ./internal/providercfg/... ./internal/quota/... ./internal/network/...",
+      "parity_focus": "provider config, quota, and network handling vs CLIProxyAPI provider/quota and OmniRoute quota cache / policy engine"
+    },
+    {
+      "name": "auth",
+      "command": "go test -timeout 10m ./internal/auth/... ./internal/signature/...",
+      "parity_focus": "auth and signature/token flows vs CLIProxyAPI internal/auth and internal/signature"
+    },
+    {
+      "name": "data",
+      "command": "go test -timeout 10m ./internal/db/... ./internal/cache/... ./internal/backup/... ./internal/background/... ./internal/logging/... ./internal/usage/...",
+      "parity_focus": "data layer, cache, background jobs, logging, and usage tracking vs CLIProxyAPI internal/store/cache/logging and OmniRoute usage tracking"
+    }
+  ],
+  "references": [
+    {
+      "name": "CLIProxyAPI",
+      "url": "https://github.com/router-for-me/CLIProxyAPI",
+      "local_path": "/workspaces/CLIProxyAPI",
+      "branch": "main",
+      "raw_url_template": "https://raw.githubusercontent.com/router-for-me/CLIProxyAPI/refs/heads/main/{path}",
+      "source_url_template": "https://github.com/router-for-me/CLIProxyAPI/blob/main/{path}#L{start}-L{end}"
+    },
+    {
+      "name": "OmniRoute",
+      "url": "https://github.com/diegosouzapw/OmniRoute",
+      "local_path": "/workspaces/OmniRoute",
+      "branch": "main",
+      "raw_url_template": "https://raw.githubusercontent.com/diegosouzapw/OmniRoute/refs/heads/main/{path}",
+      "source_url_template": "https://github.com/diegosouzapw/OmniRoute/blob/main/{path}#L{start}-L{end}",
+      "note": "Use only for proven, production-tested patterns. Do not copy its full 231-provider catalog or dashboard-only features."
+    },
+    {
+      "name": "9router",
+      "url": "https://github.com/decolua/9router",
+      "local_path": "/workspaces/9router",
+      "branch": "master",
+      "raw_url_template": "https://raw.githubusercontent.com/decolua/9router/refs/heads/master/{path}",
+      "source_url_template": "https://github.com/decolua/9router/blob/master/{path}#L{start}-L{end}",
+      "note": "Use as a lightweight reference for custom provider behavior, CLI patterns, and modular routing ideas. Compare only current side."
+    }
+  ]
+}

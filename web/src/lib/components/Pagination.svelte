@@ -2,6 +2,8 @@
   import { Button } from '$lib/components/ui/button';
   import * as Select from '$lib/components/ui/select';
 
+  type PerPageOption = number | { value: number; label: string };
+
   let {
     page,
     totalPages,
@@ -17,8 +19,23 @@
     total?: number;
     perPage?: number;
     onPerPageChange?: (perPage: number) => void;
-    perPageOptions?: number[];
+    perPageOptions?: PerPageOption[];
   } = $props();
+
+  function optionValue(opt: PerPageOption): number {
+    return typeof opt === 'number' ? opt : opt.value;
+  }
+
+  function optionLabel(opt: PerPageOption): string {
+    return typeof opt === 'number' ? String(opt) : opt.label;
+  }
+
+  function findOptionLabel(value: number): string {
+    for (const opt of perPageOptions) {
+      if (optionValue(opt) === value) return optionLabel(opt);
+    }
+    return String(value);
+  }
 
   // Visible page numbers with "..." gaps when there are many pages.
   const window = $derived.by(() => {
@@ -50,7 +67,7 @@
   }
 </script>
 
-{#if totalPages > 1 || (perPage > 0 && onPerPageChange)}
+{#if totalPages > 1 || onPerPageChange}
   <div class="flex flex-wrap items-center justify-between gap-3">
     <div class="flex flex-wrap items-center gap-2">
       <p class="text-caption text-muted-foreground">
@@ -60,16 +77,16 @@
           Page {page} of {totalPages}
         {/if}
       </p>
-      {#if perPage > 0 && onPerPageChange}
+      {#if onPerPageChange}
         <div class="flex items-center gap-1.5">
           <span class="text-caption text-muted-foreground">Per page</span>
           <Select.Root type="single" value={String(perPage)} onValueChange={handlePerPage}>
             <Select.Trigger class="h-8 w-[80px] text-body-sm rounded-sm">
-              {perPage}
+              {findOptionLabel(perPage)}
             </Select.Trigger>
             <Select.Content>
               {#each perPageOptions as opt}
-                <Select.Item value={String(opt)} class="text-body-sm">{opt}</Select.Item>
+                <Select.Item value={String(optionValue(opt))} class="text-body-sm">{optionLabel(opt)}</Select.Item>
               {/each}
             </Select.Content>
           </Select.Root>

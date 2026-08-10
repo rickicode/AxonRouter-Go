@@ -7,12 +7,13 @@ import (
 
 func TestParseGrokCliBilling(t *testing.T) {
 	cases := []struct {
-		name     string
-		billing  string
-		user     string
-		wantPlan string
-		wantLen  int
-		checks   func(t *testing.T, quotas []QuotaItem)
+		name      string
+		billing   string
+		user      string
+		taskUsage string
+		wantPlan  string
+		wantLen   int
+		checks    func(t *testing.T, quotas []QuotaItem)
 	}{
 		{
 			name: "monthly included + on-demand",
@@ -88,18 +89,39 @@ func TestParseGrokCliBilling(t *testing.T) {
 			wantPlan: "Grok Code",
 			wantLen:  0,
 		},
+		{
+			name:      "task usage frequent/occasional",
+			billing:   `{"config":{"currentPeriod":{"end":"2026-07-22T00:00:00Z"}}}`,
+			user:      `{"subscriptionTier":"pro"}`,
+			taskUsage: `{"frequentUsage":1,"frequentLimit":2,"occasionalUsage":5,"occasionalLimit":10}`,
+			wantPlan:  "Pro",
+			wantLen:   2,
+			checks: func(t *testing.T, q []QuotaItem) {
+				if q[0].Name != "Frequent" || q[0].Used != 1 || q[0].Total != 2 {
+					t.Fatalf("frequent quota mismatch: %+v", q[0])
+				}
+				if q[1].Name != "Occasional" || q[1].Used != 5 || q[1].Total != 10 {
+					t.Fatalf("occasional quota mismatch: %+v", q[1])
+				}
+			},
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var billing, user map[string]any
+			var billing, user, taskUsage map[string]any
 			if err := json.Unmarshal([]byte(tc.billing), &billing); err != nil {
 				t.Fatalf("billing unmarshal: %v", err)
 			}
 			if err := json.Unmarshal([]byte(tc.user), &user); err != nil {
 				t.Fatalf("user unmarshal: %v", err)
 			}
-			plan, quotas := parseGrokCliBilling(billing, user)
+			if tc.taskUsage != "" {
+				if err := json.Unmarshal([]byte(tc.taskUsage), &taskUsage); err != nil {
+					t.Fatalf("task usage unmarshal: %v", err)
+				}
+			}
+			plan, quotas := parseGrokCliBilling(billing, user, taskUsage)
 			if plan != tc.wantPlan {
 				t.Fatalf("plan=%q, want %q", plan, tc.wantPlan)
 			}

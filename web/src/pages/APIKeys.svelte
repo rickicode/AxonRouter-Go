@@ -1,48 +1,85 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
-  import { Button } from '$lib/components/ui/button';
+import { onMount } from 'svelte';
+import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
+import { Button } from '$lib/components/ui/button';
 import { Input } from '$lib/components/ui/input';
 import { Label } from '$lib/components/ui/label';
+import { Badge } from '$lib/components/ui/badge';
+import * as Popover from '$lib/components/ui/popover';
+import { ScrollArea } from '$lib/components/ui/scroll-area';
 import { Switch } from '$lib/components/ui/switch';
 import { AlertDialog, AlertDialogContent, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from '$lib/components/ui/alert-dialog';
-  import * as Dialog from '$lib/components/ui/dialog';
-  import * as Select from '$lib/components/ui/select';
-  import { toast } from 'svelte-sonner';
-import { apiKeysApi } from '$lib/api';
+import * as Dialog from '$lib/components/ui/dialog';
+import * as Select from '$lib/components/ui/select';
+import { toast } from 'svelte-sonner';
+import { apiKeysApi, providersApi, gatewayModelsApi } from '$lib/api';
 import { copyToClipboard } from '$lib/copy';
 import AlertTriangleIcon from '@lucide/svelte/icons/alert-triangle';
-  import { buildExpiryTimestamp, formatExpiry, type ExpirationPreset } from '$lib/api-key-utils';
-  import type { APIKeyItem } from '$lib/api';
+import CheckIcon from '@lucide/svelte/icons/check';
+import DollarSignIcon from '@lucide/svelte/icons/dollar-sign';
+import { buildExpiryTimestamp, formatExpiry, type ExpirationPreset } from '$lib/api-key-utils';
+import {
+  payloadFromSelections,
+  formatAllowlistSummary,
+  detectLimitMode,
+  type LimitMode,
+} from '$lib/api-key-allowlist';
+import type { APIKeyItem, KeyDevicesResponse, Provider, GatewayModel } from '$lib/api';
 
 let keys = $state<APIKeyItem[]>([]);
 let loading = $state(true);
 let error = $state<string | null>(null);
 let showCreate = $state(false);
-  let newName = $state('');
-  let newRateLimit = $state('600');
-  let newMaxTokensM = $state('');
-  let expirationPreset = $state<ExpirationPreset>('never');
-  let customDate = $state('');
-  let creating = $state(false);
-  let createdKey = $state('');
-  let createdKeyId = $state('');
+let newName = $state('');
+let newRateLimit = $state('600');
+let newMaxTokensM = $state('');
+let expirationPreset = $state<ExpirationPreset>('never');
+let customDate = $state('');
+let creating = $state(false);
+let createdKey = $state('');
+let createdKeyId = $state('');
 let deleteConfirm = $state<{ id: string; name: string } | null>(null);
 let showDeleteConfirm = $state(false);
 let baseUrl = $state('');
+let deviceCounts = $state<Record<string, number>>({});
+let selectedDevices = $state<KeyDevicesResponse | null>(null);
+let showDevicesDialog = $state(false);
+let limitMode = $state<LimitMode>('none');
+let allowedProviders = $state<string[]>([]);
+let allowedModels = $state<string[]>([]);
+let providers = $state<Provider[]>([]);
+let models = $state<GatewayModel[]>([]);
+let loadingPickers = $state(false);
+let pickerError = $state<string | null>(null);
+let providerSearch = $state('');
+let modelSearch = $state('');
+
+// Budget fields for create dialog
+let newDailyLimit = $state('');
+let newMonthlyLimit = $state('');
+let newWarningThreshold = $state('0.8');
+
+// Edit dialog state
+let showEdit = $state(false);
+let editingKey = $state<APIKeyItem | null>(null);
+let editDailyLimit = $state('');
+let editMonthlyLimit = $state('');
+let editWarningThreshold = $state('0.8');
+let editMaxTokensM = $state('');
+let saving = $state(false);
 
 const expirationLabels: Record<ExpirationPreset, string> = {
-    never: 'Never',
-    '1d': '1 day',
-    '7d': '7 days',
-    '30d': '30 days',
-    '90d': '90 days',
-    custom: 'Custom date',
-  };
+  never: 'Never',
+  '1d': '1 day',
+  '7d': '7 days',
+  '30d': '30 days',
+  '90d': '90 days',
+  custom: 'Custom date',
+};
 
-  function setExpirationPreset(v: string) {
-    expirationPreset = v as ExpirationPreset;
-  }
+function setExpirationPreset(v: string) {
+  expirationPreset = v as ExpirationPreset;
+}
 
 onMount(() => {
   document.title = 'API Keys — AxonRouter';
@@ -56,6 +93,7 @@ async function loadKeys() {
   try {
     const res = await apiKeysApi.list();
     keys = res.data ?? [];
+    await loadDeviceCounts();
   } catch (err) {
     error = err instanceof Error ? err.message : 'Failed to load API keys';
     toast.error(error);
@@ -64,77 +102,308 @@ async function loadKeys() {
   }
 }
 
-  async function handleCreate() {
-    creating = true;
-    try {
-      const m = parseInt(newMaxTokensM) || 0;
-      const maxTokens = m > 0 ? m * 1_000_000 : undefined;
-      const expiresAt = buildExpiryTimestamp(expirationPreset, customDate);
-      const res = await apiKeysApi.create(newName.trim() || undefined, parseInt(newRateLimit) || 600, maxTokens, expiresAt);
-      newName = '';
-      newMaxTokensM = '';
-      expirationPreset = 'never';
-      customDate = '';
-      createdKey = res.key;
-      createdKeyId = res.id;
-      toast.success('API key created');
-      await loadKeys();
-    } catch (err) {
-      toast.error('Failed to create key: ' + (err instanceof Error ? err.message : 'Unknown'));
-    } finally {
-      creating = false;
-    }
-  }
-
-  function handleDelete(id: string, name: string) {
-    deleteConfirm = { id, name };
-    showDeleteConfirm = true;
-  }
-  async function confirmDelete() {
-    if (!deleteConfirm) return;
-    const { id, name } = deleteConfirm;
-    deleteConfirm = null;
-    showDeleteConfirm = false;
-    try {
-      await apiKeysApi.delete(id);
-      toast.success(`Deleted key: ${name || id.slice(0, 8)}`);
-      await loadKeys();
-    } catch (err) {
-      toast.error('Failed to delete key');
-    }
-  }
-
-
-async function handleCopy(key: string) {
-	await copyValue(key, 'API key');
+async function loadDeviceCounts() {
+  const counts: Record<string, number> = {};
+  await Promise.all(
+    keys.map(async (key) => {
+      try {
+        const res = await apiKeysApi.getDevices(key.id);
+        counts[key.id] = res.count ?? 0;
+      } catch {
+        counts[key.id] = 0;
+      }
+    })
+  );
+  deviceCounts = counts;
 }
 
-  async function handleToggle(id: string, current: boolean) {
-    try {
-      await apiKeysApi.toggle(id, !current);
-      toast.success(current ? 'Key disabled' : 'Key enabled');
-      await loadKeys();
-    } catch (err) {
-      toast.error('Failed to toggle key');
-    }
+async function openDevices(keyId: string) {
+  selectedDevices = null;
+  showDevicesDialog = true;
+  try {
+    selectedDevices = await apiKeysApi.getDevices(keyId);
+  } catch (err) {
+    toast.error('Failed to load devices: ' + (err instanceof Error ? err.message : 'Unknown'));
+    showDevicesDialog = false;
+  }
+}
+
+function formatDateTime(ts: number): string {
+  return new Date(ts * 1000).toLocaleString();
+}
+
+function validateBudgetFields(): boolean {
+  const daily = parseFloat(newDailyLimit);
+  const monthly = parseFloat(newMonthlyLimit);
+  const threshold = parseFloat(newWarningThreshold);
+
+  if (newDailyLimit && (isNaN(daily) || daily < 0)) {
+    toast.error('Daily limit must be a non-negative number');
+    return false;
+  }
+  if (newMonthlyLimit && (isNaN(monthly) || monthly < 0)) {
+    toast.error('Monthly limit must be a non-negative number');
+    return false;
+  }
+  if (newWarningThreshold && (isNaN(threshold) || threshold < 0 || threshold > 1)) {
+    toast.error('Warning threshold must be between 0 and 1');
+    return false;
+  }
+  return true;
+}
+
+function validateEditBudgetFields(): boolean {
+  const daily = parseFloat(editDailyLimit);
+  const monthly = parseFloat(editMonthlyLimit);
+  const threshold = parseFloat(editWarningThreshold);
+
+  if (editDailyLimit && (isNaN(daily) || daily < 0)) {
+    toast.error('Daily limit must be a non-negative number');
+    return false;
+  }
+  if (editMonthlyLimit && (isNaN(monthly) || monthly < 0)) {
+    toast.error('Monthly limit must be a non-negative number');
+    return false;
+  }
+  if (editWarningThreshold && (isNaN(threshold) || threshold < 0 || threshold > 1)) {
+    toast.error('Warning threshold must be between 0 and 1');
+    return false;
+  }
+  return true;
+}
+
+async function handleCreate() {
+  const allowedPayload = payloadFromSelections(limitMode, $state.snapshot(allowedProviders), $state.snapshot(allowedModels));
+  if (limitMode !== 'none' && (!allowedPayload || allowedPayload.length === 0)) {
+    toast.error(limitMode === 'providers' ? 'Select at least one provider' : 'Select at least one model');
+    return;
   }
 
+  if (!validateBudgetFields()) return;
+
+  creating = true;
+  try {
+    const m = parseInt(newMaxTokensM) || 0;
+    const maxTokens = m > 0 ? m * 1_000_000 : undefined;
+    const expiresAt = buildExpiryTimestamp(expirationPreset, customDate);
+    const dailyLimit = newDailyLimit ? parseFloat(newDailyLimit) : undefined;
+    const monthlyLimit = newMonthlyLimit ? parseFloat(newMonthlyLimit) : undefined;
+    const threshold = newWarningThreshold ? parseFloat(newWarningThreshold) : undefined;
+    const res = await apiKeysApi.create(
+      newName.trim() || undefined,
+      parseInt(newRateLimit) || 600,
+      maxTokens,
+      expiresAt,
+      allowedPayload,
+      dailyLimit,
+      monthlyLimit,
+      threshold
+    );
+    newName = '';
+    newMaxTokensM = '';
+    newDailyLimit = '';
+    newMonthlyLimit = '';
+    newWarningThreshold = '0.8';
+    expirationPreset = 'never';
+    customDate = '';
+    limitMode = 'none';
+    allowedProviders = [];
+    allowedModels = [];
+    providerSearch = '';
+    modelSearch = '';
+    createdKey = res.key;
+    createdKeyId = res.id;
+    toast.success('API key created');
+    await loadKeys();
+  } catch (err) {
+    toast.error('Failed to create key: ' + (err instanceof Error ? err.message : 'Unknown'));
+  } finally {
+    creating = false;
+  }
+}
+
+function handleDelete(id: string, name: string) {
+  deleteConfirm = { id, name };
+  showDeleteConfirm = true;
+}
+
+async function confirmDelete() {
+  if (!deleteConfirm) return;
+  const { id, name } = deleteConfirm;
+  deleteConfirm = null;
+  showDeleteConfirm = false;
+  try {
+    await apiKeysApi.delete(id);
+    toast.success(`Deleted key: ${name || id.slice(0, 8)}`);
+    await loadKeys();
+  } catch (err) {
+    toast.error('Failed to delete key');
+  }
+}
+
+async function handleCopy(key: string) {
+  await copyValue(key, 'API key');
+}
+
+async function handleToggle(id: string, current: boolean) {
+  try {
+    await apiKeysApi.toggle(id, !current);
+    toast.success(current ? 'Key disabled' : 'Key enabled');
+    await loadKeys();
+  } catch (err) {
+    toast.error('Failed to toggle key');
+  }
+}
+
 async function copyValue(text: string, label = 'Key') {
-	await copyToClipboard(text, label);
+  await copyToClipboard(text, label);
 }
 
 function formatDate(ts: number): string {
-    return new Date(ts * 1000).toLocaleDateString();
+  return new Date(ts * 1000).toLocaleDateString();
 }
 
-  function formatMaxTokens(tokens: number): string {
-    if (!tokens || tokens <= 0) return 'Unlimited';
-    return `${Math.round(tokens / 1_000_000)}M`;
-  }
+function formatMaxTokens(tokens: number): string {
+  if (!tokens || tokens <= 0) return 'Unlimited';
+  return `${Math.round(tokens / 1_000_000)}M`;
+}
 
-  function isExpired(ts?: number): boolean {
-    return !!ts && ts <= Date.now() / 1000;
+function isExpired(ts?: number): boolean {
+  return !!ts && ts <= Date.now() / 1000;
+}
+
+function formatUSD(value: number): string {
+  if (value <= 0) return '$0.00';
+  if (value < 0.01) return '<$0.01';
+  return `$${value.toFixed(2)}`;
+}
+
+function getBudgetUtilization(spend: number, limit: number): number {
+  if (!limit || limit <= 0) return 0;
+  return Math.min(100, (spend / limit) * 100);
+}
+
+function getUtilizationColor(utilization: number, threshold: number): string {
+  if (utilization >= 100) return 'text-destructive';
+  if (utilization >= threshold * 100) return 'text-warning';
+  return 'text-muted-foreground';
+}
+
+function getUtilizationBarColor(utilization: number, threshold: number): string {
+  if (utilization >= 100) return 'bg-destructive';
+  if (utilization >= threshold * 100) return 'bg-warning';
+  return 'bg-primary';
+}
+
+function openEditDialog(key: APIKeyItem) {
+  editingKey = key;
+  editDailyLimit = key.daily_limit_usd > 0 ? String(key.daily_limit_usd) : '';
+  editMonthlyLimit = key.monthly_limit_usd > 0 ? String(key.monthly_limit_usd) : '';
+  editWarningThreshold = key.warning_threshold > 0 ? String(key.warning_threshold) : '0.8';
+  editMaxTokensM = key.max_tokens > 0 ? String(Math.round(key.max_tokens / 1_000_000)) : '';
+  showEdit = true;
+}
+
+async function handleSaveEdit() {
+  if (!editingKey) return;
+  if (!validateEditBudgetFields()) return;
+
+  saving = true;
+  try {
+    const m = parseInt(editMaxTokensM) || 0;
+    const maxTokens = m > 0 ? m * 1_000_000 : 0;
+    const dailyLimit = editDailyLimit ? parseFloat(editDailyLimit) : 0;
+    const monthlyLimit = editMonthlyLimit ? parseFloat(editMonthlyLimit) : 0;
+    const threshold = editWarningThreshold ? parseFloat(editWarningThreshold) : 0.8;
+
+    await apiKeysApi.toggle(
+      editingKey.id,
+      editingKey.is_active,
+      maxTokens,
+      dailyLimit,
+      monthlyLimit,
+      threshold
+    );
+
+    toast.success('Budget settings updated');
+    showEdit = false;
+    editingKey = null;
+    await loadKeys();
+  } catch (err) {
+    toast.error('Failed to update budget: ' + (err instanceof Error ? err.message : 'Unknown'));
+  } finally {
+    saving = false;
   }
+}
+
+async function loadPickerData() {
+  loadingPickers = true;
+  pickerError = null;
+  try {
+    const [pRes, mRes] = await Promise.all([
+      providersApi.list(),
+      gatewayModelsApi.list(),
+    ]);
+    providers = pRes.data ?? [];
+    models = mRes.data ?? [];
+  } catch (err) {
+    pickerError = err instanceof Error ? err.message : 'Failed to load providers/models';
+    toast.error(pickerError);
+  } finally {
+    loadingPickers = false;
+  }
+}
+
+function toggleProvider(id: string) {
+  if (allowedProviders.includes(id)) {
+    allowedProviders = allowedProviders.filter((p) => p !== id);
+  } else {
+    allowedProviders = [...allowedProviders, id];
+  }
+}
+
+function toggleModel(id: string) {
+  if (allowedModels.includes(id)) {
+    allowedModels = allowedModels.filter((m) => m !== id);
+  } else {
+    allowedModels = [...allowedModels, id];
+  }
+}
+
+const filteredProviders = $derived(
+  providers
+    .filter((p) => {
+      const term = providerSearch.toLowerCase();
+      return (
+        p.id.toLowerCase().includes(term) ||
+        (p.display_name ?? '').toLowerCase().includes(term)
+      );
+    })
+    .sort((a, b) => (a.display_name || a.id).localeCompare(b.display_name || b.id)),
+);
+
+const filteredModels = $derived(
+  models
+    .filter((m) => {
+      const term = modelSearch.toLowerCase();
+      return m.id.toLowerCase().includes(term);
+    })
+    .sort((a, b) => a.id.localeCompare(b.id)),
+);
+
+function resetCreateDialog() {
+  showCreate = true;
+  createdKey = '';
+  limitMode = 'none';
+  allowedProviders = [];
+  allowedModels = [];
+  providerSearch = '';
+  modelSearch = '';
+  newDailyLimit = '';
+  newMonthlyLimit = '';
+  newWarningThreshold = '0.8';
+  loadPickerData();
+}
 </script>
 
 <div class="flex flex-1 flex-col gap-6 p-6">
@@ -145,251 +414,536 @@ function formatDate(ts: number): string {
     </p>
   </div>
 
-{#if loading}
-<Card class="shadow-card overflow-hidden">
-  <CardContent class="p-0">
-    <div class="overflow-x-auto">
-      <table class="w-full text-left border-collapse">
-        <thead>
-          <tr class="border-b border-border bg-muted/30">
-            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-1/4"><div class="h-4 w-16 animate-pulse rounded bg-muted"></div></th>
-            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-20 animate-pulse rounded bg-muted"></div></th>
-            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-14 animate-pulse rounded bg-muted"></div></th>
-            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-16 animate-pulse rounded bg-muted"></div></th>
-            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-14 animate-pulse rounded bg-muted"></div></th>
-            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-32"></th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-border">
-          {#each Array(5) as _}
-          <tr>
-            <td class="py-3 px-4 space-y-2">
-              <div class="h-4 w-24 animate-pulse rounded bg-muted"></div>
-              <div class="h-3 w-48 animate-pulse rounded bg-muted"></div>
-            </td>
-            <td class="py-3 px-4"><div class="h-4 w-24 animate-pulse rounded bg-muted"></div></td>
-            <td class="py-3 px-4"><div class="h-5 w-10 animate-pulse rounded bg-muted"></div></td>
-            <td class="py-3 px-4"><div class="h-4 w-20 animate-pulse rounded bg-muted"></div></td>
-            <td class="py-3 px-4"><div class="h-4 w-16 animate-pulse rounded bg-muted"></div></td>
-            <td class="py-3 px-4"><div class="h-7 w-10 animate-pulse rounded bg-muted"></div></td>
-          </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
-  </CardContent>
-</Card>
-{:else if error}
-<Card class="shadow-card">
-  <CardContent class="flex flex-col items-center justify-center py-12 gap-3">
-    <AlertTriangleIcon class="size-8 text-destructive" />
-    <p class="text-body-sm text-muted-foreground">{error}</p>
-    <Button onclick={loadKeys} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
-  </CardContent>
-</Card>
-{:else if keys.length === 0}
-<Card class="shadow-card">
-  <CardContent class="flex flex-col items-center justify-center py-12 gap-3">
-    <div class="size-12 rounded-full bg-muted/50 flex items-center justify-center">
-      <svg class="size-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-      </svg>
-    </div>
-    <div class="text-center">
-      <p class="text-sm font-medium text-muted-foreground">No API keys configured</p>
-      <p class="text-xs text-muted-foreground/70 mt-0.5">Proxy is currently open. Add a key to require authentication.</p>
-    </div>
-    <Button onclick={() => showCreate = true} size="sm" class="text-body-sm rounded-sm mt-1">
-      Create API key
-    </Button>
-  </CardContent>
-</Card>
-{:else}
-<div class="flex items-center justify-between">
-  <p class="text-caption-mono text-muted-foreground">{keys.length} key{keys.length !== 1 ? 's' : ''}</p>
-  <Button onclick={() => { showCreate = true; createdKey = ''; }} size="sm" class="text-body-sm rounded-sm">
-    Create key
-  </Button>
-</div>
-
-<Card class="shadow-card overflow-hidden">
-  <CardContent class="p-0">
-    <div class="overflow-x-auto">
-      <table class="w-full text-left border-collapse">
-        <thead>
-          <tr class="border-b border-border bg-muted/30">
-            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Name</th>
-            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Rate Limit</th>
-            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Status</th>
-            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Created</th>
-            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Expires</th>
-            <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-32"></th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-border">
-          {#each keys as key}
-          <tr class="transition-colors hover:bg-accent/20">
-            <td class="py-3 px-4">
-              <div class="text-body-sm font-medium">{key.name || '—'}</div>
-              <div class="flex items-center gap-2 mt-1">
-                <code class="font-mono text-xs text-muted-foreground break-all">{key.key || '—'}</code>
-                {#if key.key}
-                <Button variant="outline" size="sm" class="h-6 px-1.5 py-0.5 text-caption-mono cursor-pointer" onclick={() => handleCopy(key.key)}>Copy</Button>
-                {/if}
-              </div>
-            </td>
-            <td class="py-3 px-4 text-body-sm text-muted-foreground">{key.rate_limit_per_min}/min · {key.max_tokens > 0 ? formatMaxTokens(key.max_tokens) : 'Unlimited'}</td>
-            <td class="py-3 px-4">
-              <div class="flex justify-center">
-                <Switch checked={key.is_active} onCheckedChange={() => handleToggle(key.id, key.is_active)} aria-label={key.is_active ? 'Disable key' : 'Enable key'} />
-              </div>
-            </td>
-            <td class="py-3 px-4 text-body-sm text-muted-foreground">{formatDate(key.created_at)}</td>
-            <td class="py-3 px-4">
-              {#if key.expires_at}
-              {@const expired = isExpired(key.expires_at)}
-              <span class="text-body-sm {expired ? 'text-destructive font-medium' : 'text-muted-foreground'}" title={new Date(key.expires_at * 1000).toLocaleString()}>
-                {formatExpiry(key.expires_at)}
-              </span>
-              {:else}
-              <span class="text-body-sm text-muted-foreground">Never</span>
-              {/if}
-            </td>
-            <td class="py-3 px-4">
-              <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm text-destructive hover:text-destructive" onclick={() => handleDelete(key.id, key.name)}>
-                Del
-              </Button>
-            </td>
-          </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
-  </CardContent>
-</Card>
-{/if}
-
-{#if !loading && !error}
-<Card class="shadow-card">
-  <CardHeader>
-    <CardTitle class="text-display-md">Proxy API docs.</CardTitle>
-  </CardHeader>
-  <CardContent class="space-y-6">
-    <div class="space-y-2">
-      <h3 class="text-body-sm-strong">Base URL</h3>
-      <div class="flex items-center gap-2 flex-wrap">
-        <code class="font-mono text-sm text-foreground bg-muted px-2 py-1 rounded-sm">{baseUrl}/v1</code>
-        <Button variant="outline" size="sm" class="h-7 px-2 text-caption-mono cursor-pointer rounded-sm" onclick={() => copyValue(baseUrl + '/v1', 'Base URL')}>
-          Copy
+  {#if loading}
+    <Card class="shadow-card overflow-hidden">
+      <CardContent class="p-0">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b border-border bg-muted/30">
+                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-1/4"><div class="h-4 w-16 animate-pulse rounded bg-muted"></div></th>
+                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-20 animate-pulse rounded bg-muted"></div></th>
+                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-14 animate-pulse rounded bg-muted"></div></th>
+                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-24 animate-pulse rounded bg-muted"></div></th>
+                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-16 animate-pulse rounded bg-muted"></div></th>
+                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-14 animate-pulse rounded bg-muted"></div></th>
+                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4"><div class="h-4 w-16 animate-pulse rounded bg-muted"></div></th>
+                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-32"></th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-border">
+              {#each Array(5) as _}
+                <tr>
+                  <td class="py-3 px-4 space-y-2">
+                    <div class="h-4 w-24 animate-pulse rounded bg-muted"></div>
+                    <div class="h-3 w-48 animate-pulse rounded bg-muted"></div>
+                  </td>
+                  <td class="py-3 px-4"><div class="h-4 w-24 animate-pulse rounded bg-muted"></div></td>
+                  <td class="py-3 px-4"><div class="h-5 w-10 animate-pulse rounded bg-muted"></div></td>
+                  <td class="py-3 px-4"><div class="h-4 w-20 animate-pulse rounded bg-muted"></div></td>
+                  <td class="py-3 px-4"><div class="h-4 w-14 animate-pulse rounded bg-muted"></div></td>
+                  <td class="py-3 px-4"><div class="h-4 w-20 animate-pulse rounded bg-muted"></div></td>
+                  <td class="py-3 px-4"><div class="h-4 w-16 animate-pulse rounded bg-muted"></div></td>
+                  <td class="py-3 px-4"><div class="h-7 w-10 animate-pulse rounded bg-muted"></div></td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  {:else if error}
+    <Card class="shadow-card">
+      <CardContent class="flex flex-col items-center justify-center py-12 gap-3">
+        <AlertTriangleIcon class="size-8 text-destructive" />
+        <p class="text-body-sm text-muted-foreground">{error}</p>
+        <Button onclick={loadKeys} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
+      </CardContent>
+    </Card>
+  {:else if keys.length === 0}
+    <Card class="shadow-card">
+      <CardContent class="flex flex-col items-center justify-center py-12 gap-3">
+        <div class="size-12 rounded-full bg-muted/50 flex items-center justify-center">
+          <svg class="size-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+          </svg>
+        </div>
+        <div class="text-center">
+          <p class="text-sm font-medium text-muted-foreground">No API keys configured</p>
+          <p class="text-xs text-muted-foreground/70 mt-0.5">Proxy is currently open. Add a key to require authentication.</p>
+        </div>
+        <Button onclick={resetCreateDialog} size="sm" class="text-body-sm rounded-sm mt-1">
+          Create API key
         </Button>
-      </div>
+      </CardContent>
+    </Card>
+  {:else}
+    <div class="flex items-center justify-between">
+      <p class="text-caption-mono text-muted-foreground">{keys.length} key{keys.length !== 1 ? 's' : ''}</p>
+      <Button onclick={resetCreateDialog} size="sm" class="text-body-sm rounded-sm">
+        Create key
+      </Button>
     </div>
 
-    <div class="space-y-2">
-      <h3 class="text-body-sm-strong">Authentication</h3>
-      <p class="text-body-sm text-muted-foreground">Send your API key in the Authorization header on every <code>/v1/*</code> request.</p>
-      <pre class="bg-muted p-3 rounded-sm text-caption-mono overflow-x-auto"><code>Authorization: Bearer &lt;YOUR_API_KEY&gt;</code></pre>
-    </div>
+    <Card class="shadow-card overflow-hidden">
+      <CardContent class="p-0">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b border-border bg-muted/30">
+                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Name</th>
+                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Rate Limit</th>
+                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Limit</th>
+                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Budget</th>
+                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Status</th>
+                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Devices</th>
+                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Expires</th>
+                <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4 w-32"></th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-border">
+              {#each keys as key}
+                {@const dailyUtil = getBudgetUtilization(key.daily_spend_usd, key.daily_limit_usd)}
+                {@const monthlyUtil = getBudgetUtilization(key.monthly_spend_usd, key.monthly_limit_usd)}
+                {@const hasBudget = key.daily_limit_usd > 0 || key.monthly_limit_usd > 0}
+                <tr class="transition-colors hover:bg-accent/20">
+                  <td class="py-3 px-4">
+                    <div class="text-body-sm font-medium">{key.name || '—'}</div>
+                    <div class="flex items-center gap-2 mt-1">
+                      <code class="font-mono text-xs text-muted-foreground break-all">{key.key || '—'}</code>
+                      {#if key.key}
+                        <Button variant="outline" size="sm" class="h-6 px-1.5 py-0.5 text-caption-mono cursor-pointer" onclick={() => handleCopy(key.key)}>Copy</Button>
+                      {/if}
+                    </div>
+                  </td>
+                  <td class="py-3 px-4 text-body-sm text-muted-foreground">{key.rate_limit_per_min}/min · {key.max_tokens > 0 ? formatMaxTokens(key.max_tokens) : 'Unlimited'}</td>
+                  <td class="py-3 px-4 text-body-sm text-muted-foreground">
+                    {formatAllowlistSummary(detectLimitMode(key.allowed_models), key.allowed_models)}
+                  </td>
+                  <td class="py-3 px-4">
+                    {#if hasBudget}
+                      <div class="flex flex-col gap-1.5 min-w-[140px]">
+                        {#if key.daily_limit_usd > 0}
+                          <div class="space-y-0.5">
+                            <div class="flex items-center justify-between text-xs">
+                              <span class="text-muted-foreground">Daily</span>
+                              <span class={getUtilizationColor(dailyUtil, key.warning_threshold)}>
+                                {formatUSD(key.daily_spend_usd)} / {formatUSD(key.daily_limit_usd)}
+                              </span>
+                            </div>
+                            <div class="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                              <div
+                                class="h-full rounded-full transition-all {getUtilizationBarColor(dailyUtil, key.warning_threshold)}"
+                                style="width: {dailyUtil}%"
+                              ></div>
+                            </div>
+                          </div>
+                        {/if}
+                        {#if key.monthly_limit_usd > 0}
+                          <div class="space-y-0.5">
+                            <div class="flex items-center justify-between text-xs">
+                              <span class="text-muted-foreground">Monthly</span>
+                              <span class={getUtilizationColor(monthlyUtil, key.warning_threshold)}>
+                                {formatUSD(key.monthly_spend_usd)} / {formatUSD(key.monthly_limit_usd)}
+                              </span>
+                            </div>
+                            <div class="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                              <div
+                                class="h-full rounded-full transition-all {getUtilizationBarColor(monthlyUtil, key.warning_threshold)}"
+                                style="width: {monthlyUtil}%"
+                              ></div>
+                            </div>
+                          </div>
+                        {/if}
+                      </div>
+                    {:else}
+                      <span class="text-body-sm text-muted-foreground">No limits</span>
+                    {/if}
+                  </td>
+                  <td class="py-3 px-4">
+                    <div class="flex justify-center">
+                      <Switch checked={key.is_active} onCheckedChange={() => handleToggle(key.id, key.is_active)} aria-label={key.is_active ? 'Disable key' : 'Enable key'} />
+                    </div>
+                  </td>
+                  <td class="py-3 px-4">
+                    <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" onclick={() => openDevices(key.id)}>
+                      {(deviceCounts[key.id] ?? 0)} device{deviceCounts[key.id] === 1 ? '' : 's'}
+                    </Button>
+                  </td>
+                  <td class="py-3 px-4">
+                    {#if key.expires_at}
+                      {@const expired = isExpired(key.expires_at)}
+                      <span class="text-body-sm {expired ? 'text-destructive font-medium' : 'text-muted-foreground'}" title={new Date(key.expires_at * 1000).toLocaleString()}>
+                        {formatExpiry(key.expires_at)}
+                      </span>
+                    {:else}
+                      <span class="text-body-sm text-muted-foreground">Never</span>
+                    {/if}
+                  </td>
+                  <td class="py-3 px-4">
+                    <div class="flex items-center gap-1">
+                      <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm" onclick={() => openEditDialog(key)}>
+                        Edit
+                      </Button>
+                      <Button variant="ghost" size="sm" class="text-body-sm h-7 px-2 rounded-sm text-destructive hover:text-destructive" onclick={() => handleDelete(key.id, key.name)}>
+                        Del
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  {/if}
 
-    <div class="space-y-2">
-      <h3 class="text-body-sm-strong">Supported endpoints</h3>
-      <ul class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-body-sm text-muted-foreground">
-        <li><code class="text-foreground">POST /v1/chat/completions</code> — Chat</li>
-        <li><code class="text-foreground">GET /v1/models</code> — Model list</li>
-        <li><code class="text-foreground">POST /v1/messages</code> — Claude Messages</li>
-        <li><code class="text-foreground">POST /v1/responses</code> — Responses API</li>
-        <li><code class="text-foreground">POST /v1/embeddings</code> — Embeddings</li>
-        <li><code class="text-foreground">POST /v1/audio/speech</code> — Text-to-speech</li>
-        <li><code class="text-foreground">POST /v1/audio/transcriptions</code> — Speech-to-text</li>
-        <li><code class="text-foreground">POST /v1/images/generations</code> — Images</li>
-        <li><code class="text-foreground">POST /v1/video/generations</code> — Video</li>
-        <li><code class="text-foreground">POST /v1/unified</code> — Unified gateway</li>
-        <li><code class="text-foreground">POST /v1/messages/count_tokens</code> — Token count</li>
-      </ul>
-    </div>
-
-    <div class="space-y-2">
-      <h3 class="text-body-sm-strong">Example</h3>
-      <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>curl -H "Authorization: Bearer &lt;YOUR_API_KEY&gt;" \
-  -X POST {baseUrl}/v1/chat/completions \
-  -d '&#123;"model":"openai/gpt-4o","messages":[&#123;"role":"user","content":"Hello"&#125;]&#125;'</code></pre>
-      <p class="text-caption text-muted-foreground">Model IDs must include the provider prefix, e.g. <code class="text-foreground">openai/gpt-4o</code>, <code class="text-foreground">claude/claude-sonnet-4</code>, or <code class="text-foreground">cx/gpt-5.4</code>.</p>
-    </div>
-  </CardContent>
-</Card>
-{/if}
+  {#if !loading && !error}
+    <Card class="shadow-card">
+      <CardHeader>
+        <CardTitle class="text-display-md">Proxy API docs.</CardTitle>
+      </CardHeader>
+      <CardContent class="space-y-6">
+        <div class="space-y-2">
+          <h3 class="text-body-sm-strong">Base URL</h3>
+          <div class="flex items-center gap-2 flex-wrap">
+            <code class="font-mono text-sm text-foreground bg-muted px-2 py-1 rounded-sm">{baseUrl}/v1</code>
+            <Button variant="outline" size="sm" class="h-7 px-2 text-caption-mono cursor-pointer rounded-sm" onclick={() => copyValue(baseUrl + '/v1', 'Base URL')}>
+              Copy
+            </Button>
+          </div>
+        </div>
+        <div class="space-y-2">
+          <h3 class="text-body-sm-strong">Authentication</h3>
+          <p class="text-body-sm text-muted-foreground">Send your API key in the Authorization header on every <code>/v1/*</code> request.</p>
+          <pre class="bg-muted p-3 rounded-sm text-caption-mono overflow-x-auto"><code>Authorization: Bearer &lt;YOUR_API_KEY&gt;</code></pre>
+        </div>
+        <div class="space-y-2">
+          <h3 class="text-body-sm-strong">Supported endpoints</h3>
+          <ul class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-body-sm text-muted-foreground">
+            <li><code class="text-foreground">POST /v1/chat/completions</code> — Chat</li>
+            <li><code class="text-foreground">GET /v1/models</code> — Model list</li>
+            <li><code class="text-foreground">POST /v1/messages</code> — Claude Messages</li>
+            <li><code class="text-foreground">POST /v1/responses</code> — Responses API</li>
+            <li><code class="text-foreground">POST /v1/embeddings</code> — Embeddings</li>
+            <li><code class="text-foreground">POST /v1/audio/speech</code> — Text-to-speech</li>
+            <li><code class="text-foreground">POST /v1/audio/transcriptions</code> — Speech-to-text</li>
+            <li><code class="text-foreground">POST /v1/images/generations</code> — Images</li>
+            <li><code class="text-foreground">POST /v1/video/generations</code> — Video</li>
+            <li><code class="text-foreground">POST /v1/unified</code> — Unified gateway</li>
+            <li><code class="text-foreground">POST /v1/messages/count_tokens</code> — Token count</li>
+          </ul>
+        </div>
+        <div class="space-y-2">
+          <h3 class="text-body-sm-strong">Example</h3>
+          <pre class="bg-muted p-4 rounded-sm text-caption-mono overflow-x-auto"><code>curl -H "Authorization: Bearer &lt;YOUR_API_KEY&gt;" \
+-X POST {baseUrl}/v1/chat/completions \
+-d '&#123;"model":"openai/gpt-4o","messages":[&#123;"role":"user","content":"Hello"&#125;]&#125;'</code></pre>
+          <p class="text-caption text-muted-foreground">Model IDs must include the provider prefix, e.g. <code class="text-foreground">openai/gpt-4o</code>, <code class="text-foreground">claude/claude-sonnet-4</code>, or <code class="text-foreground">cx/gpt-5.4</code>.</p>
+        </div>
+      </CardContent>
+    </Card>
+  {/if}
+</div>
 
 <!-- Create dialog -->
 <Dialog.Root bind:open={showCreate}>
-  <Dialog.Content class="sm:max-w-md">
+  <Dialog.Content class="sm:max-w-md max-h-[85vh] overflow-y-auto">
     {#if createdKey}
-          <h2 class="text-lg font-semibold mb-2">Key created</h2>
-          <p class="text-sm text-muted-foreground mb-4">Copy this key now — it won't be shown again.</p>
-          <div class="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 mb-4">
-            <p class="font-mono text-sm break-all select-all">{createdKey}</p>
-          </div>
-          <div class="flex gap-2">
-            <Button onclick={() => copyValue(createdKey, 'Key')} class="flex-1 gap-2 text-sm">
-              <svg class="size-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-              Copy key
-            </Button>
-            <Button variant="outline" onclick={() => { showCreate = false; createdKey = ''; }} class="text-sm">Done</Button>
-          </div>
-        {:else}
-          <h2 class="text-lg font-semibold mb-4">Create API key</h2>
-	<div class="flex flex-col gap-4">
-		<div class="flex flex-col gap-1.5">
-			<Label class="text-sm font-medium">Name (optional)</Label>
-			<Input bind:value={newName} placeholder="My API key" class="h-9 text-sm" />
-		</div>
-		<div class="flex flex-col gap-1.5">
-			<Label class="text-sm font-medium">Rate limit (per minute)</Label>
-			<Input bind:value={newRateLimit} type="number" min="1" class="h-9 text-sm" />
-		</div>
-            <div class="flex flex-col gap-1.5">
-              <Label class="text-sm font-medium">Max tokens (M)</Label>
-              <Input bind:value={newMaxTokensM} type="number" min="1" placeholder="Unlimited" class="h-9 text-sm" />
-              <p class="text-xs text-muted-foreground">Leave empty for unlimited. Min 1M (1 = 1,000,000 tokens).</p>
-            </div>
-            <div class="flex flex-col gap-1.5">
-              <Label class="text-sm font-medium">Expiration</Label>
-              <Select.Root type="single" value={expirationPreset} onValueChange={setExpirationPreset}>
-                <Select.Trigger class="w-full h-9 text-body-sm rounded-sm">
-                  {expirationLabels[expirationPreset]}
-                </Select.Trigger>
-                <Select.Content>
-                  {#each Object.entries(expirationLabels) as [value, label]}
-                    <Select.Item {value} class="text-body-sm">{label}</Select.Item>
-                  {/each}
-                </Select.Content>
-              </Select.Root>
-              {#if expirationPreset === 'custom'}
-                <Input type="date" bind:value={customDate} min={new Date().toISOString().split('T')[0]} class="h-9 text-sm" />
-                <p class="text-xs text-muted-foreground">Expires at 23:59:59 UTC on the selected date.</p>
-              {/if}
-            </div>
-          </div>
-          <div class="flex gap-2 mt-6">
-	<Button onclick={handleCreate} disabled={creating} class="flex-1 text-sm">
-		{creating ? 'Creating...' : 'Create'}
-	</Button>
-	<Button variant="outline" onclick={() => { showCreate = false; createdKey = ''; }} class="text-sm">Cancel</Button>
-</div>
+      <h2 class="text-lg font-semibold mb-2">Key created</h2>
+      <p class="text-sm text-muted-foreground mb-4">Copy this key now — it won't be shown again.</p>
+      <div class="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 mb-4">
+        <p class="font-mono text-sm break-all select-all">{createdKey}</p>
+      </div>
+      <div class="flex gap-2">
+        <Button onclick={() => copyValue(createdKey, 'Key')} class="flex-1 gap-2 text-sm">
+          <svg class="size-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          Copy key
+        </Button>
+        <Button variant="outline" onclick={() => { showCreate = false; createdKey = ''; }} class="text-sm">Done</Button>
+      </div>
+    {:else}
+      <h2 class="text-lg font-semibold mb-4">Create API key</h2>
+      <div class="flex flex-col gap-4">
+        <div class="flex flex-col gap-1.5">
+          <Label class="text-sm font-medium">Name (optional)</Label>
+          <Input bind:value={newName} placeholder="My API key" class="h-9 text-sm" />
+        </div>
 
+        <div class="flex flex-col gap-1.5">
+          <Label class="text-sm font-medium">Rate limit (per minute)</Label>
+          <Input bind:value={newRateLimit} type="number" min="1" class="h-9 text-sm" />
+        </div>
+
+        <div class="flex flex-col gap-1.5">
+          <Label class="text-sm font-medium">Max tokens (M)</Label>
+          <Input bind:value={newMaxTokensM} type="number" min="1" placeholder="Unlimited" class="h-9 text-sm" />
+          <p class="text-xs text-muted-foreground">Leave empty for unlimited. Min 1M (1 = 1,000,000 tokens).</p>
+        </div>
+
+        <div class="flex flex-col gap-1.5">
+          <Label class="text-sm font-medium flex items-center gap-1.5">
+            <DollarSignIcon class="size-4" />
+            Budget limits (USD)
+          </Label>
+          <div class="grid grid-cols-2 gap-3">
+            <div class="flex flex-col gap-1">
+              <Label class="text-xs text-muted-foreground">Daily limit</Label>
+              <Input bind:value={newDailyLimit} type="number" min="0" step="0.01" placeholder="No limit" class="h-9 text-sm" />
+            </div>
+            <div class="flex flex-col gap-1">
+              <Label class="text-xs text-muted-foreground">Monthly limit</Label>
+              <Input bind:value={newMonthlyLimit} type="number" min="0" step="0.01" placeholder="No limit" class="h-9 text-sm" />
+            </div>
+          </div>
+          <div class="flex flex-col gap-1">
+            <Label class="text-xs text-muted-foreground">Warning threshold (0-1)</Label>
+            <Input bind:value={newWarningThreshold} type="number" min="0" max="1" step="0.05" placeholder="0.8" class="h-9 text-sm" />
+            <p class="text-xs text-muted-foreground">Alert when spend reaches this fraction of the limit. Default: 0.8 (80%).</p>
+          </div>
+        </div>
+
+        <div class="flex flex-col gap-1.5">
+          <Label class="text-sm font-medium">Limit access</Label>
+          <div class="flex gap-2 flex-wrap">
+            <Button variant={limitMode === 'none' ? 'default' : 'outline'} size="sm" onclick={() => limitMode = 'none'} class="text-body-sm rounded-sm">Unlimited</Button>
+            <Button variant={limitMode === 'providers' ? 'default' : 'outline'} size="sm" onclick={() => limitMode = 'providers'} class="text-body-sm rounded-sm">Providers</Button>
+            <Button variant={limitMode === 'models' ? 'default' : 'outline'} size="sm" onclick={() => limitMode = 'models'} class="text-body-sm rounded-sm">Models</Button>
+          </div>
+        </div>
+
+        {#if limitMode === 'providers'}
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-sm font-medium">Allowed providers</Label>
+            <Popover.Root>
+              <Popover.Trigger class="flex h-9 w-full items-center justify-between rounded-sm border border-input bg-background px-3 py-1 text-body-sm shadow-sm transition-colors hover:bg-accent">
+                {allowedProviders.length ? `${allowedProviders.length} provider${allowedProviders.length === 1 ? '' : 's'} selected` : 'Select providers'}
+              </Popover.Trigger>
+              <Popover.Content class="w-72 p-2">
+                {#if loadingPickers}
+                  <div class="py-4 flex justify-center">
+                    <div class="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
+                  </div>
+                {:else if pickerError}
+                  <p class="text-body-sm text-destructive">{pickerError}</p>
+                  <Button variant="outline" size="sm" class="mt-2 w-full text-body-sm rounded-sm" onclick={loadPickerData}>Retry</Button>
+                {:else}
+                  <Input placeholder="Search providers..." bind:value={providerSearch} class="h-8 text-sm mb-2" />
+                  <ScrollArea class="h-48">
+                    <div class="flex flex-col gap-0.5">
+                      {#each filteredProviders as provider}
+                        <Button variant="ghost" size="sm" class="w-full justify-between text-body-sm font-normal" onclick={() => toggleProvider(provider.id)}>
+                          <span class="truncate">{provider.display_name || provider.id}</span>
+                          {#if allowedProviders.includes(provider.id)}
+                            <CheckIcon class="size-4 text-primary shrink-0 ml-2" />
+                          {/if}
+                        </Button>
+                      {:else}
+                        <p class="text-body-sm text-muted-foreground px-2 py-1">No providers found</p>
+                      {/each}
+                    </div>
+                  </ScrollArea>
+                {/if}
+              </Popover.Content>
+            </Popover.Root>
+            {#if allowedProviders.length > 0}
+              <div class="flex flex-wrap gap-1 mt-1">
+                {#each allowedProviders as id}
+                  {@const provider = providers.find((p) => p.id === id)}
+                  <Badge variant="secondary">{provider?.display_name || id}</Badge>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {:else if limitMode === 'models'}
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-sm font-medium">Allowed models</Label>
+            <Popover.Root>
+              <Popover.Trigger class="flex h-9 w-full items-center justify-between rounded-sm border border-input bg-background px-3 py-1 text-body-sm shadow-sm transition-colors hover:bg-accent">
+                {allowedModels.length ? `${allowedModels.length} model${allowedModels.length === 1 ? '' : 's'} selected` : 'Select models'}
+              </Popover.Trigger>
+              <Popover.Content class="w-80 p-2">
+                {#if loadingPickers}
+                  <div class="py-4 flex justify-center">
+                    <div class="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
+                  </div>
+                {:else if pickerError}
+                  <p class="text-body-sm text-destructive">{pickerError}</p>
+                  <Button variant="outline" size="sm" class="mt-2 w-full text-body-sm rounded-sm" onclick={loadPickerData}>Retry</Button>
+                {:else}
+                  <Input placeholder="Search models..." bind:value={modelSearch} class="h-8 text-sm mb-2" />
+                  <ScrollArea class="h-64">
+                    <div class="flex flex-col gap-0.5">
+                      {#each filteredModels as model}
+                        <Button variant="ghost" size="sm" class="w-full justify-between text-body-sm font-normal" onclick={() => toggleModel(model.id)}>
+                          <span class="truncate font-mono text-xs {model.id.startsWith('smart/') ? 'text-primary' : ''}">{model.id}</span>
+{#if model.id.startsWith('smart/')}
+<Badge variant="secondary" class="ml-1 text-[10px] px-1.5 py-0 rounded-full">Smart</Badge>
 {/if}
-</Dialog.Content>
+                          {#if allowedModels.includes(model.id)}
+                            <CheckIcon class="size-4 text-primary shrink-0 ml-2" />
+                          {/if}
+                        </Button>
+                      {:else}
+                        <p class="text-body-sm text-muted-foreground px-2 py-1">No models found</p>
+                      {/each}
+                    </div>
+                  </ScrollArea>
+                {/if}
+              </Popover.Content>
+            </Popover.Root>
+            {#if allowedModels.length > 0}
+              <div class="flex flex-wrap gap-1 mt-1">
+                {#each allowedModels as id}
+                  <Badge variant="secondary">{id}</Badge>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
+
+        <div class="flex flex-col gap-1.5">
+          <Label class="text-sm font-medium">Expiration</Label>
+          <Select.Root type="single" value={expirationPreset} onValueChange={setExpirationPreset}>
+            <Select.Trigger class="w-full h-9 text-body-sm rounded-sm">
+              {expirationLabels[expirationPreset]}
+            </Select.Trigger>
+            <Select.Content>
+              {#each Object.entries(expirationLabels) as [value, label]}
+                <Select.Item {value} class="text-body-sm">{label}</Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
+          {#if expirationPreset === 'custom'}
+            <Input type="date" bind:value={customDate} min={new Date().toISOString().split('T')[0]} class="h-9 text-sm" />
+            <p class="text-xs text-muted-foreground">Expires at 23:59:59 UTC on the selected date.</p>
+          {/if}
+        </div>
+
+        <div class="flex gap-2 mt-6">
+          <Button onclick={handleCreate} disabled={creating} class="flex-1 text-sm">
+            {creating ? 'Creating...' : 'Create'}
+          </Button>
+          <Button variant="outline" onclick={() => { showCreate = false; createdKey = ''; }} class="text-sm">Cancel</Button>
+        </div>
+      </div>
+    {/if}
+  </Dialog.Content>
 </Dialog.Root>
 
-  <AlertDialog bind:open={showDeleteConfirm}>
-    <AlertDialogContent>
-      <AlertDialogTitle>Delete API key</AlertDialogTitle>
-      <AlertDialogDescription>
-        Are you sure you want to delete <strong>{deleteConfirm?.name || deleteConfirm?.id.slice(0, 8)}</strong>? This action cannot be undone.
-      </AlertDialogDescription>
-      <div class="flex gap-2 justify-end mt-4">
-        <AlertDialogCancel onclick={() => { deleteConfirm = null; showDeleteConfirm = false; }}>Cancel</AlertDialogCancel>
-        <AlertDialogAction variant="destructive" onclick={confirmDelete}>Delete</AlertDialogAction>
+<!-- Edit budget dialog -->
+<Dialog.Root bind:open={showEdit}>
+  <Dialog.Content class="sm:max-w-md">
+    <h2 class="text-lg font-semibold mb-1">Edit budget settings</h2>
+    <p class="text-sm text-muted-foreground mb-4">
+      Configure budget limits for <strong>{editingKey?.name || editingKey?.id.slice(0, 8)}</strong>
+    </p>
+
+    <div class="flex flex-col gap-4">
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-sm font-medium">Max tokens (M)</Label>
+        <Input bind:value={editMaxTokensM} type="number" min="0" placeholder="Unlimited" class="h-9 text-sm" />
+        <p class="text-xs text-muted-foreground">Set to 0 or leave empty for unlimited.</p>
       </div>
-    </AlertDialogContent>
-  </AlertDialog>
-</div>
+
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-sm font-medium flex items-center gap-1.5">
+          <DollarSignIcon class="size-4" />
+          Budget limits (USD)
+        </Label>
+        <div class="grid grid-cols-2 gap-3">
+          <div class="flex flex-col gap-1">
+            <Label class="text-xs text-muted-foreground">Daily limit</Label>
+            <Input bind:value={editDailyLimit} type="number" min="0" step="0.01" placeholder="No limit" class="h-9 text-sm" />
+          </div>
+          <div class="flex flex-col gap-1">
+            <Label class="text-xs text-muted-foreground">Monthly limit</Label>
+            <Input bind:value={editMonthlyLimit} type="number" min="0" step="0.01" placeholder="No limit" class="h-9 text-sm" />
+          </div>
+        </div>
+        <div class="flex flex-col gap-1">
+          <Label class="text-xs text-muted-foreground">Warning threshold (0-1)</Label>
+          <Input bind:value={editWarningThreshold} type="number" min="0" max="1" step="0.05" placeholder="0.8" class="h-9 text-sm" />
+          <p class="text-xs text-muted-foreground">Alert when spend reaches this fraction of the limit.</p>
+        </div>
+      </div>
+
+      {#if editingKey}
+        {@const dailyUtil = getBudgetUtilization(editingKey.daily_spend_usd, editingKey.daily_limit_usd)}
+        {@const monthlyUtil = getBudgetUtilization(editingKey.monthly_spend_usd, editingKey.monthly_limit_usd)}
+        <div class="rounded-lg border bg-muted/30 p-3 space-y-2">
+          <p class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Current spend</p>
+          <div class="grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <p class="text-muted-foreground text-xs">Today</p>
+              <p class="font-medium">{formatUSD(editingKey.daily_spend_usd)}</p>
+            </div>
+            <div>
+              <p class="text-muted-foreground text-xs">This month</p>
+              <p class="font-medium">{formatUSD(editingKey.monthly_spend_usd)}</p>
+            </div>
+          </div>
+        </div>
+      {/if}
+
+      <div class="flex gap-2 mt-2">
+        <Button onclick={handleSaveEdit} disabled={saving} class="flex-1 text-sm">
+          {saving ? 'Saving...' : 'Save changes'}
+        </Button>
+        <Button variant="outline" onclick={() => { showEdit = false; editingKey = null; }} class="text-sm">Cancel</Button>
+      </div>
+    </div>
+  </Dialog.Content>
+</Dialog.Root>
+
+<AlertDialog bind:open={showDeleteConfirm}>
+  <AlertDialogContent>
+    <AlertDialogTitle>Delete API key</AlertDialogTitle>
+    <AlertDialogDescription>
+      Are you sure you want to delete <strong>{deleteConfirm?.name || deleteConfirm?.id.slice(0, 8)}</strong>? This action cannot be undone.
+    </AlertDialogDescription>
+    <div class="flex gap-2 justify-end mt-4">
+      <AlertDialogCancel onclick={() => { deleteConfirm = null; showDeleteConfirm = false; }}>Cancel</AlertDialogCancel>
+      <AlertDialogAction variant="destructive" onclick={confirmDelete}>Delete</AlertDialogAction>
+    </div>
+  </AlertDialogContent>
+</AlertDialog>
+
+<!-- Devices dialog -->
+<Dialog.Root bind:open={showDevicesDialog}>
+  <Dialog.Content class="sm:max-w-2xl">
+    <h2 class="text-lg font-semibold mb-1">{selectedDevices?.name || 'API key'} devices</h2>
+    <p class="text-sm text-muted-foreground mb-4">{selectedDevices?.count ?? 0} tracked device{selectedDevices?.count === 1 ? '' : 's'}</p>
+    {#if !selectedDevices}
+      <div class="py-8 flex justify-center">
+        <div class="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
+      </div>
+    {:else if selectedDevices.devices.length === 0}
+      <p class="text-body-sm text-muted-foreground">No devices tracked yet.</p>
+    {:else}
+      <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse">
+          <thead>
+            <tr class="border-b border-border bg-muted/30">
+              <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-3">Fingerprint</th>
+              <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-3">IP</th>
+              <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-3">User Agent</th>
+              <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-2 px-3">Last Seen</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-border">
+            {#each selectedDevices.devices as device}
+              <tr>
+                <td class="py-2 px-3 font-mono text-xs text-muted-foreground">{device.fingerprint}</td>
+                <td class="py-2 px-3 text-body-sm text-muted-foreground">{device.ip}</td>
+                <td class="py-2 px-3 text-body-sm text-muted-foreground max-w-xs truncate" title={device.userAgent}>{device.userAgent}</td>
+                <td class="py-2 px-3 text-body-sm text-muted-foreground">{formatDateTime(device.lastSeen)}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+  </Dialog.Content>
+</Dialog.Root>

@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +36,7 @@ type StreamResult struct {
 	Chunks     chan StreamChunk
 	Headers    http.Header
 	StatusCode int
+	CostUsd    float64 // optional provider-reported exact cost
 }
 
 // StreamConfig holds per-request streaming tunables.
@@ -75,6 +78,7 @@ type Response struct {
 	Headers    http.Header
 	Body       []byte
 	Usage      map[string]int64 // optional provider-reported token usage
+	CostUsd    float64          // optional provider-reported exact cost
 }
 
 // Request is the unified execution request.
@@ -120,9 +124,57 @@ type BaseExecutor struct {
 	FetchTimeout           time.Duration
 	StreamIdleTimeout      time.Duration
 	StreamReadinessTimeout time.Duration
-	proxyClients           sync.Map // proxyURL -> *http.Client (non-streaming)
+	ResponseHeaderTimeout  time.Duration // abort if no response headers arrive within this window
+	proxyClients           sync.Map      // proxyURL -> *http.Client (non-streaming)
 	streamBase             *http.Client
 	streamClients          sync.Map // proxyURL -> *http.Client (streaming, no Timeout)
+}
+
+// StreamReadinessTimeoutError is returned when an upstream streaming request does
+// not produce response headers within the configured readiness window. It embeds
+// an UpstreamError with StatusCode 504 so handlers surface it as a Gateway
+// Timeout to downstream clients.
+type StreamReadinessTimeoutError struct {
+	*UpstreamError
+	Timeout time.Duration
+	URL     string
+}
+
+func newStreamReadinessTimeoutError(timeout time.Duration, rawURL string) *StreamReadinessTimeoutError {
+	body := gatewayTimeoutBody(fmt.Sprintf("stream readiness timeout after %v waiting for response headers from %s", timeout, rawURL))
+	return &StreamReadinessTimeoutError{
+		UpstreamError: &UpstreamError{
+			StatusCode: http.StatusGatewayTimeout,
+			Body:       body,
+			RawBody:    body,
+		},
+		Timeout: timeout,
+		URL:     rawURL,
+	}
+}
+
+// Is reports whether target is a context deadline error, so readiness timeouts
+// are treated as timeout/category errors by the failover/detection layer.
+func (e *StreamReadinessTimeoutError) Is(target error) bool {
+	return target == context.DeadlineExceeded
+}
+
+func isResponseHeaderTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "timeout awaiting response headers")
+}
+
+// gatewayTimeoutBody returns a stable OpenAI-style error body for 504 responses.
+func gatewayTimeoutBody(message string) []byte {
+	b, _ := json.Marshal(map[string]any{
+		"error": map[string]any{
+			"message": message,
+			"type":    "timeout_error",
+		},
+	})
+	return b
 }
 
 // NewBaseExecutor creates a base executor with default settings.
@@ -130,13 +182,19 @@ type BaseExecutor struct {
 //
 //	FETCH_TIMEOUT_MS=600000 (10m), STREAM_IDLE_TIMEOUT_MS=600000 (10m),
 //	STREAM_READINESS_TIMEOUT_MS=80000 (80s).
-func defaultHTTPTransport() *http.Transport {
+//
+// defaultHTTPTransport returns a transport with ResponseHeaderTimeout set so
+// requests that never receive response headers cannot hang indefinitely.
+// ResponseHeaderTimeout covers only the window until headers arrive; it does
+// not limit body or stream reading once headers have been received.
+func defaultHTTPTransport(responseHeaderTimeout time.Duration) *http.Transport {
 	return &http.Transport{
 		MaxIdleConns:          1000,
 		MaxIdleConnsPerHost:   100,
 		IdleConnTimeout:       30 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: responseHeaderTimeout,
 		ForceAttemptHTTP2:     true,
 		DialContext:           defaultDialContext(),
 	}
@@ -156,20 +214,22 @@ func defaultDialContext() func(ctx context.Context, network, addr string) (net.C
 }
 
 func NewBaseExecutor() *BaseExecutor {
+	responseHeaderTimeout := time.Duration(getEnvInt("STREAM_RESPONSE_HEADER_TIMEOUT_MS", 30000)) * time.Millisecond
 	b := &BaseExecutor{
 		Client: &http.Client{
 			Timeout:   5 * time.Minute,
-			Transport: defaultHTTPTransport(),
+			Transport: defaultHTTPTransport(responseHeaderTimeout),
 		},
 		// Streaming uses a client with no global Timeout; stream lifecycle is
 		// governed by fetch/idle/readiness context timeouts instead.
 		streamBase: &http.Client{
-			Transport: defaultHTTPTransport(),
+			Transport: defaultHTTPTransport(responseHeaderTimeout),
 		},
 		Timeout:                5 * time.Minute,
 		FetchTimeout:           time.Duration(getEnvInt("FETCH_TIMEOUT_MS", 600000)) * time.Millisecond,
 		StreamIdleTimeout:      time.Duration(getEnvInt("STREAM_IDLE_TIMEOUT_MS", 600000)) * time.Millisecond,
 		StreamReadinessTimeout: time.Duration(getEnvInt("STREAM_READINESS_TIMEOUT_MS", 80000)) * time.Millisecond,
+		ResponseHeaderTimeout:  responseHeaderTimeout,
 	}
 	// Periodically drop idle connections so stale proxy/upstream sockets are
 	// not reused after the peer silently closed them (common EOF source).
@@ -198,6 +258,7 @@ type (
 	providerCtxKey  struct{}
 	clientIPKey     struct{}
 	userAgentKey    struct{}
+	imagesPathKey   struct{}
 )
 
 // ContextWithProvider attaches the provider prefix to ctx so the base executor
@@ -245,6 +306,19 @@ func UserAgentFromContext(ctx context.Context) string {
 	return ua
 }
 
+// ContextWithImagesPath sets an override for the upstream images endpoint path.
+// Used by /v1/images/edits to target /v1/images/edits instead of the default
+// /v1/images/generations.
+func ContextWithImagesPath(ctx context.Context, path string) context.Context {
+	return context.WithValue(ctx, imagesPathKey{}, path)
+}
+
+// ImagesPathFromContext returns the upstream images endpoint path override, if any.
+func ImagesPathFromContext(ctx context.Context) string {
+	path, _ := ctx.Value(imagesPathKey{}).(string)
+	return path
+}
+
 func clientLogAttrs(ctx context.Context) []any {
 	attrs := make([]any, 0, 4)
 	if ip := ClientIPFromContext(ctx); ip != "" {
@@ -258,14 +332,69 @@ func clientLogAttrs(ctx context.Context) []any {
 
 // ProxyConfig is attached to request contexts by v1 handlers.
 type ProxyConfig struct {
-	Enabled     bool
-	ProxyPoolID string
-	ProxyURL    string
-	NoProxy     string
-	RelayURL    string
-	RelayAuth   string
-	RelayType   string
-	StrictProxy bool
+	Enabled       bool
+	ProxyPoolID   string
+	ProxyURL      string
+	ProxyUsername string
+	ProxyPassword string
+	NoProxy       string
+	RelayURL      string
+	RelayAuth     string
+	RelayType     string
+	StrictProxy   bool
+	Version       string // opaque version/timestamp; changes invalidate cached clients
+}
+
+// proxyURLWithCredentials builds the final proxy URL, re-attaching separate
+// credentials or preserving legacy inline credentials.
+func (c ProxyConfig) proxyURLWithCredentials() string {
+	if c.ProxyURL == "" {
+		return ""
+	}
+	u, err := url.Parse(c.ProxyURL)
+	if err != nil {
+		return c.ProxyURL
+	}
+	if c.ProxyUsername != "" {
+		pass := c.ProxyPassword
+		u.User = url.UserPassword(c.ProxyUsername, pass)
+	}
+	return u.String()
+}
+
+// canonicalProxyURL returns the proxy URL without credentials for cache keys.
+func (c ProxyConfig) canonicalProxyURL() string {
+	if c.ProxyURL == "" {
+		return ""
+	}
+	u, err := url.Parse(c.ProxyURL)
+	if err != nil {
+		return c.ProxyURL
+	}
+	u.User = nil
+	return u.String()
+}
+
+// proxyCacheKey returns a cache key composed of the canonical proxy identity
+// plus an opaque version. Credential rotation changes the version and therefore
+// invalidates the cached client. Legacy inline-credential URLs are parsed to
+// derive the version when separate fields are empty.
+func (c ProxyConfig) proxyCacheKey() string {
+	version := c.Version
+	if version == "" {
+		user, pass := c.ProxyUsername, c.ProxyPassword
+		if user == "" && pass == "" && c.ProxyURL != "" {
+			if u, err := url.Parse(c.ProxyURL); err == nil && u.User != nil {
+				user = u.User.Username()
+				pass, _ = u.User.Password()
+			}
+		}
+		if user != "" || pass != "" {
+			h := sha256.Sum256([]byte(user + "\x00" + pass))
+			version = hex.EncodeToString(h[:])
+		}
+	}
+	return c.canonicalProxyURL() + "#" + version
 }
 
 // ProxyLabel returns a human-readable proxy description for logging.
@@ -278,7 +407,7 @@ func (c ProxyConfig) ProxyLabel() string {
 		return "relay/" + c.RelayType + " " + host
 	}
 	if c.ProxyURL != "" {
-		return "http " + c.ProxyURL
+		return "http " + c.canonicalProxyURL()
 	}
 	return "direct"
 }
@@ -441,45 +570,53 @@ func resolveTargetURL(rawURL string, cfg ProxyConfig) (string, map[string]string
 	return cfg.RelayURL, extra
 }
 
-// proxyClient returns an http.Client that routes through the given proxy URL.
-// ponytail: cached per proxy URL, avoids creating a new transport per request.
-func (b *BaseExecutor) proxyClient(proxyURL string) (*http.Client, error) {
-	if v, ok := b.proxyClients.Load(proxyURL); ok {
+// proxyClient returns an http.Client that routes through the proxy described by cfg.
+// Clients are cached by canonical proxy identity plus version, so credential
+// rotation produces a fresh client while sharing clients when credentials are stable.
+func (b *BaseExecutor) proxyClient(cfg ProxyConfig) (*http.Client, error) {
+	proxyURL := cfg.proxyURLWithCredentials()
+	if proxyURL == "" {
+		return b.Client, nil
+	}
+	key := cfg.proxyCacheKey()
+	if v, ok := b.proxyClients.Load(key); ok {
 		return v.(*http.Client), nil
 	}
 	u, err := url.Parse(proxyURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid proxy URL: %w", err)
 	}
-	transport := defaultHTTPTransport()
+	transport := defaultHTTPTransport(b.ResponseHeaderTimeout)
 	transport.Proxy = http.ProxyURL(u)
 	// HTTP/2 over an HTTP CONNECT proxy is flaky across providers; keep it off
 	// for proxied traffic to avoid mid-stream EOFs.
 	transport.ForceAttemptHTTP2 = false
 	c := &http.Client{Timeout: b.Timeout, Transport: transport}
-	b.proxyClients.Store(proxyURL, c)
+	b.proxyClients.Store(key, c)
 	return c, nil
 }
 
-// streamClient returns an http.Client for streaming through the given proxy.
+// streamClient returns an http.Client for streaming through the proxy described by cfg.
 // It has no global Timeout so long-lived SSE streams are not cut at 5 minutes;
 // stream timeouts are enforced via context instead.
-func (b *BaseExecutor) streamClient(proxyURL string) (*http.Client, error) {
+func (b *BaseExecutor) streamClient(cfg ProxyConfig) (*http.Client, error) {
+	proxyURL := cfg.proxyURLWithCredentials()
 	if proxyURL == "" {
 		return b.streamBase, nil
 	}
-	if v, ok := b.streamClients.Load(proxyURL); ok {
+	key := cfg.proxyCacheKey()
+	if v, ok := b.streamClients.Load(key); ok {
 		return v.(*http.Client), nil
 	}
 	u, err := url.Parse(proxyURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid proxy URL: %w", err)
 	}
-	transport := defaultHTTPTransport()
+	transport := defaultHTTPTransport(b.ResponseHeaderTimeout)
 	transport.Proxy = http.ProxyURL(u)
 	transport.ForceAttemptHTTP2 = false
 	c := &http.Client{Transport: transport}
-	b.streamClients.Store(proxyURL, c)
+	b.streamClients.Store(key, c)
 	return c, nil
 }
 
@@ -581,9 +718,9 @@ func (b *BaseExecutor) selectClient(ctx context.Context, rawURL string, headers 
 		err error
 	)
 	if stream {
-		c, err = b.streamClient(cfg.ProxyURL)
+		c, err = b.streamClient(cfg)
 	} else {
-		c, err = b.proxyClient(cfg.ProxyURL)
+		c, err = b.proxyClient(cfg)
 	}
 	if err != nil {
 		if cfg.StrictProxy {
@@ -765,6 +902,7 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 	fetchTimeout := b.FetchTimeout
 	idleTimeout := b.StreamIdleTimeout
 	readinessTimeout := b.StreamReadinessTimeout
+	responseHeaderTimeout := b.ResponseHeaderTimeout
 	stallTimeout := b.StreamIdleTimeout // default: same as idle
 	if cfg != nil {
 		if cfg.FetchTimeoutMs > 0 {
@@ -835,6 +973,9 @@ func (b *BaseExecutor) doStreamConnect(ctx context.Context, method, rawURL strin
 				"error", err,
 			}, clientLogAttrs(ctx)...)...,
 		)
+		if isResponseHeaderTimeout(err) {
+			return nil, newStreamReadinessTimeoutError(responseHeaderTimeout, targetURL)
+		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			return nil, fmt.Errorf("stream fetch timeout (%v): %w", fetchTimeout, err)
 		}

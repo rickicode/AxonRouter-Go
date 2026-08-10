@@ -9,9 +9,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
+
+	"github.com/rickicode/AxonRouter-Go/internal/provider/kiro"
+	transregistry "github.com/rickicode/AxonRouter-Go/internal/translator/registry"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/types"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // KiroExecutor handles AWS CodeWhisperer / Kiro streaming (AWS EventStream)
@@ -25,12 +30,6 @@ func NewKiroExecutor(base *BaseExecutor) *KiroExecutor {
 	return &KiroExecutor{BaseExecutor: base}
 }
 
-const (
-	kiroDefaultRegion = "us-east-1"
-)
-
-var kiroProfileARNRe = regexp.MustCompile(`^arn:aws:codewhisperer:([a-z0-9-]+):`)
-
 func genUUID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
@@ -39,48 +38,19 @@ func genUUID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-func resolveKiroRegion(psd map[string]string) string {
-	if psd != nil {
-		if r := psd["region"]; r != "" {
-			return strings.ToLower(strings.TrimSpace(r))
-		}
-		if arn := psd["profileArn"]; arn != "" {
-			if m := kiroProfileARNRe.FindStringSubmatch(arn); len(m) > 1 {
-				return m[1]
-			}
-		}
-	}
-	return kiroDefaultRegion
-}
-
-func kiroRuntimeHost(region string) string {
-	if region == "us-east-1" {
-		return "https://codewhisperer.us-east-1.amazonaws.com"
-	}
-	return fmt.Sprintf("https://q.%s.amazonaws.com", region)
-}
-
-func kiroURL(psd map[string]string, baseURL string) string {
-	if baseURL != "" {
-		return baseURL
-	}
-	region := resolveKiroRegion(psd)
-	return kiroRuntimeHost(region) + "/generateAssistantResponse"
-}
-
 func kiroHeaders(req *Request) map[string]string {
 	ua := req.ProviderSpecificData["userAgent"]
 	if ua == "" {
 		ua = "AWS-SDK-JS/3.0.0 kiro-ide/1.0.0"
 	}
 	headers := map[string]string{
-		"Content-Type":                 "application/json",
-		"Accept":                       "application/json",
-		"User-Agent":                   ua,
-		"Amz-Sdk-Request":              "attempt=1; max=3",
-		"Amz-Sdk-Invocation-Id":        genUUID(),
-		"x-amzn-bedrock-cache-control": "enable",
-		"anthropic-beta":               "prompt-caching-2024-07-31",
+		"Content-Type":          "application/json",
+		"Accept":                "application/vnd.amazon.eventstream",
+		"User-Agent":            ua,
+		"X-Amz-User-Agent":      "aws-sdk-js/3.0.0 kiro-ide/1.0.0",
+		"Amz-Sdk-Request":       "attempt=1; max=3",
+		"Amz-Sdk-Invocation-Id": genUUID(),
+		"X-Amz-Target":          "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
 	}
 	if req.AccessToken != "" {
 		headers["Authorization"] = "Bearer " + req.AccessToken
@@ -91,51 +61,93 @@ func kiroHeaders(req *Request) map[string]string {
 	for k, v := range req.Headers {
 		headers[k] = v
 	}
+
+	// Apply auth-method-specific headers after upstream overlays so they cannot be
+	// accidentally overridden by client-provided headers.
+	authMethod := normalizeRegion(req.ProviderSpecificData["authMethod"])
+	switch authMethod {
+	case "api_key":
+		headers["tokentype"] = "API_KEY"
+	case "external_idp":
+		headers["TokenType"] = "EXTERNAL_IDP"
+	}
 	return headers
+}
+
+// injectKiroProfileArn ensures a profileArn is sent upstream:
+//  1. If the connection already has a real profileArn in PSD, use it.
+//  2. If the translated request already includes a non-empty profileArn, leave it.
+//  3. For OAuth/social/import auth methods, fall back to the shared default placeholder
+//     (this is required for builder-id/social tokens because CodeWhisperer rejects
+//     requests without a profileArn).
+//
+// Account-bound methods (api_key, idc, external_idp) intentionally skip the shared
+// placeholder because it belongs to a different account.
+func injectKiroProfileArn(body []byte, psd map[string]string) ([]byte, error) {
+	psdProfileArn := strings.TrimSpace(psd["profileArn"])
+	authMethod := normalizeRegion(psd["authMethod"])
+	if authMethod == "api_key" || authMethod == "idc" || authMethod == "external_idp" {
+		if psdProfileArn == "" {
+			return body, nil
+		}
+	}
+
+	if v := gjson.GetBytes(body, "profileArn").String(); strings.TrimSpace(v) != "" {
+		return body, nil
+	}
+
+	var profileArn string
+	if psdProfileArn != "" {
+		profileArn = psdProfileArn
+	} else if authMethod != "api_key" && authMethod != "idc" && authMethod != "external_idp" {
+		profileArn = resolveDefaultKiroProfileArn(authMethod)
+	}
+
+	if profileArn == "" {
+		return body, nil
+	}
+	return sjson.SetBytes(body, "profileArn", profileArn)
 }
 
 // buildKiroUpstreamBody strips non-upstream fields from the translated body
 // and keeps only the fields Kiro accepts.
 func buildKiroUpstreamBody(body []byte) ([]byte, map[string]string, error) {
-	var raw map[string]any
-	if err := json.Unmarshal(body, &raw); err != nil {
+	var req kiroUpstreamRequest
+	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, nil, err
 	}
-	nameMap := map[string]string{}
-	if m, ok := raw["_toolNameMap"].(map[string]any); ok {
-		for k, v := range m {
-			if s, ok := v.(string); ok {
-				nameMap[k] = s
-			}
-		}
+	nameMap := req.ToolNameMap
+	if nameMap == nil {
+		nameMap = map[string]string{}
 	}
-	out := map[string]any{}
-	for _, k := range []string{"conversationState", "profileArn", "inferenceConfig", "additionalModelRequestFields"} {
-		if v, ok := raw[k]; ok && v != nil {
-			out[k] = v
-		}
-	}
-	b, err := json.Marshal(out)
+	b, err := json.Marshal(req.kiroUpstreamEnvelope)
 	return b, nameMap, err
 }
 
 type kiroStreamState struct {
-	chunkIndex       int
-	responseID       string
-	created          int64
-	content          strings.Builder
-	textLen          int64
-	reasoning        strings.Builder
-	sawToolUse       bool
-	seenToolIDs      map[string]int
-	toolIndex        int
-	toolArgsBuf      map[string]string
-	toolArgsEmitted  map[string]string
-	estInputTokens   int64
-	estOutputTokens  int64
-	hasContextUsage  bool
-	contextUsagePct  int64
-	hasMeteringEvent bool
+	chunkIndex          int
+	responseID          string
+	created             int64
+	content             strings.Builder
+	textLen             int64
+	reasoning           strings.Builder
+	sawToolUse          bool
+	seenToolIDs         map[string]int
+	toolIndex           int
+	toolArgsBuf         map[string]string
+	toolArgsEmitted     map[string]string
+	estInputTokens      int64
+	estOutputTokens     int64
+	hasContextUsage     bool
+	contextUsagePct     int64
+	hasMeteringEvent    bool
+	cacheReadTokens     int64
+	cacheCreationTokens int64
+	finishEmitted       bool
+	// Inline-thinking splitter state.
+	thinkingExpected bool
+	thinkingMode     bool
+	pendingTag       string
 }
 
 func (s *kiroStreamState) toolName(raw string, nameMap map[string]string) string {
@@ -145,33 +157,110 @@ func (s *kiroStreamState) toolName(raw string, nameMap map[string]string) string
 	return raw
 }
 
-func (s *kiroStreamState) emitChunk(delta map[string]any, model string) []byte {
-	if s.chunkIndex == 0 && delta != nil {
-		delta["role"] = "assistant"
+// splitInlineThinking walks one slice of upstream content at a time and routes
+// characters to either the content channel or the reasoning channel based on the
+// current <thinking> state. State is mutated on s so a tag split between frames
+// (e.g. "</think" followed by "ing>foo") is still recognised.
+func (s *kiroStreamState) splitInlineThinking(content string, model string) [][]byte {
+	text := s.pendingTag + content
+	s.pendingTag = ""
+
+	// Longest unfinished tag we might still complete on the next frame:
+	// "</thinking>" is 11 characters.
+	const partialMax = 11
+
+	var out [][]byte
+	for text != "" {
+		target := "</thinking>"
+		if !s.thinkingMode {
+			target = "<thinking>"
+		}
+		idx := strings.Index(text, target)
+
+		if idx == -1 {
+			// No full target tag in text. Look for a possible partial at the end
+			// so we can complete it on the next frame.
+			holdFrom := len(text)
+			start := len(text) - partialMax
+			if start < 0 {
+				start = 0
+			}
+			for i := start; i < len(text); i++ {
+				tail := text[i:]
+				if tail != "" && strings.HasPrefix(target, tail) {
+					holdFrom = i
+					break
+				}
+			}
+			flushable := text[:holdFrom]
+			if flushable != "" {
+				if s.thinkingMode {
+					s.reasoning.WriteString(flushable)
+					out = append(out, s.emitChunk(kiroOpenAIDelta{ReasoningContent: flushable}, model))
+				} else {
+					s.textLen += int64(len(flushable))
+					out = append(out, s.emitChunk(kiroOpenAIDelta{Content: flushable}, model))
+				}
+			}
+			s.pendingTag = text[holdFrom:]
+			return out
+		}
+
+		// Found a complete target tag. Flush everything before it in the
+		// current mode, flip the mode, and keep walking the remainder.
+		before := text[:idx]
+		if before != "" {
+			if s.thinkingMode {
+				s.reasoning.WriteString(before)
+				out = append(out, s.emitChunk(kiroOpenAIDelta{ReasoningContent: before}, model))
+			} else {
+				s.textLen += int64(len(before))
+				out = append(out, s.emitChunk(kiroOpenAIDelta{Content: before}, model))
+			}
+		}
+		s.thinkingMode = !s.thinkingMode
+		text = text[idx+len(target):]
 	}
-	chunk := map[string]any{
-		"id":      s.responseID,
-		"object":  "chat.completion.chunk",
-		"created": s.created,
-		"model":   model,
-		"choices": []any{
-			map[string]any{
-				"index":         0,
-				"delta":         delta,
-				"finish_reason": nil,
-			},
-		},
+	return out
+}
+
+// flushPendingThinking drains whatever is left in s.pendingTag at end-of-stream.
+func (s *kiroStreamState) flushPendingThinking(model string) [][]byte {
+	if s.pendingTag == "" {
+		return nil
+	}
+	text := s.pendingTag
+	s.pendingTag = ""
+	if s.thinkingMode {
+		s.reasoning.WriteString(text)
+		return [][]byte{s.emitChunk(kiroOpenAIDelta{ReasoningContent: text}, model)}
+	}
+	s.textLen += int64(len(text))
+	return [][]byte{s.emitChunk(kiroOpenAIDelta{Content: text}, model)}
+}
+
+func (s *kiroStreamState) emitChunk(delta kiroOpenAIDelta, model string) []byte {
+	if s.chunkIndex == 0 {
+		delta.Role = "assistant"
 	}
 	s.chunkIndex++
-	b, _ := json.Marshal(chunk)
-	return []byte("data: " + string(b))
+	chunk := kiroOpenAIStreamChunk{
+		ID:      s.responseID,
+		Object:  "chat.completion.chunk",
+		Created: s.created,
+		Model:   model,
+		Choices: []kiroOpenAIStreamChoice{
+			{Index: 0, Delta: delta, FinishReason: nil},
+		},
+	}
+	return encodeSSEChunk(chunk)
 }
 
 func (s *kiroStreamState) emitStartChunk(model string) []byte {
 	if s.started() {
 		return nil
 	}
-	return s.emitChunk(map[string]any{}, model)
+	return s.emitChunk(kiroOpenAIDelta{}, model)
 }
 
 func (s *kiroStreamState) started() bool { return s.responseID != "" }
@@ -182,7 +271,7 @@ func (s *kiroStreamState) ensureStarted(model string) []byte {
 	}
 	s.responseID = "chatcmpl-" + hex.EncodeToString([]byte(fmt.Sprintf("%d-%s", s.created, genUUID())))[:16]
 	s.created = time.Now().Unix()
-	return s.emitChunk(map[string]any{}, model)
+	return s.emitChunk(kiroOpenAIDelta{}, model)
 }
 
 func (s *kiroStreamState) maybeFlushToolArgs(nameMap map[string]string, model string) [][]byte {
@@ -194,13 +283,11 @@ func (s *kiroStreamState) maybeFlushToolArgs(nameMap map[string]string, model st
 		}
 		last := s.toolArgsEmitted[id]
 		if buf != last {
-			delta := map[string]any{
-				"tool_calls": []any{
-					map[string]any{
-						"index": toolIdx,
-						"function": map[string]any{
-							"arguments": buf,
-						},
+			delta := kiroOpenAIDelta{
+				ToolCalls: []kiroOpenAIToolCallDelta{
+					{
+						Index:    toolIdx,
+						Function: kiroOpenAIFunction{Arguments: buf},
 					},
 				},
 			}
@@ -218,115 +305,120 @@ func (s *kiroStreamState) handleEvent(frame *EventFrame, nameMap map[string]stri
 	}
 
 	eventType := frame.Headers[":event-type"]
-	if eventType == "" && frame.Payload != nil {
-		if _, ok := frame.Payload["assistantResponseEvent"]; ok {
-			eventType = "assistantResponseEvent"
-		} else if _, ok := frame.Payload["reasoningContentEvent"]; ok {
-			eventType = "reasoningContentEvent"
-		} else if _, ok := frame.Payload["toolUseEvent"]; ok {
-			eventType = "toolUseEvent"
-		} else if _, ok := frame.Payload["codeEvent"]; ok {
-			eventType = "codeEvent"
-		} else if _, ok := frame.Payload["messageStopEvent"]; ok {
-			eventType = "messageStopEvent"
-		} else if _, ok := frame.Payload["usageEvent"]; ok {
-			eventType = "usageEvent"
+	if eventType == "" && len(frame.Payload) > 0 {
+		var keys map[string]json.RawMessage
+		if err := json.Unmarshal(frame.Payload, &keys); err == nil {
+			candidates := []string{
+				"assistantResponseEvent",
+				"reasoningContentEvent",
+				"toolUseEvent",
+				"codeEvent",
+				"messageStopEvent",
+				"usageEvent",
+				"contextUsageEvent",
+				"meteringEvent",
+			}
+			for _, c := range candidates {
+				if _, ok := keys[c]; ok {
+					eventType = c
+					break
+				}
+			}
 		}
 	}
 
 	switch eventType {
 	case "assistantResponseEvent", "codeEvent":
-		payload := frame.Payload
-		if eventType == "assistantResponseEvent" {
-			if p, ok := frame.Payload["assistantResponseEvent"].(map[string]any); ok {
-				payload = p
-			}
-		} else if eventType == "codeEvent" {
-			if p, ok := frame.Payload["codeEvent"].(map[string]any); ok {
-				payload = p
-			}
+		var wrapper struct {
+			AssistantResponse kiroAssistantResponseEvent `json:"assistantResponseEvent"`
+			CodeEvent         kiroAssistantResponseEvent `json:"codeEvent"`
 		}
-		content, _ := payload["content"].(string)
-		if content == "" {
+		_ = json.Unmarshal(frame.Payload, &wrapper)
+		ev := wrapper.AssistantResponse
+		if eventType == "codeEvent" {
+			ev = wrapper.CodeEvent
+		}
+		if ev.Content == "" {
 			return nil
 		}
-		s.textLen += int64(len(content))
-		return [][]byte{s.emitChunk(map[string]any{"content": content}, model)}
+
+		// Kiro may inline thinking tags inside assistantResponseEvent content when the
+		// reasoningContentEvent frame is not emitted. Split them stream-safely.
+		if s.thinkingExpected {
+			return s.splitInlineThinking(ev.Content, model)
+		}
+		s.textLen += int64(len(ev.Content))
+		return [][]byte{s.emitChunk(kiroOpenAIDelta{Content: ev.Content}, model)}
 
 	case "reasoningContentEvent":
-		payload := frame.Payload
-		if p, ok := frame.Payload["reasoningContentEvent"].(map[string]any); ok {
-			payload = p
+		var wrapper struct {
+			ReasoningContent kiroReasoningContentEvent `json:"reasoningContentEvent"`
 		}
-		text := ""
-		if rt, ok := payload["reasoningText"].(map[string]any); ok {
-			if v, ok := rt["text"].(string); ok {
-				text = v
-			} else if v, ok := rt["Text"].(string); ok {
-				text = v
+		_ = json.Unmarshal(frame.Payload, &wrapper)
+		text := wrapper.ReasoningContent.ReasoningText.Text
+		if text == "" {
+			var direct struct {
+				ReasoningText kiroReasoningText `json:"reasoningText"`
+				Text          string            `json:"text"`
 			}
-		} else if v, ok := payload["text"].(string); ok {
-			text = v
+			_ = json.Unmarshal(frame.Payload, &direct)
+			if direct.Text != "" {
+				text = direct.Text
+			} else {
+				text = direct.ReasoningText.Text
+			}
 		}
 		if text == "" {
 			return nil
 		}
-		return [][]byte{s.emitChunk(map[string]any{"reasoning_content": text}, model)}
+		return [][]byte{s.emitChunk(kiroOpenAIDelta{ReasoningContent: text}, model)}
 
 	case "toolUseEvent":
-		toolUse := frame.Payload
-		if p, ok := frame.Payload["toolUseEvent"].(map[string]any); ok {
-			toolUse = p
+		var wrapper struct {
+			ToolUseEvent kiroToolUseEvent `json:"toolUseEvent"`
 		}
-		toolUseID, _ := toolUse["toolUseId"].(string)
-		if toolUseID == "" {
-			toolUseID, _ = toolUse["toolUseId"].(string)
-		}
+		_ = json.Unmarshal(frame.Payload, &wrapper)
+		ev := wrapper.ToolUseEvent
+		toolUseID := ev.ToolUseId
 		if toolUseID == "" {
 			toolUseID = fmt.Sprintf("call_%d", time.Now().UnixMilli())
 		}
-		name := ""
-		if n, ok := toolUse["name"].(string); ok {
-			name = s.toolName(n, nameMap)
-		}
+		name := s.toolName(ev.Name, nameMap)
+
 		var out [][]byte
 		if _, seen := s.seenToolIDs[toolUseID]; !seen {
 			s.sawToolUse = true
 			s.seenToolIDs[toolUseID] = s.toolIndex
-			delta := map[string]any{
-				"tool_calls": []any{
-					map[string]any{
-						"index": s.toolIndex,
-						"id":    toolUseID,
-						"type":  "function",
-						"function": map[string]any{
-							"name":      name,
-							"arguments": "",
-						},
+			delta := kiroOpenAIDelta{
+				ToolCalls: []kiroOpenAIToolCallDelta{
+					{
+						Index:    s.toolIndex,
+						ID:       toolUseID,
+						Type:     "function",
+						Function: kiroOpenAIFunction{Name: name, Arguments: ""},
 					},
 				},
 			}
 			out = append(out, s.emitChunk(delta, model))
 			s.toolIndex++
 		}
-		if input, ok := toolUse["input"]; ok {
-			var args string
-			switch v := input.(type) {
-			case string:
-				args = v
-			default:
-				b, _ := json.Marshal(v)
-				args = string(b)
+
+		var args string
+		if len(ev.Input) > 0 {
+			if ev.Input[0] == '"' {
+				_ = json.Unmarshal(ev.Input, &args)
+			} else {
+				args = string(ev.Input)
 			}
-			if args != "" {
-				if s.toolArgsBuf == nil {
-					s.toolArgsBuf = make(map[string]string)
-				}
-				s.toolArgsBuf[toolUseID] = args
-				// Emit incrementally if arguments are string deltas, otherwise buffer until flush.
-				if _, isStr := input.(string); isStr {
-					out = append(out, s.maybeFlushToolArgs(nameMap, model)...)
-				}
+		}
+		if args != "" {
+			if s.toolArgsBuf == nil {
+				s.toolArgsBuf = make(map[string]string)
+			}
+			s.toolArgsBuf[toolUseID] = args
+			// Emit incrementally if arguments are string deltas, otherwise buffer until flush.
+			if ev.Input[0] == '"' {
+				out = append(out, s.maybeFlushToolArgs(nameMap, model)...)
 			}
 		}
 		return out
@@ -337,41 +429,90 @@ func (s *kiroStreamState) handleEvent(frame *EventFrame, nameMap map[string]stri
 			finish = "tool_calls"
 		}
 		s.estimateUsage()
-		usage := map[string]any{}
+		var u *kiroOpenAIUsage
 		if s.estInputTokens > 0 || s.estOutputTokens > 0 {
-			usage["prompt_tokens"] = s.estInputTokens
-			usage["completion_tokens"] = s.estOutputTokens
-			usage["total_tokens"] = s.estInputTokens + s.estOutputTokens
+			u = &kiroOpenAIUsage{
+				PromptTokens:     s.estInputTokens,
+				CompletionTokens: s.estOutputTokens,
+				TotalTokens:      s.estInputTokens + s.estOutputTokens,
+			}
 		}
-		chunk := map[string]any{
-			"id":      s.responseID,
-			"object":  "chat.completion.chunk",
-			"created": s.created,
-			"model":   model,
-			"choices": []any{
-				map[string]any{
-					"index":         0,
-					"delta":         map[string]any{},
-					"finish_reason": finish,
-				},
+		if s.cacheReadTokens > 0 {
+			if u == nil {
+				u = &kiroOpenAIUsage{}
+			}
+			u.CacheReadInputTokens = s.cacheReadTokens
+		}
+		if s.cacheCreationTokens > 0 {
+			if u == nil {
+				u = &kiroOpenAIUsage{}
+			}
+			u.CacheCreationInputTokens = s.cacheCreationTokens
+		}
+		finishReason := finish
+		chunk := kiroOpenAIStreamChunk{
+			ID:      s.responseID,
+			Object:  "chat.completion.chunk",
+			Created: s.created,
+			Model:   model,
+			Choices: []kiroOpenAIStreamChoice{
+				{Index: 0, Delta: kiroOpenAIDelta{}, FinishReason: &finishReason},
 			},
+			Usage: u,
 		}
-		if len(usage) > 0 {
-			chunk["usage"] = usage
+		s.finishEmitted = true
+		return [][]byte{encodeSSEChunk(chunk)}
+
+	case "contextUsageEvent":
+		var wrapper struct {
+			ContextUsageEvent kiroContextUsageEvent `json:"contextUsageEvent"`
 		}
-		b, _ := json.Marshal(chunk)
-		return [][]byte{[]byte("data: " + string(b))}
+		if err := json.Unmarshal(frame.Payload, &wrapper); err == nil {
+			if pct := wrapper.ContextUsageEvent.ContextUsagePercentage; pct > 0 {
+				s.hasContextUsage = true
+				s.contextUsagePct = int64(pct)
+			}
+		}
+		return nil
+
+	case "meteringEvent":
+		s.hasMeteringEvent = true
+		var wrapper struct {
+			MeteringEvent kiroMeteringEvent `json:"meteringEvent"`
+		}
+		if err := json.Unmarshal(frame.Payload, &wrapper); err != nil {
+			return nil
+		}
+		m := wrapper.MeteringEvent.MetricsEvent
+		if m.InputTokens > 0 {
+			s.estInputTokens = m.InputTokens
+		}
+		if m.OutputTokens > 0 {
+			s.estOutputTokens = m.OutputTokens
+		}
+		if m.CacheReadInputTokens > 0 {
+			s.cacheReadTokens = m.CacheReadInputTokens
+		} else if m.CacheReadInputTokensSnake > 0 {
+			s.cacheReadTokens = m.CacheReadInputTokensSnake
+		}
+		if m.CacheCreationInputTokens > 0 {
+			s.cacheCreationTokens = m.CacheCreationInputTokens
+		} else if m.CacheCreationInputTokensSnake > 0 {
+			s.cacheCreationTokens = m.CacheCreationInputTokensSnake
+		}
+		return nil
 
 	case "usageEvent":
-		payload := frame.Payload
-		if p, ok := frame.Payload["usageEvent"].(map[string]any); ok {
-			payload = p
+		var wrapper struct {
+			UsageEvent kiroUsageEvent `json:"usageEvent"`
 		}
-		if inTok, ok := toInt64(payload["inputTokens"]); ok {
-			s.estInputTokens = inTok
-		}
-		if outTok, ok := toInt64(payload["outputTokens"]); ok {
-			s.estOutputTokens = outTok
+		if err := json.Unmarshal(frame.Payload, &wrapper); err == nil {
+			if wrapper.UsageEvent.InputTokens > 0 {
+				s.estInputTokens = wrapper.UsageEvent.InputTokens
+			}
+			if wrapper.UsageEvent.OutputTokens > 0 {
+				s.estOutputTokens = wrapper.UsageEvent.OutputTokens
+			}
 		}
 		return nil
 	}
@@ -399,6 +540,20 @@ func toInt64(v any) (int64, bool) {
 		return int64(n), true
 	case int:
 		return int64(n), true
+	}
+	return 0, false
+}
+
+func toFloat64(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case int64:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case float32:
+		return float64(n), true
 	}
 	return 0, false
 }
@@ -432,8 +587,8 @@ func (e *KiroExecutor) Execute(ctx context.Context, req *Request) (*Response, er
 
 func assembleKiroNonStream(sse []byte) ([]byte, error) {
 	var content, reasoning strings.Builder
-	var toolCalls []map[string]any
-	var usage map[string]any
+	var toolCalls []kiroOpenAIToolCall
+	var usage *kiroOpenAIUsage
 	var finishReason string
 
 	for _, line := range bytes.Split(sse, []byte("\n")) {
@@ -445,148 +600,199 @@ func assembleKiroNonStream(sse []byte) ([]byte, error) {
 		if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
 			continue
 		}
-		var chunk map[string]any
+		var chunk kiroOpenAIStreamChunk
 		if err := json.Unmarshal(data, &chunk); err != nil {
 			continue
 		}
-		choices, _ := chunk["choices"].([]any)
-		if len(choices) == 0 {
-			if u, ok := chunk["usage"].(map[string]any); ok {
-				usage = u
-			}
-			if fr, ok := chunk["finish_reason"].(string); ok {
-				finishReason = fr
+		if len(chunk.Choices) == 0 {
+			if chunk.Usage != nil {
+				usage = chunk.Usage
 			}
 			continue
 		}
-		choice, _ := choices[0].(map[string]any)
-		delta, _ := choice["delta"].(map[string]any)
-		if v, ok := delta["content"].(string); ok {
-			content.WriteString(v)
+		choice := chunk.Choices[0]
+		content.WriteString(choice.Delta.Content)
+		reasoning.WriteString(choice.Delta.ReasoningContent)
+		if len(choice.Delta.ToolCalls) > 0 {
+			mergeKiroToolCalls(&toolCalls, choice.Delta.ToolCalls)
 		}
-		if v, ok := delta["reasoning_content"].(string); ok {
-			reasoning.WriteString(v)
+		if choice.FinishReason != nil {
+			finishReason = *choice.FinishReason
 		}
-		if tcs, ok := delta["tool_calls"].([]any); ok && len(tcs) > 0 {
-			mergeKiroToolCalls(&toolCalls, tcs)
-		}
-		if fr, ok := choice["finish_reason"].(string); ok {
-			finishReason = fr
-		}
-		if u, ok := chunk["usage"].(map[string]any); ok {
-			usage = u
+		if chunk.Usage != nil {
+			usage = chunk.Usage
 		}
 	}
 
-	out := map[string]any{
-		"id":      genUUID(),
-		"object":  "chat.completion",
-		"created": time.Now().Unix(),
-		"model":   "kiro",
-		"choices": []any{},
-		"usage":   usage,
-	}
 	if finishReason == "" && len(toolCalls) > 0 {
 		finishReason = "tool_calls"
 	}
-	msg := map[string]any{
-		"role":    "assistant",
-		"content": content.String(),
+	msg := kiroOpenAIChatMessage{
+		Role:    "assistant",
+		Content: content.String(),
 	}
 	if reasoning.Len() > 0 {
-		msg["content"] = content.String()
-		msg["reasoning_content"] = reasoning.String()
+		msg.Content = content.String()
+		msg.ReasoningContent = reasoning.String()
 	}
 	if len(toolCalls) > 0 {
-		msg["tool_calls"] = toolCalls
+		msg.ToolCalls = toolCalls
 	}
-	out["choices"] = []any{
-		map[string]any{
-			"index":         0,
-			"message":       msg,
-			"finish_reason": finishReason,
+	var use kiroOpenAIUsage
+	if usage != nil {
+		use = *usage
+	}
+	out := kiroOpenAICompletion{
+		ID:      genUUID(),
+		Object:  "chat.completion",
+		Created: time.Now().Unix(),
+		Model:   "kiro",
+		Choices: []kiroOpenAICompletionChoice{
+			{Index: 0, Message: msg, FinishReason: finishReason},
 		},
+		Usage: use,
 	}
 	return json.Marshal(out)
 }
 
-func mergeKiroToolCalls(out *[]map[string]any, deltas []any) {
-	for _, raw := range deltas {
-		d, _ := raw.(map[string]any)
-		if d == nil {
-			continue
-		}
-		idxF, _ := d["index"].(float64)
-		idx := int(idxF)
-		id, _ := d["id"].(string)
-		fnDelta, _ := d["function"].(map[string]any)
-		name, _ := fnDelta["name"].(string)
-		args, _ := fnDelta["arguments"].(string)
+func mergeKiroToolCalls(out *[]kiroOpenAIToolCall, deltas []kiroOpenAIToolCallDelta) {
+	for _, d := range deltas {
+		idx := d.Index
+		id := d.ID
+		name := d.Function.Name
+		args := d.Function.Arguments
 
 		for len(*out) <= idx {
-			*out = append(*out, map[string]any{
-				"id":       id,
-				"type":     "function",
-				"function": map[string]any{"name": "", "arguments": ""},
+			*out = append(*out, kiroOpenAIToolCall{
+				ID:       id,
+				Type:     "function",
+				Function: kiroOpenAIFunction{Name: "", Arguments: ""},
 			})
 		}
-		tc := (*out)[idx]
+		tc := &(*out)[idx]
 		if id != "" {
-			tc["id"] = id
+			tc.ID = id
 		}
-		if fn, ok := tc["function"].(map[string]any); ok {
-			if name != "" {
-				fn["name"] = name
-			}
-			if args != "" {
-				fn["arguments"] = fn["arguments"].(string) + args
-			}
+		if name != "" {
+			tc.Function.Name = name
 		}
+		tc.Function.Arguments += args
 	}
+}
+
+// Models returns the live Kiro model catalog. Falls back to the static catalog
+// when the account is offline or unauthenticated, so model listing never breaks.
+func (e *KiroExecutor) Models(ctx context.Context, req *Request) (*Response, error) {
+	psd := make(map[string]any, len(req.ProviderSpecificData))
+	for k, v := range req.ProviderSpecificData {
+		psd[k] = v
+	}
+	result, err := kiro.FetchLiveModels(req.AccessToken, psd)
+	if err != nil {
+		return nil, err
+	}
+	type item struct {
+		ID string `json:"id"`
+	}
+	resp := struct {
+		Object string `json:"object"`
+		Data   []item `json:"data"`
+	}{Object: "list", Data: make([]item, 0, len(result.Models))}
+	for _, m := range result.Models {
+		resp.Data = append(resp.Data, item{ID: m.ID})
+	}
+	body, _ := json.Marshal(resp)
+	return &Response{StatusCode: http.StatusOK, Body: body}, nil
 }
 
 // ExecuteStream performs a streaming Kiro request.
 func (e *KiroExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
-	url := kiroURL(req.ProviderSpecificData, req.BaseURL)
-	body, nameMap, err := buildKiroUpstreamBody(req.Body)
+	urls := kiroEndpointURLs(req.ProviderSpecificData, req.BaseURL)
+
+	body := req.Body
+	// Translate inbound OpenAI Chat Completions requests into Kiro's native payload
+	// shape when a translator is registered. The handler sends OpenAI-shaped test
+	// bodies, and the executor is the right place to perform the final conversion
+	// before upstreaming.
+	if transregistry.Default().HasRequestTransformer(types.FormatOpenAI, types.FormatKiro) {
+		raw := string(body)
+		if strings.Contains(raw, `"messages"`) || strings.Contains(raw, `"model"`) {
+			body = transregistry.Default().TranslateRequest(types.FormatOpenAI, types.FormatKiro, req.Model, body, true)
+		}
+	}
+
+	body, err := injectKiroProfileArn(body, req.ProviderSpecificData)
+	if err != nil {
+		return nil, fmt.Errorf("kiro profile arn injection: %w", err)
+	}
+
+	body, nameMap, err := buildKiroUpstreamBody(body)
 	if err != nil {
 		return nil, fmt.Errorf("kiro upstream body: %w", err)
 	}
 	headers := kiroHeaders(req)
 
-	client, targetURL, err := e.clientForContext(ctx, url, headers)
-	if err != nil {
-		return nil, err
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create kiro request: %w", err)
-	}
-	for k, v := range headers {
-		httpReq.Header.Set(k, v)
-	}
-
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("kiro request: %w", err)
-	}
-
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		upErr := &UpstreamError{
-			StatusCode: resp.StatusCode,
-			Body:       body,
-			RawBody:    body,
-			Headers:    resp.Header,
+	var (
+		resp    *http.Response
+		lastErr error
+	)
+	for _, url := range urls {
+		client, targetURL, err := e.clientForContext(ctx, url, headers)
+		if err != nil {
+			return nil, err
 		}
-		upErr.TranslateErrorBody(req.Provider)
-		return nil, upErr
+
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("create kiro request: %w", err)
+		}
+		for k, v := range headers {
+			httpReq.Header.Set(k, v)
+		}
+
+		// Preserve exact-casing for auth-method-specific headers; net/http.Header.Set
+		// canonicalizes keys, but the Kiro/CodeWhisperer surface expects these spellings.
+		authMethod := normalizeRegion(req.ProviderSpecificData["authMethod"])
+		switch authMethod {
+		case "api_key":
+			httpReq.Header["tokentype"] = []string{"API_KEY"}
+		case "external_idp":
+			httpReq.Header["TokenType"] = []string{"EXTERNAL_IDP"}
+		}
+
+		resp, err = client.Do(httpReq)
+		if err != nil {
+			lastErr = err
+			resp = nil
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			respBody, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			upErr := &UpstreamError{
+				StatusCode: resp.StatusCode,
+				Body:       respBody,
+				RawBody:    respBody,
+				Headers:    resp.Header,
+			}
+			upErr.TranslateErrorBody(req.Provider)
+			// Only fall back to the next endpoint for transport errors, server errors, or rate limits.
+			// Any other 4xx is a client-side problem; return it immediately to mirror 9router BaseExecutor behavior.
+			if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+				lastErr = upErr
+				resp = nil
+				continue
+			}
+			return nil, upErr
+		}
+		break
+	}
+	if resp == nil {
+		return nil, fmt.Errorf("kiro request failed: %w", lastErr)
 	}
 
 	result := &StreamResult{
-		Chunks:     make(chan StreamChunk),
+		Chunks:     make(chan StreamChunk, 64),
 		Headers:    resp.Header,
 		StatusCode: resp.StatusCode,
 	}
@@ -596,15 +802,22 @@ func (e *KiroExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stream
 		modelName = "kiro"
 	}
 
+	thinkingExpected := strings.Contains(string(req.Body), "<thinking_mode>enabled</thinking_mode>")
+
+	// Capture the original output channel so the caller can safely reassign
+	// streamResult.Chunks (e.g. to a holdback wrapper) without racing the
+	// goroutine that reads and closes it.
+	chunks := result.Chunks
 	go func() {
 		defer resp.Body.Close()
-		defer close(result.Chunks)
+		defer close(chunks)
 
 		queue := newByteQueue()
 		state := &kiroStreamState{
-			seenToolIDs:     make(map[string]int),
-			toolArgsBuf:     make(map[string]string),
-			toolArgsEmitted: make(map[string]string),
+			seenToolIDs:      make(map[string]int),
+			toolArgsBuf:      make(map[string]string),
+			toolArgsEmitted:  make(map[string]string),
+			thinkingExpected: thinkingExpected,
 		}
 
 		buf := make([]byte, 32*1024)
@@ -630,31 +843,34 @@ func (e *KiroExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stream
 						continue
 					}
 					if start := state.ensureStarted(modelName); start != nil {
-						result.Chunks <- StreamChunk{Payload: start}
+						chunks <- StreamChunk{Payload: start}
 					}
-					chunks := state.handleEvent(frame, nameMap, modelName)
-					for _, c := range chunks {
-						result.Chunks <- StreamChunk{Payload: c}
+					emit := state.handleEvent(frame, nameMap, modelName)
+					for _, c := range emit {
+						chunks <- StreamChunk{Payload: c}
 					}
 				}
 			}
 			if readErr != nil {
 				if readErr != io.EOF {
-					result.Chunks <- StreamChunk{Err: readErr}
+					chunks <- StreamChunk{Err: readErr}
 				}
 				break
 			}
 		}
-		// flush remaining buffered tool args and emit final chunk if not emitted
-		if state.started() {
-			for _, c := range state.maybeFlushToolArgs(nameMap, modelName) {
-				result.Chunks <- StreamChunk{Payload: c}
+		// flush remaining buffered tool args and emit a final stop chunk if the
+		// upstream did not already send messageStopEvent. Without this, non-stream
+		// assembly has no finish_reason and clients never see usage.
+		if state.started() && !state.finishEmitted {
+			for _, c := range state.flushPendingThinking(modelName) {
+				chunks <- StreamChunk{Payload: c}
 			}
-			if state.sawToolUse {
-				chunks := state.handleEvent(&EventFrame{Headers: map[string]string{":event-type": "messageStopEvent"}}, nameMap, modelName)
-				for _, c := range chunks {
-					result.Chunks <- StreamChunk{Payload: c}
-				}
+			for _, c := range state.maybeFlushToolArgs(nameMap, modelName) {
+				chunks <- StreamChunk{Payload: c}
+			}
+			emit := state.handleEvent(&EventFrame{Headers: map[string]string{":event-type": "messageStopEvent"}}, nameMap, modelName)
+			for _, c := range emit {
+				chunks <- StreamChunk{Payload: c}
 			}
 		}
 	}()

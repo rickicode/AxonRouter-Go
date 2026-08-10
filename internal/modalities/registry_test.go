@@ -7,7 +7,7 @@ import (
 
 func TestServiceKinds_CF(t *testing.T) {
 	kinds := ServiceKinds("cf")
-	want := []string{"llm", "embedding", "image"}
+	want := []string{"llm", "embedding", "image", "tts", "stt"}
 	if len(kinds) != len(want) {
 		t.Fatalf("ServiceKinds(cf) = %v, want %v", kinds, want)
 	}
@@ -68,5 +68,25 @@ func TestSupportsModel_CF(t *testing.T) {
 func TestSupportsModel_UnknownProvider(t *testing.T) {
 	if SupportsModel("not-real", "embedding", "@cf/baai/bge-base-en-v1.5") {
 		t.Error("SupportsModel(not-real, ...) = true, want false")
+	}
+}
+
+func TestModels_CFTTS(t *testing.T) {
+	tts := Models("cf", "tts")
+	if len(tts) == 0 {
+		t.Fatal("Models(cf, tts) is empty")
+	}
+	if !slices.Contains(tts, "@cf/myshell-ai/melotts") {
+		t.Errorf("Models(cf, tts) missing @cf/myshell-ai/melotts; got %v", tts)
+	}
+}
+
+func TestModels_CFSTT(t *testing.T) {
+	stt := Models("cf", "stt")
+	if len(stt) == 0 {
+		t.Fatal("Models(cf, stt) is empty")
+	}
+	if !slices.Contains(stt, "@cf/openai/whisper") {
+		t.Errorf("Models(cf, stt) missing @cf/openai/whisper; got %v", stt)
 	}
 }

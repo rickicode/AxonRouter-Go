@@ -1,14 +1,21 @@
 <script lang="ts">
+function effectiveConnectionStatus(row: any): string {
+	if (row.status === 'ready' && row.cooldown_until && Date.now() < row.cooldown_until * 1000) return 'ready_cooldown';
+	return row.status;
+}
+
  import { onMount } from 'svelte';
  import { loadProvider, selectedProvider, loadConnections, connections, connectionPagination, connectionFilter, loadProviderModels, providerModels, modelTestResults, testProviderModel, addProviderModel, deleteProviderModel, isLoading, error } from '$lib/stores';
  import { unwrapInt, getTokenExpiry } from '$lib/utils';
 import { copyToClipboard } from '$lib/copy';
- import { connectionsApi, providersApi } from '$lib/api';
-import type { RoutingMode, ProviderModelEntry } from '$lib/api';
+ import { connectionsApi, providersApi, proxyPoolsApi, settingsApi } from '$lib/api';
+import type { RoutingMode, ProviderModelEntry, ProxyPool, Connection } from '$lib/api';
  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
  import { Button } from '$lib/components/ui/button';
  import { Badge } from '$lib/components/ui/badge';
  import { Input } from '$lib/components/ui/input';
+ import { Label } from '$lib/components/ui/label';
+ import { Switch } from '$lib/components/ui/switch';
  import * as Select from '$lib/components/ui/select';
  import ProviderIcon from '$lib/components/ProviderIcon.svelte';
  import { getProviderMeta, getCategoryById, getStatusDotColor, getStatusVariant, getStatusLabel } from '$lib/provider-catalog';
@@ -24,12 +31,14 @@ import StatusBadge from '$lib/components/StatusBadge.svelte';
  let showAddModal = $state(false);
 let showRoutingModal = $state(false);
 let showEditModal = $state(false);
-let routingMode = $state<RoutingMode>('round_robin');
+ let routingMode = $state<RoutingMode>('round_robin');
+let flatRate = $state(false);
 
 const routingModeLabels: Record<RoutingMode, string> = {
  round_robin: 'Round robin',
  random: 'Random',
  first_eligible: 'First eligible',
+affinity: 'Session affinity',
 };
 let newModel = $state('');
 
@@ -40,8 +49,29 @@ let newModel = $state('');
  let perPage = $state(50);
  let testingAll = $state(false);
  let actionLoading = $state<{ connectionId: string; action: 'test' | 'reset' | 'refresh' | 'delete' } | null>(null);
- let deleteTarget = $state<{ id: string; name: string } | null>(null);
- let deleteDialogOpen = $state(false);
+  let deleteTarget = $state<{ id: string; name: string } | null>(null);
+  let deleteDialogOpen = $state(false);
+
+  // Bulk proxy assignment state
+  let selectedConnectionIds = $state<Set<string>>(new Set());
+  let proxyPools = $state<ProxyPool[]>([]);
+  let selectedProxyPoolId = $state('');
+  let bulkAssigning = $state(false);
+
+  // Auto-ping state (Claude + Codex only)
+  interface AutoPingConfig {
+    enabled: boolean;
+    connections: Record<string, boolean>;
+  }
+  let autoPingConfig = $state<AutoPingConfig>({ enabled: false, connections: {} });
+  let autoPingSaving = $state(false);
+  const autoPingKey = $derived(providerId === 'claude' ? 'claude_auto_ping' : providerId === 'cx' ? 'codex_auto_ping' : null);
+  const supportsAutoPing = $derived(!!autoPingKey);
+
+  const needsProxyPool = $derived(providerId === 'oc' || providerId === 'mimocode');
+  const selectedCount = $derived(selectedConnectionIds.size);
+  const allVisibleSelected = $derived($connections.length > 0 && $connections.every((c) => selectedConnectionIds.has(c.id)));
+  const canApplyProxy = $derived(selectedCount > 0);
 
  let providerCategoryId = $derived($selectedProvider?.category ?? meta?.category ?? 'compatible');
  let providerCategoryLabel = $derived(getCategoryById(providerCategoryId)?.label ?? providerCategoryId);
@@ -55,7 +85,6 @@ const statusOptions = [
 	{ value: 'ready', label: 'Ready' },
 	{ value: 'rate_limited', label: 'Rate Limited' },
 	{ value: 'quota_exhausted', label: 'Quota Exhausted' },
-	{ value: 'auth_failed', label: 'Auth Failed' },
 	{ value: 'disabled', label: 'Disabled' },
 ];
 
@@ -63,6 +92,7 @@ const MODEL_KIND_ORDER: [string, string][] = [
 	['llm', 'Chat / Text'],
 	['image', 'Image'],
 	['embedding', 'Embedding'],
+	['search', 'Search'],
 	['tts', 'Text-to-Speech'],
 	['stt', 'Speech-to-Text'],
 	['imageToText', 'Image-to-Text'],
@@ -94,17 +124,21 @@ let groupedProviderModels = $derived.by(() => {
 	return groups;
 });
 
-onMount(() => {
- document.title = `${meta?.displayName ?? 'Provider'} — AxonRouter`;
- loadProvider(providerId);
- loadConnections(providerId, currentPage, perPage);
- loadProviderModels(providerId);
- providersApi.getSettings(providerId).then((s) => {
- routingMode = s.routing_mode;
- }).catch(() => {
- // keep default
- });
-});
+ onMount(() => {
+   document.title = `${meta?.displayName ?? 'Provider'} — AxonRouter`;
+   loadProvider(providerId);
+   refreshConnections();
+   loadProviderModels(providerId);
+   loadProxyPools();
+   loadAutoPingSettings();
+   providersApi.getSettings(providerId).then((s) => {
+   routingMode = s.routing_mode;
+   flatRate = s.flat_rate ?? false;
+   }).catch(() => {
+   // keep default
+   });
+  });
+
 
  function formatCooldown(raw: unknown): string {
  const cooldownUntil = unwrapInt(raw);
@@ -135,43 +169,156 @@ async function copyModelName(id: string) {
  } catch { return false; }
  }
 
- function getAccountLabel(conn: any): string | null {
- if (!conn.provider_specific_data) return null;
- try {
- const psd = typeof conn.provider_specific_data === 'string' ? JSON.parse(conn.provider_specific_data) : conn.provider_specific_data;
- return psd?.accountLabel || null;
- } catch { return null; }
- }
+  function getAccountLabel(conn: any): string | undefined {
+  if (!conn.provider_specific_data) return undefined;
+  try {
+  const psd = typeof conn.provider_specific_data === 'string' ? JSON.parse(conn.provider_specific_data) : conn.provider_specific_data;
+  return psd?.accountLabel || undefined;
+  } catch { return undefined; }
+  }
+
+  function getKiroAuthMethod(conn: any): string | undefined {
+  if (providerId !== 'kiro' || !conn.provider_specific_data) return undefined;
+  try {
+  const psd = typeof conn.provider_specific_data === 'string' ? JSON.parse(conn.provider_specific_data) : conn.provider_specific_data;
+  const authMethod = psd?.authMethod || '';
+  const map: Record<string, string> = {
+    'builder-id': 'AWS Builder ID',
+    'idc': 'IAM Identity Center',
+    'google': 'Google',
+    'github': 'GitHub',
+    'external_idp': 'External IdP',
+    'api_key': 'API Key',
+    'imported': 'Imported',
+    'import': 'Imported',
+  };
+  return map[authMethod];
+  } catch { return undefined; }
+  }
+
 
  function handlePageChange(page: number) {
  currentPage = page;
- loadConnections(providerId, currentPage, perPage);
+ refreshConnections();
  }
 
 function handlePerPageChange(p: number) {
  perPage = p;
- currentPage = 1;
- loadConnections(providerId, currentPage, perPage);
+ refreshConnections(true);
+ }
+
+function currentConnectionFilter(): { status: string; search: string } {
+ let status = '';
+ let search = '';
+ connectionFilter.subscribe((f) => {
+ status = f.status;
+ search = f.search;
+ })();
+ return { status, search };
 }
 
- async function handleTestAll() {
- testingAll = true;
+async function loadAllConnections() {
+ isLoading.set(true);
+ error.set(null);
  try {
- const res = (await providersApi.test(providerId)) as any;
- await loadProvider(providerId);
- await loadConnections(providerId, currentPage, perPage);
- const results = res?.results ?? [];
- const ok = results.filter((r: any) => r.status === 'ok').length;
- const failed = results.filter((r: any) => r.status === 'failed').length;
- const skipped = results.filter((r: any) => r.status === 'skipped').length;
- if (failed > 0) {
- toast.error(`Test all: ${ok} passed, ${failed} failed${skipped ? `, ${skipped} skipped` : ''}`);
- } else {
- toast.success(`Test all: ${ok} passed${skipped ? `, ${skipped} skipped` : ''}`);
- }
+ const filter = currentConnectionFilter();
+ const all: Connection[] = [];
+ let pageNum = 1;
+ let totalPages = 1;
+ do {
+ const response = await connectionsApi.list(providerId, {
+ page: pageNum,
+per_page: 500,
+ status: filter.status || undefined,
+ search: filter.search || undefined,
+ });
+ all.push(...(response.data || []));
+ totalPages = response.pagination?.total_pages ?? 1;
+ pageNum++;
+ } while (pageNum <= totalPages);
+ connections.set(all);
+ connectionPagination.set({
+ page: 1,
+ per_page: all.length,
+ total: all.length,
+ total_pages: 1,
+ });
+ currentPage = 1;
  } catch (err) {
- toast.error('Test all failed: ' + (err instanceof Error ? err.message : 'Unknown'));
- } finally { testingAll = false; }
+ error.set(err instanceof Error ? err.message : 'Failed to load all connections');
+ toast.error('Failed to load all connections');
+ } finally {
+ isLoading.set(false);
+ }
+}
+
+function refreshConnections(resetPage = false) {
+ if (resetPage) currentPage = 1;
+ if (perPage === 0) return loadAllConnections();
+ return loadConnections(providerId, currentPage, perPage);
+}
+
+async function testConnectionAndRefresh(conn: Connection): Promise<boolean> {
+ actionLoading = { connectionId: conn.id, action: 'test' };
+ try {
+ const res = (await connectionsApi.test(conn.id)) as any;
+ const ok = res?.status === 'ok' || res?.success;
+ if (!ok) {
+ toast.error(`Test failed for ${conn.name ?? conn.id}: ${res?.error ?? res?.message ?? 'Unknown error'}`);
+ }
+ return ok;
+ } catch (err) {
+ toast.error(`Test failed for ${conn.name ?? conn.id}: ${err instanceof Error ? err.message : 'Unknown'}`);
+ return false;
+ } finally {
+ // Refresh just this row so the status badge updates inline.
+ try {
+ const fresh = await connectionsApi.get(conn.id);
+ connections.update((list) => list.map((c) => (c.id === fresh.id ? fresh : c)));
+ } catch (_) {
+ // Ignore refresh errors; the next full reload will catch up.
+ }
+ }
+}
+
+  async function handleTestAll() {
+ if ($connections.length === 0) {
+ toast.info('No connections to test');
+ return;
+ }
+ testingAll = true;
+ let passed = 0;
+ let failed = 0;
+ try {
+ const conns = $connections;
+ // For large provider lists, run tests with limited concurrency so we
+ // don't hammer the backend while still finishing in a reasonable time.
+ const parallel = conns.length > 100 ? 2 : 1;
+ if (parallel === 1) {
+ for (const conn of conns) {
+ if (await testConnectionAndRefresh(conn)) passed++;
+ else failed++;
+ }
+ } else {
+ let index = 0;
+ async function worker() {
+ while (index < conns.length) {
+ const conn = conns[index++];
+ if (await testConnectionAndRefresh(conn)) passed++;
+ else failed++;
+ }
+ }
+ await Promise.all(Array.from({ length: parallel }, worker));
+ }
+ } finally {
+ actionLoading = null;
+ testingAll = false;
+ }
+ if (failed > 0) {
+ toast.error(`Test all: ${passed} passed, ${failed} failed`);
+ } else {
+ toast.success(`Test all: ${passed} passed`);
+ }
  }
 
 async function handleTestConnection(connId: string) {
@@ -183,7 +330,7 @@ async function handleTestConnection(connId: string) {
  } else {
  toast.error(`Test failed: ${res?.error ?? res?.message ?? 'Unknown error'}`);
  }
- await loadConnections(providerId, currentPage, perPage);
+ await refreshConnections();
  } catch (err) {
  toast.error('Test failed: ' + (err instanceof Error ? err.message : 'Unknown'));
   } finally { actionLoading = null; }
@@ -194,7 +341,7 @@ async function handleResetConnection(connId: string) {
   try {
  await connectionsApi.reset(connId);
  toast.success('Connection reset to ready');
- await loadConnections(providerId, currentPage, perPage);
+ await refreshConnections();
  } catch (err) {
  toast.error('Reset failed: ' + (err instanceof Error ? err.message : 'Unknown'));
   } finally { actionLoading = null; }
@@ -205,7 +352,7 @@ async function handleRefreshToken(connId: string) {
   try {
  const res = await connectionsApi.refreshToken(connId);
  toast.success(`Token refreshed, expires ${new Date(res.expires_at * 1000).toLocaleTimeString()}`);
- await loadConnections(providerId, currentPage, perPage);
+ await refreshConnections();
  } catch (err) {
  toast.error('Refresh failed: ' + (err instanceof Error ? err.message : 'Unknown'));
   } finally { actionLoading = null; }
@@ -216,21 +363,116 @@ function confirmDeleteConnection(connId: string, name: string) {
  }
 
  async function executeDeleteConnection() {
- if (!deleteTarget) return;
- const { id: connId, name } = deleteTarget;
- deleteTarget = null;
- deleteDialogOpen = false;
-  actionLoading = { connectionId: connId, action: 'delete' };
-  try {
-    await connectionsApi.delete(connId);
- toast.success(`Deleted "${name}"`);
- await loadConnections(providerId, currentPage, perPage);
- } catch (err) {
- toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
-  } finally { actionLoading = null; }
+  if (!deleteTarget) return;
+  const { id: connId, name } = deleteTarget;
+  deleteTarget = null;
+  deleteDialogOpen = false;
+   actionLoading = { connectionId: connId, action: 'delete' };
+   try {
+     await connectionsApi.delete(connId);
+  toast.success(`Deleted "${name}"`);
+  await refreshConnections();
+  } catch (err) {
+  toast.error('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+   } finally { actionLoading = null; }
 }
 
-</script>
+function toggleSelectConnection(id: string) {
+  if (selectedConnectionIds.has(id)) {
+    selectedConnectionIds.delete(id);
+  } else {
+    selectedConnectionIds.add(id);
+  }
+  selectedConnectionIds = new Set(selectedConnectionIds);
+}
+
+function toggleSelectAll() {
+  if (allVisibleSelected) {
+    for (const c of $connections) selectedConnectionIds.delete(c.id);
+  } else {
+    for (const c of $connections) selectedConnectionIds.add(c.id);
+  }
+  selectedConnectionIds = new Set(selectedConnectionIds);
+}
+
+function clearSelection() {
+  selectedConnectionIds = new Set();
+}
+
+async function loadProxyPools() {
+  if (!needsProxyPool) return;
+  try {
+    proxyPools = await proxyPoolsApi.listAll();
+  } catch (err) {
+    toast.error('Failed to load proxy pools: ' + (err instanceof Error ? err.message : 'Unknown'));
+  }
+}
+
+async function loadAutoPingSettings() {
+  if (!autoPingKey) return;
+  try {
+    const res = await settingsApi.get(autoPingKey) as { value: string } | { data: { value: string } };
+    const raw = ('data' in res && res.data ? res.data.value : (res as { value: string }).value) || '{}';
+    const parsed = JSON.parse(raw);
+    autoPingConfig = {
+      enabled: !!parsed.enabled,
+      connections: typeof parsed.connections === 'object' && parsed.connections ? parsed.connections : {},
+    };
+  } catch (err) {
+    autoPingConfig = { enabled: false, connections: {} };
+  }
+}
+
+async function toggleAutoPingEnabled() {
+  if (!autoPingKey || autoPingSaving) return;
+  autoPingSaving = true;
+  try {
+    const next = { ...autoPingConfig, enabled: !autoPingConfig.enabled };
+    await settingsApi.update(autoPingKey, JSON.stringify(next));
+    autoPingConfig = next;
+    toast.success(`Auto-ping ${next.enabled ? 'enabled' : 'disabled'} for ${meta?.displayName ?? providerId}`);
+  } catch (err) {
+    toast.error('Failed to update auto-ping: ' + (err instanceof Error ? err.message : 'Unknown'));
+  } finally {
+    autoPingSaving = false;
+  }
+}
+
+async function toggleAutoPingConnection(connId: string) {
+  if (!autoPingKey || autoPingSaving) return;
+  autoPingSaving = true;
+  try {
+    const nextConnections = { ...autoPingConfig.connections, [connId]: !autoPingConfig.connections[connId] };
+    const next = { ...autoPingConfig, connections: nextConnections };
+    await settingsApi.update(autoPingKey, JSON.stringify(next));
+    autoPingConfig = next;
+  } catch (err) {
+    toast.error('Failed to update auto-ping: ' + (err instanceof Error ? err.message : 'Unknown'));
+  } finally {
+    autoPingSaving = false;
+  }
+}
+
+async function handleBulkAssignProxy() {
+  if (!needsProxyPool || selectedCount === 0) return;
+  bulkAssigning = true;
+  try {
+    const poolId = selectedProxyPoolId || null;
+    const res = await connectionsApi.bulkAssignProxy(providerId, {
+      connection_ids: [...selectedConnectionIds],
+      proxy_pool_id: poolId,
+    });
+    toast.success(`Proxy pool updated for ${res.updated} connection${res.updated === 1 ? '' : 's'}`);
+    clearSelection();
+    await refreshConnections();
+  } catch (err) {
+    toast.error('Bulk proxy assignment failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+  } finally {
+    bulkAssigning = false;
+  }
+}
+
+ </script>
 
 {#snippet connectionBadges(row: any)}
   {@const isDefault = isDefaultDirect(row)}
@@ -294,7 +536,7 @@ function confirmDeleteConnection(connId: string, name: string) {
  <Card class="shadow-card">
  <CardContent class="flex flex-col items-center justify-center py-12">
  <p class="text-body-sm text-muted-foreground mb-4">{$error}</p>
- <Button onclick={() => { loadProvider(providerId); loadConnections(providerId, currentPage, perPage); loadProviderModels(providerId); }} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
+ <Button onclick={() => { loadProvider(providerId); refreshConnections(); loadProviderModels(providerId); }} variant="outline" class="text-body-sm rounded-sm">Try again</Button>
  </CardContent>
  </Card>
  {:else if $selectedProvider}
@@ -335,9 +577,22 @@ function confirmDeleteConnection(connId: string, name: string) {
  <!-- Connections Section -->
  <div class="space-y-4">
  <div class="flex items-center justify-between gap-3 flex-wrap">
- <div class="flex items-center gap-3">
+ <div class="flex flex-wrap items-center gap-3">
  <h2 class="text-display-sm">Connections.</h2>
- <span class="text-caption-mono text-muted-foreground">{$connectionPagination.total} total</span>
+ {#if $selectedProvider?.status_counts}
+ {@const statusCounts = $selectedProvider.status_counts}
+ {@const totalCount = Object.values(statusCounts).reduce((sum, c) => sum + c, 0)}
+ <div class="flex flex-wrap items-center gap-2">
+ <Badge variant="outline" class="text-caption-mono rounded-sm">{totalCount} total</Badge>
+ {#each ['ready', 'rate_limited', 'quota_exhausted', 'disabled'] as status}
+ {@const count = statusCounts[status] ?? 0}
+ <Badge variant="outline" class="text-caption-mono rounded-sm inline-flex items-center gap-1.5">
+ <span class="size-1.5 rounded-full" style={`background-color: ${getStatusDotColor(status)}`}></span>
+ {getStatusLabel(status)} {count}
+ </Badge>
+ {/each}
+ </div>
+ {/if}
  </div>
  <div class="flex items-center gap-2">
  <Badge variant="outline" class="text-caption-mono rounded-sm">{routingModeLabels[routingMode] ?? routingMode}</Badge>
@@ -351,14 +606,74 @@ function confirmDeleteConnection(connId: string, name: string) {
  <Button onclick={() => showAddModal = true} size="sm" class="text-body-sm rounded-sm">
  Add connection
  </Button>
- </div>
- </div>
+  </div>
+  </div>
 
- <div class="flex flex-wrap gap-3">
- <Select.Root
- type="single"
- value={$connectionFilter.status}
- onValueChange={(value: string) => { $connectionFilter.status = value || ''; currentPage = 1; loadConnections(providerId, currentPage, perPage); }}
+  {#if supportsAutoPing && $connections.some((c) => c.auth_type === 'oauth')}
+    <div class="space-y-3 rounded-xl border border-border bg-card shadow-card p-4">
+      <div class="flex items-center justify-between gap-3">
+        <div class="space-y-0.5">
+          <h3 class="text-body-sm-strong">Quota auto-ping.</h3>
+          <p class="text-caption text-muted-foreground">Send a minimal ping after quota resets to keep cached credits warm. No prompts or user data are sent.</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <Label for="auto-ping-master" class="text-body-sm text-muted-foreground">{autoPingConfig.enabled ? 'Enabled' : 'Disabled'}</Label>
+          <Switch id="auto-ping-master" checked={autoPingConfig.enabled} onCheckedChange={toggleAutoPingEnabled} disabled={autoPingSaving} />
+        </div>
+      </div>
+      {#if autoPingConfig.enabled}
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-2 border-t border-border">
+          {#each $connections.filter((c) => c.auth_type === 'oauth') as conn (conn.id)}
+            <div class="flex items-center justify-between gap-3 rounded-lg border border-border bg-background p-3">
+              <div class="min-w-0">
+                <p class="text-body-sm-strong truncate">{conn.name || conn.id}</p>
+                <p class="text-caption text-muted-foreground truncate">{conn.id}</p>
+              </div>
+              <Switch
+                checked={!!autoPingConfig.connections[conn.id]}
+                onCheckedChange={() => toggleAutoPingConnection(conn.id)}
+                disabled={autoPingSaving}
+                aria-label="Auto-ping {conn.name || conn.id}"
+              />
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
+
+  {#if needsProxyPool && selectedCount > 0}
+    <div class="flex items-center justify-between gap-3 flex-wrap rounded-xl border border-border bg-card shadow-card p-3">
+      <span class="text-body-sm-strong">{selectedCount} selected</span>
+      <div class="flex items-center gap-2 flex-wrap">
+        <Select.Root
+          type="single"
+          value={selectedProxyPoolId}
+          onValueChange={(value: string) => { selectedProxyPoolId = value; }}
+        >
+          <Select.Trigger class="w-[200px] h-9 text-body-sm rounded-sm">
+            {selectedProxyPoolId ? (proxyPools.find((p) => p.id === selectedProxyPoolId)?.name ?? 'Select pool') : 'Unbind proxy pool'}
+          </Select.Trigger>
+          <Select.Content>
+            <Select.Item value="" class="text-body-sm">Unbind proxy pool</Select.Item>
+            {#each proxyPools.filter((p) => p.isActive) as pool (pool.id)}
+              <Select.Item value={pool.id} class="text-body-sm">{pool.name}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+        <Button onclick={handleBulkAssignProxy} disabled={!canApplyProxy || bulkAssigning} size="sm" class="text-body-sm rounded-sm">
+          {bulkAssigning ? 'Applying...' : 'Apply'}
+        </Button>
+        <Button onclick={clearSelection} variant="ghost" size="sm" class="text-body-sm rounded-sm">Clear</Button>
+      </div>
+    </div>
+  {/if}
+
+  <div class="flex flex-wrap gap-3">
+  <Select.Root
+  type="single"
+  value={$connectionFilter.status}
+ onValueChange={(value: string) => { $connectionFilter.status = value || ''; currentPage = 1; refreshConnections(); }}
  >
  <Select.Trigger class="w-full sm:w-[180px] h-9 text-body-sm rounded-sm">
  {statusOptions.find(o => o.value === $connectionFilter.status)?.label || 'All statuses'}
@@ -369,7 +684,7 @@ function confirmDeleteConnection(connId: string, name: string) {
  {/each}
  </Select.Content>
  </Select.Root>
- <Input type="text" class="w-full sm:w-64 h-9 text-body-sm" placeholder="Search connections..." bind:value={$connectionFilter.search} oninput={() => { currentPage = 1; loadConnections(providerId, currentPage, perPage); }} />
+ <Input type="text" class="w-full sm:w-64 h-9 text-body-sm" placeholder="Search connections..." bind:value={$connectionFilter.search} oninput={() => { currentPage = 1; refreshConnections(); }} />
  </div>
 
  <Card class="shadow-card overflow-hidden">
@@ -379,6 +694,11 @@ function confirmDeleteConnection(connId: string, name: string) {
       <table class="w-full text-left border-collapse">
  <thead>
  <tr class="border-b border-border bg-muted/30">
+ {#if needsProxyPool}
+ <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-2 w-10 text-center">
+   <input type="checkbox" checked={allVisibleSelected} onchange={toggleSelectAll} class="size-4 rounded border-border bg-background text-foreground accent-foreground cursor-pointer" aria-label="Select all connections" />
+ </th>
+ {/if}
  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Name</th>
  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Status</th>
  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Auth</th>
@@ -390,7 +710,7 @@ function confirmDeleteConnection(connId: string, name: string) {
  </thead>
 <tbody class="divide-y divide-border">
           {#if $connections.length === 0}
-          <tr><td colspan="7" class="p-0">
+          <tr><td colspan={needsProxyPool ? 8 : 7} class="p-0">
             <div class="flex flex-col items-center justify-center py-12 gap-3">
               <div class="size-12 rounded-full bg-muted/50 flex items-center justify-center">
                 <svg class="size-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -413,18 +733,23 @@ function confirmDeleteConnection(connId: string, name: string) {
           {:else}
           {#each $connections as row}
           <tr class="transition-colors hover:bg-accent/20 group">
+            {#if needsProxyPool}
+            <td class="py-3 px-2 text-center">
+              <input type="checkbox" checked={selectedConnectionIds.has(row.id)} onchange={() => toggleSelectConnection(row.id)} class="size-4 rounded border-border bg-background text-foreground accent-foreground cursor-pointer" aria-label="Select {row.name}" />
+            </td>
+            {/if}
             <td class="py-3 px-4">
               <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <a href="/providers/{providerId}/{row.id}" class="inline-flex items-center gap-1.5 text-body-sm-strong hover:underline">
-                  <span class="size-2 rounded-full shrink-0" style="background-color: {getStatusDotColor(row.status)}"></span>
+                  <span class="size-2 rounded-full shrink-0" style="background-color: {getStatusDotColor(effectiveConnectionStatus(row))}"></span>
                   {row.name}
                 </a>
                 {@render connectionBadges(row)}
               </div>
             </td>
             <td class="py-3 px-4">
-              <Badge variant={getStatusVariant(row.status)} class="text-caption-mono rounded-sm py-0.5">
-                {getStatusLabel(row.status)}
+              <Badge variant={getStatusVariant(effectiveConnectionStatus(row))} class="text-caption-mono rounded-sm py-0.5">
+                {getStatusLabel(effectiveConnectionStatus(row))}
               </Badge>
             </td>
             <td class="py-3 px-4 text-code font-mono text-muted-foreground">{row.auth_type}</td>
@@ -474,21 +799,26 @@ function confirmDeleteConnection(connId: string, name: string) {
           <div class="flex items-start justify-between gap-3">
             <div class="min-w-0 space-y-1">
               <a href="/providers/{providerId}/{row.id}" class="inline-flex items-center gap-1.5 text-body-sm-strong hover:underline break-words">
-                <span class="size-2 rounded-full shrink-0" style="background-color: {getStatusDotColor(row.status)}"></span>
+                <span class="size-2 rounded-full shrink-0" style="background-color: {getStatusDotColor(effectiveConnectionStatus(row))}"></span>
                 <span class="break-words">{row.name}</span>
               </a>
               {@render connectionBadges(row)}
             </div>
-            <Button variant="ghost" size="icon" class="size-9 shrink-0" href={`/providers/${providerId}/${row.id}`} title="Open connection" aria-label="Open connection">
-              <Icon name="chevronRight" class="size-6" />
-            </Button>
+            <div class="flex items-center gap-2 shrink-0">
+              {#if needsProxyPool}
+                <input type="checkbox" checked={selectedConnectionIds.has(row.id)} onchange={() => toggleSelectConnection(row.id)} class="size-4 rounded border-border bg-background text-foreground accent-foreground cursor-pointer" aria-label="Select {row.name}" />
+              {/if}
+              <Button variant="ghost" size="icon" class="size-9 shrink-0" href={`/providers/${providerId}/${row.id}`} title="Open connection" aria-label="Open connection">
+                <Icon name="chevronRight" class="size-6" />
+              </Button>
+            </div>
           </div>
 
           <div class="grid grid-cols-2 gap-3 text-caption-mono text-muted-foreground">
             <div>
               <p class="uppercase font-semibold text-[10px]">Status</p>
-              <Badge variant={getStatusVariant(row.status)} class="mt-1 text-caption-mono rounded-sm py-0.5">
-                {getStatusLabel(row.status)}
+              <Badge variant={getStatusVariant(effectiveConnectionStatus(row))} class="mt-1 text-caption-mono rounded-sm py-0.5">
+                {getStatusLabel(effectiveConnectionStatus(row))}
               </Badge>
             </div>
             <div>
@@ -524,7 +854,7 @@ function confirmDeleteConnection(connId: string, name: string) {
  totalPages={$connectionPagination.total_pages}
  total={$connectionPagination.total}
  perPage={perPage}
- perPageOptions={[25, 50, 100]}
+ perPageOptions={[25, 50, 100, 200, 500, { value: 0, label: 'All' }]}
  onPerPageChange={handlePerPageChange}
  onChange={handlePageChange}
 />
@@ -612,8 +942,8 @@ function confirmDeleteConnection(connId: string, name: string) {
  {/if}
  </div>
 
-<AddConnectionModal bind:open={showAddModal} {providerId} {meta} onCreated={() => { loadConnections(providerId, currentPage, perPage); loadProvider(providerId); loadProviderModels(providerId); }} />
-<ProviderRoutingModal bind:open={showRoutingModal} {providerId} currentMode={routingMode} onSaved={(mode) => (routingMode = mode)} />
+<AddConnectionModal bind:open={showAddModal} {providerId} {meta} onCreated={() => { refreshConnections(); loadProvider(providerId); loadProviderModels(providerId); }} />
+<ProviderRoutingModal bind:open={showRoutingModal} {providerId} currentMode={routingMode} currentFlatRate={flatRate} onSaved={(mode, fr) => { routingMode = mode; flatRate = fr; }} />
 <ProviderEditModal
 	bind:open={showEditModal}
 	{providerId}

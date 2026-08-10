@@ -19,6 +19,8 @@ func TestBackgroundStoppersAreIdempotent(t *testing.T) {
 
 	cleanup := NewCleanup(nil, nil, 30)
 	cleanup.Start(ctx)
+	lifecycle := NewLifecycleManager(nil, 60)
+	lifecycle.Start(ctx)
 	quotaScheduler := NewQuotaScheduler(store, elig, 1)
 	quotaScheduler.Start(ctx)
 	rateLimiter := NewRateLimitProber(nil, nil, store, elig, quota.NewExhaustionCache(), executor.GetRegistry(), proxypool.NewResolver(nil))
@@ -27,6 +29,8 @@ func TestBackgroundStoppersAreIdempotent(t *testing.T) {
 	// Calling Stop twice must not panic.
 	cleanup.Stop()
 	cleanup.Stop()
+	lifecycle.Stop()
+	lifecycle.Stop()
 	quotaScheduler.Stop()
 	quotaScheduler.Stop()
 	rateLimiter.Stop()

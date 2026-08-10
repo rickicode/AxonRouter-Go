@@ -1,0 +1,19 @@
+[
+  {
+    "provider_type_id": "codebuddy",
+    "service_kinds": ["llm"],
+    "models": {
+      "llm": [
+        "deepseek-v3-0324",
+        "glm-4.6",
+        "glm-5.0",
+        "glm-5.1",
+        "glm-5.2",
+        "glm-5v-turbo",
+        "kimi-k2.5",
+        "kimi-k2.6",
+        "minimax-m3"
+      ]
+    }
+  }
+]

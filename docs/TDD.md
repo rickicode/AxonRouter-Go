@@ -386,6 +386,7 @@ gemini/      → Gemini (gemini format, API key)
 cx/          → Codex (openai-responses format, OAuth)  ← BEDA dengan openai!
 ag/          → Antigravity (antigravity format, OAuth Google)
 kiro/        → Kiro (kiro format, OAuth AWS)
+cursor/      → Cursor IDE (openai format, imported Cursor IDE token)
 openai/      → OpenAI (openai format, API key)
 groq/        → Groq (openai format, API key)
 elevenlabs/  → ElevenLabs (openai format, API key)

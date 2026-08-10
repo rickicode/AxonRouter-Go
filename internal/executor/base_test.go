@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -21,10 +22,10 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func captureExecutorLogs(t *testing.T, run func()) string {
 	t.Helper()
-	previous := logging.Logger
+	previous := logging.Logger.Load()
 	var buf bytes.Buffer
-	logging.Logger = slog.New(slog.NewJSONHandler(&buf, nil))
-	t.Cleanup(func() { logging.Logger = previous })
+	logging.SetLogger(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { logging.SetLogger(previous) })
 	run()
 	return buf.String()
 }
@@ -90,6 +91,71 @@ func TestDoRequestLogsClientInfoForStartAndErrorResponse(t *testing.T) {
 
 	requireLogContainsClientInfo(t, logs, "upstream request start")
 	requireLogContainsClientInfo(t, logs, "upstream error response")
+}
+
+func TestProxyConfigBuildsURLWithCredentials(t *testing.T) {
+	cfg := ProxyConfig{ProxyURL: "http://proxy.example:8080", ProxyUsername: "user1", ProxyPassword: "pass1"}
+	got := cfg.proxyURLWithCredentials()
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse built URL: %v", err)
+	}
+	if u.User == nil || u.User.Username() != "user1" {
+		t.Fatalf("expected username user1, got %v", u.User)
+	}
+	if pass, _ := u.User.Password(); pass != "pass1" {
+		t.Fatalf("expected password pass1, got %s", pass)
+	}
+	if u.Host != "proxy.example:8080" {
+		t.Fatalf("expected host unchanged, got %s", u.Host)
+	}
+}
+
+func TestProxyConfigCanonicalURLStripsCredentials(t *testing.T) {
+	cfg := ProxyConfig{ProxyURL: "http://user:pass@proxy.example:8080"}
+	if got := cfg.canonicalProxyURL(); got != "http://proxy.example:8080" {
+		t.Fatalf("expected canonical URL without credentials, got %s", got)
+	}
+}
+
+func TestProxyCacheKeyChangesWithCredentials(t *testing.T) {
+	cfgA := ProxyConfig{ProxyURL: "http://proxy.example:8080", ProxyUsername: "user-a", ProxyPassword: "pass-a"}
+	cfgB := ProxyConfig{ProxyURL: "http://proxy.example:8080", ProxyUsername: "user-b", ProxyPassword: "pass-b"}
+	if cfgA.proxyCacheKey() == cfgB.proxyCacheKey() {
+		t.Fatalf("expected different cache keys for different credentials")
+	}
+}
+
+func TestProxyCacheKeyChangesWithInlineCredentials(t *testing.T) {
+	cfgA := ProxyConfig{ProxyURL: "http://user-a:pass-a@proxy.example:8080"}
+	cfgB := ProxyConfig{ProxyURL: "http://user-b:pass-b@proxy.example:8080"}
+	if cfgA.proxyCacheKey() == cfgB.proxyCacheKey() {
+		t.Fatalf("expected different cache keys for different inline credentials")
+	}
+}
+
+func TestProxyClientCachesPerCredentialVersion(t *testing.T) {
+	exec := NewBaseExecutor()
+	cfgA := ProxyConfig{ProxyURL: "http://proxy.example:8080", ProxyUsername: "user-a", ProxyPassword: "pass-a"}
+	cfgB := ProxyConfig{ProxyURL: "http://proxy.example:8080", ProxyUsername: "user-b", ProxyPassword: "pass-b"}
+	clientA, err := exec.proxyClient(cfgA)
+	if err != nil {
+		t.Fatalf("proxyClient A: %v", err)
+	}
+	clientB, err := exec.proxyClient(cfgB)
+	if err != nil {
+		t.Fatalf("proxyClient B: %v", err)
+	}
+	if clientA == clientB {
+		t.Fatalf("expected different clients for different credentials")
+	}
+	clientA2, err := exec.proxyClient(cfgA)
+	if err != nil {
+		t.Fatalf("proxyClient A2: %v", err)
+	}
+	if clientA != clientA2 {
+		t.Fatalf("expected same cached client for identical config")
+	}
 }
 
 func TestDoRequestLogsClientInfoForRequestFailure(t *testing.T) {
