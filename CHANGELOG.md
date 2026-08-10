@@ -92,6 +92,7 @@ Each provider is seeded in `provider_types` with format `openai`, appropriate ba
 
 - **Provider detail connection-status counters** — the provider detail page now displays fixed status counts next to the Connections heading: total, ready, rate-limited, quota-exhausted, and disabled. Counts are sourced from the provider's existing `status_counts` payload, making it easy to see why a provider's connection pool appears smaller than expected.
 - **Connection pagination limits** — provider detail connections now support 200 and 500 items per page (up from the previous 100 maximum). The backend list endpoint accepts per-page values up to 500 and the "Load all" path fetches 500-row pages for faster bulk exports.
+- **Codex `image_generation` tool default model** — the auto-injected `image_generation` tool now includes a `model` field that defaults to `gpt-image-2`. The default can be overridden globally via `AXON_CODEX_IMAGE_GENERATION_MODEL` or per-connection via provider-specific data `imageGenerationModel`. Injection remains idempotent: an existing `image_generation` tool is never duplicated. Added unit tests for default injection, appending, deduplication, and configuration override in `internal/executor/codex_test.go`.
 
 ## [0.3.21] - 2026-07-27
 ### Added
