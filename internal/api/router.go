@@ -32,6 +32,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/auth/antigravity"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/codebuddy"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/codex"
+	"github.com/rickicode/AxonRouter-Go/internal/auth/freebuff"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/github"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/grokcli"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/kiro"
@@ -155,6 +156,7 @@ func New(cfg Config) *Router {
 	authManager.RegisterService(auth.ProviderGrokCli, grokcli.NewOAuthService(http.DefaultClient))
 	authManager.RegisterService(auth.ProviderCodeBuddy, codebuddy.NewOAuthService(http.DefaultClient))
 	authManager.RegisterService(auth.ProviderQoder, qoder.NewOAuthService(http.DefaultClient))
+	authManager.RegisterService(auth.ProviderFreebuff, freebuff.NewOAuthService(http.DefaultClient))
 	quota.SetAuthManager(authManager)
 	settingHandler := admin.NewSettingHandler(cfg.DB)
 	settingHandler.SeedDefaults()

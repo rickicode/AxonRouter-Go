@@ -580,6 +580,7 @@ var providerCatalogKeys = map[string][]string{
 	"devin":         {"devin"},
 	"qoder":         {"qoder"},
 	"qwencloud":     {"qwencloud"},
+	"freebuff":      {"freebuff"},
 }
 
 // staticModels returns model IDs from the auto-updating catalog, stripped of leading "@".
@@ -661,6 +662,8 @@ func defaultTestModel(providerID string) string {
 		return "deepseek-v4-flash-free"
 	case "openrouter":
 		return "openai/gpt-4o"
+	case "freebuff":
+		return "deepseek/deepseek-v4-flash"
 	case "cerebras":
 		return "gpt-oss-120b"
 	case "together":
