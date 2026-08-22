@@ -2557,8 +2557,7 @@ func (h *Handler) persistSuccess(connID string) {
 					ELSE status
 				END,
 				cooldown_until = CASE
-					WHEN status IN ('rate_limited','quota_exhausted')
-					     AND (cooldown_until IS NULL OR cooldown_until <= ?)
+					WHEN cooldown_until IS NOT NULL AND cooldown_until <= ?
 					THEN NULL
 					ELSE cooldown_until
 				END,
