@@ -1,6 +1,7 @@
 package version
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -67,34 +68,53 @@ func checkLatest(client *http.Client, url string) (ReleaseInfo, error) {
 	if err != nil {
 		return ReleaseInfo{}, err
 	}
-	version := strings.TrimSpace(string(body))
+	rawVersion := strings.TrimSpace(string(body))
+	if rawVersion == "" {
+		return ReleaseInfo{}, fmt.Errorf("empty version from %s", url)
+	}
+
+	// The production endpoint serves a plain VERSION file, while older
+	// deployments and test fixtures may still return GitHub release JSON.
+	// Accept both representations so an endpoint format change cannot turn the
+	// entire JSON document into the reported version or corrupt asset URLs.
+	version := strings.TrimPrefix(rawVersion, "v")
+	info := ReleaseInfo{}
+	if strings.HasPrefix(rawVersion, "{") {
+		var release releaseResponse
+		if err := json.Unmarshal(body, &release); err != nil || strings.TrimSpace(release.Tag) == "" {
+			return ReleaseInfo{}, fmt.Errorf("invalid release response from %s", url)
+		}
+		version = strings.TrimPrefix(strings.TrimSpace(release.Tag), "v")
+		info.PublishedAt = release.PublishedAt
+		info.HTMLURL = release.HTMLURL
+	}
 	if version == "" {
 		return ReleaseInfo{}, fmt.Errorf("empty version from %s", url)
 	}
 
 	tag := "v" + version
-	info := ReleaseInfo{
-		Version: version,
-		Tag:     tag,
-		HTMLURL: "https://github.com/rickicode/AxonRouter-Go/releases/tag/" + tag,
+	if info.HTMLURL == "" {
+		info.HTMLURL = "https://github.com/rickicode/AxonRouter-Go/releases/tag/" + tag
 	}
+	info.Version = version
+	info.Tag = tag
 	return info, nil
 }
 
 // Checker caches the latest release and refreshes it in the background.
 type Checker struct {
-	mu sync.RWMutex
-	client *http.Client
-	url string
-	ttl time.Duration
-	cached ReleaseInfo
-	cachedAt time.Time
-	changelog string
+	mu          sync.RWMutex
+	client      *http.Client
+	url         string
+	ttl         time.Duration
+	cached      ReleaseInfo
+	cachedAt    time.Time
+	changelog   string
 	changelogAt time.Time
-	startOnce sync.Once
-	stopOnce  sync.Once
-	stop      chan struct{}
-	wg        sync.WaitGroup
+	startOnce   sync.Once
+	stopOnce    sync.Once
+	stop        chan struct{}
+	wg          sync.WaitGroup
 }
 
 // NewChecker creates a Checker with the provided HTTP client.
@@ -109,9 +129,9 @@ func NewCheckerWithURL(client *http.Client, url string) *Checker {
 	}
 	return &Checker{
 		client: client,
-		url: url,
-		ttl: defaultCacheTTL,
-		stop: make(chan struct{}),
+		url:    url,
+		ttl:    defaultCacheTTL,
+		stop:   make(chan struct{}),
 	}
 }
 

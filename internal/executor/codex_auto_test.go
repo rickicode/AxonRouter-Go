@@ -229,14 +229,19 @@ func TestCodexAutoExecutor_ExecuteStreamRoutesToHTTP(t *testing.T) {
 	}
 }
 
-func TestCodexAutoExecutor_ExecuteStreamFlagReturnsNotImplemented(t *testing.T) {
+func TestCodexAutoExecutor_ExecuteStreamFlagRoutesToWebsocket(t *testing.T) {
+	captured := make(chan []byte, 1)
+	completed := []byte(`{"type":"response.completed","response":{"id":"resp-auto-stream","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)
+	ts := websocketTestServer(t, captured, [][]byte{completed})
+	defer ts.Close()
+
 	base := NewBaseExecutor()
 	base.StreamIdleTimeout = 200 * time.Millisecond
 	exec := NewCodexAutoExecutor(base)
 	req := &Request{
 		Provider:    "cx",
 		Model:       "cx/gpt-5.4",
-		BaseURL:     "http://127.0.0.1:1",
+		BaseURL:     ts.URL,
 		AccessToken: "test-token",
 		ProviderSpecificData: map[string]string{
 			"websockets": "true",
@@ -249,12 +254,24 @@ func TestCodexAutoExecutor_ExecuteStreamFlagReturnsNotImplemented(t *testing.T) 
 		},
 	}
 
-	_, err := exec.ExecuteStream(context.Background(), req)
-	if err == nil {
-		t.Fatal("expected error from unimplemented websocket streaming")
+	result, err := exec.ExecuteStream(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ExecuteStream error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "ExecuteStream is not implemented") {
-		t.Fatalf("expected not implemented error, got %v", err)
+	if result == nil {
+		t.Fatal("expected stream result, got nil")
+	}
+	var foundCompleted bool
+	for chunk := range result.Chunks {
+		if chunk.Err != nil {
+			t.Fatalf("unexpected stream error: %v", chunk.Err)
+		}
+		if chunk.Payload != nil && strings.Contains(string(chunk.Payload), "response.completed") {
+			foundCompleted = true
+		}
+	}
+	if !foundCompleted {
+		t.Fatal("expected response.completed chunk from WebSocket transport")
 	}
 }
 
