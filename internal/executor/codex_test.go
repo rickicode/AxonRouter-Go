@@ -531,6 +531,7 @@ func TestEnsureImageGenerationTool_EscapesModelAsJSON(t *testing.T) {
 
 func TestCodexImageGenerationToolModel_Priority(t *testing.T) {
 	t.Run("provider_specific_data", func(t *testing.T) {
+		t.Setenv("AXON_CODEX_IMAGE_GENERATION_MODEL", "env-model")
 		req := &Request{ProviderSpecificData: map[string]string{"imageGenerationModel": "custom-model"}}
 		if got := codexImageGenerationToolModel(req); got != "custom-model" {
 			t.Fatalf("expected custom-model, got %q", got)
