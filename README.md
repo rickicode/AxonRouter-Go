@@ -437,10 +437,14 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.30
+### What's New in v0.3.31
+
+### Added
+- **Configurable Vision Bridge** — adds a Settings → Vision Bridge model picker so text-only targets can receive per-image descriptions from a configured vision-capable model. The bridge preserves existing system instructions, supports Chat/Responses/Claude/Gemini/Interactions and combo/fusion paths, records bridge usage and cost, applies connection failover state, and fails open when enrichment is unavailable.
+- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 
 ### Fixed
-- **Proxy health check with credentials** — bulk import and single add now correctly include proxy credentials when testing proxy health. Previously, authenticated proxies were tested without credentials, causing them to fail even though they work fine.
+- **Periodic health check with credentials** — `TestPool` (used by background health checker and single-pool test button) now also reads `proxy_username` and `proxy_password` from DB to reconstruct the full URL with auth before testing.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.

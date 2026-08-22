@@ -11,7 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+
+## [0.3.31] - 2026-08-22
 ### Added
+- **Configurable Vision Bridge** — adds a Settings → Vision Bridge model picker so text-only targets can receive per-image descriptions from a configured vision-capable model. The bridge preserves existing system instructions, supports Chat/Responses/Claude/Gemini/Interactions and combo/fusion paths, records bridge usage and cost, applies connection failover state, and fails open when enrichment is unavailable.
 - **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
 
 ### Fixed
