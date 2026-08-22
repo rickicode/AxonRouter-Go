@@ -14,10 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
-- **Headroom compression service (HIJ-996): docs, spec, changelog)** — Adds documentation, API spec updates, and CHANGELOG entry for the Headroom compression feature, documenting env vars (AXON_HEADROOM_ENABLED, AXON_HEADROOM_ENDPOINT, AXON_HEADROOM_TIMEOUT_MS, AXON_HEADROOM_MAX_PAYLOAD_BYTES), admin settings fields, the /compress endpoint contract and scenarios (git diff, git log, build log, grep, find tree, search results, detection, empty payload, payload too large, unknown kind, fail-open errors), and the setup guide in docs/headroom.md covering enablement via environment or admin API, endpoint configuration, payload kinds, testing, and verification.
+- **Headroom compression service (HIJ-996): docs, spec, changelog** — documentation, API spec updates, and setup guide for the Headroom compression feature covering env vars, endpoint contract, and verification scenarios.
+- **MCP tools (HIJ-945, HIJ-943)** — three new MCP server tools: `axonrouter_model_list` (list models grouped by provider with service kinds), `axonrouter_quota_status` (get quota and cooldown status per provider), and `axonrouter_web_search` (mock web search tool). Model-grouping logic is backed by canonical provider keys from the model catalog.
+- **Configurable Codex image_generation model (HIJ-458)** — the auto-injected image generation tool now resolves its model from provider-specific data, the `AXON_CODEX_IMAGE_GENERATION_MODEL` environment variable, or the default `gpt-image-2`. Model serialization uses `encoding/json` for safety with special characters.
 
 ### Fixed
-- **Periodic health check with credentials** — `TestPool` (used by background health checker and single-pool test button) now also reads `proxy_username` and `proxy_password` from DB to reconstruct the full URL with auth before testing.
+- **Periodic health check with credentials** — `TestPool` now reads `proxy_username` and `proxy_password` from DB to reconstruct the full URL with auth before testing.
 
 ## [0.3.30] - 2026-08-03
 
