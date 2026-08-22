@@ -79,6 +79,19 @@ func SetProviderEndpoints(m map[string]string) {
 	providerEndpoints = m
 }
 
+// RegisterCustomEndpoint registers or overrides a provider's upstream models URL
+// for background sync. Called at server startup with the DB base_url so the
+// background sync fetches from the user's custom endpoint instead of the
+// hardcoded default.
+func RegisterCustomEndpoint(catalogKey, endpoint string) {
+	if catalogKey == "" || endpoint == "" {
+		return
+	}
+	providerMu.Lock()
+	providerEndpoints[catalogKey] = endpoint
+	providerMu.Unlock()
+}
+
 // ProviderFreeOnly returns a copy of the current free-only provider map.
 // Exposed for tests.
 func ProviderFreeOnly() map[string]bool {
@@ -560,6 +573,55 @@ func StartUpdater(ctx context.Context) {
 // Safe to call from API handlers — runs synchronously.
 func SyncNow(ctx context.Context) {
 	tryFetchProviders(ctx)
+}
+
+// FetchProviderModelsURL fetches model IDs from any OpenAI-compatible /v1/models
+// endpoint URL. Unlike the background sync which uses hardcoded providerEndpoints,
+// this function can query a custom base_url stored in the DB. Returns the list of
+// model IDs (with @ prefix stripped) or nil on error.
+func FetchProviderModelsURL(ctx context.Context, modelsURL string) []string {
+	fetched, err := fetchProviderModels(ctx, modelsURL)
+	if err != nil {
+		log.Printf("dynamic model fetch failed for %s: %v", modelsURL, err)
+		return nil
+	}
+	ids := make([]string, 0, len(fetched))
+	for _, m := range fetched {
+		ids = append(ids, strings.TrimPrefix(m.ID, "@"))
+	}
+	return ids
+}
+
+// FetchProviderModelsURLCached is like FetchProviderModelsURL but caches the
+// result per modelsURL for dynamicModelCacheTTL to avoid hammering the upstream
+// on every /v1/models or admin provider page refresh.
+var (
+	dynamicModelCacheMu sync.RWMutex
+	dynamicModelCache   = map[string]dynamicModelCacheEntry{}
+)
+
+type dynamicModelCacheEntry struct {
+	ids     []string
+	fetched time.Time
+}
+
+const dynamicModelCacheTTL = 30 * time.Second
+
+func FetchProviderModelsURLCached(ctx context.Context, modelsURL string) []string {
+	dynamicModelCacheMu.RLock()
+	if e, ok := dynamicModelCache[modelsURL]; ok && time.Since(e.fetched) < dynamicModelCacheTTL {
+		dynamicModelCacheMu.RUnlock()
+		return e.ids
+	}
+	dynamicModelCacheMu.RUnlock()
+
+	ids := FetchProviderModelsURL(ctx, modelsURL)
+
+	dynamicModelCacheMu.Lock()
+	dynamicModelCache[modelsURL] = dynamicModelCacheEntry{ids: ids, fetched: time.Now()}
+	dynamicModelCacheMu.Unlock()
+
+	return ids
 }
 
 func run(ctx context.Context) {

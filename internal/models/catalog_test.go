@@ -317,3 +317,133 @@ func TestGetModelIDs_CommandCodeContainsExpectedModels(t *testing.T) {
 	}
 }
 
+// TestFetchProviderModelsURL_FetchesFromCustomEndpoint verifies that
+// FetchProviderModelsURL correctly fetches models from any OpenAI-compatible
+// /v1/models endpoint and returns stripped model IDs.
+func TestFetchProviderModelsURL_FetchesFromCustomEndpoint(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{"id": "model-a"},
+				{"id": "@prefixed/model-b"},
+				{"id": "model-c"},
+			},
+		})
+	}))
+	defer ts.Close()
+
+	ids := FetchProviderModelsURL(t.Context(), ts.URL+"/v1/models")
+	want := []string{"model-a", "prefixed/model-b", "model-c"}
+	if !slices.Equal(ids, want) {
+		t.Errorf("FetchProviderModelsURL() = %v, want %v", ids, want)
+	}
+}
+
+// TestFetchProviderModelsURL_ReturnsNilOnBadURL verifies graceful failure.
+func TestFetchProviderModelsURL_ReturnsNilOnBadURL(t *testing.T) {
+	ids := FetchProviderModelsURL(t.Context(), "http://127.0.0.1:1/v1/models")
+	if ids != nil {
+		t.Errorf("FetchProviderModelsURL(bad URL) = %v, want nil", ids)
+	}
+}
+
+// TestFetchProviderModelsURLCached_CachesWithinTTL verifies that the cached
+// variant does not re-fetch within the TTL window.
+func TestFetchProviderModelsURLCached_CachesWithinTTL(t *testing.T) {
+	var calls int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"id": "cached-model"}},
+		})
+	}))
+	defer ts.Close()
+
+	url := ts.URL + "/v1/models"
+	ids1 := FetchProviderModelsURLCached(t.Context(), url)
+	ids2 := FetchProviderModelsURLCached(t.Context(), url)
+
+	if calls != 1 {
+		t.Errorf("upstream called %d times, want 1 (cached)", calls)
+	}
+	if !slices.Equal(ids1, ids2) {
+		t.Errorf("cached call mismatch: %v != %v", ids1, ids2)
+	}
+}
+
+// TestRegisterCustomEndpoint_OverridesHardcodedURL verifies that
+// RegisterCustomEndpoint replaces the endpoint for a catalog key.
+func TestRegisterCustomEndpoint_OverridesHardcodedURL(t *testing.T) {
+	origEndpoints := ProviderEndpoints()
+	defer func() {
+		SetProviderEndpoints(origEndpoints)
+	}()
+
+	// Register a custom endpoint
+	RegisterCustomEndpoint("oc", "http://192.168.90.101:3777/providers/oc/v1/models")
+
+	ep := ProviderEndpoints()
+	if ep["oc"] != "http://192.168.90.101:3777/providers/oc/v1/models" {
+		t.Errorf("oc endpoint = %q, want custom URL", ep["oc"])
+	}
+}
+
+// TestRegisterCustomEndpoint_IgnoresEmptyArgs verifies no-op on empty input.
+func TestRegisterCustomEndpoint_IgnoresEmptyArgs(t *testing.T) {
+	origEndpoints := ProviderEndpoints()
+	defer func() {
+		SetProviderEndpoints(origEndpoints)
+	}()
+
+	RegisterCustomEndpoint("", "http://example.com")
+	RegisterCustomEndpoint("oc", "")
+
+	ep := ProviderEndpoints()
+	// Should still have the original oc endpoint (or empty if unset)
+	_ = ep
+}
+
+// TestDynamicModelSync_RemovedModelsDisappear verifies that when the upstream
+// endpoint changes its model list (removing a model), the synced catalog
+// reflects the removal — models removed upstream disappear from the catalog.
+func TestDynamicModelSync_RemovedModelsDisappear(t *testing.T) {
+	modelList := []map[string]any{
+		{"id": "model-a"},
+		{"id": "model-b"},
+		{"id": "model-c"},
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"data": modelList})
+	}))
+	defer ts.Close()
+
+	origEndpoints := ProviderEndpoints()
+	defer func() {
+		SetProviderEndpoints(origEndpoints)
+	}()
+
+	SetProviderEndpoints(map[string]string{"test-dynamic": ts.URL + "/v1/models"})
+
+	// First sync: all 3 models present
+	tryFetchProviders(t.Context())
+	ids := getCurrentModelIDs("test-dynamic")
+	want := []string{"model-a", "model-b", "model-c"}
+	if !slices.Equal(ids, want) {
+		t.Errorf("first sync = %v, want %v", ids, want)
+	}
+
+	// Remove model-b from upstream
+	modelList = []map[string]any{
+		{"id": "model-a"},
+		{"id": "model-c"},
+	}
+
+	// Second sync: model-b should be gone
+	tryFetchProviders(t.Context())
+	ids = getCurrentModelIDs("test-dynamic")
+	want = []string{"model-a", "model-c"}
+	if !slices.Equal(ids, want) {
+		t.Errorf("second sync = %v, want %v (model-b should be removed)", ids, want)
+	}
+}

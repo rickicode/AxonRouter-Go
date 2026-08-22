@@ -1,6 +1,8 @@
 package v1
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -269,6 +271,12 @@ func (h *Handler) getProviderModels(prefix string) []gin.H {
 	if prefix == "openrouter" {
 		models.DiscoverOpenRouterModelsCached()
 	}
+	// For no-auth providers (oc, oc-zen, etc.) that have a DB entry with a
+	// custom base_url, fetch fresh models from upstream so removed models
+	// disappear automatically from the catalog.
+	if h.db != nil {
+		h.discoverNoAuthProviderModels(prefix)
+	}
 	ids := models.GetAllModelIDs(cfg.keys...)
 	if len(ids) == 0 {
 		return nil
@@ -327,6 +335,25 @@ func (h *Handler) discoverCloudflareModels() {
 		return
 	}
 	models.DiscoverCloudflareModelsCached(apiKey, accountID)
+}
+
+// discoverNoAuthProviderModels fetches fresh models from a no-auth provider's
+// upstream endpoint when the DB has a custom base_url. This ensures that models
+// removed upstream disappear automatically from the catalog. Results are cached
+// for 30s so /v1/models does not hit the upstream on every request.
+func (h *Handler) discoverNoAuthProviderModels(prefix string) {
+	var baseURL sql.NullString
+	err := h.db.QueryRow(`SELECT base_url FROM provider_types WHERE id = ? AND is_custom = 0`, prefix).Scan(&baseURL)
+	if err != nil || !baseURL.Valid || baseURL.String == "" {
+		return
+	}
+	modelsURL := strings.TrimRight(baseURL.String, "/") + "/v1/models"
+	ctx := context.Background()
+	upstreamModels := models.FetchProviderModelsURLCached(ctx, modelsURL)
+	if len(upstreamModels) == 0 {
+		return
+	}
+	models.MergeProviderModelIDs(prefix, upstreamModels, nil)
 }
 
 // customModels returns user-added models stored for a provider prefix (custom providers).

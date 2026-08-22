@@ -195,7 +195,15 @@ func New(cfg Config) *Router {
 	proxyResolver.SetOnInvalidate(executor.CloseIdleConnections)
 	rateLimitProber := background.NewRateLimitProber(cfg.DB, writeQueue, store, elig, exhaustionCache, executor.GetRegistry(), proxyResolver)
 	rateLimitProber.Start(ctx)
+
+	// Register custom provider endpoints from the DB so background sync fetches
+	// from the user's base_url instead of hardcoded defaults. This ensures that
+	// models removed upstream disappear automatically from the catalog.
+	registerDynamicProviderEndpoints(cfg.DB)
+
 	models.StartUpdater(ctx)
+	// Trigger an immediate sync now that custom endpoints are registered.
+	models.SyncNow(ctx)
 	cache.StartGrokCLIReasoningEviction(ctx, 5*time.Minute)
 	proxyHealth := proxypool.NewHealthChecker(cfg.DB)
 	proxyHealth.Start(ctx)
@@ -836,5 +844,26 @@ func seedConnectionsFromDB(db *sql.DB, store *connstate.Store) {
 	}
 	if count > 0 {
 		log.Printf("Seeded %d connections into eligibility store", count)
+	}
+}
+
+// registerDynamicProviderEndpoints queries the DB for non-custom providers
+// (built-in no-auth providers like oc, oc-zen, etc.) that have a base_url
+// and registers their upstream /v1/models endpoint with the catalog sync.
+// This ensures the background sync fetches from the user's custom base_url
+// instead of the hardcoded default.
+func registerDynamicProviderEndpoints(db *sql.DB) {
+	rows, err := db.Query(`SELECT id, base_url FROM provider_types WHERE is_custom = 0 AND base_url != ''`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, baseURL string
+		if err := rows.Scan(&id, &baseURL); err != nil || id == "" || baseURL == "" {
+			continue
+		}
+		modelsURL := strings.TrimRight(baseURL, "/") + "/v1/models"
+		models.RegisterCustomEndpoint(id, modelsURL)
 	}
 }
