@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
 )
@@ -25,11 +26,19 @@ type ProxyPoolHandler struct {
 	resolver   *proxypool.Resolver
 	testProxy  func(proxyURL, typ, auth string) proxypool.TestResult
 	writeQueue *db.WriteQueue
+	store      *connstate.Store              // optional: for in-memory cleanup on cascade delete
+	elig       *connstate.EligibilityManager // optional: for eligibility recompute after cascade
 }
 
 func NewProxyPoolHandler(database *sql.DB, health *proxypool.HealthChecker, resolver *proxypool.Resolver, writeQueue *db.WriteQueue) *ProxyPoolHandler {
 	return &ProxyPoolHandler{db: database, health: health, resolver: resolver, testProxy: proxypool.TestProxy, writeQueue: writeQueue}
 }
+
+// Store sets the connection state store for in-memory cleanup on cascade delete.
+func (h *ProxyPoolHandler) Store(s *connstate.Store) { h.store = s }
+
+// SetEligibility sets the eligibility manager for recomputing after cascade delete.
+func (h *ProxyPoolHandler) SetEligibility(e *connstate.EligibilityManager) { h.elig = e }
 
 func (h *ProxyPoolHandler) List(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
@@ -577,11 +586,21 @@ func (h *ProxyPoolHandler) BulkDelete(c *gin.Context) {
 			skipped++
 			continue
 		}
-		if err := h.deletePoolCascade(c.Request.Context(), id); err != nil {
+		deletedIDs, err := h.deletePoolCascade(c.Request.Context(), id)
+		if err != nil {
 			skipped++
 			continue
 		}
+		// Clean up in-memory state for hard-deleted connections.
+		if h.store != nil && len(deletedIDs) > 0 {
+			for connID := range deletedIDs {
+				h.store.Delete(connID)
+			}
+		}
 		deleted++
+	}
+	if h.store != nil && h.elig != nil && deleted > 0 {
+		h.elig.Update(h.store)
 	}
 	if h.resolver != nil {
 		h.resolver.Invalidate()
@@ -739,10 +758,20 @@ func (h *ProxyPoolHandler) Delete(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "proxy pool not found"})
 		return
 	}
-	// Cascade: soft-delete referencing connections, detach settings, then delete.
-	if err := h.deletePoolCascade(c.Request.Context(), id); err != nil {
+	// Cascade: hard-delete referencing connections, detach settings, then delete pool.
+	deleted, err := h.deletePoolCascade(c.Request.Context(), id)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	// Clean up in-memory state for hard-deleted connections.
+	if h.store != nil && len(deleted) > 0 {
+		for connID := range deleted {
+			h.store.Delete(connID)
+		}
+		if h.elig != nil {
+			h.elig.Update(h.store)
+		}
 	}
 	if h.resolver != nil {
 		h.resolver.Invalidate()
@@ -1042,9 +1071,12 @@ func likeEscape(s string) string {
 // removal are deleted. All steps run in a single transaction so a failure
 // cannot leave dangling references behind.
 // deletePoolCascadeTx performs the cascade delete within an existing tx.
-func (h *ProxyPoolHandler) deletePoolCascadeTx(tx *sql.Tx, poolID string) error {
+// Returns the set of connection IDs that were hard-deleted (excludes the direct
+// default connection that was skipped), so the caller can clean up in-memory state.
+func (h *ProxyPoolHandler) deletePoolCascadeTx(tx *sql.Tx, poolID string) (deletedConnIDs map[string]struct{}, err error) {
 	now := time.Now().Unix()
 	connIDs := map[string]struct{}{}
+	deletedConnIDs = map[string]struct{}{}
 
 	// 1a. Direct references: connections with proxyPoolId == poolID.
 	rows, qerr := tx.Query("SELECT id, provider_specific_data FROM connections WHERE provider_specific_data LIKE ? ESCAPE '\\'", "%"+likeEscape(poolID)+"%")
@@ -1110,9 +1142,10 @@ func (h *ProxyPoolHandler) deletePoolCascadeTx(tx *sql.Tx, poolID string) error 
 		groupRows.Close()
 	}
 
-	// 2. Soft-delete collected connections (skip the default direct oc connection).
-	// Keep credentials and history so an administrator can recover or audit the
-	// connection after its proxy dependency is removed.
+	// 2. Hard-delete collected connections (skip the default direct oc connection).
+	// Connections that depend on a proxy pool become non-functional when the pool
+	// is removed, so soft-deleting them would leave orphaned rows. Hard-delete
+	// the connection, its quota_cache entries, and clear the in-memory store.
 	for id := range connIDs {
 		var psd string
 		if tx.QueryRow("SELECT COALESCE(provider_specific_data,'') FROM connections WHERE id = ?", id).Scan(&psd) == nil {
@@ -1120,9 +1153,13 @@ func (h *ProxyPoolHandler) deletePoolCascadeTx(tx *sql.Tx, poolID string) error 
 				continue
 			}
 		}
-		if _, e := tx.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', disabled_reason = 'proxy_pool_deleted', updated_at = ? WHERE id = ?`, now, id); e != nil {
-			return e
+		if _, e := tx.Exec(`DELETE FROM quota_cache WHERE connection_id = ?`, id); e != nil {
+			return nil, e
 		}
+		if _, e := tx.Exec(`DELETE FROM connections WHERE id = ?`, id); e != nil {
+			return nil, e
+		}
+		deletedConnIDs[id] = struct{}{}
 	}
 
 	// 3. Detach pool from provider_proxy_defaults in settings.
@@ -1140,7 +1177,7 @@ func (h *ProxyPoolHandler) deletePoolCascadeTx(tx *sql.Tx, poolID string) error 
 			if changed {
 				if out, merr := json.Marshal(defaults); merr == nil {
 					if _, e := tx.Exec("UPDATE settings SET value = ?, updated_at = ? WHERE key = 'provider_proxy_defaults'", string(out), now); e != nil {
-						return e
+						return nil, e
 					}
 				}
 			}
@@ -1165,26 +1202,28 @@ func (h *ProxyPoolHandler) deletePoolCascadeTx(tx *sql.Tx, poolID string) error 
 		}
 		if len(newIDs) == 0 {
 			if _, e := tx.Exec("DELETE FROM proxy_groups WHERE id = ?", gid); e != nil {
-				return e
+				return nil, e
 			}
 		} else if out, merr := json.Marshal(newIDs); merr == nil {
 			if _, e := tx.Exec("UPDATE proxy_groups SET proxy_pool_ids = ?, updated_at = ? WHERE id = ?", string(out), now, gid); e != nil {
-				return e
+				return nil, e
 			}
 		}
 	}
 
 	// 5. Delete the pool itself.
 	if _, e := tx.Exec("DELETE FROM proxy_pools WHERE id = ?", poolID); e != nil {
-		return e
+		return nil, e
 	}
-	return nil
+	return deletedConnIDs, nil
 }
 
 // deletePoolCascade removes a proxy pool and cascades the deletion. It routes
 // the write through WriteQueue when available so bulk deletes never contend on
 // the SQLite writer; when writeQueue is nil it falls back to a direct tx.
-func (h *ProxyPoolHandler) deletePoolCascade(ctx context.Context, poolID string) error {
+// Returns the set of connection IDs that were hard-deleted.
+func (h *ProxyPoolHandler) deletePoolCascade(ctx context.Context, poolID string) (map[string]struct{}, error) {
+	var deleted map[string]struct{}
 	run := func(d *sql.DB) error {
 		tx, err := d.Begin()
 		if err != nil {
@@ -1195,13 +1234,20 @@ func (h *ProxyPoolHandler) deletePoolCascade(ctx context.Context, poolID string)
 				_ = tx.Rollback()
 			}
 		}()
-		if err = h.deletePoolCascadeTx(tx, poolID); err != nil {
+		deleted, err = h.deletePoolCascadeTx(tx, poolID)
+		if err != nil {
 			return err
 		}
 		return tx.Commit()
 	}
 	if h.writeQueue == nil {
-		return run(h.db)
+		if err := run(h.db); err != nil {
+			return nil, err
+		}
+		return deleted, nil
 	}
-	return h.writeQueue.Do(ctx, "delete-pool-cascade", run)
+	if err := h.writeQueue.Do(ctx, "delete-pool-cascade", run); err != nil {
+		return nil, err
+	}
+	return deleted, nil
 }

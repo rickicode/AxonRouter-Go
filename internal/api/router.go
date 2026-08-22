@@ -252,6 +252,8 @@ func New(cfg Config) *Router {
 	mcpH := mcp.NewHandler(cfg.DB)
 	mcpAPI := mcp.NewAPI()
 	proxyPoolH := admin.NewProxyPoolHandler(cfg.DB, proxyHealth, proxyResolver, writeQueue)
+	proxyPoolH.Store(store)
+	proxyPoolH.SetEligibility(elig)
 	proxyGroupH := admin.NewProxyGroupHandler(cfg.DB, proxyResolver)
 	proxyDeployH := admin.NewProxyDeployHandler(cfg.DB, proxyHealth, proxyResolver)
 	optimizationH := admin.NewOptimizationHandler(cfg.DB, exactCache)
