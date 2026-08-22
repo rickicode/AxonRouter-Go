@@ -436,10 +436,10 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.25
+### What's New in v0.3.30
 
 ### Fixed
-- **Cloudflare free-tier daily quota exhaustion** — Cloudflare accounts that hit the daily free neuron allocation are now locked out of the routing pool until the next UTC midnight instead of the generic 30-minute quota cooldown. Also fixes `quota_exhausted` in-memory state to use `SetQuotaCooldown`, preventing free-tier accounts from being auto-disabled after repeated daily quota hits.
+- **Proxy health check with credentials** — bulk import and single add now correctly include proxy credentials when testing proxy health. Previously, authenticated proxies were tested without credentials, causing them to fail even though they work fine.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.

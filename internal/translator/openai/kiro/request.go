@@ -179,7 +179,17 @@ func ConvertOpenAIRequestToKiro(model string, body []byte, stream bool) []byte {
 		}
 		payload["inferenceConfig"] = inference
 	}
-
+	if supportsReasoning(normalizedModel) && effort != "" {
+		payload["additionalModelRequestFields"] = map[string]any{
+			"thinking": map[string]any{
+				"type":    "adaptive",
+				"display": "enabled",
+			},
+			"output_config": map[string]any{
+				"effort": effort,
+			},
+		}
+	}
 	return mustMarshal(payload)
 }
 

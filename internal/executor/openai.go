@@ -89,11 +89,16 @@ func cfInjectReasoningControl(body []byte) []byte {
 // previously hard-coded Cloudflare and Bedrock quirks with values that can be
 // overridden per provider outside the binary.
 func sanitizeRequestWithCompatibility(body []byte, c providercfg.Compatibility) []byte {
+	// Always convert developer role to system — developer is OpenAI's Responses-API
+	// rename of system and is rejected by most non-OpenAI providers (DeepSeek, Groq,
+	// etc.). Converting here ensures universal compatibility.
+
 	// Fast path: if no message has array content and the provider does not
 	// require flattening, avoid the expensive map[string]any round-trip.
 	messages := gjson.GetBytes(body, "messages")
+	needDeveloperConversion := messages.Exists() && messages.IsArray() && messagesNeedDeveloperConversion(messages.Array())
 	needFlatten := c.FlattenContentArrays && messages.Exists() && messages.IsArray() && messagesNeedSanitize(messages.Array())
-	if !needFlatten {
+	if !needFlatten && !needDeveloperConversion {
 		modelNode := gjson.GetBytes(body, "model")
 		model := normalizeModelName(modelNode.String(), c)
 		if model != modelNode.String() {
@@ -157,8 +162,13 @@ func sanitizeRequestWithCompatibility(body []byte, c providercfg.Compatibility) 
 		}
 	}
 
-	if messages, ok := req["messages"].([]any); ok && c.FlattenContentArrays {
-		req["messages"] = sanitizeMessages(messages)
+	if messages, ok := req["messages"].([]any); ok {
+		if needDeveloperConversion {
+			convertDeveloperRoles(messages)
+		}
+		if c.FlattenContentArrays {
+			req["messages"] = sanitizeMessages(messages)
+		}
 	}
 
 	out, err := json.Marshal(req)
@@ -199,6 +209,30 @@ func messagesNeedSanitize(messages []gjson.Result) bool {
 		}
 	}
 	return false
+}
+
+// messagesNeedDeveloperConversion reports whether any message uses the
+// "developer" role, which must be converted to "system" for non-OpenAI providers.
+func messagesNeedDeveloperConversion(messages []gjson.Result) bool {
+	for _, msg := range messages {
+		if msg.Get("role").String() == "developer" {
+			return true
+		}
+	}
+	return false
+}
+
+// convertDeveloperRoles converts all "developer" role messages to "system" in-place.
+// This is safe because "developer" is OpenAI's Responses-API rename of "system";
+// all providers support "system".
+func convertDeveloperRoles(messages []any) {
+	for _, raw := range messages {
+		if msg, ok := raw.(map[string]any); ok {
+			if msg["role"] == "developer" {
+				msg["role"] = "system"
+			}
+		}
+	}
 }
 
 func sanitizeMessages(messages []any) []any {
@@ -341,6 +375,8 @@ func (e *OpenAIExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 	body := req.Body
 	// Ensure stream is false
 	body = JSONSet(body, "stream", false)
+	body = normalizeDeveloperRoles(body)
+	body = sanitizeDeepSeekThinkingMode(body)
 
 	headers := map[string]string{
 		"Content-Type": "application/json",
@@ -406,6 +442,8 @@ func (e *OpenAIExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 	body := req.Body
 	// Ensure stream is true
 	body = JSONSet(body, "stream", true)
+	body = normalizeDeveloperRoles(body)
+	body = sanitizeDeepSeekThinkingMode(body)
 
 	headers := map[string]string{
 		"Content-Type":  "application/json",
@@ -593,4 +631,71 @@ func (e *OpenAIExecutor) ResponsesCompact(ctx context.Context, req *Request) (*R
 	}
 
 	return resp, nil
+}
+
+// normalizeDeveloperRoles converts all "developer" role messages to "system"
+// using efficient gjson/sjson iteration (no full JSON unmarshal). This is
+// needed because most non-OpenAI providers reject the "developer" role.
+func normalizeDeveloperRoles(body []byte) []byte {
+	messages := gjson.GetBytes(body, "messages")
+	if !messages.Exists() || !messages.IsArray() {
+		return body
+	}
+	hasDeveloper := false
+	messages.ForEach(func(_, msg gjson.Result) bool {
+		if msg.Get("role").String() == "developer" {
+			hasDeveloper = true
+			return false // stop iteration
+		}
+		return true
+	})
+	if !hasDeveloper {
+		return body
+	}
+	for i, msg := range messages.Array() {
+		if msg.Get("role").String() == "developer" {
+			path := fmt.Sprintf("messages.%d.role", i)
+			body, _ = sjson.SetBytes(body, path, "system")
+		}
+	}
+	return body
+}
+
+// sanitizeDeepSeekThinkingMode prevents DeepSeek's "reasoning_content required"
+// error by stripping reasoning_effort when assistant messages lack reasoning_content.
+// DeepSeek requires reasoning_content to be passed back in multi-turn thinking mode
+// conversations. If the client stripped it (common with many AI harnesses), the
+// request fails. Stripping reasoning_effort downgrades to non-thinking mode which
+// always succeeds.
+func sanitizeDeepSeekThinkingMode(body []byte) []byte {
+	// Only relevant when reasoning_effort is set.
+	reNode := gjson.GetBytes(body, "reasoning_effort")
+	if !reNode.Exists() {
+		return body
+	}
+	re := strings.ToLower(strings.TrimSpace(reNode.String()))
+	if re == "none" || re == "" {
+		return body
+	}
+
+	// Check if any assistant message is missing reasoning_content.
+	messages := gjson.GetBytes(body, "messages")
+	if !messages.Exists() || !messages.IsArray() {
+		return body
+	}
+	needsStrip := false
+	messages.ForEach(func(_, msg gjson.Result) bool {
+		if msg.Get("role").String() == "assistant" {
+			if !msg.Get("reasoning_content").Exists() {
+				needsStrip = true
+				return false // stop iteration
+			}
+		}
+		return true
+	})
+	if needsStrip {
+		result, _ := sjson.DeleteBytes(body, "reasoning_effort")
+		return result
+	}
+	return body
 }
