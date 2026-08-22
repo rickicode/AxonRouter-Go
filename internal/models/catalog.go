@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -384,6 +385,18 @@ func ProviderCount() int {
 	mu.RLock()
 	defer mu.RUnlock()
 	return len(current)
+}
+
+// ProviderKeys returns the catalog provider keys in a stable order.
+func ProviderKeys() []string {
+	mu.RLock()
+	defer mu.RUnlock()
+	keys := make([]string, 0, len(current))
+	for key := range current {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // ModelCount returns the total number of model entries across all providers.
