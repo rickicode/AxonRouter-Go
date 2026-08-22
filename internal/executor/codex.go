@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -29,6 +30,11 @@ const (
 	// /responses/compact non-streaming calls. Override via
 	// CODEX_RESPONSES_COMPACT_TIMEOUT_MS (milliseconds).
 	defaultCodexCompactTimeout = 5 * time.Minute
+	// defaultCodexImageToolModel is the default model value injected into the
+	// Codex image_generation tool. It can be overridden per-request via
+	// ProviderSpecificData["imageGenerationModel"] or globally via
+	// AXON_CODEX_IMAGE_GENERATION_MODEL.
+	defaultCodexImageToolModel = "gpt-image-2"
 )
 
 // codexCompactTimeout returns the effective timeout for ResponsesCompact.
@@ -453,7 +459,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request) (*Response, e
 	// therefore keys off those confused values so that multi-turn replay survives both
 	// confused and exposed client continuity values.
 	body := codexRequestBody(req.Body)
-	body = ensureImageGenerationTool(body, req.Model)
+	body = ensureImageGenerationTool(body, req.Model, codexImageGenerationToolModel(req))
 	body, identityState := applyCodexIdentityConfuseBody(body, req.ConnectionID)
 	sessionKey := codexReasoningReplaySessionKey(body, req.Headers)
 	body, _ = codexInjectReasoningReplay(body, sessionKey)
@@ -551,7 +557,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, req *Request) (*Strea
 	// therefore keys off those confused values so that multi-turn replay survives both
 	// confused and exposed client continuity values.
 	body := codexRequestBody(req.Body)
-	body = ensureImageGenerationTool(body, req.Model)
+	body = ensureImageGenerationTool(body, req.Model, codexImageGenerationToolModel(req))
 	body, identityState := applyCodexIdentityConfuseBody(body, req.ConnectionID)
 	sessionKey := codexReasoningReplaySessionKey(body, req.Headers)
 	body, _ = codexInjectReasoningReplay(body, sessionKey)
@@ -758,21 +764,53 @@ func newCodexIncompleteStreamError() *CodexIncompleteStreamError {
 	return &CodexIncompleteStreamError{Message: codexIncompleteStreamMessage}
 }
 
-var (
-	defaultImageGenTool  = []byte(`{"type":"image_generation","output_format":"png"}`)
-	defaultImageGenTools = []byte(`[{"type":"image_generation","output_format":"png"}]`)
-)
+// codexImageGenerationToolModel returns the model value to use for the
+// injected Codex image_generation tool. Priority:
+//  1. req.ProviderSpecificData["imageGenerationModel"]
+//  2. AXON_CODEX_IMAGE_GENERATION_MODEL environment variable
+//  3. defaultCodexImageToolModel ("gpt-image-2")
+func codexImageGenerationToolModel(req *Request) string {
+	if req != nil && req.ProviderSpecificData != nil {
+		if v := strings.TrimSpace(req.ProviderSpecificData["imageGenerationModel"]); v != "" {
+			return v
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("AXON_CODEX_IMAGE_GENERATION_MODEL")); v != "" {
+		return v
+	}
+	return defaultCodexImageToolModel
+}
 
 // ensureImageGenerationTool injects the default image generation tool into
-// Codex requests for image-capable models when no tools are present. This
-// mirrors CLIProxyAPI behavior for gpt-image-* style models.
-func ensureImageGenerationTool(body []byte, modelName string) []byte {
+// Codex requests for image-capable models when no tools are present. The
+// injected tool includes a configurable "model" field that defaults to
+// defaultCodexImageToolModel. If an image_generation tool is already present the
+// body is returned unchanged so injection stays idempotent. This mirrors
+// CLIProxyAPI behavior for gpt-image-* style models.
+func ensureImageGenerationTool(body []byte, modelName, toolModel string) []byte {
 	if !codexModelSupportsImageGeneration(modelName) {
 		return body
 	}
+	if strings.TrimSpace(toolModel) == "" {
+		toolModel = defaultCodexImageToolModel
+	}
+	tool := map[string]string{
+		"type":          "image_generation",
+		"model":         toolModel,
+		"output_format": "png",
+	}
+	toolJSON, err := json.Marshal(tool)
+	if err != nil {
+		return body
+	}
+	toolsArrJSON, err := json.Marshal([]map[string]string{tool})
+	if err != nil {
+		return body
+	}
+
 	tools := gjson.GetBytes(body, "tools")
 	if !tools.Exists() || !tools.IsArray() || len(tools.Array()) == 0 {
-		out, _ := sjson.SetRawBytes(body, "tools", defaultImageGenTools)
+		out, _ := sjson.SetRawBytes(body, "tools", toolsArrJSON)
 		return out
 	}
 	for _, t := range tools.Array() {
@@ -780,7 +818,7 @@ func ensureImageGenerationTool(body []byte, modelName string) []byte {
 			return body
 		}
 	}
-	out, _ := sjson.SetRawBytes(body, "tools.-1", defaultImageGenTool)
+	out, _ := sjson.SetRawBytes(body, "tools.-1", toolJSON)
 	return out
 }
 

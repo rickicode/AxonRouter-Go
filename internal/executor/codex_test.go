@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -469,23 +470,32 @@ func TestCodexExecutor_ExecuteStream_PatchesEmptyCompleted(t *testing.T) {
 
 func TestEnsureImageGenerationTool_InjectsForImageModels(t *testing.T) {
 	body := []byte(`{"model":"gpt-image-2","input":"draw a cat"}`)
-	out := ensureImageGenerationTool(body, "gpt-image-2")
+	out := ensureImageGenerationTool(body, "gpt-image-2", "")
 	if got := gjson.GetBytes(out, "tools.0.type").String(); got != "image_generation" {
 		t.Fatalf("expected image_generation tool injected, got %q", got)
+	}
+	if got := gjson.GetBytes(out, "tools.0.model").String(); got != defaultCodexImageToolModel {
+		t.Fatalf("expected injected model %q, got %q", defaultCodexImageToolModel, got)
+	}
+	if got := gjson.GetBytes(out, "tools.0.output_format").String(); got != "png" {
+		t.Fatalf("expected output_format png, got %q", got)
 	}
 }
 
 func TestEnsureImageGenerationTool_AppendsToExistingTools(t *testing.T) {
 	body := []byte(`{"model":"gpt-image-2","tools":[{"type":"function","function":{"name":"foo"}}]}`)
-	out := ensureImageGenerationTool(body, "gpt-image-2")
+	out := ensureImageGenerationTool(body, "gpt-image-2", "")
 	if got := gjson.GetBytes(out, "tools.1.type").String(); got != "image_generation" {
 		t.Fatalf("expected image_generation appended, got %q; body=%s", got, string(out))
+	}
+	if got := gjson.GetBytes(out, "tools.1.model").String(); got != defaultCodexImageToolModel {
+		t.Fatalf("expected appended model %q, got %q", defaultCodexImageToolModel, got)
 	}
 }
 
 func TestEnsureImageGenerationTool_SkipsWhenPresent(t *testing.T) {
 	body := []byte(`{"model":"gpt-image-2","tools":[{"type":"image_generation","output_format":"webp"}]}`)
-	out := ensureImageGenerationTool(body, "gpt-image-2")
+	out := ensureImageGenerationTool(body, "gpt-image-2", "")
 	if gjson.GetBytes(out, "tools.#").Int() != 1 {
 		t.Fatalf("expected unchanged tools, got %s", string(out))
 	}
@@ -493,10 +503,54 @@ func TestEnsureImageGenerationTool_SkipsWhenPresent(t *testing.T) {
 
 func TestEnsureImageGenerationTool_SkipsNonImageModels(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":"hello"}`)
-	out := ensureImageGenerationTool(body, "gpt-5.4")
+	out := ensureImageGenerationTool(body, "gpt-5.4", "")
 	if gjson.GetBytes(out, "tools").Exists() {
 		t.Fatalf("expected no tools injected for non-image model, got %s", string(out))
 	}
+}
+
+func TestEnsureImageGenerationTool_ConfigurableModel(t *testing.T) {
+	body := []byte(`{"model":"gpt-image-2","input":"draw a cat"}`)
+	out := ensureImageGenerationTool(body, "gpt-image-2", "gpt-image-1.5")
+	if got := gjson.GetBytes(out, "tools.0.model").String(); got != "gpt-image-1.5" {
+		t.Fatalf("expected configurable model gpt-image-1.5, got %q", got)
+	}
+}
+
+func TestEnsureImageGenerationTool_EscapesModelAsJSON(t *testing.T) {
+	toolModel := "custom\nmodel\"quoted\""
+	body := []byte(`{"model":"gpt-image-2","input":"draw a cat"}`)
+	out := ensureImageGenerationTool(body, "gpt-image-2", toolModel)
+	if !json.Valid(out) {
+		t.Fatalf("injected tool payload is invalid JSON: %s", out)
+	}
+	if got := gjson.GetBytes(out, "tools.0.model").String(); got != toolModel {
+		t.Fatalf("expected model %q, got %q", toolModel, got)
+	}
+}
+
+func TestCodexImageGenerationToolModel_Priority(t *testing.T) {
+	t.Run("provider_specific_data", func(t *testing.T) {
+		t.Setenv("AXON_CODEX_IMAGE_GENERATION_MODEL", "env-model")
+		req := &Request{ProviderSpecificData: map[string]string{"imageGenerationModel": "custom-model"}}
+		if got := codexImageGenerationToolModel(req); got != "custom-model" {
+			t.Fatalf("expected custom-model, got %q", got)
+		}
+	})
+	t.Run("env_override", func(t *testing.T) {
+		t.Setenv("AXON_CODEX_IMAGE_GENERATION_MODEL", "env-model")
+		req := &Request{}
+		if got := codexImageGenerationToolModel(req); got != "env-model" {
+			t.Fatalf("expected env-model, got %q", got)
+		}
+	})
+	t.Run("default", func(t *testing.T) {
+		t.Setenv("AXON_CODEX_IMAGE_GENERATION_MODEL", "")
+		req := &Request{}
+		if got := codexImageGenerationToolModel(req); got != defaultCodexImageToolModel {
+			t.Fatalf("expected default %q, got %q", defaultCodexImageToolModel, got)
+		}
+	})
 }
 
 func TestCodexIdentityConfuseBodyAndExpose(t *testing.T) {
@@ -621,7 +675,7 @@ func TestCodexReasoningReplay_MultiTurnIdentityConfuse(t *testing.T) {
 	// Simulate a first turn that produces reasoning and a function_call.
 	turn1Req := []byte(`{"model":"gpt-5.4","prompt_cache_key":"real-user-key","input":[{"type":"message","role":"user","content":"hello"}]}`)
 	turn1Body := codexRequestBody(turn1Req)
-	turn1Body = ensureImageGenerationTool(turn1Body, model)
+	turn1Body = ensureImageGenerationTool(turn1Body, model, "")
 	turn1Body, _ = applyCodexIdentityConfuseBody(turn1Body, connID)
 	turn1Key := codexReasoningReplaySessionKey(turn1Body, nil)
 	if turn1Key == "prompt-cache:real-user-key" {
@@ -636,7 +690,7 @@ func TestCodexReasoningReplay_MultiTurnIdentityConfuse(t *testing.T) {
 	// confusion applied first, cache lookup should hit using the confused key.
 	turn2Req := []byte(`{"model":"gpt-5.4","prompt_cache_key":"real-user-key","input":[{"type":"message","role":"user","content":"again"}]}`)
 	turn2Body := codexRequestBody(turn2Req)
-	turn2Body = ensureImageGenerationTool(turn2Body, model)
+	turn2Body = ensureImageGenerationTool(turn2Body, model, "")
 	turn2Body, _ = applyCodexIdentityConfuseBody(turn2Body, connID)
 	turn2Key := codexReasoningReplaySessionKey(turn2Body, nil)
 	if turn2Key != turn1Key {
@@ -841,7 +895,7 @@ func TestCodexTelemetry_CountersIncrement(t *testing.T) {
 
 	req := []byte(`{"model":"gpt-5.4","prompt_cache_key":"k","input":[{"type":"message","role":"user","content":"hi"}]}`)
 	body := codexRequestBody(req)
-	body = ensureImageGenerationTool(body, model)
+	body = ensureImageGenerationTool(body, model, "")
 	body, _ = applyCodexIdentityConfuseBody(body, connID)
 	sessionKey := codexReasoningReplaySessionKey(body, nil)
 	if sessionKey == "" {
