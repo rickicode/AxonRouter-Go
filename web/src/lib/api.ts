@@ -1043,6 +1043,9 @@ export const settingsApi = {
       method: "PUT",
       body: JSON.stringify({ value }),
     }),
+
+  remove: (key: string) =>
+    fetchApi<{ ok: boolean }>(`/settings/${key}`, { method: "DELETE" }),
 };
 
 // Dashboard API
@@ -1498,6 +1501,20 @@ export interface GatewayModel {
 
 export const modelsApi = {
   list: () => fetchApi<{ data: GatewayModel[] }>("/models"),
+};
+
+export const visionBridgeApi = {
+  models: () => fetchApi<{ data: GatewayModel[] }>("/vision-bridge/models"),
+  getModel: async (): Promise<string> => {
+    try {
+      const result = await settingsApi.get('vision_bridge_model');
+      return result.value || '';
+    } catch {
+      return '';
+    }
+  },
+  setModel: (model: string) => settingsApi.update('vision_bridge_model', model),
+  disable: () => settingsApi.remove('vision_bridge_model'),
 };
 
 // CLI Tools model picker + generated config snippets for external AI CLIs

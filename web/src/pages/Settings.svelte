@@ -11,11 +11,13 @@ import ChangePasswordCard from '$lib/components/ChangePasswordCard.svelte';
 import HttpsSettings from '$lib/components/HttpsSettings.svelte';
 import RuntimeSettings from '$lib/components/RuntimeSettings.svelte';
 import SmartRouterSettings from '$lib/components/SmartRouterSettings.svelte';
+import VisionBridgeSettings from '$lib/components/VisionBridgeSettings.svelte';
 import SparklesIcon from '@lucide/svelte/icons/sparkles';
+import EyeIcon from '@lucide/svelte/icons/eye';
 import DownloadIcon from '@lucide/svelte/icons/download';
 import UploadIcon from '@lucide/svelte/icons/upload';
 
-let tab = $state<'runtime' | 'security' | 'https' | 'smart-router'>('runtime');
+let tab = $state<'runtime' | 'security' | 'https' | 'smart-router' | 'vision-bridge'>('runtime');
 let settings: Record<string, string> = $state({});
 let importText = $state('');
 let showImport = $state(false);
@@ -77,6 +79,10 @@ async function handleImport() {
       <Tabs.Trigger value="runtime" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Runtime</Tabs.Trigger>
       <Tabs.Trigger value="security" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Security</Tabs.Trigger>
       <Tabs.Trigger value="https" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">HTTPS</Tabs.Trigger>
+      <Tabs.Trigger value="vision-bridge" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm gap-1.5">
+        <EyeIcon class="size-4" />
+        Vision Bridge
+      </Tabs.Trigger>
 <Tabs.Trigger value="smart-router" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm gap-1.5">
 <SparklesIcon class="size-4" />
 Smart Router
@@ -127,6 +133,10 @@ Smart Router
 
     <Tabs.Content value="https">
       <HttpsSettings />
+    </Tabs.Content>
+
+    <Tabs.Content value="vision-bridge">
+      <VisionBridgeSettings />
     </Tabs.Content>
   </Tabs.Root>
 </div>

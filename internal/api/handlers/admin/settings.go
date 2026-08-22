@@ -117,6 +117,7 @@ var DefaultSettings = map[string]string{
 	"compression_lite_dedup":      "false",
 	"combo_strategy":              "priority",
 	"combo_strategies":            "{}",
+	"vision_bridge_model":         "",
 	"cc_filter_naming":            "false",
 	"headroom_enabled":            "false",
 	"headroom_endpoint":           "127.0.0.1:9123",

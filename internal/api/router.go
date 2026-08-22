@@ -536,6 +536,9 @@ func New(cfg Config) *Router {
 		g.GET("/models", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"data": v1H.ListActiveModels()})
 		})
+		g.GET("/vision-bridge/models", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"data": v1H.ListVisionModels()})
+		})
 		g.GET("/cli-tools/statuses", cliToolsH.AllStatuses)
 		g.GET("/cli-tools/:toolId", cliToolsH.GetConfig)
 		g.POST("/cli-tools/:toolId", cliToolsH.SaveConfig)

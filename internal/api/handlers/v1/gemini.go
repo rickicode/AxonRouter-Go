@@ -120,6 +120,9 @@ func (h *Handler) GeminiHandler(c *gin.Context) {
 		return
 	}
 
+	if op == "generateContent" || op == "streamGenerateContent" {
+		body = h.applyVisionBridge(c, body, "gemini/"+modelName, executor.FormatGemini)
+	}
 	h.runGeminiAction(c, modelName, op, body, start)
 }
 
@@ -162,6 +165,7 @@ func (h *Handler) Interactions(c *gin.Context) {
 	}
 
 	geminiReq := convertInteractionsToGemini(modelName, body)
+	geminiReq = h.applyVisionBridge(c, geminiReq, "gemini/"+modelName, executor.FormatGemini)
 	h.runGeminiInteraction(c, modelName, geminiReq, start)
 }
 

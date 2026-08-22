@@ -201,6 +201,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	// On each failure, mark the connection exhausted/cooldown and update eligibility
 	// so the next getConnection call picks a different connection.
 	clientFormat := executor.FormatOpenAI
+	body = h.applyVisionBridge(c, body, provider+"/"+modelName, clientFormat)
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
 	translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
 	translatedBody = h.applyThinkingOverrideFromContext(c.Request.Context(), translatedBody, string(providerFormat))
@@ -551,6 +552,7 @@ func (h *Handler) executeComboStep(
 	}
 	result.exec = exec
 	result.providerFormat = providerFormat
+	body = h.applyVisionBridge(c, body, step.ModelID, clientFormat)
 
 	connIDs := h.combo.PickConnections(provider, modelName)
 	for _, connID := range connIDs {
@@ -903,6 +905,26 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 		return
 	}
 
+	judgeModel := cfg.JudgeModel
+	if judgeModel == "" {
+		judgeModel = comboResult.Steps[0].ModelID
+	}
+	bridgeBody := body
+	bridgeTarget := judgeModel
+	needsBridge := !modelSupportsVision(judgeModel)
+	for _, step := range comboResult.Steps {
+		if !modelSupportsVision(step.ModelID) {
+			needsBridge = true
+			if modelSupportsVision(bridgeTarget) {
+				bridgeTarget = step.ModelID
+			}
+			break
+		}
+	}
+	if needsBridge {
+		bridgeBody = h.applyVisionBridge(c, body, bridgeTarget, executor.FormatOpenAI)
+	}
+
 	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(cfg.PanelHardTimeoutMs)*time.Millisecond)
 	defer cancel()
 
@@ -931,7 +953,11 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 			}
 			// Replace the model field with the panel model so OpenAI-compatible passthrough
 			// providers receive the actual upstream model ID instead of "fusion".
-			panelBody := setRequestModel(body, modelName)
+			panelSourceBody := body
+			if !modelSupportsVision(step.ModelID) {
+				panelSourceBody = bridgeBody
+			}
+			panelBody := setRequestModel(panelSourceBody, modelName)
 			translatedBody := registry.Request(string(executor.FormatOpenAI), string(providerFormat), modelName, panelBody, false)
 			translatedBody = sanitizeStreamOptions(translatedBody, false, executor.FormatOpenAI, providerFormat, c.Request.URL.Path)
 			translatedBody = stripFusionTools(translatedBody)
@@ -1031,7 +1057,11 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 			exec, providerFormat, execErr := h.resolveExecutor(provider, modelName)
 			rerunErr = execErr
 			if rerunErr == nil {
-				rerunBody := setRequestModel(body, modelName)
+				rerunSourceBody := body
+				if !modelSupportsVision(single.modelID) {
+					rerunSourceBody = bridgeBody
+				}
+				rerunBody := setRequestModel(rerunSourceBody, modelName)
 				translatedBody := registry.Request(string(executor.FormatOpenAI), string(providerFormat), modelName, rerunBody, stream)
 				translatedBody = sanitizeStreamOptions(translatedBody, stream, executor.FormatOpenAI, providerFormat, c.Request.URL.Path)
 				translatedBody = h.applyThinkingOverrideFromContext(ctx, translatedBody, string(providerFormat))
@@ -1084,10 +1114,6 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 	}
 
 	// Run judge synthesis.
-	judgeModel := cfg.JudgeModel
-	if judgeModel == "" {
-		judgeModel = comboResult.Steps[0].ModelID
-	}
 	judgeBody := buildFusionJudgeBody(body, successes, cfg.AnonymizeSources)
 	judgeConnID, ok := h.combo.PickConnection(db.ComboStep{ModelID: judgeModel})
 	if !ok {
@@ -1113,7 +1139,11 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 
 	// Same model-field replacement for the judge so passthrough providers get the
 	// actual judge model ID instead of the combo name.
-	judgeReqBody := setRequestModel(judgeBody, judgeModelName)
+	judgeSourceBody := judgeBody
+	if !modelSupportsVision(judgeModel) {
+		judgeSourceBody = buildFusionJudgeBody(bridgeBody, successes, cfg.AnonymizeSources)
+	}
+	judgeReqBody := setRequestModel(judgeSourceBody, judgeModelName)
 	translatedJudge := registry.Request(string(executor.FormatOpenAI), string(judgeFormat), judgeModelName, judgeReqBody, stream)
 	translatedJudge = sanitizeStreamOptions(translatedJudge, stream, executor.FormatOpenAI, judgeFormat, c.Request.URL.Path)
 

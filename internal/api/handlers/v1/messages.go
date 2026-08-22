@@ -115,6 +115,7 @@ func (h *Handler) Messages(c *gin.Context) {
 
 	// Connection failover loop: try up to failoverMaxAttempts connections before giving up.
 	clientFormat := executor.FormatClaude
+	body = h.applyVisionBridge(c, body, provider+"/"+modelName, clientFormat)
 	translatedBody := body
 	if clientFormat != providerFormat {
 		translatedBody = registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)

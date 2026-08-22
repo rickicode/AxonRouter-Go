@@ -101,6 +101,7 @@ func (h *Handler) Responses(c *gin.Context) {
 	if providerFormat != clientFormat {
 		body = multiagentv2.NormalizeInput(c.Request.Context(), c.Request.Header, body, &cfg)
 	}
+	body = h.applyVisionBridge(c, body, provider+"/"+modelName, clientFormat)
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
 	translatedBody = h.applyThinkingOverrideFromContext(c.Request.Context(), translatedBody, string(providerFormat))
 	translatedBody = sanitizeStreamOptions(translatedBody, stream, clientFormat, providerFormat, c.Request.URL.Path)
