@@ -1146,12 +1146,20 @@ func (h *ProxyPoolHandler) deletePoolCascadeTx(tx *sql.Tx, poolID string) (delet
 	// Connections that depend on a proxy pool become non-functional when the pool
 	// is removed, so soft-deleting them would leave orphaned rows. Hard-delete
 	// the connection, its quota_cache entries, and clear the in-memory store.
+	// FK-order: delete child rows (combo_steps, model_rate_limits) before
+	// connections to satisfy FOREIGN KEY constraints with PRAGMA foreign_keys=ON.
 	for id := range connIDs {
 		var psd string
 		if tx.QueryRow("SELECT COALESCE(provider_specific_data,'') FROM connections WHERE id = ?", id).Scan(&psd) == nil {
 			if strings.Contains(psd, `"direct":"true"`) {
 				continue
 			}
+		}
+		if _, e := tx.Exec(`DELETE FROM combo_steps WHERE connection_id = ?`, id); e != nil {
+			return nil, e
+		}
+		if _, e := tx.Exec(`DELETE FROM model_rate_limits WHERE connection_id = ?`, id); e != nil {
+			return nil, e
 		}
 		if _, e := tx.Exec(`DELETE FROM quota_cache WHERE connection_id = ?`, id); e != nil {
 			return nil, e

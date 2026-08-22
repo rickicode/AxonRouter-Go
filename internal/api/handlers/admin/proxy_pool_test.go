@@ -775,6 +775,12 @@ func TestProxyPoolDeleteCascadesDirectConnections(t *testing.T) {
 	mustExec(`INSERT INTO connections (id,provider_type_id,name,auth_type,status,is_active,provider_specific_data,created_at,updated_at) VALUES ('conn-pool','oc','c-pool','none','ready',1,'{"proxyPoolId":"pool-x"}',?,?)`, now, now)
 	mustExec(`INSERT INTO connections (id,provider_type_id,name,auth_type,status,is_active,provider_specific_data,created_at,updated_at) VALUES ('conn-other','oc','c-other','none','ready',1,'{"proxyPoolId":"pool-y"}',?,?)`, now, now)
 	mustExec(`INSERT INTO quota_cache (id,connection_id,provider_type_id,connection_name,plan,quotas,status,fetched_at,updated_at) VALUES ('qc-pool','conn-pool','oc','c-pool','free','[]','ok',?,?)`, now, now)
+	// Seed FK-dependent rows to verify cascade deletes child rows first.
+	mustExec(`INSERT INTO combo_steps (id,combo_id,connection_id,model_id,priority,weight,created_at) VALUES ('cs-pool','combo-x','conn-pool','oc/model',1,100,?)`, now)
+	mustExec(`INSERT INTO model_rate_limits (id,connection_id,model_id,tpm_remaining,tpm_limit,rpm_remaining,rpm_limit,last_updated_at) VALUES ('mrl-pool','conn-pool','oc/model',1000,2000,60,120,?)`, now)
+	// Also seed FK rows for the surviving connection to ensure they are NOT deleted.
+	mustExec(`INSERT INTO combo_steps (id,combo_id,connection_id,model_id,priority,weight,created_at) VALUES ('cs-other','combo-y','conn-other','oc/model2',1,100,?)`, now)
+	mustExec(`INSERT INTO model_rate_limits (id,connection_id,model_id,tpm_remaining,tpm_limit,rpm_remaining,rpm_limit,last_updated_at) VALUES ('mrl-other','conn-other','oc/model2',1000,2000,60,120,?)`, now)
 
 	deleted, err := h.deletePoolCascade(context.Background(), "pool-x")
 	if err != nil {
@@ -818,6 +824,36 @@ func TestProxyPoolDeleteCascadesDirectConnections(t *testing.T) {
 	}
 	if pc != 0 {
 		t.Errorf("pool-x should be deleted")
+	}
+	// combo_steps and model_rate_limits for deleted connection should be cleaned up.
+	var csCount int
+	if err := database.QueryRow("SELECT COUNT(*) FROM combo_steps WHERE connection_id='conn-pool'").Scan(&csCount); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if csCount != 0 {
+		t.Errorf("combo_steps for conn-pool should be deleted, got %d", csCount)
+	}
+	var mrlCount int
+	if err := database.QueryRow("SELECT COUNT(*) FROM model_rate_limits WHERE connection_id='conn-pool'").Scan(&mrlCount); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if mrlCount != 0 {
+		t.Errorf("model_rate_limits for conn-pool should be deleted, got %d", mrlCount)
+	}
+	// FK rows for the surviving connection must remain intact.
+	var csOther int
+	if err := database.QueryRow("SELECT COUNT(*) FROM combo_steps WHERE connection_id='conn-other'").Scan(&csOther); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if csOther != 1 {
+		t.Errorf("combo_steps for conn-other should survive, got %d", csOther)
+	}
+	var mrlOther int
+	if err := database.QueryRow("SELECT COUNT(*) FROM model_rate_limits WHERE connection_id='conn-other'").Scan(&mrlOther); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if mrlOther != 1 {
+		t.Errorf("model_rate_limits for conn-other should survive, got %d", mrlOther)
 	}
 }
 
