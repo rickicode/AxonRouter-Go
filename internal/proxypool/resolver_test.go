@@ -319,6 +319,146 @@ func TestResolveGroupRandomSkipsErrorAndStrictFallback(t *testing.T) {
 	}
 }
 
+func TestResolveCandidatesGroupRoundRobinRotatesPrimary(t *testing.T) {
+	database := newTestDB(t)
+	insertPool(t, database, "crr1", "crr1", "http", "http://crr1.example:8080", "", "", true, "active")
+	insertPool(t, database, "crr2", "crr2", "http", "http://crr2.example:8080", "", "", true, "active")
+	insertPool(t, database, "crr3", "crr3", "http", "http://crr3.example:8080", "", "", true, "active")
+	insertGroup(t, database, "cand-rr", "roundrobin", 1, false, true, []string{"crr1", "crr2", "crr3"})
+
+	r := NewResolver(database)
+	var primaries []string
+	for range 3 {
+		cands := r.ResolveCandidates(`{"proxyGroupId":"cand-rr"}`, "")
+		if len(cands) == 0 {
+			t.Fatal("expected candidates")
+		}
+		primaries = append(primaries, cands[0].ProxyPoolID)
+	}
+	// Round-robin must rotate the primary on every request.
+	if primaries[0] != "crr1" || primaries[1] != "crr2" || primaries[2] != "crr3" {
+		t.Fatalf("expected rotating primaries crr1,crr2,crr3, got %v", primaries)
+	}
+}
+
+func TestResolveCandidatesGroupStickyPrimary(t *testing.T) {
+	database := newTestDB(t)
+	insertPool(t, database, "cs1", "cs1", "http", "http://cs1.example:8080", "", "", true, "active")
+	insertPool(t, database, "cs2", "cs2", "http", "http://cs2.example:8080", "", "", true, "active")
+	insertGroup(t, database, "cand-sticky", "sticky", 2, false, true, []string{"cs1", "cs2"})
+
+	r := NewResolver(database)
+	first := r.ResolveCandidates(`{"proxyGroupId":"cand-sticky"}`, "")
+	second := r.ResolveCandidates(`{"proxyGroupId":"cand-sticky"}`, "")
+	if first[0].ProxyPoolID != second[0].ProxyPoolID {
+		t.Fatalf("sticky primary rotated too early: %s -> %s", first[0].ProxyPoolID, second[0].ProxyPoolID)
+	}
+	third := r.ResolveCandidates(`{"proxyGroupId":"cand-sticky"}`, "")
+	if third[0].ProxyPoolID == first[0].ProxyPoolID {
+		t.Fatalf("sticky primary should rotate after stickyLimit, still %s", third[0].ProxyPoolID)
+	}
+}
+
+func TestResolveCandidatesGroupIncludesAllActivePoolsAndDirectFallback(t *testing.T) {
+	database := newTestDB(t)
+	insertPool(t, database, "c1", "c1", "http", "http://c1.example:8080", "", "", true, "active")
+	insertPool(t, database, "c2", "c2", "http", "http://c2.example:8080", "", "", true, "active")
+	insertPool(t, database, "c3", "c3", "http", "http://c3.example:8080", "", "", true, "error") // must be skipped
+	insertGroup(t, database, "cand-all", "roundrobin", 1, false, true, []string{"c1", "c2", "c3"})
+
+	r := NewResolver(database)
+	cands := r.ResolveCandidates(`{"proxyGroupId":"cand-all"}`, "")
+	if len(cands) != 3 { // 2 healthy pools + trailing direct fallback
+		t.Fatalf("expected 3 candidates (2 pools + direct fallback), got %+v", cands)
+	}
+	got := map[string]bool{}
+	for _, c := range cands {
+		got[c.ProxyPoolID] = true
+	}
+	if !got["c1"] || !got["c2"] || got["c3"] {
+		t.Fatalf("expected only healthy pools c1,c2 in candidates, got %+v", cands)
+	}
+	if last := cands[len(cands)-1]; last.Source != "direct-fallback" {
+		t.Fatalf("expected trailing direct-fallback for non-strict group, got %+v", last)
+	}
+}
+
+func TestResolveCandidatesGroupStrictNoDirectFallback(t *testing.T) {
+	database := newTestDB(t)
+	insertPool(t, database, "cst1", "cst1", "http", "http://cst1.example:8080", "", "", true, "active")
+	insertPool(t, database, "cst2", "cst2", "http", "http://cst2.example:8080", "", "", true, "active")
+	insertGroup(t, database, "cand-strict", "roundrobin", 1, true, true, []string{"cst1", "cst2"})
+
+	r := NewResolver(database)
+	cands := r.ResolveCandidates(`{"proxyGroupId":"cand-strict"}`, "")
+	if len(cands) != 2 {
+		t.Fatalf("expected exactly 2 candidates (no direct fallback) for strict group, got %+v", cands)
+	}
+	for _, c := range cands {
+		if c.Source == "direct-fallback" {
+			t.Fatalf("strict group must not include direct fallback, got %+v", cands)
+		}
+		if !c.StrictProxy {
+			t.Fatalf("expected StrictProxy on group candidates, got %+v", c)
+		}
+	}
+}
+
+func TestResolveCandidatesErrorPoolNoPhantom(t *testing.T) {
+	database := newTestDB(t)
+	insertPool(t, database, "dead1", "dead1", "http", "http://dead1.example:8080", "", "", true, "error")
+
+	r := NewResolver(database)
+	cands := r.ResolveCandidates(`{"proxyPoolId":"dead1"}`, "")
+	// A dead non-strict pool must resolve to a single direct fallback — never a
+	// phantom candidate followed by a second direct fallback (2x direct attempts).
+	if len(cands) != 1 {
+		t.Fatalf("expected exactly 1 direct-fallback candidate, got %+v", cands)
+	}
+	if cands[0].Source != "direct-fallback" {
+		t.Fatalf("expected direct-fallback, got %+v", cands[0])
+	}
+}
+
+func TestResolveCandidatesErrorPoolStopsProviderDefaultFallthrough(t *testing.T) {
+	database := newTestDB(t)
+	// Connection pins dead1 (error); a healthy provider-default pool also
+	// exists. The pinned pool's intent (go direct) must win — the resolver
+	// must NOT silently route through the provider default, and must not
+	// emit a phantom.
+	insertPool(t, database, "dead2", "dead2", "http", "http://dead2.example:8080", "", "", true, "error")
+	insertPool(t, database, "pdef3", "pdef3", "http", "http://pdef3.example:8080", "", "", true, "active")
+	defaults := map[string]map[string]any{"openai": {"proxyPoolId": "pdef3"}}
+	raw, _ := json.Marshal(defaults)
+	if _, err := database.Exec(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)`, "provider_proxy_defaults", string(raw), time.Now().Unix()); err != nil {
+		t.Fatalf("insert defaults: %v", err)
+	}
+
+	r := NewResolver(database)
+	cands := r.ResolveCandidates(`{"proxyPoolId":"dead2"}`, "openai")
+	if len(cands) != 1 || cands[0].Source != "direct-fallback" {
+		t.Fatalf("expected single direct-fallback (no phantom, no provider-default), got %+v", cands)
+	}
+}
+
+func TestResolveCandidatesProviderDefaultErrorNoPhantom(t *testing.T) {
+	database := newTestDB(t)
+	// Provider-default pool is dead (non-strict): must yield a single direct
+	// fallback, not [phantom, direct].
+	insertPool(t, database, "pdef4", "pdef4", "http", "http://pdef4.example:8080", "", "", true, "error")
+	defaults := map[string]map[string]any{"openai": {"proxyPoolId": "pdef4"}}
+	raw, _ := json.Marshal(defaults)
+	if _, err := database.Exec(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)`, "provider_proxy_defaults", string(raw), time.Now().Unix()); err != nil {
+		t.Fatalf("insert defaults: %v", err)
+	}
+
+	r := NewResolver(database)
+	cands := r.ResolveCandidates("", "openai")
+	if len(cands) != 1 || cands[0].Source != "direct-fallback" {
+		t.Fatalf("expected single direct-fallback for dead provider-default pool, got %+v", cands)
+	}
+}
+
 func TestRelayTypeRewritten(t *testing.T) {
 	database := newTestDB(t)
 	insertPool(t, database, "relay1", "relay1", "vercel", "https://relay1.vercel.app", "", "rauth123", true, "active")

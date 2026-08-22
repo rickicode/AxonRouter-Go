@@ -70,7 +70,7 @@ func (e *EligibilityManager) Update(store *Store) {
 		if status.IsRoutingTerminal() {
 			return true
 		}
-		if status != StatusReady && status != StatusDegraded {
+		if status != StatusReady {
 			return true
 		}
 		if cs.IsInCooldown() {
@@ -127,7 +127,7 @@ func (e *EligibilityManager) UpdateProvider(provider string) {
 			if status.IsRoutingTerminal() {
 				return true
 			}
-			if status != StatusReady && status != StatusDegraded {
+			if status != StatusReady {
 				return true
 			}
 			if cs.IsInCooldown() {

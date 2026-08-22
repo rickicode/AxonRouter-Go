@@ -123,7 +123,7 @@ func DetectError(ctx context.Context, statusCode int, body string, err error, pr
 			Category:      ErrorTimeout,
 			Retryable:     true,
 			Message:       msg,
-			Status:        StatusDegraded,
+			Status:        StatusReady,
 			CooldownUntil: &until,
 			Scope:         "connection",
 			ModelID:       modelID,
@@ -204,13 +204,12 @@ func DetectError(ctx context.Context, statusCode int, body string, err error, pr
 		} else {
 			det.Status = StatusDisabled
 			det.DisabledReason = "balance_empty"
-			until := time.Now().Add(balanceEmptyCooldown)
-			det.CooldownUntil = &until
+			// No cooldown — balance empty is permanent until manual top-up.
 		}
 
 	case ErrorQuota:
 		det.Status = StatusQuotaExhausted
-		det.CooldownUntil = quotaCooldownFor(lower, headers)
+		det.CooldownUntil = quotaCooldownFor(providerPrefix, lower, headers)
 
 	case ErrorModelNotFound:
 		// Model-level lockout: the requested model is not available on this
@@ -220,7 +219,7 @@ func DetectError(ctx context.Context, statusCode int, body string, err error, pr
 		det.Scope = "model"
 
 	case ErrorServer, ErrorTimeout, ErrorNetwork:
-		det.Status = StatusDegraded
+		det.Status = StatusReady
 		until := time.Now().Add(serverErrorCooldown)
 		det.CooldownUntil = &until
 	}
@@ -275,7 +274,14 @@ func isFreeUsageExhausted(lower string) bool {
 // quotaCooldownFor returns the appropriate cooldown for a quota error.
 // Explicit upstream quota codes use a fixed 30-minute cooldown; otherwise we
 // fall back to the provider's reset horizon (next midnight UTC for daily quotas).
-func quotaCooldownFor(lower string, headers http.Header) *time.Time {
+//
+// Provider-specific daily quotas (e.g. Cloudflare free tier) are treated as
+// account-wide exhaustion and locked out until the provider's daily reset.
+func quotaCooldownFor(providerPrefix string, lower string, headers http.Header) *time.Time {
+	if providerPrefix == "cf" && isCloudflareDailyQuota(lower) {
+		until := nextMidnightUTC().Add(time.Minute)
+		return &until
+	}
 	if isExplicitQuotaError(lower) {
 		until := time.Now().Add(quotaCooldown)
 		return &until
@@ -305,6 +311,14 @@ func isExplicitQuotaError(lower string) bool {
 		strings.Contains(lower, "insufficient quota") ||
 		strings.Contains(lower, "billing_hard_limit_reached") ||
 		strings.Contains(lower, "billing hard limit")
+}
+
+// isCloudflareDailyQuota returns true when a Cloudflare error body unambiguously
+// indicates the free-tier daily neuron allocation has been exhausted.
+func isCloudflareDailyQuota(lower string) bool {
+	return strings.Contains(lower, "neurons") ||
+		strings.Contains(lower, "daily free allocation") ||
+		strings.Contains(lower, "upgrade to cloudflare")
 }
 
 // ClassifyFromResponse classifies an error from HTTP status code and response body.

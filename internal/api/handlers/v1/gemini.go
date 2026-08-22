@@ -179,14 +179,20 @@ func (h *Handler) runGeminiAction(c *gin.Context, modelName, action string, body
 	var lastErr error
 	var lastErrCategory string
 
+	var lastFailedConnID string
 attemptLoop:
 	for attempt := range maxAttempts {
 		if c.Request.Context().Err() != nil {
 			writeContextDone(c)
 			return
 		}
-
-		conn, err := h.getConnection(c.Request.Context(), provider, modelName, "")
+		var conn *Connection
+		var err error
+		if lastFailedConnID != "" {
+			conn, err = h.getConnection(c.Request.Context(), provider, modelName, "", lastFailedConnID)
+		} else {
+			conn, err = h.getConnection(c.Request.Context(), provider, modelName, "")
+		}
 		if err != nil {
 			if attempt == 0 {
 				c.JSON(http.StatusServiceUnavailable, geminiError("server_error", "no available connection"))
@@ -234,6 +240,7 @@ attemptLoop:
 				lastErrCategory = "client_error"
 				break attemptLoop
 			}
+			lastFailedConnID = conn.ID
 			retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, execErr, attempt, latency, stream)
 			lastErr = execErr
 			lastErrCategory = cat
@@ -334,15 +341,27 @@ func (h *Handler) runGeminiInteraction(c *gin.Context, modelName string, geminiR
 	var lastErr error
 	var lastErrCategory string
 
+	var lastFailedConnID string
 attemptLoop:
 	for attempt := range maxAttempts {
 		if c.Request.Context().Err() != nil {
 			writeContextDone(c)
 			return
 		}
-		conn, err := h.getConnection(c.Request.Context(), provider, modelName, "")
+		var conn *Connection
+		var err error
+		if lastFailedConnID != "" {
+			conn, err = h.getConnection(c.Request.Context(), provider, modelName, "", lastFailedConnID)
+		} else {
+			conn, err = h.getConnection(c.Request.Context(), provider, modelName, "")
+		}
 		if err != nil {
 			if attempt == 0 {
+				if cat := h.classifyProviderUnavailableForModel(provider, modelName); cat != connstate.ErrorUnknown {
+					msg, statusCode, errType := buildFailoverErrorResponse(string(cat), nil, modelName)
+					c.JSON(statusCode, geminiError(errType, msg))
+					return
+				}
 				c.JSON(http.StatusServiceUnavailable, geminiError("server_error", "no available connection"))
 				return
 			}
@@ -366,6 +385,7 @@ attemptLoop:
 				lastErrCategory = "client_error"
 				break attemptLoop
 			}
+			lastFailedConnID = conn.ID
 			retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, execErr, attempt, latency, false)
 			lastErr = execErr
 			lastErrCategory = cat

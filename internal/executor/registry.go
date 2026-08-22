@@ -24,6 +24,7 @@ const (
 	FormatDevinCLI        ProviderFormat = "devin-cli"
 	FormatQoder           ProviderFormat = "qoder"
 	FormatInteractions    ProviderFormat = "interactions"
+	FormatFreebuff        ProviderFormat = "freebuff"
 )
 
 // Registry maps provider prefixes to executors.
@@ -203,6 +204,10 @@ func RegisterDefaults() {
 	qoderExec := NewQoderExecutor(base, openaiExec)
 	GetRegistry().Register("qoder", FormatQoder, qoderExec)
 	translator.Register("qoder", translator.Func(providers.TranslateOpenAICompatible))
+
+	// Freebuff (Codebuff-compatible OpenAI chat endpoint)
+	GetRegistry().Register("freebuff", FormatFreebuff, NewFreebuffExecutor(base))
+	translator.Register("freebuff", translator.Func(providers.TranslateOpenAICompatible))
 }
 
 // RegisterCustomProviders registers all user-added custom providers from the DB

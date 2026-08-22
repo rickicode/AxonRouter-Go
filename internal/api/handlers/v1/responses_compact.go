@@ -77,15 +77,27 @@ func (h *Handler) ResponsesCompact(c *gin.Context) {
 	var lastConn *Connection
 	var lastErr error
 	var lastErrCategory string
+	var lastFailedConnID string
 attemptLoop:
 	for attempt := range maxAttempts {
 		if c.Request.Context().Err() != nil {
 			writeContextDone(c)
 			return
 		}
-		conn, err := h.getConnection(c.Request.Context(), provider, modelName, sessionID)
+		var conn *Connection
+		var err error
+		if lastFailedConnID != "" {
+			conn, err = h.getConnection(c.Request.Context(), provider, modelName, sessionID, lastFailedConnID)
+		} else {
+			conn, err = h.getConnection(c.Request.Context(), provider, modelName, sessionID)
+		}
 		if err != nil {
 			if attempt == 0 {
+				if cat := h.classifyProviderUnavailableForModel(provider, modelName); cat != connstate.ErrorUnknown {
+					msg, statusCode, errType := buildFailoverErrorResponse(string(cat), nil, modelName)
+					c.JSON(statusCode, gin.H{"error": gin.H{"message": msg, "type": errType}})
+					return
+				}
 				c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "no available connection", "type": "server_error"}})
 				return
 			}
@@ -131,6 +143,8 @@ attemptLoop:
 					return
 				}
 			}
+			lastFailedConnID = conn.ID
+			h.clearAffinitySession(provider, sessionID, modelName)
 			retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, false)
 			lastErr = err
 			lastErrCategory = cat

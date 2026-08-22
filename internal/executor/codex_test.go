@@ -13,6 +13,7 @@ import (
 
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
+	"github.com/rickicode/AxonRouter-Go/internal/telemetry"
 	"github.com/tidwall/gjson"
 )
 
@@ -860,5 +861,41 @@ func TestParseCodexEvent_NoTypeNoEvent(t *testing.T) {
 	}
 	if eventType != "" {
 		t.Fatalf("eventType=%q, want empty", eventType)
+	}
+}
+
+func TestCodexTelemetry_CountersIncrement(t *testing.T) {
+	telemetry.DefaultCodexCounters.RequestsTotal.Store(0)
+	telemetry.DefaultCodexCounters.IncompleteStreamsTotal.Store(0)
+	telemetry.DefaultCodexCounters.ReplayHitsTotal.Store(0)
+	telemetry.DefaultCodexCounters.IdentityConfuseTotal.Store(0)
+
+	cache.ClearCodexReasoningReplayCache()
+	connID := "telemetry-conn"
+	model := "gpt-5.4"
+
+	// Seed the cache using the *confused* session key so codexInjectReasoningReplay reports a replay hit.
+	confused := codexIdentityConfuseUUID(connID, "prompt-cache", "k")
+	item := []byte(`{"type":"reasoning","encrypted_content":"telemetry-reasoning"}`)
+	_ = cache.CacheCodexReasoningReplayItems(context.Background(), model, "prompt-cache:"+confused, [][]byte{item})
+
+	req := []byte(`{"model":"gpt-5.4","prompt_cache_key":"k","input":[{"type":"message","role":"user","content":"hi"}]}`)
+	body := codexRequestBody(req)
+	body = ensureImageGenerationTool(body, model)
+	body, _ = applyCodexIdentityConfuseBody(body, connID)
+	sessionKey := codexReasoningReplaySessionKey(body, nil)
+	if sessionKey == "" {
+		t.Fatalf("expected non-empty session key, got %q", sessionKey)
+	}
+	body, injected := codexInjectReasoningReplay(body, sessionKey)
+	if !injected {
+		t.Fatalf("expected replay injection so telemetry can count a hit; sessionKey=%s body=%s", sessionKey, string(body))
+	}
+
+	if telemetry.DefaultCodexCounters.IdentityConfuseTotal.Load() == 0 {
+		t.Error("expected IdentityConfuseTotal to increment")
+	}
+	if telemetry.DefaultCodexCounters.ReplayHitsTotal.Load() == 0 {
+		t.Error("expected ReplayHitsTotal to increment")
 	}
 }

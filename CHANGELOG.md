@@ -1,3 +1,9 @@
+- **Codex parity hardening (HIJ-377)** — improved stability, observability, and parity vs. CLIProxyAPI:
+  - Codex Live call sessions (`internal/api/handlers/v1/codexlive.go`) are now mirrored to a durable SQLite table (`codex_live_sessions`) when a database is attached, surviving process restarts with an explicit one-hour TTL and background expiry cleanup on store creation.
+  - The Codex reasoning replay cache (`internal/cache/codex_reasoning.go`) now enforces a global max-byte cap (default 128 MB, override via `AXON_CODEX_REASONING_MAX_BYTES`) and evicts oldest entries by total size in addition to the existing entry-count limit.
+  - Codex request telemetry is now collected in `internal/telemetry/codex.go` and exposed through the existing admin `/metrics` endpoint: `codex_requests_total`, `codex_incomplete_streams_total`, `codex_replay_hits_total`, and `codex_identity_confuse_total`.
+  - The Codex OAuth client ID (`internal/auth/codex/oauth.go`) can be overridden via `AXON_CODEX_OAUTH_CLIENT_ID`; the hardcoded value remains the default.
+  - Existing hardening verified/enforced: header blocklist strips `Cookie`, `Referer`, duplicate `Authorization`, and `X-Forwarded-*` before forwarding upstream; `ResponsesCompact` uses a bounded context timeout via `CODEX_RESPONSES_COMPACT_TIMEOUT_MS`; SSE parsing falls back to the `event:` line when JSON lacks `type`; and reasoning-replay session keys are derived after identity confusion so multi-turn replay stays consistent. Added/updated unit tests for each behavior.
 # Changelog
 
 All notable changes to AxonRouter-Go will be documented in this file.
@@ -6,6 +12,67 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Fixed
+- **Periodic health check with credentials** — `TestPool` (used by background health checker and single-pool test button) now also reads `proxy_username` and `proxy_password` from DB to reconstruct the full URL with auth before testing.
+
+## [0.3.30] - 2026-08-03
+
+### Fixed
+- **Proxy health check with credentials** — bulk import and single add now correctly include proxy credentials when testing proxy health. Previously, authenticated proxies were tested without credentials, causing them to fail even though they work fine.
+- **Periodic health check with credentials** — background health checker now also reads `proxy_username` and `proxy_password` from DB to reconstruct the full URL with auth before testing.
+
+## [0.3.29] - 2026-08-03
+
+### Fixed
+- **Developer role normalization in OpenAI executor** — `developer` role messages are now converted to `system` at the executor level using efficient gjson/sjson iteration, ensuring compatibility with non-OpenAI providers (DeepSeek, Groq, etc.) even for the non-streaming `Execute` path.
+
+## [0.3.28] - 2026-08-03
+
+### Changed
+- **Faster model sync** — reduced provider model sync interval from 24 hours to 1 hour for more frequent updates, especially for OpenCode providers whose models change frequently.
+
+### Added
+- **Manual model sync button** — added a "Sync models" button to the Providers page that triggers an immediate sync of all provider models from upstream endpoints. Shows a loading spinner and success/error toast notifications.
+
+
+
+## [0.3.27] - 2026-08-03
+
+### Fixed
+- **Developer role compatibility** — auto-convert `developer` role to `system` for non-OpenAI providers (DeepSeek, Groq, etc.) since `developer` is OpenAI's Responses-API rename that other providers reject.
+- **Proxy pool cascade delete** — connections are now hard-deleted when their proxy pool is removed, instead of just being soft-deleted.
+- **Bulk import list refresh** — proxy pool list now refreshes properly after bulk import; skipped items (duplicates/unhealthy) no longer counted as errors.
+- **Default noProxy** — both single and bulk proxy add now default to `localhost,127.0.0.1`.
+- **CI build order** — frontend is now built before lint to fix `go embed` check failure.
+
+## [0.3.26] - 2026-08-03
+
+### Added
+- **OpenCode auto-sync** — `oc-zen` and `oc-go` providers now automatically sync their model lists from upstream endpoints every 24 hours, matching the existing behavior of the `oc` (free) provider. Previously these providers only used the static embedded model list.
+
+### Fixed
+- **Failover routing hardening** — all request paths (chat, messages, responses, responses/compact, gemini) now exclude the connection that just failed from the next `getConnection` attempt, preventing the same exhausted account from being retried while the eligibility snapshot rebuilds. Affinity routing also honors this exclusion and the affinity cache is cleared on failover. Provider-unavailability classification is now model-aware so model-scope exhaustion surfaces a 429 instead of a generic 503. The emergency fallback also skips `quota_exhausted` connections whose daily cooldown has no benefit from retrying.
+
+## [0.3.25] - 2026-07-29
+
+### Fixed
+- **Cloudflare free-tier daily quota exhaustion** — Cloudflare accounts that hit the daily free neuron allocation are now locked out of the routing pool until the next UTC midnight instead of the generic 30-minute quota cooldown. Also fixes `quota_exhausted` in-memory state to use `SetQuotaCooldown`, preventing free-tier accounts from being auto-disabled after repeated daily quota hits.
+
+## [0.3.24] - 2026-07-28
+
+### Fixed
+- **Version check rate limit** — changed version check URL from `api.github.com` to `raw.githubusercontent.com` to avoid GitHub API rate limit (60/hr unauthenticated). Resolves "Check update failed: github api returned status 403" error.
+
+## [0.3.23] - 2026-07-28
+
+### Fixed
+- **Cloudflare bulk add validation** — frontend and backend now validate the `email|accountId|apiToken` pipe format for Cloudflare bulk imports. Frontend checks: exactly 3 parts, email contains `@`, accountId is 32-char hex. Backend checks: accountId is 32-char hex (both single and bulk add). Invalid lines are rejected with clear error messages instead of silently creating broken connections.
+
+### Fixed
+- **Cloudflare connection data cleanup** — swapped `api_key` and `accountId` fields for 6380 Cloudflare connections where the values were reversed during bulk import (accountId contained `cfat_` API tokens, api_key contained hex account IDs). AxonRouter restarted to re-seed connstate from corrected DB.
+
+## [0.3.22] - 2026-07-28
 
 ### Added
 - **Kiro live catalog consolidation** — live model catalog fetching, caching, fallback, and variant expansion now live alongside the static catalog in `internal/provider/kiro/catalog.go`, matching the 9Router `kiroModels.js` behavior previously split across `catalog.go` and `models.go`. The helper file `models.go` was removed; live fetch helpers moved into `catalog.go` with the same 5-minute TTL cache and static-catalog fallback. Upstream models are expanded into base / `-thinking` / `-agentic` / `-thinking-agentic` variants with human-readable display names, `rateMultiplier`, and `contextLength`. Curated metadata (Vision/Reasoning/Search capabilities, content strip lists, descriptions) is merged on top of live responses so known models keep their flags. Adds regression tests in `internal/provider/kiro/catalog_test.go` and `models_test.go` for fetch success + cache hit, fallback on failure, and variant expansion.
@@ -22,6 +89,9 @@ Each provider is seeded in `provider_types` with format `openai`, appropriate ba
 ### Added
 - **MCP stdio-SSE bridge for local tool servers** — new `internal/mcp` package registers local MCP servers in an SQLite `mcp_servers` table and exposes them to remote clients via a stdio-SSE bridge. Admin CRUD endpoints (`GET/POST/PATCH/DELETE /api/admin/mcp`, `POST /api/admin/mcp/:id/test`, `GET /api/admin/mcp/:id/tools`) are wired for both session JWT and master API key auth. The SSE endpoint `GET /api/admin/mcp/:id/sse` spawns a per-session subprocess and implements the Anthropic MCP SSE contract (`endpoint` event + `message` events); client messages are delivered via `POST /api/admin/mcp/:id/message?sessionId=xxx`. Subprocesses are reaped by max idle time or disconnect, with restart policies (`always`, `on-failure`, `never`) and a configurable max concurrent clients cap. Command/args are validated to block shell metacharacters; stderr is logged only and never forwarded to clients. A new dashboard page at `/mcp` lists servers, supports add/edit/delete, tests connections, discovers tools, and copies the SSE URL. Added `internal/mcp/mcp_test.go` with CRUD, validation, parsing, and subprocess integration tests. Updated `openspec/specs/api/spec.md` and added `docs/mcp-setup.md`.
 - **Codex `image_generation` tool default model** — the auto-injected `image_generation` tool now includes a `model` field that defaults to `gpt-image-2`. The default can be overridden globally via `AXON_CODEX_IMAGE_GENERATION_MODEL` or per-connection via provider-specific data `imageGenerationModel`. Injection remains idempotent: an existing `image_generation` tool is never duplicated. Added unit tests for default injection, appending, deduplication, and configuration override in `internal/executor/codex_test.go`.
+
+- **Provider detail connection-status counters** — the provider detail page now displays fixed status counts next to the Connections heading: total, ready, rate-limited, quota-exhausted, and disabled. Counts are sourced from the provider's existing `status_counts` payload, making it easy to see why a provider's connection pool appears smaller than expected.
+- **Connection pagination limits** — provider detail connections now support 200 and 500 items per page (up from the previous 100 maximum). The backend list endpoint accepts per-page values up to 500 and the "Load all" path fetches 500-row pages for faster bulk exports.
 
 ## [0.3.21] - 2026-07-27
 ### Added

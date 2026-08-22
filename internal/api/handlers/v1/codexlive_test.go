@@ -18,6 +18,7 @@ import (
 func setupCodexLiveTest(t *testing.T) *Handler {
 	t.Helper()
 	h := newTestHandler(t)
+	h.codexLiveSessions = newCodexLiveSessionStore().withDB(h.db)
 	now := time.Now().Unix()
 	if _, err := h.db.Exec(`INSERT OR IGNORE INTO provider_types (id, display_name, format, base_url, created_at) VALUES ('cx','Codex','openai-responses','https://chatgpt.com/backend-api/codex',?)`, now); err != nil {
 		t.Fatalf("seed provider_type: %v", err)
@@ -311,4 +312,54 @@ func (t *codexLiveTestTransport) RoundTrip(req *http.Request) (*http.Response, e
 	req.URL.Scheme = "http"
 	req.URL.Host = strings.TrimPrefix(t.base, "http://")
 	return http.DefaultTransport.RoundTrip(req)
+}
+
+func TestCodexLiveSessionStore_PersistenceSurvivesRestart(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := setupCodexLiveTest(t)
+
+	// Simulate storing a live session as CodexLive does.
+	h.codexLiveSessions.put("call_persist", "cx-live-conn", "live-access-token", "cx/gpt-live-1-codex")
+
+	// Create a brand-new store instance attached to the same DB. This mirrors
+	// an AxonRouter process restart: the in-memory map is empty on creation but
+	// durable rows are loaded.
+	newStore := newCodexLiveSessionStore().withDB(h.db)
+	sess, ok := newStore.get("call_persist")
+	if !ok {
+		t.Fatal("expected persisted session to be found after store recreation")
+	}
+	if sess.connID != "cx-live-conn" {
+		t.Errorf("connID = %q, want cx-live-conn", sess.connID)
+	}
+	if sess.connToken != "live-access-token" {
+		t.Errorf("connToken = %q, want live-access-token", sess.connToken)
+	}
+	if sess.model != "cx/gpt-live-1-codex" {
+		t.Errorf("model = %q, want cx/gpt-live-1-codex", sess.model)
+	}
+
+	// Deletion must also remove the durable row.
+	newStore.delete("call_persist")
+	if _, ok := newStore.get("call_persist"); ok {
+		t.Fatal("expected session to be deleted from persistence")
+	}
+}
+
+func TestCodexLiveSessionStore_ExpiredSessionsArePurged(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := setupCodexLiveTest(t)
+
+	// Insert a row that expired one second ago.
+	now := time.Now().Unix()
+	expires := now - 1
+	if _, err := h.db.Exec(`INSERT INTO codex_live_sessions (call_id, conn_id, conn_token, model, created_at, expires_at)
+		VALUES (?, 'conn', 'token', 'model', ?, ?)`, "call-expired", now-2, expires); err != nil {
+		t.Fatalf("insert expired session: %v", err)
+	}
+
+	newStore := newCodexLiveSessionStore().withDB(h.db)
+	if _, ok := newStore.get("call-expired"); ok {
+		t.Fatal("expected expired session to be purged")
+	}
 }

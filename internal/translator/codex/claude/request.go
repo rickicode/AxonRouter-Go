@@ -6,7 +6,10 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/rickicode/AxonRouter-Go/internal/headroom"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/common"
 	"github.com/tidwall/gjson"
+
 	"github.com/tidwall/sjson"
 )
 
@@ -15,6 +18,7 @@ import (
 // message content, top-level reasoning items, function calls/outputs, web
 // search tools, and reasoning effort→thinking budget mapping.
 func convertCodexRequestToClaude(modelName string, body []byte, stream bool) []byte {
+	body = common.CompressToolBlocks(body, headroom.GlobalToolCompressor(), headroom.DefaultToolThreshold)
 	root := gjson.ParseBytes(body)
 
 	out := []byte(`{"messages":[]}`)

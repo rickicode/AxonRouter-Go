@@ -60,13 +60,13 @@ let poolUrl = $state('');
 let poolUsername = $state('');
 let poolPassword = $state('');
 let poolType = $state('http');
-let poolNoProxy = $state('');
+let poolNoProxy = $state('localhost,127.0.0.1');
 let createPoolLoading = $state(false);
 
 // Bulk import form
 let bulkText = $state('');
 let bulkType = $state('http');
-let bulkNoProxy = $state('');
+let bulkNoProxy = $state('localhost,127.0.0.1');
 let bulkActive = $state(true);
 let bulkLoading = $state(false);
 // .txt upload + chunked send (keeps RAM bounded, mirrors provider bulk import).
@@ -159,7 +159,9 @@ async function handleBulkImportChunked() {
         for (const d of res.details ?? []) {
           if (d.status === 'created') {
             bulkCheckSuccess++;
-          } else if (d.status === 'error') {
+          } else if (d.status === 'skipped') {
+            // Skipped items (duplicates, unhealthy) are counted but not errors
+          } else {
             bulkCheckFailed++;
             bulkCheckErrors.push({ index: d.index, url: d.url ?? '', reason: d.reason ?? '' });
           }
@@ -184,6 +186,8 @@ async function handleBulkImportChunked() {
       uploadedPoolFile = '';
       poolParseWarnings = [];
       poolPage = 1;
+      // Small delay to ensure DB writes are committed before refreshing
+      await new Promise(r => setTimeout(r, 200));
       await loadAll(true);
       if (bulkCheckFailed > 0) {
         toast.error('Import finished with failures', { description: `${bulkCheckSuccess} added, ${bulkCheckFailed} failed, ${bulkCheckProcessed} processed` });
@@ -357,7 +361,7 @@ async function handleCreatePool() {
 		await proxyPoolsApi.create(payload);
 		toast.success('Proxy pool created');
 		showAddPool = false;
-		poolName = ''; poolUrl = ''; poolUsername = ''; poolPassword = ''; poolNoProxy = '';
+		poolName = ''; poolUrl = ''; poolUsername = ''; poolPassword = ''; poolNoProxy = 'localhost,127.0.0.1';
 		poolPage = 1;
 		await loadAll(true);
 	} catch (err) { toast.error(err instanceof Error ? err.message : 'Unknown error'); }
@@ -370,11 +374,11 @@ function resetAddPoolModal(tab: 'single' | 'bulk') {
   poolUrl = '';
   poolUsername = '';
   poolPassword = '';
-  poolNoProxy = '';
+  poolNoProxy = 'localhost,127.0.0.1';
   poolType = 'http';
   bulkText = '';
   bulkType = 'http';
-  bulkNoProxy = '';
+  bulkNoProxy = 'localhost,127.0.0.1';
   bulkActive = true;
 }
 
@@ -472,8 +476,12 @@ async function handleEditPool() {
 		else if (parsed.username) payload.proxyUsername = parsed.username;
 		if (editPoolPassword.trim()) payload.proxyPassword = editPoolPassword.trim();
 		else if (parsed.password) payload.proxyPassword = parsed.password;
-		await proxyPoolsApi.update(editPoolId, payload);
-		toast.success('Proxy pool updated');
+		const res = await proxyPoolsApi.update(editPoolId, payload);
+		if (res.data?.testStatus === 'error') {
+			toast.warning(`Pool saved — proxy check failed: ${res.data.lastError || 'unreachable'}`);
+		} else {
+			toast.success('Proxy pool updated');
+		}
 		showEditPool = false;
 		await loadAll(true);
 	} catch (err) { toast.error('Update failed: ' + (err instanceof Error ? err.message : 'Unknown')); }
@@ -1047,7 +1055,7 @@ async function handleBulkImport() {
   </Tabs.Content>
 
       <Tabs.Content value="assignments">
-{#if providers.some(p => p.id !== 'oc') && pools.length > 0}
+{#if providers.some(p => p.id !== 'oc') && allPools.length > 0}
         <Card class="shadow-card overflow-hidden p-0">
           <div class="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/50">
             <p class="text-caption-mono text-muted-foreground uppercase font-semibold">Provider → Proxy Assignment</p>
@@ -1086,11 +1094,11 @@ async function handleBulkImport() {
                   <td class="px-4 py-2.5">
                     <Select.Root type="single" value={proxyDefaults[prov.id]?.proxyPoolId ?? ''} onValueChange={(v: string) => setProxyDefault(prov.id, 'proxyPoolId', v ?? '')}>
                       <Select.Trigger class="h-8 w-full max-w-[200px] text-body-sm rounded-sm">
-                        {pools.find(p => p.id === (proxyDefaults[prov.id]?.proxyPoolId ?? ''))?.name ?? 'None'}
+                        {allPools.find(p => p.id === (proxyDefaults[prov.id]?.proxyPoolId ?? ''))?.name ?? 'None'}
                       </Select.Trigger>
                       <Select.Content>
                         <Select.Item value="" class="text-body-sm">None</Select.Item>
-                        {#each pools as pool}
+                        {#each allPools as pool}
                           <Select.Item value={pool.id} class="text-body-sm">{pool.name}</Select.Item>
                         {/each}
                       </Select.Content>

@@ -104,6 +104,14 @@ func (sc *SessionCache) Put(key, connID string) {
 	}
 }
 
+// Delete removes a connection ID from the cache immediately.
+func (sc *SessionCache) Delete(key string) {
+	sc.mu.Lock()
+	delete(sc.entries, key)
+	sc.mu.Unlock()
+}
+
+
 // SessionKey returns the composite key used by SessionCache.
 func SessionKey(provider, sessionID, modelID string) string {
 	return provider + "::" + sessionID + "::" + modelID

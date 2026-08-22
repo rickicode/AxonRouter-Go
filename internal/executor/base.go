@@ -428,6 +428,14 @@ func ProxyPoolIDFromContext(ctx context.Context) string {
 	return ""
 }
 
+// ProxyConfigFromContext returns the proxy config attached to ctx, if any.
+// Executors use it to derive per-proxy state keys (e.g. Freebuff pool-limit
+// cooldowns scoped to the egress path).
+func ProxyConfigFromContext(ctx context.Context) (ProxyConfig, bool) {
+	cfg, ok := ctx.Value(proxyContextKey{}).(ProxyConfig)
+	return cfg, ok
+}
+
 func ContextWithProxy(ctx context.Context, cfg ProxyConfig) context.Context {
 	return context.WithValue(ctx, proxyContextKey{}, cfg)
 }
@@ -682,8 +690,17 @@ func (b *BaseExecutor) selectClient(ctx context.Context, rawURL string, headers 
 		return b.defaultClient(stream), targetURL, nil
 	}
 
-	// No proxy configured
+	// No proxy configured. StrictProxy means "never go direct": a request
+	// marked strict with no usable egress (empty ProxyURL / RelayURL) must
+	// fail hard instead of leaking from the gateway's real IP — matching the
+	// 9router reference (proxyFetch.js throws when strictProxy is true and the
+	// proxy is unavailable). The v1 handler force-sets StrictProxy on the
+	// direct-fallback candidate for Freebuff, so an all-pools-error scenario
+	// surfaces here as an error rather than a direct session claim.
 	if cfg.ProxyURL == "" {
+		if cfg.StrictProxy {
+			return nil, targetURL, fmt.Errorf("strict proxy required but no proxy configured")
+		}
 		return b.defaultClient(stream), targetURL, nil
 	}
 
@@ -749,9 +766,12 @@ func (b *BaseExecutor) DoRequest(ctx context.Context, method, rawURL string, hea
 }
 
 // doRequestOnce performs a single non-streaming attempt using the proxy already
-// attached to ctx.
+// attached to ctx. Non-streaming requests must use the timeout-bearing client
+// (b.Client / proxyClient with b.Timeout); using the streaming client here
+// would leave non-streaming calls with no overall deadline when the handler
+// does not attach one, letting a hung proxy/upstream hang the request forever.
 func (b *BaseExecutor) doRequestOnce(ctx context.Context, method, rawURL string, headers map[string]string, body []byte) (*Response, error) {
-	client, targetURL, err := b.clientForContextStream(ctx, rawURL, headers)
+	client, targetURL, err := b.clientForContext(ctx, rawURL, headers)
 	if err != nil {
 		return nil, err
 	}

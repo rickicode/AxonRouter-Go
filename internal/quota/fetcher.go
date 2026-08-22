@@ -80,6 +80,7 @@ var knownProviders = map[string]providerMeta{
 	"grok-cli":  {DisplayName: "Grok CLI (Grok Build)", Color: "#000000", IconFile: "grok-cli.png"},
 	"codebuddy": {DisplayName: "CodeBuddy", Color: "#5b21b6", IconFile: "codebuddy.png"},
 	"qoder":     {DisplayName: "Qoder", Color: "#000000", IconFile: "qoder.svg"},
+	"freebuff":  {DisplayName: "Freebuff", Color: "#8b5cf6", IconFile: ""},
 }
 
 // ProviderMeta returns display metadata for a provider type, if known.
@@ -492,6 +493,8 @@ func fetchConnectionQuota(c connRow, providerID string, db *sql.DB) ConnectionQu
 				r.quotas, r.plan, r.msg, r.err = fetchKiroQuota(tok, psd)
 			case "grok-cli":
 				r.quotas, r.plan, r.err = fetchGrokCliQuota(tok, psd)
+			case "freebuff":
+				r.quotas, r.plan, r.err = fetchFreebuffQuota(tok)
 			case "copilot":
 				// The /user endpoint requires the GitHub OAuth access token, not the
 				// short-lived Copilot token. See OmniRoute open-sse/services/usage.ts:643.

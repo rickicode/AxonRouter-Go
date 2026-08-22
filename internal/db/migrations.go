@@ -202,6 +202,12 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 		return err
 	}
 
+	// Backfill legacy connection statuses into the simplified model.
+	// cooldown/degraded become ready while preserving cooldown_until so existing
+	// cooldown rows recover automatically when the horizon expires.
+	if _, err := db.Exec(`UPDATE connections SET status='ready' WHERE status IN ('cooldown','degraded')`); err != nil {
+		return err
+	}
 	// Backfill status_code for legacy request_logs rows that only recorded the
 	// error message. This is idempotent: rows with a non-zero status_code keep it.
 
@@ -268,6 +274,22 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 	}
 
 	if err := migrateRequestLogStatusCodes(db); err != nil {
+		return err
+	}
+
+	// Persistent Codex Live/realtime call session storage.
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS codex_live_sessions (
+			call_id TEXT PRIMARY KEY,
+			conn_id TEXT NOT NULL,
+			conn_token TEXT NOT NULL,
+			model TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_codex_live_sessions_expires
+			ON codex_live_sessions(expires_at);
+	`); err != nil {
 		return err
 	}
 
@@ -339,10 +361,11 @@ CREATE TABLE IF NOT EXISTS rotation_state (
 
 		{"codebuddy", "CodeBuddy", "openai", "https://www.codebuddy.ai/v2/chat/completions", "oauth", []string{"llm"}},
 		{"cursor", "Cursor IDE", "openai", "https://api2.cursor.sh", "oauth", []string{"llm"}},
+		{"freebuff", "Freebuff", "freebuff", "https://www.codebuff.com/api/v1/chat/completions", "oauth", []string{"llm"}},
 
 		{"vertex", "Google Vertex AI", "openai", "https://aiplatform.googleapis.com/v1/projects/{projectId}/locations/{location}/endpoints/openapi", "service-account", []string{"llm"}},
 		{"bedrock", "Amazon Bedrock Mantle", "openai", "https://bedrock-mantle.{region}.api.aws/v1", "apikey", []string{"llm"}},
-	{"commandcode", "CommandCode AI", "openai", "https://api.commandcode.ai", "apikey", []string{"llm"}},
+		{"commandcode", "CommandCode AI", "openai", "https://api.commandcode.ai", "apikey", []string{"llm"}},
 	}
 	for _, p := range providers {
 		serviceKindsJSON, _ := json.Marshal(p.ServiceKinds)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/rickicode/AxonRouter-Go/internal/headroom"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/common"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -12,7 +13,8 @@ import (
 // ConvertOpenAIResponsesRequestToOpenAI transforms an OpenAI Responses API
 // request into an OpenAI Chat Completions request body.
 func ConvertOpenAIResponsesRequestToOpenAI(modelName string, inputRawJSON []byte, stream bool) []byte {
-	rawJSON := inputRawJSON
+	rawJSON := common.CompressToolBlocks(inputRawJSON, headroom.GlobalToolCompressor(), headroom.DefaultToolThreshold)
+
 	out := []byte(`{"model":"","messages":[],"stream":false}`)
 
 	root := gjson.ParseBytes(rawJSON)

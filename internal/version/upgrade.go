@@ -1,7 +1,6 @@
 package version
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,7 +15,9 @@ const (
 	maxResponseBytes = 1 << 20 // 1 MiB
 )
 
-var githubLatestURL = "https://api.github.com/repos/rickicode/AxonRouter-Go/releases/latest"
+// Use raw.githubusercontent.com to avoid GitHub API rate limits (60/hr unauthenticated).
+// raw.githubusercontent.com has no rate limit for public repos.
+var githubLatestURL = "https://raw.githubusercontent.com/rickicode/AxonRouter-Go/master/internal/version/VERSION"
 var rawChangelogURL = "https://raw.githubusercontent.com/rickicode/AxonRouter-Go/master/CHANGELOG.md"
 
 // userAgent is sent with all outbound version/GitHub requests.
@@ -50,7 +51,6 @@ func checkLatest(client *http.Client, url string) (ReleaseInfo, error) {
 	if err != nil {
 		return ReleaseInfo{}, err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := client.Do(req)
@@ -60,19 +60,23 @@ func checkLatest(client *http.Client, url string) (ReleaseInfo, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return ReleaseInfo{}, fmt.Errorf("github api returned status %d", resp.StatusCode)
+		return ReleaseInfo{}, fmt.Errorf("github returned status %d", resp.StatusCode)
 	}
 
-	var rr releaseResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&rr); err != nil {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	if err != nil {
 		return ReleaseInfo{}, err
 	}
+	version := strings.TrimSpace(string(body))
+	if version == "" {
+		return ReleaseInfo{}, fmt.Errorf("empty version from %s", url)
+	}
 
+	tag := "v" + version
 	info := ReleaseInfo{
-		Version:     strings.TrimPrefix(rr.Tag, "v"),
-		Tag:         rr.Tag,
-		PublishedAt: rr.PublishedAt,
-		HTMLURL:     rr.HTMLURL,
+		Version: version,
+		Tag:     tag,
+		HTMLURL: "https://github.com/rickicode/AxonRouter-Go/releases/tag/" + tag,
 	}
 	return info, nil
 }

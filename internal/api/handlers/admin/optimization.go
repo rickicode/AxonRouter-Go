@@ -8,9 +8,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/compression"
+	"github.com/rickicode/AxonRouter-Go/internal/headroom"
 )
 
-// OptimizationHandler handles compression and cache admin endpoints.
+// OptimizationHandler handles compression, cache, and headroom admin endpoints.
 type OptimizationHandler struct {
 	db    *sql.DB
 	cache cache.CacheStorage
@@ -33,9 +34,9 @@ func (h *OptimizationHandler) getSetting(key, def string) string {
 func (h *OptimizationHandler) setSetting(key, value string) error {
 	now := time.Now().Unix()
 	_, err := h.db.Exec(`
-		INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
-		ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = ?
-	`, key, value, now, value, now)
+INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = ?
+`, key, value, now, value, now)
 	return err
 }
 
@@ -64,31 +65,26 @@ func (h *OptimizationHandler) UpdateCompressionSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
 	mode := req.Mode
 	if mode == "" {
 		mode = "lite"
 	}
-
 	_ = h.setSetting("compression_mode", mode)
 	_ = h.setSetting("compression_lite_collapse", boolStr(req.Lite.CollapseWhitespace))
 	_ = h.setSetting("compression_lite_image_urls", boolStr(req.Lite.ReplaceImageUrls))
 	_ = h.setSetting("compression_lite_dedup", boolStr(req.Lite.DedupSystemPrompt))
 	_ = h.setSetting("compression_lite_redundant", boolStr(req.Lite.RemoveRedundantContent))
-
 	outputLevel := req.Output.Level
 	if outputLevel == "" {
 		outputLevel = "caveman"
 	}
 	_ = h.setSetting("compression_output_enabled", boolStr(req.Output.Enabled))
 	_ = h.setSetting("compression_output_level", outputLevel)
-
 	// NOTE: Changing compression settings invalidates any exact-cache entries
 	// that were computed with the previous configuration.
 	if h.cache != nil {
 		h.cache.Flush()
 	}
-
 	c.JSON(http.StatusOK, h.compressionSettingsMap(mode))
 }
 
@@ -109,7 +105,7 @@ func (h *OptimizationHandler) FlushCache(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"flushed": true})
 }
 
-// CompressionMetrics returns aggregate compression statistics per mode and totals.
+// GetCompressionMetrics returns aggregate compression statistics per mode and totals.
 func (h *OptimizationHandler) GetCompressionMetrics(c *gin.Context) {
 	rows, err := h.db.Query(`SELECT mode, requests, original_tokens, compressed_tokens, updated_at FROM compression_metrics`)
 	if err != nil {
@@ -117,7 +113,6 @@ func (h *OptimizationHandler) GetCompressionMetrics(c *gin.Context) {
 		return
 	}
 	defer rows.Close()
-
 	type modeStats struct {
 		Mode             string  `json:"mode"`
 		Requests         int64   `json:"requests"`
@@ -127,7 +122,6 @@ func (h *OptimizationHandler) GetCompressionMetrics(c *gin.Context) {
 		SavingsPercent   float64 `json:"savings_percent"`
 		UpdatedAt        int64   `json:"updated_at"`
 	}
-
 	var modes []modeStats
 	var totalRequests, totalOriginal, totalCompressed int64
 	for rows.Next() {
@@ -149,7 +143,6 @@ func (h *OptimizationHandler) GetCompressionMetrics(c *gin.Context) {
 		totalOriginal += m.OriginalTokens
 		totalCompressed += m.CompressedTokens
 	}
-
 	totalSaved := totalOriginal - totalCompressed
 	if totalSaved < 0 {
 		totalSaved = 0
@@ -158,14 +151,38 @@ func (h *OptimizationHandler) GetCompressionMetrics(c *gin.Context) {
 	if totalOriginal > 0 {
 		totalSavings = (1.0 - float64(totalCompressed)/float64(totalOriginal)) * 100
 	}
-
 	c.JSON(http.StatusOK, gin.H{
-		"total_requests":       totalRequests,
-		"original_tokens":      totalOriginal,
-		"compressed_tokens":    totalCompressed,
-		"tokens_saved":         totalSaved,
-		"savings_percent":      totalSavings,
-		"modes":                modes,
+		"total_requests":    totalRequests,
+		"original_tokens":   totalOriginal,
+		"compressed_tokens": totalCompressed,
+		"tokens_saved":      totalSaved,
+		"savings_percent":   totalSavings,
+		"modes":             modes,
+	})
+}
+
+// GetHeadroomStatus returns Headroom configuration and runtime counters.
+func (h *OptimizationHandler) GetHeadroomStatus(c *gin.Context) {
+	enabled := parseBool(h.getSetting("headroom_enabled", "false"))
+	endpoint := h.getSetting("headroom_endpoint", "")
+	if endpoint == "" {
+		endpoint = headroom.DefaultEndpoint
+	}
+	counters := headroom.LoadCounters()
+	running := "disabled"
+	if enabled {
+		running = counters.Running.String()
+		if running == "disabled" {
+			running = "idle"
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"enabled":              enabled,
+		"endpoint":             endpoint,
+		"running":              running,
+		"headroom_total":       counters.Total,
+		"headroom_bytes_saved": counters.BytesSaved,
+		"headroom_errors":      counters.Errors,
 	})
 }
 
@@ -179,20 +196,16 @@ func (h *OptimizationHandler) PreviewCompression(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
 	mode := compression.CompressionMode(req.Mode)
 	if mode == "" {
 		mode = compression.ModeStandard
 	}
-
 	cfg := compression.Strategy{
 		Mode:   mode,
 		Lite:   h.liteConfigFromDB(),
 		Output: h.outputConfigFromDB(),
 	}
-
 	compressed, stats, _ := compression.Apply(cfg, []byte(req.Body))
-
 	c.JSON(http.StatusOK, gin.H{
 		"compressed":        string(compressed),
 		"original_tokens":   stats.OriginalTokens,

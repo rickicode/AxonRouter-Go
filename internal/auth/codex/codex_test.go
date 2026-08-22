@@ -345,7 +345,7 @@ func TestExtractAccountIDFromPSD(t *testing.T) {
 
 func testIDTokenWithAccountID(accountID string) string {
 	claims, _ := json.Marshal(map[string]any{
-		"sub": accountID,
+		"sub":                         accountID,
 		"https://api.openai.com/auth": map[string]string{"chatgpt_account_id": accountID},
 	})
 	payload := base64.RawURLEncoding.EncodeToString(claims)
@@ -373,3 +373,41 @@ func TestDeviceFlow_PollExpires(t *testing.T) {
 	}
 }
 
+func TestOAuthClientID_EnvironmentOverride(t *testing.T) {
+	t.Setenv("AXON_CODEX_OAUTH_CLIENT_ID", "custom_client_id")
+	if got := codexOAuthClientID(); got != "custom_client_id" {
+		t.Errorf("codexOAuthClientID() = %q, want custom_client_id", got)
+	}
+}
+
+func TestOAuthClientID_Default(t *testing.T) {
+	t.Setenv("AXON_CODEX_OAUTH_CLIENT_ID", "")
+	if got := codexOAuthClientID(); got != ClientID {
+		t.Errorf("codexOAuthClientID() = %q, want default %q", got, ClientID)
+	}
+}
+
+func TestDeviceFlow_ClientID_HonorsEnvironment(t *testing.T) {
+	var gotClientID string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/usercode" {
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode body: %v", err)
+			}
+			gotClientID = body["client_id"]
+		}
+		w.Write([]byte(`{"device_auth_id":"daid","user_code":"UC-1234","verification_uri":"http://verify","interval":5}`))
+	}))
+	defer ts.Close()
+
+	t.Setenv("AXON_CODEX_OAUTH_CLIENT_ID", "custom_device_client_id")
+	svc := NewOAuthService(ts.Client())
+	svc.deviceUserCodeURL = ts.URL + "/usercode"
+	if _, err := svc.RequestDeviceUserCode(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotClientID != "custom_device_client_id" {
+		t.Errorf("client_id=%q, want custom_device_client_id", gotClientID)
+	}
+}

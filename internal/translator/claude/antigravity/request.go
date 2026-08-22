@@ -12,10 +12,13 @@ import (
 	"strings"
 
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
+	"github.com/rickicode/AxonRouter-Go/internal/headroom"
 	"github.com/rickicode/AxonRouter-Go/internal/signature"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/antigravity"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/antigravity/openai"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/common"
 	"github.com/tidwall/gjson"
+
 	"github.com/tidwall/sjson"
 )
 
@@ -26,7 +29,8 @@ var functionNameSanitizer = regexp.MustCompile(`[^a-zA-Z0-9_.:-]`)
 // convertClaudeRequestToAntigravity transforms a Claude Messages API request into
 // Antigravity's Gemini-compatible envelope format.
 func convertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ bool) []byte {
-	rawJSON := signature.StripInvalidClaudeThinkingBlocks(inputRawJSON)
+	rawJSON := common.CompressToolBlocks(inputRawJSON, headroom.GlobalToolCompressor(), headroom.DefaultToolThreshold)
+	rawJSON = signature.StripInvalidClaudeThinkingBlocks(rawJSON)
 	rawJSON = stripTrailingEmptyAssistant(rawJSON)
 
 	out := []byte(`{"model":"","request":{"contents":[]}}`)
@@ -264,16 +268,16 @@ func convertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 						out, _ = sjson.SetBytes(out, "request.toolConfig.functionCallingConfig.allowedFunctionNames", []string{mapFunctionName(functionNameMap, name)})
 					}
 				}
-				} else if tc.Type == gjson.String {
-					switch tc.String() {
-					case "auto", "":
-						mode = "AUTO"
-					case "none":
-						mode = "NONE"
-					case "any":
-						mode = "ANY"
-					}
+			} else if tc.Type == gjson.String {
+				switch tc.String() {
+				case "auto", "":
+					mode = "AUTO"
+				case "none":
+					mode = "NONE"
+				case "any":
+					mode = "ANY"
 				}
+			}
 			out, _ = sjson.SetBytes(out, "request.toolConfig.functionCallingConfig.mode", mode)
 		}
 	}

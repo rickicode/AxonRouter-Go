@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 	"sync"
 	"time"
 
@@ -84,7 +86,7 @@ var antigravityProFallbackChains = map[string][]string{
 // resolveAntigravityModelID resolves a public model ID to the upstream ID that
 // should be sent to Antigravity. It follows alias chains (e.g. preview -> public
 // -> upstream) and stops when no further mapping exists or a cycle is detected.
-func resolveAntigravityModelID(modelID string) string {
+func resolveAntigravityModelID(modelID string, stripImageSuffix bool) string {
 	seen := map[string]bool{}
 	for {
 		if seen[modelID] {
@@ -96,6 +98,11 @@ func resolveAntigravityModelID(modelID string) string {
 			return modelID
 		}
 		modelID = v
+		// Avoid following aliases that resolve to image models with suffixes
+		// when callers are resolving for the non-image path.
+		if !stripImageSuffix && isAntigravityImageModel(modelID) {
+			return modelID
+		}
 	}
 }
 
@@ -496,7 +503,7 @@ func pickAntigravityProjectID(data map[string]any) string {
 // the executor must NOT wrap it again.
 // Reference: CLIProxyAPI geminiToAntigravity + AntigravityRequestEnvelope.
 func (e *AntigravityExecutor) wrapEnvelope(ctx context.Context, req *Request) ([]byte, error) {
-	return e.buildEnvelope(ctx, req, resolveAntigravityModelID(req.Model), false)
+	return e.buildEnvelope(ctx, req, resolveAntigravityModelID(req.Model, false), false)
 }
 
 // buildEnvelope finalizes the Antigravity envelope for a specific upstream model id.
@@ -599,6 +606,24 @@ func (e *AntigravityExecutor) buildEnvelope(ctx context.Context, req *Request, u
 	if err != nil {
 		return nil, fmt.Errorf("marshal antigravity envelope: %w", err)
 	}
+
+	// Image-generation models use a flattened generateImage envelope.
+	if isAntigravityImageModel(upstreamModelID) {
+		b, _ = sjson.SetBytes(b, "requestType", "image_gen")
+		b, _ = sjson.DeleteBytes(b, "request.safetySettings")
+		strippedModel, aspectRatio := stripAntigravityImageSuffix(upstreamModelID)
+		if strippedModel != "" {
+			b, _ = sjson.SetBytes(b, "model", strippedModel)
+		}
+		if aspectRatio != "" {
+			b, _ = sjson.SetBytes(b, "request.parameters.aspectRatio", aspectRatio)
+		}
+		b, err = buildAntigravityImageEnvelope(b, upstreamModelID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return b, nil
 }
 
@@ -683,7 +708,18 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, req *Request) (*Respo
 		"X-Goog-Api-Key": req.APIKey,
 	}
 
-	baseModel := resolveAntigravityModelID(req.Model)
+	requestedModel := req.Model
+	baseModel, aspectRatio := stripAntigravityImageSuffix(requestedModel)
+	if baseModel == "" {
+		baseModel = requestedModel
+	}
+	baseModel = resolveAntigravityModelID(baseModel, true)
+
+	// Image-generation models use a dedicated generateImage path.
+	if isAntigravityImageModel(baseModel) {
+		return e.executeImageSingle(ctx, req, baseModel, aspectRatio)
+	}
+
 	candidates := antigravityProFallbackChains[baseModel]
 	if len(candidates) == 0 {
 		candidates = []string{baseModel}
@@ -744,6 +780,52 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, req *Request) (*Respo
 	return nil, lastErr
 }
 
+// executeImageSingle performs one non-streaming image-generation request.
+func (e *AntigravityExecutor) executeImageSingle(ctx context.Context, req *Request, baseModel, aspectRatio string) (*Response, error) {
+	url := antigravityImageURL(req.BaseURL)
+	headers := map[string]string{
+		"Content-Type":   "application/json",
+		"Authorization":  "Bearer " + req.AccessToken,
+		"User-Agent":     envelopeUserAgent(req),
+		"X-Goog-Api-Key": req.APIKey,
+	}
+
+	mode := antigravityCreditsMode()
+	useCredits := mode == config.AntigravityCreditsModeAlways
+
+	envelopeReq := *req
+	envelopeReq.Model = baseModel
+	if aspectRatio != "" && gjson.GetBytes(req.Body, "image_config.aspect_ratio").Type != gjson.String {
+		envelopeReq.Body, _ = sjson.SetBytes(req.Body, "image_config.aspect_ratio", aspectRatio)
+	} else {
+		envelopeReq.Body = req.Body
+	}
+
+	body, err := e.buildImageGenEnvelope(ctx, &envelopeReq, baseModel, useCredits)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, e.newAntigravityUpstreamError(req, resp)
+	}
+	resp.Body = mapAntigravityImageResponse(resp.Body)
+	return resp, nil
+}
+
+// buildImageGenEnvelope builds the flattened generateImage envelope.
+func (e *AntigravityExecutor) buildImageGenEnvelope(ctx context.Context, req *Request, upstreamModelID string, useCredits bool) ([]byte, error) {
+	b, err := e.buildEnvelope(ctx, req, upstreamModelID, useCredits)
+	if err != nil {
+		return nil, err
+	}
+	return buildAntigravityImageEnvelope(b, upstreamModelID)
+}
+
 // antigravityNonStreamURL converts the streaming/base URL into the non-streaming
 // generateContent endpoint. CLIProxyAPI uses antigravityGeneratePath for non-stream.
 func antigravityNonStreamURL(base string) string {
@@ -787,6 +869,17 @@ func (e *AntigravityExecutor) executeStreamSingle(ctx context.Context, req *Requ
 //   - always: inject enabledCreditTypes on every request
 //   - retry: inject enabledCreditTypes only after a 429 quota_exhausted
 func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, req *Request) (*StreamResult, error) {
+	requestedModel := req.Model
+	baseModel, _ := stripAntigravityImageSuffix(requestedModel)
+	if baseModel == "" {
+		baseModel = requestedModel
+	}
+	baseModel = resolveAntigravityModelID(baseModel, true)
+
+	if isAntigravityImageModel(baseModel) {
+		return nil, fmt.Errorf("image generation does not support streaming")
+	}
+
 	url := req.BaseURL
 	if url == "" {
 		url = "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
@@ -800,7 +893,6 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, req *Request) (
 		"X-Goog-Api-Key": req.APIKey,
 	}
 
-	baseModel := resolveAntigravityModelID(req.Model)
 	candidates := antigravityProFallbackChains[baseModel]
 	if len(candidates) == 0 {
 		candidates = []string{baseModel}

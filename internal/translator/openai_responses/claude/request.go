@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"strings"
 
+	"github.com/rickicode/AxonRouter-Go/internal/headroom"
 	sigcompat "github.com/rickicode/AxonRouter-Go/internal/signature"
 	"github.com/rickicode/AxonRouter-Go/internal/thinking"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/common"
@@ -40,7 +41,7 @@ func sanitizeClaudeToolID(id string) string {
 // - max_output_tokens -> max_tokens
 // - stream passthrough via parameter
 func ConvertOpenAIResponsesRequestToClaude(modelName string, inputRawJSON []byte, stream bool) []byte {
-	rawJSON := inputRawJSON
+	rawJSON := common.CompressToolBlocks(inputRawJSON, headroom.GlobalToolCompressor(), headroom.DefaultToolThreshold)
 
 	// Base Claude message payload
 	out := []byte(`{"model":"","max_tokens":32000,"messages":[]}`)

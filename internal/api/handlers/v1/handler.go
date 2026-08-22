@@ -458,7 +458,7 @@ func NewHandler(
 		exactCache:          exactCache,
 		providerCfg:         providerCfg,
 		sessions:            connstate.NewSessionCache(),
-		codexLiveSessions:   newCodexLiveSessionStore(),
+		codexLiveSessions:   newCodexLiveSessionStore().withDB(db),
 		failoverMaxAttempts: loadFailoverMaxAttempts(db),
 	}
 }
@@ -519,15 +519,84 @@ func (h *Handler) resolveExecutor(provider, model string) (executor.Executor, ex
 
 const pickMaxAttempts = 10
 
+// classifyProviderUnavailableForModel returns a specific error category when
+// every non-disabled connection for a provider is unavailable for the requested
+// model. Unlike Store.ClassifyProviderUnavailable, it also considers model-scope
+// exhaustion cache entries so a provider whose connections are all exhausted for
+// this model (but still healthy for other models) surfaces a 429 instead of a
+// generic 503.
+func (h *Handler) classifyProviderUnavailableForModel(provider, modelName string) connstate.ErrorCategory {
+	provider = provideralias.ResolveAlias(provider)
+	if h.store == nil {
+		return connstate.ErrorUnknown
+	}
+	var (
+		total   int
+		quota   int
+		auth    int
+		balance int
+	)
+	now := time.Now()
+	scope := connstate.ModelScope(provider, modelName)
+	h.store.Range(func(connID string, cs *connstate.ConnectionState) bool {
+		if cs.Prefix != provider {
+			return true
+		}
+		total++
+		switch cs.GetStatus() {
+		case connstate.StatusQuotaExhausted, connstate.StatusRateLimited:
+			quota++
+		case connstate.StatusDisabled:
+			switch cs.DisabledReason {
+			case "auth_failed", "suspended":
+				auth++
+			case "balance_empty":
+				balance++
+			}
+		default:
+			if modelName != "" && h.exhaustion.IsExhaustedScopeAt(connID, scope, now) {
+				quota++
+			}
+		}
+		return true
+	})
+	if total == 0 {
+		return connstate.ErrorUnknown
+	}
+	switch {
+	case quota == total:
+		return connstate.ErrorQuota
+	case auth == total:
+		return connstate.ErrorAuth
+	case balance == total:
+		return connstate.ErrorBalanceEmpty
+	}
+	return connstate.ErrorUnknown
+}
+
+// clearAffinitySession removes the cached affinity mapping for a
+// provider/session/model so the next request does not immediately reuse a
+// connection that just failed.
+func (h *Handler) clearAffinitySession(provider, sessionID, modelName string) {
+	if h.sessions == nil || sessionID == "" {
+		return
+	}
+	h.sessions.Delete(connstate.SessionKey(provideralias.ResolveAlias(provider), sessionID, modelName))
+}
+
 // getConnection returns an active connection for a provider using the precomputed
 // eligibility snapshot. The hot path samples up to pickMaxAttempts candidates
 // so routing cost stays bounded regardless of how many eligible connections a
 // provider has. A full scan is only used as a fallback when every sampled
 // connection fails model-level cooldown/exhaustion checks.
-func (h *Handler) getConnection(ctx context.Context, provider string, modelID string, sessionID string) (conn *Connection, err error) {
+func (h *Handler) getConnection(ctx context.Context, provider string, modelID string, sessionID string, excludeConnID ...string) (conn *Connection, err error) {
 	provider = provideralias.ResolveAlias(provider)
 	mode := h.providerCfg.RoutingMode(provider)
 	now := time.Now()
+	var excluded string
+	if len(excludeConnID) > 0 {
+		excluded = excludeConnID[0]
+	}
 
 	// Remember the selected connection for affinity routing, and try to
 	// reuse a previously cached connection for this session/model.
@@ -537,14 +606,14 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 		}
 	}()
 	if mode == providercfg.Affinity && sessionID != "" {
-		if c, ok := h.tryAffinityConnection(ctx, provider, sessionID, modelID, now, mode); ok {
+		if c, ok := h.tryAffinityConnection(ctx, provider, sessionID, modelID, now, mode, excluded); ok {
 			conn = c
 			return
 		}
 	}
 
 	conns := h.elig.GetByPrefixState(provider)
-	logging.Logger.Debug("getConnection", "provider", provider, "eligible", len(conns))
+	logging.Logger.Debug("getConnection", "provider", provider, "eligible", len(conns), "excluded", excluded)
 	if len(conns) > 0 {
 		start := h.pickStartIndex(provider, modelID, len(conns), mode)
 		bound := pickMaxAttempts
@@ -553,6 +622,9 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 		}
 		for i := 0; i < bound; i++ {
 			idx := (start + i) % len(conns)
+			if excluded != "" && conns[idx].ID == excluded {
+				continue
+			}
 			if conn, ok := h.tryPickConnection(ctx, conns[idx], provider, modelID, now, mode); ok {
 				return conn, nil
 			}
@@ -560,6 +632,9 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 
 		for i := bound; i < len(conns); i++ {
 			idx := (start + i) % len(conns)
+			if excluded != "" && conns[idx].ID == excluded {
+				continue
+			}
 			if conn, ok := h.tryPickConnection(ctx, conns[idx], provider, modelID, now, mode); ok {
 				return conn, nil
 			}
@@ -570,7 +645,7 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 	// candidate was filtered out (e.g. all accounts are in a transient cooldown),
 	// scan all known connections for this provider and try them, ignoring
 	// cooldown windows but still honoring exhaustion and terminal statuses.
-	return h.getConnectionFallback(ctx, provider, modelID, now, mode)
+	return h.getConnectionFallback(ctx, provider, modelID, now, mode, excluded)
 }
 
 // getConnectionFallback is the last-resort router used when the eligibility
@@ -578,13 +653,22 @@ func (h *Handler) getConnection(ctx context.Context, provider string, modelID st
 //  1. Respect cooldowns but consider any non-terminal connection.
 //  2. If everything is in cooldown, bypass cooldown once as emergency fallback
 //     so a healthy account that was briefly cooled down can still receive traffic.
-func (h *Handler) getConnectionFallback(ctx context.Context, provider, modelID string, now time.Time, mode providercfg.RoutingMode) (*Connection, error) {
+//     Daily quota exhaustion (StatusQuotaExhausted) is never bypassed because its
+//     cooldown is account-wide and not recoverable by retrying.
+func (h *Handler) getConnectionFallback(ctx context.Context, provider, modelID string, now time.Time, mode providercfg.RoutingMode, excludeConnID ...string) (*Connection, error) {
+	var excluded string
+	if len(excludeConnID) > 0 {
+		excluded = excludeConnID[0]
+	}
 	var candidates []*connstate.ConnectionState
 	h.store.Range(func(connID string, cs *connstate.ConnectionState) bool {
 		if cs.Prefix != provider {
 			return true
 		}
 		if cs.GetStatus() == connstate.StatusDisabled {
+			return true
+		}
+		if excluded != "" && connID == excluded {
 			return true
 		}
 		candidates = append(candidates, cs)
@@ -601,8 +685,13 @@ func (h *Handler) getConnectionFallback(ctx context.Context, provider, modelID s
 		}
 	}
 
-	// Pass 2: every account is in cooldown. Bypass it as emergency fallback.
+	// Pass 2: every account is in cooldown. Bypass short cooldowns (rate limit,
+	// degraded) as emergency fallback, but never bypass quota exhaustion because
+	// its cooldown is account-wide and daily — retrying is pointless.
 	for _, cs := range candidates {
+		if cs.GetStatus() == connstate.StatusQuotaExhausted {
+			continue
+		}
 		if conn, ok := h.tryPickConnectionFallback(ctx, cs.ID, provider, modelID, now, mode); ok {
 			logging.Logger.Info("getConnection emergency fallback selected", "provider", provider, "conn", shortID(conn.ID, 8), "name", conn.Name)
 			return conn, nil
@@ -649,12 +738,15 @@ func (h *Handler) tryPickConnectionFallback(ctx context.Context, connID, provide
 // tryAffinityConnection attempts to reuse a cached connection for the
 // provider/session/model combination. The cached connection is validated
 // with the same cooldown/exhaustion checks as normal selection.
-func (h *Handler) tryAffinityConnection(ctx context.Context, provider, sessionID, modelID string, now time.Time, mode providercfg.RoutingMode) (*Connection, bool) {
+func (h *Handler) tryAffinityConnection(ctx context.Context, provider, sessionID, modelID string, now time.Time, mode providercfg.RoutingMode, excludeConnID string) (*Connection, bool) {
 	if h.sessions == nil {
 		return nil, false
 	}
 	cachedID, ok := h.sessions.Get(connstate.SessionKey(provider, sessionID, modelID))
 	if !ok {
+		return nil, false
+	}
+	if excludeConnID != "" && cachedID == excludeConnID {
 		return nil, false
 	}
 	cs := h.store.Get(cachedID)
@@ -1615,14 +1707,8 @@ func (h *Handler) handleFailoverError(ctx context.Context, c *gin.Context, conn 
 	}
 	h.combo.RecordFailure(conn.ID, det)
 	h.persistCooldownScoped(conn.ID, det)
-	// Update in-memory status so dashboard reflects rate_limited/quota_exhausted immediately.
-	if det.Status != "" {
-		if det.Status == connstate.StatusDisabled && det.DisabledReason != "" {
-			h.store.UpdateStatus(conn.ID, det.Status, det.DisabledReason)
-		} else {
-			h.store.UpdateStatus(conn.ID, det.Status)
-		}
-	}
+	// In-memory state is updated synchronously inside persistCooldownScoped so the
+	// dashboard and routing snapshot reflect the failure immediately.
 	// For providers with API-backed quota (CodeBuddy), refresh quota inline so
 	// the next routing decision uses the latest state instead of stale cache.
 	if provider == "codebuddy" && (det.Category == connstate.ErrorQuota || det.Category == connstate.ErrorRateLimit) {
@@ -1801,6 +1887,11 @@ func (h *Handler) proxyCandidates(conn *Connection) []executor.ProxyConfig {
 	}
 	cfgs := h.resolver.ResolveCandidates(conn.ProviderSpecificData, conn.Provider)
 	out := make([]executor.ProxyConfig, 0, len(cfgs))
+	// Freebuff session tiers are per-egress-IP and the session is claimed on the
+	// egress IP, so a dead/limited pool must never leak the request to the
+	// caller's real IP. Force strict proxy for freebuff (matches 9router
+	// chatCore.js: strictProxy = psd.strictProxy === true || provider === "freebuff").
+	forceStrict := conn.Provider == "freebuff"
 	for _, c := range cfgs {
 		out = append(out, executor.ProxyConfig{
 			Enabled:       c.Enabled,
@@ -1812,7 +1903,7 @@ func (h *Handler) proxyCandidates(conn *Connection) []executor.ProxyConfig {
 			RelayURL:      c.RelayURL,
 			RelayAuth:     c.RelayAuth,
 			RelayType:     c.RelayType,
-			StrictProxy:   c.StrictProxy,
+			StrictProxy:   c.StrictProxy || forceStrict,
 		})
 	}
 	return out
@@ -2246,6 +2337,13 @@ func (h *Handler) checkAutoDisable(connID, provider string) {
 	}
 	threshold := 3
 	banCount := cs.GetBanCount()
+	// Preserve the existing disabled reason (set by the auth/balance failure that
+	// incremented BanCount). If there is none, use a generic marker so the DB
+	// row is never left with disabled_reason = NULL/unknown.
+	disabledReason := cs.GetDisabledReason()
+	if disabledReason == "" {
+		disabledReason = "auto_disabled"
+	}
 
 	// Persist ban count to DB (async — does not block the request path).
 	banCountCopy := banCount
@@ -2256,8 +2354,10 @@ func (h *Handler) checkAutoDisable(connID, provider string) {
 		}
 		if banCountCopy >= threshold {
 			log.Printf("Auto-disabling connection %s after %d consecutive ban signals", connID, banCountCopy)
-			if _, err := d.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', updated_at = ? WHERE id = ?`,
-				time.Now().Unix(), connID); err != nil {
+			// A terminal disabled status must not carry a leftover cooldown horizon,
+			// otherwise the dashboard shows "disabled + Expired".
+			if _, err := d.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', disabled_reason = ?, cooldown_until = NULL, updated_at = ? WHERE id = ?`,
+				disabledReason, time.Now().Unix(), connID); err != nil {
 				return err
 			}
 		}
@@ -2266,7 +2366,7 @@ func (h *Handler) checkAutoDisable(connID, provider string) {
 
 	// In-memory status update is synchronous (cheap, lock-free sync.Map).
 	if banCount >= threshold {
-		h.store.UpdateStatus(connID, connstate.StatusDisabled)
+		h.store.UpdateStatus(connID, connstate.StatusDisabled, disabledReason)
 		h.scheduleEligibilityUpdate(connID)
 	}
 }
@@ -2316,8 +2416,9 @@ func (h *Handler) persistCooldownScoped(connID string, det connstate.ErrorDetect
 		status = string(connstate.StatusQuotaExhausted)
 	}
 	statusVal := status
+
 	// Only persist terminal failures or cooldown-bearing errors. Transient errors
-	// without a cooldown (e.g. degraded/5xx) are left for the scheduler to heal.
+	// without a cooldown (e.g. 5xx) are left for the scheduler to heal.
 	if det.CooldownUntil == nil && !connstate.Status(statusVal).IsRoutingTerminal() {
 		return
 	}
@@ -2339,10 +2440,50 @@ func (h *Handler) persistCooldownScoped(connID string, det connstate.ErrorDetect
 			disabledReason = "balance_empty"
 		}
 	}
+	// Sync in-memory status immediately so the routing snapshot and dashboard show
+	// the correct state without waiting for the async DB write. Quota exhaustion
+	// uses SetQuotaCooldown so status stays quota_exhausted and CooldownUntil is
+	// populated without incrementing BanCount.
+	switch connstate.Status(statusVal) {
+	case connstate.StatusQuotaExhausted:
+		if cooldownUntil != nil {
+			if cs := h.store.Get(connID); cs != nil {
+				cs.SetQuotaCooldown(time.Unix(*cooldownUntil, 0))
+			}
+		} else {
+			h.store.UpdateStatus(connID, connstate.StatusQuotaExhausted)
+		}
+	case connstate.StatusDisabled:
+		h.store.UpdateStatus(connID, connstate.StatusDisabled, disabledReason)
+	default:
+		if statusVal != "" {
+			h.store.UpdateStatus(connID, connstate.Status(statusVal))
+		}
+	}
+
 	errMsg := det.Message
 	errCode := string(det.Category)
 	h.writeQueue.Enqueue("persistCooldownScoped", func(d *sql.DB) error {
 		now := time.Now().Unix()
+		// Quota exhaustion resets consecutive_ban_count so transient auth errors
+		// do not accumulate toward auto-disable when the real failure is quota.
+		if connstate.Status(statusVal) == connstate.StatusQuotaExhausted {
+			_, err := d.Exec(`
+UPDATE connections
+SET is_active = ?,
+    status = ?,
+    disabled_reason = ?,
+    cooldown_until = ?,
+    consecutive_ban_count = 0,
+    last_error = ?,
+    last_error_code = ?,
+    failure_count = failure_count + 1,
+    last_failure_at = ?,
+    updated_at = ?
+WHERE id = ?
+`, isActive, statusVal, disabledReason, cooldownUntil, errMsg, errCode, now, now, connID)
+			return err
+		}
 		_, err := d.Exec(`
 UPDATE connections
 SET is_active = ?,
@@ -2373,6 +2514,7 @@ func (h *Handler) persistCooldown(connID string, det connstate.ErrorDetection) {
 		status = string(connstate.StatusQuotaExhausted)
 	}
 	statusVal := status
+
 	cooldownUntil := det.CooldownUntil.Unix()
 	errMsg := det.Message
 	errCode := string(det.Category)
@@ -2409,13 +2551,13 @@ func (h *Handler) persistSuccess(connID string) {
 		_, err := d.Exec(`
 			UPDATE connections
 			SET status = CASE
-					WHEN status IN ('cooldown','rate_limited','quota_exhausted','degraded')
+					WHEN status IN ('rate_limited','quota_exhausted')
 						 AND (cooldown_until IS NULL OR cooldown_until <= ?)
 					THEN 'ready'
 					ELSE status
 				END,
 				cooldown_until = CASE
-					WHEN status IN ('cooldown','rate_limited','quota_exhausted','degraded')
+					WHEN status IN ('rate_limited','quota_exhausted')
 					     AND (cooldown_until IS NULL OR cooldown_until <= ?)
 					THEN NULL
 					ELSE cooldown_until

@@ -25,20 +25,20 @@ const (
 	StatusRateLimited    Status = "rate_limited"
 	StatusQuotaExhausted Status = "quota_exhausted"
 	StatusDisabled       Status = "disabled"
-	StatusDegraded       Status = "degraded"
-	StatusCooldown       Status = "cooldown"
+	
+	
 )
 
 // IsEligible returns true if the status indicates the connection can be used.
 func (s Status) IsEligible() bool {
-	return s == StatusReady || s == StatusDegraded
+	return s == StatusReady
 }
 
 // IsHealable returns true for transient, non-terminal statuses that can be
 // reset to ready when a cooldown expires or a request succeeds.
 func (s Status) IsHealable() bool {
 	switch s {
-	case StatusCooldown, StatusRateLimited, StatusQuotaExhausted, StatusDegraded:
+	case StatusRateLimited, StatusQuotaExhausted:
 		return true
 	}
 	return false
@@ -107,6 +107,13 @@ func (cs *ConnectionState) GetRemainingPct() float64 {
 	return cs.RemainingPct
 }
 
+// GetDisabledReason returns the disabled reason, if any (thread-safe).
+func (cs *ConnectionState) GetDisabledReason() string {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return cs.DisabledReason
+}
+
 // SetRemainingPct stores the minimum remaining quota percentage (thread-safe).
 func (cs *ConnectionState) SetRemainingPct(pct float64) {
 	cs.mu.Lock()
@@ -173,19 +180,22 @@ func (cs *ConnectionState) SetCooldown(until time.Time) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.CooldownUntil = &until
-	cs.Status = StatusCooldown
+	cs.Status = StatusReady
 }
 
 // SetQuotaCooldown sets a quota-exhausted cooldown (midnight UTC recovery).
 // Unlike SetCooldown, it preserves StatusQuotaExhausted so the DB recovery
-// path in QuotaScheduler recognises it correctly.
+// path in QuotaScheduler recognises it correctly. Quota exhaustion is recoverable
+// and does NOT increment BanCount. It also resets any existing BanCount so that
+// transient auth errors do not accumulate toward auto-disable when the actual
+// failure mode is quota exhaustion.
 func (cs *ConnectionState) SetQuotaCooldown(until time.Time) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.CooldownUntil = &until
 	cs.Status = StatusQuotaExhausted
 	cs.FailCount++
-	cs.BanCount++
+	cs.BanCount = 0
 }
 
 // IsInCooldown checks if the connection is in cooldown.

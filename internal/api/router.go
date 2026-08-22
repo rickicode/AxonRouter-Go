@@ -32,6 +32,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/auth/antigravity"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/codebuddy"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/codex"
+	"github.com/rickicode/AxonRouter-Go/internal/auth/freebuff"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/github"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/grokcli"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/kiro"
@@ -46,6 +47,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/connstate"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
+	"github.com/rickicode/AxonRouter-Go/internal/headroom"
 	"github.com/rickicode/AxonRouter-Go/internal/mcp"
 	"github.com/rickicode/AxonRouter-Go/internal/models"
 	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
@@ -82,6 +84,7 @@ type Router struct {
 	lifecycleManager      *background.LifecycleManager
 	rateLimitProber       *background.RateLimitProber
 	mcpHandler            *mcp.Handler
+	mcpAPI                *mcp.API
 
 	// versionChecker polls GitHub Releases for update notifications.
 	versionChecker *version.Checker
@@ -153,9 +156,19 @@ func New(cfg Config) *Router {
 	authManager.RegisterService(auth.ProviderGrokCli, grokcli.NewOAuthService(http.DefaultClient))
 	authManager.RegisterService(auth.ProviderCodeBuddy, codebuddy.NewOAuthService(http.DefaultClient))
 	authManager.RegisterService(auth.ProviderQoder, qoder.NewOAuthService(http.DefaultClient))
+	authManager.RegisterService(auth.ProviderFreebuff, freebuff.NewOAuthService(http.DefaultClient))
 	quota.SetAuthManager(authManager)
 	settingHandler := admin.NewSettingHandler(cfg.DB)
 	settingHandler.SeedDefaults()
+	// Initialize headroom tool compressor from environment/config settings.
+	hCFG := headroom.Config{
+		Enabled:         config.Get().Headroom.Enabled,
+		Endpoint:        config.Get().Headroom.Endpoint,
+		TimeoutMs:       config.Get().Headroom.TimeoutMs,
+		MaxPayloadBytes: config.Get().Headroom.MaxPayloadBytes,
+	}
+	headroom.InitGlobalToolCompressor(hCFG)
+	headroom.SetEnabled(hCFG.Enabled)
 	// Bootstrap dashboard login auth (JWT secret + default admin password)
 	InitAuth(cfg.DB)
 
@@ -229,6 +242,7 @@ func New(cfg Config) *Router {
 	restartH := admin.NewRestartHandler()
 	consoleLogsH := admin.NewConsoleLogsHandler()
 	mcpH := mcp.NewHandler(cfg.DB)
+	mcpAPI := mcp.NewAPI()
 	proxyPoolH := admin.NewProxyPoolHandler(cfg.DB, proxyHealth, proxyResolver, writeQueue)
 	proxyGroupH := admin.NewProxyGroupHandler(cfg.DB, proxyResolver)
 	proxyDeployH := admin.NewProxyDeployHandler(cfg.DB, proxyHealth, proxyResolver)
@@ -531,6 +545,7 @@ func New(cfg Config) *Router {
 		g.GET("/settings/compression", optimizationH.GetCompressionSettings)
 		g.PUT("/settings/compression", optimizationH.UpdateCompressionSettings)
 		g.GET("/compression/metrics", optimizationH.GetCompressionMetrics)
+		g.GET("/headroom/status", optimizationH.GetHeadroomStatus)
 		g.GET("/cache/stats", optimizationH.GetCacheStats)
 		g.POST("/cache/flush", optimizationH.FlushCache)
 		g.POST("/optimization/preview", optimizationH.PreviewCompression)
@@ -545,6 +560,11 @@ func New(cfg Config) *Router {
 	}
 
 	registerAdminRoutes(adminGroup)
+
+	// ---- /mcp routes (API key bearer tokens) ----
+	mcpGroup := engine.Group("/mcp")
+	mcpGroup.Use(middleware.Auth(cfg.DB, authCache))
+	mcpAPI.RegisterRoutes(mcpGroup)
 
 	// ---- /admin/api/v1 routes (master key protected) ----
 	masterGroup := engine.Group("/admin/api/v1")
@@ -597,6 +617,7 @@ func New(cfg Config) *Router {
 		quotaScheduler:        quotaScheduler,
 		usageFlush:            usageFlush,
 		mcpHandler:            mcpH,
+		mcpAPI:                mcpAPI,
 		cleanup:               cleanup,
 		lifecycleManager:      lifecycleManager,
 		tokenRefreshScheduler: tokenRefreshScheduler,

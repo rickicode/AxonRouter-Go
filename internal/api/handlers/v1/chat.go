@@ -17,7 +17,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
-	provideralias "github.com/rickicode/AxonRouter-Go/internal/provider"
+
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
@@ -209,19 +209,26 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	var lastConn *Connection
 	var lastErr error
 	var lastErrCategory string
+	var lastFailedConnID string // exclude from next getConnection to prevent retrying same connection
 attemptLoop:
 	for attempt := range maxAttempts {
 		if c.Request.Context().Err() != nil {
 			writeContextDone(c)
 			return
 		}
-		conn, err := h.getConnection(c.Request.Context(), provider, modelName, sessionID)
+		var conn *Connection
+		var err error
+		if lastFailedConnID != "" {
+			conn, err = h.getConnection(c.Request.Context(), provider, modelName, sessionID, lastFailedConnID)
+		} else {
+			conn, err = h.getConnection(c.Request.Context(), provider, modelName, sessionID)
+		}
 		if err != nil {
 			if attempt == 0 {
 				logging.Logger.Info("chat: get connection failed", "err", err.Error())
 				// If every connection for this provider is in the same failure mode,
 				// surface a precise error instead of a generic 503.
-				if cat := h.store.ClassifyProviderUnavailable(provideralias.ResolveAlias(provider)); cat != connstate.ErrorUnknown {
+				if cat := h.classifyProviderUnavailableForModel(provider, modelName); cat != connstate.ErrorUnknown {
 					msg, statusCode, errType := buildFailoverErrorResponse(string(cat), nil, modelName)
 					c.JSON(statusCode, gin.H{"error": gin.H{"message": msg, "type": errType}})
 					return
@@ -299,6 +306,8 @@ attemptLoop:
 			retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, err, attempt, latency, stream)
 			lastErr = err
 			lastErrCategory = cat
+			lastFailedConnID = conn.ID
+			h.clearAffinitySession(provider, sessionID, modelName)
 			if !retry {
 				break attemptLoop // non-retryable error, stop failover
 			}
@@ -349,6 +358,8 @@ attemptLoop:
 					retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, holdbackErr, attempt, time.Since(start).Milliseconds(), stream)
 					lastErr = holdbackErr
 					lastErrCategory = cat
+					lastFailedConnID = conn.ID
+					h.clearAffinitySession(provider, sessionID, modelName)
 					if !retry {
 						cancelStream()
 						break attemptLoop
@@ -380,6 +391,8 @@ attemptLoop:
 				retry, cat := h.handleFailoverError(proxyCtx, c, conn, provider, modelName, streamErr, attempt, time.Since(start).Milliseconds(), stream)
 				lastErr = streamErr
 				lastErrCategory = cat
+				lastFailedConnID = conn.ID
+				h.clearAffinitySession(provider, sessionID, modelName)
 				if !retry {
 					cancelStream()
 					break

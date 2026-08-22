@@ -66,3 +66,8 @@ logs/
 
 # Local Hive workspace metadata
 .hive/
+
+# Build artifacts / session exports
+/build/
+issue_desc.md
+issues_all.json
