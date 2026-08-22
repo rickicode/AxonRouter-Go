@@ -2,6 +2,7 @@ package gemini
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/rickicode/AxonRouter-Go/internal/headroom"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/common"
@@ -9,6 +10,21 @@ import (
 )
 
 // convertOpenAIRequestToGemini converts an OpenAI Chat Completions request to Gemini generateContent format.
+func openAIImagePartToGemini(rawURL string) map[string]interface{} {
+	if strings.HasPrefix(strings.TrimSpace(rawURL), "data:") {
+		value := strings.TrimSpace(rawURL)[len("data:"):]
+		parts := strings.SplitN(value, ",", 2)
+		if len(parts) == 2 {
+			mime := strings.SplitN(parts[0], ";", 2)[0]
+			if mime == "" {
+				mime = "image/jpeg"
+			}
+			return map[string]interface{}{"inlineData": map[string]interface{}{"mimeType": mime, "data": parts[1]}}
+		}
+	}
+	return map[string]interface{}{"fileData": map[string]interface{}{"fileUri": rawURL, "mimeType": "image/jpeg"}}
+}
+
 func convertOpenAIRequestToGemini(modelName string, body []byte, stream bool) []byte {
 	body = common.CompressToolBlocks(body, headroom.GlobalToolCompressor(), headroom.DefaultToolThreshold)
 	root := gjson.ParseBytes(body)
@@ -93,13 +109,7 @@ func convertOpenAIRequestToGemini(modelName string, body []byte, stream bool) []
 							parts = append(parts, map[string]interface{}{"text": part.Get("text").String()})
 						case "image_url":
 							if url := part.Get("image_url.url"); url.Exists() {
-								// Gemini uses inlineData with base64
-								parts = append(parts, map[string]interface{}{
-									"inlineData": map[string]interface{}{
-										"mimeType": "image/jpeg",
-										"data":     url.String(),
-									},
-								})
+								parts = append(parts, openAIImagePartToGemini(url.String()))
 							}
 						case "tool_use":
 							parts = append(parts, map[string]interface{}{

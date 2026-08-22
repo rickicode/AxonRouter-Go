@@ -93,8 +93,14 @@ func (h *Handler) ResponsesWebsocket(c *gin.Context) {
 		_ = upConn.Close(websocket.StatusGoingAway, "closing")
 	}()
 
-	// Forward the message that carried the model selection.
-	if err := upConn.Write(ctx, msgType, firstMsg); err != nil {
+	// Responses WebSocket carries the request body in its first frame. Bridge
+	// that frame before forwarding when the selected model cannot consume images;
+	// later text-only frames remain opaque protocol traffic.
+	forwardMsg := firstMsg
+	if !modelSupportsVision(model) {
+		forwardMsg = h.applyVisionBridge(c, firstMsg, model, executor.FormatOpenAIResponses)
+	}
+	if err := upConn.Write(ctx, msgType, forwardMsg); err != nil {
 		_ = clientConn.Close(websocket.StatusBadGateway, "failed to forward first message")
 		return
 	}

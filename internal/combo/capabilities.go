@@ -34,14 +34,18 @@ func DetectRequiredCapabilities(body []byte) models.ModelCapabilities {
 		caps.Tools = true
 	}
 
+	// Inspect the complete request history. An image from an earlier user turn
+	// remains part of the model input, even after an assistant response, so
+	// looking only at the trailing turn can silently route it to a text-only
+	// model.
 	messages, _ := req["messages"].([]any)
-	for _, m := range trailingUserItems(messages) {
+	for _, m := range messages {
 		detectMessageCapabilities(m, &caps)
 	}
 
 	// Responses API format may have `input` instead of `messages`.
 	if input, ok := req["input"].([]any); ok {
-		for _, item := range trailingUserItems(input) {
+		for _, item := range input {
 			detectMessageCapabilities(item, &caps)
 		}
 	}
@@ -64,6 +68,8 @@ func DetectRequiredCapabilities(body []byte) models.ModelCapabilities {
 // trailingUserItems returns the current user turn: all non-assistant items
 // after the last assistant message. If no assistant message is present, the
 // entire slice is treated as the trailing turn.
+// trailingUserItems is retained for callers outside this package that need
+// the old turn-oriented view; capability detection itself must scan all items.
 func trailingUserItems(items []any) []any {
 	for i := len(items) - 1; i >= 0; i-- {
 		m, ok := items[i].(map[string]any)
@@ -133,6 +139,9 @@ func detectMessageCapabilities(item any, caps *models.ModelCapabilities) {
 	if !ok {
 		return
 	}
+	// Responses input may contain a content part directly (for example a
+	// top-level input_image item), not only a message with content[].
+	detectContentPart(msg, caps)
 	content := msg["content"]
 	switch v := content.(type) {
 	case string:
@@ -202,6 +211,9 @@ func (h *Handler) ReorderStepsByCapabilities(steps []db.ComboStep, required mode
 	for i, s := range steps {
 		modelID := strings.TrimPrefix(s.ModelID, "@")
 		caps := models.GetCapabilities(modelID)
+		if !caps.Vision && models.SupportsVision(modelID) {
+			caps.Vision = true
+		}
 		typed[i] = struct {
 			step db.ComboStep
 			tier int

@@ -140,9 +140,17 @@ func appendResponsesInputItem(out []byte, item, allInput gjson.Result) []byte {
 					p++
 				case "input_image":
 					if url := part.Get("image_url"); url.Exists() {
-						mime, data := parseInlineData(url.String())
-						node, _ = sjson.SetBytes(node, partKey(p, "inlineData.mimeType"), mime)
-						node, _ = sjson.SetBytes(node, partKey(p, "inlineData.data"), data)
+						imageURL := responsesImageURL(url)
+						mime, data := parseInlineData(imageURL)
+						if data != "" && mime != "" {
+							node, _ = sjson.SetBytes(node, partKey(p, "inlineData.mimeType"), mime)
+							node, _ = sjson.SetBytes(node, partKey(p, "inlineData.data"), data)
+						} else if imageURL != "" {
+							node, _ = sjson.SetBytes(node, partKey(p, "fileData.fileUri"), imageURL)
+							node, _ = sjson.SetBytes(node, partKey(p, "fileData.mimeType"), "image/jpeg")
+						} else {
+							return true
+						}
 						p++
 					}
 				case "input_audio":
@@ -276,6 +284,18 @@ func textFromStringOrTextParts(v gjson.Result) string {
 
 // parseInlineData parses a data URL (data:[<mime>][;base64],<data>) and returns
 // the MIME type and data payload. Non-data URLs are returned with an empty MIME.
+func responsesImageURL(value gjson.Result) string {
+	if value.Type == gjson.String {
+		return value.String()
+	}
+	for _, path := range []string{"url", "uri", "file_uri"} {
+		if candidate := value.Get(path); candidate.Type == gjson.String && candidate.String() != "" {
+			return candidate.String()
+		}
+	}
+	return ""
+}
+
 func parseInlineData(s string) (string, string) {
 	s = strings.TrimSpace(s)
 	const prefix = "data:"

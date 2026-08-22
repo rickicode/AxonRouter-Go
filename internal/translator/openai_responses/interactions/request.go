@@ -47,6 +47,18 @@ func ConvertOpenAIResponsesRequestToInteractions(modelName string, inputRawJSON 
 	return out
 }
 
+func responsesImageURL(value gjson.Result) string {
+	if value.Type == gjson.String {
+		return value.String()
+	}
+	for _, path := range []string{"url", "uri", "file_uri"} {
+		if candidate := value.Get(path); candidate.Type == gjson.String && candidate.String() != "" {
+			return candidate.String()
+		}
+	}
+	return ""
+}
+
 func responsesInstructionsText(instructions gjson.Result) string {
 	if instructions.Type == gjson.String {
 		return instructions.String()
@@ -177,7 +189,7 @@ func responsesContentPartToInteractions(part gjson.Result) ([]byte, bool) {
 
 func responsesImagePartToInteractions(part gjson.Result) []byte {
 	out := []byte(`{"type":"image"}`)
-	imageURL := firstNonEmpty(part.Get("image_url").String(), part.Get("url").String())
+	imageURL := firstNonEmpty(responsesImageURL(part.Get("image_url")), responsesImageURL(part.Get("url")))
 	if mimeType, data, ok := parseDataURL(imageURL); ok {
 		out, _ = sjson.SetBytes(out, "mime_type", mimeType)
 		out, _ = sjson.SetBytes(out, "data", data)

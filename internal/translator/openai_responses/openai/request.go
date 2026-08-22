@@ -258,6 +258,18 @@ func ConvertOpenAIResponsesRequestToOpenAI(modelName string, inputRawJSON []byte
 	return out
 }
 
+func responsesImageURL(value gjson.Result) string {
+	if value.Type == gjson.String {
+		return value.String()
+	}
+	for _, path := range []string{"url", "uri", "file_uri"} {
+		if candidate := value.Get(path); candidate.Type == gjson.String && candidate.String() != "" {
+			return candidate.String()
+		}
+	}
+	return ""
+}
+
 func normalizeResponsesRole(role string) string {
 	switch strings.ToLower(strings.TrimSpace(role)) {
 	case "developer", "system":
@@ -286,9 +298,9 @@ func convertResponsesContentPartToChat(part gjson.Result) []byte {
 			return p
 		}
 	case "input_image":
-		imageURL := part.Get("image_url").String()
+		imageURL := responsesImageURL(part.Get("image_url"))
 		if imageURL == "" {
-			imageURL = part.Get("url").String()
+			imageURL = responsesImageURL(part.Get("url"))
 		}
 		if imageURL == "" {
 			return nil

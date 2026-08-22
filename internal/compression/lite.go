@@ -101,33 +101,27 @@ func ApplyLite(body []byte, cfg LiteConfig) ([]byte, EngineStats, error) {
 				if !ok {
 					continue
 				}
-			if part["type"] == "text" {
-				text, _ := part["text"].(string)
-				out := text
-				if cfg.CollapseWhitespace {
-					out = CleanSpaces(out)
-					if out != text {
-						techniques = appendUnique(techniques, "collapse_whitespace")
+				if part["type"] == "text" {
+					text, _ := part["text"].(string)
+					out := text
+					if cfg.CollapseWhitespace {
+						out = CleanSpaces(out)
+						if out != text {
+							techniques = appendUnique(techniques, "collapse_whitespace")
+						}
 					}
-				}
-				if cfg.ReplaceImageUrls {
-					out = replaceImageDataURLs(out)
-					if out != text && !contains(techniques, "replace_image_urls") {
-						techniques = append(techniques, "replace_image_urls")
-					}
-				}
-				part["text"] = out
-			} else if cfg.ReplaceImageUrls && part["type"] == "image_url" {
-				if imageURL, ok := part["image_url"].(map[string]any); ok {
-					url, _ := imageURL["url"].(string)
-					if out := replaceImageDataURLs(url); out != url {
-						imageURL["url"] = out
-						if !contains(techniques, "replace_image_urls") {
+					if cfg.ReplaceImageUrls {
+						out = replaceImageDataURLs(out)
+						if out != text && !contains(techniques, "replace_image_urls") {
 							techniques = append(techniques, "replace_image_urls")
 						}
 					}
+					part["text"] = out
 				}
-			}
+				// Never rewrite image_url.url. The URL is the image payload, not
+				// prompt text; replacing a data URL with [image] makes a later
+				// Vision Bridge request impossible. Image URLs are intentionally
+				// excluded from this text-only compression pass.
 			}
 		}
 	}

@@ -16,6 +16,14 @@ func TestDetectRequiredCapabilities_Vision(t *testing.T) {
 	}
 }
 
+func TestDetectRequiredCapabilities_ResponsesTopLevelInputImage(t *testing.T) {
+	body := []byte(`{"input":[{"type":"input_image","image_url":"data:image/png;base64,abc"}]}`)
+	caps := DetectRequiredCapabilities(body)
+	if !caps.Vision {
+		t.Fatalf("expected vision capability for top-level input_image")
+	}
+}
+
 func TestDetectRequiredCapabilities_ResponsesInputImage(t *testing.T) {
 	body := []byte(`{"messages":[{"role":"user","content":[{"type":"input_image","detail":"auto"}]}]}`)
 	caps := DetectRequiredCapabilities(body)
@@ -103,15 +111,15 @@ func TestReorderStepsByCapabilities_PrioritizesVision(t *testing.T) {
 	}
 }
 
-func TestDetectRequiredCapabilities_IgnoresPriorImageTurn(t *testing.T) {
+func TestDetectRequiredCapabilities_PreservesPriorImageTurn(t *testing.T) {
 	body := []byte(`{"messages":[
 		{"role":"user","content":[{"type":"image_url","image_url":{"url":"[image]"}}]},
 		{"role":"assistant","content":"I see the image."},
 		{"role":"user","content":"just a plain text follow-up"}
 	]}`)
 	caps := DetectRequiredCapabilities(body)
-	if caps.Vision {
-		t.Fatalf("vision should not be required for a text-only trailing turn")
+	if !caps.Vision {
+		t.Fatalf("vision should remain required while the prior image is in request history")
 	}
 }
 

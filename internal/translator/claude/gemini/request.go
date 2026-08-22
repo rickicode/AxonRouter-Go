@@ -93,11 +93,20 @@ func convertClaudeRequestToGemini(modelName string, body []byte, stream bool) []
 					case "image":
 						source := part.Get("source")
 						if source.Exists() {
-							mimeType := source.Get("media_type").String()
-							data := source.Get("data").String()
-							if data != "" {
-								node, _ = sjson.SetBytes(node, fmt.Sprintf("parts.%d.inlineData.mimeType", p), mimeType)
-								node, _ = sjson.SetBytes(node, fmt.Sprintf("parts.%d.inlineData.data", p), data)
+							if source.Get("type").String() == "base64" {
+								mimeType := source.Get("media_type").String()
+								if mimeType == "" {
+									mimeType = "image/jpeg"
+								}
+								data := source.Get("data").String()
+								if data != "" {
+									node, _ = sjson.SetBytes(node, fmt.Sprintf("parts.%d.inlineData.mimeType", p), mimeType)
+									node, _ = sjson.SetBytes(node, fmt.Sprintf("parts.%d.inlineData.data", p), data)
+									p++
+								}
+							} else if imageURL := source.Get("url").String(); imageURL != "" {
+								node, _ = sjson.SetBytes(node, fmt.Sprintf("parts.%d.fileData.fileUri", p), imageURL)
+								node, _ = sjson.SetBytes(node, fmt.Sprintf("parts.%d.fileData.mimeType", p), "image/jpeg")
 								p++
 							}
 						}

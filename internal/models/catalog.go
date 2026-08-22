@@ -520,6 +520,18 @@ func GetModelTargetFormat(providerKey, modelID string) string {
 	return ""
 }
 
+// HasModel reports whether a provider catalog contains the given bare model ID.
+func HasModel(providerKey, modelID string) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	for _, entry := range current[providerKey] {
+		if entry.ID == modelID {
+			return true
+		}
+	}
+	return false
+}
+
 // GetModelServiceKinds returns the service kinds for a model ID under a provider key.
 func GetModelServiceKinds(providerKey, modelID string) []string {
 	mu.RLock()

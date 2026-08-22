@@ -49,6 +49,17 @@ func TestConvertOpenAIResponsesRequestToGemini_InputTextAndImage(t *testing.T) {
 	}
 }
 
+func TestConvertOpenAIResponsesRequestToGemini_ObjectImageURL(t *testing.T) {
+	body := []byte(`{"input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":{"url":"data:image/webp;base64,ABC"}}]}]}`)
+	out := ConvertOpenAIResponsesRequestToGemini("gemini-test", body, false)
+	if got := gjson.GetBytes(out, "contents.0.parts.0.inlineData.mimeType").String(); got != "image/webp" {
+		t.Fatalf("unexpected object image mime: %s", got)
+	}
+	if got := gjson.GetBytes(out, "contents.0.parts.0.inlineData.data").String(); got != "ABC" {
+		t.Fatalf("unexpected object image data: %s", got)
+	}
+}
+
 func TestConvertOpenAIResponsesRequestToGemini_InputAudio(t *testing.T) {
 	body := []byte(`{
 		"input": [{

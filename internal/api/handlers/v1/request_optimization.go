@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
+	"github.com/rickicode/AxonRouter-Go/internal/combo"
 	"github.com/rickicode/AxonRouter-Go/internal/compression"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
@@ -65,7 +66,17 @@ func (h *Handler) exactCacheKey(body []byte, model string, stream bool) string {
 	if stream || h.exactCache == nil || compression.HasTools(body) || compression.HasCacheControl(body) {
 		return ""
 	}
-	return cache.ComputeKey(body, model)
+
+	// A bridged response is semantically different from a direct response. Include
+	// the configured bridge model in the key so enabling, disabling, or switching
+	// the bridge cannot reuse an entry generated under a different image pipeline.
+	// This also keeps combo cache entries isolated from later bridge configuration
+	// changes without storing image-derived descriptions in the cache key.
+	cacheModel := model
+	if bridgeModel := h.visionBridgeModel(); bridgeModel != "" && combo.DetectRequiredCapabilities(body).Vision {
+		cacheModel += "\x00vision_bridge:" + bridgeModel
+	}
+	return cache.ComputeKey(body, cacheModel)
 }
 
 // serveCacheHit writes a cached response to the client and accounts for the

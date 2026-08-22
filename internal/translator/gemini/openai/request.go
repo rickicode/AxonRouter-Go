@@ -3,6 +3,7 @@ package openai
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/rickicode/AxonRouter-Go/internal/headroom"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/common"
@@ -92,6 +93,34 @@ func convertGeminiRequestToOpenAI(modelName string, body []byte, stream bool) []
 						partJSON := []byte(`{"type":"text","text":""}`)
 						partJSON, _ = sjson.SetBytes(partJSON, "text", text.String())
 						oaiMsg, _ = sjson.SetRawBytes(oaiMsg, "content.-1", partJSON)
+					}
+					if inline := part.Get("inlineData"); inline.Exists() {
+						mime := inline.Get("mimeType").String()
+						if mime == "" {
+							mime = inline.Get("mime_type").String()
+						}
+						if mime == "" || strings.HasPrefix(mime, "image/") {
+							url := inline.Get("data").String()
+							if url != "" {
+								if mime == "" {
+									mime = "image/jpeg"
+								}
+								partJSON := []byte(`{"type":"image_url","image_url":{"url":""}}`)
+								partJSON, _ = sjson.SetBytes(partJSON, "image_url.url", "data:"+mime+";base64,"+url)
+								oaiMsg, _ = sjson.SetRawBytes(oaiMsg, "content.-1", partJSON)
+							}
+						}
+					}
+					if file := part.Get("fileData"); file.Exists() {
+						fileURL := file.Get("fileUri").String()
+						if fileURL == "" {
+							fileURL = file.Get("file_uri").String()
+						}
+						if fileURL != "" {
+							partJSON := []byte(`{"type":"image_url","image_url":{"url":""}}`)
+							partJSON, _ = sjson.SetBytes(partJSON, "image_url.url", fileURL)
+							oaiMsg, _ = sjson.SetRawBytes(oaiMsg, "content.-1", partJSON)
+						}
 					}
 					if fc := part.Get("functionCall"); fc.Exists() {
 						toolCallIdx++

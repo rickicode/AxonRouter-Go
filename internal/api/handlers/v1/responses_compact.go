@@ -70,6 +70,9 @@ func (h *Handler) ResponsesCompact(c *gin.Context) {
 	}
 
 	body = executor.JSONSet(body, "model", modelName)
+	// Compact is a separate Responses surface, but it still accepts image input;
+	// apply the bridge before invoking the provider-specific compact executor.
+	body = h.applyVisionBridge(c, body, provider+"/"+modelName, executor.FormatOpenAIResponses)
 	clientFormat := executor.FormatOpenAIResponses
 	sessionID := h.sessionIDForAffinity(c, provider, modelName, body)
 

@@ -104,6 +104,23 @@ func interactionsItemToContent(item gjson.Result) map[string]any {
 	}
 
 	var parts []map[string]any
+	if item.Get("type").String() == "image" {
+		image := map[string]any{}
+		if mime := item.Get("mime_type").String(); mime != "" {
+			image["mimeType"] = mime
+		}
+		if data := item.Get("data").String(); data != "" {
+			image["data"] = data
+		}
+		if uri := interactionImageURL(item.Get("image_url")); uri != "" {
+			image["fileUri"] = uri
+		}
+		if _, ok := image["data"]; ok {
+			parts = append(parts, map[string]any{"inlineData": image})
+		} else if len(image) > 0 {
+			parts = append(parts, map[string]any{"fileData": image})
+		}
+	}
 	content := item.Get("content")
 	if content.Type == gjson.String {
 		parts = append(parts, map[string]any{"text": content.String()})
@@ -113,6 +130,24 @@ func interactionsItemToContent(item gjson.Result) map[string]any {
 				parts = append(parts, map[string]any{"text": text.String()})
 			} else if text := part.Get("content"); text.Exists() && text.Type == gjson.String {
 				parts = append(parts, map[string]any{"text": text.String()})
+			} else if part.Get("type").String() == "image" {
+				image := map[string]any{}
+				if mime := part.Get("mime_type").String(); mime != "" {
+					image["mimeType"] = mime
+				}
+				if data := part.Get("data").String(); data != "" {
+					image["data"] = data
+				}
+				if uri := interactionImageURL(part.Get("image_url")); uri != "" {
+					image["fileUri"] = uri
+				}
+				if len(image) > 0 {
+					if _, ok := image["data"]; ok {
+						parts = append(parts, map[string]any{"inlineData": image})
+					} else {
+						parts = append(parts, map[string]any{"fileData": image})
+					}
+				}
 			}
 			return true
 		})
@@ -121,6 +156,18 @@ func interactionsItemToContent(item gjson.Result) map[string]any {
 		parts = append(parts, map[string]any{"text": ""})
 	}
 	return map[string]any{"role": role, "parts": parts}
+}
+
+func interactionImageURL(value gjson.Result) string {
+	if value.Type == gjson.String {
+		return value.String()
+	}
+	for _, path := range []string{"url", "uri", "file_uri"} {
+		if candidate := value.Get(path); candidate.Type == gjson.String && candidate.String() != "" {
+			return candidate.String()
+		}
+	}
+	return ""
 }
 
 // convertJSONKeysToCamel recursively renames object keys from snake_case to

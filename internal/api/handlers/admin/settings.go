@@ -4,10 +4,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
+	"github.com/rickicode/AxonRouter-Go/internal/models"
 )
 
 // SettingHandler handles settings management.
@@ -63,6 +65,22 @@ func (h *SettingHandler) Set(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	if key == "vision_bridge_model" {
+		model := strings.TrimSpace(req.Value)
+		if model != "" {
+			parts := strings.SplitN(strings.TrimPrefix(model, "@"), "/", 2)
+			if len(parts) != 2 || !models.SupportsVision(model) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "vision_bridge_model must be an active model that supports image input"})
+				return
+			}
+			var active int
+			if err := h.db.QueryRow(`SELECT COUNT(1) FROM connections WHERE provider_type_id = ? AND is_active = 1`, parts[0]).Scan(&active); err != nil || active == 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "vision_bridge_model requires an active connection for its provider"})
+				return
+			}
+		}
 	}
 
 	// Block provider_proxy_defaults containing oc key
@@ -121,8 +139,8 @@ var DefaultSettings = map[string]string{
 	"cc_filter_naming":            "false",
 	"headroom_enabled":            "false",
 	"headroom_endpoint":           "127.0.0.1:9123",
-	"headroom_timeout_ms":           "30000",
-	"headroom_max_payload_bytes":    "524288",
+	"headroom_timeout_ms":         "30000",
+	"headroom_max_payload_bytes":  "524288",
 }
 
 // SeedDefaults inserts default settings if they don't exist.

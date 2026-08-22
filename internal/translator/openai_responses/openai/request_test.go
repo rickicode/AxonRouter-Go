@@ -259,6 +259,20 @@ func TestConvertOpenAIResponsesRequestToOpenAI_ImagePart(t *testing.T) {
 	}
 }
 
+func TestConvertOpenAIResponsesRequestToOpenAI_ObjectImageURL(t *testing.T) {
+	req := mustMarshal(t, map[string]any{
+		"input": []any{map[string]any{
+			"type": "message", "role": "user", "content": []any{map[string]any{
+				"type": "input_image", "image_url": map[string]any{"url": "https://example.com/img.png"},
+			}},
+		}},
+	})
+	out := ConvertOpenAIResponsesRequestToOpenAI("gpt-4o", req, false)
+	if got := gjson.GetBytes(out, "messages.0.content.0.image_url.url").String(); got != "https://example.com/img.png" {
+		t.Fatalf("object image URL = %q, want remote image URL", got)
+	}
+}
+
 func TestConvertOpenAIResponsesRequestToOpenAI_NamespaceTools(t *testing.T) {
 	req := mustMarshal(t, map[string]any{
 		"tools": []any{

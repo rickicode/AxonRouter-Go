@@ -669,6 +669,16 @@ func (h *Handler) handleComboRequest(c *gin.Context, comboResult *combo.ComboRes
 	var lastErrCategory string
 	var lastModelName string
 
+	// A combo request has one immutable input payload. If any step is text-only,
+	// bridge the image once before trying steps; applying it inside
+	// executeComboStep would call the vision model again after every failover.
+	for _, step := range comboResult.Steps {
+		if !modelSupportsVision(step.ModelID) {
+			body = h.applyVisionBridgeContext(c, comboCtx, body, step.ModelID, clientFormat)
+			break
+		}
+	}
+
 	for _, step := range comboResult.Steps {
 		_, modelName := executor.SplitModel(step.ModelID)
 		lastModelName = modelName
@@ -921,12 +931,11 @@ func (h *Handler) handleFusionRequest(c *gin.Context, comboResult *combo.ComboRe
 			break
 		}
 	}
-	if needsBridge {
-		bridgeBody = h.applyVisionBridge(c, body, bridgeTarget, executor.FormatOpenAI)
-	}
-
 	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(cfg.PanelHardTimeoutMs)*time.Millisecond)
 	defer cancel()
+	if needsBridge {
+		bridgeBody = h.applyVisionBridgeContext(c, ctx, body, bridgeTarget, executor.FormatOpenAI)
+	}
 
 	resultsCh := make(chan fusionPanel, len(comboResult.Steps))
 	var wg sync.WaitGroup
@@ -1453,6 +1462,29 @@ func extractAssistantContent(respBody []byte) string {
 						}
 					}
 				}
+			}
+		}
+		if sb.Len() > 0 {
+			return sb.String()
+		}
+	}
+
+	// Google Interactions responses expose model text in steps rather than
+	// choices/content/output. Supporting that envelope lets an Interactions
+	// provider serve as the configured Vision Bridge too.
+	if steps, ok := doc["steps"].([]any); ok {
+		var sb strings.Builder
+		for _, rawStep := range steps {
+			step, ok := rawStep.(map[string]any)
+			if !ok {
+				continue
+			}
+			if content, ok := step["content"].(string); ok {
+				sb.WriteString(content)
+				continue
+			}
+			if blocks, ok := step["content"].([]any); ok {
+				sb.WriteString(extractTextBlocks(blocks))
 			}
 		}
 		if sb.Len() > 0 {

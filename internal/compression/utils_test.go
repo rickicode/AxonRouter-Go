@@ -45,10 +45,10 @@ func TestLiteReplaceImageUrls(t *testing.T) {
 		"messages": []any{
 			map[string]any{
 				"role": "user",
-			"content": []any{
-				map[string]any{"type": "text", "text": " hello " + urlFrag + " world "},
-				map[string]any{"type": "image_url", "image_url": map[string]any{"url": urlFrag}},
-			},
+				"content": []any{
+					map[string]any{"type": "text", "text": " hello " + urlFrag + " world "},
+					map[string]any{"type": "image_url", "image_url": map[string]any{"url": urlFrag}},
+				},
 			},
 		},
 	})
@@ -80,8 +80,8 @@ func TestLiteReplaceImageUrls(t *testing.T) {
 
 	imagePart, _ := parts[1].(map[string]any)
 	imageURL, _ := imagePart["image_url"].(map[string]any)
-	if imageURL["url"] != "[image]" {
-		t.Errorf("expected image_url preserved as %q, got %q", "[image]", imageURL["url"])
+	if imageURL["url"] != urlFrag {
+		t.Errorf("expected image_url payload to remain intact, got %q", imageURL["url"])
 	}
 
 	if !contains(stats.TechniquesUsed, "collapse_whitespace") {
