@@ -9,15 +9,6 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/mcp/server"
 )
 
-var toolRegistry = make(map[string]ToolHandler)
-
-type ToolHandler func(ctx context.Context, args json.RawMessage) (*protocol.ToolResult, error)
-
-func GetToolHandler(name string) (ToolHandler, bool) {
-	handler, ok := toolRegistry[name]
-	return handler, ok
-}
-
 func RegisterWebSearchTool(srv *server.Server) {
 	inputSchema := `{
 		"type": "object",
@@ -56,8 +47,8 @@ func RegisterWebSearchTool(srv *server.Server) {
 			return &protocol.ToolResult{
 				Content: []protocol.ToolContent{
 					{
-						Type:  "text",
-						Text:  fmt.Sprintf("Failed to parse arguments: %v", err),
+						Type: "text",
+						Text: fmt.Sprintf("Failed to parse arguments: %v", err),
 					},
 				},
 				IsError: true,
@@ -68,8 +59,8 @@ func RegisterWebSearchTool(srv *server.Server) {
 			return &protocol.ToolResult{
 				Content: []protocol.ToolContent{
 					{
-						Type:  "text",
-						Text:  "query parameter is required",
+						Type: "text",
+						Text: "query parameter is required",
 					},
 				},
 				IsError: true,
@@ -88,8 +79,8 @@ func RegisterWebSearchTool(srv *server.Server) {
 			return &protocol.ToolResult{
 				Content: []protocol.ToolContent{
 					{
-						Type:  "text",
-						Text:  fmt.Sprintf("Search failed: %v", err),
+						Type: "text",
+						Text: fmt.Sprintf("Search failed: %v", err),
 					},
 				},
 				IsError: true,
@@ -126,8 +117,8 @@ func RegisterModelListTool(srv *server.Server) {
 			return &protocol.ToolResult{
 				Content: []protocol.ToolContent{
 					{
-						Type:  "text",
-						Text:  fmt.Sprintf("Failed to parse arguments: %v", err),
+						Type: "text",
+						Text: fmt.Sprintf("Failed to parse arguments: %v", err),
 					},
 				},
 				IsError: true,
@@ -139,8 +130,8 @@ func RegisterModelListTool(srv *server.Server) {
 			return &protocol.ToolResult{
 				Content: []protocol.ToolContent{
 					{
-						Type:  "text",
-						Text:  fmt.Sprintf("Failed to list models: %v", err),
+						Type: "text",
+						Text: fmt.Sprintf("Failed to list models: %v", err),
 					},
 				},
 				IsError: true,
@@ -177,8 +168,8 @@ func RegisterQuotaStatusTool(srv *server.Server) {
 			return &protocol.ToolResult{
 				Content: []protocol.ToolContent{
 					{
-						Type:  "text",
-						Text:  fmt.Sprintf("Failed to parse arguments: %v", err),
+						Type: "text",
+						Text: fmt.Sprintf("Failed to parse arguments: %v", err),
 					},
 				},
 				IsError: true,
@@ -190,8 +181,8 @@ func RegisterQuotaStatusTool(srv *server.Server) {
 			return &protocol.ToolResult{
 				Content: []protocol.ToolContent{
 					{
-						Type:  "text",
-						Text:  fmt.Sprintf("Failed to get quota status: %v", err),
+						Type: "text",
+						Text: fmt.Sprintf("Failed to get quota status: %v", err),
 					},
 				},
 				IsError: true,
@@ -206,14 +197,4 @@ func RegisterQuotaStatusTool(srv *server.Server) {
 		Description: "Get quota and cooldown status for providers",
 		InputSchema: []byte(inputSchema),
 	}, handler)
-}
-
-func GetAllRegisteredTools() []protocol.Tool {
-	var tools []protocol.Tool
-	for name := range toolRegistry {
-		tools = append(tools, protocol.Tool{
-			Name: name,
-		})
-	}
-	return tools
 }
