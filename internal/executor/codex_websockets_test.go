@@ -234,6 +234,22 @@ func websocketTestServer(t *testing.T, capture chan<- []byte, responses [][]byte
 	}))
 }
 
+func TestNormalizeCodexWebsocketRequest_UsesConfiguredImageGenerationModel(t *testing.T) {
+	req := &Request{
+		Model: "gpt-image-2",
+		ProviderSpecificData: map[string]string{
+			"imageGenerationModel": "custom-image-model",
+		},
+	}
+	out, reqType := normalizeCodexWebsocketRequest(req, []byte(`{"model":"gpt-image-2","input":[{"type":"message","role":"user","content":"draw"}]}`))
+	if reqType != "response.create" {
+		t.Fatalf("request type = %q, want response.create", reqType)
+	}
+	if got := gjson.GetBytes(out, "tools.0.model").String(); got != "custom-image-model" {
+		t.Fatalf("injected image model = %q, want custom-image-model; payload=%s", got, out)
+	}
+}
+
 func TestCodexWebsocketsExecutor_Execute_NormalizesResponseCreate(t *testing.T) {
 	captured := make(chan []byte, 1)
 	completed := []byte(`{"type":"response.completed","response":{"id":"resp-1","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)

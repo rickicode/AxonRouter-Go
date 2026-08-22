@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -516,6 +517,18 @@ func TestEnsureImageGenerationTool_ConfigurableModel(t *testing.T) {
 	}
 }
 
+func TestEnsureImageGenerationTool_EscapesModelAsJSON(t *testing.T) {
+	toolModel := "custom\nmodel\"quoted\""
+	body := []byte(`{"model":"gpt-image-2","input":"draw a cat"}`)
+	out := ensureImageGenerationTool(body, "gpt-image-2", toolModel)
+	if !json.Valid(out) {
+		t.Fatalf("injected tool payload is invalid JSON: %s", out)
+	}
+	if got := gjson.GetBytes(out, "tools.0.model").String(); got != toolModel {
+		t.Fatalf("expected model %q, got %q", toolModel, got)
+	}
+}
+
 func TestCodexImageGenerationToolModel_Priority(t *testing.T) {
 	t.Run("provider_specific_data", func(t *testing.T) {
 		req := &Request{ProviderSpecificData: map[string]string{"imageGenerationModel": "custom-model"}}
@@ -881,7 +894,7 @@ func TestCodexTelemetry_CountersIncrement(t *testing.T) {
 
 	req := []byte(`{"model":"gpt-5.4","prompt_cache_key":"k","input":[{"type":"message","role":"user","content":"hi"}]}`)
 	body := codexRequestBody(req)
-	body = ensureImageGenerationTool(body, model)
+	body = ensureImageGenerationTool(body, model, "")
 	body, _ = applyCodexIdentityConfuseBody(body, connID)
 	sessionKey := codexReasoningReplaySessionKey(body, nil)
 	if sessionKey == "" {

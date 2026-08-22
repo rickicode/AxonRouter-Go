@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -793,8 +794,19 @@ func ensureImageGenerationTool(body []byte, modelName, toolModel string) []byte 
 	if strings.TrimSpace(toolModel) == "" {
 		toolModel = defaultCodexImageToolModel
 	}
-	toolJSON := []byte(fmt.Sprintf(`{"type":"image_generation","model":%q,"output_format":"png"}`, toolModel))
-	toolsArrJSON := []byte(fmt.Sprintf(`[{"type":"image_generation","model":%q,"output_format":"png"}]`, toolModel))
+	tool := map[string]string{
+		"type":          "image_generation",
+		"model":         toolModel,
+		"output_format": "png",
+	}
+	toolJSON, err := json.Marshal(tool)
+	if err != nil {
+		return body
+	}
+	toolsArrJSON, err := json.Marshal([]map[string]string{tool})
+	if err != nil {
+		return body
+	}
 
 	tools := gjson.GetBytes(body, "tools")
 	if !tools.Exists() || !tools.IsArray() || len(tools.Array()) == 0 {
