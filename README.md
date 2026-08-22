@@ -436,10 +436,15 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.30
+### What's New in v0.3.31
+
+### Added
+- **Headroom compression service (HIJ-996): docs, spec, changelog** — documentation, API spec updates, and setup guide for the Headroom compression feature covering env vars, endpoint contract, and verification scenarios.
+- **MCP tools (HIJ-945, HIJ-943)** — three new MCP server tools: `axonrouter_model_list` (list models grouped by provider with service kinds), `axonrouter_quota_status` (get quota and cooldown status per provider), and `axonrouter_web_search` (mock web search tool). Model-grouping logic is backed by canonical provider keys from the model catalog.
+- **Configurable Codex image_generation model (HIJ-458)** — the auto-injected image generation tool now resolves its model from provider-specific data, the `AXON_CODEX_IMAGE_GENERATION_MODEL` environment variable, or the default `gpt-image-2`. Model serialization uses `encoding/json` for safety with special characters.
 
 ### Fixed
-- **Proxy health check with credentials** — bulk import and single add now correctly include proxy credentials when testing proxy health. Previously, authenticated proxies were tested without credentials, causing them to fail even though they work fine.
+- **Periodic health check with credentials** — `TestPool` now reads `proxy_username` and `proxy_password` from DB to reconstruct the full URL with auth before testing.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.

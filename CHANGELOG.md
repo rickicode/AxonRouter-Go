@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+
+## [0.3.31] - 2026-08-22
 ### Added
 - **Headroom compression service (HIJ-996): docs, spec, changelog** — documentation, API spec updates, and setup guide for the Headroom compression feature covering env vars, endpoint contract, and verification scenarios.
 - **MCP tools (HIJ-945, HIJ-943)** — three new MCP server tools: `axonrouter_model_list` (list models grouped by provider with service kinds), `axonrouter_quota_status` (get quota and cooldown status per provider), and `axonrouter_web_search` (mock web search tool). Model-grouping logic is backed by canonical provider keys from the model catalog.
