@@ -704,6 +704,10 @@ func (h *ConnectionHandler) BulkUpdate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if len(req.IDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ids must not be empty"})
+		return
+	}
 
 	now := time.Now().Unix()
 	placeholders := make([]string, len(req.IDs))
@@ -730,7 +734,9 @@ func (h *ConnectionHandler) BulkUpdate(c *gin.Context) {
 		args = append([]interface{}{now}, args...)
 		status = connstate.StatusReady
 	case "delete":
-		query = "UPDATE connections SET is_active = ?, status = 'disabled', disabled_reason = 'manual', updated_at = ? WHERE id IN (" + inClause + ")"
+		// Keep the provider's default direct connection protected, matching the
+		// single-connection delete endpoint. Pooled/custom accounts remain deletable.
+		query = "UPDATE connections SET is_active = ?, status = 'disabled', disabled_reason = 'manual', updated_at = ? WHERE id IN (" + inClause + ") AND NOT (provider_specific_data LIKE '%\"direct\":\"true\"%' OR provider_specific_data LIKE '%\"direct\":true%')"
 		args = append([]interface{}{false, now}, args...)
 		status = connstate.StatusDisabled
 	default:
@@ -738,6 +744,7 @@ func (h *ConnectionHandler) BulkUpdate(c *gin.Context) {
 		return
 	}
 
+	var affected int64
 	run := func(d *sql.DB) error {
 		tx, e := d.Begin()
 		if e != nil {
@@ -748,7 +755,12 @@ func (h *ConnectionHandler) BulkUpdate(c *gin.Context) {
 				_ = tx.Rollback()
 			}
 		}()
-		if _, e = tx.Exec(query, args...); e != nil {
+		result, execErr := tx.Exec(query, args...)
+		if execErr != nil {
+			return execErr
+		}
+		affected, e = result.RowsAffected()
+		if e != nil {
 			return e
 		}
 		return tx.Commit()
@@ -767,6 +779,12 @@ func (h *ConnectionHandler) BulkUpdate(c *gin.Context) {
 	// Only mutate in-memory state after the DB write committed successfully.
 	if h.store != nil {
 		for _, id := range req.IDs {
+			if req.Action == "delete" {
+				var psd string
+				if err := h.db.QueryRow("SELECT COALESCE(provider_specific_data, '') FROM connections WHERE id = ?", id).Scan(&psd); err != nil || strings.Contains(psd, `"direct":"true"`) || strings.Contains(psd, `"direct":true`) {
+					continue
+				}
+			}
 			if status == connstate.StatusDisabled {
 				h.store.UpdateStatus(id, status, "manual")
 			} else {
@@ -778,7 +796,7 @@ func (h *ConnectionHandler) BulkUpdate(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"ok": true, "affected": len(req.IDs)})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "affected": affected, "skipped": int64(len(req.IDs)) - affected})
 }
 
 func boolToInt(b bool) int {

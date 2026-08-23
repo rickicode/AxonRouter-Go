@@ -253,6 +253,51 @@ func TestBulkUpdate_ThroughWriteQueue(t *testing.T) {
 	}
 }
 
+func TestBulkUpdateDeleteProtectsDirectConnection(t *testing.T) {
+	database := newConnectionHandlerTestDB(t)
+	h := newConnectionHandlerForTest(t, database, nil)
+	now := time.Now().Unix()
+	if _, err := database.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, provider_specific_data, created_at, updated_at) VALUES
+		('conn-bulk-delete', 'test', 'Bulk Delete', 'none', 'ready', 1, '{}', ?, ?),
+		('conn-bulk-direct', 'test', 'Direct Default', 'none', 'ready', 1, '{"direct":"true"}', ?, ?)`, now, now, now, now); err != nil {
+		t.Fatalf("seed connections: %v", err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPatch, "/connections/bulk", jsonBodyConn(t, map[string]any{
+		"ids":    []string{"conn-bulk-delete", "conn-bulk-direct"},
+		"action": "delete",
+	}))
+	h.BulkUpdate(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("BulkUpdate delete status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Affected int64 `json:"affected"`
+		Skipped  int64 `json:"skipped"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Affected != 1 || resp.Skipped != 1 {
+		t.Fatalf("affected/skipped = %d/%d, want 1/1", resp.Affected, resp.Skipped)
+	}
+
+	var regularActive, directActive int
+	if err := database.QueryRow("SELECT is_active FROM connections WHERE id = 'conn-bulk-delete'").Scan(&regularActive); err != nil {
+		t.Fatalf("scan regular connection: %v", err)
+	}
+	if err := database.QueryRow("SELECT is_active FROM connections WHERE id = 'conn-bulk-direct'").Scan(&directActive); err != nil {
+		t.Fatalf("scan direct connection: %v", err)
+	}
+	if regularActive != 0 || directActive != 1 {
+		t.Fatalf("active flags = %d/%d, want regular=0 direct=1", regularActive, directActive)
+	}
+}
+
 func seedGrokCLIConnection(t *testing.T, database *sql.DB, id, baseURL string) {
 	t.Helper()
 	now := time.Now().Unix()

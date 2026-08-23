@@ -49,6 +49,8 @@ let newModel = $state('');
  let perPage = $state(50);
  let testingAll = $state(false);
  let actionLoading = $state<{ connectionId: string; action: 'test' | 'reset' | 'refresh' | 'delete' } | null>(null);
+  let bulkDeleteConfirmOpen = $state(false);
+  let bulkDeleting = $state(false);
   let deleteTarget = $state<{ id: string; name: string } | null>(null);
   let deleteDialogOpen = $state(false);
 
@@ -453,6 +455,30 @@ async function toggleAutoPingConnection(connId: string) {
   }
 }
 
+async function handleBulkDeleteConnections() {
+  if (selectedCount === 0 || bulkDeleting) return;
+  bulkDeleting = true;
+  try {
+    const res = await connectionsApi.bulkUpdate({
+      ids: [...selectedConnectionIds],
+      action: 'delete',
+    });
+    clearSelection();
+    await refreshConnections();
+    await loadProvider(providerId);
+    if (res.skipped > 0) {
+      toast.info(`Deleted ${res.affected} connection${res.affected === 1 ? '' : 's'}; ${res.skipped} protected`);
+    } else {
+      toast.success(`Deleted ${res.affected} connection${res.affected === 1 ? '' : 's'}`);
+    }
+  } catch (err) {
+    toast.error('Bulk delete failed: ' + (err instanceof Error ? err.message : 'Unknown'));
+  } finally {
+    bulkDeleting = false;
+    bulkDeleteConfirmOpen = false;
+  }
+}
+
 async function handleBulkAssignProxy() {
   if (!needsProxyPool || selectedCount === 0) return;
   bulkAssigning = true;
@@ -642,10 +668,11 @@ async function handleBulkAssignProxy() {
     </div>
   {/if}
 
-  {#if needsProxyPool && selectedCount > 0}
+  {#if selectedCount > 0}
     <div class="flex items-center justify-between gap-3 flex-wrap rounded-xl border border-border bg-card shadow-card p-3">
       <span class="text-body-sm-strong">{selectedCount} selected</span>
       <div class="flex items-center gap-2 flex-wrap">
+        {#if needsProxyPool}
         <Select.Root
           type="single"
           value={selectedProxyPoolId}
@@ -663,6 +690,11 @@ async function handleBulkAssignProxy() {
         </Select.Root>
         <Button onclick={handleBulkAssignProxy} disabled={!canApplyProxy || bulkAssigning} size="sm" class="text-body-sm rounded-sm">
           {bulkAssigning ? 'Applying...' : 'Apply'}
+        </Button>
+        {/if}
+        <Button onclick={() => (bulkDeleteConfirmOpen = true)} disabled={bulkDeleting} variant="destructive" size="sm" class="text-body-sm rounded-sm gap-1.5">
+          <Icon name="trash2" class="size-3.5" />
+          {bulkDeleting ? 'Deleting...' : 'Delete selected'}
         </Button>
         <Button onclick={clearSelection} variant="ghost" size="sm" class="text-body-sm rounded-sm">Clear</Button>
       </div>
@@ -694,11 +726,9 @@ async function handleBulkAssignProxy() {
       <table class="w-full text-left border-collapse">
  <thead>
  <tr class="border-b border-border bg-muted/30">
- {#if needsProxyPool}
  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-2 w-10 text-center">
    <input type="checkbox" checked={allVisibleSelected} onchange={toggleSelectAll} class="size-4 rounded border-border bg-background text-foreground accent-foreground cursor-pointer" aria-label="Select all connections" />
  </th>
- {/if}
  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Name</th>
  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Status</th>
  <th class="text-caption-mono text-muted-foreground uppercase font-semibold py-3 px-4">Auth</th>
@@ -710,7 +740,7 @@ async function handleBulkAssignProxy() {
  </thead>
 <tbody class="divide-y divide-border">
           {#if $connections.length === 0}
-          <tr><td colspan={needsProxyPool ? 8 : 7} class="p-0">
+          <tr><td colspan="8" class="p-0">
             <div class="flex flex-col items-center justify-center py-12 gap-3">
               <div class="size-12 rounded-full bg-muted/50 flex items-center justify-center">
                 <svg class="size-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -733,11 +763,9 @@ async function handleBulkAssignProxy() {
           {:else}
           {#each $connections as row}
           <tr class="transition-colors hover:bg-accent/20 group">
-            {#if needsProxyPool}
             <td class="py-3 px-2 text-center">
               <input type="checkbox" checked={selectedConnectionIds.has(row.id)} onchange={() => toggleSelectConnection(row.id)} class="size-4 rounded border-border bg-background text-foreground accent-foreground cursor-pointer" aria-label="Select {row.name}" />
             </td>
-            {/if}
             <td class="py-3 px-4">
               <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <a href="/providers/{providerId}/{row.id}" class="inline-flex items-center gap-1.5 text-body-sm-strong hover:underline">
@@ -805,9 +833,7 @@ async function handleBulkAssignProxy() {
               {@render connectionBadges(row)}
             </div>
             <div class="flex items-center gap-2 shrink-0">
-              {#if needsProxyPool}
-                <input type="checkbox" checked={selectedConnectionIds.has(row.id)} onchange={() => toggleSelectConnection(row.id)} class="size-4 rounded border-border bg-background text-foreground accent-foreground cursor-pointer" aria-label="Select {row.name}" />
-              {/if}
+              <input type="checkbox" checked={selectedConnectionIds.has(row.id)} onchange={() => toggleSelectConnection(row.id)} class="size-4 rounded border-border bg-background text-foreground accent-foreground cursor-pointer" aria-label="Select {row.name}" />
               <Button variant="ghost" size="icon" class="size-9 shrink-0" href={`/providers/${providerId}/${row.id}`} title="Open connection" aria-label="Open connection">
                 <Icon name="chevronRight" class="size-6" />
               </Button>
@@ -953,6 +979,21 @@ async function handleBulkAssignProxy() {
 	currentFormat={$selectedProvider?.format ?? 'openai'}
 	onSaved={() => loadProvider(providerId)}
 />
+
+<AlertDialog.Root bind:open={bulkDeleteConfirmOpen}>
+ <AlertDialog.Content>
+ <AlertDialog.Header>
+ <AlertDialog.Title>Delete selected connections</AlertDialog.Title>
+ <AlertDialog.Description>
+ Delete {selectedCount} selected connection{selectedCount === 1 ? '' : 's'}? Default direct connections are protected and will be skipped.
+ </AlertDialog.Description>
+ </AlertDialog.Header>
+ <AlertDialog.Footer>
+ <AlertDialog.Action onclick={handleBulkDeleteConnections} disabled={bulkDeleting}>Delete selected</AlertDialog.Action>
+ <AlertDialog.Cancel onclick={() => (bulkDeleteConfirmOpen = false)}>Cancel</AlertDialog.Cancel>
+ </AlertDialog.Footer>
+ </AlertDialog.Content>
+</AlertDialog.Root>
 
 <AlertDialog.Root bind:open={deleteDialogOpen}>
  <AlertDialog.Content>

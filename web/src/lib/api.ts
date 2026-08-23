@@ -453,9 +453,9 @@ export const connectionsApi = {
 
   bulkUpdate: (data: {
     ids: string[];
-    action: "enable" | "disable" | "test";
+    action: "enable" | "disable" | "reset" | "delete";
   }) =>
-    fetchApi<{ success: number; failed: number }>(`/connections/bulk`, {
+    fetchApi<{ ok: boolean; affected: number; skipped: number }>(`/connections/bulk`, {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
