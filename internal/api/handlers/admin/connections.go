@@ -708,6 +708,26 @@ func (h *ConnectionHandler) BulkUpdate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ids must not be empty"})
 		return
 	}
+	if req.Action == "delete" {
+		deletedIDs, skipped, err := h.bulkDeleteConnections(c.Request.Context(), req.IDs)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		for _, id := range deletedIDs {
+			if h.store != nil {
+				h.store.Delete(id)
+			}
+			if h.exhaustion != nil {
+				h.exhaustion.Clear(id)
+			}
+		}
+		if h.store != nil && h.elig != nil && len(deletedIDs) > 0 {
+			h.elig.Update(h.store)
+		}
+		c.JSON(http.StatusOK, gin.H{"ok": true, "affected": len(deletedIDs), "skipped": skipped})
+		return
+	}
 
 	now := time.Now().Unix()
 	placeholders := make([]string, len(req.IDs))
@@ -733,12 +753,6 @@ func (h *ConnectionHandler) BulkUpdate(c *gin.Context) {
 		query = "UPDATE connections SET status = 'ready', disabled_reason = NULL, failure_count = 0, updated_at = ? WHERE id IN (" + inClause + ")"
 		args = append([]interface{}{now}, args...)
 		status = connstate.StatusReady
-	case "delete":
-		// Keep the provider's default direct connection protected, matching the
-		// single-connection delete endpoint. Pooled/custom accounts remain deletable.
-		query = "UPDATE connections SET is_active = ?, status = 'disabled', disabled_reason = 'manual', updated_at = ? WHERE id IN (" + inClause + ") AND NOT (provider_specific_data LIKE '%\"direct\":\"true\"%' OR provider_specific_data LIKE '%\"direct\":true%')"
-		args = append([]interface{}{false, now}, args...)
-		status = connstate.StatusDisabled
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown action: " + req.Action})
 		return
@@ -779,12 +793,6 @@ func (h *ConnectionHandler) BulkUpdate(c *gin.Context) {
 	// Only mutate in-memory state after the DB write committed successfully.
 	if h.store != nil {
 		for _, id := range req.IDs {
-			if req.Action == "delete" {
-				var psd string
-				if err := h.db.QueryRow("SELECT COALESCE(provider_specific_data, '') FROM connections WHERE id = ?", id).Scan(&psd); err != nil || strings.Contains(psd, `"direct":"true"`) || strings.Contains(psd, `"direct":true`) {
-					continue
-				}
-			}
 			if status == connstate.StatusDisabled {
 				h.store.UpdateStatus(id, status, "manual")
 			} else {
@@ -797,6 +805,96 @@ func (h *ConnectionHandler) BulkUpdate(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "affected": affected, "skipped": int64(len(req.IDs)) - affected})
+}
+
+func (h *ConnectionHandler) bulkDeleteConnections(ctx context.Context, ids []string) ([]string, int, error) {
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := `SELECT id, COALESCE(provider_specific_data, '') FROM connections WHERE id IN (` + strings.Join(placeholders, ",") + `)`
+
+	var deletedIDs []string
+	var skipped int
+	run := func(d *sql.DB) error {
+		tx, err := d.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+
+		rows, err := tx.Query(query, args...)
+		if err != nil {
+			return err
+		}
+		var candidates []string
+		for rows.Next() {
+			var id, raw string
+			if err := rows.Scan(&id, &raw); err != nil {
+				rows.Close()
+				return err
+			}
+			if isDirectConnectionData(raw) {
+				continue
+			}
+			candidates = append(candidates, id)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		skipped = len(ids) - len(candidates)
+
+		for _, id := range candidates {
+			if _, err := tx.Exec(`DELETE FROM combo_steps WHERE connection_id = ?`, id); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`DELETE FROM model_rate_limits WHERE connection_id = ?`, id); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`DELETE FROM quota_cache WHERE connection_id = ?`, id); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`DELETE FROM connections WHERE id = ?`, id); err != nil {
+				return err
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		deletedIDs = candidates
+		return nil
+	}
+
+	var err error
+	if h.writeQueue == nil {
+		err = run(h.db)
+	} else {
+		err = h.writeQueue.Do(ctx, "bulk-delete-connections", run)
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	return deletedIDs, skipped, nil
+}
+
+func isDirectConnectionData(raw string) bool {
+	var psd map[string]any
+	if json.Unmarshal([]byte(raw), &psd) != nil {
+		return false
+	}
+	direct, ok := psd["direct"]
+	if !ok {
+		return false
+	}
+	if value, ok := direct.(bool); ok {
+		return value
+	}
+	value, ok := direct.(string)
+	return ok && strings.EqualFold(value, "true")
 }
 
 func boolToInt(b bool) int {

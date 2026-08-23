@@ -262,6 +262,17 @@ func TestBulkUpdateDeleteProtectsDirectConnection(t *testing.T) {
 		('conn-bulk-direct', 'test', 'Direct Default', 'none', 'ready', 1, '{"direct":"true"}', ?, ?)`, now, now, now, now); err != nil {
 		t.Fatalf("seed connections: %v", err)
 	}
+	if _, err := database.Exec(`INSERT INTO quota_cache (id, connection_id, provider_type_id, connection_name, plan, quotas, status, fetched_at, updated_at) VALUES ('qc-bulk-delete', 'conn-bulk-delete', 'test', 'Bulk Delete', 'free', '[]', 'ok', ?, ?)`, now, now); err != nil {
+		t.Fatalf("seed quota cache: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO model_rate_limits (id, connection_id, model_id, tpm_remaining, tpm_limit, rpm_remaining, rpm_limit, last_updated_at) VALUES ('mrl-bulk-delete', 'conn-bulk-delete', 'test/model', 10, 20, 5, 10, ?)`, now); err != nil {
+		t.Fatalf("seed model rate limit: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at) VALUES ('cs-bulk-delete', 'combo-test', 'conn-bulk-delete', 'test/model', 1, 100, ?)`, now); err != nil {
+		t.Fatalf("seed combo step: %v", err)
+	}
+	h.store.SeedConnection("conn-bulk-delete", "test", "ready", 0)
+	h.exhaustion.MarkExhausted("conn-bulk-delete", time.Minute)
 
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -286,15 +297,34 @@ func TestBulkUpdateDeleteProtectsDirectConnection(t *testing.T) {
 		t.Fatalf("affected/skipped = %d/%d, want 1/1", resp.Affected, resp.Skipped)
 	}
 
-	var regularActive, directActive int
-	if err := database.QueryRow("SELECT is_active FROM connections WHERE id = 'conn-bulk-delete'").Scan(&regularActive); err != nil {
-		t.Fatalf("scan regular connection: %v", err)
+	var directCount int
+	if err := database.QueryRow("SELECT COUNT(*) FROM connections WHERE id = 'conn-bulk-delete'").Scan(&directCount); err != nil {
+		t.Fatalf("scan deleted connection: %v", err)
 	}
+	if directCount != 0 {
+		t.Fatalf("bulk-deleted connection remains: count=%d", directCount)
+	}
+	if h.store.Get("conn-bulk-delete") != nil {
+		t.Fatal("bulk-deleted connection remains in memory")
+	}
+	if h.exhaustion.IsExhausted("conn-bulk-delete") {
+		t.Fatal("bulk-deleted connection remains in exhaustion cache")
+	}
+	for _, table := range []string{"quota_cache", "model_rate_limits", "combo_steps"} {
+		var count int
+		if err := database.QueryRow("SELECT COUNT(*) FROM " + table + " WHERE connection_id = 'conn-bulk-delete'").Scan(&count); err != nil {
+			t.Fatalf("scan %s: %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("%s rows remain for deleted connection: count=%d", table, count)
+		}
+	}
+	var directActive int
 	if err := database.QueryRow("SELECT is_active FROM connections WHERE id = 'conn-bulk-direct'").Scan(&directActive); err != nil {
 		t.Fatalf("scan direct connection: %v", err)
 	}
-	if regularActive != 0 || directActive != 1 {
-		t.Fatalf("active flags = %d/%d, want regular=0 direct=1", regularActive, directActive)
+	if directActive != 1 {
+		t.Fatalf("protected direct connection changed: active=%d", directActive)
 	}
 }
 
