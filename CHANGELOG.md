@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Bulk connection deletion** — provider detail pages now allow selecting accounts across all providers and hard-deleting them in one confirmed action; protected default direct connections are skipped.
 
 ### Fixed
+- **Single connection deletion** — individual account deletion now hard-deletes the connection and its quota, rate-limit, and combo child rows while preserving the protected direct account.
 - **Orphaned proxy-pool connections** — startup cleanup removes OC/MiMoCode and other connection rows whose `proxyPoolId` no longer exists, while proxy-pool deletion now removes all matching pooled connections even if stale metadata also contains a direct marker.
 
 ## [0.3.32] - 2026-08-22

@@ -208,6 +208,52 @@ func TestRecordTestFailure_Auth(t *testing.T) {
 	}
 }
 
+func TestDeleteHardDeletesConnectionAndChildren(t *testing.T) {
+	database := newConnectionHandlerTestDB(t)
+	h := newConnectionHandlerForTest(t, database, nil)
+	now := time.Now().Unix()
+	if _, err := database.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, status, is_active, provider_specific_data, created_at, updated_at) VALUES ('conn-single-delete', 'test', 'Single Delete', 'none', 'ready', 1, '{}', ?, ?)`, now, now); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO quota_cache (id, connection_id, provider_type_id, connection_name, plan, quotas, status, fetched_at, updated_at) VALUES ('qc-single-delete', 'conn-single-delete', 'test', 'Single Delete', 'free', '[]', 'ok', ?, ?)`, now, now); err != nil {
+		t.Fatalf("seed quota cache: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO model_rate_limits (id, connection_id, model_id, tpm_remaining, tpm_limit, rpm_remaining, rpm_limit, last_updated_at) VALUES ('mrl-single-delete', 'conn-single-delete', 'test/model', 10, 20, 5, 10, ?)`, now); err != nil {
+		t.Fatalf("seed model rate limit: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO combo_steps (id, combo_id, connection_id, model_id, priority, weight, created_at) VALUES ('cs-single-delete', 'combo-test', 'conn-single-delete', 'test/model', 1, 100, ?)`, now); err != nil {
+		t.Fatalf("seed combo step: %v", err)
+	}
+	h.store.SeedConnection("conn-single-delete", "test", "ready", 0)
+	h.exhaustion.MarkExhausted("conn-single-delete", time.Minute)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodDelete, "/connections/conn-single-delete", nil)
+	c.Params = gin.Params{{Key: "id", Value: "conn-single-delete"}}
+	h.Delete(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Delete status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var count int
+	if err := database.QueryRow("SELECT COUNT(*) FROM connections WHERE id = 'conn-single-delete'").Scan(&count); err != nil {
+		t.Fatalf("scan deleted connection: %v", err)
+	}
+	if count != 0 || h.store.Get("conn-single-delete") != nil || h.exhaustion.IsExhausted("conn-single-delete") {
+		t.Fatal("single delete did not clear parent and in-memory state")
+	}
+	for _, table := range []string{"quota_cache", "model_rate_limits", "combo_steps"} {
+		if err := database.QueryRow("SELECT COUNT(*) FROM " + table + " WHERE connection_id = 'conn-single-delete'").Scan(&count); err != nil {
+			t.Fatalf("scan %s: %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("%s rows remain after single delete: %d", table, count)
+		}
+	}
+}
+
 // TestBulkUpdate_ThroughWriteQueue verifies BulkUpdate routes its write through
 // db.WriteQueue and that both the DB row and the in-memory store reflect the
 // change after the queued write commits.

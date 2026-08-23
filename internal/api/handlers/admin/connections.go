@@ -262,37 +262,36 @@ func (h *ConnectionHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// Delete soft-deletes a connection.
+// Delete hard-deletes a connection and its dependent cache rows.
 func (h *ConnectionHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
 
 	// Block deletion of any default direct connection (OpenCode Free, MiMoCode, etc.).
 	var psd string
-	h.db.QueryRow("SELECT COALESCE(provider_specific_data, '') FROM connections WHERE id = ?", id).Scan(&psd)
-	if strings.Contains(psd, `"direct":"true"`) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot delete the default direct connection"})
+	err := h.db.QueryRow("SELECT COALESCE(provider_specific_data, '') FROM connections WHERE id = ?", id).Scan(&psd)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
 		return
 	}
-
-	result, err := h.db.Exec(`UPDATE connections SET is_active = 0, status = 'disabled', disabled_reason = 'manual', updated_at = ? WHERE id = ?`, time.Now().Unix(), id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
+	if isDirectConnectionData(psd) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot delete the default direct connection"})
 		return
 	}
 
-	// Sync in-memory state
-	if h.store != nil {
-		h.store.UpdateStatus(id, connstate.StatusDisabled, "manual")
-		if h.elig != nil {
-			h.elig.Update(h.store)
-		}
+	deletedIDs, _, err := h.bulkDeleteConnections(c.Request.Context(), []string{id})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
-
+	if len(deletedIDs) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
+		return
+	}
+	h.cleanupDeletedConnectionState(deletedIDs)
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -714,17 +713,7 @@ func (h *ConnectionHandler) BulkUpdate(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		for _, id := range deletedIDs {
-			if h.store != nil {
-				h.store.Delete(id)
-			}
-			if h.exhaustion != nil {
-				h.exhaustion.Clear(id)
-			}
-		}
-		if h.store != nil && h.elig != nil && len(deletedIDs) > 0 {
-			h.elig.Update(h.store)
-		}
+		h.cleanupDeletedConnectionState(deletedIDs)
 		c.JSON(http.StatusOK, gin.H{"ok": true, "affected": len(deletedIDs), "skipped": skipped})
 		return
 	}
@@ -805,6 +794,20 @@ func (h *ConnectionHandler) BulkUpdate(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "affected": affected, "skipped": int64(len(req.IDs)) - affected})
+}
+
+func (h *ConnectionHandler) cleanupDeletedConnectionState(ids []string) {
+	for _, id := range ids {
+		if h.store != nil {
+			h.store.Delete(id)
+		}
+		if h.exhaustion != nil {
+			h.exhaustion.Clear(id)
+		}
+	}
+	if h.store != nil && h.elig != nil && len(ids) > 0 {
+		h.elig.Update(h.store)
+	}
 }
 
 func (h *ConnectionHandler) bulkDeleteConnections(ctx context.Context, ids []string) ([]string, int, error) {
