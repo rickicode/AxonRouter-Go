@@ -436,14 +436,14 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.32
+### What's New in v0.3.33
 
 ### Added
-- **Dynamic model sync for custom provider base URLs** — admin, gateway, and background model sync now read the provider's `base_url` from the database instead of hardcoded URLs. When a custom provider (e.g. `oc`) has its base URL changed in the database, models are fetched from the new endpoint automatically.
+- **Bulk connection deletion** — provider detail pages now allow selecting accounts across all providers and hard-deleting them in one confirmed action; protected default direct connections are skipped.
 
 ### Fixed
-- **Proxy pool cascade hard-deletes oc/ connections** — when a proxy pool is removed, associated `oc`/`mimocode` connections are now hard-deleted instead of soft-deleted, preventing orphaned DB rows and stale in-memory state.
-- **Proxy pool cascade deletes child rows before connections** — `combo_steps` and `model_rate_limits` rows are now deleted before the parent connection to satisfy FK constraints (`PRAGMA foreign_keys=ON`). Previously, the cascade would fail with a constraint violation when connections had combo steps or rate limits, rolling back the entire transaction.
+- **Single connection deletion** — individual account deletion now hard-deletes the connection and its quota, rate-limit, and combo child rows while preserving the protected direct account.
+- **Orphaned proxy-pool connections** — startup cleanup removes OC/MiMoCode and other connection rows whose `proxyPoolId` no longer exists, while proxy-pool deletion now removes all matching pooled connections even if stale metadata also contains a direct marker.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
