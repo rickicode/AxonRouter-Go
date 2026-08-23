@@ -1066,13 +1066,13 @@ func likeEscape(s string) string {
 
 // deletePoolCascade removes a proxy pool and cascades the deletion: any
 // connection (any provider) that references the pool directly via proxyPoolId,
-// or via a proxy group that contains the pool, is soft-deleted (is_active = 0).
+// or via a proxy group that contains the pool, is hard-deleted.
 // Group references in settings are detached, and groups left empty by the
 // removal are deleted. All steps run in a single transaction so a failure
 // cannot leave dangling references behind.
 // deletePoolCascadeTx performs the cascade delete within an existing tx.
-// Returns the set of connection IDs that were hard-deleted (excludes the direct
-// default connection that was skipped), so the caller can clean up in-memory state.
+// Returns the set of connection IDs that were hard-deleted so the caller can
+// clean up corresponding in-memory state.
 func (h *ProxyPoolHandler) deletePoolCascadeTx(tx *sql.Tx, poolID string) (deletedConnIDs map[string]struct{}, err error) {
 	now := time.Now().Unix()
 	connIDs := map[string]struct{}{}
@@ -1142,19 +1142,13 @@ func (h *ProxyPoolHandler) deletePoolCascadeTx(tx *sql.Tx, poolID string) (delet
 		groupRows.Close()
 	}
 
-	// 2. Hard-delete collected connections (skip the default direct oc connection).
-	// Connections that depend on a proxy pool become non-functional when the pool
-	// is removed, so soft-deleting them would leave orphaned rows. Hard-delete
-	// the connection, its quota_cache entries, and clear the in-memory store.
+	// 2. Hard-delete collected connections. Connections that depend on a proxy
+	// pool become non-functional when the pool is removed, so soft-deleting them
+	// would leave orphaned rows. Hard-delete the connection, its quota_cache
+	// entries, and clear the in-memory store.
 	// FK-order: delete child rows (combo_steps, model_rate_limits) before
 	// connections to satisfy FOREIGN KEY constraints with PRAGMA foreign_keys=ON.
 	for id := range connIDs {
-		var psd string
-		if tx.QueryRow("SELECT COALESCE(provider_specific_data,'') FROM connections WHERE id = ?", id).Scan(&psd) == nil {
-			if strings.Contains(psd, `"direct":"true"`) {
-				continue
-			}
-		}
 		if _, e := tx.Exec(`DELETE FROM combo_steps WHERE connection_id = ?`, id); e != nil {
 			return nil, e
 		}

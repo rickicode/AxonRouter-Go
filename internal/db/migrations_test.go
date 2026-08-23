@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -474,5 +475,46 @@ func TestPricingSeedPreservesOperatorEdits(t *testing.T) {
 	}
 	if !customExists {
 		t.Errorf("operator-created row %s was deleted on migration re-run", customID)
+	}
+}
+
+func TestOrphanedProxyConnectionCleanup(t *testing.T) {
+	dir := t.TempDir()
+	d, err := sql.Open("sqlite", filepath.Join(dir, "verify.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	if err := RunMigrations(d); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().Unix()
+	if _, err := d.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, provider_specific_data, status, is_active, created_at, updated_at) VALUES ('oc-orphan','oc','Orphaned OC','none','{"proxyPoolId":"deleted-pool"}','ready',1,?,?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`INSERT INTO connections (id, provider_type_id, name, auth_type, provider_specific_data, status, is_active, created_at, updated_at) VALUES ('oc-direct-test','oc','Direct OC','none','{"direct":"true"}','ready',1,?,?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RunMigrations(d); err != nil {
+		t.Fatal(err)
+	}
+
+	var orphanCount int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM connections WHERE id = 'oc-orphan'`).Scan(&orphanCount); err != nil {
+		t.Fatal(err)
+	}
+	if orphanCount != 0 {
+		t.Fatalf("orphaned OC connection remains after migration: count=%d", orphanCount)
+	}
+
+	var directCount int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM connections WHERE id = 'oc-direct-test'`).Scan(&directCount); err != nil {
+		t.Fatal(err)
+	}
+	if directCount != 1 {
+		t.Fatalf("direct OC connection was incorrectly removed: count=%d", directCount)
 	}
 }

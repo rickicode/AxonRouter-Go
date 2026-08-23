@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+### Fixed
+- **Orphaned proxy-pool connections** — startup cleanup removes OC/MiMoCode and other connection rows whose `proxyPoolId` no longer exists, while proxy-pool deletion now removes all matching pooled connections even if stale metadata also contains a direct marker.
 
 ## [0.3.32] - 2026-08-22
 ### Added

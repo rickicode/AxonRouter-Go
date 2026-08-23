@@ -772,7 +772,7 @@ func TestProxyPoolDeleteCascadesDirectConnections(t *testing.T) {
 		}
 	}
 	mustExec(`INSERT INTO proxy_pools (id,name,type,proxy_url,is_active,test_status,created_at,updated_at) VALUES ('pool-x','x','http','http://x:1',1,'ok',?,?)`, now, now)
-	mustExec(`INSERT INTO connections (id,provider_type_id,name,auth_type,status,is_active,provider_specific_data,created_at,updated_at) VALUES ('conn-pool','oc','c-pool','none','ready',1,'{"proxyPoolId":"pool-x"}',?,?)`, now, now)
+	mustExec(`INSERT INTO connections (id,provider_type_id,name,auth_type,status,is_active,provider_specific_data,created_at,updated_at) VALUES ('conn-pool','oc','c-pool','none','ready',1,'{"proxyPoolId":"pool-x","direct":"true"}',?,?)`, now, now)
 	mustExec(`INSERT INTO connections (id,provider_type_id,name,auth_type,status,is_active,provider_specific_data,created_at,updated_at) VALUES ('conn-other','oc','c-other','none','ready',1,'{"proxyPoolId":"pool-y"}',?,?)`, now, now)
 	mustExec(`INSERT INTO quota_cache (id,connection_id,provider_type_id,connection_name,plan,quotas,status,fetched_at,updated_at) VALUES ('qc-pool','conn-pool','oc','c-pool','free','[]','ok',?,?)`, now, now)
 	// Seed FK-dependent rows to verify cascade deletes child rows first.

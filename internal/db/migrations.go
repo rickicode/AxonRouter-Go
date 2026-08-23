@@ -539,6 +539,14 @@ CREATE TABLE IF NOT EXISTS proxy_groups (
 		}
 	}
 
+	// Remove connection rows left behind by older proxy-pool deletion paths.
+	// A connection is orphaned only when its provider_specific_data contains a
+	// proxyPoolId whose pool no longer exists; the default direct connection has
+	// no proxyPoolId and is therefore preserved.
+	if err := cleanupOrphanedProxyConnections(db); err != nil {
+		return err
+	}
+
 	// Response cache table (Phase 1: schema ready for Phase 2 persistence)
 	if _, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS response_cache (
@@ -905,6 +913,68 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 	}
 
 	return nil
+}
+
+func cleanupOrphanedProxyConnections(database *sql.DB) error {
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	rows, err := tx.Query(`SELECT id, provider_specific_data FROM connections WHERE provider_specific_data LIKE '%"proxyPoolId"%'`)
+	if err != nil {
+		return err
+	}
+	type orphan struct {
+		id string
+	}
+	var orphans []orphan
+	for rows.Next() {
+		var id, raw string
+		if err := rows.Scan(&id, &raw); err != nil {
+			rows.Close()
+			return err
+		}
+		var psd map[string]any
+		if json.Unmarshal([]byte(raw), &psd) != nil {
+			continue
+		}
+		poolID, ok := psd["proxyPoolId"].(string)
+		if !ok || poolID == "" {
+			continue
+		}
+		var exists int
+		if err := tx.QueryRow("SELECT 1 FROM proxy_pools WHERE id = ? LIMIT 1", poolID).Scan(&exists); err == sql.ErrNoRows {
+			orphans = append(orphans, orphan{id: id})
+		} else if err != nil {
+			rows.Close()
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	for _, item := range orphans {
+		if _, err := tx.Exec("DELETE FROM combo_steps WHERE connection_id = ?", item.id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DELETE FROM model_rate_limits WHERE connection_id = ?", item.id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DELETE FROM quota_cache WHERE connection_id = ?", item.id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DELETE FROM connections WHERE id = ?", item.id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func isDuplicateColumnError(err error) bool {
