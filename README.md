@@ -436,14 +436,10 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.33
-
-### Added
-- **Bulk connection deletion** — provider detail pages now allow selecting accounts across all providers and hard-deleting them in one confirmed action; protected default direct connections are skipped.
+### What's New in v0.3.34
 
 ### Fixed
-- **Single connection deletion** — individual account deletion now hard-deletes the connection and its quota, rate-limit, and combo child rows while preserving the protected direct account.
-- **Orphaned proxy-pool connections** — startup cleanup removes OC/MiMoCode and other connection rows whose `proxyPoolId` no longer exists, while proxy-pool deletion now removes all matching pooled connections even if stale metadata also contains a direct marker.
+- **OC test model selection** — connection and provider tests now pick a known-working free model (e.g. `deepseek-v4-flash-free`) instead of the first catalog entry, and return the bare model name without the `oc/` prefix so the upstream endpoint recognizes it.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
