@@ -385,6 +385,11 @@ AxonRouter-Go uses a single-file versioning system so that every release is cons
   make release v=0.3.1
   ```
   `make release` will fail if the working tree is dirty or `CHANGELOG.md` has no entries under `## [Unreleased]`.
+  
+  **⚠️ Branch note:** `make release` pushes to `origin master` but the default branch is `main`. If the push targets the wrong branch, push manually:
+  ```bash
+  git push origin main vX.Y.Z
+  ```
 
 ### 3. CHANGELOG.md Is Mandatory
 - Every release **must** update `CHANGELOG.md`.
@@ -414,7 +419,7 @@ AxonRouter-Go uses a single-file versioning system so that every release is cons
 - **Dashboard sidebar**: reads `version` from the health response and links to the GitHub `CHANGELOG.md`.
 
 ### 7. Release Procedure — Agent Must Follow
-When the user asks to "release", "buat release", "update release", or any equivalent, do not just run the Makefile blindly. Follow this checklist.
+When the user asks to "release", "buat release", "update release", "tag versi", "upgrade versi", or any equivalent, do not just run the Makefile blindly. Follow this checklist.
 
 #### 7.1 Do not release a dirty working tree
 - If `git status --short` shows any `M`/`A`/`D` files, stage and commit them first with an accurate message.
@@ -433,25 +438,44 @@ cd web && npm run test
 - `CHANGELOG.md` must have entries under `## [Unreleased]`.
 - If `## [Unreleased]` is empty, ask the user what changed instead of fabricating entries.
 
-#### 7.4 Create the release
+#### 7.4 Create the release (fresh)
 Use the exact version the user asked for. If no version was specified, ask.
 ```bash
 make release v=X.Y.Z
 ```
+**Note:** `make release` pushes to `origin master`. The primary branch on GitHub is `main`. If the push to `master` fails or the release workflow doesn't trigger, push to `main` instead:
+```bash
+git push origin main vX.Y.Z
+```
 
-#### 7.5 Verify the release artifacts
+#### 7.5 Push an existing release commit (tag not pushed)
+Sometimes the release commit and local tag already exist (from a previous session or interrupted `make release`) but the tag was never pushed to GitHub. `make release` will **fail** in this case because `bump-version.js` refuses when `## [Unreleased]` is empty or the version already exists in `CHANGELOG.md`.
+
+In this situation, do NOT use `make release`. Instead:
+1. Verify the release commit exists: `git log --oneline -3`
+2. Verify the tag points to it: `git tag -n1 vX.Y.Z && git rev-parse vX.Y.Z`
+3. Verify it matches HEAD: `git rev-parse HEAD` should equal the tag target
+4. Delete stale local tag if needed: `git tag -d vX.Y.Z`
+5. Create the tag and push:
+   ```bash
+   git tag -a "vX.Y.Z" -m "Release vX.Y.Z"
+   git push origin main "vX.Y.Z"
+   ```
+6. Verify GitHub Actions triggered: `gh run list --limit 5`
+
+#### 7.6 Verify the release artifacts
 - Local tag: `git tag --list 'vX.Y.Z'`
 - Remote tag: `git ls-remote --tags origin vX.Y.Z`
 - GitHub Actions release workflow is triggered by the tag.
 
-#### 7.6 If recreating an existing release
+#### 7.7 If recreating an existing release
 Sometimes the user deletes a release and wants the same version again. Do this first:
 1. Delete remote tag: `git push --delete origin vX.Y.Z`
 2. Delete local tag: `git tag -d vX.Y.Z`
 3. Delete GitHub release: `gh release delete vX.Y.Z --yes`
-4. If the release commit is already on `master`, revert it and push:
+4. If the release commit is already on `main`, revert it and push:
    ```bash
    git revert <release-commit-sha>
-   git push origin master
+   git push origin main
    ```
 5. Then follow 7.1–7.6.
