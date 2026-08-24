@@ -337,23 +337,36 @@ func (h *Handler) discoverCloudflareModels() {
 	models.DiscoverCloudflareModelsCached(apiKey, accountID)
 }
 
+var noAuthProviderBaseURLs = map[string]string{
+	"oc":     "https://opencode.ai/zen/v1",
+	"oc-zen": "https://opencode.ai/zen/v1",
+	"oc-go":  "https://opencode.ai/zen/go/v1",
+}
+
 // discoverNoAuthProviderModels fetches fresh models from a no-auth provider's
-// upstream endpoint when the DB has a custom base_url. This ensures that models
-// removed upstream disappear automatically from the catalog. Results are cached
-// for 30s so /v1/models does not hit the upstream on every request.
+// upstream endpoint. A configured DB base_url takes precedence over the default;
+// successful responses replace the catalog so removed models cannot remain visible.
 func (h *Handler) discoverNoAuthProviderModels(prefix string) {
-	var baseURL sql.NullString
-	err := h.db.QueryRow(`SELECT base_url FROM provider_types WHERE id = ? AND is_custom = 0`, prefix).Scan(&baseURL)
-	if err != nil || !baseURL.Valid || baseURL.String == "" {
+	baseURL, ok := noAuthProviderBaseURLs[prefix]
+	if !ok {
 		return
 	}
-	modelsURL := strings.TrimRight(baseURL.String, "/") + "/v1/models"
-	ctx := context.Background()
-	upstreamModels := models.FetchProviderModelsURLCached(ctx, modelsURL)
+	var configuredURL sql.NullString
+	if err := h.db.QueryRow(`SELECT base_url FROM provider_types WHERE id = ? AND is_custom = 0`, prefix).Scan(&configuredURL); err == nil && configuredURL.Valid && configuredURL.String != "" {
+		baseURL = configuredURL.String
+	}
+	if baseURL == "" {
+		return
+	}
+	modelsURL := models.ProviderModelsURL(baseURL)
+	upstreamModels := models.FetchProviderModelsURLCached(context.Background(), modelsURL)
+	if models.ProviderFreeOnly()[prefix] {
+		upstreamModels = models.FilterFreeModelIDs(upstreamModels)
+	}
 	if len(upstreamModels) == 0 {
 		return
 	}
-	models.MergeProviderModelIDs(prefix, upstreamModels, nil)
+	models.ReplaceProviderModelIDs(prefix, upstreamModels, nil)
 }
 
 // customModels returns user-added models stored for a provider prefix (custom providers).

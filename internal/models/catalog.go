@@ -690,9 +690,7 @@ func tryFetch(ctx context.Context) {
 }
 
 // MergeProviderModelIDs overlays discovered model IDs into the in-memory catalog
-// under the given provider key. kindMap maps model ID -> service kinds. Existing
-// entries not present in the IDs are kept; service kinds are preserved when the
-// discovered entry omits them.
+// under the given provider key. Existing entries not present in the IDs are kept.
 func MergeProviderModelIDs(providerKey string, ids []string, kindMap map[string][]string) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -701,6 +699,56 @@ func MergeProviderModelIDs(providerKey string, ids []string, kindMap map[string]
 		fetched = append(fetched, modelEntry{ID: id, ServiceKinds: kindMap[id]})
 	}
 	current[providerKey] = mergeProviderEntries(current[providerKey], fetched)
+}
+
+// ReplaceProviderModelIDs replaces a dynamically discovered provider catalog.
+// It removes stale IDs while preserving service kinds for IDs whose upstream
+// response does not include them.
+func ReplaceProviderModelIDs(providerKey string, ids []string, kindMap map[string][]string) {
+	mu.Lock()
+	defer mu.Unlock()
+	previous := make(map[string]modelEntry, len(current[providerKey]))
+	for _, entry := range current[providerKey] {
+		previous[entry.ID] = entry
+	}
+	entries := make([]modelEntry, 0, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok || id == "" {
+			continue
+		}
+		seen[id] = struct{}{}
+		entry := modelEntry{ID: id, ServiceKinds: kindMap[id]}
+		if len(entry.ServiceKinds) == 0 {
+			entry.ServiceKinds = previous[id].ServiceKinds
+		}
+		entries = append(entries, entry)
+	}
+	current[providerKey] = entries
+}
+
+// ProviderModelsURL returns the OpenAI-compatible models endpoint for a base URL.
+// Bases ending in /v1 already include the API prefix.
+func ProviderModelsURL(baseURL string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if strings.HasSuffix(baseURL, "/v1") {
+		return baseURL + "/models"
+	}
+	return baseURL + "/v1/models"
+}
+
+// FilterFreeModelIDs keeps model IDs using the catalog's free-model convention.
+// OC advertises free models with a "-free" suffix and its public endpoint does
+// not expose pricing metadata through the lightweight ID fetch path.
+func FilterFreeModelIDs(ids []string) []string {
+	filtered := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimPrefix(strings.TrimSpace(id), "@")
+		if strings.HasSuffix(id, "-free") {
+			filtered = append(filtered, id)
+		}
+	}
+	return filtered
 }
 
 // cfTaskServiceKinds maps Cloudflare Workers AI task names to our service kind tags.

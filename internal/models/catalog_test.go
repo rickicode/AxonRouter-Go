@@ -447,3 +447,45 @@ func TestDynamicModelSync_RemovedModelsDisappear(t *testing.T) {
 		t.Errorf("second sync = %v, want %v (model-b should be removed)", ids, want)
 	}
 }
+
+// TestTryFetchProviders_OCFreeModelsReplaceStale verifies that OC refreshes from
+// the upstream list, keeps only free models, and removes stale catalog entries.
+func TestTryFetchProviders_OCFreeModelsReplaceStale(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{"id": "minimax-m3"},
+				{"id": "hy3-free"},
+				{"id": "deepseek-v4-flash-free"},
+			},
+		})
+	}))
+	defer upstream.Close()
+
+	origEndpoints := ProviderEndpoints()
+	origFreeOnly := ProviderFreeOnly()
+	mu.Lock()
+	origOC := append([]modelEntry(nil), current["oc"]...)
+	current["oc"] = []modelEntry{
+		{ID: "minimax-m3-free"},
+		{ID: "stale-free"},
+	}
+	mu.Unlock()
+	defer func() {
+		SetProviderEndpoints(origEndpoints)
+		SetProviderFreeOnly(origFreeOnly)
+		mu.Lock()
+		current["oc"] = origOC
+		mu.Unlock()
+	}()
+
+	SetProviderEndpoints(map[string]string{"oc": upstream.URL})
+	SetProviderFreeOnly(map[string]bool{"oc": true})
+	tryFetchProviders(t.Context())
+
+	got := getCurrentModelIDs("oc")
+	want := []string{"deepseek-v4-flash-free", "hy3-free"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("OC free models = %v, want %v", got, want)
+	}
+}

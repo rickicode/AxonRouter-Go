@@ -62,20 +62,24 @@ func (h *ModelHandler) ListModels(c *gin.Context) {
 		json.Unmarshal([]byte(providerServiceKindsJSON.String), &provider.ServiceKinds)
 	}
 
-	// Dynamic probe for no-auth providers: if the user configured a custom
-	// base_url in the DB that differs from the hardcoded default, fetch fresh
-	// models from the upstream so removed models disappear automatically.
+	// Dynamic probe for no-auth providers. Always refresh from the upstream,
+	// including the default OC URL, so removed models disappear and new free
+	// models (such as hy3-free) become visible without a process restart.
 	if defaultNoAuthURL, ok := noAuthBaseURLs[providerID]; ok {
-		if dbErr == nil && provider.BaseURL != "" && provider.BaseURL != defaultNoAuthURL {
-			modelsURL := strings.TrimRight(provider.BaseURL, "/") + "/v1/models"
-			if upstreamModels := models.FetchProviderModelsURLCached(c.Request.Context(), modelsURL); len(upstreamModels) > 0 {
-				models.MergeProviderModelIDs(providerID, upstreamModels, nil)
-				c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, provider.ServiceKinds, stored, upstreamModels, nil)})
-				return
-			}
-			// Fallback to static catalog if upstream fetch fails
+		baseURL := defaultNoAuthURL
+		if dbErr == nil && provider.BaseURL != "" {
+			baseURL = provider.BaseURL
 		}
-		// No custom DB URL or fetch failed — use the static/synced catalog.
+		modelsURL := models.ProviderModelsURL(baseURL)
+		if upstreamModels := models.FetchProviderModelsURLCached(c.Request.Context(), modelsURL); len(upstreamModels) > 0 {
+			if models.ProviderFreeOnly()[providerID] {
+				upstreamModels = models.FilterFreeModelIDs(upstreamModels)
+			}
+			models.ReplaceProviderModelIDs(providerID, upstreamModels, nil)
+			c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, provider.ServiceKinds, stored, upstreamModels, nil)})
+			return
+		}
+		// Keep the embedded catalog when upstream is temporarily unavailable.
 		c.JSON(http.StatusOK, gin.H{"data": h.listModelEntries(providerID, provider.ServiceKinds, stored, staticModels(providerID), nil)})
 		return
 	}
