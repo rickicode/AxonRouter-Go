@@ -436,11 +436,10 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.35
+### What's New in v0.3.36
 
 ### Fixed
-- **Main branch release consistency** — `upgrade.go`, `Makefile`, documentation, and the installer now use `main` instead of the stale `master` branch, so version checks and installs resolve from the canonical branch.
-- **Dynamic OC free model catalog** — OC model refresh now replaces stale entries, filters the upstream list to free models, and exposes newly published models such as `hy3-free`.
+- **OC model sync URL normalization** — dynamic provider registration now preserves `/v1` base URLs without generating an invalid `/v1/v1/models` endpoint.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
