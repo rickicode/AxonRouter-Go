@@ -17,6 +17,7 @@ import (
 
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
+	"github.com/rickicode/AxonRouter-Go/internal/models"
 	"github.com/rickicode/AxonRouter-Go/web"
 	"golang.org/x/crypto/bcrypt"
 	"strings"
@@ -59,6 +60,20 @@ func newTestRouter(t *testing.T) (*Router, *httptest.Server) {
 	})
 
 	return router, httptest.NewServer(router.Engine())
+}
+
+func TestRegisterDynamicProviderEndpoints_NormalizesBaseURL(t *testing.T) {
+	database := openTestDB(t)
+	if _, err := database.Exec(`UPDATE provider_types SET base_url = 'https://opencode.ai/zen/v1' WHERE id = 'oc'`); err != nil {
+		t.Fatalf("update provider: %v", err)
+	}
+	origEndpoints := models.ProviderEndpoints()
+	t.Cleanup(func() { models.SetProviderEndpoints(origEndpoints) })
+
+	registerDynamicProviderEndpoints(database)
+	if got := models.ProviderEndpoints()["oc"]; got != "https://opencode.ai/zen/v1/models" {
+		t.Fatalf("registered OC endpoint = %q, want https://opencode.ai/zen/v1/models", got)
+	}
 }
 
 func TestHealth(t *testing.T) {

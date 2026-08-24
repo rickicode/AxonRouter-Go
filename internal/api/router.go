@@ -865,7 +865,6 @@ func registerDynamicProviderEndpoints(db *sql.DB) {
 		if err := rows.Scan(&id, &baseURL); err != nil || id == "" || baseURL == "" {
 			continue
 		}
-		modelsURL := strings.TrimRight(baseURL, "/") + "/v1/models"
-		models.RegisterCustomEndpoint(id, modelsURL)
+		models.RegisterCustomEndpoint(id, models.ProviderModelsURL(baseURL))
 	}
 }

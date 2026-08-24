@@ -317,6 +317,24 @@ func TestGetModelIDs_CommandCodeContainsExpectedModels(t *testing.T) {
 	}
 }
 
+// TestProviderModelsURL_NormalizesVersionedBases verifies that base URLs already
+// ending in /v1 do not receive a duplicate /v1 segment.
+func TestProviderModelsURL_NormalizesVersionedBases(t *testing.T) {
+	tests := []struct {
+		base string
+		want string
+	}{
+		{"https://opencode.ai/zen/v1", "https://opencode.ai/zen/v1/models"},
+		{"https://opencode.ai/zen/v1/", "https://opencode.ai/zen/v1/models"},
+		{"https://opencode.ai/zen", "https://opencode.ai/zen/v1/models"},
+	}
+	for _, tt := range tests {
+		if got := ProviderModelsURL(tt.base); got != tt.want {
+			t.Errorf("ProviderModelsURL(%q) = %q, want %q", tt.base, got, tt.want)
+		}
+	}
+}
+
 // TestFetchProviderModelsURL_FetchesFromCustomEndpoint verifies that
 // FetchProviderModelsURL correctly fetches models from any OpenAI-compatible
 // /v1/models endpoint and returns stripped model IDs.

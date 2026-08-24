@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+### Fixed
+- **OC model sync URL normalization** — dynamic provider registration now preserves `/v1` base URLs without generating an invalid `/v1/v1/models` endpoint.
 
 ## [0.3.35] - 2026-08-24
 ### Fixed
