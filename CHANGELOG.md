@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+### Fixed
+- **OC test model selection** — connection and provider tests now pick a known-working free model (e.g. `deepseek-v4-flash-free`) instead of the first catalog entry, and return the bare model name without the `oc/` prefix so the upstream endpoint recognizes it.
+
 
 ## [0.3.33] - 2026-08-23
 ### Added

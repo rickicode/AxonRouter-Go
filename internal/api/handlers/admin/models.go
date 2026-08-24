@@ -654,6 +654,17 @@ func defaultTestModel(providerID string) string {
 				func(id string) bool { return strings.Contains(id, "-free") },
 			)
 		}
+		if providerID == "oc" || providerID == "oc-zen" || providerID == "oc-go" {
+			// OC upstream strips the provider prefix itself; return bare names.
+			// Pick the first available free model from the catalog dynamically.
+			bare := make([]string, len(ids))
+			for i, id := range ids {
+				bare[i] = strings.TrimPrefix(id, providerID+"/")
+			}
+			return pickModel(bare,
+				func(m string) bool { return strings.Contains(m, "-free") },
+			)
+		}
 		return ids[0]
 	}
 	switch providerID {

@@ -150,6 +150,45 @@ func TestDefaultTestModel_ZenMuxFreeReturnsFreeModel(t *testing.T) {
 	}
 }
 
+func TestDefaultTestModel_OCReturnsBareFreeModel(t *testing.T) {
+	got := defaultTestModel("oc")
+	if got == "" {
+		t.Fatal("defaultTestModel(oc) returned empty")
+	}
+	// OC test model must NOT have the oc/ prefix; upstream strips it itself.
+	if strings.HasPrefix(got, "oc/") {
+		t.Fatalf("defaultTestModel(oc) returned prefixed model %q; want bare model name", got)
+	}
+	// Must be a free model from the catalog (dynamically selected).
+	if !strings.Contains(got, "-free") {
+		t.Errorf("defaultTestModel(oc) = %q; want a -free model from catalog", got)
+	}
+}
+
+func TestDefaultTestModel_OCGoReturnsBareModel(t *testing.T) {
+	got := defaultTestModel("oc-go")
+	if got == "" {
+		t.Fatal("defaultTestModel(oc-go) returned empty")
+	}
+	// oc-go upstream has no -free models; must still return a bare name.
+	if strings.HasPrefix(got, "oc-go/") {
+		t.Fatalf("defaultTestModel(oc-go) returned prefixed model %q; want bare model name", got)
+	}
+}
+
+func TestDefaultTestModel_OCZenReturnsBareFreeModel(t *testing.T) {
+	got := defaultTestModel("oc-zen")
+	if got == "" {
+		t.Fatal("defaultTestModel(oc-zen) returned empty")
+	}
+	if strings.HasPrefix(got, "oc-zen/") {
+		t.Fatalf("defaultTestModel(oc-zen) returned prefixed model %q; want bare model name", got)
+	}
+	if !strings.Contains(got, "-free") {
+		t.Errorf("defaultTestModel(oc-zen) = %q; want a -free model from catalog", got)
+	}
+}
+
 func kindsOf(m map[string]any) []string {
 	if v, ok := m["service_kinds"].([]string); ok {
 		return v
