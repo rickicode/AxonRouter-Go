@@ -18,8 +18,8 @@ const (
 
 // Use raw.githubusercontent.com to avoid GitHub API rate limits (60/hr unauthenticated).
 // raw.githubusercontent.com has no rate limit for public repos.
-var githubLatestURL = "https://raw.githubusercontent.com/rickicode/AxonRouter-Go/master/internal/version/VERSION"
-var rawChangelogURL = "https://raw.githubusercontent.com/rickicode/AxonRouter-Go/master/CHANGELOG.md"
+var githubLatestURL = "https://raw.githubusercontent.com/rickicode/AxonRouter-Go/main/internal/version/VERSION"
+var rawChangelogURL = "https://raw.githubusercontent.com/rickicode/AxonRouter-Go/main/CHANGELOG.md"
 
 // userAgent is sent with all outbound version/GitHub requests.
 var userAgent = "AxonRouter-Go/" + String()

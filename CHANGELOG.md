@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+### Fixed
+- **Version checker branch** — `upgrade.go` and `Makefile` now use `main` instead of stale `master` branch, so the dashboard shows the correct latest release version.
+
 
 ## [0.3.34] - 2026-08-24
 ### Fixed

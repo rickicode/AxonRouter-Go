@@ -74,7 +74,7 @@ make release "v=$next"
 If `make release` fails at the push step or still references the wrong branch, fall back to manual push:
 
 ```bash
-git push origin master
+git push origin main
 git push origin "v$next"
 ```
 

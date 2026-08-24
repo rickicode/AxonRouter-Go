@@ -348,7 +348,7 @@ This builds the binary and starts a **dev server** on the alternate port (`3788`
 
 ## Hive Worktree Cleanup Rule (CRITICAL)
 
-When using Hive-managed feature worktrees, **do not let merged worktrees accumulate indefinitely**. If there are **10 or more Hive worktrees whose branches have already been merged into `master`**, those worktrees **must be deleted** to keep the workspace clean and avoid disk/branch pollution.
+When using Hive-managed feature worktrees, **do not let merged worktrees accumulate indefinitely**. If there are **10 or more Hive worktrees whose branches have already been merged into `main`**, those worktrees **must be deleted** to keep the workspace clean and avoid disk/branch pollution.
 
 ### How to check
 ```bash
@@ -385,11 +385,6 @@ AxonRouter-Go uses a single-file versioning system so that every release is cons
   make release v=0.3.1
   ```
   `make release` will fail if the working tree is dirty or `CHANGELOG.md` has no entries under `## [Unreleased]`.
-  
-  **⚠️ Branch note:** `make release` pushes to `origin master` but the default branch is `main`. If the push targets the wrong branch, push manually:
-  ```bash
-  git push origin main vX.Y.Z
-  ```
 
 ### 3. CHANGELOG.md Is Mandatory
 - Every release **must** update `CHANGELOG.md`.
@@ -442,10 +437,6 @@ cd web && npm run test
 Use the exact version the user asked for. If no version was specified, ask.
 ```bash
 make release v=X.Y.Z
-```
-**Note:** `make release` pushes to `origin master`. The primary branch on GitHub is `main`. If the push to `master` fails or the release workflow doesn't trigger, push to `main` instead:
-```bash
-git push origin main vX.Y.Z
 ```
 
 #### 7.5 Push an existing release commit (tag not pushed)
