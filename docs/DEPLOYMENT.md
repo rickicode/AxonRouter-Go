@@ -6,7 +6,7 @@ For tool-by-tool client settings, see [docs/INTEGRATIONS.md](./INTEGRATIONS.md).
 ## Recommended install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/master/installer.sh | bash
+curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/main/installer.sh | bash
 ```
 
 The installer auto-detects your OS/architecture, picks the matching GitHub release asset, and installs `axonrouter` into the first writable directory on this list:
@@ -21,7 +21,7 @@ The installer auto-detects your OS/architecture, picks the matching GitHub relea
 | `./installer.sh` | Latest release, auto-detected OS/arch. |
 | `./installer.sh --version v0.3.3` | Pin a specific release tag. |
 | `./installer.sh --to /usr/local/bin` | Install to a custom directory. |
-| `curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/master/installer.sh \| sudo bash -s -- --service` | Install binary + create a systemd service (Linux only). |
+| `curl -fsSL https://raw.githubusercontent.com/rickicode/AxonRouter-Go/main/installer.sh \| sudo bash -s -- --service` | Install binary + create a systemd service (Linux only). |
 
 ### Supported targets
 
