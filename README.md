@@ -436,10 +436,11 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.34
+### What's New in v0.3.35
 
 ### Fixed
-- **OC test model selection** — connection and provider tests now pick a known-working free model (e.g. `deepseek-v4-flash-free`) instead of the first catalog entry, and return the bare model name without the `oc/` prefix so the upstream endpoint recognizes it.
+- **Main branch release consistency** — `upgrade.go`, `Makefile`, documentation, and the installer now use `main` instead of the stale `master` branch, so version checks and installs resolve from the canonical branch.
+- **Dynamic OC free model catalog** — OC model refresh now replaces stale entries, filters the upstream list to free models, and exposes newly published models such as `hy3-free`.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.

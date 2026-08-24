@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+
+## [0.3.35] - 2026-08-24
 ### Fixed
 - **Main branch release consistency** — `upgrade.go`, `Makefile`, documentation, and the installer now use `main` instead of the stale `master` branch, so version checks and installs resolve from the canonical branch.
 - **Dynamic OC free model catalog** — OC model refresh now replaces stale entries, filters the upstream list to free models, and exposes newly published models such as `hy3-free`.
