@@ -631,7 +631,47 @@ func pickModel(ids []string, preds ...func(string) bool) string {
 // body should contain only the upstream model name (author/model) so the CF
 // sanitizer can prepend @cf/ exactly once. Prefer an LLM model for CF so the
 // default test body is appropriate for chat completions.
+// resolveDynamicTestModel probes the live upstream /models endpoint for a
+// no-auth/free provider and returns a model that actually exists there. The
+// discovered free models are locked into the shared catalog via
+// ReplaceProviderModelIDs so subsequent tests reuse the same choice instead of
+// re-reading a possibly stale embedded list. Returns "" if no model could be
+// resolved.
+func resolveDynamicTestModel(providerID, baseURL string) string {
+	if baseURL == "" {
+		return ""
+	}
+	modelsURL := models.ProviderModelsURL(baseURL)
+	upstream := models.FetchProviderModelsURLCached(context.Background(), modelsURL)
+	if len(upstream) == 0 {
+		return ""
+	}
+	candidates := models.FilterFreeModelIDs(upstream)
+	if len(candidates) == 0 {
+		candidates = upstream
+	}
+	// Lock the discovered models into the catalog for reuse across tests.
+	models.ReplaceProviderModelIDs(providerID, candidates, nil)
+	// OC expects a bare model name (it re-adds the provider prefix upstream).
+	bare := make([]string, len(candidates))
+	for i, id := range candidates {
+		bare[i] = strings.TrimPrefix(id, providerID+"/")
+	}
+	return pickModel(bare, func(m string) bool { return strings.Contains(m, "-free") })
+}
+
 func defaultTestModel(providerID string) string {
+	// For no-auth/free providers, resolve the test model from the live upstream
+	// catalog and lock it. This keeps the test model dynamic (always an existing
+	// model) and stable across runs, instead of hardcoding a free model that may
+	// not be served by the upstream (e.g. OC "Console" returning Model unavailable).
+	if models.ProviderFreeOnly()[providerID] {
+		if base := noAuthBaseURLs[providerID]; base != "" {
+			if m := resolveDynamicTestModel(providerID, base); m != "" {
+				return m
+			}
+		}
+	}
 	ids := staticModels(providerID)
 	if len(ids) > 0 {
 		if providerID == "cf" {

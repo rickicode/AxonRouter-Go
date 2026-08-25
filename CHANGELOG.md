@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Dynamic OC test model resolution** — connection/provider tests (`TestAll`, `ValidateKey`) now resolve the OC test model from the live upstream `/v1/models` list and lock the discovered free model into the shared catalog, instead of always hardcoding `deepseek-v4-flash-free`. This prevents false `Model is unavailable` failures when the upstream (Console) no longer serves the hardcoded free model. It falls back to the embedded/synced catalog when the upstream is unreachable.
+
 ## [0.3.36] - 2026-08-24
 ### Fixed
 - **OC model sync URL normalization** — dynamic provider registration now preserves `/v1` base URLs without generating an invalid `/v1/v1/models` endpoint.

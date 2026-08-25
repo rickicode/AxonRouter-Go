@@ -1,9 +1,13 @@
 package admin
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/rickicode/AxonRouter-Go/internal/models"
 )
 
 func TestDefaultTestModel_CloudflareStripsProviderPrefix(t *testing.T) {
@@ -203,4 +207,61 @@ func kindsOf(m map[string]any) []string {
 		return out
 	}
 	return nil
+}
+
+// TestDefaultTestModel_OCDynamicResolvesAndLocks verifies that, for the free
+// OC provider, the test model is resolved from the live upstream /v1/models
+// list (not the hardcoded embedded default) and that the discovered model is
+// locked into the shared catalog for reuse.
+func TestDefaultTestModel_OCDynamicResolvesAndLocks(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"oc/dynamic-free-model"},{"id":"oc/some-paid-model"}]}`))
+	}))
+	defer ts.Close()
+
+	// Point OC at the mock and mark it free-only, restoring afterwards.
+	origBase := noAuthBaseURLs["oc"]
+	noAuthBaseURLs["oc"] = ts.URL
+	defer func() { noAuthBaseURLs["oc"] = origBase }()
+
+	origFree := models.ProviderFreeOnly()
+	models.SetProviderFreeOnly(map[string]bool{"oc": true})
+	defer models.SetProviderFreeOnly(origFree)
+
+	// Capture and restore the catalog entry so the test does not leak state.
+	origCatalog := models.GetAllModelIDs("oc")
+	defer models.ReplaceProviderModelIDs("oc", origCatalog, nil)
+
+	got := defaultTestModel("oc")
+	if got != "dynamic-free-model" {
+		t.Fatalf("defaultTestModel(oc) = %q, want dynamically-resolved %q", got, "dynamic-free-model")
+	}
+
+	// The dynamically discovered free model must be locked into the catalog.
+	if !slices.Contains(staticModels("oc"), "oc/dynamic-free-model") {
+		t.Errorf("catalog not locked with dynamic model; got %v", staticModels("oc"))
+	}
+}
+
+// TestDefaultTestModel_OCFallsBackWhenUpstreamUnavailable verifies that when
+// the live upstream cannot be reached, the test model still resolves from the
+// embedded/synced catalog instead of failing outright.
+func TestDefaultTestModel_OCFallsBackWhenUpstreamUnavailable(t *testing.T) {
+	// Use a base URL that will refuse connections.
+	origBase := noAuthBaseURLs["oc"]
+	noAuthBaseURLs["oc"] = "http://127.0.0.1:1/v1"
+	defer func() { noAuthBaseURLs["oc"] = origBase }()
+
+	origFree := models.ProviderFreeOnly()
+	models.SetProviderFreeOnly(map[string]bool{"oc": true})
+	defer models.SetProviderFreeOnly(origFree)
+
+	got := defaultTestModel("oc")
+	if got == "" {
+		t.Fatal("defaultTestModel(oc) returned empty when upstream unavailable; want fallback")
+	}
+	if strings.HasPrefix(got, "oc/") {
+		t.Fatalf("defaultTestModel(oc) returned prefixed model %q; want bare model name", got)
+	}
 }
