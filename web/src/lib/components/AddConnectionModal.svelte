@@ -10,7 +10,7 @@ import { connectionsApi, providersApi, oauthApi, proxyPoolsApi } from '$lib/api'
 import { toast } from 'svelte-sonner';
 import { copyToClipboard } from '$lib/copy';
 import { connections } from '$lib/stores';
-import { getProxyPoolId, filterProxyPools } from '$lib/auto-add-proxy-pools';
+import { getProxyPoolId } from '$lib/auto-add-proxy-pools';
 import ProviderIcon from '$lib/components/ProviderIcon.svelte';
 import KiroDeviceCodeView from '$lib/components/KiroDeviceCodeView.svelte';
 import KiroSocialCallbackView from '$lib/components/KiroSocialCallbackView.svelte';
@@ -33,6 +33,7 @@ import { KIRO_METHODS, KIRO_STARTING_METHOD, getKiroMethodLabel, type KiroMethod
   type Step = 'form' | 'oauth-waiting' | 'done' | 'error';
   type Mode = 'single' | 'bulk';
   type AuthMode = 'oauth' | 'apikey' | 'none' | 'custom';
+type ProxyPoolOption = { id: string; name: string; type: string; proxyUrl: string };
 
   let step = $state<Step>('form');
   let mode = $state<Mode>('single');
@@ -62,12 +63,16 @@ let refreshToken = $state('');
 let expiresAt = $state('');
 let email = $state('');
 let deviceId = $state('');
-let proxyPools = $state<{ id: string; name: string; type: string; proxyUrl: string }[]>([]);
+let proxyPools = $state<ProxyPoolOption[]>([]);
 let proxyPoolsLoading = $state(false);
 let selectedPoolId = $state('');
 let poolSearch = $state('');
+let poolSearching = $state(false);
+let poolSearchResults = $state<ProxyPoolOption[] | null>(null);
+let poolSearchTimer: ReturnType<typeof setTimeout> | undefined = undefined;
 let poolDropdownOpen = $state(false);
 let poolDropdownRef: HTMLDivElement | undefined = $state();
+const bulkFreebuffPlaceholder = '[{"access_token":"...","refresh_token":"...","email":"user@example.com","device_id":"optional"}]';
 
   // Kiro method selection state
   let kiroMethod = $state<KiroMethod | 'menu'>(KIRO_STARTING_METHOD);
@@ -249,7 +254,10 @@ const existingPoolIds = $derived(
 const missingPools = $derived(proxyPools.filter((pool) => !existingPoolIds.has(pool.id)));
 const connectedPoolCount = $derived(existingPoolIds.size);
 const missingPoolCount = $derived(missingPools.length);
-const filteredPools = $derived(filterProxyPools(proxyPools, poolSearch));
+const displayPools = $derived(poolSearchResults ? poolSearchResults : proxyPools);
+const selectedPool = $derived(
+  proxyPools.find((p) => p.id === selectedPoolId) ?? (poolSearchResults?.find((p) => p.id === selectedPoolId) ?? null)
+);
 function reset() {
   step = 'form';
   mode = 'single';
@@ -281,6 +289,8 @@ function reset() {
   proxyPoolsLoading = false;
   selectedPoolId = '';
   poolSearch = '';
+  poolSearchResults = null;
+  poolSearching = false;
   poolDropdownOpen = false;
   uploadedFileName = '';
   parsedConnections = [];
@@ -340,15 +350,33 @@ $effect(() => {
 async function fetchProxyPools() {
   if (!needsProxyPool) return;
   proxyPoolsLoading = true;
-    try {
-      const res = await proxyPoolsApi.list({ is_active: 'true' });
-      proxyPools = res.data ?? [];
-    } catch {
-      proxyPools = [];
-    } finally {
-      proxyPoolsLoading = false;
-    }
+  try {
+    // Load ALL proxy pools (active + inactive) so the selector reflects every
+    // pool that exists and "auto-add missing" can cover all of them.
+    proxyPools = await proxyPoolsApi.listAll();
+  } catch {
+    proxyPools = [];
+  } finally {
+    proxyPoolsLoading = false;
   }
+}
+// Server-side search across ALL existing proxy pools (paginated, full result).
+// This lets the dropdown find a pool even if it isn't in the initially loaded
+// subset, instead of only filtering the in-memory list.
+async function searchProxyPools(query: string): Promise<ProxyPoolOption[]> {
+  const q = query.trim();
+  if (!q) return [];
+  const out: ProxyPoolOption[] = [];
+  let page = 1;
+  let totalPages = 1;
+  do {
+    const res = await proxyPoolsApi.list({ q, page: String(page), per_page: '100' });
+    out.push(...(res.data ?? []));
+    totalPages = res.pagination?.total_pages ?? 1;
+    page += 1;
+  } while (page <= totalPages);
+  return out;
+}
 
   function defaultName(index?: number): string {
     const base = meta?.displayName ?? providerId;
@@ -590,6 +618,38 @@ async function handleValidate() {
     errorMsg = `${failed} pool connection${failed === 1 ? '' : 's'} could not be added`;
     toast.error(errorMsg);
     step = 'error';
+  }
+}
+
+async function handleFreebuffBulkImport() {
+  errorMsg = '';
+  submitting = true;
+  try {
+    const parsed = JSON.parse(bulkText);
+    if (!Array.isArray(parsed)) {
+      throw new Error('Expected a JSON array');
+    }
+    const accounts = parsed.map((acc: any) => ({
+      access_token: acc.access_token,
+      refresh_token: acc.refresh_token,
+      expires_at: acc.expires_at || 0,
+      email: acc.email || '',
+      device_id: acc.device_id || '',
+      name: acc.name || '',
+    })).filter((a: any) => a.access_token && a.refresh_token);
+    if (accounts.length === 0) {
+      throw new Error('No valid accounts found (each needs access_token + refresh_token)');
+    }
+    const res = await oauthApi.bulkImportFreebuff(accounts);
+    toast.success(`Imported ${res.created} new, updated ${res.updated} existing (${res.failed} failed)`);
+    step = 'done';
+    onCreated?.();
+  } catch (err) {
+    errorMsg = err instanceof Error ? err.message : 'Failed to bulk import';
+    toast.error(errorMsg);
+    step = 'error';
+  } finally {
+    submitting = false;
   }
 }
 
@@ -880,6 +940,7 @@ async function importKiroToken() {
 }
 
 function handleSubmit() {
+  if (isOAuth && importMode && providerId === 'freebuff' && bulkText.trim()) return handleFreebuffBulkImport();
   if (isOAuth && importMode) return handleImportSubmit();
   if (isOAuth) return handleOAuthSubmit();
   if (isNoAuth) return handleNoAuthSubmit();
@@ -891,6 +952,35 @@ $effect(() => {
   if (open && needsProxyPool && step === 'form') {
     fetchProxyPools();
   }
+});
+// Debounced server-side search: every keystroke re-queries ALL proxy pools so
+// the dropdown always reflects what actually exists in the backend.
+$effect(() => {
+  if (!poolDropdownOpen) {
+    poolSearchResults = null;
+    poolSearching = false;
+    return;
+  }
+  const q = poolSearch;
+  clearTimeout(poolSearchTimer);
+  if (!q.trim()) {
+    poolSearchResults = null;
+    poolSearching = false;
+    return;
+  }
+  poolSearching = true;
+  poolSearchTimer = setTimeout(() => {
+    searchProxyPools(q)
+      .then((results) => {
+        if (poolSearch === q) poolSearchResults = results;
+      })
+      .catch(() => {
+        if (poolSearch === q) poolSearchResults = [];
+      })
+      .finally(() => {
+        if (poolSearch === q) poolSearching = false;
+      });
+  }, 300);
 });
 
 </script>
@@ -1280,6 +1370,22 @@ $effect(() => {
           {/if}
 
           {#if importMode}
+            {#if providerId === 'freebuff'}
+              <div class="flex flex-col gap-1.5">
+                <Label class="text-sm font-medium">Bulk Import (JSON)</Label>
+                <Textarea
+                  bind:value={bulkText}
+                  placeholder={bulkFreebuffPlaceholder}
+                  class="h-32 font-mono text-xs"
+                />
+                <p class="text-[11px] text-muted-foreground">Paste a JSON array of Freebuff accounts. Each needs access_token + refresh_token.</p>
+              </div>
+              <div class="flex items-center gap-3">
+                <div class="h-px flex-1 bg-border"></div>
+                <span class="text-[11px] uppercase tracking-wide text-muted-foreground">or single import</span>
+                <div class="h-px flex-1 bg-border"></div>
+              </div>
+            {/if}
             {#if providerId === 'kiro'}
               <Button variant="outline" class="w-full text-sm" onclick={handleAutoImportKiro}>
                 Auto-import from kiro-cli
@@ -1353,7 +1459,7 @@ $effect(() => {
                 aria-expanded={poolDropdownOpen}
               >
                 <span class="truncate">
-                  {proxyPools.find(p => p.id === selectedPoolId)?.name || 'Select a proxy pool'}
+{selectedPool?.name || 'Select a proxy pool'}
                 </span>
                 <ChevronDownIcon class="size-4 shrink-0 text-muted-foreground {poolDropdownOpen ? 'rotate-180' : ''}" />
               </button>
@@ -1368,12 +1474,14 @@ $effect(() => {
                     />
                   </div>
                   <div class="max-h-52 overflow-y-auto p-1">
-                    {#if filteredPools.length === 0}
+                    {#if poolSearching}
+                      <div class="px-2 py-3 text-center text-body-sm text-muted-foreground">Searching…</div>
+                    {:else if displayPools.length === 0}
                       <div class="px-2 py-3 text-center text-body-sm text-muted-foreground">
-                        No pools match.
+                        {poolSearch.trim() ? 'No pools match.' : 'No proxy pools available.'}
                       </div>
                     {:else}
-                      {#each filteredPools as pool (pool.id)}
+                      {#each displayPools as pool (pool.id)}
                         <button
                           type="button"
                           class="w-full rounded-md px-2 py-1.5 text-left text-body-sm outline-none transition-colors hover:bg-accent focus:bg-accent {pool.id === selectedPoolId ? 'bg-primary/10 text-primary' : ''}"

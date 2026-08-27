@@ -557,6 +557,12 @@ export const oauthApi = {
       body: JSON.stringify(data),
     }),
 
+  bulkImportFreebuff: (accounts: { access_token: string; refresh_token: string; expires_at?: number; email?: string; device_id?: string; name?: string }[]) =>
+    fetchApi<{ total: number; created: number; updated: number; failed: number; results: { index: number; status: string; id?: string; error?: string }[] }>("/oauth/freebuff/bulk-import", {
+      method: "POST",
+      body: JSON.stringify({ accounts }),
+    }),
+
   startKiroBuilderID: () =>
     fetchApi<KiroDeviceCodeResponse>("/oauth/kiro/builder-id/start", {
       method: "POST",
