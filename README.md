@@ -436,17 +436,10 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.37
-
-### Added
-- **Bulk Freebuff import** — new `POST /api/admin/oauth/freebuff/bulk-import` endpoint accepts up to 5000 Freebuff accounts in a single JSON request; deduplicates by email, creates or updates connections, and returns per-account results. Frontend AddConnectionModal gains a JSON textarea in the "Import token" tab for paste-and-import workflow.
+### What's New in v0.3.38
 
 ### Fixed
-- **Provider system gaps** — custom providers now share the `sharedBase` connection pool instead of creating isolated HTTP clients; added missing providers (`freebuff`, `qoder`, `devin`, `gemini-interactions`, `qwencloud`) to the `v1ProviderCatalog` so they appear in `/v1/models`; `registerCustomProvider` now handles `grok-cli` and `freebuff` format handlers.
-- **Freebuff account-wide model locking** — when a Freebuff account receives `model_locked`, ALL models for that account are now blocked for 1 hour (matching the server session TTL), preventing wasted upstream requests. Previously only the specific model was blocked for 10 minutes.
-- **Multimodal executor shared base** — TTS, STT, Image, and Video handlers now use `SharedBase()` instead of creating new `BaseExecutor` instances per request, sharing the idle connection pool.
-- **Service kinds for non-Cloudflare providers** — `v1ProviderCatalog` now includes correct `serviceKinds` per provider (e.g. OpenAI supports `llm`, `embedding`, `tts`, `stt`, `image`, `imageToText`, `webSearch`); DB seed migration updates `service_kinds` for all built-in providers.
-- **Dynamic OC test model resolution** — connection/provider tests (`TestAll`, `ValidateKey`) now resolve the OC test model from the live upstream `/v1/models` list and lock the discovered free model into the shared catalog, instead of always hardcoding `deepseek-v4-flash-free`. This prevents false `Model is unavailable` failures when the upstream (Console) no longer serves the hardcoded free model. It falls back to the embedded/synced catalog when the upstream is unreachable.
+- **Freebuff bulk import tab** — the Import Token tab now appears when connecting Freebuff accounts; `refresh_token` is optional in the bulk import endpoint (freebuffX tokens don't have refresh tokens).
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.

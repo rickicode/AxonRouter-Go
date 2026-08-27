@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.38] - 2026-08-27
+
 ### Fixed
 - **Freebuff bulk import tab** — the Import Token tab now appears when connecting Freebuff accounts; `refresh_token` is optional in the bulk import endpoint (freebuffX tokens don't have refresh tokens).
 
