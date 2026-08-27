@@ -436,10 +436,10 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.38
+### What's New in v0.3.39
 
 ### Fixed
-- **Freebuff bulk import tab** — the Import Token tab now appears when connecting Freebuff accounts; `refresh_token` is optional in the bulk import endpoint (freebuffX tokens don't have refresh tokens).
+- **Freebuff bulk import format** — accepts both direct array `[...]` and object `{"accounts": [...]}` formats from `fbm export`.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
