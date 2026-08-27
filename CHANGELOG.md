@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Freebuff bulk import format** — accepts both direct array `[...]` and object `{"accounts": [...]}` formats from `fbm export`.
+
 ## [0.3.38] - 2026-08-27
 
 ### Fixed
