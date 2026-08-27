@@ -85,14 +85,14 @@ func (h *OAuthHandler) ImportToken(c *gin.Context) {
 }
 
 // BulkImportFreebuff imports multiple Freebuff accounts at once from a JSON array.
-// Each entry requires access_token and refresh_token; email, expires_at, and
+// Each entry requires access_token; refresh_token, email, expires_at, and
 // device_id are optional. Deduplicates by email (oauth_email) — existing accounts
 // are updated with new tokens.
 func (h *OAuthHandler) BulkImportFreebuff(c *gin.Context) {
 	var req struct {
 		Accounts []struct {
 			AccessToken  string            `json:"access_token" binding:"required"`
-			RefreshToken string            `json:"refresh_token" binding:"required"`
+			RefreshToken string            `json:"refresh_token"`
 			ExpiresAt    int64             `json:"expires_at"`
 			Email        string            `json:"email"`
 			DeviceID     string            `json:"device_id"`

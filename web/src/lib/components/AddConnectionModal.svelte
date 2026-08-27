@@ -72,7 +72,7 @@ let poolSearchResults = $state<ProxyPoolOption[] | null>(null);
 let poolSearchTimer: ReturnType<typeof setTimeout> | undefined = undefined;
 let poolDropdownOpen = $state(false);
 let poolDropdownRef: HTMLDivElement | undefined = $state();
-const bulkFreebuffPlaceholder = '[{"access_token":"...","refresh_token":"...","email":"user@example.com","device_id":"optional"}]';
+const bulkFreebuffPlaceholder = '[{"access_token":"...","email":"user@example.com","name":"optional-label"}]';
 
   // Kiro method selection state
   let kiroMethod = $state<KiroMethod | 'menu'>(KIRO_STARTING_METHOD);
@@ -240,7 +240,7 @@ const supportsBulk = $derived(isApiKey);
 const isOCProvider = $derived(providerId === 'oc');
 const isMimocodeProvider = $derived(providerId === 'mimocode');
 const needsProxyPool = $derived(isOCProvider || isMimocodeProvider);
-const showImportMode = $derived(providerId === 'grok-cli' || providerId === 'kiro' || providerId === 'cursor');
+const showImportMode = $derived(providerId === 'grok-cli' || providerId === 'kiro' || providerId === 'cursor' || providerId === 'freebuff');
 const isKiro = $derived(providerId === 'kiro');
 const isCursor = $derived(providerId === 'cursor');
 let autoImportedPsd = $state<Record<string, string> | undefined>(undefined);
@@ -636,9 +636,9 @@ async function handleFreebuffBulkImport() {
       email: acc.email || '',
       device_id: acc.device_id || '',
       name: acc.name || '',
-    })).filter((a: any) => a.access_token && a.refresh_token);
+    })).filter((a: any) => a.access_token);
     if (accounts.length === 0) {
-      throw new Error('No valid accounts found (each needs access_token + refresh_token)');
+      throw new Error('No valid accounts found (each needs access_token)');
     }
     const res = await oauthApi.bulkImportFreebuff(accounts);
     toast.success(`Imported ${res.created} new, updated ${res.updated} existing (${res.failed} failed)`);
@@ -1378,7 +1378,7 @@ $effect(() => {
                   placeholder={bulkFreebuffPlaceholder}
                   class="h-32 font-mono text-xs"
                 />
-                <p class="text-[11px] text-muted-foreground">Paste a JSON array of Freebuff accounts. Each needs access_token + refresh_token.</p>
+                <p class="text-[11px] text-muted-foreground">Paste a JSON array of Freebuff accounts. Each needs access_token.</p>
               </div>
               <div class="flex items-center gap-3">
                 <div class="h-px flex-1 bg-border"></div>
