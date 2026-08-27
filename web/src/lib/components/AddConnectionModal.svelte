@@ -625,9 +625,11 @@ async function handleFreebuffBulkImport() {
   errorMsg = '';
   submitting = true;
   try {
-    const parsed = JSON.parse(bulkText);
+    const raw = JSON.parse(bulkText);
+    // Support both formats: direct array [...] or {"accounts": [...]}
+    const parsed = Array.isArray(raw) ? raw : (raw.accounts ?? raw.data ?? raw.connections ?? []);
     if (!Array.isArray(parsed)) {
-      throw new Error('Expected a JSON array');
+      throw new Error('Expected a JSON array or {"accounts": [...]}');
     }
     const accounts = parsed.map((acc: any) => ({
       access_token: acc.access_token,
