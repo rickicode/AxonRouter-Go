@@ -41,9 +41,9 @@ func (h *Handler) TTS(c *gin.Context) {
 				return h.ttsExecutorFactory(), nil
 			}
 			if provider == "cf" {
-				return executor.NewCloudflareTTSExecutor(executor.NewBaseExecutor()), nil
+				return executor.NewCloudflareTTSExecutor(executor.SharedBase()), nil
 			}
-			return executor.NewTTSExecutor(executor.NewBaseExecutor()), nil
+			return executor.NewTTSExecutor(executor.SharedBase()), nil
 		})
 		return
 	}
@@ -58,9 +58,9 @@ func (h *Handler) TTS(c *gin.Context) {
 	if h.ttsExecutorFactory != nil {
 		ttsExec = h.ttsExecutorFactory()
 	} else if provider == "cf" {
-		ttsExec = executor.NewCloudflareTTSExecutor(executor.NewBaseExecutor())
+		ttsExec = executor.NewCloudflareTTSExecutor(executor.SharedBase())
 	} else {
-		ttsExec = executor.NewTTSExecutor(executor.NewBaseExecutor())
+		ttsExec = executor.NewTTSExecutor(executor.SharedBase())
 	}
 	conn, err := h.getConnection(c.Request.Context(), provider, modelName, sessionID)
 	if err != nil {

@@ -441,7 +441,7 @@ func TestProviderList_IncludesCategoryAndServiceKinds(t *testing.T) {
 	for _, p := range resp.Data {
 		if p.ID == "cf" {
 			cfFound = true
-			want := []string{"llm", "embedding", "image"}
+			want := []string{"llm", "embedding", "image", "tts", "stt"}
 			if !slicesEqual(p.ServiceKinds, want) {
 				t.Errorf("cf service_kinds = %v, want %v", p.ServiceKinds, want)
 			}

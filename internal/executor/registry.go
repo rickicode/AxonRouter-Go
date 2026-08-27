@@ -102,6 +102,12 @@ func SplitModel(model string) (prefix, name string) {
 // It owns the idle-connection pools that must be flushed when proxy state changes.
 var sharedBase *BaseExecutor
 
+// SharedBase returns the shared BaseExecutor. Used by multimodal handlers
+// (TTS, STT, Image) to share idle-connection pools with LLM executors.
+func SharedBase() *BaseExecutor {
+	return sharedBase
+}
+
 // CloseIdleConnections flushes idle keep-alive connections across the shared
 // base executor (default + all cached proxy clients). Safe to call any time.
 func CloseIdleConnections() {
@@ -214,7 +220,9 @@ func RegisterDefaults() {
 // so they become routable and appear in /v1/models. Must run after RegisterDefaults.
 func RegisterCustomProviders(db *sql.DB) {
 	reg := GetRegistry()
-	base := NewBaseExecutor()
+	// Reuse sharedBase so custom providers share idle-connection pools with
+	// built-in providers and are cleaned up by CloseIdleConnections().
+	base := sharedBase
 	openaiExec := NewOpenAIExecutor(base)
 	openaiResponsesExec := NewOpenAIResponsesExecutor(base)
 	claudeExec := NewClaudeExecutor(base)
@@ -222,8 +230,10 @@ func RegisterCustomProviders(db *sql.DB) {
 	geminiInteractionsExec := NewGeminiInteractionsExecutor(base)
 	agExec := NewAntigravityExecutor(base)
 	kiroExec := NewKiroExecutor(base)
+	grokcliExec := NewGrokCLIExecutor(base)
 	devinExec := NewDevinCLIExecutor(base)
 	qoderExec := NewQoderExecutor(base, openaiExec)
+	freebuffExec := NewFreebuffExecutor(base)
 
 	rows, err := db.Query(`SELECT id, format FROM provider_types WHERE is_custom = 1`)
 	if err != nil {
@@ -235,13 +245,13 @@ func RegisterCustomProviders(db *sql.DB) {
 		if err := rows.Scan(&id, &format); err != nil {
 			continue
 		}
-		registerCustomProvider(reg, openaiExec, openaiResponsesExec, claudeExec, geminiExec, geminiInteractionsExec, agExec, kiroExec, devinExec, qoderExec, id, format)
+				registerCustomProvider(reg, openaiExec, openaiResponsesExec, claudeExec, geminiExec, geminiInteractionsExec, agExec, kiroExec, grokcliExec, devinExec, qoderExec, freebuffExec, id, format)
 	}
 }
 
 // registerCustomProvider maps a provider format to the reusable built-in executor
 // and translator so the custom provider routes and translates like a built-in.
-func registerCustomProvider(reg *Registry, openaiExec, openaiResponsesExec, claudeExec, geminiExec, geminiInteractionsExec, agExec, kiroExec, devinExec, qoderExec Executor, id, format string) {
+func registerCustomProvider(reg *Registry, openaiExec, openaiResponsesExec, claudeExec, geminiExec, geminiInteractionsExec, agExec, kiroExec, grokcliExec, devinExec, qoderExec, freebuffExec Executor, id, format string) {
 	switch format {
 	case "anthropic", "claude":
 		reg.Register(id, FormatClaude, claudeExec)
@@ -258,11 +268,17 @@ func registerCustomProvider(reg *Registry, openaiExec, openaiResponsesExec, clau
 	case "kiro":
 		reg.Register(id, FormatKiro, kiroExec)
 		translator.Register(id, translator.Func(providers.TranslateKiro))
+	case "grok-cli":
+		reg.Register(id, FormatGrokCLI, grokcliExec)
+		translator.Register(id, translator.Func(providers.TranslateGrokCLI))
 	case "devin", "devin-cli":
 		reg.Register(id, FormatDevinCLI, devinExec)
 		translator.Register(id, translator.Func(providers.TranslateOpenAICompatible))
 	case "qoder":
 		reg.Register(id, FormatQoder, qoderExec)
+		translator.Register(id, translator.Func(providers.TranslateOpenAICompatible))
+	case "freebuff":
+		reg.Register(id, FormatFreebuff, freebuffExec)
 		translator.Register(id, translator.Func(providers.TranslateOpenAICompatible))
 	case "openai-responses":
 		reg.Register(id, FormatOpenAIResponses, openaiResponsesExec)

@@ -12,15 +12,18 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/models"
 )
 
-// v1ProviderCatalog maps provider prefix → models.json keys + owned_by.
+// v1ProviderCatalog maps provider prefix → models.json keys + owned_by +
+// optional provider-level service_kinds fallback (used when per-model kinds
+// are empty in models.json).
 var v1ProviderCatalog = map[string]struct {
-	keys    []string
-	ownedBy string
+	keys         []string
+	ownedBy      string
+	serviceKinds []string // nil = default ["llm"]
 }{
-	"claude":        {keys: []string{"claude"}, ownedBy: "anthropic"},
-	"gemini":        {keys: []string{"gemini"}, ownedBy: "google"},
-	"cx":            {keys: []string{"codex-free", "codex-team", "codex-plus", "codex-pro"}, ownedBy: "openai"},
-	"ag":            {keys: []string{"antigravity"}, ownedBy: "google"},
+	"claude":        {keys: []string{"claude"}, ownedBy: "anthropic", serviceKinds: []string{"llm", "imageToText"}},
+	"gemini":        {keys: []string{"gemini"}, ownedBy: "google", serviceKinds: []string{"llm", "embedding", "image", "imageToText", "webSearch", "tts", "stt"}},
+	"cx":            {keys: []string{"codex-free", "codex-team", "codex-plus", "codex-pro"}, ownedBy: "openai", serviceKinds: []string{"llm", "image"}},
+	"ag":            {keys: []string{"antigravity"}, ownedBy: "google", serviceKinds: []string{"llm", "image"}},
 	"kiro":          {keys: []string{"kiro"}, ownedBy: "amazon"},
 	"aistudio":      {keys: []string{"aistudio"}, ownedBy: "google"},
 	"oc":            {keys: []string{"oc"}, ownedBy: "opencode"},
@@ -31,19 +34,19 @@ var v1ProviderCatalog = map[string]struct {
 	"mimo":          {keys: []string{"mimo"}, ownedBy: "xiaomi"},
 	"mimo-tp":       {keys: []string{"mimo-tp"}, ownedBy: "xiaomi"},
 	"mimo-token":    {keys: []string{"mimo-tp"}, ownedBy: "xiaomi"},
-	"openai":        {keys: []string{"openai"}, ownedBy: "openai"},
-	"groq":          {keys: []string{"groq"}, ownedBy: "groq"},
+	"openai":        {keys: []string{"openai"}, ownedBy: "openai", serviceKinds: []string{"llm", "embedding", "tts", "stt", "image", "imageToText", "webSearch"}},
+	"groq":          {keys: []string{"groq"}, ownedBy: "groq", serviceKinds: []string{"llm", "imageToText", "stt"}},
 	"deepseek":      {keys: []string{"deepseek"}, ownedBy: "deepseek"},
-	"openrouter":    {keys: []string{"openrouter"}, ownedBy: "openrouter"},
+	"openrouter":    {keys: []string{"openrouter"}, ownedBy: "openrouter", serviceKinds: []string{"llm", "embedding", "tts", "imageToText"}},
 	"copilot":       {keys: []string{"copilot"}, ownedBy: "github"},
 	"vertex":        {keys: []string{"vertex"}, ownedBy: "google"},
 	"glm":           {keys: []string{"glm"}, ownedBy: "zhipu"},
-	"minimax":       {keys: []string{"minimax"}, ownedBy: "minimax"},
-	"kimi":          {keys: []string{"kimi"}, ownedBy: "moonshot"},
-	"mistral":       {keys: []string{"mistral"}, ownedBy: "mistral"},
+	"minimax":       {keys: []string{"minimax"}, ownedBy: "minimax", serviceKinds: []string{"llm", "image", "imageToText", "webSearch", "tts"}},
+	"kimi":          {keys: []string{"kimi"}, ownedBy: "moonshot", serviceKinds: []string{"llm", "webSearch"}},
+	"mistral":       {keys: []string{"mistral"}, ownedBy: "mistral", serviceKinds: []string{"llm", "imageToText", "embedding"}},
 	"cerebras":      {keys: []string{"cerebras"}, ownedBy: "cerebras"},
-	"together":      {keys: []string{"together"}, ownedBy: "together"},
-	"fireworks":     {keys: []string{"fireworks"}, ownedBy: "fireworks"},
+	"together":      {keys: []string{"together"}, ownedBy: "together", serviceKinds: []string{"llm", "embedding"}},
+	"fireworks":     {keys: []string{"fireworks"}, ownedBy: "fireworks", serviceKinds: []string{"llm", "embedding"}},
 	"novita":        {keys: []string{"novita"}, ownedBy: "novita"},
 	"lambda":        {keys: []string{"lambda"}, ownedBy: "lambda"},
 	"pollinations":  {keys: []string{"pollinations"}, ownedBy: "pollinations"},
@@ -51,11 +54,15 @@ var v1ProviderCatalog = map[string]struct {
 	"zenmux-free":   {keys: []string{"zenmux-free"}, ownedBy: "zenmux"},
 	"bedrock":       {keys: []string{"bedrock"}, ownedBy: "amazon"},
 
-	"zai":         {keys: []string{"claude"}, ownedBy: "zai"},
+	"zai":         {keys: []string{"claude"}, ownedBy: "zai", serviceKinds: []string{"llm", "imageToText"}},
 	"cf":          {keys: []string{"cf"}, ownedBy: "cloudflare"},
 	"grok-cli":    {keys: []string{"grok-cli"}, ownedBy: "xai"},
 	"codebuddy":   {keys: []string{"codebuddy"}, ownedBy: "tencent"},
 	"commandcode": {keys: []string{"commandcode"}, ownedBy: "commandcode"},
+	"qwencloud":   {keys: []string{"qwencloud"}, ownedBy: "alibaba"},
+	"devin":       {keys: []string{"devin"}, ownedBy: "cognition"},
+	"qoder":       {keys: []string{"qoder"}, ownedBy: "qoder"},
+	"freebuff":    {keys: []string{"freebuff"}, ownedBy: "freebuff"},
 }
 
 // buildModelList returns the unified gateway model catalog: registered providers,
@@ -297,10 +304,14 @@ func (h *Handler) getProviderModels(prefix string) []gin.H {
 				break
 			}
 		}
-		// Non-CF providers in this catalog are OpenAI-compatible text providers, so
-		// default any model without explicit tags to LLM.
+		// Use provider-level service_kinds fallback when per-model kinds are empty.
+		// CF providers are handled separately via the modalities registry.
 		if len(serviceKinds) == 0 && prefix != "cf" {
-			serviceKinds = []string{"llm"}
+			if len(cfg.serviceKinds) > 0 {
+				serviceKinds = cfg.serviceKinds
+			} else {
+				serviceKinds = []string{"llm"}
+			}
 		}
 		entry := gin.H{
 			"id":       modelID,

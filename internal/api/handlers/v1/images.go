@@ -59,7 +59,7 @@ func (h *Handler) Images(c *gin.Context) {
 					return &imageGeneratorAdapter{ImageGenerator: imgGen}, nil
 				}
 			}
-			return executor.NewImagesExecutor(executor.NewBaseExecutor()), nil
+			return executor.NewImagesExecutor(executor.SharedBase()), nil
 		})
 		return
 	}
@@ -96,7 +96,7 @@ func (h *Handler) Images(c *gin.Context) {
 		}
 	}
 	if imagesExec == nil {
-		imagesExec = executor.NewImagesExecutor(executor.NewBaseExecutor())
+		imagesExec = executor.NewImagesExecutor(executor.SharedBase())
 	}
 
 	conn, err := h.getConnection(c.Request.Context(), provider, modelName, sessionID)

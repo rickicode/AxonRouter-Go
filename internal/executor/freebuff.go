@@ -25,8 +25,10 @@ const (
 	// Active sessions live ~1h; used when the server omits expiresAt.
 	freebuffSessionDefaultTTL = time.Hour
 
-	// model_locked sessions (~1h) are re-checked every 10 min.
-	freebuffModelLockCooldown = 10 * time.Minute
+	// model_locked sessions (~1h) are re-checked every 1h to match the server
+	// session TTL. The lock is account-wide: when any model is locked, all
+	// models for the same account are blocked for the full hour.
+	freebuffModelLockCooldown = time.Hour
 	// limited-tier IP refusals are re-checked after 5 min.
 	freebuffPoolLimitedCooldown = 5 * time.Minute
 
@@ -89,7 +91,8 @@ type FreebuffExecutor struct {
 	mu                 sync.Mutex
 	sessions           map[string]freebuffSession // token::model -> claimed session row
 	inflight           map[string]*freebuffClaim  // token::model -> in-flight claim (dedupe)
-	modelLockCooldowns map[string]time.Time       // token::model -> until
+	modelLockCooldowns map[string]time.Time       // token::model -> until (legacy per-model)
+	accountLockUntil   map[string]time.Time       // token -> until (account-wide lock)
 	poolLimitCooldowns map[string]time.Time       // proxyKey::model -> until
 }
 
@@ -118,6 +121,7 @@ func NewFreebuffExecutor(base *BaseExecutor) *FreebuffExecutor {
 		sessions:           make(map[string]freebuffSession),
 		inflight:           make(map[string]*freebuffClaim),
 		modelLockCooldowns: make(map[string]time.Time),
+		accountLockUntil:   make(map[string]time.Time),
 		poolLimitCooldowns: make(map[string]time.Time),
 	}
 }
@@ -165,9 +169,14 @@ func (e *FreebuffExecutor) run(ctx context.Context, req *Request, stream bool) (
 	}
 	model = strings.TrimPrefix(model, "freebuff/")
 
-	// Fail fast while a known-dead (account,model) pair is in cooldown — no
-	// session claim, no run registration, no upstream spam. (Pool-level
-	// cooldowns are handled by the candidate loop below.)
+	// Fail fast while the account is locked to another model — no session claim,
+	// no run registration, no upstream spam. The account-wide lock covers ALL
+	// models for this token, not just the one that was rejected.
+	if until := e.getAccountLock(token); until != nil {
+		return nil, freebuffError(http.StatusConflict, fmt.Sprintf(
+			"Freebuff account locked to another model — retry after %s.", until.Format(time.Kitchen)))
+	}
+	// Legacy per-model cooldown (kept for backward compat).
 	if until := e.getCooldown(e.modelLockCooldowns, token+"::"+model); until != nil {
 		return nil, freebuffError(http.StatusConflict, fmt.Sprintf(
 			"Freebuff session locked to another model — retry after %s.", until.Format(time.Kitchen)))
@@ -251,9 +260,11 @@ func (e *FreebuffExecutor) attemptPool(ctx context.Context, req *Request, model,
 			return nil, &freebuffPoolScopedError{message: gateErrorMessage(gate, model)}
 		}
 		if gate.kind == "model_locked" {
-			// Account-scoped: block the (token, model) pair so later requests
-			// fail fast instead of hammering the upstream.
-			e.setCooldown(e.modelLockCooldowns, token+"::"+model, time.Now().Add(freebuffModelLockCooldown))
+			// Account-scoped: lock the ENTIRE account (all models) so later
+			// requests for ANY model fail fast instead of hammering upstream.
+			until := time.Now().Add(freebuffModelLockCooldown)
+			e.setAccountLock(token, until)
+			e.setCooldown(e.modelLockCooldowns, token+"::"+model, until)
 			return nil, freebuffError(http.StatusConflict, gateErrorMessage(gate, model))
 		}
 		return nil, err
@@ -329,7 +340,9 @@ func (e *FreebuffExecutor) attemptPool(ctx context.Context, req *Request, model,
 			}
 			if gate.kind == "model_locked" {
 				markFinished("cancelled")
-				e.setCooldown(e.modelLockCooldowns, token+"::"+model, time.Now().Add(freebuffModelLockCooldown))
+				until := time.Now().Add(freebuffModelLockCooldown)
+				e.setAccountLock(token, until)
+				e.setCooldown(e.modelLockCooldowns, token+"::"+model, until)
 				return nil, freebuffError(http.StatusConflict, gateErrorMessage(gate, model))
 			}
 			markFinished("cancelled")
@@ -362,7 +375,9 @@ func (e *FreebuffExecutor) attemptPool(ctx context.Context, req *Request, model,
 				}
 				if gate.kind == "model_locked" {
 					markFinished("cancelled")
-					e.setCooldown(e.modelLockCooldowns, token+"::"+model, time.Now().Add(freebuffModelLockCooldown))
+					until := time.Now().Add(freebuffModelLockCooldown)
+					e.setAccountLock(token, until)
+					e.setCooldown(e.modelLockCooldowns, token+"::"+model, until)
 					return nil, freebuffError(http.StatusConflict, gateErrorMessage(gate, model))
 				}
 				markFinished("failed")
@@ -861,11 +876,12 @@ func (e *FreebuffExecutor) finishRun(ctx context.Context, req *Request, runID, s
 	}()
 }
 
-// dropSession removes a cached session row for a dead token so a re-login
-// starts clean.
+// dropSession removes a cached session row and account lock for a dead token
+// so a re-login starts clean.
 func (e *FreebuffExecutor) dropSession(token, model string) {
 	e.mu.Lock()
 	delete(e.sessions, token+"::"+model)
+	delete(e.accountLockUntil, token)
 	e.mu.Unlock()
 }
 
@@ -898,10 +914,34 @@ func (e *FreebuffExecutor) setCooldown(m map[string]time.Time, key string, until
 	m[key] = until
 }
 
-// clearCooldowns lifts any model-lock / pool-limit cooldowns after a success.
+// getAccountLock returns the account-wide lock expiry for a token.
+func (e *FreebuffExecutor) getAccountLock(token string) *time.Time {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	until, ok := e.accountLockUntil[token]
+	if !ok {
+		return nil
+	}
+	if time.Now().After(until) {
+		delete(e.accountLockUntil, token)
+		return nil
+	}
+	return &until
+}
+
+// setAccountLock sets an account-wide lock for a token (all models blocked).
+func (e *FreebuffExecutor) setAccountLock(token string, until time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.accountLockUntil[token] = until
+}
+
+// clearCooldowns lifts any model-lock / account-lock / pool-limit cooldowns
+// after a successful chat response.
 func (e *FreebuffExecutor) clearCooldowns(token, model, proxyKey string) {
 	e.mu.Lock()
 	delete(e.modelLockCooldowns, token+"::"+model)
+	delete(e.accountLockUntil, token)
 	delete(e.poolLimitCooldowns, proxyKey+"::"+model)
 	e.mu.Unlock()
 }
@@ -916,7 +956,7 @@ func gateErrorMessage(gate freebuffGate, model string) string {
 			label = "another model"
 		}
 		return fmt.Sprintf(
-			"Freebuff session is locked to %s — it cannot serve %s. End the session on freebuff.com or wait for it to expire (~1h).",
+			"Freebuff account is locked to %s — it cannot serve %s. All models on this account are blocked for ~1h. End the session on freebuff.com or wait for it to expire.",
 			label, model)
 	}
 	if gate.kind == "limited_ip" {
@@ -1022,7 +1062,7 @@ func freebuffGateMessage(status string) string {
 	case "spend_limited":
 		return "Freebuff spend limit reached — add credits or wait for the window to reset."
 	case "model_locked":
-		return "Freebuff session is locked to another model — end it in the CLI or wait for it to expire."
+		return "Freebuff account is locked to another model — all models are blocked for ~1h. End the session on freebuff.com or wait for it to expire."
 	case "model_unavailable":
 		return "This model is not available on Freebuff right now."
 	case "premium_slot_taken":

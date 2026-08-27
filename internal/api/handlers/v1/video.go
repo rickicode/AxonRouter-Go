@@ -50,7 +50,7 @@ func (h *Handler) Video(c *gin.Context) {
 	if h.videoExecutorFactory != nil {
 		videoExec = h.videoExecutorFactory()
 	} else {
-		videoExec = executor.NewVideoExecutor(executor.NewBaseExecutor())
+		videoExec = executor.NewVideoExecutor(executor.SharedBase())
 	}
 
 	conn, err := h.getConnection(c.Request.Context(), provider, modelName, sessionID)

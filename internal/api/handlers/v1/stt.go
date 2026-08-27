@@ -88,9 +88,9 @@ func (h *Handler) STT(c *gin.Context) {
 	if h.sttExecutorFactory != nil {
 		sttExec = h.sttExecutorFactory()
 	} else if provider == "cf" {
-		sttExec = executor.NewCloudflareSTTExecutor(executor.NewBaseExecutor())
+		sttExec = executor.NewCloudflareSTTExecutor(executor.SharedBase())
 	} else {
-		sttExec = executor.NewSTTExecutor(executor.NewBaseExecutor())
+		sttExec = executor.NewSTTExecutor(executor.SharedBase())
 	}
 	conn, err := h.getConnection(c.Request.Context(), provider, model, "")
 	if err != nil {

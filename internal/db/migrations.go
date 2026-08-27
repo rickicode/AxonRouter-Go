@@ -912,6 +912,31 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 		}
 	}
 
+	// Update service_kinds for built-in providers to reflect their actual capabilities.
+	// Uses UPDATE (not INSERT) so custom providers are never affected.
+	providerServiceKinds := []struct {
+		ID    string
+		Kinds string
+	}{
+		{"openai", `["llm","embedding","tts","stt","image","imageToText","webSearch"]`},
+		{"claude", `["llm","imageToText"]`},
+		{"gemini", `["llm","embedding","image","imageToText","webSearch","tts","stt"]`},
+		{"groq", `["llm","imageToText","stt"]`},
+		{"mistral", `["llm","imageToText","embedding"]`},
+		{"minimax", `["llm","image","imageToText","webSearch","tts"]`},
+		{"kimi", `["llm","webSearch"]`},
+		{"together", `["llm","embedding"]`},
+		{"fireworks", `["llm","embedding"]`},
+		{"openrouter", `["llm","embedding","tts","imageToText"]`},
+		{"cf", `["llm","embedding","image","tts","stt"]`},
+		{"antigravity", `["llm","image"]`},
+		{"ag", `["llm","image"]`},
+		{"cx", `["llm","image"]`},
+	}
+	for _, p := range providerServiceKinds {
+		db.Exec(`UPDATE provider_types SET service_kinds = ? WHERE id = ? AND is_custom = 0`, p.Kinds, p.ID)
+	}
+
 	return nil
 }
 
