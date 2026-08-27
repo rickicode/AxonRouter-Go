@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.37] - 2026-08-27
+
 ### Added
 - **Bulk Freebuff import** — new `POST /api/admin/oauth/freebuff/bulk-import` endpoint accepts up to 5000 Freebuff accounts in a single JSON request; deduplicates by email, creates or updates connections, and returns per-account results. Frontend AddConnectionModal gains a JSON textarea in the "Import token" tab for paste-and-import workflow.
 
