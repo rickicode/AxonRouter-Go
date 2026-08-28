@@ -436,10 +436,10 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.39
+### What's New in v0.3.40
 
 ### Fixed
-- **Freebuff bulk import format** — accepts both direct array `[...]` and object `{"accounts": [...]}` formats from `fbm export`.
+- **Freebuff direct connections** — Freebuff no longer requires a proxy pool; connections without a proxy configured fall back to direct. This fixes `freebuff/*` requests that previously returned "requires a working proxy pool" when no pool was assigned.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
