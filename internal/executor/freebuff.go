@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -526,6 +527,7 @@ func (e *FreebuffExecutor) sendChat(ctx context.Context, req *Request, url strin
 		if resp.StatusCode >= 400 {
 			return &chatResult{status: resp.StatusCode, body: resp.Body, headers: resp.Headers}, nil
 		}
+		stripFreebuffToolCalls(resp)
 		return &chatResult{status: resp.StatusCode, resp: resp}, nil
 	}
 	result, err := e.DoStreamRequestWithConfig(ContextWithProvider(ctx, req.Provider), http.MethodPost, url, headers, body, req.StreamConfig)
@@ -1180,4 +1182,25 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 	case <-t.C:
 		return true
 	}
+}
+
+// freebuffToolCallRe matches <tool_call>...</tool_call> blocks that the freebuff
+// model emits when no real tools are provided. These XML-style tool calls are
+// not OpenAI-compatible and break clients like the pi CLI.
+var freebuffToolCallRe = regexp.MustCompile(`(?s)<tool_call>.*?</tool_call>\s*`)
+
+// stripFreebuffToolCalls removes <tool_call>...</tool_call> blocks from the
+// response body's choices[0].message.content field. Non-JSON bodies and
+// responses without the pattern are returned unchanged.
+func stripFreebuffToolCalls(resp *Response) {
+	if resp == nil || !gjson.ValidBytes(resp.Body) {
+		return
+	}
+	content := gjson.GetBytes(resp.Body, "choices.0.message.content").String()
+	if content == "" || !freebuffToolCallRe.MatchString(content) {
+		return
+	}
+	cleaned := freebuffToolCallRe.ReplaceAllString(content, "")
+	cleaned = strings.TrimSpace(cleaned)
+	resp.Body, _ = sjson.SetBytes(resp.Body, "choices.0.message.content", cleaned)
 }
