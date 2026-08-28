@@ -567,6 +567,8 @@ func (e *FreebuffExecutor) buildChatBody(req *Request, model, runID, traceSessio
 	body = ensureFreebuffSystemMarker(body)
 	body, _ = sjson.DeleteBytes(body, "reasoning_effort")
 	body, _ = sjson.DeleteBytes(body, "reasoning")
+	body, _ = sjson.DeleteBytes(body, "tools")
+	body, _ = sjson.DeleteBytes(body, "functions")
 
 	clientID := providerData(req, "fingerprintId", "freebuffClientID")
 	if clientID == "" {
