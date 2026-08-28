@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/rickicode/AxonRouter-Go/internal/executor/translator"
 	"github.com/rickicode/AxonRouter-Go/internal/executor/translator/providers"
@@ -212,8 +213,10 @@ func RegisterDefaults() {
 	translator.Register("qoder", translator.Func(providers.TranslateOpenAICompatible))
 
 	// Freebuff (Codebuff-compatible OpenAI chat endpoint)
-	GetRegistry().Register("freebuff", FormatFreebuff, NewFreebuffExecutor(base))
+	freebuffExec := NewFreebuffExecutor(base)
+	GetRegistry().Register("freebuff", FormatFreebuff, freebuffExec)
 	translator.Register("freebuff", translator.Func(providers.TranslateOpenAICompatible))
+	freebuffExec.StartPruner(5 * time.Minute)
 }
 
 // RegisterCustomProviders registers all user-added custom providers from the DB

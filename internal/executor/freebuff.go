@@ -127,6 +127,18 @@ func NewFreebuffExecutor(base *BaseExecutor) *FreebuffExecutor {
 	}
 }
 
+// StartPruner launches a background goroutine that periodically prunes
+// stale session rows and expired cooldowns. Call once at startup.
+func (e *FreebuffExecutor) StartPruner(interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			e.pruneSessionState()
+		}
+	}()
+}
+
 // Execute performs a non-streaming chat completion.
 func (e *FreebuffExecutor) Execute(ctx context.Context, req *Request) (*Response, error) {
 	res, err := e.run(ctx, req, false)
@@ -940,6 +952,41 @@ func (e *FreebuffExecutor) clearCooldowns(token, model, proxyKey string) {
 	delete(e.accountLockUntil, token)
 	delete(e.poolLimitCooldowns, proxyKey+"::"+model)
 	e.mu.Unlock()
+}
+
+// pruneSessionState drops stale session rows + expired cooldowns so
+// long-running servers never accumulate state for accounts/models no
+// longer in use. Returns how many entries were removed.
+func (e *FreebuffExecutor) pruneSessionState() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	now := time.Now()
+	removed := 0
+	for k, s := range e.sessions {
+		if !s.ExpiresAt.IsZero() && now.After(s.ExpiresAt) {
+			delete(e.sessions, k)
+			removed++
+		}
+	}
+	for k, until := range e.modelLockCooldowns {
+		if now.After(until) {
+			delete(e.modelLockCooldowns, k)
+			removed++
+		}
+	}
+	for k, until := range e.accountLockUntil {
+		if now.After(until) {
+			delete(e.accountLockUntil, k)
+			removed++
+		}
+	}
+	for k, until := range e.poolLimitCooldowns {
+		if now.After(until) {
+			delete(e.poolLimitCooldowns, k)
+			removed++
+		}
+	}
+	return removed
 }
 
 // gateErrorMessage returns the client-facing message for a session gate.
