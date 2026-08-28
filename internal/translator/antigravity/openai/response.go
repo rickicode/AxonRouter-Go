@@ -20,14 +20,22 @@ type convertCliResponseToOpenAIChatParams struct {
 	FunctionIndex        int
 	SawToolCall          bool   // Tracks if any tool call was seen in the entire stream
 	UpstreamFinishReason string // Caches the upstream finish reason for final chunk
-	SanitizedNameMap     map[string]string
+	CloakedNameMap       map[string]string
 }
 
 // functionCallIDCounter provides a process-wide unique counter for function call identifiers.
 var functionCallIDCounter uint64
 
-// SanitizedToolNameMap builds a map of sanitized -> original tool names.
-func SanitizedToolNameMap(rawJSON []byte) map[string]string {
+// CloakedToolNameMap builds a map of cloaked (sanitized + _ide suffix) -> original
+// tool names from the client's OpenAI request tools. The request translator renames
+// every client tool with CloakName(SanitizeFunctionName(name)) before sending it to
+// Antigravity, so restoring the exact original name (including any characters that
+// required sanitization) on the way back lets the client recognize its own tools.
+//
+// This mirrors 9Router's toolNameMap (suffixed -> original) and the AxonRouter Claude
+// response path's buildToolNameMap. It reads the correct OpenAI path (tools[].function.name)
+// unlike the previous SanitizedToolNameMap helper.
+func CloakedToolNameMap(rawJSON []byte) map[string]string {
 	if len(rawJSON) == 0 || !gjson.ValidBytes(rawJSON) {
 		return nil
 	}
@@ -37,17 +45,16 @@ func SanitizedToolNameMap(rawJSON []byte) map[string]string {
 	}
 	out := make(map[string]string)
 	tools.ForEach(func(_, tool gjson.Result) bool {
-		name := strings.TrimSpace(tool.Get("name").String())
+		if tool.Get("type").String() != "function" {
+			return true
+		}
+		name := strings.TrimSpace(tool.Get("function.name").String())
 		if name == "" {
 			return true
 		}
-		// Use local SanitizeFunctionName
-		sanitized := SanitizeFunctionName(name)
-		if sanitized == name {
-			return true
-		}
-		if _, exists := out[sanitized]; !exists {
-			out[sanitized] = name
+		cloaked := antigravity.CloakName(SanitizeFunctionName(name))
+		if _, exists := out[cloaked]; !exists {
+			out[cloaked] = name
 		}
 		return true
 	})
@@ -57,15 +64,17 @@ func SanitizedToolNameMap(rawJSON []byte) map[string]string {
 	return out
 }
 
-// RestoreSanitizedToolName returns the original tool name.
-func RestoreSanitizedToolName(toolNameMap map[string]string, sanitizedName string) string {
-	if sanitizedName == "" || toolNameMap == nil {
-		return sanitizedName
+// RestoreCloakedToolName returns the original tool name for a cloaked name returned by
+// Antigravity, or the name itself if it was not cloaked. The map already resolves both the
+// _ide suffix and any sanitization, so no extra UncloakName pass is needed.
+func RestoreCloakedToolName(toolNameMap map[string]string, cloakedName string) string {
+	if cloakedName == "" || toolNameMap == nil {
+		return cloakedName
 	}
-	if original, ok := toolNameMap[sanitizedName]; ok {
+	if original, ok := toolNameMap[cloakedName]; ok {
 		return original
 	}
-	return sanitizedName
+	return cloakedName
 }
 
 var dataTag = []byte("data:")
@@ -74,14 +83,14 @@ var dataTag = []byte("data:")
 func convertAntigravityResponseToOpenAIStream(_ context.Context, _ string, originalRequestRawJSON, _, rawJSON []byte, param *any) [][]byte {
 	if *param == nil {
 		*param = &convertCliResponseToOpenAIChatParams{
-			UnixTimestamp:    0,
-			FunctionIndex:    0,
-			SanitizedNameMap: SanitizedToolNameMap(originalRequestRawJSON),
+			UnixTimestamp:  0,
+			FunctionIndex:  0,
+			CloakedNameMap: CloakedToolNameMap(originalRequestRawJSON),
 		}
 	}
 	p := (*param).(*convertCliResponseToOpenAIChatParams)
-	if p.SanitizedNameMap == nil {
-		p.SanitizedNameMap = SanitizedToolNameMap(originalRequestRawJSON)
+	if p.CloakedNameMap == nil {
+		p.CloakedNameMap = CloakedToolNameMap(originalRequestRawJSON)
 	}
 
 	// The SSE scanner forwards the raw line, including the "data:" prefix.
@@ -182,7 +191,7 @@ func convertAntigravityResponseToOpenAIStream(_ context.Context, _ string, origi
 					template, _ = sjson.SetRawBytes(template, "choices.0.delta.tool_calls", []byte(`[]`))
 				}
 
-				fcName := antigravity.UncloakName(RestoreSanitizedToolName(p.SanitizedNameMap, functionCallResult.Get("name").String()))
+				fcName := RestoreCloakedToolName(p.CloakedNameMap, functionCallResult.Get("name").String())
 				functionCallTemplate := []byte(`{"id": "","index": 0,"type": "function","function": {"name": "","arguments": ""}}`)
 				functionCallTemplate, _ = sjson.SetBytes(functionCallTemplate, "id", fmt.Sprintf("%s-%d-%d", fcName, time.Now().UnixNano(), atomic.AddUint64(&functionCallIDCounter, 1)))
 				functionCallTemplate, _ = sjson.SetBytes(functionCallTemplate, "index", functionCallIndex)
@@ -248,7 +257,7 @@ func convertAntigravityResponseToOpenAINonStream(_ context.Context, _ string, or
 	}
 	rawJSON = []byte(responseResult.Raw)
 
-	sanitizedNameMap := SanitizedToolNameMap(originalRequestRawJSON)
+	cloakedNameMap := CloakedToolNameMap(originalRequestRawJSON)
 	var unixTimestamp int64
 	template := []byte(`{"id":"","object":"chat.completion","created":123456,"model":"model","choices":[]}`)
 
@@ -329,7 +338,7 @@ func convertAntigravityResponseToOpenAINonStream(_ context.Context, _ string, or
 							choiceTemplate, _ = sjson.SetRawBytes(choiceTemplate, "message.tool_calls", []byte(`[]`))
 						}
 						functionCallItemTemplate := []byte(`{"id":"","type":"function","function":{"name":"","arguments":""}}`)
-						fcName := RestoreSanitizedToolName(sanitizedNameMap, functionCallResult.Get("name").String())
+						fcName := RestoreCloakedToolName(cloakedNameMap, functionCallResult.Get("name").String())
 						functionCallItemTemplate, _ = sjson.SetBytes(functionCallItemTemplate, "id", fmt.Sprintf("%s-%d-%d", fcName, time.Now().UnixNano(), atomic.AddUint64(&functionCallIDCounter, 1)))
 						functionCallItemTemplate, _ = sjson.SetBytes(functionCallItemTemplate, "function.name", fcName)
 						if fcArgsResult := functionCallResult.Get("args"); fcArgsResult.Exists() {
