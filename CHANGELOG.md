@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Freebuff direct connections** — Freebuff no longer requires a proxy pool; connections without a proxy configured fall back to direct. This fixes `freebuff/*` requests that previously returned "requires a working proxy pool" when no pool was assigned.
+
 ## [0.3.39] - 2026-08-27
 
 ### Fixed
