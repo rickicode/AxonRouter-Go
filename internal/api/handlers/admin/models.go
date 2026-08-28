@@ -727,7 +727,7 @@ func defaultTestModel(providerID string) string {
 	case "openrouter":
 		return "openai/gpt-4o"
 	case "freebuff":
-		return "deepseek/deepseek-v4-flash"
+		return "mimo/mimo-v2.5"
 	case "cerebras":
 		return "gpt-oss-120b"
 	case "together":
