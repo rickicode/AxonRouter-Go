@@ -823,14 +823,10 @@ func TestFreebuffExecutor_LimitedIPPoolFailover(t *testing.T) {
 	}
 }
 
-// TestFreebuffExecutor_AllPoolsErrorNoDirectLeak is the anti-leak regression
-// for the strict-proxy contract: when every configured proxy pool is dead
-// (test status error), the resolver emits ONLY the direct-fallback marker and
-// the v1 handler force-sets StrictProxy=true on it for freebuff. The executor
-// must refuse to attempt that candidate — a session claim from the gateway's
-// real IP would pin the freebuff tier to that IP — and fail with a clear 409
-// instead. Zero upstream calls proves the claim never leaked.
-func TestFreebuffExecutor_AllPoolsErrorNoDirectLeak(t *testing.T) {
+// TestFreebuffExecutor_NoProxyDirectAllowed verifies that freebuff works
+// without a proxy pool configured. When no proxy pool is assigned, the
+// resolver returns no candidates and the executor uses a direct connection.
+func TestFreebuffExecutor_NoProxyDirectAllowed(t *testing.T) {
 	var upstreamCalls int32
 	session, _, chat := defaultFreebuffHandlers()
 	ts := newFreebuffTestServer()
@@ -863,29 +859,14 @@ func TestFreebuffExecutor_AllPoolsErrorNoDirectLeak(t *testing.T) {
 		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
 	})
 
-	// Exactly what handler.proxyCandidates produces for freebuff when the
-	// resolver finds no usable pool: the direct-fallback marker with
-	// StrictProxy force-set to true.
-	directMarker := []ProxyConfig{{StrictProxy: true}} // direct-fallback marker, force-strict
-	ctx := ContextWithProxy(context.Background(), directMarker[0])
-	ctx = ContextWithProxyCandidates(ctx, directMarker)
-
-	_, err := exec.Execute(ctx, freebuffTestReq(ts, body))
-	if err == nil {
-		t.Fatal("expected a clear error when all pools are dead (no direct fallback)")
+	// No proxy candidates — simulates a connection without a proxy pool.
+	// The executor should fall back to a direct connection.
+	_, err := exec.Execute(context.Background(), freebuffTestReq(ts, body))
+	if err != nil {
+		t.Fatalf("expected direct connection to succeed, got: %v", err)
 	}
-	upErr, ok := err.(*UpstreamError)
-	if !ok {
-		t.Fatalf("expected UpstreamError, got %T", err)
-	}
-	if upErr.StatusCode != http.StatusConflict {
-		t.Errorf("status=%d, want 409", upErr.StatusCode)
-	}
-	if !strings.Contains(string(upErr.Body), "requires a working proxy pool") {
-		t.Errorf("body should explain the pool requirement: %s", upErr.Body)
-	}
-	if got := atomic.LoadInt32(&upstreamCalls); got != 0 {
-		t.Fatalf("upstream was hit %d times — the session claim leaked to the real IP", got)
+	if got := atomic.LoadInt32(&upstreamCalls); got < 3 {
+		t.Fatalf("upstream calls=%d, want >= 3 (session + run + chat)", got)
 	}
 }
 

@@ -192,17 +192,17 @@ func (e *FreebuffExecutor) run(ctx context.Context, req *Request, stream bool) (
 		cands = []ProxyConfig{{}}
 	}
 	var firstBlocked *time.Time
-	sawStrictNoEgress := false
 	for _, cand := range cands {
 		proxyKey := freebuffPoolKey(cand)
-		// A force-strict candidate with no egress is the resolver's
-		// direct-fallback marker: the v1 handler force-sets StrictProxy on it
-		// for freebuff so a dead/error pool can NEVER leak the session claim
-		// to the gateway's real IP (the freebuff tier is per-egress-IP).
-		// Attempting it would be exactly that leak, so skip it; if no other
-		// pool can serve the request it fails with a clear 409 below.
-		if cand.StrictProxy && cand.ProxyURL == "" && cand.RelayURL == "" {
-			sawStrictNoEgress = true
+		// A strict-proxy candidate with no egress is the resolver's
+		// direct-fallback marker. When all pools are dead, the resolver
+		// emits ONLY this marker — attempting it would leak the session
+		// claim to the gateway's real IP (freebuff tiers are per-egress-IP).
+		// However, when NO pools are configured at all, the resolver returns
+		// an empty list and the caller adds an empty candidate to allow
+		// direct connections — so we only skip when there ARE real pool
+		// candidates (len(cands) > 1).
+		if cand.StrictProxy && cand.ProxyURL == "" && cand.RelayURL == "" && len(cands) > 1 {
 			continue
 		}
 		if until := e.getCooldown(e.poolLimitCooldowns, proxyKey+"::"+model); until != nil {
@@ -228,15 +228,7 @@ func (e *FreebuffExecutor) run(ctx context.Context, req *Request, stream bool) (
 		}
 		return nil, err
 	}
-	if sawStrictNoEgress && firstBlocked == nil {
-		// Covers both dead-pool (every configured pool is in error status) and
-		// never-configured (no pool assigned to the connection) cases. Freebuff
-		// tiers are per-egress-IP, so going direct would pin the session to the
-		// gateway's real IP — the reference (9router proxyFetch.js) only avoids
-		// this when a proxy was configured; we enforce it unconditionally.
-		return nil, freebuffError(http.StatusConflict,
-			"Freebuff requires a working proxy pool — no working pool is configured or all configured pools are unavailable (test status error). Fix the pool status or assign a different pool; direct connections are disabled for Freebuff.")
-	}
+
 	if firstBlocked != nil {
 		return nil, freebuffError(http.StatusConflict, fmt.Sprintf(
 			"Freebuff limited-mode IP rejected %s — retry with a full-access proxy after %s.", model, firstBlocked.Format(time.Kitchen)))

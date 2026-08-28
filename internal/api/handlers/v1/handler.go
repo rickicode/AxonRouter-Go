@@ -1887,11 +1887,6 @@ func (h *Handler) proxyCandidates(conn *Connection) []executor.ProxyConfig {
 	}
 	cfgs := h.resolver.ResolveCandidates(conn.ProviderSpecificData, conn.Provider)
 	out := make([]executor.ProxyConfig, 0, len(cfgs))
-	// Freebuff session tiers are per-egress-IP and the session is claimed on the
-	// egress IP, so a dead/limited pool must never leak the request to the
-	// caller's real IP. Force strict proxy for freebuff (matches 9router
-	// chatCore.js: strictProxy = psd.strictProxy === true || provider === "freebuff").
-	forceStrict := conn.Provider == "freebuff"
 	for _, c := range cfgs {
 		out = append(out, executor.ProxyConfig{
 			Enabled:       c.Enabled,
@@ -1903,7 +1898,7 @@ func (h *Handler) proxyCandidates(conn *Connection) []executor.ProxyConfig {
 			RelayURL:      c.RelayURL,
 			RelayAuth:     c.RelayAuth,
 			RelayType:     c.RelayType,
-			StrictProxy:   c.StrictProxy || forceStrict,
+			StrictProxy:   c.StrictProxy,
 		})
 	}
 	return out
