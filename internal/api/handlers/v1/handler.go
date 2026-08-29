@@ -40,6 +40,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
 	"github.com/rickicode/AxonRouter-Go/internal/smart"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/normalize"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 	"github.com/tidwall/gjson"
@@ -2218,6 +2219,12 @@ func (h *Handler) streamResponse(
 				translatedChunks = registry.Response(ctx, string(providerFormat), string(clientFormat), model, originalReq, translatedReq, chunk.Payload, &streamState)
 			}
 			for _, tc := range translatedChunks {
+				safeChunk, valid := normalize.ValidateClientSSE(tc)
+				if !valid {
+					logging.Logger.Warn("dropping malformed translated SSE frame", "provider", provider, "model", model, "client_format", clientFormat)
+					continue
+				}
+				tc = safeChunk
 				c.Writer.Write(tc)
 				flusher.Flush()
 				totalOutputBytes += estimateOutputFromTranslatedChunk(tc)

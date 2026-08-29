@@ -19,6 +19,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/normalize"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
@@ -190,11 +191,15 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 
 	// Replace model with unprefixed name
 	body = executor.JSONSet(body, "model", modelName)
+	body = normalize.EnsureToolCallIDs(body)
 
 	exec, providerFormat, err := h.resolveExecutor(provider, modelName)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": err.Error(), "type": "invalid_request_error"}})
 		return
+	}
+	if providerFormat != executor.FormatKiro {
+		body = normalize.FixMissingToolResponses(body)
 	}
 
 	// Connection failover loop: try up to failoverMaxAttempts connections before giving up.
@@ -407,6 +412,11 @@ attemptLoop:
 			return
 		} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
+			if safeResp, valid := normalize.ValidateClientJSON(translatedResp); valid {
+				translatedResp = safeResp
+			} else {
+				logging.Logger.Warn("translated response was invalid JSON", "provider", provider, "model", modelName)
+			}
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			tokensEstimated := false
 			if tokenCounts.InputTokens+tokenCounts.OutputTokens == 0 && resp.StatusCode < 400 {

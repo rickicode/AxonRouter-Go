@@ -50,6 +50,35 @@ func TestClaudeStreamContextWindowExceeded(t *testing.T) {
 	}
 }
 
+func TestClaudeStreamToolUsePreservesUpstreamIDs(t *testing.T) {
+	var param any
+	ctx := context.Background()
+	chunks := []string{
+		`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"m","content":[],"stop_reason":null,"usage":{"input_tokens":1,"output_tokens":0}}}`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_abc","name":"calc","input":{}}}`,
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_def","name":"grep","input":{}}}`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"a\":1}"}}`,
+		`data: {"type":"content_block_stop","index":0}`,
+		`data: {"type":"content_block_stop","index":1}`,
+	}
+	ids := map[string]bool{}
+	for _, c := range chunks {
+		for _, b := range convertClaudeResponseToOpenAIStream(ctx, "", nil, nil, []byte(c), &param) {
+			s := stripData(string(b))
+			calls := gjson.Get(s, "choices.0.delta.tool_calls")
+			if calls.IsArray() {
+				calls.ForEach(func(_, tc gjson.Result) bool {
+					ids[tc.Get("id").String()] = true
+					return true
+				})
+			}
+		}
+	}
+	if !ids["toolu_abc"] || !ids["toolu_def"] {
+		t.Fatalf("expected distinct upstream tool ids, got %v", ids)
+	}
+}
+
 func TestClaudeStreamToolUseRoundTrip(t *testing.T) {
 	var param any
 	ctx := context.Background()

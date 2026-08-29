@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -20,6 +21,7 @@ type claudeStreamState struct {
 	ThinkingBlockIndex   int
 	ToolBlocks           map[int]int // upstream tool index -> claude content block index
 	ToolNames            map[int]string
+	ToolIDs              map[int]string
 	ToolStartEmitted     map[int]bool
 	ToolArgsAccum        map[int]*strings.Builder
 	TextAccum            strings.Builder
@@ -33,11 +35,39 @@ type claudeStreamState struct {
 
 var dataTag = []byte("data:")
 
+func sanitizeStreamToolID(id string, index int, messageID string) string {
+	var b strings.Builder
+	for _, r := range id {
+		if strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-", r) {
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() > 0 {
+		return b.String()
+	}
+	messageID = sanitizeStreamToolIDBase(messageID)
+	if messageID == "" {
+		messageID = "response"
+	}
+	return fmt.Sprintf("call_%s_%d", messageID, index)
+}
+
+func sanitizeStreamToolIDBase(id string) string {
+	var b strings.Builder
+	for _, r := range id {
+		if strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-", r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 func getStreamState(param *any) *claudeStreamState {
 	if *param == nil {
 		*param = &claudeStreamState{
 			ToolBlocks:       make(map[int]int),
 			ToolNames:        make(map[int]string),
+			ToolIDs:          make(map[int]string),
 			ToolStartEmitted: make(map[int]bool),
 			ToolArgsAccum:    make(map[int]*strings.Builder),
 		}
@@ -186,13 +216,13 @@ func handleContentBlockStart(root gjson.Result, state *claudeStreamState) [][]by
 	}
 
 	if blockType == "tool_use" {
-		toolID := root.Get("content_block.id").String()
+		toolID := sanitizeStreamToolID(root.Get("content_block.id").String(), index, state.MessageID)
 		toolName := root.Get("content_block.name").String()
+		state.ToolIDs[index] = toolID
 		state.ToolNames[index] = toolName
 		state.ToolBlocks[index] = index
 		state.ToolStartEmitted[index] = false
 		state.ToolArgsAccum[index] = &strings.Builder{}
-		_ = toolID
 		return nil
 	}
 
@@ -245,7 +275,7 @@ func handleContentBlockStop(root gjson.Result, state *claudeStreamState) [][]byt
 
 		tc := map[string]interface{}{
 			"index": index,
-			"id":    "call_" + state.MessageID,
+			"id":    state.ToolIDs[index],
 			"type":  "function",
 			"function": map[string]interface{}{
 				"name":      name,
@@ -256,6 +286,7 @@ func handleContentBlockStop(root gjson.Result, state *claudeStreamState) [][]byt
 		state.SawToolCall = true
 		delete(state.ToolArgsAccum, index)
 		delete(state.ToolNames, index)
+		delete(state.ToolIDs, index)
 		return [][]byte{chunk}
 	}
 

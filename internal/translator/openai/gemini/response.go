@@ -18,6 +18,7 @@ type geminiStreamState struct {
 	ToolIndex   int
 	ToolArgsAcc map[int]*strings.Builder
 	ToolNames   map[int]string
+	ToolIDs     map[int]string
 	ContentAcc  strings.Builder
 }
 
@@ -26,6 +27,7 @@ func getGeminiState(param *any) *geminiStreamState {
 		*param = &geminiStreamState{
 			ToolArgsAcc: make(map[int]*strings.Builder),
 			ToolNames:   make(map[int]string),
+			ToolIDs:     make(map[int]string),
 		}
 	}
 	return (*param).(*geminiStreamState)
@@ -72,13 +74,13 @@ func convertGeminiResponseToOpenAIStream(_ context.Context, _ string, _, _ []byt
 						state.ToolIndex++
 						idx := state.ToolIndex
 						state.ToolNames[idx] = fc.Get("name").String()
-						argsStr := fc.Get("args").Raw
-						if argsStr == "" {
-							argsStr = "{}"
-						}
+						toolID := fc.Get("id").String()
+						toolID = sanitizeGeminiToolID(toolID, idx, state.MessageID)
+						state.ToolIDs[idx] = toolID
+						argsStr := normalizeGeminiArguments(fc.Get("args").Raw)
 						chunk := buildOpenAIFromGemini(state.MessageID, state.Model, []map[string]interface{}{{
 							"index": idx,
-							"id":    fmt.Sprintf("call_%s_%d", state.MessageID, idx),
+							"id":    state.ToolIDs[idx],
 							"type":  "function",
 							"function": map[string]interface{}{
 								"name":      fc.Get("name").String(),
@@ -162,12 +164,13 @@ func convertGeminiResponseToOpenAINonStream(_ context.Context, _ string, _, _ []
 					}
 					if fc := part.Get("functionCall"); fc.Exists() {
 						toolIdx++
+						toolID := sanitizeGeminiToolID(fc.Get("id").String(), toolIdx, root.Get("createTimeMillis").String())
 						toolCalls = append(toolCalls, map[string]interface{}{
-							"id":   fmt.Sprintf("call_gemini_%d", toolIdx),
+							"id":   toolID,
 							"type": "function",
 							"function": map[string]interface{}{
 								"name":      fc.Get("name").String(),
-								"arguments": fc.Get("args").Raw,
+								"arguments": normalizeGeminiArguments(fc.Get("args").Raw),
 							},
 						})
 					}
@@ -216,6 +219,43 @@ func convertGeminiResponseToOpenAINonStream(_ context.Context, _ string, _, _ []
 
 	result, _ := json.Marshal(out)
 	return result
+}
+
+func normalizeGeminiArguments(raw string) string {
+	if strings.TrimSpace(raw) == "" || raw == "null" {
+		return "{}"
+	}
+	var value any
+	if json.Unmarshal([]byte(raw), &value) != nil {
+		return "{}"
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "{}"
+	}
+	return string(encoded)
+}
+
+func sanitizeGeminiToolID(id string, index int, messageID string) string {
+	var b strings.Builder
+	for _, r := range id {
+		if strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-", r) {
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() > 0 {
+		return b.String()
+	}
+	var base strings.Builder
+	for _, r := range messageID {
+		if strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-", r) {
+			base.WriteRune(r)
+		}
+	}
+	if base.Len() == 0 {
+		base.WriteString("gemini")
+	}
+	return fmt.Sprintf("call_%s_%d", base.String(), index)
 }
 
 func buildOpenAIFromGemini(id, model string, toolCalls []map[string]interface{}, content *gjson.Result, reasoningContent *string) []byte {

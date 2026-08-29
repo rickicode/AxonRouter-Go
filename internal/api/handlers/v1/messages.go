@@ -16,6 +16,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 	"github.com/rickicode/AxonRouter-Go/internal/executor"
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/normalize"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
@@ -112,6 +113,10 @@ func (h *Handler) Messages(c *gin.Context) {
 		return
 	}
 	body = executor.JSONSet(body, "model", modelName)
+	body = normalize.EnsureToolCallIDs(body)
+	if providerFormat != executor.FormatKiro {
+		body = normalize.FixMissingToolResponses(body)
+	}
 
 	// Connection failover loop: try up to failoverMaxAttempts connections before giving up.
 	clientFormat := executor.FormatClaude
@@ -265,6 +270,11 @@ attemptLoop:
 				translatedResp = resp.Body
 			} else {
 				translatedResp = registry.ResponseNonStream(c.Request.Context(), string(clientFormat), string(providerFormat), modelName, body, translatedBody, resp.Body, nil)
+			}
+			if safeResp, valid := normalize.ValidateClientJSON(translatedResp); valid {
+				translatedResp = safeResp
+			} else {
+				logging.Logger.Warn("translated response was invalid JSON", "provider", provider, "model", modelName)
 			}
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			tokensEstimated := false

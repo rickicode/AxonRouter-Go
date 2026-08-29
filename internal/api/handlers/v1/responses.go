@@ -13,6 +13,7 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/logging"
 	"github.com/rickicode/AxonRouter-Go/internal/providercfg"
 	"github.com/rickicode/AxonRouter-Go/internal/quota"
+	"github.com/rickicode/AxonRouter-Go/internal/translator/normalize"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/registry"
 	"github.com/rickicode/AxonRouter-Go/internal/usage"
 )
@@ -92,6 +93,10 @@ func (h *Handler) Responses(c *gin.Context) {
 		return
 	}
 	body = executor.JSONSet(body, "model", modelName)
+	body = normalize.EnsureToolCallIDs(body)
+	if providerFormat != executor.FormatKiro {
+		body = normalize.FixMissingToolResponses(body)
+	}
 	clientFormat := executor.FormatOpenAIResponses
 	translatedBody := registry.Request(string(clientFormat), string(providerFormat), modelName, body, stream)
 	translatedBody = h.applyThinkingOverrideFromContext(c.Request.Context(), translatedBody, string(providerFormat))
@@ -297,6 +302,11 @@ attemptLoop:
 			return
 		} else {
 			translatedResp := registry.ResponseNonStream(c.Request.Context(), string(providerFormat), string(clientFormat), modelName, body, translatedBody, resp.Body, nil)
+			if safeResp, valid := normalize.ValidateClientJSON(translatedResp); valid {
+				translatedResp = safeResp
+			} else {
+				logging.Logger.Warn("translated response was invalid JSON", "provider", provider, "model", modelName)
+			}
 			tokenCounts := ExtractTokensFromBody(translatedResp)
 			tokensEstimated := false
 			if tokenCounts.InputTokens+tokenCounts.OutputTokens == 0 && resp.StatusCode < 400 {
@@ -332,16 +342,16 @@ attemptLoop:
 				TokensEstimated:     tokensEstimated,
 			})
 			h.accumulateAPIKeyUsage(c.GetString("api_key_id"), body, translatedResp, true)
-	if resp.StatusCode < 300 {
-		h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
-	}
-	h.writeJSONResponse(c, resp.StatusCode, translatedResp, responseCost{
-		modelID:         modelName,
-		exactCost:       resp.CostUsd,
-		counts:          tokenCounts,
-		tokensEstimated: tokensEstimated,
-		flatRate:        h.isFlatRate(provider),
-	})
+			if resp.StatusCode < 300 {
+				h.storeExactCache(cacheKey, translatedResp, resp.StatusCode)
+			}
+			h.writeJSONResponse(c, resp.StatusCode, translatedResp, responseCost{
+				modelID:         modelName,
+				exactCost:       resp.CostUsd,
+				counts:          tokenCounts,
+				tokensEstimated: tokensEstimated,
+				flatRate:        h.isFlatRate(provider),
+			})
 		}
 		return
 	}

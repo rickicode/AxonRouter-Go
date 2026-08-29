@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/rickicode/AxonRouter-Go/internal/translator/openai/claude"
@@ -12,30 +13,53 @@ import (
 
 // claudeStreamState holds accumulated state for OpenAI→Claude streaming.
 type claudeStreamState struct {
-	MessageID            string
-	Model                string
-	CreatedAt            int64
-	ToolNameMap          map[string]string
-	ContentBlockStarted  bool
-	ContentBlockIndex    int
-	ThinkingBlockStarted bool
-	ThinkingBlockIndex   int
-	ToolBlocks           map[int]int
-	ToolStartEmitted     map[int]bool
-	ToolArgsAccum        map[int]*strings.Builder
-	TextAccum            strings.Builder
-	ThinkingAccum        strings.Builder
-	FinishReason         string
-	MessageStartSent     bool
-	MessageStopSent      bool
-	SawToolCall          bool
+	MessageID             string
+	Model                 string
+	CreatedAt             int64
+	ToolNameMap           map[string]string
+	ContentBlockStarted   bool
+	ContentBlockIndex     int
+	ThinkingBlockStarted  bool
+	ThinkingBlockIndex    int
+	ToolBlocks            map[int]int
+	ToolIDs               map[int]string
+	ToolStartEmitted      map[int]bool
+	ToolArgsAccum         map[int]*strings.Builder
+	TextAccum             strings.Builder
+	ThinkingAccum         strings.Builder
+	FinishReason          string
+	MessageStartSent      bool
+	MessageStopSent       bool
+	SawToolCall           bool
 	NextContentBlockIndex int
-	InputTokens          int64
-	OutputTokens         int64
-	CachedTokens         int64
+	InputTokens           int64
+	OutputTokens          int64
+	CachedTokens          int64
 }
 
 var dataTag = []byte("data:")
+
+func sanitizeStreamToolID(id string, index int, messageID string) string {
+	var b strings.Builder
+	for _, r := range id {
+		if strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-", r) {
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() > 0 {
+		return b.String()
+	}
+	var base strings.Builder
+	for _, r := range messageID {
+		if strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-", r) {
+			base.WriteRune(r)
+		}
+	}
+	if base.Len() == 0 {
+		base.WriteString("response")
+	}
+	return fmt.Sprintf("call_%s_%d", base.String(), index)
+}
 
 // Static JSON event structs eliminate per-event map allocations while keeping
 // the exact byte ordering the original map[string]interface{} + json.Marshal
@@ -65,13 +89,13 @@ type claudeContentDelta struct {
 }
 
 type messageStartMessage struct {
-	Content      []any     `json:"content"`
-	ID           string    `json:"id"`
-	Model        string    `json:"model"`
-	Role         string    `json:"role"`
-	StopReason   any       `json:"stop_reason"`
-	StopSequence any       `json:"stop_sequence"`
-	Type         string    `json:"type"`
+	Content      []any       `json:"content"`
+	ID           string      `json:"id"`
+	Model        string      `json:"model"`
+	Role         string      `json:"role"`
+	StopReason   any         `json:"stop_reason"`
+	StopSequence any         `json:"stop_sequence"`
+	Type         string      `json:"type"`
 	Usage        claudeUsage `json:"usage"`
 }
 
@@ -133,9 +157,10 @@ func wrapEvent(b []byte) []byte {
 func getState(param *any) *claudeStreamState {
 	if *param == nil {
 		*param = &claudeStreamState{
-			ToolBlocks:       make(map[int]int),
-			ToolStartEmitted: make(map[int]bool),
-			ToolArgsAccum:    make(map[int]*strings.Builder),
+			ToolBlocks:            make(map[int]int),
+			ToolIDs:               make(map[int]string),
+			ToolStartEmitted:      make(map[int]bool),
+			ToolArgsAccum:         make(map[int]*strings.Builder),
 			NextContentBlockIndex: 0,
 		}
 	}
@@ -223,11 +248,9 @@ func ConvertOpenAIResponseToClaudeStream(_ context.Context, _ string, _, _ []byt
 				toolCalls.ForEach(func(_, tc gjson.Result) bool {
 					idx := int(tc.Get("index").Int())
 					if !state.ToolStartEmitted[idx] {
-						toolID := tc.Get("id").String()
+						toolID := sanitizeStreamToolID(tc.Get("id").String(), idx, state.MessageID)
+						state.ToolIDs[idx] = toolID
 						toolName := claude.UncloakClaudeToolName(tc.Get("function.name").String())
-						if toolID == "" {
-							toolID = "call_" + state.MessageID
-						}
 						results = append(results, buildClaudeToolUseStart(state, idx, toolID, toolName))
 						state.ToolStartEmitted[idx] = true
 					}

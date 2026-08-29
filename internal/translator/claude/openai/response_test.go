@@ -16,6 +16,35 @@ func stripData(s string) string {
 	return s
 }
 
+func TestStreamToolUseIDsStableAndSanitized(t *testing.T) {
+	var param any
+	ctx := context.Background()
+	chunks := []string{
+		`data: {"id":"chatcmpl-1","model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"bad.id/1","function":{"name":"read","arguments":""}}]}}]}`,
+		`data: {"id":"chatcmpl-1","model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`,
+		`data: [DONE]`,
+	}
+	ids := map[string]bool{}
+	for _, c := range chunks {
+		for _, b := range ConvertOpenAIResponseToClaudeStream(ctx, "", nil, nil, []byte(c), &param) {
+			s := stripData(string(b))
+			if block := gjson.Get(s, "content_block"); block.Exists() && block.Get("type").String() == "tool_use" {
+				ids[block.Get("id").String()] = true
+			}
+		}
+	}
+	if len(ids) != 1 {
+		t.Fatalf("expected exactly one stable tool id, got %v", ids)
+	}
+	for id := range ids {
+		for _, r := range id {
+			if !strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-", r) {
+				t.Fatalf("tool id %q contains illegal character", id)
+			}
+		}
+	}
+}
+
 func TestStreamUsageInMessageDelta(t *testing.T) {
 	var param any
 	ctx := context.Background()

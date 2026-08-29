@@ -5,6 +5,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/rickicode/AxonRouter-Go/internal/translator/normalize"
 	"github.com/rickicode/AxonRouter-Go/internal/translator/types"
 )
 
@@ -55,6 +56,12 @@ func (r *Registry) Register(from, to types.Format, request types.TranslateFunc, 
 
 // TranslateRequest converts a payload between formats.
 func (r *Registry) TranslateRequest(from, to types.Format, model string, rawJSON []byte, stream bool) []byte {
+	// Normalize OpenAI-style conversation history before provider conversion.
+	// Kiro has stricter source-aware reconciliation in its own adapter.
+	if from == types.FormatOpenAI && to != types.FormatKiro {
+		rawJSON = normalize.FixMissingToolResponses(normalize.EnsureToolCallIDs(rawJSON))
+	}
+
 	r.mu.RLock()
 	var fn types.TranslateFunc
 	if byTarget, ok := r.requests[from]; ok {
