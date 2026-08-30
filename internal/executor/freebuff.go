@@ -472,6 +472,7 @@ func freebuffFinalizeStreamRun(ctx context.Context, stream *StreamResult, markFi
 
 	handlerCh := make(chan StreamChunk, 64)
 	watchCh := make(chan StreamChunk, 64)
+	filter := freebuffToolCallStreamFilter{}
 
 	// abort signals the watcher that the stream was interrupted (client
 	// disconnect / cancellation), then drains the remainder of the source so
@@ -490,21 +491,34 @@ func freebuffFinalizeStreamRun(ctx context.Context, stream *StreamResult, markFi
 	go func() {
 		defer close(handlerCh)
 		defer close(watchCh)
-		for chunk := range stream.Chunks {
-			if ctx.Err() != nil {
-				abort()
-				return
-			}
+		forward := func(chunk StreamChunk) bool {
 			select {
 			case handlerCh <- chunk:
 			case <-ctx.Done():
 				abort()
-				return
+				return false
 			}
 			select {
 			case watchCh <- chunk:
 			case <-ctx.Done():
 				abort()
+				return false
+			}
+			return true
+		}
+		for chunk := range stream.Chunks {
+			if ctx.Err() != nil {
+				abort()
+				return
+			}
+			for _, filtered := range filter.filter(chunk) {
+				if !forward(filtered) {
+					return
+				}
+			}
+		}
+		for _, chunk := range filter.finish() {
+			if !forward(chunk) {
 				return
 			}
 		}
@@ -1238,6 +1252,101 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 // model emits when no real tools are provided. These XML-style tool calls are
 // not OpenAI-compatible and break clients like the pi CLI.
 var freebuffToolCallRe = regexp.MustCompile(`(?s)<tool_call>.*?</tool_call>\s*`)
+
+const (
+	freebuffToolCallOpen  = "<tool_call>"
+	freebuffToolCallClose = "</tool_call>"
+)
+
+type freebuffToolCallStreamFilter struct {
+	pending string
+	inTool  bool
+}
+
+func (f *freebuffToolCallStreamFilter) filter(chunk StreamChunk) []StreamChunk {
+	if chunk.Err != nil || len(chunk.Payload) == 0 {
+		return []StreamChunk{chunk}
+	}
+	payload := string(chunk.Payload)
+	if !strings.HasPrefix(payload, "data:") {
+		return []StreamChunk{chunk}
+	}
+	data := strings.TrimSpace(strings.TrimPrefix(payload, "data:"))
+	if data == "[DONE]" {
+		if pending := f.flush(); pending != "" {
+			return []StreamChunk{{Payload: freebuffStreamContent(pending)}, chunk}
+		}
+		return []StreamChunk{chunk}
+	}
+	content := gjson.Get(data, "choices.0.delta.content")
+	if !content.Exists() || content.Type != gjson.String {
+		return []StreamChunk{chunk}
+	}
+	cleaned := f.filterContent(content.String())
+	updated, _ := sjson.Set(data, "choices.0.delta.content", cleaned)
+	chunk.Payload = []byte("data: " + updated)
+	return []StreamChunk{chunk}
+}
+
+func (f *freebuffToolCallStreamFilter) finish() []StreamChunk {
+	if pending := f.flush(); pending != "" {
+		return []StreamChunk{{Payload: freebuffStreamContent(pending)}}
+	}
+	return nil
+}
+
+func (f *freebuffToolCallStreamFilter) filterContent(content string) string {
+	f.pending += content
+	var visible strings.Builder
+	for {
+		if f.inTool {
+			if end := strings.Index(f.pending, freebuffToolCallClose); end >= 0 {
+				f.pending = f.pending[end+len(freebuffToolCallClose):]
+				f.inTool = false
+				continue
+			}
+			f.pending = freebuffToolCallSuffix(f.pending, freebuffToolCallClose)
+			return visible.String()
+		}
+		if start := strings.Index(f.pending, freebuffToolCallOpen); start >= 0 {
+			visible.WriteString(f.pending[:start])
+			f.pending = f.pending[start+len(freebuffToolCallOpen):]
+			f.inTool = true
+			continue
+		}
+		pending := freebuffToolCallSuffix(f.pending, freebuffToolCallOpen)
+		visible.WriteString(f.pending[:len(f.pending)-len(pending)])
+		f.pending = pending
+		return visible.String()
+	}
+}
+
+func (f *freebuffToolCallStreamFilter) flush() string {
+	if f.inTool {
+		f.pending = ""
+		f.inTool = false
+		return ""
+	}
+	pending := f.pending
+	f.pending = ""
+	return pending
+}
+
+func freebuffToolCallSuffix(value, marker string) string {
+	for n := min(len(value), len(marker)-1); n > 0; n-- {
+		if strings.HasSuffix(value, marker[:n]) {
+			return value[len(value)-n:]
+		}
+	}
+	return ""
+}
+
+func freebuffStreamContent(content string) []byte {
+	payload, _ := json.Marshal(map[string]any{
+		"choices": []any{map[string]any{"delta": map[string]string{"content": content}}},
+	})
+	return append([]byte("data: "), payload...)
+}
 
 // stripFreebuffToolCalls removes <tool_call>...</tool_call> blocks from the
 // response body's choices[0].message.content field. Non-JSON bodies and

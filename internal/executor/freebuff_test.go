@@ -277,6 +277,51 @@ func TestFreebuffExecutor_StreamFlow(t *testing.T) {
 	}
 }
 
+func TestFreebuffExecutor_StreamStripsSplitToolCalls(t *testing.T) {
+	session, runs, _ := defaultFreebuffHandlers()
+	ts := newFreebuffTestServer()
+	defer ts.Close()
+	ts.session = session
+	ts.runs = runs
+	ts.chat = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		for _, content := range []string{"before <tool", `_call>{"name":"read"}`, `}</tool_call> after`} {
+			fmt.Fprintf(w, `data: {"choices":[{"delta":{"content":%q}}]}`+"\n", content)
+			flusher.Flush()
+		}
+		fmt.Fprintln(w, `data: [DONE]`)
+		flusher.Flush()
+	}
+
+	base := NewBaseExecutor()
+	exec := NewFreebuffExecutor(base)
+	body, _ := json.Marshal(map[string]any{
+		"model":    "deepseek/deepseek-v4-flash",
+		"stream":   true,
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	})
+	res, err := exec.ExecuteStream(context.Background(), freebuffTestReq(ts, body))
+	if err != nil {
+		t.Fatalf("ExecuteStream error: %v", err)
+	}
+	var chunks []string
+	for chunk := range res.Chunks {
+		if chunk.Err != nil {
+			t.Fatalf("chunk error: %v", chunk.Err)
+		}
+		chunks = append(chunks, string(chunk.Payload))
+	}
+	joined := strings.Join(chunks, "\n")
+	if strings.Contains(joined, "tool_call") {
+		t.Fatalf("stream leaked Freebuff tool call: %s", joined)
+	}
+	if !strings.Contains(joined, "before") || !strings.Contains(joined, "after") {
+		t.Fatalf("stream lost visible content: %s", joined)
+	}
+}
+
 // TestFreebuffExecutor_StreamFinishLifecycle verifies that FINISH for a
 // streaming request tracks the REAL stream lifecycle, not the connection open:
 //   - stream completes cleanly  -> FINISH status "completed"
