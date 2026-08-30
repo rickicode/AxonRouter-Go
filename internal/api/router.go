@@ -417,6 +417,8 @@ func New(cfg Config) *Router {
 		g.GET("/oauth/:sessionId/poll", oauthH.PollOAuth)
 		g.POST("/oauth/callback", oauthH.SubmitOAuthCallback)
 		g.POST("/oauth/import-token", oauthH.ImportToken)
+		g.POST("/oauth/codex/bulk-import", oauthH.BulkImportCodex)
+		g.POST("/oauth/grok-cli/bulk-import", oauthH.BulkImportGrokCli)
 		g.POST("/oauth/freebuff/bulk-import", oauthH.BulkImportFreebuff)
 
 		// Cursor IDE token auto-import from local VS Code: state file

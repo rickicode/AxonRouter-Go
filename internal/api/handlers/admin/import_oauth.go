@@ -1,14 +1,18 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rickicode/AxonRouter-Go/internal/auth"
+	codexauth "github.com/rickicode/AxonRouter-Go/internal/auth/codex"
+	grokcliauth "github.com/rickicode/AxonRouter-Go/internal/auth/grokcli"
 	"github.com/rickicode/AxonRouter-Go/internal/db"
 )
 
@@ -84,6 +88,131 @@ func (h *OAuthHandler) ImportToken(c *gin.Context) {
 	})
 }
 
+func (h *OAuthHandler) BulkImportCodex(c *gin.Context) {
+	var raw json.RawMessage
+	if err := c.ShouldBindJSON(&raw); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	accounts, err := normalizeOAuthBulkInput(raw)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	const maxBulk = 5000
+	if len(accounts) > maxBulk {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "too many accounts: maximum 5000 per import"})
+		return
+	}
+
+	type importResult struct {
+		Index int    `json:"index"`
+		OK    bool   `json:"ok"`
+		ID    string `json:"id,omitempty"`
+		Error string `json:"error,omitempty"`
+	}
+	results := make([]importResult, 0, len(accounts))
+	success := 0
+	failed := 0
+	for i, account := range accounts {
+		id, importErr := codexauth.ImportCredentials(c.Request.Context(), h.db, account)
+		if importErr != nil {
+			results = append(results, importResult{Index: i, Error: importErr.Error()})
+			failed++
+			continue
+		}
+		if h.store != nil {
+			h.store.SeedConnection(id, string(auth.ProviderCodex), "ready", 0)
+			if h.elig != nil {
+				h.elig.Update(h.store)
+			}
+		}
+		results = append(results, importResult{Index: i, OK: true, ID: id})
+		success++
+	}
+	c.JSON(http.StatusOK, gin.H{"success": success, "failed": failed, "results": results})
+}
+
+func (h *OAuthHandler) BulkImportGrokCli(c *gin.Context) {
+	var raw json.RawMessage
+	if err := c.ShouldBindJSON(&raw); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	accounts, err := normalizeOAuthBulkInput(raw)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	const maxBulk = 5000
+	if len(accounts) > maxBulk {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "too many accounts: maximum 5000 per import"})
+		return
+	}
+
+	type importResult struct {
+		Index int    `json:"index"`
+		OK    bool   `json:"ok"`
+		ID    string `json:"id,omitempty"`
+		Error string `json:"error,omitempty"`
+	}
+	results := make([]importResult, 0, len(accounts))
+	success := 0
+	failed := 0
+	for i, account := range accounts {
+		id, importErr := grokcliauth.ImportCredentials(c.Request.Context(), h.db, account)
+		if importErr != nil {
+			results = append(results, importResult{Index: i, Error: importErr.Error()})
+			failed++
+			continue
+		}
+		if h.store != nil {
+			h.store.SeedConnection(id, string(auth.ProviderGrokCli), "ready", 0)
+		}
+		results = append(results, importResult{Index: i, OK: true, ID: id})
+		success++
+	}
+	if h.elig != nil {
+		h.elig.Update(h.store)
+	}
+	c.JSON(http.StatusOK, gin.H{"success": success, "failed": failed, "results": results})
+}
+
+func normalizeOAuthBulkInput(raw json.RawMessage) ([]json.RawMessage, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return nil, fmt.Errorf("no accounts provided")
+	}
+	if trimmed[0] == '[' {
+		var accounts []json.RawMessage
+		if err := json.Unmarshal(trimmed, &accounts); err != nil {
+			return nil, fmt.Errorf("invalid accounts JSON: %w", err)
+		}
+		if len(accounts) == 0 {
+			return nil, fmt.Errorf("no accounts provided")
+		}
+		return accounts, nil
+	}
+	if trimmed[0] != '{' {
+		return nil, fmt.Errorf("expected an account object or array")
+	}
+	var envelope struct {
+		Accounts []json.RawMessage `json:"accounts"`
+	}
+	if err := json.Unmarshal(trimmed, &envelope); err != nil {
+		return nil, fmt.Errorf("invalid account JSON: %w", err)
+	}
+	if envelope.Accounts != nil {
+		if len(envelope.Accounts) == 0 {
+			return nil, fmt.Errorf("no accounts provided")
+		}
+		return envelope.Accounts, nil
+	}
+	return []json.RawMessage{trimmed}, nil
+}
+
 // BulkImportFreebuff imports multiple Freebuff accounts at once from a JSON array.
 // Each entry requires access_token; refresh_token, email, expires_at, and
 // device_id are optional. Deduplicates by email (oauth_email) — existing accounts
@@ -91,12 +220,12 @@ func (h *OAuthHandler) ImportToken(c *gin.Context) {
 func (h *OAuthHandler) BulkImportFreebuff(c *gin.Context) {
 	var req struct {
 		Accounts []struct {
-			AccessToken  string            `json:"access_token" binding:"required"`
-			RefreshToken string            `json:"refresh_token"`
-			ExpiresAt    int64             `json:"expires_at"`
-			Email        string            `json:"email"`
-			DeviceID     string            `json:"device_id"`
-			Name         string            `json:"name"`
+			AccessToken  string `json:"access_token" binding:"required"`
+			RefreshToken string `json:"refresh_token"`
+			ExpiresAt    int64  `json:"expires_at"`
+			Email        string `json:"email"`
+			DeviceID     string `json:"device_id"`
+			Name         string `json:"name"`
 		} `json:"accounts" binding:"required,min=1"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {

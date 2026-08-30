@@ -488,6 +488,12 @@ export interface ImportOAuthTokenResponse {
   status: string;
 }
 
+export interface BulkOAuthImportResponse {
+  success: number;
+  failed: number;
+  results: { index: number; ok: boolean; id?: string; error?: string }[];
+}
+
 export interface KiroAutoImportResult {
   found: boolean;
   access_token?: string;
@@ -555,6 +561,20 @@ export const oauthApi = {
     fetchApi<ImportOAuthTokenResponse>("/oauth/import-token", {
       method: "POST",
       body: JSON.stringify(data),
+    }),
+
+  bulkImportCodex: (accounts: Record<string, unknown>[]) =>
+    fetchApi<BulkOAuthImportResponse>("/oauth/codex/bulk-import", {
+      method: "POST",
+      body: JSON.stringify({ accounts }),
+      timeout_ms: 120000,
+    }),
+
+  bulkImportGrokCli: (accounts: Record<string, unknown>[]) =>
+    fetchApi<BulkOAuthImportResponse>("/oauth/grok-cli/bulk-import", {
+      method: "POST",
+      body: JSON.stringify({ accounts }),
+      timeout_ms: 120000,
     }),
 
   bulkImportFreebuff: (accounts: { access_token: string; refresh_token: string; expires_at?: number; email?: string; device_id?: string; name?: string }[]) =>

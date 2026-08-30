@@ -15,18 +15,23 @@ import (
 // payload and the Codex CLI auth.json file.
 type rawAuthShape struct {
 	// Bare access-token style.
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	IDToken      string `json:"id_token"`
-	ExpiresIn    int64  `json:"expires_in"`
-	ExpiresAt    int64  `json:"expires_at"`
+	AccessToken      string `json:"access_token"`
+	AccessTokenCamel string `json:"accessToken"`
+	RefreshToken     string `json:"refresh_token"`
+	IDToken          string `json:"id_token"`
+	IDTokenCamel     string `json:"idToken"`
+	ExpiresIn        int64  `json:"expires_in"`
+	ExpiresInCamel   int64  `json:"expiresIn"`
+	ExpiresAt        int64  `json:"expires_at"`
 
 	// CLI auth.json style.
-	Token     string `json:"token"`
-	RToken    string `json:"refreshToken"`
-	ExpAt     any    `json:"expiresAt"`
-	AccountID string `json:"accountId"`
-	Email     string `json:"email"`
+	Token                 string         `json:"token"`
+	RToken                string         `json:"refreshToken"`
+	ExpAt                 any            `json:"expiresAt"`
+	AccountID             string         `json:"accountId"`
+	Email                 string         `json:"email"`
+	ProviderSpecificData  map[string]any `json:"providerSpecificData"`
+	ProviderSpecificSnake map[string]any `json:"provider_specific_data"`
 }
 
 // ImportCredentials persists a raw access-token or Codex CLI auth.json blob as
@@ -40,14 +45,14 @@ func ImportCredentials(ctx context.Context, database *sql.DB, raw []byte) (strin
 		return "", fmt.Errorf("parse credentials: %w", err)
 	}
 
-	accessToken := firstNonEmpty(shape.AccessToken, shape.Token)
+	accessToken := firstNonEmpty(shape.AccessToken, shape.AccessTokenCamel, shape.Token)
 	if accessToken == "" {
 		return "", fmt.Errorf("missing access_token/token")
 	}
 	refreshToken := firstNonEmpty(shape.RefreshToken, shape.RToken)
-	idToken := shape.IDToken
+	idToken := firstNonEmpty(shape.IDToken, shape.IDTokenCamel)
 
-	expiresAt := parseExpires(shape.ExpiresAt, shape.ExpiresIn, shape.ExpAt)
+	expiresAt := parseExpires(shape.ExpiresAt, firstPositive(shape.ExpiresIn, shape.ExpiresInCamel), shape.ExpAt)
 	if expiresAt.IsZero() {
 		// Default to 55 minutes from now if no expiry is provided, matching
 		// a typical Codex access-token lifetime.
@@ -58,6 +63,22 @@ func ImportCredentials(ctx context.Context, database *sql.DB, raw []byte) (strin
 	accountID, email := extractTokenClaims(idToken)
 	if accountID == "" {
 		accountID = shape.AccountID
+	}
+	providerSpecificData := make(map[string]any, len(shape.ProviderSpecificData)+len(shape.ProviderSpecificSnake))
+	for key, value := range shape.ProviderSpecificSnake {
+		providerSpecificData[key] = value
+	}
+	for key, value := range shape.ProviderSpecificData {
+		providerSpecificData[key] = value
+	}
+	if accountID == "" {
+		accountID = stringValue(providerSpecificData["account_id"])
+	}
+	if accountID == "" {
+		accountID = stringValue(providerSpecificData["accountId"])
+	}
+	if accountID == "" {
+		accountID = stringValue(providerSpecificData["chatgptAccountId"])
 	}
 	if email == "" {
 		email = shape.Email
@@ -78,7 +99,10 @@ func ImportCredentials(ctx context.Context, database *sql.DB, raw []byte) (strin
 			connName = "Codex Imported"
 		}
 	}
-	psd := map[string]any{}
+	psd := make(map[string]any, len(providerSpecificData)+2)
+	for key, value := range providerSpecificData {
+		psd[key] = value
+	}
 	if accountID != "" {
 		psd["account_id"] = accountID
 	}
@@ -110,6 +134,20 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstPositive(values ...int64) int64 {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func stringValue(value any) string {
+	s, _ := value.(string)
+	return strings.TrimSpace(s)
 }
 
 func parseExpires(expiresAtSec int64, expiresIn int64, expiresAtRaw any) time.Time {

@@ -19,16 +19,18 @@ import type { RoutingMode, ProviderModelEntry, ProxyPool, Connection } from '$li
  import * as Select from '$lib/components/ui/select';
  import ProviderIcon from '$lib/components/ProviderIcon.svelte';
  import { getProviderMeta, getCategoryById, getStatusDotColor, getStatusVariant, getStatusLabel } from '$lib/provider-catalog';
- import { toast } from 'svelte-sonner';
+import { toast } from 'svelte-sonner';
 import Icon from '$lib/components/Icon.svelte';
  import AddConnectionModal from '$lib/components/AddConnectionModal.svelte';
+ import BulkImportOAuthModal from '$lib/components/BulkImportOAuthModal.svelte';
 import ProviderRoutingModal from '$lib/components/ProviderRoutingModal.svelte';
 import ProviderEditModal from '$lib/components/ProviderEditModal.svelte';
 import Pagination from '$lib/components/Pagination.svelte';
  import * as AlertDialog from '$lib/components/ui/alert-dialog';
 import StatusBadge from '$lib/components/StatusBadge.svelte';
 
- let showAddModal = $state(false);
+let showAddModal = $state(false);
+let showBulkImportOAuth = $state(false);
 let showRoutingModal = $state(false);
 let showEditModal = $state(false);
  let routingMode = $state<RoutingMode>('round_robin');
@@ -629,6 +631,11 @@ async function handleBulkAssignProxy() {
  <Button onclick={handleTestAll} disabled={testingAll} variant="outline" size="sm" class="text-body-sm rounded-sm">
  {testingAll ? 'Testing...' : 'Test all'}
  </Button>
+ {#if providerId === 'cx' || providerId === 'grok-cli'}
+ <Button onclick={() => showBulkImportOAuth = true} variant="outline" size="sm" class="text-body-sm rounded-sm">
+ Bulk import
+ </Button>
+ {/if}
  <Button onclick={() => showAddModal = true} size="sm" class="text-body-sm rounded-sm">
  Add connection
  </Button>
@@ -969,6 +976,14 @@ async function handleBulkAssignProxy() {
  </div>
 
 <AddConnectionModal bind:open={showAddModal} {providerId} {meta} onCreated={() => { refreshConnections(); loadProvider(providerId); loadProviderModels(providerId); }} />
+{#if providerId === 'cx' || providerId === 'grok-cli'}
+<BulkImportOAuthModal
+ bind:open={showBulkImportOAuth}
+ provider={providerId === 'cx' ? 'codex' : 'grok-cli'}
+ providerLabel={providerId === 'cx' ? 'Codex' : 'Grok CLI'}
+ onCreated={() => { refreshConnections(); loadProvider(providerId); }}
+ />
+{/if}
 <ProviderRoutingModal bind:open={showRoutingModal} {providerId} currentMode={routingMode} currentFlatRate={flatRate} onSaved={(mode, fr) => { routingMode = mode; flatRate = fr; }} />
 <ProviderEditModal
 	bind:open={showEditModal}

@@ -131,6 +131,92 @@ func TestImportToken_Success(t *testing.T) {
 	}
 }
 
+func TestBulkImportCodex(t *testing.T) {
+	h, database := newOAuthImportTestDeps(t)
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := `{"accounts":[
+		{"accessToken":"bulk-access-1","refreshToken":"bulk-refresh-1","email":"codex-one@example.com"},
+		{"refreshToken":"missing-access"}
+	]}`
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/oauth/codex/bulk-import", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.BulkImportCodex(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "bulk-access-1") {
+		t.Fatal("response echoed an access token")
+	}
+	var resp struct {
+		Success int `json:"success"`
+		Failed  int `json:"failed"`
+		Results []struct {
+			Index int  `json:"index"`
+			OK    bool `json:"ok"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Success != 1 || resp.Failed != 1 || len(resp.Results) != 2 || !resp.Results[0].OK || resp.Results[1].OK {
+		t.Fatalf("unexpected result: %+v", resp)
+	}
+	var count int
+	if err := database.QueryRow("SELECT COUNT(*) FROM connections WHERE provider_type_id = 'cx'").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("Codex connection count = %d, want 1", count)
+	}
+}
+
+func TestBulkImportGrokCli(t *testing.T) {
+	h, database := newOAuthImportTestDeps(t)
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := `{"accounts":[
+		{"accessToken":"grok-access-1","refreshToken":"grok-refresh-1","email":"grok-one@example.com"},
+		{"refreshToken":"missing-access"}
+	]}`
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/oauth/grok-cli/bulk-import", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.BulkImportGrokCli(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "grok-access-1") {
+		t.Fatal("response echoed an access token")
+	}
+	var resp struct {
+		Success int `json:"success"`
+		Failed  int `json:"failed"`
+		Results []struct {
+			Index int  `json:"index"`
+			OK    bool `json:"ok"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Success != 1 || resp.Failed != 1 || len(resp.Results) != 2 || !resp.Results[0].OK || resp.Results[1].OK {
+		t.Fatalf("unexpected result: %+v", resp)
+	}
+	var count int
+	if err := database.QueryRow("SELECT COUNT(*) FROM connections WHERE provider_type_id = 'grok-cli'").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("Grok CLI connection count = %d, want 1", count)
+	}
+}
+
 func TestImportToken_Qoder(t *testing.T) {
 	h, database := newOAuthImportTestDeps(t)
 	gin.SetMode(gin.TestMode)
