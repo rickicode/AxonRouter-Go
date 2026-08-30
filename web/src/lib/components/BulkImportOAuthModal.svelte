@@ -24,16 +24,25 @@
   let jsonText = $state('');
   let submitting = $state(false);
   let parseError = $state('');
+  let isDragging = $state(false);
+  let fileSummary = $state<{ files: number; accounts: number } | null>(null);
   let result = $state<{ success: number; failed: number; results: Result[] } | null>(null);
 
-  const placeholder = `[
+  const placeholder = $derived(provider === 'grok-cli' ? `[
+  {
+    "access_token": "eyJ0eXAiOiJhdCtqd3Qi...",
+    "refresh_token": "LZhriF9bf88pPykpXCuZ9...",
+    "id_token": "eyJ0eXAiOiJKV1QiLCJhbGci...",
+    "email": "account@example.com"
+  }
+]` : `[
   {
     "accessToken": "eyJhbGc...",
     "refreshToken": "rt_...",
     "idToken": "eyJhbGc...",
     "email": "user@example.com"
   }
-]`;
+]`);
 
   function isAccount(value: unknown): value is Account {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -45,9 +54,29 @@
     return isAccount(value) ? [value] : null;
   }
 
+  function parseAccountsText(text: string): Account[] | null {
+    const trimmed = text.trim();
+    if (!trimmed) return null;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (initialError) {
+      if (provider !== 'grok-cli') throw initialError;
+      let fixed = trimmed;
+      if (!fixed.startsWith('[')) {
+        fixed = fixed.replace(/}\s*,\s*{/g, '},{').replace(/}\s*{/g, '},{');
+        if (fixed.endsWith(',')) fixed = fixed.slice(0, -1);
+        fixed = `[${fixed}]`;
+      }
+      parsed = JSON.parse(fixed);
+    }
+    return normalizeAccounts(parsed);
+  }
+
   function parseInput(): { accounts: Account[] | null; error?: string } {
     try {
-      const accounts = normalizeAccounts(JSON.parse(jsonText.trim()));
+      const accounts = parseAccountsText(jsonText);
       return accounts && accounts.length > 0
         ? { accounts }
         : { accounts: null, error: 'No account objects found in input' };
@@ -65,12 +94,53 @@
     jsonText = '';
     parseError = '';
     result = null;
+    fileSummary = null;
+    isDragging = false;
   }
 
   function handleClose() {
     if (submitting) return;
     reset();
     open = false;
+  }
+
+  async function processFiles(files: FileList | File[]) {
+    const jsonFiles = Array.from(files).filter((file) =>
+      file.name.endsWith('.json') || file.type === 'application/json' || file.type === ''
+    );
+    if (jsonFiles.length === 0) {
+      parseError = 'Please select valid .json files';
+      return;
+    }
+
+    try {
+      const accounts: Account[] = [];
+      for (const file of jsonFiles) {
+        const parsed = parseAccountsText(await file.text());
+        if (parsed) accounts.push(...parsed);
+      }
+      if (accounts.length === 0) {
+        parseError = 'No accounts found in selected files';
+        return;
+      }
+      jsonText = JSON.stringify(accounts, null, 2);
+      fileSummary = { files: jsonFiles.length, accounts: accounts.length };
+      parseError = '';
+    } catch (err) {
+      parseError = `Error reading files: ${err instanceof Error ? err.message : 'invalid JSON'}`;
+    }
+  }
+
+  function handleFileChange(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    if (input.files) void processFiles(input.files);
+    input.value = '';
+  }
+
+  function handleDrop(event: DragEvent) {
+    event.preventDefault();
+    isDragging = false;
+    if (event.dataTransfer?.files) void processFiles(event.dataTransfer.files);
   }
 
   async function handleSubmit() {
@@ -111,21 +181,45 @@
     <Dialog.Header>
       <Dialog.Title class="text-lg font-semibold">Bulk add {providerLabel} accounts</Dialog.Title>
       <Dialog.Description class="text-sm text-muted-foreground">
-        Paste {providerLabel} OAuth account objects. Each account needs an access token.
+        {provider === 'grok-cli' ? 'Upload JSON files or paste a JSON array / object.' : 'Paste OAuth account objects. Each account needs an access token.'}
       </Dialog.Description>
     </Dialog.Header>
 
     <div class="flex flex-col gap-3">
       <div class="flex flex-col gap-1.5">
         <Label for="oauth-bulk-json" class="text-sm font-medium">Account JSON</Label>
-        <Textarea
-          id="oauth-bulk-json"
-          bind:value={jsonText}
-          placeholder={placeholder}
-          class="min-h-60 font-mono text-xs"
-          spellcheck={false}
-          disabled={submitting}
-        />
+        {#if provider === 'grok-cli'}
+          <div class="flex items-center justify-between gap-2">
+            <p class="text-caption text-muted-foreground">Upload multiple .json files or paste JSON.</p>
+            <label class="inline-flex cursor-pointer items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-caption text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground">
+              <span>Upload JSON</span>
+              <input type="file" accept=".json,application/json" multiple class="hidden" onchange={handleFileChange} disabled={submitting} />
+            </label>
+          </div>
+        {/if}
+        <div
+          class="relative"
+          ondragover={(event) => { if (provider === 'grok-cli') { event.preventDefault(); isDragging = true; } }}
+          ondragleave={() => isDragging = false}
+          ondrop={handleDrop}
+        >
+          <Textarea
+            id="oauth-bulk-json"
+            bind:value={jsonText}
+            placeholder={placeholder}
+            class="min-h-60 font-mono text-xs"
+            spellcheck={false}
+            disabled={submitting}
+          />
+          {#if provider === 'grok-cli' && isDragging}
+            <div class="pointer-events-none absolute inset-0 flex items-center justify-center rounded-md border-2 border-dashed border-primary bg-background/90 text-body-sm text-primary">
+              Drop .json files here
+            </div>
+          {/if}
+        </div>
+        {#if fileSummary}
+          <p class="text-caption text-emerald-400">Loaded {fileSummary.accounts} account{fileSummary.accounts === 1 ? '' : 's'} from {fileSummary.files} file{fileSummary.files === 1 ? '' : 's'}</p>
+        {/if}
         {#if jsonText.trim()}
           <p class="text-caption text-emerald-400">{accountCount()} account{accountCount() === 1 ? '' : 's'} detected</p>
         {/if}

@@ -104,20 +104,17 @@ function parseConnectionLines(text: string) {
     let conn: { name: string; api_key: string; priority?: number; provider_specific_data?: Record<string, string> } | null = null;
     if (meta?.inputFormat === 'pipe') {
       const parts = line.split('|').map((p) => p.trim());
-      if (parts.length !== 3) {
-        warnings.push(`Line ${index + 1}: expected email|accountId|apiToken (3 parts), got ${parts.length} part(s): "${line}"`);
+      if (parts.length < 3) {
+        warnings.push(`Line ${index + 1}: expected name|apiKey|accountId (at least 3 parts), got ${parts.length} part(s): "${line}"`);
       } else {
-        const [email, accountId, apiToken] = parts;
-        // Validate email format
-        if (!email.includes('@')) {
-          warnings.push(`Line ${index + 1}: invalid email "${email}"`);
-        }
-        // Validate accountId is 32-char hex (Cloudflare account ID)
-        else if (!/^[0-9a-f]{32}$/i.test(accountId)) {
+        const name = parts[0] || `Connection ${index + 1}`;
+        const apiKey = parts.slice(1, -1).join('|');
+        const accountId = parts.at(-1) ?? '';
+        if (!/^[0-9a-f]{32}$/i.test(accountId)) {
           warnings.push(`Line ${index + 1}: invalid accountId "${accountId}" (must be 32-char hex)`);
         }
         else {
-          conn = { name: email, api_key: apiToken, provider_specific_data: { accountId } };
+          conn = { name, api_key: apiKey, provider_specific_data: { accountId } };
         }
       }
     } else {
@@ -1273,7 +1270,7 @@ $effect(() => {
               <Textarea
                 bind:value={bulkText}
                 class="min-h-36 font-mono text-xs"
-                placeholder={meta?.inputFormat === 'pipe' ? 'user@example.com|accountId|apiToken\n...' : `sk-...\nmain: sk-...\nbackup, sk-...\nbackup| sk-...`}
+                placeholder={meta?.inputFormat === 'pipe' ? 'name|apiKey|accountId\n...' : `sk-...\nmain: sk-...\nbackup, sk-...\nbackup| sk-...`}
                 spellcheck={false}
               />
               {#if bulkText.trim()}
@@ -1283,7 +1280,7 @@ $effect(() => {
               {/if}
               <p class="text-[11px] text-muted-foreground">
                 {#if meta?.inputFormat === 'pipe'}
-                  Format: <span class="font-mono">email|accountId|apiToken</span> (one per line)
+                  Format: <span class="font-mono">name|apiKey|accountId</span> (one per line)
                 {:else}
                   One key per line, or <span class="font-mono">name|key</span>, <span class="font-mono">name: key</span>, <span class="font-mono">name, key</span>.
                 {/if}
