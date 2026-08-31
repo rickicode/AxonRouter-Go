@@ -436,10 +436,10 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for systemd, Docker, environment va
 ## 🚀 Latest Release Notes
 
 <!-- LATEST_CHANGELOG_START -->
-### What's New in v0.3.40
+### What's New in v0.3.41
 
-### Fixed
-- **Freebuff direct connections** — Freebuff no longer requires a proxy pool; connections without a proxy configured fall back to direct. This fixes `freebuff/*` requests that previously returned "requires a working proxy pool" when no pool was assigned.
+- **Provider icon coverage** — imported the complete public provider icon inventory from the 9router references, mapped missing built-in provider icons, and repaired the corrupted Deepgram asset.
+- **Antigravity tool-call uncloak fix (parity 9router)** — OpenAI→client responses now restore the exact original tool name on both stream and non-stream paths. Previously the non-streaming path never stripped the `_ide` cloak suffix (so clients like coding agents received `read_file_ide` instead of `read_file`), and the name-restore helper read the wrong JSON path and dropped sanitization, leaking sanitized names. Replaced `SanitizedToolNameMap` with `CloakedToolNameMap` (`CloakName(SanitizeFunctionName(name)) -> original`), matching 9router's `toolNameMap` and the existing Antigravity→Claude path.
 <!-- LATEST_CHANGELOG_END -->
 
 See the full [CHANGELOG.md](./CHANGELOG.md) for older releases.
