@@ -587,8 +587,7 @@ func TestFreebuffExecutor_StaleSessionReclaim(t *testing.T) {
 	ts.chat = func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt32(&chatCalls, 1)
 		if n == 1 {
-			// First chat: stale session (428 waiting_room_required).
-			writeJSON(w, 428, map[string]any{"status": "waiting_room_required", "message": "need session"})
+			writeJSON(w, 426, map[string]any{"status": "waiting_room_required", "message": "need session"})
 			return
 		}
 		chat(w, r)

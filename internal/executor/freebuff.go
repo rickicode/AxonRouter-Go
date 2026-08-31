@@ -59,6 +59,7 @@ var freebuffRootAgentByModel = map[string]string{
 // stale and must be re-claimed before retrying (mirrors the CLI's
 // FreebuffGateErrorKind statuses).
 var freebuffSessionStaleCodes = map[int]bool{
+	426: true,
 	428: true, // waiting_room_required — no session row / instance id missing
 	409: true, // session_superseded / session_model_mismatch
 	410: true, // session_expired — the active session's expires_at passed
