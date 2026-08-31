@@ -1,0 +1,11 @@
+{
+    "schema_version": 1,
+    "commit": "0edecc8f7e97ccbb64af87b24719fda92f31f422",
+    "indexed_at": "2026-08-31T08:34:33Z",
+    "project": "workspaces-AxonRouter-Go",
+    "nodes": 12794,
+    "edges": 47668,
+    "original_size": 37486592,
+    "compressed_size": 7537722,
+    "compression_level": 3
+}
