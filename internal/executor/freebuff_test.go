@@ -144,8 +144,8 @@ func TestFreebuffExecutor_FullFlow(t *testing.T) {
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 			return
 		}
-		if req.Agent != "base2-free-deepseek-flash" {
-			t.Errorf("agentId=%q, want base2-free-deepseek-flash", req.Agent)
+		if req.Agent != "base3-free-deepseek-flash" {
+			t.Errorf("agentId=%q, want base3-free-deepseek-flash", req.Agent)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"runId": "run-1"})
 	}
@@ -173,6 +173,10 @@ func TestFreebuffExecutor_FullFlow(t *testing.T) {
 		"stream":    false,
 		"messages":  []any{map[string]any{"role": "user", "content": "hi"}},
 		"reasoning": map[string]any{"effort": "high"},
+		"tools": []any{map[string]any{
+			"type":     "function",
+			"function": map[string]any{"name": "read_file", "parameters": map[string]any{"type": "object"}},
+		}},
 	})
 	res, err := exec.Execute(context.Background(), freebuffTestReq(ts, body))
 	if err != nil {
@@ -216,6 +220,9 @@ func TestFreebuffExecutor_FullFlow(t *testing.T) {
 	// reasoning fields stripped (backend applies its own server-side).
 	if gjson.GetBytes(got, "reasoning_effort").Exists() || gjson.GetBytes(got, "reasoning").Exists() {
 		t.Errorf("reasoning fields should be stripped")
+	}
+	if gjson.GetBytes(got, "tools.#").Int() != 2 || gjson.GetBytes(got, "tools.1.function.name").String() != "end_turn" {
+		t.Errorf("tools should preserve client tools and append end_turn: %s", got)
 	}
 	if allow := gjson.GetBytes(got, "provider.allow_fallbacks").Bool(); allow {
 		t.Errorf("provider.allow_fallbacks should be false")
@@ -1279,11 +1286,11 @@ func TestFreebuffExecutor_SystemMarker(t *testing.T) {
 
 func TestFreebuffExecutor_RootAgentByModel(t *testing.T) {
 	cases := map[string]string{
-		"deepseek/deepseek-v4-flash": "base2-free-deepseek-flash",
-		"deepseek/deepseek-v4-pro":   "base2-free-deepseek",
-		"mimo/mimo-v2.5":             "base2-free-mimo",
-		"minimax/minimax-m3":         "base2-free-minimax-m3",
-		"openai/gpt-5.6-luna":        "base2-free-luna",
+		"deepseek/deepseek-v4-flash": "base3-free-deepseek-flash",
+		"deepseek/deepseek-v4-pro":   "base3-free-deepseek",
+		"mimo/mimo-v2.5":             "base3-free-mimo",
+		"minimax/minimax-m3":         "base3-free-minimax-m3",
+		"openai/gpt-5.6-luna":        "base3-free-luna",
 	}
 	for model, want := range cases {
 		if got := freebuffRootAgentByModel[model]; got != want {

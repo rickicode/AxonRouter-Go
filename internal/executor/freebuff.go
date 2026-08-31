@@ -48,11 +48,11 @@ var freebuffRootSystemOpenings = []string{
 
 // freebuffRootAgentByModel mirrors the CLI's FREEBUFF_ROOT_AGENT_ID_BY_MODEL.
 var freebuffRootAgentByModel = map[string]string{
-	"deepseek/deepseek-v4-flash": "base2-free-deepseek-flash",
-	"deepseek/deepseek-v4-pro":   "base2-free-deepseek",
-	"mimo/mimo-v2.5":             "base2-free-mimo",
-	"minimax/minimax-m3":         "base2-free-minimax-m3",
-	"openai/gpt-5.6-luna":        "base2-free-luna",
+	"deepseek/deepseek-v4-flash": "base3-free-deepseek-flash",
+	"deepseek/deepseek-v4-pro":   "base3-free-deepseek",
+	"mimo/mimo-v2.5":             "base3-free-mimo",
+	"minimax/minimax-m3":         "base3-free-minimax-m3",
+	"openai/gpt-5.6-luna":        "base3-free-luna",
 }
 
 // freebuffSessionStaleCodes are chat statuses that mean the claimed session is
@@ -596,8 +596,8 @@ func (e *FreebuffExecutor) buildChatBody(req *Request, model, runID, traceSessio
 	body = ensureFreebuffSystemMarker(body)
 	body, _ = sjson.DeleteBytes(body, "reasoning_effort")
 	body, _ = sjson.DeleteBytes(body, "reasoning")
-	body, _ = sjson.DeleteBytes(body, "tools")
 	body, _ = sjson.DeleteBytes(body, "functions")
+	body = ensureFreebuffEndTurnTool(body)
 
 	clientID := providerData(req, "fingerprintId", "freebuffClientID")
 	if clientID == "" {
@@ -620,6 +620,35 @@ func (e *FreebuffExecutor) buildChatBody(req *Request, model, runID, traceSessio
 		body = JSONSet(body, "stream", false)
 	}
 	return body
+}
+
+func ensureFreebuffEndTurnTool(body []byte) []byte {
+	result := gjson.GetBytes(body, "tools")
+	if !result.Exists() || !result.IsArray() || len(result.Array()) == 0 {
+		return body
+	}
+	var tools []map[string]any
+	if err := json.Unmarshal([]byte(result.Raw), &tools); err != nil {
+		return body
+	}
+	for _, tool := range tools {
+		if fn, ok := tool["function"].(map[string]any); ok && fn["name"] == "end_turn" {
+			return body
+		}
+	}
+	tools = append(tools, map[string]any{
+		"type": "function",
+		"function": map[string]any{
+			"name":        "end_turn",
+			"description": "Signal the end of the current task.",
+			"parameters":  map[string]any{"type": "object", "properties": map[string]any{}},
+		},
+	})
+	updated, err := sjson.SetBytes(body, "tools", tools)
+	if err != nil {
+		return body
+	}
+	return updated
 }
 
 // ensureFreebuffSystemMarker ensures messages[0] opens with a canonical Freebuff
