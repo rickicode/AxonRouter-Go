@@ -414,7 +414,7 @@ AxonRouter-Go uses a single-file versioning system so that every release is cons
 - **Dashboard sidebar**: reads `version` from the health response and links to the GitHub `CHANGELOG.md`.
 
 ### 7. Release Procedure — Agent Must Follow
-When the user asks to "release", "buat release", "update release", "tag versi", "upgrade versi", or any equivalent, do not just run the Makefile blindly. Follow this checklist.
+When the user asks to "release", "buat release", "update release", "tag versi", "upgrade versi", or any equivalent, execute this checklist end-to-end. If the user supplies an exact version (for example `0.3.41`), do not ask for the version again.
 
 #### 7.1 Do not release a dirty working tree
 - If `git status --short` shows any `M`/`A`/`D` files, stage and commit them first with an accurate message.
@@ -434,10 +434,13 @@ cd web && npm run test
 - If `## [Unreleased]` is empty, ask the user what changed instead of fabricating entries.
 
 #### 7.4 Create the release (fresh)
-Use the exact version the user asked for. If no version was specified, ask.
+Use the exact version the user asked for. If no version was specified, ask before changing version files. `make release` is the canonical command: it synchronizes derived versions, updates the changelog and README, creates the release commit, creates the `v<VERSION>` tag, and pushes the release commit and tag so GitHub Actions starts automatically.
 ```bash
 make release v=X.Y.Z
 ```
+After this command succeeds, do not create a second tag or manually repeat the push. Verify the resulting commit/tag and workflow in section 7.6.
+
+If a required validation fails, report the exact failing command and blocker before releasing. Proceed only when the user explicitly authorizes a release with that known failure; record the exception in the final response.
 
 #### 7.5 Push an existing release commit (tag not pushed)
 Sometimes the release commit and local tag already exist (from a previous session or interrupted `make release`) but the tag was never pushed to GitHub. `make release` will **fail** in this case because `bump-version.js` refuses when `## [Unreleased]` is empty or the version already exists in `CHANGELOG.md`.
@@ -457,6 +460,7 @@ In this situation, do NOT use `make release`. Instead:
 #### 7.6 Verify the release artifacts
 - Local tag: `git tag --list 'vX.Y.Z'`
 - Remote tag: `git ls-remote --tags origin vX.Y.Z`
+- Release commit and tag target: `git rev-parse HEAD` and `git rev-parse vX.Y.Z` (the tag must point to the release commit).
 - GitHub Actions release workflow is triggered by the tag.
 
 #### 7.7 If recreating an existing release
