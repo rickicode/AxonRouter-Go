@@ -627,6 +627,7 @@ export const PROVIDER_CATALOG: ProviderMeta[] = [
     displayName: 'Cursor IDE',
     icon: 'terminal',
     textIcon: 'CU',
+    iconFile: '/providers/cursor.png',
     category: 'oauth',
     description: 'Cursor IDE account imported from the local VS Code: state file. Token is read from state.vscdb and validated with Cursor\'s upstream API.',
     format: 'openai',
