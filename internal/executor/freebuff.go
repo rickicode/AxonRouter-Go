@@ -1308,8 +1308,24 @@ func (f *freebuffToolCallStreamFilter) filter(chunk StreamChunk) []StreamChunk {
 		}
 		return []StreamChunk{chunk}
 	}
+	updatedData := []byte(data)
+	fieldsChanged := false
+	choices := gjson.Get(data, "choices")
+	if choices.IsArray() {
+		for i, choice := range choices.Array() {
+			toolCalls := choice.Get("delta.tool_calls")
+			if toolCalls.IsArray() && len(toolCalls.Array()) == 0 {
+				updatedData, _ = sjson.DeleteBytes(updatedData, fmt.Sprintf("choices.%d.delta.tool_calls", i))
+				fieldsChanged = true
+			}
+		}
+	}
+	data = string(updatedData)
 	content := gjson.Get(data, "choices.0.delta.content")
 	if !content.Exists() || content.Type != gjson.String {
+		if fieldsChanged {
+			chunk.Payload = []byte("data: " + data)
+		}
 		return []StreamChunk{chunk}
 	}
 	cleaned := f.filterContent(content.String())

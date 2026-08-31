@@ -294,8 +294,13 @@ func TestFreebuffExecutor_StreamStripsSplitToolCalls(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		flusher, _ := w.(http.Flusher)
-		for _, content := range []string{"before <tool", `_call>{"name":"read"}`, `}</tool_call> after`} {
-			fmt.Fprintf(w, `data: {"choices":[{"delta":{"content":%q}}]}`+"\n", content)
+		for _, payload := range []string{
+			`{"choices":[{"delta":{"content":"before <tool"}}]}`,
+			`{"choices":[{"delta":{"content":"_call>{\"name\":\"read\"}"}}]}`,
+			`{"choices":[{"delta":{"content":"}</tool_call> after"}}]}`,
+			`{"choices":[{"delta":{"tool_calls":[]}}]}`,
+		} {
+			fmt.Fprintf(w, "data: %s\n", payload)
 			flusher.Flush()
 		}
 		fmt.Fprintln(w, `data: [DONE]`)
