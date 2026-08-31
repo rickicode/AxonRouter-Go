@@ -873,9 +873,6 @@ func (e *FreebuffExecutor) startRun(ctx context.Context, req *Request, model str
 		"action":         "START",
 		"agentId":        agentID,
 		"ancestorRunIds": []string{},
-		"totalSteps":     0,
-		"directCredits":  0,
-		"totalCredits":   0,
 	})
 
 	var resp *Response
