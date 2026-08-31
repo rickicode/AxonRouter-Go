@@ -22,6 +22,7 @@ const (
 	freebuffAgentRunsPath  = "/api/v1/agent-runs"
 	freebuffSystemMarker   = "You are Buffy, the strategic coding assistant."
 	freebuffUserAgent      = "codebuff-cli/0.0.138"
+	freebuffChatUserAgent  = "ai-sdk/openai-compatible/1.0/codebuff"
 
 	// Active sessions live ~1h; used when the server omits expiresAt.
 	freebuffSessionDefaultTTL = time.Hour
@@ -309,7 +310,7 @@ func (e *FreebuffExecutor) attemptPool(ctx context.Context, req *Request, model,
 	}()
 
 	url := freebuffURL(req)
-	headers := e.chatHeaders(req)
+	headers := e.chatHeaders(req, stream)
 	buildBody := func() []byte {
 		return e.buildChatBody(req, model, runID, traceSessionID, session.InstanceID, stream)
 	}
@@ -1238,11 +1239,13 @@ func (e *FreebuffExecutor) sessionHeaders(req *Request) map[string]string {
 	return h
 }
 
-func (e *FreebuffExecutor) chatHeaders(req *Request) map[string]string {
+func (e *FreebuffExecutor) chatHeaders(req *Request, stream bool) map[string]string {
 	h := map[string]string{
 		"Content-Type": "application/json",
-		"Accept":       "text/event-stream",
-		"User-Agent":   freebuffUserAgent,
+		"User-Agent":   freebuffChatUserAgent,
+	}
+	if stream {
+		h["Accept"] = "text/event-stream"
 	}
 	SetAuthHeader(h, req.APIKey, req.AccessToken)
 	if req.Headers != nil {

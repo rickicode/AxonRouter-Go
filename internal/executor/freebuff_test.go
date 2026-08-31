@@ -161,6 +161,12 @@ func TestFreebuffExecutor_FullFlow(t *testing.T) {
 		return ""
 	}
 	ts.chat = func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("User-Agent"); got != "ai-sdk/openai-compatible/1.0/codebuff" {
+			t.Errorf("chat User-Agent=%q", got)
+		}
+		if got := r.Header.Get("Accept"); got != "" {
+			t.Errorf("non-stream chat Accept=%q, want empty", got)
+		}
 		b, _ := io.ReadAll(r.Body)
 		chatBody.Store(b)
 		chat(w, r)
