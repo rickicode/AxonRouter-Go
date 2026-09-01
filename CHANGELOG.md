@@ -14,6 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **GitLab Duo, xAI (Grok), and iFlow OAuth providers** — three new built-in OAuth providers closing the parity gap with 9router:
+  - `internal/auth/gitlab` — authorization-code + PKCE flow against a configurable GitLab instance (`GITLAB_OAUTH_BASE_URL` / `GITLAB_OAUTH_CLIENT_ID` / `GITLAB_OAUTH_CLIENT_SECRET`), persists `baseUrl`/`clientId`/`authKind` in provider-specific data so token refresh survives env changes, and stores the user profile (`username`, `name`, `email`, `user_id`).
+  - `internal/auth/xai` — OIDC discovery (`https://auth.x.ai/.well-known/openid-configuration`) with a static fallback, PKCE + nonce, fixed loopback port 56121, and id_token claim extraction (`email`/`sub`) for account identity.
+  - `internal/auth/iflow` — plain authorization_code flow (no PKCE) with Basic auth using the public client credentials, mandatory post-exchange `getUserInfo` call that returns the provider-scoped `apiKey` (stored in `api_key`), plus the account email/phone.
+  - `internal/executor/iflow.go` — iFlow request signing: `session-id`, `x-iflow-timestamp`, `x-iflow-signature` (HMAC-SHA256 of `userAgent:sessionID:timestamp` keyed by the apiKey), `User-Agent: iFlow-Cli`, and bearer auth when an apiKey is present; streaming requests get `stream_options.include_usage` injected. Wired into every OpenAI-compatible request path.
+  - All three providers are registered in the auth manager, provider aliases, SQLite seeds, and executor/translator registry so they are routable; the dashboard provider catalog and tests cover their metadata.
+- **Frontend provider catalog** — `gitlab`, `xai`, and `iflow` entries with OAuth metadata, icons, and test coverage.
+
+### Fixed
+- **Usage summary test date sensitivity** — `TestUsageSummaryHandler` in `internal/api/handlers/admin/usage_test.go` failed on the 1st of a month (the month-start row landed in the "today" bucket and the yesterday row fell outside the current month). Expectations are now date-aware.
+
 ## [0.3.41] - 2026-08-31
 - **Provider icon coverage** — imported the complete public provider icon inventory from the 9router references, mapped missing built-in provider icons, and repaired the corrupted Deepgram asset.
 - **Antigravity tool-call uncloak fix (parity 9router)** — OpenAI→client responses now restore the exact original tool name on both stream and non-stream paths. Previously the non-streaming path never stripped the `_ide` cloak suffix (so clients like coding agents received `read_file_ide` instead of `read_file`), and the name-restore helper read the wrong JSON path and dropped sanitization, leaking sanitized names. Replaced `SanitizedToolNameMap` with `CloakedToolNameMap` (`CloakName(SanitizeFunctionName(name)) -> original`), matching 9router's `toolNameMap` and the existing Antigravity→Claude path.

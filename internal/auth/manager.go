@@ -25,6 +25,9 @@ const (
 	ProviderCodeBuddy   ProviderType = "codebuddy"
 	ProviderQoder       ProviderType = "qoder"
 	ProviderFreebuff    ProviderType = "freebuff"
+	ProviderGitLab      ProviderType = "gitlab"
+	ProviderXAI         ProviderType = "xai"
+	ProviderIFlow       ProviderType = "iflow"
 )
 
 // Credentials holds authentication tokens for a connection.

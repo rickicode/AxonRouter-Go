@@ -34,9 +34,12 @@ import (
 	"github.com/rickicode/AxonRouter-Go/internal/auth/codex"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/freebuff"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/github"
+	"github.com/rickicode/AxonRouter-Go/internal/auth/gitlab"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/grokcli"
+	"github.com/rickicode/AxonRouter-Go/internal/auth/iflow"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/kiro"
 	"github.com/rickicode/AxonRouter-Go/internal/auth/qoder"
+	"github.com/rickicode/AxonRouter-Go/internal/auth/xai"
 	"github.com/rickicode/AxonRouter-Go/internal/background"
 	"github.com/rickicode/AxonRouter-Go/internal/cache"
 	"github.com/rickicode/AxonRouter-Go/internal/combo"
@@ -157,6 +160,9 @@ func New(cfg Config) *Router {
 	authManager.RegisterService(auth.ProviderCodeBuddy, codebuddy.NewOAuthService(http.DefaultClient))
 	authManager.RegisterService(auth.ProviderQoder, qoder.NewOAuthService(http.DefaultClient))
 	authManager.RegisterService(auth.ProviderFreebuff, freebuff.NewOAuthService(http.DefaultClient))
+	authManager.RegisterService(auth.ProviderGitLab, gitlab.NewOAuthService(http.DefaultClient))
+	authManager.RegisterService(auth.ProviderXAI, xai.NewOAuthService(http.DefaultClient))
+	authManager.RegisterService(auth.ProviderIFlow, iflow.NewOAuthService(http.DefaultClient))
 	quota.SetAuthManager(authManager)
 	settingHandler := admin.NewSettingHandler(cfg.DB)
 	settingHandler.SeedDefaults()
@@ -297,6 +303,9 @@ func New(cfg Config) *Router {
 	v1Group.GET("/models", v1H.Models)
 	v1Group.POST("/audio/speech", v1H.TTS)
 	v1Group.POST("/audio/transcriptions", v1H.STT)
+	v1Group.GET("/audio/voices", v1H.Voices)
+	v1Group.POST("/web/fetch", v1H.WebFetch)
+	v1Group.GET("/tags", v1H.Tags)
 	v1Group.POST("/images/generations", v1H.Images)
 	v1Group.POST("/images/edits", v1H.ImagesEdits)
 	v1Group.POST("/video/generations", v1H.Video)

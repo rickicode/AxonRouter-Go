@@ -384,6 +384,7 @@ func (e *OpenAIExecutor) Execute(ctx context.Context, req *Request) (*Response, 
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
 	openRouterHeaders(headers, req.Provider, req.ProviderSpecificData)
 	codebuddyHeaders(headers, req.Provider)
+	iflowHeaders(headers, req.Provider, req.ProviderSpecificData)
 
 	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
 	if err != nil {
@@ -444,6 +445,8 @@ func (e *OpenAIExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 	body = JSONSet(body, "stream", true)
 	body = normalizeDeveloperRoles(body)
 	body = sanitizeDeepSeekThinkingMode(body)
+	// iFlow requires stream_options.include_usage on streaming requests.
+	body = iflowTransformRequest(body, req.Provider, true)
 
 	headers := map[string]string{
 		"Content-Type":  "application/json",
@@ -453,6 +456,7 @@ func (e *OpenAIExecutor) ExecuteStream(ctx context.Context, req *Request) (*Stre
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
 	openRouterHeaders(headers, req.Provider, req.ProviderSpecificData)
 	codebuddyHeaders(headers, req.Provider)
+	iflowHeaders(headers, req.Provider, req.ProviderSpecificData)
 
 	return e.DoStreamRequestWithConfig(ContextWithProvider(ctx, req.Provider), "POST", url, headers, body, req.StreamConfig)
 }
@@ -479,6 +483,7 @@ func (e *OpenAIExecutor) Embeddings(ctx context.Context, req *Request) (*Respons
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
 	openRouterHeaders(headers, req.Provider, req.ProviderSpecificData)
 	codebuddyHeaders(headers, req.Provider)
+	iflowHeaders(headers, req.Provider, req.ProviderSpecificData)
 
 	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
 	if err != nil {
@@ -507,6 +512,7 @@ func (e *OpenAIExecutor) Images(ctx context.Context, req *Request) (*Response, e
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
 	openRouterHeaders(headers, req.Provider, req.ProviderSpecificData)
+	iflowHeaders(headers, req.Provider, req.ProviderSpecificData)
 
 	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
 	if err != nil {
@@ -533,6 +539,7 @@ func (e *OpenAIExecutor) Models(ctx context.Context, req *Request) (*Response, e
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
 	openRouterHeaders(headers, req.Provider, req.ProviderSpecificData)
+	iflowHeaders(headers, req.Provider, req.ProviderSpecificData)
 
 	resp, err := e.DoRequest(ctx, "GET", url, headers, nil)
 	if err != nil {
@@ -561,6 +568,7 @@ func (e *OpenAIExecutor) Responses(ctx context.Context, req *Request) (*Response
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
 	openRouterHeaders(headers, req.Provider, req.ProviderSpecificData)
+	iflowHeaders(headers, req.Provider, req.ProviderSpecificData)
 
 	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
 	if err != nil {
@@ -591,6 +599,7 @@ func (e *OpenAIExecutor) ResponsesStream(ctx context.Context, req *Request) (*St
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
 	openRouterHeaders(headers, req.Provider, req.ProviderSpecificData)
+	iflowHeaders(headers, req.Provider, req.ProviderSpecificData)
 
 	return e.DoStreamRequestWithConfig(ContextWithProvider(ctx, req.Provider), "POST", url, headers, body, req.StreamConfig)
 }
@@ -613,6 +622,7 @@ func (e *OpenAIExecutor) ResponsesCompact(ctx context.Context, req *Request) (*R
 	}
 	SetAuthHeader(headers, req.APIKey, req.AccessToken)
 	openRouterHeaders(headers, req.Provider, req.ProviderSpecificData)
+	iflowHeaders(headers, req.Provider, req.ProviderSpecificData)
 
 	resp, err := e.DoRequest(ctx, "POST", url, headers, body)
 	if err != nil {

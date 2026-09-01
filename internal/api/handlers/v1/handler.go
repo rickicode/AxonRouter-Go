@@ -1077,6 +1077,9 @@ var refreshLeadMs = map[string]time.Duration{
 	"kiro":     5 * time.Minute,  // Kiro: AWS SSO OIDC one-time-use refresh tokens
 	"copilot":  5 * time.Minute,  // Copilot: GitHub device-code tokens refresh early due to Copilot token skew
 	"grok-cli": 5 * time.Minute,  // Grok CLI: xAI OIDC device-code tokens refresh before expiry
+	"gitlab":   5 * time.Minute,  // GitLab Duo: OAuth tokens refresh before expiry
+	"xai":      5 * time.Minute,  // xAI: OAuth tokens refresh before expiry
+	"iflow":    24 * time.Hour,   // iFlow: long-lived access tokens, refresh well ahead (9router registry)
 }
 
 const defaultRefreshLeadMs = 5 * time.Minute

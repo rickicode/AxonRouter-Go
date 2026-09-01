@@ -124,7 +124,7 @@ func RegisterDefaults() {
 
 	// OpenAI-compatible providers
 	openaiExec := NewOpenAIExecutor(base)
-	for _, p := range []string{"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp", "elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras", "together", "fireworks", "novita", "lambda", "pollinations", "zenmux", "zenmux-free", "cursor", "brave", "tavily", "exa", "jina", "google-pse", "firecrawl", "fal", "black-forest-labs", "assemblyai", "cartesia", "edge-tts", "qwen", "alicode", "kimi-coding", "iflow", "volcengine-ark", "hunyuan", "nanobanana", "topaz", "puter", "comfyui"} {
+	for _, p := range []string{"openai", "groq", "deepseek", "oc", "oc-zen", "oc-go", "mimo", "mimo-tp", "elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras", "together", "fireworks", "novita", "lambda", "pollinations", "zenmux", "zenmux-free", "cursor", "brave", "tavily", "exa", "jina", "google-pse", "firecrawl", "fal", "black-forest-labs", "assemblyai", "cartesia", "edge-tts", "qwen", "alicode", "kimi-coding", "iflow", "gitlab", "xai", "volcengine-ark", "hunyuan", "nanobanana", "topaz", "puter", "comfyui"} {
 		GetRegistry().Register(p, FormatOpenAI, openaiExec)
 	}
 	// CodeBuddy uses an OpenAI-compatible endpoint but requires a leading system
@@ -159,7 +159,7 @@ func RegisterDefaults() {
 		"elevenlabs", "deepgram", "glm", "minimax", "kimi", "mistral", "cerebras",
 		"together", "fireworks", "novita", "lambda", "pollinations", "zenmux", "zenmux-free",
 		"mimocode", "openrouter", "copilot", "vertex", "bedrock", "codebuddy",
-		"qwencloud", "cursor", "brave", "tavily", "exa", "jina", "google-pse", "firecrawl", "fal", "black-forest-labs", "assemblyai", "cartesia", "edge-tts", "qwen", "alicode", "kimi-coding", "iflow", "volcengine-ark", "hunyuan", "nanobanana", "topaz", "puter", "comfyui", "commandcode",
+		"qwencloud", "cursor", "brave", "tavily", "exa", "jina", "google-pse", "firecrawl", "fal", "black-forest-labs", "assemblyai", "cartesia", "edge-tts", "qwen", "alicode", "kimi-coding", "iflow", "gitlab", "xai", "volcengine-ark", "hunyuan", "nanobanana", "topaz", "puter", "comfyui", "commandcode",
 	} {
 		translator.Register(p, translator.Func(providers.TranslateOpenAICompatible))
 	}

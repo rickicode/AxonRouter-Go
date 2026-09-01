@@ -26,6 +26,8 @@ var Registry = map[string]CanonicalInfo{
 	"alicode":           {DisplayName: "AliCode", Aliases: nil},
 	"kimi-coding":       {DisplayName: "Kimi Coding", Aliases: nil},
 	"iflow":             {DisplayName: "iFlow", Aliases: nil},
+	"gitlab":            {DisplayName: "GitLab Duo", Aliases: nil},
+	"xai":               {DisplayName: "xAI (Grok)", Aliases: nil},
 	"volcengine-ark":    {DisplayName: "Volcengine Ark", Aliases: []string{"volcengine"}},
 	"hunyuan":           {DisplayName: "Tencent Hunyuan", Aliases: nil},
 	"nanobanana":        {DisplayName: "Nanobanana", Aliases: nil},

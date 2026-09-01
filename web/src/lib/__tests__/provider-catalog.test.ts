@@ -95,4 +95,50 @@ describe('provider-catalog', () => {
       expect(matches).toHaveLength(1);
     }
   });
+
+  it('includes gitlab with OAuth metadata', () => {
+    const meta = getProviderMeta('gitlab');
+    expect(meta).toBeDefined();
+    expect(meta!.id).toBe('gitlab');
+    expect(meta!.displayName).toBe('GitLab Duo');
+    expect(meta!.prefix).toBe('gitlab/');
+    expect(meta!.format).toBe('openai');
+    expect(meta!.authType).toBe('oauth');
+    expect(meta!.category).toBe('oauth');
+    expect(meta!.isBuiltIn).toBe(true);
+    expect(meta!.serviceKinds).toEqual(['llm']);
+  });
+
+  it('includes xai with OAuth metadata', () => {
+    const meta = getProviderMeta('xai');
+    expect(meta).toBeDefined();
+    expect(meta!.id).toBe('xai');
+    expect(meta!.displayName).toBe('xAI (Grok)');
+    expect(meta!.prefix).toBe('xai/');
+    expect(meta!.format).toBe('openai');
+    expect(meta!.authType).toBe('oauth');
+    expect(meta!.category).toBe('oauth');
+    expect(meta!.isBuiltIn).toBe(true);
+    expect(meta!.serviceKinds).toEqual(['llm']);
+  });
+
+  it('includes iflow with OAuth metadata', () => {
+    const meta = getProviderMeta('iflow');
+    expect(meta).toBeDefined();
+    expect(meta!.id).toBe('iflow');
+    expect(meta!.displayName).toBe('iFlow AI');
+    expect(meta!.prefix).toBe('iflow/');
+    expect(meta!.format).toBe('openai');
+    expect(meta!.authType).toBe('oauth');
+    expect(meta!.category).toBe('oauth');
+    expect(meta!.isBuiltIn).toBe(true);
+    expect(meta!.serviceKinds).toEqual(['llm']);
+  });
+
+  it('has unique gitlab/xai/iflow entries in the catalog', () => {
+    for (const id of ['gitlab', 'xai', 'iflow']) {
+      const matches = PROVIDER_CATALOG.filter((p) => p.id === id);
+      expect(matches).toHaveLength(1);
+    }
+  });
 });
