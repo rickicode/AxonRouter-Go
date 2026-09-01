@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `internal/executor/iflow.go` — iFlow request signing: `session-id`, `x-iflow-timestamp`, `x-iflow-signature` (HMAC-SHA256 of `userAgent:sessionID:timestamp` keyed by the apiKey), `User-Agent: iFlow-Cli`, and bearer auth when an apiKey is present; streaming requests get `stream_options.include_usage` injected. Wired into every OpenAI-compatible request path.
   - All three providers are registered in the auth manager, provider aliases, SQLite seeds, and executor/translator registry so they are routable; the dashboard provider catalog and tests cover their metadata.
 - **Frontend provider catalog** — `gitlab`, `xai`, and `iflow` entries with OAuth metadata, icons, and test coverage.
+- **Translator Debugger UI** — full replay of the request pipeline (client → source → OpenAI → target → provider → client) matching the log files under `logs/translator/`:
+  - `internal/api/handlers/admin/translator.go` — `TranslatorHandler` with `Translate` (step 1 detect provider/model/formats, step 2 source→OpenAI, step 3 OpenAI→target + URL/headers/body preview via `BuildUpstreamRequest`), `Send` (streams through the real executor path), and allowlisted `Load`/`Save` of the 7 debug files.
+  - `internal/executor/build_request.go` — `BuildUpstreamRequest` mirrors executor request construction (URL, headers, body) without sending, so the debugger can preview exactly what the gateway will emit.
+  - `internal/api/handlers/v1/handler.go` — `DebugSend` + `loadConnectionForDebug` export the v1 executor path (proxy handling, streaming, SSE error frames) to the admin debugger without importing the admin package.
+  - `web/src/pages/TranslatorDebug.svelte` — 7-step accordion with live streaming into the provider-response step, copy/format/clear/load per step, and `svelte-sonner` toasts; sidebar + route + `translatorApi` client wired in.
+  - Unit tests cover format detection (7 cases), endpoint-based source-format overrides, the full step 1–3 round trip against a seeded provider/connection, save/load round trip, and path-traversal rejection.
 
 ### Fixed
 - **Usage summary test date sensitivity** — `TestUsageSummaryHandler` in `internal/api/handlers/admin/usage_test.go` failed on the 1st of a month (the month-start row landed in the "today" bucket and the yesterday row fell outside the current month). Expectations are now date-aware.

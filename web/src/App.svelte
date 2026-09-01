@@ -39,6 +39,7 @@ import MCP from './pages/MCP.svelte';
 import Usage from './pages/Usage.svelte';
 import BackupRestore from './pages/BackupRestore.svelte';
 import Console from './pages/Console.svelte';
+import TranslatorDebug from './pages/TranslatorDebug.svelte';
 import About from './pages/About.svelte';
 import NotFound from './pages/NotFound.svelte';
 
@@ -70,6 +71,7 @@ const labels: Record<string, string> = {
 		'mcp': 'MCP',
 		'backup-restore': 'Backup & Restore',
 		'console': 'Console',
+		'translator': 'Translator Debug',
 		'about': 'About',
   };
     return labels[segment] ?? segment.charAt(0).toUpperCase() + segment.slice(1);
@@ -140,6 +142,9 @@ if (segments[0] === 'backup-restore' && segments.length === 1) return { componen
 
 // /console → Console
 if (segments[0] === 'console' && segments.length === 1) return { component: Console, params: {} };
+
+// /translator → TranslatorDebug
+if (segments[0] === 'translator' && segments.length === 1) return { component: TranslatorDebug, params: {} };
 
 // /about → About
 if (segments[0] === 'about' && segments.length === 1) return { component: About, params: {} };

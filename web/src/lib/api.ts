@@ -1893,3 +1893,133 @@ export const mcpApi = {
 
 	sseUrl: (id: string, token: string) => `${window.location.origin}/api/admin/mcp/${encodeURIComponent(id)}/sse?token=${encodeURIComponent(token)}`,
 };
+
+// ---------------------------------------------------------------------------
+// Translator Debugger API
+// ---------------------------------------------------------------------------
+
+export interface TranslatorDetectResult {
+	provider: string;
+	model: string;
+	sourceFormat: string;
+	targetFormat: string;
+}
+
+export interface TranslatorStep2Result {
+	body: string;
+}
+
+export interface TranslatorStep3Result {
+	provider: string;
+	model: string;
+	format: string;
+	url: string;
+	headers: Record<string, string>;
+	body: string;
+	conn: { id: string; name: string };
+}
+
+export interface TranslatorTranslateResponse {
+	success: boolean;
+	error?: string;
+	result?: TranslatorDetectResult | TranslatorStep2Result | TranslatorStep3Result;
+}
+
+export interface TranslatorSendResponse {
+	success: boolean;
+	error?: string;
+}
+
+export interface TranslatorLoadResponse {
+	success: boolean;
+	name: string;
+	content: string;
+}
+
+export interface TranslatorSaveResponse {
+	success: boolean;
+	error?: string;
+}
+
+export const translatorApi = {
+	/** Step 1: detect provider/model/formats from a raw client body. */
+	detect(body: unknown, path = '', model = '') {
+		return fetchApi<TranslatorTranslateResponse>('/translator/translate', {
+			method: 'POST',
+			body: JSON.stringify({ step: 1, path, model, body }),
+			timeout_ms: 15000,
+		});
+	},
+
+	/** Step 2: translate source → OpenAI intermediate. */
+	toOpenAI(body: unknown, path = '', model = '') {
+		return fetchApi<TranslatorTranslateResponse>('/translator/translate', {
+			method: 'POST',
+			body: JSON.stringify({ step: 2, path, model, body }),
+			timeout_ms: 15000,
+		});
+	},
+
+	/** Step 3: translate OpenAI intermediate → target + URL/headers/body preview. */
+	toTarget(body: unknown, path = '', model = '') {
+		return fetchApi<TranslatorTranslateResponse>('/translator/translate', {
+			method: 'POST',
+			body: JSON.stringify({ step: 3, path, model, body }),
+			timeout_ms: 15000,
+		});
+	},
+
+	/**
+	 * Step 4: execute the built target request against the provider and stream
+	 * the raw upstream body back. Returns a text decoder chunk handler.
+	 */
+	async send(provider: string, model: string, body: unknown, onChunk: (text: string) => void): Promise<string> {
+		const token = getToken();
+		const controller = new AbortController();
+		const response = await fetch(`${API_BASE}/translator/send`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				...(token ? { Authorization: 'Bearer ' + token } : {}),
+			},
+			body: JSON.stringify({ provider, model, body }),
+			signal: controller.signal,
+		});
+
+		if (!response.ok) {
+			const err = await response.json().catch(() => ({ error: response.statusText }));
+			throw new Error(err.error || `HTTP ${response.status}`);
+		}
+
+		const reader = response.body?.getReader();
+		if (!reader) return '';
+		const decoder = new TextDecoder();
+		let full = '';
+		// eslint-disable-next-line no-constant-condition
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			const text = decoder.decode(value, { stream: true });
+			full += text;
+			onChunk(text);
+		}
+		return full;
+	},
+
+	/** Load a saved debugger step file (allowlisted name). */
+	load(name: string) {
+		return fetchApi<TranslatorLoadResponse>(
+			`/translator/load?name=${encodeURIComponent(name)}`,
+			{ timeout_ms: 15000 },
+		);
+	},
+
+	/** Save a debugger step file (allowlisted name). */
+	save(name: string, content: string) {
+		return fetchApi<TranslatorSaveResponse>('/translator/save', {
+			method: 'POST',
+			body: JSON.stringify({ name, content }),
+			timeout_ms: 15000,
+		});
+	},
+};

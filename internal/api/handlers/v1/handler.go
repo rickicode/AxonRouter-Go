@@ -1625,6 +1625,151 @@ func (h *Handler) executeDirect(ctx context.Context, exec executor.Executor, req
 	return resp, nil, err
 }
 
+// DebugSend executes a single raw request against a provider connection and
+// writes the upstream body back to the client. It is the translator debugger's
+// "send" step: it reuses the same executor + proxy resolution as the live
+// gateway but deliberately bypasses failover, usage tracking, and request
+// logging so a developer can inspect one exact provider round trip.
+//
+// The body is expected to already be in the provider's native format (i.e. the
+// step-4 "target" body). Streaming responses are relayed byte-for-byte as SSE;
+// non-streaming responses are returned as plain text so the debugger can show
+// the raw upstream bytes without re-encoding.
+func (h *Handler) DebugSend(c *gin.Context, provider, model string, body []byte) {
+	exec, _, ok := h.registry.Get(provider)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "unknown provider: " + provider})
+		return
+	}
+
+	conn, err := h.loadConnectionForDebug(provider)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "no active connection for provider: " + provider})
+		return
+	}
+
+	var psdMap map[string]string
+	if conn.ProviderSpecificData != "" {
+		if err := json.Unmarshal([]byte(conn.ProviderSpecificData), &psdMap); err != nil {
+			psdMap = nil
+		}
+	}
+	stream := executor.IsStreamRequest(body)
+	req := &executor.Request{
+		Model:                model,
+		Body:                 body,
+		Stream:               stream,
+		APIKey:               conn.APIKey,
+		AccessToken:          conn.AccessToken,
+		BaseURL:              conn.BaseURL,
+		Provider:             provider,
+		ProviderSpecificData: psdMap,
+		ConnectionID:         conn.ID,
+	}
+	proxyCtx := h.proxyContext(c.Request.Context(), conn)
+
+	if stream {
+		streamer, ok := exec.(interface {
+			ExecuteStream(context.Context, *executor.Request) (*executor.StreamResult, error)
+		})
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "executor does not support streaming"})
+			return
+		}
+		result, err := streamer.ExecuteStream(proxyCtx, req)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"success": false, "error": err.Error()})
+			return
+		}
+		flusher, ok := c.Writer.(http.Flusher)
+		if !ok {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "streaming not supported"})
+			return
+		}
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Status(http.StatusOK)
+		for {
+			chunk, open := <-result.Chunks
+			if !open {
+				break
+			}
+			if chunk.Err != nil {
+				// Client cancellation should not be treated as an upstream error.
+				if errors.Is(chunk.Err, context.Canceled) || h.isClientCanceled(c, chunk.Err) {
+					return
+				}
+				c.Writer.Write([]byte("data: " + jsonEscape(chunk.Err.Error()) + "\n\n"))
+				flusher.Flush()
+				continue
+			}
+			if len(chunk.Payload) > 0 {
+				c.Writer.Write(chunk.Payload)
+				flusher.Flush()
+			}
+		}
+		return
+	}
+
+	resp, err := exec.Execute(proxyCtx, req)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	c.Header("Content-Type", "text/plain; charset=utf-8")
+	if resp.StatusCode != 0 {
+		c.Status(resp.StatusCode)
+	}
+	if len(resp.Body) > 0 {
+		_, _ = c.Writer.Write(resp.Body)
+	}
+}
+
+// loadConnectionForDebug resolves the highest-priority active connection for a
+// provider, using the same SQL the credential cache uses (loadConnectionByID).
+func (h *Handler) loadConnectionForDebug(provider string) (*Connection, error) {
+	rows, err := h.db.Query(`
+		SELECT c.id, c.name, c.provider_type_id,
+			COALESCE(c.api_key, '') AS api_key,
+			COALESCE(c.oauth_token, '') AS oauth_token,
+			COALESCE(c.oauth_refresh_token, '') AS oauth_refresh_token,
+			COALESCE(c.oauth_expires_at, 0) AS oauth_expires_at,
+			COALESCE(pt.base_url, '') AS base_url,
+			COALESCE(c.status, 'ready') AS status,
+			COALESCE(c.provider_specific_data, '') AS psd
+		FROM connections c
+		JOIN provider_types pt ON c.provider_type_id = pt.id
+		WHERE c.provider_type_id = ? AND c.is_active = 1
+		ORDER BY COALESCE(c.priority, 0) DESC, c.created_at DESC
+		LIMIT 1`, provider)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, nil
+	}
+	conn := &Connection{}
+	if err := rows.Scan(&conn.ID, &conn.Name, &conn.Provider,
+		&conn.APIKey, &conn.AccessToken, &conn.RefreshToken,
+		&conn.OAuthExpiresAt, &conn.BaseURL, &conn.Status, &conn.ProviderSpecificData); err != nil {
+		return nil, err
+	}
+	return conn, nil
+}
+
+// jsonEscape renders a string as a JSON string literal (for embedding error
+// text in an SSE data: frame).
+func jsonEscape(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
 // executeProviderCall builds an executor.Request from a connection and translated
 // body, attaches proxy context, and runs executeDirect. It returns the proxy
 // context (for downstream logging/PoolID lookups), the response, stream result,

@@ -292,6 +292,9 @@ func New(cfg Config) *Router {
 	// Create v1 handler with all dependencies (must exist before wiring routes)
 	smartRouter := smart.NewRouter(cfg.DB, store, elig)
 	v1H := v1.NewHandler(cfg.DB, writeQueue, store, elig, comboHandler, smartRouter, tracker, deviceTracker, authManager, proxyResolver, exhaustionCache, compStrategy, exactCache, providerCfg)
+	// Translator debugger: step 1-3 translation/preview + step 4 send (reuses the
+	// v1 handler's executor path so the debugger exercises the real gateway flow).
+	translatorH := admin.NewTranslatorHandler(cfg.DB, config.Get().DataDir, v1H.DebugSend)
 	// ---- /v1 routes (proxy) ----
 	v1Group := engine.Group("/v1")
 	v1Group.Use(middleware.Auth(cfg.DB, authCache))
@@ -495,6 +498,12 @@ func New(cfg Config) *Router {
 		g.GET("/console-logs", consoleLogsH.Get)
 		g.DELETE("/console-logs", consoleLogsH.Clear)
 		g.GET("/console-logs/stream", consoleLogsH.Stream)
+
+		// Translator Debugger — step pipeline, raw send, and session load/save.
+		g.POST("/translator/translate", translatorH.Translate)
+		g.POST("/translator/send", translatorH.Send)
+		g.GET("/translator/load", translatorH.Load)
+		g.POST("/translator/save", translatorH.Save)
 
 		// Quota
 		g.GET("/quota", quotaH.List)

@@ -18,6 +18,7 @@ import BarChartIcon from '@lucide/svelte/icons/bar-chart';
   import CodeIcon from '@lucide/svelte/icons/code';
 import InfoIcon from '@lucide/svelte/icons/info';
 import BlocksIcon from '@lucide/svelte/icons/blocks';
+import RepeatIcon from '@lucide/svelte/icons/repeat';
 
   let { onclose }: { onclose?: () => void } = $props();
 
@@ -32,6 +33,7 @@ const platformItems = [
 ];
 const systemItems = [
     { href: '/console', label: 'Console', icon: TerminalIcon },
+    { href: '/translator', label: 'Translator Debug', icon: RepeatIcon },
     { href: '/proxy-pools', label: 'Proxy Pools', icon: GlobeIcon },
  { href: '/api-keys', label: 'API Keys', icon: KeyIcon },
  { href: '/developers', label: 'Developers', icon: CodeIcon },
