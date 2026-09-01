@@ -140,11 +140,24 @@ func TestUsageSummaryHandler(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	if resp.Data.Today["requests"] != 1 {
-		t.Errorf("today requests = %v, want 1", resp.Data.Today["requests"])
+	// NOTE: date-sensitive test. On the 1st of the month the "month-start" row
+	// lands in the same UTC "today" bucket as the today row, and the "yesterday"
+	// row falls in the previous month (outside month-to-date). Expectations are
+	// adjusted accordingly so the test passes on any calendar day.
+	wantTodayReq := 1.0
+	wantTodayCost := 1.00
+	wantMonthCost := 8.00
+	if now.Day() == 1 {
+		wantTodayReq = 2.0
+		wantTodayCost = 6.00
+		wantMonthCost = 6.00
 	}
-	if resp.Data.Today["cost_usd"] != 1.00 {
-		t.Errorf("today cost_usd = %v, want 1.00", resp.Data.Today["cost_usd"])
+
+	if resp.Data.Today["requests"] != wantTodayReq {
+		t.Errorf("today requests = %v, want %v", resp.Data.Today["requests"], wantTodayReq)
+	}
+	if resp.Data.Today["cost_usd"] != wantTodayCost {
+		t.Errorf("today cost_usd = %v, want %v", resp.Data.Today["cost_usd"], wantTodayCost)
 	}
 	if resp.Data.Yesterday["requests"] != 1 {
 		t.Errorf("yesterday requests = %v, want 1", resp.Data.Yesterday["requests"])
@@ -152,8 +165,8 @@ func TestUsageSummaryHandler(t *testing.T) {
 	if resp.Data.Yesterday["cost_usd"] != 2.00 {
 		t.Errorf("yesterday cost_usd = %v, want 2.00", resp.Data.Yesterday["cost_usd"])
 	}
-	if resp.Data.Month["cost_usd"] != 8.00 {
-		t.Errorf("month cost_usd = %v, want 8.00", resp.Data.Month["cost_usd"])
+	if resp.Data.Month["cost_usd"] != wantMonthCost {
+		t.Errorf("month cost_usd = %v, want %v", resp.Data.Month["cost_usd"], wantMonthCost)
 	}
 	if resp.Data.Projected <= 0 {
 		t.Errorf("projected_month_cost = %v, want positive", resp.Data.Projected)
