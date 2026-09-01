@@ -795,6 +795,75 @@ func (h *ProxyPoolHandler) Test(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
+// FitnessList returns all fitness marks plus geo data and pool names for the
+// Proxy Fitness dashboard page. Static route — registered before /:id.
+func (h *ProxyPoolHandler) FitnessList(c *gin.Context) {
+	fitness := proxypool.Fitness().Snapshot()
+	geo := proxypool.Geo().Snapshot()
+
+	// Fetch pool names for display.
+	names := map[string]string{}
+	rows, err := h.db.Query("SELECT id, name FROM proxy_pools")
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var id, name string
+			if rows.Scan(&id, &name) == nil {
+				names[id] = name
+			}
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"pools":   fitness,
+		"geo":     geo,
+		"names":   names,
+	})
+}
+
+// FitnessClear clears fitness marks for a specific pool. Accepts an optional
+// "scope" in the JSON body; when omitted all scopes for the pool are cleared.
+func (h *ProxyPoolHandler) FitnessClear(c *gin.Context) {
+	id := c.Param("id")
+	if _, ok := h.get(id); !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "proxy pool not found"})
+		return
+	}
+	var req struct {
+		Scope string `json:"scope"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	proxypool.Fitness().Clear(id, req.Scope)
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// FitnessClearAll clears every fitness mark. Accepts an optional "provider"
+// filter (e.g. "freebuff") that narrows the scope to only marks matching
+// provider::*. When provider is empty, all marks are cleared.
+func (h *ProxyPoolHandler) FitnessClearAll(c *gin.Context) {
+	var req struct {
+		Provider string `json:"provider"`
+	}
+	_ = c.ShouldBindJSON(&req)
+
+	if req.Provider == "" {
+		proxypool.Fitness().ClearAll()
+		c.JSON(http.StatusOK, gin.H{"success": true})
+		return
+	}
+
+	// Scope-filtered clear: iterate snapshot and clear matching scopes.
+	prefix := req.Provider + "::"
+	for poolID, scopes := range proxypool.Fitness().Snapshot() {
+		for scope := range scopes {
+			if strings.HasPrefix(scope, prefix) {
+				proxypool.Fitness().Clear(poolID, scope)
+			}
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
 func (h *ProxyPoolHandler) HealthGet(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "lastHealthCheckAt": h.health.Last()})
 }

@@ -15,6 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Proxy fitness registry + smart rotation (parity 9router)** — proxy pools can now be marked "unfit" for a `provider::model` scope (e.g. Freebuff limited-IP bans) with a 5-minute cooldown:
+  - `internal/proxypool/fitness.go` — in-memory `FitnessRegistry` keyed `poolID → scope → mark`, persisted to the `proxy_pool_fitness` settings row (debounced 2s), lazily hydrated on first access, expired marks pruned on read, provider wildcard (`provider::*`) honored by `IsFit`/`FitIDs`.
+  - **Smart rotation mode** — new proxy-group mode (`smart`) that filters the group's active pools through the fitness registry for the request's `provider::model` scope before picking (fail-open: falls back to the unfiltered list when every pool is marked unfit). `ResolveCandidates` now takes the model; mode validation accepts `roundrobin|sticky|random|smart`.
+  - **Freebuff integration** — on a `limited_ip` pool-scoped error the executor marks the pool unfit (`freebuff::<model>`), the run-loop skips unfit pools, and a successful request clears the mark. Marks survive restarts and are visible/clearable in the new **Proxy Fitness** dashboard page.
+  - Admin API: `GET /proxy-pools/fitness` (marks + geo + pool names), `POST /proxy-pools/:id/fitness/clear`, `POST /proxy-pools/fitness/clear-all` (optional provider filter), all registered as static routes before `/proxy-pools/:id`.
+  - `web/src/pages/ProxyFitness.svelte` — table of marks with provider/model/pool/egress/reason/cooldown countdown, provider filter + search, per-row and clear-all actions, and a geo-probe enable toggle; sidebar + route wired.
+- **Pool egress geo + flapping detection (parity 9router)** — the periodic health probe now captures each pool's egress IP/country/region/city/org through the pool itself:
+  - `internal/proxypool/geo.go` — in-memory `GeoCache` with bounded IP history (8), instability flag (≥2 distinct egress IPs, typical for serverless relays), datacenter classification from org regex, and `GEO_PROBE_URL` override.
+  - Endpoint fallback chain (`ifconfig.co` → `ipwho.is` → `ip-api.com` → `ipapi.co` → `ipinfo.io`) with a tolerant `parseGeo` handling each shape; manual "test pool" always captures geo, the 30-min health run is gated by the `pool_geo_probe_enabled` setting (default on).
+  - `TestResult` gains a `region` field; `TestPoolWithGeo` records into the cache.
+
 - **GitLab Duo, xAI (Grok), and iFlow OAuth providers** — three new built-in OAuth providers closing the parity gap with 9router:
   - `internal/auth/gitlab` — authorization-code + PKCE flow against a configurable GitLab instance (`GITLAB_OAUTH_BASE_URL` / `GITLAB_OAUTH_CLIENT_ID` / `GITLAB_OAUTH_CLIENT_SECRET`), persists `baseUrl`/`clientId`/`authKind` in provider-specific data so token refresh survives env changes, and stores the user profile (`username`, `name`, `email`, `user_id`).
   - `internal/auth/xai` — OIDC discovery (`https://auth.x.ai/.well-known/openid-configuration`) with a static fallback, PKCE + nonce, fixed loopback port 56121, and id_token claim extraction (`email`/`sub`) for account identity.
@@ -30,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Unit tests cover format detection (7 cases), endpoint-based source-format overrides, the full step 1–3 round trip against a seeded provider/connection, save/load round trip, and path-traversal rejection.
 
 ### Fixed
+- **Freebuff direct-leak when all pools blocked** — the resolver's URL-less `direct-fallback` candidate could be attempted by the freebuff executor when a non-strict group's pools were all dead/cooled, leaking the gateway IP. The run-loop now skips any URL-less candidate whenever real pools exist (`len(cands) > 1`), regardless of `StrictProxy`.
 - **Usage summary test date sensitivity** — `TestUsageSummaryHandler` in `internal/api/handlers/admin/usage_test.go` failed on the 1st of a month (the month-start row landed in the "today" bucket and the yesterday row fell outside the current month). Expectations are now date-aware.
 
 ## [0.3.41] - 2026-08-31

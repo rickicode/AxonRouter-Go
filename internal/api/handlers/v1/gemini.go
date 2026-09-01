@@ -206,7 +206,7 @@ attemptLoop:
 		var streamResult *executor.StreamResult
 		var execErr error
 
-		proxyCtx := h.proxyContext(c.Request.Context(), conn)
+		proxyCtx := h.proxyContext(c.Request.Context(), conn, modelName)
 		latency := time.Since(start).Milliseconds()
 
 		switch action {
@@ -369,7 +369,7 @@ attemptLoop:
 		}
 		h.proactiveRefreshToken(c.Request.Context(), conn, provider)
 
-		proxyCtx := h.proxyContext(c.Request.Context(), conn)
+		proxyCtx := h.proxyContext(c.Request.Context(), conn, modelName)
 		_, resp, _, execErr := h.executeProviderCall(proxyCtx, exec, conn, provider, modelName, geminiReq, false, nil)
 		latency := time.Since(start).Milliseconds()
 		if resp != nil {

@@ -112,7 +112,7 @@ func (h *Handler) Embeddings(c *gin.Context) {
 		Provider:             provider,
 		ProviderSpecificData: psdMap,
 	}
-	proxyCtx := h.proxyContext(c.Request.Context(), conn)
+	proxyCtx := h.proxyContext(c.Request.Context(), conn, modelName)
 
 	// Use any executor that implements EmbeddingsExecutor through the standard
 	// adapter so executeWithRetry can drive it with reactive retry.

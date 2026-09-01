@@ -14,6 +14,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+
+	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
 )
 
 const (
@@ -209,15 +211,23 @@ func (e *FreebuffExecutor) run(ctx context.Context, req *Request, stream bool) (
 	var firstBlocked *time.Time
 	for _, cand := range cands {
 		proxyKey := freebuffPoolKey(cand)
-		// A strict-proxy candidate with no egress is the resolver's
-		// direct-fallback marker. When all pools are dead, the resolver
-		// emits ONLY this marker — attempting it would leak the session
-		// claim to the gateway's real IP (freebuff tiers are per-egress-IP).
-		// However, when NO pools are configured at all, the resolver returns
-		// an empty list and the caller adds an empty candidate to allow
-		// direct connections — so we only skip when there ARE real pool
-		// candidates (len(cands) > 1).
-		if cand.StrictProxy && cand.ProxyURL == "" && cand.RelayURL == "" && len(cands) > 1 {
+		// A candidate with no egress (empty ProxyURL and RelayURL) is the
+		// resolver's direct-fallback marker. When all pools are dead, the
+		// resolver emits ONLY this marker — attempting it would leak the
+		// session claim to the gateway's real IP (freebuff tiers are per-
+		// egress-IP). However, when NO pools are configured at all, the
+		// resolver returns an empty list and the caller adds an empty
+		// candidate to allow direct connections — so we only skip when
+		// there ARE real pool candidates (len(cands) > 1).
+		if cand.ProxyURL == "" && cand.RelayURL == "" && len(cands) > 1 {
+			continue
+		}
+		// Skip pools the fitness registry marks unfit for this model.
+		if cand.ProxyPoolID != "" && !proxypool.Fitness().IsFit(cand.ProxyPoolID, proxypool.ScopeFor("freebuff", model)) {
+			if firstBlocked == nil {
+				t := time.Now().Add(freebuffPoolLimitedCooldown)
+				firstBlocked = &t
+			}
 			continue
 		}
 		if until := e.getCooldown(e.poolLimitCooldowns, proxyKey+"::"+model); until != nil {
@@ -236,6 +246,11 @@ func (e *FreebuffExecutor) run(ctx context.Context, req *Request, stream bool) (
 			// Mark this pool unfit for the model and try the next candidate.
 			until := time.Now().Add(freebuffPoolLimitedCooldown)
 			e.setCooldown(e.poolLimitCooldowns, proxyKey+"::"+model, until)
+			// Also record the fitness mark (persisted, visible to the
+			// resolver/admin UI, survives restarts).
+			if cand.ProxyPoolID != "" {
+				proxypool.Fitness().MarkUnfit(cand.ProxyPoolID, proxypool.ScopeFor("freebuff", model), "limited_ip", freebuffPoolLimitedCooldown)
+			}
 			if firstBlocked == nil {
 				firstBlocked = &until
 			}
@@ -422,7 +437,7 @@ func (e *FreebuffExecutor) attemptPool(ctx context.Context, req *Request, model,
 		}
 
 		// A successful chat means the pair is healthy again — lift any cooldowns.
-		e.clearCooldowns(token, model, proxyKey)
+		e.clearCooldowns(ctx, token, model, proxyKey)
 		if stream && result.stream != nil {
 			// Streaming: the run is only "completed" once the stream actually
 			// finishes. A lifecycle watcher observes a TEE copy of the chunk
@@ -990,13 +1005,17 @@ func (e *FreebuffExecutor) setAccountLock(token string, until time.Time) {
 }
 
 // clearCooldowns lifts any model-lock / account-lock / pool-limit cooldowns
-// after a successful chat response.
-func (e *FreebuffExecutor) clearCooldowns(token, model, proxyKey string) {
+// after a successful chat response. The fitness mark for the pool is also
+// cleared so a recovered egress is immediately eligible again.
+func (e *FreebuffExecutor) clearCooldowns(ctx context.Context, token, model, proxyKey string) {
 	e.mu.Lock()
 	delete(e.modelLockCooldowns, token+"::"+model)
 	delete(e.accountLockUntil, token)
 	delete(e.poolLimitCooldowns, proxyKey+"::"+model)
 	e.mu.Unlock()
+	if poolID := ProxyPoolIDFromContext(ctx); poolID != "" {
+		proxypool.Fitness().Clear(poolID, proxypool.ScopeFor("freebuff", model))
+	}
 }
 
 // pruneSessionState drops stale session rows + expired cooldowns so

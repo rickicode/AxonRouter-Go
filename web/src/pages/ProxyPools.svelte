@@ -1434,7 +1434,7 @@ async function handleBulkImport() {
   <Dialog.Content class="sm:max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
     <Dialog.Header>
       <Dialog.Title class="text-body-md-strong">{editGroupId ? 'Edit proxy group' : 'Create proxy group'}</Dialog.Title>
-      <Dialog.Description class="text-xs">{editGroupId ? 'Update routing mode, strict proxy, and pool membership.' : 'Combine multiple pools with round-robin, sticky, or random routing.'}</Dialog.Description>
+      <Dialog.Description class="text-xs">{editGroupId ? 'Update routing mode, strict proxy, and pool membership.' : 'Combine multiple pools with round-robin, sticky, smart, or random routing.'}</Dialog.Description>
     </Dialog.Header>
     <div class="space-y-4 overflow-y-auto pr-1">
 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1448,6 +1448,7 @@ async function handleBulkImport() {
 						<button class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-all {groupMode === 'roundrobin' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'roundrobin')}>Round Robin</button>
 						<button class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-all {groupMode === 'sticky' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'sticky')}>Sticky</button>
 						<button class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-all {groupMode === 'random' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'random')}>Random</button>
+						<button class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-all {groupMode === 'smart' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (groupMode = 'smart')}>Smart</button>
 					</div>
 				</div>
 			</div>

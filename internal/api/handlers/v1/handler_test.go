@@ -198,7 +198,7 @@ func TestProxyContext_PoolID(t *testing.T) {
 		Provider:             "openai",
 		ProviderSpecificData: `{"proxyPoolId":"pool-abc"}`,
 	}
-	proxyCtx := h.proxyContext(context.Background(), conn)
+	proxyCtx := h.proxyContext(context.Background(), conn, "gpt-4o")
 	if got := executor.ProxyPoolIDFromContext(proxyCtx); got != "pool-abc" {
 		t.Errorf("ProxyPoolIDFromContext = %q, want pool-abc", got)
 	}

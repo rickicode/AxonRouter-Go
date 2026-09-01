@@ -329,7 +329,7 @@ func TestResolveCandidatesGroupRoundRobinRotatesPrimary(t *testing.T) {
 	r := NewResolver(database)
 	var primaries []string
 	for range 3 {
-		cands := r.ResolveCandidates(`{"proxyGroupId":"cand-rr"}`, "")
+		cands := r.ResolveCandidates(`{"proxyGroupId":"cand-rr"}`, "", "")
 		if len(cands) == 0 {
 			t.Fatal("expected candidates")
 		}
@@ -348,12 +348,12 @@ func TestResolveCandidatesGroupStickyPrimary(t *testing.T) {
 	insertGroup(t, database, "cand-sticky", "sticky", 2, false, true, []string{"cs1", "cs2"})
 
 	r := NewResolver(database)
-	first := r.ResolveCandidates(`{"proxyGroupId":"cand-sticky"}`, "")
-	second := r.ResolveCandidates(`{"proxyGroupId":"cand-sticky"}`, "")
+	first := r.ResolveCandidates(`{"proxyGroupId":"cand-sticky"}`, "", "")
+	second := r.ResolveCandidates(`{"proxyGroupId":"cand-sticky"}`, "", "")
 	if first[0].ProxyPoolID != second[0].ProxyPoolID {
 		t.Fatalf("sticky primary rotated too early: %s -> %s", first[0].ProxyPoolID, second[0].ProxyPoolID)
 	}
-	third := r.ResolveCandidates(`{"proxyGroupId":"cand-sticky"}`, "")
+	third := r.ResolveCandidates(`{"proxyGroupId":"cand-sticky"}`, "", "")
 	if third[0].ProxyPoolID == first[0].ProxyPoolID {
 		t.Fatalf("sticky primary should rotate after stickyLimit, still %s", third[0].ProxyPoolID)
 	}
@@ -367,7 +367,7 @@ func TestResolveCandidatesGroupIncludesAllActivePoolsAndDirectFallback(t *testin
 	insertGroup(t, database, "cand-all", "roundrobin", 1, false, true, []string{"c1", "c2", "c3"})
 
 	r := NewResolver(database)
-	cands := r.ResolveCandidates(`{"proxyGroupId":"cand-all"}`, "")
+	cands := r.ResolveCandidates(`{"proxyGroupId":"cand-all"}`, "", "")
 	if len(cands) != 3 { // 2 healthy pools + trailing direct fallback
 		t.Fatalf("expected 3 candidates (2 pools + direct fallback), got %+v", cands)
 	}
@@ -390,7 +390,7 @@ func TestResolveCandidatesGroupStrictNoDirectFallback(t *testing.T) {
 	insertGroup(t, database, "cand-strict", "roundrobin", 1, true, true, []string{"cst1", "cst2"})
 
 	r := NewResolver(database)
-	cands := r.ResolveCandidates(`{"proxyGroupId":"cand-strict"}`, "")
+	cands := r.ResolveCandidates(`{"proxyGroupId":"cand-strict"}`, "", "")
 	if len(cands) != 2 {
 		t.Fatalf("expected exactly 2 candidates (no direct fallback) for strict group, got %+v", cands)
 	}
@@ -409,7 +409,7 @@ func TestResolveCandidatesErrorPoolNoPhantom(t *testing.T) {
 	insertPool(t, database, "dead1", "dead1", "http", "http://dead1.example:8080", "", "", true, "error")
 
 	r := NewResolver(database)
-	cands := r.ResolveCandidates(`{"proxyPoolId":"dead1"}`, "")
+	cands := r.ResolveCandidates(`{"proxyPoolId":"dead1"}`, "", "")
 	// A dead non-strict pool must resolve to a single direct fallback — never a
 	// phantom candidate followed by a second direct fallback (2x direct attempts).
 	if len(cands) != 1 {
@@ -435,7 +435,7 @@ func TestResolveCandidatesErrorPoolStopsProviderDefaultFallthrough(t *testing.T)
 	}
 
 	r := NewResolver(database)
-	cands := r.ResolveCandidates(`{"proxyPoolId":"dead2"}`, "openai")
+	cands := r.ResolveCandidates(`{"proxyPoolId":"dead2"}`, "openai", "")
 	if len(cands) != 1 || cands[0].Source != "direct-fallback" {
 		t.Fatalf("expected single direct-fallback (no phantom, no provider-default), got %+v", cands)
 	}
@@ -453,10 +453,65 @@ func TestResolveCandidatesProviderDefaultErrorNoPhantom(t *testing.T) {
 	}
 
 	r := NewResolver(database)
-	cands := r.ResolveCandidates("", "openai")
+	cands := r.ResolveCandidates("", "openai", "")
 	if len(cands) != 1 || cands[0].Source != "direct-fallback" {
 		t.Fatalf("expected single direct-fallback for dead provider-default pool, got %+v", cands)
 	}
+}
+
+func TestResolveCandidatesSmartModeFiltersUnfit(t *testing.T) {
+	database := newTestDB(t)
+	insertPool(t, database, "sm-p1", "p1", "http", "http://p1.example:8080", "", "", true, "active")
+	insertPool(t, database, "sm-p2", "p2", "http", "http://p2.example:8080", "", "", true, "active")
+	insertPool(t, database, "sm-p3", "p3", "http", "http://p3.example:8080", "", "", true, "active")
+	insertGroup(t, database, "smart-g1", "smart", 1, false, true, []string{"sm-p1", "sm-p2", "sm-p3"})
+
+	// Mark sm-p2 unfit for freebuff::gpt-4o.
+	f := Fitness()
+	f.ClearAll()
+	f.MarkUnfit("sm-p2", ScopeFor("freebuff", "gpt-4o"), "limited_ip", 5*time.Minute)
+
+	r := NewResolver(database)
+	cands := r.ResolveCandidates(`{"proxyGroupId":"smart-g1"}`, "freebuff", "gpt-4o")
+	// Candidate chain must never contain the unfit pool.
+	for _, c := range cands {
+		if c.ProxyPoolID == "sm-p2" {
+			t.Fatalf("smart mode emitted unfit pool sm-p2: %+v", cands)
+		}
+	}
+	if len(cands) == 0 {
+		t.Fatal("smart mode returned no candidates")
+	}
+	// The primary pick must come from the fit set (p1 or p3).
+	if cands[0].ProxyPoolID != "sm-p1" && cands[0].ProxyPoolID != "sm-p3" {
+		t.Fatalf("primary pick should come from fit set, got %+v", cands)
+	}
+	// A different scope must not be filtered.
+	cands2 := r.ResolveCandidates(`{"proxyGroupId":"smart-g1"}`, "freebuff", "gpt-5")
+	if len(cands2) != 4 { // 3 pools + direct fallback
+		t.Fatalf("expected unfiltered chain for different model, got %+v", cands2)
+	}
+}
+
+func TestResolveCandidatesSmartModeFailOpen(t *testing.T) {
+	database := newTestDB(t)
+	insertPool(t, database, "fo-p1", "p1", "http", "http://p1.example:8080", "", "", true, "active")
+	insertPool(t, database, "fo-p2", "p2", "http", "http://p2.example:8080", "", "", true, "active")
+	insertGroup(t, database, "smart-g2", "smart", 1, false, true, []string{"fo-p1", "fo-p2"})
+
+	// Mark BOTH pools unfit — the resolver must fail open (unfiltered list).
+	f := Fitness()
+	f.ClearAll()
+	f.MarkUnfit("fo-p1", ScopeFor("freebuff", "gpt-4o"), "limited_ip", 5*time.Minute)
+	f.MarkUnfit("fo-p2", ScopeFor("freebuff", "gpt-4o"), "limited_ip", 5*time.Minute)
+
+	r := NewResolver(database)
+	cands := r.ResolveCandidates(`{"proxyGroupId":"smart-g2"}`, "freebuff", "gpt-4o")
+	// Fail-open: all pools still appear (3 = 2 pools + direct fallback).
+	if len(cands) != 3 {
+		t.Fatalf("expected fail-open chain when all pools unfit, got %+v", cands)
+	}
+	f.ClearAll()
 }
 
 func TestRelayTypeRewritten(t *testing.T) {

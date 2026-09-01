@@ -256,7 +256,7 @@ attemptLoop:
 		var proxyCfg executor.ProxyConfig
 		var proxyCands []executor.ProxyConfig
 		if h.resolver != nil {
-			proxyCands = h.proxyCandidates(conn)
+			proxyCands = h.proxyCandidates(conn, modelName)
 			if len(proxyCands) > 0 {
 				proxyCfg = proxyCands[0]
 			}

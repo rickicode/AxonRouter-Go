@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/tidwall/gjson"
+
+	"github.com/rickicode/AxonRouter-Go/internal/proxypool"
 )
 
 // freebuffTestServer routes the three freebuff API endpoints used by the
@@ -939,6 +941,10 @@ func TestFreebuffExecutor_NoProxyDirectAllowed(t *testing.T) {
 // The request fails with the pool-cooldown message and every upstream call was
 // routed through the real proxy — none direct.
 func TestFreebuffExecutor_DeadPoolMarkerSkippedAfterRealPool(t *testing.T) {
+	// Isolate from any fitness marks left by earlier pool-failover tests
+	// (the registry is a package singleton shared across tests).
+	proxypool.Fitness().ClearAll()
+
 	var chatViaPoolA int32
 	var chatDirect int32
 	session, runs, _ := defaultFreebuffHandlers()
@@ -1004,6 +1010,158 @@ func TestFreebuffExecutor_DeadPoolMarkerSkippedAfterRealPool(t *testing.T) {
 	if got := atomic.LoadInt32(&chatDirect); got != 0 {
 		t.Fatalf("chat went DIRECT %d times — failover leaked to the real IP", got)
 	}
+}
+
+// TestFreebuffExecutor_LimitedIPMarksFitness verifies that a limited-IP
+// refusal records a fitness mark in the shared registry, keyed by the pool ID
+// and the freebuff::model scope (model = req.Model after trimming "freebuff/").
+func TestFreebuffExecutor_LimitedIPMarksFitness(t *testing.T) {
+	f := proxypool.Fitness()
+	f.ClearAll()
+
+	session, runs, _ := defaultFreebuffHandlers()
+	ts := newFreebuffTestServer()
+	defer ts.Close()
+	ts.session = session
+	ts.runs = runs
+	ts.chat = func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"status":  "session_model_mismatch",
+			"message": "limited tier: only deepseek-v4-flash allowed",
+		})
+	}
+	proxyX := freebuffForwardProxy(t, ts.ts.URL, "x")
+	defer proxyX.Close()
+
+	base := NewBaseExecutor()
+	exec := NewFreebuffExecutor(base)
+	body, _ := json.Marshal(map[string]any{
+		"model":    "deepseek/deepseek-v4-flash",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	})
+
+	cands := []ProxyConfig{{Enabled: true, ProxyPoolID: "pool-x", ProxyURL: proxyX.URL}}
+	ctx := ContextWithProxy(context.Background(), cands[0])
+	ctx = ContextWithProxyCandidates(ctx, cands)
+
+	_, err := exec.Execute(ctx, freebuffTestReq(ts, body))
+	if err == nil {
+		t.Fatal("expected 409 from single limited-IP pool")
+	}
+
+	// pool-x must now be unfit for freebuff::deepseek/deepseek-v4-flash
+	// (the model from req.Model, not the body's model).
+	scope := proxypool.ScopeFor("freebuff", "deepseek/deepseek-v4-flash")
+	if f.IsFit("pool-x", scope) {
+		t.Error("pool-x should be unfit after limited-IP refusal")
+	}
+	if !f.IsFit("pool-x", proxypool.ScopeFor("freebuff", "gpt-5")) {
+		t.Error("pool-x should be fit for a different model")
+	}
+	f.ClearAll()
+}
+
+// TestFreebuffExecutor_FitnessSkipThenFailover verifies that the candidate loop
+// skips a pool pre-marked unfit (persisted mark) and fails over to the next
+// candidate without contacting the unfit pool.
+func TestFreebuffExecutor_FitnessSkipThenFailover(t *testing.T) {
+	f := proxypool.Fitness()
+	f.ClearAll()
+
+	var chatViaPoolB int32
+	session, runs, _ := defaultFreebuffHandlers()
+	ts := newFreebuffTestServer()
+	defer ts.Close()
+	ts.session = session
+	ts.runs = runs
+	ts.chat = func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&chatViaPoolB, 1)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id": "chat-1", "object": "chat.completion",
+			"choices": []any{map[string]any{
+				"index": 0, "message": map[string]any{"role": "assistant", "content": "ok"},
+				"finish_reason": "stop",
+			}},
+		})
+	}
+	proxyB := freebuffForwardProxy(t, ts.ts.URL, "b")
+	defer proxyB.Close()
+
+	// pool-a is pre-marked unfit — the executor must skip it without a chat
+	// attempt and serve via pool-b.
+	f.MarkUnfit("pool-a", proxypool.ScopeFor("freebuff", "deepseek/deepseek-v4-flash"), "limited_ip", 5*time.Minute)
+
+	base := NewBaseExecutor()
+	exec := NewFreebuffExecutor(base)
+	body, _ := json.Marshal(map[string]any{
+		"model":    "deepseek/deepseek-v4-flash",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	})
+
+	cands := []ProxyConfig{
+		{Enabled: true, ProxyPoolID: "pool-a", ProxyURL: "http://pool-a.example:8080"},
+		{Enabled: true, ProxyPoolID: "pool-b", ProxyURL: proxyB.URL},
+	}
+	ctx := ContextWithProxy(context.Background(), cands[0])
+	ctx = ContextWithProxyCandidates(ctx, cands)
+
+	res, err := exec.Execute(ctx, freebuffTestReq(ts, body))
+	if err != nil {
+		t.Fatalf("Execute should skip unfit pool-a and serve via pool-b: %v", err)
+	}
+	if res.StatusCode != 200 {
+		t.Fatalf("status=%d, want 200", res.StatusCode)
+	}
+	if got := atomic.LoadInt32(&chatViaPoolB); got != 1 {
+		t.Fatalf("chat via pool-b=%d, want 1", got)
+	}
+	// pool-a's mark must survive because pool-a was never attempted.
+	scope := proxypool.ScopeFor("freebuff", "deepseek/deepseek-v4-flash")
+	if f.IsFit("pool-a", scope) {
+		t.Error("pool-a should still be unfit (never attempted)")
+	}
+	// pool-b should be fit (was never marked).
+	if !f.IsFit("pool-b", scope) {
+		t.Error("pool-b should be fit after success")
+	}
+	f.ClearAll()
+}
+
+// TestFreebuffExecutor_FitnessClearedOnSuccess verifies that after a
+// successful chat through a pool, the fitness mark for that pool's
+// freebuff::model scope is cleared. clearCooldowns is the success-path hook:
+// it runs on every 200 chat response and lifts the mark for the pool that
+// served the request.
+func TestFreebuffExecutor_FitnessClearedOnSuccess(t *testing.T) {
+	f := proxypool.Fitness()
+	f.ClearAll()
+
+	base := NewBaseExecutor()
+	exec := NewFreebuffExecutor(base)
+	scope := proxypool.ScopeFor("freebuff", "deepseek/deepseek-v4-flash")
+
+	// Mark the pool unfit, then a successful chat (via clearCooldowns) must
+	// clear exactly this scope for this pool.
+	f.MarkUnfit("pool-y", scope, "limited_ip", 5*time.Minute)
+	if f.IsFit("pool-y", scope) {
+		t.Fatal("pool-y should be unfit after MarkUnfit")
+	}
+
+	// The success path attaches the serving pool to ctx via ContextWithProxy;
+	// clearCooldowns reads ProxyPoolIDFromContext to clear the right mark.
+	ctx := ContextWithProxy(context.Background(), ProxyConfig{ProxyPoolID: "pool-y", ProxyURL: "http://pool-y.example:8080"})
+	exec.clearCooldowns(ctx, "token", "deepseek/deepseek-v4-flash", "http://pool-y.example:8080")
+
+	if !f.IsFit("pool-y", scope) {
+		t.Error("pool-y fitness mark should be cleared after a successful chat")
+	}
+	// The mark for a different model must survive.
+	f.MarkUnfit("pool-y", proxypool.ScopeFor("freebuff", "gpt-5"), "limited_ip", 5*time.Minute)
+	exec.clearCooldowns(ctx, "token", "deepseek/deepseek-v4-flash", "http://pool-y.example:8080")
+	if f.IsFit("pool-y", proxypool.ScopeFor("freebuff", "gpt-5")) {
+		t.Error("clearing one model's mark must not clear another model's mark")
+	}
+	f.ClearAll()
 }
 
 func TestFreebuffExecutor_429RetryThenSuccess(t *testing.T) {

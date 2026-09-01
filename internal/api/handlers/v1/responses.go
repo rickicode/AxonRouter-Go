@@ -160,7 +160,7 @@ attemptLoop:
 				AdaptiveReadiness:        true,
 			}
 		}
-		proxyCtx := h.proxyContext(c.Request.Context(), conn)
+		proxyCtx := h.proxyContext(c.Request.Context(), conn, modelName)
 		var resp *executor.Response
 		var streamResult *executor.StreamResult
 		if stream {

@@ -1249,7 +1249,7 @@ export interface ProxyPool {
 export interface ProxyGroup {
   id: string;
   name: string;
-  mode: 'roundrobin' | 'sticky' | 'random';
+  mode: 'roundrobin' | 'sticky' | 'random' | 'smart';
   stickyLimit: number;
   strictProxy: boolean;
   proxyPoolIds: string[];
@@ -1345,6 +1345,46 @@ bulkCreate: (data: Record<string, unknown>) =>
     } while (page <= totalPages);
     return out;
   },
+};
+
+// Proxy Fitness API
+export interface FitnessMark {
+  until: string;
+  reason: string;
+}
+
+export interface GeoEntry {
+  ip?: string;
+  country?: string;
+  region?: string;
+  city?: string;
+  org?: string;
+  isDatacenter?: boolean;
+  ipHistory?: string[];
+  isUnstable?: boolean;
+  updatedAt?: string;
+  lastError?: string;
+}
+
+export interface FitnessListResponse {
+  success: boolean;
+  pools: Record<string, Record<string, FitnessMark>>;
+  geo: Record<string, GeoEntry>;
+  names: Record<string, string>;
+}
+
+export const fitnessApi = {
+  list: () => fetchApi<FitnessListResponse>("/proxy-pools/fitness"),
+  clear: (poolId: string, scope?: string) =>
+    fetchApi<{ success: boolean }>(`/proxy-pools/${poolId}/fitness/clear`, {
+      method: "POST",
+      body: JSON.stringify(scope ? { scope } : {}),
+    }),
+  clearAll: (provider?: string) =>
+    fetchApi<{ success: boolean }>("/proxy-pools/fitness/clear-all", {
+      method: "POST",
+      body: JSON.stringify(provider ? { provider } : {}),
+    }),
 };
 
 // Proxy Group API

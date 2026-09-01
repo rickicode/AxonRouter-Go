@@ -517,6 +517,8 @@ func New(cfg Config) *Router {
 
 		// Proxy Pools (static routes before :id to avoid wildcard capture)
 		g.GET("/proxy-pools", proxyPoolH.List)
+		g.GET("/proxy-pools/fitness", proxyPoolH.FitnessList)
+		g.POST("/proxy-pools/fitness/clear-all", proxyPoolH.FitnessClearAll)
 		g.GET("/proxy-pools/health-check", proxyPoolH.HealthGet)
 		g.POST("/proxy-pools/health-check", proxyPoolH.HealthRun)
 		g.GET("/proxy-pools/generate-source", proxyDeployH.GenerateSource)
@@ -526,6 +528,7 @@ func New(cfg Config) *Router {
 		g.POST("/proxy-pools", proxyPoolH.Create)
 		g.POST("/proxy-pools/bulk", proxyPoolH.BulkCreate)
 		g.POST("/proxy-pools/bulk-delete", proxyPoolH.BulkDelete)
+		g.POST("/proxy-pools/:id/fitness/clear", proxyPoolH.FitnessClear)
 		g.GET("/proxy-pools/:id", proxyPoolH.Get)
 		g.PATCH("/proxy-pools/:id", proxyPoolH.Update)
 		g.DELETE("/proxy-pools/:id", proxyPoolH.Delete)

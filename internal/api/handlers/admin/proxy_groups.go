@@ -87,8 +87,8 @@ func (h *ProxyGroupHandler) Create(c *gin.Context) {
 	if mode == "" {
 		mode = "roundrobin"
 	}
-	if mode != "roundrobin" && mode != "sticky" && mode != "random" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be roundrobin, sticky or random"})
+	if !validGroupMode(mode) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be roundrobin, sticky, random or smart"})
 		return
 	}
 	ids, err := h.poolIDs(req["proxyPoolIds"])
@@ -142,8 +142,8 @@ func (h *ProxyGroupHandler) Update(c *gin.Context) {
 	}
 	if _, ok := req["mode"]; ok {
 		mode := asString(req["mode"])
-		if mode != "roundrobin" && mode != "sticky" && mode != "random" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be roundrobin, sticky or random"})
+		if !validGroupMode(mode) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be roundrobin, sticky, random or smart"})
 			return
 		}
 		add("mode", mode)
@@ -245,6 +245,13 @@ func scanGroup(row rowScanner) (db.ProxyGroup, bool) {
 		g.ProxyPoolIDs = []string{}
 	}
 	return g, true
+}
+
+// validGroupMode reports whether mode is a supported proxy-group selection mode.
+// "smart" filters candidate pools through the fitness registry (provider::model
+// scope) before picking.
+func validGroupMode(mode string) bool {
+	return mode == "roundrobin" || mode == "sticky" || mode == "random" || mode == "smart"
 }
 
 func asInt(v any, fallback int) int {

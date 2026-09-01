@@ -1524,7 +1524,7 @@ func (h *Handler) handleMediaCombo(
 				Provider:             provider,
 				ProviderSpecificData: psdMap,
 			}
-			proxyCtx := h.proxyContext(comboCtx, conn)
+			proxyCtx := h.proxyContext(comboCtx, conn, modelName)
 			resp, _, err := h.executeWithRetry(proxyCtx, stepExec, req, conn, provider, modelName)
 			latency := time.Since(start).Milliseconds()
 			if err != nil {
@@ -1670,7 +1670,7 @@ func (h *Handler) DebugSend(c *gin.Context, provider, model string, body []byte)
 		ProviderSpecificData: psdMap,
 		ConnectionID:         conn.ID,
 	}
-	proxyCtx := h.proxyContext(c.Request.Context(), conn)
+	proxyCtx := h.proxyContext(c.Request.Context(), conn, model)
 
 	if stream {
 		streamer, ok := exec.(interface {
@@ -1804,7 +1804,7 @@ func (h *Handler) executeProviderCall(
 	}
 	req.ConnectionID = conn.ID
 	req.PersistProviderSpecificData = h.persistProviderSpecificData(ctx, conn)
-	proxyCtx := h.proxyContext(ctx, conn)
+	proxyCtx := h.proxyContext(ctx, conn, modelName)
 	resp, streamResult, err := h.executeDirect(proxyCtx, exec, req)
 	return proxyCtx, resp, streamResult, err
 }
@@ -2029,12 +2029,13 @@ func isFailoverEligible(cat connstate.ErrorCategory) bool {
 
 // proxyCandidates resolves the ordered proxy configs to try for a connection.
 // The first entry is the primary; the executor retries across the rest on
-// transient proxy/network failures.
-func (h *Handler) proxyCandidates(conn *Connection) []executor.ProxyConfig {
+// transient proxy/network failures. model is the unprefixed model id, used to
+// build the fitness scope for smart-mode groups.
+func (h *Handler) proxyCandidates(conn *Connection, model string) []executor.ProxyConfig {
 	if h.resolver == nil {
 		return nil
 	}
-	cfgs := h.resolver.ResolveCandidates(conn.ProviderSpecificData, conn.Provider)
+	cfgs := h.resolver.ResolveCandidates(conn.ProviderSpecificData, conn.Provider, model)
 	out := make([]executor.ProxyConfig, 0, len(cfgs))
 	for _, c := range cfgs {
 		out = append(out, executor.ProxyConfig{
@@ -2054,12 +2055,13 @@ func (h *Handler) proxyCandidates(conn *Connection) []executor.ProxyConfig {
 }
 
 // proxyContext resolves proxy config for a connection and returns a context with
-// the primary proxy and the retry candidates attached.
-func (h *Handler) proxyContext(ctx context.Context, conn *Connection) context.Context {
+// the primary proxy and the retry candidates attached. model is the unprefixed
+// model id, used to build the fitness scope for smart-mode groups.
+func (h *Handler) proxyContext(ctx context.Context, conn *Connection, model string) context.Context {
 	if h.resolver == nil {
 		return ctx
 	}
-	cands := h.proxyCandidates(conn)
+	cands := h.proxyCandidates(conn, model)
 	if len(cands) == 0 {
 		return ctx
 	}

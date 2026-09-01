@@ -213,7 +213,11 @@ func (r *Resolver) Resolve(providerSpecificData, providerID string) Config {
 // Note: pick() state (rr/sticky counters) is shared with Resolve(), which the
 // background rate-limit prober also calls — probe requests advance the same
 // counters. Probes are infrequent, so the practical skew is negligible.
-func (r *Resolver) ResolveCandidates(providerSpecificData, providerID string) []Config {
+//
+// model is the unprefixed model id (e.g. "gpt-4o"). It is used to build the
+// fitness scope (provider::model) so that smart-mode groups can skip pools
+// whose egress is currently marked unfit for this request.
+func (r *Resolver) ResolveCandidates(providerSpecificData, providerID, model string) []Config {
 	var psd map[string]any
 	_ = json.Unmarshal([]byte(providerSpecificData), &psd)
 
@@ -229,6 +233,18 @@ func (r *Resolver) ResolveCandidates(providerSpecificData, providerID string) []
 		if g, ok := r.getGroup(id); ok && g.isActive {
 			active, _ := r.activePools(g.poolIDs)
 			if len(active) > 0 {
+				// Smart mode filters the active pools through the fitness
+				// registry for this provider::model scope before picking.
+				if g.mode == "smart" {
+					scope := ScopeFor(providerID, model)
+					if fit := Fitness().FitIDs(active, scope); len(fit) > 0 {
+						active = fit
+					}
+					// Fail-open: if every pool is marked unfit, fall back to
+					// the unfiltered list. Fail-closed handling for
+					// IP-limited providers (freebuff) lives in the executor,
+					// which consults the registry per candidate.
+				}
 				primary := r.pick(id, g.mode, g.stickyLimit, active)
 				for _, pid := range rotateFrom(active, primary) {
 					if cfg, ok := r.resolvePool(pid, "connection-group", g.strict); ok {

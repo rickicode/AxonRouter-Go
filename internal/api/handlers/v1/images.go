@@ -125,7 +125,7 @@ func (h *Handler) Images(c *gin.Context) {
 		ProviderSpecificData: psdMap,
 	}
 
-	proxyCtx := h.proxyContext(c.Request.Context(), conn)
+	proxyCtx := h.proxyContext(c.Request.Context(), conn, modelName)
 
 	// Execute with reactive 401/403 retry (3 attempts, linear backoff)
 	var resp *executor.Response

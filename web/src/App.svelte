@@ -29,6 +29,7 @@ import { Button } from '$lib/components/ui/button';
   import Quota from './pages/Quota.svelte';
   import ProxyPools from './pages/ProxyPools.svelte';
   import ProxyPoolDetail from './pages/ProxyPoolDetail.svelte';
+  import ProxyFitness from './pages/ProxyFitness.svelte';
   import APIKeys from './pages/APIKeys.svelte';
 import Optimization from './pages/Optimization.svelte';
 import CLIToolsList from './pages/CLIToolsList.svelte';
@@ -65,6 +66,7 @@ const labels: Record<string, string> = {
 		quota: 'Quota',
 		settings: 'Settings',
 		'proxy-pools': 'Proxy Pools',
+	'proxy-fitness': 'Proxy Fitness',
 		'cli-tools': 'CLI Tools',
 		'model-pricing': 'Model Pricing',
 'developers': 'Developers',
@@ -113,6 +115,9 @@ const labels: Record<string, string> = {
 
     // /proxy-pools → ProxyPools
     if (segments[0] === 'proxy-pools' && segments.length === 1) return { component: ProxyPools, params: {} };
+
+    // /proxy-fitness → ProxyFitness
+    if (segments[0] === 'proxy-fitness' && segments.length === 1) return { component: ProxyFitness, params: {} };
 
     // /api-keys → APIKeys
     if (segments[0] === 'api-keys') return { component: APIKeys, params: {} };

@@ -174,7 +174,7 @@ attemptLoop:
 			Provider:             provider,
 			ProviderSpecificData: psdMap,
 		}
-		proxyCtx := h.proxyContext(c.Request.Context(), conn)
+		proxyCtx := h.proxyContext(c.Request.Context(), conn, modelName)
 		resp, streamResult, err := h.executeDirect(proxyCtx, exec, req)
 		latency := time.Since(start).Milliseconds()
 		if resp != nil {
@@ -402,7 +402,7 @@ func (h *Handler) CountTokens(c *gin.Context) {
 	}
 
 	if tc, ok := exec.(executor.TokenCounter); ok {
-		proxyCtx := h.proxyContext(c.Request.Context(), conn)
+		proxyCtx := h.proxyContext(c.Request.Context(), conn, modelName)
 		resp, err := tc.CountTokens(proxyCtx, req)
 		if err != nil {
 			c.JSON(http.StatusBadGateway, claudeError("server_error", err.Error()))

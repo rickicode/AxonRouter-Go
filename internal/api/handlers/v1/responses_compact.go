@@ -123,7 +123,7 @@ attemptLoop:
 			Provider:             provider,
 			ProviderSpecificData: psdMap,
 		}
-		proxyCtx := h.proxyContext(c.Request.Context(), conn)
+		proxyCtx := h.proxyContext(c.Request.Context(), conn, modelName)
 
 		resp, err := compactExec.ResponsesCompact(proxyCtx, req)
 		latency := time.Since(start).Milliseconds()

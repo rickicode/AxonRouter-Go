@@ -3,12 +3,18 @@ package proxypool
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"sync"
 	"time"
 )
 
 const HealthInterval = 30 * time.Minute
 const healthConcurrency = 4
+
+// settingPoolGeoProbeEnabled gates whether the periodic health probe records
+// egress geo (IP/country/org + flapping history) into the GeoCache. Manual
+// "test pool" button always captures geo regardless of this setting.
+const settingPoolGeoProbeEnabled = "pool_geo_probe_enabled"
 
 type HealthChecker struct {
 	db     *sql.DB
@@ -89,6 +95,10 @@ func (h *HealthChecker) RunNow() ([]TestResult, bool) {
 	var mu sync.Mutex
 	out := make([]TestResult, 0, len(ids))
 
+	// The periodic probe records egress geo into the GeoCache only when the
+	// operator enables it (default on). Manual test-pool always captures geo.
+	recordGeo := h.geoProbeEnabled()
+
 	for _, id := range ids {
 		id := id
 		wg.Add(1)
@@ -96,7 +106,16 @@ func (h *HealthChecker) RunNow() ([]TestResult, bool) {
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			if res, err := TestPool(h.db, id); err == nil {
+			var (
+				res TestResult
+				err error
+			)
+			if recordGeo {
+				res, err = TestPoolWithGeo(h.db, id)
+			} else {
+				res, err = TestPool(h.db, id)
+			}
+			if err == nil {
 				mu.Lock()
 				out = append(out, res)
 				mu.Unlock()
@@ -105,4 +124,18 @@ func (h *HealthChecker) RunNow() ([]TestResult, bool) {
 	}
 	wg.Wait()
 	return out, false
+}
+
+// geoProbeEnabled reads the pool_geo_probe_enabled setting via the checker's
+// own DB handle (the package-level db.GetSetting only sees the global store).
+func (h *HealthChecker) geoProbeEnabled() bool {
+	if h.db == nil {
+		return true
+	}
+	var v string
+	err := h.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, settingPoolGeoProbeEnabled).Scan(&v)
+	if err != nil {
+		return true // default on
+	}
+	return strings.EqualFold(strings.TrimSpace(v), "true") || v == "1" || v == "yes"
 }
