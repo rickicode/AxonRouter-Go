@@ -250,3 +250,114 @@ func TestFetchQoderQuota_PooledPlan(t *testing.T) {
 		t.Errorf("expected used=total=0, got used=%f total=%f", qi.Used, qi.Total)
 	}
 }
+
+func TestFetchQoderUserID_ResolvesFromPAT(t *testing.T) {
+	clearQoderJobTokenCache()
+
+	var userInfoAuth string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/exchange":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"jobToken":  "jt-user123",
+					"expiresIn": 3600,
+				},
+			})
+		case "/userinfo":
+			userInfoAuth = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"id": "user-42",
+				},
+			})
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+
+	t.Setenv("QODER_JOB_TOKEN_EXCHANGE_URL", ts.URL+"/exchange")
+	t.Setenv("QODER_USERINFO_URL", ts.URL+"/userinfo")
+
+	got := FetchQoderUserID("pt-secret")
+	if got != "user-42" {
+		t.Fatalf("expected user-42, got %q", got)
+	}
+	if userInfoAuth != "Bearer jt-user123" {
+		t.Errorf("userinfo expected Authorization Bearer jt-user123, got %q", userInfoAuth)
+	}
+}
+
+func TestFetchQoderUserID_CachesPerPAT(t *testing.T) {
+	clearQoderJobTokenCache()
+
+	var userInfoCalls int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/exchange":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"jobToken": "jt-cache", "expiresIn": 3600},
+			})
+		case "/userinfo":
+			userInfoCalls++
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "user-cached"})
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+
+	t.Setenv("QODER_JOB_TOKEN_EXCHANGE_URL", ts.URL+"/exchange")
+	t.Setenv("QODER_USERINFO_URL", ts.URL+"/userinfo")
+
+	if got := FetchQoderUserID("pt-one"); got != "user-cached" {
+		t.Fatalf("first fetch: expected user-cached, got %q", got)
+	}
+	if got := FetchQoderUserID("pt-one"); got != "user-cached" {
+		t.Fatalf("cached fetch: expected user-cached, got %q", got)
+	}
+	if userInfoCalls != 1 {
+		t.Errorf("expected 1 userinfo call (cached second), got %d", userInfoCalls)
+	}
+}
+
+func TestFetchQoderUserID_FailsGracefully(t *testing.T) {
+	clearQoderJobTokenCache()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/exchange":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"jobToken": "jt-fail", "expiresIn": 3600},
+			})
+		case "/userinfo":
+			http.Error(w, "boom", http.StatusForbidden)
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+
+	t.Setenv("QODER_JOB_TOKEN_EXCHANGE_URL", ts.URL+"/exchange")
+	t.Setenv("QODER_USERINFO_URL", ts.URL+"/userinfo")
+
+	if got := FetchQoderUserID("pt-fail"); got != "" {
+		t.Fatalf("expected empty userId on failure, got %q", got)
+	}
+}
+
+func TestFetchQoderUserID_EmptyToken(t *testing.T) {
+	clearQoderJobTokenCache()
+	if got := FetchQoderUserID(""); got != "" {
+		t.Fatalf("expected empty for empty token, got %q", got)
+	}
+	if got := FetchQoderUserID("  "); got != "" {
+		t.Fatalf("expected empty for whitespace token, got %q", got)
+	}
+}

@@ -20,6 +20,7 @@ import (
 const (
 	defaultJobTokenExchangeURL = "https://openapi.qoder.sh/api/v1/jobToken/exchange"
 	defaultUserStatusURL       = "https://openapi.qoder.sh/api/v3/user/status"
+	defaultUserInfoURL         = "https://openapi.qoder.sh/api/v1/userinfo"
 	defaultJobTokenTTL         = 23 * time.Hour
 	minJobTokenTTL             = time.Minute
 )
@@ -27,6 +28,11 @@ const (
 // qoderJobTokenCache is a short-lived, in-memory cache keyed by sha256(PAT).
 // Job tokens are not persisted to the database.
 var qoderJobTokenCache sync.Map // key: string (hex sha256) -> *qoderJobTokenCacheEntry
+
+// qoderUserIDCache is an in-memory cache of resolved Qoder userIds keyed by
+// sha256(PAT). The userId is stable for the lifetime of the account, so it is
+// cached independently of the short-lived job token.
+var qoderUserIDCache sync.Map // key: string (hex sha256) -> string
 
 type qoderJobTokenCacheEntry struct {
 	jobToken  string
@@ -51,6 +57,16 @@ func getQoderUserStatusURL() string {
 		return v
 	}
 	return defaultUserStatusURL
+}
+
+// getQoderUserInfoURL returns the configured /userinfo URL used to resolve the
+// userId for a job token. Defaults to the public Qoder endpoint but can be
+// overridden via QODER_USERINFO_URL for tests or private deployments.
+func getQoderUserInfoURL() string {
+	if v := strings.TrimSpace(os.Getenv("QODER_USERINFO_URL")); v != "" {
+		return v
+	}
+	return defaultUserInfoURL
 }
 
 func qoderTokenCacheKey(token string) string {
@@ -384,6 +400,10 @@ func clearQoderJobTokenCache() {
 		qoderJobTokenCache.Delete(key)
 		return true
 	})
+	qoderUserIDCache.Range(func(key, value any) bool {
+		qoderUserIDCache.Delete(key)
+		return true
+	})
 }
 
 const defaultAPITokenValidationURL = "https://dashscope.aliyuncs.com/compatible-mode/v1/models"
@@ -436,6 +456,81 @@ func ResolveQoderJobToken(pat string) (string, int, error) {
 		expiresAt: now.Add(ttl),
 	})
 	return jobToken, status, nil
+}
+
+// FetchQoderUserID resolves the Qoder userId for a PAT (pt-*) or job token
+// (jt-*) by calling the /api/v1/userinfo endpoint with the resolved job token.
+// This mirrors 9router's fetchUserIdForJobToken, which needs the userId for
+// COSY request signing. The resolved userId is cached per-PAT; empty on any
+// failure (callers fall back to a stored userId).
+func FetchQoderUserID(pat string) string {
+	pat = strings.TrimSpace(pat)
+	if pat == "" {
+		return ""
+	}
+
+	key := qoderTokenCacheKey(pat)
+	if cached, ok := qoderUserIDCache.Load(key); ok {
+		if id, ok := cached.(string); ok && id != "" {
+			return id
+		}
+	}
+
+	// Resolve to a job token first (cached); pass through jt-* tokens directly.
+	resolved, _, err := ResolveQoderJobToken(pat)
+	if err != nil || resolved == "" {
+		return ""
+	}
+
+	req, err := http.NewRequest(http.MethodGet, getQoderUserInfoURL(), nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Authorization", "Bearer "+resolved)
+	req.Header.Set("Accept", "application/json")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 512))
+		return ""
+	}
+
+	var data map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return ""
+	}
+	userID := findQoderUserID(data)
+	if userID == "" {
+		return ""
+	}
+	qoderUserIDCache.Store(key, userID)
+	return userID
+}
+
+// findQoderUserID extracts a userId from the /userinfo response, tolerating the
+// nested shapes Qoder has historically returned: {id}, {data:{id}},
+// {data:{userId}}, {userId}, {user_id}.
+func findQoderUserID(data map[string]any) string {
+	nested, _ := data["data"].(map[string]any)
+	candidates := []string{
+		getStringField(data, "id"),
+		getStringField(data, "userId"),
+		getStringField(data, "user_id"),
+		getStringField(nested, "id"),
+		getStringField(nested, "userId"),
+		getStringField(nested, "user_id"),
+	}
+	for _, c := range candidates {
+		if c = strings.TrimSpace(c); c != "" {
+			return c
+		}
+	}
+	return ""
 }
 
 // CheckQoderAPIToken performs a lightweight GET to the DashScope
