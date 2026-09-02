@@ -2,6 +2,8 @@
   import { fetchApi } from '$lib/api';
   import { setToken, setRememberMe, authStore, setMustChangePassword } from '$lib/auth';
   import { toast } from 'svelte-sonner';
+  import { t, getT } from '$lib/i18n';
+  import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { Button } from '$lib/components/ui/button';
@@ -38,7 +40,7 @@
         authStore.set(true);
       }
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Login failed';
+      error = e instanceof Error ? e.message : getT()('login.failed');
       toast.error(error);
     } finally {
       loading = false;
@@ -77,21 +79,21 @@
         </div>
 
         <div class="space-y-1">
-          <h1 class="text-display-md">Sign in.</h1>
+          <h1 class="text-display-md">{$t('login.title')}</h1>
           <p class="text-body-sm text-muted-foreground">
-            Enter your admin password to access the dashboard.
+            {$t('login.subtitle')}
           </p>
         </div>
       </div>
 
       <form class="flex flex-col gap-4" onsubmit={submit}>
         <div class="flex flex-col gap-2">
-          <Label for="password" class="text-body-sm-strong">Password</Label>
+          <Label for="password" class="text-body-sm-strong">{$t('login.passwordLabel')}</Label>
           <div class="relative">
             <Input
               id="password"
               type={show ? 'text' : 'password'}
-              placeholder="Enter your password"
+              placeholder="{$t('login.passwordPlaceholder')}"
               autocomplete="current-password"
               class="h-11 pr-10"
               bind:value={password}
@@ -100,7 +102,7 @@
               type="button"
               class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
               onclick={() => (show = !show)}
-              aria-label={show ? 'Hide password' : 'Show password'}
+              aria-label={show ? $t('login.hidePasswordLabel') : $t('login.showPasswordLabel')}
             >
               {#if show}
                 <EyeOffIcon class="size-4" />
@@ -118,10 +120,10 @@
         <Button type="submit" size="lg" class="h-11 w-full gap-2" disabled={loading}>
           {#if loading}
             <Loader2Icon class="size-4 animate-spin" />
-            <span>Signing in…</span>
+            <span>{$t('login.signingIn')}</span>
           {:else}
             <LockIcon class="size-4" />
-            <span>Sign in</span>
+            <span>{$t('login.signIn')}</span>
           {/if}
         </Button>
       </form>
@@ -132,14 +134,15 @@
       >
         <ShieldCheckIcon class="mt-0.5 size-4 shrink-0 text-primary" />
         <span>
-          The initial admin password is <span class="font-mono text-foreground">12345677</span>. Change it from Settings or via the CLI.
+          {$t('login.hint', { code: '12345677' })}
         </span>
       </div>
     </div>
 
     <!-- Subtle footer -->
     <p class="mt-5 text-center text-caption text-muted-foreground/60">
-      AxonRouter Dashboard · v0.3.10
+      {$t('login.footer')} · v0.3.10
     </p>
   </div>
+  <LanguageSwitcher variant="login" />
 </div>

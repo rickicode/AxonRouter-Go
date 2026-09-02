@@ -188,18 +188,16 @@
     <div class="flex flex-col gap-3">
       <div class="flex flex-col gap-1.5">
         <Label for="oauth-bulk-json" class="text-sm font-medium">Account JSON</Label>
-        {#if provider === 'grok-cli'}
-          <div class="flex items-center justify-between gap-2">
-            <p class="text-caption text-muted-foreground">Upload multiple .json files or paste JSON.</p>
-            <label class="inline-flex cursor-pointer items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-caption text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground">
-              <span>Upload JSON</span>
-              <input type="file" accept=".json,application/json" multiple class="hidden" onchange={handleFileChange} disabled={submitting} />
-            </label>
-          </div>
-        {/if}
+        <div class="flex items-center justify-between gap-2">
+          <p class="text-caption text-muted-foreground">Upload multiple .json files or paste JSON.</p>
+          <label class="inline-flex cursor-pointer items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-caption text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground">
+            <span>Upload JSON</span>
+            <input type="file" accept=".json,application/json" multiple class="hidden" onchange={handleFileChange} disabled={submitting} />
+          </label>
+        </div>
         <div
           class="relative"
-          ondragover={(event) => { if (provider === 'grok-cli') { event.preventDefault(); isDragging = true; } }}
+          ondragover={(event) => { event.preventDefault(); isDragging = true; }}
           ondragleave={() => isDragging = false}
           ondrop={handleDrop}
         >
@@ -211,7 +209,7 @@
             spellcheck={false}
             disabled={submitting}
           />
-          {#if provider === 'grok-cli' && isDragging}
+          {#if isDragging}
             <div class="pointer-events-none absolute inset-0 flex items-center justify-center rounded-md border-2 border-dashed border-primary bg-background/90 text-body-sm text-primary">
               Drop .json files here
             </div>

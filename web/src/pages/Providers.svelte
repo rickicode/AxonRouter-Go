@@ -3,6 +3,7 @@
   import { loadProviders, providers, isLoading, error } from '$lib/stores';
   import { providersApi } from '$lib/api';
   import { toast } from 'svelte-sonner';
+  import { t, getT } from '$lib/i18n';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
@@ -26,10 +27,10 @@ import type { Provider } from '$lib/api';
     syncing = true;
     try {
       const res = await providersApi.syncModels();
-      toast.success(res.message || 'Models synced successfully');
+      toast.success(res.message || getT()('providers.syncSuccess'));
       await loadProviders();
     } catch (e: any) {
-      toast.error('Sync failed: ' + (e.message || e));
+      toast.error(getT()('providers.syncFailed', { message: e.message || e }));
     } finally {
       syncing = false;
     }
@@ -249,7 +250,7 @@ function providerColor(provider: Provider): string {
   {:else if $error}
     <section class="rounded-xl border border-destructive/20 bg-destructive/5 p-8 text-center shadow-card">
       <p class="mx-auto max-w-xl text-body-sm text-destructive">{$error}</p>
-      <Button onclick={loadProviders} variant="outline" class="mt-4 text-body-sm">Try again</Button>
+      <Button onclick={loadProviders} variant="outline" class="mt-4 text-body-sm">{$t('providers.errorTryAgain')}</Button>
     </section>
   {:else}
     <section class="overflow-hidden rounded-xl bg-card shadow-elevated">
@@ -258,43 +259,43 @@ function providerColor(provider: Provider): string {
 			<div class="pointer-events-none absolute right-0 top-0 size-40 rounded-full bg-violet-500/10 blur-3xl"></div>
         <div class="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div class="max-w-3xl space-y-2">
-            <h1 class="text-display-lg text-foreground">Providers</h1>
+            <h1 class="text-display-lg text-foreground">{$t('providers.title')}</h1>
             <p class="text-body-sm text-muted-foreground">
-              OmniRoute-style provider catalog with AxonRouter connection health, auth labels, prefixes, and model surface details.
+              {$t('providers.subtitle')}
             </p>
           </div>
           <div class="flex items-center gap-2">
             <button onclick={syncModels} disabled={syncing} class="inline-flex items-center gap-2 h-9 rounded-lg border border-border bg-background px-4 text-sm font-medium text-foreground transition-all hover:bg-muted active:scale-[0.98] disabled:opacity-50">
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class:animate-spin={syncing}><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path><path d="M16 16h5v5"></path></svg>
-              {syncing ? 'Syncing...' : 'Sync models'}
+              {syncing ? $t('providers.syncing') : $t('providers.syncModels')}
             </button>
             <button onclick={() => showAddModal = true} class="inline-flex items-center gap-2 h-9 rounded-lg bg-foreground px-4 text-sm font-medium text-background transition-all hover:bg-foreground/80 active:scale-[0.98]">
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-              Add provider
+              {$t('providers.addProvider')}
             </button>
           </div>
         </div>
 
         <div class="relative mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <div class="rounded-lg bg-background/80 p-4">
-            <p class="text-caption text-muted-foreground">Catalog</p>
+            <p class="text-caption text-muted-foreground">{$t('providers.stats.catalog')}</p>
             <p class="mt-1 text-display-md">{$providers.length}</p>
-            <p class="text-caption-mono text-muted-foreground">{providerTotals.configured} configured</p>
+            <p class="text-caption-mono text-muted-foreground">{$t('providers.stats.configured', { n: providerTotals.configured })}</p>
           </div>
           <div class="rounded-lg bg-background/80 p-4">
-            <p class="text-caption text-muted-foreground">Connections</p>
+            <p class="text-caption text-muted-foreground">{$t('providers.stats.connections')}</p>
             <p class="mt-1 text-display-md">{providerTotals.totalConnections}</p>
-            <p class="text-caption-mono text-muted-foreground">runtime pool</p>
+            <p class="text-caption-mono text-muted-foreground">{$t('providers.stats.runtimePool')}</p>
           </div>
           <div class="rounded-lg bg-background/80 p-4">
-            <p class="text-caption text-muted-foreground">Ready</p>
+            <p class="text-caption text-muted-foreground">{$t('providers.stats.ready')}</p>
             <p class="mt-1 text-display-md text-emerald-400">{providerTotals.ready}</p>
-            <p class="text-caption-mono text-muted-foreground">available routes</p>
+            <p class="text-caption-mono text-muted-foreground">{$t('providers.stats.availableRoutes')}</p>
           </div>
           <div class="rounded-lg bg-background/80 p-4">
-            <p class="text-caption text-muted-foreground">Needs attention</p>
+            <p class="text-caption text-muted-foreground">{$t('providers.stats.needsAttention')}</p>
             <p class="mt-1 text-display-md {providerTotals.issues > 0 ? 'text-destructive' : 'text-muted-foreground'}">{providerTotals.issues}</p>
-            <p class="text-caption-mono text-muted-foreground">quota, auth, cooldown</p>
+            <p class="text-caption-mono text-muted-foreground">{$t('providers.stats.quotaAuthCooldown')}</p>
           </div>
         </div>
       </div>
@@ -307,24 +308,24 @@ function providerColor(provider: Provider): string {
             <Input
               type="text"
               class="h-10 w-full text-body-sm"
-              placeholder="Search providers..."
+              placeholder="{$t('providers.searchPlaceholder')}"
               bind:value={searchQuery}
             />
             {#if searchQuery}
               <button
                 type="button"
                 class="absolute inset-y-0 right-2 text-caption text-muted-foreground hover:text-foreground"
-                aria-label="Clear search"
+                aria-label="{$t('providers.clearSearch')}"
                 onclick={() => (searchQuery = '')}
               >
-                Clear
+                {$t('providers.clearSearch')}
               </button>
             {/if}
           </div>
           <div class="flex items-center gap-2 text-caption-mono text-muted-foreground">
-            <span>{filteredProviders.length} shown</span>
+            <span>{$t('providers.shownCount', { n: filteredProviders.length })}</span>
             <span class="h-1 w-1 rounded-full bg-border"></span>
-            <span>{visibleSections.length} sections</span>
+            <span>{$t('providers.sectionsCount', { n: visibleSections.length })}</span>
           </div>
         </div>
 
@@ -335,7 +336,7 @@ function providerColor(provider: Provider): string {
             aria-pressed={activeCategory === ''}
             onclick={() => (activeCategory = '')}
           >
-            All
+            {$t('providers.filterAll')}
             <span class="font-mono opacity-75">{providerTotals.configured}/{$providers.length}</span>
           </button>
           {#each visibleCategoryChips as cat (cat.id)}
@@ -372,7 +373,7 @@ function providerColor(provider: Provider): string {
                 <span class="mt-2 h-2.5 w-2.5 shrink-0 rounded-full" style="background: {cat.color};"></span>
                 <span class="min-w-0">
                   <span class="flex flex-wrap items-center gap-2">
-                    <span class="text-display-sm text-foreground">{cat.id === 'free' ? 'Free tier providers' : `${cat.label} providers`}</span>
+                    <span class="text-display-sm text-foreground">{cat.id === 'free' ? $t('providers.freeTier') : $t('providers.categoryProviders', { category: cat.label })}</span>
                     <Badge variant="secondary" class="rounded-full text-caption-mono">
                       {stat.configured}/{stat.total}
                     </Badge>
@@ -412,7 +413,7 @@ function providerColor(provider: Provider): string {
 										</Badge>
 									{/if}
 									{#if providerHasFree(provider)}
-										<Badge variant="secondary" class="shrink-0 rounded-full text-[10px] px-1.5 py-0 h-auto text-muted-foreground">Free</Badge>
+										<Badge variant="secondary" class="shrink-0 rounded-full text-[10px] px-1.5 py-0 h-auto text-muted-foreground">{$t('providers.free')}</Badge>
 									{/if}
 
                   </div>
@@ -431,13 +432,13 @@ function providerColor(provider: Provider): string {
                   {#if readyCount(provider) > 0}
                     <Badge variant="secondary" class="rounded-full text-[10px] px-1.5 py-0 h-auto gap-1 text-muted-foreground">
                       <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
-                      {readyCount(provider)} ready
+                      {$t('providers.readyCount', { n: readyCount(provider) })}
                     </Badge>
                   {/if}
                   {#if issueCount(provider) > 0}
                     <Badge variant="secondary" class="rounded-full text-[10px] px-1.5 py-0 h-auto gap-1 text-muted-foreground">
                       <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
-                      {issueCount(provider)} issues
+                      {$t('providers.issuesCount', { n: issueCount(provider) })}
                     </Badge>
                   {/if}
                   {#if disabledCount(provider) > 0}
@@ -447,11 +448,11 @@ function providerColor(provider: Provider): string {
                       title={disabledReasonBreakdown(provider)}
                     >
                       <span class="h-1.5 w-1.5 rounded-full bg-zinc-500"></span>
-                      {disabledCount(provider)} disabled
+                      {$t('providers.disabledCount', { n: disabledCount(provider) })}
                     </Badge>
                   {/if}
                   {#if readyCount(provider) === 0 && issueCount(provider) === 0 && disabledCount(provider) === 0}
-                    <span class="text-caption text-muted-foreground">{provider.connection_count || 0} connections</span>
+                    <span class="text-caption text-muted-foreground">{$t('providers.connectionsCount', { n: provider.connection_count || 0 })}</span>
                   {/if}
                 </div>
                 <span class="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
@@ -468,9 +469,9 @@ function providerColor(provider: Provider): string {
       </div>
     {:else}
       <section class="rounded-xl border border-dashed border-border/30 bg-card p-12 text-center shadow-card">
-        <p class="text-body-sm text-muted-foreground">No providers match your filters.</p>
+        <p class="text-body-sm text-muted-foreground">{$t('providers.noMatch')}</p>
         <Button variant="outline" class="mt-4" onclick={() => { searchQuery = ''; activeCategory = ''; }}>
-          Reset filters
+          {$t('providers.resetFilters')}
         </Button>
       </section>
     {/if}

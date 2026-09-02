@@ -631,7 +631,7 @@ async function handleBulkAssignProxy() {
  <Button onclick={handleTestAll} disabled={testingAll} variant="outline" size="sm" class="text-body-sm rounded-sm">
  {testingAll ? 'Testing...' : 'Test all'}
  </Button>
- {#if providerId === 'cx' || providerId === 'grok-cli'}
+ {#if providerId === 'grok-cli'}
  <Button onclick={() => showBulkImportOAuth = true} variant="outline" size="sm" class="text-body-sm rounded-sm">
  Bulk import
  </Button>
@@ -975,7 +975,13 @@ async function handleBulkAssignProxy() {
  {/if}
  </div>
 
-<AddConnectionModal bind:open={showAddModal} {providerId} {meta} onCreated={() => { refreshConnections(); loadProvider(providerId); loadProviderModels(providerId); }} />
+<AddConnectionModal
+ bind:open={showAddModal}
+ {providerId}
+ {meta}
+ onBulkImport={providerId === 'cx' ? () => { showAddModal = false; showBulkImportOAuth = true; } : undefined}
+ onCreated={() => { refreshConnections(); loadProvider(providerId); loadProviderModels(providerId); }}
+ />
 {#if providerId === 'cx' || providerId === 'grok-cli'}
 <BulkImportOAuthModal
  bind:open={showBulkImportOAuth}

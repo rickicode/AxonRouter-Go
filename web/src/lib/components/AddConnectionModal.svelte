@@ -23,11 +23,13 @@ import { KIRO_METHODS, KIRO_STARTING_METHOD, getKiroMethodLabel, type KiroMethod
     providerId,
     meta,
     onCreated,
+    onBulkImport,
   }: {
     open: boolean;
     providerId: string;
     meta: ProviderMeta | undefined;
     onCreated?: () => void;
+    onBulkImport?: () => void;
   } = $props();
 
   type Step = 'form' | 'oauth-waiting' | 'done' | 'error';
@@ -766,15 +768,6 @@ async function handleOAuthSubmit() {
       toast.info(`OAuth started for ${meta?.displayName ?? providerId}`);
       pollOAuthStatus(res.session_id);
 
-      // Open a small popup for the OAuth provider so the user stays in the dashboard.
-      // If the popup is blocked, the user can still open the URL from the waiting step.
-      if (oauthUrl) {
-        window.open(
-          oauthUrl,
-          'oauth',
-          'width=600,height=700,popup=yes,scrollbars=yes,resizable=yes'
-        );
-      }
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : 'Failed to start OAuth';
       toast.error(errorMsg);
@@ -1013,6 +1006,20 @@ $effect(() => {
             </div>
           </div>
         </div>
+        {#if providerId === 'cx' && onBulkImport}
+          <div class="mt-4 grid grid-cols-2 gap-2 rounded-lg border border-border/50 bg-muted/20 p-1">
+            <button type="button" class="rounded-md bg-card px-3 py-2 text-sm text-foreground shadow-sm" aria-current="page">
+              Connect manually
+            </button>
+            <button
+              type="button"
+              class="rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-card/60 hover:text-foreground"
+              onclick={onBulkImport}
+            >
+              Bulk import
+            </button>
+          </div>
+        {/if}
       </Dialog.Header>
 
       <div class="flex flex-col gap-4 py-2">

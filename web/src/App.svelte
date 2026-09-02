@@ -9,6 +9,10 @@ import * as Sidebar from '$lib/components/ui/sidebar';
   import SidebarNav from '$lib/components/sidebar/SidebarNav.svelte';
   import SidebarBrand from '$lib/components/sidebar/SidebarBrand.svelte';
   import SidebarHealth from '$lib/components/sidebar/SidebarHealth.svelte';
+  // NOTE: Svelte exposes the imported `t` store as `$t` in markup; `$t` is not a valid import.
+  import { initI18n, t, getT } from '$lib/i18n';
+  import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+  import type { TranslationKey } from '$lib/i18n/messages';
 import { authStore, logout, mustChangePasswordStore, isPasswordWarningDismissed } from '$lib/auth';
 import Login from './pages/Login.svelte';
 import ChangePasswordModal from '$lib/components/ChangePasswordModal.svelte';
@@ -47,39 +51,43 @@ import NotFound from './pages/NotFound.svelte';
   let cleanup: (() => void) | undefined;
   let stopHealthChecks: (() => void) | undefined;
 
+  let stopI18n: (() => void) | undefined;
+
   onMount(() => {
     cleanup = router.start();
     stopHealthChecks = startHealthChecks();
+    stopI18n = initI18n();
     return () => {
       cleanup?.();
       stopHealthChecks?.();
+      stopI18n?.();
     };
   });
 
   function getPageLabel(path: string): string {
-    if (path === '/') return 'Dashboard';
+    if (path === '/') return 'nav.dashboard';
     const segment = path.split('/').filter(Boolean)[0];
-const labels: Record<string, string> = {
-		providers: 'Providers',
-		combos: 'Combos',
-		logs: 'Logs',
-		quota: 'Quota',
-		settings: 'Settings',
-		'proxy-pools': 'Proxy Pools',
-	'proxy-fitness': 'Proxy Fitness',
-		'cli-tools': 'CLI Tools',
-		'model-pricing': 'Model Pricing',
-'developers': 'Developers',
-		'mcp': 'MCP',
-		'backup-restore': 'Backup & Restore',
-		'console': 'Console',
-		'translator': 'Translator Debug',
-		'about': 'About',
-  };
+    const labels: Record<string, string> = {
+      providers: 'nav.providers',
+      combos: 'nav.combos',
+      logs: 'nav.logs',
+      quota: 'nav.quota',
+      settings: 'nav.settings',
+      'proxy-pools': 'nav.proxyPools',
+      'proxy-fitness': 'nav.proxyFitness',
+      'cli-tools': 'nav.cliTools',
+      'model-pricing': 'nav.modelPricing',
+      developers: 'nav.developers',
+      mcp: 'nav.mcp',
+      'backup-restore': 'nav.backupRestore',
+      console: 'nav.console',
+      translator: 'nav.translatorDebug',
+      about: 'nav.about',
+    };
     return labels[segment] ?? segment.charAt(0).toUpperCase() + segment.slice(1);
   }
 
-  function matchRoute(path: string): { component: any; params: Record<string, string> } {
+function matchRoute(path: string): { component: any; params: Record<string, string> } {
     const segments = path.split('/').filter(Boolean);
 
     // / → Dashboard
@@ -162,7 +170,7 @@ if (segments[0] === 'about' && segments.length === 1) return { component: About,
 
 function handleLogout() {
   logout();
-  toast.success('Signed out');
+  toast.success(getT()('app.signedOut'));
 }
   let pageLabel = $derived(getPageLabel($currentPath));
 </script>
@@ -186,15 +194,16 @@ function handleLogout() {
   <Sidebar.Inset>
     <header class="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background/50 backdrop-blur-md sticky top-0 z-50 px-6">
       <Sidebar.Trigger class="md:hidden text-muted-foreground hover:text-foreground transition-colors cursor-pointer" />
-      <h1 class="text-body-md-strong text-foreground">{pageLabel}</h1>
+      <h1 class="text-body-md-strong text-foreground">{$t(pageLabel)}</h1>
 <div class="ml-auto flex items-center gap-2">
+  <LanguageSwitcher variant="header" />
   <a href="https://saweria.co/HIJILABS" target="_blank" rel="noopener noreferrer" class="flex items-center gap-1.5 text-caption-mono text-muted-foreground hover:text-foreground transition-colors">
     <HeartIcon class="size-4" />
-    <span class="hidden sm:inline">Support us</span>
+    <span class="hidden sm:inline">{$t('app.supportUs')}</span>
   </a>
   <Button variant="ghost" size="sm" class="gap-1.5" onclick={handleLogout}>
     <LogOutIcon class="size-4" />
-    <span class="hidden sm:inline">Logout</span>
+    <span class="hidden sm:inline">{$t('app.logout')}</span>
   </Button>
 </div>
     </header>
@@ -212,4 +221,3 @@ function handleLogout() {
 {:else}
   <Login />
 {/if}
-

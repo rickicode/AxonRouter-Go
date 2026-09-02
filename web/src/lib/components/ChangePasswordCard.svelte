@@ -6,6 +6,7 @@ import { Label } from '$lib/components/ui/label';
 import { passwordApi } from '$lib/api';
 import { setMustChangePassword } from '$lib/auth';
 import { toast } from 'svelte-sonner';
+import { t, getT } from '$lib/i18n';
 import LockIcon from '@lucide/svelte/icons/lock';
 import EyeIcon from '@lucide/svelte/icons/eye';
 import EyeOffIcon from '@lucide/svelte/icons/eye-off';
@@ -28,15 +29,15 @@ function toggle(field: 'current' | 'new' | 'confirm') {
 async function submit(event: SubmitEvent) {
 	event.preventDefault();
 	if (!currentPassword) {
-		toast.error('Current password is required');
+		toast.error(getT()('changePassword.requiredCurrent'));
 		return;
 	}
 	if (!newPassword || newPassword.length < 8) {
-		toast.error('New password must be at least 8 characters');
+		toast.error(getT()('changePassword.minLengthNew'));
 		return;
 	}
 	if (newPassword !== confirmPassword) {
-		toast.error('New passwords do not match');
+		toast.error(getT()('changePassword.mismatch'));
 		return;
 	}
 	loading = true;
@@ -46,9 +47,9 @@ async function submit(event: SubmitEvent) {
 		currentPassword = '';
 		newPassword = '';
 		confirmPassword = '';
-		toast.success('Password updated');
+		toast.success(getT()('changePassword.updated'));
 	} catch (err) {
-		toast.error(err instanceof Error ? err.message : 'Failed to update password');
+		toast.error(err instanceof Error ? err.message : getT()('changePassword.failed'));
 	} finally {
 		loading = false;
 	}
@@ -62,20 +63,20 @@ async function submit(event: SubmitEvent) {
 				<LockIcon class="size-5" />
 			</span>
 			<div>
-				<CardTitle class="text-body-md-strong">Change Password</CardTitle>
-				<CardDescription class="text-body-sm">Update the admin dashboard password.</CardDescription>
+				<CardTitle class="text-body-md-strong">{$t('changePassword.title')}</CardTitle>
+				<CardDescription class="text-body-sm">{$t('changePassword.subtitle')}</CardDescription>
 			</div>
 		</div>
 	</CardHeader>
 <CardContent>
   <form class="space-y-4 max-w-xl" onsubmit={submit}>
     <div class="space-y-2">
-      <Label for="current-password" class="text-body-sm-strong">Current Password</Label>
+      <Label for="current-password" class="text-body-sm-strong">{$t('changePassword.currentLabel')}</Label>
       <div class="relative">
         <Input
           id="current-password"
           type={showCurrent ? 'text' : 'password'}
-          placeholder="Enter current password"
+          placeholder="{$t('changePassword.currentPlaceholder')}"
           autocomplete="current-password"
           class="h-11 pr-10"
           bind:value={currentPassword}
@@ -84,7 +85,7 @@ async function submit(event: SubmitEvent) {
           type="button"
           class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
           onclick={() => toggle('current')}
-          aria-label={showCurrent ? 'Hide password' : 'Show password'}
+          aria-label={showCurrent ? $t('changePassword.hidePassword') : $t('changePassword.showPassword')}
         >
           {#if showCurrent}
             <EyeOffIcon class="size-4" />
@@ -96,12 +97,12 @@ async function submit(event: SubmitEvent) {
     </div>
 
     <div class="space-y-2">
-      <Label for="new-password" class="text-body-sm-strong">New Password</Label>
+      <Label for="new-password" class="text-body-sm-strong">{$t('changePassword.newLabel')}</Label>
       <div class="relative">
         <Input
           id="new-password"
           type={showNew ? 'text' : 'password'}
-          placeholder="Enter new password (min. 8 characters)"
+          placeholder="{$t('changePassword.newPlaceholder')}"
           autocomplete="new-password"
           class="h-11 pr-10"
           bind:value={newPassword}
@@ -110,7 +111,7 @@ async function submit(event: SubmitEvent) {
           type="button"
           class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
           onclick={() => toggle('new')}
-          aria-label={showNew ? 'Hide password' : 'Show password'}
+          aria-label={showNew ? $t('changePassword.hidePassword') : $t('changePassword.showPassword')}
         >
           {#if showNew}
             <EyeOffIcon class="size-4" />
@@ -119,16 +120,16 @@ async function submit(event: SubmitEvent) {
           {/if}
         </button>
       </div>
-      <p class="text-caption text-muted-foreground">Use at least 8 characters.</p>
+      <p class="text-caption text-muted-foreground">{$t('changePassword.minLengthHint')}</p>
     </div>
 
     <div class="space-y-2">
-      <Label for="confirm-password" class="text-body-sm-strong">Confirm New Password</Label>
+      <Label for="confirm-password" class="text-body-sm-strong">{$t('changePassword.confirmLabel')}</Label>
       <div class="relative">
         <Input
           id="confirm-password"
           type={showConfirm ? 'text' : 'password'}
-          placeholder="Repeat new password"
+          placeholder="{$t('changePassword.confirmPlaceholder')}"
           autocomplete="new-password"
           class="h-11 pr-10"
           bind:value={confirmPassword}
@@ -137,7 +138,7 @@ async function submit(event: SubmitEvent) {
           type="button"
           class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
           onclick={() => toggle('confirm')}
-          aria-label={showConfirm ? 'Hide password' : 'Show password'}
+          aria-label={showConfirm ? $t('changePassword.hidePassword') : $t('changePassword.showPassword')}
         >
           {#if showConfirm}
             <EyeOffIcon class="size-4" />
@@ -152,10 +153,10 @@ async function submit(event: SubmitEvent) {
       <Button type="submit" class="h-11" disabled={loading}>
         {#if loading}
           <Loader2Icon class="size-4 animate-spin mr-2" />
-          <span>Saving…</span>
+          <span>{$t('changePassword.saving')}</span>
         {:else}
           <LockIcon class="size-4 mr-2" />
-          <span>Update Password</span>
+          <span>{$t('changePassword.updateButton')}</span>
         {/if}
       </Button>
     </div>

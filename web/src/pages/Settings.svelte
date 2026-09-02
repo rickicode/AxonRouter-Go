@@ -7,6 +7,7 @@ import { Textarea } from '$lib/components/ui/textarea';
 import * as Tabs from '$lib/components/ui/tabs';
 import { settingsApi } from '$lib/api';
 import { toast } from 'svelte-sonner';
+import { t, getT } from '$lib/i18n';
 import ChangePasswordCard from '$lib/components/ChangePasswordCard.svelte';
 import HttpsSettings from '$lib/components/HttpsSettings.svelte';
 import RuntimeSettings from '$lib/components/RuntimeSettings.svelte';
@@ -59,27 +60,27 @@ async function handleImport() {
     }
     showImport = false;
     importText = '';
-    toast.success('Settings imported');
+    toast.success(getT()('settings.imported'));
   } catch (err) {
-    toast.error('Import failed: ' + (err instanceof Error ? err.message : 'Invalid JSON'));
+    toast.error(getT()('settings.importFailed', { message: err instanceof Error ? err.message : 'Invalid JSON' }));
   }
 }
 </script>
 
 <div class="flex flex-1 flex-col gap-6 p-6">
   <div class="space-y-1">
-    <h1 class="text-display-lg">Settings.</h1>
-    <p class="text-body-sm text-muted-foreground">Manage runtime parameters, security, HTTPS, and smart routing.</p>
+    <h1 class="text-display-lg">{$t('settings.title')}</h1>
+    <p class="text-body-sm text-muted-foreground">{$t('settings.subtitle')}</p>
   </div>
 
   <Tabs.Root bind:value={tab} class="w-full flex flex-col gap-6">
     <Tabs.List class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-1">
-      <Tabs.Trigger value="runtime" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Runtime</Tabs.Trigger>
-      <Tabs.Trigger value="security" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Security</Tabs.Trigger>
-      <Tabs.Trigger value="https" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">HTTPS</Tabs.Trigger>
+      <Tabs.Trigger value="runtime" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">{$t('settings.tabs.runtime')}</Tabs.Trigger>
+      <Tabs.Trigger value="security" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">{$t('settings.tabs.security')}</Tabs.Trigger>
+      <Tabs.Trigger value="https" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">{$t('settings.tabs.https')}</Tabs.Trigger>
 <Tabs.Trigger value="smart-router" class="rounded-md px-4 py-1.5 text-body-sm font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm gap-1.5">
 <SparklesIcon class="size-4" />
-Smart Router
+{$t('settings.tabs.smartRouter')}
 </Tabs.Trigger>
     </Tabs.List>
 
@@ -92,32 +93,32 @@ Smart Router
 
       <Card class="shadow-card border-border/60">
         <CardHeader class="pb-3">
-          <CardTitle class="text-body-md-strong">Data Management</CardTitle>
-          <CardDescription class="text-body-sm">Export, import, and migrate settings data.</CardDescription>
+          <CardTitle class="text-body-md-strong">{$t('settings.dataManagement')}</CardTitle>
+          <CardDescription class="text-body-sm">{$t('settings.dataManagementDesc')}</CardDescription>
         </CardHeader>
         <CardContent class="space-y-4">
           <div class="flex flex-wrap gap-2">
             <Button onclick={handleExport} variant="outline" size="sm" class="text-body-sm rounded-sm gap-2">
               <DownloadIcon class="size-4" />
-              Export settings (JSON)
+              {$t('settings.exportButton')}
             </Button>
             <Button onclick={() => showImport = !showImport} variant="outline" size="sm" class="text-body-sm rounded-sm gap-2">
               <UploadIcon class="size-4" />
-              {showImport ? 'Cancel import' : 'Import settings'}
+              {showImport ? $t('settings.cancelImport') : $t('settings.importButton')}
             </Button>
           </div>
 
           {#if showImport}
             <div class="space-y-3 rounded-xl border border-border bg-card p-4">
-              <Label class="text-body-sm-strong">Paste settings JSON</Label>
+              <Label class="text-body-sm-strong">{$t('settings.importLabel')}</Label>
               <Textarea
                 class="w-full h-32 font-mono text-xs"
-                placeholder="Paste JSON settings object here..."
+                placeholder="{$t('settings.importPlaceholder')}"
                 bind:value={importText}
               />
               <div class="flex gap-2">
-                <Button onclick={handleImport} disabled={!importText.trim()} size="sm" class="text-body-sm rounded-sm">Import</Button>
-                <Button onclick={() => { showImport = false; importText = ''; }} variant="ghost" size="sm" class="text-body-sm">Cancel</Button>
+                <Button onclick={handleImport} disabled={!importText.trim()} size="sm" class="text-body-sm rounded-sm">{$t('settings.importAction')}</Button>
+                <Button onclick={() => { showImport = false; importText = ''; }} variant="ghost" size="sm" class="text-body-sm">{$t('settings.cancel')}</Button>
               </div>
             </div>
           {/if}

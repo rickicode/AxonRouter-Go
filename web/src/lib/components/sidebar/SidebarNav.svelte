@@ -1,6 +1,7 @@
 <script lang="ts">
   import { currentPath, router } from '$lib/router';
   import { healthUpdateAvailable } from '$lib/health';
+  import { t } from '$lib/i18n';
   import * as Sidebar from '$lib/components/ui/sidebar';
   import HomeIcon from '@lucide/svelte/icons/home';
   import ServerIcon from '@lucide/svelte/icons/server';
@@ -20,31 +21,32 @@ import InfoIcon from '@lucide/svelte/icons/info';
 import BlocksIcon from '@lucide/svelte/icons/blocks';
 import RepeatIcon from '@lucide/svelte/icons/repeat';
 import ShieldAlertIcon from '@lucide/svelte/icons/shield-alert';
+import type { TranslationKey } from '$lib/i18n/messages';
 
   let { onclose }: { onclose?: () => void } = $props();
 
-const platformItems = [
- { href: '/', label: 'Dashboard', icon: HomeIcon },
- { href: '/providers', label: 'Providers', icon: ServerIcon },
- { href: '/combos', label: 'Combos', icon: LayersIcon },
- { href: '/usage', label: 'Usage', icon: BarChartIcon },
- { href: '/quota', label: 'Quota', icon: GaugeIcon },
- { href: '/optimization', label: 'Optimization', icon: ZapIcon },
- { href: '/logs', label: 'Logs', icon: TerminalIcon },
+const platformItems: { href: string; labelKey: TranslationKey; icon: any }[] = [
+ { href: '/', labelKey: 'nav.dashboard', icon: HomeIcon },
+ { href: '/providers', labelKey: 'nav.providers', icon: ServerIcon },
+ { href: '/combos', labelKey: 'nav.combos', icon: LayersIcon },
+ { href: '/usage', labelKey: 'nav.usage', icon: BarChartIcon },
+ { href: '/quota', labelKey: 'nav.quota', icon: GaugeIcon },
+ { href: '/optimization', labelKey: 'nav.optimization', icon: ZapIcon },
+ { href: '/logs', labelKey: 'nav.logs', icon: TerminalIcon },
 ];
-const systemItems = [
-    { href: '/console', label: 'Console', icon: TerminalIcon },
-    { href: '/translator', label: 'Translator Debug', icon: RepeatIcon },
-    { href: '/proxy-pools', label: 'Proxy Pools', icon: GlobeIcon },
-    { href: '/proxy-fitness', label: 'Proxy Fitness', icon: ShieldAlertIcon },
- { href: '/api-keys', label: 'API Keys', icon: KeyIcon },
- { href: '/developers', label: 'Developers', icon: CodeIcon },
-    { href: '/cli-tools', label: 'CLI Tools', icon: BotIcon },
-{ href: '/model-pricing', label: 'Model Pricing', icon: BadgeDollarSignIcon },
-{ href: '/mcp', label: 'MCP', icon: BlocksIcon },
-{ href: '/backup-restore', label: 'Backup & Restore', icon: ArchiveRestoreIcon },
-{ href: '/settings', label: 'Settings', icon: SettingsIcon },
-  { href: '/about', label: 'About', icon: InfoIcon },
+const systemItems: { href: string; labelKey: TranslationKey; icon: any }[] = [
+    { href: '/console', labelKey: 'nav.console', icon: TerminalIcon },
+    { href: '/translator', labelKey: 'nav.translatorDebug', icon: RepeatIcon },
+    { href: '/proxy-pools', labelKey: 'nav.proxyPools', icon: GlobeIcon },
+    { href: '/proxy-fitness', labelKey: 'nav.proxyFitness', icon: ShieldAlertIcon },
+ { href: '/api-keys', labelKey: 'nav.apiKeys', icon: KeyIcon },
+ { href: '/developers', labelKey: 'nav.developers', icon: CodeIcon },
+    { href: '/cli-tools', labelKey: 'nav.cliTools', icon: BotIcon },
+{ href: '/model-pricing', labelKey: 'nav.modelPricing', icon: BadgeDollarSignIcon },
+{ href: '/mcp', labelKey: 'nav.mcp', icon: BlocksIcon },
+{ href: '/backup-restore', labelKey: 'nav.backupRestore', icon: ArchiveRestoreIcon },
+{ href: '/settings', labelKey: 'nav.settings', icon: SettingsIcon },
+  { href: '/about', labelKey: 'nav.about', icon: InfoIcon },
 ];
 
   function isActive(pathname: string, href: string): boolean {
@@ -63,7 +65,7 @@ const systemItems = [
   <!-- Platform Section -->
   <div class="mb-1">
     <p class="px-3 py-1.5 text-caption-mono uppercase tracking-wider text-sidebar-foreground/30 select-none">
-      Platform
+      {$t('nav.section.platform')}
     </p>
     <nav class="space-y-0.5">
       {#each platformItems as item}
@@ -76,7 +78,7 @@ const systemItems = [
         >
           <span class="absolute left-0 inset-y-0 w-0.5 rounded-r-full transition-all duration-150 {active ? 'bg-sidebar-primary opacity-100' : 'opacity-0'}"></span>
           <item.icon class="size-4 shrink-0 transition-colors duration-150 {active ? 'text-sidebar-foreground' : 'text-sidebar-foreground/40 group-hover:text-sidebar-foreground/80'}" />
-          <span class="truncate">{item.label}</span>
+          <span class="truncate">{$t(item.labelKey)}</span>
           {#if active}
             <span class="ml-auto size-1.5 rounded-full bg-sidebar-primary shrink-0"></span>
           {/if}
@@ -93,7 +95,7 @@ const systemItems = [
   <!-- System Section -->
   <div>
     <p class="px-3 py-1.5 text-caption-mono uppercase tracking-wider text-sidebar-foreground/30 select-none">
-      System
+      {$t('nav.section.system')}
     </p>
     <nav class="space-y-0.5">
       {#each systemItems as item}
@@ -106,7 +108,7 @@ const systemItems = [
         >
           <span class="absolute left-0 inset-y-0 w-0.5 rounded-r-full transition-all duration-150 {active ? 'bg-sidebar-primary opacity-100' : 'opacity-0'}"></span>
           <item.icon class="size-4 shrink-0 transition-colors duration-150 {active ? 'text-sidebar-foreground' : 'text-sidebar-foreground/40 group-hover:text-sidebar-foreground/80'}" />
-          <span class="truncate">{item.label}</span>
+          <span class="truncate">{$t(item.labelKey)}</span>
           {#if active}
             <span class="ml-auto size-1.5 rounded-full bg-sidebar-primary shrink-0"></span>
           {/if}

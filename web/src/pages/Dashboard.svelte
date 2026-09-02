@@ -5,6 +5,7 @@ import { Button } from '$lib/components/ui/button';
 import { dashboardApi, apiKeysApi, type DashboardStats, type APIKeyItem } from '$lib/api';
 import { formatTokens, formatCount, formatBytes, loadActiveRequests, activeRequests } from '$lib/stores';
 import { toast } from 'svelte-sonner';
+import { t, getT } from '$lib/i18n';
 import ActivityIcon from '@lucide/svelte/icons/activity';
 import CpuIcon from '@lucide/svelte/icons/cpu';
 import DollarSignIcon from '@lucide/svelte/icons/dollar-sign';
@@ -69,8 +70,9 @@ function connectionSub(stats: DashboardStats): string {
   const total = stats.total_connections ?? 0;
   const healthy = stats.healthy_connections ?? 0;
   const unhealthy = total - healthy;
-  if (unhealthy === 0) return 'all healthy';
-  return `${fmtInt(unhealthy)} ${unhealthy === 1 ? 'error' : 'errors'}`;
+  if (unhealthy === 0) return getT()('dashboard.connectionAllHealthy');
+  const t = getT();
+  return `${fmtInt(unhealthy)} ${t(unhealthy === 1 ? 'dashboard.connectionError' : 'dashboard.connectionErrors')}`;
 }
 const STATUS_COLORS: Record<string, string> = {
   ready: 'bg-green-500',
@@ -102,7 +104,7 @@ async function load() {
   try {
     stats = await dashboardApi.stats();
   } catch (e) {
-    errorMsg = e instanceof Error ? e.message : 'Failed to load dashboard';
+    errorMsg = e instanceof Error ? e.message : getT()('dashboard.failed');
     toast.error(errorMsg);
   } finally {
     loading = false;
@@ -131,8 +133,8 @@ onMount(() => {
 </script>
 <div class="flex flex-1 flex-col gap-6 p-6">
   <div class="space-y-1">
-    <h1 class="text-display-lg">Dashboard.</h1>
-    <p class="text-body-sm text-muted-foreground">Auto-refreshing overview of traffic, cost, and system health.</p>
+    <h1 class="text-display-lg">{$t('dashboard.title')}</h1>
+    <p class="text-body-sm text-muted-foreground">{$t('dashboard.subtitle')}</p>
   </div>
   {#if loading && !stats}
     <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -144,40 +146,40 @@ onMount(() => {
     <Card class="shadow-card">
       <CardContent class="flex flex-col items-center justify-center py-16 gap-4">
         <p class="text-body-sm text-muted-foreground">{errorMsg}</p>
-        <Button onclick={load} variant="outline" class="text-body-sm cursor-pointer">Try again</Button>
+        <Button onclick={load} variant="outline" class="text-body-sm cursor-pointer">{$t('dashboard.tryAgain')}</Button>
       </CardContent>
     </Card>
   {:else if stats}
     <!-- Today KPIs -->
     <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
-      {@render kpiCard('Requests', formatCount(stats.requests_today), 'today', ActivityIcon, 'bg-blue-500/40', 'text-blue-400')}
-      {@render kpiCard('Tokens', formatTokens(stats.tokens_today), 'today', CpuIcon, 'bg-violet-500/40', 'text-violet-400')}
-      {@render kpiCard('Cost', money(stats.cost_today), 'today', DollarSignIcon, 'bg-emerald-500/40', 'text-emerald-400')}
-      {@render kpiCard('Errors', formatCount(stats.errors_today), 'today', AlertTriangleIcon, 'bg-red-500/40', 'text-red-400')}
-      {@render kpiCard('Avg latency', fmtLatency(stats.avg_latency_ms_today), 'today', TimerIcon, 'bg-amber-500/40', 'text-amber-400')}
+      {@render kpiCard($t('dashboard.kpi.requests'), formatCount(stats.requests_today), $t('dashboard.kpiSub.today'), ActivityIcon, 'bg-blue-500/40', 'text-blue-400')}
+      {@render kpiCard($t('dashboard.kpi.tokens'), formatTokens(stats.tokens_today), $t('dashboard.kpiSub.today'), CpuIcon, 'bg-violet-500/40', 'text-violet-400')}
+      {@render kpiCard($t('dashboard.kpi.cost'), money(stats.cost_today), $t('dashboard.kpiSub.today'), DollarSignIcon, 'bg-emerald-500/40', 'text-emerald-400')}
+      {@render kpiCard($t('dashboard.kpi.errors'), formatCount(stats.errors_today), $t('dashboard.kpiSub.today'), AlertTriangleIcon, 'bg-red-500/40', 'text-red-400')}
+      {@render kpiCard($t('dashboard.kpi.avgLatency'), fmtLatency(stats.avg_latency_ms_today), $t('dashboard.kpiSub.today'), TimerIcon, 'bg-amber-500/40', 'text-amber-400')}
     </div>
     <!-- System KPIs -->
     <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-      {@render kpiCard('CPU', fmtPercent(stats.cpu_percent), `${stats.cpu_cores ?? 0} cores`, ZapIcon, 'bg-cyan-500/40', 'text-cyan-400')}
-      {@render kpiCard('Memory', `${formatBytes(stats.memory_used_bytes ?? 0)} / ${formatBytes(stats.memory_total_bytes ?? 0)}`, fmtPercent(stats.memory_percent), DatabaseIcon, 'bg-fuchsia-500/40', 'text-fuchsia-400')}
-      {@render kpiCard('Disk', `${formatBytes(stats.disk_used_bytes ?? 0)} / ${formatBytes(stats.disk_total_bytes ?? 0)}`, fmtPercent(stats.disk_percent), HardDriveIcon, 'bg-orange-500/40', 'text-orange-400')}
-      {@render kpiCard('Connections', `${stats.healthy_connections ?? 0}/${stats.total_connections}`, connectionSub(stats), ServerIcon, 'bg-lime-500/40', 'text-lime-400')}
-      {@render kpiCard('Providers', fmtInt(stats.total_providers), 'registered', BoxesIcon, 'bg-pink-500/40', 'text-pink-400')}
-      {@render kpiCard('Combos', fmtInt(stats.total_combos), 'configured', LayersIcon, 'bg-indigo-500/40', 'text-indigo-400')}
-      {@render kpiCard('Uptime', fmtUptime(stats.uptime_seconds), 'since start', ClockIcon, 'bg-sky-500/40', 'text-sky-400')}
-      {@render kpiCard('Active requests', formatCount(streamCount), 'live', RadioIcon, 'bg-teal-500/40', 'text-teal-400')}
+      {@render kpiCard($t('dashboard.kpi.cpu'), fmtPercent(stats.cpu_percent), getT()('dashboard.kpiSub.cores', { n: fmtInt(stats.cpu_cores ?? 0) }), ZapIcon, 'bg-cyan-500/40', 'text-cyan-400')}
+      {@render kpiCard($t('dashboard.kpi.memory'), `${formatBytes(stats.memory_used_bytes ?? 0)} / ${formatBytes(stats.memory_total_bytes ?? 0)}`, fmtPercent(stats.memory_percent), DatabaseIcon, 'bg-fuchsia-500/40', 'text-fuchsia-400')}
+      {@render kpiCard($t('dashboard.kpi.disk'), `${formatBytes(stats.disk_used_bytes ?? 0)} / ${formatBytes(stats.disk_total_bytes ?? 0)}`, fmtPercent(stats.disk_percent), HardDriveIcon, 'bg-orange-500/40', 'text-orange-400')}
+      {@render kpiCard($t('dashboard.kpi.connections'), `${stats.healthy_connections ?? 0}/${stats.total_connections}`, connectionSub(stats), ServerIcon, 'bg-lime-500/40', 'text-lime-400')}
+      {@render kpiCard($t('dashboard.kpi.providers'), fmtInt(stats.total_providers), $t('dashboard.kpiSub.registered'), BoxesIcon, 'bg-pink-500/40', 'text-pink-400')}
+      {@render kpiCard($t('dashboard.kpi.combos'), fmtInt(stats.total_combos), $t('dashboard.kpiSub.configured'), LayersIcon, 'bg-indigo-500/40', 'text-indigo-400')}
+      {@render kpiCard($t('dashboard.kpi.uptime'), fmtUptime(stats.uptime_seconds), $t('dashboard.kpiSub.sinceStart'), ClockIcon, 'bg-sky-500/40', 'text-sky-400')}
+      {@render kpiCard($t('dashboard.kpi.activeRequests'), formatCount(streamCount), $t('dashboard.kpiSub.live'), RadioIcon, 'bg-teal-500/40', 'text-teal-400')}
     </div>
     <!-- Connection status chart -->
     <Card class="shadow-card">
       <CardHeader class="pb-3 border-b border-border">
         <div class="flex items-center gap-2">
           <ServerIcon class="size-4 text-muted-foreground" />
-          <CardTitle class="text-body-md-strong">Connection status</CardTitle>
+          <CardTitle class="text-body-md-strong">{$t('dashboard.connectionStatus')}</CardTitle>
         </div>
       </CardHeader>
       <CardContent class="pt-4">
         {#if Object.keys(stats.status_counts ?? {}).length === 0}
-          <p class="text-body-sm text-muted-foreground py-8 text-center">No connection status data.</p>
+          <p class="text-body-sm text-muted-foreground py-8 text-center">{$t('dashboard.noConnectionData')}</p>
         {:else}
           {@const dist = statusDistribution(stats)}
           {@const total = dist.reduce((sum, d) => sum + d.count, 0)}
@@ -203,7 +205,7 @@ onMount(() => {
       <CardHeader class="pb-3 border-b border-border">
         <div class="flex items-center gap-2">
           <WalletIcon class="size-4 text-muted-foreground" />
-          <CardTitle class="text-body-md-strong">API key budget utilization</CardTitle>
+          <CardTitle class="text-body-md-strong">{$t('dashboard.budgetTitle')}</CardTitle>
         </div>
       </CardHeader>
       <CardContent class="pt-4">
@@ -214,7 +216,7 @@ onMount(() => {
             {/each}
           </div>
         {:else if apiKeys.length === 0}
-          <p class="text-body-sm text-muted-foreground py-8 text-center">No API keys with budget limits configured.</p>
+          <p class="text-body-sm text-muted-foreground py-8 text-center">{$t('dashboard.noBudgetKeys')}</p>
         {:else}
           <div class="space-y-4">
             {#each apiKeys as key}
@@ -231,12 +233,12 @@ onMount(() => {
                       <ShieldAlertIcon class="size-4 text-amber-500" />
                     {/if}
                   </div>
-                  <span class="text-caption text-muted-foreground">Threshold: {(key.warning_threshold * 100).toFixed(0)}%</span>
+                  <span class="text-caption text-muted-foreground">{$t('dashboard.budgetThreshold', { percent: (key.warning_threshold * 100).toFixed(0) })}</span>
                 </div>
                 {#if key.daily_limit_usd > 0}
                   <div class="space-y-1.5">
                     <div class="flex items-center justify-between text-xs">
-                      <span class="text-muted-foreground">Daily</span>
+                      <span class="text-muted-foreground">{$t('dashboard.budgetDaily')}</span>
                       <span class={getUtilizationTextColor(dailyUtil, key.warning_threshold)}>
                         {formatUSD(key.daily_spend_usd)} / {formatUSD(key.daily_limit_usd)}
                         <span class="text-muted-foreground ml-1">({dailyUtil.toFixed(0)}%)</span>
@@ -253,7 +255,7 @@ onMount(() => {
                 {#if key.monthly_limit_usd > 0}
                   <div class="space-y-1.5">
                     <div class="flex items-center justify-between text-xs">
-                      <span class="text-muted-foreground">Monthly</span>
+                      <span class="text-muted-foreground">{$t('dashboard.budgetMonthly')}</span>
                       <span class={getUtilizationTextColor(monthlyUtil, key.warning_threshold)}>
                         {formatUSD(key.monthly_spend_usd)} / {formatUSD(key.monthly_limit_usd)}
                         <span class="text-muted-foreground ml-1">({monthlyUtil.toFixed(0)}%)</span>
@@ -273,15 +275,15 @@ onMount(() => {
           <div class="mt-4 flex flex-wrap gap-4">
             <div class="flex items-center gap-1.5">
               <span class="inline-block size-2.5 rounded-full bg-emerald-500"></span>
-              <span class="text-caption text-muted-foreground">Below threshold</span>
+              <span class="text-caption text-muted-foreground">{$t('dashboard.budgetLegend.below')}</span>
             </div>
             <div class="flex items-center gap-1.5">
               <span class="inline-block size-2.5 rounded-full bg-amber-500"></span>
-              <span class="text-caption text-muted-foreground">At/above threshold</span>
+              <span class="text-caption text-muted-foreground">{$t('dashboard.budgetLegend.atAbove')}</span>
             </div>
             <div class="flex items-center gap-1.5">
               <span class="inline-block size-2.5 rounded-full bg-destructive"></span>
-              <span class="text-caption text-muted-foreground">Over limit</span>
+              <span class="text-caption text-muted-foreground">{$t('dashboard.budgetLegend.over')}</span>
             </div>
           </div>
         {/if}
