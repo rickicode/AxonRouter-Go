@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.41] - 2026-09-02
+
 ### Added
 - **Proxy fitness registry + smart rotation (parity 9router)** — proxy pools can now be marked "unfit" for a `provider::model` scope (e.g. Freebuff limited-IP bans) with a 5-minute cooldown:
   - `internal/proxypool/fitness.go` — in-memory `FitnessRegistry` keyed `poolID → scope → mark`, persisted to the `proxy_pool_fitness` settings row (debounced 2s), lazily hydrated on first access, expired marks pruned on read, provider wildcard (`provider::*`) honored by `IsFit`/`FitIDs`.
@@ -44,10 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Freebuff direct-leak when all pools blocked** — the resolver's URL-less `direct-fallback` candidate could be attempted by the freebuff executor when a non-strict group's pools were all dead/cooled, leaking the gateway IP. The run-loop now skips any URL-less candidate whenever real pools exist (`len(cands) > 1`), regardless of `StrictProxy`.
 - **Usage summary test date sensitivity** — `TestUsageSummaryHandler` in `internal/api/handlers/admin/usage_test.go` failed on the 1st of a month (the month-start row landed in the "today" bucket and the yesterday row fell outside the current month). Expectations are now date-aware.
 
-## [0.3.41] - 2026-08-31
+### Changed
+
 - **Provider icon coverage** — imported the complete public provider icon inventory from the 9router references, mapped missing built-in provider icons, and repaired the corrupted Deepgram asset.
 - **Antigravity tool-call uncloak fix (parity 9router)** — OpenAI→client responses now restore the exact original tool name on both stream and non-stream paths. Previously the non-streaming path never stripped the `_ide` cloak suffix (so clients like coding agents received `read_file_ide` instead of `read_file`), and the name-restore helper read the wrong JSON path and dropped sanitization, leaking sanitized names. Replaced `SanitizedToolNameMap` with `CloakedToolNameMap` (`CloakName(SanitizeFunctionName(name)) -> original`), matching 9router's `toolNameMap` and the existing Antigravity→Claude path.
-
 ## [0.3.40] - 2026-08-28
 
 ### Fixed
